@@ -1,0 +1,24 @@
+{#-
+  Custom override: add X icon to the header source links.
+-#}
+<a href="{{ config.repo_url }}" title="{{ lang.t('source') }}" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    {% set icon = config.theme.icon.repo or "fontawesome/brands/git-alt" %}
+    {% include ".icons/" ~ icon ~ ".svg" %}
+  </div>
+  <div class="md-source__repository">
+    {{ config.repo_name }}
+  </div>
+</a>
+{% if config.extra.x_url %}
+  <a href="{{ config.extra.x_url }}" title="{{ config.extra.x_handle or 'X' }}" class="md-source md-source--x" aria-label="{{ config.extra.x_handle or 'X' }}" target="_blank" rel="noopener">
+    <div class="md-source__icon md-icon">
+      {% include ".icons/phydra/x.svg" %}
+    </div>
+    {% if config.extra.x_handle %}
+      <div class="md-source__repository md-source__repository--x">
+        {{ config.extra.x_handle }}
+      </div>
+    {% endif %}
+  </a>
+{% endif %}
