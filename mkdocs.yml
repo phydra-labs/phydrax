@@ -145,8 +145,6 @@ nav:
             - Enforced constraint pipelines: "api/solver/enforced_constraints.md"
     - Misc:
         - Nondimensionalization: "misc/nondimensionalization.md"
-    - References:
-        - Overview: "references/index.md"
     - Appendix:
         - Overview: "appendix/index.md"
         - Differentiation modes: "appendix/differentiation_modes.md"
