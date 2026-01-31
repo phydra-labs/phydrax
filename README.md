@@ -1,4 +1,6 @@
-# Getting started
+<h1 align='center'>Phydrax</h1>
+
+## Getting started
 
 Phydrax is a scientific machine learning toolkit for PDEs, constraints, and domain-aware models, built on [JAX](https://github.com/jax-ml/jax) + [Equinox](https://github.com/patrick-kidger/equinox).
 It provides composable building blocks for geometry, operators, and training pipelines, with
