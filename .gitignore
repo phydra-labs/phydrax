@@ -16,3 +16,4 @@ __pycache__
 uv.lock
 AGENTS.md
 dist/
+site/
