@@ -42,12 +42,74 @@ Optional (but central in many PDE problems):
 
 ## Core flow
 
-If you are new to the library, start with:
+If you are new to the library, the general recipe is:
 
 1. Define a domain (space, time, or products of both).
 2. Define functions on that domain.
 3. Add constraints and operators to construct a loss $L$.
 4. Train or evaluate with a solver.
+
+## Example
+
+This example trains a neural field $u_\theta(x,y)$ to satisfy
+
+$$
+\Delta u = 4 \quad \text{in }\Omega=[-1,1]^2,\qquad
+u = g \quad \text{on }\partial\Omega,
+$$
+
+*The configurations are kept minimal for structural demonstration purposes. Convergence requires larger networks, more iterations, and hyperparameter tuning.*
+
+```python
+import jax.numpy as jnp
+import jax.random as jr
+import optax
+import phydrax as phx
+
+geom = phx.domain.Square(center=(0.0, 0.0), side=2.0)  # [-1,1]^2, label "x"
+
+# Exact solution / boundary target g(x,y) = x^2 + y^2
+@geom.Function("x")
+def g(x):
+    return x[0] ** 2 + x[1] ** 2
+
+# Trainable field u_theta(x)
+model = phx.nn.MLP(
+    in_size=2,
+    out_size="scalar",
+    width_size=16,
+    depth=2,
+    key=jr.key(0),
+)
+u = geom.Model("x")(model)
+
+structure = phx.domain.ProductStructure((("x",),))
+
+# Interior PDE residual: Δu - 4 = 0
+pde = phx.constraints.ContinuousPointwiseInteriorConstraint(
+    "u",
+    geom,
+    operator=lambda f: phx.operators.laplacian(f, var="x") - 4.0,
+    num_points=64,
+    structure=structure,
+    reduction="mean",
+)
+
+# Soft Dirichlet boundary: u - g = 0 on ∂Ω
+boundary = geom.component({"x": phx.domain.Boundary()})
+bc = phx.constraints.ContinuousDirichletBoundaryConstraint(
+    "u",
+    boundary,
+    target=g,
+    num_points=32,
+    structure=structure,
+    weight=10.0,
+    reduction="mean",
+)
+
+solver = phx.solver.FunctionalSolver(functions={"u": u}, constraints=[pde, bc])
+solver = solver.solve(num_iter=20, optim=optax.adam(1e-3), seed=0)
+```
 
 ## Installation
 
