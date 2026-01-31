@@ -1,0 +1,153 @@
+site_name: Phydrax
+site_description: Documentation for the Phydrax scientific ML and PDE toolkit.
+site_author: Phydra Labs
+site_url: https://phydra-labs.github.io/phydrax
+repo_url: https://github.com/phydra-labs/phydrax
+repo_name: phydra-labs/phydrax
+
+strict: true
+
+theme:
+    name: material
+    features:
+        - navigation.sections
+        - toc.integrate
+        - header.autohide
+        - content.code.copy
+    palette:
+        - scheme: default
+          primary: white
+          accent: indigo
+          toggle:
+              icon: material/weather-night
+              name: Switch to dark mode
+        - scheme: slate
+          primary: black
+          accent: cyan
+          toggle:
+              icon: material/weather-sunny
+              name: Switch to light mode
+    logo: "_static/phydra.png"
+    icon:
+            repo: fontawesome/brands/github
+    favicon: "_static/phydra.png"
+    custom_dir: "docs/_overrides"
+
+extra:
+    x_url: https://x.com/PhydraLabs
+    x_handle: "@PhydraLabs"
+
+extra_javascript:
+    - _static/mathjax.js
+    - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+extra_css:
+    - _static/custom_css.css
+
+markdown_extensions:
+    - attr_list
+    - pymdownx.arithmatex:
+        generic: true
+    - pymdownx.superfences
+    - pymdownx.details
+    - admonition
+    - toc:
+        permalink: "¤"
+        toc_depth: 4
+
+plugins:
+    - search:
+        separator: '[\s\-,:!=\[\]()"/]+|(?!\b)(?=[A-Z][a-z])|\.(?!\d)|&[lg]t;'
+    - mkdocstrings:
+        handlers:
+            python:
+                options:
+                    force_inspection: true
+                    preload_modules:
+                        - mkdocstrings_setup
+                    heading_level: 4
+                    inherited_members: false
+                    members_order: source
+                    show_bases: false
+                    show_signature: true
+                    show_if_no_docstring: false
+                    show_overloads: false
+                    show_root_heading: true
+                    show_signature_annotations: true
+                    show_source: false
+                    show_symbol_type_heading: true
+                    show_symbol_type_toc: true
+                    show_docstring_description: true
+                    show_docstring_examples: true
+                    show_docstring_parameters: true
+                    show_docstring_returns: true
+                    show_docstring_raises: true
+                    show_docstring_attributes: false
+                    summary:
+                        attributes: false
+
+nav:
+    - Getting started: "index.md"
+    - All of Phydrax: "all-of-phydrax.md"
+    - Cookbook:
+        - Overview: "cookbook/index.md"
+        - Poisson (field learning): "cookbook/poisson.md"
+        - Heat equation (space–time): "cookbook/heat.md"
+        - Inverse + hybrid physics–data: "cookbook/inverse_and_data.md"
+        - Operator learning (DatasetDomain): "cookbook/operator_learning.md"
+    - Guides:
+        - Domains and sampling: "guides_domain.md"
+        - Differential operators: "guides_differential.md"
+        - Integrals and measures: "guides_integrals.md"
+        - Constraints and objectives: "guides_constraints.md"
+        - Solvers and training: "guides_solver.md"
+    - API:
+        - Overview: "api/phydrax.md"
+        - Domains:
+            - Overview: "api/domain/index.md"
+            - Time: "api/domain/time.md"
+            - Geometry (1D): "api/domain/geometry1d.md"
+            - Geometry (2D): "api/domain/geometry2d.md"
+            - Geometry (3D): "api/domain/geometry3d.md"
+            - Composition: "api/domain/composition.md"
+            - Sampling: "api/domain/sampling.md"
+            - Components: "api/domain/components.md"
+            - Functions: "api/domain/functions.md"
+        - Operators:
+            - Overview: "api/operators/index.md"
+            - Differential: "api/operators/differential.md"
+            - Integral: "api/operators/integral.md"
+            - Functional: "api/operators/functional.md"
+            - Linear algebra: "api/operators/linalg.md"
+            - Delay: "api/operators/delay.md"
+        - Constraints:
+            - Overview: "api/constraints/index.md"
+            - Core: "api/constraints/core.md"
+            - Continuous: "api/constraints/continuous.md"
+            - Boundary: "api/constraints/boundary.md"
+            - Discrete: "api/constraints/discrete.md"
+            - Enforced constraint ansätze: "api/constraints/enforced.md"
+            - CFD: "api/constraints/cfd.md"
+            - Solid: "api/constraints/solid.md"
+            - Thermal: "api/constraints/thermal.md"
+            - Electromagnetics: "api/constraints/em.md"
+        - Neural networks:
+            - Overview: "api/nn/index.md"
+            - Layers: "api/nn/layers.md"
+            - Architectures: "api/nn/architectures.md"
+            - Structured: "api/nn/structured.md"
+            - Wrappers: "api/nn/wrappers.md"
+            - Embeddings: "api/nn/embeddings.md"
+            - Activations: "api/nn/activations.md"
+        - Solver:
+            - Overview: "api/solver/index.md"
+            - Functional solver: "api/solver/functional_solver.md"
+            - Enforced constraint pipelines: "api/solver/enforced_constraints.md"
+    - Misc:
+        - Nondimensionalization: "misc/nondimensionalization.md"
+    - References:
+        - Overview: "references/index.md"
+    - Appendix:
+        - Overview: "appendix/index.md"
+        - Differentiation modes: "appendix/differentiation_modes.md"
+        - Physics-Constrained Interpolation: "appendix/physics_constrained_interpolation.md"

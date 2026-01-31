@@ -1,0 +1,110 @@
+PHYDRA NON-PRODUCTION LICENSE (PNPL) v1.0
+
+Copyright (c) 2026 PHYDRA, Inc.
+All rights reserved.
+
+This License permits use of the Software only for Non-Production Use (research, evaluation,
+testing, prototyping, and piloting in Non-Production Environments). Any Production or
+Commercial Use requires a separate license from Licensor. Contact: partner@phydra.ai
+
+1. SCOPE AND ACCEPTANCE
+1.1 Scope. This agreement (the “Agreement”) applies to any access, use, modification, or
+    Distribution of the Software by You, regardless of how You obtained it.
+1.2 Acceptance. By accessing, using, running, executing, modifying, or Distributing the
+    Software, or by creating/using/Distributing a Derivative, You agree to be bound by
+    this Agreement.
+1.3 Authority. If You accept this Agreement on behalf of an employer or other entity, You
+    represent that You have authority to bind that entity. In that case, “You” means that
+    entity.
+
+2. LICENSE GRANT (NON-PRODUCTION ONLY)
+Subject to Section 3 (Limitations), Licensor grants You a non-exclusive, royalty-free,
+worldwide, non-transferable, non-sublicensable license to:
+(a) run, execute, and operate the Software;
+(b) copy and modify the Software and create Derivatives; and
+(c) Distribute the Software and/or Derivatives as permitted in Section 2.2 and 2.3;
+in each case solely for Non-Production Use.
+
+2.2 Distribution of the Software (and Licensor-provided Derivatives).
+You may Distribute copies of the Software and any Derivatives made available by Licensor,
+provided that:
+(a) You provide a copy of this Agreement to recipients; and
+(b) You retain all copyright and license notices and include a NOTICE file containing:
+    "Licensed by PHYDRA, Inc. under the Phydra Non-Production License (PNPL)."
+
+2.3 Distribution of Your Derivatives.
+You may Distribute Derivatives that You create under terms of Your choice, provided that:
+(a) the use of the original Software and any Licensor-provided Derivatives remains governed
+    by this Agreement;
+(b) You include prominent notices stating that You modified the Software; and
+(c) Your terms do not conflict with this Agreement as it applies to the original Software
+    and any Licensor-provided Derivatives.
+
+3. LIMITATIONS
+3.1 Non-Production only. You may use the Software and Derivatives only for Non-Production Use
+    in Non-Production Environments. This applies whether used by humans or by Automated Agents.
+3.2 No Production/Commercial use. You may not use, supply, or make available the Software,
+    Derivatives, or Outputs in the course of any Commercial Activity or Production, whether
+    for payment or free of charge, including via hosted or managed services (e.g., SaaS),
+    APIs, cloud instances, or “behind a software layer,” without a separate license from
+    Licensor (partner@phydra.ai).
+3.3 No misrepresentation. You must not imply that Your Derivatives or modified versions are
+    an official product of, or endorsed by, Licensor without Licensor’s written permission.
+3.4 Other uses require a separate license. Any use not expressly permitted by this Agreement
+    requires a separate license from Licensor. Contact: partner@phydra.ai
+
+4. INTELLECTUAL PROPERTY; TRADEMARKS; OUTPUTS
+4.1 Ownership. Licensor retains all right, title, and interest in the Software.
+4.2 Trademarks. No trademark rights are granted. You may use Licensor names/marks only for
+    reasonable attribution and description of the Software.
+4.3 Outputs. Licensor claims no ownership of Outputs. You are responsible for Outputs and any
+    subsequent use of Outputs, and Outputs remain subject to the restrictions in Section 3.
+
+5. DISCLAIMER
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING TITLE, NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR
+PURPOSE. YOU ASSUME ALL RISK ARISING FROM USE OF THE SOFTWARE.
+
+6. LIMITATION OF LIABILITY; INDEMNITY
+6.1 Limitation. TO THE MAXIMUM EXTENT PERMITTED BY LAW, LICENSOR SHALL NOT BE LIABLE FOR ANY
+    INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR ANY LOSS OF PROFITS,
+    DATA, OR GOODWILL, ARISING OUT OF OR RELATED TO THIS AGREEMENT OR THE SOFTWARE, EVEN IF
+    ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+6.2 Indemnity. You agree to indemnify and hold harmless Licensor from claims, damages, or
+    losses arising out of or related to Your use or Distribution of the Software, Derivatives,
+    or Outputs.
+
+7. TERMINATION
+7.1 Term. This Agreement is effective upon acceptance and continues until terminated.
+7.2 Breach. If You breach this Agreement, Your rights terminate automatically. Upon termination,
+    You must cease all use of the Software and delete all copies in Your possession or control.
+7.3 IP litigation termination. If You initiate a claim alleging the Software infringes Your IP,
+    any licenses granted to You under this Agreement terminate immediately.
+
+8. GENERAL
+8.1 Governing law; venue. This Agreement will be governed by the laws of the State of Delaware,
+    USA, without regard to conflict-of-laws principles. The state and federal courts located in
+    Delaware, USA will have exclusive jurisdiction over any dispute arising out of or relating
+    to this Agreement or the Software, and You consent to personal jurisdiction in those courts.
+8.2 Severability. If any provision is unenforceable, the remaining provisions remain in effect.
+8.3 Entire agreement. This Agreement is the entire agreement between You and Licensor regarding
+    Non-Production Use of the Software.
+
+9. DEFINITIONS
+“Automated Agent” means software that initiates actions or executes tasks without contemporaneous
+human direction.
+“Commercial Activity” means use primarily intended for commercial advantage or monetary compensation,
+including internal business operations beyond evaluation/piloting.
+“Derivative” means any modified version of the Software or work based on the Software. Outputs are not
+Derivatives.
+“Distribute” means providing or making available by any means (including source, binary, or hosted access).
+“Non-Production Environment” means any setting that excludes live/real-world production operations,
+revenue-generating activity, and direct end-user/customer-facing use or impact.
+“Non-Production Use” means use solely for research, evaluation, testing, prototyping, piloting, or demos
+in a Non-Production Environment.
+“Outputs” means any results produced by running the Software (including predictions, simulations,
+artifacts, or generated results).
+“Production” means any use that is not Non-Production Use, including deploying in a live product/service,
+supporting real business operations, or offering hosted/API access.
+“Software” means the code and materials made available by Licensor under this Agreement.
+“Licensor” means PHYDRA, Inc.
