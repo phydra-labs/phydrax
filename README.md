@@ -2,7 +2,7 @@
 
 Phydrax is a scientific machine learning toolkit for PDEs, constraints, and domain-aware models, built on [JAX](https://github.com/jax-ml/jax) + [Equinox](https://github.com/patrick-kidger/equinox).
 It provides composable building blocks for geometry, operators, and training pipelines, with
-an emphasis on explicit control of objectives and data sampling.
+an emphasis on software modularity and interoperability.
 
 ## Unifying view: minimize functionals over domains
 
@@ -28,7 +28,7 @@ Most workflows are composing a few primitives:
 
 - **Domain**: a labeled product space $\Omega=\Omega_x\times\Omega_t\times\cdots$.
 - **Component**: a subset like interior/boundary/initial slice where a term lives.
-- **DomainFunction**: a field $u:\Omega\to\mathbb{R}^m$ with explicit label dependencies.
+- **DomainFunction**: a field $u :\Omega\to\mathbb{R}^m$ with explicit label dependencies.
 - **Operators**: maps $u\mapsto r$ like $\nabla u$, $\Delta u$, $\partial_t u$, integrals, etc.
 - **Constraints**: scalar loss terms built from residuals on components.
 - **FunctionalSolver**: sums constraints into a differentiable scalar objective and runs optimization.
@@ -59,6 +59,10 @@ uv add phydrax
 ```
 
 No special builds or containers. Batteries-included, ready to go.
+
+## Documentation
+
+Can be found [here](https://phydra-labs.github.io/phydrax).
 
 ## Why JAX?
 
