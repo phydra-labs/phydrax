@@ -26,16 +26,16 @@ where each term corresponds to a constraint, data fit, or integral target on a d
 
 Most workflows are composing a few primitives:
 
-- **Domain**: a labeled product space \(\Omega=\Omega_x\times\Omega_t\times\cdots\).
+- **Domain**: a labeled product space $\Omega=\Omega_x\times\Omega_t\times\cdots$.
 - **Component**: a subset like interior/boundary/initial slice where a term lives.
-- **DomainFunction**: a field \(u:\Omega\to\mathbb{R}^m\) with explicit label dependencies.
-- **Operators**: maps \(u\mapsto r\) like \(\nabla u\), \(\Delta u\), \(\partial_t u\), integrals, etc.
+- **DomainFunction**: a field $u:\Omega\to\mathbb{R}^m$ with explicit label dependencies.
+- **Operators**: maps $u\mapsto r$ like $\nabla u$, $\Delta u$, $\partial_t u$, integrals, etc.
 - **Constraints**: scalar loss terms built from residuals on components.
 - **FunctionalSolver**: sums constraints into a differentiable scalar objective and runs optimization.
 
 Optional (but central in many PDE problems):
 
-- **Enforced constraints**: build an ansatz \(\tilde u\) that satisfies boundary/initial conditions by construction,
+- **Enforced constraints**: build an ansatz $\tilde u$ that satisfies boundary/initial conditions by construction,
   then train on the remaining terms.
 
 ## Core flow
