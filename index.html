@@ -362,6 +362,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#example" class="md-nav__link">
+    <span class="md-ellipsis">
+      Example
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#installation" class="md-nav__link">
     <span class="md-ellipsis">
       Installation
@@ -1980,6 +1989,28 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="appendix/surely_youre_joking/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Surely You're Joking!
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2045,6 +2076,62 @@ L[u] = \sum_i w_i\int_{\Omega_i}\rho_i(u(z))\,d\mu_i(z),
 <li>Add constraints and operators to construct a loss <span class="arithmatex">\(L\)</span>.</li>
 <li>Train or evaluate with a solver.</li>
 </ol>
+<h2 id="example">Example<a class="headerlink" href="#example" title="Permanent link">¤</a></h2>
+<p>This example trains a neural field <span class="arithmatex">\(u_\theta(x,y)\)</span> to satisfy</p>
+<div class="arithmatex">\[
+\Delta u = 4 \quad \text{in }\Omega=[-1,1]^2,\qquad
+u = g \quad \text{on }\partial\Omega,
+\]</div>
+<p><em>The configurations are kept minimal for structural demonstration purposes. Convergence requires larger networks, more iterations, and hyperparameter tuning.</em></p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">jax.numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">jnp</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">jax.random</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">jr</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">optax</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">phydrax</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">phx</span>
+
+<span class="n">geom</span> <span class="o">=</span> <span class="n">phx</span><span class="o">.</span><span class="n">domain</span><span class="o">.</span><span class="n">Square</span><span class="p">(</span><span class="n">center</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">),</span> <span class="n">side</span><span class="o">=</span><span class="mf">2.0</span><span class="p">)</span>  <span class="c1"># [-1,1]^2, label &quot;x&quot;</span>
+
+<span class="c1"># Exact solution / boundary target g(x,y) = x^2 + y^2</span>
+<span class="nd">@geom</span><span class="o">.</span><span class="n">Function</span><span class="p">(</span><span class="s2">&quot;x&quot;</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">g</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">x</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">**</span> <span class="mi">2</span> <span class="o">+</span> <span class="n">x</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">**</span> <span class="mi">2</span>
+
+<span class="c1"># Trainable field u_theta(x)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">phx</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">MLP</span><span class="p">(</span>
+    <span class="n">in_size</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+    <span class="n">out_size</span><span class="o">=</span><span class="s2">&quot;scalar&quot;</span><span class="p">,</span>
+    <span class="n">width_size</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>
+    <span class="n">depth</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+    <span class="n">key</span><span class="o">=</span><span class="n">jr</span><span class="o">.</span><span class="n">key</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span>
+<span class="p">)</span>
+<span class="n">u</span> <span class="o">=</span> <span class="n">geom</span><span class="o">.</span><span class="n">Model</span><span class="p">(</span><span class="s2">&quot;x&quot;</span><span class="p">)(</span><span class="n">model</span><span class="p">)</span>
+
+<span class="n">structure</span> <span class="o">=</span> <span class="n">phx</span><span class="o">.</span><span class="n">domain</span><span class="o">.</span><span class="n">ProductStructure</span><span class="p">(((</span><span class="s2">&quot;x&quot;</span><span class="p">,),))</span>
+
+<span class="c1"># Interior PDE residual: Δu - 4 = 0</span>
+<span class="n">pde</span> <span class="o">=</span> <span class="n">phx</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">ContinuousPointwiseInteriorConstraint</span><span class="p">(</span>
+    <span class="s2">&quot;u&quot;</span><span class="p">,</span>
+    <span class="n">geom</span><span class="p">,</span>
+    <span class="n">operator</span><span class="o">=</span><span class="k">lambda</span> <span class="n">f</span><span class="p">:</span> <span class="n">phx</span><span class="o">.</span><span class="n">operators</span><span class="o">.</span><span class="n">laplacian</span><span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="n">var</span><span class="o">=</span><span class="s2">&quot;x&quot;</span><span class="p">)</span> <span class="o">-</span> <span class="mf">4.0</span><span class="p">,</span>
+    <span class="n">num_points</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span>
+    <span class="n">structure</span><span class="o">=</span><span class="n">structure</span><span class="p">,</span>
+    <span class="n">reduction</span><span class="o">=</span><span class="s2">&quot;mean&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Soft Dirichlet boundary: u - g = 0 on ∂Ω</span>
+<span class="n">boundary</span> <span class="o">=</span> <span class="n">geom</span><span class="o">.</span><span class="n">component</span><span class="p">({</span><span class="s2">&quot;x&quot;</span><span class="p">:</span> <span class="n">phx</span><span class="o">.</span><span class="n">domain</span><span class="o">.</span><span class="n">Boundary</span><span class="p">()})</span>
+<span class="n">bc</span> <span class="o">=</span> <span class="n">phx</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">ContinuousDirichletBoundaryConstraint</span><span class="p">(</span>
+    <span class="s2">&quot;u&quot;</span><span class="p">,</span>
+    <span class="n">boundary</span><span class="p">,</span>
+    <span class="n">target</span><span class="o">=</span><span class="n">g</span><span class="p">,</span>
+    <span class="n">num_points</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span>
+    <span class="n">structure</span><span class="o">=</span><span class="n">structure</span><span class="p">,</span>
+    <span class="n">weight</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span>
+    <span class="n">reduction</span><span class="o">=</span><span class="s2">&quot;mean&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">solver</span> <span class="o">=</span> <span class="n">phx</span><span class="o">.</span><span class="n">solver</span><span class="o">.</span><span class="n">FunctionalSolver</span><span class="p">(</span><span class="n">functions</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;u&quot;</span><span class="p">:</span> <span class="n">u</span><span class="p">},</span> <span class="n">constraints</span><span class="o">=</span><span class="p">[</span><span class="n">pde</span><span class="p">,</span> <span class="n">bc</span><span class="p">])</span>
+<span class="n">solver</span> <span class="o">=</span> <span class="n">solver</span><span class="o">.</span><span class="n">solve</span><span class="p">(</span><span class="n">num_iter</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">optim</span><span class="o">=</span><span class="n">optax</span><span class="o">.</span><span class="n">adam</span><span class="p">(</span><span class="mf">1e-3</span><span class="p">),</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+</code></pre></div>
 <h2 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">¤</a></h2>
 <p>Requires Python 3.11+.</p>
 <p>First, install your preferred JAX distribution.
