@@ -29,6 +29,13 @@ from ..domain._components import (
 from ..domain._domain import _AbstractDomain, RelabeledDomain
 from ..domain._function import DomainFunction
 from ..domain._scalar import _AbstractScalarDomain
+from ..domain._structure import ProductStructure
+from ..operators.differential._domain_ops import partial_n
+from ..operators.differential._hooks import (
+    blend_with_gate,
+    nth_quotient_rule,
+    with_derivative_hook,
+)
 
 
 def _unwrap_factor(factor: object, /) -> object:
@@ -761,6 +768,145 @@ def _max_initial_order(
     return max(orders) if orders else -1
 
 
+def _initial_overlay_boundary_compatible(
+    *,
+    u_base: DomainFunction,
+    boundary_overlays: Sequence["_BoundaryBlendOverlay"],
+    initial_overlay: "_InitialEnforcedOverlay",
+    sampler: str,
+    key: Key[Array, ""],
+    num_probe: int = 64,
+    atol: float = 1e-8,
+) -> bool:
+    if not boundary_overlays:
+        return False
+
+    for overlay in boundary_overlays:
+        for piece in overlay.pieces:
+            if isinstance(piece, MultiFieldEnforcedConstraint):
+                return False
+
+    def _get_field_unavailable(name: str, /) -> DomainFunction:
+        raise KeyError(
+            f"Boundary-compatibility probe cannot resolve co-variable {name!r}."
+        )
+
+    u_boundary = u_base
+    for overlay in boundary_overlays:
+        u_boundary = overlay.apply(u_boundary, get_field=_get_field_unavailable)
+
+    u_initial = initial_overlay.apply(u_boundary)
+    u_reenforced = u_initial
+    for overlay in boundary_overlays:
+        u_reenforced = overlay.apply(u_reenforced, get_field=_get_field_unavailable)
+
+    diff = u_initial - u_reenforced
+
+    probe_components: list[DomainComponent] = []
+    for overlay in boundary_overlays:
+        for piece in overlay.pieces:
+            probe_components.append(piece.component)
+
+    unique_components: list[DomainComponent] = []
+    seen_ids: set[int] = set()
+    for comp in probe_components:
+        comp_id = id(comp)
+        if comp_id in seen_ids:
+            continue
+        seen_ids.add(comp_id)
+        unique_components.append(comp)
+
+    n_probe = max(int(num_probe), 2)
+    for i, component in enumerate(unique_components):
+        non_fixed_labels = tuple(
+            lbl
+            for lbl in component.domain.labels
+            if not isinstance(
+                component.spec.component_for(lbl), (FixedStart, FixedEnd, Fixed)
+            )
+        )
+        if not non_fixed_labels:
+            vals = jnp.asarray(diff.func(key=jr.fold_in(key, i)), dtype=float)
+        else:
+            structure = ProductStructure((non_fixed_labels,))
+            batch = component.sample(
+                n_probe,
+                structure=structure,
+                sampler=sampler,
+                key=jr.fold_in(key, i),
+            )
+            vals = jnp.asarray(diff(batch, key=jr.fold_in(key, i + 10_000)).data)
+        if bool(jnp.any(~jnp.isfinite(vals))):
+            return False
+        if float(jnp.max(jnp.abs(vals))) > float(atol):
+            return False
+
+    return True
+
+
+class _BoundaryWeightedQuotientCallable(StrictModule):
+    pieces: tuple[DomainFunction, ...]
+    weights: tuple[DomainFunction, ...]
+    remainder_weight: DomainFunction | None
+    base: DomainFunction
+    piece_pos: tuple[tuple[int, ...], ...]
+    weight_pos: tuple[tuple[int, ...], ...]
+    remainder_weight_pos: tuple[int, ...] | None
+    base_pos: tuple[int, ...]
+
+    def __init__(
+        self,
+        *,
+        pieces: tuple[DomainFunction, ...],
+        weights: tuple[DomainFunction, ...],
+        remainder_weight: DomainFunction | None,
+        base: DomainFunction,
+        piece_pos: tuple[tuple[int, ...], ...],
+        weight_pos: tuple[tuple[int, ...], ...],
+        remainder_weight_pos: tuple[int, ...] | None,
+        base_pos: tuple[int, ...],
+    ):
+        self.pieces = pieces
+        self.weights = weights
+        self.remainder_weight = remainder_weight
+        self.base = base
+        self.piece_pos = piece_pos
+        self.weight_pos = weight_pos
+        self.remainder_weight_pos = remainder_weight_pos
+        self.base_pos = base_pos
+
+    def __call__(self, *args, key=None, **kwargs):
+        num = jnp.asarray(0.0, dtype=float)
+        den = jnp.asarray(0.0, dtype=float)
+
+        for w, p, w_pos, p_pos in zip(
+            self.weights,
+            self.pieces,
+            self.weight_pos,
+            self.piece_pos,
+            strict=True,
+        ):
+            w_args = tuple(args[i] for i in w_pos)
+            p_args = tuple(args[i] for i in p_pos)
+            w_val = w.func(*w_args, key=key, **kwargs)
+            p_val = p.func(*p_args, key=key, **kwargs)
+            num = num + w_val * p_val
+            den = den + w_val
+
+        if self.remainder_weight is not None:
+            rem_pos = self.remainder_weight_pos
+            if rem_pos is None:
+                raise ValueError("Missing remainder weight argument positions.")
+            w_args = tuple(args[i] for i in rem_pos)
+            u_args = tuple(args[i] for i in self.base_pos)
+            w_val = self.remainder_weight.func(*w_args, key=key, **kwargs)
+            u_val = self.base.func(*u_args, key=key, **kwargs)
+            num = num + w_val * u_val
+            den = den + w_val
+
+        return num / den
+
+
 class _BoundaryBlendOverlay(StrictModule):
     var: str
     pieces: tuple[SingleFieldEnforcedConstraint | MultiFieldEnforcedConstraint, ...]
@@ -862,12 +1008,14 @@ class _BoundaryBlendOverlay(StrictModule):
     ) -> DomainFunction:
         num = DomainFunction(domain=u.domain, deps=(), func=0.0, metadata=u.metadata)
         den = DomainFunction(domain=u.domain, deps=(), func=0.0, metadata={})
+        piece_functions: list[DomainFunction] = []
 
         for c, w in zip(self.pieces, self.weights, strict=True):
             if isinstance(c, SingleFieldEnforcedConstraint):
                 u_piece = c.apply(u)
             else:
                 u_piece = c.apply(u, get_field)
+            piece_functions.append(u_piece)
             num = num + w * u_piece
             den = den + w
 
@@ -875,7 +1023,73 @@ class _BoundaryBlendOverlay(StrictModule):
             num = num + self.remainder_weight * u
             den = den + self.remainder_weight
 
-        return num / den
+        blended_expr = num / den
+        deps = blended_expr.deps
+        dep_idx = {lbl: i for i, lbl in enumerate(deps)}
+        piece_pos = tuple(
+            tuple(dep_idx[lbl] for lbl in piece.deps) for piece in piece_functions
+        )
+        weight_pos = tuple(
+            tuple(dep_idx[lbl] for lbl in weight.deps) for weight in self.weights
+        )
+        remainder_weight_pos: tuple[int, ...] | None = None
+        base_pos: tuple[int, ...] = ()
+        if self.remainder_weight is not None:
+            remainder_weight_pos = tuple(
+                dep_idx[lbl] for lbl in self.remainder_weight.deps
+            )
+            base_pos = tuple(dep_idx[lbl] for lbl in u.deps)
+
+        blended = DomainFunction(
+            domain=blended_expr.domain,
+            deps=deps,
+            func=_BoundaryWeightedQuotientCallable(
+                pieces=tuple(piece_functions),
+                weights=self.weights,
+                remainder_weight=self.remainder_weight,
+                base=u,
+                piece_pos=piece_pos,
+                weight_pos=weight_pos,
+                remainder_weight_pos=remainder_weight_pos,
+                base_pos=base_pos,
+            ),
+            metadata=blended_expr.metadata,
+        )
+
+        def _hook(
+            *,
+            var: str,
+            axis: int | None,
+            order: int,
+            mode: Literal["reverse", "forward"],
+            backend: Literal["ad", "jet", "fd", "basis"],
+            basis: Literal["poly", "fourier", "sine", "cosine"],
+            periodic: bool,
+        ) -> DomainFunction | None:
+            if backend not in ("ad", "jet"):
+                return None
+
+            def _derive(fn: DomainFunction, k: int, /) -> DomainFunction:
+                return partial_n(
+                    fn,
+                    var=var,
+                    axis=axis,
+                    order=int(k),
+                    mode=mode,
+                    backend=backend,
+                    basis=basis,
+                    periodic=periodic,
+                )
+
+            return nth_quotient_rule(
+                num,
+                den,
+                var=var,
+                order=int(order),
+                derive=_derive,
+            )
+
+        return with_derivative_hook(blended, _hook)
 
 
 class _InitialEnforcedOverlay(StrictModule):
@@ -1104,12 +1318,8 @@ class _InteriorDataOverlay(StrictModule):
                 m = m * (jnp.maximum(t - t0, 0.0) ** int(q))
             return m
 
-        def _call(*args: Any, key=None, **kwargs: Any):
+        def _correction(*args: Any, key=None, **kwargs: Any):
             z = {lbl: args[idx[lbl]] for lbl in deps}
-
-            u_query = jnp.asarray(
-                u0.func(*(z[lbl] for lbl in u0.deps), key=key, **kwargs), dtype=float
-            )
 
             def _u0_at_anchor(*dep_vals):
                 return jnp.asarray(u0.func(*dep_vals, key=key, **kwargs), dtype=float)
@@ -1321,7 +1531,7 @@ class _InteriorDataOverlay(StrictModule):
                     corr = jnp.sum(wpsi * r_all)
 
                 m_q = _M_query(z)
-                return u_query + m_q * corr
+                return m_q * corr
 
             if u0.deps:
                 u_anchor = jax.vmap(_u0_at_anchor)(*(anchors[lbl] for lbl in u0.deps))
@@ -1452,11 +1662,49 @@ class _InteriorDataOverlay(StrictModule):
                 t = jnp.asarray(z[evolution_var], dtype=float).reshape(())
                 m_q = m_q * (jnp.maximum(t - t0, 0.0) ** int(q))
 
-            return u_query + m_q * corr
+            return m_q * corr
 
-        return DomainFunction(
-            domain=u0.domain, deps=deps, func=_call, metadata=u0.metadata
+        correction = DomainFunction(
+            domain=u0.domain,
+            deps=deps,
+            func=_correction,
+            metadata={"interior_data_correction": True},
         )
+        ansatz = u0 + correction
+
+        def _hook(
+            *,
+            var: str,
+            axis: int | None,
+            order: int,
+            mode: Literal["reverse", "forward"],
+            backend: Literal["ad", "jet", "fd", "basis"],
+            basis: Literal["poly", "fourier", "sine", "cosine"],
+            periodic: bool,
+        ) -> DomainFunction | None:
+            if backend not in ("ad", "jet"):
+                return None
+            return partial_n(
+                u0,
+                var=var,
+                axis=axis,
+                order=int(order),
+                mode=mode,
+                backend=backend,
+                basis=basis,
+                periodic=periodic,
+            ) + partial_n(
+                correction,
+                var=var,
+                axis=axis,
+                order=int(order),
+                mode=mode,
+                backend=backend,
+                basis=basis,
+                periodic=periodic,
+            )
+
+        return with_derivative_hook(ansatz, _hook)
 
 
 class EnforcedConstraintPipeline(StrictModule):
@@ -1490,6 +1738,7 @@ class EnforcedConstraintPipeline(StrictModule):
     initial: tuple[SingleFieldEnforcedConstraint | MultiFieldEnforcedConstraint, ...]
     interior_data: _InteriorDataOverlay | None
     boundary_gate: DomainFunction | None
+    initial_overlay_boundary_compatible: bool
     co_vars: tuple[str, ...]
 
     def __init__(
@@ -1650,6 +1899,16 @@ class EnforcedConstraintPipeline(StrictModule):
 
         self.initial_overlay = initial_overlay
         self.initial = tuple(initial_constraints)
+        self.initial_overlay_boundary_compatible = bool(
+            (self.initial_overlay is not None)
+            and _initial_overlay_boundary_compatible(
+                u_base=u_base,
+                boundary_overlays=self.boundary,
+                initial_overlay=self.initial_overlay,
+                sampler=sampler,
+                key=jr.fold_in(key, 42_791),
+            )
+        )
 
         boundary_exps = _gate_exponents_from_boundary_constraints(
             constraints, evolution_var=self.evolution_var
@@ -1761,8 +2020,11 @@ class EnforcedConstraintPipeline(StrictModule):
             u = overlay.apply(u, get_field=get_field)
         if self.initial_overlay is not None:
             u_next = self.initial_overlay.apply(u)
-            if self.boundary_gate is not None:
-                u = u + self.boundary_gate * (u_next - u)
+            if (
+                self.boundary_gate is not None
+                and not self.initial_overlay_boundary_compatible
+            ):
+                u = blend_with_gate(u, u_next, self.boundary_gate)
             else:
                 u = u_next
         for c in self.initial:
@@ -1771,7 +2033,7 @@ class EnforcedConstraintPipeline(StrictModule):
             else:
                 u_next = c.apply(u, get_field)
             if self.boundary_gate is not None:
-                u = u + self.boundary_gate * (u_next - u)
+                u = blend_with_gate(u, u_next, self.boundary_gate)
             else:
                 u = u_next
         if self.interior_data is not None:

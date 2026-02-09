@@ -298,7 +298,7 @@ limit of infinite beam width (or in settings where the relevant neighbors always
 the BVH-accelerated method is identical to an exact neighborhood search. For finite beam width it is an approximation,
 and its accuracy depends on whether the candidate set captures the effective support of the MLS kernel.
 
-## A.5. Higher-order initial constraints via a Hermite/Taylor ansatz
+## A.5. Higher-order initial constraints via a gated Taylor ansatz
 
 Let $t$ be the evolution variable with an initial slice $t=t_0$. Suppose we want to enforce, for a given
 integer $K\ge 0$:
@@ -316,16 +316,41 @@ $$
 and define the enforced initial ansatz:
 
 $$
-u_I(t)=P_K(t) + (t-t_0)^{K+1}\bigl(u(t)-P_K(t)\bigr).
+u_I(t)=P_K(t) + g(t)\,\bigl(u(t)-P_K(t)\bigr).
 $$
+
+Assume $g$ satisfies
+$$
+g^{(j)}(t_0)=0,\qquad j=0,1,\dots,K.
+$$
+Then $u_I$ matches all prescribed initial derivatives.
 
 **Proposition A.4 (exact initial derivatives).** Assume $u$ is $K+1$ times differentiable in $t$.
 Then $\partial_t^k u_I(\cdot,t_0)=g_k(\cdot)$ for $k=0,\dots,K$.
 
-*Proof.* The correction term $(t-t_0)^{K+1}(u-P_K)$ has a factor $(t-t_0)^{K+1}$, so all of its derivatives
-up to order $K$ vanish at $t=t_0$. Therefore $\partial_t^k u_I(t_0)=\partial_t^k P_K(t_0)=g_k$. $\square$
+*Proof.* Write $u_I=P_K+g(u-P_K)$. By Leibniz, every derivative of $g(u-P_K)$ of order $\le K$ contains a factor
+$g^{(j)}(t_0)$ with $j\le K$, hence vanishes at $t_0$. Therefore
+$\partial_t^k u_I(t_0)=\partial_t^k P_K(t_0)=g_k$. $\square$
 
-This construction is used as the “initial target overlay” when multiple initial derivative targets are specified.
+In implementation, two gate families are supported:
+
+- **Polynomial gate** (legacy):
+  $$
+  g_{\text{poly}}(t)=(t-t_0)^{K+1}.
+  $$
+- **Rational gate** (default):
+  $$
+  q=K+1,\qquad
+  \tau=\frac{\Delta t}{L\,\varepsilon^{1/q}},\qquad
+  g_{\text{rat}}(t)=\frac{\tau^q}{1+\tau^q},
+  $$
+  where $\varepsilon=\texttt{gate\_eps}>0$, and $\Delta t$ is the oriented (or absolute) distance from the initial slice
+  depending on whether the initial component is `FixedStart`, `FixedEnd`, or `Fixed`.
+
+Near $t_0$, $g_{\text{rat}}(t)=\mathcal O((t-t_0)^{K+1})$, so it preserves the same exact-derivative property while
+remaining bounded away from unbounded polynomial growth far from the initial slice.
+
+This gated Taylor construction is used as the “initial target overlay” when multiple initial derivative targets are specified.
 
 ## A.6. Mixed boundary/initial constraints and the boundary gate
 
@@ -336,13 +361,18 @@ The pipeline resolves the interaction by a staged priority:
 
 1. Enforce boundary constraints first to obtain $u_B$.
 2. Compute an initial-enforced candidate $u_{\text{init}}$ from $u_B$.
-3. Blend the update through a **boundary gate** $\gamma$ that vanishes on the constrained boundary.
+3. If boundary/initial interaction is incompatible, blend through a **boundary gate** $\gamma$ that vanishes on the constrained boundary.
+   If they are compatible, accept the initial-enforced update directly.
 
 $$
-u_{BI} \;=\; u_B + \gamma\,(u_{\text{init}}-u_B).
+u_{BI} \;=\;
+\begin{cases}
+u_{\text{init}}, & \text{(boundary-compatible initial overlay)},\\[4pt]
+u_B + \gamma\,(u_{\text{init}}-u_B), & \text{(gated compatibility branch)}.
+\end{cases}
 $$
 
-This guarantees boundary constraints remain satisfied by construction because the update is identically zero on the
+In the gated branch, boundary constraints remain satisfied by construction because the update is identically zero on the
 boundary. The gate is chosen to vanish to sufficiently high order to preserve boundary constraints involving spatial
 derivatives up to a prescribed order.
 
@@ -353,7 +383,9 @@ $$
 u_{BI}(\cdot,t_0)=u_B(\cdot,t_0) + \gamma(\cdot)\,\bigl(g_0-u_B(\cdot,t_0)\bigr).
 $$
 
-Unless $\gamma\equiv 1$ away from the boundary (or $u_B(\cdot,t_0)=g_0$ already), this blend relaxes *exact* initial
+This tradeoff applies only in the gated branch. In the compatibility branch, the pipeline keeps
+$u_{BI}=u_{\text{init}}$, so exact initial matching from A.5 is preserved globally. In the gated branch,
+unless $\gamma\equiv 1$ away from the boundary (or $u_B(\cdot,t_0)=g_0$ already), the blend relaxes *exact* initial
 enforcement near the boundary in order to preserve boundary constraints. In Phydrax’s implementation, $\gamma$ is smooth,
 vanishes to high order on the boundary, and tends to $1$ with increasing distance, so initial constraints are typically
 satisfied approximately away from the boundary (subject to compatibility at $\partial\Omega\times\lbrace t_0\rbrace$).
@@ -554,9 +586,10 @@ For the strongest “exactness” statements, the following conditions are essen
 3. **Anchor placement.** Interior anchors/tracks must lie strictly away from constrained sets so that $M(z_i)>0$.
 4. **Regularity.** To preserve derivative constraints through order $K$, the gate factors and the field must admit
    the corresponding derivatives (at least $C^K$ in the relevant coordinates).
-5. **Gating tradeoff.** If the boundary gate $\gamma$ is not identically $1$ away from the boundary, then the gated blend
-   cannot preserve boundary constraints and enforce initial constraints exactly everywhere simultaneously; instead, initial
-   constraints are typically satisfied approximately away from the boundary.
+5. **Gating tradeoff (conditional).** If the pipeline takes the gated branch and the boundary gate $\gamma$ is not
+   identically $1$ away from the boundary, then the gated blend cannot preserve boundary constraints and enforce initial
+   constraints exactly everywhere simultaneously; initial constraints are then typically satisfied approximately near the
+   boundary. If the compatibility branch is taken, this tradeoff is avoided.
 6. **Approximation layers.** BVH selection, MLS distance proxies, and approximate distance fields introduce numerical
    approximation. The mathematical statements above should be interpreted either in the idealized continuous limit or as
    “up to numerical tolerance” for practical computations.
@@ -566,6 +599,7 @@ For the strongest “exactness” statements, the following conditions are essen
 The following implementation concepts align with the mathematics above:
 
 - **Boundary stage**: piecewise constraints combined via weighted blending $u_B$.
-- **Initial stage**: higher-order `enforce_initial` overlay and/or other initial enforced constraints, blended via a boundary gate $\gamma$.
+- **Initial stage**: higher-order `enforce_initial` gated Taylor overlay and/or other initial enforced constraints, with
+  boundary-gated blending only when boundary compatibility requires it.
 - **Interior stage**: anchor/data correction $u\mapsto u + M\cdot(\text{IDW interpolant of scaled residuals})$ (with snapping for exact anchors).
 - **BVH**: packed AABB tree used to accelerate boundary-subset weight evaluation for blending.

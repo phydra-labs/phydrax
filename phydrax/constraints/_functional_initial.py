@@ -17,11 +17,12 @@ from ..domain._components import (
     FixedStart,
 )
 from ..domain._function import DomainFunction
-from ..domain._structure import NumPoints, ProductStructure
+from ..domain._structure import ProductStructure
 from ..operators.differential._domain_ops import dt_n
 from ._functional import FunctionalConstraint
 from ._interpolate import idw_interpolant
 from ._pointset import PointSetConstraint
+from ._sampling_spec import SamplingNumPoints
 
 
 def _value_deps(component: DomainComponent | DomainComponentUnion, /) -> tuple[str, ...]:
@@ -63,9 +64,8 @@ def ContinuousInitialConstraint(
     time_derivative_order: int = 0,
     mode: Literal["reverse", "forward"] = "reverse",
     time_derivative_backend: Literal["ad", "jet"] = "ad",
-    num_points: NumPoints | tuple[Any, ...],
+    num_points: SamplingNumPoints,
     structure: ProductStructure,
-    coord_separable: Mapping[str, Any] | None = None,
     dense_structure: ProductStructure | None = None,
     sampler: str = "latin_hypercube",
     weight: ArrayLike = 1.0,
@@ -92,9 +92,10 @@ def ContinuousInitialConstraint(
     - `time_derivative_order`: Derivative order $n$ for $\partial^n/\partial t^n$.
     - `mode`: Differentiation mode (`"reverse"` or `"forward"`).
     - `time_derivative_backend`: Backend for time derivatives (`"ad"` or `"jet"`).
-    - `num_points`: Number of initial-slice points to sample (paired or structured; see `structure`).
+    - `num_points`: Sampling spec. Accepts dense counts (`int` / `tuple[int, ...]`),
+      coord-separable mappings (e.g. `{"x": 64}`), or mixed forms
+      `(dense_num_points, coord_map)`.
     - `structure`: A `ProductStructure` describing how variables are sampled/blocked.
-    - `coord_separable`: Optional coord-separable sampling spec (per label).
     - `dense_structure`: Optional dense structure used when sampling produces dense batches.
     - `sampler`: Sampling scheme (e.g. `"latin_hypercube"`).
     - `weight`: Scalar multiplier applied to this term.
@@ -140,7 +141,6 @@ def ContinuousInitialConstraint(
         constraint_vars=constraint_var,
         num_points=num_points,
         structure=structure,
-        coord_separable=coord_separable,
         dense_structure=dense_structure,
         sampler=sampler,
         weight=weight,
