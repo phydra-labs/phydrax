@@ -34,6 +34,7 @@ theme:
     custom_dir: "docs/_overrides"
 
 extra:
+    linkedin_url: https://www.linkedin.com/company/phydra-labs
     x_url: https://x.com/PhydraLabs
     x_handle: "@PhydraLabs"
 
@@ -101,6 +102,8 @@ nav:
         - Integrals and measures: "guides_integrals.md"
         - Constraints and objectives: "guides_constraints.md"
         - Solvers and training: "guides_solver.md"
+    - Examples:
+        - Overview: "examples/index.md"
     - API:
         - Overview: "api/phydrax.md"
         - Domains:

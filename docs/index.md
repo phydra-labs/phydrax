@@ -136,7 +136,7 @@ Source-available under the Phydra Non-Production License (PNPL).
 Research/piloting encouraged. 
 Production/commercial use requires a separate license.
 
-For production licensing and all other commercial inquiries including consulting, contracting, and custom software: partner@phydra.ai, or DM us on [X](https://x.com/PhydraLabs).
+For production licensing and all other commercial inquiries including consulting, contracting, and custom software: partner@phydra.ai, or DM us on [X](https://x.com/PhydraLabs) or [LinkedIn](https://www.linkedin.com/company/phydra-labs).
 
 <br>
 Next: [All of Phydrax](all-of-phydrax.md)
