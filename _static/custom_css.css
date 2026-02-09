@@ -143,6 +143,11 @@ h6.heading {
     fill: currentColor;
 }
 
+.md-source--linkedin .md-source__icon svg {
+    transform: scale(1.1);
+    transform-origin: center;
+}
+
 /* Fit the X handle alongside the GitHub one in the top right. */
 div.md-header__source {
     width: revert;

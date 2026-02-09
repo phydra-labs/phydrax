@@ -22,3 +22,10 @@
     {% endif %}
   </a>
 {% endif %}
+{% if config.extra.linkedin_url %}
+  <a href="{{ config.extra.linkedin_url }}" title="LinkedIn" class="md-source md-source--linkedin" aria-label="LinkedIn" target="_blank" rel="noopener">
+    <div class="md-source__icon md-icon">
+      {% include ".icons/phydra/linkedin.svg" %}
+    </div>
+  </a>
+{% endif %}
