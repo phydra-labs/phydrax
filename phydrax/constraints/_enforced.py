@@ -35,6 +35,12 @@ from ..operators.differential._domain_ops import (
     cauchy_stress,
     directional_derivative,
     dt,
+    partial_n,
+)
+from ..operators.differential._hooks import (
+    blend_with_gate,
+    nth_quotient_rule,
+    with_derivative_hook,
 )
 from ..operators.linalg import einsum
 
@@ -42,7 +48,88 @@ from ..operators.linalg import einsum
 class _IdentityCallable(StrictModule):
     def __call__(self, x, /, *, key=None, **kwargs):
         del key, kwargs
+        if isinstance(x, tuple):
+            if len(x) != 1:
+                raise ValueError(
+                    "Scalar identity helper expected a single coord-separable axis."
+                )
+            return x[0]
         return x
+
+
+class _InitialPolynomialCallable(StrictModule):
+    targets: tuple[DomainFunction, ...]
+    coeffs: tuple[float, ...]
+    target_pos: tuple[tuple[int, ...], ...]
+    var_pos: int | None
+    t0: Array
+
+    def __init__(
+        self,
+        *,
+        targets: tuple[DomainFunction, ...],
+        coeffs: tuple[float, ...],
+        target_pos: tuple[tuple[int, ...], ...],
+        var_pos: int | None,
+        t0: Array,
+    ):
+        self.targets = targets
+        self.coeffs = coeffs
+        self.target_pos = target_pos
+        self.var_pos = var_pos
+        self.t0 = jnp.asarray(t0, dtype=float).reshape(())
+
+    def __call__(self, *args, key=None, **kwargs):
+        def _mul_aligned(a: Any, b: Any, /) -> Array:
+            a_arr = jnp.asarray(a)
+            b_arr = jnp.asarray(b)
+            try:
+                return a_arr * b_arr
+            except (TypeError, ValueError):
+                if a_arr.ndim == 2 and int(a_arr.shape[0]) == 1 and b_arr.ndim == 1:
+                    return b_arr[:, None] * a_arr
+                if b_arr.ndim == 2 and int(b_arr.shape[0]) == 1 and a_arr.ndim == 1:
+                    return a_arr[:, None] * b_arr
+                if a_arr.ndim == 1 and b_arr.ndim == 1:
+                    return a_arr[:, None] * b_arr[None, :]
+                if (
+                    a_arr.ndim == 1
+                    and b_arr.ndim >= 2
+                    and int(a_arr.shape[0]) == int(b_arr.shape[0])
+                ):
+                    shape = (int(a_arr.shape[0]),) + (1,) * (b_arr.ndim - 1)
+                    return a_arr.reshape(shape) * b_arr
+                if (
+                    b_arr.ndim == 1
+                    and a_arr.ndim >= 2
+                    and int(b_arr.shape[0]) == int(a_arr.shape[0])
+                ):
+                    shape = (int(b_arr.shape[0]),) + (1,) * (a_arr.ndim - 1)
+                    return a_arr * b_arr.reshape(shape)
+                raise
+
+        dt = None
+        if self.var_pos is not None:
+            dt = jnp.asarray(args[self.var_pos], dtype=float) - self.t0
+
+        out = jnp.asarray(0.0, dtype=float)
+        dt_pow = (
+            jnp.ones_like(dt, dtype=float)
+            if dt is not None
+            else jnp.asarray(1.0, dtype=float)
+        )
+        for target, coeff, pos in zip(
+            self.targets,
+            self.coeffs,
+            self.target_pos,
+            strict=True,
+        ):
+            target_args = tuple(args[i] for i in pos)
+            target_val = target.func(*target_args, key=key, **kwargs)
+            out = out + float(coeff) * _mul_aligned(dt_pow, target_val)
+            if dt is not None:
+                dt_pow = dt_pow * dt
+        return out
 
 
 def _constant_weight(value: float, /) -> Callable[[Array], Array]:
@@ -196,13 +283,55 @@ def _enforced_constraint_weight_fn(
 
         return jax.lax.cond(has_valid, _do, lambda _: jnp.asarray(1.0), operand=None)
 
-    def _weight_point(x: Array, /) -> Array:
+    def _weight_from_point(x: Array, /) -> Array:
         f = _mls_distance(x)
-
         alpha = sigma + eps
         rho = 2.0 * alpha * (jax.nn.softplus(f / alpha) - jnp.log(2.0))
         rho = jnp.abs(rho)
         return (rho + 1e-16) ** -2
+
+    def _weight_point(x: Array | tuple[Array, ...], /) -> Array:
+        if isinstance(x, tuple):
+            coords = tuple(jnp.asarray(c, dtype=float) for c in x)
+            if not coords:
+                raise ValueError("Weight function received an empty coord tuple.")
+            if not all(c.ndim == 1 for c in coords):
+                raise ValueError(
+                    "Coord-separable inputs for boundary weight must be 1D axes."
+                )
+            if len(coords) != int(geom.var_dim):
+                raise ValueError(
+                    f"Boundary weight expected {int(geom.var_dim)} coord axes, got {len(coords)}."
+                )
+            if len(coords) == 1:
+                return jax.vmap(
+                    lambda xi: _weight_from_point(jnp.asarray([xi], dtype=float))
+                )(coords[0])
+
+            mesh = jnp.meshgrid(*coords, indexing="ij")
+            flat_points = jnp.stack([m.reshape(-1) for m in mesh], axis=1)
+            flat_weights = jax.vmap(_weight_from_point)(flat_points)
+            out_shape = tuple(int(c.shape[0]) for c in coords)
+            return flat_weights.reshape(out_shape)
+
+        x_arr = jnp.asarray(x, dtype=float)
+        if x_arr.ndim == 0:
+            return _weight_from_point(jnp.asarray([x_arr], dtype=float))
+        if x_arr.ndim == 1:
+            if int(x_arr.shape[0]) != int(geom.var_dim):
+                raise ValueError(
+                    f"Boundary weight expected point shape ({int(geom.var_dim)},), got {x_arr.shape}."
+                )
+            return _weight_from_point(x_arr)
+        if x_arr.ndim == 2:
+            if int(x_arr.shape[1]) != int(geom.var_dim):
+                raise ValueError(
+                    f"Boundary weight expected point batch shape (N,{int(geom.var_dim)}), got {x_arr.shape}."
+                )
+            return jax.vmap(_weight_from_point)(x_arr)
+        raise ValueError(
+            "Boundary weight expected input with shape (), (d,), (N,d), or coord-separable tuple."
+        )
 
     return _weight_point
 
@@ -247,6 +376,10 @@ def enforce_dirichlet(
         raise ValueError("enforce_dirichlet requires a non-interior component for var.")
 
     value = 0.0 if target is None else _coerce_value(target, u)
+    if isinstance(value, DomainFunction):
+        value_fn = value
+    else:
+        value_fn = DomainFunction(domain=u.domain, deps=(), func=value, metadata={})
 
     if isinstance(factor, _AbstractGeometry):
         if not isinstance(comp, Boundary):
@@ -254,7 +387,7 @@ def enforce_dirichlet(
                 "enforce_dirichlet for geometry vars requires component Boundary()."
             )
         phi = component.sdf(var=var)
-        return value + phi * (u - value)
+        return blend_with_gate(value_fn, u, phi)
 
     if isinstance(factor, _AbstractScalarDomain):
         t = DomainFunction(domain=component.domain, deps=(var,), func=_IdentityCallable())
@@ -269,7 +402,7 @@ def enforce_dirichlet(
         else:
             raise TypeError(f"Unsupported scalar component {type(comp).__name__}.")
 
-        return value + phi * (u - value)
+        return blend_with_gate(value_fn, u, phi)
 
     raise TypeError(f"Unsupported unary domain type {type(factor).__name__}.")
 
@@ -604,6 +737,8 @@ def enforce_initial(
     *,
     var: str = "t",
     targets: Mapping[int, DomainFunction | ArrayLike],
+    gate: Literal["rational", "poly"] = "rational",
+    gate_eps: float = 1e-2,
 ) -> DomainFunction:
     r"""Enforced initial-condition ansatz matching time derivatives at a fixed time.
 
@@ -618,10 +753,14 @@ def enforce_initial(
     and returns
 
     $$
-    u^*(t) = p(t) + (t-t_0)^{m+1}\,(u(t)-p(t)),
+    u^*(t) = p(t) + g(t)\,(u(t)-p(t)),
     $$
 
     which matches all specified derivatives exactly at $t=t_0$.
+
+    By default, `g` is a bounded rational gate based on normalized time-from-$t_0$
+    that avoids unbounded polynomial growth away from the initial slice. Set
+    `gate="poly"` to recover the original $(t-t_0)^{m+1}$ gate.
     """
     if isinstance(component, DomainComponentUnion):
         raise TypeError(
@@ -676,16 +815,77 @@ def enforce_initial(
                 "enforce_initial requires targets for all derivative orders from 0..max_order."
             )
 
+    targets_ordered: list[DomainFunction] = []
+    for order in range(max_order + 1):
+        target = targets_by_order[order]
+        if isinstance(target, DomainFunction):
+            target_fn = target
+        else:
+            target_fn = DomainFunction(
+                domain=u.domain,
+                deps=(),
+                func=target,
+                metadata={},
+            )
+        if target_fn.domain.labels != u.domain.labels:
+            target_fn = target_fn.promote(u.domain)
+        targets_ordered.append(target_fn)
+
+    poly_dep_set: set[str] = set()
+    for target_fn in targets_ordered:
+        poly_dep_set.update(target_fn.deps)
+    if max_order > 0:
+        poly_dep_set.add(var)
+    poly_deps = tuple(lbl for lbl in u.domain.labels if lbl in poly_dep_set)
+    dep_idx = {lbl: i for i, lbl in enumerate(poly_deps)}
+
+    target_pos = tuple(
+        tuple(dep_idx[lbl] for lbl in target_fn.deps) for target_fn in targets_ordered
+    )
+    coeffs = tuple(1.0 / float(factorial(order)) for order in range(max_order + 1))
+    var_pos: int | None = dep_idx.get(var)
+    poly = DomainFunction(
+        domain=u.domain,
+        deps=poly_deps,
+        func=_InitialPolynomialCallable(
+            targets=tuple(targets_ordered),
+            coeffs=coeffs,
+            target_pos=target_pos,
+            var_pos=var_pos,
+            t0=t0,
+        ),
+        metadata={},
+    )
+
     t = DomainFunction(domain=component.domain, deps=(var,), func=_IdentityCallable())
     dt = t - t0
 
-    poly = DomainFunction(domain=u.domain, deps=(), func=0.0, metadata=u.metadata)
-    for order in range(max_order + 1):
-        target = targets_by_order[order]
-        coeff = 1.0 / float(factorial(order))
-        poly = poly + target * (dt**order) * coeff
+    q = int(max_order + 1)
+    if gate == "poly":
+        return poly + (dt**q) * (u - poly)
+    if gate != "rational":
+        raise ValueError("gate must be 'rational' or 'poly'.")
 
-    return poly + (dt ** (max_order + 1)) * (u - poly)
+    gate_eps_f = float(gate_eps)
+    if gate_eps_f <= 0.0:
+        raise ValueError("gate_eps must be > 0.")
+
+    t_start = jnp.asarray(factor.fixed("start"), dtype=float).reshape(())
+    t_end = jnp.asarray(factor.fixed("end"), dtype=float).reshape(())
+    if isinstance(comp, Fixed):
+        # Use a symmetric distance scale around t0 so the gate saturates on the
+        # larger side of the interval.
+        L = jnp.maximum(jnp.abs(t0 - t_start), jnp.abs(t_end - t0)) + 1e-12
+        dt_gate = abs(dt)
+    else:
+        L = jnp.abs(t_end - t_start) + 1e-12
+        dt_gate = dt if isinstance(comp, FixedStart) else (-dt)
+
+    scale = L * (gate_eps_f ** (1.0 / float(q)))
+    tau = dt_gate / scale
+    tau_pow = tau**q
+    g = tau_pow / (1.0 + tau_pow)
+    return blend_with_gate(poly, u, g)
 
 
 def _complement_where(
@@ -820,4 +1020,39 @@ def enforce_blend(
             numerator = numerator + w_rem * u
             denominator = denominator + w_rem
 
-    return numerator / denominator
+    blended = numerator / denominator
+
+    def _hook(
+        *,
+        var: str,
+        axis: int | None,
+        order: int,
+        mode: Literal["reverse", "forward"],
+        backend: Literal["ad", "jet", "fd", "basis"],
+        basis: Literal["poly", "fourier", "sine", "cosine"],
+        periodic: bool,
+    ) -> DomainFunction | None:
+        if backend not in ("ad", "jet"):
+            return None
+
+        def _derive(fn: DomainFunction, k: int, /) -> DomainFunction:
+            return partial_n(
+                fn,
+                var=var,
+                axis=axis,
+                order=int(k),
+                mode=mode,
+                backend=backend,
+                basis=basis,
+                periodic=periodic,
+            )
+
+        return nth_quotient_rule(
+            numerator,
+            denominator,
+            var=var,
+            order=int(order),
+            derive=_derive,
+        )
+
+    return with_derivative_hook(blended, _hook)

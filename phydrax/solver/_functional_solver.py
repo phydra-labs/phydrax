@@ -18,6 +18,7 @@ from .._frozendict import frozendict
 from .._strict import StrictModule
 from ..constraints._base import AbstractConstraint
 from ..domain._function import DomainFunction
+from ..operators.differential._runtime import derivative_runtime_context
 from ._enforced_constraint_pipeline import (
     EnforcedConstraintPipelines,
     EnforcedInteriorData,
@@ -164,8 +165,9 @@ class FunctionalSolver(StrictModule):
         functions = self.ansatz_functions()
         keys = jr.split(key, len(self.constraints))
         total = jnp.array(0.0, dtype=float)
-        for c, k in zip(self.constraints, keys, strict=True):
-            total = total + c.loss(functions, key=k, **kwargs)
+        with derivative_runtime_context():
+            for c, k in zip(self.constraints, keys, strict=True):
+                total = total + c.loss(functions, key=k, **kwargs)
         return total
 
     def solve(

@@ -49,9 +49,8 @@ def test_continuous_initial_coord_separable_spatial():
         "u",
         component,
         func=0.0,
-        num_points=(),
+        num_points={"x": 4},
         structure=structure,
-        coord_separable={"x": 4},
     )
     assert _jit_loss(constraint, {"u": u}) < 1e-6
 
@@ -71,9 +70,8 @@ def test_integral_constraint_coord_separable_constant():
         component=component,
         operator=lambda f: f,
         constraint_vars="u",
-        num_points=6,
+        num_points=(6, {"x": 5}),
         structure=structure,
-        coord_separable={"x": 5},
         equal_to=1.0,
     )
     assert _jit_loss(constraint, {"u": u}) < 1e-6
@@ -319,9 +317,8 @@ def test_discrete_interior_sensor_track_coord_separable_multilabel():
         sensors=sensors,
         times=times,
         sensor_values=sensor_values,
-        num_points=12,
+        num_points=(12, {"x": 4}),
         structure=structure,
-        coord_separable={"x": 4},
     )
     assert _jit_loss(constraint, {"u": u}) < 1e-6
 
@@ -338,9 +335,8 @@ def test_coord_separable_laplacian_jet_zero():
         "u",
         geom,
         operator=lambda f: laplacian(f, var="x", backend="jet"),
-        num_points=16,
+        num_points={"x": 8},
         structure=structure,
-        coord_separable={"x": 8},
     )
     assert _jit_loss(constraint, {"u": u}) < 1e-6
 
@@ -361,8 +357,7 @@ def test_coord_separable_div_diag_k_grad_jet_zero():
         "u",
         geom,
         operator=lambda f: div_diag_k_grad(f, k_vec, var="x", backend="jet"),
-        num_points=16,
+        num_points={"x": 8},
         structure=structure,
-        coord_separable={"x": 8},
     )
     assert _jit_loss(constraint, {"u": u}) < 1e-6

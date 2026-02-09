@@ -494,7 +494,7 @@ class DomainComponent(StrictModule):
     ) -> CoordSeparableBatch:
         r"""Sample a coordinate-separable batch.
 
-        For selected geometry labels, this samples each coordinate axis independently,
+        For selected unary labels, this samples each coordinate axis independently,
         producing coordinate arrays (and an associated boolean mask) suitable for
         grid-like evaluation. Any remaining (non-fixed, non-separable) labels are
         sampled using `dense_structure`.
@@ -603,9 +603,14 @@ class DomainComponent(StrictModule):
                 raise TypeError(f"Unsupported unary domain type {type(factor).__name__}.")
 
             if lbl in coord_label_set:
-                if not isinstance(factor, _AbstractGeometry):
+                if isinstance(factor, _AbstractGeometry):
+                    var_dim = int(factor.var_dim)
+                elif isinstance(factor, _AbstractScalarDomain):
+                    var_dim = 1
+                else:
                     raise TypeError(
-                        f"coord_separable requires a geometry label; got {lbl!r} with factor {type(factor).__name__}."
+                        "coord_separable requires a geometry/scalar label; got "
+                        f"{lbl!r} with factor {type(factor).__name__}."
                     )
                 if not isinstance(comp, Interior):
                     raise ValueError(
@@ -615,7 +620,6 @@ class DomainComponent(StrictModule):
 
                 n_spec = coord_separable[lbl]
                 where_fn = self.where.get(lbl)
-                var_dim = int(factor.var_dim)
 
                 axis_specs: tuple[AbstractAxisSpec, ...] | None = None
                 counts: tuple[int, ...] | None = None
@@ -647,41 +651,80 @@ class DomainComponent(StrictModule):
                                 "Sequence[AxisSpec], or GridSpec."
                             )
 
-                if axis_specs is not None:
-                    if len(axis_specs) != var_dim:
-                        raise ValueError(
-                            f"coord_separable[{lbl!r}] must have length {var_dim}."
+                if isinstance(factor, _AbstractGeometry):
+                    if axis_specs is not None:
+                        if len(axis_specs) != var_dim:
+                            raise ValueError(
+                                f"coord_separable[{lbl!r}] must have length {var_dim}."
+                            )
+                        bounds = jnp.asarray(factor.mesh_bounds, dtype=float)
+                        coords = []
+                        for i, spec in enumerate(axis_specs):
+                            disc = spec.materialize(bounds[0, i], bounds[1, i])
+                            coords.append(disc.nodes)
+                            axis_name = _axis_name_for_coord(lbl, i)
+                            axis_discretization_by_axis[axis_name] = disc
+
+                        coords_tuple = tuple(coords)
+                        mask_arr = sdf_mask_from_adf(factor.adf, coords_tuple)
+                        if where_fn is not None:
+                            grid = broadcasted_grid(coords_tuple)
+                            pts = grid.reshape((-1, var_dim))
+                            where_mask = jax.vmap(where_fn)(pts).reshape(grid.shape[:-1])
+                            mask_arr = mask_arr & jnp.asarray(where_mask, dtype=bool)
+
+                        coords_out = coords_tuple
+                        mask = mask_arr
+                    else:
+                        assert counts is not None
+                        if len(counts) != var_dim:
+                            raise ValueError(
+                                f"coord_separable[{lbl!r}] must have length {var_dim}."
+                            )
+                        coords_out, mask = factor._sample_interior_separable(
+                            counts,
+                            sampler=sampler,
+                            where=where_fn,
+                            key=coord_key_by_label[lbl],
                         )
-                    bounds = jnp.asarray(factor.mesh_bounds, dtype=float)
-                    coords = []
-                    for i, spec in enumerate(axis_specs):
-                        disc = spec.materialize(bounds[0, i], bounds[1, i])
-                        coords.append(disc.nodes)
-                        axis_name = _axis_name_for_coord(lbl, i)
-                        axis_discretization_by_axis[axis_name] = disc
-
-                    coords_tuple = tuple(coords)
-                    mask_arr = sdf_mask_from_adf(factor.adf, coords_tuple)
-                    if where_fn is not None:
-                        grid = broadcasted_grid(coords_tuple)
-                        pts = grid.reshape((-1, var_dim))
-                        where_mask = jax.vmap(where_fn)(pts).reshape(grid.shape[:-1])
-                        mask_arr = mask_arr & jnp.asarray(where_mask, dtype=bool)
-
-                    coords_out = coords_tuple
-                    mask = mask_arr
                 else:
-                    assert counts is not None
-                    if len(counts) != var_dim:
-                        raise ValueError(
-                            f"coord_separable[{lbl!r}] must have length {var_dim}."
+                    assert isinstance(factor, _AbstractScalarDomain)
+                    if axis_specs is not None:
+                        if len(axis_specs) != 1:
+                            raise ValueError(
+                                f"coord_separable[{lbl!r}] must have length 1."
+                            )
+                        start = jnp.asarray(factor.fixed("start"), dtype=float).reshape(
+                            ()
                         )
-                    coords_out, mask = factor._sample_interior_separable(
-                        counts,
-                        sampler=sampler,
-                        where=where_fn,
-                        key=coord_key_by_label[lbl],
-                    )
+                        end = jnp.asarray(factor.fixed("end"), dtype=float).reshape(())
+                        disc = axis_specs[0].materialize(start, end)
+                        coord = jnp.asarray(disc.nodes, dtype=float).reshape((-1,))
+                        axis_name = _axis_name_for_coord(lbl, 0)
+                        axis_discretization_by_axis[axis_name] = disc
+                    else:
+                        assert counts is not None
+                        if len(counts) != 1:
+                            raise ValueError(
+                                f"coord_separable[{lbl!r}] must have length 1."
+                            )
+                        coord = jnp.asarray(
+                            _sample_scalar(
+                                factor,
+                                comp,
+                                int(counts[0]),
+                                sampler=sampler,
+                                key=coord_key_by_label[lbl],
+                            ),
+                            dtype=float,
+                        ).reshape((-1,))
+                    if where_fn is not None:
+                        mask = jnp.asarray(jax.vmap(where_fn)(coord), dtype=bool).reshape(
+                            (-1,)
+                        )
+                    else:
+                        mask = jnp.ones((coord.shape[0],), dtype=bool)
+                    coords_out = (coord,)
 
                 if len(coords_out) != var_dim:
                     raise ValueError(

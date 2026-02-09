@@ -138,9 +138,8 @@ def test_pde_toy_steady_pipeline_zero_loss_basis_backend_coord_separable():
             basis="fourier",
             periodic=True,
         ),
-        num_points=0,
+        num_points={"x": FourierAxisSpec(64)},
         structure=structure,
-        coord_separable={"x": FourierAxisSpec(64)},
     )
 
     solver = FunctionalSolver(

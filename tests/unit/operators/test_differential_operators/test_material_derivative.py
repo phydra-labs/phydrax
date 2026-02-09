@@ -63,3 +63,24 @@ def test_material_derivative_preserves_metadata():
         domain=geom, deps=("x",), func=lambda x: jnp.array([0.0 * x[0], 0.0 * x[0]])
     )
     assert material_derivative(u, v).metadata == u.metadata
+
+
+def test_material_derivative_ad_engine_jvp_matches_default():
+    geom = Square(center=(0.0, 0.0), side=2.0)
+    dom = geom @ TimeInterval(0.0, 1.0)
+
+    @dom.Function("x", "t")
+    def u(x, t):
+        return x[0] ** 2 + x[1] ** 2 + t**3
+
+    v = DomainFunction(domain=geom, deps=(), func=jnp.array([1.0, -0.5]))
+
+    pts = frozendict(
+        {
+            "x": cx.Field(jnp.array([0.25, -0.75]), dims=(None,)),
+            "t": cx.Field(jnp.array(0.4), dims=()),
+        }
+    )
+    out_ref = jnp.asarray(material_derivative(u, v)(pts).data)
+    out_jvp = jnp.asarray(material_derivative(u, v, ad_engine="jvp")(pts).data)
+    assert jnp.allclose(out_jvp, out_ref, atol=1e-6)

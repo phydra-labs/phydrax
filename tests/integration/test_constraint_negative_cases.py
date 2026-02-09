@@ -7,6 +7,7 @@ import pytest
 
 from phydrax.constraints import ContinuousInitialConstraint, FunctionalConstraint
 from phydrax.domain import (
+    CoordSeparableBatch,
     DomainComponentUnion,
     Interior,
     Interval1d,
@@ -21,14 +22,13 @@ def test_coord_separable_rejects_component_union():
     c2 = geom.component({"x": Interior()})
     union = DomainComponentUnion((c1, c2))
 
-    with pytest.raises(ValueError, match="coord_separable sampling is not supported"):
+    with pytest.raises(ValueError, match="coord-separable sampling is not supported"):
         FunctionalConstraint.from_operator(
             component=union,
             operator=lambda u: u,
             constraint_vars="u",
-            num_points=4,
+            num_points={"x": 4},
             structure=ProductStructure((("x",),)),
-            coord_separable={"x": 4},
         )
 
 
@@ -38,17 +38,33 @@ def test_coord_separable_requires_dense_structure_for_other_labels():
     domain = geom @ time
     component = domain.component()
 
+    with pytest.raises(ValueError, match="dense_structure"):
+        FunctionalConstraint.from_operator(
+            component=component,
+            operator=lambda u: u,
+            constraint_vars="u",
+            num_points={"x": 4},
+            structure=ProductStructure((("x",),)),
+        )
+
+
+def test_coord_separable_accepts_scalar_labels():
+    geom = Interval1d(0.0, 1.0)
+    time = TimeInterval(0.0, 1.0)
+    domain = geom @ time
+    component = domain.component()
+
     constraint = FunctionalConstraint.from_operator(
         component=component,
         operator=lambda u: u,
         constraint_vars="u",
-        num_points=4,
-        structure=ProductStructure((("x",),)),
-        coord_separable={"x": 4},
+        num_points=(5, {"t": 4}),
+        structure=ProductStructure((("x",), ("t",))),
     )
-
-    with pytest.raises(ValueError, match="dense_structure"):
-        constraint.sample(key=jr.key(0))
+    batch = constraint.sample(key=jr.key(0))
+    assert isinstance(batch, CoordSeparableBatch)
+    assert "t" in batch.coord_axes_by_label
+    assert len(batch.points["t"]) == 1
 
 
 def test_continuous_initial_requires_fixed_start():

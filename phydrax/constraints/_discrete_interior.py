@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal
+from typing import Literal
 
 import interpax
 import jax
@@ -20,10 +20,11 @@ from ..domain._components import (
     FixedStart,
 )
 from ..domain._function import DomainFunction
-from ..domain._structure import NumPoints, ProductStructure
+from ..domain._structure import ProductStructure
 from ._functional import FunctionalConstraint
 from ._interpolate import idw_interpolant
 from ._pointset import PointSetConstraint
+from ._sampling_spec import SamplingNumPoints
 
 
 def _default_structure(
@@ -73,9 +74,8 @@ def DiscreteInteriorDataConstraint(
     sensors: Mapping[str, ArrayLike] | ArrayLike | None = None,
     times: ArrayLike | None = None,
     sensor_values: ArrayLike | None = None,
-    num_points: NumPoints | tuple[Any, ...] | None = None,
+    num_points: SamplingNumPoints | None = None,
     structure: ProductStructure | None = None,
-    coord_separable: Mapping[str, Any] | None = None,
     dense_structure: ProductStructure | None = None,
     sampler: str = "latin_hypercube",
     weight: ArrayLike = 1.0,
@@ -139,7 +139,6 @@ def DiscreteInteriorDataConstraint(
             constraint_vars=constraint_var,
             num_points=num_points,
             structure=structure,
-            coord_separable=coord_separable,
             dense_structure=dense_structure,
             sampler=sampler,
             weight=weight,

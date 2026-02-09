@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import inspect
+import time
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -15,6 +16,8 @@ import jax.numpy as jnp
 import jax.random as jr
 import optax
 from jax import core as jcore
+
+from ..operators.differential._runtime import derivative_runtime_context
 
 
 if TYPE_CHECKING:
@@ -93,21 +96,22 @@ def solve(
                 enforced = solver.constraint_pipelines.apply(functions)
             keys = jr.split(key, len(solver.constraints))
             total = jnp.array(0.0, dtype=float)
-            if not log_constraints_:
+            with derivative_runtime_context():
+                if not log_constraints_:
+                    for c, k in zip(solver.constraints, keys, strict=True):
+                        term = c.loss(enforced, key=k, iter_=iter_)
+                        total = total + jnp.asarray(term, dtype=float).reshape(())
+                    return total, jnp.zeros((0,), dtype=float)
+
+                terms: list[jax.Array] = []
                 for c, k in zip(solver.constraints, keys, strict=True):
                     term = c.loss(enforced, key=k, iter_=iter_)
-                    total = total + jnp.asarray(term, dtype=float).reshape(())
+                    term = jnp.asarray(term, dtype=float).reshape(())
+                    terms.append(term)
+                    total = total + term
+                if terms:
+                    return total, jnp.stack(terms, axis=0)
                 return total, jnp.zeros((0,), dtype=float)
-
-            terms: list[jax.Array] = []
-            for c, k in zip(solver.constraints, keys, strict=True):
-                term = c.loss(enforced, key=k, iter_=iter_)
-                term = jnp.asarray(term, dtype=float).reshape(())
-                terms.append(term)
-                total = total + term
-            if terms:
-                return total, jnp.stack(terms, axis=0)
-            return total, jnp.zeros((0,), dtype=float)
 
         loss_fn = eqx.filter_value_and_grad(_loss_wrt_params, has_aux=True)
 
@@ -122,9 +126,11 @@ def solve(
 
                 (value, _terms0), grads = loss_fn(params_, solver, key, iter_)
                 grads = jtu.tree_map(
-                    lambda a: jnp.nan_to_num(a, nan=0.0, posinf=0.0, neginf=0.0)
-                    if eqx.is_inexact_array(a)
-                    else a,
+                    lambda a: (
+                        jnp.nan_to_num(a, nan=0.0, posinf=0.0, neginf=0.0)
+                        if eqx.is_inexact_array(a)
+                        else a
+                    ),
                     grads,
                     is_leaf=eqx.is_inexact_array,
                 )
@@ -161,6 +167,7 @@ def solve(
         out_file = log_fp if log_fp is not None else None
 
         for epoch in range(int(num_iter)):
+            iter_start = time.perf_counter()
             rng, subkey = jr.split(rng)
             iter_ = jnp.asarray(epoch + 1, dtype=float)
             params, opt_state, loss_val, terms = solve_step(
@@ -171,12 +178,14 @@ def solve(
                 if loss_f < best_loss:
                     best_loss = loss_f
                     best_params = params
+            iter_time_s = time.perf_counter() - iter_start
             if log_every_ > 0 and ((epoch + 1) % log_every_ == 0):
                 loss_f = float(loss_val)
                 best_display = best_loss if keep_best else loss_f
                 print(
                     f"[phydrax][optax] iter {epoch + 1}/{int(num_iter)} "
-                    f"loss={loss_f:.6e} best={best_display:.6e}",
+                    f"loss={loss_f:.6e} best={best_display:.6e} "
+                    f"iter_time={iter_time_s:.3f}s",
                     file=out_file,
                 )
                 if log_constraints_:
@@ -222,11 +231,12 @@ def _solve_evosax(
             enforced = solver.constraint_pipelines.apply(functions)
         keys = jr.split(key, len(solver.constraints))
         total = jnp.array(0.0, dtype=float)
-        for c, k, b in zip(solver.constraints, keys, batches, strict=True):
-            if b is None:
-                total = total + c.loss(enforced, key=k, iter_=iter_)
-            else:
-                total = total + c.loss(enforced, key=k, iter_=iter_, batch=b)
+        with derivative_runtime_context():
+            for c, k, b in zip(solver.constraints, keys, batches, strict=True):
+                if b is None:
+                    total = total + c.loss(enforced, key=k, iter_=iter_)
+                else:
+                    total = total + c.loss(enforced, key=k, iter_=iter_, batch=b)
         return total
 
     def _terms_for_params(p, solver, key, iter_, batches):
@@ -237,12 +247,13 @@ def _solve_evosax(
             enforced = solver.constraint_pipelines.apply(functions)
         keys = jr.split(key, len(solver.constraints))
         terms: list[jax.Array] = []
-        for c, k, b in zip(solver.constraints, keys, batches, strict=True):
-            if b is None:
-                term = c.loss(enforced, key=k, iter_=iter_)
-            else:
-                term = c.loss(enforced, key=k, iter_=iter_, batch=b)
-            terms.append(jnp.asarray(term, dtype=float).reshape(()))
+        with derivative_runtime_context():
+            for c, k, b in zip(solver.constraints, keys, batches, strict=True):
+                if b is None:
+                    term = c.loss(enforced, key=k, iter_=iter_)
+                else:
+                    term = c.loss(enforced, key=k, iter_=iter_, batch=b)
+                terms.append(jnp.asarray(term, dtype=float).reshape(()))
         if terms:
             return jnp.stack(terms, axis=0)
         return jnp.zeros((0,), dtype=float)
@@ -276,6 +287,7 @@ def _solve_evosax(
         out_file = log_fp if log_fp is not None else None
 
         for epoch in range(int(num_iter)):
+            iter_start = time.perf_counter()
             key, ask_key, eval_key, tell_key, cand_key = jr.split(key, 5)
             population, evo_state = algo.ask(ask_key, evo_state, algo_params)
             popsize = None
@@ -318,12 +330,14 @@ def _solve_evosax(
                     best_params = cand_params
             else:
                 best_params = cand_params
+            iter_time_s = time.perf_counter() - iter_start
             if log_every_ > 0 and ((epoch + 1) % log_every_ == 0):
                 loss_f = float(cand_loss)
                 best_display = best_loss if keep_best else loss_f
                 print(
                     f"[phydrax][evosax] iter {epoch + 1}/{int(num_iter)} "
-                    f"loss={loss_f:.6e} best={best_display:.6e}",
+                    f"loss={loss_f:.6e} best={best_display:.6e} "
+                    f"iter_time={iter_time_s:.3f}s",
                     file=out_file,
                 )
                 if log_constraints_:

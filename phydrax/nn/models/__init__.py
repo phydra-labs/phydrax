@@ -24,6 +24,7 @@ from .wrappers._magnitude_direction import (
 )
 from .wrappers._separable_wrappers import (
     LatentContractionModel,
+    LatentExecutionPolicy,
     Separable,
 )
 
@@ -44,6 +45,7 @@ __all__ = [
     "FeynmaNN",
     "FNO1d",
     "FNO2d",
+    "LatentExecutionPolicy",
     "LatentContractionModel",
     "Separable",
 ]

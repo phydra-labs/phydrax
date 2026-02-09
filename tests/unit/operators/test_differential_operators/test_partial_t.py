@@ -4,10 +4,18 @@
 
 import coordax as cx
 import jax.numpy as jnp
+import jax.random as jr
+import pytest
 
 from phydrax._frozendict import frozendict
-from phydrax.domain import DomainFunction, Square, TimeInterval
-from phydrax.operators.differential import partial_t
+from phydrax.domain import (
+    DomainFunction,
+    Interval1d,
+    ProductStructure,
+    Square,
+    TimeInterval,
+)
+from phydrax.operators.differential import dt_n, partial_t
 
 
 def test_partial_t_time_only_scalar():
@@ -59,3 +67,117 @@ def test_partial_t_preserves_metadata():
         domain=dom, deps=("t",), func=lambda t: t**2, metadata={"scale": 3}
     )
     assert partial_t(u).metadata == u.metadata
+
+
+def test_partial_t_product_skips_space_only_factor():
+    dom = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
+
+    @dom.Function("x")
+    def fx(x):
+        return x[0] + 2.0
+
+    @dom.Function("t")
+    def gt(t):
+        return t**3
+
+    u = fx * gt
+    component = dom.component()
+    batch = component.sample(
+        num_points=(5, 7),
+        structure=ProductStructure((("x",), ("t",))),
+        key=jr.key(0),
+    )
+    x_vals = jnp.asarray(batch.points["x"].data[:, 0])
+    t_vals = jnp.asarray(batch.points["t"].data)
+    expected = (x_vals[:, None] + 2.0) * (3.0 * t_vals**2)[None, :]
+    out = jnp.asarray(partial_t(u, var="t")(batch).data)
+    assert jnp.allclose(out, expected, atol=1e-6)
+
+
+def test_dt_n_quotient_with_time_independent_denominator():
+    dom = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
+
+    @dom.Function("x")
+    def fx(x):
+        return x[0] + 2.0
+
+    @dom.Function("t")
+    def gt(t):
+        return t**3
+
+    u = gt / fx
+    component = dom.component()
+    batch = component.sample(
+        num_points=(6, 8),
+        structure=ProductStructure((("x",), ("t",))),
+        key=jr.key(1),
+    )
+    x_vals = jnp.asarray(batch.points["x"].data[:, 0])
+    t_vals = jnp.asarray(batch.points["t"].data)
+    expected = (6.0 * t_vals)[None, :] / (x_vals[:, None] + 2.0)
+    out = jnp.asarray(dt_n(u, var="t", order=2)(batch).data)
+    assert jnp.allclose(out, expected, atol=1e-6)
+
+
+def test_partial_t_quotient_with_time_independent_numerator():
+    dom = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
+
+    @dom.Function("x")
+    def fx(x):
+        return x[0] + 2.0
+
+    @dom.Function("t")
+    def gt(t):
+        return 1.0 + t
+
+    u = fx / gt
+    component = dom.component()
+    batch = component.sample(
+        num_points=(4, 9),
+        structure=ProductStructure((("x",), ("t",))),
+        key=jr.key(2),
+    )
+    x_vals = jnp.asarray(batch.points["x"].data[:, 0])
+    t_vals = jnp.asarray(batch.points["t"].data)
+    expected = -(x_vals[:, None] + 2.0) / ((1.0 + t_vals)[None, :] ** 2)
+    out = jnp.asarray(partial_t(u, var="t")(batch).data)
+    assert jnp.allclose(out, expected, atol=1e-6)
+
+
+def test_partial_t_ad_engine_jvp_matches_default():
+    dom = TimeInterval(0.0, 1.0)
+
+    @dom.Function("t")
+    def f(t):
+        return jnp.sin(t) + t**3
+
+    t = jnp.linspace(0.0, 1.0, 11)
+    batch = frozendict({"t": cx.Field(t, dims=("t",))})
+    out_ref = jnp.asarray(partial_t(f)(batch).data)
+    out_jvp = jnp.asarray(partial_t(f, ad_engine="jvp")(batch).data)
+    assert jnp.allclose(out_jvp, out_ref, atol=1e-6)
+
+
+def test_dt_n_ad_engine_jvp_matches_default():
+    dom = TimeInterval(0.0, 1.0)
+
+    @dom.Function("t")
+    def f(t):
+        return t**4 + 2.0 * t
+
+    t = jnp.linspace(0.0, 1.0, 9)
+    batch = frozendict({"t": cx.Field(t, dims=("t",))})
+    out_ref = jnp.asarray(dt_n(f, order=2, backend="ad")(batch).data)
+    out_jvp = jnp.asarray(dt_n(f, order=2, backend="ad", ad_engine="jvp")(batch).data)
+    assert jnp.allclose(out_jvp, out_ref, atol=1e-6)
+
+
+def test_dt_n_ad_engine_requires_ad_backend():
+    dom = TimeInterval(0.0, 1.0)
+
+    @dom.Function("t")
+    def f(t):
+        return t**3
+
+    with pytest.raises(ValueError, match="backend='ad'"):
+        dt_n(f, order=2, backend="jet", ad_engine="jvp")

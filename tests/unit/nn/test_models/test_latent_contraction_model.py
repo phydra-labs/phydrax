@@ -2,11 +2,17 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Literal
+
 import jax.numpy as jnp
 import jax.random as jr
+import pytest
 
-from phydrax.nn.models import LatentContractionModel
+from phydrax.nn.models import LatentContractionModel, LatentExecutionPolicy
 from phydrax.nn.models.core._base import _AbstractBaseModel
+
+
+FlatTopology = Literal["flat", "best_effort_flat", "strict_flat"]
 
 
 def _as_scalar(x):
@@ -79,5 +85,50 @@ def test_latent_contraction_aligned_points():
     )
     out = jnp.stack([model(p) for p in points], axis=0)
     expected = (3.0 * points[:, 0] - points[:, 1]) * points[:, 2]
+    assert out.shape == expected.shape
+    assert jnp.allclose(out, expected)
+
+
+def test_latent_contraction_dense_factor_batches():
+    model = LatentContractionModel(
+        latent_size=2,
+        out_size="scalar",
+        x=XYLatentModel(),
+        p=ScalarLatentModel(),
+    )
+    x_batch = jnp.array(
+        [
+            [0.0, 2.0],
+            [1.0, 3.0],
+            [2.0, 1.5],
+        ],
+        dtype=float,
+    )
+    p_batch = jnp.array([1.0, 2.0, 3.0], dtype=float)
+    out = model({"x": x_batch, "p": p_batch})
+    expected = (3.0 * x_batch[:, 0] - x_batch[:, 1])[:, None] * p_batch[None, :]
+    assert out.shape == expected.shape
+    assert jnp.allclose(out, expected)
+
+
+@pytest.mark.parametrize("topology", ("flat", "best_effort_flat", "strict_flat"))
+def test_latent_contraction_flat_topologies_match_grouped(topology: FlatTopology):
+    grouped = LatentContractionModel(
+        latent_size=2,
+        out_size="scalar",
+        x=XYLatentModel(),
+        p=ScalarLatentModel(),
+    )
+    planned = LatentContractionModel(
+        latent_size=2,
+        out_size="scalar",
+        x=XYLatentModel(),
+        p=ScalarLatentModel(),
+        execution_policy=LatentExecutionPolicy(topology=topology, fallback="warn"),
+    )
+    x = (jnp.array([0.0, 0.5, 1.0]), jnp.array([1.0, 2.0]))
+    p = (jnp.array([1.0, 2.0]),)
+    expected = grouped({"x": x, "p": p})
+    out = planned({"x": x, "p": p})
     assert out.shape == expected.shape
     assert jnp.allclose(out, expected)

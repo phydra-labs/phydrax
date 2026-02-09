@@ -48,8 +48,12 @@ is a scalar multiplier.
 
 ### Sampling structure and `over=...`
 
-Sampling is controlled by a `ProductStructure` (paired point sampling) and optionally by
-`coord_separable` (grid sampling).
+Sampling is controlled by a `ProductStructure` (paired point sampling) and the `num_points`
+specification:
+
+- dense sampling: `num_points=...`
+- coord-separable sampling: `num_points={"label": axis_spec_or_count, ...}`
+- mixed sampling: `num_points=(dense_num_points, {"label": axis_spec_or_count, ...})`
 
 The `over` argument selects which axes to reduce over:
 

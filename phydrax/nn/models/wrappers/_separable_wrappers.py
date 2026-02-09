@@ -4,6 +4,7 @@
 
 import functools as ft
 import string
+import warnings
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
@@ -14,9 +15,53 @@ from jaxtyping import Array, Key
 from opt_einsum import contract
 
 from ...._doc import DOC_KEY0
+from ...._strict import StrictModule
 from ..._utils import _get_size, _identity
 from .._utils import _contract_str, _stack_separable
 from ..core._base import _AbstractBaseModel, _AbstractStructuredInputModel
+
+
+class LatentExecutionPolicy(StrictModule):
+    r"""Execution policy for latent contraction product models.
+
+    This controls high-level planning preferences and fallback behavior.
+    """
+
+    topology: Literal["grouped", "flat", "best_effort_flat", "strict_flat"]
+    layout: Literal["auto", "dense_points", "coord_separable", "hybrid", "full_tensor"]
+    fallback: Literal["warn", "error", "silent"]
+
+    def __init__(
+        self,
+        *,
+        topology: Literal[
+            "grouped", "flat", "best_effort_flat", "strict_flat"
+        ] = "grouped",
+        layout: Literal[
+            "auto", "dense_points", "coord_separable", "hybrid", "full_tensor"
+        ] = "auto",
+        fallback: Literal["warn", "error", "silent"] = "warn",
+    ):
+        self.topology = topology
+        self.layout = layout
+        self.fallback = fallback
+
+
+class _LatentTopologyPlan(StrictModule):
+    requested: Literal["grouped", "flat", "best_effort_flat", "strict_flat"]
+    effective: Literal["grouped", "flat"]
+    fallback_message: str | None
+
+    def __init__(
+        self,
+        *,
+        requested: Literal["grouped", "flat", "best_effort_flat", "strict_flat"],
+        effective: Literal["grouped", "flat"],
+        fallback_message: str | None = None,
+    ):
+        self.requested = requested
+        self.effective = effective
+        self.fallback_message = fallback_message
 
 
 class LatentContractionModel(_AbstractStructuredInputModel):
@@ -35,6 +80,11 @@ class LatentContractionModel(_AbstractStructuredInputModel):
     Each factor model may return either:
     - $L\cdot m$ features (interpreted as $(L,m)$), or
     - $L$ features (broadcast across the $m$ outputs).
+
+    When this model is wrapped with `domain.Model(...)`, differential operators
+    (`partial_n`, `dt_n`, `laplacian`) can use an exact latent-factor derivative
+    contraction path. This preserves derivative semantics while avoiding
+    differentiation through the full contracted output graph when possible.
     """
 
     in_size: int | Literal["scalar"]
@@ -45,9 +95,15 @@ class LatentContractionModel(_AbstractStructuredInputModel):
     factor_models: tuple[_AbstractBaseModel, ...]
     output_activation: Callable
     keep_outputs_complex: bool
+    execution_policy: LatentExecutionPolicy
 
     _factor_sizes: tuple[int, ...]
     _total_in_size: int
+    _supports_blockwise_input: bool = True
+    _warn_on_auto_fallback: bool
+    _supported_layouts: tuple[
+        Literal["auto", "dense_points", "coord_separable", "hybrid", "full_tensor"], ...
+    ] = ("auto", "dense_points", "coord_separable", "hybrid", "full_tensor")
 
     def __init__(
         self,
@@ -57,6 +113,7 @@ class LatentContractionModel(_AbstractStructuredInputModel):
         factors: Mapping[str, _AbstractBaseModel] | None = None,
         output_activation: Callable | None = None,
         keep_outputs_complex: bool = False,
+        execution_policy: LatentExecutionPolicy | None = None,
         key: Key[Array, ""] = DOC_KEY0,
         **factor_models: _AbstractBaseModel,
     ):
@@ -96,6 +153,16 @@ class LatentContractionModel(_AbstractStructuredInputModel):
             _identity if output_activation is None else output_activation
         )
         self.keep_outputs_complex = bool(keep_outputs_complex)
+        self.execution_policy = (
+            LatentExecutionPolicy() if execution_policy is None else execution_policy
+        )
+        self._warn_on_auto_fallback = self.execution_policy.fallback == "warn"
+
+    def _auto_fallback(self, message: str, /) -> None:
+        if self.execution_policy.fallback == "error":
+            raise ValueError(message)
+        if self.execution_policy.fallback == "warn":
+            warnings.warn(message, UserWarning, stacklevel=3)
 
     def __call__(
         self,
@@ -106,6 +173,12 @@ class LatentContractionModel(_AbstractStructuredInputModel):
         **kwargs: Any,
     ) -> Array:
         del kwargs
+        if self.execution_policy.layout not in self._supported_layouts:
+            self._auto_fallback(
+                "LatentContractionModel currently supports "
+                "auto/dense_points/coord_separable/hybrid/full_tensor layouts; "
+                f"requested layout={self.execution_policy.layout!r}. Falling back to auto."
+            )
         if isinstance(x, Mapping):
             factor_inputs = [x[name] for name in self.factor_names]  # ty: ignore
             return self._call_factorwise(factor_inputs, key=key)
@@ -135,8 +208,10 @@ class LatentContractionModel(_AbstractStructuredInputModel):
             lats, shape = self._eval_factor(model, pts, name=name, key=k)
             latents.append(lats)
             batch_shapes.append(shape)
-        equation = self._contraction_equation(batch_shapes)
-        out = contract(equation, *latents)
+        plan = self._plan_topology(supports_flat=True)
+        if plan.fallback_message is not None:
+            self._auto_fallback(plan.fallback_message)
+        out = self._contract_latents(latents, batch_shapes, topology=plan.effective)
         return self._finalize(out)
 
     def _call_aligned(self, x: Array, /, *, key: Key[Array, ""] = DOC_KEY0) -> Array:
@@ -218,10 +293,15 @@ class LatentContractionModel(_AbstractStructuredInputModel):
             elif arr.ndim == 2 and arr.shape == (1, 1):
                 out = model(arr.reshape(()), key=key)
                 batch_shape = ()
+            elif arr.ndim == 1:
+                out = jax.vmap(ft.partial(model, key=key))(arr)
+                batch_shape = (int(arr.shape[0]),)
+            elif arr.ndim == 2 and arr.shape[1] == 1:
+                out = jax.vmap(ft.partial(model, key=key))(arr[:, 0])
+                batch_shape = (int(arr.shape[0]),)
             else:
                 raise ValueError(
-                    f"Factor {name!r} expected scalar input with shape () or (1,), got {arr.shape}. "
-                    "Pass a tuple of 1D coordinate arrays for coord-separable axes or vmap for batches."
+                    f"Factor {name!r} expected scalar input with shape (), (1,), (N,), or (N,1), got {arr.shape}."
                 )
         else:
             if arr.ndim == 1:
@@ -231,10 +311,16 @@ class LatentContractionModel(_AbstractStructuredInputModel):
                     )
                 out = model(arr, key=key)
                 batch_shape = ()
+            elif arr.ndim == 2:
+                if arr.shape[1] != in_dim:
+                    raise ValueError(
+                        f"Factor {name!r} expected shape (N,{in_dim}), got {arr.shape}."
+                    )
+                out = jax.vmap(ft.partial(model, key=key))(arr)
+                batch_shape = (int(arr.shape[0]),)
             else:
                 raise ValueError(
-                    f"Factor {name!r} expected shape ({in_dim},), got {arr.shape}. "
-                    "Pass a tuple of 1D coordinate arrays for coord-separable axes or vmap for batches."
+                    f"Factor {name!r} expected shape ({in_dim},) or (N,{in_dim}), got {arr.shape}."
                 )
         out = jnp.asarray(out)
         if out.ndim == len(batch_shape):
@@ -302,6 +388,73 @@ class LatentContractionModel(_AbstractStructuredInputModel):
             terms.append(f"{idxs}lo")
             out_terms.append(idxs)
         return ",".join(terms) + "->" + "".join(out_terms) + "o"
+
+    def _plan_topology(self, /, *, supports_flat: bool) -> _LatentTopologyPlan:
+        requested = self.execution_policy.topology
+        if requested == "grouped":
+            return _LatentTopologyPlan(requested=requested, effective="grouped")
+        if supports_flat:
+            return _LatentTopologyPlan(requested=requested, effective="flat")
+        if requested == "best_effort_flat":
+            return _LatentTopologyPlan(
+                requested=requested,
+                effective="grouped",
+                fallback_message=(
+                    "LatentContractionModel requested best_effort_flat but the "
+                    "current execution path only supports grouped; falling back to grouped."
+                ),
+            )
+        msg = (
+            "LatentContractionModel requested flat topology but the current "
+            "execution path only supports grouped."
+        )
+        self._auto_fallback(msg)
+        return _LatentTopologyPlan(requested=requested, effective="grouped")
+
+    def _contract_latents(
+        self,
+        latents: Sequence[Array],
+        batch_shapes: Sequence[tuple[int, ...]],
+        /,
+        *,
+        topology: Literal["grouped", "flat"],
+    ) -> Array:
+        if topology == "grouped":
+            equation = self._contraction_equation(batch_shapes)
+            return contract(equation, *latents)
+        return self._contract_latents_flat(latents, batch_shapes)
+
+    def _contract_latents_flat(
+        self,
+        latents: Sequence[Array],
+        batch_shapes: Sequence[tuple[int, ...]],
+        /,
+    ) -> Array:
+        if not latents:
+            raise ValueError("Latent contraction requires at least one factor latent.")
+        total_axes = sum(len(shape) for shape in batch_shapes)
+        leading_shape = tuple(dim for shape in batch_shapes for dim in shape)
+
+        acc = None
+        axis_offset = 0
+        for latent, shape in zip(latents, batch_shapes, strict=True):
+            latent_arr = jnp.asarray(latent)
+            latent_shape = [1] * total_axes + [
+                int(latent_arr.shape[-2]),
+                int(latent_arr.shape[-1]),
+            ]
+            for i, dim in enumerate(shape):
+                latent_shape[axis_offset + i] = int(dim)
+            axis_offset += len(shape)
+            latent_b = latent_arr.reshape(tuple(latent_shape))
+            acc = latent_b if acc is None else (acc * latent_b)
+
+        assert acc is not None
+        if total_axes == 0:
+            return jnp.sum(acc, axis=-2)
+        flat = acc.reshape((-1, int(acc.shape[-2]), int(acc.shape[-1])))
+        out = jnp.sum(flat, axis=-2)
+        return out.reshape(leading_shape + (int(acc.shape[-1]),))
 
     def _finalize(self, out: Array) -> Array:
         if jnp.iscomplexobj(out) and not self.keep_outputs_complex:

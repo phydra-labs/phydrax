@@ -108,9 +108,8 @@ def test_sampling_jit_interior_constraint_coord_separable_fourier_axis_spec():
         "u",
         geom,
         operator=lambda u: u,
-        num_points=0,
+        num_points={"x": FourierAxisSpec(8)},
         structure=structure,
-        coord_separable={"x": FourierAxisSpec(8)},
     )
     total = _jit_sample_sum(constraint)
     assert jnp.isfinite(total)

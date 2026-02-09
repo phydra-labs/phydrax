@@ -31,7 +31,7 @@ The measure depends on the factor type and the component selection:
 Phydrax supports two structured sampling modes that affect how integrals are reduced:
 
 - `PointsBatch` (paired sampling): you choose a `ProductStructure` and sample points per block.
-- `CoordSeparableBatch` (coord-separable sampling): you sample 1D coordinate axes for selected geometry labels
+- `CoordSeparableBatch` (coord-separable sampling): you sample 1D coordinate axes for selected unary labels
   and evaluate on a Cartesian grid, optionally with per-axis discretization metadata.
 
 ### Default weights
@@ -49,7 +49,7 @@ where \(n_a\) is the number of points on axis \(a\) and \(\mu_a\) is the product
 For `CoordSeparableBatch`, Phydrax multiplies per-axis weights:
 
 - if `AxisDiscretization.quad_weights` is present (e.g. Gauss–Legendre), those weights are used;
-- otherwise weights fall back to uniform weights based on the factor's axis-aligned bounding box.
+- otherwise weights fall back to uniform weights based on per-label measure (geometry AABB lengths or scalar interval measure).
 
 ## Filtering and weighting (`where`, `weight_all`)
 

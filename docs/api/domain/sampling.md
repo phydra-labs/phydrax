@@ -13,12 +13,12 @@ Phydrax supports two complementary structured sampling modes:
 - **Paired sampling** (`PointsBatch`): samples *points* in each block of a `ProductStructure`.
   This is the default mode used by most pointwise PDE residual constraints.
 - **Coord-separable sampling** (`CoordSeparableBatch`): samples *1D coordinate axes* for selected
-  geometry labels and evaluates on the implied Cartesian grid (with an interior mask).
+  unary labels (geometry and/or scalar intervals) and evaluates on the implied Cartesian grid (with an interior mask).
   This is the natural mode for FFT/basis/spectral operators and neural operators (FNO, DeepONet).
 
 Coord-separable sampling is driven by `DomainComponent.sample_coord_separable(...)`, which takes:
 
-- `coord_separable`: a mapping from geometry label (e.g. `"x"`) to either
+- `coord_separable`: a mapping from unary label (e.g. `"x"` or `"t"`) to either
   counts (`int` / `Sequence[int]`) *or* basis-aware axis specs (`AbstractAxisSpec` implementations / `GridSpec`);
 - `dense_structure` + `num_points`: how to sample any remaining non-fixed, non-separable labels
   (e.g. `"data"` for operator-learning datasets).

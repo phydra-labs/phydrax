@@ -4,6 +4,7 @@
 
 import coordax as cx
 import jax.numpy as jnp
+import pytest
 
 from phydrax._frozendict import frozendict
 from phydrax.domain import DomainFunction, Square, TimeInterval
@@ -101,3 +102,31 @@ def test_directional_derivative_preserves_metadata():
     )
     v = DomainFunction(domain=geom, deps=(), func=jnp.array([1.0, 0.0]))
     assert directional_derivative(u, v).metadata == u.metadata
+
+
+def test_directional_derivative_ad_engine_jvp_matches_default():
+    geom = Square(center=(0.0, 0.0), side=2.0)
+
+    @geom.Function("x")
+    def f(x):
+        return x[0] ** 2 + x[1] ** 2 + x[0] * x[1]
+
+    v = DomainFunction(domain=geom, deps=(), func=jnp.array([1.0, -0.25]))
+    pts = frozendict({"x": cx.Field(jnp.array([0.2, -0.4]), dims=(None,))})
+    out_ref = jnp.asarray(directional_derivative(f, v, backend="ad")(pts).data)
+    out_jvp = jnp.asarray(
+        directional_derivative(f, v, backend="ad", ad_engine="jvp")(pts).data
+    )
+    assert jnp.allclose(out_jvp, out_ref, atol=1e-6)
+
+
+def test_directional_derivative_ad_engine_requires_ad_backend():
+    geom = Square(center=(0.0, 0.0), side=2.0)
+
+    @geom.Function("x")
+    def f(x):
+        return x[0] ** 2 + x[1] ** 2
+
+    v = DomainFunction(domain=geom, deps=(), func=jnp.array([1.0, 0.0]))
+    with pytest.raises(ValueError, match="backend='ad'"):
+        directional_derivative(f, v, backend="fd", ad_engine="jvp")

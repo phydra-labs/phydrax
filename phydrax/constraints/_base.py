@@ -3,7 +3,7 @@
 #
 
 from abc import abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from jaxtyping import Array, Key
@@ -14,7 +14,6 @@ from ..domain._components import DomainComponent, DomainComponentUnion
 from ..domain._function import DomainFunction
 from ..domain._structure import (
     CoordSeparableBatch,
-    NumPoints,
     PointsBatch,
     ProductStructure,
 )
@@ -58,9 +57,8 @@ class AbstractSamplingConstraint(AbstractConstraint):
 
     component: AbstractAttribute[DomainComponent | DomainComponentUnion]
     structure: AbstractAttribute[ProductStructure]
-    coord_separable: AbstractAttribute[Mapping[str, int | Sequence[int]] | None]
     dense_structure: AbstractAttribute[ProductStructure | None]
-    num_points: AbstractAttribute[NumPoints | tuple[Any, ...]]
+    num_points: AbstractAttribute[Any]
     sampler: AbstractAttribute[str]
     over: AbstractAttribute[str | tuple[str, ...] | None]
     reduction: AbstractAttribute[Literal["mean", "integral"]]
