@@ -8,6 +8,7 @@
 *.phx
 .venv
 .tmp
+.notes
 .prompts
 __pycache__
 .DS_Store
