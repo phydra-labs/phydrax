@@ -4,6 +4,7 @@
 
 import coordax as cx
 import jax.numpy as jnp
+import pytest
 
 from phydrax._frozendict import frozendict
 from phydrax.domain import DomainFunction, Square, TimeInterval
@@ -63,3 +64,27 @@ def test_div_preserves_metadata():
     )
     out = div(u)
     assert out.metadata == u.metadata
+
+
+def test_div_ad_engine_jvp_matches_default():
+    geom = Square(center=(0.0, 0.0), side=2.0)
+
+    @geom.Function("x")
+    def u(x):
+        return jnp.array([x[0] ** 2 + x[1], x[1] ** 2 + x[0]])
+
+    pts = frozendict({"x": cx.Field(jnp.array([0.3, -0.7]), dims=(None,))})
+    out_ref = jnp.asarray(div(u, backend="ad")(pts).data)
+    out_jvp = jnp.asarray(div(u, backend="ad", ad_engine="jvp")(pts).data)
+    assert jnp.allclose(out_jvp, out_ref, atol=1e-6)
+
+
+def test_div_ad_engine_requires_ad_backend():
+    geom = Square(center=(0.0, 0.0), side=2.0)
+
+    @geom.Function("x")
+    def u(x):
+        return jnp.array([x[0], x[1]])
+
+    with pytest.raises(ValueError, match="backend='ad'"):
+        div(u, backend="fd", ad_engine="jvp")

@@ -4,6 +4,7 @@
 
 import coordax as cx
 import jax.numpy as jnp
+import pytest
 
 from phydrax._frozendict import frozendict
 from phydrax.domain import DomainFunction, Square, TimeInterval
@@ -106,3 +107,37 @@ def test_div_diag_k_grad_preserves_metadata():
         domain=geom, deps=("x",), func=lambda x: jnp.array([1.0 + x[0], 1.0 + x[1]])
     )
     assert div_diag_k_grad(u, k_vec).metadata == u.metadata
+
+
+def test_div_diag_k_grad_ad_engine_jvp_matches_default_point():
+    geom = Square(center=(0.0, 0.0), side=2.0)
+
+    @geom.Function("x")
+    def u(x):
+        return x[0] ** 2 + x[1] ** 2
+
+    @geom.Function("x")
+    def k_vec(x):
+        return jnp.array([1.0 + x[0], 2.0 + 0.5 * x[1]])
+
+    pts = frozendict({"x": cx.Field(jnp.array([0.2, -0.4]), dims=(None,))})
+    out_ref = jnp.asarray(div_diag_k_grad(u, k_vec, backend="ad")(pts).data)
+    out_jvp = jnp.asarray(
+        div_diag_k_grad(u, k_vec, backend="ad", ad_engine="jvp")(pts).data
+    )
+    assert jnp.allclose(out_jvp, out_ref, atol=1e-6)
+
+
+def test_div_diag_k_grad_ad_engine_requires_ad_backend():
+    geom = Square(center=(0.0, 0.0), side=2.0)
+
+    @geom.Function("x")
+    def u(x):
+        return x[0] ** 2 + x[1] ** 2
+
+    @geom.Function("x")
+    def k_vec(x):
+        return jnp.array([1.0 + x[0], 1.0 + x[1]])
+
+    with pytest.raises(ValueError, match="backend='ad'"):
+        div_diag_k_grad(u, k_vec, backend="jet", ad_engine="jvp")

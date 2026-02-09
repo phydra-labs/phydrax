@@ -4,19 +4,40 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Literal
+import operator
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, Literal
 
 import jax
+import jax.core as jax_core
 import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import ArrayLike
 
+from ..._callable import _KeyIterAdapter
+from ..._frozendict import frozendict
 from ...domain._base import _AbstractGeometry
 from ...domain._domain import RelabeledDomain
-from ...domain._function import DomainFunction
+from ...domain._function import (
+    _BinaryCallable,
+    _SwapAxesCallable,
+    _UnaryCallable,
+    DomainFunction,
+)
+from ...domain._model_function import _ConcatenatedModelCallable
 from ...domain._scalar import _AbstractScalarDomain
+from ...nn._utils import _get_size
+from ._hooks import (
+    DERIVATIVE_HOOK_KEY,
+    get_derivative_hook,
+    nth_product_rule,
+    nth_quotient_rule,
+)
 from ._jet import jet_d1_d2, jet_dn, jet_dn_multi
+from ._runtime import get_partial_eval_cache
+
+
+_ADEngine = Literal["auto", "reverse", "forward", "jvp"]
 
 
 def _unwrap_factor(factor: object, /) -> object:
@@ -73,6 +94,484 @@ def _coord_axis_position(
     if pos is None:
         raise ValueError("Could not resolve coord-separable axis position.")
     return int(pos)
+
+
+def _resolve_ad_mode(
+    mode: Literal["reverse", "forward"], ad_engine: _ADEngine, /
+) -> Literal["reverse", "forward"]:
+    if ad_engine == "auto" or ad_engine == "jvp":
+        return mode
+    if ad_engine == "reverse":
+        return "reverse"
+    if ad_engine == "forward":
+        return "forward"
+    raise ValueError("ad_engine must be one of 'auto', 'reverse', 'forward', or 'jvp'.")
+
+
+def _ensure_ad_engine_backend(
+    backend: Literal["ad", "jet", "fd", "basis"], ad_engine: _ADEngine, /
+) -> None:
+    if backend != "ad" and ad_engine != "auto":
+        raise ValueError("ad_engine is only supported when backend='ad'.")
+
+
+def _latent_model_from_domain_function(
+    u: DomainFunction, /
+) -> tuple[Any, _ConcatenatedModelCallable] | None:
+    if not isinstance(u.func, _ConcatenatedModelCallable):
+        return None
+    raw_model = u.func.raw_model
+    from ...nn.models.wrappers._separable_wrappers import LatentContractionModel
+
+    if isinstance(raw_model, LatentContractionModel):
+        return raw_model, u.func
+    return None
+
+
+def _unwrap_adapter(func: Callable, /) -> Callable:
+    inner = func
+    while isinstance(inner, _KeyIterAdapter):
+        inner = inner.func
+    return inner
+
+
+def _const_scalar(fn: DomainFunction, /) -> float | None:
+    if fn.deps:
+        return None
+    value = jnp.asarray(fn.func(key=None))
+    if value.ndim != 0:
+        return None
+    return float(value)
+
+
+def _try_structured_first_partial(
+    u: DomainFunction,
+    /,
+    *,
+    var: str,
+    axis: int | None,
+    mode: Literal["reverse", "forward"],
+) -> DomainFunction | None:
+    def _derive(fn: DomainFunction, k: int, /) -> DomainFunction:
+        kk = int(k)
+        if kk == 0:
+            return fn
+        return partial_n(
+            fn,
+            var=var,
+            axis=axis,
+            order=kk,
+            mode=mode,
+            backend="ad",
+        )
+
+    inner = _unwrap_adapter(u.func)
+    if isinstance(inner, _BinaryCallable):
+        left = inner.b if inner.reverse else inner.a
+        right = inner.a if inner.reverse else inner.b
+        d_left = partial(left, var=var, axis=axis, mode=mode)
+        d_right = partial(right, var=var, axis=axis, mode=mode)
+
+        if inner.op is operator.add:
+            return d_left + d_right
+        if inner.op is operator.sub:
+            return d_left - d_right
+        if inner.op is operator.mul:
+            return nth_product_rule(left, right, var=var, order=1, derive=_derive)
+        if inner.op is operator.matmul:
+            return d_left @ right + left @ d_right
+        if inner.op is operator.truediv:
+            return nth_quotient_rule(
+                left,
+                right,
+                var=var,
+                order=1,
+                derive=_derive,
+            )
+        if inner.op is operator.pow:
+            exp = _const_scalar(right)
+            if exp is not None:
+                exp_i = int(round(exp))
+                if abs(exp - float(exp_i)) < 1e-12:
+                    if exp_i == 0:
+                        return DomainFunction(
+                            domain=u.domain, deps=u.deps, func=0.0, metadata=u.metadata
+                        )
+                    return float(exp_i) * (left ** (exp_i - 1)) * d_left
+            base = _const_scalar(left)
+            if base is not None and base > 0.0:
+                return (left**right) * jnp.log(base) * d_right
+        return None
+
+    if isinstance(inner, _UnaryCallable):
+        operand = DomainFunction(
+            domain=u.domain, deps=u.deps, func=inner.func, metadata=u.metadata
+        )
+        d_operand = partial(operand, var=var, axis=axis, mode=mode)
+        if inner.op is operator.neg:
+            return -d_operand
+        return None
+
+    if isinstance(inner, _SwapAxesCallable):
+        operand = DomainFunction(
+            domain=u.domain, deps=u.deps, func=inner.func, metadata=u.metadata
+        )
+        d_operand = partial(operand, var=var, axis=axis, mode=mode)
+        return DomainFunction(
+            domain=d_operand.domain,
+            deps=d_operand.deps,
+            func=_SwapAxesCallable(d_operand.func, inner.axis1, inner.axis2),
+            metadata=d_operand.metadata,
+        )
+
+    return None
+
+
+def _try_structured_partial_n(
+    u: DomainFunction,
+    /,
+    *,
+    var: str,
+    axis: int | None,
+    order: int,
+    mode: Literal["reverse", "forward"],
+) -> DomainFunction | None:
+    out = u
+    for _ in range(int(order)):
+        next_out = _try_structured_first_partial(out, var=var, axis=axis, mode=mode)
+        if next_out is None:
+            return None
+        out = next_out
+    return out
+
+
+def _try_derivative_hook(
+    u: DomainFunction,
+    /,
+    *,
+    var: str,
+    axis: int | None,
+    order: int,
+    mode: Literal["reverse", "forward"],
+    backend: Literal["ad", "jet", "fd", "basis"],
+    basis: Literal["poly", "fourier", "sine", "cosine"],
+    periodic: bool,
+) -> DomainFunction | None:
+    hook = get_derivative_hook(u)
+    if hook is None:
+        return None
+    out = hook(
+        var=var,
+        axis=axis,
+        order=int(order),
+        mode=mode,
+        backend=backend,
+        basis=basis,
+        periodic=bool(periodic),
+    )
+    if out is None:
+        return None
+    if not isinstance(out, DomainFunction):
+        raise TypeError("Derivative hook must return a DomainFunction or None.")
+    return out
+
+
+def _strip_derivative_hook_metadata(metadata: Any, /) -> Any:
+    if not isinstance(metadata, Mapping):
+        return metadata
+    if DERIVATIVE_HOOK_KEY not in metadata:
+        return metadata
+    return frozendict({k: v for k, v in metadata.items() if k != DERIVATIVE_HOOK_KEY})
+
+
+def _emit_latent_fallback_warning(u: DomainFunction, reason: str, /) -> None:
+    msg = "Falling back to generic derivative path for LatentContractionModel: " + reason
+    model_info = _latent_model_from_domain_function(u)
+    if model_info is not None:
+        model, _ = model_info
+        model._auto_fallback(msg)
+        return
+    if isinstance(u.func, _ConcatenatedModelCallable):
+        u.func.emit_auto_fallback_warning(msg)
+
+
+def _runtime_signature(value: Any, /) -> Any:
+    if isinstance(value, (str, int, float, bool, type(None))):
+        return ("lit", value)
+    if isinstance(value, tuple):
+        return ("tuple", tuple(_runtime_signature(v) for v in value))
+    if isinstance(value, list):
+        return ("list", tuple(_runtime_signature(v) for v in value))
+    if isinstance(value, Mapping):
+        return (
+            "map",
+            tuple(sorted((str(k), _runtime_signature(v)) for k, v in value.items())),
+        )
+    if isinstance(value, (jax.Array, jax_core.Tracer)):
+        return ("array", id(value), tuple(value.shape), str(value.dtype))
+    return ("obj", id(value))
+
+
+def _partial_eval_cache_key(
+    u: DomainFunction,
+    /,
+    *,
+    var: str,
+    axis_i: int,
+    order_i: int,
+    mode: Literal["reverse", "forward"],
+    backend: Literal["ad", "jet", "fd", "basis"],
+    basis: Literal["poly", "fourier", "sine", "cosine"],
+    periodic: bool,
+    force_generic: bool,
+    args: Sequence[Any],
+    key: Any,
+    kwargs: Mapping[str, Any],
+) -> tuple[Any, ...]:
+    return (
+        id(u.func),
+        str(var),
+        int(axis_i),
+        int(order_i),
+        str(mode),
+        str(backend),
+        str(basis),
+        bool(periodic),
+        bool(force_generic),
+        tuple(_runtime_signature(a) for a in args),
+        _runtime_signature(key),
+        tuple(sorted((str(k), _runtime_signature(v)) for k, v in kwargs.items())),
+    )
+
+
+_LatentDerivativeExecutor = Callable[
+    [Any, Sequence[jax.Array], Sequence[tuple[int, ...]]], jax.Array
+]
+
+
+def _latent_exec_grouped(
+    model: Any, latents: Sequence[jax.Array], batch_shapes: Sequence[tuple[int, ...]], /
+) -> jax.Array:
+    return model._contract_latents(latents, batch_shapes, topology="grouped")
+
+
+def _latent_exec_flat(
+    model: Any, latents: Sequence[jax.Array], batch_shapes: Sequence[tuple[int, ...]], /
+) -> jax.Array:
+    return model._contract_latents(latents, batch_shapes, topology="flat")
+
+
+_LATENT_DERIVATIVE_EXECUTORS: dict[str, _LatentDerivativeExecutor] = {
+    "grouped": _latent_exec_grouped,
+    "flat": _latent_exec_flat,
+}
+
+
+def _latent_derivative_executor_plan(
+    model: Any, /
+) -> tuple[_LatentDerivativeExecutor, str | None]:
+    plan = model._plan_topology(supports_flat=True)
+    return _LATENT_DERIVATIVE_EXECUTORS[plan.effective], plan.fallback_message
+
+
+def _latent_factor_nth_latents(
+    model: Any,
+    factor_model: Any,
+    pts: Any,
+    /,
+    *,
+    name: str,
+    key: Any,
+    axis_i: int,
+    order_i: int,
+) -> tuple[jax.Array | None, tuple[int, ...] | None, str | None]:
+    in_dim = _get_size(factor_model.in_size)
+    if not (0 <= int(axis_i) < int(in_dim)):
+        return (
+            None,
+            None,
+            f"requested axis={axis_i} but factor {name!r} has in_size={in_dim}.",
+        )
+
+    if isinstance(pts, tuple):
+        coords = tuple(jnp.asarray(c) for c in pts)
+        if len(coords) != int(in_dim):
+            return (
+                None,
+                None,
+                f"factor {name!r} expected {in_dim} coord arrays, got {len(coords)}.",
+            )
+        if not all(c.ndim == 1 for c in coords):
+            return (
+                None,
+                None,
+                f"factor {name!r} requires 1D coord arrays for tuple inputs.",
+            )
+
+        def _latents_at_coord(coord):
+            new_pts = coords[:axis_i] + (coord,) + coords[axis_i + 1 :]
+            latents, _ = model._eval_factor(factor_model, new_pts, name=name, key=key)
+            return latents
+
+        v = jnp.ones_like(coords[axis_i])
+        latents = jet_dn(_latents_at_coord, coords[axis_i], v, n=order_i)
+        batch_shape = tuple(int(c.shape[0]) for c in coords)
+        return latents, batch_shape, None
+
+    arr = jnp.asarray(pts)
+
+    def _latents_from_input(inp):
+        latents, _ = model._eval_factor_array(factor_model, inp, name=name, key=key)
+        return latents
+
+    if arr.ndim == 0:
+        if int(in_dim) != 1:
+            return (
+                None,
+                None,
+                f"factor {name!r} scalar input is incompatible with in_size={in_dim}.",
+            )
+        v = jnp.ones_like(arr)
+        latents = jet_dn(_latents_from_input, arr, v, n=order_i)
+        return latents, (), None
+
+    if arr.ndim == 1:
+        if int(in_dim) == 1:
+            v = jnp.ones_like(arr)
+        elif int(arr.shape[0]) == int(in_dim):
+            v = jnp.zeros_like(arr).at[axis_i].set(1.0)
+        else:
+            return (
+                None,
+                None,
+                f"factor {name!r} expected shape ({in_dim},), got {arr.shape}.",
+            )
+        latents = jet_dn(_latents_from_input, arr, v, n=order_i)
+        _, batch_shape = model._eval_factor_array(factor_model, arr, name=name, key=key)
+        return latents, batch_shape, None
+
+    if arr.ndim == 2 and int(arr.shape[1]) == int(in_dim):
+
+        def _nth_single(row):
+            if int(in_dim) == 1:
+                v = jnp.ones_like(row)
+            else:
+                v = jnp.zeros_like(row).at[axis_i].set(1.0)
+            return jet_dn(_latents_from_input, row, v, n=order_i)
+
+        latents = jax.vmap(_nth_single)(arr)
+        return latents, (int(arr.shape[0]),), None
+
+    return (
+        None,
+        None,
+        f"factor {name!r} has unsupported input shape {arr.shape} for optimized derivative path.",
+    )
+
+
+def _latent_try_partial_n_eval(
+    u: DomainFunction,
+    /,
+    *,
+    var: str,
+    axis_i: int,
+    order_i: int,
+    args: Sequence[Any],
+    key: Any,
+    kwargs: dict[str, Any],
+) -> tuple[jax.Array | None, str | None]:
+    model_info = _latent_model_from_domain_function(u)
+    if model_info is None:
+        return None, None
+
+    model, _ = model_info
+    del kwargs
+    if len(args) != len(model.factor_models):
+        return (
+            None,
+            "optimized latent derivative path requires one dependency per latent factor.",
+        )
+    if var not in u.deps:
+        return None, f"variable {var!r} is not in DomainFunction dependencies."
+
+    if model.execution_policy.layout not in model._supported_layouts:
+        model._auto_fallback(
+            "Latent derivative fast path currently supports "
+            "auto/dense_points/coord_separable/hybrid/full_tensor layouts; "
+            f"requested layout={model.execution_policy.layout!r}. Falling back to generic derivatives."
+        )
+        return None, None
+
+    executor, provider_fallback_msg = _latent_derivative_executor_plan(model)
+    if provider_fallback_msg is not None:
+        model._auto_fallback(provider_fallback_msg)
+
+    dep_idx = int(u.deps.index(var))
+    factor_inputs = list(args)
+    keys = model._split_key(key)
+    latents: list[jax.Array] = []
+    batch_shapes: list[tuple[int, ...]] = []
+    for i, (name, factor_model, pts, k) in enumerate(
+        zip(model.factor_names, model.factor_models, factor_inputs, keys, strict=True)
+    ):
+        if i == dep_idx:
+            lat, batch_shape, reason = _latent_factor_nth_latents(
+                model,
+                factor_model,
+                pts,
+                name=name,
+                key=k,
+                axis_i=axis_i,
+                order_i=order_i,
+            )
+            if reason is not None or lat is None or batch_shape is None:
+                return None, reason
+        else:
+            lat, batch_shape = model._eval_factor(factor_model, pts, name=name, key=k)
+        latents.append(lat)
+        batch_shapes.append(batch_shape)
+
+    try:
+        out = executor(model, latents, batch_shapes)
+    except Exception as exc:
+        if model.execution_policy.topology == "best_effort_flat":
+            model._auto_fallback(
+                "Latent derivative flat provider failed; falling back to grouped. "
+                f"Reason: {exc}"
+            )
+            out = _latent_exec_grouped(model, latents, batch_shapes)
+        else:
+            return (
+                None,
+                "latent derivative provider failed to evaluate optimized path: "
+                + str(exc),
+            )
+    out = model._finalize(out)
+
+    batch_ndim = sum(len(shape) for shape in batch_shapes)
+    if batch_ndim > 1 and out.ndim >= batch_ndim:
+        axes_by_dep: list[tuple[int, ...]] = []
+        axis_cursor = 0
+        for shape in batch_shapes:
+            dep_axes = tuple(range(axis_cursor, axis_cursor + len(shape)))
+            axes_by_dep.append(dep_axes)
+            axis_cursor += len(shape)
+
+        dense_axes: list[int] = []
+        coord_axes: list[int] = []
+        for dep_arg, dep_axes in zip(args, axes_by_dep, strict=True):
+            if isinstance(dep_arg, tuple):
+                coord_axes.extend(dep_axes)
+            else:
+                dense_axes.extend(dep_axes)
+
+        desired_batch_axes = tuple(dense_axes + coord_axes)
+        current_batch_axes = tuple(range(batch_ndim))
+        if desired_batch_axes != current_batch_axes:
+            perm = desired_batch_axes + tuple(range(batch_ndim, out.ndim))
+            out = jnp.transpose(out, perm)
+
+    return out, None
 
 
 def _fd_first_derivative(
@@ -235,6 +734,7 @@ def grad(
     backend: Literal["ad", "fd", "basis"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Gradient/Jacobian of `u` with respect to a labeled variable.
 
@@ -295,8 +795,11 @@ def grad(
     """
     var = _resolve_var(u, var)
     factor, var_dim = _factor_and_dim(u, var)
+    out_metadata = _strip_derivative_hook_metadata(u.metadata)
 
-    jac = jax.jacrev if mode == "reverse" else jax.jacfwd
+    _ensure_ad_engine_backend(backend, ad_engine)
+    mode_eff = _resolve_ad_mode(mode, ad_engine)
+    jac = jax.jacrev if mode_eff == "reverse" else jax.jacfwd
 
     if var not in u.deps:
 
@@ -307,7 +810,42 @@ def grad(
             return jnp.zeros(y.shape + (var_dim,), dtype=y.dtype)
 
         return DomainFunction(
-            domain=u.domain, deps=u.deps, func=_zero, metadata=u.metadata
+            domain=u.domain, deps=u.deps, func=_zero, metadata=out_metadata
+        )
+
+    if backend == "ad" and ad_engine != "jvp" and get_derivative_hook(u) is not None:
+        if isinstance(factor, _AbstractScalarDomain):
+            return partial_n(
+                u,
+                var=var,
+                axis=None,
+                order=1,
+                mode=mode_eff,
+                backend="ad",
+                ad_engine="auto",
+            )
+
+        partials = tuple(
+            partial_n(
+                u,
+                var=var,
+                axis=i,
+                order=1,
+                mode=mode_eff,
+                backend="ad",
+                ad_engine="auto",
+            )
+            for i in range(int(var_dim))
+        )
+
+        def _grad_fast(*args, key=None, **kwargs):
+            vals = [jnp.asarray(p.func(*args, key=key, **kwargs)) for p in partials]
+            if int(var_dim) == 1:
+                return vals[0][..., None]
+            return jnp.stack(vals, axis=-1)
+
+        return DomainFunction(
+            domain=u.domain, deps=u.deps, func=_grad_fast, metadata=out_metadata
         )
 
     idx = u.deps.index(var)
@@ -381,6 +919,20 @@ def grad(
                 return jvps[0][..., None]
             return jnp.stack(jvps, axis=-1)
 
+        if backend == "ad" and ad_engine == "jvp":
+            x = jnp.asarray(x0)
+            if int(var_dim) == 1:
+                v = jnp.ones_like(x)
+                out = jax.jvp(f, (x,), (v,))[1]
+                if isinstance(factor, _AbstractScalarDomain):
+                    return out
+                return out[..., None]
+            cols = []
+            for axis_i in range(int(var_dim)):
+                v = jnp.zeros_like(x).at[..., axis_i].set(1.0)
+                cols.append(jax.jvp(f, (x,), (v,))[1])
+            return jnp.stack(cols, axis=-1)
+
         y0 = f(x0)
         if jnp.iscomplexobj(y0):
             jac_r = jac(lambda xi: jnp.real(f(xi)))(x0)
@@ -388,7 +940,7 @@ def grad(
             return jac_r + 1j * jac_i
         return jac(f)(x0)
 
-    return DomainFunction(domain=u.domain, deps=u.deps, func=_grad, metadata=u.metadata)
+    return DomainFunction(domain=u.domain, deps=u.deps, func=_grad, metadata=out_metadata)
 
 
 def hessian(
@@ -396,6 +948,7 @@ def hessian(
     /,
     *,
     var: str | None = None,
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Hessian of `u` with respect to a labeled variable.
 
@@ -437,6 +990,8 @@ def hessian(
     """
     var = _resolve_var(u, var)
     factor, var_dim = _factor_and_dim(u, var)
+    out_metadata = _strip_derivative_hook_metadata(u.metadata)
+    _resolve_ad_mode("reverse", ad_engine)
 
     if var not in u.deps:
 
@@ -447,7 +1002,124 @@ def hessian(
             return jnp.zeros(y.shape + (var_dim, var_dim), dtype=y.dtype)
 
         return DomainFunction(
-            domain=u.domain, deps=u.deps, func=_zero, metadata=u.metadata
+            domain=u.domain, deps=u.deps, func=_zero, metadata=out_metadata
+        )
+
+    if ad_engine == "jvp":
+        if isinstance(factor, _AbstractScalarDomain):
+            return partial_n(
+                u,
+                var=var,
+                axis=None,
+                order=2,
+                mode="reverse",
+                backend="ad",
+                ad_engine="jvp",
+            )
+
+        first_partials = tuple(
+            partial_n(
+                u,
+                var=var,
+                axis=i,
+                order=1,
+                mode="reverse",
+                backend="ad",
+                ad_engine="jvp",
+            )
+            for i in range(int(var_dim))
+        )
+        second_partials = tuple(
+            tuple(
+                partial_n(
+                    first_partials[i],
+                    var=var,
+                    axis=j,
+                    order=1,
+                    mode="reverse",
+                    backend="ad",
+                    ad_engine="jvp",
+                )
+                for j in range(int(var_dim))
+            )
+            for i in range(int(var_dim))
+        )
+
+        def _hess_jvp(*args, key=None, **kwargs):
+            rows = []
+            for i in range(int(var_dim)):
+                row_vals = [
+                    jnp.asarray(second_partials[i][j].func(*args, key=key, **kwargs))
+                    for j in range(int(var_dim))
+                ]
+                rows.append(jnp.stack(row_vals, axis=-1))
+            return jnp.stack(rows, axis=-2)
+
+        return DomainFunction(
+            domain=u.domain,
+            deps=u.deps,
+            func=_hess_jvp,
+            metadata=out_metadata,
+        )
+
+    if (
+        get_derivative_hook(u) is not None
+        or _latent_model_from_domain_function(u) is not None
+    ):
+        if isinstance(factor, _AbstractScalarDomain):
+            return partial_n(
+                u,
+                var=var,
+                axis=None,
+                order=2,
+                mode="reverse",
+                backend="ad",
+                ad_engine="auto",
+            )
+
+        first_partials = tuple(
+            partial_n(
+                u,
+                var=var,
+                axis=i,
+                order=1,
+                mode="reverse",
+                backend="ad",
+                ad_engine="auto",
+            )
+            for i in range(int(var_dim))
+        )
+        second_partials = tuple(
+            tuple(
+                partial_n(
+                    first_partials[i],
+                    var=var,
+                    axis=j,
+                    order=1,
+                    mode="reverse",
+                    backend="ad",
+                    ad_engine="auto",
+                )
+                for j in range(int(var_dim))
+            )
+            for i in range(int(var_dim))
+        )
+
+        def _hess_fast(*args, key=None, **kwargs):
+            rows = []
+            for i in range(int(var_dim)):
+                row_vals = [
+                    jnp.asarray(second_partials[i][j].func(*args, key=key, **kwargs))
+                    for j in range(int(var_dim))
+                ]
+                rows.append(jnp.stack(row_vals, axis=-1))
+            return jnp.stack(rows, axis=-2)
+
+        return DomainFunction(
+            domain=u.domain,
+            deps=u.deps,
+            func=_hess_fast,
+            metadata=out_metadata,
         )
 
     idx = u.deps.index(var)
@@ -528,7 +1200,7 @@ def hessian(
             return hess_r + 1j * hess_i
         return jax.hessian(f)(x0)
 
-    return DomainFunction(domain=u.domain, deps=u.deps, func=_hess, metadata=u.metadata)
+    return DomainFunction(domain=u.domain, deps=u.deps, func=_hess, metadata=out_metadata)
 
 
 def directional_derivative(
@@ -541,6 +1213,7 @@ def directional_derivative(
     backend: Literal["ad", "fd", "basis"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Directional derivative of `u` along a direction field `v`.
 
@@ -571,12 +1244,21 @@ def directional_derivative(
         raise ValueError(
             "directional_derivative(var=...) requires a geometry variable, not a scalar variable."
         )
+    _ensure_ad_engine_backend(backend, ad_engine)
 
     joined = u.domain.join(v.domain)
     u2 = u.promote(joined)
     v2 = v.promote(joined)
 
-    g = grad(u2, var=var, mode=mode, backend=backend, basis=basis, periodic=periodic)
+    g = grad(
+        u2,
+        var=var,
+        mode=mode,
+        backend=backend,
+        basis=basis,
+        periodic=periodic,
+        ad_engine=ad_engine if backend == "ad" else "auto",
+    )
 
     deps = tuple(lbl for lbl in joined.labels if (lbl in g.deps) or (lbl in v2.deps))
     idx = {lbl: i for i, lbl in enumerate(deps)}
@@ -602,6 +1284,7 @@ def div(
     backend: Literal["ad", "fd", "basis"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Divergence of a vector field.
 
@@ -632,8 +1315,17 @@ def div(
         raise ValueError(
             "div(var=...) requires a geometry variable, not a scalar variable."
         )
+    _ensure_ad_engine_backend(backend, ad_engine)
 
-    g = grad(u, var=var, mode=mode, backend=backend, basis=basis, periodic=periodic)
+    g = grad(
+        u,
+        var=var,
+        mode=mode,
+        backend=backend,
+        basis=basis,
+        periodic=periodic,
+        ad_engine=ad_engine if backend == "ad" else "auto",
+    )
 
     def _div(*args, key=None, **kwargs):
         jac = jnp.asarray(g.func(*args, key=key, **kwargs))
@@ -659,6 +1351,7 @@ def curl(
     backend: Literal["ad", "fd", "basis"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Curl of a 3D vector field.
     
@@ -694,8 +1387,17 @@ def curl(
         raise ValueError(
             f"curl(var=...) requires a 3D geometry variable, got var_dim={var_dim}."
         )
+    _ensure_ad_engine_backend(backend, ad_engine)
 
-    g = grad(u, var=var, mode=mode, backend=backend, basis=basis, periodic=periodic)
+    g = grad(
+        u,
+        var=var,
+        mode=mode,
+        backend=backend,
+        basis=basis,
+        periodic=periodic,
+        ad_engine=ad_engine if backend == "ad" else "auto",
+    )
 
     def _curl(*args, key=None, **kwargs):
         jac = jnp.asarray(g.func(*args, key=key, **kwargs))
@@ -720,6 +1422,7 @@ def div_tensor(
     backend: Literal["ad", "fd", "basis"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Divergence of a second-order tensor field.
 
@@ -746,8 +1449,17 @@ def div_tensor(
         raise ValueError(
             "div_tensor(var=...) requires a geometry variable, not a scalar variable."
         )
+    _ensure_ad_engine_backend(backend, ad_engine)
 
-    gT = grad(T, var=var, mode=mode, backend=backend, basis=basis, periodic=periodic)
+    gT = grad(
+        T,
+        var=var,
+        mode=mode,
+        backend=backend,
+        basis=basis,
+        periodic=periodic,
+        ad_engine=ad_engine if backend == "ad" else "auto",
+    )
 
     def _divT(*args, key=None, **kwargs):
         g = jnp.asarray(gT.func(*args, key=key, **kwargs))
@@ -770,6 +1482,7 @@ def cauchy_strain(
     backend: Literal["ad", "fd", "basis"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Cauchy (small) strain tensor for a displacement/velocity field.
 
@@ -795,7 +1508,16 @@ def cauchy_strain(
         raise ValueError(
             "cauchy_strain(var=...) requires a geometry variable, not a scalar variable."
         )
-    G = grad(u, var=var, mode=mode, backend=backend, basis=basis, periodic=periodic)
+    _ensure_ad_engine_backend(backend, ad_engine)
+    G = grad(
+        u,
+        var=var,
+        mode=mode,
+        backend=backend,
+        basis=basis,
+        periodic=periodic,
+        ad_engine=ad_engine if backend == "ad" else "auto",
+    )
     return 0.5 * (G + G.T)
 
 
@@ -808,8 +1530,10 @@ def strain_rate(
     backend: Literal["ad", "fd", "basis"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Alias for `cauchy_strain` (common notation $D(u)$ for velocity fields)."""
+    _ensure_ad_engine_backend(backend, ad_engine)
     return cauchy_strain(
         u,
         var=var,
@@ -817,6 +1541,7 @@ def strain_rate(
         backend=backend,
         basis=basis,
         periodic=periodic,
+        ad_engine=ad_engine if backend == "ad" else "auto",
     )
 
 
@@ -829,6 +1554,7 @@ def strain_rate_magnitude(
     backend: Literal["ad", "fd", "basis"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Magnitude of the strain-rate tensor.
 
@@ -848,8 +1574,15 @@ def strain_rate_magnitude(
 
     - A `DomainFunction` representing $\|D(u)\|$.
     """
+    _ensure_ad_engine_backend(backend, ad_engine)
     D = strain_rate(
-        u, var=var, mode=mode, backend=backend, basis=basis, periodic=periodic
+        u,
+        var=var,
+        mode=mode,
+        backend=backend,
+        basis=basis,
+        periodic=periodic,
+        ad_engine=ad_engine if backend == "ad" else "auto",
     )
 
     def _mag(*args, key=None, **kwargs):
@@ -883,6 +1616,7 @@ def cauchy_stress(
     backend: Literal["ad", "fd", "basis"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Linear-elastic Cauchy stress (Hooke's law).
 
@@ -911,6 +1645,7 @@ def cauchy_stress(
         raise ValueError(
             "cauchy_stress(var=...) requires a geometry variable, not a scalar variable."
         )
+    _ensure_ad_engine_backend(backend, ad_engine)
 
     mu_fn = _as_domain_function(u, mu)
     lambda_fn = _as_domain_function(u, lambda_)
@@ -921,6 +1656,7 @@ def cauchy_stress(
         backend=backend,
         basis=basis,
         periodic=periodic,
+        ad_engine=ad_engine if backend == "ad" else "auto",
     )
     tr = _trace_last2(strain, keepdims=True)
     I = jnp.eye(var_dim)
@@ -938,6 +1674,7 @@ def div_cauchy_stress(
     backend: Literal["ad", "fd", "basis"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Divergence of the linear-elastic Cauchy stress.
 
@@ -960,6 +1697,7 @@ def div_cauchy_stress(
     - A `DomainFunction` representing $\nabla\cdot\sigma(u)$ (vector-valued).
     """
     var = _resolve_var(u, var)
+    _ensure_ad_engine_backend(backend, ad_engine)
     sigma = cauchy_stress(
         u,
         lambda_=lambda_,
@@ -969,6 +1707,7 @@ def div_cauchy_stress(
         backend=backend,
         basis=basis,
         periodic=periodic,
+        ad_engine=ad_engine if backend == "ad" else "auto",
     )
     return div_tensor(
         sigma,
@@ -977,6 +1716,7 @@ def div_cauchy_stress(
         backend=backend,
         basis=basis,
         periodic=periodic,
+        ad_engine=ad_engine if backend == "ad" else "auto",
     )
 
 
@@ -991,6 +1731,7 @@ def viscous_stress(
     backend: Literal["ad", "fd", "basis"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Newtonian viscous stress tensor for a velocity field.
 
@@ -1014,6 +1755,7 @@ def viscous_stress(
         raise ValueError(
             "viscous_stress(var=...) requires a geometry variable, not a scalar variable."
         )
+    _ensure_ad_engine_backend(backend, ad_engine)
 
     mu_fn = _as_domain_function(u, mu)
     if lambda_ is None:
@@ -1021,7 +1763,15 @@ def viscous_stress(
     else:
         lambda_fn = _as_domain_function(u, lambda_)
 
-    G = grad(u, var=var, mode=mode, backend=backend, basis=basis, periodic=periodic)
+    G = grad(
+        u,
+        var=var,
+        mode=mode,
+        backend=backend,
+        basis=basis,
+        periodic=periodic,
+        ad_engine=ad_engine if backend == "ad" else "auto",
+    )
     D = 0.5 * (G + G.T)
     trD = _trace_last2(D, keepdims=True)
     I = jnp.eye(var_dim)
@@ -1045,6 +1795,7 @@ def navier_stokes_stress(
     backend: Literal["ad", "fd", "basis"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Cauchy stress for incompressible/compressible Navier–Stokes.
 
@@ -1071,6 +1822,7 @@ def navier_stokes_stress(
     """
     var = _resolve_var(u, var)
     _, var_dim = _factor_and_dim(u, var)
+    _ensure_ad_engine_backend(backend, ad_engine)
 
     tau = viscous_stress(
         u,
@@ -1081,6 +1833,7 @@ def navier_stokes_stress(
         backend=backend,
         basis=basis,
         periodic=periodic,
+        ad_engine=ad_engine if backend == "ad" else "auto",
     )
     p_fn = _as_domain_function(u, p)
     I = jnp.eye(var_dim)
@@ -1099,6 +1852,7 @@ def navier_stokes_divergence(
     backend: Literal["ad", "fd", "basis"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Divergence of the Navier–Stokes stress.
 
@@ -1121,6 +1875,7 @@ def navier_stokes_divergence(
     - A `DomainFunction` representing $\nabla\cdot(\tau(u) - p I)$ (vector-valued).
     """
     var = _resolve_var(u, var)
+    _ensure_ad_engine_backend(backend, ad_engine)
     sig = navier_stokes_stress(
         u,
         p,
@@ -1131,9 +1886,16 @@ def navier_stokes_divergence(
         backend=backend,
         basis=basis,
         periodic=periodic,
+        ad_engine=ad_engine if backend == "ad" else "auto",
     )
     return div_tensor(
-        sig, var=var, mode=mode, backend=backend, basis=basis, periodic=periodic
+        sig,
+        var=var,
+        mode=mode,
+        backend=backend,
+        basis=basis,
+        periodic=periodic,
+        ad_engine=ad_engine if backend == "ad" else "auto",
     )
 
 
@@ -1146,6 +1908,7 @@ def laplacian(
     backend: Literal["ad", "jet", "fd", "basis"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Laplacian of a scalar field with respect to a geometry variable.
 
@@ -1162,12 +1925,18 @@ def laplacian(
       must have exactly one geometry variable.
     - `mode`: Autodiff mode for Jacobian/Hessian construction when applicable.
     - `backend`: Differentiation backend:
-      - `"ad"`: uses nested autodiff (`grad(grad(u))`).
-      - `"jet"`: uses JAX Jet expansions for second directional derivatives.
+      - `"ad"`: sums second partials via `partial_n(..., order=2, backend="ad")`
+        using AD derivatives (respecting `ad_engine`).
+      - `"jet"`: uses JAX Jet expansions for second directional derivatives
+        (and enables latent Jet fast paths when available).
       - `"fd"`: uses finite differences on coord-separable grids (falls back to `"ad"`).
       - `"basis"`: uses spectral/barycentric methods on coord-separable grids (falls back to `"ad"`).
     - `basis`: Basis method used when `backend="basis"`.
     - `periodic`: Whether to treat differentiated axes as periodic (used by `backend="fd"`).
+    - `ad_engine`: AD execution strategy used when `backend="ad"`:
+      - `"auto"`: existing mixed strategy (default).
+      - `"reverse"` / `"forward"`: force Jacobian AD mode.
+      - `"jvp"`: force directional-JVP derivatives.
 
     **Returns:**
 
@@ -1181,131 +1950,103 @@ def laplacian(
         )
 
     if var not in u.deps:
+        out_metadata = _strip_derivative_hook_metadata(u.metadata)
 
         def _zero(*args, key=None, **kwargs):
             y = jnp.asarray(u.func(*args, key=key, **kwargs))
             return jnp.zeros_like(y)
 
         return DomainFunction(
-            domain=u.domain, deps=u.deps, func=_zero, metadata=u.metadata
+            domain=u.domain, deps=u.deps, func=_zero, metadata=out_metadata
         )
 
-    if backend == "fd" or backend == "basis":
-        total = None
-        for i in range(var_dim):
-            d2 = partial_n(
-                u,
-                var=var,
-                axis=i,
-                order=2,
-                mode=mode,
-                backend=backend,
-                basis=basis,
-                periodic=periodic,
-            )
-            total = d2 if total is None else (total + d2)
-        assert total is not None
-        return total
+    if backend not in ("ad", "jet", "fd", "basis"):
+        raise ValueError("backend must be 'ad', 'jet', 'fd', or 'basis'.")
+    _ensure_ad_engine_backend(backend, ad_engine)
+    mode_eff = _resolve_ad_mode(mode, ad_engine)
 
-    if backend == "ad":
-        hess = grad(grad(u, var=var, mode=mode), var=var, mode=mode)
+    total = None
+    for i in range(var_dim):
+        d2 = partial_n(
+            u,
+            var=var,
+            axis=i,
+            order=2,
+            mode=mode_eff,
+            backend=backend,
+            basis=basis,
+            periodic=periodic,
+            ad_engine=ad_engine if backend == "ad" else "auto",
+        )
+        total = d2 if total is None else (total + d2)
+    assert total is not None
+
+    if backend in ("ad", "jet"):
+        idx = int(u.deps.index(var))
 
         def _lap(*args, key=None, **kwargs):
-            x0 = args[u.deps.index(var)]
-            if isinstance(x0, tuple):
-                coords = tuple(jnp.asarray(xi) for xi in x0)
-                if len(coords) != var_dim:
-                    raise ValueError(
-                        f"coord-separable laplacian expects {var_dim} coordinate arrays for var={var!r}."
-                    )
-                if not all(xi.ndim == 1 for xi in coords):
-                    raise ValueError(
-                        "coord-separable laplacian requires a tuple of 1D coordinate arrays."
-                    )
+            x0 = args[idx]
+            if not isinstance(x0, tuple):
+                return total.func(*args, key=key, **kwargs)
 
-                terms = []
-                for i in range(var_dim):
-
-                    def f_i(coord, *, i=i):
-                        call_args = list(args)
-                        call_args[u.deps.index(var)] = (
-                            coords[:i] + (coord,) + coords[i + 1 :]
-                        )
-                        return u.func(*call_args, key=key, **kwargs)
-
-                    v = jnp.ones_like(coords[i])
-                    d2 = jax.jvp(
-                        lambda c: jax.jvp(f_i, (c,), (v,))[1], (coords[i],), (v,)
-                    )[1]
-                    terms.append(d2)
-                out = terms[0]
-                for t in terms[1:]:
-                    out = out + t
-                return out
-
-            h = jnp.asarray(hess.func(*args, key=key, **kwargs))
-            if h.ndim < 2:
-                raise ValueError("laplacian expects a Hessian with two trailing axes.")
-            if h.shape[-2] != var_dim or h.shape[-1] != var_dim:
-                raise ValueError(
-                    f"laplacian expects Hessian trailing axes ({var_dim}, {var_dim})."
-                )
-            return jnp.trace(h, axis1=-2, axis2=-1)
-
-        return DomainFunction(
-            domain=u.domain, deps=u.deps, func=_lap, metadata=u.metadata
-        )
-
-    if backend != "jet":
-        raise ValueError("backend must be 'ad', 'jet', 'fd', or 'basis'.")
-
-    idx = u.deps.index(var)
-
-    def _lap(*args, key=None, **kwargs):
-        x0 = args[idx]
-
-        def f(xi):
-            call_args = tuple(xi if i == idx else args[i] for i in range(len(args)))
-            return u.func(*call_args, key=key, **kwargs)
-
-        if isinstance(x0, tuple):
             coords = tuple(jnp.asarray(xi) for xi in x0)
-            if len(coords) != var_dim:
+            if len(coords) != int(var_dim):
                 raise ValueError(
-                    f"coord-separable laplacian expects {var_dim} coordinate arrays for var={var!r}."
+                    f"coord-separable laplacian expects {int(var_dim)} coordinate arrays for var={var!r}."
                 )
             if not all(xi.ndim == 1 for xi in coords):
                 raise ValueError(
                     "coord-separable laplacian requires a tuple of 1D coordinate arrays."
                 )
 
-            total = None
-            for i in range(var_dim):
+            if int(var_dim) == 1:
+                ones = jnp.ones_like(coords[0])
 
-                def f_i(coord, *, i=i):
+                def f_0(coord):
                     call_args = list(args)
-                    call_args[idx] = coords[:i] + (coord,) + coords[i + 1 :]
+                    call_args[idx] = (coord,)
                     return u.func(*call_args, key=key, **kwargs)
 
-                v = jnp.ones_like(coords[i])
-                d2 = jet_d1_d2(f_i, coords[i], v)[1]
-                total = d2 if total is None else (total + d2)
-            assert total is not None
-            return total
+                return jax.jvp(
+                    lambda c: jax.jvp(f_0, (c,), (ones,))[1],
+                    (coords[0],),
+                    (ones,),
+                )[1]
 
-        x = jnp.asarray(x0)
-        total = None
-        for i in range(var_dim):
-            if var_dim == 1:
-                v = jnp.ones_like(x)
-            else:
-                v = jnp.zeros_like(x).at[..., i].set(1.0)
-            d2 = jet_d1_d2(f, x, v)[1]
-            total = d2 if total is None else (total + d2)
-        assert total is not None
-        return total
+            diag_terms = []
+            for axis_i in range(int(var_dim)):
+                ones = jnp.ones_like(coords[axis_i])
 
-    return DomainFunction(domain=u.domain, deps=u.deps, func=_lap, metadata=u.metadata)
+                def f_i(coord, *, axis_i: int = axis_i):
+                    call_args = list(args)
+                    call_args[idx] = coords[:axis_i] + (coord,) + coords[axis_i + 1 :]
+                    return u.func(*call_args, key=key, **kwargs)
+
+                d2 = jax.jvp(
+                    lambda c: jax.jvp(
+                        lambda cc: f_i(cc),
+                        (c,),
+                        (ones,),
+                    )[1],
+                    (coords[axis_i],),
+                    (ones,),
+                )[1]
+                diag_terms.append(d2)
+
+            out = diag_terms[0]
+            for d2 in diag_terms[1:]:
+                out = out + d2
+            return out
+
+        out_metadata = _strip_derivative_hook_metadata(u.metadata)
+        return DomainFunction(
+            domain=u.domain,
+            deps=u.deps,
+            func=_lap,
+            metadata=out_metadata,
+        )
+
+    return total
 
 
 def bilaplacian(
@@ -1317,6 +2058,7 @@ def bilaplacian(
     backend: Literal["ad", "jet", "fd", "basis"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Bi-Laplacian of a scalar field with respect to a geometry variable.
 
@@ -1333,7 +2075,7 @@ def bilaplacian(
     - `u`: Input function (typically scalar-valued).
     - `var`: Geometry label to differentiate with respect to. If `None`, the domain
       must have exactly one geometry variable.
-    - `mode`, `backend`, `basis`, `periodic`: As in `laplacian`.
+    - `mode`, `backend`, `basis`, `periodic`, `ad_engine`: As in `laplacian`.
 
     **Returns:**
 
@@ -1355,30 +2097,35 @@ def bilaplacian(
         return DomainFunction(
             domain=u.domain, deps=u.deps, func=_zero, metadata=u.metadata
         )
+    _ensure_ad_engine_backend(backend, ad_engine)
+    mode_eff = _resolve_ad_mode(mode, ad_engine)
 
     if backend == "fd" or backend == "basis":
         return laplacian(
             laplacian(
                 u,
                 var=var,
-                mode=mode,
+                mode=mode_eff,
                 backend=backend,
                 basis=basis,
                 periodic=periodic,
+                ad_engine="auto",
             ),
             var=var,
-            mode=mode,
+            mode=mode_eff,
             backend=backend,
             basis=basis,
             periodic=periodic,
+            ad_engine="auto",
         )
 
     if backend == "ad":
         return laplacian(
-            laplacian(u, var=var, mode=mode, backend="ad"),
+            laplacian(u, var=var, mode=mode_eff, backend="ad", ad_engine=ad_engine),
             var=var,
-            mode=mode,
+            mode=mode_eff,
             backend="ad",
+            ad_engine=ad_engine,
         )
 
     if backend != "jet":
@@ -1481,9 +2228,110 @@ def partial(
     var: str,
     axis: int | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
+    mode_eff = _resolve_ad_mode(mode, ad_engine)
     _, var_dim = _factor_and_dim(u, var)
-    g = grad(u, var=var, mode=mode)
+    axis_i: int | None = None
+
+    if var_dim == 1:
+        if axis is None:
+            axis_i = None
+        else:
+            axis_i = int(axis)
+            if axis_i != 0:
+                raise ValueError("axis must be 0 for a 1D variable.")
+    else:
+        if axis is None:
+            raise ValueError("partial(var=...) for a vector variable requires axis=...")
+        axis_i = int(axis)
+        if not (0 <= axis_i < var_dim):
+            raise ValueError(f"axis must be in [0, {var_dim}), got {axis_i}.")
+
+    use_jvp = ad_engine == "jvp"
+    if not use_jvp:
+        hooked = _try_derivative_hook(
+            u,
+            var=var,
+            axis=axis,
+            order=1,
+            mode=mode_eff,
+            backend="ad",
+            basis="poly",
+            periodic=False,
+        )
+        if hooked is not None:
+            return hooked
+
+        structured = _try_structured_partial_n(
+            u, var=var, axis=axis, order=1, mode=mode_eff
+        )
+        if structured is not None:
+            return structured
+
+    out_metadata = _strip_derivative_hook_metadata(u.metadata)
+
+    idx = u.deps.index(var) if var in u.deps else None
+
+    if use_jvp:
+        if idx is None:
+
+            def _zero(*args, key=None, **kwargs):
+                y = jnp.asarray(u.func(*args, key=key, **kwargs))
+                return jnp.zeros_like(y)
+
+            return DomainFunction(
+                domain=u.domain, deps=u.deps, func=_zero, metadata=out_metadata
+            )
+
+        assert idx is not None
+
+        def _partial_jvp(*args, key=None, **kwargs):
+            x0 = args[idx]
+            if isinstance(x0, tuple):
+                coords = tuple(jnp.asarray(xi) for xi in x0)
+                if len(coords) != int(var_dim):
+                    raise ValueError(
+                        f"coord-separable partial expects {int(var_dim)} coordinate arrays for var={var!r}."
+                    )
+                if not all(xi.ndim == 1 for xi in coords):
+                    raise ValueError(
+                        "coord-separable partial requires a tuple of 1D coordinate arrays."
+                    )
+                if int(var_dim) == 1:
+                    coord_axis = 0
+                else:
+                    assert axis_i is not None
+                    coord_axis = int(axis_i)
+                ones = jnp.ones_like(coords[coord_axis])
+
+                def f_i(coord):
+                    call_args = list(args)
+                    call_args[idx] = (
+                        coords[:coord_axis] + (coord,) + coords[coord_axis + 1 :]
+                    )
+                    return u.func(*call_args, key=key, **kwargs)
+
+                return jax.jvp(f_i, (coords[coord_axis],), (ones,))[1]
+
+            x = jnp.asarray(x0)
+
+            def f(xi):
+                call_args = tuple(xi if i == idx else args[i] for i in range(len(args)))
+                return u.func(*call_args, key=key, **kwargs)
+
+            if int(var_dim) == 1:
+                v = jnp.ones_like(x)
+            else:
+                assert axis_i is not None
+                v = jnp.zeros_like(x).at[..., int(axis_i)].set(1.0)
+            return jax.jvp(f, (x,), (v,))[1]
+
+        return DomainFunction(
+            domain=u.domain, deps=u.deps, func=_partial_jvp, metadata=out_metadata
+        )
+
+    g = grad(u, var=var, mode=mode_eff)
 
     if var_dim == 1:
 
@@ -1494,21 +2342,16 @@ def partial(
             return jac
 
         return DomainFunction(
-            domain=u.domain, deps=u.deps, func=_partial, metadata=u.metadata
+            domain=u.domain, deps=u.deps, func=_partial, metadata=out_metadata
         )
-
-    if axis is None:
-        raise ValueError("partial(var=...) for a vector variable requires axis=...")
-    axis_i = int(axis)
-    if not (0 <= axis_i < var_dim):
-        raise ValueError(f"axis must be in [0, {var_dim}), got {axis_i}.")
+    assert axis_i is not None
 
     def _partial(*args, key=None, **kwargs):
         jac = jnp.asarray(g.func(*args, key=key, **kwargs))
         return jnp.take(jac, axis_i, axis=-1)
 
     return DomainFunction(
-        domain=u.domain, deps=u.deps, func=_partial, metadata=u.metadata
+        domain=u.domain, deps=u.deps, func=_partial, metadata=out_metadata
     )
 
 
@@ -1523,6 +2366,7 @@ def partial_n(
     backend: Literal["ad", "jet", "fd", "basis"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Nth partial derivative with respect to a labeled variable.
 
@@ -1537,6 +2381,10 @@ def partial_n(
       For scalar variables, must be `None`.
     - `order`: Derivative order $n\ge 0$.
     - `mode`: Autodiff mode used when `backend="ad"`.
+    - `ad_engine`: AD execution strategy used when `backend="ad"`:
+      - `"auto"`: default strategy.
+      - `"reverse"` / `"forward"`: force Jacobian AD mode.
+      - `"jvp"`: force directional-JVP derivatives.
     - `backend`:
       - `"ad"`: repeated application of `partial`.
       - `"jet"`: uses Jet expansions for $n\ge 2$ (point inputs and coord-separable inputs).
@@ -1554,13 +2402,28 @@ def partial_n(
         raise ValueError("order must be non-negative.")
     if order_i == 0:
         return u
-    if backend == "ad":
+    _ensure_ad_engine_backend(backend, ad_engine)
+    mode_eff = _resolve_ad_mode(mode, ad_engine)
+
+    if backend == "ad" and ad_engine == "jvp":
         out = u
         for _ in range(order_i):
-            out = partial(out, var=var, axis=axis, mode=mode)
+            out = partial(out, var=var, axis=axis, mode=mode_eff, ad_engine="jvp")
+        return out
+
+    if backend == "ad" and _latent_model_from_domain_function(u) is not None:
+        out = u
+        for _ in range(order_i):
+            out = partial(out, var=var, axis=axis, mode=mode_eff, ad_engine=ad_engine)
+        return out
+
+    if backend == "ad" and _latent_model_from_domain_function(u) is None:
+        out = u
+        for _ in range(order_i):
+            out = partial(out, var=var, axis=axis, mode=mode_eff, ad_engine="auto")
         return out
     if order_i == 1 and backend == "jet":
-        return partial(u, var=var, axis=axis, mode=mode)
+        return partial(u, var=var, axis=axis, mode=mode_eff, ad_engine="auto")
     if backend == "fd" or backend == "basis":
         # Discrete backends require coord-separable inputs; fall back to AD otherwise.
         fallback = partial_n(
@@ -1568,11 +2431,13 @@ def partial_n(
             var=var,
             axis=axis,
             order=order_i,
-            mode=mode,
+            mode=mode_eff,
             backend="ad",
+            ad_engine="auto",
         )
 
     _, var_dim = _factor_and_dim(u, var)
+    out_metadata = _strip_derivative_hook_metadata(u.metadata)
 
     if var not in u.deps:
 
@@ -1581,7 +2446,7 @@ def partial_n(
             return jnp.zeros_like(y)
 
         return DomainFunction(
-            domain=u.domain, deps=u.deps, func=_zero, metadata=u.metadata
+            domain=u.domain, deps=u.deps, func=_zero, metadata=out_metadata
         )
 
     if var_dim == 1:
@@ -1598,14 +2463,81 @@ def partial_n(
         if not (0 <= axis_i < int(var_dim)):
             raise ValueError(f"axis must be in [0,{int(var_dim)}), got {axis_i}.")
 
+    if backend == "ad" or backend == "jet":
+        hooked = _try_derivative_hook(
+            u,
+            var=var,
+            axis=axis,
+            order=order_i,
+            mode=mode_eff,
+            backend=backend,
+            basis=basis,
+            periodic=periodic,
+        )
+        if hooked is not None:
+            return hooked
+        structured = _try_structured_partial_n(
+            u, var=var, axis=axis, order=order_i, mode=mode_eff
+        )
+        if structured is not None:
+            return structured
+
     idx = u.deps.index(var)
 
     def _nth(*args, key=None, **kwargs):
+        runtime_kwargs = dict(kwargs)
+        force_generic = bool(runtime_kwargs.pop("force_generic", False))
+        cache = get_partial_eval_cache()
+        cache_key: tuple[Any, ...] | None = None
+        if cache is not None:
+            cache_key = _partial_eval_cache_key(
+                u,
+                var=var,
+                axis_i=axis_i,
+                order_i=order_i,
+                mode=mode_eff,
+                backend=backend,
+                basis=basis,
+                periodic=periodic,
+                force_generic=force_generic,
+                args=args,
+                key=key,
+                kwargs=runtime_kwargs,
+            )
+            if cache_key in cache:
+                return cache[cache_key]
+
+        def _return(out: Any, /) -> Any:
+            if cache is not None and cache_key is not None:
+                cache[cache_key] = out
+            return out
+
         x0 = args[idx]
+
+        if backend == "ad" or backend == "jet":
+            if force_generic:
+                _emit_latent_fallback_warning(
+                    u,
+                    "optimized latent derivative path disabled by force_generic=True.",
+                )
+            else:
+                fast_out, fast_reason = _latent_try_partial_n_eval(
+                    u,
+                    var=var,
+                    axis_i=axis_i,
+                    order_i=order_i,
+                    args=args,
+                    key=key,
+                    kwargs=runtime_kwargs,
+                )
+                if fast_out is not None:
+                    return _return(fast_out)
+                if fast_reason is not None:
+                    _emit_latent_fallback_warning(u, fast_reason)
 
         if backend == "fd" or backend == "basis":
             if not isinstance(x0, tuple):
-                return fallback.func(*args, key=key, **kwargs)
+                return _return(fallback.func(*args, key=key, **runtime_kwargs))
             coords = tuple(jnp.asarray(xi) for xi in x0)
             if len(coords) != var_dim:
                 raise ValueError(
@@ -1616,7 +2548,7 @@ def partial_n(
                     "coord-separable partial_n requires a tuple of 1D coordinate arrays."
                 )
 
-            y = jnp.asarray(u.func(*args, key=key, **kwargs))
+            y = jnp.asarray(u.func(*args, key=key, **runtime_kwargs))
             axis_pos = _coord_axis_position(args, arg_index=idx, coord_index=axis_i)
             if backend == "fd":
                 dx = (
@@ -1624,16 +2556,20 @@ def partial_n(
                     if coords[axis_i].shape[0] > 1
                     else jnp.asarray(1.0, dtype=coords[axis_i].dtype)
                 )
-                return _fd_nth_derivative(
-                    y, dx=dx, axis=axis_pos, order=order_i, periodic=bool(periodic)
+                return _return(
+                    _fd_nth_derivative(
+                        y, dx=dx, axis=axis_pos, order=order_i, periodic=bool(periodic)
+                    )
                 )
-            return _basis_nth_derivative(
-                y, coords[axis_i], axis=axis_pos, order=order_i, basis=basis
+            return _return(
+                _basis_nth_derivative(
+                    y, coords[axis_i], axis=axis_pos, order=order_i, basis=basis
+                )
             )
 
         def f(xi):
             call_args = tuple(xi if i == idx else args[i] for i in range(len(args)))
-            return u.func(*call_args, key=key, **kwargs)
+            return u.func(*call_args, key=key, **runtime_kwargs)
 
         if isinstance(x0, tuple):
             coords = tuple(jnp.asarray(xi) for xi in x0)
@@ -1649,19 +2585,19 @@ def partial_n(
             def f_i(coord):
                 call_args = list(args)
                 call_args[idx] = coords[:axis_i] + (coord,) + coords[axis_i + 1 :]
-                return u.func(*call_args, key=key, **kwargs)
+                return u.func(*call_args, key=key, **runtime_kwargs)
 
             v = jnp.ones_like(coords[axis_i])
-            return jet_dn(f_i, coords[axis_i], v, n=order_i)
+            return _return(jet_dn(f_i, coords[axis_i], v, n=order_i))
 
         x = jnp.asarray(x0)
         if var_dim == 1:
             v = jnp.ones_like(x)
         else:
             v = jnp.zeros_like(x).at[..., axis_i].set(1.0)
-        return jet_dn(f, x, v, n=order_i)
+        return _return(jet_dn(f, x, v, n=order_i))
 
-    return DomainFunction(domain=u.domain, deps=u.deps, func=_nth, metadata=u.metadata)
+    return DomainFunction(domain=u.domain, deps=u.deps, func=_nth, metadata=out_metadata)
 
 
 def partial_x(
@@ -1670,12 +2606,13 @@ def partial_x(
     *,
     var: str = "x",
     mode: Literal["reverse", "forward"] = "reverse",
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Convenience wrapper for $\partial u/\partial x$ (axis 0 of geometry variable `var`).
 
     Equivalent to `partial(u, var=var, axis=0, mode=mode)`.
     """
-    return partial(u, var=var, axis=0, mode=mode)
+    return partial(u, var=var, axis=0, mode=mode, ad_engine=ad_engine)
 
 
 def partial_y(
@@ -1684,12 +2621,13 @@ def partial_y(
     *,
     var: str = "x",
     mode: Literal["reverse", "forward"] = "reverse",
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Convenience wrapper for $\partial u/\partial y$ (axis 1 of geometry variable `var`).
 
     Equivalent to `partial(u, var=var, axis=1, mode=mode)`.
     """
-    return partial(u, var=var, axis=1, mode=mode)
+    return partial(u, var=var, axis=1, mode=mode, ad_engine=ad_engine)
 
 
 def partial_z(
@@ -1698,12 +2636,13 @@ def partial_z(
     *,
     var: str = "x",
     mode: Literal["reverse", "forward"] = "reverse",
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Convenience wrapper for $\partial u/\partial z$ (axis 2 of geometry variable `var`).
 
     Equivalent to `partial(u, var=var, axis=2, mode=mode)`.
     """
-    return partial(u, var=var, axis=2, mode=mode)
+    return partial(u, var=var, axis=2, mode=mode, ad_engine=ad_engine)
 
 
 def partial_t(
@@ -1712,12 +2651,13 @@ def partial_t(
     *,
     var: str = "t",
     mode: Literal["reverse", "forward"] = "reverse",
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Convenience wrapper for $\partial u/\partial t$ (scalar variable `var`).
 
     Equivalent to `partial(u, var=var, axis=None, mode=mode)`.
     """
-    return partial(u, var=var, axis=None, mode=mode)
+    return partial(u, var=var, axis=None, mode=mode, ad_engine=ad_engine)
 
 
 def dt(
@@ -1726,9 +2666,10 @@ def dt(
     *,
     var: str = "t",
     mode: Literal["reverse", "forward"] = "reverse",
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Alias for $\partial u/\partial t$ (`partial_t`)."""
-    return partial_t(u, var=var, mode=mode)
+    return partial_t(u, var=var, mode=mode, ad_engine=ad_engine)
 
 
 def dt_n(
@@ -1739,6 +2680,7 @@ def dt_n(
     order: int,
     mode: Literal["reverse", "forward"] = "reverse",
     backend: Literal["ad", "jet"] = "ad",
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Nth time derivative $\partial^n u/\partial t^n$.
 
@@ -1752,7 +2694,17 @@ def dt_n(
     - `mode`: Autodiff mode used when `backend="ad"`.
     - `backend`: `"ad"` (repeated application) or `"jet"` (Jet expansions for $n\ge 2$).
     """
-    return partial_n(u, var=var, axis=None, order=int(order), mode=mode, backend=backend)
+    if backend != "ad" and ad_engine != "auto":
+        raise ValueError("ad_engine is only supported when backend='ad'.")
+    return partial_n(
+        u,
+        var=var,
+        axis=None,
+        order=int(order),
+        mode=mode,
+        backend=backend,
+        ad_engine=ad_engine if backend == "ad" else "auto",
+    )
 
 
 def material_derivative(
@@ -1763,6 +2715,7 @@ def material_derivative(
     spatial_var: str = "x",
     time_var: str = "t",
     mode: Literal["reverse", "forward"] = "reverse",
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Material derivative (advective derivative) of a field.
 
@@ -1779,9 +2732,10 @@ def material_derivative(
     - `spatial_var`: Geometry label (default `"x"`).
     - `time_var`: Time label (default `"t"`).
     - `mode`: Autodiff mode used by `dt` and `directional_derivative`.
+    - `ad_engine`: AD execution strategy for composed AD derivatives.
     """
-    return dt(u, var=time_var, mode=mode) + directional_derivative(
-        u, v, var=spatial_var, mode=mode
+    return dt(u, var=time_var, mode=mode, ad_engine=ad_engine) + directional_derivative(
+        u, v, var=spatial_var, mode=mode, ad_engine=ad_engine
     )
 
 
@@ -1804,6 +2758,7 @@ def div_k_grad(
     backend: Literal["ad", "fd", "basis"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Compute $\nabla\cdot(k\,\nabla u)$ for scalar diffusivity/permeability $k$.
 
@@ -1832,14 +2787,31 @@ def div_k_grad(
         raise ValueError(
             "div_k_grad(var=...) requires a geometry variable, not a scalar variable."
         )
+    _ensure_ad_engine_backend(backend, ad_engine)
 
     k_fn = _as_domain_function(u, k)
     joined = u.domain.join(k_fn.domain)
     u2 = u.promote(joined)
     k2 = k_fn.promote(joined)
 
-    gu = grad(u2, var=var, mode=mode, backend=backend, basis=basis, periodic=periodic)
-    gk = grad(k2, var=var, mode=mode, backend=backend, basis=basis, periodic=periodic)
+    gu = grad(
+        u2,
+        var=var,
+        mode=mode,
+        backend=backend,
+        basis=basis,
+        periodic=periodic,
+        ad_engine=ad_engine if backend == "ad" else "auto",
+    )
+    gk = grad(
+        k2,
+        var=var,
+        mode=mode,
+        backend=backend,
+        basis=basis,
+        periodic=periodic,
+        ad_engine=ad_engine if backend == "ad" else "auto",
+    )
     lap_u = laplacian(
         u2,
         var=var,
@@ -1847,6 +2819,7 @@ def div_k_grad(
         backend=backend,
         basis=basis,
         periodic=periodic,
+        ad_engine=ad_engine if backend == "ad" else "auto",
     )
 
     deps = tuple(lbl for lbl in joined.labels if (lbl in u2.deps) or (lbl in k2.deps))
@@ -1900,6 +2873,7 @@ def div_diag_k_grad(
     var: str | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
     backend: Literal["ad", "jet"] = "ad",
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Compute $\nabla\cdot(\text{diag}(k)\,\nabla u)$ for diagonal anisotropy.
 
@@ -1930,6 +2904,7 @@ def div_diag_k_grad(
         raise ValueError(
             "div_diag_k_grad(var=...) requires a geometry variable, not a scalar variable."
         )
+    _ensure_ad_engine_backend(backend, ad_engine)
 
     joined = u.domain.join(k_vec.domain)
     u2 = u.promote(joined)
@@ -1941,9 +2916,15 @@ def div_diag_k_grad(
     k_pos = tuple(idx[lbl] for lbl in k2.deps)
 
     if backend == "ad":
-        gu = grad(u2, var=var, mode=mode)
-        gk = grad(k2, var=var, mode=mode)
-        hess_u = grad(grad(u2, var=var, mode=mode), var=var, mode=mode)
+        gu = grad(u2, var=var, mode=mode, backend="ad", ad_engine=ad_engine)
+        gk = grad(k2, var=var, mode=mode, backend="ad", ad_engine=ad_engine)
+        hess_u = grad(
+            grad(u2, var=var, mode=mode, backend="ad", ad_engine=ad_engine),
+            var=var,
+            mode=mode,
+            backend="ad",
+            ad_engine=ad_engine,
+        )
 
         def _op(*args, key=None, **kwargs):
             u_args = [args[i] for i in u_pos]
@@ -2157,6 +3138,7 @@ def div_K_grad(
     backend: Literal["ad", "fd", "basis"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Compute $\nabla\cdot(K\,\nabla u)$ for a full anisotropic tensor $K$.
 
@@ -2192,12 +3174,21 @@ def div_K_grad(
         raise ValueError(
             "div_K_grad(var=...) requires a geometry variable, not a scalar variable."
         )
+    _ensure_ad_engine_backend(backend, ad_engine)
 
     joined = u.domain.join(K.domain)
     u2 = u.promote(joined)
     K2 = K.promote(joined)
 
-    gu = grad(u2, var=var, mode=mode, backend=backend, basis=basis, periodic=periodic)
+    gu = grad(
+        u2,
+        var=var,
+        mode=mode,
+        backend=backend,
+        basis=basis,
+        periodic=periodic,
+        ad_engine=ad_engine if backend == "ad" else "auto",
+    )
 
     deps = tuple(lbl for lbl in joined.labels if (lbl in u2.deps) or (lbl in K2.deps))
     idx = {lbl: i for i, lbl in enumerate(deps)}
@@ -2228,7 +3219,15 @@ def div_K_grad(
         return oe.contract("...ij,...j->...i", Kx_exp, gu_x)
 
     flux = DomainFunction(domain=joined, deps=deps, func=_flux, metadata=u.metadata)
-    return div(flux, var=var, mode=mode, backend=backend, basis=basis, periodic=periodic)
+    return div(
+        flux,
+        var=var,
+        mode=mode,
+        backend=backend,
+        basis=basis,
+        periodic=periodic,
+        ad_engine=ad_engine if backend == "ad" else "auto",
+    )
 
 
 def deformation_gradient(
@@ -2237,6 +3236,7 @@ def deformation_gradient(
     *,
     var: str | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
+    ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Deformation gradient for a displacement field.
 
@@ -2251,6 +3251,7 @@ def deformation_gradient(
     - `u`: Displacement field (vector-valued).
     - `var`: Geometry label to differentiate with respect to.
     - `mode`: Autodiff mode passed to `grad`.
+    - `ad_engine`: AD execution strategy passed to `grad`.
 
     **Returns:**
 
@@ -2263,7 +3264,7 @@ def deformation_gradient(
             "deformation_gradient(var=...) requires a geometry variable, not a scalar variable."
         )
 
-    G = grad(u, var=var, mode=mode)
+    G = grad(u, var=var, mode=mode, backend="ad", ad_engine=ad_engine)
     I = jnp.eye(var_dim)
     return G + I
 

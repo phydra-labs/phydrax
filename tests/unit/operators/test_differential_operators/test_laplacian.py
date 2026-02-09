@@ -4,6 +4,7 @@
 
 import coordax as cx
 import jax.numpy as jnp
+import pytest
 
 from phydrax._frozendict import frozendict
 from phydrax.domain import DomainFunction, Square, TimeInterval
@@ -87,3 +88,42 @@ def test_laplacian_preserves_metadata():
     )
     out = laplacian(u)
     assert out.metadata == u.metadata
+
+
+def test_laplacian_ad_engine_jvp_matches_default_point():
+    geom = Square(center=(0.0, 0.0), side=2.0)
+
+    @geom.Function("x")
+    def f(x):
+        return x[0] ** 2 + x[1] ** 2 + x[0] * x[1]
+
+    pts = frozendict({"x": cx.Field(jnp.array([0.7, -0.2]), dims=(None,))})
+    out_ref = jnp.asarray(laplacian(f, backend="ad")(pts).data)
+    out_jvp = jnp.asarray(laplacian(f, backend="ad", ad_engine="jvp")(pts).data)
+    assert jnp.allclose(out_jvp, out_ref, atol=1e-6)
+
+
+def test_laplacian_ad_engine_jvp_matches_default_coord_separable(sample_coord_separable):
+    geom = Square(center=(0.0, 0.0), side=2.0)
+    component = geom.component()
+    batch = sample_coord_separable(component, {"x": (7, 6)}, dense_blocks=(), key=3)
+
+    @geom.Function("x")
+    def f(x):
+        x0, x1 = x
+        return x0**2 + 3.0 * x1**2
+
+    out_ref = jnp.asarray(laplacian(f, backend="ad")(batch).data)
+    out_jvp = jnp.asarray(laplacian(f, backend="ad", ad_engine="jvp")(batch).data)
+    assert jnp.allclose(out_jvp, out_ref, atol=1e-6)
+
+
+def test_laplacian_ad_engine_requires_ad_backend():
+    geom = Square(center=(0.0, 0.0), side=2.0)
+
+    @geom.Function("x")
+    def f(x):
+        return x[0] ** 2 + x[1] ** 2
+
+    with pytest.raises(ValueError, match="backend='ad'"):
+        laplacian(f, backend="jet", ad_engine="jvp")

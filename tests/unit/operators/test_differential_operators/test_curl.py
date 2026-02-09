@@ -4,6 +4,7 @@
 
 import coordax as cx
 import jax.numpy as jnp
+import pytest
 
 from phydrax._frozendict import frozendict
 from phydrax.domain import DomainFunction, TimeInterval
@@ -73,3 +74,23 @@ def test_curl_preserves_metadata(box3d):
         metadata={"k": 1},
     )
     assert curl(u, var="x").metadata == u.metadata
+
+
+def test_curl_ad_engine_jvp_matches_default(box3d):
+    @box3d.Function("x")
+    def u(x):
+        return jnp.array([x[1] + x[2], -x[0], x[0] * x[1]])
+
+    pts = frozendict({"x": cx.Field(jnp.array([0.3, -0.4, 0.2]), dims=(None,))})
+    out_ref = jnp.asarray(curl(u, var="x", backend="ad")(pts).data)
+    out_jvp = jnp.asarray(curl(u, var="x", backend="ad", ad_engine="jvp")(pts).data)
+    assert jnp.allclose(out_jvp, out_ref, atol=1e-6)
+
+
+def test_curl_ad_engine_requires_ad_backend(box3d):
+    @box3d.Function("x")
+    def u(x):
+        return jnp.array([x[1], -x[0], 0.0])
+
+    with pytest.raises(ValueError, match="backend='ad'"):
+        curl(u, var="x", backend="fd", ad_engine="jvp")

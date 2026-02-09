@@ -108,6 +108,15 @@ Many differential operators accept a `backend` keyword:
 - `backend="fd"` uses finite differences on coord-separable grids (and falls back to autodiff for point inputs).
 - `backend="basis"` uses basis-aware methods on coord-separable grids (and falls back to autodiff for point inputs).
 
+!!! note
+    For `LatentContractionModel` wrapped via `domain.Model(...)`, `partial`,
+    `partial_n`, `dt_n`, and `laplacian` may take an exact latent-factor derivative
+    contraction route under `backend="jet"`. For `backend="ad"`, Phydrax stays on
+    AD derivatives (or directional JVP if `ad_engine="jvp"` is explicitly selected).
+    The latent contraction route is an acceleration path (not an approximation): if
+    preconditions are not met, Phydrax falls back to the generic derivative path and
+    applies the model's configured fallback policy (`warn`, `error`, or `silent`).
+
 ### Jet backend (Taylor-mode / derivative jets)
 
 The jet backend propagates a *truncated derivative jet* through the computation graph. Concretely, for a smooth
@@ -142,9 +151,9 @@ The `basis` keyword (used when `backend="basis"`) selects a 1D method along each
 
 ## Coord-separable sampling and grid evaluation
 
-When you sample a `CoordSeparableBatch`, selected geometry labels provide a **tuple of 1D coordinate axes**
+When you sample a `CoordSeparableBatch`, selected labels provide a **tuple of 1D coordinate axes**
 instead of a point cloud. For a 2D geometry label `"x"`, the model/operator receives
-\((x_{\text{axis}}, y_{\text{axis}})\) and evaluates on the implied Cartesian grid.
+\((x_{\text{axis}}, y_{\text{axis}})\); for a scalar label (e.g. `"t"`), the tuple has one axis.
 
 This is the preferred mode for spectral operators and neural operators (FNO/DeepONet).
 
