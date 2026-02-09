@@ -28,10 +28,19 @@ class _AbstractBaseModel(StrictModule):
         raise NotImplementedError
 
     _supports_structured_input: bool = False
+    _supports_blockwise_input: bool = False
+    _warn_on_auto_fallback: bool = False
 
     @classmethod
     def supports_structured_input(cls) -> bool:
         return cls._supports_structured_input
+
+    @classmethod
+    def supports_blockwise_input(cls) -> bool:
+        return cls._supports_blockwise_input
+
+    def warn_on_auto_fallback(self) -> bool:
+        return bool(self._warn_on_auto_fallback)
 
 
 class _AbstractStructuredInputModel(_AbstractBaseModel):

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
 from typing import Any
 
@@ -32,31 +33,51 @@ def structured(func: Callable, /) -> StructuredCallable:
 
 
 class _ConcatenatedModelCallable(StrictModule):
+    raw_model: Any
     model: Callable
     supports_structured_input: bool
+    supports_blockwise_input: bool
+    warn_on_auto_fallback: bool
 
     def __init__(self, model: Callable, /):
+        self.raw_model = model
         supports_structured_input = isinstance(model, StructuredCallable)
+        supports_blockwise_input = False
+        warn_on_auto_fallback = False
         if isinstance(model, _AbstractBaseModel) and model.supports_structured_input():
             supports_structured_input = True
+            supports_blockwise_input = model.supports_blockwise_input()
+            warn_on_auto_fallback = model.warn_on_auto_fallback()
         self.supports_structured_input = bool(supports_structured_input)
+        self.supports_blockwise_input = bool(supports_blockwise_input)
+        self.warn_on_auto_fallback = bool(warn_on_auto_fallback)
         self.model = _ensure_special_kwonly_args(model)
+
+    def emit_auto_fallback_warning(self, message: str, /) -> None:
+        if self.warn_on_auto_fallback:
+            warnings.warn(message, UserWarning, stacklevel=3)
 
     def __call__(self, *args: Any, key=None, iter_=None, **kwargs: Any):
         if not args:
             raise ValueError("Model callable requires at least one positional input.")
 
         if self.supports_structured_input:
+
+            def _as_array_or_tuple(value: Any):
+                if isinstance(value, tuple):
+                    return tuple(jnp.asarray(v) for v in value)
+                return jnp.asarray(value)
+
             if len(args) == 1:
-                x_in = args[0]
+                x_in = _as_array_or_tuple(args[0])
             else:
-                flat: list[Any] = []
-                for a in args:
-                    if isinstance(a, tuple):
-                        flat.extend(a)
+                packed: list[Any] = []
+                for value in args:
+                    if isinstance(value, tuple):
+                        packed.extend(jnp.asarray(v) for v in value)
                     else:
-                        flat.append(a)
-                x_in = tuple(jnp.asarray(x) for x in flat)
+                        packed.append(jnp.asarray(value))
+                x_in = tuple(packed)
             return self.model(x_in, key=key, iter_=iter_, **kwargs)
 
         for a in args:

@@ -13,6 +13,7 @@ separable models, and latent contraction models over product domains.
 - `MLP` and `Linear` for dense models.
 - `Separable` and `SeparableMLP` for coord-separable inputs.
 - `LatentContractionModel` for product-domain factorization.
+- `LatentExecutionPolicy` for structured execution fallback behavior.
 
 !!! example
     ```python
@@ -45,6 +46,7 @@ from .models import (  # noqa: F401
     FNO2d,
     KAN,
     LatentContractionModel,
+    LatentExecutionPolicy,
     Linear,
     MagnitudeDirectionModel,
     MLP,
@@ -77,6 +79,7 @@ __all__ = [
     "DeepONet",
     "FNO1d",
     "FNO2d",
+    "LatentExecutionPolicy",
     "LatentContractionModel",
     "Separable",
     "SeparableFeynmaNN",
