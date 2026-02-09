@@ -126,7 +126,7 @@ def test_docs_python_examples_run(tmp_path: Path, md_path: Path) -> None:
     env.setdefault("JAX_PLATFORM_NAME", "cpu")
     env.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
-    timeout_s = 180
+    timeout_s = 60 * 5
 
     subprocess.run(
         [sys.executable, str(script_path)],

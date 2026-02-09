@@ -18,7 +18,7 @@ authors = [
   {email = "leonard@phydra.ai", name = "Phydra Labs"}
 ]
 name = "phydrax"
-version = "0.1.1"
+version = "0.2.0"
 requires-python = ">=3.11,<4.0"
 license-files = ["LICENSE"]
 
@@ -51,6 +51,10 @@ docs = [
   "mkdocstrings-python==1.16.8",
   "pymdown-extensions==10.14.3"
 ]
+notebooks = [
+    "marimo>=0.15.2",
+    "matplotlib>=3.10.8",
+]
 tests = [
     "pytest>=9.0.2",
     "pytest-clarity>=1.0.1",
@@ -62,7 +66,6 @@ qa = [
     "ruff>=0.14.14",
     "ty>=0.0.13",
 ]
-
 
 [tool.ruff]
 line-length = 90
