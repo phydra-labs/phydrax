@@ -15,20 +15,20 @@ from .._doc import DOC_KEY0
 from ..domain._components import (
     DomainComponent,
     DomainComponentUnion,
-    Fixed,
-    FixedEnd,
-    FixedStart,
-    Interior,
 )
 from ..domain._function import DomainFunction
 from ..domain._structure import (
     CoordSeparableBatch,
-    NumPoints,
     PointsBatch,
     ProductStructure,
 )
 from ..operators.integral._batch_ops import integral
 from ._base import AbstractSamplingConstraint
+from ._sampling_spec import (
+    CoordSamplingMap,
+    parse_sampling_num_points,
+    SamplingNumPoints,
+)
 
 
 class IntegralEqualityConstraint(AbstractSamplingConstraint):
@@ -53,9 +53,9 @@ class IntegralEqualityConstraint(AbstractSamplingConstraint):
     constraint_vars: tuple[str, ...]
     component: DomainComponent | DomainComponentUnion
     structure: ProductStructure
-    coord_separable: Mapping[str, Any] | None
+    coord_sampling: CoordSamplingMap | None
     dense_structure: ProductStructure | None
-    num_points: NumPoints | tuple[Any, ...]
+    num_points: Any
     sampler: str
     weight: Array
     label: str | None
@@ -70,9 +70,8 @@ class IntegralEqualityConstraint(AbstractSamplingConstraint):
         component: DomainComponent | DomainComponentUnion,
         integrand: Callable[[Mapping[str, DomainFunction]], DomainFunction],
         equal_to: ArrayLike = 0.0,
-        num_points: NumPoints | tuple[Any, ...],
+        num_points: SamplingNumPoints,
         structure: ProductStructure,
-        coord_separable: Mapping[str, Any] | None = None,
         dense_structure: ProductStructure | None = None,
         constraint_vars: Sequence[str] | None = None,
         sampler: str = "latin_hypercube",
@@ -85,34 +84,21 @@ class IntegralEqualityConstraint(AbstractSamplingConstraint):
         self.component = component
         self.integrand = integrand
         self.equal_to = jnp.asarray(equal_to, dtype=float)
-        self.num_points = num_points
         self.structure = structure
-        self.coord_separable = coord_separable
-        self.dense_structure = dense_structure
+        dense_num_points, coord_sampling, dense_structure_out = parse_sampling_num_points(
+            component,
+            num_points=num_points,
+            structure=structure,
+            dense_structure=dense_structure,
+        )
+        self.num_points = dense_num_points
+        self.coord_sampling = coord_sampling
+        self.dense_structure = dense_structure_out
         self.sampler = str(sampler)
         self.weight = jnp.asarray(weight, dtype=float)
         self.label = None if label is None else str(label)
         self.over = over
         self.reduction = "integral"
-        self._ensure_coord_separable_interior()
-
-    def _ensure_coord_separable_interior(self) -> None:
-        if self.coord_separable is None:
-            return
-        if isinstance(self.component, DomainComponentUnion):
-            raise ValueError(
-                "coord_separable sampling is not supported for DomainComponentUnion."
-            )
-        coord_labels = tuple(self.coord_separable)
-        bad = tuple(
-            lbl
-            for lbl in coord_labels
-            if not isinstance(self.component.spec.component_for(lbl), Interior)
-        )
-        if bad:
-            raise ValueError(
-                f"coord_separable labels must use Interior() components; got {bad!r}."
-            )
 
     @classmethod
     def from_integrand(
@@ -122,9 +108,8 @@ class IntegralEqualityConstraint(AbstractSamplingConstraint):
         integrand: Callable[[Mapping[str, DomainFunction]], DomainFunction]
         | DomainFunction,
         equal_to: ArrayLike = 0.0,
-        num_points: NumPoints | tuple[Any, ...],
+        num_points: SamplingNumPoints,
         structure: ProductStructure,
-        coord_separable: Mapping[str, Any] | None = None,
         dense_structure: ProductStructure | None = None,
         constraint_vars: Sequence[str] | None = None,
         sampler: str = "latin_hypercube",
@@ -148,7 +133,6 @@ class IntegralEqualityConstraint(AbstractSamplingConstraint):
             equal_to=equal_to,
             num_points=num_points,
             structure=structure,
-            coord_separable=coord_separable,
             dense_structure=dense_structure,
             constraint_vars=constraint_vars,
             sampler=sampler,
@@ -165,9 +149,8 @@ class IntegralEqualityConstraint(AbstractSamplingConstraint):
         operator: Callable[..., DomainFunction],
         constraint_vars: str | Sequence[str],
         equal_to: ArrayLike = 0.0,
-        num_points: NumPoints | tuple[Any, ...],
+        num_points: SamplingNumPoints,
         structure: ProductStructure,
-        coord_separable: Mapping[str, Any] | None = None,
         dense_structure: ProductStructure | None = None,
         sampler: str = "latin_hypercube",
         weight: ArrayLike = 1.0,
@@ -190,7 +173,6 @@ class IntegralEqualityConstraint(AbstractSamplingConstraint):
             equal_to=equal_to,
             num_points=num_points,
             structure=structure,
-            coord_separable=coord_separable,
             dense_structure=dense_structure,
             constraint_vars=vars_tuple,
             sampler=sampler,
@@ -199,63 +181,21 @@ class IntegralEqualityConstraint(AbstractSamplingConstraint):
             over=over,
         )
 
-    def _dense_structure_for_coord_separable(self) -> ProductStructure | None:
-        if self.dense_structure is not None:
-            return self.dense_structure
-        if self.coord_separable is None:
-            return None
-        if isinstance(self.component, DomainComponentUnion):
-            raise ValueError(
-                "coord_separable sampling is not supported for DomainComponentUnion."
-            )
-        coord_labels = set(self.coord_separable)
-        fixed_labels = frozenset(
-            lbl
-            for lbl in self.component.domain.labels
-            if isinstance(
-                self.component.spec.component_for(lbl), (FixedStart, FixedEnd, Fixed)
-            )
-        )
-        dense_labels = [
-            lbl
-            for lbl in self.component.domain.labels
-            if lbl not in coord_labels and lbl not in fixed_labels
-        ]
-        if not dense_labels:
-            return ProductStructure(blocks=())
-        blocks: list[tuple[str, ...]] = []
-        for block in self.structure.blocks:
-            filtered = tuple(
-                lbl
-                for lbl in block
-                if lbl not in coord_labels and lbl not in fixed_labels
-            )
-            if filtered:
-                blocks.append(filtered)
-        covered = set(lbl for block in blocks for lbl in block)
-        missing = [lbl for lbl in dense_labels if lbl not in covered]
-        if missing:
-            raise ValueError(
-                "coord_separable requires dense_structure to cover non-separable labels; "
-                f"missing {tuple(missing)!r}."
-            )
-        return ProductStructure(tuple(blocks))
-
     def sample(
         self,
         *,
         key: Key[Array, ""] = DOC_KEY0,
     ) -> PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...]:
         """Sample points for estimating the integral."""
-        if self.coord_separable is not None:
+        if self.coord_sampling is not None:
             if isinstance(self.component, DomainComponentUnion):
                 raise ValueError(
-                    "coord_separable sampling is not supported for DomainComponentUnion."
+                    "coord-separable sampling is not supported for DomainComponentUnion."
                 )
             return self.component.sample_coord_separable(
-                self.coord_separable,
+                self.coord_sampling,
                 num_points=self.num_points,
-                dense_structure=self._dense_structure_for_coord_separable(),
+                dense_structure=self.dense_structure,
                 sampler=self.sampler,
                 key=key,
             )

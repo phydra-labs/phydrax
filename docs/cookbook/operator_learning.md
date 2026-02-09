@@ -67,9 +67,8 @@ For this runnable example, we choose a simple analytic “operator” that maps 
         component=domain.component(),
         operator=residual,
         constraint_vars="u",
-        num_points=8,  # number of dataset samples per step
+        num_points=(8, {"x": phx.domain.UniformAxisSpec(nx)}),  # dense data + coord-separable x
         structure=phx.domain.ProductStructure((("data", "x"),)),
-        coord_separable={"x": phx.domain.UniformAxisSpec(nx)},
         dense_structure=phx.domain.ProductStructure((("data",),)),
         reduction="mean",
     )

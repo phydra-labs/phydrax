@@ -11,9 +11,10 @@ from jaxtyping import ArrayLike
 
 from ..domain._components import DomainComponentUnion, Fixed, FixedEnd, FixedStart
 from ..domain._function import DomainFunction
-from ..domain._structure import NumPoints, ProductStructure
+from ..domain._structure import ProductStructure
 from ..operators.differential._domain_ops import dt_n
 from ._functional import FunctionalConstraint
+from ._sampling_spec import SamplingNumPoints
 
 
 def ContinuousPointwiseInteriorConstraint(
@@ -21,9 +22,8 @@ def ContinuousPointwiseInteriorConstraint(
     domain,
     operator,
     *,
-    num_points: NumPoints | tuple[Any, ...],
+    num_points: SamplingNumPoints,
     structure: ProductStructure,
-    coord_separable: Mapping[str, Any] | None = None,
     dense_structure: ProductStructure | None = None,
     sampler: str = "latin_hypercube",
     weight: ArrayLike = 1.0,
@@ -63,9 +63,10 @@ def ContinuousPointwiseInteriorConstraint(
     - `domain`: A `phydrax.domain` object to sample from.
     - `operator`: Callable mapping one or more `DomainFunction` objects to a residual
       `DomainFunction`.
-    - `num_points`: Number of interior points to sample (paired or structured; see `structure`).
+    - `num_points`: Sampling spec. Accepts dense counts (`int` / `tuple[int, ...]`),
+      coord-separable mappings (e.g. `{"x": 64}`), or mixed forms
+      `(dense_num_points, coord_map)`.
     - `structure`: A `ProductStructure` describing how variables are sampled/blocked.
-    - `coord_separable`: Optional coord-separable sampling spec (per label).
     - `dense_structure`: Optional dense structure used when sampling produces dense batches.
     - `sampler`: Sampling scheme (e.g. `"latin_hypercube"`).
     - `weight`: Scalar multiplier $w$ applied to this term.
@@ -85,7 +86,6 @@ def ContinuousPointwiseInteriorConstraint(
         constraint_vars=constraint_vars,
         num_points=num_points,
         structure=structure,
-        coord_separable=coord_separable,
         dense_structure=dense_structure,
         sampler=sampler,
         weight=weight,
@@ -105,9 +105,8 @@ def ContinuousInitialFunctionConstraint(
     time_derivative_order: int = 0,
     mode: Literal["reverse", "forward"] = "reverse",
     time_derivative_backend: Literal["ad", "jet"] = "ad",
-    num_points: NumPoints | tuple[Any, ...],
+    num_points: SamplingNumPoints,
     structure: ProductStructure,
-    coord_separable: Mapping[str, Any] | None = None,
     dense_structure: ProductStructure | None = None,
     sampler: str = "latin_hypercube",
     weight: ArrayLike = 1.0,
@@ -141,9 +140,10 @@ def ContinuousInitialFunctionConstraint(
     - `time_derivative_order`: Derivative order $n$ for $\partial^n/\partial t^n$.
     - `mode`: Differentiation mode (`"reverse"` or `"forward"`).
     - `time_derivative_backend`: Backend for time derivatives (`"ad"` or `"jet"`).
-    - `num_points`: Number of initial-slice points to sample (paired or structured; see `structure`).
+    - `num_points`: Sampling spec. Accepts dense counts (`int` / `tuple[int, ...]`),
+      coord-separable mappings (e.g. `{"x": 64}`), or mixed forms
+      `(dense_num_points, coord_map)`.
     - `structure`: A `ProductStructure` describing how variables are sampled/blocked.
-    - `coord_separable`: Optional coord-separable sampling spec (per label).
     - `dense_structure`: Optional dense structure used when sampling produces dense batches.
     - `sampler`: Sampling scheme (e.g. `"latin_hypercube"`).
     - `weight`: Scalar multiplier applied to this term.
@@ -204,19 +204,12 @@ def ContinuousInitialFunctionConstraint(
             - value
         )
 
-    if coord_separable is not None:
-        if coord_separable.keys() & fixed_labels:
-            raise ValueError(
-                "coord_separable must not include fixed labels for initial constraints."
-            )
-
     return FunctionalConstraint.from_operator(
         component=component,
         operator=operator,
         constraint_vars=constraint_vars,
         num_points=num_points,
         structure=structure,
-        coord_separable=coord_separable,
         dense_structure=dense_structure,
         sampler=sampler,
         weight=weight,

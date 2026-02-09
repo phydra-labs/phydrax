@@ -203,34 +203,56 @@ def _default_quadrature_total_weight_coord_separable(
 
     w_total = cx.Field(jnp.array(1.0, dtype=float), dims=())
 
-    # Coord-separable geometry labels: per-axis AABB lengths.
+    # Coord-separable labels: per-axis uniform weights (or provided quadrature weights).
     for lbl, axes in batch.coord_axes_by_label.items():
         factor = component.domain.factor(lbl)
         if isinstance(factor, RelabeledDomain):
             factor = factor.base
-        if not isinstance(factor, _AbstractGeometry):
-            raise TypeError(
-                "coord-separable quadrature requires a geometry label; "
-                f"got {lbl!r} with factor {type(factor).__name__}."
-            )
-        bounds = jnp.asarray(factor.mesh_bounds, dtype=float)
-        lengths = bounds[1] - bounds[0]
-        if len(axes) != int(factor.var_dim):
-            raise ValueError(
-                f"coord-separable axis count mismatch for {lbl!r}: got {len(axes)} axes "
-                f"but geometry var_dim={int(factor.var_dim)}."
-            )
-        for i, axis in enumerate(axes):
-            field = _first_field_leaf(batch.points[lbl][i])
+        if isinstance(factor, _AbstractGeometry):
+            bounds = jnp.asarray(factor.mesh_bounds, dtype=float)
+            lengths = bounds[1] - bounds[0]
+            if len(axes) != int(factor.var_dim):
+                raise ValueError(
+                    f"coord-separable axis count mismatch for {lbl!r}: got {len(axes)} axes "
+                    f"but geometry var_dim={int(factor.var_dim)}."
+                )
+            for i, axis in enumerate(axes):
+                field = _first_field_leaf(batch.points[lbl][i])
+                n = int(field.data.shape[0])
+                disc = batch.axis_discretization_by_axis.get(axis)
+                if disc is not None and disc.quad_weights is not None:
+                    w_axis = cx.Field(jnp.asarray(disc.quad_weights), dims=(axis,))
+                else:
+                    w_axis = cx.Field(
+                        jnp.full((n,), lengths[i] / float(n), dtype=float), dims=(axis,)
+                    )
+                w_total = w_total * w_axis
+            continue
+
+        if isinstance(factor, _AbstractScalarDomain):
+            if len(axes) != 1:
+                raise ValueError(
+                    f"coord-separable axis count mismatch for scalar label {lbl!r}: "
+                    f"got {len(axes)} axes but expected 1."
+                )
+            axis = axes[0]
+            field = _first_field_leaf(batch.points[lbl][0])
             n = int(field.data.shape[0])
             disc = batch.axis_discretization_by_axis.get(axis)
             if disc is not None and disc.quad_weights is not None:
                 w_axis = cx.Field(jnp.asarray(disc.quad_weights), dims=(axis,))
             else:
+                measure = _label_measure(component, lbl)
                 w_axis = cx.Field(
-                    jnp.full((n,), lengths[i] / float(n), dtype=float), dims=(axis,)
+                    jnp.full((n,), measure / float(n), dtype=float), dims=(axis,)
                 )
             w_total = w_total * w_axis
+            continue
+
+        raise TypeError(
+            "coord-separable quadrature requires a geometry/scalar label; "
+            f"got {lbl!r} with factor {type(factor).__name__}."
+        )
 
     # Dense blocks: same as paired sampling weights.
     for block, axis in zip(

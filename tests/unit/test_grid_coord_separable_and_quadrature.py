@@ -4,7 +4,13 @@
 
 import jax.numpy as jnp
 
-from phydrax.domain import FourierAxisSpec, Interval1d, LegendreAxisSpec
+from phydrax.domain import (
+    FourierAxisSpec,
+    Interval1d,
+    LegendreAxisSpec,
+    ProductStructure,
+    TimeInterval,
+)
 from phydrax.operators.integral import integral
 
 
@@ -53,3 +59,23 @@ def test_sdf_domain_function_evaluates_on_coord_separable_batch():
     values = jnp.asarray(out.data, dtype=float)
     assert jnp.all(values <= 0.0 + 1e-8)
     assert jnp.any(values < 0.0)
+
+
+def test_coord_separable_scalar_time_axis_integral_constant():
+    geom = Interval1d(0.0, 1.0)
+    time = TimeInterval(0.0, 2.0)
+    domain = geom @ time
+    component = domain.component()
+
+    @domain.Function("x", "t")
+    def u(x, t):
+        del x, t
+        return 1.0
+
+    batch = component.sample_coord_separable(
+        {"t": LegendreAxisSpec(8)},
+        num_points=5,
+        dense_structure=ProductStructure((("x",),)),
+    )
+    out = integral(u, batch, component=component)
+    assert jnp.allclose(jnp.asarray(out.data), 2.0, rtol=1e-7, atol=1e-7)

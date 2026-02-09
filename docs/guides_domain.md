@@ -91,7 +91,7 @@ batch = domain.component().sample(
 For spectral/basis operators and neural operators, it is often preferable to sample *1D axes*
 and evaluate on the implied Cartesian grid. This is **coord-separable sampling**.
 
-You choose which geometry labels are coord-separable by passing a per-label spec, e.g.
+You choose which unary labels are coord-separable by passing a per-label spec, e.g.
 `{"x": FourierAxisSpec(64)}` for a 1D periodic grid or `{"x": (64, 64)}` for a 2D grid.
 
 ```python
@@ -106,8 +106,9 @@ batch = geom.component().sample_coord_separable(
 )
 ```
 
-When a geometry label is coord-separable, the value passed into a `DomainFunction` for that label
-is a **tuple of 1D coordinate arrays** (one per spatial dimension), rather than a point cloud.
+When a label is coord-separable, the value passed into a `DomainFunction` for that label
+is a **tuple of 1D coordinate arrays** (for scalar labels this tuple has length 1),
+rather than a point cloud.
 
 ## Axis specs and quadrature metadata
 
