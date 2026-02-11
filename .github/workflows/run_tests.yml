@@ -28,6 +28,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+          uv add chex
           uv sync --all-extras
 
       - name: Test with pytest
