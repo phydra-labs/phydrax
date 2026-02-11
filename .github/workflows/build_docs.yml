@@ -7,6 +7,7 @@ on:
   pull_request:
     branches:
       - main
+      
 
 permissions:
   contents: write
@@ -33,19 +34,8 @@ jobs:
 
       - name: Install dependencies
         run: |
+          uv add chex
           uv sync --extra docs
-
-      - name: Debug phydrax import traceback
-        run: |
-          uv run python - <<'PY'
-          import traceback
-          try:
-              import phydrax
-              print("phydrax import OK")
-          except Exception:
-              traceback.print_exc()
-              raise
-          PY
 
       - name: Build docs
         run: uv run mkdocs build
