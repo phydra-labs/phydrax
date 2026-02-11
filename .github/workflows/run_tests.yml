@@ -30,4 +30,4 @@ jobs:
 
       - name: Test with pytest
         run: |
-          uv run pytest -n auto --reruns 1
+          uv run pytest
