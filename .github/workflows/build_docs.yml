@@ -1,0 +1,36 @@
+name: Build docs
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  run-test:
+    strategy:
+      matrix:
+        python-version: [ 3.11 ]
+        os: [ ubuntu-latest ]
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          uv sync --extra docs
+
+      - name: Check that documentation can be built, and deploy it.
+        run: |
+          uv run mkdocs build
+          uv run mkdocs gh-deploy
