@@ -33,7 +33,9 @@ with \(g(x,y)=x^2+y^2\). The exact solution is \(u^\star(x,y)=x^2+y^2\).
     def g(x):
         return x[0] ** 2 + x[1] ** 2
 
-    model = phx.nn.MLP(in_size=2, out_size="scalar", width_size=16, depth=2, key=jr.key(0))
+    model = phx.nn.MLP(
+        in_size=2, out_size="scalar", width_size=16, depth=2, scan=False, key=jr.key(0)
+    )
     u = geom.Model("x")(model)
 
     structure = phx.domain.ProductStructure((("x",),))
@@ -79,7 +81,9 @@ Instead of penalizing boundary mismatch, enforce \(u=g\) by construction using
     def g(x):
         return x[0] ** 2 + x[1] ** 2
 
-    model = phx.nn.MLP(in_size=2, out_size="scalar", width_size=16, depth=2, key=jr.key(0))
+    model = phx.nn.MLP(
+        in_size=2, out_size="scalar", width_size=16, depth=2, scan=False, key=jr.key(0)
+    )
     u = geom.Model("x")(model)
 
     structure = phx.domain.ProductStructure((("x",),))

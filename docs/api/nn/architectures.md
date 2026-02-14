@@ -8,6 +8,9 @@ Common end-to-end model families (dense, separable, polynomial, and complex-valu
     - `MLP` is a standard feed-forward network with optional residual connection.
     - `KAN` replaces activations with polynomial edge functions.
     - `FeynmaNN` builds complex hidden states with a sum-over-paths block.
+    - `MLP`, `KAN`, `FeynmaNN`, `FNO1d`, and `FNO2d` support `scan=True` to use
+      a scan-over-depth execution path when topology is compatible.
+    - `scan=True` is primarily a compile-time optimization for deeper repeated blocks.
 
 ::: phydrax.nn.MLP
     options:
