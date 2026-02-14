@@ -38,7 +38,7 @@ See [API → Constraints → Enforced constraint ansätze](../api/constraints/en
 
 ### Differentiation backends
 
-Differential operators support multiple backends (`backend="ad"|"jet"|"fd"|"basis"`) and autodiff modes
+Differential operators support multiple backends (`backend="ad"|"jet"|"fd"|"basis"|"mfd"`) and autodiff modes
 (`mode="reverse"|"forward"`). For deep math notes, see
 [Appendix → Differentiation modes](../appendix/differentiation_modes.md).
 

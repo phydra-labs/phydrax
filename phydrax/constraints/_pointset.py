@@ -226,6 +226,7 @@ class PointSetConstraint(AbstractConstraint):
     label: str | None
     reduction: Literal["mean", "sum"]
     residual: Callable[[Mapping[str, DomainFunction]], DomainFunction]
+    eval_kwargs: frozendict[str, Any]
 
     def __init__(
         self,
@@ -236,6 +237,7 @@ class PointSetConstraint(AbstractConstraint):
         weight: ArrayLike = 1.0,
         label: str | None = None,
         reduction: Literal["mean", "sum"] = "mean",
+        eval_kwargs: Mapping[str, Any] | None = None,
     ):
         """Create a point-set constraint from points and a residual callable."""
         self.constraint_vars = () if constraint_vars is None else tuple(constraint_vars)
@@ -244,6 +246,7 @@ class PointSetConstraint(AbstractConstraint):
         self.weight = jnp.asarray(weight, dtype=float)
         self.label = None if label is None else str(label)
         self.reduction = reduction
+        self.eval_kwargs = frozendict({} if eval_kwargs is None else dict(eval_kwargs))
 
     @classmethod
     def from_points(
@@ -256,6 +259,7 @@ class PointSetConstraint(AbstractConstraint):
         weight: ArrayLike = 1.0,
         label: str | None = None,
         reduction: Literal["mean", "sum"] = "mean",
+        eval_kwargs: Mapping[str, Any] | None = None,
     ) -> "PointSetConstraint":
         """Build a `PointSetConstraint` from raw point coordinates."""
         batch = points_batch_from_points(component, points)
@@ -266,6 +270,7 @@ class PointSetConstraint(AbstractConstraint):
             weight=weight,
             label=label,
             reduction=reduction,
+            eval_kwargs=eval_kwargs,
         )
 
     @classmethod
@@ -278,6 +283,7 @@ class PointSetConstraint(AbstractConstraint):
         weight: ArrayLike = 1.0,
         label: str | None = None,
         reduction: Literal["mean", "sum"] = "mean",
+        eval_kwargs: Mapping[str, Any] | None = None,
     ) -> "PointSetConstraint":
         """Build a `PointSetConstraint` from an operator applied to named fields."""
         vars_tuple = (
@@ -296,6 +302,7 @@ class PointSetConstraint(AbstractConstraint):
             weight=weight,
             label=label,
             reduction=reduction,
+            eval_kwargs=eval_kwargs,
         )
 
     def sample(
@@ -319,6 +326,8 @@ class PointSetConstraint(AbstractConstraint):
         This evaluates the residual on the stored points and applies the configured
         reduction (`mean` or `sum`).
         """
+        runtime_kwargs: dict[str, Any] = dict(self.eval_kwargs)
+        runtime_kwargs.update(kwargs)
         res = self.residual(functions)
         if not isinstance(res, DomainFunction):
             base = None
@@ -340,13 +349,30 @@ class PointSetConstraint(AbstractConstraint):
             else:
                 res = DomainFunction(domain=base.domain, deps=(), func=res, metadata={})
 
+        mfd_mode = runtime_kwargs.get("mfd_mode")
+        use_cloud = isinstance(mfd_mode, str) and mfd_mode.lower() == "cloud"
+        if use_cloud:
+            runtime_kwargs["_blockwise_eval"] = "direct"
+            out_res = res(self.points, key=key, **runtime_kwargs)
+            if not isinstance(out_res, cx.Field):
+                raise TypeError("Expected pointset evaluation to return a coordax.Field.")
+            data = jnp.asarray(out_res.data, dtype=float)
+            sq = data * data
+            if sq.ndim > 1:
+                sq = jnp.sum(sq, axis=tuple(range(1, sq.ndim)))
+            if self.reduction == "sum":
+                value = jnp.sum(sq)
+            else:
+                value = jnp.mean(sq)
+            return self.weight * value.reshape(())
+
         f = DomainFunction(
             domain=res.domain,
             deps=res.deps,
             func=_SquaredFrobeniusResidual(res),
             metadata=res.metadata,
         )
-        out = f(self.points, key=key, **kwargs)
+        out = f(self.points, key=key, **runtime_kwargs)
         if not isinstance(out, cx.Field):
             raise TypeError("Expected pointset evaluation to return a coordax.Field.")
 

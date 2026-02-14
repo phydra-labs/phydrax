@@ -1062,7 +1062,7 @@ class _BoundaryBlendOverlay(StrictModule):
             axis: int | None,
             order: int,
             mode: Literal["reverse", "forward"],
-            backend: Literal["ad", "jet", "fd", "basis"],
+            backend: Literal["ad", "jet", "fd", "basis", "mfd"],
             basis: Literal["poly", "fourier", "sine", "cosine"],
             periodic: bool,
         ) -> DomainFunction | None:
@@ -1678,7 +1678,7 @@ class _InteriorDataOverlay(StrictModule):
             axis: int | None,
             order: int,
             mode: Literal["reverse", "forward"],
-            backend: Literal["ad", "jet", "fd", "basis"],
+            backend: Literal["ad", "jet", "fd", "basis", "mfd"],
             basis: Literal["poly", "fourier", "sine", "cosine"],
             periodic: bool,
         ) -> DomainFunction | None:

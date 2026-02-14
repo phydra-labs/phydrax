@@ -114,6 +114,15 @@ class _AbstractDomain(StrictModule):
             )
             has_key = "key" in params
             has_iter = "iter_" in params
+            accepted_kw_names = {
+                name
+                for name, p in params.items()
+                if p.kind
+                in (
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    inspect.Parameter.KEYWORD_ONLY,
+                )
+            }
 
             if has_key and params["key"].kind != inspect.Parameter.KEYWORD_ONLY:
                 raise TypeError("`key` must be a keyword-only argument for `func`.")
@@ -129,6 +138,19 @@ class _AbstractDomain(StrictModule):
                     if out_kwargs is kwargs:
                         out_kwargs = dict(out_kwargs)
                     out_kwargs["iter_"] = iter_
+
+                if not has_var_kwargs and out_kwargs:
+                    # Differential runtime knobs (e.g. mfd_mode/mfd_cloud_plan) may be
+                    # threaded through composite residual expressions. Drop those for
+                    # plain user functions that do not declare **kwargs.
+                    out_kwargs = {
+                        k: v
+                        for k, v in out_kwargs.items()
+                        if (
+                            (k in accepted_kw_names)
+                            or (not (k == "force_generic" or k.startswith("mfd_")))
+                        )
+                    }
 
                 coord_indices = [
                     i
