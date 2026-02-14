@@ -16,6 +16,8 @@ Models that exploit product-domain structure via low-rank factorization.
       exact latent-factor derivative contraction path under `backend="jet"`; if that
       path is unavailable, execution falls back according to
       `LatentExecutionPolicy.fallback`.
+    - `SeparableMLP`, `SeparableKAN`, and `SeparableFeynmaNN` forward `scan` to
+      their internal scalar submodels.
 
 ::: phydrax.nn.Separable
     options:
@@ -26,6 +28,14 @@ Models that exploit product-domain structure via low-rank factorization.
 ---
 
 ::: phydrax.nn.SeparableMLP
+    options:
+        members:
+            - __init__
+            - __call__
+
+---
+
+::: phydrax.nn.SeparableKAN
     options:
         members:
             - __init__

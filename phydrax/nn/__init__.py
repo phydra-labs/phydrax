@@ -53,6 +53,7 @@ from .models import (  # noqa: F401
     RandomFourierFeatureEmbeddings,
     Separable,
     SeparableFeynmaNN,
+    SeparableKAN,
     SeparableMLP,
 )
 
@@ -72,6 +73,7 @@ __all__ = [
     "MagnitudeDirectionModel",
     "RandomFourierFeatureEmbeddings",
     "SeparableMLP",
+    "SeparableKAN",
     "KAN",
     "Linear",
     "MLP",

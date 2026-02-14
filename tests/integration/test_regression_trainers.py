@@ -14,7 +14,7 @@ from phydrax.nn.models import MLP
 from phydrax.solver import FunctionalSolver
 
 
-def _make_regression_solver(seed: int) -> FunctionalSolver:
+def _make_regression_solver(seed: int, *, scan: bool = False) -> FunctionalSolver:
     geom = Square(center=(0.0, 0.0), side=2.0)
 
     @geom.Function("x")
@@ -32,13 +32,30 @@ def _make_regression_solver(seed: int) -> FunctionalSolver:
         reduction="mean",
     )
 
-    model = MLP(in_size=2, out_size="scalar", hidden_sizes=(), key=jr.key(seed))
+    model = MLP(
+        in_size=2, out_size="scalar", hidden_sizes=(), scan=scan, key=jr.key(seed)
+    )
     u = geom.Model("x")(model)
     return FunctionalSolver(functions={"u": u}, constraints=[constraint])
 
 
 def test_regression_2d_optax():
     solver = _make_regression_solver(seed=0)
+    init_loss = solver.loss(key=jr.key(0))
+
+    trained = solver.solve(
+        num_iter=120,
+        optim=optax.adam(1e-2),
+        seed=0,
+        jit=True,
+        keep_best=True,
+    )
+    final_loss = trained.loss(key=jr.key(0))
+    assert final_loss < init_loss
+
+
+def test_regression_2d_optax_scan():
+    solver = _make_regression_solver(seed=3, scan=True)
     init_loss = solver.loss(key=jr.key(0))
 
     trained = solver.solve(

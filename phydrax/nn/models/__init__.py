@@ -8,6 +8,7 @@ from .architectures._fno import FNO1d, FNO2d
 from .architectures._kan import KAN
 from .architectures._mlp import MLP
 from .architectures._separable_feynmann import SeparableFeynmaNN
+from .architectures._separable_kan import SeparableKAN
 from .architectures._separable_mlp import SeparableMLP
 from .embeddings._fourier import (
     RandomFourierFeatureEmbeddings,
@@ -41,6 +42,7 @@ __all__ = [
     "MagnitudeDirectionModel",
     "DeepONet",
     "SeparableMLP",
+    "SeparableKAN",
     "SeparableFeynmaNN",
     "FeynmaNN",
     "FNO1d",

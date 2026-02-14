@@ -16,6 +16,7 @@ from ...._strict import StrictModule
 from ..._utils import _get_size, _identity
 from ...activations._stan import Stan
 from ..core._base import _AbstractBaseModel
+from ..core._scan_utils import pack_scan_modules, scan_apply, stack_scan_dynamics
 from ..layers._linear import Linear as RealLinear
 
 
@@ -87,6 +88,18 @@ class _ModReLU(StrictModule):
         u = z / (r + self.eps)
         m = jnp.maximum(r + self.b, 0.0)
         return m * u
+
+
+class _FeynBlockStep(StrictModule):
+    block: "_SumOverPathsDense"
+    activation: _ModReLU
+
+    def __init__(self, block: "_SumOverPathsDense", activation: _ModReLU):
+        self.block = block
+        self.activation = activation
+
+    def __call__(self, z: Array) -> Array:
+        return self.activation(self.block(z))
 
 
 class _ActionNet(StrictModule):
@@ -275,6 +288,9 @@ class FeynmaNN(_AbstractBaseModel):
     in_size: int | Literal["scalar"]
     out_size: int | Literal["scalar"]
     final_activation: Callable
+    scan: bool
+    _scan_enabled: bool
+    _scan_static: object | None
 
     def __init__(
         self,
@@ -292,6 +308,7 @@ class FeynmaNN(_AbstractBaseModel):
         key: Key[Array, ""] = DOC_KEY0,
         rwf: bool | tuple[float, float] = False,
         keep_output_complex: bool = False,
+        scan: bool = False,
     ):
         in_features = _get_size(in_size)
         out_features = _get_size(out_size)
@@ -338,6 +355,19 @@ class FeynmaNN(_AbstractBaseModel):
         self.in_size = in_size
         self.out_size = out_size
         self.final_activation = final_act
+        self.scan = bool(scan)
+        self._scan_enabled = False
+        self._scan_static = None
+
+        if self.scan and len(self.blocks) > 1 and self.activs is not None:
+            repeated_steps = tuple(
+                _FeynBlockStep(block=b, activation=a)
+                for b, a in zip(self.blocks[1:], self.activs[1:], strict=True)
+            )
+            _, static, enabled = pack_scan_modules(repeated_steps)
+            self._scan_enabled = enabled
+            if enabled:
+                self._scan_static = static
 
     def __call__(
         self,
@@ -358,8 +388,26 @@ class FeynmaNN(_AbstractBaseModel):
             and self.activs is not None
         )
         z = self.complexify(x)
-        for block, act in zip(self.blocks, self.activs):
-            z = act(block(z))
+        if self._scan_enabled and self._scan_static is not None and len(self.blocks) > 1:
+            repeated_steps = tuple(
+                _FeynBlockStep(block=b, activation=a)
+                for b, a in zip(self.blocks[1:], self.activs[1:], strict=True)
+            )
+            dynamic = stack_scan_dynamics(repeated_steps)
+            if dynamic is not None:
+                z = self.activs[0](self.blocks[0](z))
+                z = scan_apply(
+                    dynamic,
+                    self._scan_static,
+                    z,
+                    lambda carry, layer: layer(carry),
+                )
+            else:
+                for block, act in zip(self.blocks, self.activs):
+                    z = act(block(z))
+        else:
+            for block, act in zip(self.blocks, self.activs):
+                z = act(block(z))
         if self.latent_project is not None:
             y = self.latent_project(z)
         else:
