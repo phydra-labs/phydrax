@@ -16,6 +16,7 @@ from jaxtyping import ArrayLike
 
 from ..._callable import _KeyIterAdapter
 from ..._frozendict import frozendict
+from ..._strict import StrictModule
 from ...domain._base import _AbstractGeometry
 from ...domain._domain import RelabeledDomain
 from ...domain._function import (
@@ -109,7 +110,7 @@ def _resolve_ad_mode(
 
 
 def _ensure_ad_engine_backend(
-    backend: Literal["ad", "jet", "fd", "basis"], ad_engine: _ADEngine, /
+    backend: Literal["ad", "jet", "fd", "basis", "mfd"], ad_engine: _ADEngine, /
 ) -> None:
     if backend != "ad" and ad_engine != "auto":
         raise ValueError("ad_engine is only supported when backend='ad'.")
@@ -253,7 +254,7 @@ def _try_derivative_hook(
     axis: int | None,
     order: int,
     mode: Literal["reverse", "forward"],
-    backend: Literal["ad", "jet", "fd", "basis"],
+    backend: Literal["ad", "jet", "fd", "basis", "mfd"],
     basis: Literal["poly", "fourier", "sine", "cosine"],
     periodic: bool,
 ) -> DomainFunction | None:
@@ -320,7 +321,7 @@ def _partial_eval_cache_key(
     axis_i: int,
     order_i: int,
     mode: Literal["reverse", "forward"],
-    backend: Literal["ad", "jet", "fd", "basis"],
+    backend: Literal["ad", "jet", "fd", "basis", "mfd"],
     basis: Literal["poly", "fourier", "sine", "cosine"],
     periodic: bool,
     force_generic: bool,
@@ -725,13 +726,599 @@ def _basis_nth_derivative(
     return _poly_nth_derivative(y, x, axis=axis, order=order)
 
 
+_MFDBoundaryMode = Literal["biased", "ghost", "hybrid"]
+_MFDPointMode = Literal["probe", "cloud"]
+
+
+class MFDCloudPlan(StrictModule):
+    """Precomputed fixed-cloud stencil plan for point-input MFD."""
+
+    neighbors_idx: jax.Array
+    weights: jax.Array
+    mask: jax.Array
+    axis_i: int
+    order_i: int
+    num_points: int
+    k: int
+
+    def __init__(
+        self,
+        *,
+        neighbors_idx: ArrayLike,
+        weights: ArrayLike,
+        mask: ArrayLike,
+        axis_i: int,
+        order_i: int,
+    ):
+        idx = jnp.asarray(neighbors_idx, dtype=jnp.int32)
+        w = jnp.asarray(weights, dtype=float)
+        m = jnp.asarray(mask, dtype=bool)
+        if idx.ndim != 2:
+            raise ValueError(
+                f"MFDCloudPlan.neighbors_idx must have shape (N,K), got {idx.shape}."
+            )
+        if w.shape != idx.shape:
+            raise ValueError(
+                "MFDCloudPlan.weights must match neighbors_idx shape; "
+                f"got {w.shape} and {idx.shape}."
+            )
+        if m.shape != idx.shape:
+            raise ValueError(
+                "MFDCloudPlan.mask must match neighbors_idx shape; "
+                f"got {m.shape} and {idx.shape}."
+            )
+        n = int(idx.shape[0])
+        k = int(idx.shape[1])
+        if n <= 0 or k <= 0:
+            raise ValueError("MFDCloudPlan requires positive N and K.")
+        self.neighbors_idx = idx
+        self.weights = w
+        self.mask = m
+        self.axis_i = int(axis_i)
+        self.order_i = int(order_i)
+        self.num_points = n
+        self.k = k
+
+
+def _mfd_cloud_points_1d(points: ArrayLike, /) -> jax.Array:
+    pts = jnp.asarray(points, dtype=float)
+    if pts.ndim == 1:
+        return pts.reshape((-1,))
+    if pts.ndim == 2 and int(pts.shape[1]) == 1:
+        return pts[:, 0].reshape((-1,))
+    raise ValueError(
+        "build_mfd_cloud_plan currently supports 1D point clouds only; "
+        f"expected shape (N,) or (N,1), got {pts.shape}."
+    )
+
+
+def build_mfd_cloud_plan(
+    points: ArrayLike,
+    /,
+    *,
+    order: int,
+    k: int | None = None,
+    axis: int = 0,
+) -> MFDCloudPlan:
+    """Build a fixed-size cloud stencil plan for 1D point-input MFD."""
+    order_i = int(order)
+    if order_i < 0:
+        raise ValueError("order must be non-negative.")
+    axis_i = int(axis)
+    if axis_i != 0:
+        raise ValueError("build_mfd_cloud_plan currently supports axis=0 only.")
+
+    x = _mfd_cloud_points_1d(points)
+    n = int(x.shape[0])
+    if n <= order_i:
+        raise ValueError(f"Need at least order+1 points; got n={n}, order={order_i}.")
+    if int(jnp.unique(x).shape[0]) != n:
+        raise ValueError(
+            "build_mfd_cloud_plan requires unique cloud points for stable local stencils."
+        )
+
+    k_req = int(k) if k is not None else max(5, 2 * order_i + 1)
+    k_eff = max(order_i + 1, k_req)
+    k_eff = min(k_eff, n)
+
+    dist = jnp.abs(x[:, None] - x[None, :])
+    neighbors_idx = jnp.argsort(dist, axis=1)[:, : int(k_eff)]
+
+    def _row_weights(idx_row: jax.Array, x0: jax.Array, /) -> jax.Array:
+        nodes = x[idx_row]
+        return _fd_weights_fornberg(nodes, x0, order=order_i)
+
+    weights = jax.vmap(_row_weights)(neighbors_idx, x)
+    mask = jnp.ones_like(neighbors_idx, dtype=bool)
+    return MFDCloudPlan(
+        neighbors_idx=neighbors_idx,
+        weights=weights,
+        mask=mask,
+        axis_i=axis_i,
+        order_i=order_i,
+    )
+
+
+def _mfd_normalize_stencil_size(n: int, order: int, requested: int | None, /) -> int:
+    n_i = int(n)
+    if n_i <= 1:
+        return 1
+    base = int(requested) if requested is not None else max(5, 2 * int(order) + 1)
+    size = max(int(order) + 1, int(base))
+    size = min(size, n_i)
+    if size % 2 == 0 and size > 1:
+        if (size - 1) > int(order):
+            size -= 1
+        elif (size + 1) <= n_i:
+            size += 1
+    if size <= int(order):
+        size = int(order) + 1
+    if size > n_i:
+        size = n_i
+    if size <= int(order):
+        raise ValueError(
+            f"mfd stencil is too small for order={order}; got size={size} with n={n_i}."
+        )
+    return int(size)
+
+
+def _fd_weights_fornberg(x: jax.Array, x0: jax.Array, /, *, order: int) -> jax.Array:
+    x1 = jnp.asarray(x, dtype=float).reshape((-1,))
+    x0_ = jnp.asarray(x0, dtype=float).reshape(())
+    n = int(x1.shape[0])
+    m = int(order)
+    if m < 0:
+        raise ValueError("order must be non-negative.")
+    if n == 0:
+        return jnp.zeros((0,), dtype=float)
+    if n <= m:
+        raise ValueError(f"Need at least order+1 nodes, got n={n}, order={m}.")
+
+    c = jnp.zeros((m + 1, n), dtype=float).at[0, 0].set(1.0)
+    c1 = jnp.asarray(1.0, dtype=float)
+    c4 = x1[0] - x0_
+
+    for i in range(1, n):
+        mn = min(i, m)
+        c2 = jnp.asarray(1.0, dtype=float)
+        c5 = c4
+        c4 = x1[i] - x0_
+        for j in range(i):
+            c3 = x1[i] - x1[j]
+            c2 = c2 * c3
+            if j == i - 1:
+                for k in range(mn, 0, -1):
+                    c = c.at[k, i].set(
+                        c1 * (float(k) * c[k - 1, i - 1] - c5 * c[k, i - 1]) / c2
+                    )
+                c = c.at[0, i].set(-c1 * c5 * c[0, i - 1] / c2)
+            for k in range(mn, 0, -1):
+                c = c.at[k, j].set((c4 * c[k, j] - float(k) * c[k - 1, j]) / c3)
+            c = c.at[0, j].set(c4 * c[0, j] / c3)
+        c1 = c2
+    return c[m]
+
+
+def _mfd_centered_offsets(stencil_size: int, /) -> tuple[int, ...]:
+    half = int(stencil_size) // 2
+    if int(stencil_size) % 2 == 1:
+        return tuple(range(-half, half + 1))
+    return tuple(range(-half, half))
+
+
+def _mfd_reflect_to_interval(
+    value: jax.Array, /, *, lower: jax.Array, upper: jax.Array
+) -> jax.Array:
+    lo = jnp.asarray(lower, dtype=float).reshape(())
+    hi = jnp.asarray(upper, dtype=float).reshape(())
+    width = hi - lo
+    width_safe = jnp.maximum(width, jnp.asarray(1e-12, dtype=float))
+    period = 2.0 * width_safe
+    z = jnp.mod(jnp.asarray(value, dtype=float) - lo, period)
+    reflected = lo + jnp.where(z <= width_safe, z, period - z)
+    return jnp.where(width > 0.0, reflected, jnp.broadcast_to(lo, jnp.shape(value)))
+
+
+def _mfd_biased_window_indices_all(n: int, stencil_size: int, /) -> jax.Array:
+    i = jnp.arange(int(n), dtype=int)
+    half = int(stencil_size) // 2
+    start = jnp.clip(i - int(half), 0, int(n) - int(stencil_size))
+    offsets = jnp.arange(int(stencil_size), dtype=int)
+    return start[:, None] + offsets[None, :]
+
+
+def _mfd_ghost_window_all(
+    x: jax.Array, offsets: jax.Array, /
+) -> tuple[jax.Array, jax.Array]:
+    x1 = jnp.asarray(x, dtype=float).reshape((-1,))
+    n = int(x1.shape[0])
+    p = jnp.arange(n, dtype=int)[:, None] + jnp.asarray(offsets, dtype=int)[None, :]
+
+    left = p < 0
+    right = p >= int(n)
+    j_left = jnp.clip(-p, 0, int(n) - 1)
+    j_right = jnp.clip(2 * int(n) - 2 - p, 0, int(n) - 1)
+
+    idx = jnp.where(left, j_left, jnp.where(right, j_right, p))
+    x_left = x1[0]
+    x_right = x1[-1]
+    x_center = x1[idx]
+    x_nodes = jnp.where(
+        left,
+        2.0 * x_left - x1[j_left],
+        jnp.where(right, 2.0 * x_right - x1[j_right], x_center),
+    )
+    return idx, x_nodes
+
+
+def _mfd_tuple_stencil_operator(
+    x: jax.Array,
+    /,
+    *,
+    order: int,
+    boundary_mode: _MFDBoundaryMode,
+    stencil_size: int,
+) -> tuple[jax.Array, jax.Array]:
+    x1 = jnp.asarray(x, dtype=float).reshape((-1,))
+    n = int(x1.shape[0])
+    offsets_tuple = _mfd_centered_offsets(stencil_size)
+    offsets = jnp.asarray(offsets_tuple, dtype=int)
+
+    i = jnp.arange(int(n), dtype=int)
+    idx_center = i[:, None] + offsets[None, :]
+    centered_ok = (i + int(offsets_tuple[0]) >= 0) & (i + int(offsets_tuple[-1]) < int(n))
+
+    if boundary_mode == "biased":
+        idx_boundary = _mfd_biased_window_indices_all(n, stencil_size)
+        idx = jnp.where(centered_ok[:, None], idx_center, idx_boundary)
+        x_nodes = x1[idx]
+    else:
+        idx_ghost, x_nodes_ghost = _mfd_ghost_window_all(x1, offsets)
+        idx = jnp.where(centered_ok[:, None], idx_center, idx_ghost)
+        idx_center_safe = jnp.clip(idx_center, 0, int(n) - 1)
+        x_nodes_center = x1[idx_center_safe]
+        x_nodes = jnp.where(centered_ok[:, None], x_nodes_center, x_nodes_ghost)
+
+    weights = jax.vmap(
+        lambda nodes, x0: _fd_weights_fornberg(nodes, x0, order=int(order))
+    )(x_nodes, x1)
+    return idx, weights
+
+
+def _mfd_periodic_tuple_nth_derivative(
+    y: jax.Array,
+    x: jax.Array,
+    /,
+    *,
+    axis: int,
+    order: int,
+    stencil_size: int,
+) -> jax.Array:
+    x1 = jnp.asarray(x, dtype=float).reshape((-1,))
+    n = int(x1.shape[0])
+    if n < 2:
+        return jnp.zeros_like(y)
+    offsets = _mfd_centered_offsets(stencil_size)
+    dx = x1[1] - x1[0] if n > 1 else jnp.asarray(1.0, dtype=x1.dtype).reshape(())
+    nodes = jnp.asarray(offsets, dtype=float) * jnp.asarray(dx, dtype=float)
+    weights = _fd_weights_fornberg(nodes, jnp.asarray(0.0), order=order)
+
+    out = jnp.zeros_like(y)
+    for j, off in enumerate(offsets):
+        out = out + jnp.asarray(weights[j]) * jnp.roll(y, -int(off), axis=axis)
+    return out
+
+
+def _mfd_tuple_nth_derivative(
+    y: jax.Array,
+    x: jax.Array,
+    /,
+    *,
+    axis: int,
+    order: int,
+    periodic: bool,
+    boundary_mode: _MFDBoundaryMode,
+    stencil_size: int | None,
+) -> jax.Array:
+    x1 = jnp.asarray(x, dtype=float).reshape((-1,))
+    n = int(x1.shape[0])
+    if n < 2:
+        return jnp.zeros_like(y)
+    s = _mfd_normalize_stencil_size(n, int(order), stencil_size)
+    if periodic:
+        return _mfd_periodic_tuple_nth_derivative(
+            y,
+            x1,
+            axis=axis,
+            order=int(order),
+            stencil_size=s,
+        )
+
+    out0 = jnp.moveaxis(y, int(axis), 0)
+    n0 = int(out0.shape[0])
+    if n0 != n:
+        raise ValueError(
+            f"MFD axis length mismatch: values have {n0}, coordinates have {n}."
+        )
+    idx, weights = _mfd_tuple_stencil_operator(
+        x1,
+        order=int(order),
+        boundary_mode=boundary_mode,
+        stencil_size=s,
+    )
+    vals = out0[idx, ...]
+    out = jnp.einsum("ns,ns...->n...", weights, vals)
+    return jnp.moveaxis(out, 0, int(axis))
+
+
+def _mfd_bounds_for_axis(
+    factor: _AbstractGeometry | _AbstractScalarDomain,
+    /,
+    *,
+    axis: int,
+) -> tuple[jax.Array, jax.Array] | None:
+    if isinstance(factor, _AbstractScalarDomain):
+        lo = jnp.asarray(factor.fixed("start"), dtype=float).reshape(())
+        hi = jnp.asarray(factor.fixed("end"), dtype=float).reshape(())
+        return lo, hi
+    bounds = jnp.asarray(factor.mesh_bounds, dtype=float)
+    ax = int(axis)
+    return bounds[0, ax].reshape(()), bounds[1, ax].reshape(())
+
+
+def _mfd_default_step(
+    factor: _AbstractGeometry | _AbstractScalarDomain,
+    /,
+    *,
+    axis: int,
+) -> jax.Array:
+    bounds = _mfd_bounds_for_axis(factor, axis=axis)
+    if bounds is None:
+        return jnp.asarray(1e-3, dtype=float)
+    lo, hi = bounds
+    span = jnp.maximum(jnp.asarray(hi - lo, dtype=float), jnp.asarray(1e-12, dtype=float))
+    return jnp.asarray(1e-3, dtype=float) * span
+
+
+def _mfd_shift_axis(x: jax.Array, /, *, axis: int, shift: jax.Array) -> jax.Array:
+    x_arr = jnp.asarray(x)
+    if x_arr.ndim == 0:
+        return x_arr + jnp.asarray(shift, dtype=x_arr.dtype)
+    if x_arr.ndim == 1:
+        ax = int(axis)
+        return x_arr.at[ax].add(jnp.asarray(shift, dtype=x_arr.dtype))
+    ax = int(axis)
+    return x_arr.at[..., ax].add(jnp.asarray(shift, dtype=x_arr.dtype))
+
+
+def _mfd_eval_u_on_point_batch(
+    u: DomainFunction,
+    /,
+    *,
+    args: Sequence[Any],
+    key: Any,
+    runtime_kwargs: Mapping[str, Any],
+    num_points: int,
+) -> jax.Array:
+    n = int(num_points)
+    in_axes: list[int | None] = []
+    call_args: list[Any] = []
+    for arg in args:
+        arr = jnp.asarray(arg)
+        if arr.ndim > 0 and int(arr.shape[0]) == n:
+            in_axes.append(0)
+            call_args.append(arr)
+        else:
+            in_axes.append(None)
+            call_args.append(arg)
+
+    def _eval_single(*single_args: Any) -> jax.Array:
+        return jnp.asarray(u.func(*single_args, key=key, **runtime_kwargs))
+
+    return jax.vmap(_eval_single, in_axes=tuple(in_axes))(*tuple(call_args))
+
+
+def _mfd_point_nth_derivative_cloud(
+    u: DomainFunction,
+    /,
+    *,
+    args: Sequence[Any],
+    idx: int,
+    key: Any,
+    runtime_kwargs: Mapping[str, Any],
+    var_dim: int,
+    axis_i: int,
+    order_i: int,
+    plan: MFDCloudPlan,
+) -> jax.Array:
+    if int(var_dim) != 1:
+        raise ValueError("mfd_mode='cloud' currently supports only var_dim==1.")
+    if int(axis_i) != int(plan.axis_i):
+        raise ValueError(
+            f"mfd_cloud_plan axis mismatch: operator axis={axis_i}, plan axis={plan.axis_i}."
+        )
+    if int(order_i) != int(plan.order_i):
+        raise ValueError(
+            "mfd_cloud_plan order mismatch: "
+            f"operator order={order_i}, plan order={plan.order_i}."
+        )
+
+    x0 = jnp.asarray(args[idx], dtype=float)
+    if x0.ndim == 1:
+        n = int(x0.shape[0])
+    elif x0.ndim == 2 and int(x0.shape[1]) == 1:
+        n = int(x0.shape[0])
+    else:
+        raise ValueError(
+            "mfd_mode='cloud' requires point-batch inputs with shape (N,) or (N,1) "
+            f"for var_dim==1; got {x0.shape}."
+        )
+    if n != int(plan.num_points):
+        raise ValueError(
+            "mfd_cloud_plan num_points mismatch: "
+            f"plan has N={plan.num_points}, runtime input has N={n}."
+        )
+
+    y = _mfd_eval_u_on_point_batch(
+        u,
+        args=args,
+        key=key,
+        runtime_kwargs=runtime_kwargs,
+        num_points=n,
+    )
+    if y.ndim == 0 or int(y.shape[0]) != n:
+        raise ValueError(
+            "mfd_mode='cloud' expects batched function output with leading axis N; "
+            f"got output shape {y.shape} for N={n}."
+        )
+
+    vals = y[plan.neighbors_idx, ...]
+    weights = jnp.where(plan.mask, plan.weights, 0.0)
+    return jnp.einsum("nk,nk...->n...", weights, vals)
+
+
+def _mfd_point_nth_derivative(
+    u: DomainFunction,
+    /,
+    *,
+    args: Sequence[Any],
+    idx: int,
+    key: Any,
+    runtime_kwargs: Mapping[str, Any],
+    var_dim: int,
+    axis_i: int,
+    order_i: int,
+    periodic: bool,
+    factor: _AbstractGeometry | _AbstractScalarDomain,
+    boundary_mode: _MFDBoundaryMode,
+    stencil_size: int | None,
+    step_override: Any | None,
+) -> jax.Array:
+    x0 = args[idx]
+    x_arr = jnp.asarray(x0, dtype=float)
+
+    s = int(stencil_size) if stencil_size is not None else max(5, 2 * int(order_i) + 1)
+    if s <= int(order_i):
+        s = int(order_i) + 1
+    if s % 2 == 0:
+        s += 1
+    half = int(s) // 2
+    offsets_center = tuple(range(-half, half + 1))
+    h = (
+        jnp.asarray(step_override, dtype=float).reshape(())
+        if step_override is not None
+        else _mfd_default_step(factor, axis=axis_i)
+    )
+    h = jnp.maximum(jnp.abs(h), jnp.asarray(1e-12, dtype=float))
+    h_pow = jnp.power(h, int(order_i))
+    bounds = _mfd_bounds_for_axis(factor, axis=axis_i)
+    weight_cache: dict[tuple[int, ...], jax.Array] = {}
+
+    def _weights_for_offsets(offsets: tuple[int, ...], /) -> jax.Array:
+        cached = weight_cache.get(offsets)
+        if cached is None:
+            nodes_unit = jnp.asarray(offsets, dtype=float)
+            cached = _fd_weights_fornberg(nodes_unit, jnp.asarray(0.0), order=order_i)
+            weight_cache[offsets] = cached
+        return cached / h_pow
+
+    def _eval_with_offsets(offsets: tuple[int, ...], /, *, reflect: bool) -> jax.Array:
+        weights = _weights_for_offsets(offsets)
+        offsets_arr = jnp.asarray(offsets, dtype=float)
+
+        def _eval_single(off: jax.Array, /) -> jax.Array:
+            shift = jnp.asarray(off, dtype=float).reshape(()) * h
+            if int(var_dim) == 1:
+                xi = x_arr + shift
+            else:
+                xi = _mfd_shift_axis(x_arr, axis=axis_i, shift=shift)
+
+            if bounds is not None:
+                lo, hi = bounds
+                if periodic:
+                    width = hi - lo
+                    width_safe = jnp.maximum(width, jnp.asarray(1e-12, dtype=float))
+                    if var_dim == 1:
+                        wrapped = lo + jnp.mod(xi - lo, width_safe)
+                        xi = jnp.where(
+                            width > 0.0, wrapped, jnp.broadcast_to(lo, xi.shape)
+                        )
+                    else:
+                        coord = xi[int(axis_i)] if xi.ndim == 1 else xi[..., int(axis_i)]
+                        wrapped = lo + jnp.mod(coord - lo, width_safe)
+                        coord = jnp.where(
+                            width > 0.0, wrapped, jnp.broadcast_to(lo, coord.shape)
+                        )
+                        if xi.ndim == 1:
+                            xi = xi.at[int(axis_i)].set(coord)
+                        else:
+                            xi = xi.at[..., int(axis_i)].set(coord)
+                elif reflect:
+                    if var_dim == 1:
+                        xi = _mfd_reflect_to_interval(xi, lower=lo, upper=hi)
+                    else:
+                        coord = xi[int(axis_i)] if xi.ndim == 1 else xi[..., int(axis_i)]
+                        coord = _mfd_reflect_to_interval(coord, lower=lo, upper=hi)
+                        if xi.ndim == 1:
+                            xi = xi.at[int(axis_i)].set(coord)
+                        else:
+                            xi = xi.at[..., int(axis_i)].set(coord)
+
+            call_args = tuple(xi if i == idx else args[i] for i in range(len(args)))
+            return jnp.asarray(u.func(*call_args, key=key, **runtime_kwargs))
+
+        stacked = jax.vmap(_eval_single)(offsets_arr)
+        return jnp.tensordot(weights, stacked, axes=(0, 0))
+
+    if periodic:
+        return _eval_with_offsets(offsets_center, reflect=False)
+
+    if bounds is None:
+        if boundary_mode == "biased":
+            return _eval_with_offsets(offsets_center, reflect=False)
+        return _eval_with_offsets(offsets_center, reflect=True)
+
+    lo, hi = bounds
+    if int(var_dim) == 1:
+        xi0 = x_arr
+    elif x_arr.ndim == 1:
+        xi0 = x_arr[int(axis_i)]
+    else:
+        xi0 = x_arr[..., int(axis_i)]
+    need_left = xi0 - jnp.asarray(float(half), dtype=float) * h < lo
+    need_right = xi0 + jnp.asarray(float(half), dtype=float) * h > hi
+    if boundary_mode in ("ghost", "hybrid"):
+        return _eval_with_offsets(offsets_center, reflect=True)
+
+    offsets_left = tuple(range(0, int(s)))
+    offsets_right = tuple(range(-int(s) + 1, 1))
+
+    if jnp.asarray(need_left).ndim == 0:
+        return jax.lax.cond(
+            need_left,
+            lambda _: _eval_with_offsets(offsets_left, reflect=False),
+            lambda _: jax.lax.cond(
+                need_right,
+                lambda __: _eval_with_offsets(offsets_right, reflect=False),
+                lambda __: _eval_with_offsets(offsets_center, reflect=False),
+                operand=None,
+            ),
+            operand=None,
+        )
+
+    out_center = _eval_with_offsets(offsets_center, reflect=False)
+    out_left = _eval_with_offsets(offsets_left, reflect=False)
+    out_right = _eval_with_offsets(offsets_right, reflect=False)
+    return jnp.where(need_left, out_left, jnp.where(need_right, out_right, out_center))
+
+
 def grad(
     u: DomainFunction,
     /,
     *,
     var: str | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
-    backend: Literal["ad", "fd", "basis"] = "ad",
+    backend: Literal["ad", "fd", "basis", "mfd"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
     ad_engine: _ADEngine = "auto",
@@ -764,8 +1351,11 @@ def grad(
       - `"ad"`: autodiff (works for point batches and coord-separable batches).
       - `"fd"`: finite differences on coord-separable grids (falls back to `"ad"`).
       - `"basis"`: spectral/barycentric methods on coord-separable grids (falls back to `"ad"`).
+      - `"mfd"`: meshless finite differences with two-sided interior stencils and
+        boundary closures.
     - `basis`: Basis method used when `backend="basis"`.
-    - `periodic`: Whether to treat the differentiated axis as periodic (used by `backend="fd"`).
+    - `periodic`: Whether to treat the differentiated axis as periodic (used by
+      `backend="fd"` and `backend="mfd"` tuple/point paths).
 
     **Notes:**
 
@@ -849,15 +1439,41 @@ def grad(
         )
 
     idx = u.deps.index(var)
+    mfd_partials: tuple[DomainFunction, ...] = ()
+    if backend == "mfd":
+        mfd_partials = tuple(
+            partial_n(
+                u,
+                var=var,
+                axis=None if int(var_dim) == 1 else i,
+                order=1,
+                mode=mode_eff,
+                backend="mfd",
+                basis=basis,
+                periodic=periodic,
+                ad_engine="auto",
+            )
+            for i in range(int(var_dim))
+        )
 
     def _grad(*args, key=None, **kwargs):
         x0 = args[idx]
+
+        if backend == "mfd":
+            terms = [
+                jnp.asarray(d_i.func(*args, key=key, **kwargs)) for d_i in mfd_partials
+            ]
+            if int(var_dim) == 1:
+                if isinstance(factor, _AbstractScalarDomain):
+                    return terms[0]
+                return terms[0][..., None]
+            return jnp.stack(terms, axis=-1)
 
         def f(xi):
             call_args = tuple(xi if i == idx else args[i] for i in range(len(args)))
             return u.func(*call_args, key=key, **kwargs)
 
-        if isinstance(x0, tuple) and backend != "ad":
+        if isinstance(x0, tuple) and backend in ("fd", "basis"):
             coords = tuple(jnp.asarray(xi) for xi in x0)
             if len(coords) != var_dim:
                 raise ValueError(
@@ -1210,7 +1826,7 @@ def directional_derivative(
     *,
     var: str = "x",
     mode: Literal["reverse", "forward"] = "reverse",
-    backend: Literal["ad", "fd", "basis"] = "ad",
+    backend: Literal["ad", "fd", "basis", "mfd"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
     ad_engine: _ADEngine = "auto",
@@ -1281,7 +1897,7 @@ def div(
     *,
     var: str | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
-    backend: Literal["ad", "fd", "basis"] = "ad",
+    backend: Literal["ad", "fd", "basis", "mfd"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
     ad_engine: _ADEngine = "auto",
@@ -1348,7 +1964,7 @@ def curl(
     *,
     var: str | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
-    backend: Literal["ad", "fd", "basis"] = "ad",
+    backend: Literal["ad", "fd", "basis", "mfd"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
     ad_engine: _ADEngine = "auto",
@@ -1419,7 +2035,7 @@ def div_tensor(
     *,
     var: str | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
-    backend: Literal["ad", "fd", "basis"] = "ad",
+    backend: Literal["ad", "fd", "basis", "mfd"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
     ad_engine: _ADEngine = "auto",
@@ -1479,7 +2095,7 @@ def cauchy_strain(
     *,
     var: str | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
-    backend: Literal["ad", "fd", "basis"] = "ad",
+    backend: Literal["ad", "fd", "basis", "mfd"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
     ad_engine: _ADEngine = "auto",
@@ -1527,7 +2143,7 @@ def strain_rate(
     *,
     var: str | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
-    backend: Literal["ad", "fd", "basis"] = "ad",
+    backend: Literal["ad", "fd", "basis", "mfd"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
     ad_engine: _ADEngine = "auto",
@@ -1551,7 +2167,7 @@ def strain_rate_magnitude(
     *,
     var: str | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
-    backend: Literal["ad", "fd", "basis"] = "ad",
+    backend: Literal["ad", "fd", "basis", "mfd"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
     ad_engine: _ADEngine = "auto",
@@ -1613,7 +2229,7 @@ def cauchy_stress(
     mu: DomainFunction | ArrayLike,
     var: str | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
-    backend: Literal["ad", "fd", "basis"] = "ad",
+    backend: Literal["ad", "fd", "basis", "mfd"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
     ad_engine: _ADEngine = "auto",
@@ -1671,7 +2287,7 @@ def div_cauchy_stress(
     mu: DomainFunction | ArrayLike,
     var: str | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
-    backend: Literal["ad", "fd", "basis"] = "ad",
+    backend: Literal["ad", "fd", "basis", "mfd"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
     ad_engine: _ADEngine = "auto",
@@ -1728,7 +2344,7 @@ def viscous_stress(
     lambda_: DomainFunction | ArrayLike | None = None,
     var: str | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
-    backend: Literal["ad", "fd", "basis"] = "ad",
+    backend: Literal["ad", "fd", "basis", "mfd"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
     ad_engine: _ADEngine = "auto",
@@ -1792,7 +2408,7 @@ def navier_stokes_stress(
     lambda_: DomainFunction | ArrayLike | None = None,
     var: str | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
-    backend: Literal["ad", "fd", "basis"] = "ad",
+    backend: Literal["ad", "fd", "basis", "mfd"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
     ad_engine: _ADEngine = "auto",
@@ -1849,7 +2465,7 @@ def navier_stokes_divergence(
     lambda_: DomainFunction | ArrayLike | None = None,
     var: str | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
-    backend: Literal["ad", "fd", "basis"] = "ad",
+    backend: Literal["ad", "fd", "basis", "mfd"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
     ad_engine: _ADEngine = "auto",
@@ -1905,7 +2521,7 @@ def laplacian(
     *,
     var: str | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
-    backend: Literal["ad", "jet", "fd", "basis"] = "ad",
+    backend: Literal["ad", "jet", "fd", "basis", "mfd"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
     ad_engine: _ADEngine = "auto",
@@ -1931,8 +2547,10 @@ def laplacian(
         (and enables latent Jet fast paths when available).
       - `"fd"`: uses finite differences on coord-separable grids (falls back to `"ad"`).
       - `"basis"`: uses spectral/barycentric methods on coord-separable grids (falls back to `"ad"`).
+      - `"mfd"`: meshless finite differences for point and coord-separable inputs.
     - `basis`: Basis method used when `backend="basis"`.
-    - `periodic`: Whether to treat differentiated axes as periodic (used by `backend="fd"`).
+    - `periodic`: Whether to treat differentiated axes as periodic (used by
+      `backend="fd"` and `backend="mfd"`).
     - `ad_engine`: AD execution strategy used when `backend="ad"`:
       - `"auto"`: existing mixed strategy (default).
       - `"reverse"` / `"forward"`: force Jacobian AD mode.
@@ -1960,8 +2578,8 @@ def laplacian(
             domain=u.domain, deps=u.deps, func=_zero, metadata=out_metadata
         )
 
-    if backend not in ("ad", "jet", "fd", "basis"):
-        raise ValueError("backend must be 'ad', 'jet', 'fd', or 'basis'.")
+    if backend not in ("ad", "jet", "fd", "basis", "mfd"):
+        raise ValueError("backend must be 'ad', 'jet', 'fd', 'basis', or 'mfd'.")
     _ensure_ad_engine_backend(backend, ad_engine)
     mode_eff = _resolve_ad_mode(mode, ad_engine)
 
@@ -2055,7 +2673,7 @@ def bilaplacian(
     *,
     var: str | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
-    backend: Literal["ad", "jet", "fd", "basis"] = "ad",
+    backend: Literal["ad", "jet", "fd", "basis", "mfd"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
     ad_engine: _ADEngine = "auto",
@@ -2100,7 +2718,7 @@ def bilaplacian(
     _ensure_ad_engine_backend(backend, ad_engine)
     mode_eff = _resolve_ad_mode(mode, ad_engine)
 
-    if backend == "fd" or backend == "basis":
+    if backend == "fd" or backend == "basis" or backend == "mfd":
         return laplacian(
             laplacian(
                 u,
@@ -2129,7 +2747,7 @@ def bilaplacian(
         )
 
     if backend != "jet":
-        raise ValueError("backend must be 'ad', 'jet', 'fd', or 'basis'.")
+        raise ValueError("backend must be 'ad', 'jet', 'fd', 'basis', or 'mfd'.")
 
     idx = u.deps.index(var)
 
@@ -2363,7 +2981,7 @@ def partial_n(
     axis: int | None = None,
     order: int,
     mode: Literal["reverse", "forward"] = "reverse",
-    backend: Literal["ad", "jet", "fd", "basis"] = "ad",
+    backend: Literal["ad", "jet", "fd", "basis", "mfd"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
     ad_engine: _ADEngine = "auto",
@@ -2390,8 +3008,10 @@ def partial_n(
       - `"jet"`: uses Jet expansions for $n\ge 2$ (point inputs and coord-separable inputs).
       - `"fd"`: finite differences on coord-separable grids (falls back to `"ad"` for point inputs).
       - `"basis"`: spectral/barycentric methods on coord-separable grids (falls back to `"ad"` for point inputs).
+      - `"mfd"`: meshless finite differences for point inputs and coord-separable grids.
     - `basis`: Basis method used when `backend="basis"`.
-    - `periodic`: Whether to treat the differentiated axis as periodic (used by `backend="fd"`).
+    - `periodic`: Whether to treat the differentiated axis as periodic (used by
+      `backend="fd"` and `backend="mfd"`).
 
     **Returns:**
 
@@ -2436,7 +3056,7 @@ def partial_n(
             ad_engine="auto",
         )
 
-    _, var_dim = _factor_and_dim(u, var)
+    factor, var_dim = _factor_and_dim(u, var)
     out_metadata = _strip_derivative_hook_metadata(u.metadata)
 
     if var not in u.deps:
@@ -2512,6 +3132,54 @@ def partial_n(
                 cache[cache_key] = out
             return out
 
+        mfd_boundary_mode: _MFDBoundaryMode = "hybrid"
+        mfd_stencil_size: int | None = None
+        mfd_step: Any | None = None
+        mfd_mode: _MFDPointMode = "probe"
+        mfd_cloud_plan: MFDCloudPlan | None = None
+        if backend == "mfd":
+            mfd_boundary_mode_raw = runtime_kwargs.pop("mfd_boundary_mode", "hybrid")
+            mfd_boundary_mode_str = str(mfd_boundary_mode_raw).lower()
+            if mfd_boundary_mode_str == "biased":
+                mfd_boundary_mode = "biased"
+            elif mfd_boundary_mode_str == "ghost":
+                mfd_boundary_mode = "ghost"
+            elif mfd_boundary_mode_str == "hybrid":
+                mfd_boundary_mode = "hybrid"
+            else:
+                raise ValueError(
+                    "mfd_boundary_mode must be one of 'biased', 'ghost', or 'hybrid'."
+                )
+            mfd_stencil_size_raw = runtime_kwargs.pop("mfd_stencil_size", None)
+            mfd_stencil_size = (
+                int(mfd_stencil_size_raw) if mfd_stencil_size_raw is not None else None
+            )
+            if mfd_stencil_size is not None and mfd_stencil_size <= 0:
+                raise ValueError("mfd_stencil_size must be positive.")
+            mfd_step_raw = runtime_kwargs.pop("mfd_step", None)
+            if mfd_step_raw is not None:
+                step_arr = jnp.asarray(mfd_step_raw)
+                if step_arr.ndim != 0:
+                    raise ValueError("mfd_step must be a scalar.")
+                mfd_step = mfd_step_raw
+            mfd_mode_raw = runtime_kwargs.pop("mfd_mode", "probe")
+            mfd_mode_str = str(mfd_mode_raw).lower()
+            if mfd_mode_str == "probe":
+                mfd_mode = "probe"
+            elif mfd_mode_str == "cloud":
+                mfd_mode = "cloud"
+            else:
+                raise ValueError("mfd_mode must be one of 'probe' or 'cloud'.")
+            mfd_cloud_plan_raw = runtime_kwargs.pop("mfd_cloud_plan", None)
+            if mfd_mode == "cloud":
+                if mfd_cloud_plan_raw is None:
+                    raise ValueError(
+                        "mfd_mode='cloud' requires mfd_cloud_plan at evaluation time."
+                    )
+                if not isinstance(mfd_cloud_plan_raw, MFDCloudPlan):
+                    raise TypeError("mfd_cloud_plan must be an instance of MFDCloudPlan.")
+                mfd_cloud_plan = mfd_cloud_plan_raw
+
         x0 = args[idx]
 
         if backend == "ad" or backend == "jet":
@@ -2564,6 +3232,63 @@ def partial_n(
             return _return(
                 _basis_nth_derivative(
                     y, coords[axis_i], axis=axis_pos, order=order_i, basis=basis
+                )
+            )
+
+        if backend == "mfd":
+            if isinstance(x0, tuple):
+                coords = tuple(jnp.asarray(xi) for xi in x0)
+                if len(coords) != var_dim:
+                    raise ValueError(
+                        f"coord-separable partial_n expects {var_dim} coordinate arrays for var={var!r}."
+                    )
+                if not all(xi.ndim == 1 for xi in coords):
+                    raise ValueError(
+                        "coord-separable partial_n requires a tuple of 1D coordinate arrays."
+                    )
+                y = jnp.asarray(u.func(*args, key=key, **runtime_kwargs))
+                axis_pos = _coord_axis_position(args, arg_index=idx, coord_index=axis_i)
+                return _return(
+                    _mfd_tuple_nth_derivative(
+                        y,
+                        coords[axis_i],
+                        axis=axis_pos,
+                        order=order_i,
+                        periodic=bool(periodic),
+                        boundary_mode=mfd_boundary_mode,
+                        stencil_size=mfd_stencil_size,
+                    )
+                )
+            if mfd_mode == "cloud":
+                assert mfd_cloud_plan is not None
+                return _return(
+                    _mfd_point_nth_derivative_cloud(
+                        u,
+                        args=args,
+                        idx=idx,
+                        key=key,
+                        runtime_kwargs=runtime_kwargs,
+                        var_dim=int(var_dim),
+                        axis_i=int(axis_i),
+                        order_i=int(order_i),
+                        plan=mfd_cloud_plan,
+                    )
+                )
+            return _return(
+                _mfd_point_nth_derivative(
+                    u,
+                    args=args,
+                    idx=idx,
+                    key=key,
+                    runtime_kwargs=runtime_kwargs,
+                    var_dim=int(var_dim),
+                    axis_i=int(axis_i),
+                    order_i=int(order_i),
+                    periodic=bool(periodic),
+                    factor=factor,
+                    boundary_mode=mfd_boundary_mode,
+                    stencil_size=mfd_stencil_size,
+                    step_override=mfd_step,
                 )
             )
 
@@ -2755,7 +3480,7 @@ def div_k_grad(
     *,
     var: str | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
-    backend: Literal["ad", "fd", "basis"] = "ad",
+    backend: Literal["ad", "fd", "basis", "mfd"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
     ad_engine: _ADEngine = "auto",
@@ -3135,7 +3860,7 @@ def div_K_grad(
     *,
     var: str | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
-    backend: Literal["ad", "fd", "basis"] = "ad",
+    backend: Literal["ad", "fd", "basis", "mfd"] = "ad",
     basis: Literal["poly", "fourier", "sine", "cosine"] = "poly",
     periodic: bool = False,
     ad_engine: _ADEngine = "auto",

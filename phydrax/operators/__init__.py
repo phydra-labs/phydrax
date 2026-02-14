@@ -43,6 +43,7 @@ from .delay import (  # noqa: F401
 )
 from .differential import (  # noqa: F401
     bilaplacian,
+    build_mfd_cloud_plan,
     caputo_time_fractional,
     caputo_time_fractional_dw,
     cauchy_from_pk2,
@@ -74,6 +75,7 @@ from .differential import (  # noqa: F401
     linear_elastic_orthotropic_stress_2d,
     material_derivative,
     maxwell_stress,
+    MFDCloudPlan,
     navier_stokes_divergence,
     navier_stokes_stress,
     neo_hookean_cauchy,
@@ -185,6 +187,8 @@ __all__ = [
     "riesz_fractional_derivative_gl_mc",
     "caputo_time_fractional",
     "caputo_time_fractional_dw",
+    "build_mfd_cloud_plan",
+    "MFDCloudPlan",
     # integral exports
     "build_ball_quadrature",
     "build_quadrature",

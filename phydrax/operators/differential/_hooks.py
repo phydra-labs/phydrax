@@ -23,7 +23,7 @@ DerivativeHook: TypeAlias = Callable[
 ]
 
 DerivativeMode: TypeAlias = Literal["reverse", "forward"]
-DerivativeBackend: TypeAlias = Literal["ad", "jet", "fd", "basis"]
+DerivativeBackend: TypeAlias = Literal["ad", "jet", "fd", "basis", "mfd"]
 DerivativeBasis: TypeAlias = Literal["poly", "fourier", "sine", "cosine"]
 
 
