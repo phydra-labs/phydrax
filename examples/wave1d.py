@@ -194,8 +194,8 @@ def _():
     depth = 6
     num_iter = 100
     learning_rate = 7e-3
-    num_x_interior = 100
-    num_t_interior = 200
+    num_x_interior = 400
+    num_t_interior = 800
     nx_plot = 200
     nt_plot = 400
     seed = 0
