@@ -17,15 +17,25 @@ from phydrax.nn.models import DeepONet, FNO1d, FNO2d, MLP
 from phydrax.operators.differential import laplacian
 
 
-def test_deeponet_domain_model_coord_separable_output_shape():
+@pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
+def test_deeponet_domain_model_coord_separable_output_shape(scan):
     data = jnp.ones((3, 4), dtype=float)
     data_dom = DatasetDomain(data)
     geom = Interval1d(0.0, 1.0)
     domain = data_dom @ geom
 
     latent = 5
-    branch = MLP(in_size=4, out_size=latent, width_size=8, depth=2, key=jr.key(0))
-    trunk = MLP(in_size="scalar", out_size=latent, width_size=8, depth=2, key=jr.key(1))
+    branch = MLP(
+        in_size=4, out_size=latent, width_size=8, depth=2, scan=scan, key=jr.key(0)
+    )
+    trunk = MLP(
+        in_size="scalar",
+        out_size=latent,
+        width_size=8,
+        depth=2,
+        scan=scan,
+        key=jr.key(1),
+    )
     model = DeepONet(
         branch=branch,
         trunk=trunk,
@@ -52,7 +62,8 @@ def test_deeponet_domain_model_coord_separable_output_shape():
     assert jnp.all(jnp.isfinite(jnp.asarray(out.data)))
 
 
-def test_fno1d_domain_model_coord_separable_output_shape_and_basis_laplacian():
+@pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
+def test_fno1d_domain_model_coord_separable_output_shape_and_basis_laplacian(scan):
     n = 16
     data = jnp.ones((3, n), dtype=float)
     data_dom = DatasetDomain(data)
@@ -65,6 +76,7 @@ def test_fno1d_domain_model_coord_separable_output_shape_and_basis_laplacian():
         width=8,
         depth=2,
         modes=6,
+        scan=scan,
         key=jr.key(0),
     )
     u = domain.Model("data", "x")(model)
@@ -89,14 +101,16 @@ def test_fno1d_domain_model_coord_separable_output_shape_and_basis_laplacian():
     assert jnp.all(jnp.isfinite(jnp.asarray(out_lap.data)))
 
 
-def test_fno1d_rejects_point_like_x_input():
-    model = FNO1d(width=8, depth=2, modes=6, key=jr.key(0))
+@pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
+def test_fno1d_rejects_point_like_x_input(scan):
+    model = FNO1d(width=8, depth=2, modes=6, scan=scan, key=jr.key(0))
     data = jnp.ones((8,), dtype=float)
     with pytest.raises(ValueError, match="coord-separable grid evaluation"):
         _ = model((data, jnp.asarray([0.5], dtype=float)))
 
 
-def test_fno2d_domain_model_coord_separable_output_shape_and_basis_laplacian():
+@pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
+def test_fno2d_domain_model_coord_separable_output_shape_and_basis_laplacian(scan):
     nx = 12
     ny = 10
     data = jnp.ones((3, nx, ny), dtype=float)
@@ -110,6 +124,7 @@ def test_fno2d_domain_model_coord_separable_output_shape_and_basis_laplacian():
         width=8,
         depth=2,
         modes=6,
+        scan=scan,
         key=jr.key(0),
     )
     u = domain.Model("data", "x")(model)
@@ -134,8 +149,9 @@ def test_fno2d_domain_model_coord_separable_output_shape_and_basis_laplacian():
     assert jnp.all(jnp.isfinite(jnp.asarray(out_lap.data)))
 
 
-def test_fno2d_rejects_point_like_xy_input():
-    model = FNO2d(width=8, depth=2, modes=6, key=jr.key(0))
+@pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
+def test_fno2d_rejects_point_like_xy_input(scan):
+    model = FNO2d(width=8, depth=2, modes=6, scan=scan, key=jr.key(0))
     data = jnp.ones((8, 8), dtype=float)
     with pytest.raises(ValueError, match="coord-separable grid evaluation"):
         _ = model(

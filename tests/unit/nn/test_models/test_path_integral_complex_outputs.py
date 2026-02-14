@@ -5,17 +5,20 @@
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import pytest
 
 from phydrax.nn.models import FeynmaNN, LatentContractionModel, MLP, Separable
 
 
-def test_pimlp_keep_output_complex_scalar():
+@pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
+def test_pimlp_keep_output_complex_scalar(scan):
     key = jr.key(0)
     m = FeynmaNN(
         in_size=2,
         out_size="scalar",
         width_size=16,
         depth=2,
+        scan=scan,
         num_paths=3,
         keep_output_complex=True,
         key=key,
@@ -26,12 +29,14 @@ def test_pimlp_keep_output_complex_scalar():
     assert y.shape == ()
 
 
-def test_pimlp_keep_output_complex_vector():
+@pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
+def test_pimlp_keep_output_complex_vector(scan):
     m = FeynmaNN(
         in_size=3,
         out_size=4,
         width_size=16,
         depth=2,
+        scan=scan,
         num_paths=3,
         keep_output_complex=True,
         key=jr.key(2),
@@ -42,7 +47,8 @@ def test_pimlp_keep_output_complex_vector():
     assert y.shape == (4,)
 
 
-def test_separable_wrapper_complex_output_toggle():
+@pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
+def test_separable_wrapper_complex_output_toggle(scan):
     # Underlying scalar models for each coordinate produce complex latents
     L = 2
     out = 1
@@ -52,6 +58,7 @@ def test_separable_wrapper_complex_output_toggle():
             out_size=L * out,
             width_size=12,
             depth=2,
+            scan=scan,
             num_paths=2,
             keep_output_complex=True,
             key=jr.key(10 + i),
@@ -82,7 +89,8 @@ def test_separable_wrapper_complex_output_toggle():
     assert yr.shape == (7,)
 
 
-def test_latent_contraction_complex_output_toggle():
+@pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
+def test_latent_contraction_complex_output_toggle(scan):
     # Space model produces complex latents of size L*out; time model is real L
     L = 3
     d = 2
@@ -91,11 +99,14 @@ def test_latent_contraction_complex_output_toggle():
         out_size=L * 1,
         width_size=16,
         depth=2,
+        scan=scan,
         num_paths=2,
         keep_output_complex=True,
         key=jr.key(20),
     )
-    time_model = MLP(in_size="scalar", out_size=L, width_size=8, depth=1, key=jr.key(21))
+    time_model = MLP(
+        in_size="scalar", out_size=L, width_size=8, depth=1, scan=scan, key=jr.key(21)
+    )
     ts_c = LatentContractionModel(
         out_size="scalar",
         latent_size=L,
