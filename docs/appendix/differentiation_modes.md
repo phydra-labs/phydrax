@@ -358,6 +358,12 @@ This avoids per-call local stencil solves and turns cloud MFD into a gather-plus
 pattern with static shapes, which is JIT-friendly for repeated training steps on a fixed
 point set.
 
+For multi-dimensional clouds (`x_i \in \mathbb{R}^d`), derivative plans are
+axis/order specific. In practice, Phydrax can consume either:
+
+- one plan via `mfd_cloud_plan` (single derivative operator), or
+- a plan table via `mfd_cloud_plans[(axis, order)]` for composed operators (e.g. Laplacian).
+
 ## 7. Practical guidance (what to use when)
 
 Common choices:

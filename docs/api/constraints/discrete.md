@@ -52,6 +52,10 @@ loss = constraint.loss({"u": u}, key=jr.key(0))
 assert jnp.isfinite(loss)
 ```
 
+For multi-axis cloud derivatives (for example Laplacians built from multiple
+`partial_n` operators), pass a `(axis, order) -> plan` mapping via
+`eval_kwargs={"mfd_mode": "cloud", "mfd_cloud_plans": plans}`.
+
 ## Discrete point constraints
 
 ::: phydrax.constraints.PointSetConstraint

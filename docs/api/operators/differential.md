@@ -42,7 +42,9 @@ Many operators share these keywords:
 - `mfd_step`: probe spacing for point-input MFD evaluation (evaluation-time knob).
 - `mfd_mode`: point-input MFD mode, `"probe"` (default) or `"cloud"`.
 - `mfd_cloud_plan`: fixed-cloud stencil plan built with
-  `phydrax.operators.build_mfd_cloud_plan(...)` (required for `mfd_mode="cloud"`).
+  `phydrax.operators.build_mfd_cloud_plan(...)`.
+- `mfd_cloud_plans`: mapping from `(axis, order)` to `MFDCloudPlan` built with
+  `phydrax.operators.build_mfd_cloud_plans(...)`.
 
 See the guide for operator shape conventions and for the math behind surface and fractional operators.
 
@@ -52,14 +54,19 @@ See the guide for operator shape conventions and for the math behind surface and
     the symbolic operator.
 
 !!! note
-    `mfd_mode="cloud"` is currently a fixed-cloud point path for 1D variables
-    (`var_dim == 1`). Tuple/coord-separable MFD remains unchanged.
+    For `mfd_mode="cloud"`, provide either `mfd_cloud_plan` (single derivative plan)
+    or `mfd_cloud_plans` (multi-derivative plan table). Tuple/coord-separable MFD
+    remains unchanged.
 
 ## MFD cloud utilities
 
 Use these helpers to precompute and reuse fixed-cloud stencils for point-input MFD.
 
 ::: phydrax.operators.build_mfd_cloud_plan
+
+---
+
+::: phydrax.operators.build_mfd_cloud_plans
 
 ---
 

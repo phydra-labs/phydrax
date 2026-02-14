@@ -166,7 +166,10 @@ Boundary handling is explicit:
 Fixed-cloud mode for point inputs is also available:
 
 - Build a reusable plan once with `phx.operators.build_mfd_cloud_plan(points, order=n, k=K)`.
-- Evaluate with `mfd_mode="cloud", mfd_cloud_plan=plan`.
+- Or build a plan table with
+  `phx.operators.build_mfd_cloud_plans(points, specs=((axis, order), ...), k=K)`.
+- Evaluate with `mfd_mode="cloud"` and either `mfd_cloud_plan=plan` or
+  `mfd_cloud_plans=plans`.
 
 In cloud mode, for each anchor point $x_i$:
 
@@ -176,6 +179,10 @@ $$
 
 where $\nu(i,j)$ indexes the $j$th planned neighbor, $w_{ij}$ are precomputed
 stencil weights, and $m_{ij}\in\{0,1\}$ is the fixed-shape mask.
+
+For multi-dimensional clouds (`points.shape == (N, d)`), plans are axis-specific:
+for `partial_n(..., axis=a, order=n)`, use the `(a, n)` entry from
+`mfd_cloud_plans`.
 
 For coord-separable tuple inputs, MFD acts as an axiswise operator \(D_i^{(n)}\) on each
 axis and composes naturally for multi-D operators:
