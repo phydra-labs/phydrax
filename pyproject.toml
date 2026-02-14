@@ -60,12 +60,14 @@ tests = [
     "pytest-clarity>=1.0.1",
     "pytest-rerunfailures>=16.1",
     "pytest-sugar>=1.1.1",
+    "pytest-testmon>=2.2.0",
     "pytest-xdist>=3.8.0",
 ]
 qa = [
     "ruff>=0.14.14",
     "ty>=0.0.13",
 ]
+
 
 [tool.ruff]
 line-length = 90
