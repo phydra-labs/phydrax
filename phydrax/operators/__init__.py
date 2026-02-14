@@ -44,6 +44,7 @@ from .delay import (  # noqa: F401
 from .differential import (  # noqa: F401
     bilaplacian,
     build_mfd_cloud_plan,
+    build_mfd_cloud_plans,
     caputo_time_fractional,
     caputo_time_fractional_dw,
     cauchy_from_pk2,
@@ -188,6 +189,7 @@ __all__ = [
     "caputo_time_fractional",
     "caputo_time_fractional_dw",
     "build_mfd_cloud_plan",
+    "build_mfd_cloud_plans",
     "MFDCloudPlan",
     # integral exports
     "build_ball_quadrature",

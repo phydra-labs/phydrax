@@ -5,6 +5,7 @@
 from ._domain_ops import (
     bilaplacian,
     build_mfd_cloud_plan,
+    build_mfd_cloud_plans,
     cauchy_from_pk2,
     cauchy_strain,
     cauchy_stress,
@@ -122,5 +123,6 @@ __all__ = [
     "caputo_time_fractional",
     "caputo_time_fractional_dw",
     "build_mfd_cloud_plan",
+    "build_mfd_cloud_plans",
     "MFDCloudPlan",
 ]

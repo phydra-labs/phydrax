@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 import operator
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
@@ -728,6 +729,7 @@ def _basis_nth_derivative(
 
 _MFDBoundaryMode = Literal["biased", "ghost", "hybrid"]
 _MFDPointMode = Literal["probe", "cloud"]
+_MFDCloudPlanKey = tuple[int, int]
 
 
 class MFDCloudPlan(StrictModule):
@@ -738,6 +740,9 @@ class MFDCloudPlan(StrictModule):
     mask: jax.Array
     axis_i: int
     order_i: int
+    var_dim: int
+    degree: int
+    reg: float
     num_points: int
     k: int
 
@@ -749,10 +754,18 @@ class MFDCloudPlan(StrictModule):
         mask: ArrayLike,
         axis_i: int,
         order_i: int,
+        var_dim: int = 1,
+        degree: int | None = None,
+        reg: float = 0.0,
     ):
         idx = jnp.asarray(neighbors_idx, dtype=jnp.int32)
         w = jnp.asarray(weights, dtype=float)
         m = jnp.asarray(mask, dtype=bool)
+        axis_i_int = int(axis_i)
+        order_i_int = int(order_i)
+        var_dim_int = int(var_dim)
+        degree_i_int = int(order_i_int if degree is None else degree)
+        reg_f = float(reg)
         if idx.ndim != 2:
             raise ValueError(
                 f"MFDCloudPlan.neighbors_idx must have shape (N,K), got {idx.shape}."
@@ -771,25 +784,145 @@ class MFDCloudPlan(StrictModule):
         k = int(idx.shape[1])
         if n <= 0 or k <= 0:
             raise ValueError("MFDCloudPlan requires positive N and K.")
+        if order_i_int < 0:
+            raise ValueError("MFDCloudPlan order_i must be non-negative.")
+        if var_dim_int <= 0:
+            raise ValueError("MFDCloudPlan var_dim must be positive.")
+        if not (0 <= axis_i_int < var_dim_int):
+            raise ValueError(
+                f"MFDCloudPlan axis_i must be in [0,{var_dim_int}), got {axis_i_int}."
+            )
+        if degree_i_int < order_i_int:
+            raise ValueError(
+                "MFDCloudPlan degree must be >= order_i; "
+                f"got degree={degree_i_int}, order_i={order_i_int}."
+            )
+        if reg_f < 0.0:
+            raise ValueError("MFDCloudPlan reg must be non-negative.")
         self.neighbors_idx = idx
         self.weights = w
         self.mask = m
-        self.axis_i = int(axis_i)
-        self.order_i = int(order_i)
+        self.axis_i = axis_i_int
+        self.order_i = order_i_int
+        self.var_dim = var_dim_int
+        self.degree = degree_i_int
+        self.reg = reg_f
         self.num_points = n
         self.k = k
 
 
-def _mfd_cloud_points_1d(points: ArrayLike, /) -> jax.Array:
+def _mfd_cloud_points(points: ArrayLike, /) -> jax.Array:
     pts = jnp.asarray(points, dtype=float)
     if pts.ndim == 1:
-        return pts.reshape((-1,))
-    if pts.ndim == 2 and int(pts.shape[1]) == 1:
-        return pts[:, 0].reshape((-1,))
+        return pts.reshape((-1, 1))
+    if pts.ndim == 2 and int(pts.shape[1]) >= 1:
+        return pts
     raise ValueError(
-        "build_mfd_cloud_plan currently supports 1D point clouds only; "
-        f"expected shape (N,) or (N,1), got {pts.shape}."
+        "build_mfd_cloud_plan expects point-cloud shape (N,), (N,1), or (N,d); "
+        f"got {pts.shape}."
     )
+
+
+def _mfd_monomial_powers(var_dim: int, degree: int, /) -> tuple[tuple[int, ...], ...]:
+    d = int(var_dim)
+    p = int(degree)
+    if d <= 0:
+        raise ValueError("var_dim must be positive.")
+    if p < 0:
+        raise ValueError("degree must be non-negative.")
+    out: list[tuple[int, ...]] = []
+    cur = [0] * d
+
+    def _fill(pos: int, remaining: int, /) -> None:
+        if pos == d - 1:
+            cur[pos] = remaining
+            out.append(tuple(cur))
+            return
+        for e in range(remaining + 1):
+            cur[pos] = e
+            _fill(pos + 1, remaining - e)
+
+    for total in range(p + 1):
+        _fill(0, total)
+    return tuple(out)
+
+
+def _mfd_eval_monomials(r: jax.Array, powers: Sequence[tuple[int, ...]], /) -> jax.Array:
+    rr = jnp.asarray(r, dtype=float)
+    if rr.ndim != 2:
+        raise ValueError(f"Expected r with shape (K,d), got {rr.shape}.")
+    k = int(rr.shape[0])
+    terms: list[jax.Array] = []
+    for pow_vec in powers:
+        term = jnp.ones((k,), dtype=float)
+        for ax, exp in enumerate(pow_vec):
+            if int(exp) != 0:
+                term = term * jnp.power(rr[:, ax], int(exp))
+        terms.append(term)
+    if not terms:
+        return jnp.zeros((k, 0), dtype=float)
+    return jnp.stack(terms, axis=1)
+
+
+def _mfd_dvec_axis_order(
+    *,
+    axis_i: int,
+    order_i: int,
+    powers: Sequence[tuple[int, ...]],
+) -> jax.Array:
+    axis_int = int(axis_i)
+    order_int = int(order_i)
+    m = len(powers)
+    d = len(powers[0]) if m > 0 else 0
+    out = jnp.zeros((m,), dtype=float)
+    for p_idx, pow_vec in enumerate(powers):
+        if any((int(e) != 0) for j, e in enumerate(pow_vec) if j != axis_int):
+            continue
+        axis_exp = int(pow_vec[axis_int]) if axis_int < d else 0
+        if axis_exp == order_int:
+            out = out.at[p_idx].set(float(math.factorial(order_int)))
+            break
+    return out
+
+
+def _mfd_cloud_row_weights_nd(
+    nodes: jax.Array,
+    x0: jax.Array,
+    /,
+    *,
+    powers: Sequence[tuple[int, ...]],
+    dvec: jax.Array,
+    order_i: int,
+    reg: float,
+) -> tuple[jax.Array, float, float]:
+    nodes_arr = jnp.asarray(nodes, dtype=float)
+    x0_arr = jnp.asarray(x0, dtype=float).reshape((-1,))
+    if nodes_arr.ndim != 2:
+        raise ValueError(f"Expected nodes with shape (K,d), got {nodes_arr.shape}.")
+
+    r = nodes_arr - x0_arr[None, :]
+    dist = jnp.sqrt(jnp.sum(r * r, axis=1))
+    h = jnp.max(dist)
+    h_safe = jnp.maximum(h, jnp.asarray(1e-12, dtype=float))
+    r_scaled = r / h_safe
+
+    a = _mfd_eval_monomials(r_scaled, powers)
+    omega = jnp.exp(-jnp.sum(r_scaled * r_scaled, axis=1))
+    omega = jnp.maximum(omega, jnp.asarray(1e-8, dtype=float))
+
+    atw = a.T * omega[None, :]
+    normal_raw = atw @ a
+    svals_raw = jnp.linalg.svd(normal_raw, compute_uv=False)
+    min_sv = float(jnp.min(svals_raw))
+    cond = float(
+        jnp.max(svals_raw)
+        / jnp.maximum(jnp.min(svals_raw), jnp.asarray(1e-30, dtype=float))
+    )
+    normal = normal_raw + float(reg) * jnp.eye(a.shape[1], dtype=float)
+    coeff = jnp.linalg.solve(normal, dvec)
+    w_scaled = omega * (a @ coeff)
+    w = w_scaled / jnp.power(h_safe, int(order_i))
+    return w, min_sv, cond
 
 
 def build_mfd_cloud_plan(
@@ -799,36 +932,105 @@ def build_mfd_cloud_plan(
     order: int,
     k: int | None = None,
     axis: int = 0,
+    degree: int | None = None,
+    reg: float = 1e-10,
 ) -> MFDCloudPlan:
-    """Build a fixed-size cloud stencil plan for 1D point-input MFD."""
+    """Build a fixed-size cloud stencil plan for point-input MFD."""
     order_i = int(order)
     if order_i < 0:
         raise ValueError("order must be non-negative.")
-    axis_i = int(axis)
-    if axis_i != 0:
-        raise ValueError("build_mfd_cloud_plan currently supports axis=0 only.")
-
-    x = _mfd_cloud_points_1d(points)
+    x = _mfd_cloud_points(points)
     n = int(x.shape[0])
+    var_dim = int(x.shape[1])
+    axis_i = int(axis)
+    if not (0 <= axis_i < var_dim):
+        raise ValueError(f"axis must be in [0,{var_dim}), got axis={axis_i}.")
+    if float(reg) < 0.0:
+        raise ValueError("reg must be non-negative.")
     if n <= order_i:
         raise ValueError(f"Need at least order+1 points; got n={n}, order={order_i}.")
-    if int(jnp.unique(x).shape[0]) != n:
+    if int(jnp.unique(x, axis=0).shape[0]) != n:
         raise ValueError(
             "build_mfd_cloud_plan requires unique cloud points for stable local stencils."
         )
 
-    k_req = int(k) if k is not None else max(5, 2 * order_i + 1)
+    degree_i = int(degree) if degree is not None else max(2, order_i + 1)
+    if degree_i < order_i:
+        raise ValueError(
+            f"degree must be >= order; got degree={degree_i}, order={order_i}."
+        )
+
+    basis_dim = int(math.comb(var_dim + degree_i, degree_i))
+    if var_dim > 1 and n < basis_dim:
+        raise ValueError(
+            "build_mfd_cloud_plan requires at least as many points as basis terms; "
+            f"got n={n}, basis_dim={basis_dim}. Increase points or reduce degree."
+        )
+
+    if k is None:
+        if var_dim == 1:
+            k_req = max(5, 2 * order_i + 1)
+        else:
+            k_req = max(2 * basis_dim, basis_dim + 2)
+    else:
+        k_req = int(k)
+        if k_req <= 0:
+            raise ValueError("k must be positive.")
+        if var_dim > 1 and k_req < basis_dim:
+            raise ValueError(
+                "k is too small for ND cloud polynomial basis; "
+                f"need at least {basis_dim}, got k={k_req}. "
+                "Increase k or reduce degree."
+            )
+
     k_eff = max(order_i + 1, k_req)
     k_eff = min(k_eff, n)
+    if var_dim > 1 and k_eff < basis_dim:
+        raise ValueError(
+            "k is too small for ND cloud polynomial basis; "
+            f"need at least {basis_dim}, got k_eff={k_eff}. Increase k or reduce degree."
+        )
 
-    dist = jnp.abs(x[:, None] - x[None, :])
-    neighbors_idx = jnp.argsort(dist, axis=1)[:, : int(k_eff)]
+    diff = x[:, None, :] - x[None, :, :]
+    dist2 = jnp.sum(diff * diff, axis=-1)
+    neighbors_idx = jnp.argsort(dist2, axis=1)[:, : int(k_eff)]
 
-    def _row_weights(idx_row: jax.Array, x0: jax.Array, /) -> jax.Array:
-        nodes = x[idx_row]
-        return _fd_weights_fornberg(nodes, x0, order=order_i)
+    if var_dim == 1:
+        x1 = x[:, 0]
 
-    weights = jax.vmap(_row_weights)(neighbors_idx, x)
+        def _row_weights_1d(idx_row: jax.Array, x0: jax.Array, /) -> jax.Array:
+            nodes = x1[idx_row]
+            return _fd_weights_fornberg(nodes, x0, order=order_i)
+
+        weights = jax.vmap(_row_weights_1d)(neighbors_idx, x1)
+    else:
+        powers = _mfd_monomial_powers(var_dim, degree_i)
+        dvec = _mfd_dvec_axis_order(axis_i=axis_i, order_i=order_i, powers=powers)
+        rows: list[jax.Array] = []
+        for i in range(n):
+            row_idx = neighbors_idx[i]
+            row_nodes = x[row_idx, :]
+            row_w, min_sv, cond = _mfd_cloud_row_weights_nd(
+                row_nodes,
+                x[i, :],
+                powers=powers,
+                dvec=dvec,
+                order_i=order_i,
+                reg=float(reg),
+            )
+            if (not math.isfinite(min_sv)) or min_sv <= 1e-14:
+                raise ValueError(
+                    "build_mfd_cloud_plan found rank-deficient local neighborhoods. "
+                    "Increase k, reduce degree, or improve cloud geometry."
+                )
+            if (not math.isfinite(cond)) or cond > 1e16:
+                raise ValueError(
+                    "build_mfd_cloud_plan found ill-conditioned local neighborhoods. "
+                    "Increase k, reduce degree, or increase reg."
+                )
+            rows.append(row_w)
+        weights = jnp.stack(rows, axis=0)
+
     mask = jnp.ones_like(neighbors_idx, dtype=bool)
     return MFDCloudPlan(
         neighbors_idx=neighbors_idx,
@@ -836,7 +1038,63 @@ def build_mfd_cloud_plan(
         mask=mask,
         axis_i=axis_i,
         order_i=order_i,
+        var_dim=var_dim,
+        degree=degree_i,
+        reg=float(reg),
     )
+
+
+def build_mfd_cloud_plans(
+    points: ArrayLike,
+    /,
+    *,
+    specs: Sequence[tuple[int, int]],
+    k: int | None = None,
+    degree: int | None = None,
+    reg: float = 1e-10,
+) -> frozendict[tuple[int, int], MFDCloudPlan]:
+    """Build multiple fixed-cloud plans keyed by `(axis, order)`."""
+    plans: dict[tuple[int, int], MFDCloudPlan] = {}
+    for spec in specs:
+        if not isinstance(spec, tuple) or len(spec) != 2:
+            raise TypeError(
+                "specs entries must be `(axis, order)` tuples; "
+                f"got {type(spec).__name__}."
+            )
+        axis_i = int(spec[0])
+        order_i = int(spec[1])
+        plans[(axis_i, order_i)] = build_mfd_cloud_plan(
+            points,
+            order=order_i,
+            k=k,
+            axis=axis_i,
+            degree=degree,
+            reg=reg,
+        )
+    return frozendict(plans)
+
+
+def _mfd_resolve_cloud_plan(
+    *,
+    axis_i: int,
+    order_i: int,
+    plan: MFDCloudPlan | None,
+    plans: Mapping[_MFDCloudPlanKey, MFDCloudPlan] | None,
+) -> MFDCloudPlan:
+    if plan is not None:
+        return plan
+    if plans is None:
+        raise ValueError(
+            "mfd_mode='cloud' requires mfd_cloud_plan or mfd_cloud_plans at evaluation time."
+        )
+    key = (int(axis_i), int(order_i))
+    resolved = plans.get(key)
+    if resolved is None:
+        raise ValueError(
+            "mfd_cloud_plans is missing required key "
+            f"{key!r} for this derivative evaluation."
+        )
+    return resolved
 
 
 def _mfd_normalize_stencil_size(n: int, order: int, requested: int | None, /) -> int:
@@ -1131,8 +1389,11 @@ def _mfd_point_nth_derivative_cloud(
     order_i: int,
     plan: MFDCloudPlan,
 ) -> jax.Array:
-    if int(var_dim) != 1:
-        raise ValueError("mfd_mode='cloud' currently supports only var_dim==1.")
+    if int(var_dim) != int(plan.var_dim):
+        raise ValueError(
+            "mfd_cloud_plan var_dim mismatch: "
+            f"operator var_dim={var_dim}, plan var_dim={plan.var_dim}."
+        )
     if int(axis_i) != int(plan.axis_i):
         raise ValueError(
             f"mfd_cloud_plan axis mismatch: operator axis={axis_i}, plan axis={plan.axis_i}."
@@ -1143,15 +1404,13 @@ def _mfd_point_nth_derivative_cloud(
             f"operator order={order_i}, plan order={plan.order_i}."
         )
 
-    x0 = jnp.asarray(args[idx], dtype=float)
-    if x0.ndim == 1:
-        n = int(x0.shape[0])
-    elif x0.ndim == 2 and int(x0.shape[1]) == 1:
-        n = int(x0.shape[0])
-    else:
+    x0 = _mfd_cloud_points(args[idx])
+    n = int(x0.shape[0])
+    d = int(x0.shape[1])
+    if d != int(var_dim):
         raise ValueError(
-            "mfd_mode='cloud' requires point-batch inputs with shape (N,) or (N,1) "
-            f"for var_dim==1; got {x0.shape}."
+            "mfd_mode='cloud' input dimension mismatch: "
+            f"expected var_dim={var_dim}, got point shape {x0.shape}."
         )
     if n != int(plan.num_points):
         raise ValueError(
@@ -3137,6 +3396,7 @@ def partial_n(
         mfd_step: Any | None = None
         mfd_mode: _MFDPointMode = "probe"
         mfd_cloud_plan: MFDCloudPlan | None = None
+        mfd_cloud_plans: Mapping[_MFDCloudPlanKey, MFDCloudPlan] | None = None
         if backend == "mfd":
             mfd_boundary_mode_raw = runtime_kwargs.pop("mfd_boundary_mode", "hybrid")
             mfd_boundary_mode_str = str(mfd_boundary_mode_raw).lower()
@@ -3171,14 +3431,38 @@ def partial_n(
             else:
                 raise ValueError("mfd_mode must be one of 'probe' or 'cloud'.")
             mfd_cloud_plan_raw = runtime_kwargs.pop("mfd_cloud_plan", None)
-            if mfd_mode == "cloud":
-                if mfd_cloud_plan_raw is None:
-                    raise ValueError(
-                        "mfd_mode='cloud' requires mfd_cloud_plan at evaluation time."
+            mfd_cloud_plans_raw = runtime_kwargs.pop("mfd_cloud_plans", None)
+            if mfd_cloud_plans_raw is not None:
+                if not isinstance(mfd_cloud_plans_raw, Mapping):
+                    raise TypeError(
+                        "mfd_cloud_plans must be a mapping keyed by (axis, order)."
                     )
-                if not isinstance(mfd_cloud_plan_raw, MFDCloudPlan):
-                    raise TypeError("mfd_cloud_plan must be an instance of MFDCloudPlan.")
-                mfd_cloud_plan = mfd_cloud_plan_raw
+                plans_dict: dict[_MFDCloudPlanKey, MFDCloudPlan] = {}
+                for raw_key, raw_plan in mfd_cloud_plans_raw.items():
+                    if not isinstance(raw_key, tuple) or len(raw_key) != 2:
+                        raise TypeError(
+                            "mfd_cloud_plans keys must be (axis, order) tuples; "
+                            f"got {raw_key!r}."
+                        )
+                    key = (int(raw_key[0]), int(raw_key[1]))
+                    if not isinstance(raw_plan, MFDCloudPlan):
+                        raise TypeError(
+                            "mfd_cloud_plans values must be MFDCloudPlan instances."
+                        )
+                    plans_dict[key] = raw_plan
+                mfd_cloud_plans = frozendict(plans_dict)
+            if mfd_mode == "cloud":
+                if mfd_cloud_plan_raw is not None:
+                    if not isinstance(mfd_cloud_plan_raw, MFDCloudPlan):
+                        raise TypeError(
+                            "mfd_cloud_plan must be an instance of MFDCloudPlan."
+                        )
+                    mfd_cloud_plan = mfd_cloud_plan_raw
+                if mfd_cloud_plan is None and mfd_cloud_plans is None:
+                    raise ValueError(
+                        "mfd_mode='cloud' requires mfd_cloud_plan or "
+                        "mfd_cloud_plans at evaluation time."
+                    )
 
         x0 = args[idx]
 
@@ -3260,7 +3544,12 @@ def partial_n(
                     )
                 )
             if mfd_mode == "cloud":
-                assert mfd_cloud_plan is not None
+                plan_eff = _mfd_resolve_cloud_plan(
+                    axis_i=int(axis_i),
+                    order_i=int(order_i),
+                    plan=mfd_cloud_plan,
+                    plans=mfd_cloud_plans,
+                )
                 return _return(
                     _mfd_point_nth_derivative_cloud(
                         u,
@@ -3271,7 +3560,7 @@ def partial_n(
                         var_dim=int(var_dim),
                         axis_i=int(axis_i),
                         order_i=int(order_i),
-                        plan=mfd_cloud_plan,
+                        plan=plan_eff,
                     )
                 )
             return _return(
