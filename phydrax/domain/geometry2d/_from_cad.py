@@ -2,6 +2,7 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import tempfile
 from collections.abc import Callable, Sequence
 from functools import cached_property
 from pathlib import Path
@@ -841,7 +842,7 @@ def Geometry2DFromPointCloud(
     if hasattr(surface, "triangulate"):
         surface = surface.triangulate()
 
-    tmp_path = Path(f"/tmp/pv_pointcloud2d_{uuid4().hex}.stl").resolve()
+    tmp_path = Path(tempfile.gettempdir(), f"pv_pointcloud2d_{uuid4().hex}.stl").resolve()
     surface.save(tmp_path)
 
     geom = Geometry2DFromCAD(tmp_path, recenter=recenter)
