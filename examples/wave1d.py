@@ -377,8 +377,9 @@ def _(jax, jnp, jr, phx):
             "u",
             domain,
             operator=lambda f: (
-                phx.operators.dt_n(f, var="t", order=2, backend="mfd")
-                - (float(c) ** 2) * phx.operators.laplacian(f, var="x", backend="mfd")
+                phx.operators.dt_n(f, var="t", order=2, ad_engine="jvp")
+                - (float(c) ** 2)
+                * phx.operators.laplacian(f, var="x", ad_engine="jvp")
             ),
             num_points={"x": int(num_x_interior), "t": int(num_t_interior)},
             structure=structure_xt,
