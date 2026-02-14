@@ -4,7 +4,7 @@
     For a more detailed mathematical guide (notation, shapes, and backend behavior), see
     [Guides → Differential operators](../../guides_differential.md).
 
-## Backends (AD / jet / FD / basis)
+## Backends (AD / jet / FD / basis / MFD)
 
 Many differential operators accept a `backend` keyword:
 
@@ -19,6 +19,8 @@ Many differential operators accept a `backend` keyword:
   - `basis="sine"` / `basis="cosine"`: FFT-based spectral derivatives via odd/even extension
     (sine \(\leftrightarrow\) odd extension, cosine \(\leftrightarrow\) even extension),
   - `basis="poly"`: polynomial (barycentric) derivatives for generic 1D grids.
+- `backend="mfd"`: meshless finite differences with two-sided interior stencils and
+  explicit boundary closure modes (`hybrid`, `ghost`, `biased`).
 
 !!! note
     FFT-based bases (`fourier`/`sine`/`cosine`) assume a *uniformly-spaced* coordinate axis.
@@ -31,11 +33,37 @@ Many operators share these keywords:
 - `var`: label to differentiate with respect to (e.g. `"x"` or `"t"`). If omitted, the variable
   is inferred when possible.
 - `mode`: autodiff mode (`"reverse"` uses `jax.jacrev`, `"forward"` uses `jax.jacfwd`) for AD-based paths.
-- `backend`: `"ad"`, `"jet"`, `"fd"`, or `"basis"` (see above).
+- `backend`: `"ad"`, `"jet"`, `"fd"`, `"basis"`, or `"mfd"` (see above).
 - `basis`: basis method used when `backend="basis"`.
-- `periodic`: periodic treatment for FD stencils (used when `backend="fd"`).
+- `periodic`: periodic treatment for FD/MFD stencils (used when `backend in {"fd","mfd"}`).
+- `mfd_boundary_mode`: boundary closure policy when `backend="mfd"`:
+  `"hybrid"` (default), `"ghost"`, or `"biased"`.
+- `mfd_stencil_size`: local stencil/support size for MFD (evaluation-time knob).
+- `mfd_step`: probe spacing for point-input MFD evaluation (evaluation-time knob).
+- `mfd_mode`: point-input MFD mode, `"probe"` (default) or `"cloud"`.
+- `mfd_cloud_plan`: fixed-cloud stencil plan built with
+  `phydrax.operators.build_mfd_cloud_plan(...)` (required for `mfd_mode="cloud"`).
 
 See the guide for operator shape conventions and for the math behind surface and fractional operators.
+
+!!! note
+    The `mfd_*` options are consumed at operator evaluation time (e.g. when calling the
+    returned `DomainFunction`), so they can be tuned per-evaluation without rebuilding
+    the symbolic operator.
+
+!!! note
+    `mfd_mode="cloud"` is currently a fixed-cloud point path for 1D variables
+    (`var_dim == 1`). Tuple/coord-separable MFD remains unchanged.
+
+## MFD cloud utilities
+
+Use these helpers to precompute and reuse fixed-cloud stencils for point-input MFD.
+
+::: phydrax.operators.build_mfd_cloud_plan
+
+---
+
+::: phydrax.operators.MFDCloudPlan
 
 ## Core derivatives
 

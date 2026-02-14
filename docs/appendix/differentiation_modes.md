@@ -15,7 +15,8 @@ Many differential operators share two primary keywords:
   - `"ad"`: automatic differentiation,
   - `"jet"`: Taylor-mode AD (derivative jets) for higher-order pure derivatives,
   - `"fd"`: finite differences on coord-separable grids (with AD fallback),
-  - `"basis"`: basis-aware (spectral / interpolation) derivatives on coord-separable grids (with AD fallback).
+  - `"basis"`: basis-aware (spectral / interpolation) derivatives on coord-separable grids (with AD fallback),
+  - `"mfd"`: meshless finite differences with explicit boundary closures.
 - `mode`: selects the autodiff *direction* when `backend="ad"`:
   - `"reverse"`: reverse-mode (`jax.jacrev`),
   - `"forward"`: forward-mode (`jax.jacfwd`).
@@ -23,11 +24,11 @@ Many differential operators share two primary keywords:
 Some operators additionally accept:
 
 - `basis ∈ {"poly","fourier","sine","cosine"}` when `backend="basis"`;
-- `periodic ∈ {False,True}` when `backend="fd"`.
+- `periodic ∈ {False,True}` when `backend="fd"` or `backend="mfd"`.
 
 !!! note
     `backend="fd"` and `backend="basis"` require **coord-separable** (structured-grid) evaluation for the variable being
-    differentiated. When given point batches, these backends fall back to `"ad"`.
+    differentiated. `backend="mfd"` supports both coord-separable and point-evaluation paths.
 
 ## 1. Notation
 
@@ -262,7 +263,102 @@ Higher derivatives can be obtained by repeated application of such differentiati
     Polynomial differentiation can be sensitive to node placement for large \(N\). For non-periodic smooth problems on
     \([-1,1]\), Chebyshev-like nodes typically behave far better than uniform nodes.
 
-## 6. Practical guidance (what to use when)
+## 6. `backend="mfd"`: meshless finite differences
+
+The MFD backend approximates derivatives by local weighted combinations of nearby
+samples. At a target \(x_\star\), choose support nodes \(\{x_j\}_{j=1}^{N_s}\) and seek
+weights \(w_j^{(\alpha)}\) for derivative multi-index \(\alpha\) such that
+
+$$
+\partial^\alpha u(x_\star)\;\approx\;\sum_{j=1}^{N_s} w_j^{(\alpha)} u(x_j).
+$$
+
+### 6.1 Polynomial moment reproduction
+
+Weights are chosen so the stencil is exact on a polynomial space \(\Pi_m\):
+
+$$
+\sum_{j=1}^{N_s} w_j^{(\alpha)} p(x_j) = \partial^\alpha p(x_\star)
+\quad \forall p\in\Pi_m.
+$$
+
+This is the meshless analogue of finite-difference consistency conditions. In practice,
+one uses an overdetermined local fit and solves in a weighted least-squares sense.
+
+### 6.2 Weighted least-squares / MLS form
+
+Let \(r_j=x_j-x_\star\), basis \(b(r)\), design matrix \(A_{j\beta}=b_\beta(r_j)\), and
+positive diagonal weights \(W=\operatorname{diag}(\omega_j)\). Define
+\(d_{\alpha,\beta}=\partial^\alpha b_\beta(0)\). A standard expression is
+
+$$
+w^{(\alpha)} = W A (A^\top W A)^{-1} d_\alpha.
+$$
+
+Then the derivative estimate is the linear form \(w^{(\alpha)\top}u_{\text{local}}\).
+
+### 6.3 Accuracy and conditioning
+
+If \(u\) is smooth and the support is quasi-uniform with spacing scale \(h\), typical
+consistency is
+
+$$
+\partial^\alpha u(x_\star) - \sum_j w_j^{(\alpha)}u(x_j)
+= O\!\left(h^{m+1-|\alpha|}\right).
+$$
+
+Numerically, conditioning depends on support geometry and basis degree. Practical
+stability rules:
+
+- use support size larger than the basis dimension (\(N_s \gg \dim \Pi_m\)),
+- scale local coordinates by support radius before building moments,
+- avoid near-collinear/degenerate support sets,
+- use mild regularization if needed.
+
+### 6.4 Boundary closures
+
+Near boundaries, symmetric supports may be unavailable. Phydrax exposes closure modes:
+
+- `ghost`: reflected/ghost support to preserve centered behavior,
+- `biased`: asymmetric one-sided in-domain support,
+- `hybrid`: prefer centered/ghost behavior and fall back to biased closure.
+
+This matches the classical interior-vs-boundary split in finite-difference schemes while
+remaining meshless in support construction.
+
+### 6.5 Coord-separable tuple path
+
+For tuple axes, MFD still acts as an axiswise linear operator \(D_i^{(n)}\). On tensor
+grids, this gives the same operator algebra as structured stencils:
+
+$$
+\partial_{x_i}^n u \approx D_i^{(n)}u,
+\qquad
+\Delta u \approx \sum_{i=1}^d D_i^{(2)}u.
+$$
+
+So tuple MFD can use efficient axiswise application while retaining MFD boundary closures.
+
+### 6.6 Fixed-cloud point mode
+
+For point batches, `mfd_mode="cloud"` reuses a precomputed local stencil graph.
+Given anchors \(\{x_i\}_{i=1}^N\), choose \(K\) neighbors per anchor and precompute:
+
+- neighbor indices \(\nu(i,j)\in\{1,\dots,N\}\),
+- derivative weights \(w_{ij}^{(n)}\),
+- a binary mask \(m_{ij}\in\{0,1\}\) (for fixed-shape padded neighborhoods).
+
+Evaluation is then
+
+$$
+\partial^n u(x_i)\;\approx\;\sum_{j=1}^{K} m_{ij}\,w_{ij}^{(n)}\,u\!\left(x_{\nu(i,j)}\right).
+$$
+
+This avoids per-call local stencil solves and turns cloud MFD into a gather-plus-dot
+pattern with static shapes, which is JIT-friendly for repeated training steps on a fixed
+point set.
+
+## 7. Practical guidance (what to use when)
 
 Common choices:
 
@@ -270,5 +366,7 @@ Common choices:
 - **Structured grids / neural operators**:
   - use `backend="basis"` for smooth fields matching the basis assumptions (especially periodic Fourier grids),
   - use `backend="fd"` for local, stencil-based discretizations or less-smooth signals.
+- **Irregular sampling / boundary-sensitive local closures**: use `backend="mfd"` when
+  you want local meshless stencils with explicit boundary policy control.
 - **High-order derivatives in one variable** (especially time derivatives of order \(n\ge 2\)): `backend="jet"` often
   avoids the overhead of deeply nested Jacobian constructions.
