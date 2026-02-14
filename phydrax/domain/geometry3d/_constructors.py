@@ -3,6 +3,7 @@
 #
 
 import inspect
+import tempfile
 from pathlib import Path
 from uuid import uuid4
 
@@ -51,7 +52,7 @@ def Geometry3DFromPointCloud(
         progress_bar=bool(progress_bar),
     )
 
-    tmp_path = Path(f"/tmp/pv_pointcloud_{uuid4().hex}.stl").resolve()
+    tmp_path = Path(tempfile.gettempdir(), f"pv_pointcloud_{uuid4().hex}.stl").resolve()
     surface.save(tmp_path)
 
     geom = Geometry3DFromCAD(tmp_path, recenter=recenter)
@@ -132,7 +133,7 @@ def Geometry3DFromDEM(
     else:
         solid = surface
 
-    tmp_path = Path(f"/tmp/pv_dem_{uuid4().hex}.stl").resolve()
+    tmp_path = Path(tempfile.gettempdir(), f"pv_dem_{uuid4().hex}.stl").resolve()
     solid.save(tmp_path)
 
     geom = Geometry3DFromCAD(tmp_path, recenter=recenter)
@@ -218,7 +219,7 @@ def Geometry3DFromLidarScene(
     else:
         solid = surf
 
-    tmp_path = Path(f"/tmp/pv_lidar_{uuid4().hex}.stl").resolve()
+    tmp_path = Path(tempfile.gettempdir(), f"pv_lidar_{uuid4().hex}.stl").resolve()
     solid.save(tmp_path)
 
     geom = Geometry3DFromCAD(tmp_path, recenter=recenter)
