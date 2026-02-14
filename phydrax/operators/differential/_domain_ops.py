@@ -597,10 +597,12 @@ def _fd_first_derivative(
 def _fd_nth_derivative(
     y: jax.Array, /, *, dx: jax.Array, axis: int, order: int, periodic: bool
 ) -> jax.Array:
-    out = y
-    for _ in range(int(order)):
-        out = _fd_first_derivative(out, dx=dx, axis=axis, periodic=periodic)
-    return out
+    order_i = int(order)
+
+    def _step(_: int, out_i: jax.Array) -> jax.Array:
+        return _fd_first_derivative(out_i, dx=dx, axis=axis, periodic=periodic)
+
+    return jax.lax.fori_loop(0, order_i, _step, y)
 
 
 def _barycentric_diff_matrix(x: jax.Array, /) -> jax.Array:
@@ -620,15 +622,17 @@ def _barycentric_diff_matrix(x: jax.Array, /) -> jax.Array:
 def _poly_nth_derivative(
     y: jax.Array, x: jax.Array, /, *, axis: int, order: int
 ) -> jax.Array:
-    out = y
-    for _ in range(int(order)):
-        D = _barycentric_diff_matrix(x)
-        out0 = jnp.moveaxis(out, axis, 0)
+    order_i = int(order)
+    D = _barycentric_diff_matrix(x)
+
+    def _step(_: int, out_i: jax.Array) -> jax.Array:
+        out0 = jnp.moveaxis(out_i, axis, 0)
         n = int(out0.shape[0])
         flat = out0.reshape((n, -1))
         dflat = D @ flat
-        out = jnp.moveaxis(dflat.reshape(out0.shape), 0, axis)
-    return out
+        return jnp.moveaxis(dflat.reshape(out0.shape), 0, axis)
+
+    return jax.lax.fori_loop(0, order_i, _step, y)
 
 
 def _fourier_nth_derivative(

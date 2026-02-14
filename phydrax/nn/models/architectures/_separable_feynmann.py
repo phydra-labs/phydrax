@@ -107,6 +107,7 @@ class SeparableFeynmaNN(_AbstractStructuredInputModel):
             output_activation=output_activation,
             keep_outputs_complex=keep_outputs_complex,
             split_input=split_input,
+            scan=scan,
         )
         self.in_size = self.model.in_size
         self.out_size = self.model.out_size

@@ -55,6 +55,26 @@ def test_partial_n_fd_matches_closed_form_periodic_to_tolerance():
     assert jnp.allclose(out, expected, rtol=2e-3, atol=2e-3)
 
 
+def test_partial_n_fd_third_order_matches_closed_form_periodic_to_tolerance():
+    geom = Interval1d(0.0, 1.0)
+
+    @geom.Function("x")
+    def u(x):
+        return jnp.sin(2.0 * jnp.pi * x[0])
+
+    d3 = partial_n(
+        u,
+        var="x",
+        order=3,
+        backend="fd",
+        periodic=True,
+    )
+    coords = FourierAxisSpec(256).materialize(jnp.array(0.0), jnp.array(1.0)).nodes
+    out = d3.func((coords,))
+    expected = -((2.0 * jnp.pi) ** 3) * jnp.cos(2.0 * jnp.pi * coords)
+    assert jnp.allclose(out, expected, rtol=1e-2, atol=1e-2)
+
+
 def test_partial_n_basis_poly_on_legendre_nodes_matches_closed_form():
     geom = Interval1d(-1.0, 1.0)
 
@@ -72,6 +92,26 @@ def test_partial_n_basis_poly_on_legendre_nodes_matches_closed_form():
     coords = LegendreAxisSpec(12).materialize(jnp.array(-1.0), jnp.array(1.0)).nodes
     out = d2.func((coords,))
     expected = 6.0 * coords
+    assert jnp.allclose(out, expected, rtol=1e-6, atol=1e-6)
+
+
+def test_partial_n_basis_poly_fourth_order_matches_closed_form():
+    geom = Interval1d(-1.0, 1.0)
+
+    @geom.Function("x")
+    def u(x):
+        return x[0] ** 6
+
+    d4 = partial_n(
+        u,
+        var="x",
+        order=4,
+        backend="basis",
+        basis="poly",
+    )
+    coords = LegendreAxisSpec(16).materialize(jnp.array(-1.0), jnp.array(1.0)).nodes
+    out = d4.func((coords,))
+    expected = 360.0 * (coords**2)
     assert jnp.allclose(out, expected, rtol=1e-6, atol=1e-6)
 
 

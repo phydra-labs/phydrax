@@ -91,3 +91,22 @@ def scan_apply(
 
     carry, _ = jax.lax.scan(_step, x, dynamic)
     return carry
+
+
+def scan_apply_with_data(
+    dynamic: Any,
+    static: Any,
+    carry: Any,
+    data: Any,
+    fn: Callable[[Any, Any, Any], Any],
+) -> Any:
+    """Apply a scan over packed module dynamics with aligned per-step scan data."""
+
+    def _step(carry_i: Any, packed: tuple[Any, Any]) -> tuple[Any, None]:
+        dynamic_layer, data_i = packed
+        layer = eqx.combine(dynamic_layer, static)
+        out = fn(carry_i, layer, data_i)
+        return out, None
+
+    carry_out, _ = jax.lax.scan(_step, carry, (dynamic, data))
+    return carry_out
