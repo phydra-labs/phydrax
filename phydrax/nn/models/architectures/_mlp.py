@@ -12,6 +12,7 @@ from jaxtyping import Array, Key
 from ...._doc import DOC_KEY0
 from ..._utils import _canonical_size, _get_value_shape, _identity, SizeLike
 from ..core._base import _AbstractBaseModel
+from ..core._scan_utils import pack_scan_modules, scan_apply, stack_scan_dynamics
 from ..layers._linear import Linear
 
 
@@ -48,6 +49,9 @@ class MLP(_AbstractBaseModel):
     out_size: int | tuple[int, ...] | Literal["scalar"]
     final_activation: Callable
     skip_connection: bool
+    scan: bool
+    _scan_enabled: bool
+    _scan_static: object | None
     _residual_proj: Linear | None
 
     def __init__(
@@ -65,6 +69,7 @@ class MLP(_AbstractBaseModel):
         use_bias: bool = True,
         use_final_bias: bool = True,
         initializer: str = "glorot_normal",
+        scan: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
     ):
         r"""Construct an MLP.
@@ -87,6 +92,9 @@ class MLP(_AbstractBaseModel):
         - `use_bias`: Whether to use biases in hidden `Linear` layers.
         - `use_final_bias`: Whether to use a bias in the final `Linear` layer.
         - `initializer`: Weight initializer name for `Linear` layers.
+        - `scan`: If `True`, uses `jax.lax.scan` over repeated hidden layers when
+          their topology is compatible. If not compatible, falls back to the
+          standard loop path.
         - `key`: PRNG key.
         """
         if (width_size is None) ^ (depth is None):
@@ -179,6 +187,16 @@ class MLP(_AbstractBaseModel):
         self.out_size = out_size_c
         self.final_activation = final_act_fn
         self.skip_connection = bool(skip_connection)
+        self.scan = bool(scan)
+        self._scan_enabled = False
+        self._scan_static = None
+
+        if self.scan and len(self.layers) > 2:
+            repeated_layers = self.layers[1:-1]
+            _, static, enabled = pack_scan_modules(repeated_layers)
+            self._scan_enabled = enabled
+            if enabled:
+                self._scan_static = static
 
         if need_proj and proj_key is not None:
             self._residual_proj = Linear(
@@ -213,12 +231,25 @@ class MLP(_AbstractBaseModel):
         - Output with trailing value shape implied by `out_size`. If `out_size == "scalar"`,
           returns a scalar per leading index (no trailing value axis).
         """
-        # Standard MLP path: apply hidden layers then output layer
         x0 = x
-        for layer in self.layers[:-1]:
-            x = layer(x, key=key)
-        # Final layer pre-activation (final layer uses identity activation)
-        y = self.layers[-1](x, key=key)
+        y = None
+        if self._scan_enabled and self._scan_static is not None:
+            repeated_layers = self.layers[1:-1]
+            dynamic = stack_scan_dynamics(repeated_layers)
+            if dynamic is not None:
+                x = self.layers[0](x, key=key)
+                x = scan_apply(
+                    dynamic,
+                    self._scan_static,
+                    x,
+                    lambda carry, layer: layer(carry, key=key),
+                )
+                y = self.layers[-1](x, key=key)
+        if y is None:
+            for layer in self.layers[:-1]:
+                x = layer(x, key=key)
+            y = self.layers[-1](x, key=key)
+
         # Residual addition before final activation
         if self.skip_connection:
             if self._residual_proj is None:

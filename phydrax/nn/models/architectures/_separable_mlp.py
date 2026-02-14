@@ -57,12 +57,14 @@ class SeparableMLP(_AbstractStructuredInputModel):
         use_bias: bool = True,
         use_final_bias: bool = True,
         initializer: str = "glorot_normal",
+        scan: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
     ):
         r"""Create a separable MLP.
 
         `SeparableMLP` forwards MLP hyperparameters to each internal scalar
-        coordinate model. The coordinate models output `latent_size * out_size`
+        coordinate model (including `scan`). The coordinate models output
+        `latent_size * out_size`
         features so the wrapper can reshape them to $(L,m)$ and contract.
         """
         in_dim = _get_size(in_size)
@@ -92,6 +94,7 @@ class SeparableMLP(_AbstractStructuredInputModel):
                 use_bias=use_bias,
                 use_final_bias=use_final_bias,
                 initializer=initializer,
+                scan=scan,
                 key=subkey,
             )
             for subkey in keys
