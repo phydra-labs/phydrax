@@ -24,6 +24,7 @@ license-files = ["LICENSE"]
 
 dependencies = [
     "build123d>=0.10.0",
+    "chex>=0.1.91",
     "coordax==0.2.3",
     "equinox==0.13.2",
     "evosax>=0.2.0",

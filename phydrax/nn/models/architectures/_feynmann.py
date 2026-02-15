@@ -378,9 +378,16 @@ class FeynmaNN(_AbstractBaseModel):
     ) -> Array:
         # Handle scalar input
         if self.in_size == "scalar":
-            if x.shape != ():
-                raise ValueError(f"`x` must have scalar shape, got {x.shape}")
-            x = jnp.broadcast_to(x, (1,))
+            x_arr = jnp.asarray(x)
+            if x_arr.shape == ():
+                x = jnp.broadcast_to(x_arr, (1,))
+            elif x_arr.shape == (1,):
+                x = x_arr
+            else:
+                raise ValueError(
+                    "`x` must have scalar shape () or singleton feature shape (1,), "
+                    f"got {x_arr.shape}."
+                )
 
         assert (
             self.complexify is not None

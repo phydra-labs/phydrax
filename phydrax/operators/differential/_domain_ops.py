@@ -916,12 +916,14 @@ def _mfd_cloud_row_weights_nd(
 
     atw = a.T * omega[None, :]
     normal_raw = atw @ a
-    svals_raw = jnp.linalg.svd(normal_raw, compute_uv=False)
-    min_sv = float(jnp.min(svals_raw))
-    cond = float(
-        jnp.max(svals_raw)
-        / jnp.maximum(jnp.min(svals_raw), jnp.asarray(1e-30, dtype=float))
+    # normal_raw is symmetric PSD (A^T W A), so singular values are its eigenvalues.
+    svals_raw = jnp.maximum(
+        jnp.linalg.eigvalsh(normal_raw), jnp.asarray(0.0, dtype=float)
     )
+    min_sv_arr = jnp.min(svals_raw)
+    max_sv_arr = jnp.max(svals_raw)
+    min_sv = float(min_sv_arr)
+    cond = float(max_sv_arr / jnp.maximum(min_sv_arr, jnp.asarray(1e-30, dtype=float)))
     normal = normal_raw + float(reg) * jnp.eye(a.shape[1], dtype=float)
     coeff = jnp.linalg.solve(normal, dvec)
     w_scaled = omega * (a @ coeff)
@@ -1309,7 +1311,7 @@ def _mfd_tuple_nth_derivative(
         stencil_size=s,
     )
     vals = out0[idx, ...]
-    out = jnp.einsum("ns,ns...->n...", weights, vals)
+    out = oe.contract("ns,ns...->n...", weights, vals)
     return jnp.moveaxis(out, 0, int(axis))
 
 
@@ -1437,7 +1439,7 @@ def _mfd_point_nth_derivative_cloud(
 
     vals = y[plan.neighbors_idx, ...]
     weights = jnp.where(plan.mask, plan.weights, 0.0)
-    return jnp.einsum("nk,nk...->n...", weights, vals)
+    return oe.contract("nk,nk...->n...", weights, vals)
 
 
 def _mfd_point_nth_derivative(

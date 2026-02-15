@@ -90,8 +90,9 @@ def test_pointset_eval_kwargs_enable_mfd_cloud_mode():
     constraint = PointSetConstraint.from_points(
         component=component,
         points=points,
-        residual=lambda fns: partial_n(fns["u"], var="x", order=1, backend="mfd")
-        - dudx_exact,
+        residual=lambda fns: (
+            partial_n(fns["u"], var="x", order=1, backend="mfd") - dudx_exact
+        ),
         constraint_vars=("u",),
         reduction="mean",
         eval_kwargs={"mfd_mode": "cloud", "mfd_cloud_plan": plan},
@@ -153,8 +154,9 @@ def test_pointset_cloud_mode_solver_jit_smoke():
     constraint = PointSetConstraint.from_points(
         component=component,
         points=points,
-        residual=lambda fns: partial_n(fns["u"], var="x", order=1, backend="mfd")
-        - dudx_exact,
+        residual=lambda fns: (
+            partial_n(fns["u"], var="x", order=1, backend="mfd") - dudx_exact
+        ),
         constraint_vars=("u",),
         reduction="mean",
         eval_kwargs={"mfd_mode": "cloud", "mfd_cloud_plan": plan},
@@ -196,8 +198,9 @@ def test_pointset_eval_kwargs_enable_mfd_cloud_mode_nd():
     constraint = PointSetConstraint.from_points(
         component=component,
         points=points,
-        residual=lambda fns: partial_n(fns["u"], var="x", axis=0, order=1, backend="mfd")
-        - dudx_exact,
+        residual=lambda fns: (
+            partial_n(fns["u"], var="x", axis=0, order=1, backend="mfd") - dudx_exact
+        ),
         constraint_vars=("u",),
         reduction="mean",
         eval_kwargs={"mfd_mode": "cloud", "mfd_cloud_plan": plan},
@@ -237,8 +240,9 @@ def test_pointset_from_operator_cloud_mode_nd_with_plan_table():
     ).points
     constraint = PointSetConstraint.from_operator(
         points=points_batch,
-        operator=lambda f: partial_n(f, var="x", axis=1, order=1, backend="mfd")
-        - dudy_exact,
+        operator=lambda f: (
+            partial_n(f, var="x", axis=1, order=1, backend="mfd") - dudy_exact
+        ),
         constraint_vars="u",
         reduction="sum",
         eval_kwargs={"mfd_mode": "cloud", "mfd_cloud_plans": plans},
@@ -269,8 +273,9 @@ def test_pointset_cloud_mode_nd_solver_jit_smoke():
     constraint = PointSetConstraint.from_points(
         component=component,
         points=points,
-        residual=lambda fns: partial_n(fns["u"], var="x", axis=0, order=1, backend="mfd")
-        - dudx_exact,
+        residual=lambda fns: (
+            partial_n(fns["u"], var="x", axis=0, order=1, backend="mfd") - dudx_exact
+        ),
         constraint_vars=("u",),
         reduction="mean",
         eval_kwargs={"mfd_mode": "cloud", "mfd_cloud_plan": plan},
