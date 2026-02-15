@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
+from jaxtyping import ArrayLike
 from opt_einsum import contract
 
 from ...domain._function import DomainFunction
@@ -81,22 +82,25 @@ def trace(u: DomainFunction, /) -> DomainFunction:
     return DomainFunction(domain=u.domain, deps=u.deps, func=_op, metadata=u.metadata)
 
 
-def einsum(subscript: str, /, *operands: DomainFunction) -> DomainFunction:
-    r"""Einstein summation of one or more `DomainFunction` operands.
+def einsum(subscript: str, /, *operands: DomainFunction | ArrayLike) -> DomainFunction:
+    r"""Einstein summation of `DomainFunction` and/or constant array operands.
 
-    Given operands $u^{(1)}(z),\dots,u^{(k)}(z)$, returns the pointwise contraction
-    specified by `subscript`, i.e.
+    Given operands $u^{(1)}(z),\dots,u^{(k)}(z)$ (each either a `DomainFunction`
+    or a constant array-like), returns the pointwise contraction specified by
+    `subscript`, i.e.
 
     $$
     w(z) = \texttt{einsum}(\texttt{subscript}, u^{(1)}(z), \dots, u^{(k)}(z)).
     $$
 
-    Domains are joined across operands before evaluation.
+    Domains are joined across `DomainFunction` operands before evaluation.
+    Constant operands are broadcast by `einsum` and do not contribute domain deps.
 
     **Arguments:**
 
     - `subscript`: Einsum subscript string (as in `opt_einsum.contract`).
-    - `operands`: One or more `DomainFunction` operands.
+    - `operands`: One or more operands (`DomainFunction` or array-like). At least
+      one operand must be a `DomainFunction`.
 
     **Returns:**
 
@@ -105,26 +109,41 @@ def einsum(subscript: str, /, *operands: DomainFunction) -> DomainFunction:
     if not operands:
         raise ValueError("einsum requires at least one operand.")
 
-    joined = operands[0].domain
-    for op in operands[1:]:
+    fn_operands = tuple(op for op in operands if isinstance(op, DomainFunction))
+    if not fn_operands:
+        raise ValueError("einsum requires at least one DomainFunction operand.")
+
+    joined = fn_operands[0].domain
+    for op in fn_operands[1:]:
         joined = joined.join(op.domain)
 
-    ops = tuple(op.promote(joined) for op in operands)
+    promoted = tuple(op.promote(joined) for op in fn_operands)
 
-    deps = tuple(lbl for lbl in joined.labels if any(lbl in op.deps for op in ops))
+    deps = tuple(lbl for lbl in joined.labels if any(lbl in op.deps for op in promoted))
 
     idx = {lbl: i for i, lbl in enumerate(deps)}
-    positions = tuple(tuple(idx[lbl] for lbl in op.deps) for op in ops)
+    promoted_iter = iter(promoted)
+    operand_specs = []
+    for op in operands:
+        if isinstance(op, DomainFunction):
+            op_promoted = next(promoted_iter)
+            pos = tuple(idx[lbl] for lbl in op_promoted.deps)
+            operand_specs.append((op_promoted, pos, None))
+        else:
+            operand_specs.append((None, (), jnp.asarray(op)))
 
-    meta = ops[0].metadata
-    for op in ops[1:]:
+    meta = promoted[0].metadata
+    for op in promoted[1:]:
         if op.metadata != meta:
             meta = {}
             break
 
     def _op(*args, key=None, **kwargs):
         arrays = []
-        for op, pos in zip(ops, positions, strict=True):
+        for op, pos, const in operand_specs:
+            if op is None:
+                arrays.append(const)
+                continue
             op_args = [args[i] for i in pos]
             arrays.append(op.func(*op_args, key=key, **kwargs))
         return contract(subscript, *arrays)
