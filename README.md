@@ -79,6 +79,8 @@ model = phx.nn.MLP(
     out_size="scalar",
     width_size=16,
     depth=2,
+    # For deeper repeated stacks, consider scan=True to reduce compile cost.
+    scan=False,
     key=jr.key(0),
 )
 u = geom.Model("x")(model)

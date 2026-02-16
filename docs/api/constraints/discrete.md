@@ -1,5 +1,11 @@
 # Discrete constraints
 
+For `PointSetConstraint`, runtime operator knobs can be set once via
+`eval_kwargs` and are merged into each `.loss(...)` call.
+
+`PointSetConstraint.weight` can be a scalar global multiplier or a
+`DomainFunction` evaluated pointwise on the anchor set.
+
 ## Discrete point constraints
 
 ::: phydrax.constraints.PointSetConstraint

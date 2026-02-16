@@ -7,11 +7,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
+from .._doc import DOC_KEY0
 from ..domain._components import DomainComponentUnion, Fixed, FixedEnd, FixedStart
 from ..domain._function import DomainFunction
-from ..domain._structure import ProductStructure
+from ..domain._structure import CoordSeparableBatch, PointsBatch, ProductStructure
 from ..operators.differential._domain_ops import dt_n
 from ._functional import FunctionalConstraint
 from ._sampling_spec import SamplingNumPoints
@@ -26,10 +27,15 @@ def ContinuousPointwiseInteriorConstraint(
     structure: ProductStructure,
     dense_structure: ProductStructure | None = None,
     sampler: str = "latin_hypercube",
-    weight: ArrayLike = 1.0,
+    weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
     reduction: Literal["mean", "integral"] = "mean",
+    sampling_mode: Literal["resample", "fixed"] = "resample",
+    fixed_batch: (
+        PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...] | None
+    ) = None,
+    fixed_batch_key: Key[Array, ""] = DOC_KEY0,
     where: Mapping[str, Any] | None = None,
     where_all: DomainFunction | None = None,
 ) -> FunctionalConstraint:
@@ -72,6 +78,10 @@ def ContinuousPointwiseInteriorConstraint(
     - `weight`: Scalar multiplier $w$ applied to this term.
     - `over`: Optional subset of labels to reduce/integrate over.
     - `reduction`: Reduction mode: `"mean"` (measure-normalized) or `"integral"` (unnormalized).
+    - `sampling_mode`: `"resample"` (default; sample every call) or `"fixed"` (reuse one batch).
+    - `fixed_batch`: Optional prebuilt batch used when `sampling_mode="fixed"`.
+    - `fixed_batch_key`: Key used to sample the fixed batch when `sampling_mode="fixed"`
+      and `fixed_batch` is not provided.
     - `where`: Optional per-label filters, treated as indicator functions.
     - `where_all`: Optional global filter, evaluated on the full point tuple.
     """
@@ -92,6 +102,9 @@ def ContinuousPointwiseInteriorConstraint(
         label=label,
         over=over,
         reduction=reduction,
+        sampling_mode=sampling_mode,
+        fixed_batch=fixed_batch,
+        fixed_batch_key=fixed_batch_key,
     )
 
 
@@ -109,7 +122,7 @@ def ContinuousInitialFunctionConstraint(
     structure: ProductStructure,
     dense_structure: ProductStructure | None = None,
     sampler: str = "latin_hypercube",
-    weight: ArrayLike = 1.0,
+    weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
     reduction: Literal["mean", "integral"] = "mean",

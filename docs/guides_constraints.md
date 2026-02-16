@@ -43,8 +43,13 @@ $$
 $$
 
 Here $\mu$ is the component measure induced by the domain (volume/area/length for interiors,
-surface measure for boundaries, counting measure for fixed slices, etc.), and `weight = w`
-is a scalar multiplier.
+surface measure for boundaries, counting measure for fixed slices, etc.).
+
+`weight` can be either:
+
+- a scalar/array-like global multiplier $w$, or
+- a `DomainFunction` used as a pointwise weight inside the reduction
+  (i.e. $\rho(z)$ becomes $w(z)\rho(z)$ before mean/integral reduction).
 
 ### Sampling structure and `over=...`
 
@@ -62,6 +67,21 @@ The `over` argument selects which axes to reduce over:
 - `over=("x", "t")`: reduce over a paired block.
 
 For coord-separable batches, `over="x"` reduces over the coord-separable axes for that label.
+
+### Sampling policy: `resample` vs `fixed`
+
+Sampled constraints support two policies:
+
+- `sampling_mode="resample"` (default): draw a fresh batch on each `loss(...)` call.
+- `sampling_mode="fixed"`: build one batch once and reuse it for all calls.
+
+`sampling_mode="fixed"` is useful for reproducible diagnostics and lower per-iteration
+overhead when batch construction is expensive (for example, large coord-separable grids).
+
+You can either:
+
+- provide `fixed_batch=...` explicitly, or
+- provide `fixed_batch_key=...` and let the constraint sample one fixed batch at construction.
 
 ### Filtering: `where` and `where_all`
 

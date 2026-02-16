@@ -27,7 +27,7 @@ Some operators additionally accept:
 
 !!! note
     `backend="fd"` and `backend="basis"` require **coord-separable** (structured-grid) evaluation for the variable being
-    differentiated. When given point batches, these backends fall back to `"ad"`.
+    differentiated.
 
 ## 1. Notation
 

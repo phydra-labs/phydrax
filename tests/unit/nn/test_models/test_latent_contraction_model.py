@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
-from phydrax.nn.models import LatentContractionModel, LatentExecutionPolicy
+from phydrax.nn.models import LatentContractionModel, LatentExecutionPolicy, MLP
 from phydrax.nn.models.core._base import _AbstractBaseModel
 
 
@@ -132,3 +132,79 @@ def test_latent_contraction_flat_topologies_match_grouped(topology: FlatTopology
     out = planned({"x": x, "p": p})
     assert out.shape == expected.shape
     assert jnp.allclose(out, expected)
+
+
+def test_latent_contraction_aligned_scan_matches_loop_for_homogeneous_factors():
+    latent_size = 4
+    out_size = 2
+    m1 = MLP(
+        in_size="scalar",
+        out_size=latent_size * out_size,
+        width_size=8,
+        depth=2,
+        scan=False,
+        key=jr.key(10),
+    )
+    m2 = MLP(
+        in_size="scalar",
+        out_size=latent_size * out_size,
+        width_size=8,
+        depth=2,
+        scan=False,
+        key=jr.key(11),
+    )
+
+    model_loop = LatentContractionModel(
+        latent_size=latent_size,
+        out_size=out_size,
+        scan=False,
+        x=m1,
+        t=m2,
+    )
+    model_scan = LatentContractionModel(
+        latent_size=latent_size,
+        out_size=out_size,
+        scan=True,
+        x=m1,
+        t=m2,
+    )
+    x = jnp.array([0.3, -0.2], dtype=float)
+    out_loop = model_loop(x)
+    out_scan = model_scan(x)
+    assert model_scan._scan_enabled_aligned
+    assert out_scan.shape == out_loop.shape
+    assert jnp.allclose(out_scan, out_loop)
+
+
+def test_latent_contraction_scan_falls_back_when_aligned_factors_not_uniform():
+    latent_size = 4
+    out_size = 2
+    scalar_model = MLP(
+        in_size="scalar",
+        out_size=latent_size * out_size,
+        width_size=8,
+        depth=2,
+        scan=False,
+        key=jr.key(12),
+    )
+    vector_model = MLP(
+        in_size=2,
+        out_size=latent_size * out_size,
+        width_size=8,
+        depth=2,
+        scan=False,
+        key=jr.key(13),
+    )
+
+    model = LatentContractionModel(
+        latent_size=latent_size,
+        out_size=out_size,
+        scan=True,
+        s=scalar_model,
+        v=vector_model,
+    )
+    assert not model._scan_enabled_aligned
+
+    x = jnp.array([0.1, 0.2, 0.3], dtype=float)
+    out = model(x)
+    assert out.shape == (out_size,)

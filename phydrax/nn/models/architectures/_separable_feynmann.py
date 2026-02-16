@@ -56,12 +56,14 @@ class SeparableFeynmaNN(_AbstractStructuredInputModel):
         learn_gates: bool = True,
         rwf: bool | tuple[float, float] = False,
         keep_output_complex: bool = False,
+        scan: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
     ):
         r"""Create a separable FeynmaNN.
 
         `SeparableFeynmaNN` forwards FeynmaNN hyperparameters to each internal
-        scalar coordinate model. The coordinate models output `latent_size * out_size`
+        scalar coordinate model (including `scan`). The coordinate models output
+        `latent_size * out_size`
         features so the wrapper can reshape them to $(L,m)$ and contract.
         """
         in_dim = _get_size(in_size)
@@ -91,6 +93,7 @@ class SeparableFeynmaNN(_AbstractStructuredInputModel):
                 learn_gates=learn_gates,
                 rwf=rwf,
                 keep_output_complex=keep_output_complex,
+                scan=scan,
                 key=subkey,
             )
             for subkey in keys
@@ -104,6 +107,7 @@ class SeparableFeynmaNN(_AbstractStructuredInputModel):
             output_activation=output_activation,
             keep_outputs_complex=keep_outputs_complex,
             split_input=split_input,
+            scan=scan,
         )
         self.in_size = self.model.in_size
         self.out_size = self.model.out_size

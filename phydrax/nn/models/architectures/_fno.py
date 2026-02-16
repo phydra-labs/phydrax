@@ -15,6 +15,7 @@ from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
 from ..._utils import _get_size
 from ..core._base import _AbstractStructuredInputModel
+from ..core._scan_utils import pack_scan_modules, scan_apply, stack_scan_dynamics
 from ..layers._linear import Linear
 
 
@@ -152,6 +153,18 @@ class SpectralConv2d(StrictModule):
         return jnp.fft.irfftn(out_ft, s=(nx, ny), axes=(-3, -2))
 
 
+class _FNOResidualStep(StrictModule):
+    spectral: SpectralConv1d | SpectralConv2d
+    pointwise: Linear
+
+    def __init__(self, spectral: SpectralConv1d | SpectralConv2d, pointwise: Linear):
+        self.spectral = spectral
+        self.pointwise = pointwise
+
+    def __call__(self, x: Array) -> Array:
+        return jnp.tanh(self.spectral(x) + self.pointwise(x))
+
+
 class FNO1d(_AbstractStructuredInputModel):
     r"""Minimal 1D Fourier Neural Operator for coord-separable grid evaluation.
 
@@ -172,6 +185,9 @@ class FNO1d(_AbstractStructuredInputModel):
     spectral_layers: tuple[SpectralConv1d, ...]
     pointwise_layers: tuple[Linear, ...]
     proj: Linear
+    scan: bool
+    _scan_enabled: bool
+    _scan_static: object | None
 
     def __init__(
         self,
@@ -181,12 +197,16 @@ class FNO1d(_AbstractStructuredInputModel):
         width: int = 32,
         depth: int = 4,
         modes: int = 16,
+        scan: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
     ):
         self.in_size = in_channels
         self.out_size = out_channels
         self.width = int(width)
         self.modes = int(modes)
+        self.scan = bool(scan)
+        self._scan_enabled = False
+        self._scan_static = None
 
         if self.width <= 0:
             raise ValueError("width must be positive.")
@@ -226,6 +246,16 @@ class FNO1d(_AbstractStructuredInputModel):
         self.proj = Linear(
             in_size=self.width, out_size=out_ch, activation=None, key=keys[-1]
         )
+
+        if self.scan:
+            steps = tuple(
+                _FNOResidualStep(spectral=s, pointwise=p)
+                for s, p in zip(self.spectral_layers, self.pointwise_layers, strict=True)
+            )
+            _, static, enabled = pack_scan_modules(steps)
+            self._scan_enabled = enabled
+            if enabled:
+                self._scan_static = static
 
     def __call__(
         self,
@@ -267,8 +297,27 @@ class FNO1d(_AbstractStructuredInputModel):
 
         xw = self.lift(xin)
         xw = jnp.tanh(xw)
-        for spec, pw in zip(self.spectral_layers, self.pointwise_layers, strict=True):
-            xw = jnp.tanh(spec(xw) + pw(xw))
+        if self._scan_enabled and self._scan_static is not None:
+            steps = tuple(
+                _FNOResidualStep(spectral=s, pointwise=p)
+                for s, p in zip(self.spectral_layers, self.pointwise_layers, strict=True)
+            )
+            dynamic = stack_scan_dynamics(steps)
+            if dynamic is not None:
+                xw = scan_apply(
+                    dynamic,
+                    self._scan_static,
+                    xw,
+                    lambda carry, layer: layer(carry),
+                )
+            else:
+                for spec, pw in zip(
+                    self.spectral_layers, self.pointwise_layers, strict=True
+                ):
+                    xw = jnp.tanh(spec(xw) + pw(xw))
+        else:
+            for spec, pw in zip(self.spectral_layers, self.pointwise_layers, strict=True):
+                xw = jnp.tanh(spec(xw) + pw(xw))
         y = self.proj(xw)
         if self.out_size == "scalar":
             return y[..., 0]
@@ -297,6 +346,9 @@ class FNO2d(_AbstractStructuredInputModel):
     spectral_layers: tuple[SpectralConv2d, ...]
     pointwise_layers: tuple[Linear, ...]
     proj: Linear
+    scan: bool
+    _scan_enabled: bool
+    _scan_static: object | None
 
     def __init__(
         self,
@@ -307,6 +359,7 @@ class FNO2d(_AbstractStructuredInputModel):
         depth: int = 4,
         modes: int = 12,
         modes_y: int | None = None,
+        scan: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
     ):
         self.in_size = in_channels
@@ -314,6 +367,9 @@ class FNO2d(_AbstractStructuredInputModel):
         self.width = int(width)
         self.modes_x = int(modes)
         self.modes_y = int(modes if modes_y is None else modes_y)
+        self.scan = bool(scan)
+        self._scan_enabled = False
+        self._scan_static = None
 
         if self.width <= 0:
             raise ValueError("width must be positive.")
@@ -354,6 +410,16 @@ class FNO2d(_AbstractStructuredInputModel):
         self.proj = Linear(
             in_size=self.width, out_size=out_ch, activation=None, key=keys[-1]
         )
+
+        if self.scan:
+            steps = tuple(
+                _FNOResidualStep(spectral=s, pointwise=p)
+                for s, p in zip(self.spectral_layers, self.pointwise_layers, strict=True)
+            )
+            _, static, enabled = pack_scan_modules(steps)
+            self._scan_enabled = enabled
+            if enabled:
+                self._scan_static = static
 
     def __call__(
         self,
@@ -400,8 +466,27 @@ class FNO2d(_AbstractStructuredInputModel):
 
         xw = self.lift(xin)
         xw = jnp.tanh(xw)
-        for spec, pw in zip(self.spectral_layers, self.pointwise_layers, strict=True):
-            xw = jnp.tanh(spec(xw) + pw(xw))
+        if self._scan_enabled and self._scan_static is not None:
+            steps = tuple(
+                _FNOResidualStep(spectral=s, pointwise=p)
+                for s, p in zip(self.spectral_layers, self.pointwise_layers, strict=True)
+            )
+            dynamic = stack_scan_dynamics(steps)
+            if dynamic is not None:
+                xw = scan_apply(
+                    dynamic,
+                    self._scan_static,
+                    xw,
+                    lambda carry, layer: layer(carry),
+                )
+            else:
+                for spec, pw in zip(
+                    self.spectral_layers, self.pointwise_layers, strict=True
+                ):
+                    xw = jnp.tanh(spec(xw) + pw(xw))
+        else:
+            for spec, pw in zip(self.spectral_layers, self.pointwise_layers, strict=True):
+                xw = jnp.tanh(spec(xw) + pw(xw))
         y = self.proj(xw)
         if self.out_size == "scalar":
             return y[..., 0]

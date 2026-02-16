@@ -10,12 +10,15 @@ import pytest
 from phydrax.nn.models import LatentContractionModel, MLP, Separable
 
 
-def test_latent_contraction_regular_and_factorwise():
+@pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
+def test_latent_contraction_regular_and_factorwise(scan):
     key = jr.key(0)
     # space model: in_size=2 -> out=latent*out=8
-    space_model = MLP(in_size=2, out_size=8, width_size=8, depth=1, key=key)
+    space_model = MLP(in_size=2, out_size=8, width_size=8, depth=1, scan=scan, key=key)
     # time model: scalar -> latent=4
-    time_model = MLP(in_size="scalar", out_size=4, width_size=8, depth=1, key=jr.key(1))
+    time_model = MLP(
+        in_size="scalar", out_size=4, width_size=8, depth=1, scan=scan, key=jr.key(1)
+    )
 
     model = LatentContractionModel(
         out_size=2,
@@ -40,11 +43,14 @@ def test_latent_contraction_regular_and_factorwise():
         _ = model((jnp.array([0.1, 0.2]),))
 
 
-def test_separable_wrapper_regular_and_separable():
+@pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
+def test_separable_wrapper_regular_and_separable(scan):
     key = jr.key(42)
     # Two scalar models for 2D
-    m1 = MLP(in_size="scalar", out_size=8, width_size=8, depth=1, key=key)
-    m2 = MLP(in_size="scalar", out_size=8, width_size=8, depth=1, key=jr.key(43))
+    m1 = MLP(in_size="scalar", out_size=8, width_size=8, depth=1, scan=scan, key=key)
+    m2 = MLP(
+        in_size="scalar", out_size=8, width_size=8, depth=1, scan=scan, key=jr.key(43)
+    )
 
     model = Separable(in_size=2, out_size=2, latent_size=4, models=(m1, m2))
 
@@ -57,3 +63,81 @@ def test_separable_wrapper_regular_and_separable():
     x2 = jnp.array([0.2, 0.4])
     ys = model((x1, x2))
     assert ys.shape == (2, 2, 2)
+
+
+def test_separable_scan_matches_loop_for_point_and_separable_tuple():
+    latent_size = 3
+    out_size = 2
+    split_input = 2
+    models = tuple(
+        MLP(
+            in_size="scalar",
+            out_size=latent_size * out_size,
+            width_size=8,
+            depth=2,
+            scan=False,
+            key=jr.key(100 + i),
+        )
+        for i in range(4)
+    )
+
+    loop_model = Separable(
+        in_size=2,
+        out_size=out_size,
+        latent_size=latent_size,
+        models=models,
+        split_input=split_input,
+        scan=False,
+    )
+    scan_model = Separable(
+        in_size=2,
+        out_size=out_size,
+        latent_size=latent_size,
+        models=models,
+        split_input=split_input,
+        scan=True,
+    )
+    assert scan_model._scan_enabled_regular
+    assert all(scan_model._scan_enabled_clone_groups)
+
+    x_point = jnp.array([0.2, -0.1], dtype=float)
+    y_point_loop = loop_model(x_point)
+    y_point_scan = scan_model(x_point)
+    assert y_point_scan.shape == y_point_loop.shape
+    assert jnp.allclose(y_point_scan, y_point_loop)
+
+    x1 = jnp.array([0.1, 0.2, 0.4], dtype=float)
+    x2 = jnp.array([-0.3, 0.0], dtype=float)
+    y_sep_loop = loop_model((x1, x2))
+    y_sep_scan = scan_model((x1, x2))
+    assert y_sep_scan.shape == y_sep_loop.shape
+    assert jnp.allclose(y_sep_scan, y_sep_loop)
+
+
+def test_separable_scan_falls_back_for_heterogeneous_models():
+    m1 = MLP(
+        in_size="scalar",
+        out_size=8,
+        width_size=8,
+        depth=2,
+        scan=False,
+        key=jr.key(7),
+    )
+    m2 = MLP(
+        in_size="scalar",
+        out_size=8,
+        hidden_sizes=(5, 7, 5),
+        scan=False,
+        key=jr.key(8),
+    )
+    model = Separable(
+        in_size=2,
+        out_size=2,
+        latent_size=4,
+        models=(m1, m2),
+        scan=True,
+    )
+    assert model.scan
+    assert not model._scan_enabled_regular
+    y = model(jnp.array([0.1, 0.2]))
+    assert y.shape == (2,)

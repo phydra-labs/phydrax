@@ -595,10 +595,12 @@ def _fd_first_derivative(
 def _fd_nth_derivative(
     y: jax.Array, /, *, dx: jax.Array, axis: int, order: int, periodic: bool
 ) -> jax.Array:
-    out = y
-    for _ in range(int(order)):
-        out = _fd_first_derivative(out, dx=dx, axis=axis, periodic=periodic)
-    return out
+    order_i = int(order)
+
+    def _step(_: int, out_i: jax.Array) -> jax.Array:
+        return _fd_first_derivative(out_i, dx=dx, axis=axis, periodic=periodic)
+
+    return jax.lax.fori_loop(0, order_i, _step, y)
 
 
 def _barycentric_diff_matrix(x: jax.Array, /) -> jax.Array:
@@ -618,15 +620,17 @@ def _barycentric_diff_matrix(x: jax.Array, /) -> jax.Array:
 def _poly_nth_derivative(
     y: jax.Array, x: jax.Array, /, *, axis: int, order: int
 ) -> jax.Array:
-    out = y
-    for _ in range(int(order)):
-        D = _barycentric_diff_matrix(x)
-        out0 = jnp.moveaxis(out, axis, 0)
+    order_i = int(order)
+    D = _barycentric_diff_matrix(x)
+
+    def _step(_: int, out_i: jax.Array) -> jax.Array:
+        out0 = jnp.moveaxis(out_i, axis, 0)
         n = int(out0.shape[0])
         flat = out0.reshape((n, -1))
         dflat = D @ flat
-        out = jnp.moveaxis(dflat.reshape(out0.shape), 0, axis)
-    return out
+        return jnp.moveaxis(dflat.reshape(out0.shape), 0, axis)
+
+    return jax.lax.fori_loop(0, order_i, _step, y)
 
 
 def _fourier_nth_derivative(
@@ -765,7 +769,8 @@ def grad(
       - `"fd"`: finite differences on coord-separable grids (falls back to `"ad"`).
       - `"basis"`: spectral/barycentric methods on coord-separable grids (falls back to `"ad"`).
     - `basis`: Basis method used when `backend="basis"`.
-    - `periodic`: Whether to treat the differentiated axis as periodic (used by `backend="fd"`).
+    - `periodic`: Whether to treat the differentiated axis as periodic (used by
+      `backend="fd"` tuple paths).
 
     **Notes:**
 
@@ -857,7 +862,7 @@ def grad(
             call_args = tuple(xi if i == idx else args[i] for i in range(len(args)))
             return u.func(*call_args, key=key, **kwargs)
 
-        if isinstance(x0, tuple) and backend != "ad":
+        if isinstance(x0, tuple) and backend in ("fd", "basis"):
             coords = tuple(jnp.asarray(xi) for xi in x0)
             if len(coords) != var_dim:
                 raise ValueError(
@@ -1932,7 +1937,8 @@ def laplacian(
       - `"fd"`: uses finite differences on coord-separable grids (falls back to `"ad"`).
       - `"basis"`: uses spectral/barycentric methods on coord-separable grids (falls back to `"ad"`).
     - `basis`: Basis method used when `backend="basis"`.
-    - `periodic`: Whether to treat differentiated axes as periodic (used by `backend="fd"`).
+    - `periodic`: Whether to treat differentiated axes as periodic (used by
+      `backend="fd"`).
     - `ad_engine`: AD execution strategy used when `backend="ad"`:
       - `"auto"`: existing mixed strategy (default).
       - `"reverse"` / `"forward"`: force Jacobian AD mode.
@@ -2391,7 +2397,8 @@ def partial_n(
       - `"fd"`: finite differences on coord-separable grids (falls back to `"ad"` for point inputs).
       - `"basis"`: spectral/barycentric methods on coord-separable grids (falls back to `"ad"` for point inputs).
     - `basis`: Basis method used when `backend="basis"`.
-    - `periodic`: Whether to treat the differentiated axis as periodic (used by `backend="fd"`).
+    - `periodic`: Whether to treat the differentiated axis as periodic (used by
+      `backend="fd"`).
 
     **Returns:**
 
@@ -2873,6 +2880,7 @@ def div_diag_k_grad(
     var: str | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
     backend: Literal["ad", "jet"] = "ad",
+    periodic: bool = False,
     ad_engine: _ADEngine = "auto",
 ) -> DomainFunction:
     r"""Compute $\nabla\cdot(\text{diag}(k)\,\nabla u)$ for diagonal anisotropy.
@@ -2893,6 +2901,7 @@ def div_diag_k_grad(
     - `var`: Geometry label to differentiate with respect to.
     - `mode`: Autodiff mode used when `backend="ad"`.
     - `backend`: `"ad"` (autodiff) or `"jet"` (Jet expansions).
+    - `periodic`: Retained for API compatibility (ignored for `"ad"`/`"jet"`).
 
     **Returns:**
 

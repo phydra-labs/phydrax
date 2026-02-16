@@ -19,6 +19,11 @@ from ...._strict import StrictModule
 from ..._utils import _get_size, _identity
 from .._utils import _contract_str, _stack_separable
 from ..core._base import _AbstractBaseModel, _AbstractStructuredInputModel
+from ..core._scan_utils import (
+    pack_scan_modules,
+    scan_apply_with_data,
+    stack_scan_dynamics,
+)
 
 
 class LatentExecutionPolicy(StrictModule):
@@ -96,11 +101,15 @@ class LatentContractionModel(_AbstractStructuredInputModel):
     output_activation: Callable
     keep_outputs_complex: bool
     execution_policy: LatentExecutionPolicy
+    scan: bool
 
     _factor_sizes: tuple[int, ...]
     _total_in_size: int
     _supports_blockwise_input: bool = True
     _warn_on_auto_fallback: bool
+    _scan_enabled_aligned: bool
+    _scan_static_aligned: object | None
+    _scan_factor_size_uniform: bool
     _supported_layouts: tuple[
         Literal["auto", "dense_points", "coord_separable", "hybrid", "full_tensor"], ...
     ] = ("auto", "dense_points", "coord_separable", "hybrid", "full_tensor")
@@ -114,6 +123,7 @@ class LatentContractionModel(_AbstractStructuredInputModel):
         output_activation: Callable | None = None,
         keep_outputs_complex: bool = False,
         execution_policy: LatentExecutionPolicy | None = None,
+        scan: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
         **factor_models: _AbstractBaseModel,
     ):
@@ -129,6 +139,9 @@ class LatentContractionModel(_AbstractStructuredInputModel):
           yourself if you want adaptive behavior).
         - `keep_outputs_complex`: If `True`, keeps complex outputs when the
           factors are complex-valued; otherwise returns the real part.
+        - `scan`: If `True`, uses `jax.lax.scan` for aligned factor execution
+          when factor model structure is compatible; otherwise falls back to the
+          loop path.
 
         Each factor model should return either $L$ features or $L\cdot m$ features
         so the wrapper can reshape to $(L,m)$.
@@ -157,6 +170,16 @@ class LatentContractionModel(_AbstractStructuredInputModel):
             LatentExecutionPolicy() if execution_policy is None else execution_policy
         )
         self._warn_on_auto_fallback = self.execution_policy.fallback == "warn"
+        self.scan = bool(scan)
+        self._scan_enabled_aligned = False
+        self._scan_static_aligned = None
+        self._scan_factor_size_uniform = len(set(self._factor_sizes)) == 1
+
+        if self.scan and self._scan_factor_size_uniform:
+            _, static, enabled = pack_scan_modules(self.factor_models)
+            self._scan_enabled_aligned = enabled
+            if enabled:
+                self._scan_static_aligned = static
 
     def _auto_fallback(self, message: str, /) -> None:
         if self.execution_policy.fallback == "error":
@@ -217,6 +240,44 @@ class LatentContractionModel(_AbstractStructuredInputModel):
     def _call_aligned(self, x: Array, /, *, key: Key[Array, ""] = DOC_KEY0) -> Array:
         factor_inputs = self._split_aligned_input(x)
         keys = self._split_key(key)
+        if (
+            self.scan
+            and self._scan_enabled_aligned
+            and self._scan_static_aligned is not None
+            and len(self.factor_models) > 1
+        ):
+            first_lat, _ = self._eval_factor_array(
+                self.factor_models[0],
+                factor_inputs[0],
+                name=self.factor_names[0],
+                key=keys[0],
+            )
+            dynamic = stack_scan_dynamics(self.factor_models[1:])
+            if dynamic is not None:
+                scan_inputs = jnp.stack(
+                    tuple(jnp.asarray(pts) for pts in factor_inputs[1:]), axis=0
+                )
+
+                def _step(carry: Array, layer: Any, data_i: tuple[Array, Array]) -> Array:
+                    pts_i, key_i = data_i
+                    lats_i, _ = self._eval_factor_array(
+                        layer,
+                        pts_i,
+                        name="scan_factor",
+                        key=key_i,
+                    )
+                    return carry * lats_i
+
+                prod = scan_apply_with_data(
+                    dynamic,
+                    self._scan_static_aligned,
+                    first_lat,
+                    (scan_inputs, keys[1:]),
+                    _step,
+                )
+                out = jnp.sum(prod, axis=-2)
+                return self._finalize(out)
+
         latents = []
         batch_size = None
         for name, model, pts, k in zip(
@@ -491,9 +552,14 @@ class Separable(_AbstractStructuredInputModel):
     models: tuple[_AbstractBaseModel, ...]
     output_activation: Callable
     keep_outputs_complex: bool
+    scan: bool
     _replicated_scalar_input: bool
     _clones: int
     _base_in_dim: int
+    _scan_enabled_regular: bool
+    _scan_static_regular: object | None
+    _scan_enabled_clone_groups: tuple[bool, ...]
+    _scan_static_clone_groups: tuple[object | None, ...]
 
     def __init__(
         self,
@@ -505,6 +571,7 @@ class Separable(_AbstractStructuredInputModel):
         output_activation: Callable | None = None,
         keep_outputs_complex: bool = False,
         split_input: int | None = None,
+        scan: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
     ):
         r"""Create a separable wrapper.
@@ -520,6 +587,8 @@ class Separable(_AbstractStructuredInputModel):
           it yourself if you want adaptive behavior).
         - `split_input`: If provided and `in_size="scalar"`, replicates the scalar
           input across `split_input` coordinate models.
+        - `scan`: If `True`, uses `jax.lax.scan` for compatible regular and
+          clone-group execution paths; otherwise falls back to loops.
         """
         del key
         in_dim = _get_size(in_size)
@@ -543,6 +612,28 @@ class Separable(_AbstractStructuredInputModel):
             _identity if output_activation is None else output_activation
         )
         self.keep_outputs_complex = bool(keep_outputs_complex)
+        self.scan = bool(scan)
+        self._scan_enabled_regular = False
+        self._scan_static_regular = None
+        self._scan_enabled_clone_groups = tuple(False for _ in range(in_dim))
+        self._scan_static_clone_groups = tuple(None for _ in range(in_dim))
+
+        if self.scan:
+            _, static_regular, enabled_regular = pack_scan_modules(self.models)
+            self._scan_enabled_regular = enabled_regular
+            if enabled_regular:
+                self._scan_static_regular = static_regular
+
+            if clones > 1:
+                enabled_groups: list[bool] = []
+                static_groups: list[object | None] = []
+                for i in range(in_dim):
+                    group = self.models[i * clones : (i + 1) * clones]
+                    _, static_group, enabled_group = pack_scan_modules(group)
+                    enabled_groups.append(enabled_group)
+                    static_groups.append(static_group if enabled_group else None)
+                self._scan_enabled_clone_groups = tuple(enabled_groups)
+                self._scan_static_clone_groups = tuple(static_groups)
 
     def __call__(
         self,
@@ -586,14 +677,44 @@ class Separable(_AbstractStructuredInputModel):
         clones = self._clones
         in_dim = self._base_in_dim
 
+        def _scan_regular(model_inputs: Array, /) -> Array | None:
+            if (
+                not self.scan
+                or not self._scan_enabled_regular
+                or self._scan_static_regular is None
+                or len(self.models) <= 1
+            ):
+                return None
+            dynamic = stack_scan_dynamics(self.models[1:])
+            if dynamic is None:
+                return None
+
+            def _step(carry: Array, layer: Any, data_i: tuple[Array, Array]) -> Array:
+                xi_i, key_i = data_i
+                return carry * jnp.asarray(layer(xi_i, key=key_i))
+
+            first = jnp.asarray(self.models[0](model_inputs[0], key=keys[0]))
+            return scan_apply_with_data(
+                dynamic,
+                self._scan_static_regular,
+                first,
+                (model_inputs[1:], keys[1:]),
+                _step,
+            )
+
         # Scalar-input case: treat (N,) and (N,1) as a batch of scalars.
         if in_dim == 1:
             if x_arr.ndim == 0:
-                out_list = []
-                for idx in range(clones):
-                    out_list.append(self.models[idx](x_arr, key=keys[idx]))
-                outputs = ft.reduce(jnp.multiply, out_list, jnp.array(1.0))
-                out = contract("lo->o", self._reshape_latents(outputs))
+                scan_inputs = jnp.repeat(x_arr, len(self.models))
+                scan_out = _scan_regular(scan_inputs)
+                if scan_out is not None:
+                    out = contract("lo->o", self._reshape_latents(scan_out))
+                else:
+                    out_list = []
+                    for idx in range(clones):
+                        out_list.append(self.models[idx](x_arr, key=keys[idx]))
+                    outputs = ft.reduce(jnp.multiply, out_list, jnp.array(1.0))
+                    out = contract("lo->o", self._reshape_latents(outputs))
             else:
                 if x_arr.ndim == 2 and x_arr.shape == (1, 1):
                     x_arr = jnp.squeeze(x_arr, axis=(0, 1))
@@ -604,25 +725,35 @@ class Separable(_AbstractStructuredInputModel):
                         f"Invalid input shape {x_arr.shape}. Expected scalar input. "
                         "Use vmap for batched inputs."
                     )
-                out_list = []
-                for idx in range(clones):
-                    out_list.append(self.models[idx](x_arr, key=keys[idx]))
-                outputs = ft.reduce(jnp.multiply, out_list, jnp.array(1.0))
-                out = contract("lo->o", self._reshape_latents(outputs))
+                scan_inputs = jnp.repeat(x_arr, len(self.models))
+                scan_out = _scan_regular(scan_inputs)
+                if scan_out is not None:
+                    out = contract("lo->o", self._reshape_latents(scan_out))
+                else:
+                    out_list = []
+                    for idx in range(clones):
+                        out_list.append(self.models[idx](x_arr, key=keys[idx]))
+                    outputs = ft.reduce(jnp.multiply, out_list, jnp.array(1.0))
+                    out = contract("lo->o", self._reshape_latents(outputs))
 
         # Standard (vector) input case: x is a single point (d,) or a batch (N,d).
         elif x_arr.ndim == 1:
             if x_arr.shape[0] != in_dim:
                 raise ValueError(f"Expected shape ({in_dim},) got {x_arr.shape}.")
-            out_list = []
-            idx = 0
-            for i in range(in_dim):
-                xi = x_arr[i]
-                for _ in range(clones):
-                    out_list.append(self.models[idx](xi, key=keys[idx]))
-                    idx += 1
-            outputs = ft.reduce(jnp.multiply, out_list, jnp.array(1.0))
-            out = contract("lo->o", self._reshape_latents(outputs))
+            scan_inputs = jnp.repeat(x_arr, clones)
+            scan_out = _scan_regular(scan_inputs)
+            if scan_out is not None:
+                out = contract("lo->o", self._reshape_latents(scan_out))
+            else:
+                out_list = []
+                idx = 0
+                for i in range(in_dim):
+                    xi = x_arr[i]
+                    for _ in range(clones):
+                        out_list.append(self.models[idx](xi, key=keys[idx]))
+                        idx += 1
+                outputs = ft.reduce(jnp.multiply, out_list, jnp.array(1.0))
+                out = contract("lo->o", self._reshape_latents(outputs))
         else:
             raise ValueError(
                 f"Invalid input shape {x_arr.shape}. Expected ({in_dim},). "
@@ -660,13 +791,51 @@ class Separable(_AbstractStructuredInputModel):
         clones = self._clones
         outputs_dim = []
         idx = 0
-        for xi in x:
-            clones_lat = []
-            for _ in range(clones):
-                out = jax.vmap(ft.partial(self.models[idx], key=keys[idx]))(xi)
-                clones_lat.append(self._reshape_latents(out))
-                idx += 1
-            outputs_dim.append(ft.reduce(jnp.multiply, clones_lat))
+        for i, xi in enumerate(x):
+            group_models = self.models[idx : idx + clones]
+            group_keys = keys[idx : idx + clones]
+
+            if (
+                self.scan
+                and clones > 1
+                and self._scan_enabled_clone_groups[i]
+                and (self._scan_static_clone_groups[i] is not None)
+            ):
+                static_group = self._scan_static_clone_groups[i]
+                first = jax.vmap(ft.partial(group_models[0], key=group_keys[0]))(xi)
+                group_lat = self._reshape_latents(first)
+                dynamic = stack_scan_dynamics(group_models[1:])
+                if dynamic is not None and static_group is not None:
+                    scan_x = jnp.broadcast_to(xi, (clones - 1, int(xi.shape[0])))
+
+                    def _step(
+                        carry: Array, layer: Any, data_i: tuple[Array, Array]
+                    ) -> Array:
+                        xi_i, key_i = data_i
+                        out_i = jax.vmap(ft.partial(layer, key=key_i))(xi_i)
+                        return carry * self._reshape_latents(out_i)
+
+                    group_lat = scan_apply_with_data(
+                        dynamic,
+                        static_group,
+                        group_lat,
+                        (scan_x, group_keys[1:]),
+                        _step,
+                    )
+                else:
+                    for model_i, key_i in zip(
+                        group_models[1:], group_keys[1:], strict=True
+                    ):
+                        out_i = jax.vmap(ft.partial(model_i, key=key_i))(xi)
+                        group_lat = group_lat * self._reshape_latents(out_i)
+                outputs_dim.append(group_lat)
+            else:
+                clones_lat = []
+                for model_i, key_i in zip(group_models, group_keys, strict=True):
+                    out_i = jax.vmap(ft.partial(model_i, key=key_i))(xi)
+                    clones_lat.append(self._reshape_latents(out_i))
+                outputs_dim.append(ft.reduce(jnp.multiply, clones_lat))
+            idx += clones
 
         if len(outputs_dim) == 1:
             out = contract("nlo->no", outputs_dim[0])

@@ -573,6 +573,19 @@ class DomainFunction(StrictModule):
     ) -> cx.Field:
         from ._model_function import _ConcatenatedModelCallable
 
+        blockwise_eval = kwargs.pop("_blockwise_eval", False)
+        blockwise_mode = "vmap"
+        if isinstance(blockwise_eval, str):
+            mode = blockwise_eval.strip().lower()
+            if mode not in ("vmap", "direct"):
+                raise ValueError(
+                    "_blockwise_eval string mode must be 'vmap' or 'direct'."
+                )
+            force_blockwise = True
+            blockwise_mode = mode
+        else:
+            force_blockwise = bool(blockwise_eval)
+
         def _emit_blockwise_fallback(reason: str, /) -> None:
             if isinstance(self.func, _ConcatenatedModelCallable):
                 self.func.emit_auto_fallback_warning(
@@ -807,14 +820,76 @@ class DomainFunction(StrictModule):
         if out is None:
             if fallback_reason is not None:
                 _emit_blockwise_fallback(fallback_reason)
-            if not self.deps:
-                val = self.func(key=key, **kwargs)
-                out = cx.Field(jnp.asarray(val), dims=(None,) * jnp.asarray(val).ndim)
+            if force_blockwise:
+                if structure is None:
+                    raise ValueError(
+                        "_blockwise_eval requires a structured PointsBatch input."
+                    )
+                if structure.axis_names is None:
+                    raise ValueError(
+                        "PointsBatch.structure must be canonicalized (axis_names set)."
+                    )
+                mapped_axes: list[str] = []
+                mapped_blocks: list[tuple[str, ...]] = []
+                for block, axis in zip(
+                    structure.blocks, structure.axis_names, strict=True
+                ):
+                    if any(lbl in self.deps for lbl in block):
+                        mapped_blocks.append(block)
+                        mapped_axes.append(axis)
+
+                if not self.deps:
+                    val = self.func(key=key, **kwargs)
+                    y = jnp.asarray(val)
+                else:
+                    dep_values = tuple(
+                        _unwrap_fields_to_data(points_map[d]) for d in self.deps
+                    )
+                    if blockwise_mode == "direct":
+                        y = jnp.asarray(self.func(*dep_values, key=key, **kwargs))
+                    elif mapped_blocks:
+
+                        def _call(*args):
+                            return self.func(*args, key=key, **kwargs)
+
+                        mapped = _call
+                        for block in reversed(mapped_blocks):
+                            in_axes = tuple(
+                                0 if dep in block else None for dep in self.deps
+                            )
+                            mapped = jax.vmap(mapped, in_axes=in_axes, out_axes=0)
+                        y = jnp.asarray(mapped(*dep_values))
+                    else:
+                        y = jnp.asarray(self.func(*dep_values, key=key, **kwargs))
+
+                if not mapped_axes:
+                    out = cx.Field(y, dims=(None,) * y.ndim)
+                else:
+                    used_axes: list[str] = []
+                    shape_i = 0
+                    started = False
+                    for axis in mapped_axes:
+                        if shape_i >= y.ndim:
+                            break
+                        n = _axis_size(points_map, axis)
+                        if y.shape[shape_i] == n:
+                            used_axes.append(axis)
+                            shape_i += 1
+                            started = True
+                            continue
+                        if started:
+                            break
+                    out_dims = tuple(used_axes) + (None,) * (y.ndim - shape_i)
+                    out = cx.Field(y, dims=out_dims)
             else:
-                dep_values = tuple(points_map[d] for d in self.deps)
-                out = cx.cmap(self.func, out_axes="leading")(
-                    *dep_values, key=key, **kwargs
-                )
+                if not self.deps:
+                    val = self.func(key=key, **kwargs)
+                    out = cx.Field(jnp.asarray(val), dims=(None,) * jnp.asarray(val).ndim)
+                else:
+                    dep_values = tuple(points_map[d] for d in self.deps)
+                    out = cx.cmap(self.func, out_axes="leading")(
+                        *dep_values, key=key, **kwargs
+                    )
         if not isinstance(out, cx.Field):
             raise TypeError("DomainFunction must return a coordax.Field.")
 

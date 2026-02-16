@@ -4,6 +4,7 @@
 
 import jax.numpy as jnp
 import jax.random as jr
+import pytest
 
 from phydrax.nn.models import Linear, MLP, RandomFourierFeatureEmbeddings
 
@@ -33,8 +34,9 @@ def test_linear_tensor_in_scalar_out_shapes():
     assert yb.shape == (7,)
 
 
-def test_mlp_tensor_out_shapes():
-    model = MLP(in_size=2, out_size=(2, 2), hidden_sizes=(8,), key=jr.key(2))
+@pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
+def test_mlp_tensor_out_shapes(scan):
+    model = MLP(in_size=2, out_size=(2, 2), hidden_sizes=(8,), scan=scan, key=jr.key(2))
     x = jnp.ones((2,))
     y = model(x)
     assert y.shape == (2, 2)

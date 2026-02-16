@@ -23,6 +23,7 @@ from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
 from ..._utils import _canonical_size, _get_size, _get_value_shape, _identity, SizeLike
 from ..core._base import _AbstractBaseModel
+from ..core._scan_utils import pack_scan_modules, scan_apply, stack_scan_dynamics
 from ..layers._linear import Linear
 
 
@@ -230,6 +231,9 @@ class KAN(_AbstractBaseModel):
     out_size: int | tuple[int, ...] | Literal["scalar"]
     final_activation: Callable
     skip_connection: bool
+    scan: bool
+    _scan_enabled: bool
+    _scan_static: object | None
     _residual_proj: Linear | None
 
     def __init__(
@@ -250,6 +254,7 @@ class KAN(_AbstractBaseModel):
         use_bias: bool = True,
         poly: str = "chebyshev",
         poly_params: dict | None = None,
+        scan: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
     ):
         in_size_c = _canonical_size(in_size)
@@ -370,6 +375,17 @@ class KAN(_AbstractBaseModel):
             _identity if final_activation is None else final_activation
         )
         self.skip_connection = bool(skip_connection)
+        self.scan = bool(scan)
+        self._scan_enabled = False
+        self._scan_static = None
+
+        if self.scan and len(self.layers) > 2:
+            repeated_layers = self.layers[1:-1]
+            _, static, enabled = pack_scan_modules(repeated_layers)
+            self._scan_enabled = enabled
+            if enabled:
+                self._scan_static = static
+
         need_proj = self.skip_connection and in_shape != out_shape
         self._residual_proj = (
             Linear(
@@ -398,8 +414,24 @@ class KAN(_AbstractBaseModel):
         applies `final_activation` to the result.
         """
         y = x
-        for layer in self.layers:
-            y = layer(y)
+        out = None
+        if self._scan_enabled and self._scan_static is not None:
+            repeated_layers = self.layers[1:-1]
+            dynamic = stack_scan_dynamics(repeated_layers)
+            if dynamic is not None:
+                y = self.layers[0](y)
+                y = scan_apply(
+                    dynamic,
+                    self._scan_static,
+                    y,
+                    lambda carry, layer: layer(carry),
+                )
+                out = self.layers[-1](y)
+        if out is None:
+            for layer in self.layers:
+                y = layer(y)
+            out = y
+        y = out
         if self.skip_connection:
             if self._residual_proj is not None:
                 res = self._residual_proj(x)

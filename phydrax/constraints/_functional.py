@@ -59,22 +59,31 @@ class FunctionalConstraint(AbstractSamplingConstraint):
 
     and the scalar loss is computed using either reduction mode.
 
-    For `reduction="mean"`:
+    If `weight` is a scalar/array-like, it is treated as a global multiplier $w$.
+    If `weight` is a `DomainFunction`, it is applied pointwise inside the reduction.
+
+    For `reduction="mean"` with scalar weight:
 
     $$
     \ell = w\,\frac{1}{\mu(\Omega_{\text{comp}})}\int_{\Omega_{\text{comp}}} \rho(z)\,d\mu(z),
     $$
 
-    For `reduction="integral"`:
+    For `reduction="integral"` with scalar weight:
 
     $$
     \ell = w\int_{\Omega_{\text{comp}}} \rho(z)\,d\mu(z),
     $$
 
-    where $w$ is the scalar `weight`.
+    where $w$ is the scalar global `weight`.
 
     Sampling is performed according to `structure` (paired blocks) or coord-separable
     mapping specs encoded directly in `num_points`.
+
+    Sampling policy is controlled by `sampling_mode`:
+
+    - `"resample"`: draw a new batch every loss evaluation (default).
+    - `"fixed"`: build one batch once (from `fixed_batch` or `fixed_batch_key`)
+      and reuse it.
     """
 
     constraint_vars: tuple[str, ...]
@@ -85,9 +94,12 @@ class FunctionalConstraint(AbstractSamplingConstraint):
     num_points: Any
     sampler: str
     weight: Array
+    pointwise_weight: DomainFunction | None
     label: str | None
     over: str | tuple[str, ...] | None
     reduction: Literal["mean", "integral"]
+    sampling_mode: Literal["resample", "fixed"]
+    fixed_batch: PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...] | None
     residual: Callable[[Mapping[str, DomainFunction]], DomainFunction]
 
     def __init__(
@@ -100,10 +112,15 @@ class FunctionalConstraint(AbstractSamplingConstraint):
         dense_structure: ProductStructure | None = None,
         constraint_vars: Sequence[str] | None = None,
         sampler: str = "latin_hypercube",
-        weight: ArrayLike = 1.0,
+        weight: DomainFunction | ArrayLike = 1.0,
         label: str | None = None,
         over: str | tuple[str, ...] | None = None,
         reduction: Literal["mean", "integral"] = "mean",
+        sampling_mode: Literal["resample", "fixed"] = "resample",
+        fixed_batch: (
+            PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...] | None
+        ) = None,
+        fixed_batch_key: Key[Array, ""] = DOC_KEY0,
     ):
         self.constraint_vars = () if constraint_vars is None else tuple(constraint_vars)
         self.component = component
@@ -119,10 +136,54 @@ class FunctionalConstraint(AbstractSamplingConstraint):
         self.coord_sampling = coord_sampling
         self.dense_structure = dense_structure_out
         self.sampler = str(sampler)
-        self.weight = jnp.asarray(weight, dtype=float)
+        if isinstance(weight, DomainFunction):
+            self.weight = jnp.asarray(1.0, dtype=float)
+            self.pointwise_weight = weight
+        else:
+            self.weight = jnp.asarray(weight, dtype=float)
+            self.pointwise_weight = None
         self.label = None if label is None else str(label)
         self.over = over
         self.reduction = reduction
+        sampling_mode_str = str(sampling_mode).lower()
+        if sampling_mode_str not in ("resample", "fixed"):
+            raise ValueError("sampling_mode must be either 'resample' or 'fixed'.")
+        if sampling_mode_str == "fixed":
+            self.sampling_mode = "fixed"
+            self.fixed_batch = (
+                self._sample_once(key=fixed_batch_key)
+                if fixed_batch is None
+                else fixed_batch
+            )
+        else:
+            self.sampling_mode = "resample"
+            if fixed_batch is not None:
+                raise ValueError("fixed_batch is only valid when sampling_mode='fixed'.")
+            self.fixed_batch = None
+
+    def _sample_once(
+        self,
+        *,
+        key: Key[Array, ""] = DOC_KEY0,
+    ) -> PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...]:
+        if self.coord_sampling is not None:
+            if isinstance(self.component, DomainComponentUnion):
+                raise ValueError(
+                    "coord-separable sampling is not supported for DomainComponentUnion."
+                )
+            return self.component.sample_coord_separable(
+                self.coord_sampling,
+                num_points=self.num_points,
+                dense_structure=self.dense_structure,
+                sampler=self.sampler,
+                key=key,
+            )
+        return self.component.sample(
+            self.num_points,
+            structure=self.structure,
+            sampler=self.sampler,
+            key=key,
+        )
 
     @classmethod
     def from_operator(
@@ -135,10 +196,15 @@ class FunctionalConstraint(AbstractSamplingConstraint):
         structure: ProductStructure,
         dense_structure: ProductStructure | None = None,
         sampler: str = "latin_hypercube",
-        weight: ArrayLike = 1.0,
+        weight: DomainFunction | ArrayLike = 1.0,
         label: str | None = None,
         over: str | tuple[str, ...] | None = None,
         reduction: Literal["mean", "integral"] = "mean",
+        sampling_mode: Literal["resample", "fixed"] = "resample",
+        fixed_batch: (
+            PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...] | None
+        ) = None,
+        fixed_batch_key: Key[Array, ""] = DOC_KEY0,
     ) -> "FunctionalConstraint":
         r"""Create a `FunctionalConstraint` from an operator mapping `DomainFunction`s to a residual.
 
@@ -166,6 +232,9 @@ class FunctionalConstraint(AbstractSamplingConstraint):
             label=label,
             over=over,
             reduction=reduction,
+            sampling_mode=sampling_mode,
+            fixed_batch=fixed_batch,
+            fixed_batch_key=fixed_batch_key,
         )
 
     def sample(
@@ -178,25 +247,13 @@ class FunctionalConstraint(AbstractSamplingConstraint):
         - Returns a `PointsBatch` for paired sampling.
         - Returns a `CoordSeparableBatch` when `num_points` requested coord-separable sampling.
         - Returns a tuple of `PointsBatch` when sampling from a `DomainComponentUnion`.
+        - In `sampling_mode="fixed"`, this returns the same stored batch every call.
         """
-        if self.coord_sampling is not None:
-            if isinstance(self.component, DomainComponentUnion):
-                raise ValueError(
-                    "coord-separable sampling is not supported for DomainComponentUnion."
-                )
-            return self.component.sample_coord_separable(
-                self.coord_sampling,
-                num_points=self.num_points,
-                dense_structure=self.dense_structure,
-                sampler=self.sampler,
-                key=key,
-            )
-        return self.component.sample(
-            self.num_points,
-            structure=self.structure,
-            sampler=self.sampler,
-            key=key,
-        )
+        if self.sampling_mode == "fixed":
+            if self.fixed_batch is None:
+                raise ValueError("sampling_mode='fixed' requires fixed_batch to be set.")
+            return self.fixed_batch
+        return self._sample_once(key=key)
 
     def loss(
         self,
@@ -212,6 +269,8 @@ class FunctionalConstraint(AbstractSamplingConstraint):
         This samples the configured component, evaluates the residual, forms a squared
         Frobenius norm, and reduces via `mean(...)` or `integral(...)` depending on
         `reduction` and `over`.
+
+        If `batch` is provided, it is used directly (overriding `sampling_mode`).
 
         This:
         1) builds the residual `DomainFunction` $r$ from `functions`,
@@ -243,6 +302,11 @@ class FunctionalConstraint(AbstractSamplingConstraint):
             func=_SquaredFrobeniusResidual(res),
             metadata=res.metadata,
         )
+        if self.pointwise_weight is not None:
+            w = self.pointwise_weight
+            if w.domain.labels != f.domain.labels:
+                w = w.promote(f.domain)
+            f = w * f
         if self.reduction == "mean":
             out = mean(
                 f,

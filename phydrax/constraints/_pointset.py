@@ -205,27 +205,32 @@ class PointSetConstraint(AbstractConstraint):
 
     The scalar loss is then
 
-    For `reduction="mean"`:
+    For `reduction="mean"` with scalar global weight:
 
     $$
     \ell = w\,\frac{1}{N}\sum_{i=1}^N \rho(z_i),
     $$
 
-    For `reduction="sum"`:
+    For `reduction="sum"` with scalar global weight:
 
     $$
     \ell = w\sum_{i=1}^N \rho(z_i),
     $$
 
-    where $w$ is the scalar `weight`.
+    where $w$ is the scalar global `weight`.
+
+    If `weight` is provided as a `DomainFunction`, it is evaluated pointwise on the
+    stored points and multiplied into the per-point squared residual before reduction.
     """
 
     constraint_vars: tuple[str, ...]
     points: PointsBatch
     weight: Array
+    pointwise_weight: DomainFunction | None
     label: str | None
     reduction: Literal["mean", "sum"]
     residual: Callable[[Mapping[str, DomainFunction]], DomainFunction]
+    eval_kwargs: frozendict[str, Any]
 
     def __init__(
         self,
@@ -233,17 +238,24 @@ class PointSetConstraint(AbstractConstraint):
         points: PointsBatch,
         residual: Callable[[Mapping[str, DomainFunction]], DomainFunction],
         constraint_vars: Sequence[str] | None = None,
-        weight: ArrayLike = 1.0,
+        weight: DomainFunction | ArrayLike = 1.0,
         label: str | None = None,
         reduction: Literal["mean", "sum"] = "mean",
+        eval_kwargs: Mapping[str, Any] | None = None,
     ):
         """Create a point-set constraint from points and a residual callable."""
         self.constraint_vars = () if constraint_vars is None else tuple(constraint_vars)
         self.points = points
         self.residual = residual
-        self.weight = jnp.asarray(weight, dtype=float)
+        if isinstance(weight, DomainFunction):
+            self.weight = jnp.asarray(1.0, dtype=float)
+            self.pointwise_weight = weight
+        else:
+            self.weight = jnp.asarray(weight, dtype=float)
+            self.pointwise_weight = None
         self.label = None if label is None else str(label)
         self.reduction = reduction
+        self.eval_kwargs = frozendict({} if eval_kwargs is None else dict(eval_kwargs))
 
     @classmethod
     def from_points(
@@ -253,9 +265,10 @@ class PointSetConstraint(AbstractConstraint):
         points: Mapping[str, ArrayLike] | ArrayLike,
         residual: Callable[[Mapping[str, DomainFunction]], DomainFunction],
         constraint_vars: Sequence[str] | None = None,
-        weight: ArrayLike = 1.0,
+        weight: DomainFunction | ArrayLike = 1.0,
         label: str | None = None,
         reduction: Literal["mean", "sum"] = "mean",
+        eval_kwargs: Mapping[str, Any] | None = None,
     ) -> "PointSetConstraint":
         """Build a `PointSetConstraint` from raw point coordinates."""
         batch = points_batch_from_points(component, points)
@@ -266,6 +279,7 @@ class PointSetConstraint(AbstractConstraint):
             weight=weight,
             label=label,
             reduction=reduction,
+            eval_kwargs=eval_kwargs,
         )
 
     @classmethod
@@ -275,9 +289,10 @@ class PointSetConstraint(AbstractConstraint):
         points: PointsBatch,
         operator: Callable[..., DomainFunction],
         constraint_vars: str | Sequence[str],
-        weight: ArrayLike = 1.0,
+        weight: DomainFunction | ArrayLike = 1.0,
         label: str | None = None,
         reduction: Literal["mean", "sum"] = "mean",
+        eval_kwargs: Mapping[str, Any] | None = None,
     ) -> "PointSetConstraint":
         """Build a `PointSetConstraint` from an operator applied to named fields."""
         vars_tuple = (
@@ -296,6 +311,7 @@ class PointSetConstraint(AbstractConstraint):
             weight=weight,
             label=label,
             reduction=reduction,
+            eval_kwargs=eval_kwargs,
         )
 
     def sample(
@@ -319,6 +335,28 @@ class PointSetConstraint(AbstractConstraint):
         This evaluates the residual on the stored points and applies the configured
         reduction (`mean` or `sum`).
         """
+        runtime_kwargs: dict[str, Any] = dict(self.eval_kwargs)
+        runtime_kwargs.update(kwargs)
+
+        def _eval_pointwise_weight() -> Array | None:
+            if self.pointwise_weight is None:
+                return None
+            w_out = self.pointwise_weight(self.points, key=key)
+            if not isinstance(w_out, cx.Field):
+                raise TypeError(
+                    "Expected pointwise weight evaluation to return a coordax.Field."
+                )
+            w_data = jnp.asarray(w_out.data, dtype=float)
+            if w_data.ndim == 0:
+                return w_data
+            if w_data.ndim == 1:
+                return w_data
+            if w_data.ndim == 2 and int(w_data.shape[1]) == 1:
+                return w_data[:, 0]
+            raise ValueError(
+                "Pointwise constraint weight must evaluate to scalar per point."
+            )
+
         res = self.residual(functions)
         if not isinstance(res, DomainFunction):
             base = None
@@ -346,11 +384,14 @@ class PointSetConstraint(AbstractConstraint):
             func=_SquaredFrobeniusResidual(res),
             metadata=res.metadata,
         )
-        out = f(self.points, key=key, **kwargs)
+        out = f(self.points, key=key, **runtime_kwargs)
         if not isinstance(out, cx.Field):
             raise TypeError("Expected pointset evaluation to return a coordax.Field.")
 
         data = jnp.asarray(out.data, dtype=float)
+        w_data = _eval_pointwise_weight()
+        if w_data is not None:
+            data = data * w_data
         if self.reduction == "sum":
             value = jnp.sum(data)
         else:

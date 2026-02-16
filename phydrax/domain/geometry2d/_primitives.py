@@ -2,6 +2,7 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 from uuid import uuid4
@@ -43,7 +44,7 @@ def Circle(
         with bd.Locations((cx, cy)):
             bd.Circle(r)
     face = sk.sketch
-    tmp = Path(f"/tmp/bd2d_circle_{uuid4().hex}.stl").resolve()
+    tmp = Path(tempfile.gettempdir(), f"bd2d_circle_{uuid4().hex}.stl").resolve()
     # Export the Face as STL and construct the geometry from it
     bd.export_stl(face, tmp, tolerance=1e-1, angular_tolerance=1e-1)
     geom = Geometry2DFromCAD(tmp, recenter=False)
@@ -82,7 +83,7 @@ def Ellipse(
         with bd.Locations((cx, cy)):
             bd.Ellipse(rx, ry)
     face = sk.sketch
-    tmp = Path(f"/tmp/bd2d_ellipse_{uuid4().hex}.stl").resolve()
+    tmp = Path(tempfile.gettempdir(), f"bd2d_ellipse_{uuid4().hex}.stl").resolve()
     bd.export_stl(face, tmp, tolerance=1e-4, angular_tolerance=1e-2)
     geom = Geometry2DFromCAD(tmp, recenter=False)
     tmp.unlink(missing_ok=True)
@@ -119,7 +120,7 @@ def Rectangle(
         with bd.Locations((cx, cy)):
             bd.Rectangle(w, h)
     face = sk.sketch
-    tmp = Path(f"/tmp/bd2d_rectangle_{uuid4().hex}.stl").resolve()
+    tmp = Path(tempfile.gettempdir(), f"bd2d_rectangle_{uuid4().hex}.stl").resolve()
     bd.export_stl(face, tmp, tolerance=1e-4, angular_tolerance=0.001)
     geom = Geometry2DFromCAD(tmp, recenter=False)
     tmp.unlink(missing_ok=True)
@@ -197,7 +198,7 @@ def Polygon(
         with bd.Locations((float(center[0]), float(center[1]))):
             bd.Polygon(*(tuple(map(float, v)) for v in rel))
     face = sk.sketch
-    tmp = Path(f"/tmp/bd2d_polygon_{uuid4().hex}.stl").resolve()
+    tmp = Path(tempfile.gettempdir(), f"bd2d_polygon_{uuid4().hex}.stl").resolve()
     bd.export_stl(face, tmp, tolerance=1e-4, angular_tolerance=0.001)
     geom = Geometry2DFromCAD(tmp, recenter=False)
     tmp.unlink(missing_ok=True)

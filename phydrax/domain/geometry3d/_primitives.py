@@ -2,6 +2,7 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 from uuid import uuid4
@@ -37,7 +38,7 @@ def Sphere(
     c = np.asarray(center, dtype=float)
     r = float(radius)
     shape = bd.Sphere(r).moved(bd.Location(tuple(c)))
-    tmp = Path(f"/tmp/bd3d_sphere_{uuid4().hex}.stl").resolve()
+    tmp = Path(tempfile.gettempdir(), f"bd3d_sphere_{uuid4().hex}.stl").resolve()
     bd.export_stl(shape, tmp, tolerance=1e-3, angular_tolerance=5e-2)
     geom = Geometry3DFromCAD(tmp, recenter=False)
     tmp.unlink(missing_ok=True)
@@ -75,7 +76,7 @@ def Ellipsoid(
     shp = bd.Sphere(1.0)
     shp = bd.scale(shp, (rx, ry, rz))
     shp = shp.moved(bd.Location(tuple(c)))
-    tmp = Path(f"/tmp/bd3d_ellipsoid_{uuid4().hex}.stl").resolve()
+    tmp = Path(tempfile.gettempdir(), f"bd3d_ellipsoid_{uuid4().hex}.stl").resolve()
     bd.export_stl(shp, tmp, tolerance=1e-3, angular_tolerance=5e-2)
     geom = Geometry3DFromCAD(tmp, recenter=False)
     tmp.unlink(missing_ok=True)
@@ -109,7 +110,7 @@ def Cuboid(
     c = np.asarray(center, dtype=float)
     dx, dy, dz = [float(x) for x in dimensions]
     shp = bd.Box(dx, dy, dz).moved(bd.Location(tuple(c)))
-    tmp = Path(f"/tmp/bd3d_cuboid_{uuid4().hex}.stl").resolve()
+    tmp = Path(tempfile.gettempdir(), f"bd3d_cuboid_{uuid4().hex}.stl").resolve()
     bd.export_stl(shp, tmp, tolerance=1e-3, angular_tolerance=5e-2)
     geom = Geometry3DFromCAD(tmp, recenter=False)
     tmp.unlink(missing_ok=True)
@@ -173,7 +174,7 @@ def Cylinder(
             bd.Circle(r)
         bd.extrude(amount=h)
     shp = bp.part
-    tmp = Path(f"/tmp/bd3d_cylinder_{uuid4().hex}.stl").resolve()
+    tmp = Path(tempfile.gettempdir(), f"bd3d_cylinder_{uuid4().hex}.stl").resolve()
     bd.export_stl(shp, tmp, tolerance=1e-3, angular_tolerance=5e-2)
     geom = Geometry3DFromCAD(tmp, recenter=False)
     tmp.unlink(missing_ok=True)
@@ -216,7 +217,7 @@ def Cone(
     with bd.BuildPart(wp) as bp:
         bd.Cone(r0, r1, h)
     shp = bp.part
-    tmp = Path(f"/tmp/bd3d_cone_{uuid4().hex}.stl").resolve()
+    tmp = Path(tempfile.gettempdir(), f"bd3d_cone_{uuid4().hex}.stl").resolve()
     bd.export_stl(shp, tmp, tolerance=1e-3, angular_tolerance=5e-2)
     geom = Geometry3DFromCAD(tmp, recenter=False)
     tmp.unlink(missing_ok=True)
@@ -255,7 +256,7 @@ def Torus(
     # Build full torus. Note: partial-angle torus not exported reliably as STL with watertight volume.
     shp = bd.Torus(major_radius=major, minor_radius=minor)
     shp = shp.moved(bd.Location(tuple(c)))
-    tmp = Path(f"/tmp/bd3d_torus_{uuid4().hex}.stl").resolve()
+    tmp = Path(tempfile.gettempdir(), f"bd3d_torus_{uuid4().hex}.stl").resolve()
     bd.export_stl(shp, tmp, tolerance=5e-2, angular_tolerance=8e-2)
     geom = Geometry3DFromCAD(tmp)
     tmp.unlink(missing_ok=True)
@@ -301,7 +302,7 @@ def Wedge(
     )
     # Place the wedge so that its right-angle near corner is at x0
     shp = shp.moved(bd.Location(tuple(x0)))
-    tmp = Path(f"/tmp/bd3d_wedge_{uuid4().hex}.stl").resolve()
+    tmp = Path(tempfile.gettempdir(), f"bd3d_wedge_{uuid4().hex}.stl").resolve()
     bd.export_stl(shp, tmp, tolerance=1e-3, angular_tolerance=5e-2)
     geom = Geometry3DFromCAD(tmp, recenter=False)
     tmp.unlink(missing_ok=True)
