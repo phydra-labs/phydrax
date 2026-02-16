@@ -59,19 +59,22 @@ class FunctionalConstraint(AbstractSamplingConstraint):
 
     and the scalar loss is computed using either reduction mode.
 
-    For `reduction="mean"`:
+    If `weight` is a scalar/array-like, it is treated as a global multiplier $w$.
+    If `weight` is a `DomainFunction`, it is applied pointwise inside the reduction.
+
+    For `reduction="mean"` with scalar weight:
 
     $$
     \ell = w\,\frac{1}{\mu(\Omega_{\text{comp}})}\int_{\Omega_{\text{comp}}} \rho(z)\,d\mu(z),
     $$
 
-    For `reduction="integral"`:
+    For `reduction="integral"` with scalar weight:
 
     $$
     \ell = w\int_{\Omega_{\text{comp}}} \rho(z)\,d\mu(z),
     $$
 
-    where $w$ is the scalar `weight`.
+    where $w$ is the scalar global `weight`.
 
     Sampling is performed according to `structure` (paired blocks) or coord-separable
     mapping specs encoded directly in `num_points`.
@@ -85,6 +88,7 @@ class FunctionalConstraint(AbstractSamplingConstraint):
     num_points: Any
     sampler: str
     weight: Array
+    pointwise_weight: DomainFunction | None
     label: str | None
     over: str | tuple[str, ...] | None
     reduction: Literal["mean", "integral"]
@@ -100,7 +104,7 @@ class FunctionalConstraint(AbstractSamplingConstraint):
         dense_structure: ProductStructure | None = None,
         constraint_vars: Sequence[str] | None = None,
         sampler: str = "latin_hypercube",
-        weight: ArrayLike = 1.0,
+        weight: DomainFunction | ArrayLike = 1.0,
         label: str | None = None,
         over: str | tuple[str, ...] | None = None,
         reduction: Literal["mean", "integral"] = "mean",
@@ -119,7 +123,12 @@ class FunctionalConstraint(AbstractSamplingConstraint):
         self.coord_sampling = coord_sampling
         self.dense_structure = dense_structure_out
         self.sampler = str(sampler)
-        self.weight = jnp.asarray(weight, dtype=float)
+        if isinstance(weight, DomainFunction):
+            self.weight = jnp.asarray(1.0, dtype=float)
+            self.pointwise_weight = weight
+        else:
+            self.weight = jnp.asarray(weight, dtype=float)
+            self.pointwise_weight = None
         self.label = None if label is None else str(label)
         self.over = over
         self.reduction = reduction
@@ -135,7 +144,7 @@ class FunctionalConstraint(AbstractSamplingConstraint):
         structure: ProductStructure,
         dense_structure: ProductStructure | None = None,
         sampler: str = "latin_hypercube",
-        weight: ArrayLike = 1.0,
+        weight: DomainFunction | ArrayLike = 1.0,
         label: str | None = None,
         over: str | tuple[str, ...] | None = None,
         reduction: Literal["mean", "integral"] = "mean",
@@ -243,6 +252,11 @@ class FunctionalConstraint(AbstractSamplingConstraint):
             func=_SquaredFrobeniusResidual(res),
             metadata=res.metadata,
         )
+        if self.pointwise_weight is not None:
+            w = self.pointwise_weight
+            if w.domain.labels != f.domain.labels:
+                w = w.promote(f.domain)
+            f = w * f
         if self.reduction == "mean":
             out = mean(
                 f,
