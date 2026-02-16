@@ -68,6 +68,21 @@ The `over` argument selects which axes to reduce over:
 
 For coord-separable batches, `over="x"` reduces over the coord-separable axes for that label.
 
+### Sampling policy: `resample` vs `fixed`
+
+Sampled constraints support two policies:
+
+- `sampling_mode="resample"` (default): draw a fresh batch on each `loss(...)` call.
+- `sampling_mode="fixed"`: build one batch once and reuse it for all calls.
+
+`sampling_mode="fixed"` is useful for reproducible diagnostics and lower per-iteration
+overhead when batch construction is expensive (for example, large coord-separable grids).
+
+You can either:
+
+- provide `fixed_batch=...` explicitly, or
+- provide `fixed_batch_key=...` and let the constraint sample one fixed batch at construction.
+
 ### Filtering: `where` and `where_all`
 
 Continuous constraints can restrict the sampling region via:
