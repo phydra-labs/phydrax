@@ -4,8 +4,6 @@
 
 from ._domain_ops import (
     bilaplacian,
-    build_mfd_cloud_plan,
-    build_mfd_cloud_plans,
     cauchy_from_pk2,
     cauchy_strain,
     cauchy_stress,
@@ -31,7 +29,6 @@ from ._domain_ops import (
     linear_elastic_orthotropic_stress_2d,
     material_derivative,
     maxwell_stress,
-    MFDCloudPlan,
     navier_stokes_divergence,
     navier_stokes_stress,
     neo_hookean_cauchy,
@@ -122,7 +119,4 @@ __all__ = [
     "riesz_fractional_derivative_gl_mc",
     "caputo_time_fractional",
     "caputo_time_fractional_dw",
-    "build_mfd_cloud_plan",
-    "build_mfd_cloud_plans",
-    "MFDCloudPlan",
 ]

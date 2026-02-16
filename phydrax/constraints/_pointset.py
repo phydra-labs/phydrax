@@ -378,26 +378,6 @@ class PointSetConstraint(AbstractConstraint):
             else:
                 res = DomainFunction(domain=base.domain, deps=(), func=res, metadata={})
 
-        mfd_mode = runtime_kwargs.get("mfd_mode")
-        use_cloud = isinstance(mfd_mode, str) and mfd_mode.lower() == "cloud"
-        if use_cloud:
-            runtime_kwargs["_blockwise_eval"] = "direct"
-            out_res = res(self.points, key=key, **runtime_kwargs)
-            if not isinstance(out_res, cx.Field):
-                raise TypeError("Expected pointset evaluation to return a coordax.Field.")
-            data = jnp.asarray(out_res.data, dtype=float)
-            sq = data * data
-            if sq.ndim > 1:
-                sq = jnp.sum(sq, axis=tuple(range(1, sq.ndim)))
-            w_data = _eval_pointwise_weight()
-            if w_data is not None:
-                sq = sq * w_data
-            if self.reduction == "sum":
-                value = jnp.sum(sq)
-            else:
-                value = jnp.mean(sq)
-            return self.weight * value.reshape(())
-
         f = DomainFunction(
             domain=res.domain,
             deps=res.deps,

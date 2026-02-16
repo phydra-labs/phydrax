@@ -140,16 +140,13 @@ class _AbstractDomain(StrictModule):
                     out_kwargs["iter_"] = iter_
 
                 if not has_var_kwargs and out_kwargs:
-                    # Differential runtime knobs (e.g. mfd_mode/mfd_cloud_plan) may be
-                    # threaded through composite residual expressions. Drop those for
-                    # plain user functions that do not declare **kwargs.
+                    # Differential runtime knobs may be threaded through
+                    # composite residual expressions. Drop those for plain
+                    # user functions that do not declare **kwargs.
                     out_kwargs = {
                         k: v
                         for k, v in out_kwargs.items()
-                        if (
-                            (k in accepted_kw_names)
-                            or (not (k == "force_generic" or k.startswith("mfd_")))
-                        )
+                        if ((k in accepted_kw_names) or (k != "force_generic"))
                     }
 
                 coord_indices = [

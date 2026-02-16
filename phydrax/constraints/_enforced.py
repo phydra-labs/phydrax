@@ -1028,7 +1028,7 @@ def enforce_blend(
         axis: int | None,
         order: int,
         mode: Literal["reverse", "forward"],
-        backend: Literal["ad", "jet", "fd", "basis", "mfd"],
+        backend: Literal["ad", "jet", "fd", "basis"],
         basis: Literal["poly", "fourier", "sine", "cosine"],
         periodic: bool,
     ) -> DomainFunction | None:

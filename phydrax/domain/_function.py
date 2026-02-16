@@ -242,7 +242,7 @@ def _transpose_lifted_hook(
         axis: int | None,
         order: int,
         mode: Literal["reverse", "forward"],
-        backend: Literal["ad", "jet", "fd", "basis", "mfd"],
+        backend: Literal["ad", "jet", "fd", "basis"],
         basis: Literal["poly", "fourier", "sine", "cosine"],
         periodic: bool,
     ) -> "DomainFunction | None":
@@ -297,7 +297,7 @@ def _compose_binary_derivative_hook(
         axis: int | None,
         order: int,
         mode: Literal["reverse", "forward"],
-        backend: Literal["ad", "jet", "fd", "basis", "mfd"],
+        backend: Literal["ad", "jet", "fd", "basis"],
         basis: Literal["poly", "fourier", "sine", "cosine"],
         periodic: bool,
     ) -> "DomainFunction | None":
