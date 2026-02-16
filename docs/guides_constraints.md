@@ -43,8 +43,13 @@ $$
 $$
 
 Here $\mu$ is the component measure induced by the domain (volume/area/length for interiors,
-surface measure for boundaries, counting measure for fixed slices, etc.), and `weight = w`
-is a scalar multiplier.
+surface measure for boundaries, counting measure for fixed slices, etc.).
+
+`weight` can be either:
+
+- a scalar/array-like global multiplier $w$, or
+- a `DomainFunction` used as a pointwise weight inside the reduction
+  (i.e. $\rho(z)$ becomes $w(z)\rho(z)$ before mean/integral reduction).
 
 ### Sampling structure and `over=...`
 

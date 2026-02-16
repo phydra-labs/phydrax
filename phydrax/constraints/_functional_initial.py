@@ -68,7 +68,7 @@ def ContinuousInitialConstraint(
     structure: ProductStructure,
     dense_structure: ProductStructure | None = None,
     sampler: str = "latin_hypercube",
-    weight: ArrayLike = 1.0,
+    weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
     reduction: Literal["mean", "integral"] = "mean",
@@ -164,7 +164,7 @@ def DiscreteInitialConstraint(
     idw_exponent: float = 2.0,
     eps_snap: float = 1e-12,
     lengthscales: Mapping[str, float] | None = None,
-    weight: ArrayLike = 1.0,
+    weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     reduction: Literal["mean", "sum"] = "mean",
 ) -> PointSetConstraint:

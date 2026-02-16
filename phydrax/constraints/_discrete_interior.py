@@ -78,7 +78,7 @@ def DiscreteInteriorDataConstraint(
     structure: ProductStructure | None = None,
     dense_structure: ProductStructure | None = None,
     sampler: str = "latin_hypercube",
-    weight: ArrayLike = 1.0,
+    weight: DomainFunction | ArrayLike = 1.0,
     reduction: Literal["mean", "sum"] = "mean",
     idw_exponent: float = 2.0,
     eps_snap: float = 1e-12,

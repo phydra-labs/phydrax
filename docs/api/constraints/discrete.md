@@ -56,6 +56,9 @@ For multi-axis cloud derivatives (for example Laplacians built from multiple
 `partial_n` operators), pass a `(axis, order) -> plan` mapping via
 `eval_kwargs={"mfd_mode": "cloud", "mfd_cloud_plans": plans}`.
 
+`PointSetConstraint.weight` can be a scalar global multiplier or a
+`DomainFunction` evaluated pointwise on the anchor set.
+
 ## Discrete point constraints
 
 ::: phydrax.constraints.PointSetConstraint
