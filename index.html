@@ -2189,6 +2189,8 @@ u = g \quad \text{on }\partial\Omega,
     <span class="n">out_size</span><span class="o">=</span><span class="s2">&quot;scalar&quot;</span><span class="p">,</span>
     <span class="n">width_size</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>
     <span class="n">depth</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+    <span class="c1"># For deeper repeated stacks, consider scan=True to reduce compile cost.</span>
+    <span class="n">scan</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
     <span class="n">key</span><span class="o">=</span><span class="n">jr</span><span class="o">.</span><span class="n">key</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span>
 <span class="p">)</span>
 <span class="n">u</span> <span class="o">=</span> <span class="n">geom</span><span class="o">.</span><span class="n">Model</span><span class="p">(</span><span class="s2">&quot;x&quot;</span><span class="p">)(</span><span class="n">model</span><span class="p">)</span>

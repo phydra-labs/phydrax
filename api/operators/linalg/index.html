@@ -2111,24 +2111,27 @@
 
 
 <h4 id="phydrax.operators.einsum" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python"><span class="n">phydrax</span><span class="o">.</span><span class="n">operators</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="n">subscript</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">/</span><span class="p">,</span> <span class="o">*</span><span class="n">operands</span><span class="p">:</span> <span class="n">DomainFunction</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DomainFunction</span></code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <code class="highlight language-python"><span class="n">phydrax</span><span class="o">.</span><span class="n">operators</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="n">subscript</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">/</span><span class="p">,</span> <span class="o">*</span><span class="n">operands</span><span class="p">:</span> <span class="n">DomainFunction</span> <span class="o">|</span> <span class="n">ArrayLike</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DomainFunction</span></code>
 
 <a href="#phydrax.operators.einsum" class="headerlink" title="Permanent link">¤</a></h4>
 
 
     <div class="doc doc-contents first">
 
-        <p>Einstein summation of one or more <code>DomainFunction</code> operands.</p>
-<p>Given operands <span class="arithmatex">\(u^{(1)}(z),\dots,u^{(k)}(z)\)</span>, returns the pointwise contraction
-specified by <code>subscript</code>, i.e.</p>
+        <p>Einstein summation of <code>DomainFunction</code> and/or constant array operands.</p>
+<p>Given operands <span class="arithmatex">\(u^{(1)}(z),\dots,u^{(k)}(z)\)</span> (each either a <code>DomainFunction</code>
+or a constant array-like), returns the pointwise contraction specified by
+<code>subscript</code>, i.e.</p>
 <div class="arithmatex">\[
 w(z) = \texttt{einsum}(\texttt{subscript}, u^{(1)}(z), \dots, u^{(k)}(z)).
 \]</div>
-<p>Domains are joined across operands before evaluation.</p>
+<p>Domains are joined across <code>DomainFunction</code> operands before evaluation.
+Constant operands are broadcast by <code>einsum</code> and do not contribute domain deps.</p>
 <p><strong>Arguments:</strong></p>
 <ul>
 <li><code>subscript</code>: Einsum subscript string (as in <code>opt_einsum.contract</code>).</li>
-<li><code>operands</code>: One or more <code>DomainFunction</code> operands.</li>
+<li><code>operands</code>: One or more operands (<code>DomainFunction</code> or array-like). At least
+  one operand must be a <code>DomainFunction</code>.</li>
 </ul>
 <p><strong>Returns:</strong></p>
 <ul>

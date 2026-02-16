@@ -692,6 +692,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#sampling-policy-resample-vs-fixed" class="md-nav__link">
+    <span class="md-ellipsis">
+      Sampling policy: resample vs fixed
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#filtering-where-and-where_all" class="md-nav__link">
     <span class="md-ellipsis">
       Filtering: where and where_all
@@ -2164,8 +2173,13 @@ L(\theta) = \sum_i \ell_i(\theta).
 \ell = w\int_{\Omega_{\text{comp}}}\rho(z)\,\mathrm{d}\mu(z)
 \]</div>
 <p>Here <span class="arithmatex">\(\mu\)</span> is the component measure induced by the domain (volume/area/length for interiors,
-surface measure for boundaries, counting measure for fixed slices, etc.), and <code>weight = w</code>
-is a scalar multiplier.</p>
+surface measure for boundaries, counting measure for fixed slices, etc.).</p>
+<p><code>weight</code> can be either:</p>
+<ul>
+<li>a scalar/array-like global multiplier <span class="arithmatex">\(w\)</span>, or</li>
+<li>a <code>DomainFunction</code> used as a pointwise weight inside the reduction
+  (i.e. <span class="arithmatex">\(\rho(z)\)</span> becomes <span class="arithmatex">\(w(z)\rho(z)\)</span> before mean/integral reduction).</li>
+</ul>
 <h3 id="sampling-structure-and-over">Sampling structure and <code>over=...</code><a class="headerlink" href="#sampling-structure-and-over" title="Permanent link">¤</a></h3>
 <p>Sampling is controlled by a <code>ProductStructure</code> (paired point sampling) and the <code>num_points</code>
 specification:</p>
@@ -2181,6 +2195,19 @@ specification:</p>
 <li><code>over=("x", "t")</code>: reduce over a paired block.</li>
 </ul>
 <p>For coord-separable batches, <code>over="x"</code> reduces over the coord-separable axes for that label.</p>
+<h3 id="sampling-policy-resample-vs-fixed">Sampling policy: <code>resample</code> vs <code>fixed</code><a class="headerlink" href="#sampling-policy-resample-vs-fixed" title="Permanent link">¤</a></h3>
+<p>Sampled constraints support two policies:</p>
+<ul>
+<li><code>sampling_mode="resample"</code> (default): draw a fresh batch on each <code>loss(...)</code> call.</li>
+<li><code>sampling_mode="fixed"</code>: build one batch once and reuse it for all calls.</li>
+</ul>
+<p><code>sampling_mode="fixed"</code> is useful for reproducible diagnostics and lower per-iteration
+overhead when batch construction is expensive (for example, large coord-separable grids).</p>
+<p>You can either:</p>
+<ul>
+<li>provide <code>fixed_batch=...</code> explicitly, or</li>
+<li>provide <code>fixed_batch_key=...</code> and let the constraint sample one fixed batch at construction.</li>
+</ul>
 <h3 id="filtering-where-and-where_all">Filtering: <code>where</code> and <code>where_all</code><a class="headerlink" href="#filtering-where-and-where_all" title="Permanent link">¤</a></h3>
 <p>Continuous constraints can restrict the sampling region via:</p>
 <ul>

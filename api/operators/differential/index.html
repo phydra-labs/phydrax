@@ -2685,7 +2685,8 @@ in <span class="arithmatex">\(\mathbb{R}^d\)</span>:</p>
 <li><code>"fd"</code>: finite differences on coord-separable grids (falls back to <code>"ad"</code>).</li>
 <li><code>"basis"</code>: spectral/barycentric methods on coord-separable grids (falls back to <code>"ad"</code>).</li>
 <li><code>basis</code>: Basis method used when <code>backend="basis"</code>.</li>
-<li><code>periodic</code>: Whether to treat the differentiated axis as periodic (used by <code>backend="fd"</code>).</li>
+<li><code>periodic</code>: Whether to treat the differentiated axis as periodic (used by
+  <code>backend="fd"</code> tuple paths).</li>
 </ul>
 <p><strong>Notes:</strong></p>
 <ul>
@@ -2871,7 +2872,8 @@ producing a trailing shape <code>(..., m, d, d)</code>.</p>
 <li><code>"fd"</code>: uses finite differences on coord-separable grids (falls back to <code>"ad"</code>).</li>
 <li><code>"basis"</code>: uses spectral/barycentric methods on coord-separable grids (falls back to <code>"ad"</code>).</li>
 <li><code>basis</code>: Basis method used when <code>backend="basis"</code>.</li>
-<li><code>periodic</code>: Whether to treat differentiated axes as periodic (used by <code>backend="fd"</code>).</li>
+<li><code>periodic</code>: Whether to treat differentiated axes as periodic (used by
+  <code>backend="fd"</code>).</li>
 <li><code>ad_engine</code>: AD execution strategy used when <code>backend="ad"</code>:</li>
 <li><code>"auto"</code>: existing mixed strategy (default).</li>
 <li><code>"reverse"</code> / <code>"forward"</code>: force Jacobian AD mode.</li>
@@ -3151,7 +3153,8 @@ componentwise, i.e. <span class="arithmatex">\(D_v u\)</span> has the same value
 <li><code>"fd"</code>: finite differences on coord-separable grids (falls back to <code>"ad"</code> for point inputs).</li>
 <li><code>"basis"</code>: spectral/barycentric methods on coord-separable grids (falls back to <code>"ad"</code> for point inputs).</li>
 <li><code>basis</code>: Basis method used when <code>backend="basis"</code>.</li>
-<li><code>periodic</code>: Whether to treat the differentiated axis as periodic (used by <code>backend="fd"</code>).</li>
+<li><code>periodic</code>: Whether to treat the differentiated axis as periodic (used by
+  <code>backend="fd"</code>).</li>
 </ul>
 <p><strong>Returns:</strong></p>
 <ul>
