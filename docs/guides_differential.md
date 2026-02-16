@@ -107,7 +107,6 @@ Many differential operators accept a `backend` keyword:
 - `backend="jet"` uses Taylor-mode AD ("jets") for higher-order derivatives with respect to a single variable.
 - `backend="fd"` uses finite differences on coord-separable grids (and falls back to autodiff for point inputs).
 - `backend="basis"` uses basis-aware methods on coord-separable grids (and falls back to autodiff for point inputs).
-- `backend="mfd"` uses meshless finite differences for both point inputs and coord-separable axes.
 
 !!! note
     For `LatentContractionModel` wrapped via `domain.Model(...)`, `partial`,
@@ -117,79 +116,6 @@ Many differential operators accept a `backend` keyword:
     The latent contraction route is an acceleration path (not an approximation): if
     preconditions are not met, Phydrax falls back to the generic derivative path and
     applies the model's configured fallback policy (`warn`, `error`, or `silent`).
-
-### MFD backend (meshless finite differences)
-
-For `backend="mfd"`, derivatives are computed by a local meshless stencil around each
-target point \(x_\star\). Let \(\alpha\) be the derivative multi-index (or pure axis-order
-pair in `partial_n`) and let \(\{x_j\}_{j=1}^{N_s}\) be local support points. The
-approximation is
-
-$$
-\partial^\alpha u(x_\star)\;\approx\;\sum_{j=1}^{N_s} w_j^{(\alpha)}\,u(x_j),
-$$
-
-where weights \(w^{(\alpha)}\) are chosen to reproduce polynomials up to degree \(m\):
-
-$$
-\sum_{j=1}^{N_s} w_j^{(\alpha)}\,p(x_j) \;=\; \partial^\alpha p(x_\star)
-\quad \forall p\in\Pi_m.
-$$
-
-A common weighted least-squares construction uses local coordinates
-\(r_j=x_j-x_\star\), basis vector \(b(r)\), design matrix \(A_{j\beta}=b_\beta(r_j)\),
-and diagonal metric \(W=\operatorname{diag}(\omega_j)\). With
-\(d_{\alpha,\beta}=\partial^\alpha b_\beta(0)\), one standard formula is
-
-$$
-w^{(\alpha)} \;=\; W A\,(A^\top W A)^{-1}\,d_\alpha.
-$$
-
-Under standard smoothness and quasi-uniformity assumptions, the truncation error is
-typically of order
-
-$$
-\partial^\alpha u(x_\star) - \sum_j w_j^{(\alpha)}u(x_j)
-\;=\; O\!\left(h^{m+1-|\alpha|}\right),
-$$
-
-where \(h\) is a local spacing scale.
-
-Boundary handling is explicit:
-
-- `mfd_boundary_mode="ghost"` uses reflected/ghost support to preserve centered
-  (two-sided) behavior near boundaries.
-- `mfd_boundary_mode="biased"` uses one-sided/asymmetric in-domain support.
-- `mfd_boundary_mode="hybrid"` prefers centered/ghost closures and uses biased closure
-  when needed.
-
-Fixed-cloud mode for point inputs is also available:
-
-- Build a reusable plan once with `phx.operators.build_mfd_cloud_plan(points, order=n, k=K)`.
-- Or build a plan table with
-  `phx.operators.build_mfd_cloud_plans(points, specs=((axis, order), ...), k=K)`.
-- Evaluate with `mfd_mode="cloud"` and either `mfd_cloud_plan=plan` or
-  `mfd_cloud_plans=plans`.
-
-In cloud mode, for each anchor point $x_i$:
-
-$$
-\partial^n u(x_i)\;\approx\;\sum_{j=1}^{K} m_{ij}\,w_{ij}\,u(x_{\nu(i,j)}),
-$$
-
-where $\nu(i,j)$ indexes the $j$th planned neighbor, $w_{ij}$ are precomputed
-stencil weights, and $m_{ij}\in\{0,1\}$ is the fixed-shape mask.
-
-For multi-dimensional clouds (`points.shape == (N, d)`), plans are axis-specific:
-for `partial_n(..., axis=a, order=n)`, use the `(a, n)` entry from
-`mfd_cloud_plans`.
-
-For coord-separable tuple inputs, MFD acts as an axiswise operator \(D_i^{(n)}\) on each
-axis and composes naturally for multi-D operators:
-
-$$
-\Delta u \;\approx\; \sum_{i=1}^d D_i^{(2)}u.
-$$
 
 ### Jet backend (Taylor-mode / derivative jets)
 

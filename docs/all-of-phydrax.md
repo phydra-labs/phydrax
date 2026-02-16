@@ -47,7 +47,7 @@ Phydrax supports two complementary evaluation regimes:
 
 ### Differentiation: AD / jets / FD / basis
 
-Differential operators support multiple backends (`backend="ad"|"jet"|"fd"|"basis"|"mfd"`) and autodiff modes
+Differential operators support multiple backends (`backend="ad"|"jet"|"fd"|"basis"`) and autodiff modes
 (`mode="reverse"|"forward"`). For deeper math, see [Appendix → Differentiation modes](appendix/differentiation_modes.md).
 
 ### Constraints: soft penalties vs enforced by construction
