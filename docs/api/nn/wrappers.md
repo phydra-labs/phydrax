@@ -7,6 +7,7 @@ Composable model transforms that add structure or change output interpretation.
 
     - `EquinoxModel` / `EquinoxStructuredModel` adapt arbitrary Equinox/JAX callables into Phydrax models by attaching `in_size` / `out_size`.
     - `ComplexOutputModel` packs/unpacks real/imag parts into complex outputs.
+    - `Sequential` chains models so outputs of stage `i` feed stage `i+1`.
 
 ## Equinox adapters
 
@@ -121,6 +122,39 @@ assert y.shape == (4,)
 ---
 
 ## Model transforms
+
+`Sequential` is useful for embedded pipelines, for example
+`RandomFourierFeatureEmbeddings -> MLP`, then reused inside separable wrappers.
+
+```python
+import jax.random as jr
+import phydrax as phx
+
+branch = phx.nn.Sequential(
+    (
+        phx.nn.RandomFourierFeatureEmbeddings(
+            in_size="scalar",
+            out_size=64,
+            key=jr.key(0),
+        ),
+        phx.nn.MLP(
+            in_size=64,
+            out_size=16,
+            width_size=64,
+            depth=2,
+            key=jr.key(1),
+        ),
+    )
+)
+```
+
+::: phydrax.nn.Sequential
+    options:
+        members:
+            - __init__
+            - __call__
+
+---
 
 ::: phydrax.nn.MagnitudeDirectionModel
     options:

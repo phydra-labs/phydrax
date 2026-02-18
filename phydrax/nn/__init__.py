@@ -55,6 +55,7 @@ from .models import (  # noqa: F401
     SeparableFeynmaNN,
     SeparableKAN,
     SeparableMLP,
+    Sequential,
 )
 
 
@@ -81,6 +82,7 @@ __all__ = [
     "DeepONet",
     "FNO1d",
     "FNO2d",
+    "Sequential",
     "LatentExecutionPolicy",
     "LatentContractionModel",
     "Separable",
