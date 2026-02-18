@@ -2,218 +2,218 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://phydra-labs.github.io/phydrax/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/all-of-phydrax/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/guides_constraints/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/guides_differential/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/guides_domain/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/guides_integrals/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/guides_solver/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/phydrax/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/constraints/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/constraints/boundary/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/constraints/cfd/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/constraints/continuous/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/constraints/core/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/constraints/discrete/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/constraints/em/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/constraints/enforced/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/constraints/solid/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/constraints/thermal/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/domain/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/domain/components/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/domain/composition/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/domain/functions/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/domain/geometry1d/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/domain/geometry2d/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/domain/geometry3d/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/domain/sampling/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/domain/time/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/nn/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/nn/activations/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/nn/architectures/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/nn/embeddings/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/nn/layers/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/nn/structured/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/nn/wrappers/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/operators/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/operators/delay/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/operators/differential/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/operators/functional/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/operators/integral/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/operators/linalg/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/solver/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/solver/enforced_constraints/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/api/solver/functional_solver/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/appendix/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/appendix/differentiation_modes/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/appendix/physics_constrained_interpolation/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/appendix/surely_youre_joking/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/cookbook/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/cookbook/heat/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/cookbook/inverse_and_data/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/cookbook/operator_learning/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/cookbook/poisson/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/examples/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
     <url>
          <loc>https://phydra-labs.github.io/phydrax/misc/nondimensionalization/</loc>
-         <lastmod>2026-02-16</lastmod>
+         <lastmod>2026-02-18</lastmod>
     </url>
 </urlset>

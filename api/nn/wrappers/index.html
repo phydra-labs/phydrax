@@ -1707,6 +1707,15 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#phydrax.nn.Sequential" class="md-nav__link">
+    <span class="md-ellipsis">
+      <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;Sequential
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#phydrax.nn.MagnitudeDirectionModel" class="md-nav__link">
     <span class="md-ellipsis">
       <code class="doc-symbol doc-symbol-toc doc-symbol-class"></code>&nbsp;MagnitudeDirectionModel
@@ -2142,6 +2151,7 @@
 <ul>
 <li><code>EquinoxModel</code> / <code>EquinoxStructuredModel</code> adapt arbitrary Equinox/JAX callables into Phydrax models by attaching <code>in_size</code> / <code>out_size</code>.</li>
 <li><code>ComplexOutputModel</code> packs/unpacks real/imag parts into complex outputs.</li>
+<li><code>Sequential</code> chains models so outputs of stage <code>i</code> feed stage <code>i+1</code>.</li>
 </ul>
 </div>
 <h2 id="equinox-adapters">Equinox adapters<a class="headerlink" href="#equinox-adapters" title="Permanent link">¤</a></h2>
@@ -2385,6 +2395,113 @@ wrapped module:</p>
 
 </div><hr />
 <h2 id="model-transforms">Model transforms<a class="headerlink" href="#model-transforms" title="Permanent link">¤</a></h2>
+<p><code>Sequential</code> is useful for embedded pipelines, for example
+<code>RandomFourierFeatureEmbeddings -&gt; MLP</code>, then reused inside separable wrappers.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">jax.random</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">jr</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">phydrax</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">phx</span>
+
+<span class="n">branch</span> <span class="o">=</span> <span class="n">phx</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Sequential</span><span class="p">(</span>
+    <span class="p">(</span>
+        <span class="n">phx</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">RandomFourierFeatureEmbeddings</span><span class="p">(</span>
+            <span class="n">in_size</span><span class="o">=</span><span class="s2">&quot;scalar&quot;</span><span class="p">,</span>
+            <span class="n">out_size</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span>
+            <span class="n">key</span><span class="o">=</span><span class="n">jr</span><span class="o">.</span><span class="n">key</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span>
+        <span class="p">),</span>
+        <span class="n">phx</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">MLP</span><span class="p">(</span>
+            <span class="n">in_size</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span>
+            <span class="n">out_size</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>
+            <span class="n">width_size</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span>
+            <span class="n">depth</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+            <span class="n">key</span><span class="o">=</span><span class="n">jr</span><span class="o">.</span><span class="n">key</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+<span class="p">)</span>
+</code></pre></div>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h4 id="phydrax.nn.Sequential" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>phydrax.nn.Sequential</code>
+
+
+<a href="#phydrax.nn.Sequential" class="headerlink" title="Permanent link">¤</a></h4>
+
+
+    <div class="doc doc-contents first">
+
+
+        <p>Compose models in sequence.</p>
+<p>Given models <span class="arithmatex">\((m_1,\dots,m_K)\)</span>, this wrapper evaluates</p>
+<div class="arithmatex">\[
+y(x)=m_K(\cdots m_2(m_1(x))\cdots).
+\]</div>
+<p>Adjacent models must have compatible sizes:
+<code>canonical(prev.out_size) == canonical(next.in_size)</code>.</p>
+
+
+
+
+
+
+
+
+
+
+  <div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h5 id="phydrax.nn.Sequential.__init__" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="fm">__init__</span><span class="p">(</span><span class="n">models</span><span class="p">:</span> <span class="n">collections</span><span class="o">.</span><span class="n">abc</span><span class="o">.</span><span class="n">Sequence</span><span class="p">[</span><span class="n">phydrax</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">models</span><span class="o">.</span><span class="n">core</span><span class="o">.</span><span class="n">_base</span><span class="o">.</span><span class="n">_AbstractBaseModel</span><span class="p">])</span></code>
+
+<a href="#phydrax.nn.Sequential.__init__" class="headerlink" title="Permanent link">¤</a></h5>
+
+
+    <div class="doc doc-contents ">
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h5 id="phydrax.nn.Sequential.__call__" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="fm">__call__</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">Array</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Array</span><span class="p">,</span> <span class="o">...</span><span class="p">],</span> <span class="o">/</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="n">Key</span><span class="p">[</span><span class="n">Array</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">jr</span><span class="o">.</span><span class="n">key</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span> <span class="o">-&gt;</span> <span class="n">Array</span></code>
+
+<a href="#phydrax.nn.Sequential.__call__" class="headerlink" title="Permanent link">¤</a></h5>
+
+
+    <div class="doc doc-contents ">
+
+        <p>Evaluate the model pipeline.</p>
+<p>If tuple input is provided, the first stage must support structured input.</p>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div><hr />
 
 
 <div class="doc doc-object doc-class">
