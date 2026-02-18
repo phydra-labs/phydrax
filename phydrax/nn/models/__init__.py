@@ -28,6 +28,7 @@ from .wrappers._separable_wrappers import (
     LatentExecutionPolicy,
     Separable,
 )
+from .wrappers._sequential import Sequential
 
 
 __all__ = [
@@ -45,6 +46,7 @@ __all__ = [
     "SeparableKAN",
     "SeparableFeynmaNN",
     "FeynmaNN",
+    "Sequential",
     "FNO1d",
     "FNO2d",
     "LatentExecutionPolicy",
