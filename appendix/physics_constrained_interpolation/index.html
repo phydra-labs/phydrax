@@ -2571,11 +2571,11 @@ P_K(t)=\sum_{k=0}^{K}\frac{(t-t_0)^k}{k!}\,g_k,
 <div class="arithmatex">\[
 u_I(t)=P_K(t) + g(t)\,\bigl(u(t)-P_K(t)\bigr).
 \]</div>
-<p>Assume <span class="arithmatex">\(g\)</span> satisfies
-$$
+<p>Assume <span class="arithmatex">\(g\)</span> satisfies:</p>
+<div class="arithmatex">\[
 g^{(j)}(t_0)=0,\qquad j=0,1,\dots,K.
-$$
-Then <span class="arithmatex">\(u_I\)</span> matches all prescribed initial derivatives.</p>
+\]</div>
+<p>Then <span class="arithmatex">\(u_I\)</span> matches all prescribed initial derivatives.</p>
 <p><strong>Proposition A.4 (exact initial derivatives).</strong> Assume <span class="arithmatex">\(u\)</span> is <span class="arithmatex">\(K+1\)</span> times differentiable in <span class="arithmatex">\(t\)</span>.
 Then <span class="arithmatex">\(\partial_t^k u_I(\cdot,t_0)=g_k(\cdot)\)</span> for <span class="arithmatex">\(k=0,\dots,K\)</span>.</p>
 <p><em>Proof.</em> Write <span class="arithmatex">\(u_I=P_K+g(u-P_K)\)</span>. By Leibniz, every derivative of <span class="arithmatex">\(g(u-P_K)\)</span> of order <span class="arithmatex">\(\le K\)</span> contains a factor
@@ -2584,16 +2584,10 @@ Then <span class="arithmatex">\(\partial_t^k u_I(\cdot,t_0)=g_k(\cdot)\)</span> 
 <p>In implementation, two gate families are supported:</p>
 <ul>
 <li><strong>Polynomial gate</strong> (legacy):
-  $$
-  g_{\text{poly}}(t)=(t-t_0)^{K+1}.
-  $$</li>
+  <span class="arithmatex">\(g_{\text{poly}}(t)=(t-t_0)^{K+1}\)</span>.</li>
 <li><strong>Rational gate</strong> (default):
-  $$
-  q=K+1,\qquad
-  \tau=\frac{\Delta t}{L\,\varepsilon^{1/q}},\qquad
-  g_{\text{rat}}(t)=\frac{\tau^q}{1+\tau^q},
-  $$
-  where <span class="arithmatex">\(\varepsilon=\texttt{gate\_eps}&gt;0\)</span>, and <span class="arithmatex">\(\Delta t\)</span> is the oriented (or absolute) distance from the initial slice
+  <span class="arithmatex">\(q=K+1\)</span>, <span class="arithmatex">\(\tau=\frac{\Delta t}{L\,\varepsilon^{1/q}}\)</span>, and
+  <span class="arithmatex">\(g_{\text{rat}}(t)=\frac{\tau^q}{1+\tau^q}\)</span>, where <span class="arithmatex">\(\varepsilon=\texttt{gate\_eps}&gt;0\)</span>, and <span class="arithmatex">\(\Delta t\)</span> is the oriented (or absolute) distance from the initial slice
   depending on whether the initial component is <code>FixedStart</code>, <code>FixedEnd</code>, or <code>Fixed</code>.</li>
 </ul>
 <p>Near <span class="arithmatex">\(t_0\)</span>, <span class="arithmatex">\(g_{\text{rat}}(t)=\mathcal O((t-t_0)^{K+1})\)</span>, so it preserves the same exact-derivative property while
@@ -2711,13 +2705,12 @@ limit <span class="arithmatex">\(\varepsilon\to 0\)</span> with exact evaluation
 than a prescribed threshold <span class="arithmatex">\(\varepsilon_{\text{snap}}\)</span> to an anchor, the weight becomes one-hot.</p>
 <p><strong>Proposition A.6 (exactness at anchors under snapping).</strong> Suppose <span class="arithmatex">\(M(z_k)&gt;0\)</span> and <span class="arithmatex">\(w_k(z_k)=1\)</span>. Then <span class="arithmatex">\(\tilde u(z_k)=y_k\)</span>.</p>
 <p><em>Proof.</em> Evaluate the overlay at <span class="arithmatex">\(z=z_k\)</span>:</p>
-<p>[
-\begin{aligned}
-\tilde u(z_k) &amp;= u(z_k) + M(z_k)\,r_k \
-&amp;= u(z_k) + M(z_k)\frac{y_k-u(z_k)}{M(z_k)} \
-&amp;= y_k.
-\end{aligned}
-]
+<p>$$
+\tilde u(z_k)
+= u(z_k) + M(z_k)\,r_k
+= u(z_k) + M(z_k)\frac{y_k-u(z_k)}{M(z_k)}
+= y_k.
+$$
 <span class="arithmatex">\(\square\)</span></p>
 <h3 id="a75-preservation-of-boundary-and-initial-constraints">A.7.5. Preservation of boundary and initial constraints<a class="headerlink" href="#a75-preservation-of-boundary-and-initial-constraints" title="Permanent link">¤</a></h3>
 <p>The interior correction has the form <span class="arithmatex">\(\Delta u(z)=M(z)\,h(z)\)</span> where <span class="arithmatex">\(h(z)=\sum_i w_i(z)r_i\)</span>.</p>
