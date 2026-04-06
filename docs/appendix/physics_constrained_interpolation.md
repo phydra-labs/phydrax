@@ -319,10 +319,12 @@ $$
 u_I(t)=P_K(t) + g(t)\,\bigl(u(t)-P_K(t)\bigr).
 $$
 
-Assume $g$ satisfies
+Assume $g$ satisfies:
+
 $$
 g^{(j)}(t_0)=0,\qquad j=0,1,\dots,K.
 $$
+
 Then $u_I$ matches all prescribed initial derivatives.
 
 **Proposition A.4 (exact initial derivatives).** Assume $u$ is $K+1$ times differentiable in $t$.
@@ -335,16 +337,10 @@ $\partial_t^k u_I(t_0)=\partial_t^k P_K(t_0)=g_k$. $\square$
 In implementation, two gate families are supported:
 
 - **Polynomial gate** (legacy):
-  $$
-  g_{\text{poly}}(t)=(t-t_0)^{K+1}.
-  $$
+  $g_{\text{poly}}(t)=(t-t_0)^{K+1}$.
 - **Rational gate** (default):
-  $$
-  q=K+1,\qquad
-  \tau=\frac{\Delta t}{L\,\varepsilon^{1/q}},\qquad
-  g_{\text{rat}}(t)=\frac{\tau^q}{1+\tau^q},
-  $$
-  where $\varepsilon=\texttt{gate\_eps}>0$, and $\Delta t$ is the oriented (or absolute) distance from the initial slice
+  $q=K+1$, $\tau=\frac{\Delta t}{L\,\varepsilon^{1/q}}$, and
+  $g_{\text{rat}}(t)=\frac{\tau^q}{1+\tau^q}$, where $\varepsilon=\texttt{gate\_eps}>0$, and $\Delta t$ is the oriented (or absolute) distance from the initial slice
   depending on whether the initial component is `FixedStart`, `FixedEnd`, or `Fixed`.
 
 Near $t_0$, $g_{\text{rat}}(t)=\mathcal O((t-t_0)^{K+1})$, so it preserves the same exact-derivative property while
@@ -501,22 +497,21 @@ This is an interpolation of the scaled residual field $r$, multiplied by the pro
 
 ### A.7.4. Exact anchor satisfaction (snap rule)
 
-In exact arithmetic, the IDW interpolant need not satisfy \(w_i(z_i)=1\) (it typically satisfies this only in the
-limit \(\varepsilon\to 0\) with exact evaluation). The implementation therefore uses a *snap rule*: if a query is closer
-than a prescribed threshold \(\varepsilon_{\text{snap}}\) to an anchor, the weight becomes one-hot.
+In exact arithmetic, the IDW interpolant need not satisfy $w_i(z_i)=1$ (it typically satisfies this only in the
+limit $\varepsilon\to 0$ with exact evaluation). The implementation therefore uses a *snap rule*: if a query is closer
+than a prescribed threshold $\varepsilon_{\text{snap}}$ to an anchor, the weight becomes one-hot.
 
-**Proposition A.6 (exactness at anchors under snapping).** Suppose \(M(z_k)>0\) and \(w_k(z_k)=1\). Then \(\tilde u(z_k)=y_k\).
+**Proposition A.6 (exactness at anchors under snapping).** Suppose $M(z_k)>0$ and $w_k(z_k)=1$. Then $\tilde u(z_k)=y_k$.
 
-*Proof.* Evaluate the overlay at \(z=z_k\):
+*Proof.* Evaluate the overlay at $z=z_k$:
 
-\[
-\begin{aligned}
-\tilde u(z_k) &= u(z_k) + M(z_k)\,r_k \\
-&= u(z_k) + M(z_k)\frac{y_k-u(z_k)}{M(z_k)} \\
-&= y_k.
-\end{aligned}
-\]
-\(\square\)
+$$
+\tilde u(z_k)
+= u(z_k) + M(z_k)\,r_k
+= u(z_k) + M(z_k)\frac{y_k-u(z_k)}{M(z_k)}
+= y_k.
+$$
+$\square$
 
 ### A.7.5. Preservation of boundary and initial constraints
 
