@@ -2144,7 +2144,7 @@
     <div class="doc doc-contents first">
 
         <p>Prescribed heat-flux (Neumann) boundary condition.</p>
-<p>Enforces <span class="arithmatex">\(k\\,\\partial T/\\partial n = q\)</span> on the boundary component, where
+<p>Enforces <span class="arithmatex">\(k\,\partial T/\partial n = q\)</span> on the boundary component, where
 <span class="arithmatex">\(q\)</span> is the heat flux (default <span class="arithmatex">\(0\)</span>).</p>
 <p><strong>Arguments:</strong></p>
 <ul>
@@ -2185,15 +2185,15 @@
     <div class="doc doc-contents first">
 
         <p>Convection (Robin) boundary condition.</p>
-<p>Enforces <span class="arithmatex">\(k\\,\\partial T/\\partial n = h\\,(T - T_\\infty)\)</span> on the boundary
-component, where <span class="arithmatex">\(T_\\infty\)</span> is the ambient temperature (default <span class="arithmatex">\(0\)</span>).</p>
+<p>Enforces <span class="arithmatex">\(k\,\partial T/\partial n = h\,(T - T_\infty)\)</span> on the boundary
+component, where <span class="arithmatex">\(T_\infty\)</span> is the ambient temperature (default <span class="arithmatex">\(0\)</span>).</p>
 <p><strong>Arguments:</strong></p>
 <ul>
 <li><code>temperature_var</code>: Name of the temperature field.</li>
 <li><code>component</code>: Boundary component.</li>
 <li><code>h</code>: Convection coefficient.</li>
 <li><code>k</code>: Thermal conductivity.</li>
-<li><code>ambient_temp</code>: Ambient temperature <span class="arithmatex">\(T_\\infty\)</span> (defaults to 0).</li>
+<li><code>ambient_temp</code>: Ambient temperature <span class="arithmatex">\(T_\infty\)</span> (defaults to 0).</li>
 <li><code>var</code>: Geometry variable used to compute normals.</li>
 <li><code>mode</code>: Differentiation mode (<code>"reverse"</code> or <code>"forward"</code>).</li>
 <li><code>num_points</code>: Number of boundary samples.</li>
