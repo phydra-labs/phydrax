@@ -10,6 +10,7 @@ jax.config.update("jax_enable_x64", True)
 
 from . import (
     constraints,
+    data_utils,
     domain,
     nn,
     operators,
@@ -20,6 +21,7 @@ from . import (
 # Explicit re-exports for star import
 __all__ = [
     "constraints",
+    "data_utils",
     "domain",
     "nn",
     "operators",

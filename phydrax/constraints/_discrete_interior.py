@@ -144,6 +144,8 @@ def DiscreteInteriorDataConstraint(
             weight=weight,
             label=label,
             reduction="mean" if reduction == "mean" else "integral",
+            data_constraint_var=constraint_var,
+            data_target=target,
         )
 
     if points is None or values is None:
@@ -170,9 +172,12 @@ def DiscreteInteriorDataConstraint(
         component=component,
         points=pts_in,
         residual=residual,
+        constraint_vars=(constraint_var,),
         weight=weight,
         label=label,
         reduction=reduction,
+        data_constraint_var=constraint_var,
+        data_target_values=values,
     )
 
 

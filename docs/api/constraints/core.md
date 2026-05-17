@@ -11,6 +11,7 @@ measures, and `over=` semantics), see [Guides → Constraints and objectives](..
             - __init__
             - from_operator
             - sample
+            - data_metrics
             - loss
 
 ---
@@ -21,6 +22,7 @@ measures, and `over=` semantics), see [Guides → Constraints and objectives](..
             - __init__
             - from_points
             - from_operator
+            - data_metrics
             - loss
 
 ---

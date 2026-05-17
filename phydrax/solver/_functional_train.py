@@ -17,6 +17,8 @@ import jax.random as jr
 import optax
 from jax import core as jcore
 
+from ..constraints._functional import FunctionalConstraint
+from ..constraints._pointset import PointSetConstraint
 from ..operators.differential._runtime import derivative_runtime_context
 
 
@@ -29,6 +31,117 @@ def _constraint_label(constraint: Any, /) -> str:
     if label:
         return str(label)
     return type(constraint).__name__
+
+
+class _TensorBoardLogger:
+    _event_cls: Any
+    _summary_cls: Any
+    _writer: Any
+
+    def __init__(self, log_dir: str | Path):
+        from tensorboard.compat.proto.event_pb2 import Event
+        from tensorboard.compat.proto.summary_pb2 import Summary
+        from tensorboard.summary.writer.event_file_writer import EventFileWriter
+
+        path = Path(log_dir)
+        path.mkdir(parents=True, exist_ok=True)
+        self._event_cls = Event
+        self._summary_cls = Summary
+        self._writer = EventFileWriter(str(path))
+
+    def __enter__(self) -> "_TensorBoardLogger":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.flush()
+        self._writer.close()
+
+    def scalar(self, tag: str, value: Any, step: int) -> None:
+        summary = self._summary_cls(
+            value=[
+                self._summary_cls.Value(
+                    tag=str(tag),
+                    simple_value=float(jnp.asarray(value, dtype=float).reshape(())),
+                )
+            ]
+        )
+        event = self._event_cls(
+            wall_time=time.time(),
+            step=int(step),
+            summary=summary,
+        )
+        self._writer.add_event(event)
+
+    def flush(self) -> None:
+        self._writer.flush()
+
+
+def _clean_tag_part(value: str, /) -> str:
+    cleaned = "".join(
+        ch if ch.isalnum() or ch in "._-" else "_" for ch in str(value)
+    ).strip("_")
+    return cleaned or "constraint"
+
+
+def _constraint_tag(index: int, name: str, /) -> str:
+    return f"constraints/{index:03d}_{_clean_tag_part(name)}"
+
+
+def _metric_suffix(metrics: dict[str, Any], /) -> str:
+    if not metrics:
+        return ""
+    parts = []
+    for name, value in metrics.items():
+        value_f = float(jnp.asarray(value, dtype=float).reshape(()))
+        parts.append(f"{name}={value_f:.6e}")
+    return " " + " ".join(parts)
+
+
+def _tensorboard_every(
+    *,
+    tensorboard_log_dir: str | Path | None,
+    tensorboard_every: int | None,
+    log_every: int,
+) -> int | None:
+    if tensorboard_log_dir is None:
+        return None
+    if tensorboard_every is None:
+        return log_every if log_every > 0 else 1
+    every = int(tensorboard_every)
+    if every <= 0:
+        raise ValueError(
+            "tensorboard_every must be positive when TensorBoard is enabled."
+        )
+    return every
+
+
+def _log_tensorboard_scalars(
+    writer: _TensorBoardLogger,
+    *,
+    step: int,
+    loss: Any,
+    best_loss: float,
+    iter_time_s: float,
+    constraint_names: tuple[str, ...],
+    terms: Any,
+    data_metrics: tuple[dict[str, Any], ...],
+    log_constraints: bool,
+) -> None:
+    writer.scalar("train/loss", loss, step)
+    writer.scalar("train/best_loss", best_loss, step)
+    writer.scalar("train/iter_time_s", iter_time_s, step)
+
+    if not log_constraints:
+        return
+
+    terms_arr = jnp.asarray(terms, dtype=float)
+    for i, (name, val) in enumerate(
+        zip(constraint_names, list(map(float, terms_arr)), strict=True)
+    ):
+        prefix = _constraint_tag(i, name)
+        writer.scalar(f"{prefix}/loss", val, step)
+        for metric_name, metric_value in data_metrics[i].items():
+            writer.scalar(f"{prefix}/{metric_name}", metric_value, step)
 
 
 def solve(
@@ -44,6 +157,9 @@ def solve(
     log_every: int = 1,
     log_constraints: bool = True,
     log_path: str | Path | None = None,
+    tensorboard_log_dir: str | Path | None = None,
+    tensorboard_every: int | None = None,
+    tensorboard_flush_every: int = 10,
 ) -> "FunctionalSolver":
     if num_iter == 0:
         return self
@@ -54,37 +170,54 @@ def solve(
             "or an evosax algorithm instance), not a string."
         )
 
+    _opt_linesearch: optax.GradientTransformationExtraArgs | None = None
+    _opt_standard: optax.GradientTransformation | None = None
+
+    if isinstance(optim, optax.GradientTransformationExtraArgs):
+        _opt_linesearch = optim
+    elif isinstance(optim, optax.GradientTransformation):
+        _opt_standard = optim
+    else:
+        return _solve_evosax(
+            self,
+            num_iter=num_iter,
+            algo=optim,
+            seed=seed,
+            jit=jit,
+            keep_best=keep_best,
+            log_every=log_every,
+            log_constraints=log_constraints,
+            log_path=log_path,
+            tensorboard_log_dir=tensorboard_log_dir,
+            tensorboard_every=tensorboard_every,
+            tensorboard_flush_every=tensorboard_flush_every,
+        )
+
     log_ctx = (
         open(Path(log_path), "w", encoding="utf-8")
         if log_path is not None
         else nullcontext(None)
     )
 
-    with log_ctx as log_fp:
-        _opt_linesearch: optax.GradientTransformationExtraArgs | None = None
-        _opt_standard: optax.GradientTransformation | None = None
+    tb_ctx = (
+        _TensorBoardLogger(tensorboard_log_dir)
+        if tensorboard_log_dir is not None
+        else nullcontext(None)
+    )
 
-        if isinstance(optim, optax.GradientTransformationExtraArgs):
-            _opt_linesearch = optim
-        elif isinstance(optim, optax.GradientTransformation):
-            _opt_standard = optim
-        else:
-            return _solve_evosax(
-                self,
-                num_iter=num_iter,
-                algo=optim,
-                seed=seed,
-                jit=jit,
-                keep_best=keep_best,
-                log_every=log_every,
-                log_constraints=log_constraints,
-                log_path=log_path,
-            )
-
+    with log_ctx as log_fp, tb_ctx as tb_writer:
         params, static = eqx.partition(self.functions, eqx.is_inexact_array)
         log_every_ = int(log_every)
         if log_every_ < 0:
             raise ValueError("log_every must be >= 0.")
+        tb_every_ = _tensorboard_every(
+            tensorboard_log_dir=tensorboard_log_dir,
+            tensorboard_every=tensorboard_every,
+            log_every=log_every_,
+        )
+        tb_flush_every_ = int(tensorboard_flush_every)
+        if tb_flush_every_ <= 0:
+            raise ValueError("tensorboard_flush_every must be positive.")
         log_constraints_ = bool(log_constraints)
         constraint_names = tuple(_constraint_label(c) for c in self.constraints)
 
@@ -112,6 +245,22 @@ def solve(
                 if terms:
                     return total, jnp.stack(terms, axis=0)
                 return total, jnp.zeros((0,), dtype=float)
+
+        def _data_metrics_wrt_params(params_, solver, key, iter_):
+            functions = eqx.combine(params_, static)
+            if solver.constraint_pipelines is None:
+                enforced = functions
+            else:
+                enforced = solver.constraint_pipelines.apply(functions)
+            keys = jr.split(key, len(solver.constraints))
+            metrics: list[dict[str, Any]] = []
+            with derivative_runtime_context():
+                for c, k in zip(solver.constraints, keys, strict=True):
+                    if isinstance(c, (FunctionalConstraint, PointSetConstraint)):
+                        metrics.append(c.data_metrics(enforced, key=k, iter_=iter_))
+                    else:
+                        metrics.append({})
+            return tuple(metrics)
 
         loss_fn = eqx.filter_value_and_grad(_loss_wrt_params, has_aux=True)
 
@@ -179,11 +328,18 @@ def solve(
                     best_loss = loss_f
                     best_params = params
             iter_time_s = time.perf_counter() - iter_start
-            if log_every_ > 0 and ((epoch + 1) % log_every_ == 0):
+            step = epoch + 1
+            console_step = log_every_ > 0 and (step % log_every_ == 0)
+            tensorboard_step = tb_every_ is not None and (step % tb_every_ == 0)
+            data_metrics: tuple[dict[str, Any], ...] = tuple({} for _ in self.constraints)
+            if log_constraints_ and (console_step or tensorboard_step):
+                data_metrics = _data_metrics_wrt_params(params, self, subkey, iter_)
+
+            if console_step:
                 loss_f = float(loss_val)
                 best_display = best_loss if keep_best else loss_f
                 print(
-                    f"[phydrax][optax] iter {epoch + 1}/{int(num_iter)} "
+                    f"[phydrax][optax] iter {step}/{int(num_iter)} "
                     f"loss={loss_f:.6e} best={best_display:.6e} "
                     f"iter_time={iter_time_s:.3f}s",
                     file=out_file,
@@ -193,7 +349,24 @@ def solve(
                     for i, (name, val) in enumerate(
                         zip(constraint_names, list(map(float, terms_arr)), strict=True)
                     ):
-                        print(f"  [{i}] {name}: {val:.6e}", file=out_file)
+                        suffix = _metric_suffix(data_metrics[i])
+                        print(f"  [{i}] {name}: {val:.6e}{suffix}", file=out_file)
+            if tensorboard_step and tb_writer is not None:
+                loss_f = float(loss_val)
+                best_display = best_loss if keep_best else loss_f
+                _log_tensorboard_scalars(
+                    tb_writer,
+                    step=step,
+                    loss=loss_val,
+                    best_loss=best_display,
+                    iter_time_s=iter_time_s,
+                    constraint_names=constraint_names,
+                    terms=terms,
+                    data_metrics=data_metrics,
+                    log_constraints=log_constraints_,
+                )
+                if step % tb_flush_every_ == 0:
+                    tb_writer.flush()
 
         chosen = best_params if keep_best else params
         functions = eqx.combine(chosen, static)
@@ -211,6 +384,10 @@ def _solve_evosax(
     log_every: int,
     log_constraints: bool,
     log_path: str | Path | None,
+    tensorboard_log_dir: str | Path | None = None,
+    tensorboard_every: int | None = None,
+    tensorboard_flush_every: int = 10,
+    tensorboard_writer: _TensorBoardLogger | None = None,
 ) -> "FunctionalSolver":
     from ..constraints._base import AbstractSamplingConstraint
 
@@ -218,6 +395,14 @@ def _solve_evosax(
     log_every_ = int(log_every)
     if log_every_ < 0:
         raise ValueError("log_every must be >= 0.")
+    tb_every_ = _tensorboard_every(
+        tensorboard_log_dir=tensorboard_log_dir,
+        tensorboard_every=tensorboard_every,
+        log_every=log_every_,
+    )
+    tb_flush_every_ = int(tensorboard_flush_every)
+    if tb_flush_every_ <= 0:
+        raise ValueError("tensorboard_flush_every must be positive.")
     log_constraints_ = bool(log_constraints)
     constraint_names = tuple(_constraint_label(c) for c in self.constraints)
 
@@ -258,6 +443,22 @@ def _solve_evosax(
             return jnp.stack(terms, axis=0)
         return jnp.zeros((0,), dtype=float)
 
+    def _data_metrics_for_params(p, solver, key, iter_):
+        functions = eqx.combine(p, static)
+        if solver.constraint_pipelines is None:
+            enforced = functions
+        else:
+            enforced = solver.constraint_pipelines.apply(functions)
+        keys = jr.split(key, len(solver.constraints))
+        metrics: list[dict[str, Any]] = []
+        with derivative_runtime_context():
+            for c, k in zip(solver.constraints, keys, strict=True):
+                if isinstance(c, (FunctionalConstraint, PointSetConstraint)):
+                    metrics.append(c.data_metrics(enforced, key=k, iter_=iter_))
+                else:
+                    metrics.append({})
+        return tuple(metrics)
+
     loss_fn = eqx.filter_jit(_loss_for_params) if jit else _loss_for_params
     terms_fn = eqx.filter_jit(_terms_for_params) if jit else _terms_for_params
 
@@ -282,8 +483,13 @@ def _solve_evosax(
         if log_path is not None
         else nullcontext(None)
     )
+    tb_ctx = (
+        _TensorBoardLogger(tensorboard_log_dir)
+        if tensorboard_writer is None and tensorboard_log_dir is not None
+        else nullcontext(tensorboard_writer)
+    )
 
-    with log_ctx as log_fp:
+    with log_ctx as log_fp, tb_ctx as tb_writer:
         out_file = log_fp if log_fp is not None else None
 
         for epoch in range(int(num_iter)):
@@ -331,26 +537,54 @@ def _solve_evosax(
             else:
                 best_params = cand_params
             iter_time_s = time.perf_counter() - iter_start
-            if log_every_ > 0 and ((epoch + 1) % log_every_ == 0):
+            step = epoch + 1
+            console_step = log_every_ > 0 and (step % log_every_ == 0)
+            tensorboard_step = tb_every_ is not None and (step % tb_every_ == 0)
+            data_metrics: tuple[dict[str, Any], ...] = tuple({} for _ in self.constraints)
+            terms_arr = jnp.zeros((0,), dtype=float)
+            if log_constraints_ and (console_step or tensorboard_step):
+                terms_arr = jnp.asarray(
+                    terms_fn(cand_params, self, eval_key_shared, iter_, batches_tuple),
+                    dtype=float,
+                )
+                data_metrics = _data_metrics_for_params(
+                    cand_params,
+                    self,
+                    eval_key_shared,
+                    iter_,
+                )
+
+            if console_step:
                 loss_f = float(cand_loss)
                 best_display = best_loss if keep_best else loss_f
                 print(
-                    f"[phydrax][evosax] iter {epoch + 1}/{int(num_iter)} "
+                    f"[phydrax][evosax] iter {step}/{int(num_iter)} "
                     f"loss={loss_f:.6e} best={best_display:.6e} "
                     f"iter_time={iter_time_s:.3f}s",
                     file=out_file,
                 )
                 if log_constraints_:
-                    terms_arr = jnp.asarray(
-                        terms_fn(
-                            cand_params, self, eval_key_shared, iter_, batches_tuple
-                        ),
-                        dtype=float,
-                    )
                     for i, (name, val) in enumerate(
                         zip(constraint_names, list(map(float, terms_arr)), strict=True)
                     ):
-                        print(f"  [{i}] {name}: {val:.6e}", file=out_file)
+                        suffix = _metric_suffix(data_metrics[i])
+                        print(f"  [{i}] {name}: {val:.6e}{suffix}", file=out_file)
+            if tensorboard_step and tb_writer is not None:
+                loss_f = float(cand_loss)
+                best_display = best_loss if keep_best else loss_f
+                _log_tensorboard_scalars(
+                    tb_writer,
+                    step=step,
+                    loss=cand_loss,
+                    best_loss=best_display,
+                    iter_time_s=iter_time_s,
+                    constraint_names=constraint_names,
+                    terms=terms_arr,
+                    data_metrics=data_metrics,
+                    log_constraints=log_constraints_,
+                )
+                if step % tb_flush_every_ == 0:
+                    tb_writer.flush()
 
         functions = eqx.combine(best_params, static)
         return eqx.tree_at(lambda s: s.functions, self, functions)

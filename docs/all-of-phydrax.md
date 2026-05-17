@@ -250,6 +250,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - [Solvers and training](guides_solver.md)
 - [API reference](api/phydrax.md)
 - `phydrax.domain` for geometry, time, and sampling.
+- `phydrax.data_utils` for CSV loading and array scaling.
 - `phydrax.constraints` for loss terms and enforced constraints.
 - `phydrax.operators` for PDE operators.
 - `phydrax.nn` for models and wrappers.

@@ -37,8 +37,10 @@ dependencies = [
     "opt-einsum>=3.4.0",
     "optax>=0.2.6",
     "orthax>=0.2.7",
+    "polars>=1.40.1",
     "pyvista>=0.46.4",
     "quadax>=0.2.11",
+    "tensorboard>=2.20.0",
     "trimesh[easy]>=4.11.1",
 ]
 

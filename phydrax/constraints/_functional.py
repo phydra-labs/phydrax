@@ -22,6 +22,7 @@ from ..domain._structure import (
 )
 from ..operators.integral._batch_ops import integral, mean
 from ._base import AbstractSamplingConstraint
+from ._data_metrics import supervised_data_metrics
 from ._sampling_spec import (
     CoordSamplingMap,
     parse_sampling_num_points,
@@ -101,6 +102,9 @@ class FunctionalConstraint(AbstractSamplingConstraint):
     sampling_mode: Literal["resample", "fixed"]
     fixed_batch: PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...] | None
     residual: Callable[[Mapping[str, DomainFunction]], DomainFunction]
+    data_constraint_var: str | None
+    data_target: DomainFunction | None
+    data_accuracy_eps: Array
 
     def __init__(
         self,
@@ -121,6 +125,9 @@ class FunctionalConstraint(AbstractSamplingConstraint):
             PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...] | None
         ) = None,
         fixed_batch_key: Key[Array, ""] = DOC_KEY0,
+        data_constraint_var: str | None = None,
+        data_target: DomainFunction | None = None,
+        data_accuracy_eps: float = 1e-12,
     ):
         self.constraint_vars = () if constraint_vars is None else tuple(constraint_vars)
         self.component = component
@@ -160,6 +167,11 @@ class FunctionalConstraint(AbstractSamplingConstraint):
             if fixed_batch is not None:
                 raise ValueError("fixed_batch is only valid when sampling_mode='fixed'.")
             self.fixed_batch = None
+        self.data_constraint_var = (
+            None if data_constraint_var is None else str(data_constraint_var)
+        )
+        self.data_target = data_target
+        self.data_accuracy_eps = jnp.asarray(float(data_accuracy_eps), dtype=float)
 
     def _sample_once(
         self,
@@ -205,6 +217,9 @@ class FunctionalConstraint(AbstractSamplingConstraint):
             PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...] | None
         ) = None,
         fixed_batch_key: Key[Array, ""] = DOC_KEY0,
+        data_constraint_var: str | None = None,
+        data_target: DomainFunction | None = None,
+        data_accuracy_eps: float = 1e-12,
     ) -> "FunctionalConstraint":
         r"""Create a `FunctionalConstraint` from an operator mapping `DomainFunction`s to a residual.
 
@@ -235,6 +250,9 @@ class FunctionalConstraint(AbstractSamplingConstraint):
             sampling_mode=sampling_mode,
             fixed_batch=fixed_batch,
             fixed_batch_key=fixed_batch_key,
+            data_constraint_var=data_constraint_var,
+            data_target=data_target,
+            data_accuracy_eps=data_accuracy_eps,
         )
 
     def sample(
@@ -254,6 +272,36 @@ class FunctionalConstraint(AbstractSamplingConstraint):
                 raise ValueError("sampling_mode='fixed' requires fixed_batch to be set.")
             return self.fixed_batch
         return self._sample_once(key=key)
+
+    def data_metrics(
+        self,
+        functions: Mapping[str, DomainFunction],
+        /,
+        *,
+        key: Key[Array, ""] = DOC_KEY0,
+        batch: PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Array]:
+        """Evaluate supervised-data diagnostics for sampled data-fit constraints."""
+        if self.data_constraint_var is None or self.data_target is None:
+            return {}
+
+        batch_ = self.sample(key=key) if batch is None else batch
+        if isinstance(batch_, tuple):
+            raise TypeError("Data metrics require a single sampled batch.")
+
+        prediction = functions[self.data_constraint_var](batch_, key=key, **kwargs)
+        target = self.data_target(batch_, key=key, **kwargs)
+        if not isinstance(prediction, cx.Field):
+            raise TypeError("Expected data prediction to return a coordax.Field.")
+        if not isinstance(target, cx.Field):
+            raise TypeError("Expected data target to return a coordax.Field.")
+
+        return supervised_data_metrics(
+            jnp.asarray(prediction.data, dtype=float),
+            jnp.asarray(target.data, dtype=float),
+            eps=self.data_accuracy_eps,
+        )
 
     def loss(
         self,

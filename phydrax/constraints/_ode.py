@@ -118,6 +118,7 @@ def DiscreteODEConstraint(
         component=domain.component(),
         points=pts,
         residual=residual,
+        constraint_vars=(constraint_var,),
         weight=weight,
         label=label,
         reduction=reduction,
@@ -219,7 +220,10 @@ def DiscreteTimeDataConstraint(
         component=domain.component(),
         points=pts,
         residual=residual,
+        constraint_vars=(constraint_var,),
         weight=weight,
         label=label,
         reduction=reduction,
+        data_constraint_var=constraint_var,
+        data_target_values=values,
     )
