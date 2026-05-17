@@ -18,7 +18,7 @@ This keeps the Optax interface and can be chained with standard learning-rate
 and weight-decay transformations.
 """
 
-from typing import Any, NamedTuple
+from typing import Any, cast, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -92,8 +92,7 @@ def _split_decay_state(state: base.OptState, /) -> tuple[SSBroydenState, base.Op
         or not isinstance(state[0], SSBroydenState)
     ):
         raise TypeError("Expected (SSBroydenState, decay_state) for optimizer state.")
-    assert isinstance(state[1], base.OptState)
-    return state[0], state[1]
+    return state[0], cast(base.OptState, state[1])
 
 
 def _ssbroyden_core(

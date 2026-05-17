@@ -64,6 +64,7 @@ from ._grid import (
     SineAxisSpec,
     UniformAxisSpec,
 )
+from ._hyperrectangle import HyperRectangle
 from ._model_function import structured
 from ._product_domain import ProductDomain
 from ._scalar import ScalarInterval
@@ -116,6 +117,7 @@ __all__ = [
     "DomainFunction",
     "structured",
     "DatasetDomain",
+    "HyperRectangle",
     "ProductStructure",
     "PointsBatch",
     "QuadratureBatch",
