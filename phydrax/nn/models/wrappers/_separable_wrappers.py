@@ -852,4 +852,5 @@ class Separable(_AbstractStructuredInputModel):
     def _split_key(self, key: Key[Array, ""] | None, /) -> Key[Array, " n_models"]:
         if key is None:
             key = DOC_KEY0
+
         return jr.split(key, len(self.models))

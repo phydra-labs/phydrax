@@ -3,7 +3,7 @@
 #
 
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import Literal, overload, Sequence
 
 import meshio
 import numpy as np
@@ -40,6 +40,24 @@ def _canonicalize_mesh_arrays(
     f_sorted = f_sorted[f_order]
 
     return v_sorted, f_sorted
+
+
+@overload
+def _sanitize_meshio_mesh(
+    meshio_mesh: meshio.Mesh,
+    *,
+    output_type: Literal["trimesh"],
+    recenter: bool = True,
+) -> trimesh.Trimesh: ...
+
+
+@overload
+def _sanitize_meshio_mesh(
+    meshio_mesh: meshio.Mesh,
+    *,
+    output_type: Literal["meshio"],
+    recenter: bool = True,
+) -> meshio.Mesh: ...
 
 
 def _sanitize_meshio_mesh(

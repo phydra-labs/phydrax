@@ -10,7 +10,7 @@ Two-loop recursion with ring-buffer history and scalar H0 scaling
 and a backtracking-ish strong Wolfe line search.
 """
 
-from typing import Any, NamedTuple
+from typing import Any, cast, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -86,8 +86,7 @@ def _split_decay_state(state: base.OptState, /) -> tuple[LBFGSState, base.OptSta
         or not isinstance(state[0], LBFGSState)
     ):
         raise TypeError("Expected (LBFGSState, decay_state) for optimizer state.")
-    assert isinstance(state[1], base.OptState)
-    return state[0], state[1]
+    return state[0], cast(base.OptState, state[1])
 
 
 def _zeros_like_tree(tree):
