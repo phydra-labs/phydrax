@@ -117,6 +117,10 @@ nav:
             - Sampling: "api/domain/sampling.md"
             - Components: "api/domain/components.md"
             - Functions: "api/domain/functions.md"
+        - Data utilities:
+            - Overview: "api/data_utils/index.md"
+            - CSV reader: "api/data_utils/csv.md"
+            - Scalers: "api/data_utils/scalers.md"
         - Operators:
             - Overview: "api/operators/index.md"
             - Differential: "api/operators/differential.md"

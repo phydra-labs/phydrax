@@ -67,6 +67,43 @@ scalar), so constraints can implement schedules (annealing, curriculum weights, 
 - If `keep_best=True`, the returned solver uses the best parameter set observed over all epochs
   (by objective value); otherwise it returns the final parameters.
 
+### Logging and TensorBoard
+
+`solve(...)` can report progress to stdout, a text file, TensorBoard, or any combination
+of those outputs.
+
+- `log_every`: console/file logging cadence. Use `0` to disable text progress logs.
+- `log_constraints`: include per-constraint losses in text logs and TensorBoard.
+- `log_path`: write text logs to a file instead of stdout.
+- `tensorboard_log_dir`: write TensorBoard event files.
+- `tensorboard_every`: TensorBoard scalar cadence. By default it follows `log_every`
+  when `log_every > 0`, otherwise it writes every iteration.
+
+For data-fit constraints created by `DiscreteInteriorDataConstraint` or
+`DiscreteTimeDataConstraint`, per-constraint logs also include supervised-data
+diagnostics:
+
+- `data_accuracy`: `1 - data_relative_l2_error`
+- `data_relative_l2_error`: prediction-target relative L2 error
+- `data_rmse`: root mean squared prediction-target error
+
+```text
+solver = solver.solve(
+    num_iter=200,
+    optim=optax.adam(1e-3),
+    seed=0,
+    log_every=10,
+    tensorboard_log_dir="runs/example",
+    tensorboard_every=1,
+)
+```
+
+View the run with:
+
+```bash
+tensorboard --logdir runs
+```
+
 ## Minimal example
 
 ```python

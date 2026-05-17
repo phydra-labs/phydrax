@@ -12,6 +12,8 @@ For a conceptual overview (loss evaluation, enforced pipelines, training loop be
     - `loss(...)` evaluates the total objective at the current parameters.
     - `ansatz_functions()` returns fields after applying enforced pipelines (if configured).
     - `solve(...)` updates parameters inside `functions` using Optax or evosax optimizers.
+    - `solve(..., tensorboard_log_dir=...)` writes TensorBoard scalar logs.
+    - Discrete data constraints report data-fit diagnostics alongside their loss.
 
 ## Typical usage
 

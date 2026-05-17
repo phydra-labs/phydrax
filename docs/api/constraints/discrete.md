@@ -6,6 +6,14 @@ For `PointSetConstraint`, runtime operator knobs can be set once via
 `PointSetConstraint.weight` can be a scalar global multiplier or a
 `DomainFunction` evaluated pointwise on the anchor set.
 
+Data-fit constraints created by `DiscreteInteriorDataConstraint` and
+`DiscreteTimeDataConstraint` attach supervised-data diagnostics used by
+`FunctionalSolver.solve(...)` logging:
+
+- `data_accuracy`
+- `data_relative_l2_error`
+- `data_rmse`
+
 ## Discrete point constraints
 
 ::: phydrax.constraints.PointSetConstraint
@@ -14,6 +22,7 @@ For `PointSetConstraint`, runtime operator knobs can be set once via
             - __init__
             - from_points
             - from_operator
+            - data_metrics
             - loss
 
 ---

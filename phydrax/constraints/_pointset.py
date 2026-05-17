@@ -20,6 +20,7 @@ from ..domain._function import DomainFunction
 from ..domain._scalar import _AbstractScalarDomain
 from ..domain._structure import Points, PointsBatch, ProductStructure
 from ._base import AbstractConstraint
+from ._data_metrics import supervised_data_metrics
 from ._functional import _SquaredFrobeniusResidual
 
 
@@ -231,6 +232,9 @@ class PointSetConstraint(AbstractConstraint):
     reduction: Literal["mean", "sum"]
     residual: Callable[[Mapping[str, DomainFunction]], DomainFunction]
     eval_kwargs: frozendict[str, Any]
+    data_constraint_var: str | None
+    data_target_values: Array | None
+    data_accuracy_eps: Array
 
     def __init__(
         self,
@@ -242,6 +246,9 @@ class PointSetConstraint(AbstractConstraint):
         label: str | None = None,
         reduction: Literal["mean", "sum"] = "mean",
         eval_kwargs: Mapping[str, Any] | None = None,
+        data_constraint_var: str | None = None,
+        data_target_values: ArrayLike | None = None,
+        data_accuracy_eps: float = 1e-12,
     ):
         """Create a point-set constraint from points and a residual callable."""
         self.constraint_vars = () if constraint_vars is None else tuple(constraint_vars)
@@ -256,6 +263,15 @@ class PointSetConstraint(AbstractConstraint):
         self.label = None if label is None else str(label)
         self.reduction = reduction
         self.eval_kwargs = frozendict({} if eval_kwargs is None else dict(eval_kwargs))
+        self.data_constraint_var = (
+            None if data_constraint_var is None else str(data_constraint_var)
+        )
+        self.data_target_values = (
+            None
+            if data_target_values is None
+            else jnp.asarray(data_target_values, dtype=float)
+        )
+        self.data_accuracy_eps = jnp.asarray(float(data_accuracy_eps), dtype=float)
 
     @classmethod
     def from_points(
@@ -269,6 +285,9 @@ class PointSetConstraint(AbstractConstraint):
         label: str | None = None,
         reduction: Literal["mean", "sum"] = "mean",
         eval_kwargs: Mapping[str, Any] | None = None,
+        data_constraint_var: str | None = None,
+        data_target_values: ArrayLike | None = None,
+        data_accuracy_eps: float = 1e-12,
     ) -> "PointSetConstraint":
         """Build a `PointSetConstraint` from raw point coordinates."""
         batch = points_batch_from_points(component, points)
@@ -280,6 +299,9 @@ class PointSetConstraint(AbstractConstraint):
             label=label,
             reduction=reduction,
             eval_kwargs=eval_kwargs,
+            data_constraint_var=data_constraint_var,
+            data_target_values=data_target_values,
+            data_accuracy_eps=data_accuracy_eps,
         )
 
     @classmethod
@@ -293,6 +315,9 @@ class PointSetConstraint(AbstractConstraint):
         label: str | None = None,
         reduction: Literal["mean", "sum"] = "mean",
         eval_kwargs: Mapping[str, Any] | None = None,
+        data_constraint_var: str | None = None,
+        data_target_values: ArrayLike | None = None,
+        data_accuracy_eps: float = 1e-12,
     ) -> "PointSetConstraint":
         """Build a `PointSetConstraint` from an operator applied to named fields."""
         vars_tuple = (
@@ -312,6 +337,9 @@ class PointSetConstraint(AbstractConstraint):
             label=label,
             reduction=reduction,
             eval_kwargs=eval_kwargs,
+            data_constraint_var=data_constraint_var,
+            data_target_values=data_target_values,
+            data_accuracy_eps=data_accuracy_eps,
         )
 
     def sample(
@@ -321,6 +349,35 @@ class PointSetConstraint(AbstractConstraint):
     ) -> PointsBatch:
         del key
         return self.points
+
+    def data_metrics(
+        self,
+        functions: Mapping[str, DomainFunction],
+        /,
+        *,
+        key: Key[Array, ""] = DOC_KEY0,
+        **kwargs: Any,
+    ) -> dict[str, Array]:
+        """Evaluate supervised-data diagnostics for data-fit point constraints."""
+        if self.data_constraint_var is None or self.data_target_values is None:
+            return {}
+
+        runtime_kwargs: dict[str, Any] = dict(self.eval_kwargs)
+        runtime_kwargs.update(kwargs)
+
+        pred = functions[self.data_constraint_var](
+            self.points,
+            key=key,
+            **runtime_kwargs,
+        )
+        if not isinstance(pred, cx.Field):
+            raise TypeError("Expected data prediction to return a coordax.Field.")
+
+        return supervised_data_metrics(
+            jnp.asarray(pred.data, dtype=float),
+            jnp.asarray(self.data_target_values, dtype=float),
+            eps=self.data_accuracy_eps,
+        )
 
     def loss(
         self,
