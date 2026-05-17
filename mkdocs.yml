@@ -112,6 +112,7 @@ nav:
             - Geometry (1D): "api/domain/geometry1d.md"
             - Geometry (2D): "api/domain/geometry2d.md"
             - Geometry (3D): "api/domain/geometry3d.md"
+            - HyperRectangle: "api/domain/hyperrectangle.md"
             - Composition: "api/domain/composition.md"
             - Sampling: "api/domain/sampling.md"
             - Components: "api/domain/components.md"

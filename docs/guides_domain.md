@@ -24,6 +24,46 @@ domain = geom @ time                        # labels ("x", "t")
 
 For non-time scalar axes, use `ScalarInterval(start, end, label="...")`.
 
+## Vector domains with HyperRectangle
+
+Use `HyperRectangle` when the domain is an axis-aligned box in `R^d` and each
+sample should remain one vector under a single label. This is the simplest shape
+for feature vectors, parameter boxes, and tabular supervised learning data.
+
+```python
+import jax.numpy as jnp
+import phydrax as phx
+
+features = phx.domain.HyperRectangle(
+    lower=jnp.zeros(6),
+    upper=jnp.ones(6),
+    label="x",
+)
+
+@features.Function("x")
+def u(x):
+    return jnp.sum(x)
+
+points = jnp.array(
+    [
+        [0.0, 0.1, 0.2, 0.3, 0.4, 0.5],
+        [0.5, 0.4, 0.3, 0.2, 0.1, 0.0],
+    ]
+)
+values = jnp.sum(points, axis=1)
+
+data = phx.constraints.DiscreteInteriorDataConstraint(
+    "u",
+    features,
+    points=points,
+    values=values,
+)
+```
+
+`points` is the raw `(N, d)` array. Do not wrap it in a dictionary unless the
+domain is a product with multiple labels. The function receives each row as one
+`(d,)` vector named `"x"`.
+
 Functions on a domain are wrapped as `DomainFunction`s. The key idea is that a `DomainFunction`
 declares which labels it depends on, and operators/constraints use those labels consistently.
 
