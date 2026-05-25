@@ -12,7 +12,7 @@ domain functions and typically return a scalar loss term $\\ell(u)$.
 
 - **Pointwise** constraints for PDE residuals and boundary conditions.
 - **Integral** constraints for global conservation or averages.
-- **Discrete** constraints for sensors and labeled data.
+- **Discrete** constraints for sensors, labeled data, and ragged trajectories.
 - **Enforced** constraints that build an ansatz satisfying boundary or initial data.
 
 ## Typical loss form
@@ -132,11 +132,43 @@ from ._ode import (
     InitialODEConstraint,
 )
 from ._pointset import PointSetConstraint
+from ._ragged_time_series import (
+    RaggedTimeSeriesBatch,
+    RaggedTimeSeriesDataConstraint,
+)
+from ._ragged_time_series_enforced import (
+    enforce_ragged_time_series,
+    RaggedTimeSeriesHardGate,
+    RaggedTimeSeriesHardInterpolation,
+)
+from ._supervised_dataset import (
+    SupervisedDatasetBatch,
+    SupervisedDatasetConstraint,
+)
+from ._trajectory_data import (
+    TrajectoryCaseDataBatch,
+    TrajectoryCaseDataConstraint,
+    TrajectoryCaseTime,
+    TrajectorySignal,
+    TrajectorySignalInterpolation,
+)
 
 
 __all__ = [
     "FunctionalConstraint",
     "PointSetConstraint",
+    "RaggedTimeSeriesBatch",
+    "RaggedTimeSeriesDataConstraint",
+    "RaggedTimeSeriesHardGate",
+    "RaggedTimeSeriesHardInterpolation",
+    "enforce_ragged_time_series",
+    "TrajectoryCaseDataBatch",
+    "TrajectoryCaseDataConstraint",
+    "TrajectoryCaseTime",
+    "TrajectorySignal",
+    "TrajectorySignalInterpolation",
+    "SupervisedDatasetBatch",
+    "SupervisedDatasetConstraint",
     "IntegralEqualityConstraint",
     "ContinuousPointwiseInteriorConstraint",
     "ContinuousInitialFunctionConstraint",

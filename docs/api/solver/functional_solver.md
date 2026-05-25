@@ -11,6 +11,7 @@ For a conceptual overview (loss evaluation, enforced pipelines, training loop be
 
     - `loss(...)` evaluates the total objective at the current parameters.
     - `ansatz_functions()` returns fields after applying enforced pipelines (if configured).
+    - `partition_functions()` exposes the trainable/non-trainable state split used by `solve(...)`.
     - `solve(...)` updates parameters inside `functions` using Optax or evosax optimizers.
     - `solve(..., tensorboard_log_dir=...)` writes TensorBoard scalar logs.
     - Discrete data constraints report data-fit diagnostics alongside their loss.
@@ -49,5 +50,7 @@ loss1 = solver.loss(key=jr.key(1))
             - __init__
             - ansatz_functions
             - __getitem__
+            - partition_functions
+            - trainable_functions
             - loss
             - solve

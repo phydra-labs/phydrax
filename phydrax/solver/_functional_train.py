@@ -8,7 +8,7 @@ import inspect
 import time
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import Any, Protocol, runtime_checkable, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -17,13 +17,24 @@ import jax.random as jr
 import optax
 from jax import core as jcore
 
-from ..constraints._functional import FunctionalConstraint
-from ..constraints._pointset import PointSetConstraint
+from .._trainable import combine_trainable, partition_trainable
 from ..operators.differential._runtime import derivative_runtime_context
 
 
 if TYPE_CHECKING:
     from ._functional_solver import FunctionalSolver
+
+
+@runtime_checkable
+class _SupportsDataMetrics(Protocol):
+    def data_metrics(
+        self,
+        functions: Any,
+        /,
+        *,
+        key: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any]: ...
 
 
 def _constraint_label(constraint: Any, /) -> str:
@@ -115,6 +126,31 @@ def _tensorboard_every(
     return every
 
 
+def _write_constraint_tensorboard_scalars(
+    writer: _TensorBoardLogger,
+    *,
+    step: int,
+    namespace: str,
+    constraint_names: tuple[str, ...],
+    terms: Any,
+    data_metrics: tuple[dict[str, Any], ...],
+    write_legacy: bool = False,
+) -> None:
+    terms_arr = jnp.asarray(terms, dtype=float)
+    for i, (name, val) in enumerate(
+        zip(constraint_names, list(map(float, terms_arr)), strict=True)
+    ):
+        base = _constraint_tag(i, name)
+        prefix = f"{namespace}/{base}"
+        writer.scalar(f"{prefix}/loss", val, step)
+        if write_legacy:
+            writer.scalar(f"{base}/loss", val, step)
+        for metric_name, metric_value in data_metrics[i].items():
+            writer.scalar(f"{prefix}/{metric_name}", metric_value, step)
+            if write_legacy:
+                writer.scalar(f"{base}/{metric_name}", metric_value, step)
+
+
 def _log_tensorboard_scalars(
     writer: _TensorBoardLogger,
     *,
@@ -122,9 +158,12 @@ def _log_tensorboard_scalars(
     loss: Any,
     best_loss: float,
     iter_time_s: float,
-    constraint_names: tuple[str, ...],
-    terms: Any,
-    data_metrics: tuple[dict[str, Any], ...],
+    train_constraint_names: tuple[str, ...],
+    train_terms: Any,
+    train_data_metrics: tuple[dict[str, Any], ...],
+    eval_constraint_names: tuple[str, ...],
+    eval_terms: Any,
+    eval_data_metrics: tuple[dict[str, Any], ...],
     log_constraints: bool,
 ) -> None:
     writer.scalar("train/loss", loss, step)
@@ -134,14 +173,23 @@ def _log_tensorboard_scalars(
     if not log_constraints:
         return
 
-    terms_arr = jnp.asarray(terms, dtype=float)
-    for i, (name, val) in enumerate(
-        zip(constraint_names, list(map(float, terms_arr)), strict=True)
-    ):
-        prefix = _constraint_tag(i, name)
-        writer.scalar(f"{prefix}/loss", val, step)
-        for metric_name, metric_value in data_metrics[i].items():
-            writer.scalar(f"{prefix}/{metric_name}", metric_value, step)
+    _write_constraint_tensorboard_scalars(
+        writer,
+        step=step,
+        namespace="train",
+        constraint_names=train_constraint_names,
+        terms=train_terms,
+        data_metrics=train_data_metrics,
+        write_legacy=True,
+    )
+    _write_constraint_tensorboard_scalars(
+        writer,
+        step=step,
+        namespace="eval",
+        constraint_names=eval_constraint_names,
+        terms=eval_terms,
+        data_metrics=eval_data_metrics,
+    )
 
 
 def solve(
@@ -206,7 +254,7 @@ def solve(
     )
 
     with log_ctx as log_fp, tb_ctx as tb_writer:
-        params, static = eqx.partition(self.functions, eqx.is_inexact_array)
+        params, non_trainable = partition_trainable(self.functions)
         log_every_ = int(log_every)
         if log_every_ < 0:
             raise ValueError("log_every must be >= 0.")
@@ -220,9 +268,10 @@ def solve(
             raise ValueError("tensorboard_flush_every must be positive.")
         log_constraints_ = bool(log_constraints)
         constraint_names = tuple(_constraint_label(c) for c in self.constraints)
+        eval_constraint_names = tuple(_constraint_label(c) for c in self.eval_constraints)
 
-        def _loss_wrt_params(params_, solver, key, iter_):
-            functions = eqx.combine(params_, static)
+        def _loss_wrt_params(params_, non_trainable_, solver, key, iter_):
+            functions = combine_trainable(params_, non_trainable_)
             if solver.constraint_pipelines is None:
                 enforced = functions
             else:
@@ -246,17 +295,45 @@ def solve(
                     return total, jnp.stack(terms, axis=0)
                 return total, jnp.zeros((0,), dtype=float)
 
-        def _data_metrics_wrt_params(params_, solver, key, iter_):
-            functions = eqx.combine(params_, static)
+        def _enforced_functions_wrt_params(params_, non_trainable_, solver):
+            functions = combine_trainable(params_, non_trainable_)
             if solver.constraint_pipelines is None:
-                enforced = functions
-            else:
-                enforced = solver.constraint_pipelines.apply(functions)
-            keys = jr.split(key, len(solver.constraints))
+                return functions
+            return solver.constraint_pipelines.apply(functions)
+
+        def _terms_wrt_constraints(
+            params_,
+            non_trainable_,
+            solver,
+            constraints,
+            key,
+            iter_,
+        ):
+            enforced = _enforced_functions_wrt_params(params_, non_trainable_, solver)
+            keys = jr.split(key, len(constraints))
+            terms: list[jax.Array] = []
+            with derivative_runtime_context():
+                for c, k in zip(constraints, keys, strict=True):
+                    term = c.loss(enforced, key=k, iter_=iter_)
+                    terms.append(jnp.asarray(term, dtype=float).reshape(()))
+            if terms:
+                return jnp.stack(terms, axis=0)
+            return jnp.zeros((0,), dtype=float)
+
+        def _data_metrics_wrt_constraints(
+            params_,
+            non_trainable_,
+            solver,
+            constraints,
+            key,
+            iter_,
+        ):
+            enforced = _enforced_functions_wrt_params(params_, non_trainable_, solver)
+            keys = jr.split(key, len(constraints))
             metrics: list[dict[str, Any]] = []
             with derivative_runtime_context():
-                for c, k in zip(solver.constraints, keys, strict=True):
-                    if isinstance(c, (FunctionalConstraint, PointSetConstraint)):
+                for c, k in zip(constraints, keys, strict=True):
+                    if isinstance(c, _SupportsDataMetrics):
                         metrics.append(c.data_metrics(enforced, key=k, iter_=iter_))
                     else:
                         metrics.append({})
@@ -266,14 +343,16 @@ def solve(
 
         is_linesearch = _opt_linesearch is not None
 
-        def solve_step(params_, opt_state, solver, key, iter_):
+        def solve_step(params_, non_trainable_, opt_state, solver, key, iter_):
             if is_linesearch:
                 import jax.tree_util as jtu
 
                 def _value_fn(p):
-                    return _loss_wrt_params(p, solver, key, iter_)[0]
+                    return _loss_wrt_params(p, non_trainable_, solver, key, iter_)[0]
 
-                (value, _terms0), grads = loss_fn(params_, solver, key, iter_)
+                (value, _terms0), grads = loss_fn(
+                    params_, non_trainable_, solver, key, iter_
+                )
                 grads = jtu.tree_map(
                     lambda a: (
                         jnp.nan_to_num(a, nan=0.0, posinf=0.0, neginf=0.0)
@@ -293,10 +372,14 @@ def solve(
                     value_fn=_value_fn,
                 )
                 params_ = eqx.apply_updates(params_, updates)
-                loss_val, terms = _loss_wrt_params(params_, solver, key, iter_)
+                loss_val, terms = _loss_wrt_params(
+                    params_, non_trainable_, solver, key, iter_
+                )
                 return params_, opt_state, loss_val, terms
 
-            (loss_val, terms), grads = loss_fn(params_, solver, key, iter_)
+            (loss_val, terms), grads = loss_fn(
+                params_, non_trainable_, solver, key, iter_
+            )
             assert _opt_standard is not None
             updates, opt_state = _opt_standard.update(grads, opt_state, params_)
             params_ = eqx.apply_updates(params_, updates)
@@ -320,7 +403,7 @@ def solve(
             rng, subkey = jr.split(rng)
             iter_ = jnp.asarray(epoch + 1, dtype=float)
             params, opt_state, loss_val, terms = solve_step(
-                params, opt_state, self, subkey, iter_
+                params, non_trainable, opt_state, self, subkey, iter_
             )
             if keep_best:
                 loss_f = float(loss_val)
@@ -331,9 +414,38 @@ def solve(
             step = epoch + 1
             console_step = log_every_ > 0 and (step % log_every_ == 0)
             tensorboard_step = tb_every_ is not None and (step % tb_every_ == 0)
-            data_metrics: tuple[dict[str, Any], ...] = tuple({} for _ in self.constraints)
+            train_data_metrics: tuple[dict[str, Any], ...] = tuple(
+                {} for _ in self.constraints
+            )
+            eval_terms = jnp.zeros((0,), dtype=float)
+            eval_data_metrics: tuple[dict[str, Any], ...] = tuple(
+                {} for _ in self.eval_constraints
+            )
             if log_constraints_ and (console_step or tensorboard_step):
-                data_metrics = _data_metrics_wrt_params(params, self, subkey, iter_)
+                train_data_metrics = _data_metrics_wrt_constraints(
+                    params,
+                    non_trainable,
+                    self,
+                    self.constraints,
+                    jr.fold_in(subkey, 1),
+                    iter_,
+                )
+                eval_terms = _terms_wrt_constraints(
+                    params,
+                    non_trainable,
+                    self,
+                    self.eval_constraints,
+                    jr.fold_in(subkey, 2),
+                    iter_,
+                )
+                eval_data_metrics = _data_metrics_wrt_constraints(
+                    params,
+                    non_trainable,
+                    self,
+                    self.eval_constraints,
+                    jr.fold_in(subkey, 3),
+                    iter_,
+                )
 
             if console_step:
                 loss_f = float(loss_val)
@@ -349,8 +461,24 @@ def solve(
                     for i, (name, val) in enumerate(
                         zip(constraint_names, list(map(float, terms_arr)), strict=True)
                     ):
-                        suffix = _metric_suffix(data_metrics[i])
-                        print(f"  [{i}] {name}: {val:.6e}{suffix}", file=out_file)
+                        suffix = _metric_suffix(train_data_metrics[i])
+                        print(
+                            f"  [train {i}] {name}: {val:.6e}{suffix}",
+                            file=out_file,
+                        )
+                    eval_terms_arr = jnp.asarray(eval_terms, dtype=float)
+                    for i, (name, val) in enumerate(
+                        zip(
+                            eval_constraint_names,
+                            list(map(float, eval_terms_arr)),
+                            strict=True,
+                        )
+                    ):
+                        suffix = _metric_suffix(eval_data_metrics[i])
+                        print(
+                            f"  [eval {i}] {name}: {val:.6e}{suffix}",
+                            file=out_file,
+                        )
             if tensorboard_step and tb_writer is not None:
                 loss_f = float(loss_val)
                 best_display = best_loss if keep_best else loss_f
@@ -360,16 +488,19 @@ def solve(
                     loss=loss_val,
                     best_loss=best_display,
                     iter_time_s=iter_time_s,
-                    constraint_names=constraint_names,
-                    terms=terms,
-                    data_metrics=data_metrics,
+                    train_constraint_names=constraint_names,
+                    train_terms=terms,
+                    train_data_metrics=train_data_metrics,
+                    eval_constraint_names=eval_constraint_names,
+                    eval_terms=eval_terms,
+                    eval_data_metrics=eval_data_metrics,
                     log_constraints=log_constraints_,
                 )
                 if step % tb_flush_every_ == 0:
                     tb_writer.flush()
 
         chosen = best_params if keep_best else params
-        functions = eqx.combine(chosen, static)
+        functions = combine_trainable(chosen, non_trainable)
         return eqx.tree_at(lambda s: s.functions, self, functions)
 
 
@@ -391,7 +522,7 @@ def _solve_evosax(
 ) -> "FunctionalSolver":
     from ..constraints._base import AbstractSamplingConstraint
 
-    params, static = eqx.partition(self.functions, eqx.is_inexact_array)
+    params, non_trainable = partition_trainable(self.functions)
     log_every_ = int(log_every)
     if log_every_ < 0:
         raise ValueError("log_every must be >= 0.")
@@ -405,11 +536,12 @@ def _solve_evosax(
         raise ValueError("tensorboard_flush_every must be positive.")
     log_constraints_ = bool(log_constraints)
     constraint_names = tuple(_constraint_label(c) for c in self.constraints)
+    eval_constraint_names = tuple(_constraint_label(c) for c in self.eval_constraints)
 
     algo_params = algo.default_params
 
-    def _loss_for_params(p, solver, key, iter_, batches):
-        functions = eqx.combine(p, static)
+    def _loss_for_params(p, non_trainable_, solver, key, iter_, batches):
+        functions = combine_trainable(p, non_trainable_)
         if solver.constraint_pipelines is None:
             enforced = functions
         else:
@@ -424,8 +556,8 @@ def _solve_evosax(
                     total = total + c.loss(enforced, key=k, iter_=iter_, batch=b)
         return total
 
-    def _terms_for_params(p, solver, key, iter_, batches):
-        functions = eqx.combine(p, static)
+    def _terms_for_params(p, non_trainable_, solver, key, iter_, batches):
+        functions = combine_trainable(p, non_trainable_)
         if solver.constraint_pipelines is None:
             enforced = functions
         else:
@@ -443,17 +575,31 @@ def _solve_evosax(
             return jnp.stack(terms, axis=0)
         return jnp.zeros((0,), dtype=float)
 
-    def _data_metrics_for_params(p, solver, key, iter_):
-        functions = eqx.combine(p, static)
+    def _enforced_functions_for_params(p, non_trainable_, solver):
+        functions = combine_trainable(p, non_trainable_)
         if solver.constraint_pipelines is None:
-            enforced = functions
-        else:
-            enforced = solver.constraint_pipelines.apply(functions)
-        keys = jr.split(key, len(solver.constraints))
+            return functions
+        return solver.constraint_pipelines.apply(functions)
+
+    def _terms_for_constraints(p, non_trainable_, solver, constraints, key, iter_):
+        enforced = _enforced_functions_for_params(p, non_trainable_, solver)
+        keys = jr.split(key, len(constraints))
+        terms: list[jax.Array] = []
+        with derivative_runtime_context():
+            for c, k in zip(constraints, keys, strict=True):
+                term = c.loss(enforced, key=k, iter_=iter_)
+                terms.append(jnp.asarray(term, dtype=float).reshape(()))
+        if terms:
+            return jnp.stack(terms, axis=0)
+        return jnp.zeros((0,), dtype=float)
+
+    def _data_metrics_for_constraints(p, non_trainable_, solver, constraints, key, iter_):
+        enforced = _enforced_functions_for_params(p, non_trainable_, solver)
+        keys = jr.split(key, len(constraints))
         metrics: list[dict[str, Any]] = []
         with derivative_runtime_context():
-            for c, k in zip(solver.constraints, keys, strict=True):
-                if isinstance(c, (FunctionalConstraint, PointSetConstraint)):
+            for c, k in zip(constraints, keys, strict=True):
+                if isinstance(c, _SupportsDataMetrics):
                     metrics.append(c.data_metrics(enforced, key=k, iter_=iter_))
                 else:
                     metrics.append({})
@@ -523,11 +669,25 @@ def _solve_evosax(
 
             eval_key_shared = jr.fold_in(eval_key, 1)
             losses = jax.vmap(
-                lambda p: loss_fn(p, self, eval_key_shared, iter_, batches_tuple)
+                lambda p: loss_fn(
+                    p,
+                    non_trainable,
+                    self,
+                    eval_key_shared,
+                    iter_,
+                    batches_tuple,
+                )
             )(population)
             evo_state, _ = algo.tell(tell_key, population, losses, evo_state, algo_params)
             cand_params = algo.get_mean(evo_state)
-            cand_loss = loss_fn(cand_params, self, eval_key_shared, iter_, batches_tuple)
+            cand_loss = loss_fn(
+                cand_params,
+                non_trainable,
+                self,
+                eval_key_shared,
+                iter_,
+                batches_tuple,
+            )
 
             if keep_best:
                 loss_f = float(cand_loss)
@@ -540,17 +700,48 @@ def _solve_evosax(
             step = epoch + 1
             console_step = log_every_ > 0 and (step % log_every_ == 0)
             tensorboard_step = tb_every_ is not None and (step % tb_every_ == 0)
-            data_metrics: tuple[dict[str, Any], ...] = tuple({} for _ in self.constraints)
+            train_data_metrics: tuple[dict[str, Any], ...] = tuple(
+                {} for _ in self.constraints
+            )
+            eval_terms = jnp.zeros((0,), dtype=float)
+            eval_data_metrics: tuple[dict[str, Any], ...] = tuple(
+                {} for _ in self.eval_constraints
+            )
             terms_arr = jnp.zeros((0,), dtype=float)
             if log_constraints_ and (console_step or tensorboard_step):
                 terms_arr = jnp.asarray(
-                    terms_fn(cand_params, self, eval_key_shared, iter_, batches_tuple),
+                    terms_fn(
+                        cand_params,
+                        non_trainable,
+                        self,
+                        eval_key_shared,
+                        iter_,
+                        batches_tuple,
+                    ),
                     dtype=float,
                 )
-                data_metrics = _data_metrics_for_params(
+                train_data_metrics = _data_metrics_for_constraints(
                     cand_params,
+                    non_trainable,
                     self,
-                    eval_key_shared,
+                    self.constraints,
+                    jr.fold_in(eval_key_shared, 1),
+                    iter_,
+                )
+                eval_terms = _terms_for_constraints(
+                    cand_params,
+                    non_trainable,
+                    self,
+                    self.eval_constraints,
+                    jr.fold_in(eval_key_shared, 2),
+                    iter_,
+                )
+                eval_data_metrics = _data_metrics_for_constraints(
+                    cand_params,
+                    non_trainable,
+                    self,
+                    self.eval_constraints,
+                    jr.fold_in(eval_key_shared, 3),
                     iter_,
                 )
 
@@ -567,8 +758,24 @@ def _solve_evosax(
                     for i, (name, val) in enumerate(
                         zip(constraint_names, list(map(float, terms_arr)), strict=True)
                     ):
-                        suffix = _metric_suffix(data_metrics[i])
-                        print(f"  [{i}] {name}: {val:.6e}{suffix}", file=out_file)
+                        suffix = _metric_suffix(train_data_metrics[i])
+                        print(
+                            f"  [train {i}] {name}: {val:.6e}{suffix}",
+                            file=out_file,
+                        )
+                    eval_terms_arr = jnp.asarray(eval_terms, dtype=float)
+                    for i, (name, val) in enumerate(
+                        zip(
+                            eval_constraint_names,
+                            list(map(float, eval_terms_arr)),
+                            strict=True,
+                        )
+                    ):
+                        suffix = _metric_suffix(eval_data_metrics[i])
+                        print(
+                            f"  [eval {i}] {name}: {val:.6e}{suffix}",
+                            file=out_file,
+                        )
             if tensorboard_step and tb_writer is not None:
                 loss_f = float(cand_loss)
                 best_display = best_loss if keep_best else loss_f
@@ -578,13 +785,16 @@ def _solve_evosax(
                     loss=cand_loss,
                     best_loss=best_display,
                     iter_time_s=iter_time_s,
-                    constraint_names=constraint_names,
-                    terms=terms_arr,
-                    data_metrics=data_metrics,
+                    train_constraint_names=constraint_names,
+                    train_terms=terms_arr,
+                    train_data_metrics=train_data_metrics,
+                    eval_constraint_names=eval_constraint_names,
+                    eval_terms=eval_terms,
+                    eval_data_metrics=eval_data_metrics,
                     log_constraints=log_constraints_,
                 )
                 if step % tb_flush_every_ == 0:
                     tb_writer.flush()
 
-        functions = eqx.combine(best_params, static)
+        functions = combine_trainable(best_params, non_trainable)
         return eqx.tree_at(lambda s: s.functions, self, functions)

@@ -16,6 +16,9 @@ Phydrax supports two complementary structured sampling modes:
   unary labels (geometry and/or scalar intervals) and evaluates on the implied Cartesian grid (with an interior mask).
   This is the natural mode for FFT/basis/spectral operators and neural operators (FNO, DeepONet).
 
+`TrajectoryDatasetDomain` is paired-only: its dataset row and time label must stay
+on the same sampling axis.
+
 Coord-separable sampling is driven by `DomainComponent.sample_coord_separable(...)`, which takes:
 
 - `coord_separable`: a mapping from unary label (e.g. `"x"` or `"t"`) to either

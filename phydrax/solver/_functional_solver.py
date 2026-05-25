@@ -27,6 +27,25 @@ from ._enforced_constraint_pipeline import (
 )
 
 
+def _constraints_tuple(
+    value: AbstractConstraint | Sequence[AbstractConstraint],
+    /,
+    *,
+    name: str,
+) -> tuple[AbstractConstraint, ...]:
+    if isinstance(value, AbstractConstraint):
+        out = (value,)
+    else:
+        out = tuple(value)
+    bad = tuple(c for c in out if not isinstance(c, AbstractConstraint))
+    if bad:
+        raise TypeError(
+            f"All {name} must be instances of AbstractConstraint; got "
+            f"{tuple(type(c).__name__ for c in bad)!r}."
+        )
+    return out
+
+
 class FunctionalSolver(StrictModule):
     r"""Assemble constraints into a differentiable scalar loss.
 
@@ -34,6 +53,7 @@ class FunctionalSolver(StrictModule):
 
     - a mapping of named fields (as `DomainFunction`s), e.g. $u_\theta$;
     - a collection of constraints $\ell_i$ producing scalar penalties.
+    - optional eval-only constraints for validation diagnostics.
 
     The solver loss is the (weighted) sum
 
@@ -53,13 +73,16 @@ class FunctionalSolver(StrictModule):
 
     **Training**
 
-    `solve(...)` optimizes the inexact-array leaves inside `functions` (via Equinox
-    partitioning), and passes an `iter_` counter through to constraint losses so that
+    `solve(...)` optimizes trainable inexact-array leaves inside `functions` (via a
+    Phydrax-aware Equinox partition). Domains and fixed observed-data state remain
+    numeric/JAX-traceable but are excluded from gradients and optimizer updates.
+    The solver also passes an `iter_` counter through to constraint losses so that
     constraints can implement schedules.
     """
 
     functions: frozendict[str, DomainFunction]
     constraints: tuple[AbstractConstraint, ...]
+    eval_constraints: tuple[AbstractConstraint, ...]
     constraint_pipelines: EnforcedConstraintPipelines | None
 
     def __init__(
@@ -67,6 +90,7 @@ class FunctionalSolver(StrictModule):
         *,
         functions: Mapping[str, DomainFunction],
         constraints: AbstractConstraint | Sequence[AbstractConstraint],
+        eval_constraints: AbstractConstraint | Sequence[AbstractConstraint] = (),
         constraint_pipelines: EnforcedConstraintPipelines | None = None,
         constraint_terms: Sequence[
             SingleFieldEnforcedConstraint | MultiFieldEnforcedConstraint
@@ -84,6 +108,7 @@ class FunctionalSolver(StrictModule):
 
         - `functions`: Mapping `{name: DomainFunction}` defining the fields.
         - `constraints`: One or more `AbstractConstraint` instances.
+        - `eval_constraints`: Optional constraints evaluated only for logging/diagnostics.
         - `constraint_pipelines`: Optional pre-built enforced constraint pipelines. If provided,
           do not also pass `constraint_terms`/`interior_data_terms`.
         - `constraint_terms`: Enforced constraint terms used to build `EnforcedConstraintPipelines`
@@ -96,19 +121,11 @@ class FunctionalSolver(StrictModule):
         - `boundary_weight_key`: PRNG key used to draw boundary blending references.
         """
         self.functions = frozendict(functions)
-
-        if isinstance(constraints, AbstractConstraint):
-            self.constraints = (constraints,)
-        else:
-            self.constraints = tuple(constraints)
-            bad = tuple(
-                c for c in self.constraints if not isinstance(c, AbstractConstraint)
-            )
-            if bad:
-                raise TypeError(
-                    "All constraints must be instances of AbstractConstraint; got "
-                    f"{tuple(type(c).__name__ for c in bad)!r}."
-                )
+        self.constraints = _constraints_tuple(constraints, name="constraints")
+        self.eval_constraints = _constraints_tuple(
+            eval_constraints,
+            name="eval_constraints",
+        )
 
         if constraint_pipelines is not None and (constraint_terms or interior_data_terms):
             raise ValueError(
@@ -142,6 +159,17 @@ class FunctionalSolver(StrictModule):
     def __getitem__(self, var: str) -> DomainFunction:
         """Convenience accessor: return the (ansatz) field named `var`."""
         return self.ansatz_functions()[var]
+
+    def partition_functions(self) -> tuple[Any, Any]:
+        """Return `(trainable, non_trainable)` function PyTrees used by `solve()`."""
+        from .._trainable import partition_trainable
+
+        return partition_trainable(self.functions)
+
+    def trainable_functions(self) -> Any:
+        """Return the trainable function PyTree used as optimizer/evolution state."""
+        trainable, _non_trainable = self.partition_functions()
+        return trainable
 
     def loss(
         self,
@@ -190,7 +218,8 @@ class FunctionalSolver(StrictModule):
     ) -> "FunctionalSolver":
         """Run the training loop and return an updated solver.
 
-        The optimization updates the inexact-array leaves of `self.functions`.
+        The optimization updates trainable inexact-array leaves of `self.functions`.
+        Domains and fixed observed-data state are kept non-trainable.
 
         - If `optim` is an Optax `GradientTransformation`, a standard gradient step is used.
         - If `optim` is an Optax `GradientTransformationExtraArgs`, a line-search style update is used.

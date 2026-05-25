@@ -11,7 +11,7 @@ separable models, and latent contraction models over product domains.
 ## Highlights
 
 - `MLP` and `Linear` for dense models.
-- `Separable` and `SeparableMLP` for coord-separable inputs.
+- `Separable` and `SeparableMLP` for pointwise separable and coord-separable inputs.
 - `LatentContractionModel` for product-domain factorization.
 - `LatentExecutionPolicy` for structured execution fallback behavior.
 

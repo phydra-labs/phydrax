@@ -14,6 +14,7 @@ explicit coordinate labels.
 - Scalar domains like `Interval1d`, `ScalarInterval`, and `TimeInterval`.
 - Geometry in 2D and 3D (`Square`, `Sphere`, `Geometry2DFromCAD`, etc.).
 - Product domains via the `@` operator, e.g. $\\Omega = \\Omega_x \\times \\Omega_t$.
+- Dataset domains for operator learning and ragged row-indexed trajectories.
 - `DomainFunction` wrappers that carry domain metadata.
 
 ## Structured sampling
@@ -75,6 +76,9 @@ from ._structure import (
     QuadratureBatch,
 )
 from ._time import TimeInterval
+from ._trajectory_dataset import (
+    TrajectoryDatasetDomain,
+)
 
 # Re-export geometry submodule objects (unary domains)
 from .geometry1d import Interval1d  # noqa: F401
@@ -117,6 +121,7 @@ __all__ = [
     "DomainFunction",
     "structured",
     "DatasetDomain",
+    "TrajectoryDatasetDomain",
     "HyperRectangle",
     "ProductStructure",
     "PointsBatch",

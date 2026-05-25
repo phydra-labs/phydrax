@@ -3,14 +3,14 @@
 #
 
 from collections.abc import Callable
-from typing import Literal
+from typing import ClassVar, Literal
 
 import jax.random as jr
 from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
 from ..._utils import _get_size
-from ..core._base import _AbstractStructuredInputModel
+from ..core._base import _AbstractStructuredInputModel, DomainInputMode
 from ..wrappers._separable_wrappers import Separable
 from ._feynmann import FeynmaNN
 
@@ -34,6 +34,8 @@ class SeparableFeynmaNN(_AbstractStructuredInputModel):
     in_size: int | Literal["scalar"]
     out_size: int | Literal["scalar"]
     model: _AbstractStructuredInputModel
+    _domain_input_mode: ClassVar[DomainInputMode] = "flat"
+    _supports_blockwise_input: bool = True
 
     def __init__(
         self,
