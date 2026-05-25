@@ -6,7 +6,7 @@ import functools as ft
 import string
 import warnings
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 import jax
 import jax.numpy as jnp
@@ -18,7 +18,11 @@ from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
 from ..._utils import _get_size, _identity
 from .._utils import _contract_str, _stack_separable
-from ..core._base import _AbstractBaseModel, _AbstractStructuredInputModel
+from ..core._base import (
+    _AbstractBaseModel,
+    _AbstractStructuredInputModel,
+    DomainInputMode,
+)
 from ..core._scan_utils import (
     pack_scan_modules,
     scan_apply_with_data,
@@ -542,11 +546,15 @@ class Separable(_AbstractStructuredInputModel):
     u_o(x)=\sum_{\ell=1}^{L}\prod_{i=1}^{d} g_{i,\ell,o}(x_i).
     $$
 
-    Supports regular array inputs and separable tuple inputs (a tuple of 1D coordinate arrays).
+    Supports regular array inputs and separable tuple inputs (a tuple of 1D coordinate
+    arrays). Under `Domain.Model(...)`, regular pointwise calls default to flat
+    vector packing so this wrapper can replace dense vector models.
     """
 
     in_size: int | Literal["scalar"]
     out_size: int | Literal["scalar"]
+    _domain_input_mode: ClassVar[DomainInputMode] = "flat"
+    _supports_blockwise_input: bool = True
 
     latent_size: int
     models: tuple[_AbstractBaseModel, ...]
@@ -657,8 +665,8 @@ class Separable(_AbstractStructuredInputModel):
         **Inputs:**
 
         - `x`: either a single point of shape `(d,)` (or scalar `()` in the
-          replicated scalar-input case), or a separable tuple `(x_1,...,x_d)` of
-          1D coordinate arrays.
+          replicated scalar-input case), a batch of points with shape `(..., d)`,
+          or a separable tuple `(x_1,...,x_d)` of 1D coordinate arrays.
         """
         # If the input is a tuple of arrays, dispatch to the dedicated paths.
         # - separable: a tuple of 1D coordinate arrays
@@ -754,6 +762,36 @@ class Separable(_AbstractStructuredInputModel):
                         idx += 1
                 outputs = ft.reduce(jnp.multiply, out_list, jnp.array(1.0))
                 out = contract("lo->o", self._reshape_latents(outputs))
+        elif x_arr.ndim >= 2:
+            if int(x_arr.shape[-1]) != in_dim:
+                raise ValueError(
+                    f"Expected trailing shape ({in_dim},) got {x_arr.shape}."
+                )
+            coord_inputs = jnp.moveaxis(x_arr, -1, 0)
+            scan_inputs = jnp.repeat(coord_inputs, clones, axis=0)
+            scan_out = _scan_regular(scan_inputs)
+            if scan_out is not None:
+                leading_shape = tuple(int(i) for i in scan_out.shape[:-1])
+                latent_shape = leading_shape + (
+                    self.latent_size,
+                    _get_size(self.out_size),
+                )
+                out = contract("...lo->...o", scan_out.reshape(latent_shape))
+            else:
+                out_list = []
+                idx = 0
+                for i in range(in_dim):
+                    xi = x_arr[..., i]
+                    for _ in range(clones):
+                        out_list.append(self.models[idx](xi, key=keys[idx]))
+                        idx += 1
+                outputs = ft.reduce(jnp.multiply, out_list, jnp.array(1.0))
+                leading_shape = tuple(int(i) for i in outputs.shape[:-1])
+                latent_shape = leading_shape + (
+                    self.latent_size,
+                    _get_size(self.out_size),
+                )
+                out = contract("...lo->...o", outputs.reshape(latent_shape))
         else:
             raise ValueError(
                 f"Invalid input shape {x_arr.shape}. Expected ({in_dim},). "

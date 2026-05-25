@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import jax.random as jr
 
 from phydrax.domain import DatasetDomain, FourierAxisSpec, Interval1d, ProductStructure
+from phydrax.domain._dataset import DATASET_INDEX_KEY
 from phydrax.operators.integral import integral
 
 
@@ -22,6 +23,20 @@ def test_dataset_domain_samples_points_batch():
     field = batch["data"]
     assert field.dims == (axis, None)
     assert field.data.shape == (4, 1)
+
+
+def test_dataset_domain_points_from_indices_carries_internal_indices():
+    data = jnp.arange(10.0, dtype=float).reshape((5, 2))
+    dom = DatasetDomain(data)
+    structure = ProductStructure((("data",),))
+    indices = jnp.asarray([3, 1, 3], dtype=jnp.int32)
+
+    batch = dom.points_from_indices(indices, structure=structure)
+    axis = batch.structure.axis_for("data")
+    assert axis is not None
+    assert batch["data"].dims == (axis, None)
+    assert jnp.allclose(batch["data"].data, data[indices])
+    assert jnp.all(batch[DATASET_INDEX_KEY].data == indices)
 
 
 def test_dataset_domain_integral_probability_measure_is_average():

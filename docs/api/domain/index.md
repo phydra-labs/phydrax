@@ -11,3 +11,7 @@ Use `HyperRectangle` for analytic axis-aligned boxes where a point is naturally 
 single vector, such as `R^6 -> scalar` supervised learning inputs. Use product
 domains when each coordinate factor should keep its own label and sampling
 structure.
+
+Use `TrajectoryDatasetDomain` when each dataset row has a vector-valued trajectory
+with a shared `dt` but row-specific length. It keeps `data` and `t` paired so
+physics residuals at `t` only sample valid times for the selected dataset row.

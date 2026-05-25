@@ -21,7 +21,17 @@ cleanly with:
 
 - `ProductDomain` composition via `@`,
 - structured sampling (`dense_structure=ProductStructure((("data",),))`),
-- `Domain.Model(...)` for building operator-learning models that take `(data, coords...)`.
+- `Domain.Model(...)` for building either flat pointwise models or structured
+  operator models over `(data, coords...)`.
+
+`Domain.Model(...)` defaults to each model's declared input mode. Dense models and
+separable vector models use flat concatenation; operator models such as `DeepONet`
+use structured tuple inputs. Override this with `input_mode="flat"` or
+`input_mode="structured"` when needed.
+
+For row-indexed time series with different sequence lengths, use
+[`TrajectoryDatasetDomain`](trajectory_dataset.md). It is not a plain rectangular
+product: the dataset row and sampled time are coupled.
 
 ### Measure semantics
 

@@ -120,6 +120,12 @@ def _label_measure(component: DomainComponent, label: str, /) -> Array:
 def _default_quadrature_total_weight(
     component: DomainComponent, batch: PointsBatch, /
 ) -> cx.Field:
+    from ...domain._trajectory_dataset import trajectory_default_quadrature_total_weight
+
+    custom = trajectory_default_quadrature_total_weight(component, batch)
+    if custom is not None:
+        return custom
+
     if batch.structure.axis_names is None:
         raise ValueError("PointsBatch.structure must be canonicalized (axis_names set).")
 
@@ -169,6 +175,12 @@ def build_quadrature(
 
     - A `QuadratureBatch` with per-axis weights compatible with `batch`.
     """
+    from ...domain._trajectory_dataset import trajectory_quadrature_weights_by_axis
+
+    custom = trajectory_quadrature_weights_by_axis(component, batch)
+    if custom is not None:
+        return QuadratureBatch(batch, weights_by_axis=custom)
+
     if batch.structure.axis_names is None:
         raise ValueError("PointsBatch.structure must be canonicalized (axis_names set).")
 

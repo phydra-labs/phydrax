@@ -3,7 +3,8 @@
 #
 
 import jax.numpy as jnp
-from jaxtyping import Array
+import jax.random as jr
+from jaxtyping import Array, ArrayLike, Key
 
 
 def supervised_data_metrics(
@@ -48,4 +49,106 @@ def _align_data_metric_shapes(pred: Array, target: Array, /) -> tuple[Array, Arr
     raise ValueError(
         "Data metric prediction and target shapes are incompatible: "
         f"prediction={pred_arr.shape}, target={target_arr.shape}."
+    )
+
+
+def supervised_per_sample_squared_error(
+    prediction: Array,
+    target: Array,
+    /,
+) -> Array:
+    """Return one squared-error scalar per leading sample."""
+    pred_arr, target_arr = _align_data_metric_shapes(prediction, target)
+    residual = pred_arr - target_arr
+    squared = residual * residual
+    if squared.ndim <= 1:
+        return squared.reshape((-1,))
+    return jnp.sum(squared.reshape((int(squared.shape[0]), -1)), axis=1)
+
+
+def reduce_supervised_loss(
+    per_sample: Array,
+    /,
+    *,
+    reduction: str,
+) -> Array:
+    """Reduce per-sample supervised losses with a common mean/sum policy."""
+    per_sample_arr = jnp.asarray(per_sample, dtype=float)
+    if reduction == "mean":
+        reduced = jnp.mean(per_sample_arr)
+    elif reduction == "sum":
+        reduced = jnp.sum(per_sample_arr)
+    else:
+        raise ValueError("reduction must be either 'mean' or 'sum'.")
+    return jnp.asarray(reduced, dtype=float).reshape(())
+
+
+def validate_supervised_targets(
+    values: ArrayLike,
+    /,
+    *,
+    leading_size: int,
+    name: str,
+) -> Array:
+    """Validate a target array with a leading empirical-case axis."""
+    arr = jnp.asarray(values, dtype=float)
+    if arr.ndim == 0:
+        raise ValueError(f"{name} values must have shape (N, ...).")
+    if int(arr.shape[0]) != int(leading_size):
+        raise ValueError(
+            f"{name} leading axis must be N={int(leading_size)}, got {arr.shape[0]}."
+        )
+    return arr
+
+
+def validate_case_indices(
+    indices: ArrayLike | None,
+    /,
+    *,
+    size: int,
+    name: str = "indices",
+) -> Array | None:
+    """Validate an optional non-empty 1D integer index subset."""
+    if indices is None:
+        return None
+    raw = jnp.asarray(indices)
+    if raw.ndim != 1:
+        raise ValueError(f"{name} must have shape (K,), got {raw.shape}.")
+    if int(raw.shape[0]) <= 0:
+        raise ValueError(f"{name} must be non-empty.")
+    idx = raw.astype(jnp.int32)
+    if bool(jnp.any(idx != raw)):
+        raise ValueError(f"{name} must contain integer indices.")
+    if bool(jnp.any(idx < 0)) or bool(jnp.any(idx >= int(size))):
+        raise ValueError(f"{name} must be within [0, {int(size)}).")
+    return idx
+
+
+def sample_case_indices(
+    *,
+    size: int,
+    num_samples: int,
+    key: Key[Array, ""],
+    indices: Array | None = None,
+) -> Array:
+    """Sample empirical-case indices uniformly from all cases or a subset."""
+    n = int(num_samples)
+    if n < 0:
+        raise ValueError("num_samples must be non-negative.")
+    if n == 0:
+        return jnp.zeros((0,), dtype=jnp.int32)
+    if indices is None:
+        return _random_int(key, n=n, maxval=int(size))
+    idx = jnp.asarray(indices, dtype=jnp.int32).reshape((-1,))
+    positions = _random_int(key, n=n, maxval=int(idx.shape[0]))
+    return idx[positions]
+
+
+def _random_int(key: Key[Array, ""], /, *, n: int, maxval: int) -> Array:
+    return jr.randint(
+        key,
+        shape=(int(n),),
+        minval=0,
+        maxval=int(maxval),
+        dtype=jnp.int32,
     )

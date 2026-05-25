@@ -323,6 +323,12 @@ class DomainComponent(StrictModule):
         For scalar boundaries $\{a,b\}$ this uses counting measure (mass $2$), and for
         fixed slices uses unit mass.
         """
+        from ._trajectory_dataset import trajectory_component_measure
+
+        custom = trajectory_component_measure(self)
+        if custom is not None:
+            return custom
+
         m = jnp.array(1.0, dtype=float)
         for lbl in self.domain.labels:
             comp = self.spec.component_for(lbl)
@@ -376,6 +382,20 @@ class DomainComponent(StrictModule):
         sampler: str = "latin_hypercube",
         key: Key[Array, ""] = DOC_KEY0,
     ) -> PointsBatch:
+        from ._trajectory_dataset import (
+            sample_trajectory_component,
+            TrajectoryDatasetDomain,
+        )
+
+        if isinstance(self.domain, TrajectoryDatasetDomain):
+            return sample_trajectory_component(
+                self,
+                num_points,
+                structure=structure,
+                sampler=sampler,
+                key=key,
+            )
+
         fixed_labels = frozenset(
             lbl
             for lbl in self.domain.labels
@@ -508,6 +528,14 @@ class DomainComponent(StrictModule):
         This is useful when an operator factorizes across coordinate axes, or when a
         Cartesian grid is desired for quadrature-like reductions.
         """
+        from ._trajectory_dataset import TrajectoryDatasetDomain
+
+        if isinstance(self.domain, TrajectoryDatasetDomain):
+            raise ValueError(
+                "TrajectoryDatasetDomain requires paired data-time sampling; "
+                "coord-separable trajectory sampling is not supported."
+            )
+
         coord_labels = tuple(lbl for lbl in self.domain.labels if lbl in coord_separable)
         for lbl in coord_labels:
             if lbl not in self.domain.labels:

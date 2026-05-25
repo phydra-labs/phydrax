@@ -3,12 +3,15 @@
 #
 
 from abc import abstractmethod
-from typing import Literal
+from typing import ClassVar, Literal, TypeAlias
 
 from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
 from ...._strict import AbstractAttribute, StrictModule
+
+
+DomainInputMode: TypeAlias = Literal["flat", "structured"]
 
 
 class _AbstractBaseModel(StrictModule):
@@ -30,6 +33,7 @@ class _AbstractBaseModel(StrictModule):
     _supports_structured_input: bool = False
     _supports_blockwise_input: bool = False
     _warn_on_auto_fallback: bool = False
+    _domain_input_mode: ClassVar[DomainInputMode] = "flat"
 
     @classmethod
     def supports_structured_input(cls) -> bool:
@@ -42,11 +46,16 @@ class _AbstractBaseModel(StrictModule):
     def warn_on_auto_fallback(self) -> bool:
         return bool(self._warn_on_auto_fallback)
 
+    @classmethod
+    def domain_input_mode(cls) -> DomainInputMode:
+        return cls._domain_input_mode
+
 
 class _AbstractStructuredInputModel(_AbstractBaseModel):
     """Abstract base class for models that accept structured (tuple) inputs."""
 
     _supports_structured_input: bool = True
+    _domain_input_mode: ClassVar[DomainInputMode] = "structured"
 
     @abstractmethod
     def __call__(

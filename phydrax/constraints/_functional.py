@@ -14,7 +14,7 @@ from jaxtyping import Array, ArrayLike, Key
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
 from ..domain._components import DomainComponent, DomainComponentUnion
-from ..domain._function import DomainFunction
+from ..domain._function import batch_aware_callable, BatchAwareCallable, DomainFunction
 from ..domain._structure import (
     CoordSeparableBatch,
     PointsBatch,
@@ -30,11 +30,35 @@ from ._sampling_spec import (
 )
 
 
-class _SquaredFrobeniusResidual(StrictModule):
+class _SquaredFrobeniusResidual(StrictModule, BatchAwareCallable):
     residual: DomainFunction
 
     def __init__(self, residual: DomainFunction):
         self.residual = residual
+
+    def use_batch_call(self) -> bool:
+        return batch_aware_callable(self.residual.func) is not None
+
+    def __call_batch__(
+        self,
+        batch: PointsBatch | CoordSeparableBatch,
+        /,
+        *,
+        key: Key[Array, ""] = DOC_KEY0,
+        **kwargs: Any,
+    ) -> cx.Field:
+        y = self.residual(batch, key=key, **kwargs)
+        if not isinstance(y, cx.Field):
+            raise TypeError("Expected residual to return a coordax.Field.")
+
+        data = jnp.asarray(y.data)
+        dims = y.dims
+        squared = data * data
+        reduction_axes = [i for i, dim in enumerate(dims) if dim is None]
+        for axis in reversed(reduction_axes):
+            squared = jnp.sum(squared, axis=axis)
+            dims = dims[:axis] + dims[axis + 1 :]
+        return cx.Field(squared, dims=dims)
 
     def __call__(self, *args: Any, key=None, **kwargs: Any):
         y = jnp.asarray(self.residual.func(*args, key=key, **kwargs))

@@ -5,7 +5,7 @@
 import abc
 import inspect
 from collections.abc import Callable, Mapping
-from typing import Any, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
 
@@ -186,9 +186,29 @@ class _AbstractDomain(StrictModule):
 
         return decorator
 
-    def Model(self, *deps: str, structured: bool = False):
+    def Model(
+        self,
+        *deps: str,
+        structured: bool = False,
+        input_mode: Literal["flat", "structured"] | None = None,
+    ):
+        """Wrap a neural model as a `DomainFunction`.
+
+        By default each model chooses its own domain input mode. Dense and separable
+        pointwise models use flat concatenation, while operator models may request
+        structured tuple inputs. `structured=True` is a compatibility alias for
+        `input_mode="structured"`.
+        """
         from ._function import DomainFunction
         from ._model_function import _ConcatenatedModelCallable, StructuredCallable
+
+        if structured and input_mode is not None:
+            raise ValueError("Use either structured=True or input_mode=..., not both.")
+        mode: Literal["flat", "structured"] | None = input_mode
+        if structured:
+            mode = "structured"
+        if mode is not None and mode not in ("flat", "structured"):
+            raise ValueError("input_mode must be either 'flat' or 'structured'.")
 
         deps_ = self.labels if not deps else deps
         for dep in deps_:
@@ -203,7 +223,7 @@ class _AbstractDomain(StrictModule):
             return DomainFunction(
                 domain=self,
                 deps=deps_,
-                func=_ConcatenatedModelCallable(model),
+                func=_ConcatenatedModelCallable(model, input_mode=mode),
             )
 
         return decorator
@@ -215,7 +235,7 @@ class _AbstractDomain(StrictModule):
         transform: Callable[[Any], Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
     ):
-        from ._function import _ConstCallable, _UnaryCallable, DomainFunction
+        from ._function import _TrainableConstCallable, _UnaryCallable, DomainFunction
 
         if init is None:
             raise TypeError("Domain.Parameter requires init to be array-like, not None.")
@@ -225,7 +245,12 @@ class _AbstractDomain(StrictModule):
             raw = raw.astype(float)
 
         if transform is None:
-            return DomainFunction(domain=self, deps=(), func=raw, metadata=metadata)
+            return DomainFunction(
+                domain=self,
+                deps=(),
+                func=_TrainableConstCallable(raw),
+                metadata=metadata,
+            )
 
         if not callable(transform):
             raise TypeError("Domain.Parameter transform must be a callable or None.")
@@ -233,7 +258,7 @@ class _AbstractDomain(StrictModule):
         return DomainFunction(
             domain=self,
             deps=(),
-            func=_UnaryCallable(_ConstCallable(raw), transform),
+            func=_UnaryCallable(_TrainableConstCallable(raw), transform),
             metadata=metadata,
         )
 

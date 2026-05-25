@@ -9,6 +9,11 @@ Models that exploit product-domain structure via low-rank factorization.
     - `LatentContractionModel` generalizes this to named factor models and flexible inputs.
     - `LatentExecutionPolicy` controls grouped-vs-flat planning preferences and fallback behavior.
       Supported topology modes are `grouped`, `flat`, `best_effort_flat`, and `strict_flat`.
+    - `SeparableMLP`, `SeparableKAN`, and `SeparableFeynmaNN` are drop-in pointwise
+      replacements for dense vector models in `Domain.Model(...)`: by default their
+      dependencies are flattened into one vector, then each scalar coordinate is sent
+      to its own internal model. Use `input_mode="structured"` or `structured=True`
+      when you intentionally want tuple/coord-separable input packing.
     - `LatentContractionModel` supports layout hints `auto`, `dense_points`,
       `coord_separable`, `hybrid`, and `full_tensor`.
     - Any automatic fallback can be configured to warn, error, or stay silent.

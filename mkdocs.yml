@@ -113,6 +113,7 @@ nav:
             - Geometry (2D): "api/domain/geometry2d.md"
             - Geometry (3D): "api/domain/geometry3d.md"
             - HyperRectangle: "api/domain/hyperrectangle.md"
+            - Trajectory dataset: "api/domain/trajectory_dataset.md"
             - Composition: "api/domain/composition.md"
             - Sampling: "api/domain/sampling.md"
             - Components: "api/domain/components.md"
@@ -121,6 +122,7 @@ nav:
             - Overview: "api/data_utils/index.md"
             - CSV reader: "api/data_utils/csv.md"
             - Scalers: "api/data_utils/scalers.md"
+            - Splits: "api/data_utils/splits.md"
         - Operators:
             - Overview: "api/operators/index.md"
             - Differential: "api/operators/differential.md"

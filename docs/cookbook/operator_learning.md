@@ -17,6 +17,11 @@ In Phydrax, \(\Omega_{\text{data}}\) is represented by `DatasetDomain`, and oper
 `DatasetDomain` stores an in-memory PyTree of arrays with a shared leading dataset axis, and samples by indexing.
 See [API → Domain → Composition](../api/domain/composition.md).
 
+For row-indexed time series with a shared `dt` and different lengths, use
+`TrajectoryDatasetDomain` instead of `DatasetDomain @ TimeInterval`. It keeps the
+dataset row and sampled time coupled so physics residuals and ragged supervised data
+constraints see only valid `(data, t)` pairs.
+
 ## DeepONet skeleton on \(\Omega_{\text{data}}\times\Omega_x\) {: data-toc-label="DeepONet skeleton on Ω_data × Ω_x"}
 
 Assume each dataset sample contains a vector of coefficients \(c\in\mathbb{R}^K\) that parameterizes an input.
