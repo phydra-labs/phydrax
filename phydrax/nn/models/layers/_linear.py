@@ -21,6 +21,7 @@ from ..._utils import (
 )
 from ..core._base import _AbstractBaseModel
 from ..core._initializers import _initializer_dict
+from ..core._keys import EvalKey
 
 
 _key = DOC_KEY0
@@ -141,7 +142,7 @@ class Linear(_AbstractBaseModel):
         x: Array,
         /,
         *,
-        key: Key[Array, ""] = _key,
+        key: EvalKey = _key,
     ) -> Array:
         x_arr = jnp.asarray(x)
         in_shape = self._in_value_shape

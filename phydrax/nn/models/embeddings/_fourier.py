@@ -14,6 +14,7 @@ from ...._doc import DOC_KEY0
 from ..._utils import _canonical_size, _get_size, _get_value_shape, SizeLike
 from .._utils import _tuple
 from ..core._base import _AbstractBaseModel
+from ..core._keys import EvalKey
 
 
 class RandomFourierFeatureEmbeddings(_AbstractBaseModel):
@@ -96,7 +97,7 @@ class RandomFourierFeatureEmbeddings(_AbstractBaseModel):
         x: Array,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: EvalKey = DOC_KEY0,
     ) -> Array:
         x_arr = jnp.asarray(x)
         in_shape = _get_value_shape(self.in_size)

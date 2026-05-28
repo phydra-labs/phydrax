@@ -23,6 +23,9 @@ Models that exploit product-domain structure via low-rank factorization.
       `LatentExecutionPolicy.fallback`.
     - `SeparableMLP`, `SeparableKAN`, and `SeparableFeynmaNN` forward `scan` to
       their internal scalar submodels.
+    - Use `key=None` for deterministic inference/export. Fan-out models split real
+      evaluation keys for stochastic children, but propagate `None` without creating
+      PRNG operations.
 
 ::: phydrax.nn.Separable
     options:

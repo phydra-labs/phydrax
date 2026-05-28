@@ -10,6 +10,9 @@ from collections.abc import Callable
 from ._strict import StrictModule
 
 
+_MISSING = object()
+
+
 class _KeyIterAdapter(StrictModule):
     func: Callable
     has_var_kwargs: bool
@@ -30,9 +33,9 @@ class _KeyIterAdapter(StrictModule):
         self.has_key = bool(has_key)
         self.has_iter = bool(has_iter)
 
-    def __call__(self, *args, key=None, iter_=None, **kwargs):
+    def __call__(self, *args, key=_MISSING, iter_=None, **kwargs):
         out_kwargs = kwargs
-        if key is not None and (self.has_key or self.has_var_kwargs):
+        if key is not _MISSING and (self.has_key or self.has_var_kwargs):
             out_kwargs = dict(out_kwargs)
             out_kwargs["key"] = key
         if iter_ is not None and (self.has_iter or self.has_var_kwargs):
@@ -63,9 +66,9 @@ def _ensure_special_kwonly_args(func: Callable, /) -> Callable:
 
     if is_bound_method:
 
-        def _wrapped(*args, key=None, iter_=None, **kwargs):
+        def _wrapped(*args, key=_MISSING, iter_=None, **kwargs):
             out_kwargs = kwargs
-            if key is not None and (has_key or has_var_kwargs):
+            if key is not _MISSING and (has_key or has_var_kwargs):
                 out_kwargs = dict(out_kwargs)
                 out_kwargs["key"] = key
             if iter_ is not None and (has_iter or has_var_kwargs):

@@ -5,12 +5,12 @@
 from typing import Literal
 
 import jax.numpy as jnp
-import jax.random as jr
-from jaxtyping import Array, Key
+from jaxtyping import Array
 
 from ...._doc import DOC_KEY0
 from ..._utils import _get_size
 from ..core._base import _AbstractBaseModel, _AbstractStructuredInputModel
+from ..core._keys import EvalKey, split_eval_key
 
 
 class MagnitudeDirectionModel(_AbstractStructuredInputModel):
@@ -53,7 +53,7 @@ class MagnitudeDirectionModel(_AbstractStructuredInputModel):
         x: Array | tuple[Array, ...],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: EvalKey = DOC_KEY0,
     ) -> Array:
         r"""Evaluate $y(x)=m(x)\,\frac{d(x)}{\|d(x)\|}$.
 
@@ -61,7 +61,7 @@ class MagnitudeDirectionModel(_AbstractStructuredInputModel):
         division by zero. If `direction_model.out_size == "scalar"`, the
         normalization is skipped.
         """
-        key_mag, key_dir = jr.split(key, 2)
+        key_mag, key_dir = split_eval_key(key, 2)
         magnitude_model = self.magnitude_model
         direction_model = self.direction_model
         if isinstance(x, tuple):

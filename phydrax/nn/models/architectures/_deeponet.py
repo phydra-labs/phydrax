@@ -8,14 +8,14 @@ from typing import Literal
 
 import jax
 import jax.numpy as jnp
-import jax.random as jr
 import opt_einsum as oe
-from jaxtyping import Array, Key
+from jaxtyping import Array
 
 from ...._doc import DOC_KEY0
 from ....domain._grid import broadcasted_grid
 from ..._utils import _get_size
 from ..core._base import _AbstractBaseModel, _AbstractStructuredInputModel
+from ..core._keys import EvalKey, split_eval_key
 
 
 class DeepONet(_AbstractStructuredInputModel):
@@ -96,14 +96,14 @@ class DeepONet(_AbstractStructuredInputModel):
         x: Array | tuple[Array, ...],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: EvalKey = DOC_KEY0,
     ) -> Array:
         if not isinstance(x, tuple):
             raise ValueError("DeepONet requires a tuple input (branch_input, coords...).")
         if len(x) < 2:
             raise ValueError("DeepONet requires at least (branch_input, coords...).")
 
-        k_branch, k_trunk = jr.split(key, 2)
+        k_branch, k_trunk = split_eval_key(key, 2)
 
         branch_in = jnp.asarray(x[0])
         branch_vec = branch_in.reshape((-1,))

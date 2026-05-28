@@ -12,6 +12,7 @@ from jaxtyping import Array, Key
 from ...._doc import DOC_KEY0
 from ..._utils import _get_size
 from ..core._base import _AbstractStructuredInputModel, DomainInputMode
+from ..core._keys import EvalKey
 from ..wrappers._separable_wrappers import Separable
 from ._mlp import MLP
 
@@ -123,7 +124,7 @@ class SeparableMLP(_AbstractStructuredInputModel):
         x: Array | tuple[Array, ...],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: EvalKey = DOC_KEY0,
     ) -> Array:
         r"""Evaluate the separable MLP.
 

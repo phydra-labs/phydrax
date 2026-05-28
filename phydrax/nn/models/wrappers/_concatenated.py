@@ -6,12 +6,12 @@ from collections.abc import Sequence
 from typing import Literal
 
 import jax.numpy as jnp
-import jax.random as jr
-from jaxtyping import Array, Key
+from jaxtyping import Array
 
 from ...._doc import DOC_KEY0
 from ..._utils import _get_size
 from ..core._base import _AbstractBaseModel, _AbstractStructuredInputModel
+from ..core._keys import EvalKey, split_eval_key
 
 
 class ConcatenatedModel(_AbstractStructuredInputModel):
@@ -55,7 +55,7 @@ class ConcatenatedModel(_AbstractStructuredInputModel):
         x: Array | tuple[Array, ...],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: EvalKey = DOC_KEY0,
     ) -> Array:
         r"""Evaluate all child models at `x` and concatenate their outputs.
 
@@ -74,7 +74,7 @@ class ConcatenatedModel(_AbstractStructuredInputModel):
             if len(structured_models) == 1:
                 outputs = (structured_models[0](x, key=key),)
             else:
-                keys = jr.split(key, len(structured_models))
+                keys = split_eval_key(key, len(structured_models))
                 outputs = tuple(
                     model(x, key=subkey) for model, subkey in zip(structured_models, keys)
                 )
@@ -83,7 +83,7 @@ class ConcatenatedModel(_AbstractStructuredInputModel):
             if len(self.models) == 1:
                 outputs = (self.models[0](x_arr, key=key),)
             else:
-                keys = jr.split(key, len(self.models))
+                keys = split_eval_key(key, len(self.models))
                 outputs = tuple(
                     model(x_arr, key=subkey) for model, subkey in zip(self.models, keys)
                 )
