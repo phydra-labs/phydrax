@@ -153,6 +153,7 @@ nav:
             - Overview: "api/solver/index.md"
             - Functional solver: "api/solver/functional_solver.md"
             - Enforced constraint pipelines: "api/solver/enforced_constraints.md"
+        - Export: "api/export.md"
     - Misc:
         - Nondimensionalization: "misc/nondimensionalization.md"
     - Appendix:

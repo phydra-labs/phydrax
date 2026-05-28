@@ -12,6 +12,7 @@ from jaxtyping import Array, Key
 from ...._doc import DOC_KEY0
 from ..._utils import _canonical_size, _get_value_shape, _identity, SizeLike
 from ..core._base import _AbstractBaseModel
+from ..core._keys import EvalKey
 from ..core._scan_utils import pack_scan_modules, scan_apply, stack_scan_dynamics
 from ..layers._linear import Linear
 
@@ -216,7 +217,7 @@ class MLP(_AbstractBaseModel):
         x: Array,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: EvalKey = DOC_KEY0,
     ) -> Array:
         r"""Evaluate the MLP at `x`.
 

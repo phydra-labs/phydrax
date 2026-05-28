@@ -7,12 +7,13 @@ from __future__ import annotations
 from typing import Any, Literal
 
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jaxtyping import Array
 
 from ...._callable import _ensure_special_kwonly_args
 from ...._doc import DOC_KEY0
 from ..._utils import _canonical_size, _get_size, _get_value_shape, SizeLike
 from ..core._base import _AbstractBaseModel, _AbstractStructuredInputModel
+from ..core._keys import EvalKey
 
 
 _Layout = Literal["value", "passthrough"]
@@ -105,7 +106,7 @@ class EquinoxModel(_AbstractBaseModel):
         x: Array,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: EvalKey = DOC_KEY0,
         iter_: Array | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -145,7 +146,7 @@ class EquinoxStructuredModel(_AbstractStructuredInputModel):
         x: Array | tuple[Array, ...],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: EvalKey = DOC_KEY0,
         iter_: Array | None = None,
         **kwargs: Any,
     ) -> Array:

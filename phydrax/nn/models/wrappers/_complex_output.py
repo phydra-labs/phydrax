@@ -5,13 +5,13 @@
 from typing import Literal, overload
 
 import jax.numpy as jnp
-import jax.random as jr
-from jaxtyping import Array, Key
+from jaxtyping import Array
 
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
 from ..._utils import _get_size
 from ..core._base import _AbstractBaseModel, _AbstractStructuredInputModel
+from ..core._keys import EvalKey, split_eval_key
 
 
 class ComplexOutputModel(StrictModule):
@@ -106,7 +106,7 @@ class ComplexOutputModel(StrictModule):
         x: Array | tuple[Array, ...],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: EvalKey = DOC_KEY0,
     ) -> Array:
         r"""Evaluate the wrapped model(s) and return complex outputs.
 
@@ -143,7 +143,7 @@ class ComplexOutputModel(StrictModule):
         assert self._real_model is not None and self._imag_model is not None
         real_model = self._real_model
         imag_model = self._imag_model
-        key_r, key_i = jr.split(key, 2)
+        key_r, key_i = split_eval_key(key, 2)
         if isinstance(x, tuple):
             if not isinstance(real_model, _AbstractStructuredInputModel):
                 raise TypeError(

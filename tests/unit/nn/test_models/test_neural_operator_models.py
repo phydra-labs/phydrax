@@ -2,6 +2,7 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -246,6 +247,50 @@ def test_separable_mlp_domain_model_still_uses_structured_blockwise_grids():
     assert out.dims == (x_axis0, x_axis1, None)
     assert out.data.shape == (5, 4, 2)
     assert jnp.all(jnp.isfinite(jnp.asarray(out.data)))
+
+
+@pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
+def test_separable_mlp_key_none_avoids_eval_time_random_split(scan):
+    model = SeparableMLP(
+        in_size=3,
+        out_size="scalar",
+        width_size=8,
+        depth=2,
+        latent_size=4,
+        scan=scan,
+        key=jr.key(4),
+    )
+    x = jnp.asarray([0.1, 0.2, 0.3])
+
+    y_none = model(x, key=None)
+    y_keyed = model(x, key=jr.key(5))
+    assert jnp.allclose(y_none, y_keyed)
+
+    keyless_jaxpr = str(jax.make_jaxpr(lambda z: model(z, key=None))(x))
+    keyed_jaxpr = str(jax.make_jaxpr(lambda z, k: model(z, key=k))(x, jr.key(6)))
+    assert "random_split" not in keyless_jaxpr
+    assert "random_split" in keyed_jaxpr
+
+
+def test_domain_model_explicit_key_none_reaches_model_export_path():
+    geom = Square(center=(0.0, 0.0), side=1.0)
+    model = SeparableMLP(
+        in_size=2,
+        out_size="scalar",
+        width_size=8,
+        depth=2,
+        latent_size=4,
+        key=jr.key(7),
+    )
+    u = geom.Model("x")(model)
+    x = jnp.asarray([0.1, 0.2])
+
+    y_none = u.func(x, key=None)
+    y_keyed = u.func(x, key=jr.key(8))
+    assert jnp.allclose(y_none, y_keyed)
+
+    keyless_jaxpr = str(jax.make_jaxpr(lambda z: u.func(z, key=None))(x))
+    assert "random_split" not in keyless_jaxpr
 
 
 def test_domain_model_input_mode_rejects_conflicting_structured_alias():

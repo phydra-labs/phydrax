@@ -5,10 +5,11 @@
 from abc import abstractmethod
 from typing import ClassVar, Literal, TypeAlias
 
-from jaxtyping import Array, Key
+from jaxtyping import Array
 
 from ...._doc import DOC_KEY0
 from ...._strict import AbstractAttribute, StrictModule
+from ._keys import EvalKey
 
 
 DomainInputMode: TypeAlias = Literal["flat", "structured"]
@@ -26,7 +27,7 @@ class _AbstractBaseModel(StrictModule):
         x: Array,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: EvalKey = DOC_KEY0,
     ) -> Array:
         raise NotImplementedError
 
@@ -63,6 +64,6 @@ class _AbstractStructuredInputModel(_AbstractBaseModel):
         x: Array | tuple[Array, ...],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: EvalKey = DOC_KEY0,
     ) -> Array:
         raise NotImplementedError

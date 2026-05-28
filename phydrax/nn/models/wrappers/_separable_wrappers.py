@@ -10,7 +10,6 @@ from typing import Any, ClassVar, Literal
 
 import jax
 import jax.numpy as jnp
-import jax.random as jr
 from jaxtyping import Array, Key
 from opt_einsum import contract
 
@@ -23,6 +22,7 @@ from ..core._base import (
     _AbstractStructuredInputModel,
     DomainInputMode,
 )
+from ..core._keys import EvalKey, split_eval_key
 from ..core._scan_utils import (
     pack_scan_modules,
     scan_apply_with_data,
@@ -196,7 +196,7 @@ class LatentContractionModel(_AbstractStructuredInputModel):
         x: Array | tuple[Array, ...] | Mapping[str, Any],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: EvalKey = DOC_KEY0,
         **kwargs: Any,
     ) -> Array:
         del kwargs
@@ -222,7 +222,7 @@ class LatentContractionModel(_AbstractStructuredInputModel):
         return self._call_aligned(jnp.asarray(x), key=key)
 
     def _call_factorwise(
-        self, factor_inputs: Sequence[Any], /, *, key: Key[Array, ""] = DOC_KEY0
+        self, factor_inputs: Sequence[Any], /, *, key: EvalKey = DOC_KEY0
     ) -> Array:
         if len(factor_inputs) != len(self.factor_models):
             raise ValueError("Factor input count does not match the model factors.")
@@ -241,11 +241,12 @@ class LatentContractionModel(_AbstractStructuredInputModel):
         out = self._contract_latents(latents, batch_shapes, topology=plan.effective)
         return self._finalize(out)
 
-    def _call_aligned(self, x: Array, /, *, key: Key[Array, ""] = DOC_KEY0) -> Array:
+    def _call_aligned(self, x: Array, /, *, key: EvalKey = DOC_KEY0) -> Array:
         factor_inputs = self._split_aligned_input(x)
         keys = self._split_key(key)
         if (
             self.scan
+            and key is not None
             and self._scan_enabled_aligned
             and self._scan_static_aligned is not None
             and len(self.factor_models) > 1
@@ -311,7 +312,7 @@ class LatentContractionModel(_AbstractStructuredInputModel):
         /,
         *,
         name: str,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: EvalKey = DOC_KEY0,
     ) -> tuple[Array, tuple[int, ...]]:
         if isinstance(pts, tuple):
             coords = tuple(jnp.asarray(c) for c in pts)
@@ -343,7 +344,7 @@ class LatentContractionModel(_AbstractStructuredInputModel):
         /,
         *,
         name: str,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: EvalKey = DOC_KEY0,
     ) -> tuple[Array, tuple[int, ...]]:
         arr = jnp.asarray(pts)
         in_dim = _get_size(model.in_size)
@@ -529,10 +530,8 @@ class LatentContractionModel(_AbstractStructuredInputModel):
             out = jnp.squeeze(out, axis=-1)
         return out
 
-    def _split_key(self, key: Key[Array, ""] | None, /) -> Key[Array, " n_models"]:
-        if key is None:
-            key = DOC_KEY0
-        return jr.split(key, len(self.factor_models))
+    def _split_key(self, key: EvalKey, /):
+        return split_eval_key(key, len(self.factor_models))
 
 
 class Separable(_AbstractStructuredInputModel):
@@ -648,7 +647,7 @@ class Separable(_AbstractStructuredInputModel):
         x: Array | tuple[Array, ...],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: EvalKey = DOC_KEY0,
         **kwargs: Any,
     ) -> Array:
         r"""Evaluate the separable model.
@@ -688,6 +687,7 @@ class Separable(_AbstractStructuredInputModel):
         def _scan_regular(model_inputs: Array, /) -> Array | None:
             if (
                 not self.scan
+                or key is None
                 or not self._scan_enabled_regular
                 or self._scan_static_regular is None
                 or len(self.models) <= 1
@@ -815,7 +815,7 @@ class Separable(_AbstractStructuredInputModel):
         x: tuple[Array, ...],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: EvalKey = DOC_KEY0,
         **kwargs: Any,
     ) -> Array:
         del kwargs
@@ -835,6 +835,7 @@ class Separable(_AbstractStructuredInputModel):
 
             if (
                 self.scan
+                and key is not None
                 and clones > 1
                 and self._scan_enabled_clone_groups[i]
                 and (self._scan_static_clone_groups[i] is not None)
@@ -887,8 +888,5 @@ class Separable(_AbstractStructuredInputModel):
             out = jnp.squeeze(out, axis=-1)
         return out
 
-    def _split_key(self, key: Key[Array, ""] | None, /) -> Key[Array, " n_models"]:
-        if key is None:
-            key = DOC_KEY0
-
-        return jr.split(key, len(self.models))
+    def _split_key(self, key: EvalKey, /):
+        return split_eval_key(key, len(self.models))
