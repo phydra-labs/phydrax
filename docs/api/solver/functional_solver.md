@@ -14,6 +14,7 @@ For a conceptual overview (loss evaluation, enforced pipelines, training loop be
     - `partition_functions()` exposes the trainable/non-trainable state split used by `solve(...)`.
     - `solve(...)` updates parameters inside `functions` using Optax or evosax optimizers.
     - `solve(..., tensorboard_log_dir=...)` writes TensorBoard scalar logs.
+    - `save_onnx("u", ...)` exports one named ansatz function for deployment.
     - Discrete data constraints report data-fit diagnostics alongside their loss.
 
 ## Typical usage
@@ -54,3 +55,4 @@ loss1 = solver.loss(key=jr.key(1))
             - trainable_functions
             - loss
             - solve
+            - save_onnx

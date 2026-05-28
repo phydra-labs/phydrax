@@ -8,3 +8,4 @@ Top-level package namespace. Most functionality lives in subpackages:
 - `phydrax.constraints`: objective terms built from operators and data
 - `phydrax.nn`: neural network components and structured models
 - `phydrax.solver`: loss assembly and training utilities
+- `phydrax.export`: deployment helpers for learned inference functions

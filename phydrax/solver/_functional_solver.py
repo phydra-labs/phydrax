@@ -160,6 +160,17 @@ class FunctionalSolver(StrictModule):
         """Convenience accessor: return the (ansatz) field named `var`."""
         return self.ansatz_functions()[var]
 
+    def save_onnx(self, var: str, path: str | Path, /, **kwargs: Any) -> Any:
+        """Export one named ansatz function to ONNX.
+
+        This is a thin convenience wrapper around `phydrax.export.save_onnx`.
+        It exports the inference function `self[var]`, not the solver, loss, or
+        constraints.
+        """
+        from ..export import save_onnx
+
+        return save_onnx(self[var], path, **kwargs)
+
     def partition_functions(self) -> tuple[Any, Any]:
         """Return `(trainable, non_trainable)` function PyTrees used by `solve()`."""
         from .._trainable import partition_trainable
