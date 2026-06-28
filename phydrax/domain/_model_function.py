@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import inspect
 import warnings
 from collections.abc import Callable
 from typing import Any
@@ -12,7 +13,8 @@ import jax.numpy as jnp
 
 from .._callable import _ensure_special_kwonly_args
 from .._strict import StrictModule
-from ..nn.models.core._base import _AbstractBaseModel, DomainInputMode
+from ..nn.models.core._base import DomainInputMode
+from ..nn.models.core._loss import model_domain_metadata
 
 
 class StructuredCallable(StrictModule):
@@ -34,11 +36,13 @@ def structured(func: Callable, /) -> StructuredCallable:
 
 class _ConcatenatedModelCallable(StrictModule):
     raw_model: Any
-    model: Callable
     input_mode: DomainInputMode
     supports_structured_input: bool
     supports_blockwise_input: bool
     warn_on_auto_fallback: bool
+    _call_has_var_kwargs: bool
+    _call_has_key: bool
+    _call_has_iter: bool
 
     def __init__(
         self,
@@ -54,11 +58,14 @@ class _ConcatenatedModelCallable(StrictModule):
         inferred_mode: DomainInputMode = (
             "structured" if supports_structured_input else "flat"
         )
-        if isinstance(model, _AbstractBaseModel):
-            inferred_mode = model.domain_input_mode()
-            supports_structured_input = model.supports_structured_input()
-            supports_blockwise_input = model.supports_blockwise_input()
-            warn_on_auto_fallback = model.warn_on_auto_fallback()
+        metadata = model_domain_metadata(model)
+        if metadata is not None:
+            (
+                inferred_mode,
+                supports_structured_input,
+                supports_blockwise_input,
+                warn_on_auto_fallback,
+            ) = metadata
         mode = inferred_mode if input_mode is None else input_mode
         if mode not in ("flat", "structured"):
             raise ValueError("input_mode must be either 'flat' or 'structured'.")
@@ -71,11 +78,35 @@ class _ConcatenatedModelCallable(StrictModule):
         self.supports_structured_input = bool(supports_structured_input)
         self.supports_blockwise_input = bool(supports_blockwise_input)
         self.warn_on_auto_fallback = bool(warn_on_auto_fallback)
-        self.model = _ensure_special_kwonly_args(model)
+        sig = inspect.signature(model)
+        params = sig.parameters
+        has_var_kwargs = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
+        has_key = "key" in params
+        has_iter = "iter_" in params
+        if has_key and params["key"].kind != inspect.Parameter.KEYWORD_ONLY:
+            raise TypeError("`key` must be a keyword-only argument for model calls.")
+        if has_iter and params["iter_"].kind != inspect.Parameter.KEYWORD_ONLY:
+            raise TypeError("`iter_` must be a keyword-only argument for model calls.")
+        self._call_has_var_kwargs = bool(has_var_kwargs)
+        self._call_has_key = bool(has_key)
+        self._call_has_iter = bool(has_iter)
 
     def emit_auto_fallback_warning(self, message: str, /) -> None:
         if self.warn_on_auto_fallback:
             warnings.warn(message, UserWarning, stacklevel=3)
+
+    def _call_model(self, x: Any, /, *, key=None, iter_=None, **kwargs: Any):
+        out_kwargs = kwargs
+        if self._call_has_key or self._call_has_var_kwargs:
+            out_kwargs = dict(out_kwargs)
+            out_kwargs["key"] = key
+        if iter_ is not None and (self._call_has_iter or self._call_has_var_kwargs):
+            if out_kwargs is kwargs:
+                out_kwargs = dict(out_kwargs)
+            out_kwargs["iter_"] = iter_
+        return self.raw_model(x, **out_kwargs)
 
     def __call__(self, *args: Any, key=None, iter_=None, **kwargs: Any):
         if not args:
@@ -109,7 +140,7 @@ class _ConcatenatedModelCallable(StrictModule):
                     else:
                         packed.append(jnp.asarray(value))
                 x_in = tuple(packed)
-            return self.model(x_in, key=key, iter_=iter_, **kwargs)
+            return self._call_model(x_in, key=key, iter_=iter_, **kwargs)
 
         arrays: list[Any] = []
         for value in args:
@@ -122,7 +153,7 @@ class _ConcatenatedModelCallable(StrictModule):
 
         if len(arrays) == 1:
             x_in = arrays[0]
-            return self.model(x_in, key=key, iter_=iter_, **kwargs)
+            return self._call_model(x_in, key=key, iter_=iter_, **kwargs)
 
         leading_shape: tuple[int, ...] | None = None
         for arr in arrays:
@@ -141,7 +172,7 @@ class _ConcatenatedModelCallable(StrictModule):
         if leading_shape is None:
             parts = [arr.reshape((-1,)) for arr in arrays]
             x_in = jnp.concatenate(parts, axis=0)
-            return self.model(x_in, key=key, iter_=iter_, **kwargs)
+            return self._call_model(x_in, key=key, iter_=iter_, **kwargs)
 
         parts = []
         for arr in arrays:
@@ -158,4 +189,4 @@ class _ConcatenatedModelCallable(StrictModule):
                 )
             parts.append(part)
         x_in = jnp.concatenate(parts, axis=-1)
-        return self.model(x_in, key=key, iter_=iter_, **kwargs)
+        return self._call_model(x_in, key=key, iter_=iter_, **kwargs)

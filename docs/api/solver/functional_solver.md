@@ -1,7 +1,7 @@
 # Functional solver
 
-`FunctionalSolver` is the main entry point for turning a set of fields and constraints
-into a differentiable objective.
+`FunctionalSolver` is the main entry point for turning a set of fields, constraints,
+and attached model losses into a differentiable objective.
 
 For a conceptual overview (loss evaluation, enforced pipelines, training loop behavior), see
 [Guides → Solvers and training](../../guides_solver.md).

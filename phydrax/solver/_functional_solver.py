@@ -25,6 +25,7 @@ from ._enforced_constraint_pipeline import (
     MultiFieldEnforcedConstraint,
     SingleFieldEnforcedConstraint,
 )
+from ._model_losses import function_model_loss_values
 
 
 def _constraints_tuple(
@@ -47,18 +48,19 @@ def _constraints_tuple(
 
 
 class FunctionalSolver(StrictModule):
-    r"""Assemble constraints into a differentiable scalar loss.
+    r"""Assemble constraints and model losses into a differentiable scalar loss.
 
     A `FunctionalSolver` holds:
 
     - a mapping of named fields (as `DomainFunction`s), e.g. $u_\theta$;
     - a collection of constraints $\ell_i$ producing scalar penalties.
+    - optional model-level losses attached to the trainable models.
     - optional eval-only constraints for validation diagnostics.
 
     The solver loss is the (weighted) sum
 
     $$
-    L = \sum_i \ell_i.
+    L = \sum_i \ell_i + \sum_j r_j.
     $$
 
     Optionally, *enforced constraint pipelines* can be applied to replace the raw fields
@@ -68,8 +70,8 @@ class FunctionalSolver(StrictModule):
 
     - `ansatz_functions()` applies any enforced pipelines and returns the effective field
       mapping used by constraints.
-    - `loss(key=...)` splits the provided PRNG key into one subkey per constraint and
-      sums the resulting scalar losses.
+    - `loss(key=...)` splits the provided PRNG key into one subkey per constraint,
+      evaluates any attached model losses, and sums the resulting scalar losses.
 
     **Training**
 
@@ -188,25 +190,31 @@ class FunctionalSolver(StrictModule):
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
     ) -> Array:
-        r"""Evaluate the total loss $L=\sum_i \ell_i$ over all configured constraints.
+        r"""Evaluate the total loss over constraints and attached model losses.
 
         This:
 
         1) applies enforced pipelines (if configured),
         2) splits `key` into one subkey per constraint,
-        3) sums `constraint.loss(...)` over all constraints.
+        3) sums `constraint.loss(...)` over all constraints,
+        4) adds scalar model losses attached via `model.add_model_loss(...)` or
+           model `__loss__` hooks.
 
         Any additional keyword arguments are forwarded to each constraint.
         """
-        if not self.constraints:
-            return jnp.array(0.0, dtype=float)
-
         functions = self.ansatz_functions()
         keys = jr.split(key, len(self.constraints))
         total = jnp.array(0.0, dtype=float)
         with derivative_runtime_context():
             for c, k in zip(self.constraints, keys, strict=True):
                 total = total + c.loss(functions, key=k, **kwargs)
+            iter_ = kwargs.get("iter_", None)
+            for term in function_model_loss_values(
+                self.functions,
+                key=jr.fold_in(key, len(self.constraints)),
+                iter_=iter_,
+            ):
+                total = total + term
         return total
 
     def solve(
