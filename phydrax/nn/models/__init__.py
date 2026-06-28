@@ -10,6 +10,7 @@ from .architectures._mlp import MLP
 from .architectures._separable_feynmann import SeparableFeynmaNN
 from .architectures._separable_kan import SeparableKAN
 from .architectures._separable_mlp import SeparableMLP
+from .core._loss import add_model_loss, ModelWithLoss
 from .embeddings._fourier import (
     RandomFourierFeatureEmbeddings,
 )
@@ -39,6 +40,7 @@ __all__ = [
     "KAN",
     "Linear",
     "MLP",
+    "ModelWithLoss",
     "ConcatenatedModel",
     "MagnitudeDirectionModel",
     "DeepONet",
@@ -52,4 +54,5 @@ __all__ = [
     "LatentExecutionPolicy",
     "LatentContractionModel",
     "Separable",
+    "add_model_loss",
 ]

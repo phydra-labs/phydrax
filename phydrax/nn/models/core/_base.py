@@ -3,8 +3,10 @@
 #
 
 from abc import abstractmethod
-from typing import ClassVar, Literal, TypeAlias
+from collections.abc import Callable
+from typing import Any, ClassVar, Literal, TypeAlias
 
+import jax.numpy as jnp
 from jaxtyping import Array
 
 from ...._doc import DOC_KEY0
@@ -50,6 +52,28 @@ class _AbstractBaseModel(StrictModule):
     @classmethod
     def domain_input_mode(cls) -> DomainInputMode:
         return cls._domain_input_mode
+
+    def __loss__(
+        self,
+        *,
+        key: EvalKey = DOC_KEY0,
+        iter_: Array | None = None,
+    ) -> Array:
+        del key, iter_
+        return jnp.array(0.0, dtype=float)
+
+    def add_model_loss(
+        self,
+        penalty: Callable[..., Any],
+        /,
+        *,
+        weight: Any = 1.0,
+        label: str | None = None,
+    ) -> Any:
+        """Return a model wrapper that contributes an extra scalar objective term."""
+        from ._loss import add_model_loss
+
+        return add_model_loss(self, penalty, weight=weight, label=label)
 
 
 class _AbstractStructuredInputModel(_AbstractBaseModel):

@@ -19,6 +19,7 @@ from jax import core as jcore
 
 from .._trainable import combine_trainable, partition_trainable
 from ..operators.differential._runtime import derivative_runtime_context
+from ._model_losses import function_model_loss_labels, function_model_loss_values
 
 
 if TYPE_CHECKING:
@@ -98,6 +99,10 @@ def _constraint_tag(index: int, name: str, /) -> str:
     return f"constraints/{index:03d}_{_clean_tag_part(name)}"
 
 
+def _model_loss_tag(index: int, name: str, /) -> str:
+    return f"model_losses/{index:03d}_{_clean_tag_part(name)}"
+
+
 def _metric_suffix(metrics: dict[str, Any], /) -> str:
     if not metrics:
         return ""
@@ -151,6 +156,20 @@ def _write_constraint_tensorboard_scalars(
                 writer.scalar(f"{base}/{metric_name}", metric_value, step)
 
 
+def _write_model_loss_tensorboard_scalars(
+    writer: _TensorBoardLogger,
+    *,
+    step: int,
+    model_loss_names: tuple[str, ...],
+    terms: Any,
+) -> None:
+    terms_arr = jnp.asarray(terms, dtype=float)
+    for i, (name, val) in enumerate(
+        zip(model_loss_names, list(map(float, terms_arr)), strict=True)
+    ):
+        writer.scalar(f"train/{_model_loss_tag(i, name)}/loss", val, step)
+
+
 def _log_tensorboard_scalars(
     writer: _TensorBoardLogger,
     *,
@@ -161,6 +180,8 @@ def _log_tensorboard_scalars(
     train_constraint_names: tuple[str, ...],
     train_terms: Any,
     train_data_metrics: tuple[dict[str, Any], ...],
+    train_model_loss_names: tuple[str, ...],
+    train_model_loss_terms: Any,
     eval_constraint_names: tuple[str, ...],
     eval_terms: Any,
     eval_data_metrics: tuple[dict[str, Any], ...],
@@ -181,6 +202,12 @@ def _log_tensorboard_scalars(
         terms=train_terms,
         data_metrics=train_data_metrics,
         write_legacy=True,
+    )
+    _write_model_loss_tensorboard_scalars(
+        writer,
+        step=step,
+        model_loss_names=train_model_loss_names,
+        terms=train_model_loss_terms,
     )
     _write_constraint_tensorboard_scalars(
         writer,
@@ -268,6 +295,7 @@ def solve(
             raise ValueError("tensorboard_flush_every must be positive.")
         log_constraints_ = bool(log_constraints)
         constraint_names = tuple(_constraint_label(c) for c in self.constraints)
+        model_loss_names = function_model_loss_labels(self.functions)
         eval_constraint_names = tuple(_constraint_label(c) for c in self.eval_constraints)
 
         def _loss_wrt_params(params_, non_trainable_, solver, key, iter_):
@@ -283,11 +311,25 @@ def solve(
                     for c, k in zip(solver.constraints, keys, strict=True):
                         term = c.loss(enforced, key=k, iter_=iter_)
                         total = total + jnp.asarray(term, dtype=float).reshape(())
+                    for term in function_model_loss_values(
+                        functions,
+                        key=jr.fold_in(key, len(solver.constraints)),
+                        iter_=iter_,
+                    ):
+                        total = total + jnp.asarray(term, dtype=float).reshape(())
                     return total, jnp.zeros((0,), dtype=float)
 
                 terms: list[jax.Array] = []
                 for c, k in zip(solver.constraints, keys, strict=True):
                     term = c.loss(enforced, key=k, iter_=iter_)
+                    term = jnp.asarray(term, dtype=float).reshape(())
+                    terms.append(term)
+                    total = total + term
+                for term in function_model_loss_values(
+                    functions,
+                    key=jr.fold_in(key, len(solver.constraints)),
+                    iter_=iter_,
+                ):
                     term = jnp.asarray(term, dtype=float).reshape(())
                     terms.append(term)
                     total = total + term
@@ -405,6 +447,9 @@ def solve(
             params, opt_state, loss_val, terms = solve_step(
                 params, non_trainable, opt_state, self, subkey, iter_
             )
+            terms_arr = jnp.asarray(terms, dtype=float)
+            train_constraint_terms = terms_arr[: len(constraint_names)]
+            train_model_loss_terms = terms_arr[len(constraint_names) :]
             if keep_best:
                 loss_f = float(loss_val)
                 if loss_f < best_loss:
@@ -457,13 +502,27 @@ def solve(
                     file=out_file,
                 )
                 if log_constraints_:
-                    terms_arr = jnp.asarray(terms, dtype=float)
                     for i, (name, val) in enumerate(
-                        zip(constraint_names, list(map(float, terms_arr)), strict=True)
+                        zip(
+                            constraint_names,
+                            list(map(float, train_constraint_terms)),
+                            strict=True,
+                        )
                     ):
                         suffix = _metric_suffix(train_data_metrics[i])
                         print(
                             f"  [train {i}] {name}: {val:.6e}{suffix}",
+                            file=out_file,
+                        )
+                    for i, (name, val) in enumerate(
+                        zip(
+                            model_loss_names,
+                            list(map(float, train_model_loss_terms)),
+                            strict=True,
+                        )
+                    ):
+                        print(
+                            f"  [model {i}] {name}: {val:.6e}",
                             file=out_file,
                         )
                     eval_terms_arr = jnp.asarray(eval_terms, dtype=float)
@@ -489,8 +548,10 @@ def solve(
                     best_loss=best_display,
                     iter_time_s=iter_time_s,
                     train_constraint_names=constraint_names,
-                    train_terms=terms,
+                    train_terms=train_constraint_terms,
                     train_data_metrics=train_data_metrics,
+                    train_model_loss_names=model_loss_names,
+                    train_model_loss_terms=train_model_loss_terms,
                     eval_constraint_names=eval_constraint_names,
                     eval_terms=eval_terms,
                     eval_data_metrics=eval_data_metrics,
@@ -536,6 +597,7 @@ def _solve_evosax(
         raise ValueError("tensorboard_flush_every must be positive.")
     log_constraints_ = bool(log_constraints)
     constraint_names = tuple(_constraint_label(c) for c in self.constraints)
+    model_loss_names = function_model_loss_labels(self.functions)
     eval_constraint_names = tuple(_constraint_label(c) for c in self.eval_constraints)
 
     algo_params = algo.default_params
@@ -554,6 +616,12 @@ def _solve_evosax(
                     total = total + c.loss(enforced, key=k, iter_=iter_)
                 else:
                     total = total + c.loss(enforced, key=k, iter_=iter_, batch=b)
+            for term in function_model_loss_values(
+                functions,
+                key=jr.fold_in(key, len(solver.constraints)),
+                iter_=iter_,
+            ):
+                total = total + jnp.asarray(term, dtype=float).reshape(())
         return total
 
     def _terms_for_params(p, non_trainable_, solver, key, iter_, batches):
@@ -570,6 +638,12 @@ def _solve_evosax(
                     term = c.loss(enforced, key=k, iter_=iter_)
                 else:
                     term = c.loss(enforced, key=k, iter_=iter_, batch=b)
+                terms.append(jnp.asarray(term, dtype=float).reshape(()))
+            for term in function_model_loss_values(
+                functions,
+                key=jr.fold_in(key, len(solver.constraints)),
+                iter_=iter_,
+            ):
                 terms.append(jnp.asarray(term, dtype=float).reshape(()))
         if terms:
             return jnp.stack(terms, axis=0)
@@ -708,6 +782,8 @@ def _solve_evosax(
                 {} for _ in self.eval_constraints
             )
             terms_arr = jnp.zeros((0,), dtype=float)
+            train_constraint_terms = terms_arr[: len(constraint_names)]
+            train_model_loss_terms = terms_arr[len(constraint_names) :]
             if log_constraints_ and (console_step or tensorboard_step):
                 terms_arr = jnp.asarray(
                     terms_fn(
@@ -720,6 +796,8 @@ def _solve_evosax(
                     ),
                     dtype=float,
                 )
+                train_constraint_terms = terms_arr[: len(constraint_names)]
+                train_model_loss_terms = terms_arr[len(constraint_names) :]
                 train_data_metrics = _data_metrics_for_constraints(
                     cand_params,
                     non_trainable,
@@ -756,11 +834,26 @@ def _solve_evosax(
                 )
                 if log_constraints_:
                     for i, (name, val) in enumerate(
-                        zip(constraint_names, list(map(float, terms_arr)), strict=True)
+                        zip(
+                            constraint_names,
+                            list(map(float, train_constraint_terms)),
+                            strict=True,
+                        )
                     ):
                         suffix = _metric_suffix(train_data_metrics[i])
                         print(
                             f"  [train {i}] {name}: {val:.6e}{suffix}",
+                            file=out_file,
+                        )
+                    for i, (name, val) in enumerate(
+                        zip(
+                            model_loss_names,
+                            list(map(float, train_model_loss_terms)),
+                            strict=True,
+                        )
+                    ):
+                        print(
+                            f"  [model {i}] {name}: {val:.6e}",
                             file=out_file,
                         )
                     eval_terms_arr = jnp.asarray(eval_terms, dtype=float)
@@ -786,8 +879,10 @@ def _solve_evosax(
                     best_loss=best_display,
                     iter_time_s=iter_time_s,
                     train_constraint_names=constraint_names,
-                    train_terms=terms_arr,
+                    train_terms=train_constraint_terms,
                     train_data_metrics=train_data_metrics,
+                    train_model_loss_names=model_loss_names,
+                    train_model_loss_terms=train_model_loss_terms,
                     eval_constraint_names=eval_constraint_names,
                     eval_terms=eval_terms,
                     eval_data_metrics=eval_data_metrics,

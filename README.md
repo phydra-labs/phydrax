@@ -33,7 +33,8 @@ Most workflows are composing a few primitives:
 - **DomainFunction**: a field $u :\Omega\to\mathbb{R}^m$ with explicit label dependencies.
 - **Operators**: maps $u\mapsto r$ like $\nabla u$, $\Delta u$, $\partial_t u$, integrals, etc.
 - **Constraints**: scalar loss terms built from residuals on components.
-- **FunctionalSolver**: sums constraints into a differentiable scalar objective and runs optimization.
+- **Model losses**: optional parameter-space penalties attached directly to models.
+- **FunctionalSolver**: sums constraints and model losses into a differentiable scalar objective and runs optimization.
 
 Optional (but central in many PDE problems):
 

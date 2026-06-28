@@ -29,7 +29,7 @@ At a practical level, most workflows look like:
 2) define one or more **fields** \(u_\theta:\Omega\to\mathbb{R}^m\) as `DomainFunction`s,  
 3) build **residual operators** \(r=\mathcal{N}(u_\theta,\dots)\) using `phydrax.operators`,  
 4) turn residuals into **constraint terms** \(\ell_i\) via sampling + reduction (mean/integral),  
-5) sum terms into a **functional** \(L=\sum_i \ell_i\) and optimize with `FunctionalSolver`.
+5) sum constraint terms and optional model losses into a **functional** and optimize with `FunctionalSolver`.
 
 Two design choices make this interoperable:
 

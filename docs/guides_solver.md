@@ -8,14 +8,16 @@ A `FunctionalSolver` is a lightweight orchestrator that holds:
 
 - `functions`: a mapping `{name: DomainFunction}` of the current fields,
 - `constraints`: a list/tuple of constraint objects, each producing a scalar loss,
+- model-level losses attached to models with `model.add_model_loss(...)` or a custom
+  model `__loss__` hook,
 - `eval_constraints`: optional constraints used only for diagnostics/logging,
 - optional `constraint_pipelines`: enforced-constraint pipelines that replace raw fields with ansatz
   functions satisfying selected conditions exactly.
 
-The total objective is the sum of constraint losses:
+The training objective is the sum of constraint losses plus any attached model losses:
 
 $$
-L = \sum_i \ell_i.
+L = \sum_i \ell_i + \sum_j r_j.
 $$
 
 `eval_constraints` are evaluated against the same current ansatz functions, but
@@ -31,8 +33,60 @@ When you call `solver.loss(key=...)`:
    *ansatz functions* via `solver.ansatz_functions()`.
 2) The provided PRNG key is split into one subkey per constraint.
 3) Each constraint loss is evaluated and summed.
+4) Model-level losses attached to the raw trainable models are evaluated and added.
 
 Additional keyword arguments are forwarded to each constraint's `.loss(...)` method.
+The `iter_` keyword, when present, is also forwarded to model losses.
+
+## Model losses
+
+Use model losses for parameter-space penalties that are not residuals over a domain,
+such as spectral penalties, norm targets, sparsity penalties, or architecture-specific
+regularization. These losses are evaluated once per distinct raw model in
+`solver.functions`; if two fields share the same model object, its model loss is not
+double-counted.
+
+For existing Phydrax models, attach a scalar penalty with `add_model_loss(...)`:
+
+```python
+import equinox as eqx
+import jax
+import jax.numpy as jnp
+import jax.random as jr
+import phydrax as phx
+
+model = phx.nn.MLP(
+    in_size=2,
+    out_size="scalar",
+    width_size=32,
+    depth=2,
+    key=jr.key(0),
+).add_model_loss(
+    lambda m: (jnp.linalg.norm(m.layers[0].weight) - 1.0) ** 2,
+    weight=1e-4,
+    label="unit_weight_norm",
+)
+```
+
+The penalty callable receives the wrapped model as its first argument and may accept
+keyword-only `key` and `iter_` arguments.
+
+Custom model classes can instead implement `__loss__`:
+
+```python
+class MyModel(eqx.Module):
+    weight: jax.Array
+
+    def __call__(self, x, *, key=None):
+        return self.weight @ x
+
+    def __loss__(self, *, key=None, iter_=None):
+        return 1e-4 * jnp.sum(self.weight**2)
+```
+
+During `solve(...)`, model losses contribute to gradients, optimizer state, and
+best-model selection. When `log_constraints=True`, text logs print them as
+`[model i] ...`, and TensorBoard writes them under `train/model_losses/...`.
 
 ## Enforced-constraint pipelines
 
@@ -93,7 +147,7 @@ scalar), so constraints can implement schedules (annealing, curriculum weights, 
 of those outputs.
 
 - `log_every`: console/file logging cadence. Use `0` to disable text progress logs.
-- `log_constraints`: include per-constraint losses in text logs and TensorBoard.
+- `log_constraints`: include per-constraint and per-model-loss terms in text logs and TensorBoard.
 - `log_path`: write text logs to a file instead of stdout.
 - `tensorboard_log_dir`: write TensorBoard event files.
 - `tensorboard_every`: TensorBoard scalar cadence. By default it follows `log_every`

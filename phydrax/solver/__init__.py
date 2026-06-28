@@ -5,8 +5,9 @@
 """
 # Solver
 
-Solvers assemble constraints and data into a loss and provide utilities for
-training or evaluation. The main entry point is `FunctionalSolver`.
+Solvers assemble constraints, data, and attached model losses into a loss and
+provide utilities for training or evaluation. The main entry point is
+`FunctionalSolver`.
 
 ## Enforced constraints
 

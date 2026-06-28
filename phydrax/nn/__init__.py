@@ -36,6 +36,7 @@ from .activations import (  # noqa: F401
     Stan,
 )
 from .models import (  # noqa: F401
+    add_model_loss,
     ComplexOutputModel,
     ConcatenatedModel,
     DeepONet,
@@ -50,6 +51,7 @@ from .models import (  # noqa: F401
     Linear,
     MagnitudeDirectionModel,
     MLP,
+    ModelWithLoss,
     RandomFourierFeatureEmbeddings,
     Separable,
     SeparableFeynmaNN,
@@ -78,6 +80,7 @@ __all__ = [
     "KAN",
     "Linear",
     "MLP",
+    "ModelWithLoss",
     "FeynmaNN",
     "DeepONet",
     "FNO1d",
@@ -87,4 +90,5 @@ __all__ = [
     "LatentContractionModel",
     "Separable",
     "SeparableFeynmaNN",
+    "add_model_loss",
 ]

@@ -9,5 +9,5 @@ For a conceptual overview (loss evaluation, enforced pipelines, training loop be
 !!! note
     Key notes:
 
-    - Use `FunctionalSolver` to sum constraint losses into $L=\sum_i \ell_i$.
+    - Use `FunctionalSolver` to sum constraint losses and attached model losses.
     - Use enforced constraint pipelines to enforce conditions by construction (no penalty term).
