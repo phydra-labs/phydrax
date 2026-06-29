@@ -114,13 +114,24 @@ def _label_measure(component: DomainComponent, label: str, /) -> Array:
             return jnp.asarray(factor.measure, dtype=float)
         raise TypeError(f"Unsupported dataset component {type(comp).__name__}.")
 
+    from ...domain.graph._dataset import GraphDatasetDomain
+    from ...domain.graph._domain import GraphDomain
+
+    if isinstance(factor, (GraphDomain, GraphDatasetDomain)):
+        return jnp.asarray(factor.component_measure(comp), dtype=float)
+
     raise TypeError(f"Unsupported unary domain type {type(factor).__name__}.")
 
 
-def _default_quadrature_total_weight(
-    component: DomainComponent, batch: PointsBatch, /
-) -> cx.Field:
+def _default_quadrature_total_weight(component: DomainComponent, batch: Any, /) -> cx.Field:
     from ...domain._trajectory_dataset import trajectory_default_quadrature_total_weight
+    from ...domain.graph._trajectory import (
+        graph_trajectory_default_quadrature_total_weight,
+    )
+
+    graph_custom = graph_trajectory_default_quadrature_total_weight(component, batch)
+    if graph_custom is not None:
+        return graph_custom
 
     custom = trajectory_default_quadrature_total_weight(component, batch)
     if custom is not None:
@@ -176,6 +187,11 @@ def build_quadrature(
     - A `QuadratureBatch` with per-axis weights compatible with `batch`.
     """
     from ...domain._trajectory_dataset import trajectory_quadrature_weights_by_axis
+    from ...domain.graph._trajectory import graph_trajectory_quadrature_weights_by_axis
+
+    graph_custom = graph_trajectory_quadrature_weights_by_axis(component, batch)
+    if graph_custom is not None:
+        return QuadratureBatch(batch, weights_by_axis=graph_custom)
 
     custom = trajectory_quadrature_weights_by_axis(component, batch)
     if custom is not None:
@@ -203,6 +219,12 @@ def build_quadrature(
             jnp.full((n,), block_measure / float(n), dtype=float), dims=(axis,)
         )
     return QuadratureBatch(batch, weights_by_axis=weights_by_axis)
+
+
+def _is_points_like_batch(batch: Any, /) -> bool:
+    from ...domain.graph._batch import GraphBatch
+
+    return isinstance(batch, (PointsBatch, GraphBatch))
 
 
 def _default_quadrature_total_weight_coord_separable(
@@ -406,9 +428,9 @@ def integral(
         raise TypeError(
             "For DomainComponent, batch must be a PointsBatch or CoordSeparableBatch."
         )
-    if not isinstance(batch, (PointsBatch, CoordSeparableBatch)):
+    if not (_is_points_like_batch(batch) or isinstance(batch, CoordSeparableBatch)):
         raise TypeError(
-            "For DomainComponent, batch must be a PointsBatch or CoordSeparableBatch."
+            "For DomainComponent, batch must be a PointsBatch, GraphBatch, or CoordSeparableBatch."
         )
     batch_single = batch
 
@@ -427,7 +449,7 @@ def integral(
     if not isinstance(y, cx.Field):
         raise TypeError("integrand must evaluate to a coordax.Field.")
 
-    if isinstance(batch_single, PointsBatch):
+    if _is_points_like_batch(batch_single):
         axes = _axes_for_over(batch_single.structure, over)
     else:
         if over is None:
@@ -472,7 +494,7 @@ def integral(
                 f"QuadratureBatch missing weights for axes {tuple(missing)!r}."
             )
     else:
-        if isinstance(batch_single, PointsBatch):
+        if _is_points_like_batch(batch_single):
             wq = _default_quadrature_total_weight(component, batch_single)
         else:
             wq = _default_quadrature_total_weight_coord_separable(component, batch_single)

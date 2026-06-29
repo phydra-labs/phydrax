@@ -34,6 +34,7 @@ from . import (
     delay,
     differential,
     functional,
+    graph,
     linalg,
 )
 
@@ -102,6 +103,22 @@ from .functional import (  # noqa: F401
     spatial_lp_norm,
     spatial_mean,
 )
+from .graph import (  # noqa: F401
+    degree as graph_degree,
+    graph_advection_diffusion_residual,
+    graph_conservation_residual,
+    graph_diffusion_residual,
+    graph_div,
+    graph_divergence,
+    graph_euler_residual,
+    graph_grad,
+    graph_gradient,
+    graph_heat_residual,
+    graph_incidence_laplacian,
+    graph_laplacian,
+    graph_poisson_residual,
+    neighbor_aggregate,
+)
 from .integral import (  # noqa: F401
     build_ball_quadrature,
     build_quadrature,
@@ -128,6 +145,7 @@ __all__ = [
     "delay",
     "differential",
     "functional",
+    "graph",
     "linalg",
     # delay exports
     "delay_operator",
@@ -202,6 +220,21 @@ __all__ = [
     "spatial_l2_norm",
     "spatial_lp_norm",
     "spatial_mean",
+    # graph exports
+    "graph_advection_diffusion_residual",
+    "graph_conservation_residual",
+    "graph_degree",
+    "graph_diffusion_residual",
+    "graph_div",
+    "graph_divergence",
+    "graph_euler_residual",
+    "graph_grad",
+    "graph_gradient",
+    "graph_heat_residual",
+    "graph_incidence_laplacian",
+    "graph_laplacian",
+    "graph_poisson_residual",
+    "neighbor_aggregate",
     # linalg exports
     "det",
     "einsum",

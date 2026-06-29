@@ -27,9 +27,15 @@ class BatchAwareCallable:
     def use_batch_call(self) -> bool:
         return True
 
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        raise TypeError(
+            "This callable requires structured batch evaluation via __call_batch__."
+        )
+
     def __call_batch__(
         self,
-        batch: PointsBatch | CoordSeparableBatch,
+        batch: PointsBatch | CoordSeparableBatch | Any,
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
@@ -629,12 +635,13 @@ class DomainFunction(StrictModule):
 
     def __call__(
         self,
-        points: PointsBatch | CoordSeparableBatch | Points,
+        points: PointsBatch | CoordSeparableBatch | Points | Any,
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.Field:
         from ._model_function import _ConcatenatedModelCallable
+        from .graph._batch import GraphBatch
 
         blockwise_eval = kwargs.pop("_blockwise_eval", False)
         blockwise_mode = "vmap"
@@ -757,7 +764,7 @@ class DomainFunction(StrictModule):
             out_dims = tuple(axis_order) + (None,) * (y.ndim - len(axis_order))
             return cx.Field(y, dims=out_dims), None
 
-        if isinstance(points, PointsBatch):
+        if isinstance(points, (PointsBatch, GraphBatch)):
             points_map = points.points
             structure = points.structure
             dense_structure = None
@@ -775,10 +782,10 @@ class DomainFunction(StrictModule):
 
         batch_func = batch_aware_callable(self.func)
         if batch_func is not None:
-            if not isinstance(points, (PointsBatch, CoordSeparableBatch)):
+            if not isinstance(points, (PointsBatch, CoordSeparableBatch, GraphBatch)):
                 raise TypeError(
                     "Batch-aware DomainFunction evaluation requires a PointsBatch "
-                    "or CoordSeparableBatch input."
+                    "CoordSeparableBatch, or GraphBatch input."
                 )
             out = batch_func.__call_batch__(points, key=key, **kwargs)
             if not isinstance(out, cx.Field):

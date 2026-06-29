@@ -12,8 +12,9 @@ see [Enforced constraint pipelines](../solver/enforced_constraints.md).
       boundary normals \(n(x)\) (via \(\partial/\partial n\)) and therefore do **not**
       support coord-separable (tuple-of-axes) evaluation. Phydrax raises a `ValueError`
       if you try to evaluate these ansätze on a `CoordSeparableBatch`.
-    - `enforce_dirichlet`, `enforce_initial`, and `enforce_blend` do not require boundary normals
-      and can be used in spectral/FNO-style interior grid evaluations.
+    - `enforce_dirichlet`, `enforce_initial`, `enforce_blend`, and `enforce_graph_values`
+      do not require boundary normals and can be used in spectral/FNO-style or graph-batch
+      evaluations.
 
 ::: phydrax.constraints.enforce_dirichlet
 
@@ -40,3 +41,7 @@ see [Enforced constraint pipelines](../solver/enforced_constraints.md).
 ---
 
 ::: phydrax.constraints.enforce_blend
+
+---
+
+::: phydrax.constraints.enforce_graph_values

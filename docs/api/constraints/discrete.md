@@ -83,6 +83,31 @@ rows. This is the recommended way to pair `SupervisedDatasetConstraint` with
 
 ::: phydrax.constraints.SupervisedDatasetBatch
 
+## Supervised graph constraints
+
+Use `GraphTarget` when fixed graph-family data should be consumed as a
+`DomainFunction` inside a physics residual. Use `GraphSupervisedConstraint` when
+the graph target is the supervised residual itself. Targets are supplied per graph
+case and are aligned to sampled node, edge, or global rows.
+
+`GraphTrajectorySignal` and `GraphTrajectorySupervisedConstraint` provide the
+same pattern for graph trajectories with values shaped by case, time, and graph
+entity.
+
+::: phydrax.constraints.GraphTarget
+
+---
+
+::: phydrax.constraints.GraphSupervisedConstraint
+
+---
+
+::: phydrax.constraints.GraphTrajectorySignal
+
+---
+
+::: phydrax.constraints.GraphTrajectorySupervisedConstraint
+
 ## Ragged trajectory constraints
 
 Use `RaggedTimeSeriesDataConstraint` when each dataset row has a vector-valued time
