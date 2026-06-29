@@ -41,6 +41,7 @@ from . import (
     geometry1d,
     geometry2d,
     geometry3d,
+    graph,
 )
 from ._components import (
     Boundary,
@@ -106,10 +107,30 @@ from .geometry3d import (  # noqa: F401
     Torus,
     Wedge,
 )
+from .graph import (
+    BoundaryEdges,
+    BoundaryNodes,
+    Edges,
+    EdgeSet,
+    EdgeType,
+    Globals,
+    GRAPH_ENTITY_OFFSET_KEY,
+    GRAPH_SAMPLE_INDEX_KEY,
+    GraphBatch,
+    GraphDatasetDomain,
+    GraphDomain,
+    GraphTrajectoryDatasetDomain,
+    InterfaceEdges,
+    InteriorNodes,
+    Nodes,
+    NodeSet,
+    NodeType,
+)
 
 
 __all__ = [
     # subpackages
+    "graph",
     "geometry1d",
     "geometry2d",
     "geometry3d",
@@ -122,6 +143,12 @@ __all__ = [
     "structured",
     "DatasetDomain",
     "TrajectoryDatasetDomain",
+    "GraphBatch",
+    "GraphDatasetDomain",
+    "GraphDomain",
+    "GraphTrajectoryDatasetDomain",
+    "GRAPH_ENTITY_OFFSET_KEY",
+    "GRAPH_SAMPLE_INDEX_KEY",
     "HyperRectangle",
     "ProductStructure",
     "PointsBatch",
@@ -146,6 +173,17 @@ __all__ = [
     "ComponentSpec",
     "DomainComponent",
     "DomainComponentUnion",
+    "BoundaryEdges",
+    "BoundaryNodes",
+    "EdgeSet",
+    "EdgeType",
+    "Nodes",
+    "Edges",
+    "Globals",
+    "InteriorNodes",
+    "InterfaceEdges",
+    "NodeSet",
+    "NodeType",
     # geometry1d exports
     "Interval1d",
     # geometry2d exports

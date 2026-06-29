@@ -1804,6 +1804,8 @@ class EnforcedConstraintPipeline(StrictModule):
                     and c.initial_target is not None
                 ):
                     initial_target_constraints.append(c)
+            else:
+                initial_constraints.append(c)
 
         boundary_overlays: list[_BoundaryBlendOverlay] = []
         if boundary_constraints:

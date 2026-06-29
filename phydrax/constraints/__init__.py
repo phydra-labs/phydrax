@@ -113,6 +113,14 @@ from ._functional_initial import (
     DiscreteInitialConstraint,
 )
 from ._functional_integral import IntegralEqualityConstraint
+from ._graph_data import (
+    GraphSupervisedConstraint,
+    GraphTarget,
+    GraphTargetInterpolation,
+    GraphTrajectorySignal,
+    GraphTrajectorySupervisedConstraint,
+)
+from ._graph_enforced import enforce_graph_values
 from ._integral import (
     AveragePressureBoundaryConstraint,
     CFDBoundaryFlowRateConstraint,
@@ -169,6 +177,12 @@ __all__ = [
     "TrajectorySignalInterpolation",
     "SupervisedDatasetBatch",
     "SupervisedDatasetConstraint",
+    "GraphSupervisedConstraint",
+    "GraphTarget",
+    "GraphTargetInterpolation",
+    "GraphTrajectorySignal",
+    "GraphTrajectorySupervisedConstraint",
+    "enforce_graph_values",
     "IntegralEqualityConstraint",
     "ContinuousPointwiseInteriorConstraint",
     "ContinuousInitialFunctionConstraint",

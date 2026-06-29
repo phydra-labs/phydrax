@@ -20,6 +20,7 @@ from .wrappers._equinox import (
     EquinoxModel,
     EquinoxStructuredModel,
 )
+from .wrappers._graph import GraphModel, GraphRolloutModel
 from .wrappers._magnitude_direction import (
     MagnitudeDirectionModel,
 )
@@ -35,6 +36,8 @@ __all__ = [
     "ComplexOutputModel",
     "EquinoxModel",
     "EquinoxStructuredModel",
+    "GraphModel",
+    "GraphRolloutModel",
     "RandomFourierFeatureEmbeddings",
     "KAN",
     "Linear",

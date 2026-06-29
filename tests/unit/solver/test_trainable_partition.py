@@ -9,6 +9,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 
+import phydrax as phx
 from phydrax._trainable import partition_trainable
 from phydrax.constraints import enforce_ragged_time_series, TrajectorySignal
 from phydrax.domain import DomainFunction, Interval1d, TrajectoryDatasetDomain
@@ -32,6 +33,34 @@ def _make_trajectory_problem():
     times = domain.start + domain.dt * jnp.arange(domain.max_length)
     values = inputs[:, 0, None] + times[None, :]
     return domain, inputs, values
+
+
+class _ScaledQueryTransfer(eqx.Module):
+    transfer: phx.graph.QueryGraphOperator
+    scale: jnp.ndarray
+
+    def __init__(self, transfer: phx.graph.QueryGraphOperator, scale):
+        self.transfer = transfer
+        self.scale = jnp.asarray(scale, dtype=float)
+
+    def __call__(self, graph):
+        out = self.transfer(graph)
+        nodes = dict(out.nodes)
+        nodes["out"] = nodes["out"] * self.scale
+        return out.replace(nodes=nodes, validate=False)
+
+
+class _ScaledNodeRate(eqx.Module):
+    scale: jnp.ndarray
+
+    def __init__(self, scale):
+        self.scale = jnp.asarray(scale, dtype=float)
+
+    def __call__(self, graph):
+        return graph.replace(
+            nodes=jnp.ones_like(graph.nodes) * self.scale,
+            validate=False,
+        )
 
 
 def test_trajectory_signal_construction_does_not_make_static_jax_arrays():
@@ -108,3 +137,57 @@ def test_hard_ragged_table_is_fixed_but_free_model_stays_trainable():
     assert param_shapes
     assert values.shape not in param_shapes
     assert values.shape in fixed_shapes
+
+
+def test_embedded_query_graph_state_is_fixed_but_graph_model_params_trainable():
+    source = phx.graph.GraphIR(
+        nodes={
+            "positions": jnp.array([[0.0], [1.0]]),
+            "features": jnp.array([[1.0], [3.0]]),
+        },
+        n_node=jnp.array([2], dtype=jnp.int32),
+        n_edge=jnp.array([0], dtype=jnp.int32),
+    )
+    query = phx.graph.radius_query_graph(
+        jnp.array([[0.0], [1.0]]),
+        jnp.array([[0.5]]),
+        radius=1.0,
+    )
+    transfer = phx.graph.QueryGraphOperator(
+        query,
+        source_key="features",
+        input_key="u",
+        output_key="out",
+    )
+    domain = phx.domain.GraphDomain(source)
+    model = _ScaledQueryTransfer(transfer, 2.0)
+    u = domain.GraphModel(model, output_key="out")
+
+    params, non_trainable = partition_trainable({"u": u})
+    trainable_leaves = _inexact_leaves(params)
+    fixed_shapes = tuple(leaf.shape for leaf in _array_leaves(non_trainable))
+
+    assert len(trainable_leaves) == 1
+    assert jnp.allclose(trainable_leaves[0], 2.0)
+    assert source.nodes["features"].shape in fixed_shapes
+    assert query.graph.edges["kernel_weight"].shape in fixed_shapes
+
+
+def test_graph_rollout_stepper_dt_is_fixed_but_vector_field_params_trainable():
+    graph = phx.graph.GraphIR(
+        nodes=jnp.array([[0.0], [1.0]]),
+        n_node=jnp.array([2], dtype=jnp.int32),
+        n_edge=jnp.array([0], dtype=jnp.int32),
+    )
+    domain = phx.domain.GraphDomain(graph)
+    stepper = phx.graph.EulerGraphStepper(_ScaledNodeRate(2.0), dt=0.25)
+    rollout = domain.GraphRolloutModel(stepper, steps=1)
+
+    params, non_trainable = partition_trainable({"rollout": rollout})
+    trainable_leaves = _inexact_leaves(params)
+    fixed_leaves = _array_leaves(non_trainable)
+
+    assert len(trainable_leaves) == 1
+    assert jnp.allclose(trainable_leaves[0], 2.0)
+    assert not any(bool(jnp.allclose(leaf, 0.25)) for leaf in trainable_leaves)
+    assert graph.nodes.shape in tuple(leaf.shape for leaf in fixed_leaves)

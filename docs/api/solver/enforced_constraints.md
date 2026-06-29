@@ -8,8 +8,9 @@ For the underlying ansatz constructors (`enforce_dirichlet`, `enforce_neumann`, 
 !!! note
     Key notes:
 
-    - An `EnforcedConstraintPipeline` stages overlays in the order boundary → initial → interior data.
+    - An `EnforcedConstraintPipeline` stages overlays in the order boundary → initial/generic overlays → interior data.
     - `EnforcedConstraintPipelines` topologically orders multi-field dependencies (`co_vars`).
+    - Graph value overlays built with `enforce_graph_values` are generic overlays and can be passed through `constraint_terms`.
     - For a detailed mathematical treatment of the PCI pipeline (including BVH-weighted boundary blending, boundary–initial gating, and the interior anchor/data stage), see [Appendix → Physics-Constrained Interpolation](../../appendix/physics_constrained_interpolation.md).
 
 ::: phydrax.solver.SingleFieldEnforcedConstraint
