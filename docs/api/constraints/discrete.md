@@ -125,10 +125,48 @@ constraint = phx.constraints.RaggedSeriesSupervisedConstraint(
 
 Pass `indices=...` for train/validation splits at the case level.
 
+For long series, avoid full padded rows during training by sampling fixed-width
+views:
+
+```python
+constraint = phx.constraints.RaggedSeriesSupervisedConstraint(
+    "u",
+    domain.component(),
+    targets,
+    num_cases=64,
+    series_sampling="points_uniform",
+    num_series_points=256,
+)
+```
+
+The default `series_sampling="full"` preserves the full-row behavior. Sampled
+modes return `(num_cases, num_series_points, ...)` series payloads and keep the
+same per-case targets. Use `window_uniform` when local order matters, and
+`points_uniform` for permutation-invariant pooling/statistical encoders.
+
+For full-sequence training on long, uneven records, prefer length buckets over
+global full rows:
+
+```python
+constraints = phx.constraints.RaggedSeriesSupervisedConstraint.bucketed(
+    "u",
+    domain.component(),
+    targets,
+    num_cases=64,
+    num_buckets=8,
+)
+solver = phx.solver.FunctionalSolver(functions={"u": u}, constraints=constraints)
+```
+
+The helper returns multiple ordinary constraints. Each bucket uses a fixed-width
+prefix view whose width is the bucket maximum length, so it still covers the
+complete series for every case in that bucket.
+
 ::: phydrax.constraints.RaggedSeriesSupervisedConstraint
     options:
         members:
             - __init__
+            - bucketed
             - sample
             - data_metrics
             - loss

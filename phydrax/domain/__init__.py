@@ -73,6 +73,7 @@ from ._product_domain import ProductDomain
 from ._ragged_series_dataset import (
     RAGGED_SERIES_INDEX_KEY,
     RaggedSeriesDatasetDomain,
+    RaggedSeriesSampling,
 )
 from ._scalar import ScalarInterval
 from ._structure import (
@@ -150,6 +151,7 @@ __all__ = [
     "IrregularTrajectoryDatasetDomain",
     "RAGGED_SERIES_INDEX_KEY",
     "RaggedSeriesDatasetDomain",
+    "RaggedSeriesSampling",
     "TrajectoryDatasetDomain",
     "GraphBatch",
     "GraphDatasetDomain",

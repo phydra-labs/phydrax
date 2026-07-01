@@ -164,6 +164,11 @@ one time channel when `include_time=True`, plus static channels when
 `include_static_in_steps=True`. The `readout_model` input size should match the
 pooled latent size plus static channels when `include_static_in_readout=True`.
 
+For sampled ragged-series training with `reduction="sum"`, set
+`scale_sampled_sum=True` to multiply pooled sampled sums by the payload
+`sample_scale`. This estimates a full-series sum from a fixed-width sampled view.
+Mean pooling does not need this correction.
+
 ::: phydrax.nn.RaggedSeriesBatchInput
 
 ---

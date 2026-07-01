@@ -31,6 +31,8 @@ class RaggedSeriesBatchInput(StrictModule):
     time: Array
     mask: Array
     length: Array
+    sample_index: Array | None
+    sample_scale: Array | None
 
     def __init__(
         self,
@@ -40,12 +42,20 @@ class RaggedSeriesBatchInput(StrictModule):
         time: Array,
         mask: Array,
         length: Array,
+        sample_index: Array | None = None,
+        sample_scale: Array | None = None,
     ):
         self.static = static
         self.series = series
         self.time = jnp.asarray(time, dtype=float)
         self.mask = jnp.asarray(mask, dtype=bool)
         self.length = jnp.asarray(length, dtype=jnp.int32)
+        self.sample_index = (
+            None if sample_index is None else jnp.asarray(sample_index, dtype=jnp.int32)
+        )
+        self.sample_scale = (
+            None if sample_scale is None else jnp.asarray(sample_scale, dtype=float)
+        )
 
 
 def _tree_to_feature_array(tree: Any, /, *, axis_rank: int, name: str) -> Array:
@@ -112,6 +122,22 @@ def _extract_payload(batch: PointsBatch, label: str, /) -> RaggedSeriesBatchInpu
         raise TypeError("Ragged series 'mask' payload must be a coordax.Field.")
     if not isinstance(length, cx.Field):
         raise TypeError("Ragged series 'length' payload must be a coordax.Field.")
+    sample_index = None
+    if "sample_index" in payload:
+        sample_index_field = payload["sample_index"]
+        if not isinstance(sample_index_field, cx.Field):
+            raise TypeError(
+                "Ragged series 'sample_index' payload must be a coordax.Field."
+            )
+        sample_index = sample_index_field.data
+    sample_scale = None
+    if "sample_scale" in payload:
+        sample_scale_field = payload["sample_scale"]
+        if not isinstance(sample_scale_field, cx.Field):
+            raise TypeError(
+                "Ragged series 'sample_scale' payload must be a coordax.Field."
+            )
+        sample_scale = sample_scale_field.data
 
     return RaggedSeriesBatchInput(
         static=static,
@@ -119,6 +145,8 @@ def _extract_payload(batch: PointsBatch, label: str, /) -> RaggedSeriesBatchInpu
         time=time.data,
         mask=mask.data,
         length=length.data,
+        sample_index=sample_index,
+        sample_scale=sample_scale,
     )
 
 
@@ -170,6 +198,7 @@ class MaskedSeriesPoolingModel(StrictModule):
     include_time: bool
     include_static_in_steps: bool
     include_static_in_readout: bool
+    scale_sampled_sum: bool
 
     def __init__(
         self,
@@ -180,6 +209,7 @@ class MaskedSeriesPoolingModel(StrictModule):
         include_time: bool = True,
         include_static_in_steps: bool = False,
         include_static_in_readout: bool = True,
+        scale_sampled_sum: bool = False,
     ):
         if reduction not in ("mean", "sum"):
             raise ValueError("reduction must be either 'mean' or 'sum'.")
@@ -189,6 +219,7 @@ class MaskedSeriesPoolingModel(StrictModule):
         self.include_time = bool(include_time)
         self.include_static_in_steps = bool(include_static_in_steps)
         self.include_static_in_readout = bool(include_static_in_readout)
+        self.scale_sampled_sum = bool(scale_sampled_sum)
 
     def __call__(
         self,
@@ -241,6 +272,9 @@ class MaskedSeriesPoolingModel(StrictModule):
         if self.reduction == "mean":
             denom = jnp.maximum(jnp.sum(mask_f, axis=1), jnp.asarray(1.0, dtype=pooled.dtype))
             pooled = pooled / denom
+        elif self.scale_sampled_sum and x.sample_scale is not None:
+            scale = jnp.asarray(x.sample_scale, dtype=pooled.dtype)
+            pooled = pooled * scale[:, None]
 
         readout_parts = [pooled]
         if self.include_static_in_readout:

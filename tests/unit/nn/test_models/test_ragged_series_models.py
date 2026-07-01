@@ -80,6 +80,45 @@ def test_masked_series_pooling_ignores_padded_tail_values():
     assert jnp.allclose(out_a, jnp.asarray([2.0, 7.0]))
 
 
+def test_masked_series_pooling_can_scale_sampled_sum():
+    payload = phx.nn.RaggedSeriesBatchInput(
+        static=None,
+        series=jnp.asarray([[[1.0], [3.0]]]),
+        time=jnp.asarray([[0.0, 1.0]]),
+        mask=jnp.asarray([[True, True]]),
+        length=jnp.asarray([4], dtype=jnp.int32),
+        sample_index=jnp.asarray([[0, 1]], dtype=jnp.int32),
+        sample_scale=jnp.asarray([2.0]),
+    )
+
+    def step_model(x, *, key=None):
+        del key
+        return x[..., :1]
+
+    def readout_model(x, *, key=None):
+        del key
+        return x[:, 0]
+
+    unscaled = phx.nn.MaskedSeriesPoolingModel(
+        step_model=step_model,
+        readout_model=readout_model,
+        reduction="sum",
+        include_time=False,
+        include_static_in_readout=False,
+    )
+    scaled = phx.nn.MaskedSeriesPoolingModel(
+        step_model=step_model,
+        readout_model=readout_model,
+        reduction="sum",
+        include_time=False,
+        include_static_in_readout=False,
+        scale_sampled_sum=True,
+    )
+
+    assert jnp.allclose(unscaled(payload), jnp.asarray([4.0]))
+    assert jnp.allclose(scaled(payload), jnp.asarray([8.0]))
+
+
 def test_masked_series_pooling_has_finite_parameter_gradients():
     domain = _domain()
     payload = phx.nn.RaggedSeriesBatchInput(

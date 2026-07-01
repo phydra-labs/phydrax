@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, Literal
 
 import coordax as cx
@@ -20,6 +21,13 @@ from ._structure import _validate_label, PointsBatch, ProductStructure
 
 RAGGED_SERIES_INDEX_KEY = "__phydrax_ragged_series_index__"
 RaggedSeriesMeasureMode = Literal["probability", "count"]
+RaggedSeriesSampling = Literal[
+    "full",
+    "points_uniform",
+    "window_uniform",
+    "prefix",
+    "suffix",
+]
 
 
 def _tree_leading_axis_size(tree: PyTree[ArrayLike], /, *, name: str) -> int:
@@ -126,6 +134,30 @@ def _as_scalar(name: str, value: ArrayLike, /) -> Array:
     return arr.reshape(())
 
 
+def _pack_padded_series(series: PyTree[Array], lengths: Array, /) -> PyTree[Array]:
+    length_list = list(map(int, lengths.tolist()))
+
+    def _pack_leaf(leaf: Array) -> Array:
+        arr = jnp.asarray(leaf)
+        parts = [arr[i, : length] for i, length in enumerate(length_list)]
+        return jnp.concatenate(parts, axis=0)
+
+    return jax.tree_util.tree_map(_pack_leaf, series)
+
+
+def _mask_series_tree(series: PyTree[Array], mask: Array, /) -> PyTree[Array]:
+    valid = jnp.asarray(mask, dtype=bool)
+
+    def _mask_leaf(leaf: Array) -> Array:
+        arr = jnp.asarray(leaf)
+        mask_arr = valid
+        while mask_arr.ndim < arr.ndim:
+            mask_arr = jnp.expand_dims(mask_arr, axis=-1)
+        return jnp.where(mask_arr, arr, jnp.zeros((), dtype=arr.dtype))
+
+    return jax.tree_util.tree_map(_mask_leaf, series)
+
+
 class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
     """A finite dataset domain for conditional variable-length input series.
 
@@ -136,7 +168,9 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
     """
 
     static: PyTree[Array] | None
-    series: PyTree[Array]
+    series: PyTree[Array] | None
+    series_packed: PyTree[Array]
+    offsets: Array
     lengths: Array
     start: Array
     dt: Array
@@ -171,6 +205,14 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
 
         self.static = static_arrays
         self.series = series_arrays
+        self.series_packed = _pack_padded_series(series_arrays, lengths_arr)
+        self.offsets = jnp.concatenate(
+            [
+                jnp.zeros((1,), dtype=jnp.int32),
+                jnp.cumsum(lengths_arr, dtype=jnp.int32),
+            ],
+            axis=0,
+        )
         self.lengths = lengths_arr
         self.start = start_arr
         self.dt = dt_arr
@@ -179,6 +221,103 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
         self._size = int(n)
         self._max_length = int(max_length)
         self._time_axis = start_arr + dt_arr * jnp.arange(max_length, dtype=float)
+
+    @classmethod
+    def from_padded(
+        cls,
+        series: PyTree[ArrayLike],
+        lengths: ArrayLike,
+        /,
+        *,
+        static: PyTree[ArrayLike] | None = None,
+        start: ArrayLike = 0.0,
+        dt: ArrayLike = 1.0,
+        label: str = "data",
+        measure: RaggedSeriesMeasureMode = "probability",
+    ) -> "RaggedSeriesDatasetDomain":
+        """Construct a ragged-series dataset from padded series arrays."""
+        return cls(
+            series,
+            lengths,
+            static=static,
+            start=start,
+            dt=dt,
+            label=label,
+            measure=measure,
+        )
+
+    @classmethod
+    def from_sequences(
+        cls,
+        series: Sequence[PyTree[ArrayLike]],
+        /,
+        *,
+        static: PyTree[ArrayLike] | None = None,
+        start: ArrayLike = 0.0,
+        dt: ArrayLike = 1.0,
+        label: str = "data",
+        measure: RaggedSeriesMeasureMode = "probability",
+    ) -> "RaggedSeriesDatasetDomain":
+        """Construct from one PyTree of valid series arrays per case.
+
+        This convenience constructor accepts records whose leaves have leading
+        shape `(Li, ...)` and pads once to the maximum valid length. The domain
+        also stores a packed valid representation used by sampled mini-batches.
+        """
+        if len(series) == 0:
+            raise ValueError("from_sequences requires at least one series record.")
+        treedef = jax.tree_util.tree_structure(series[0])
+        leaf_rows = [jax.tree_util.tree_leaves(record) for record in series]
+        lengths: list[int] = []
+        for record, leaves in zip(series, leaf_rows, strict=True):
+            if jax.tree_util.tree_structure(record) != treedef:
+                raise ValueError("All series records must share the same PyTree structure.")
+            if not leaves:
+                raise ValueError("Series records must contain at least one leaf.")
+            first = jnp.asarray(leaves[0])
+            if first.ndim == 0:
+                raise ValueError("Series record leaves must have a leading time axis.")
+            length = int(first.shape[0])
+            if length <= 0:
+                raise ValueError("Series record lengths must be positive.")
+            for leaf in leaves:
+                arr = jnp.asarray(leaf)
+                if arr.ndim == 0:
+                    raise ValueError(
+                        "Series record leaves must have a leading time axis."
+                    )
+                if int(arr.shape[0]) != length:
+                    raise ValueError(
+                        "All leaves in a series record must share the same length."
+                    )
+            lengths.append(length)
+
+        max_length = max(lengths)
+        per_leaf: list[list[Array]] = [[] for _ in leaf_rows[0]]
+        for leaves, length in zip(leaf_rows, lengths, strict=True):
+            pad = int(max_length) - int(length)
+            for i, leaf in enumerate(leaves):
+                arr = jnp.asarray(leaf)
+                if pad > 0:
+                    arr = jnp.concatenate(
+                        [
+                            arr,
+                            jnp.zeros((pad,) + arr.shape[1:], dtype=arr.dtype),
+                        ],
+                        axis=0,
+                    )
+                per_leaf[i].append(arr)
+        padded_leaves = [jnp.stack(parts, axis=0) for parts in per_leaf]
+        padded = jax.tree_util.tree_unflatten(treedef, padded_leaves)
+        return cls(
+            padded,
+            jnp.asarray(lengths, dtype=jnp.int32),
+            static=static,
+            start=start,
+            dt=dt,
+            label=label,
+            measure=measure,
+        )
 
     @property
     def label(self) -> str:
@@ -209,6 +348,10 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
     @property
     def time_axis(self) -> Array:
         return self._time_axis
+
+    @property
+    def total_observations(self) -> int:
+        return int(self.offsets[-1])
 
     def sample(
         self,
@@ -244,13 +387,104 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
     def input_rows(self, indices: ArrayLike, /) -> dict[str, Any]:
         idx = jnp.asarray(indices, dtype=jnp.int32)
         lengths = self.lengths[idx]
-        time = jnp.broadcast_to(self._time_axis, (int(idx.shape[0]), self.max_length))
-        mask = jnp.arange(self.max_length, dtype=jnp.int32)[None, :] < lengths[:, None]
+        positions = jnp.broadcast_to(
+            jnp.arange(self.max_length, dtype=jnp.int32),
+            (int(idx.shape[0]), self.max_length),
+        )
+        mask = positions < lengths[:, None]
+        return self._rows_from_positions(idx, positions, mask)
+
+    def sampled_input_rows(
+        self,
+        indices: ArrayLike,
+        /,
+        *,
+        num_series_points: int,
+        sampling: RaggedSeriesSampling,
+        key: Key[Array, ""] = DOC_KEY0,
+    ) -> dict[str, Any]:
+        """Return fixed-width sampled series views for selected cases."""
+        idx = jnp.asarray(indices, dtype=jnp.int32).reshape((-1,))
+        k = int(num_series_points)
+        if k <= 0:
+            raise ValueError("num_series_points must be positive.")
+        sampling_str = str(sampling)
+        if sampling_str not in (
+            "points_uniform",
+            "window_uniform",
+            "prefix",
+            "suffix",
+        ):
+            raise ValueError(
+                "sampled_input_rows sampling must be 'points_uniform', "
+                "'window_uniform', 'prefix', or 'suffix'."
+            )
+
+        lengths = self.lengths[idx]
+        arange_k = jnp.arange(k, dtype=jnp.int32)
+        arange_grid = jnp.broadcast_to(arange_k[None, :], (int(idx.shape[0]), k))
+
+        if sampling_str == "points_uniform":
+            u = jr.uniform(key, shape=(int(idx.shape[0]), k))
+            random_pos = jnp.floor(u * lengths[:, None].astype(float)).astype(jnp.int32)
+            positions = jnp.where(lengths[:, None] >= k, random_pos, arange_grid)
+            mask = jnp.where(
+                lengths[:, None] >= k,
+                jnp.ones((int(idx.shape[0]), k), dtype=bool),
+                arange_grid < lengths[:, None],
+            )
+        elif sampling_str == "window_uniform":
+            max_start = jnp.maximum(lengths - k, 0)
+            u = jr.uniform(key, shape=(int(idx.shape[0]),))
+            start = jnp.floor(u * (max_start.astype(float) + 1.0)).astype(jnp.int32)
+            positions = start[:, None] + arange_grid
+            mask = positions < lengths[:, None]
+        elif sampling_str == "prefix":
+            positions = arange_grid
+            mask = positions < lengths[:, None]
+        else:
+            start = jnp.maximum(lengths - k, 0)
+            positions = start[:, None] + arange_grid
+            mask = positions < lengths[:, None]
+
+        positions = jnp.minimum(positions, lengths[:, None] - 1)
+        return self._rows_from_positions(idx, positions, mask)
+
+    def _rows_from_positions(
+        self,
+        indices: Array,
+        positions: Array,
+        mask: Array,
+        /,
+    ) -> dict[str, Any]:
+        idx = jnp.asarray(indices, dtype=jnp.int32).reshape((-1,))
+        pos = jnp.asarray(positions, dtype=jnp.int32)
+        valid = jnp.asarray(mask, dtype=bool)
+        if pos.ndim != 2:
+            raise ValueError("series positions must have shape (B, K).")
+        if valid.shape != pos.shape:
+            raise ValueError("series mask must match sampled positions shape.")
+        if int(pos.shape[0]) != int(idx.shape[0]):
+            raise ValueError("series positions leading axis must match indices.")
+
+        lengths = self.lengths[idx]
+        source_pos = jnp.minimum(pos, lengths[:, None] - 1)
+        flat = self.offsets[idx][:, None] + source_pos
+        series_rows = jax.tree_util.tree_map(
+            lambda a: jnp.asarray(a)[flat],
+            self.series_packed,
+        )
+        valid_counts = jnp.maximum(
+            jnp.sum(valid.astype(jnp.int32), axis=1),
+            jnp.ones((int(idx.shape[0]),), dtype=jnp.int32),
+        )
         rows: dict[str, Any] = {
-            "series": jax.tree_util.tree_map(lambda a: jnp.asarray(a)[idx], self.series),
-            "time": time,
-            "mask": mask,
+            "series": _mask_series_tree(series_rows, valid),
+            "time": self.start + self.dt * pos.astype(float),
+            "mask": valid,
             "length": lengths,
+            "sample_index": source_pos,
+            "sample_scale": lengths.astype(float) / valid_counts.astype(float),
         }
         if self.static is not None:
             rows["static"] = jax.tree_util.tree_map(
@@ -292,6 +526,47 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
         }
         return PointsBatch(points=frozendict(points), structure=structure_out)
 
+    def sampled_points_from_indices(
+        self,
+        indices: ArrayLike,
+        /,
+        *,
+        num_series_points: int,
+        sampling: RaggedSeriesSampling = "points_uniform",
+        structure: ProductStructure | None = None,
+        key: Key[Array, ""] = DOC_KEY0,
+    ) -> PointsBatch:
+        """Materialize fixed-width sampled series rows for selected cases."""
+        structure_in = structure or ProductStructure(((self.label,),))
+        structure_out = structure_in.canonicalize(self.labels)
+        axis = structure_out.axis_for(self.label)
+        if axis is None:
+            raise ValueError(
+                f"RaggedSeriesDatasetDomain points require a sampling axis for "
+                f"label {self.label!r}."
+            )
+        idx = jnp.asarray(indices, dtype=jnp.int32).reshape((-1,))
+        rows = self.sampled_input_rows(
+            idx,
+            num_series_points=num_series_points,
+            sampling=sampling,
+            key=key,
+        )
+
+        def _to_field(value: ArrayLike):
+            arr = jnp.asarray(value)
+            if arr.ndim == 0:
+                raise ValueError(
+                    "Ragged series indexed rows must retain a leading sample axis."
+                )
+            return cx.Field(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
+
+        points = {
+            self.label: jax.tree_util.tree_map(_to_field, rows),
+            RAGGED_SERIES_INDEX_KEY: cx.Field(idx, dims=(axis,)),
+        }
+        return PointsBatch(points=frozendict(points), structure=structure_out)
+
     def equivalent(self, other: object, /) -> bool:
         if not isinstance(other, RaggedSeriesDatasetDomain):
             return False
@@ -317,6 +592,10 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
             other.series
         ):
             return False
+        if jax.tree_util.tree_structure(
+            self.series_packed
+        ) != jax.tree_util.tree_structure(other.series_packed):
+            return False
 
         for a, b in zip(
             jax.tree_util.tree_leaves(self.static),
@@ -331,8 +610,8 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
                 return False
 
         for a, b in zip(
-            jax.tree_util.tree_leaves(self.series),
-            jax.tree_util.tree_leaves(other.series),
+            jax.tree_util.tree_leaves(self.series_packed),
+            jax.tree_util.tree_leaves(other.series_packed),
             strict=True,
         ):
             arr_a = jnp.asarray(a)
@@ -349,4 +628,5 @@ __all__ = [
     "RAGGED_SERIES_INDEX_KEY",
     "RaggedSeriesDatasetDomain",
     "RaggedSeriesMeasureMode",
+    "RaggedSeriesSampling",
 ]
