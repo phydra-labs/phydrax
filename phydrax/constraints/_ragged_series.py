@@ -203,13 +203,22 @@ class RaggedSeriesSupervisedConstraint(AbstractSamplingConstraint):
         Each returned constraint samples only from one length bucket and uses
         `series_sampling="prefix"` with `num_series_points` equal to that bucket's
         maximum valid length. This covers full sequences within the bucket while
-        avoiding global max-length materialization during training.
+        avoiding global max-length materialization during training. The requested
+        `num_cases` is split across buckets by bucket population, and each bucket
+        loss is weighted by its population fraction, matching the case-average
+        objective of one full padded constraint.
         """
         if not isinstance(component.domain, RaggedSeriesDatasetDomain):
             raise TypeError(
                 "RaggedSeriesSupervisedConstraint.bucketed requires a "
                 "RaggedSeriesDatasetDomain component."
             )
+        n = int(num_cases)
+        if n <= 0:
+            raise ValueError("num_cases must be positive.")
+        reduction_str = str(reduction)
+        if reduction_str not in ("mean", "sum"):
+            raise ValueError("reduction must be either 'mean' or 'sum'.")
         domain = component.domain
         selected = validate_case_indices(
             indices,
@@ -226,7 +235,7 @@ class RaggedSeriesSupervisedConstraint(AbstractSamplingConstraint):
             bucket_groups = _balanced_length_bucket_groups(
                 case_indices,
                 lengths,
-                num_buckets=num_buckets,
+                num_buckets=min(int(num_buckets), n),
             )
         else:
             bucket_groups = _edge_length_bucket_groups(
@@ -234,21 +243,40 @@ class RaggedSeriesSupervisedConstraint(AbstractSamplingConstraint):
                 lengths,
                 length_bucket_edges=length_bucket_edges,
             )
+            if len(bucket_groups) > n:
+                raise ValueError(
+                    "num_cases must be at least the number of non-empty length "
+                    "buckets."
+                )
 
         total = float(case_indices.shape[0])
+        bucket_sizes = np.asarray(
+            [bucket_indices.shape[0] for bucket_indices, _width in bucket_groups],
+            dtype=np.int32,
+        )
+        bucket_case_counts = _bucket_case_counts(
+            num_cases=n,
+            bucket_sizes=bucket_sizes,
+        )
         constraints: list[RaggedSeriesSupervisedConstraint] = []
-        for bucket_id, (bucket_indices, bucket_width) in enumerate(bucket_groups, start=1):
+        for bucket_id, ((bucket_indices, bucket_width), bucket_num_cases) in enumerate(
+            zip(bucket_groups, bucket_case_counts, strict=True),
+            start=1,
+        ):
             if label is None:
                 bucket_label = None
             else:
                 bucket_label = f"{label}_bucket_{bucket_id}"
-            bucket_weight = _bucket_weight(weight, bucket_indices.shape[0] / total)
+            bucket_fraction = bucket_indices.shape[0] / total
+            if reduction_str == "sum":
+                bucket_fraction *= n / int(bucket_num_cases)
+            bucket_weight = _bucket_weight(weight, bucket_fraction)
             constraints.append(
                 cls(
                     constraint_var,
                     component,
                     values,
-                    num_cases=num_cases,
+                    num_cases=int(bucket_num_cases),
                     structure=structure,
                     sampler=sampler,
                     weight=bucket_weight,
@@ -390,6 +418,44 @@ def _balanced_length_bucket_groups(
         bucket_width = int(np.max(lengths[order_group]))
         groups.append((bucket_indices, bucket_width))
     return tuple(groups)
+
+
+def _bucket_case_counts(
+    *,
+    num_cases: int,
+    bucket_sizes: np.ndarray,
+) -> np.ndarray:
+    n = int(num_cases)
+    sizes = np.asarray(bucket_sizes, dtype=np.int32)
+    if sizes.ndim != 1:
+        raise ValueError("bucket_sizes must have shape (B,).")
+    if int(sizes.shape[0]) <= 0:
+        raise ValueError("bucket_sizes must be non-empty.")
+    if np.any(sizes <= 0):
+        raise ValueError("bucket_sizes must be positive.")
+    if n < int(sizes.shape[0]):
+        raise ValueError(
+            "num_cases must be at least the number of non-empty length buckets."
+        )
+
+    probabilities = sizes.astype(float) / float(np.sum(sizes))
+    raw = probabilities * float(n)
+    counts = np.floor(raw).astype(np.int32)
+    counts = np.maximum(counts, np.ones_like(counts))
+
+    while int(np.sum(counts)) > n:
+        candidates = np.flatnonzero(counts > 1)
+        candidate = int(candidates[np.argmin(raw[candidates])])
+        counts[candidate] -= 1
+
+    remaining = n - int(np.sum(counts))
+    if remaining > 0:
+        fractional = raw - np.floor(raw)
+        order = np.argsort(-fractional, kind="stable")
+        for i in range(remaining):
+            counts[int(order[i % int(order.shape[0])])] += 1
+
+    return counts
 
 
 def _edge_length_bucket_groups(

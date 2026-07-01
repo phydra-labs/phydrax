@@ -160,7 +160,10 @@ solver = phx.solver.FunctionalSolver(functions={"u": u}, constraints=constraints
 
 The helper returns multiple ordinary constraints. Each bucket uses a fixed-width
 prefix view whose width is the bucket maximum length, so it still covers the
-complete series for every case in that bucket.
+complete series for every case in that bucket. Bucketing is only an efficiency
+device: `num_cases` is distributed across buckets by bucket population, and
+bucket losses are scaled so the combined estimator matches one full padded
+constraint with the same reduction.
 
 ::: phydrax.constraints.RaggedSeriesSupervisedConstraint
     options:

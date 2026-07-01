@@ -101,7 +101,9 @@ constraints = phx.constraints.RaggedSeriesSupervisedConstraint.bucketed(
 This returns one constraint per non-empty length bucket. Each bucket samples from
 its own case subset and materializes a prefix view whose width is that bucket's
 maximum valid length, so every case in the bucket is covered without padding to
-the global maximum length.
+the global maximum length. The requested `num_cases` is split across buckets by
+case count, and bucket losses are scaled so the combined estimator matches one
+full padded constraint with the same reduction while avoiding global padding.
 
 ::: phydrax.domain.RaggedSeriesDatasetDomain
     options:
