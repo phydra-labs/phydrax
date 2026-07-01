@@ -25,6 +25,11 @@ from .wrappers._graph import GraphModel, GraphRolloutModel
 from .wrappers._magnitude_direction import (
     MagnitudeDirectionModel,
 )
+from .wrappers._ragged_series import (
+    MaskedSeriesPoolingModel,
+    RaggedSeriesBatchInput,
+    RaggedSeriesModel,
+)
 from .wrappers._separable_wrappers import (
     LatentContractionModel,
     LatentExecutionPolicy,
@@ -46,6 +51,9 @@ __all__ = [
     "ModelWithLoss",
     "ConcatenatedModel",
     "MagnitudeDirectionModel",
+    "MaskedSeriesPoolingModel",
+    "RaggedSeriesBatchInput",
+    "RaggedSeriesModel",
     "DeepONet",
     "SeparableMLP",
     "SeparableKAN",

@@ -70,6 +70,10 @@ from ._hyperrectangle import HyperRectangle
 from ._irregular_trajectory_dataset import IrregularTrajectoryDatasetDomain
 from ._model_function import structured
 from ._product_domain import ProductDomain
+from ._ragged_series_dataset import (
+    RAGGED_SERIES_INDEX_KEY,
+    RaggedSeriesDatasetDomain,
+)
 from ._scalar import ScalarInterval
 from ._structure import (
     CoordSeparableBatch,
@@ -144,6 +148,8 @@ __all__ = [
     "structured",
     "DatasetDomain",
     "IrregularTrajectoryDatasetDomain",
+    "RAGGED_SERIES_INDEX_KEY",
+    "RaggedSeriesDatasetDomain",
     "TrajectoryDatasetDomain",
     "GraphBatch",
     "GraphDatasetDomain",

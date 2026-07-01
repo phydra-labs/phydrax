@@ -116,6 +116,7 @@ nav:
             - HyperRectangle: "api/domain/hyperrectangle.md"
             - Graph: "api/domain/graph.md"
             - Trajectory dataset: "api/domain/trajectory_dataset.md"
+            - Ragged series dataset: "api/domain/ragged_series_dataset.md"
             - Composition: "api/domain/composition.md"
             - Sampling: "api/domain/sampling.md"
             - Components: "api/domain/components.md"

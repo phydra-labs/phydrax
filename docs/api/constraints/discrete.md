@@ -11,7 +11,9 @@ Data-fit constraints created by `DiscreteInteriorDataConstraint`,
 supervised-data diagnostics used by `FunctionalSolver.solve(...)` logging.
 `RaggedTimeSeriesDataConstraint` provides the same diagnostics for
 trajectory-valued targets, and `TrajectoryCaseDataConstraint` provides them for
-per-row scalar/vector targets on a `TrajectoryDatasetDomain`:
+per-row scalar/vector targets on a `TrajectoryDatasetDomain`.
+`RaggedSeriesSupervisedConstraint` provides the same row-aligned diagnostics for
+`RaggedSeriesDatasetDomain` inputs:
 
 - `data_accuracy`
 - `data_relative_l2_error`
@@ -82,6 +84,58 @@ rows. This is the recommended way to pair `SupervisedDatasetConstraint` with
 ---
 
 ::: phydrax.constraints.SupervisedDatasetBatch
+
+## Supervised ragged series constraints
+
+Use `RaggedSeriesSupervisedConstraint` when the input row contains padded
+variable-length series plus a mask and the target is aligned by case. This is the
+right shape for conditional mappings such as `(static, four sensor traces) -> two
+summary scalars`.
+
+```python
+import jax.numpy as jnp
+import phydrax as phx
+
+static = jnp.asarray([[1.0, 0.0], [2.0, 1.0]])
+series = jnp.asarray(
+    [
+        [[1.0, 2.0], [3.0, 4.0], [0.0, 0.0]],
+        [[5.0, 6.0], [7.0, 8.0], [9.0, 10.0]],
+    ]
+)
+lengths = jnp.asarray([2, 3])
+targets = jnp.asarray([[4.0, -4.0], [21.0, -21.0]])
+
+domain = phx.domain.RaggedSeriesDatasetDomain(series, lengths, static=static)
+
+def encoder(payload, *, key=None):
+    del key
+    valid = payload.mask.astype(float)
+    total = jnp.sum(payload.series[..., 0] * valid, axis=1)
+    return jnp.stack((total, -total), axis=-1)
+
+u = domain.Function("data")(phx.nn.RaggedSeriesModel(encoder))
+constraint = phx.constraints.RaggedSeriesSupervisedConstraint(
+    "u",
+    domain.component(),
+    targets,
+    num_cases=16,
+)
+```
+
+Pass `indices=...` for train/validation splits at the case level.
+
+::: phydrax.constraints.RaggedSeriesSupervisedConstraint
+    options:
+        members:
+            - __init__
+            - sample
+            - data_metrics
+            - loss
+
+---
+
+::: phydrax.constraints.RaggedSeriesSupervisedBatch
 
 ## Supervised graph constraints
 

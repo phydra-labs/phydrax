@@ -25,6 +25,7 @@ from ._grid import (
     GridSpec,
     sdf_mask_from_adf,
 )
+from ._ragged_series_dataset import RaggedSeriesDatasetDomain
 from ._scalar import _AbstractScalarDomain
 from ._structure import (
     _axis_name_for_coord,
@@ -370,7 +371,7 @@ class DomainComponent(StrictModule):
                         f"Unsupported scalar component {type(comp).__name__}."
                     )
 
-            elif isinstance(factor, DatasetDomain):
+            elif isinstance(factor, (DatasetDomain, RaggedSeriesDatasetDomain)):
                 if isinstance(comp, Interior):
                     mi = factor.measure
                 else:
@@ -535,14 +536,14 @@ class DomainComponent(StrictModule):
                 points[lbl] = _as_field(arr, dims=(axis,))
                 continue
 
-            if isinstance(factor, DatasetDomain):
+            if isinstance(factor, (DatasetDomain, RaggedSeriesDatasetDomain)):
                 samples = factor.sample(n, sampler=sampler, key=k)
 
                 def _to_field(v):
                     arr = jnp.asarray(v)
                     if arr.ndim == 0:
                         raise ValueError(
-                            "DatasetDomain samples must have a leading sample axis."
+                            "Dataset samples must have a leading sample axis."
                         )
                     return _as_field(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
 
@@ -696,7 +697,7 @@ class DomainComponent(StrictModule):
                 points[lbl] = _as_field(arr, dims=(axis,))
                 continue
 
-            if isinstance(factor, DatasetDomain):
+            if isinstance(factor, (DatasetDomain, RaggedSeriesDatasetDomain)):
                 k = jr.fold_in(keys_for_blocks[bi], label_to_idx[lbl])
                 samples = factor.sample(n, sampler=sampler, key=k)
 
@@ -704,7 +705,7 @@ class DomainComponent(StrictModule):
                     arr = jnp.asarray(v)
                     if arr.ndim == 0:
                         raise ValueError(
-                            "DatasetDomain samples must have a leading sample axis."
+                            "Dataset samples must have a leading sample axis."
                         )
                     return _as_field(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
 
@@ -1027,7 +1028,7 @@ class DomainComponent(StrictModule):
                 points[lbl] = _as_field(arr, dims=(axis,))
                 continue
 
-            if isinstance(factor, DatasetDomain):
+            if isinstance(factor, (DatasetDomain, RaggedSeriesDatasetDomain)):
                 k = jr.fold_in(dense_keys_for_blocks[bi], label_to_idx[lbl])
                 samples = factor.sample(n, sampler=sampler, key=k)
 
@@ -1035,7 +1036,7 @@ class DomainComponent(StrictModule):
                     arr = jnp.asarray(v)
                     if arr.ndim == 0:
                         raise ValueError(
-                            "DatasetDomain samples must have a leading sample axis."
+                            "Dataset samples must have a leading sample axis."
                         )
                     return _as_field(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
 

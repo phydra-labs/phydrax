@@ -6,6 +6,7 @@ Composable model transforms that add structure or change output interpretation.
     Key notes:
 
     - `EquinoxModel` / `EquinoxStructuredModel` adapt arbitrary Equinox/JAX callables into Phydrax models by attaching `in_size` / `out_size`.
+    - `RaggedSeriesModel` adapts encoders for `RaggedSeriesDatasetDomain` payloads.
     - `ComplexOutputModel` packs/unpacks real/imag parts into complex outputs.
     - `Sequential` chains models so outputs of stage `i` feed stage `i+1`.
 
@@ -114,6 +115,68 @@ assert y.shape == (4,)
 ---
 
 ::: phydrax.nn.EquinoxStructuredModel
+    options:
+        members:
+            - __init__
+            - __call__
+
+---
+
+## Ragged series adapters
+
+Use `RaggedSeriesModel` to wrap a callable that consumes
+`RaggedSeriesBatchInput`. The wrapper extracts the sampled case payload from a
+`RaggedSeriesDatasetDomain` batch and returns a `coordax.Field` with the case
+axis preserved.
+
+`MaskedSeriesPoolingModel` is a small baseline encoder. It applies a per-step
+model to each valid timestep, masks padded entries, pools over time, then applies
+a readout model.
+
+```python
+import jax.random as jr
+import phydrax as phx
+
+key_step, key_readout = jr.split(jr.key(0))
+
+encoder = phx.nn.MaskedSeriesPoolingModel(
+    step_model=phx.nn.MLP(
+        in_size=5,
+        out_size=16,
+        width_size=32,
+        depth=2,
+        key=key_step,
+    ),
+    readout_model=phx.nn.MLP(
+        in_size=18,
+        out_size=2,
+        width_size=32,
+        depth=2,
+        key=key_readout,
+    ),
+)
+
+u = domain.Function("data")(phx.nn.RaggedSeriesModel(encoder))
+```
+
+The `step_model` input size should match the flattened series channel count plus
+one time channel when `include_time=True`, plus static channels when
+`include_static_in_steps=True`. The `readout_model` input size should match the
+pooled latent size plus static channels when `include_static_in_readout=True`.
+
+::: phydrax.nn.RaggedSeriesBatchInput
+
+---
+
+::: phydrax.nn.RaggedSeriesModel
+    options:
+        members:
+            - __init__
+            - __call_batch__
+
+---
+
+::: phydrax.nn.MaskedSeriesPoolingModel
     options:
         members:
             - __init__

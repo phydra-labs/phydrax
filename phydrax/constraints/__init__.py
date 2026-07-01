@@ -144,6 +144,10 @@ from ._ragged_time_series import (
     RaggedTimeSeriesBatch,
     RaggedTimeSeriesDataConstraint,
 )
+from ._ragged_series import (
+    RaggedSeriesSupervisedBatch,
+    RaggedSeriesSupervisedConstraint,
+)
 from ._ragged_time_series_enforced import (
     enforce_ragged_time_series,
     RaggedTimeSeriesHardGate,
@@ -167,6 +171,8 @@ __all__ = [
     "PointSetConstraint",
     "RaggedTimeSeriesBatch",
     "RaggedTimeSeriesDataConstraint",
+    "RaggedSeriesSupervisedBatch",
+    "RaggedSeriesSupervisedConstraint",
     "RaggedTimeSeriesHardGate",
     "RaggedTimeSeriesHardInterpolation",
     "enforce_ragged_time_series",

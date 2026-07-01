@@ -15,3 +15,7 @@ structure.
 Use `TrajectoryDatasetDomain` when each dataset row has a vector-valued trajectory
 with a shared `dt` but row-specific length. It keeps `data` and `t` paired so
 physics residuals at `t` only sample valid times for the selected dataset row.
+
+Use `RaggedSeriesDatasetDomain` when the ragged time series is an input attached
+to an empirical row and the target is supervised once per row, such as
+`(static, variable-length sensor series) -> summary parameters`.
