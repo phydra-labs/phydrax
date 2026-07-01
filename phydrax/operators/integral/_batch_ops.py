@@ -124,6 +124,9 @@ def _label_measure(component: DomainComponent, label: str, /) -> Array:
 
 
 def _default_quadrature_total_weight(component: DomainComponent, batch: Any, /) -> cx.Field:
+    from ...domain._irregular_trajectory_dataset import (
+        irregular_trajectory_default_quadrature_total_weight,
+    )
     from ...domain._trajectory_dataset import trajectory_default_quadrature_total_weight
     from ...domain.graph._trajectory import (
         graph_trajectory_default_quadrature_total_weight,
@@ -136,6 +139,12 @@ def _default_quadrature_total_weight(component: DomainComponent, batch: Any, /) 
     custom = trajectory_default_quadrature_total_weight(component, batch)
     if custom is not None:
         return custom
+
+    irregular_custom = irregular_trajectory_default_quadrature_total_weight(
+        component, batch
+    )
+    if irregular_custom is not None:
+        return irregular_custom
 
     if batch.structure.axis_names is None:
         raise ValueError("PointsBatch.structure must be canonicalized (axis_names set).")
@@ -186,6 +195,9 @@ def build_quadrature(
 
     - A `QuadratureBatch` with per-axis weights compatible with `batch`.
     """
+    from ...domain._irregular_trajectory_dataset import (
+        irregular_trajectory_quadrature_weights_by_axis,
+    )
     from ...domain._trajectory_dataset import trajectory_quadrature_weights_by_axis
     from ...domain.graph._trajectory import graph_trajectory_quadrature_weights_by_axis
 
@@ -196,6 +208,10 @@ def build_quadrature(
     custom = trajectory_quadrature_weights_by_axis(component, batch)
     if custom is not None:
         return QuadratureBatch(batch, weights_by_axis=custom)
+
+    irregular_custom = irregular_trajectory_quadrature_weights_by_axis(component, batch)
+    if irregular_custom is not None:
+        return QuadratureBatch(batch, weights_by_axis=irregular_custom)
 
     if batch.structure.axis_names is None:
         raise ValueError("PointsBatch.structure must be canonicalized (axis_names set).")

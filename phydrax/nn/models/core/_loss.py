@@ -138,6 +138,25 @@ class ModelWithLoss(StrictModule):
     def supports_blockwise_input(self) -> bool:
         return _supports_blockwise_input(self.model)
 
+    def supports_axis_batch_input(self) -> bool:
+        return _supports_axis_batch_input(self.model)
+
+    def __call_axis_batch__(
+        self,
+        batch: Any,
+        deps: tuple[str, ...],
+        /,
+        *,
+        key: EvalKey = DOC_KEY0,
+        iter_: Array | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        if isinstance(self.model, _AbstractBaseModel):
+            return self.model.__call_axis_batch__(
+                batch, deps, key=key, iter_=iter_, **kwargs
+            )
+        raise TypeError("Wrapped model does not support axis-batch execution.")
+
     def warn_on_auto_fallback(self) -> bool:
         method = getattr(self.model, "warn_on_auto_fallback", None)
         if callable(method):
@@ -181,6 +200,14 @@ def _supports_blockwise_input(model: Any, /) -> bool:
     return bool(getattr(model, "_supports_blockwise_input", False))
 
 
+def _supports_axis_batch_input(model: Any, /) -> bool:
+    if isinstance(model, ModelWithLoss):
+        return model.supports_axis_batch_input()
+    if isinstance(model, _AbstractBaseModel):
+        return model.supports_axis_batch_input()
+    return False
+
+
 def _domain_input_mode(model: Any, /) -> DomainInputMode:
     method = getattr(model, "domain_input_mode", None)
     if callable(method):
@@ -195,13 +222,14 @@ def _domain_input_mode(model: Any, /) -> DomainInputMode:
 def model_domain_metadata(
     model: Any,
     /,
-) -> tuple[DomainInputMode, bool, bool, bool] | None:
+) -> tuple[DomainInputMode, bool, bool, bool, bool] | None:
     """Return domain-call metadata for Phydrax model-like objects."""
     if isinstance(model, (_AbstractBaseModel, ModelWithLoss)):
         return (
             _domain_input_mode(model),
             _supports_structured_input(model),
             _supports_blockwise_input(model),
+            _supports_axis_batch_input(model),
             bool(
                 model.warn_on_auto_fallback()
                 if callable(getattr(model, "warn_on_auto_fallback", None))

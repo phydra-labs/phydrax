@@ -13,8 +13,8 @@ import jax.numpy as jnp
 
 from .._callable import _ensure_special_kwonly_args
 from .._strict import StrictModule
-from ..nn.models.core._base import DomainInputMode
-from ..nn.models.core._loss import model_domain_metadata
+from ..nn.models.core._base import _AbstractBaseModel, DomainInputMode
+from ..nn.models.core._loss import model_domain_metadata, ModelWithLoss
 
 
 class StructuredCallable(StrictModule):
@@ -39,6 +39,7 @@ class _ConcatenatedModelCallable(StrictModule):
     input_mode: DomainInputMode
     supports_structured_input: bool
     supports_blockwise_input: bool
+    supports_axis_batch_input: bool
     warn_on_auto_fallback: bool
     _call_has_var_kwargs: bool
     _call_has_key: bool
@@ -54,6 +55,7 @@ class _ConcatenatedModelCallable(StrictModule):
         self.raw_model = model
         supports_structured_input = isinstance(model, StructuredCallable)
         supports_blockwise_input = False
+        supports_axis_batch_input = False
         warn_on_auto_fallback = False
         inferred_mode: DomainInputMode = (
             "structured" if supports_structured_input else "flat"
@@ -64,6 +66,7 @@ class _ConcatenatedModelCallable(StrictModule):
                 inferred_mode,
                 supports_structured_input,
                 supports_blockwise_input,
+                supports_axis_batch_input,
                 warn_on_auto_fallback,
             ) = metadata
         mode = inferred_mode if input_mode is None else input_mode
@@ -77,6 +80,7 @@ class _ConcatenatedModelCallable(StrictModule):
         self.input_mode = mode
         self.supports_structured_input = bool(supports_structured_input)
         self.supports_blockwise_input = bool(supports_blockwise_input)
+        self.supports_axis_batch_input = bool(supports_axis_batch_input)
         self.warn_on_auto_fallback = bool(warn_on_auto_fallback)
         sig = inspect.signature(model)
         params = sig.parameters
@@ -107,6 +111,26 @@ class _ConcatenatedModelCallable(StrictModule):
                 out_kwargs = dict(out_kwargs)
             out_kwargs["iter_"] = iter_
         return self.raw_model(x, **out_kwargs)
+
+    def __call_axis_batch__(
+        self,
+        batch: Any,
+        deps: tuple[str, ...],
+        /,
+        *,
+        key=None,
+        iter_=None,
+        **kwargs: Any,
+    ):
+        if isinstance(self.raw_model, ModelWithLoss):
+            return self.raw_model.__call_axis_batch__(
+                batch, deps, key=key, iter_=iter_, **kwargs
+            )
+        if isinstance(self.raw_model, _AbstractBaseModel):
+            return self.raw_model.__call_axis_batch__(
+                batch, deps, key=key, iter_=iter_, **kwargs
+            )
+        raise TypeError("Model callable does not support axis-batch execution.")
 
     def __call__(self, *args: Any, key=None, iter_=None, **kwargs: Any):
         if not args:

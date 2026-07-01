@@ -323,6 +323,7 @@ class DomainComponent(StrictModule):
         For scalar boundaries $\{a,b\}$ this uses counting measure (mass $2$), and for
         fixed slices uses unit mass.
         """
+        from ._irregular_trajectory_dataset import irregular_trajectory_component_measure
         from ._trajectory_dataset import trajectory_component_measure
         from .graph._trajectory import graph_trajectory_component_measure
 
@@ -333,6 +334,10 @@ class DomainComponent(StrictModule):
         custom = trajectory_component_measure(self)
         if custom is not None:
             return custom
+
+        irregular_custom = irregular_trajectory_component_measure(self)
+        if irregular_custom is not None:
+            return irregular_custom
 
         m = jnp.array(1.0, dtype=float)
         for lbl in self.domain.labels:
@@ -562,6 +567,10 @@ class DomainComponent(StrictModule):
         sampler: str = "latin_hypercube",
         key: Key[Array, ""] = DOC_KEY0,
     ) -> PointsBatch:
+        from ._irregular_trajectory_dataset import (
+            IrregularTrajectoryDatasetDomain,
+            sample_irregular_trajectory_component,
+        )
         from ._trajectory_dataset import (
             sample_trajectory_component,
             TrajectoryDatasetDomain,
@@ -582,6 +591,15 @@ class DomainComponent(StrictModule):
 
         if isinstance(self.domain, TrajectoryDatasetDomain):
             return sample_trajectory_component(
+                self,
+                num_points,
+                structure=structure,
+                sampler=sampler,
+                key=key,
+            )
+
+        if isinstance(self.domain, IrregularTrajectoryDatasetDomain):
+            return sample_irregular_trajectory_component(
                 self,
                 num_points,
                 structure=structure,

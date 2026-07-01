@@ -67,6 +67,7 @@ from ._grid import (
     UniformAxisSpec,
 )
 from ._hyperrectangle import HyperRectangle
+from ._irregular_trajectory_dataset import IrregularTrajectoryDatasetDomain
 from ._model_function import structured
 from ._product_domain import ProductDomain
 from ._scalar import ScalarInterval
@@ -142,6 +143,7 @@ __all__ = [
     "DomainFunction",
     "structured",
     "DatasetDomain",
+    "IrregularTrajectoryDatasetDomain",
     "TrajectoryDatasetDomain",
     "GraphBatch",
     "GraphDatasetDomain",
