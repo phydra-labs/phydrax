@@ -102,11 +102,13 @@ want to average over.
 Use `TrajectoryDatasetDomain` when each dataset element represents a function,
 forcing, parameter vector, or latent descriptor and has an associated time series
 with a shared `dt` but a row-specific length.
+Use `IrregularTrajectoryDatasetDomain` for the same paired case-time model when
+each row carries explicit observation times and the time spacing is non-uniform.
 
 This is different from `DatasetDomain(...) @ TimeInterval(...)`: a plain product
 domain creates a rectangular product and does not know that each dataset row has
-its own end time. `TrajectoryDatasetDomain` keeps the `data` and `t` labels paired,
-so sampling and fixed-end slices are row-aware.
+its own valid time grid. Trajectory dataset domains keep the `data` and `t` labels
+paired, so sampling and fixed-end slices are row-aware.
 
 Because the row and time are coupled, use `ProductStructure((("data", "t"),))`
 for trajectory sampling, including fixed-time components.

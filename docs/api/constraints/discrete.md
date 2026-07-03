@@ -11,7 +11,9 @@ Data-fit constraints created by `DiscreteInteriorDataConstraint`,
 supervised-data diagnostics used by `FunctionalSolver.solve(...)` logging.
 `RaggedTimeSeriesDataConstraint` provides the same diagnostics for
 trajectory-valued targets, and `TrajectoryCaseDataConstraint` provides them for
-per-row scalar/vector targets on a `TrajectoryDatasetDomain`:
+per-row scalar/vector targets on a `TrajectoryDatasetDomain`.
+`RaggedSeriesSupervisedConstraint` provides the same row-aligned diagnostics for
+`RaggedSeriesDatasetDomain` inputs:
 
 - `data_accuracy`
 - `data_relative_l2_error`
@@ -31,10 +33,14 @@ per-row scalar/vector targets on a `TrajectoryDatasetDomain`:
 ---
 
 ::: phydrax.constraints.DiscreteInteriorDataConstraint
+    options:
+        members: []
 
 ---
 
 ::: phydrax.constraints.DiscreteTimeDataConstraint
+    options:
+        members: []
 
 ## Supervised dataset constraints
 
@@ -82,6 +88,103 @@ rows. This is the recommended way to pair `SupervisedDatasetConstraint` with
 ---
 
 ::: phydrax.constraints.SupervisedDatasetBatch
+    options:
+        members: []
+
+## Supervised ragged series constraints
+
+Use `RaggedSeriesSupervisedConstraint` when the input row contains padded
+variable-length series plus a mask and the target is aligned by case. This is the
+right shape for conditional mappings such as `(static, four sensor traces) -> two
+summary scalars`.
+
+```python
+import jax.numpy as jnp
+import phydrax as phx
+
+static = jnp.asarray([[1.0, 0.0], [2.0, 1.0]])
+series = jnp.asarray(
+    [
+        [[1.0, 2.0], [3.0, 4.0], [0.0, 0.0]],
+        [[5.0, 6.0], [7.0, 8.0], [9.0, 10.0]],
+    ]
+)
+lengths = jnp.asarray([2, 3])
+targets = jnp.asarray([[4.0, -4.0], [21.0, -21.0]])
+
+domain = phx.domain.RaggedSeriesDatasetDomain(series, lengths, static=static)
+
+def encoder(payload, *, key=None):
+    del key
+    valid = payload.mask.astype(float)
+    total = jnp.sum(payload.series[..., 0] * valid, axis=1)
+    return jnp.stack((total, -total), axis=-1)
+
+u = domain.Function("data")(phx.nn.RaggedSeriesModel(encoder))
+constraint = phx.constraints.RaggedSeriesSupervisedConstraint(
+    "u",
+    domain.component(),
+    targets,
+    num_cases=16,
+)
+```
+
+Pass `indices=...` for train/validation splits at the case level.
+
+For long series, avoid full padded rows during training by sampling fixed-width
+views:
+
+```python
+constraint = phx.constraints.RaggedSeriesSupervisedConstraint(
+    "u",
+    domain.component(),
+    targets,
+    num_cases=64,
+    series_sampling="points_uniform",
+    num_series_points=256,
+)
+```
+
+The default `series_sampling="full"` preserves the full-row behavior. Sampled
+modes return `(num_cases, num_series_points, ...)` series payloads and keep the
+same per-case targets. Use `window_uniform` when local order matters, and
+`points_uniform` for permutation-invariant pooling/statistical encoders.
+
+For full-sequence training on long, uneven records, prefer length buckets over
+global full rows:
+
+```python
+constraints = phx.constraints.RaggedSeriesSupervisedConstraint.bucketed(
+    "u",
+    domain.component(),
+    targets,
+    num_cases=64,
+    num_buckets=8,
+)
+solver = phx.solver.FunctionalSolver(functions={"u": u}, constraints=constraints)
+```
+
+The helper returns multiple ordinary constraints. Each bucket uses a fixed-width
+prefix view whose width is the bucket maximum length, so it still covers the
+complete series for every case in that bucket. Bucketing is only an efficiency
+device: `num_cases` is distributed across buckets by bucket population, and
+bucket losses are scaled so the combined estimator matches one full padded
+constraint with the same reduction.
+
+::: phydrax.constraints.RaggedSeriesSupervisedConstraint
+    options:
+        members:
+            - __init__
+            - bucketed
+            - sample
+            - data_metrics
+            - loss
+
+---
+
+::: phydrax.constraints.RaggedSeriesSupervisedBatch
+    options:
+        members: []
 
 ## Supervised graph constraints
 
@@ -95,18 +198,26 @@ same pattern for graph trajectories with values shaped by case, time, and graph
 entity.
 
 ::: phydrax.constraints.GraphTarget
+    options:
+        members: []
 
 ---
 
 ::: phydrax.constraints.GraphSupervisedConstraint
+    options:
+        members: []
 
 ---
 
 ::: phydrax.constraints.GraphTrajectorySignal
+    options:
+        members: []
 
 ---
 
 ::: phydrax.constraints.GraphTrajectorySupervisedConstraint
+    options:
+        members: []
 
 ## Ragged trajectory constraints
 
@@ -153,6 +264,8 @@ trajectory out of the training data constraint.
 ---
 
 ::: phydrax.constraints.RaggedTimeSeriesBatch
+    options:
+        members: []
 
 ## Fixed trajectory signals and case targets
 
@@ -206,6 +319,8 @@ solver optimizer parameters.
 train/eval splits.
 
 ::: phydrax.constraints.TrajectorySignal
+    options:
+        members: []
 
 ---
 
@@ -220,6 +335,8 @@ train/eval splits.
 ---
 
 ::: phydrax.constraints.TrajectoryCaseDataBatch
+    options:
+        members: []
 
 ## Hard ragged trajectory enforcement
 
@@ -249,19 +366,29 @@ default for second-order time residuals. Pass `components=[...]` to hard-enforce
 only selected trailing output components while leaving the others free.
 
 ::: phydrax.constraints.enforce_ragged_time_series
+    options:
+        members: []
 
 ## Discrete boundary / initial constraints
 
 ::: phydrax.constraints.DiscreteDirichletBoundaryConstraint
+    options:
+        members: []
 
 ---
 
 ::: phydrax.constraints.DiscreteNeumannBoundaryConstraint
+    options:
+        members: []
 
 ---
 
 ::: phydrax.constraints.DiscreteInitialConstraint
+    options:
+        members: []
 
 ## Discrete ODE constraints
 
 ::: phydrax.constraints.DiscreteODEConstraint
+    options:
+        members: []

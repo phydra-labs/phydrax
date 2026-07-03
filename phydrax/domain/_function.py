@@ -780,6 +780,20 @@ class DomainFunction(StrictModule):
                 dense_structure = None
                 coord_axes_by_label = None
 
+        if (
+            isinstance(self.func, _ConcatenatedModelCallable)
+            and self.func.supports_axis_batch_input
+            and isinstance(points, (PointsBatch, CoordSeparableBatch, GraphBatch))
+        ):
+            out = self.func.__call_axis_batch__(
+                points, self.deps, key=key, **kwargs
+            )
+            if not isinstance(out, cx.Field):
+                raise TypeError(
+                    "Axis-batch model execution must return a coordax.Field."
+                )
+            return out
+
         batch_func = batch_aware_callable(self.func)
         if batch_func is not None:
             if not isinstance(points, (PointsBatch, CoordSeparableBatch, GraphBatch)):

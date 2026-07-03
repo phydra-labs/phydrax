@@ -312,7 +312,14 @@ def GraphTarget(
     *,
     component_kind: GraphComponentKind = "nodes",
 ) -> DomainFunction:
-    """Expose graph-family node/edge/global targets as a `DomainFunction`."""
+    """Expose fixed graph-family targets as a `DomainFunction`.
+
+    `values` is aligned by graph case and entity kind. It can be one padded array
+    with leading graph-case axis or a sequence of per-case arrays whose leading
+    length matches each case's selected node, edge, or global count. The returned
+    function reads graph metadata from a `GraphBatch` and returns targets aligned
+    to the sampled entities.
+    """
     if not isinstance(domain, GraphDatasetDomain):
         raise TypeError("GraphTarget requires a GraphDatasetDomain.")
     values_flat, offsets = _validate_graph_case_arrays(domain, values, component_kind)
@@ -336,7 +343,12 @@ def GraphTrajectorySignal(
     component_kind: GraphComponentKind = "nodes",
     interpolation: GraphTargetInterpolation = "nearest",
 ) -> DomainFunction:
-    """Expose graph trajectory targets as a `DomainFunction` over `(graph, t)`."""
+    """Expose fixed graph-trajectory data as a `DomainFunction` over `(graph, t)`.
+
+    `values` is aligned by graph case, local time index, and entity kind. Use
+    `interpolation="nearest"` for observation lookup and `"linear"` for continuous
+    time interpolation between neighboring stored frames.
+    """
     if not isinstance(domain, GraphTrajectoryDatasetDomain):
         raise TypeError("GraphTrajectorySignal requires a GraphTrajectoryDatasetDomain.")
     interpolation_str = str(interpolation)
@@ -380,7 +392,13 @@ def GraphSupervisedConstraint(
     label: str | None = None,
     data_accuracy_eps: float = 1e-12,
 ) -> FunctionalConstraint:
-    """Build a sampled supervised constraint for graph-family targets."""
+    """Build a sampled supervised constraint for graph-family targets.
+
+    The target data is aligned with the entity kind selected by `component`
+    (`Nodes()`, `Edges()`, `Globals()`, or an explicit subset). The returned
+    constraint samples graph cases, evaluates `constraint_var`, and penalizes the
+    difference from `GraphTarget(...)`.
+    """
     if not isinstance(component.domain, GraphDatasetDomain):
         raise TypeError("GraphSupervisedConstraint requires a GraphDatasetDomain component.")
     domain = component.domain
@@ -421,7 +439,12 @@ def GraphTrajectorySupervisedConstraint(
     label: str | None = None,
     data_accuracy_eps: float = 1e-12,
 ) -> FunctionalConstraint:
-    """Build a supervised constraint for graph trajectory observations."""
+    """Build a supervised constraint for graph trajectory observations.
+
+    The target data is aligned by graph case, time index, and the entity kind
+    selected by `component`. Sampling draws paired graph-time batches and compares
+    `constraint_var` with `GraphTrajectorySignal(...)`.
+    """
     if not isinstance(component.domain, GraphTrajectoryDatasetDomain):
         raise TypeError(
             "GraphTrajectorySupervisedConstraint requires a "

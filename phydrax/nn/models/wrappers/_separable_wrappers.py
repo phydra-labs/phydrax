@@ -8,13 +8,16 @@ import warnings
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, ClassVar, Literal
 
+import coordax as cx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 from opt_einsum import contract
 
 from ...._doc import DOC_KEY0
+from ...._frozendict import frozendict
 from ...._strict import StrictModule
+from ....domain._structure import CoordSeparableBatch, PointsBatch
 from ..._utils import _get_size, _identity
 from .._utils import _contract_str, _stack_separable
 from ..core._base import (
@@ -27,6 +30,12 @@ from ..core._scan_utils import (
     pack_scan_modules,
     scan_apply_with_data,
     stack_scan_dynamics,
+)
+from ._axis_contraction import (
+    AxisContractionPlan,
+    AxisFactor,
+    AxisProductTerm,
+    contract_axis_factors,
 )
 
 
@@ -102,6 +111,7 @@ class LatentContractionModel(_AbstractStructuredInputModel):
     latent_size: int
     factor_names: tuple[str, ...]
     factor_models: tuple[_AbstractBaseModel, ...]
+    factor_inputs: frozendict[str, tuple[str, ...]] | None
     output_activation: Callable
     keep_outputs_complex: bool
     execution_policy: LatentExecutionPolicy
@@ -110,6 +120,7 @@ class LatentContractionModel(_AbstractStructuredInputModel):
     _factor_sizes: tuple[int, ...]
     _total_in_size: int
     _supports_blockwise_input: bool = True
+    _supports_axis_batch_input: bool
     _warn_on_auto_fallback: bool
     _scan_enabled_aligned: bool
     _scan_static_aligned: object | None
@@ -124,6 +135,7 @@ class LatentContractionModel(_AbstractStructuredInputModel):
         latent_size: int,
         out_size: int | Literal["scalar"],
         factors: Mapping[str, _AbstractBaseModel] | None = None,
+        factor_inputs: Mapping[str, Sequence[str] | str] | None = None,
         output_activation: Callable | None = None,
         keep_outputs_complex: bool = False,
         execution_policy: LatentExecutionPolicy | None = None,
@@ -139,6 +151,8 @@ class LatentContractionModel(_AbstractStructuredInputModel):
         - `out_size`: Output size $m$ (or `"scalar"`).
         - `factors` / `**factor_models`: Factor models $g_i$ mapping factor inputs
           to latent features.
+        - `factor_inputs`: Optional mapping from factor name to the domain label(s)
+          consumed by that factor during axis-aware structured-batch execution.
         - `output_activation`: Optional activation applied after contraction (wrap it
           yourself if you want adaptive behavior).
         - `keep_outputs_complex`: If `True`, keeps complex outputs when the
@@ -160,6 +174,7 @@ class LatentContractionModel(_AbstractStructuredInputModel):
 
         self.factor_names = tuple(factors.keys())
         self.factor_models = tuple(factors.values())
+        self.factor_inputs = self._canonical_factor_inputs(factor_inputs)
         self.latent_size = int(latent_size)
         self.out_size = out_size
         self._factor_sizes = tuple(_get_size(m.in_size) for m in self.factor_models)
@@ -174,6 +189,7 @@ class LatentContractionModel(_AbstractStructuredInputModel):
             LatentExecutionPolicy() if execution_policy is None else execution_policy
         )
         self._warn_on_auto_fallback = self.execution_policy.fallback == "warn"
+        self._supports_axis_batch_input = self.factor_inputs is not None
         self.scan = bool(scan)
         self._scan_enabled_aligned = False
         self._scan_static_aligned = None
@@ -190,6 +206,34 @@ class LatentContractionModel(_AbstractStructuredInputModel):
             raise ValueError(message)
         if self.execution_policy.fallback == "warn":
             warnings.warn(message, UserWarning, stacklevel=3)
+
+    def _canonical_factor_inputs(
+        self,
+        factor_inputs: Mapping[str, Sequence[str] | str] | None,
+        /,
+    ) -> frozendict[str, tuple[str, ...]] | None:
+        if factor_inputs is None:
+            return None
+        expected = set(self.factor_names)
+        provided = set(factor_inputs.keys())
+        if provided != expected:
+            missing = tuple(sorted(expected - provided))
+            extra = tuple(sorted(provided - expected))
+            raise ValueError(
+                "factor_inputs must provide exactly one entry for each factor; "
+                f"missing={missing!r}, extra={extra!r}."
+            )
+        out: dict[str, tuple[str, ...]] = {}
+        for name in self.factor_names:
+            raw = factor_inputs[name]
+            if isinstance(raw, str):
+                labels = (raw,)
+            else:
+                labels = tuple(str(label) for label in raw)
+            if not labels:
+                raise ValueError(f"factor_inputs[{name!r}] must be non-empty.")
+            out[name] = labels
+        return frozendict(out)
 
     def __call__(
         self,
@@ -240,6 +284,219 @@ class LatentContractionModel(_AbstractStructuredInputModel):
             self._auto_fallback(plan.fallback_message)
         out = self._contract_latents(latents, batch_shapes, topology=plan.effective)
         return self._finalize(out)
+
+    def __call_axis_batch__(
+        self,
+        batch: PointsBatch | CoordSeparableBatch,
+        deps: tuple[str, ...],
+        /,
+        *,
+        key: EvalKey = DOC_KEY0,
+        iter_: Any | None = None,
+        **kwargs: Any,
+    ) -> cx.Field:
+        del iter_, kwargs
+        if self.factor_inputs is None:
+            raise ValueError(
+                "LatentContractionModel axis-batch execution requires factor_inputs."
+            )
+        if not isinstance(batch, (PointsBatch, CoordSeparableBatch)):
+            raise TypeError(
+                "LatentContractionModel axis-batch execution requires a PointsBatch "
+                "or CoordSeparableBatch."
+            )
+
+        covered: set[str] = set()
+        for labels in self.factor_inputs.values():
+            covered.update(labels)
+        if covered != set(deps):
+            missing = tuple(sorted(set(deps) - covered))
+            extra = tuple(sorted(covered - set(deps)))
+            raise ValueError(
+                "LatentContractionModel factor_inputs must cover exactly the "
+                f"DomainFunction dependencies; missing={missing!r}, extra={extra!r}."
+            )
+
+        keys = self._split_key(key)
+        factors: dict[str, AxisFactor] = {}
+        for name, model, k in zip(
+            self.factor_names, self.factor_models, keys, strict=True
+        ):
+            labels = self.factor_inputs[name]
+            values, axes = self._axis_factor_values(batch, labels)
+            latents = self._eval_axis_factor(model, values, axes, name=name, key=k)
+            factors[name] = AxisFactor(name, latents, axes)
+
+        plan = AxisContractionPlan(
+            (AxisProductTerm(self.factor_names),),
+        )
+        result = contract_axis_factors(factors, plan)
+        out = jnp.asarray(self._finalize(result.data))
+        if out.ndim < len(result.axes):
+            raise ValueError(
+                "LatentContractionModel axis-batch output rank is smaller than "
+                "the named-axis rank."
+            )
+        dims = result.axes + (None,) * (out.ndim - len(result.axes))
+        return cx.Field(out, dims=dims)
+
+    def _axis_factor_values(
+        self,
+        batch: PointsBatch | CoordSeparableBatch,
+        labels: tuple[str, ...],
+        /,
+    ) -> tuple[Array | tuple[Array, ...], tuple[str, ...]]:
+        points = batch.points
+        if len(labels) == 1:
+            return self._axis_value_and_axes(points[labels[0]], label=labels[0])
+
+        arrays: list[Array] = []
+        axes_ref: tuple[str, ...] | None = None
+        for label in labels:
+            value, axes = self._axis_value_and_axes(points[label], label=label)
+            if isinstance(value, tuple):
+                raise ValueError(
+                    "Multi-label LatentContractionModel factors do not support "
+                    f"coord-separable tuple inputs for label {label!r}."
+                )
+            if axes_ref is None:
+                axes_ref = axes
+            elif axes_ref != axes:
+                raise ValueError(
+                    "Multi-label LatentContractionModel factors require all labels "
+                    f"to share axes; got {axes_ref!r} and {axes!r}."
+                )
+            arrays.append(value)
+
+        if axes_ref is None:
+            raise ValueError("LatentContractionModel factor labels must be non-empty.")
+        return self._pack_axis_arrays(arrays, axes_ref), axes_ref
+
+    def _axis_value_and_axes(
+        self,
+        value: Any,
+        /,
+        *,
+        label: str,
+    ) -> tuple[Array | tuple[Array, ...], tuple[str, ...]]:
+        if isinstance(value, cx.Field):
+            axes = tuple(dim for dim in value.dims if dim is not None)
+            return jnp.asarray(value.data), axes
+        if isinstance(value, tuple):
+            arrays: list[Array] = []
+            axes: list[str] = []
+            for item in value:
+                if not isinstance(item, cx.Field):
+                    raise TypeError(
+                        "LatentContractionModel coord-separable factor input "
+                        f"{label!r} must contain coordax.Field entries."
+                    )
+                named_dims = tuple(dim for dim in item.dims if dim is not None)
+                axes.extend(named_dims)
+                arrays.append(jnp.asarray(item.data))
+            return tuple(arrays), tuple(axes)
+        raise TypeError(
+            "LatentContractionModel axis-batch inputs must be coordax.Field leaves "
+            f"or coord-separable tuples; got {type(value).__name__} for label {label!r}."
+        )
+
+    def _pack_axis_arrays(
+        self,
+        arrays: Sequence[Array],
+        axes: tuple[str, ...],
+        /,
+    ) -> Array:
+        if not arrays:
+            raise ValueError("Cannot pack an empty factor input.")
+        axis_rank = len(axes)
+        axis_shape = tuple(int(n) for n in arrays[0].shape[:axis_rank])
+        parts: list[Array] = []
+        for arr_in in arrays:
+            arr = jnp.asarray(arr_in)
+            if arr.ndim < axis_rank:
+                raise ValueError(
+                    f"Factor input rank {arr.ndim} is smaller than axis rank {axis_rank}."
+                )
+            if tuple(int(n) for n in arr.shape[:axis_rank]) != axis_shape:
+                raise ValueError(
+                    "Factor inputs with shared axes must have matching leading shapes."
+                )
+            feature_size = 1
+            for dim in arr.shape[axis_rank:]:
+                feature_size *= int(dim)
+            if arr.ndim == axis_rank:
+                feature_size = 1
+            parts.append(arr.reshape(axis_shape + (feature_size,)))
+        return jnp.concatenate(parts, axis=-1)
+
+    def _eval_axis_factor(
+        self,
+        model: _AbstractBaseModel,
+        values: Array | tuple[Array, ...],
+        axes: tuple[str, ...],
+        /,
+        *,
+        name: str,
+        key: EvalKey = DOC_KEY0,
+    ) -> Array:
+        if isinstance(values, tuple):
+            latents, batch_shape = self._eval_factor(model, values, name=name, key=key)
+            expected = tuple(int(jnp.asarray(v).shape[0]) for v in values)
+            if tuple(batch_shape) != expected or len(batch_shape) != len(axes):
+                raise ValueError(
+                    f"Factor {name!r} coord-separable batch shape {batch_shape!r} "
+                    f"does not match axes {axes!r}."
+                )
+            return latents
+        return self._eval_axis_factor_array(model, values, axes, name=name, key=key)
+
+    def _eval_axis_factor_array(
+        self,
+        model: _AbstractBaseModel,
+        values: Array,
+        axes: tuple[str, ...],
+        /,
+        *,
+        name: str,
+        key: EvalKey = DOC_KEY0,
+    ) -> Array:
+        arr = jnp.asarray(values)
+        axis_rank = len(axes)
+        if axis_rank == 0:
+            latents, _ = self._eval_factor_array(model, arr, name=name, key=key)
+            return latents
+
+        if arr.ndim < axis_rank:
+            raise ValueError(
+                f"Factor {name!r} input rank {arr.ndim} is smaller than axis rank "
+                f"{axis_rank}."
+            )
+        leading_shape = tuple(int(n) for n in arr.shape[:axis_rank])
+        in_dim = _get_size(model.in_size)
+        if in_dim == 1:
+            if arr.ndim == axis_rank:
+                flat = arr.reshape((-1,))
+            elif arr.ndim == axis_rank + 1 and int(arr.shape[-1]) == 1:
+                flat = arr.reshape((-1,))
+            else:
+                raise ValueError(
+                    f"Factor {name!r} expected scalar axis-batch input with shape "
+                    f"{leading_shape} or {leading_shape + (1,)}, got {arr.shape}."
+                )
+        else:
+            if arr.ndim != axis_rank + 1 or int(arr.shape[-1]) != in_dim:
+                raise ValueError(
+                    f"Factor {name!r} expected axis-batch input with trailing size "
+                    f"{in_dim}, got {arr.shape}."
+                )
+            flat = arr.reshape((-1, in_dim))
+
+        out = jax.vmap(ft.partial(model, key=key))(flat)
+        out = jnp.asarray(out)
+        if out.ndim == 1:
+            out = out[:, None]
+        out = out.reshape(leading_shape + (int(out.shape[-1]),))
+        return self._reshape_latents(out, name=name)
 
     def _call_aligned(self, x: Array, /, *, key: EvalKey = DOC_KEY0) -> Array:
         factor_inputs = self._split_aligned_input(x)

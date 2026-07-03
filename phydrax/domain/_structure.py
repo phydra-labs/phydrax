@@ -4,7 +4,7 @@
 
 import re
 from collections.abc import Mapping
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 import coordax as cx
 import jax
@@ -201,8 +201,15 @@ class PointsBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
 
     points: Points
     structure: ProductStructure
+    metadata: frozendict[str, Any]
 
-    def __init__(self, points: Points, structure: ProductStructure):
+    def __init__(
+        self,
+        points: Points,
+        structure: ProductStructure,
+        *,
+        metadata: Mapping[str, Any] | None = None,
+    ):
         """Construct a `PointsBatch` from sampled points and a canonical structure."""
         if structure.axis_names is None:
             raise ValueError(
@@ -211,6 +218,7 @@ class PointsBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
         _validate_reserved_axes(points, allowed_axes=frozenset(structure.axis_names))
         self.points = points
         self.structure = structure
+        self.metadata = frozendict({} if metadata is None else metadata)
 
     def __getitem__(self, key: str) -> PyTree[cx.Field]:
         return self.points[key]

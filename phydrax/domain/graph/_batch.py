@@ -25,7 +25,9 @@ class GraphBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
     `GraphIR` topology required by graph operators and message-passing models. The
     selected graph entity axis is still represented as a normal Phydrax sampling
     axis in `structure`, so ordinary `DomainFunction` evaluation, broadcasting,
-    and reductions can operate on node/edge/global fields.
+    and reductions can operate on node/edge/global fields. Additional reserved
+    fields carry entity, graph, dataset, and trajectory indices for constraints
+    that need to align sampled predictions with fixed graph data.
     """
 
     points: Points

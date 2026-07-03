@@ -69,6 +69,15 @@ class GraphDomain(_AbstractUnaryDomain):
         measure: GraphMeasureMode = "probability",
         validate: bool = True,
     ):
+        """Create a domain over one sparse graph.
+
+        Parameters:
+            graph: Graph topology and node, edge, and global payloads.
+            label: Domain label used for sampled graph entities.
+            measure: Component measure mode. `"probability"` normalizes sampled
+                entity reductions; `"count"` scales by the selected entity count.
+            validate: Validate the `GraphIR` before storing it.
+        """
         if not isinstance(graph, GraphIR):
             raise TypeError("GraphDomain expects a phydrax.graph.GraphIR instance.")
         if validate:
@@ -81,26 +90,32 @@ class GraphDomain(_AbstractUnaryDomain):
 
     @property
     def label(self) -> str:
+        """Domain label used for graph entity payloads."""
         return self._label
 
     @property
     def var_dim(self) -> int:
+        """Number of coordinate labels owned by this unary domain."""
         return 1
 
     @property
     def measure_mode(self) -> GraphMeasureMode:
+        """Measure mode used for graph-component reductions."""
         return self._measure_mode
 
     @property
     def num_nodes(self) -> int:
+        """Number of nodes in the stored graph."""
         return int(self.graph.num_nodes)
 
     @property
     def num_edges(self) -> int:
+        """Number of edges in the stored graph."""
         return int(self.graph.num_edges)
 
     @property
     def num_graphs(self) -> int:
+        """Number of graph-global entries in the stored graph."""
         return int(self.graph.num_graphs)
 
     def _size_for_kind(self, kind: GraphComponentKind, /) -> int:
@@ -119,10 +134,12 @@ class GraphDomain(_AbstractUnaryDomain):
         return graph_component_indices_for_graph(self.graph, component, kind)
 
     def component_size(self, component: _AbstractVarComponent, /) -> int:
+        """Return the number of entities selected by a graph component."""
         kind = graph_component_kind(component)
         return int(self._component_indices(component, kind).shape[0])
 
     def component_measure(self, component: _AbstractVarComponent, /) -> Array:
+        """Return the total measure assigned to a graph component."""
         if self._measure_mode == "probability":
             return jnp.asarray(1.0, dtype=float)
         return jnp.asarray(float(self.component_size(component)), dtype=float)
@@ -168,7 +185,11 @@ class GraphDomain(_AbstractUnaryDomain):
         structure: ProductStructure,
         label: str | None = None,
     ) -> GraphBatch:
-        """Materialize a full graph entity batch for the selected component."""
+        """Materialize all entities selected by `component`.
+
+        `GraphDomain` represents one fixed graph, so sampling is deterministic and
+        must request exactly `component_size(component)` entities.
+        """
         label_out = self.label if label is None else str(label)
         structure_out = structure.canonicalize((label_out,))
         axis = structure_out.axis_for(label_out)
@@ -216,7 +237,11 @@ class GraphDomain(_AbstractUnaryDomain):
         global_input_key: str | None = None,
         output_key: str | None = None,
     ):
-        """Wrap a `GraphIR -> GraphIR` model as a graph `DomainFunction`."""
+        """Wrap a `GraphIR -> GraphIR` model as a graph `DomainFunction`.
+
+        The wrapped model receives the sampled batch topology and can return node,
+        edge, or global outputs selected by `output`.
+        """
         from ...domain._function import DomainFunction
         from ...nn import GraphModel
 
@@ -252,7 +277,11 @@ class GraphDomain(_AbstractUnaryDomain):
         global_input_key: str | None = None,
         output_key: str | None = None,
     ):
-        """Wrap an autoregressive graph rollout as a graph `DomainFunction`."""
+        """Wrap an autoregressive graph rollout as a graph `DomainFunction`.
+
+        The stepper is applied for `steps` transitions on the sampled graph state,
+        and the selected rollout feature is exposed as a graph-domain field.
+        """
         from ...domain._function import DomainFunction
         from ...nn import GraphRolloutModel
 
@@ -275,6 +304,7 @@ class GraphDomain(_AbstractUnaryDomain):
         )
 
     def equivalent(self, other: object, /) -> bool:
+        """Return whether another domain has the same public graph-domain shape."""
         if not isinstance(other, GraphDomain):
             return False
         if self.label != other.label:

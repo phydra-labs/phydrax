@@ -171,7 +171,12 @@ def _component_times(
 
 
 class GraphTrajectoryDatasetDomain(_AbstractDomain):
-    """A coupled graph-family and time domain for graph trajectories."""
+    """A coupled graph-family and time domain for graph trajectories.
+
+    Each graph case owns a valid trajectory length on a shared uniform time grid.
+    Sampling keeps graph and time labels paired, so time components such as
+    `FixedEnd()` are interpreted relative to the selected graph case.
+    """
 
     graphs: tuple[GraphIR, ...]
     lengths: Array
@@ -204,6 +209,20 @@ class GraphTrajectoryDatasetDomain(_AbstractDomain):
         layout: LayoutPlan | None = None,
         validate: bool = True,
     ):
+        """Create a finite graph-trajectory domain.
+
+        Parameters:
+            graphs: Graph cases sampled by the domain.
+            lengths: Valid time-step count for each graph case.
+            dt: Uniform time spacing shared by all graph cases.
+            start: Shared start time.
+            graph_label: Label used for sampled graph entities.
+            time_label: Label used for sampled times.
+            measure: Measure mode for graph-time reductions.
+            sampling: Strategy for drawing interior graph-time samples.
+            layout: Optional static graph-batch padding plan.
+            validate: Validate each `GraphIR` before storing it.
+        """
         _validate_label(str(graph_label))
         _validate_label(str(time_label))
         if str(graph_label) == str(time_label):
@@ -274,57 +293,71 @@ class GraphTrajectoryDatasetDomain(_AbstractDomain):
 
     @property
     def labels(self) -> tuple[str, str]:
+        """Graph and time labels owned by the domain."""
         return (self._graph_label, self._time_label)
 
     @property
     def graph_label(self) -> str:
+        """Label used for graph entity payloads."""
         return self._graph_label
 
     @property
     def time_label(self) -> str:
+        """Label used for sampled trajectory times."""
         return self._time_label
 
     @property
     def measure_mode(self) -> GraphTrajectoryMeasure:
+        """Measure mode used for graph-time reductions."""
         return self._measure
 
     @property
     def sampling_mode(self) -> GraphTrajectorySampling:
+        """Sampling strategy used for interior graph-time points."""
         return self._sampling
 
     @property
     def layout(self) -> LayoutPlan | None:
+        """Static graph-batch layout, if sampled batches are padded."""
         return self._layout
 
     @property
     def size(self) -> int:
+        """Number of graph trajectory cases."""
         return len(self.graphs)
 
     @property
     def max_length(self) -> int:
+        """Maximum valid time-step count across graph cases."""
         return int(self._max_length)
 
     @property
     def total_observations(self) -> int:
+        """Total number of valid graph-time observations across cases."""
         return int(self._total_observations)
 
     @property
     def flat_case_indices(self) -> Array:
+        """Flat case index for each valid graph-time observation."""
         return self._flat_case_indices
 
     @property
     def flat_time_indices(self) -> Array:
+        """Flat local time index for each valid graph-time observation."""
         return self._flat_time_indices
 
     @property
     def durations(self) -> Array:
+        """Per-case trajectory duration, `(length - 1) * dt`."""
         return (self.lengths.astype(float) - 1.0) * self.dt
 
     @property
     def end_times(self) -> Array:
+        """Per-case final valid time."""
         return self.start + self.durations
 
     def factor(self, label: str, /) -> _AbstractUnaryDomain:
+        """Return the unary graph or time factor for `label`."""
         if label == self._graph_label:
             return self._graph_factor
         if label == self._time_label:
@@ -338,9 +371,11 @@ class GraphTrajectoryDatasetDomain(_AbstractDomain):
         *,
         multiple: int = 1,
     ) -> LayoutPlan:
+        """Return a worst-case static graph layout for `num_cases` samples."""
         return self._graph_factor.layout_for_batch_size(num_cases, multiple=multiple)
 
     def with_layout(self, layout: LayoutPlan | None, /) -> "GraphTrajectoryDatasetDomain":
+        """Return a copy that packs sampled graph batches with `layout`."""
         return GraphTrajectoryDatasetDomain(
             self.graphs,
             self.lengths,
@@ -355,6 +390,7 @@ class GraphTrajectoryDatasetDomain(_AbstractDomain):
         )
 
     def observation_times(self, case_indices: ArrayLike, time_indices: ArrayLike, /) -> Array:
+        """Convert local time indices to physical times."""
         del case_indices
         return self.start + self.dt * jnp.asarray(time_indices, dtype=float)
 
@@ -368,6 +404,12 @@ class GraphTrajectoryDatasetDomain(_AbstractDomain):
         structure: ProductStructure | None = None,
         time_indices: ArrayLike | None = None,
     ) -> GraphBatch:
+        """Materialize graph-time samples by explicit case and time arrays.
+
+        `case_indices` and `times` must have the same leading length. The selected
+        graph component is expanded to all matching entities for each sampled
+        graph-time pair.
+        """
         structure_in = structure or ProductStructure((self.labels,))
         structure_out, axis = _single_axis_for_graph_trajectory(self, structure_in)
         case_idx = jnp.asarray(case_indices, dtype=jnp.int32).reshape((-1,))
@@ -453,7 +495,11 @@ class GraphTrajectoryDatasetDomain(_AbstractDomain):
         global_input_key: str | None = None,
         output_key: str | None = None,
     ):
-        """Wrap a `GraphIR -> GraphIR` model as a graph-time `DomainFunction`."""
+        """Wrap a `GraphIR -> GraphIR` model as a graph-time `DomainFunction`.
+
+        The model sees the sampled batched graph topology and may also consume the
+        sampled time label through its input functions.
+        """
         from ...domain._function import DomainFunction
         from ...nn import GraphModel
 
@@ -489,7 +535,11 @@ class GraphTrajectoryDatasetDomain(_AbstractDomain):
         global_input_key: str | None = None,
         output_key: str | None = None,
     ):
-        """Wrap an autoregressive graph rollout as a graph-time `DomainFunction`."""
+        """Wrap an autoregressive graph rollout as a graph-time `DomainFunction`.
+
+        Use this for graph sequence models whose state is advanced by repeatedly
+        applying a one-step graph stepper.
+        """
         from ...domain._function import DomainFunction
         from ...nn import GraphRolloutModel
 
@@ -512,6 +562,7 @@ class GraphTrajectoryDatasetDomain(_AbstractDomain):
         )
 
     def equivalent(self, other: object, /) -> bool:
+        """Return whether another domain has the same public graph-time shape."""
         if not isinstance(other, GraphTrajectoryDatasetDomain):
             return False
         if self.labels != other.labels:

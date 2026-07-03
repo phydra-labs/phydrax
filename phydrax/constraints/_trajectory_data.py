@@ -18,6 +18,7 @@ from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..domain._components import DomainComponent
 from ..domain._function import BatchAwareCallable, DomainFunction
+from ..domain._irregular_trajectory_dataset import IrregularTrajectoryDatasetDomain
 from ..domain._structure import CoordSeparableBatch, PointsBatch, ProductStructure
 from ..domain._trajectory_dataset import (
     TRAJECTORY_CASE_INDEX_KEY,
@@ -171,6 +172,22 @@ class TrajectoryCaseDataConstraint(AbstractSamplingConstraint):
         label: str | None = None,
         data_accuracy_eps: float = 1e-12,
     ):
+        """Create a supervised case-level trajectory data constraint.
+
+        Parameters:
+            constraint_var: Name of the predicted function to supervise.
+            component: Component from a `TrajectoryDatasetDomain`.
+            values: Case targets with leading size equal to `domain.size`.
+            num_cases: Number of cases sampled per loss evaluation.
+            structure: Product structure used to represent sampled cases.
+            case_time: Representative time used if the predicted function depends
+                on the trajectory time label.
+            weight: Scalar or pointwise multiplier applied to this loss term.
+            reduction: `"mean"` or `"sum"` over sampled cases.
+            case_indices: Optional case subset for train/validation splits.
+            label: Optional diagnostic label for this constraint.
+            data_accuracy_eps: Stabilizer used in supervised data metrics.
+        """
         if not isinstance(component.domain, TrajectoryDatasetDomain):
             raise TypeError(
                 "TrajectoryCaseDataConstraint requires a TrajectoryDatasetDomain component."
@@ -238,6 +255,7 @@ class TrajectoryCaseDataConstraint(AbstractSamplingConstraint):
         *,
         key: Key[Array, ""] = DOC_KEY0,
     ) -> Any:
+        """Draw a case mini-batch and return aligned model inputs and targets."""
         domain = self.domain
         case_indices = _sample_case_indices(
             domain,
@@ -284,6 +302,7 @@ class TrajectoryCaseDataConstraint(AbstractSamplingConstraint):
         batch: TrajectoryCaseDataBatch | None = None,
         **kwargs: Any,
     ) -> dict[str, Array]:
+        """Return supervised diagnostics on a sampled or provided batch."""
         batch_ = self.sample(key=key) if batch is None else batch
         prediction = self._prediction(functions, batch_, key=key, **kwargs)
         return supervised_data_metrics(
@@ -302,6 +321,7 @@ class TrajectoryCaseDataConstraint(AbstractSamplingConstraint):
         batch: TrajectoryCaseDataBatch | None = None,
         **kwargs: Any,
     ) -> Array:
+        """Return the weighted supervised squared-error loss."""
         del iter_
         batch_ = self.sample(key=key) if batch is None else batch
         prediction = self._prediction(functions, batch_, key=key, **kwargs)
@@ -368,6 +388,52 @@ class _NearestTrajectorySignal(StrictModule, BatchAwareCallable, NonTrainableSta
         return cx.Field(out, dims=dims)
 
 
+class _IrregularNearestTrajectorySignal(
+    StrictModule, BatchAwareCallable, NonTrainableState
+):
+    domain: IrregularTrajectoryDatasetDomain
+    values: Array
+
+    def __init__(
+        self, *, domain: IrregularTrajectoryDatasetDomain, values: ArrayLike
+    ):
+        self.domain = domain
+        self.values = _validate_values(domain, values)
+
+    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+        del args, key, kwargs
+        raise TypeError("TrajectorySignal requires PointsBatch evaluation.")
+
+    def __call_batch__(
+        self,
+        batch: PointsBatch | CoordSeparableBatch,
+        /,
+        *,
+        key: Key[Array, ""] = DOC_KEY0,
+        **kwargs: Any,
+    ) -> cx.Field:
+        del key, kwargs
+        if not isinstance(batch, PointsBatch):
+            raise TypeError("TrajectorySignal requires PointsBatch evaluation.")
+        if TRAJECTORY_CASE_INDEX_KEY not in batch:
+            raise ValueError(
+                "TrajectorySignal requires trajectory batches with internal case indices."
+            )
+        case_field = batch[TRAJECTORY_CASE_INDEX_KEY]
+        time_field = batch[self.domain.time_label]
+        if not isinstance(case_field, cx.Field):
+            raise TypeError("Trajectory case indices must be stored as a Field.")
+        if not isinstance(time_field, cx.Field):
+            raise TypeError("Trajectory time values must be stored as a Field.")
+        case_idx = jnp.asarray(case_field.data, dtype=jnp.int32)
+        t = jnp.asarray(time_field.data, dtype=float)
+        time_idx = self.domain.nearest_time_indices(case_idx, t)
+        values = jax.lax.stop_gradient(self.values)
+        out = values[case_idx, time_idx]
+        dims = time_field.dims + (None,) * max(out.ndim - len(time_field.dims), 0)
+        return cx.Field(out, dims=dims)
+
+
 class _InterpolatedTrajectorySignal(StrictModule, BatchAwareCallable, NonTrainableState):
     table: _RaggedTimeSeriesTable
     order: int
@@ -400,8 +466,200 @@ class _InterpolatedTrajectorySignal(StrictModule, BatchAwareCallable, NonTrainab
         return cx.Field(out, dims=dims)
 
 
+class _IrregularTrajectorySignalTable(StrictModule, NonTrainableState):
+    domain: IrregularTrajectoryDatasetDomain
+    values: Array
+
+    def __init__(
+        self,
+        *,
+        domain: IrregularTrajectoryDatasetDomain,
+        values: ArrayLike,
+    ):
+        self.domain = domain
+        self.values = _validate_values(domain, values)
+
+    def evaluate(
+        self,
+        batch: PointsBatch,
+        /,
+        *,
+        max_order: int,
+    ) -> tuple[Array, ...]:
+        order = int(max_order)
+        if order > 1:
+            raise ValueError(
+                "Irregular TrajectorySignal with interpolation='linear' supports "
+                "time derivatives only up to order 1."
+            )
+        if TRAJECTORY_CASE_INDEX_KEY not in batch:
+            raise ValueError(
+                "TrajectorySignal requires trajectory batches with internal case indices."
+            )
+        case_field = batch[TRAJECTORY_CASE_INDEX_KEY]
+        time_field = batch[self.domain.time_label]
+        if not isinstance(case_field, cx.Field):
+            raise TypeError("Trajectory case indices must be stored as a Field.")
+        if not isinstance(time_field, cx.Field):
+            raise TypeError("Trajectory time values must be stored as a Field.")
+        case_idx = jnp.asarray(case_field.data, dtype=jnp.int32)
+        t = jnp.asarray(time_field.data, dtype=float)
+        lower, upper, frac = self.domain.bracketing_time_indices(case_idx, t)
+        values = jax.lax.stop_gradient(self.values)
+        y0 = values[case_idx, lower]
+        y1 = values[case_idx, upper]
+        frac_b = _broadcast_like(frac, y0)
+        target = (1.0 - frac_b) * y0 + frac_b * y1
+        if order == 0:
+            return (target,)
+
+        t0 = self.domain.times[case_idx, lower]
+        t1 = self.domain.times[case_idx, upper]
+        lengths = self.domain.lengths[case_idx]
+        denom = jnp.where(lengths > 1, t1 - t0, 1.0)
+        slope = (y1 - y0) / _broadcast_like(denom, y0)
+        slope = jnp.where(_broadcast_like(lengths > 1, slope), slope, 0.0)
+        return (target, slope)
+
+
+class _IrregularInterpolatedTrajectorySignal(
+    StrictModule, BatchAwareCallable, NonTrainableState
+):
+    table: _IrregularTrajectorySignalTable
+    order: int
+
+    def __init__(self, *, table: _IrregularTrajectorySignalTable, order: int = 0):
+        self.table = table
+        self.order = int(order)
+
+    def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
+        del args, key, kwargs
+        raise TypeError("TrajectorySignal requires PointsBatch evaluation.")
+
+    def __call_batch__(
+        self,
+        batch: PointsBatch | CoordSeparableBatch,
+        /,
+        *,
+        key: Key[Array, ""] = DOC_KEY0,
+        **kwargs: Any,
+    ) -> cx.Field:
+        del key, kwargs
+        if not isinstance(batch, PointsBatch):
+            raise TypeError("TrajectorySignal requires PointsBatch evaluation.")
+        time_field = batch[self.table.domain.time_label]
+        if not isinstance(time_field, cx.Field):
+            raise TypeError("Trajectory time values must be stored as a Field.")
+        targets = self.table.evaluate(batch, max_order=self.order)
+        out = targets[self.order]
+        dims = time_field.dims + (None,) * max(out.ndim - len(time_field.dims), 0)
+        return cx.Field(out, dims=dims)
+
+
+def _broadcast_like(values: Array, reference: Array, /) -> Array:
+    arr = jnp.asarray(values)
+    ref = jnp.asarray(reference)
+    if arr.ndim == ref.ndim:
+        return arr
+    if arr.ndim != 1:
+        raise ValueError(
+            f"Cannot broadcast shape {arr.shape} against reference shape {ref.shape}."
+        )
+    return arr.reshape((int(arr.shape[0]),) + (1,) * (ref.ndim - 1))
+
+
+def _irregular_trajectory_signal(
+    domain: IrregularTrajectoryDatasetDomain,
+    values: ArrayLike,
+    /,
+    *,
+    interpolation: TrajectorySignalInterpolation,
+) -> DomainFunction:
+    if interpolation == "cubic_hermite":
+        raise ValueError(
+            "IrregularTrajectoryDatasetDomain TrajectorySignal supports only "
+            "interpolation='nearest' or interpolation='linear'."
+        )
+
+    if interpolation == "nearest":
+        base = DomainFunction(
+            domain=domain,
+            deps=domain.labels,
+            func=_IrregularNearestTrajectorySignal(domain=domain, values=values),
+            metadata={},
+        )
+
+        def _nearest_hook(
+            *,
+            var: str,
+            axis: int | None,
+            order: int,
+            mode,
+            backend,
+            basis,
+            periodic: bool,
+        ) -> DomainFunction | None:
+            del mode, backend, basis, periodic
+            if var != domain.time_label or axis is not None:
+                return None
+            if int(order) == 0:
+                return with_derivative_hook(base, _nearest_hook)
+            raise ValueError(
+                "TrajectorySignal with interpolation='nearest' is not differentiable; "
+                "use interpolation='linear' for time derivatives."
+            )
+
+        return with_derivative_hook(base, _nearest_hook)
+
+    table = _IrregularTrajectorySignalTable(domain=domain, values=values)
+    base = DomainFunction(
+        domain=domain,
+        deps=domain.labels,
+        func=_IrregularInterpolatedTrajectorySignal(table=table, order=0),
+        metadata={},
+    )
+
+    def _make_hook(offset: int, /):
+        def _hook(
+            *,
+            var: str,
+            axis: int | None,
+            order: int,
+            mode,
+            backend,
+            basis,
+            periodic: bool,
+        ) -> DomainFunction | None:
+            del mode, basis, periodic
+            if backend not in ("ad", "jet"):
+                return None
+            if var != domain.time_label:
+                return None
+            if axis is not None:
+                return None
+            n = int(offset) + int(order)
+            if n > 1:
+                raise ValueError(
+                    "Irregular TrajectorySignal with interpolation='linear' supports "
+                    "time derivatives only up to order 1."
+                )
+            if n == 0:
+                return with_derivative_hook(base, _make_hook(0))
+            out = DomainFunction(
+                domain=domain,
+                deps=domain.labels,
+                func=_IrregularInterpolatedTrajectorySignal(table=table, order=n),
+                metadata={},
+            )
+            return with_derivative_hook(out, _make_hook(n))
+
+        return _hook
+
+    return with_derivative_hook(base, _make_hook(0))
+
+
 def TrajectorySignal(
-    domain: TrajectoryDatasetDomain,
+    domain: TrajectoryDatasetDomain | IrregularTrajectoryDatasetDomain,
     values: ArrayLike,
     /,
     *,
@@ -409,9 +667,16 @@ def TrajectorySignal(
     time_var: str | None = None,
     snap_tol: float = 1e-10,
 ) -> DomainFunction:
-    """Expose fixed ragged trajectory data as a DomainFunction over `(data, t)`."""
-    if not isinstance(domain, TrajectoryDatasetDomain):
-        raise TypeError("TrajectorySignal requires a TrajectoryDatasetDomain.")
+    """Expose fixed trajectory data as a `DomainFunction` over `(data, t)`.
+
+    Use this when an observed ragged time series is an input or forcing term for
+    another residual, rather than the supervised output being fitted directly.
+    `values` must have one leading row per trajectory case and a padded time axis
+    matching the domain lengths. Interpolated signals are non-trainable solver
+    state and support time derivatives according to the interpolation order.
+    """
+    if not isinstance(domain, (TrajectoryDatasetDomain, IrregularTrajectoryDatasetDomain)):
+        raise TypeError("TrajectorySignal requires a trajectory dataset domain.")
     var = domain.time_label if time_var is None else str(time_var)
     if var != domain.time_label:
         raise ValueError(
@@ -421,6 +686,18 @@ def TrajectorySignal(
     interpolation_str = str(interpolation)
     if interpolation_str not in ("nearest", "linear", "cubic_hermite"):
         raise ValueError("interpolation must be 'nearest', 'linear', or 'cubic_hermite'.")
+
+    if isinstance(domain, IrregularTrajectoryDatasetDomain):
+        interpolation_value = (
+            "nearest"
+            if interpolation_str == "nearest"
+            else ("linear" if interpolation_str == "linear" else "cubic_hermite")
+        )
+        return _irregular_trajectory_signal(
+            domain,
+            values,
+            interpolation=interpolation_value,
+        )
 
     if interpolation_str == "nearest":
         base = DomainFunction(

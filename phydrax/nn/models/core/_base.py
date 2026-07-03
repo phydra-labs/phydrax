@@ -35,6 +35,7 @@ class _AbstractBaseModel(StrictModule):
 
     _supports_structured_input: bool = False
     _supports_blockwise_input: bool = False
+    _supports_axis_batch_input: bool = False
     _warn_on_auto_fallback: bool = False
     _domain_input_mode: ClassVar[DomainInputMode] = "flat"
 
@@ -48,6 +49,9 @@ class _AbstractBaseModel(StrictModule):
 
     def warn_on_auto_fallback(self) -> bool:
         return bool(self._warn_on_auto_fallback)
+
+    def supports_axis_batch_input(self) -> bool:
+        return bool(self._supports_axis_batch_input)
 
     @classmethod
     def domain_input_mode(cls) -> DomainInputMode:

@@ -94,7 +94,7 @@ class _AbstractDomain(StrictModule):
         )
 
     def Function(self, *deps: str):
-        from ._function import DomainFunction
+        from ._function import batch_aware_callable, DomainFunction
 
         if deps:
             for dep in deps:
@@ -105,6 +105,8 @@ class _AbstractDomain(StrictModule):
 
         def decorator(func):
             if not callable(func):
+                return DomainFunction(domain=self, deps=deps, func=func)
+            if batch_aware_callable(func) is not None:
                 return DomainFunction(domain=self, deps=deps, func=func)
 
             sig = inspect.signature(func)

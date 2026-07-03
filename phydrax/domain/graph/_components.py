@@ -82,56 +82,72 @@ class _AbstractEdgeTypeSubset(_AbstractGraphTypeSubset):
 
 
 class Nodes(_AbstractVarComponent):
-    """Marker selecting the node set of a graph domain."""
+    """Marker selecting all valid nodes of each sampled graph."""
 
     def __init__(self):
         """Create a node component marker."""
 
 
 class Edges(_AbstractVarComponent):
-    """Marker selecting the edge set of a graph domain."""
+    """Marker selecting all valid edges of each sampled graph."""
 
     def __init__(self):
         """Create an edge component marker."""
 
 
 class Globals(_AbstractVarComponent):
-    """Marker selecting graph-level entries of a graph domain."""
+    """Marker selecting graph-level entries of each sampled graph."""
 
     def __init__(self):
         """Create a graph-global component marker."""
 
 
 class NodeSet(_AbstractNodeSubset):
-    """Marker selecting an explicit set of node indices."""
+    """Marker selecting explicit local node indices.
+
+    In a graph dataset, the same local node indices are applied independently to
+    every sampled graph case.
+    """
 
 
 class EdgeSet(_AbstractEdgeSubset):
-    """Marker selecting an explicit set of edge indices."""
+    """Marker selecting explicit local edge indices.
+
+    In a graph dataset, the same local edge indices are applied independently to
+    every sampled graph case.
+    """
 
 
 class NodeType(_AbstractNodeTypeSubset):
-    """Marker selecting graph nodes whose type id is in `type_ids`."""
+    """Marker selecting nodes whose integer type id is in `type_ids`.
+
+    The graph node payload must be mapping-valued and contain `type_key`, by
+    default `graph.nodes["type"]`.
+    """
 
 
 class EdgeType(_AbstractEdgeTypeSubset):
-    """Marker selecting graph edges whose type id is in `type_ids`."""
+    """Marker selecting edges whose integer type id is in `type_ids`.
+
+    The graph edge payload must be mapping-valued and contain `type_key`, by
+    default `graph.edges["type"]`.
+    """
 
 
 class BoundaryNodes(_AbstractNodeSubset):
-    """Marker selecting graph nodes treated as a boundary set."""
+    """Marker selecting explicit local nodes treated as a boundary set."""
 
 
 class InteriorNodes(_AbstractNodeSubset):
-    """Marker selecting graph nodes treated as an interior set."""
+    """Marker selecting explicit local nodes treated as an interior set."""
 
 
 class BoundaryEdges(_AbstractEdgeSubset):
-    """Marker selecting graph edges treated as a boundary set."""
+    """Marker selecting explicit local edges treated as a boundary set."""
 
 
 class InterfaceEdges(_AbstractEdgeSubset):
-    """Marker selecting graph edges treated as an interface set."""
+    """Marker selecting explicit local edges treated as an interface set."""
 
 
 def graph_component_kind(component: _AbstractVarComponent, /) -> GraphComponentKind:
