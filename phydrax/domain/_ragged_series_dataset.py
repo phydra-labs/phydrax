@@ -11,6 +11,7 @@ import coordax as cx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 from jaxtyping import Array, ArrayLike, Key, PyTree
 
 from .._doc import DOC_KEY0
@@ -135,12 +136,12 @@ def _as_scalar(name: str, value: ArrayLike, /) -> Array:
 
 
 def _pack_padded_series(series: PyTree[Array], lengths: Array, /) -> PyTree[Array]:
-    length_list = list(map(int, lengths.tolist()))
+    length_np = np.asarray(lengths, dtype=np.int32)
 
     def _pack_leaf(leaf: Array) -> Array:
-        arr = jnp.asarray(leaf)
-        parts = [arr[i, : length] for i, length in enumerate(length_list)]
-        return jnp.concatenate(parts, axis=0)
+        arr = np.asarray(leaf)
+        mask = np.arange(arr.shape[1], dtype=np.int32)[None, :] < length_np[:, None]
+        return jnp.asarray(arr[mask])
 
     return jax.tree_util.tree_map(_pack_leaf, series)
 
