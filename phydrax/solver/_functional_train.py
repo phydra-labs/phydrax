@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import inspect
+import signal
+import threading
 import time
 from contextlib import nullcontext
 from pathlib import Path
@@ -111,6 +113,73 @@ def _metric_suffix(metrics: dict[str, Any], /) -> str:
         value_f = float(jnp.asarray(value, dtype=float).reshape(()))
         parts.append(f"{name}={value_f:.6e}")
     return " " + " ".join(parts)
+
+
+class _TrainingSignalGuard:
+    """Convert process interrupts into a graceful training-loop stop request."""
+
+    _previous_handlers: dict[int, Any]
+
+    def __init__(self):
+        self._previous_handlers = {}
+        self._signum: int | None = None
+        self._reason: str | None = None
+        self._installed = False
+
+    def __enter__(self) -> "_TrainingSignalGuard":
+        if threading.current_thread() is not threading.main_thread():
+            return self
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            self._previous_handlers[int(sig)] = signal.getsignal(sig)
+            signal.signal(sig, self._handle_signal)
+        self._installed = True
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if not self._installed:
+            return
+        for signum, handler in self._previous_handlers.items():
+            signal.signal(signum, handler)
+
+    @property
+    def stop_requested(self) -> bool:
+        return self._signum is not None or self._reason is not None
+
+    @property
+    def signal_name(self) -> str:
+        if self._signum is None:
+            return self._reason or "signal"
+        return signal.Signals(self._signum).name
+
+    def _handle_signal(self, signum: int, frame: Any) -> None:
+        del frame
+        if self._signum is None:
+            self._signum = int(signum)
+
+    def request_stop_from_exception(self, exc: BaseException, /) -> None:
+        if self.stop_requested:
+            return
+        if isinstance(exc, KeyboardInterrupt):
+            self._reason = "SIGINT"
+        else:
+            self._reason = type(exc).__name__
+
+
+def _log_training_signal_stop(
+    backend: str,
+    guard: _TrainingSignalGuard,
+    /,
+    *,
+    completed: int,
+    total: int,
+    file: Any,
+) -> None:
+    print(
+        f"[phydrax][{backend}] received {guard.signal_name}; "
+        f"exiting training loop after {completed}/{total} iteration(s).",
+        file=file,
+        flush=True,
+    )
 
 
 def _tensorboard_every(
@@ -280,7 +349,7 @@ def solve(
         else nullcontext(None)
     )
 
-    with log_ctx as log_fp, tb_ctx as tb_writer:
+    with log_ctx as log_fp, tb_ctx as tb_writer, _TrainingSignalGuard() as signal_guard:
         params, non_trainable = partition_trainable(self.functions)
         log_every_ = int(log_every)
         if log_every_ < 0:
@@ -441,124 +510,155 @@ def solve(
         out_file = log_fp if log_fp is not None else None
 
         for epoch in range(int(num_iter)):
-            iter_start = time.perf_counter()
-            rng, subkey = jr.split(rng)
-            iter_ = jnp.asarray(epoch + 1, dtype=float)
-            params, opt_state, loss_val, terms = solve_step(
-                params, non_trainable, opt_state, self, subkey, iter_
-            )
-            terms_arr = jnp.asarray(terms, dtype=float)
-            train_constraint_terms = terms_arr[: len(constraint_names)]
-            train_model_loss_terms = terms_arr[len(constraint_names) :]
-            if keep_best:
-                loss_f = float(loss_val)
-                if loss_f < best_loss:
-                    best_loss = loss_f
-                    best_params = params
-            iter_time_s = time.perf_counter() - iter_start
-            step = epoch + 1
-            console_step = log_every_ > 0 and (step % log_every_ == 0)
-            tensorboard_step = tb_every_ is not None and (step % tb_every_ == 0)
-            train_data_metrics: tuple[dict[str, Any], ...] = tuple(
-                {} for _ in self.constraints
-            )
-            eval_terms = jnp.zeros((0,), dtype=float)
-            eval_data_metrics: tuple[dict[str, Any], ...] = tuple(
-                {} for _ in self.eval_constraints
-            )
-            if log_constraints_ and (console_step or tensorboard_step):
-                train_data_metrics = _data_metrics_wrt_constraints(
-                    params,
-                    non_trainable,
-                    self,
-                    self.constraints,
-                    jr.fold_in(subkey, 1),
-                    iter_,
-                )
-                eval_terms = _terms_wrt_constraints(
-                    params,
-                    non_trainable,
-                    self,
-                    self.eval_constraints,
-                    jr.fold_in(subkey, 2),
-                    iter_,
-                )
-                eval_data_metrics = _data_metrics_wrt_constraints(
-                    params,
-                    non_trainable,
-                    self,
-                    self.eval_constraints,
-                    jr.fold_in(subkey, 3),
-                    iter_,
-                )
-
-            if console_step:
-                loss_f = float(loss_val)
-                best_display = best_loss if keep_best else loss_f
-                print(
-                    f"[phydrax][optax] iter {step}/{int(num_iter)} "
-                    f"loss={loss_f:.6e} best={best_display:.6e} "
-                    f"iter_time={iter_time_s:.3f}s",
+            if signal_guard.stop_requested:
+                _log_training_signal_stop(
+                    "optax",
+                    signal_guard,
+                    completed=epoch,
+                    total=int(num_iter),
                     file=out_file,
                 )
-                if log_constraints_:
-                    for i, (name, val) in enumerate(
-                        zip(
-                            constraint_names,
-                            list(map(float, train_constraint_terms)),
-                            strict=True,
-                        )
-                    ):
-                        suffix = _metric_suffix(train_data_metrics[i])
-                        print(
-                            f"  [train {i}] {name}: {val:.6e}{suffix}",
-                            file=out_file,
-                        )
-                    for i, (name, val) in enumerate(
-                        zip(
-                            model_loss_names,
-                            list(map(float, train_model_loss_terms)),
-                            strict=True,
-                        )
-                    ):
-                        print(
-                            f"  [model {i}] {name}: {val:.6e}",
-                            file=out_file,
-                        )
-                    eval_terms_arr = jnp.asarray(eval_terms, dtype=float)
-                    for i, (name, val) in enumerate(
-                        zip(
-                            eval_constraint_names,
-                            list(map(float, eval_terms_arr)),
-                            strict=True,
-                        )
-                    ):
-                        suffix = _metric_suffix(eval_data_metrics[i])
-                        print(
-                            f"  [eval {i}] {name}: {val:.6e}{suffix}",
-                            file=out_file,
-                        )
-            if tensorboard_step and tb_writer is not None:
-                loss_f = float(loss_val)
-                best_display = best_loss if keep_best else loss_f
-                _log_tensorboard_scalars(
-                    tb_writer,
-                    step=step,
-                    loss=loss_val,
-                    best_loss=best_display,
-                    iter_time_s=iter_time_s,
-                    train_constraint_names=constraint_names,
-                    train_terms=train_constraint_terms,
-                    train_data_metrics=train_data_metrics,
-                    train_model_loss_names=model_loss_names,
-                    train_model_loss_terms=train_model_loss_terms,
-                    eval_constraint_names=eval_constraint_names,
-                    eval_terms=eval_terms,
-                    eval_data_metrics=eval_data_metrics,
-                    log_constraints=log_constraints_,
+                break
+            completed = epoch
+            try:
+                iter_start = time.perf_counter()
+                rng, subkey = jr.split(rng)
+                iter_ = jnp.asarray(epoch + 1, dtype=float)
+                params, opt_state, loss_val, terms = solve_step(
+                    params, non_trainable, opt_state, self, subkey, iter_
                 )
-                if step % tb_flush_every_ == 0:
-                    tb_writer.flush()
+                completed = epoch + 1
+                terms_arr = jnp.asarray(terms, dtype=float)
+                train_constraint_terms = terms_arr[: len(constraint_names)]
+                train_model_loss_terms = terms_arr[len(constraint_names) :]
+                if keep_best:
+                    loss_f = float(loss_val)
+                    if loss_f < best_loss:
+                        best_loss = loss_f
+                        best_params = params
+                iter_time_s = time.perf_counter() - iter_start
+                step = epoch + 1
+                if signal_guard.stop_requested:
+                    _log_training_signal_stop(
+                        "optax",
+                        signal_guard,
+                        completed=step,
+                        total=int(num_iter),
+                        file=out_file,
+                    )
+                    break
+                console_step = log_every_ > 0 and (step % log_every_ == 0)
+                tensorboard_step = tb_every_ is not None and (step % tb_every_ == 0)
+                train_data_metrics: tuple[dict[str, Any], ...] = tuple(
+                    {} for _ in self.constraints
+                )
+                eval_terms = jnp.zeros((0,), dtype=float)
+                eval_data_metrics: tuple[dict[str, Any], ...] = tuple(
+                    {} for _ in self.eval_constraints
+                )
+                if log_constraints_ and (console_step or tensorboard_step):
+                    train_data_metrics = _data_metrics_wrt_constraints(
+                        params,
+                        non_trainable,
+                        self,
+                        self.constraints,
+                        jr.fold_in(subkey, 1),
+                        iter_,
+                    )
+                    eval_terms = _terms_wrt_constraints(
+                        params,
+                        non_trainable,
+                        self,
+                        self.eval_constraints,
+                        jr.fold_in(subkey, 2),
+                        iter_,
+                    )
+                    eval_data_metrics = _data_metrics_wrt_constraints(
+                        params,
+                        non_trainable,
+                        self,
+                        self.eval_constraints,
+                        jr.fold_in(subkey, 3),
+                        iter_,
+                    )
+
+                if console_step:
+                    loss_f = float(loss_val)
+                    best_display = best_loss if keep_best else loss_f
+                    print(
+                        f"[phydrax][optax] iter {step}/{int(num_iter)} "
+                        f"loss={loss_f:.6e} best={best_display:.6e} "
+                        f"iter_time={iter_time_s:.3f}s",
+                        file=out_file,
+                    )
+                    if log_constraints_:
+                        for i, (name, val) in enumerate(
+                            zip(
+                                constraint_names,
+                                list(map(float, train_constraint_terms)),
+                                strict=True,
+                            )
+                        ):
+                            suffix = _metric_suffix(train_data_metrics[i])
+                            print(
+                                f"  [train {i}] {name}: {val:.6e}{suffix}",
+                                file=out_file,
+                            )
+                        for i, (name, val) in enumerate(
+                            zip(
+                                model_loss_names,
+                                list(map(float, train_model_loss_terms)),
+                                strict=True,
+                            )
+                        ):
+                            print(
+                                f"  [model {i}] {name}: {val:.6e}",
+                                file=out_file,
+                            )
+                        eval_terms_arr = jnp.asarray(eval_terms, dtype=float)
+                        for i, (name, val) in enumerate(
+                            zip(
+                                eval_constraint_names,
+                                list(map(float, eval_terms_arr)),
+                                strict=True,
+                            )
+                        ):
+                            suffix = _metric_suffix(eval_data_metrics[i])
+                            print(
+                                f"  [eval {i}] {name}: {val:.6e}{suffix}",
+                                file=out_file,
+                            )
+                if tensorboard_step and tb_writer is not None:
+                    loss_f = float(loss_val)
+                    best_display = best_loss if keep_best else loss_f
+                    _log_tensorboard_scalars(
+                        tb_writer,
+                        step=step,
+                        loss=loss_val,
+                        best_loss=best_display,
+                        iter_time_s=iter_time_s,
+                        train_constraint_names=constraint_names,
+                        train_terms=train_constraint_terms,
+                        train_data_metrics=train_data_metrics,
+                        train_model_loss_names=model_loss_names,
+                        train_model_loss_terms=train_model_loss_terms,
+                        eval_constraint_names=eval_constraint_names,
+                        eval_terms=eval_terms,
+                        eval_data_metrics=eval_data_metrics,
+                        log_constraints=log_constraints_,
+                    )
+                    if step % tb_flush_every_ == 0:
+                        tb_writer.flush()
+            except (KeyboardInterrupt, InterruptedError) as exc:
+                signal_guard.request_stop_from_exception(exc)
+                _log_training_signal_stop(
+                    "optax",
+                    signal_guard,
+                    completed=completed,
+                    total=int(num_iter),
+                    file=out_file,
+                )
+                break
 
         chosen = best_params if keep_best else params
         functions = combine_trainable(chosen, non_trainable)
@@ -709,187 +809,223 @@ def _solve_evosax(
         else nullcontext(tensorboard_writer)
     )
 
-    with log_ctx as log_fp, tb_ctx as tb_writer:
+    with log_ctx as log_fp, tb_ctx as tb_writer, _TrainingSignalGuard() as signal_guard:
         out_file = log_fp if log_fp is not None else None
 
         for epoch in range(int(num_iter)):
-            iter_start = time.perf_counter()
-            key, ask_key, eval_key, tell_key, cand_key = jr.split(key, 5)
-            population, evo_state = algo.ask(ask_key, evo_state, algo_params)
-            popsize = None
-            for leaf in jax.tree_util.tree_leaves(population):
-                if isinstance(leaf, (jax.Array, jcore.Tracer)) and len(leaf.shape) > 0:
-                    popsize = int(leaf.shape[0])
-                    break
-            if popsize is None:
-                raise ValueError(
-                    "Could not infer population size from evosax population."
+            if signal_guard.stop_requested:
+                _log_training_signal_stop(
+                    "evosax",
+                    signal_guard,
+                    completed=epoch,
+                    total=int(num_iter),
+                    file=out_file,
                 )
+                break
+            completed = epoch
+            try:
+                iter_start = time.perf_counter()
+                key, ask_key, eval_key, tell_key, cand_key = jr.split(key, 5)
+                population, evo_state = algo.ask(ask_key, evo_state, algo_params)
+                popsize = None
+                for leaf in jax.tree_util.tree_leaves(population):
+                    if (
+                        isinstance(leaf, (jax.Array, jcore.Tracer))
+                        and len(leaf.shape) > 0
+                    ):
+                        popsize = int(leaf.shape[0])
+                        break
+                if popsize is None:
+                    raise ValueError(
+                        "Could not infer population size from evosax population."
+                    )
 
-            iter_ = jnp.asarray(epoch + 1, dtype=float)
+                iter_ = jnp.asarray(epoch + 1, dtype=float)
 
-            # Common random numbers (CRN): sample each constraint batch once per generation
-            # and reuse it across the full population to reduce variance and avoid
-            # vmapping through host callbacks.
-            batch_key = jr.fold_in(eval_key, 0)
-            batch_keys = jr.split(batch_key, len(self.constraints))
-            batches: list[Any] = []
-            for c, k in zip(self.constraints, batch_keys, strict=True):
-                if isinstance(c, AbstractSamplingConstraint):
-                    batches.append(c.sample(key=k))
-                else:
-                    batches.append(None)
-            batches_tuple = tuple(batches)
+                # Common random numbers (CRN): sample each constraint batch once per
+                # generation and reuse it across the full population to reduce variance
+                # and avoid vmapping through host callbacks.
+                batch_key = jr.fold_in(eval_key, 0)
+                batch_keys = jr.split(batch_key, len(self.constraints))
+                batches: list[Any] = []
+                for c, k in zip(self.constraints, batch_keys, strict=True):
+                    if isinstance(c, AbstractSamplingConstraint):
+                        batches.append(c.sample(key=k))
+                    else:
+                        batches.append(None)
+                batches_tuple = tuple(batches)
 
-            eval_key_shared = jr.fold_in(eval_key, 1)
-            losses = jax.vmap(
-                lambda p: loss_fn(
-                    p,
+                eval_key_shared = jr.fold_in(eval_key, 1)
+                losses = jax.vmap(
+                    lambda p: loss_fn(
+                        p,
+                        non_trainable,
+                        self,
+                        eval_key_shared,
+                        iter_,
+                        batches_tuple,
+                    )
+                )(population)
+                evo_state, _ = algo.tell(
+                    tell_key, population, losses, evo_state, algo_params
+                )
+                cand_params = algo.get_mean(evo_state)
+                cand_loss = loss_fn(
+                    cand_params,
                     non_trainable,
                     self,
                     eval_key_shared,
                     iter_,
                     batches_tuple,
                 )
-            )(population)
-            evo_state, _ = algo.tell(tell_key, population, losses, evo_state, algo_params)
-            cand_params = algo.get_mean(evo_state)
-            cand_loss = loss_fn(
-                cand_params,
-                non_trainable,
-                self,
-                eval_key_shared,
-                iter_,
-                batches_tuple,
-            )
 
-            if keep_best:
-                loss_f = float(cand_loss)
-                if loss_f < best_loss:
-                    best_loss = loss_f
+                if keep_best:
+                    loss_f = float(cand_loss)
+                    if loss_f < best_loss:
+                        best_loss = loss_f
+                        best_params = cand_params
+                else:
                     best_params = cand_params
-            else:
-                best_params = cand_params
-            iter_time_s = time.perf_counter() - iter_start
-            step = epoch + 1
-            console_step = log_every_ > 0 and (step % log_every_ == 0)
-            tensorboard_step = tb_every_ is not None and (step % tb_every_ == 0)
-            train_data_metrics: tuple[dict[str, Any], ...] = tuple(
-                {} for _ in self.constraints
-            )
-            eval_terms = jnp.zeros((0,), dtype=float)
-            eval_data_metrics: tuple[dict[str, Any], ...] = tuple(
-                {} for _ in self.eval_constraints
-            )
-            terms_arr = jnp.zeros((0,), dtype=float)
-            train_constraint_terms = terms_arr[: len(constraint_names)]
-            train_model_loss_terms = terms_arr[len(constraint_names) :]
-            if log_constraints_ and (console_step or tensorboard_step):
-                terms_arr = jnp.asarray(
-                    terms_fn(
+                completed = epoch + 1
+                iter_time_s = time.perf_counter() - iter_start
+                step = epoch + 1
+                if signal_guard.stop_requested:
+                    _log_training_signal_stop(
+                        "evosax",
+                        signal_guard,
+                        completed=step,
+                        total=int(num_iter),
+                        file=out_file,
+                    )
+                    break
+                console_step = log_every_ > 0 and (step % log_every_ == 0)
+                tensorboard_step = tb_every_ is not None and (step % tb_every_ == 0)
+                train_data_metrics: tuple[dict[str, Any], ...] = tuple(
+                    {} for _ in self.constraints
+                )
+                eval_terms = jnp.zeros((0,), dtype=float)
+                eval_data_metrics: tuple[dict[str, Any], ...] = tuple(
+                    {} for _ in self.eval_constraints
+                )
+                terms_arr = jnp.zeros((0,), dtype=float)
+                train_constraint_terms = terms_arr[: len(constraint_names)]
+                train_model_loss_terms = terms_arr[len(constraint_names) :]
+                if log_constraints_ and (console_step or tensorboard_step):
+                    terms_arr = jnp.asarray(
+                        terms_fn(
+                            cand_params,
+                            non_trainable,
+                            self,
+                            eval_key_shared,
+                            iter_,
+                            batches_tuple,
+                        ),
+                        dtype=float,
+                    )
+                    train_constraint_terms = terms_arr[: len(constraint_names)]
+                    train_model_loss_terms = terms_arr[len(constraint_names) :]
+                    train_data_metrics = _data_metrics_for_constraints(
                         cand_params,
                         non_trainable,
                         self,
-                        eval_key_shared,
+                        self.constraints,
+                        jr.fold_in(eval_key_shared, 1),
                         iter_,
-                        batches_tuple,
-                    ),
-                    dtype=float,
-                )
-                train_constraint_terms = terms_arr[: len(constraint_names)]
-                train_model_loss_terms = terms_arr[len(constraint_names) :]
-                train_data_metrics = _data_metrics_for_constraints(
-                    cand_params,
-                    non_trainable,
-                    self,
-                    self.constraints,
-                    jr.fold_in(eval_key_shared, 1),
-                    iter_,
-                )
-                eval_terms = _terms_for_constraints(
-                    cand_params,
-                    non_trainable,
-                    self,
-                    self.eval_constraints,
-                    jr.fold_in(eval_key_shared, 2),
-                    iter_,
-                )
-                eval_data_metrics = _data_metrics_for_constraints(
-                    cand_params,
-                    non_trainable,
-                    self,
-                    self.eval_constraints,
-                    jr.fold_in(eval_key_shared, 3),
-                    iter_,
-                )
+                    )
+                    eval_terms = _terms_for_constraints(
+                        cand_params,
+                        non_trainable,
+                        self,
+                        self.eval_constraints,
+                        jr.fold_in(eval_key_shared, 2),
+                        iter_,
+                    )
+                    eval_data_metrics = _data_metrics_for_constraints(
+                        cand_params,
+                        non_trainable,
+                        self,
+                        self.eval_constraints,
+                        jr.fold_in(eval_key_shared, 3),
+                        iter_,
+                    )
 
-            if console_step:
-                loss_f = float(cand_loss)
-                best_display = best_loss if keep_best else loss_f
-                print(
-                    f"[phydrax][evosax] iter {step}/{int(num_iter)} "
-                    f"loss={loss_f:.6e} best={best_display:.6e} "
-                    f"iter_time={iter_time_s:.3f}s",
+                if console_step:
+                    loss_f = float(cand_loss)
+                    best_display = best_loss if keep_best else loss_f
+                    print(
+                        f"[phydrax][evosax] iter {step}/{int(num_iter)} "
+                        f"loss={loss_f:.6e} best={best_display:.6e} "
+                        f"iter_time={iter_time_s:.3f}s",
+                        file=out_file,
+                    )
+                    if log_constraints_:
+                        for i, (name, val) in enumerate(
+                            zip(
+                                constraint_names,
+                                list(map(float, train_constraint_terms)),
+                                strict=True,
+                            )
+                        ):
+                            suffix = _metric_suffix(train_data_metrics[i])
+                            print(
+                                f"  [train {i}] {name}: {val:.6e}{suffix}",
+                                file=out_file,
+                            )
+                        for i, (name, val) in enumerate(
+                            zip(
+                                model_loss_names,
+                                list(map(float, train_model_loss_terms)),
+                                strict=True,
+                            )
+                        ):
+                            print(
+                                f"  [model {i}] {name}: {val:.6e}",
+                                file=out_file,
+                            )
+                        eval_terms_arr = jnp.asarray(eval_terms, dtype=float)
+                        for i, (name, val) in enumerate(
+                            zip(
+                                eval_constraint_names,
+                                list(map(float, eval_terms_arr)),
+                                strict=True,
+                            )
+                        ):
+                            suffix = _metric_suffix(eval_data_metrics[i])
+                            print(
+                                f"  [eval {i}] {name}: {val:.6e}{suffix}",
+                                file=out_file,
+                            )
+                if tensorboard_step and tb_writer is not None:
+                    loss_f = float(cand_loss)
+                    best_display = best_loss if keep_best else loss_f
+                    _log_tensorboard_scalars(
+                        tb_writer,
+                        step=step,
+                        loss=cand_loss,
+                        best_loss=best_display,
+                        iter_time_s=iter_time_s,
+                        train_constraint_names=constraint_names,
+                        train_terms=train_constraint_terms,
+                        train_data_metrics=train_data_metrics,
+                        train_model_loss_names=model_loss_names,
+                        train_model_loss_terms=train_model_loss_terms,
+                        eval_constraint_names=eval_constraint_names,
+                        eval_terms=eval_terms,
+                        eval_data_metrics=eval_data_metrics,
+                        log_constraints=log_constraints_,
+                    )
+                    if step % tb_flush_every_ == 0:
+                        tb_writer.flush()
+            except (KeyboardInterrupt, InterruptedError) as exc:
+                signal_guard.request_stop_from_exception(exc)
+                _log_training_signal_stop(
+                    "evosax",
+                    signal_guard,
+                    completed=completed,
+                    total=int(num_iter),
                     file=out_file,
                 )
-                if log_constraints_:
-                    for i, (name, val) in enumerate(
-                        zip(
-                            constraint_names,
-                            list(map(float, train_constraint_terms)),
-                            strict=True,
-                        )
-                    ):
-                        suffix = _metric_suffix(train_data_metrics[i])
-                        print(
-                            f"  [train {i}] {name}: {val:.6e}{suffix}",
-                            file=out_file,
-                        )
-                    for i, (name, val) in enumerate(
-                        zip(
-                            model_loss_names,
-                            list(map(float, train_model_loss_terms)),
-                            strict=True,
-                        )
-                    ):
-                        print(
-                            f"  [model {i}] {name}: {val:.6e}",
-                            file=out_file,
-                        )
-                    eval_terms_arr = jnp.asarray(eval_terms, dtype=float)
-                    for i, (name, val) in enumerate(
-                        zip(
-                            eval_constraint_names,
-                            list(map(float, eval_terms_arr)),
-                            strict=True,
-                        )
-                    ):
-                        suffix = _metric_suffix(eval_data_metrics[i])
-                        print(
-                            f"  [eval {i}] {name}: {val:.6e}{suffix}",
-                            file=out_file,
-                        )
-            if tensorboard_step and tb_writer is not None:
-                loss_f = float(cand_loss)
-                best_display = best_loss if keep_best else loss_f
-                _log_tensorboard_scalars(
-                    tb_writer,
-                    step=step,
-                    loss=cand_loss,
-                    best_loss=best_display,
-                    iter_time_s=iter_time_s,
-                    train_constraint_names=constraint_names,
-                    train_terms=train_constraint_terms,
-                    train_data_metrics=train_data_metrics,
-                    train_model_loss_names=model_loss_names,
-                    train_model_loss_terms=train_model_loss_terms,
-                    eval_constraint_names=eval_constraint_names,
-                    eval_terms=eval_terms,
-                    eval_data_metrics=eval_data_metrics,
-                    log_constraints=log_constraints_,
-                )
-                if step % tb_flush_every_ == 0:
-                    tb_writer.flush()
+                break
 
         functions = combine_trainable(best_params, non_trainable)
         return eqx.tree_at(lambda s: s.functions, self, functions)
