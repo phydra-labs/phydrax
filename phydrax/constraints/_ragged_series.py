@@ -61,7 +61,12 @@ def _validate_targets(domain: RaggedSeriesDatasetDomain, values: ArrayLike, /) -
 
 
 class RaggedSeriesSupervisedConstraint(AbstractSamplingConstraint):
-    """Supervise row-aligned targets on a `RaggedSeriesDatasetDomain`."""
+    """Supervise row-aligned targets on a `RaggedSeriesDatasetDomain`.
+
+    Each sampled case contributes one target row. The model receives the
+    ragged-series payload for that case, either as the full padded row or as a
+    fixed-width sampled view for efficient training on long records.
+    """
 
     constraint_vars: tuple[str, ...]
     component: DomainComponent
@@ -98,6 +103,27 @@ class RaggedSeriesSupervisedConstraint(AbstractSamplingConstraint):
         label: str | None = None,
         data_accuracy_eps: float = 1e-12,
     ):
+        """Create a ragged-series supervised data constraint.
+
+        Parameters:
+            constraint_var: Name of the predicted function to supervise.
+            component: Component from a `RaggedSeriesDatasetDomain`.
+            values: Targets with leading size equal to `domain.size`.
+            num_cases: Number of cases sampled per loss evaluation.
+            structure: Optional product structure for the sampled case axis.
+            sampler: Case sampler. Only `"uniform"` is currently supported.
+            weight: Scalar or pointwise multiplier applied to this loss term.
+            reduction: `"mean"` for case-average loss or `"sum"` for a summed
+                squared-error loss.
+            series_sampling: `"full"` for full padded rows, or a sampled view mode
+                such as `"points_uniform"`, `"window_uniform"`, `"prefix"`, or
+                `"suffix"`.
+            num_series_points: Width of sampled series views when
+                `series_sampling` is not `"full"`.
+            indices: Optional case subset for train/validation splits.
+            label: Optional diagnostic label for this constraint.
+            data_accuracy_eps: Stabilizer used in supervised data metrics.
+        """
         if not isinstance(component.domain, RaggedSeriesDatasetDomain):
             raise TypeError(
                 "RaggedSeriesSupervisedConstraint requires a "
@@ -305,6 +331,7 @@ class RaggedSeriesSupervisedConstraint(AbstractSamplingConstraint):
         *,
         key: Key[Array, ""] = DOC_KEY0,
     ) -> RaggedSeriesSupervisedBatch:
+        """Draw a case mini-batch and return aligned model inputs and targets."""
         domain = self.domain
         key_cases = key
         key_series = key
@@ -358,6 +385,7 @@ class RaggedSeriesSupervisedConstraint(AbstractSamplingConstraint):
         batch: RaggedSeriesSupervisedBatch | None = None,
         **kwargs: Any,
     ) -> dict[str, Array]:
+        """Return supervised diagnostics on a sampled or provided batch."""
         batch_ = self.sample(key=key) if batch is None else batch
         prediction = self._prediction(functions, batch_, key=key, **kwargs)
         return supervised_data_metrics(
@@ -376,6 +404,7 @@ class RaggedSeriesSupervisedConstraint(AbstractSamplingConstraint):
         batch: RaggedSeriesSupervisedBatch | None = None,
         **kwargs: Any,
     ) -> Array:
+        """Return the weighted supervised squared-error loss."""
         del iter_
         batch_ = self.sample(key=key) if batch is None else batch
         prediction = self._prediction(functions, batch_, key=key, **kwargs)

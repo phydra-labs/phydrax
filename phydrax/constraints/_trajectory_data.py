@@ -172,6 +172,22 @@ class TrajectoryCaseDataConstraint(AbstractSamplingConstraint):
         label: str | None = None,
         data_accuracy_eps: float = 1e-12,
     ):
+        """Create a supervised case-level trajectory data constraint.
+
+        Parameters:
+            constraint_var: Name of the predicted function to supervise.
+            component: Component from a `TrajectoryDatasetDomain`.
+            values: Case targets with leading size equal to `domain.size`.
+            num_cases: Number of cases sampled per loss evaluation.
+            structure: Product structure used to represent sampled cases.
+            case_time: Representative time used if the predicted function depends
+                on the trajectory time label.
+            weight: Scalar or pointwise multiplier applied to this loss term.
+            reduction: `"mean"` or `"sum"` over sampled cases.
+            case_indices: Optional case subset for train/validation splits.
+            label: Optional diagnostic label for this constraint.
+            data_accuracy_eps: Stabilizer used in supervised data metrics.
+        """
         if not isinstance(component.domain, TrajectoryDatasetDomain):
             raise TypeError(
                 "TrajectoryCaseDataConstraint requires a TrajectoryDatasetDomain component."
@@ -239,6 +255,7 @@ class TrajectoryCaseDataConstraint(AbstractSamplingConstraint):
         *,
         key: Key[Array, ""] = DOC_KEY0,
     ) -> Any:
+        """Draw a case mini-batch and return aligned model inputs and targets."""
         domain = self.domain
         case_indices = _sample_case_indices(
             domain,
@@ -285,6 +302,7 @@ class TrajectoryCaseDataConstraint(AbstractSamplingConstraint):
         batch: TrajectoryCaseDataBatch | None = None,
         **kwargs: Any,
     ) -> dict[str, Array]:
+        """Return supervised diagnostics on a sampled or provided batch."""
         batch_ = self.sample(key=key) if batch is None else batch
         prediction = self._prediction(functions, batch_, key=key, **kwargs)
         return supervised_data_metrics(
@@ -303,6 +321,7 @@ class TrajectoryCaseDataConstraint(AbstractSamplingConstraint):
         batch: TrajectoryCaseDataBatch | None = None,
         **kwargs: Any,
     ) -> Array:
+        """Return the weighted supervised squared-error loss."""
         del iter_
         batch_ = self.sample(key=key) if batch is None else batch
         prediction = self._prediction(functions, batch_, key=key, **kwargs)
@@ -648,7 +667,14 @@ def TrajectorySignal(
     time_var: str | None = None,
     snap_tol: float = 1e-10,
 ) -> DomainFunction:
-    """Expose fixed ragged trajectory data as a DomainFunction over `(data, t)`."""
+    """Expose fixed trajectory data as a `DomainFunction` over `(data, t)`.
+
+    Use this when an observed ragged time series is an input or forcing term for
+    another residual, rather than the supervised output being fitted directly.
+    `values` must have one leading row per trajectory case and a padded time axis
+    matching the domain lengths. Interpolated signals are non-trainable solver
+    state and support time derivatives according to the interpolation order.
+    """
     if not isinstance(domain, (TrajectoryDatasetDomain, IrregularTrajectoryDatasetDomain)):
         raise TypeError("TrajectorySignal requires a trajectory dataset domain.")
     var = domain.time_label if time_var is None else str(time_var)

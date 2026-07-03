@@ -141,6 +141,16 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
         layout: LayoutPlan | None = None,
         validate: bool = True,
     ):
+        """Create a finite graph-family domain.
+
+        Parameters:
+            graphs: Graph cases sampled by the domain.
+            label: Domain label used for sampled graph entity payloads.
+            measure: Component measure mode. `"probability"` normalizes sampled
+                entity reductions; `"count"` scales by selected entity count.
+            layout: Optional static padding plan used when batching sampled graphs.
+            validate: Validate each `GraphIR` before storing it.
+        """
         if len(graphs) == 0:
             raise ValueError("GraphDatasetDomain requires at least one graph.")
         if measure not in ("probability", "count"):
@@ -158,22 +168,27 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
 
     @property
     def label(self) -> str:
+        """Domain label used for graph entity payloads."""
         return self._label
 
     @property
     def var_dim(self) -> int:
+        """Number of coordinate labels owned by this unary domain."""
         return 1
 
     @property
     def size(self) -> int:
+        """Number of graph cases in the finite dataset."""
         return len(self.graphs)
 
     @property
     def measure_mode(self) -> GraphDatasetMeasureMode:
+        """Measure mode used for graph-component reductions."""
         return self._measure_mode
 
     @property
     def layout(self) -> LayoutPlan | None:
+        """Static graph-batch layout, if sampled batches are padded."""
         return self._layout
 
     def layout_for_batch_size(
@@ -183,7 +198,11 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
         *,
         multiple: int = 1,
     ) -> LayoutPlan:
-        """Return a worst-case static layout for sampling `num_cases` graphs."""
+        """Return a worst-case static layout for sampling `num_cases` graphs.
+
+        The returned layout can be passed to `with_layout(...)` to keep sampled
+        graph batch shapes stable across JIT-compiled training steps.
+        """
         n = int(num_cases)
         if n <= 0:
             raise ValueError("num_cases must be positive.")
@@ -221,6 +240,7 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
         sampler: str = "uniform",
         key: Key[Array, ""] = DOC_KEY0,
     ) -> Array:
+        """Sample graph-case indices from the dataset."""
         del sampler
         n = int(num_points)
         if n < 0:
@@ -236,6 +256,7 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
         )
 
     def component_size(self, component: _AbstractVarComponent, /) -> int:
+        """Return the total selected entity count across all graph cases."""
         kind = graph_component_kind(component)
         total = 0
         for graph in self.graphs:
@@ -243,6 +264,7 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
         return total
 
     def component_measure(self, component: _AbstractVarComponent, /) -> Array:
+        """Return the total measure assigned to a graph component."""
         if self._measure_mode == "probability":
             return jnp.asarray(1.0, dtype=float)
         return jnp.asarray(float(self.component_size(component)), dtype=float)
@@ -257,6 +279,7 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
         sampler: str = "uniform",
         key: Key[Array, ""] = DOC_KEY0,
     ) -> GraphBatch:
+        """Sample graph cases and materialize the selected graph entities."""
         indices = self.sample_indices(num_points, sampler=sampler, key=key)
         return self.points_from_indices(
             indices,
@@ -274,6 +297,12 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
         structure: ProductStructure | None = None,
         label: str | None = None,
     ) -> GraphBatch:
+        """Materialize selected graph cases by explicit dataset index.
+
+        Entity indices inside the returned `GraphBatch` refer to the batched
+        `GraphIR`, while dataset/sample metadata fields preserve the original
+        source case for graph-data constraints and diagnostics.
+        """
         label_out = self.label if label is None else str(label)
         structure_in = structure or ProductStructure(((label_out,),))
         structure_out = structure_in.canonicalize((label_out,))
@@ -355,7 +384,11 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
         global_input_key: str | None = None,
         output_key: str | None = None,
     ):
-        """Wrap a `GraphIR -> GraphIR` model as a graph-family `DomainFunction`."""
+        """Wrap a `GraphIR -> GraphIR` model as a graph-family `DomainFunction`.
+
+        The model is evaluated on each sampled batched topology and returns the
+        node, edge, or global output selected by `output`.
+        """
         from ...domain._function import DomainFunction
         from ...nn import GraphModel
 
@@ -391,7 +424,11 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
         global_input_key: str | None = None,
         output_key: str | None = None,
     ):
-        """Wrap an autoregressive graph rollout as a graph-family `DomainFunction`."""
+        """Wrap an autoregressive graph rollout as a graph-family `DomainFunction`.
+
+        Use this when a graph model predicts a sequence by repeatedly applying a
+        one-step graph state transition on sampled graph cases.
+        """
         from ...domain._function import DomainFunction
         from ...nn import GraphRolloutModel
 
@@ -414,6 +451,7 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
         )
 
     def equivalent(self, other: object, /) -> bool:
+        """Return whether another domain has the same public graph-family shape."""
         if not isinstance(other, GraphDatasetDomain):
             return False
         if self.label != other.label:

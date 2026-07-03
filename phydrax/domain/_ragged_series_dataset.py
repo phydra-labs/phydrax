@@ -193,6 +193,17 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
         label: str = "data",
         measure: RaggedSeriesMeasureMode = "probability",
     ):
+        """Create a finite dataset of variable-length input series.
+
+        Parameters:
+            series: Padded series PyTree with leading shape `(cases, max_length, ...)`.
+            lengths: Valid series length for each case.
+            static: Optional per-case static payload with leading size `cases`.
+            start: Shared start time for the series grid.
+            dt: Uniform time spacing shared by all cases.
+            label: Domain label used for sampled row payloads.
+            measure: Empirical row measure, either `"probability"` or `"count"`.
+        """
         _validate_label(str(label))
         series_arrays, n, max_length = _validate_series(series)
         static_arrays = _validate_static(static, n=n)
@@ -322,36 +333,44 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
 
     @property
     def label(self) -> str:
+        """Domain label used for sampled ragged-series payloads."""
         return self._label
 
     @property
     def var_dim(self) -> int:
+        """Number of coordinate labels owned by this unary domain."""
         return 1
 
     @property
     def size(self) -> int:
+        """Number of cases in the finite dataset."""
         return int(self._size)
 
     @property
     def max_length(self) -> int:
+        """Maximum padded series length across all cases."""
         return int(self._max_length)
 
     @property
     def measure_mode(self) -> RaggedSeriesMeasureMode:
+        """Empirical row measure mode used by reductions."""
         return self._measure_mode
 
     @property
     def measure(self) -> Array:
+        """Total domain measure under the configured measure mode."""
         if self._measure_mode == "count":
             return jnp.asarray(float(self._size), dtype=float)
         return jnp.asarray(1.0, dtype=float)
 
     @property
     def time_axis(self) -> Array:
+        """Shared padded time grid of length `max_length`."""
         return self._time_axis
 
     @property
     def total_observations(self) -> int:
+        """Total number of valid series observations across all cases."""
         return int(self.offsets[-1])
 
     def sample(
@@ -361,6 +380,7 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
         sampler: str = "uniform",
         key: Key[Array, ""] = DOC_KEY0,
     ) -> dict[str, Any]:
+        """Sample case rows and return their ragged-series payloads."""
         indices = self.sample_indices(num_points, sampler=sampler, key=key)
         return self.input_rows(indices)
 
@@ -371,6 +391,7 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
         sampler: str = "uniform",
         key: Key[Array, ""] = DOC_KEY0,
     ) -> Array:
+        """Sample case indices from the finite dataset."""
         del sampler
         n = int(num_points)
         if n < 0:
@@ -386,6 +407,7 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
         )
 
     def input_rows(self, indices: ArrayLike, /) -> dict[str, Any]:
+        """Return full padded row payloads for explicit case indices."""
         idx = jnp.asarray(indices, dtype=jnp.int32)
         lengths = self.lengths[idx]
         positions = jnp.broadcast_to(
@@ -404,7 +426,12 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
         sampling: RaggedSeriesSampling,
         key: Key[Array, ""] = DOC_KEY0,
     ) -> dict[str, Any]:
-        """Return fixed-width sampled series views for selected cases."""
+        """Return fixed-width sampled series views for selected cases.
+
+        The returned payload has width `num_series_points` and includes a boolean
+        mask plus `sample_scale` so sampled reductions can account for the original
+        valid length.
+        """
         idx = jnp.asarray(indices, dtype=jnp.int32).reshape((-1,))
         k = int(num_series_points)
         if k <= 0:
@@ -501,6 +528,7 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
         *,
         structure: ProductStructure | None = None,
     ) -> PointsBatch:
+        """Materialize full padded rows as a Phydrax `PointsBatch`."""
         structure_in = structure or ProductStructure(((self.label,),))
         structure_out = structure_in.canonicalize(self.labels)
         axis = structure_out.axis_for(self.label)
@@ -537,7 +565,7 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
         structure: ProductStructure | None = None,
         key: Key[Array, ""] = DOC_KEY0,
     ) -> PointsBatch:
-        """Materialize fixed-width sampled series rows for selected cases."""
+        """Materialize fixed-width sampled series rows as a `PointsBatch`."""
         structure_in = structure or ProductStructure(((self.label,),))
         structure_out = structure_in.canonicalize(self.labels)
         axis = structure_out.axis_for(self.label)
@@ -569,6 +597,7 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
         return PointsBatch(points=frozendict(points), structure=structure_out)
 
     def equivalent(self, other: object, /) -> bool:
+        """Return whether another domain has the same public dataset shape."""
         if not isinstance(other, RaggedSeriesDatasetDomain):
             return False
         if self.label != other.label:

@@ -13,7 +13,8 @@ domains when each coordinate factor should keep its own label and sampling
 structure.
 
 Use `TrajectoryDatasetDomain` when each dataset row has a vector-valued trajectory
-with a shared `dt` but row-specific length. It keeps `data` and `t` paired so
+with a shared `dt` but row-specific length. Use `IrregularTrajectoryDatasetDomain`
+when rows have explicit non-uniform time grids. Both keep `data` and `t` paired so
 physics residuals at `t` only sample valid times for the selected dataset row.
 
 Use `RaggedSeriesDatasetDomain` when the ragged time series is an input attached

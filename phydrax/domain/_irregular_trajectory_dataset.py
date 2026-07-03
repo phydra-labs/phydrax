@@ -128,7 +128,12 @@ def _single_axis_for_trajectory(
 
 
 class IrregularTrajectoryDatasetDomain(_AbstractDomain):
-    """A coupled finite-function and irregular time domain for ragged trajectories."""
+    """A coupled finite-function and irregular time domain for ragged trajectories.
+
+    Each dataset row owns explicit strictly increasing observation times. Sampling
+    keeps `data` and `t` paired, so every sampled time is valid for the selected
+    dataset row even when cases have different non-uniform time grids.
+    """
 
     inputs: PyTree[Array]
     times: Array
@@ -157,6 +162,17 @@ class IrregularTrajectoryDatasetDomain(_AbstractDomain):
         measure: TrajectoryMeasure = "case_time_probability",
         sampling: TrajectorySampling = "case_time_uniform",
     ):
+        """Create a finite dataset of row-conditioned irregular trajectories.
+
+        Parameters:
+            inputs: Per-case input PyTree with a shared leading case axis.
+            times: Padded physical time table with shape `(cases, max_length)`.
+            lengths: Valid time-step count for each case.
+            data_label: Label used for sampled input rows.
+            time_label: Label used for sampled times.
+            measure: Measure mode for coupled case-time reductions.
+            sampling: Strategy for drawing interior case-time samples.
+        """
         _validate_label(str(data_label))
         _validate_label(str(time_label))
         if str(data_label) == str(time_label):
@@ -228,61 +244,76 @@ class IrregularTrajectoryDatasetDomain(_AbstractDomain):
 
     @property
     def labels(self) -> tuple[str, ...]:
+        """Data and time labels owned by the domain."""
         return (self._data_label, self._time_label)
 
     @property
     def data_label(self) -> str:
+        """Label used for sampled input rows."""
         return self._data_label
 
     @property
     def time_label(self) -> str:
+        """Label used for sampled trajectory times."""
         return self._time_label
 
     @property
     def measure_mode(self) -> TrajectoryMeasure:
+        """Measure mode used for coupled case-time reductions."""
         return self._measure
 
     @property
     def sampling_mode(self) -> TrajectorySampling:
+        """Sampling strategy used for interior case-time points."""
         return self._sampling
 
     @property
     def size(self) -> int:
+        """Number of trajectory cases."""
         return int(self.lengths.shape[0])
 
     @property
     def max_length(self) -> int:
+        """Maximum valid time-step count across cases."""
         return int(self._max_length)
 
     @property
     def total_observations(self) -> int:
+        """Total number of valid time observations across all cases."""
         return int(self._total_observations)
 
     @property
     def flat_case_indices(self) -> Array:
+        """Flat case index for each valid time observation."""
         return self._flat_case_indices
 
     @property
     def flat_time_indices(self) -> Array:
+        """Flat local time index for each valid time observation."""
         return self._flat_time_indices
 
     @property
     def start_times(self) -> Array:
+        """Per-case first valid time."""
         return self.times[jnp.arange(self.size), 0]
 
     @property
     def end_times(self) -> Array:
+        """Per-case final valid time."""
         return self.times[jnp.arange(self.size), self.lengths - 1]
 
     @property
     def durations(self) -> Array:
+        """Per-case time span, `end_times - start_times`."""
         return self.end_times - self.start_times
 
     @property
     def node_widths(self) -> Array:
+        """Trapezoid-style quadrature widths for each valid time node."""
         return self._node_widths
 
     def factor(self, label: str, /) -> _AbstractUnaryDomain:
+        """Return the unary data or time factor for `label`."""
         if label == self._data_label:
             return self._data_factor
         if label == self._time_label:
@@ -290,6 +321,7 @@ class IrregularTrajectoryDatasetDomain(_AbstractDomain):
         raise KeyError(f"Label {label!r} not in domain {self.labels}.")
 
     def equivalent(self, other: object, /) -> bool:
+        """Return whether another domain has the same public trajectory shape."""
         if not isinstance(other, IrregularTrajectoryDatasetDomain):
             return False
         if self.labels != other.labels:
@@ -320,20 +352,24 @@ class IrregularTrajectoryDatasetDomain(_AbstractDomain):
         return True
 
     def inputs_tree_structure(self) -> Any:
+        """Return the PyTree structure of the stored per-case inputs."""
         return jax.tree_util.tree_structure(self.inputs)
 
     def input_rows(self, case_indices: ArrayLike, /) -> PyTree[Array]:
+        """Return input rows for explicit case indices."""
         idx = jnp.asarray(case_indices, dtype=jnp.int32)
         return jax.tree_util.tree_map(lambda a: jnp.asarray(a)[idx], self.inputs)
 
     def observation_times(
         self, case_indices: ArrayLike, time_indices: ArrayLike, /
     ) -> Array:
+        """Gather physical times by case and local time index."""
         case_idx = jnp.asarray(case_indices, dtype=jnp.int32)
         time_idx = jnp.asarray(time_indices, dtype=jnp.int32)
         return self.times[case_idx, time_idx]
 
     def lower_time_indices(self, case_indices: ArrayLike, times: ArrayLike, /) -> Array:
+        """Return the lower bracketing time index for each requested time."""
         case_idx = jnp.asarray(case_indices, dtype=jnp.int32).reshape((-1,))
         t = jnp.asarray(times, dtype=float).reshape((-1,))
         rows = self.times[case_idx]
@@ -343,6 +379,7 @@ class IrregularTrajectoryDatasetDomain(_AbstractDomain):
         return jnp.clip(counts - 1, 0, lengths - 1).astype(jnp.int32)
 
     def nearest_time_indices(self, case_indices: ArrayLike, times: ArrayLike, /) -> Array:
+        """Return the nearest valid time index for each requested time."""
         case_idx = jnp.asarray(case_indices, dtype=jnp.int32).reshape((-1,))
         t = jnp.asarray(times, dtype=float).reshape((-1,))
         lower = self.lower_time_indices(case_idx, t)
@@ -356,6 +393,7 @@ class IrregularTrajectoryDatasetDomain(_AbstractDomain):
     def bracketing_time_indices(
         self, case_indices: ArrayLike, times: ArrayLike, /
     ) -> tuple[Array, Array, Array]:
+        """Return lower index, upper index, and interpolation fraction for times."""
         case_idx = jnp.asarray(case_indices, dtype=jnp.int32).reshape((-1,))
         t = jnp.asarray(times, dtype=float).reshape((-1,))
         lengths = self.lengths[case_idx]
@@ -379,6 +417,7 @@ class IrregularTrajectoryDatasetDomain(_AbstractDomain):
         structure: ProductStructure | None = None,
         time_indices: ArrayLike | None = None,
     ) -> PointsBatch:
+        """Materialize paired case-time samples as a `PointsBatch`."""
         structure_in = structure or ProductStructure((self.labels,))
         structure_, axis = _single_axis_for_trajectory(self, structure_in)
         case_idx = jnp.asarray(case_indices, dtype=jnp.int32).reshape((-1,))

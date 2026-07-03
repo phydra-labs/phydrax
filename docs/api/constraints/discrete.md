@@ -33,10 +33,14 @@ per-row scalar/vector targets on a `TrajectoryDatasetDomain`.
 ---
 
 ::: phydrax.constraints.DiscreteInteriorDataConstraint
+    options:
+        members: []
 
 ---
 
 ::: phydrax.constraints.DiscreteTimeDataConstraint
+    options:
+        members: []
 
 ## Supervised dataset constraints
 
@@ -84,6 +88,8 @@ rows. This is the recommended way to pair `SupervisedDatasetConstraint` with
 ---
 
 ::: phydrax.constraints.SupervisedDatasetBatch
+    options:
+        members: []
 
 ## Supervised ragged series constraints
 
@@ -177,6 +183,8 @@ constraint with the same reduction.
 ---
 
 ::: phydrax.constraints.RaggedSeriesSupervisedBatch
+    options:
+        members: []
 
 ## Supervised graph constraints
 
@@ -190,18 +198,26 @@ same pattern for graph trajectories with values shaped by case, time, and graph
 entity.
 
 ::: phydrax.constraints.GraphTarget
+    options:
+        members: []
 
 ---
 
 ::: phydrax.constraints.GraphSupervisedConstraint
+    options:
+        members: []
 
 ---
 
 ::: phydrax.constraints.GraphTrajectorySignal
+    options:
+        members: []
 
 ---
 
 ::: phydrax.constraints.GraphTrajectorySupervisedConstraint
+    options:
+        members: []
 
 ## Ragged trajectory constraints
 
@@ -248,6 +264,8 @@ trajectory out of the training data constraint.
 ---
 
 ::: phydrax.constraints.RaggedTimeSeriesBatch
+    options:
+        members: []
 
 ## Fixed trajectory signals and case targets
 
@@ -301,6 +319,8 @@ solver optimizer parameters.
 train/eval splits.
 
 ::: phydrax.constraints.TrajectorySignal
+    options:
+        members: []
 
 ---
 
@@ -315,6 +335,8 @@ train/eval splits.
 ---
 
 ::: phydrax.constraints.TrajectoryCaseDataBatch
+    options:
+        members: []
 
 ## Hard ragged trajectory enforcement
 
@@ -344,19 +366,29 @@ default for second-order time residuals. Pass `components=[...]` to hard-enforce
 only selected trailing output components while leaving the others free.
 
 ::: phydrax.constraints.enforce_ragged_time_series
+    options:
+        members: []
 
 ## Discrete boundary / initial constraints
 
 ::: phydrax.constraints.DiscreteDirichletBoundaryConstraint
+    options:
+        members: []
 
 ---
 
 ::: phydrax.constraints.DiscreteNeumannBoundaryConstraint
+    options:
+        members: []
 
 ---
 
 ::: phydrax.constraints.DiscreteInitialConstraint
+    options:
+        members: []
 
 ## Discrete ODE constraints
 
 ::: phydrax.constraints.DiscreteODEConstraint
+    options:
+        members: []

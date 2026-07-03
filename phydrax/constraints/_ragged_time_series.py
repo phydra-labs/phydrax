@@ -354,6 +354,25 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
         label: str | None = None,
         data_accuracy_eps: float = 1e-12,
     ):
+        """Create a supervised ragged time-series data constraint.
+
+        Parameters:
+            constraint_var: Name of the predicted function to supervise.
+            component: Component from a trajectory dataset domain.
+            values: Padded target array with one leading row per case and a time
+                axis at position 1.
+            num_points: Number of sampled observations, or `(cases, times)` for a
+                case-time grid batch.
+            structure: Product structure for sampled `(data, t)` points.
+            sampling: Observation-level, case-level, or continuous case-time
+                sampling mode.
+            interpolation: Target lookup mode for continuous time sampling.
+            weight: Scalar or pointwise multiplier applied to this loss term.
+            reduction: `"mean"` or `"sum"` over sampled observations.
+            case_indices: Optional case subset for train/validation splits.
+            label: Optional diagnostic label for this constraint.
+            data_accuracy_eps: Stabilizer used in supervised data metrics.
+        """
         if not isinstance(
             component.domain, (TrajectoryDatasetDomain, IrregularTrajectoryDatasetDomain)
         ):
@@ -445,6 +464,7 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
         *,
         key: Key[Array, ""] = DOC_KEY0,
     ) -> Any:
+        """Draw a ragged trajectory mini-batch and aligned target values."""
         domain = self.domain
         if isinstance(self.num_points, tuple):
             return self._sample_case_time_grid(domain, key=key)
@@ -639,6 +659,7 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
         batch: RaggedTimeSeriesBatch | None = None,
         **kwargs: Any,
     ) -> dict[str, Array]:
+        """Return supervised diagnostics on a sampled or provided batch."""
         batch_ = self.sample(key=key) if batch is None else batch
         prediction = self._prediction(functions, batch_, key=key, **kwargs)
         pred_arr, target_arr = _flatten_grid_prediction_target(
@@ -662,6 +683,7 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
         batch: RaggedTimeSeriesBatch | None = None,
         **kwargs: Any,
     ) -> Array:
+        """Return the weighted supervised squared-error loss."""
         del iter_
         batch_ = self.sample(key=key) if batch is None else batch
         prediction = self._prediction(functions, batch_, key=key, **kwargs)

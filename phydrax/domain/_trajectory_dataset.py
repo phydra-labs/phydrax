@@ -162,6 +162,18 @@ class TrajectoryDatasetDomain(_AbstractDomain):
         measure: TrajectoryMeasure = "case_time_probability",
         sampling: TrajectorySampling = "case_time_uniform",
     ):
+        """Create a finite dataset of row-conditioned trajectories.
+
+        Parameters:
+            inputs: Per-case input PyTree with a shared leading case axis.
+            lengths: Valid time-step count for each case.
+            dt: Uniform time spacing shared by all cases.
+            start: Shared start time.
+            data_label: Label used for sampled input rows.
+            time_label: Label used for sampled times.
+            measure: Measure mode for coupled case-time reductions.
+            sampling: Strategy for drawing interior case-time samples.
+        """
         _validate_label(str(data_label))
         _validate_label(str(time_label))
         if str(data_label) == str(time_label):
@@ -237,53 +249,66 @@ class TrajectoryDatasetDomain(_AbstractDomain):
 
     @property
     def labels(self) -> tuple[str, ...]:
+        """Data and time labels owned by the domain."""
         return (self._data_label, self._time_label)
 
     @property
     def data_label(self) -> str:
+        """Label used for sampled input rows."""
         return self._data_label
 
     @property
     def time_label(self) -> str:
+        """Label used for sampled trajectory times."""
         return self._time_label
 
     @property
     def measure_mode(self) -> TrajectoryMeasure:
+        """Measure mode used for coupled case-time reductions."""
         return self._measure
 
     @property
     def sampling_mode(self) -> TrajectorySampling:
+        """Sampling strategy used for interior case-time points."""
         return self._sampling
 
     @property
     def size(self) -> int:
+        """Number of trajectory cases."""
         return int(self.lengths.shape[0])
 
     @property
     def max_length(self) -> int:
+        """Maximum valid time-step count across cases."""
         return int(self._max_length)
 
     @property
     def total_observations(self) -> int:
+        """Total number of valid time observations across all cases."""
         return int(self._total_observations)
 
     @property
     def flat_case_indices(self) -> Array:
+        """Flat case index for each valid time observation."""
         return self._flat_case_indices
 
     @property
     def flat_time_indices(self) -> Array:
+        """Flat local time index for each valid time observation."""
         return self._flat_time_indices
 
     @property
     def durations(self) -> Array:
+        """Per-case trajectory duration, `(length - 1) * dt`."""
         return (self.lengths.astype(float) - 1.0) * self.dt
 
     @property
     def end_times(self) -> Array:
+        """Per-case final valid time."""
         return self.start + self.durations
 
     def factor(self, label: str, /) -> _AbstractUnaryDomain:
+        """Return the unary data or time factor for `label`."""
         if label == self._data_label:
             return self._data_factor
         if label == self._time_label:
@@ -291,6 +316,7 @@ class TrajectoryDatasetDomain(_AbstractDomain):
         raise KeyError(f"Label {label!r} not in domain {self.labels}.")
 
     def equivalent(self, other: object, /) -> bool:
+        """Return whether another domain has the same public trajectory shape."""
         if not isinstance(other, TrajectoryDatasetDomain):
             return False
         if self.labels != other.labels:
@@ -323,15 +349,18 @@ class TrajectoryDatasetDomain(_AbstractDomain):
         return True
 
     def inputs_tree_structure(self) -> Any:
+        """Return the PyTree structure of the stored per-case inputs."""
         return jax.tree_util.tree_structure(self.inputs)
 
     def input_rows(self, case_indices: ArrayLike, /) -> PyTree[Array]:
+        """Return input rows for explicit case indices."""
         idx = jnp.asarray(case_indices, dtype=jnp.int32)
         return jax.tree_util.tree_map(lambda a: jnp.asarray(a)[idx], self.inputs)
 
     def observation_times(
         self, case_indices: ArrayLike, time_indices: ArrayLike, /
     ) -> Array:
+        """Convert local time indices to physical times."""
         del case_indices
         return self.start + self.dt * jnp.asarray(time_indices, dtype=float)
 
@@ -344,6 +373,7 @@ class TrajectoryDatasetDomain(_AbstractDomain):
         structure: ProductStructure | None = None,
         time_indices: ArrayLike | None = None,
     ) -> PointsBatch:
+        """Materialize paired case-time samples as a `PointsBatch`."""
         structure_in = structure or ProductStructure((self.labels,))
         structure_, axis = _single_axis_for_trajectory(self, structure_in)
         case_idx = jnp.asarray(case_indices, dtype=jnp.int32).reshape((-1,))

@@ -109,12 +109,15 @@ full padded constraint with the same reduction while avoiding global padding.
     options:
         members:
             - __init__
+            - from_padded
+            - from_sequences
             - label
             - size
             - max_length
             - measure_mode
             - measure
             - time_axis
+            - total_observations
             - sample
             - sample_indices
             - input_rows
