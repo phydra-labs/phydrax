@@ -246,6 +246,9 @@ class FunctionalSolver(StrictModule):
 
         During training, each constraint loss receives an `iter_` keyword argument (the
         1-based iteration index as a JAX scalar) to enable schedules.
+        If `SIGINT` or `SIGTERM` is received while the loop is active, the current
+        loop exits gracefully and `solve(...)` returns the best/current solver state
+        instead of terminating the calling program.
 
         Logging:
 
