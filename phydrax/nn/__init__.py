@@ -11,7 +11,7 @@ separable models, and latent contraction models over product domains.
 ## Highlights
 
 - `MLP` and `Linear` for dense models.
-- `Separable` and `SeparableMLP` for coord-separable inputs.
+- `Separable` and `SeparableMLP` for pointwise separable and coord-separable inputs.
 - `LatentContractionModel` for product-domain factorization.
 - `LatentExecutionPolicy` for structured execution fallback behavior.
 
@@ -36,6 +36,7 @@ from .activations import (  # noqa: F401
     Stan,
 )
 from .models import (  # noqa: F401
+    add_model_loss,
     ComplexOutputModel,
     ConcatenatedModel,
     DeepONet,
@@ -44,13 +45,19 @@ from .models import (  # noqa: F401
     FeynmaNN,
     FNO1d,
     FNO2d,
+    GraphModel,
+    GraphRolloutModel,
     KAN,
     LatentContractionModel,
     LatentExecutionPolicy,
     Linear,
     MagnitudeDirectionModel,
+    MaskedSeriesPoolingModel,
     MLP,
+    ModelWithLoss,
     RandomFourierFeatureEmbeddings,
+    RaggedSeriesBatchInput,
+    RaggedSeriesModel,
     Separable,
     SeparableFeynmaNN,
     SeparableKAN,
@@ -71,13 +78,19 @@ __all__ = [
     "ConcatenatedModel",
     "EquinoxModel",
     "EquinoxStructuredModel",
+    "GraphModel",
+    "GraphRolloutModel",
     "MagnitudeDirectionModel",
+    "MaskedSeriesPoolingModel",
     "RandomFourierFeatureEmbeddings",
+    "RaggedSeriesBatchInput",
+    "RaggedSeriesModel",
     "SeparableMLP",
     "SeparableKAN",
     "KAN",
     "Linear",
     "MLP",
+    "ModelWithLoss",
     "FeynmaNN",
     "DeepONet",
     "FNO1d",
@@ -87,4 +100,5 @@ __all__ = [
     "LatentContractionModel",
     "Separable",
     "SeparableFeynmaNN",
+    "add_model_loss",
 ]

@@ -6,6 +6,7 @@
 *.cache
 *.stl
 *.phx
+*.png
 .venv
 .tmp
 .notes
@@ -17,5 +18,10 @@ __pycache__
 .ruff_cache
 uv.lock
 AGENTS.md
+LLM.md
+scratch.py
+*.onnx
+*.tfevents*
 dist/
 site/
+_gitignore/

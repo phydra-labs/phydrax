@@ -6,12 +6,12 @@ from collections.abc import Sequence
 from typing import Literal
 
 import jax.numpy as jnp
-import jax.random as jr
-from jaxtyping import Array, Key
+from jaxtyping import Array
 
 from ...._doc import DOC_KEY0
 from ..._utils import _canonical_size
 from ..core._base import _AbstractBaseModel, _AbstractStructuredInputModel
+from ..core._keys import EvalKey, split_eval_key
 
 
 class Sequential(_AbstractStructuredInputModel):
@@ -57,7 +57,7 @@ class Sequential(_AbstractStructuredInputModel):
         x: Array | tuple[Array, ...],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: EvalKey = DOC_KEY0,
     ) -> Array:
         r"""Evaluate the model pipeline.
 
@@ -66,7 +66,7 @@ class Sequential(_AbstractStructuredInputModel):
         if len(self.models) == 1:
             keys = (key,)
         else:
-            keys = tuple(jr.split(key, len(self.models)))
+            keys = split_eval_key(key, len(self.models))
 
         first_model = self.models[0]
         if isinstance(x, tuple):

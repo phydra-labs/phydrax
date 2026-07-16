@@ -1,7 +1,7 @@
 # Functional solver
 
-`FunctionalSolver` is the main entry point for turning a set of fields and constraints
-into a differentiable objective.
+`FunctionalSolver` is the main entry point for turning a set of fields, constraints,
+and attached model losses into a differentiable objective.
 
 For a conceptual overview (loss evaluation, enforced pipelines, training loop behavior), see
 [Guides → Solvers and training](../../guides_solver.md).
@@ -11,7 +11,11 @@ For a conceptual overview (loss evaluation, enforced pipelines, training loop be
 
     - `loss(...)` evaluates the total objective at the current parameters.
     - `ansatz_functions()` returns fields after applying enforced pipelines (if configured).
+    - `partition_functions()` exposes the trainable/non-trainable state split used by `solve(...)`.
     - `solve(...)` updates parameters inside `functions` using Optax or evosax optimizers.
+    - `solve(..., tensorboard_log_dir=...)` writes TensorBoard scalar logs.
+    - `save_onnx("u", ...)` exports one named ansatz function for deployment.
+    - Discrete data constraints report data-fit diagnostics alongside their loss.
 
 ## Typical usage
 
@@ -47,5 +51,8 @@ loss1 = solver.loss(key=jr.key(1))
             - __init__
             - ansatz_functions
             - __getitem__
+            - partition_functions
+            - trainable_functions
             - loss
             - solve
+            - save_onnx

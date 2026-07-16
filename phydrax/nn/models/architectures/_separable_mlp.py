@@ -3,7 +3,7 @@
 #
 
 from collections.abc import Callable, Sequence
-from typing import Literal
+from typing import ClassVar, Literal
 
 import jax
 import jax.random as jr
@@ -11,7 +11,8 @@ from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
 from ..._utils import _get_size
-from ..core._base import _AbstractStructuredInputModel
+from ..core._base import _AbstractStructuredInputModel, DomainInputMode
+from ..core._keys import EvalKey
 from ..wrappers._separable_wrappers import Separable
 from ._mlp import MLP
 
@@ -21,8 +22,11 @@ class SeparableMLP(_AbstractStructuredInputModel):
 
     This builds one scalar-input `MLP` per coordinate (and per `split_input`
     clone), then wraps them in `phydrax.nn.Separable` to form a low-rank separable
-    approximation. With latent size $L$ and output size $m$, the resulting model
-    has the form
+    approximation. It is drop-in compatible with dense vector models under
+    `Domain.Model(...)`: ordinary pointwise domain calls flatten dependencies into
+    one vector, then this model sends each scalar vector coordinate through its own
+    internal MLP. With latent size $L$ and output size $m$, the resulting model has
+    the form
 
     $$
     u_o(x)=\sum_{\ell=1}^{L}\prod_{i=1}^{d} g_{i,\ell,o}(x_i),
@@ -35,6 +39,8 @@ class SeparableMLP(_AbstractStructuredInputModel):
     in_size: int | Literal["scalar"]
     out_size: int | Literal["scalar"]
     model: _AbstractStructuredInputModel
+    _domain_input_mode: ClassVar[DomainInputMode] = "flat"
+    _supports_blockwise_input: bool = True
 
     def __init__(
         self,
@@ -118,7 +124,7 @@ class SeparableMLP(_AbstractStructuredInputModel):
         x: Array | tuple[Array, ...],
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: EvalKey = DOC_KEY0,
     ) -> Array:
         r"""Evaluate the separable MLP.
 

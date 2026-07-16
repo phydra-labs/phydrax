@@ -122,6 +122,137 @@ For sensor/anchor data (discrete samples), Phydrax provides constraints that do 
 component, but instead evaluate on explicit point sets (and typically reduce by mean/integral in
 an analogous way).
 
+For ragged trajectory data indexed by a `TrajectoryDatasetDomain`, use
+`RaggedTimeSeriesDataConstraint`. It samples valid `(data, t)` pairs, compares the
+model against the stored time-series values, and reports the same supervised metrics
+as other data-fit constraints.
+
+```python
+import jax.numpy as jnp
+import phydrax as phx
+
+inputs = jnp.asarray([[0.0], [1.0], [2.0]])
+lengths = jnp.asarray([2, 4, 3])
+domain = phx.domain.TrajectoryDatasetDomain(inputs, lengths, dt=0.5)
+
+times = domain.start + domain.dt * jnp.arange(domain.max_length)
+values = inputs[:, 0, None] + times[None, :]
+
+@domain.Function("data", "t")
+def exact(data, t):
+    return data[0] + t
+
+constraint = phx.constraints.RaggedTimeSeriesDataConstraint(
+    "u",
+    domain.component(),
+    values,
+    num_points=16,
+    sampling="observation_uniform",
+)
+
+loss = constraint.loss({"u": exact})
+metrics = constraint.data_metrics({"u": exact})
+```
+
+Use `case_indices=...` to restrict a ragged data constraint to a train or
+validation set of trajectory rows. This is case-level splitting: every observed
+time point for an excluded case stays excluded.
+
+When the ragged time series is an observed input/forcing rather than the learned
+field itself, expose it as a fixed function with `TrajectorySignal`. Include the
+fixed signal in the solver's `functions` mapping under the same name used by
+`constraint_vars`.
+It remains JAX-traceable numeric state but is not optimized by `solve(...)`.
+
+```python
+forcing = phx.constraints.TrajectorySignal(
+    domain,
+    values,
+    interpolation="linear",
+)
+
+physics = phx.constraints.FunctionalConstraint.from_operator(
+    component=domain.component(),
+    operator=lambda u, s: phx.operators.partial_t(u, var="t")
+    - phx.operators.partial_t(s, var="t"),
+    constraint_vars=("u", "forcing"),
+    num_points=128,
+    structure=phx.domain.ProductStructure((("data", "t"),)),
+)
+```
+
+For labels attached to the dataset row rather than to every time point, use
+`TrajectoryCaseDataConstraint`:
+
+```python
+targets = jnp.asarray([[1.0, 0.0], [2.0, -1.0], [3.0, -2.0]])
+
+case_data = phx.constraints.TrajectoryCaseDataConstraint(
+    "theta",
+    domain.component(),
+    targets,
+    num_cases=32,
+)
+```
+
+For non-time empirical rows, use `DatasetDomain` with
+`SupervisedDatasetConstraint`. The domain owns the row payloads, and the constraint
+owns aligned targets:
+
+```python
+rows = jnp.asarray([[0.0, 1.0], [1.0, 2.0], [2.0, 4.0]])
+dataset_targets = rows[:, 0] + 2.0 * rows[:, 1]
+dataset_domain = phx.domain.DatasetDomain(rows)
+
+@dataset_domain.Function("data")
+def u(row):
+    return row[0] + 2.0 * row[1]
+
+data = phx.constraints.SupervisedDatasetConstraint(
+    "u",
+    dataset_domain.component(),
+    dataset_targets,
+    num_cases=32,
+)
+```
+
+Use `indices=...` to train or evaluate on an explicit subset of dataset rows.
+`phydrax.data_utils.train_test_split_indices(...)` and
+`phydrax.data_utils.kfold_indices(...)` return index arrays for these arguments.
+
+For exact row-wise enforcement, use a hard ansatz instead of a data loss:
+
+```python
+@domain.Function("data", "t")
+def u_free(data, t):
+    return data[0] + t
+
+@domain.Function()
+def rhs():
+    return 1.0
+
+u = phx.constraints.enforce_ragged_time_series(
+    u_free,
+    domain,
+    values,
+    interpolation="cubic_hermite",
+    gate="sin4",
+)
+
+physics = phx.constraints.FunctionalConstraint.from_operator(
+    component=domain.component(),
+    operator=lambda u_fn: phx.operators.partial_t(u_fn, var="t") - rhs,
+    constraint_vars="u",
+    num_points=128,
+    structure=phx.domain.ProductStructure((("data", "t"),)),
+)
+```
+
+The hard ansatz matches every observed node by construction, so the data constraint
+can be kept only for diagnostics. Use `interpolation="linear"` for first-order
+physics, or `interpolation="cubic_hermite"` when second time derivatives appear in
+the residual. `components=[0, 2]` enforces only selected trailing output components.
+
 ## Integral equality constraints
 
 Integral constraints enforce targets of the form

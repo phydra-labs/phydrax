@@ -29,7 +29,7 @@ At a practical level, most workflows look like:
 2) define one or more **fields** \(u_\theta:\Omega\to\mathbb{R}^m\) as `DomainFunction`s,  
 3) build **residual operators** \(r=\mathcal{N}(u_\theta,\dots)\) using `phydrax.operators`,  
 4) turn residuals into **constraint terms** \(\ell_i\) via sampling + reduction (mean/integral),  
-5) sum terms into a **functional** \(L=\sum_i \ell_i\) and optimize with `FunctionalSolver`.
+5) sum constraint terms and optional model losses into a **functional** and optimize with `FunctionalSolver`.
 
 Two design choices make this interoperable:
 
@@ -214,6 +214,22 @@ To model operators \(G: f \mapsto u(\cdot)\), represent the domain as a product
 DeepONet/FNO. See [API → Domain → Composition](api/domain/composition.md) and
 [API → NN → Architectures](api/nn/architectures.md).
 
+For row-indexed trajectories with a shared time step but different sequence
+lengths, use `TrajectoryDatasetDomain` and `RaggedTimeSeriesDataConstraint`. This
+keeps each sampled time tied to the dataset row that owns it while still allowing
+time residuals and other `DomainFunction` operators.
+
+When a row has static covariates and observed ragged signals, keep those semantics
+separate: put the static covariates in the `TrajectoryDatasetDomain` input row,
+expose measured signals with `TrajectorySignal`, and supervise row-level targets
+with `TrajectoryCaseDataConstraint`. Observed trajectory signals and domain arrays
+are JAX-traceable fixed state, not solver parameters.
+
+If trajectory data must be exact, use `enforce_ragged_time_series` to build a hard
+ansatz and train only the remaining physics constraints. Linear interpolation covers
+first-order time residuals; cubic-Hermite interpolation covers second-order time
+residuals and optional selected output components.
+
 ## Notation
 
 We use $x$ for spatial variables, $t$ for time, and $u(x, t)$ for fields. A typical
@@ -227,7 +243,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   Start at [Getting started](index.md) and then [Guides → Constraints](guides_constraints.md).
 - **Enforced BC/IC**: build ansätze with `enforce_dirichlet` / `enforce_initial` / etc., and stage them via solver pipelines.
   See [API → Solver → Enforced constraint pipelines](api/solver/enforced_constraints.md).
-- **Data assimilation / hybrid physics–data**: add `DiscreteInteriorDataConstraint` / `DiscreteTimeDataConstraint` alongside PDE residuals.
+- **Data assimilation / hybrid physics-data**: add `DiscreteInteriorDataConstraint`, `DiscreteTimeDataConstraint`, `SupervisedDatasetConstraint`, `RaggedTimeSeriesDataConstraint`, or `TrajectoryCaseDataConstraint` alongside PDE residuals. Use `TrajectorySignal` for fixed measured forcings/covariates on ragged trajectory domains, and `eval_constraints` for held-out data diagnostics.
   See [API → Constraints → Discrete](api/constraints/discrete.md).
 - **Inverse problems (unknown coefficients/parameters)**: represent unknowns as additional fields or domain parameters, and couple them in residual operators.
   See [API → Domain → Functions](api/domain/functions.md) and [API → Constraints](api/constraints/index.md).
@@ -250,6 +266,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - [Solvers and training](guides_solver.md)
 - [API reference](api/phydrax.md)
 - `phydrax.domain` for geometry, time, and sampling.
+- `phydrax.data_utils` for CSV loading, array scaling, and case-index splits.
 - `phydrax.constraints` for loss terms and enforced constraints.
 - `phydrax.operators` for PDE operators.
 - `phydrax.nn` for models and wrappers.

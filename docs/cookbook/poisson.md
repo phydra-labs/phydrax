@@ -134,7 +134,7 @@ evaluate on the implied Cartesian grid. For a 2D geometry label `"x"`, coord-sep
         depth=2,
         key=jr.key(0),
     )
-    u = geom.Model("x")(model)
+    u = geom.Model("x", input_mode="structured")(model)
 
     batch = geom.component().sample_coord_separable({"x": (32, 32)}, key=jr.key(1))
 

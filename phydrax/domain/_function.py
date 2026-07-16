@@ -12,12 +12,46 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key, PyTree
 
-from .._callable import _ensure_special_kwonly_args
+from .._callable import _ensure_special_kwonly_args, _KeyIterAdapter
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from .._trainable import NonTrainableState
 from ._domain import _AbstractDomain
 from ._structure import CoordSeparableBatch, Points, PointsBatch
+
+
+class BatchAwareCallable:
+    """Marker for callables that need the structured batch object during evaluation."""
+
+    def use_batch_call(self) -> bool:
+        return True
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        raise TypeError(
+            "This callable requires structured batch evaluation via __call_batch__."
+        )
+
+    def __call_batch__(
+        self,
+        batch: PointsBatch | CoordSeparableBatch | Any,
+        /,
+        *,
+        key: Key[Array, ""] = DOC_KEY0,
+        **kwargs: Any,
+    ) -> cx.Field:
+        raise NotImplementedError
+
+
+def batch_aware_callable(func: Callable, /) -> BatchAwareCallable | None:
+    """Return the batch-aware callable inside Phydrax's keyword adapter, if present."""
+    inner = func
+    while isinstance(inner, _KeyIterAdapter):
+        inner = inner.func
+    if isinstance(inner, BatchAwareCallable) and inner.use_batch_call():
+        return inner
+    return None
 
 
 def _first_field_leaf(tree: PyTree[Any]) -> cx.Field:
@@ -133,12 +167,25 @@ def _rank1_leading_broadcast_op(
     return op(left, right)
 
 
-class _ConstCallable(StrictModule):
+class _ConstCallable(StrictModule, NonTrainableState):
     value: jax.Array
 
     def __init__(self, value: ArrayLike | None):
         if value is None:
             raise TypeError("DomainFunction constants must be array-like, not None.")
+        self.value = jnp.asarray(value)
+
+    def __call__(self, *args, key=None, **kwargs):
+        del args, key, kwargs
+        return self.value
+
+
+class _TrainableConstCallable(StrictModule):
+    value: jax.Array
+
+    def __init__(self, value: ArrayLike | None):
+        if value is None:
+            raise TypeError("Domain.Parameter constants must be array-like, not None.")
         self.value = jnp.asarray(value)
 
     def __call__(self, *args, key=None, **kwargs):
@@ -172,7 +219,7 @@ class _SwapAxesCallable(StrictModule):
         return jnp.swapaxes(self.func(*args, key=key, **kwargs), self.axis1, self.axis2)
 
 
-class _BinaryCallable(StrictModule):
+class _BinaryCallable(StrictModule, BatchAwareCallable):
     a: "DomainFunction"
     b: "DomainFunction"
     op: Callable[[Any, Any], Any]
@@ -196,6 +243,28 @@ class _BinaryCallable(StrictModule):
         self.a_pos = tuple(int(i) for i in a_pos)
         self.b_pos = tuple(int(i) for i in b_pos)
         self.reverse = bool(reverse)
+
+    def use_batch_call(self) -> bool:
+        return (batch_aware_callable(self.a.func) is not None) or (
+            batch_aware_callable(self.b.func) is not None
+        )
+
+    def __call_batch__(
+        self,
+        batch: PointsBatch | CoordSeparableBatch,
+        /,
+        *,
+        key: Key[Array, ""] = DOC_KEY0,
+        **kwargs: Any,
+    ) -> cx.Field:
+        left_fn = self.b if self.reverse else self.a
+        right_fn = self.a if self.reverse else self.b
+        left = left_fn(batch, key=key, **kwargs)
+        right = right_fn(batch, key=key, **kwargs)
+        out = self.op(left, right)
+        if not isinstance(out, cx.Field):
+            raise TypeError("Batch-aware binary DomainFunction must return a Field.")
+        return out
 
     def __call__(self, *args, key=None, **kwargs):
         a_args = [args[i] for i in self.a_pos]
@@ -566,12 +635,13 @@ class DomainFunction(StrictModule):
 
     def __call__(
         self,
-        points: PointsBatch | CoordSeparableBatch | Points,
+        points: PointsBatch | CoordSeparableBatch | Points | Any,
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.Field:
         from ._model_function import _ConcatenatedModelCallable
+        from .graph._batch import GraphBatch
 
         blockwise_eval = kwargs.pop("_blockwise_eval", False)
         blockwise_mode = "vmap"
@@ -681,7 +751,11 @@ class DomainFunction(StrictModule):
                     axis_order.append(axis)
 
             axis_order = list(_dedupe_axes(axis_order))
-            y = jnp.asarray(self.func(*args, key=key, **kwargs))
+            call_kwargs = kwargs
+            if any(isinstance(arg, tuple) for arg in args):
+                call_kwargs = dict(kwargs)
+                call_kwargs["_phydrax_model_input_mode"] = "structured"
+            y = jnp.asarray(self.func(*args, key=key, **call_kwargs))
             if y.ndim < len(axis_order):
                 return (
                     None,
@@ -690,7 +764,7 @@ class DomainFunction(StrictModule):
             out_dims = tuple(axis_order) + (None,) * (y.ndim - len(axis_order))
             return cx.Field(y, dims=out_dims), None
 
-        if isinstance(points, PointsBatch):
+        if isinstance(points, (PointsBatch, GraphBatch)):
             points_map = points.points
             structure = points.structure
             dense_structure = None
@@ -705,6 +779,32 @@ class DomainFunction(StrictModule):
                 points_map = points
                 dense_structure = None
                 coord_axes_by_label = None
+
+        if (
+            isinstance(self.func, _ConcatenatedModelCallable)
+            and self.func.supports_axis_batch_input
+            and isinstance(points, (PointsBatch, CoordSeparableBatch, GraphBatch))
+        ):
+            out = self.func.__call_axis_batch__(
+                points, self.deps, key=key, **kwargs
+            )
+            if not isinstance(out, cx.Field):
+                raise TypeError(
+                    "Axis-batch model execution must return a coordax.Field."
+                )
+            return out
+
+        batch_func = batch_aware_callable(self.func)
+        if batch_func is not None:
+            if not isinstance(points, (PointsBatch, CoordSeparableBatch, GraphBatch)):
+                raise TypeError(
+                    "Batch-aware DomainFunction evaluation requires a PointsBatch "
+                    "CoordSeparableBatch, or GraphBatch input."
+                )
+            out = batch_func.__call_batch__(points, key=key, **kwargs)
+            if not isinstance(out, cx.Field):
+                raise TypeError("Batch-aware DomainFunction must return a coordax.Field.")
+            return out
 
         for lbl in self.domain.labels:
             if lbl not in points_map:

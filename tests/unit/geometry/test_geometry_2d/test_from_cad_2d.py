@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 import trimesh
 from jax import numpy as jnp
+from numpy.typing import ArrayLike
 
 from phydrax.domain.geometry2d import Geometry2DFromCAD
 
@@ -18,7 +19,9 @@ def simple_square_mesh():
     points = np.array(
         [[-0.5, -0.5, 0.0], [0.5, -0.5, 0.0], [0.5, 0.5, 0.0], [-0.5, 0.5, 0.0]]
     )
-    cells = [("triangle", np.array([[0, 1, 2], [0, 2, 3]]))]
+    cells: list[tuple[str, ArrayLike] | meshio.CellBlock] = [
+        ("triangle", np.array([[0, 1, 2], [0, 2, 3]]))
+    ]
     return meshio.Mesh(points=points, cells=cells)
 
 

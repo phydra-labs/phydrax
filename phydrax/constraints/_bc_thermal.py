@@ -65,7 +65,7 @@ def ContinuousHeatFluxBoundaryConstraint(
 ) -> FunctionalConstraint:
     r"""Prescribed heat-flux (Neumann) boundary condition.
 
-    Enforces $k\\,\\partial T/\\partial n = q$ on the boundary component, where
+    Enforces $k\,\partial T/\partial n = q$ on the boundary component, where
     $q$ is the heat flux (default $0$).
 
     **Arguments:**
@@ -129,8 +129,8 @@ def ContinuousConvectionBoundaryConstraint(
 ) -> FunctionalConstraint:
     r"""Convection (Robin) boundary condition.
 
-    Enforces $k\\,\\partial T/\\partial n = h\\,(T - T_\\infty)$ on the boundary
-    component, where $T_\\infty$ is the ambient temperature (default $0$).
+    Enforces $k\,\partial T/\partial n = h\,(T - T_\infty)$ on the boundary
+    component, where $T_\infty$ is the ambient temperature (default $0$).
 
     **Arguments:**
 
@@ -138,7 +138,7 @@ def ContinuousConvectionBoundaryConstraint(
     - `component`: Boundary component.
     - `h`: Convection coefficient.
     - `k`: Thermal conductivity.
-    - `ambient_temp`: Ambient temperature $T_\\infty$ (defaults to 0).
+    - `ambient_temp`: Ambient temperature $T_\infty$ (defaults to 0).
     - `var`: Geometry variable used to compute normals.
     - `mode`: Differentiation mode (`"reverse"` or `"forward"`).
     - `num_points`: Number of boundary samples.

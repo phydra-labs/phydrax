@@ -14,6 +14,7 @@ explicit coordinate labels.
 - Scalar domains like `Interval1d`, `ScalarInterval`, and `TimeInterval`.
 - Geometry in 2D and 3D (`Square`, `Sphere`, `Geometry2DFromCAD`, etc.).
 - Product domains via the `@` operator, e.g. $\\Omega = \\Omega_x \\times \\Omega_t$.
+- Dataset domains for operator learning and ragged row-indexed trajectories.
 - `DomainFunction` wrappers that carry domain metadata.
 
 ## Structured sampling
@@ -40,6 +41,7 @@ from . import (
     geometry1d,
     geometry2d,
     geometry3d,
+    graph,
 )
 from ._components import (
     Boundary,
@@ -64,8 +66,15 @@ from ._grid import (
     SineAxisSpec,
     UniformAxisSpec,
 )
+from ._hyperrectangle import HyperRectangle
+from ._irregular_trajectory_dataset import IrregularTrajectoryDatasetDomain
 from ._model_function import structured
 from ._product_domain import ProductDomain
+from ._ragged_series_dataset import (
+    RAGGED_SERIES_INDEX_KEY,
+    RaggedSeriesDatasetDomain,
+    RaggedSeriesSampling,
+)
 from ._scalar import ScalarInterval
 from ._structure import (
     CoordSeparableBatch,
@@ -74,6 +83,9 @@ from ._structure import (
     QuadratureBatch,
 )
 from ._time import TimeInterval
+from ._trajectory_dataset import (
+    TrajectoryDatasetDomain,
+)
 
 # Re-export geometry submodule objects (unary domains)
 from .geometry1d import Interval1d  # noqa: F401
@@ -101,10 +113,30 @@ from .geometry3d import (  # noqa: F401
     Torus,
     Wedge,
 )
+from .graph import (
+    BoundaryEdges,
+    BoundaryNodes,
+    Edges,
+    EdgeSet,
+    EdgeType,
+    Globals,
+    GRAPH_ENTITY_OFFSET_KEY,
+    GRAPH_SAMPLE_INDEX_KEY,
+    GraphBatch,
+    GraphDatasetDomain,
+    GraphDomain,
+    GraphTrajectoryDatasetDomain,
+    InterfaceEdges,
+    InteriorNodes,
+    Nodes,
+    NodeSet,
+    NodeType,
+)
 
 
 __all__ = [
     # subpackages
+    "graph",
     "geometry1d",
     "geometry2d",
     "geometry3d",
@@ -116,6 +148,18 @@ __all__ = [
     "DomainFunction",
     "structured",
     "DatasetDomain",
+    "IrregularTrajectoryDatasetDomain",
+    "RAGGED_SERIES_INDEX_KEY",
+    "RaggedSeriesDatasetDomain",
+    "RaggedSeriesSampling",
+    "TrajectoryDatasetDomain",
+    "GraphBatch",
+    "GraphDatasetDomain",
+    "GraphDomain",
+    "GraphTrajectoryDatasetDomain",
+    "GRAPH_ENTITY_OFFSET_KEY",
+    "GRAPH_SAMPLE_INDEX_KEY",
+    "HyperRectangle",
     "ProductStructure",
     "PointsBatch",
     "QuadratureBatch",
@@ -139,6 +183,17 @@ __all__ = [
     "ComponentSpec",
     "DomainComponent",
     "DomainComponentUnion",
+    "BoundaryEdges",
+    "BoundaryNodes",
+    "EdgeSet",
+    "EdgeType",
+    "Nodes",
+    "Edges",
+    "Globals",
+    "InteriorNodes",
+    "InterfaceEdges",
+    "NodeSet",
+    "NodeType",
     # geometry1d exports
     "Interval1d",
     # geometry2d exports

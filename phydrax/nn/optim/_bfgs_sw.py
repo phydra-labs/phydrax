@@ -9,7 +9,7 @@ Uses a dense inverse-Hessian approximation in the flattened parameter space.
 Best suited for low/moderate dimensional problems; for large models prefer L-BFGS.
 """
 
-from typing import Any, NamedTuple
+from typing import Any, cast, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -77,8 +77,7 @@ def _split_decay_state(state: base.OptState, /) -> tuple[BFGSState, base.OptStat
         or not isinstance(state[0], BFGSState)
     ):
         raise TypeError("Expected (BFGSState, decay_state) for optimizer state.")
-    assert isinstance(state[1], base.OptState)
-    return state[0], state[1]
+    return state[0], cast(base.OptState, state[1])
 
 
 def bfgs_sw_core(

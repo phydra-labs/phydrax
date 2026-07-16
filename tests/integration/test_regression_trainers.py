@@ -2,7 +2,6 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import optax
@@ -73,7 +72,7 @@ def test_regression_2d_evosax():
     solver = _make_regression_solver(seed=1)
     init_loss = solver.loss(key=jr.key(0))
 
-    params, _ = eqx.partition(solver.functions, eqx.is_inexact_array)
+    params = solver.trainable_functions()
 
     algo_name = "Open_ES"
     algo_dict = vars(evo_algos)

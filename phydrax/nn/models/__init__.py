@@ -10,6 +10,7 @@ from .architectures._mlp import MLP
 from .architectures._separable_feynmann import SeparableFeynmaNN
 from .architectures._separable_kan import SeparableKAN
 from .architectures._separable_mlp import SeparableMLP
+from .core._loss import add_model_loss, ModelWithLoss
 from .embeddings._fourier import (
     RandomFourierFeatureEmbeddings,
 )
@@ -20,8 +21,14 @@ from .wrappers._equinox import (
     EquinoxModel,
     EquinoxStructuredModel,
 )
+from .wrappers._graph import GraphModel, GraphRolloutModel
 from .wrappers._magnitude_direction import (
     MagnitudeDirectionModel,
+)
+from .wrappers._ragged_series import (
+    MaskedSeriesPoolingModel,
+    RaggedSeriesBatchInput,
+    RaggedSeriesModel,
 )
 from .wrappers._separable_wrappers import (
     LatentContractionModel,
@@ -35,12 +42,18 @@ __all__ = [
     "ComplexOutputModel",
     "EquinoxModel",
     "EquinoxStructuredModel",
+    "GraphModel",
+    "GraphRolloutModel",
     "RandomFourierFeatureEmbeddings",
     "KAN",
     "Linear",
     "MLP",
+    "ModelWithLoss",
     "ConcatenatedModel",
     "MagnitudeDirectionModel",
+    "MaskedSeriesPoolingModel",
+    "RaggedSeriesBatchInput",
+    "RaggedSeriesModel",
     "DeepONet",
     "SeparableMLP",
     "SeparableKAN",
@@ -52,4 +65,5 @@ __all__ = [
     "LatentExecutionPolicy",
     "LatentContractionModel",
     "Separable",
+    "add_model_loss",
 ]

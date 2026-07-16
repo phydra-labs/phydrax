@@ -6,13 +6,19 @@ from __future__ import annotations
 
 from typing import Literal
 
+import coordax as cx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key, PyTree
 
 from .._doc import DOC_KEY0
+from .._frozendict import frozendict
 from ._domain import _AbstractUnaryDomain
+from ._structure import PointsBatch, ProductStructure
+
+
+DATASET_INDEX_KEY = "__phydrax_dataset_index__"
 
 
 class DatasetDomain(_AbstractUnaryDomain):
@@ -92,15 +98,66 @@ class DatasetDomain(_AbstractUnaryDomain):
         sampler: str = "uniform",
         key: Key[Array, ""] = DOC_KEY0,
     ) -> PyTree[Array]:
+        idx = self.sample_indices(num_points, sampler=sampler, key=key)
+        return self.input_rows(idx)
+
+    def sample_indices(
+        self,
+        num_points: int,
+        *,
+        sampler: str = "uniform",
+        key: Key[Array, ""] = DOC_KEY0,
+    ) -> Array:
         del sampler
         n = int(num_points)
         if n < 0:
             raise ValueError("num_points must be non-negative.")
         if n == 0:
-            return jax.tree_util.tree_map(lambda a: jnp.asarray(a)[:0], self.data)
+            return jnp.zeros((0,), dtype=jnp.int32)
 
-        idx = jr.randint(key, shape=(n,), minval=0, maxval=int(self._size))
+        return jr.randint(
+            key,
+            shape=(n,),
+            minval=0,
+            maxval=int(self._size),
+            dtype=jnp.int32,
+        )
+
+    def input_rows(self, indices: ArrayLike, /) -> PyTree[Array]:
+        idx = jnp.asarray(indices, dtype=jnp.int32)
         return jax.tree_util.tree_map(lambda a: jnp.asarray(a)[idx], self.data)
+
+    def points_from_indices(
+        self,
+        indices: ArrayLike,
+        /,
+        *,
+        structure: ProductStructure | None = None,
+    ) -> PointsBatch:
+        structure_in = structure or ProductStructure(((self.label,),))
+        structure_out = structure_in.canonicalize(self.labels)
+        axis = structure_out.axis_for(self.label)
+        if axis is None:
+            raise ValueError(
+                f"DatasetDomain points require a sampling axis for label {self.label!r}."
+            )
+
+        idx = jnp.asarray(indices, dtype=jnp.int32).reshape((-1,))
+        rows = self.input_rows(idx)
+
+        def _to_field(v: ArrayLike):
+            arr = jnp.asarray(v)
+            if arr.ndim == 0:
+                raise ValueError(
+                    "DatasetDomain indexed rows must retain a leading sample axis."
+                )
+            return cx.Field(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
+
+        points = {
+            self.label: jax.tree_util.tree_map(_to_field, rows),
+            DATASET_INDEX_KEY: cx.Field(idx, dims=(axis,)),
+        }
+        return PointsBatch(points=frozendict(points), structure=structure_out)
 
     def equivalent(self, other: object, /) -> bool:
         if not isinstance(other, DatasetDomain):
@@ -128,4 +185,4 @@ class DatasetDomain(_AbstractUnaryDomain):
         return True
 
 
-__all__ = ["DatasetDomain"]
+__all__ = ["DATASET_INDEX_KEY", "DatasetDomain"]

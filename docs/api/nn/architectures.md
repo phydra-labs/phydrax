@@ -46,6 +46,13 @@ Phydrax's `Domain.Model(...)` wrapper will pass dependency arguments to models a
 - **point inputs** (dense sampling): coordinate arrays with leading batch axes, or
 - **coord-separable inputs**: tuples of 1D coordinate axes (from `CoordSeparableBatch`).
 
+`supports_structured_input()` and default domain packing are distinct. Dense models
+and separable coordinate models such as `SeparableMLP(in_size=d)` default to flat
+point packing, so `domain.Model("x", "t")(model)` passes a vector of size `d`.
+Operator models such as `DeepONet` and `FNO` default to structured packing. Pass
+`input_mode="structured"` or `structured=True` to force tuple packing, and
+`input_mode="flat"` to force MLP-style concatenation.
+
 !!! note
     Input conventions:
 

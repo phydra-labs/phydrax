@@ -25,6 +25,10 @@ The measure depends on the factor type and the component selection:
 - **Dataset factors** (`DatasetDomain`):
   - `Interior()`: either \(\mu(\Omega_{\text{data}})=1\) (`measure="probability"`) or
     \(\mu(\Omega_{\text{data}})=N\) (`measure="count"`).
+- **Trajectory datasets** (`TrajectoryDatasetDomain`):
+  - default paired weights estimate an expectation over valid row-time samples;
+  - `measure="time_integral_average"` estimates the average row-wise time integral;
+  - `measure="time_integral_sum"` estimates the sum of row-wise time integrals.
 
 ## Sampling structure: paired vs coord-separable
 

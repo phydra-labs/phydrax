@@ -25,20 +25,42 @@ from ._enforced_constraint_pipeline import (
     MultiFieldEnforcedConstraint,
     SingleFieldEnforcedConstraint,
 )
+from ._model_losses import function_model_loss_values
+
+
+def _constraints_tuple(
+    value: AbstractConstraint | Sequence[AbstractConstraint],
+    /,
+    *,
+    name: str,
+) -> tuple[AbstractConstraint, ...]:
+    if isinstance(value, AbstractConstraint):
+        out = (value,)
+    else:
+        out = tuple(value)
+    bad = tuple(c for c in out if not isinstance(c, AbstractConstraint))
+    if bad:
+        raise TypeError(
+            f"All {name} must be instances of AbstractConstraint; got "
+            f"{tuple(type(c).__name__ for c in bad)!r}."
+        )
+    return out
 
 
 class FunctionalSolver(StrictModule):
-    r"""Assemble constraints into a differentiable scalar loss.
+    r"""Assemble constraints and model losses into a differentiable scalar loss.
 
     A `FunctionalSolver` holds:
 
     - a mapping of named fields (as `DomainFunction`s), e.g. $u_\theta$;
     - a collection of constraints $\ell_i$ producing scalar penalties.
+    - optional model-level losses attached to the trainable models.
+    - optional eval-only constraints for validation diagnostics.
 
     The solver loss is the (weighted) sum
 
     $$
-    L = \sum_i \ell_i.
+    L = \sum_i \ell_i + \sum_j r_j.
     $$
 
     Optionally, *enforced constraint pipelines* can be applied to replace the raw fields
@@ -48,18 +70,21 @@ class FunctionalSolver(StrictModule):
 
     - `ansatz_functions()` applies any enforced pipelines and returns the effective field
       mapping used by constraints.
-    - `loss(key=...)` splits the provided PRNG key into one subkey per constraint and
-      sums the resulting scalar losses.
+    - `loss(key=...)` splits the provided PRNG key into one subkey per constraint,
+      evaluates any attached model losses, and sums the resulting scalar losses.
 
     **Training**
 
-    `solve(...)` optimizes the inexact-array leaves inside `functions` (via Equinox
-    partitioning), and passes an `iter_` counter through to constraint losses so that
+    `solve(...)` optimizes trainable inexact-array leaves inside `functions` (via a
+    Phydrax-aware Equinox partition). Domains and fixed observed-data state remain
+    numeric/JAX-traceable but are excluded from gradients and optimizer updates.
+    The solver also passes an `iter_` counter through to constraint losses so that
     constraints can implement schedules.
     """
 
     functions: frozendict[str, DomainFunction]
     constraints: tuple[AbstractConstraint, ...]
+    eval_constraints: tuple[AbstractConstraint, ...]
     constraint_pipelines: EnforcedConstraintPipelines | None
 
     def __init__(
@@ -67,6 +92,7 @@ class FunctionalSolver(StrictModule):
         *,
         functions: Mapping[str, DomainFunction],
         constraints: AbstractConstraint | Sequence[AbstractConstraint],
+        eval_constraints: AbstractConstraint | Sequence[AbstractConstraint] = (),
         constraint_pipelines: EnforcedConstraintPipelines | None = None,
         constraint_terms: Sequence[
             SingleFieldEnforcedConstraint | MultiFieldEnforcedConstraint
@@ -84,6 +110,7 @@ class FunctionalSolver(StrictModule):
 
         - `functions`: Mapping `{name: DomainFunction}` defining the fields.
         - `constraints`: One or more `AbstractConstraint` instances.
+        - `eval_constraints`: Optional constraints evaluated only for logging/diagnostics.
         - `constraint_pipelines`: Optional pre-built enforced constraint pipelines. If provided,
           do not also pass `constraint_terms`/`interior_data_terms`.
         - `constraint_terms`: Enforced constraint terms used to build `EnforcedConstraintPipelines`
@@ -96,19 +123,11 @@ class FunctionalSolver(StrictModule):
         - `boundary_weight_key`: PRNG key used to draw boundary blending references.
         """
         self.functions = frozendict(functions)
-
-        if isinstance(constraints, AbstractConstraint):
-            self.constraints = (constraints,)
-        else:
-            self.constraints = tuple(constraints)
-            bad = tuple(
-                c for c in self.constraints if not isinstance(c, AbstractConstraint)
-            )
-            if bad:
-                raise TypeError(
-                    "All constraints must be instances of AbstractConstraint; got "
-                    f"{tuple(type(c).__name__ for c in bad)!r}."
-                )
+        self.constraints = _constraints_tuple(constraints, name="constraints")
+        self.eval_constraints = _constraints_tuple(
+            eval_constraints,
+            name="eval_constraints",
+        )
 
         if constraint_pipelines is not None and (constraint_terms or interior_data_terms):
             raise ValueError(
@@ -143,31 +162,59 @@ class FunctionalSolver(StrictModule):
         """Convenience accessor: return the (ansatz) field named `var`."""
         return self.ansatz_functions()[var]
 
+    def save_onnx(self, var: str, path: str | Path, /, **kwargs: Any) -> Any:
+        """Export one named ansatz function to ONNX.
+
+        This is a thin convenience wrapper around `phydrax.export.save_onnx`.
+        It exports the inference function `self[var]`, not the solver, loss, or
+        constraints.
+        """
+        from ..export import save_onnx
+
+        return save_onnx(self[var], path, **kwargs)
+
+    def partition_functions(self) -> tuple[Any, Any]:
+        """Return `(trainable, non_trainable)` function PyTrees used by `solve()`."""
+        from .._trainable import partition_trainable
+
+        return partition_trainable(self.functions)
+
+    def trainable_functions(self) -> Any:
+        """Return the trainable function PyTree used as optimizer/evolution state."""
+        trainable, _non_trainable = self.partition_functions()
+        return trainable
+
     def loss(
         self,
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
     ) -> Array:
-        r"""Evaluate the total loss $L=\sum_i \ell_i$ over all configured constraints.
+        r"""Evaluate the total loss over constraints and attached model losses.
 
         This:
 
         1) applies enforced pipelines (if configured),
         2) splits `key` into one subkey per constraint,
-        3) sums `constraint.loss(...)` over all constraints.
+        3) sums `constraint.loss(...)` over all constraints,
+        4) adds scalar model losses attached via `model.add_model_loss(...)` or
+           model `__loss__` hooks.
 
         Any additional keyword arguments are forwarded to each constraint.
         """
-        if not self.constraints:
-            return jnp.array(0.0, dtype=float)
-
         functions = self.ansatz_functions()
         keys = jr.split(key, len(self.constraints))
         total = jnp.array(0.0, dtype=float)
         with derivative_runtime_context():
             for c, k in zip(self.constraints, keys, strict=True):
                 total = total + c.loss(functions, key=k, **kwargs)
+            iter_ = kwargs.get("iter_", None)
+            for term in function_model_loss_values(
+                self.functions,
+                key=jr.fold_in(key, len(self.constraints)),
+                iter_=iter_,
+            ):
+                total = total + term
         return total
 
     def solve(
@@ -184,10 +231,14 @@ class FunctionalSolver(StrictModule):
         log_every: int = 1,
         log_constraints: bool = True,
         log_path: str | Path | None = None,
+        tensorboard_log_dir: str | Path | None = None,
+        tensorboard_every: int | None = None,
+        tensorboard_flush_every: int = 10,
     ) -> "FunctionalSolver":
         """Run the training loop and return an updated solver.
 
-        The optimization updates the inexact-array leaves of `self.functions`.
+        The optimization updates trainable inexact-array leaves of `self.functions`.
+        Domains and fixed observed-data state are kept non-trainable.
 
         - If `optim` is an Optax `GradientTransformation`, a standard gradient step is used.
         - If `optim` is an Optax `GradientTransformationExtraArgs`, a line-search style update is used.
@@ -195,12 +246,18 @@ class FunctionalSolver(StrictModule):
 
         During training, each constraint loss receives an `iter_` keyword argument (the
         1-based iteration index as a JAX scalar) to enable schedules.
+        If `SIGINT` or `SIGTERM` is received while the loop is active, the current
+        loop exits gracefully and `solve(...)` returns the best/current solver state
+        instead of terminating the calling program.
 
         Logging:
 
         - If `log_every > 0`, prints a progress line every `log_every` iterations.
         - If `log_constraints=True`, also prints the per-constraint loss breakdown.
         - If `log_path` is provided, logs are written to that file instead of stdout.
+        - If `tensorboard_log_dir` is provided, scalar training logs are written as
+          TensorBoard event files. `tensorboard_every` controls the event cadence
+          and defaults to `log_every` when positive, otherwise every iteration.
         """
         from ._functional_train import solve as _solve
 
@@ -217,4 +274,7 @@ class FunctionalSolver(StrictModule):
             log_every=log_every,
             log_constraints=log_constraints,
             log_path=log_path,
+            tensorboard_log_dir=tensorboard_log_dir,
+            tensorboard_every=tensorboard_every,
+            tensorboard_flush_every=tensorboard_flush_every,
         )

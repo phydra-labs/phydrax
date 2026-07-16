@@ -16,6 +16,7 @@ from ...._strict import StrictModule
 from ..._utils import _get_size, _identity
 from ...activations._stan import Stan
 from ..core._base import _AbstractBaseModel
+from ..core._keys import EvalKey
 from ..core._scan_utils import pack_scan_modules, scan_apply, stack_scan_dynamics
 from ..layers._linear import Linear as RealLinear
 
@@ -374,7 +375,7 @@ class FeynmaNN(_AbstractBaseModel):
         x: Array,
         /,
         *,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: EvalKey = DOC_KEY0,
     ) -> Array:
         # Handle scalar input
         if self.in_size == "scalar":

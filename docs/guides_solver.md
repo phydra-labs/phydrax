@@ -8,14 +8,22 @@ A `FunctionalSolver` is a lightweight orchestrator that holds:
 
 - `functions`: a mapping `{name: DomainFunction}` of the current fields,
 - `constraints`: a list/tuple of constraint objects, each producing a scalar loss,
+- model-level losses attached to models with `model.add_model_loss(...)` or a custom
+  model `__loss__` hook,
+- `eval_constraints`: optional constraints used only for diagnostics/logging,
 - optional `constraint_pipelines`: enforced-constraint pipelines that replace raw fields with ansatz
   functions satisfying selected conditions exactly.
 
-The total objective is the sum of constraint losses:
+The training objective is the sum of constraint losses plus any attached model losses:
 
 $$
-L = \sum_i \ell_i.
+L = \sum_i \ell_i + \sum_j r_j.
 $$
+
+`eval_constraints` are evaluated against the same current ansatz functions, but
+they do not contribute to `loss(...)`, gradients, optimizer state, or best-model
+selection. Use them for validation folds, held-out cases, or non-training
+diagnostics.
 
 ## Loss evaluation (`loss(...)`)
 
@@ -25,8 +33,60 @@ When you call `solver.loss(key=...)`:
    *ansatz functions* via `solver.ansatz_functions()`.
 2) The provided PRNG key is split into one subkey per constraint.
 3) Each constraint loss is evaluated and summed.
+4) Model-level losses attached to the raw trainable models are evaluated and added.
 
 Additional keyword arguments are forwarded to each constraint's `.loss(...)` method.
+The `iter_` keyword, when present, is also forwarded to model losses.
+
+## Model losses
+
+Use model losses for parameter-space penalties that are not residuals over a domain,
+such as spectral penalties, norm targets, sparsity penalties, or architecture-specific
+regularization. These losses are evaluated once per distinct raw model in
+`solver.functions`; if two fields share the same model object, its model loss is not
+double-counted.
+
+For existing Phydrax models, attach a scalar penalty with `add_model_loss(...)`:
+
+```python
+import equinox as eqx
+import jax
+import jax.numpy as jnp
+import jax.random as jr
+import phydrax as phx
+
+model = phx.nn.MLP(
+    in_size=2,
+    out_size="scalar",
+    width_size=32,
+    depth=2,
+    key=jr.key(0),
+).add_model_loss(
+    lambda m: (jnp.linalg.norm(m.layers[0].weight) - 1.0) ** 2,
+    weight=1e-4,
+    label="unit_weight_norm",
+)
+```
+
+The penalty callable receives the wrapped model as its first argument and may accept
+keyword-only `key` and `iter_` arguments.
+
+Custom model classes can instead implement `__loss__`:
+
+```python
+class MyModel(eqx.Module):
+    weight: jax.Array
+
+    def __call__(self, x, *, key=None):
+        return self.weight @ x
+
+    def __loss__(self, *, key=None, iter_=None):
+        return 1e-4 * jnp.sum(self.weight**2)
+```
+
+During `solve(...)`, model losses contribute to gradients, optimizer state, and
+best-model selection. When `log_constraints=True`, text logs print them as
+`[model i] ...`, and TensorBoard writes them under `train/model_losses/...`.
 
 ## Enforced-constraint pipelines
 
@@ -42,10 +102,24 @@ types and constructors.
 ## Training (`solve(...)`)
 
 `FunctionalSolver.solve(...)` runs an optimization loop over the parameters contained inside
-`solver.functions`. Under the hood it uses Equinox to split the function PyTree into:
+`solver.functions`. Under the hood it uses a Phydrax-aware Equinox partition to split
+the function PyTree into:
 
-- **trainable parameters**: inexact arrays (floating/complex arrays),
-- **static part**: everything else.
+- **trainable parameters**: inexact arrays inside trainable models/functions,
+- **non-trainable state**: domains, observed data tables, fixed trajectory signals,
+  hard-enforcement lookup tables, integer metadata, and other fixed state.
+
+This distinction matters for physics-data problems. Observed data may be a JAX
+array so it can participate in JIT-compiled residuals, but it is not an optimizer
+parameter and is excluded from gradients, optimizer state, and weight decay.
+Explicit learnable fields created through model wrappers or `Domain.Parameter(...)`
+remain trainable. Literal constant `DomainFunction` values are treated as fixed
+state; use `Domain.Parameter(...)` when a scalar/vector coefficient should be
+optimized.
+
+Use `solver.partition_functions()` to inspect the exact split, or
+`solver.trainable_functions()` when an external optimizer needs the trainable PyTree
+shape.
 
 ### Optimizer support
 
@@ -66,6 +140,98 @@ scalar), so constraints can implement schedules (annealing, curriculum weights, 
   (Line-search optimizers are not JIT-wrapped.)
 - If `keep_best=True`, the returned solver uses the best parameter set observed over all epochs
   (by objective value); otherwise it returns the final parameters.
+
+### Logging and TensorBoard
+
+`solve(...)` can report progress to stdout, a text file, TensorBoard, or any combination
+of those outputs.
+
+- `log_every`: console/file logging cadence. Use `0` to disable text progress logs.
+- `log_constraints`: include per-constraint and per-model-loss terms in text logs and TensorBoard.
+- `log_path`: write text logs to a file instead of stdout.
+- `tensorboard_log_dir`: write TensorBoard event files.
+- `tensorboard_every`: TensorBoard scalar cadence. By default it follows `log_every`
+  when `log_every > 0`, otherwise it writes every iteration.
+
+For data-fit constraints created by `DiscreteInteriorDataConstraint`,
+`DiscreteTimeDataConstraint`, `SupervisedDatasetConstraint`,
+`RaggedTimeSeriesDataConstraint`, or `TrajectoryCaseDataConstraint`,
+per-constraint logs also include supervised-data diagnostics:
+
+- `data_accuracy`: `1 - data_relative_l2_error`
+- `data_relative_l2_error`: prediction-target relative L2 error
+- `data_rmse`: root mean squared prediction-target error
+
+When ragged trajectory data is enforced with
+`enforce_ragged_time_series(...)`, the data is part of the ansatz rather than a
+loss term. In that case, train with physics constraints only and keep a
+`RaggedTimeSeriesDataConstraint` outside the solver if you want diagnostics. Use
+`interpolation="cubic_hermite"` when the physics residual needs second time
+derivatives.
+
+TensorBoard writes aggregate training scalars under `train/...`, training
+constraint scalars under `train/constraints/...`, and eval-only constraint scalars
+under `eval/constraints/...`. The legacy `constraints/...` train tags are also
+emitted for existing dashboards.
+
+```text
+solver = solver.solve(
+    num_iter=200,
+    optim=optax.adam(1e-3),
+    seed=0,
+    log_every=10,
+    tensorboard_log_dir="runs/example",
+    tensorboard_every=1,
+)
+```
+
+View the run with:
+
+```bash
+tensorboard --logdir runs
+```
+
+## Train/eval empirical constraints
+
+Use index-scoped empirical constraints for held-out validation. For ordinary
+row-wise data, split the row indices and give training indices to `constraints`
+and validation indices to `eval_constraints`:
+
+```python
+import jax.numpy as jnp
+import jax.random as jr
+import phydrax as phx
+
+rows = jnp.asarray([[0.0], [0.2], [0.4], [0.6], [0.8], [1.0]])
+targets = 1.0 + 2.0 * rows[:, 0]
+domain = phx.domain.DatasetDomain(rows)
+train_idx, val_idx = phx.data_utils.train_test_split_indices(
+    domain.size,
+    test_fraction=0.2,
+    key=jr.key(0),
+)
+
+train_data = phx.constraints.SupervisedDatasetConstraint(
+    "u",
+    domain.component(),
+    targets,
+    num_cases=32,
+    indices=train_idx,
+    label="train_data",
+)
+val_data = phx.constraints.SupervisedDatasetConstraint(
+    "u",
+    domain.component(),
+    targets,
+    num_cases=32,
+    indices=val_idx,
+    label="val_data",
+)
+```
+
+For ragged trajectories, use `case_indices=...` on
+`RaggedTimeSeriesDataConstraint` or `TrajectoryCaseDataConstraint`. The split is
+by dataset row, so all observations from a held-out trajectory remain held out.
 
 ## Minimal example
 
@@ -119,7 +285,7 @@ import phydrax as phx
 # solver = phx.solver.FunctionalSolver(functions={"u": u}, constraints=[constraint])
 
 # evosax expects a "solution" PyTree matching the trainable parameter structure.
-params, _ = eqx.partition(solver.functions, eqx.is_inexact_array)
+params = solver.trainable_functions()
 algo = evo_algos.Open_ES(population_size=8, solution=params)
 
 solver = solver.solve(num_iter=20, optim=algo, seed=0)

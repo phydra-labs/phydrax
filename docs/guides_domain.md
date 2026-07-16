@@ -24,6 +24,144 @@ domain = geom @ time                        # labels ("x", "t")
 
 For non-time scalar axes, use `ScalarInterval(start, end, label="...")`.
 
+## Vector domains with HyperRectangle
+
+Use `HyperRectangle` when the domain is an axis-aligned box in `R^d` and each
+sample should remain one vector under a single label. This is the simplest shape
+for feature vectors, parameter boxes, and tabular supervised learning data.
+
+```python
+import jax.numpy as jnp
+import phydrax as phx
+
+features = phx.domain.HyperRectangle(
+    lower=jnp.zeros(6),
+    upper=jnp.ones(6),
+    label="x",
+)
+
+@features.Function("x")
+def u(x):
+    return jnp.sum(x)
+
+points = jnp.array(
+    [
+        [0.0, 0.1, 0.2, 0.3, 0.4, 0.5],
+        [0.5, 0.4, 0.3, 0.2, 0.1, 0.0],
+    ]
+)
+values = jnp.sum(points, axis=1)
+
+data = phx.constraints.DiscreteInteriorDataConstraint(
+    "u",
+    features,
+    points=points,
+    values=values,
+)
+```
+
+`points` is the raw `(N, d)` array. Do not wrap it in a dictionary unless the
+domain is a product with multiple labels. The function receives each row as one
+`(d,)` vector named `"x"`.
+
+## Empirical dataset domains
+
+Use `DatasetDomain` when the row itself is an empirical case or condition. This is
+the right shape when rows are PyTrees, multimodal inputs, branch conditions, or
+finite cases that will later be paired with physical coordinates.
+
+For row-aligned scalar/vector targets on the empirical rows themselves, use
+`SupervisedDatasetConstraint`:
+
+```python
+import jax.numpy as jnp
+import phydrax as phx
+
+rows = jnp.asarray([[0.0, 1.0], [1.0, 2.0], [2.0, 4.0]])
+targets = rows[:, 0] + 2.0 * rows[:, 1]
+dataset_domain = phx.domain.DatasetDomain(rows)
+
+@dataset_domain.Function("data")
+def u(row):
+    return row[0] + 2.0 * row[1]
+
+constraint = phx.constraints.SupervisedDatasetConstraint(
+    "u",
+    dataset_domain.component(),
+    targets,
+    num_cases=32,
+)
+```
+
+Use `HyperRectangle` when the feature dimensions are continuous variables of the
+problem. Use `DatasetDomain` when the empirical row distribution is the domain you
+want to average over.
+
+## Ragged trajectory dataset domains
+
+Use `TrajectoryDatasetDomain` when each dataset element represents a function,
+forcing, parameter vector, or latent descriptor and has an associated time series
+with a shared `dt` but a row-specific length.
+Use `IrregularTrajectoryDatasetDomain` for the same paired case-time model when
+each row carries explicit observation times and the time spacing is non-uniform.
+
+This is different from `DatasetDomain(...) @ TimeInterval(...)`: a plain product
+domain creates a rectangular product and does not know that each dataset row has
+its own valid time grid. Trajectory dataset domains keep the `data` and `t` labels
+paired, so sampling and fixed-end slices are row-aware.
+
+Because the row and time are coupled, use `ProductStructure((("data", "t"),))`
+for trajectory sampling, including fixed-time components.
+The same paired batches support hard branch-conditional data enforcement through
+`enforce_ragged_time_series`; choose `cubic_hermite` interpolation when second time
+derivatives are part of the physics residual.
+
+Keep static case features and time-varying signals separate. Store static scalars
+or vectors in the `inputs` rows, and expose observed ragged signals with
+`TrajectorySignal` when residuals need them. Per-case scalar/vector labels should
+use `TrajectoryCaseDataConstraint` rather than being repeated as constant time
+series.
+
+```python
+import jax.numpy as jnp
+import jax.random as jr
+import phydrax as phx
+
+inputs = jnp.asarray([[0.0], [1.0], [2.0]])
+lengths = jnp.asarray([2, 4, 3])
+trajectory_domain = phx.domain.TrajectoryDatasetDomain(inputs, lengths, dt=0.5)
+
+component = trajectory_domain.component()
+structure = phx.domain.ProductStructure((("data", "t"),))
+batch = component.sample(8, structure=structure, key=jr.key(0))
+
+@trajectory_domain.Function("data", "t")
+def u(data, t):
+    return data[0] + t
+
+values = u(batch)
+```
+
+```python
+signal_values = (
+    inputs[:, 0, None]
+    + trajectory_domain.dt * jnp.arange(trajectory_domain.max_length)[None, :]
+)
+forcing = phx.constraints.TrajectorySignal(
+    trajectory_domain,
+    signal_values,
+    interpolation="linear",
+)
+
+targets = jnp.asarray([[1.0, 0.0], [2.0, -1.0], [3.0, -2.0]])
+case_target = phx.constraints.TrajectoryCaseDataConstraint(
+    "theta",
+    trajectory_domain.component(),
+    targets,
+    num_cases=32,
+)
+```
+
 Functions on a domain are wrapped as `DomainFunction`s. The key idea is that a `DomainFunction`
 declares which labels it depends on, and operators/constraints use those labels consistently.
 

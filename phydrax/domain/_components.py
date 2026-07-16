@@ -25,6 +25,7 @@ from ._grid import (
     GridSpec,
     sdf_mask_from_adf,
 )
+from ._ragged_series_dataset import RaggedSeriesDatasetDomain
 from ._scalar import _AbstractScalarDomain
 from ._structure import (
     _axis_name_for_coord,
@@ -323,6 +324,22 @@ class DomainComponent(StrictModule):
         For scalar boundaries $\{a,b\}$ this uses counting measure (mass $2$), and for
         fixed slices uses unit mass.
         """
+        from ._irregular_trajectory_dataset import irregular_trajectory_component_measure
+        from ._trajectory_dataset import trajectory_component_measure
+        from .graph._trajectory import graph_trajectory_component_measure
+
+        graph_custom = graph_trajectory_component_measure(self)
+        if graph_custom is not None:
+            return graph_custom
+
+        custom = trajectory_component_measure(self)
+        if custom is not None:
+            return custom
+
+        irregular_custom = irregular_trajectory_component_measure(self)
+        if irregular_custom is not None:
+            return irregular_custom
+
         m = jnp.array(1.0, dtype=float)
         for lbl in self.domain.labels:
             comp = self.spec.component_for(lbl)
@@ -354,7 +371,7 @@ class DomainComponent(StrictModule):
                         f"Unsupported scalar component {type(comp).__name__}."
                     )
 
-            elif isinstance(factor, DatasetDomain):
+            elif isinstance(factor, (DatasetDomain, RaggedSeriesDatasetDomain)):
                 if isinstance(comp, Interior):
                     mi = factor.measure
                 else:
@@ -363,10 +380,185 @@ class DomainComponent(StrictModule):
                     )
 
             else:
-                raise TypeError(f"Unsupported unary domain type {type(factor).__name__}.")
+                from .graph._dataset import GraphDatasetDomain
+                from .graph._domain import GraphDomain
+
+                if isinstance(factor, (GraphDomain, GraphDatasetDomain)):
+                    mi = factor.component_measure(comp)
+                else:
+                    raise TypeError(
+                        f"Unsupported unary domain type {type(factor).__name__}."
+                    )
 
             m = m * jnp.asarray(mi, dtype=float)
         return m
+
+    def _sample_graph_batch(
+        self,
+        num_points: NumPoints,
+        *,
+        structure: ProductStructure,
+        sampler: str,
+        key: Key[Array, ""],
+    ):
+        from .graph._batch import GraphBatch
+        from .graph._dataset import GraphDatasetDomain
+        from .graph._domain import GraphDomain
+
+        graph_labels: list[str] = []
+        for lbl in self.domain.labels:
+            factor = self.domain.factor(lbl)
+            if isinstance(factor, RelabeledDomain):
+                factor = factor.base
+            if isinstance(factor, (GraphDomain, GraphDatasetDomain)):
+                graph_labels.append(lbl)
+
+        if not graph_labels:
+            return None
+        if len(graph_labels) > 1:
+            raise ValueError("Sampling multiple GraphDomain factors is not supported yet.")
+
+        graph_label = graph_labels[0]
+        graph_factor = self.domain.factor(graph_label)
+        if isinstance(graph_factor, RelabeledDomain):
+            graph_factor = graph_factor.base
+        assert isinstance(graph_factor, (GraphDomain, GraphDatasetDomain))
+
+        fixed_labels = frozenset(
+            lbl
+            for lbl in self.domain.labels
+            if isinstance(self.spec.component_for(lbl), (FixedStart, FixedEnd, Fixed))
+        )
+        structure_out = structure.canonicalize(
+            self.domain.labels, fixed_labels=fixed_labels
+        )
+        graph_axis = structure_out.axis_for(graph_label)
+        if graph_axis is None:
+            raise ValueError(
+                f"GraphDomain label {graph_label!r} must be sampled on an axis."
+            )
+        for block in structure_out.blocks:
+            if graph_label in block and len(block) != 1:
+                raise ValueError(
+                    "GraphDomain labels must be sampled in singleton ProductStructure "
+                    f"blocks; got {block!r}."
+                )
+
+        if isinstance(num_points, int):
+            if len(structure_out.blocks) != 1:
+                raise ValueError(
+                    "num_points=int is only valid for exactly one sampling block."
+                )
+            num_points_by_block = (int(num_points),)
+        else:
+            if len(num_points) != len(structure_out.blocks):
+                raise ValueError(
+                    f"num_points must have length {len(structure_out.blocks)} to match blocks."
+                )
+            num_points_by_block = tuple(int(n) for n in num_points)
+
+        label_to_block_index = {
+            lbl: i for i, block in enumerate(structure_out.blocks) for lbl in block
+        }
+        label_to_idx = {lbl: i for i, lbl in enumerate(self.domain.labels)}
+        block_keys = jr.split(key, len(structure_out.blocks) + 1)[1:]
+        graph_n = num_points_by_block[label_to_block_index[graph_label]]
+        if isinstance(graph_factor, GraphDatasetDomain):
+            graph_batch = graph_factor.sample_component(
+                self.spec.component_for(graph_label),
+                graph_n,
+                structure=ProductStructure(((graph_label,),), axis_names=(graph_axis,)),
+                label=graph_label,
+                sampler=sampler,
+                key=jr.fold_in(
+                    block_keys[label_to_block_index[graph_label]],
+                    label_to_idx[graph_label],
+                ),
+            )
+        else:
+            graph_batch = graph_factor.sample_component(
+                self.spec.component_for(graph_label),
+                graph_n,
+                structure=ProductStructure(((graph_label,),), axis_names=(graph_axis,)),
+                label=graph_label,
+            )
+
+        points: dict[str, Any] = dict(graph_batch.points)
+
+        for lbl in self.domain.labels:
+            if lbl == graph_label:
+                continue
+            comp = self.spec.component_for(lbl)
+            factor = self.domain.factor(lbl)
+            if isinstance(factor, RelabeledDomain):
+                factor = factor.base
+
+            if lbl in fixed_labels:
+                if isinstance(factor, _AbstractScalarDomain):
+                    if isinstance(comp, FixedStart):
+                        val = factor.fixed("start")
+                    elif isinstance(comp, FixedEnd):
+                        val = factor.fixed("end")
+                    else:
+                        assert isinstance(comp, Fixed)
+                        val = jnp.asarray(comp.value, dtype=float).reshape(())
+                    points[lbl] = _as_field(
+                        jnp.asarray(val, dtype=float).reshape(()), dims=()
+                    )
+                    continue
+
+                if isinstance(factor, _AbstractGeometry):
+                    assert isinstance(comp, Fixed)
+                    val = jnp.asarray(comp.value, dtype=float).reshape((factor.var_dim,))
+                    points[lbl] = _as_field(val, dims=(None,))
+                    continue
+
+                raise TypeError(f"Unsupported unary domain type {type(factor).__name__}.")
+
+            axis = structure_out.axis_for(lbl)
+            if axis is None:
+                raise ValueError(f"Missing sampling axis for non-fixed label {lbl!r}.")
+            bi = label_to_block_index[lbl]
+            n = num_points_by_block[bi]
+            k = jr.fold_in(block_keys[bi], label_to_idx[lbl])
+
+            if isinstance(factor, _AbstractGeometry):
+                arr = _sample_geometry(factor, comp, n, sampler=sampler, key=k)
+                if arr.ndim == 1:
+                    arr = arr.reshape((-1, 1))
+                points[lbl] = _as_field(arr, dims=(axis, None))
+                continue
+
+            if isinstance(factor, _AbstractScalarDomain):
+                arr = _sample_scalar(factor, comp, n, sampler=sampler, key=k).reshape(
+                    (-1,)
+                )
+                points[lbl] = _as_field(arr, dims=(axis,))
+                continue
+
+            if isinstance(factor, (DatasetDomain, RaggedSeriesDatasetDomain)):
+                samples = factor.sample(n, sampler=sampler, key=k)
+
+                def _to_field(v):
+                    arr = jnp.asarray(v)
+                    if arr.ndim == 0:
+                        raise ValueError(
+                            "Dataset samples must have a leading sample axis."
+                        )
+                    return _as_field(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
+
+                points[lbl] = jax.tree_util.tree_map(_to_field, samples)
+                continue
+
+            raise TypeError(f"Unsupported unary domain type {type(factor).__name__}.")
+
+        return GraphBatch(
+            points=frozendict(points),
+            structure=structure_out,
+            graph=graph_batch.graph,
+            graph_label=graph_label,
+            component_kind=graph_batch.component_kind,
+        )
 
     def sample(
         self,
@@ -376,6 +568,55 @@ class DomainComponent(StrictModule):
         sampler: str = "latin_hypercube",
         key: Key[Array, ""] = DOC_KEY0,
     ) -> PointsBatch:
+        from ._irregular_trajectory_dataset import (
+            IrregularTrajectoryDatasetDomain,
+            sample_irregular_trajectory_component,
+        )
+        from ._trajectory_dataset import (
+            sample_trajectory_component,
+            TrajectoryDatasetDomain,
+        )
+        from .graph._trajectory import (
+            GraphTrajectoryDatasetDomain,
+            sample_graph_trajectory_component,
+        )
+
+        if isinstance(self.domain, GraphTrajectoryDatasetDomain):
+            return sample_graph_trajectory_component(
+                self,
+                num_points,
+                structure=structure,
+                sampler=sampler,
+                key=key,
+            )
+
+        if isinstance(self.domain, TrajectoryDatasetDomain):
+            return sample_trajectory_component(
+                self,
+                num_points,
+                structure=structure,
+                sampler=sampler,
+                key=key,
+            )
+
+        if isinstance(self.domain, IrregularTrajectoryDatasetDomain):
+            return sample_irregular_trajectory_component(
+                self,
+                num_points,
+                structure=structure,
+                sampler=sampler,
+                key=key,
+            )
+
+        graph_batch = self._sample_graph_batch(
+            num_points,
+            structure=structure,
+            sampler=sampler,
+            key=key,
+        )
+        if graph_batch is not None:
+            return graph_batch
+
         fixed_labels = frozenset(
             lbl
             for lbl in self.domain.labels
@@ -456,7 +697,7 @@ class DomainComponent(StrictModule):
                 points[lbl] = _as_field(arr, dims=(axis,))
                 continue
 
-            if isinstance(factor, DatasetDomain):
+            if isinstance(factor, (DatasetDomain, RaggedSeriesDatasetDomain)):
                 k = jr.fold_in(keys_for_blocks[bi], label_to_idx[lbl])
                 samples = factor.sample(n, sampler=sampler, key=k)
 
@@ -464,7 +705,7 @@ class DomainComponent(StrictModule):
                     arr = jnp.asarray(v)
                     if arr.ndim == 0:
                         raise ValueError(
-                            "DatasetDomain samples must have a leading sample axis."
+                            "Dataset samples must have a leading sample axis."
                         )
                     return _as_field(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
 
@@ -508,6 +749,14 @@ class DomainComponent(StrictModule):
         This is useful when an operator factorizes across coordinate axes, or when a
         Cartesian grid is desired for quadrature-like reductions.
         """
+        from ._trajectory_dataset import TrajectoryDatasetDomain
+
+        if isinstance(self.domain, TrajectoryDatasetDomain):
+            raise ValueError(
+                "TrajectoryDatasetDomain requires paired data-time sampling; "
+                "coord-separable trajectory sampling is not supported."
+            )
+
         coord_labels = tuple(lbl for lbl in self.domain.labels if lbl in coord_separable)
         for lbl in coord_labels:
             if lbl not in self.domain.labels:
@@ -779,7 +1028,7 @@ class DomainComponent(StrictModule):
                 points[lbl] = _as_field(arr, dims=(axis,))
                 continue
 
-            if isinstance(factor, DatasetDomain):
+            if isinstance(factor, (DatasetDomain, RaggedSeriesDatasetDomain)):
                 k = jr.fold_in(dense_keys_for_blocks[bi], label_to_idx[lbl])
                 samples = factor.sample(n, sampler=sampler, key=k)
 
@@ -787,7 +1036,7 @@ class DomainComponent(StrictModule):
                     arr = jnp.asarray(v)
                     if arr.ndim == 0:
                         raise ValueError(
-                            "DatasetDomain samples must have a leading sample axis."
+                            "Dataset samples must have a leading sample axis."
                         )
                     return _as_field(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
 
