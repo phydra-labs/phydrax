@@ -37,6 +37,34 @@ def test_volume_property(geometry_from_cube):
     assert np.isclose(computed_volume, expected_volume, atol=1e-6)
 
 
+def test_boundary_partition_matches_surface_measure(geometry_from_cube):
+    geom = geometry_from_cube
+    partition = geom.boundary_measure_partition
+    assert partition.vertices.shape == (12, 3, 3)
+    assert np.isclose(float(partition.total_measure), float(geom.surface_area_value))
+    points, strata, base_mass = partition.sample(
+        24,
+        key=jax.random.key(32),
+        minimum_per_stratum=1,
+    )
+    assert points.shape == (24, 3)
+    assert len(set(map(int, strata))) == partition.num_strata
+    assert np.isclose(float(jnp.sum(base_mass)), 1.0)
+
+
+def test_surface_chart_atlas_integrates_faces_without_seam_duplication(
+    geometry_from_cube,
+):
+    geom = geometry_from_cube
+    quadrature = geom.boundary_chart_atlas.tensor_quadrature(4)
+    assert quadrature.points.shape == (12, 4, 4, 3)
+    assert jnp.all(geom._on_boundary(quadrature.points.reshape((-1, 3))))
+    measured = quadrature.integrate(jnp.ones(quadrature.weights.shape))
+    assert jnp.allclose(measured, geom.surface_area_value)
+    x_moment = quadrature.integrate(quadrature.points[..., 0])
+    assert jnp.allclose(x_moment, 0.0, atol=1e-12)
+
+
 def test_bounds_property(geometry_from_cube):
     geom = geometry_from_cube
     bounds = np.asarray(geom.bounds, dtype=float)

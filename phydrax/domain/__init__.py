@@ -43,6 +43,8 @@ from . import (
     geometry3d,
     graph,
 )
+from ._base import GeometryTransitionKind, GeometryTransitionResult
+from ._chart import CADChartAtlas, CADChartQuadrature
 from ._components import (
     Boundary,
     ComponentSpec,
@@ -63,11 +65,13 @@ from ._grid import (
     FourierAxisSpec,
     GridSpec,
     LegendreAxisSpec,
+    NestedDyadicAxisSpec,
     SineAxisSpec,
     UniformAxisSpec,
 )
 from ._hyperrectangle import HyperRectangle
 from ._irregular_trajectory_dataset import IrregularTrajectoryDatasetDomain
+from ._measure_partition import GeometryMeasurePartition
 from ._model_function import structured
 from ._product_domain import ProductDomain
 from ._ragged_series_dataset import (
@@ -142,6 +146,8 @@ __all__ = [
     "geometry3d",
     # time domain
     "ScalarInterval",
+    "GeometryTransitionKind",
+    "GeometryTransitionResult",
     "TimeInterval",
     # product domains / structure
     "ProductDomain",
@@ -160,6 +166,9 @@ __all__ = [
     "GRAPH_ENTITY_OFFSET_KEY",
     "GRAPH_SAMPLE_INDEX_KEY",
     "HyperRectangle",
+    "GeometryMeasurePartition",
+    "CADChartAtlas",
+    "CADChartQuadrature",
     "ProductStructure",
     "PointsBatch",
     "QuadratureBatch",
@@ -168,6 +177,7 @@ __all__ = [
     "AbstractAxisSpec",
     "AxisDiscretization",
     "GridSpec",
+    "NestedDyadicAxisSpec",
     "UniformAxisSpec",
     "FourierAxisSpec",
     "SineAxisSpec",

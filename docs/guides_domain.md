@@ -260,6 +260,65 @@ batch, including:
 This is how Phydrax keeps sampling, quadrature, and operator discretization consistent without
 manual bookkeeping.
 
+### Nested axes and CAD cut-cell weights
+
+`NestedDyadicAxisSpec(capacity, initial_level=...)` materializes a fixed-capacity
+axis with immutable level, parent-interval, active-node, and quadrature metadata.
+It is intended for `HierarchicalAxisCollocation`: the array shape remains fixed
+while nested nodes become active.
+
+For an irregular geometry sampled on bounding-box axes, `coord_mask_by_label`
+remains a boolean support mask. A numerical geometry correction is stored
+separately in `coord_geometry_weight_by_label`; integrals multiply both. Request a
+deterministic subcell estimate with `GridSpec(..., cut_cell_order=k)`:
+
+```python
+grid = phx.domain.GridSpec(
+    (
+        phx.domain.UniformAxisSpec(65),
+        phx.domain.UniformAxisSpec(65),
+    ),
+    cut_cell_order=3,
+)
+batch = cad.component().sample_coord_separable({"x": grid})
+```
+
+Each tensor node represents its bounding Voronoi subcell. Phydrax probes each
+subcell, estimates its occupied fraction, keeps evaluation points inside the
+declared geometry, and normalizes the represented mass to the geometry measure.
+This improves constant/low-order integration over a binary nodal mask. It does
+not recover a disconnected feature that has no interior tensor node. Use a
+paired-point representation or a geometry-conforming mesh for such features.
+`CoordSeparableBatch` rejects negative, non-finite, misaligned, and unknown-label
+geometry weights.
+
+### CAD measure partitions and boundary charts
+
+Mesh-backed 2D CAD geometries expose:
+
+- `interior_measure_partition`: triangle areas;
+- `boundary_measure_partition`: boundary-edge lengths;
+- `boundary_chart_atlas`: one unit-interval chart per boundary edge.
+
+Mesh-backed 3D CAD geometries expose a surface-triangle
+`boundary_measure_partition` and `boundary_chart_atlas`. A 3D interior
+volume-cell partition is intentionally not synthesized from a surface mesh.
+
+`CADChartAtlas.tensor_quadrature(order)` maps Gauss-Legendre reference axes to
+physical edges or Duffy-mapped triangles. `CADChartQuadrature.weights` already
+contains the physical Jacobian and trim semantics. Adjacent charts share only
+measure-zero seams, so summing chart weights does not double-count physical
+surface measure:
+
+```python
+import jax.numpy as jnp
+
+chart_rule = cad.boundary_chart_atlas.tensor_quadrature(6)
+surface_measure = chart_rule.integrate(
+    jnp.ones(chart_rule.weights.shape)
+)
+```
+
 ## Phase-space product domains (position–momentum)
 
 You can represent phase space by composing a spatial geometry for position with a second spatial

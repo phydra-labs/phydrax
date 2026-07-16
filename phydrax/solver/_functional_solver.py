@@ -17,6 +17,7 @@ from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._strict import StrictModule
 from ..constraints._base import AbstractConstraint
+from ..constraints._functional import FunctionalConstraint
 from ..domain._function import DomainFunction
 from ..operators.differential._runtime import derivative_runtime_context
 from ._enforced_constraint_pipeline import (
@@ -86,6 +87,8 @@ class FunctionalSolver(StrictModule):
     constraints: tuple[AbstractConstraint, ...]
     eval_constraints: tuple[AbstractConstraint, ...]
     constraint_pipelines: EnforcedConstraintPipelines | None
+    collocation: tuple[Any | None, ...]
+    training_diagnostics: frozendict[str, Array]
 
     def __init__(
         self,
@@ -103,6 +106,7 @@ class FunctionalSolver(StrictModule):
         boundary_weight_num_reference: int = 500_000,
         boundary_weight_sampler: str = "latin_hypercube",
         boundary_weight_key: Key[Array, ""] = DOC_KEY0,
+        collocation_key: Key[Array, ""] = DOC_KEY0,
     ):
         r"""Create a functional solver.
 
@@ -147,6 +151,19 @@ class FunctionalSolver(StrictModule):
             )
 
         self.constraint_pipelines = constraint_pipelines
+        collocation_keys = jr.split(collocation_key, len(self.constraints))
+        self.collocation = tuple(
+            (
+                constraint.collocation_policy.initialize(constraint, key=constraint_key)
+                if isinstance(constraint, FunctionalConstraint)
+                and constraint.collocation_policy is not None
+                else None
+            )
+            for constraint, constraint_key in zip(
+                self.constraints, collocation_keys, strict=True
+            )
+        )
+        self.training_diagnostics = frozendict()
 
     def ansatz_functions(self) -> frozendict[str, DomainFunction]:
         r"""Return the current field mapping after applying enforced pipelines (if configured)."""
@@ -206,8 +223,30 @@ class FunctionalSolver(StrictModule):
         keys = jr.split(key, len(self.constraints))
         total = jnp.array(0.0, dtype=float)
         with derivative_runtime_context():
-            for c, k in zip(self.constraints, keys, strict=True):
-                total = total + c.loss(functions, key=k, **kwargs)
+            for c, population, k in zip(
+                self.constraints, self.collocation, keys, strict=True
+            ):
+                if population is not None:
+                    if not isinstance(c, FunctionalConstraint):
+                        raise TypeError(
+                            "Adaptive collocation is only valid for FunctionalConstraint."
+                        )
+                    policy = c.collocation_policy
+                    if policy is None:
+                        raise ValueError(
+                            "Adaptive population requires a collocation policy."
+                        )
+                    batch, batch_weight = policy.loss_batch_and_weight(population)
+                    term = c.loss(
+                        functions,
+                        key=k,
+                        batch=batch,
+                        batch_weight=batch_weight,
+                        **kwargs,
+                    )
+                else:
+                    term = c.loss(functions, key=k, **kwargs)
+                total = total + term
             iter_ = kwargs.get("iter_", None)
             for term in function_model_loss_values(
                 self.functions,
@@ -234,6 +273,7 @@ class FunctionalSolver(StrictModule):
         tensorboard_log_dir: str | Path | None = None,
         tensorboard_every: int | None = None,
         tensorboard_flush_every: int = 10,
+        profile_adaptive: bool = False,
     ) -> "FunctionalSolver":
         """Run the training loop and return an updated solver.
 
@@ -258,6 +298,8 @@ class FunctionalSolver(StrictModule):
         - If `tensorboard_log_dir` is provided, scalar training logs are written as
           TensorBoard event files. `tensorboard_every` controls the event cadence
           and defaults to `log_every` when positive, otherwise every iteration.
+        - If `profile_adaptive=True`, device-synchronized refresh and optimizer wall
+          times are returned in `training_diagnostics`.
         """
         from ._functional_train import solve as _solve
 
@@ -277,4 +319,5 @@ class FunctionalSolver(StrictModule):
             tensorboard_log_dir=tensorboard_log_dir,
             tensorboard_every=tensorboard_every,
             tensorboard_flush_every=tensorboard_flush_every,
+            profile_adaptive=profile_adaptive,
         )

@@ -41,6 +41,38 @@ $L = \\sum_i w_i \\, \\ell_i$.
     ```
 """
 
+from ._adaptive import (
+    AbstractCollocationPolicy,
+    CollocationPolicy,
+    CollocationPopulation,
+    PeriodicCollocation,
+    R3,
+    RARD,
+    with_collocation_policy,
+)
+from ._adaptive_control import (
+    AdaptationBudget,
+    COLLOCATION_POLICY_SUPPORT,
+    collocation_policy_support,
+    CollocationDefaults,
+    CollocationPolicySupport,
+    controlled_collocation,
+    ControlledCollocationPolicy,
+    ControlledCollocationPopulation,
+    CoverageAnchors,
+    PolicySupportTier,
+    RECOMMENDED_COLLOCATION_DEFAULTS,
+    RefreshGuard,
+    RefreshSchedule,
+    ResidualMonitor,
+)
+from ._adaptive_separable import (
+    HierarchicalAxisCollocation,
+    HierarchicalAxisPolicy,
+    PeriodicSeparableCollocation,
+    SeparableCollocationPolicy,
+    SeparableCollocationPopulation,
+)
 from ._bc_cfd import (
     ContinuousNoPenetrationBoundaryConstraint,
     ContinuousSlipWallBoundaryConstraint,
@@ -140,13 +172,13 @@ from ._ode import (
     InitialODEConstraint,
 )
 from ._pointset import PointSetConstraint
-from ._ragged_time_series import (
-    RaggedTimeSeriesBatch,
-    RaggedTimeSeriesDataConstraint,
-)
 from ._ragged_series import (
     RaggedSeriesSupervisedBatch,
     RaggedSeriesSupervisedConstraint,
+)
+from ._ragged_time_series import (
+    RaggedTimeSeriesBatch,
+    RaggedTimeSeriesDataConstraint,
 )
 from ._ragged_time_series_enforced import (
     enforce_ragged_time_series,
@@ -167,6 +199,32 @@ from ._trajectory_data import (
 
 
 __all__ = [
+    "AbstractCollocationPolicy",
+    "CollocationPolicy",
+    "CollocationPopulation",
+    "PeriodicCollocation",
+    "R3",
+    "RARD",
+    "with_collocation_policy",
+    "AdaptationBudget",
+    "COLLOCATION_POLICY_SUPPORT",
+    "CollocationDefaults",
+    "CollocationPolicySupport",
+    "ControlledCollocationPolicy",
+    "ControlledCollocationPopulation",
+    "CoverageAnchors",
+    "PolicySupportTier",
+    "RECOMMENDED_COLLOCATION_DEFAULTS",
+    "RefreshGuard",
+    "RefreshSchedule",
+    "ResidualMonitor",
+    "collocation_policy_support",
+    "controlled_collocation",
+    "HierarchicalAxisCollocation",
+    "HierarchicalAxisPolicy",
+    "PeriodicSeparableCollocation",
+    "SeparableCollocationPolicy",
+    "SeparableCollocationPopulation",
     "FunctionalConstraint",
     "PointSetConstraint",
     "RaggedTimeSeriesBatch",

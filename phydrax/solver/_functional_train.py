@@ -19,7 +19,10 @@ import jax.random as jr
 import optax
 from jax import core as jcore
 
+from .._frozendict import frozendict
 from .._trainable import combine_trainable, partition_trainable
+from ..constraints._adaptive_control import ControlledCollocationPolicy
+from ..constraints._functional import FunctionalConstraint
 from ..operators.differential._runtime import derivative_runtime_context
 from ._model_losses import function_model_loss_labels, function_model_loss_values
 
@@ -288,6 +291,159 @@ def _log_tensorboard_scalars(
     )
 
 
+def _adaptive_constraint_loss(
+    constraint,
+    population: Any | None,
+    functions,
+    /,
+    *,
+    key,
+    iter_,
+):
+    if population is None:
+        return constraint.loss(functions, key=key, iter_=iter_)
+    if not isinstance(constraint, FunctionalConstraint):
+        raise TypeError("Adaptive collocation is only valid for FunctionalConstraint.")
+    policy = constraint.collocation_policy
+    if policy is None:
+        raise ValueError("Adaptive population requires a collocation policy.")
+    batch, batch_weight = policy.loss_batch_and_weight(population)
+    return constraint.loss(
+        functions,
+        key=key,
+        iter_=iter_,
+        batch=batch,
+        batch_weight=batch_weight,
+    )
+
+
+def _refresh_collocation(
+    solver,
+    functions,
+    collocation: tuple[Any | None, ...],
+    /,
+    *,
+    key,
+    iter_,
+) -> tuple[Any | None, ...]:
+    if solver.constraint_pipelines is None:
+        enforced = functions
+    else:
+        enforced = solver.constraint_pipelines.apply(functions)
+    keys = jr.split(key, len(solver.constraints))
+    refreshed: list[Any | None] = []
+    for constraint, population, constraint_key in zip(
+        solver.constraints, collocation, keys, strict=True
+    ):
+        if population is None:
+            refreshed.append(None)
+            continue
+        if not isinstance(constraint, FunctionalConstraint):
+            raise TypeError("Adaptive collocation is only valid for FunctionalConstraint.")
+        policy = constraint.collocation_policy
+        if policy is None:
+            raise ValueError("Adaptive population requires a collocation policy.")
+        if bool(policy.should_refresh(population, iter_)):
+            population = policy.refresh(
+                constraint,
+                enforced,
+                population,
+                key=constraint_key,
+                iter_=iter_,
+            )
+        refreshed.append(population)
+    return tuple(refreshed)
+
+
+def _settle_collocation(
+    solver,
+    functions,
+    collocation: tuple[Any | None, ...],
+    /,
+    *,
+    key,
+    iter_,
+) -> tuple[Any | None, ...]:
+    if solver.constraint_pipelines is None:
+        enforced = functions
+    else:
+        enforced = solver.constraint_pipelines.apply(functions)
+    keys = jr.split(key, len(solver.constraints))
+    settled: list[Any | None] = []
+    for constraint, population, constraint_key in zip(
+        solver.constraints, collocation, keys, strict=True
+    ):
+        if population is None:
+            settled.append(None)
+            continue
+        if not isinstance(constraint, FunctionalConstraint):
+            raise TypeError("Adaptive collocation is only valid for FunctionalConstraint.")
+        policy = constraint.collocation_policy
+        if isinstance(policy, ControlledCollocationPolicy):
+            population = policy.settle(
+                constraint,
+                enforced,
+                population,
+                key=constraint_key,
+                iter_=iter_,
+            )
+        settled.append(population)
+    return tuple(settled)
+
+def _record_collocation_training_evaluations(
+    solver,
+    collocation: tuple[Any | None, ...],
+    /,
+    *,
+    multiplier: int = 1,
+) -> tuple[Any | None, ...]:
+    recorded: list[Any | None] = []
+    for constraint, population in zip(
+        solver.constraints,
+        collocation,
+        strict=True,
+    ):
+        if population is None:
+            recorded.append(None)
+            continue
+        if not isinstance(constraint, FunctionalConstraint):
+            raise TypeError("Adaptive collocation is only valid for FunctionalConstraint.")
+        policy = constraint.collocation_policy
+        if policy is None:
+            raise ValueError("Adaptive population requires a collocation policy.")
+        if isinstance(policy, ControlledCollocationPolicy):
+            population = policy.record_training_evaluation(
+                population,
+                multiplier=multiplier,
+            )
+        recorded.append(population)
+    return tuple(recorded)
+
+
+
+def _collocation_data_metrics(
+    solver,
+    collocation: tuple[Any | None, ...],
+    /,
+) -> tuple[dict[str, jax.Array], ...]:
+    metrics: list[dict[str, jax.Array]] = []
+    for constraint, population in zip(
+        solver.constraints,
+        collocation,
+        strict=True,
+    ):
+        if population is None:
+            metrics.append({})
+            continue
+        if not isinstance(constraint, FunctionalConstraint):
+            raise TypeError("Adaptive collocation is only valid for FunctionalConstraint.")
+        policy = constraint.collocation_policy
+        if policy is None:
+            raise ValueError("Adaptive population requires a collocation policy.")
+        metrics.append(policy.data_metrics(population))
+    return tuple(metrics)
+
+
 def solve(
     self: "FunctionalSolver",
     *,
@@ -304,6 +460,7 @@ def solve(
     tensorboard_log_dir: str | Path | None = None,
     tensorboard_every: int | None = None,
     tensorboard_flush_every: int = 10,
+    profile_adaptive: bool = False,
 ) -> "FunctionalSolver":
     if num_iter == 0:
         return self
@@ -335,6 +492,7 @@ def solve(
             tensorboard_log_dir=tensorboard_log_dir,
             tensorboard_every=tensorboard_every,
             tensorboard_flush_every=tensorboard_flush_every,
+            profile_adaptive=profile_adaptive,
         )
 
     log_ctx = (
@@ -367,7 +525,9 @@ def solve(
         model_loss_names = function_model_loss_labels(self.functions)
         eval_constraint_names = tuple(_constraint_label(c) for c in self.eval_constraints)
 
-        def _loss_wrt_params(params_, non_trainable_, solver, key, iter_):
+        def _loss_wrt_params(
+            params_, non_trainable_, solver, key, iter_, collocation_
+        ):
             functions = combine_trainable(params_, non_trainable_)
             if solver.constraint_pipelines is None:
                 enforced = functions
@@ -377,8 +537,12 @@ def solve(
             total = jnp.array(0.0, dtype=float)
             with derivative_runtime_context():
                 if not log_constraints_:
-                    for c, k in zip(solver.constraints, keys, strict=True):
-                        term = c.loss(enforced, key=k, iter_=iter_)
+                    for c, population, k in zip(
+                        solver.constraints, collocation_, keys, strict=True
+                    ):
+                        term = _adaptive_constraint_loss(
+                            c, population, enforced, key=k, iter_=iter_
+                        )
                         total = total + jnp.asarray(term, dtype=float).reshape(())
                     for term in function_model_loss_values(
                         functions,
@@ -389,8 +553,12 @@ def solve(
                     return total, jnp.zeros((0,), dtype=float)
 
                 terms: list[jax.Array] = []
-                for c, k in zip(solver.constraints, keys, strict=True):
-                    term = c.loss(enforced, key=k, iter_=iter_)
+                for c, population, k in zip(
+                    solver.constraints, collocation_, keys, strict=True
+                ):
+                    term = _adaptive_constraint_loss(
+                        c, population, enforced, key=k, iter_=iter_
+                    )
                     term = jnp.asarray(term, dtype=float).reshape(())
                     terms.append(term)
                     total = total + term
@@ -454,15 +622,24 @@ def solve(
 
         is_linesearch = _opt_linesearch is not None
 
-        def solve_step(params_, non_trainable_, opt_state, solver, key, iter_):
+        def solve_step(
+            params_, non_trainable_, opt_state, solver, key, iter_, collocation_
+        ):
             if is_linesearch:
                 import jax.tree_util as jtu
 
                 def _value_fn(p):
-                    return _loss_wrt_params(p, non_trainable_, solver, key, iter_)[0]
+                    return _loss_wrt_params(
+                        p, non_trainable_, solver, key, iter_, collocation_
+                    )[0]
 
                 (value, _terms0), grads = loss_fn(
-                    params_, non_trainable_, solver, key, iter_
+                    params_,
+                    non_trainable_,
+                    solver,
+                    key,
+                    iter_,
+                    collocation_,
                 )
                 grads = jtu.tree_map(
                     lambda a: (
@@ -484,12 +661,22 @@ def solve(
                 )
                 params_ = eqx.apply_updates(params_, updates)
                 loss_val, terms = _loss_wrt_params(
-                    params_, non_trainable_, solver, key, iter_
+                    params_,
+                    non_trainable_,
+                    solver,
+                    key,
+                    iter_,
+                    collocation_,
                 )
                 return params_, opt_state, loss_val, terms
 
             (loss_val, terms), grads = loss_fn(
-                params_, non_trainable_, solver, key, iter_
+                params_,
+                non_trainable_,
+                solver,
+                key,
+                iter_,
+                collocation_,
             )
             assert _opt_standard is not None
             updates, opt_state = _opt_standard.update(grads, opt_state, params_)
@@ -507,7 +694,10 @@ def solve(
 
         best_loss = float("inf")
         best_params = params
+        collocation = self.collocation
         out_file = log_fp if log_fp is not None else None
+        refresh_wall_time = 0.0
+        optimizer_wall_time = 0.0
 
         for epoch in range(int(num_iter)):
             if signal_guard.stop_requested:
@@ -524,8 +714,34 @@ def solve(
                 iter_start = time.perf_counter()
                 rng, subkey = jr.split(rng)
                 iter_ = jnp.asarray(epoch + 1, dtype=float)
+                functions_snapshot = combine_trainable(params, non_trainable)
+                refresh_started = time.perf_counter() if profile_adaptive else 0.0
+                collocation = _refresh_collocation(
+                    self,
+                    functions_snapshot,
+                    collocation,
+                    key=jr.fold_in(subkey, 101),
+                    iter_=epoch + 1,
+                )
+                if profile_adaptive:
+                    jax.block_until_ready(collocation)
+                    refresh_wall_time += time.perf_counter() - refresh_started
+                optimizer_started = time.perf_counter() if profile_adaptive else 0.0
                 params, opt_state, loss_val, terms = solve_step(
-                    params, non_trainable, opt_state, self, subkey, iter_
+                    params,
+                    non_trainable,
+                    opt_state,
+                    self,
+                    subkey,
+                    iter_,
+                    collocation,
+                )
+                if profile_adaptive:
+                    jax.block_until_ready((params, opt_state, loss_val))
+                    optimizer_wall_time += time.perf_counter() - optimizer_started
+                collocation = _record_collocation_training_evaluations(
+                    self,
+                    collocation,
                 )
                 completed = epoch + 1
                 terms_arr = jnp.asarray(terms, dtype=float)
@@ -564,6 +780,18 @@ def solve(
                         self.constraints,
                         jr.fold_in(subkey, 1),
                         iter_,
+                    )
+                    collocation_metrics = _collocation_data_metrics(
+                        self,
+                        collocation,
+                    )
+                    train_data_metrics = tuple(
+                        data_metrics | adaptive_metrics
+                        for data_metrics, adaptive_metrics in zip(
+                            train_data_metrics,
+                            collocation_metrics,
+                            strict=True,
+                        )
                     )
                     eval_terms = _terms_wrt_constraints(
                         params,
@@ -662,7 +890,27 @@ def solve(
 
         chosen = best_params if keep_best else params
         functions = combine_trainable(chosen, non_trainable)
-        return eqx.tree_at(lambda s: s.functions, self, functions)
+        settle_started = time.perf_counter() if profile_adaptive else 0.0
+        collocation = _settle_collocation(
+            self,
+            functions,
+            collocation,
+            key=jr.fold_in(rng, 991),
+            iter_=completed + 1,
+        )
+        if profile_adaptive:
+            jax.block_until_ready(collocation)
+            refresh_wall_time += time.perf_counter() - settle_started
+        result = eqx.tree_at(lambda s: s.functions, self, functions)
+        result = eqx.tree_at(lambda s: s.collocation, result, collocation)
+        diagnostics = frozendict(
+            {
+                "profile_enabled": jnp.asarray(profile_adaptive),
+                "refresh_wall_time_seconds": jnp.asarray(refresh_wall_time),
+                "optimizer_wall_time_seconds": jnp.asarray(optimizer_wall_time),
+            }
+        )
+        return eqx.tree_at(lambda s: s.training_diagnostics, result, diagnostics)
 
 
 def _solve_evosax(
@@ -679,6 +927,7 @@ def _solve_evosax(
     tensorboard_log_dir: str | Path | None = None,
     tensorboard_every: int | None = None,
     tensorboard_flush_every: int = 10,
+    profile_adaptive: bool = False,
     tensorboard_writer: _TensorBoardLogger | None = None,
 ) -> "FunctionalSolver":
     from ..constraints._base import AbstractSamplingConstraint
@@ -711,11 +960,25 @@ def _solve_evosax(
         keys = jr.split(key, len(solver.constraints))
         total = jnp.array(0.0, dtype=float)
         with derivative_runtime_context():
-            for c, k, b in zip(solver.constraints, keys, batches, strict=True):
-                if b is None:
+            for c, k, batch_info in zip(
+                solver.constraints, keys, batches, strict=True
+            ):
+                if batch_info is None:
                     total = total + c.loss(enforced, key=k, iter_=iter_)
                 else:
-                    total = total + c.loss(enforced, key=k, iter_=iter_, batch=b)
+                    batch, batch_weight = batch_info
+                    if batch_weight is None:
+                        total = total + c.loss(
+                            enforced, key=k, iter_=iter_, batch=batch
+                        )
+                    else:
+                        total = total + c.loss(
+                            enforced,
+                            key=k,
+                            iter_=iter_,
+                            batch=batch,
+                            batch_weight=batch_weight,
+                        )
             for term in function_model_loss_values(
                 functions,
                 key=jr.fold_in(key, len(solver.constraints)),
@@ -733,11 +996,23 @@ def _solve_evosax(
         keys = jr.split(key, len(solver.constraints))
         terms: list[jax.Array] = []
         with derivative_runtime_context():
-            for c, k, b in zip(solver.constraints, keys, batches, strict=True):
-                if b is None:
+            for c, k, batch_info in zip(
+                solver.constraints, keys, batches, strict=True
+            ):
+                if batch_info is None:
                     term = c.loss(enforced, key=k, iter_=iter_)
                 else:
-                    term = c.loss(enforced, key=k, iter_=iter_, batch=b)
+                    batch, batch_weight = batch_info
+                    if batch_weight is None:
+                        term = c.loss(enforced, key=k, iter_=iter_, batch=batch)
+                    else:
+                        term = c.loss(
+                            enforced,
+                            key=k,
+                            iter_=iter_,
+                            batch=batch,
+                            batch_weight=batch_weight,
+                        )
                 terms.append(jnp.asarray(term, dtype=float).reshape(()))
             for term in function_model_loss_values(
                 functions,
@@ -797,6 +1072,7 @@ def _solve_evosax(
 
     best_loss = float("inf")
     best_params = params
+    collocation = self.collocation
 
     log_ctx = (
         open(Path(log_path), "w", encoding="utf-8")
@@ -811,6 +1087,8 @@ def _solve_evosax(
 
     with log_ctx as log_fp, tb_ctx as tb_writer, _TrainingSignalGuard() as signal_guard:
         out_file = log_fp if log_fp is not None else None
+        refresh_wall_time = 0.0
+        optimizer_wall_time = 0.0
 
         for epoch in range(int(num_iter)):
             if signal_guard.stop_requested:
@@ -841,6 +1119,19 @@ def _solve_evosax(
                     )
 
                 iter_ = jnp.asarray(epoch + 1, dtype=float)
+                functions_snapshot = combine_trainable(best_params, non_trainable)
+                refresh_started = time.perf_counter() if profile_adaptive else 0.0
+                collocation = _refresh_collocation(
+                    self,
+                    functions_snapshot,
+                    collocation,
+                    key=jr.fold_in(eval_key, 101),
+                    iter_=epoch + 1,
+                )
+                if profile_adaptive:
+                    jax.block_until_ready(collocation)
+                    refresh_wall_time += time.perf_counter() - refresh_started
+                optimizer_started = time.perf_counter() if profile_adaptive else 0.0
 
                 # Common random numbers (CRN): sample each constraint batch once per
                 # generation and reuse it across the full population to reduce variance
@@ -848,9 +1139,24 @@ def _solve_evosax(
                 batch_key = jr.fold_in(eval_key, 0)
                 batch_keys = jr.split(batch_key, len(self.constraints))
                 batches: list[Any] = []
-                for c, k in zip(self.constraints, batch_keys, strict=True):
-                    if isinstance(c, AbstractSamplingConstraint):
-                        batches.append(c.sample(key=k))
+                for c, adaptive_population, k in zip(
+                    self.constraints, collocation, batch_keys, strict=True
+                ):
+                    if adaptive_population is not None:
+                        if not isinstance(c, FunctionalConstraint):
+                            raise TypeError(
+                                "Adaptive collocation is only valid for FunctionalConstraint."
+                            )
+                        policy = c.collocation_policy
+                        if policy is None:
+                            raise ValueError(
+                                "Adaptive population requires a collocation policy."
+                            )
+                        batches.append(
+                            policy.loss_batch_and_weight(adaptive_population)
+                        )
+                    elif isinstance(c, AbstractSamplingConstraint):
+                        batches.append((c.sample(key=k), None))
                     else:
                         batches.append(None)
                 batches_tuple = tuple(batches)
@@ -877,6 +1183,14 @@ def _solve_evosax(
                     eval_key_shared,
                     iter_,
                     batches_tuple,
+                )
+                if profile_adaptive:
+                    jax.block_until_ready((evo_state, cand_params, cand_loss))
+                    optimizer_wall_time += time.perf_counter() - optimizer_started
+                collocation = _record_collocation_training_evaluations(
+                    self,
+                    collocation,
+                    multiplier=popsize + 1,
                 )
 
                 if keep_best:
@@ -1028,4 +1342,24 @@ def _solve_evosax(
                 break
 
         functions = combine_trainable(best_params, non_trainable)
-        return eqx.tree_at(lambda s: s.functions, self, functions)
+        settle_started = time.perf_counter() if profile_adaptive else 0.0
+        collocation = _settle_collocation(
+            self,
+            functions,
+            collocation,
+            key=jr.fold_in(key, 991),
+            iter_=completed + 1,
+        )
+        if profile_adaptive:
+            jax.block_until_ready(collocation)
+            refresh_wall_time += time.perf_counter() - settle_started
+        result = eqx.tree_at(lambda s: s.functions, self, functions)
+        result = eqx.tree_at(lambda s: s.collocation, result, collocation)
+        diagnostics = frozendict(
+            {
+                "profile_enabled": jnp.asarray(profile_adaptive),
+                "refresh_wall_time_seconds": jnp.asarray(refresh_wall_time),
+                "optimizer_wall_time_seconds": jnp.asarray(optimizer_wall_time),
+            }
+        )
+        return eqx.tree_at(lambda s: s.training_diagnostics, result, diagnostics)

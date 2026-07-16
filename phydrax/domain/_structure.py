@@ -299,6 +299,8 @@ class CoordSeparableBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
       e.g. `("x0", "x1")` for a 2D geometry label.
     - `coord_mask_by_label`: a mask `coordax.Field` that can be used to exclude
       coordinate combinations outside an irregular geometry (e.g. AABB grid masking).
+    - `coord_geometry_weight_by_label`: optional non-negative numerical geometry
+      corrections over the same logical axes as each coordinate mask.
     - `dense_structure`: a normal `ProductStructure` for any remaining (non-separable)
       labels sampled in paired blocks.
     """
@@ -307,6 +309,8 @@ class CoordSeparableBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
     dense_structure: ProductStructure
     coord_axes_by_label: frozendict[str, tuple[str, ...]]
     coord_mask_by_label: frozendict[str, cx.Field]
+    coord_geometry_weight_by_label: frozendict[str, cx.Field]
+    coord_geometry_order_by_label: frozendict[str, int]
     axis_discretization_by_axis: frozendict[str, AxisDiscretization]
 
     def __init__(
@@ -317,6 +321,12 @@ class CoordSeparableBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
         coord_axes_by_label: frozendict[str, tuple[str, ...]]
         | Mapping[str, tuple[str, ...]],
         coord_mask_by_label: frozendict[str, cx.Field] | Mapping[str, cx.Field],
+        coord_geometry_weight_by_label: frozendict[str, cx.Field]
+        | Mapping[str, cx.Field]
+        | None = None,
+        coord_geometry_order_by_label: frozendict[str, int]
+        | Mapping[str, int]
+        | None = None,
         axis_discretization_by_axis: frozendict[str, AxisDiscretization]
         | Mapping[str, AxisDiscretization]
         | None = None,
@@ -330,6 +340,8 @@ class CoordSeparableBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
         axes_by_label = frozendict(coord_axes_by_label)
         mask_by_label = frozendict(coord_mask_by_label)
         disc_by_axis = frozendict(axis_discretization_by_axis or {})
+        geometry_weight_by_label = frozendict(coord_geometry_weight_by_label or {})
+        geometry_order_by_label = frozendict(coord_geometry_order_by_label or {})
 
         allowed_sep: set[str] = set()
         for lbl, axes in axes_by_label.items():
@@ -376,7 +388,48 @@ class CoordSeparableBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
                 raise ValueError(
                     f"CoordSeparableBatch mask for {lbl!r} must have dims {axes}, got {mask.dims}."
                 )
+            geometry_weight = geometry_weight_by_label.get(lbl)
+            if geometry_weight is not None:
+                if not isinstance(geometry_weight, cx.Field):
+                    raise TypeError(
+                        f"CoordSeparableBatch geometry weight for {lbl!r} "
+                        "must be a coordax.Field."
+                    )
+                if geometry_weight.dims != axes:
+                    raise ValueError(
+                        f"CoordSeparableBatch geometry weight for {lbl!r} must "
+                        f"have dims {axes}, got {geometry_weight.dims}."
+                    )
+                if geometry_weight.data.shape != mask.data.shape:
+                    raise ValueError(
+                        f"CoordSeparableBatch geometry weight for {lbl!r} must "
+                        f"have shape {mask.data.shape}, got {geometry_weight.data.shape}."
+                    )
+                weight_data = jnp.asarray(geometry_weight.data, dtype=float)
+                if bool(jnp.any(~jnp.isfinite(weight_data))) or bool(
+                    jnp.any(weight_data < 0.0)
+                ):
+                    raise ValueError(
+                        "Coord-separable geometry weights must be finite and non-negative."
+                    )
 
+        if geometry_order_by_label.keys() != geometry_weight_by_label.keys():
+            raise ValueError(
+                "Coordinate geometry probe-order labels must match geometry-weight labels."
+            )
+        for label, order in geometry_order_by_label.items():
+            if int(order) <= 0:
+                raise ValueError(
+                    f"Geometry probe order for {label!r} must be positive."
+                )
+        unknown_geometry_weights = (
+            geometry_weight_by_label.keys() - axes_by_label.keys()
+        )
+        if unknown_geometry_weights:
+            raise ValueError(
+                "Found geometry weights for unknown coord-separable labels "
+                f"{tuple(sorted(unknown_geometry_weights))!r}."
+            )
         for axis, disc in disc_by_axis.items():
             if axis not in allowed_sep:
                 raise ValueError(
@@ -398,6 +451,8 @@ class CoordSeparableBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
         self.coord_axes_by_label = axes_by_label
         self.coord_mask_by_label = mask_by_label
         self.axis_discretization_by_axis = disc_by_axis
+        self.coord_geometry_weight_by_label = geometry_weight_by_label
+        self.coord_geometry_order_by_label = geometry_order_by_label
 
     def __getitem__(self, key: str) -> PyTree[cx.Field]:
         return self.points[key]
