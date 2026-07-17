@@ -5,6 +5,7 @@
 import jax.numpy as jnp
 import jax.random as jr
 import optax
+import pytest
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
 from phydrax.constraints import (
@@ -71,6 +72,36 @@ def _make_dataset_solver_with_eval(seed: int = 0) -> FunctionalSolver:
         constraints=[train],
         eval_constraints=[eval_data],
     )
+
+
+def _make_dataset_solver_with_two_train_constraints(seed: int = 0) -> FunctionalSolver:
+    rows = jnp.linspace(0.0, 1.0, 8).reshape((-1, 1))
+    domain = DatasetDomain(rows)
+    targets = 1.0 + 2.0 * rows[:, 0]
+    model = MLP(
+        in_size=1,
+        out_size="scalar",
+        hidden_sizes=(),
+        key=jr.key(seed),
+    )
+    u = domain.Model("data")(model)
+    train_a = SupervisedDatasetConstraint(
+        "u",
+        domain.component(),
+        targets,
+        num_cases=4,
+        indices=jnp.asarray([0, 1, 2, 3], dtype=jnp.int32),
+        label="train_a",
+    )
+    train_b = SupervisedDatasetConstraint(
+        "u",
+        domain.component(),
+        targets,
+        num_cases=4,
+        indices=jnp.asarray([4, 5, 6, 7], dtype=jnp.int32),
+        label="train_b",
+    )
+    return FunctionalSolver(functions={"u": u}, constraints=[train_a, train_b])
 
 
 def test_discrete_interior_data_constraint_reports_exact_data_metrics():
@@ -147,6 +178,48 @@ def test_solve_text_log_includes_eval_constraints(tmp_path):
     assert "[train 0] train_data:" in text
     assert "[eval 0] eval_data:" in text
     assert "data_accuracy=" in text
+
+
+def test_solve_can_subsample_train_constraints_and_log_all_constraints(tmp_path):
+    solver = _make_dataset_solver_with_two_train_constraints()
+    log_path = tmp_path / "train_subset.log"
+
+    solver.solve(
+        num_iter=2,
+        optim=optax.adam(1e-2),
+        seed=0,
+        log_every=1,
+        log_path=log_path,
+        train_constraint_sample_size=1,
+    )
+
+    text = log_path.read_text(encoding="utf-8")
+    assert "[train 0] train_a:" in text
+    assert "[train 1] train_b:" in text
+
+
+def test_solve_can_subsample_train_constraints_without_constraint_logging():
+    solver = _make_dataset_solver_with_two_train_constraints()
+
+    solver.solve(
+        num_iter=2,
+        optim=optax.adam(1e-2),
+        seed=0,
+        log_every=0,
+        log_constraints=False,
+        train_constraint_sample_size=1,
+    )
+
+
+def test_solve_rejects_invalid_train_constraint_sample_size():
+    solver = _make_dataset_solver_with_two_train_constraints()
+
+    with pytest.raises(ValueError, match="train_constraint_sample_size"):
+        solver.solve(
+            num_iter=1,
+            optim=optax.adam(1e-2),
+            train_constraint_sample_size=0,
+        )
 
 
 def test_solver_loss_excludes_eval_constraints():

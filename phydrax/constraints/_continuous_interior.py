@@ -14,6 +14,7 @@ from ..domain._components import DomainComponentUnion, Fixed, FixedEnd, FixedSta
 from ..domain._function import DomainFunction
 from ..domain._structure import CoordSeparableBatch, PointsBatch, ProductStructure
 from ..operators.differential._domain_ops import dt_n
+from ._adaptive import AbstractCollocationPolicy
 from ._functional import FunctionalConstraint
 from ._sampling_spec import SamplingNumPoints
 
@@ -38,6 +39,7 @@ def ContinuousPointwiseInteriorConstraint(
     fixed_batch_key: Key[Array, ""] = DOC_KEY0,
     where: Mapping[str, Any] | None = None,
     where_all: DomainFunction | None = None,
+    collocation_policy: AbstractCollocationPolicy | None = None,
 ) -> FunctionalConstraint:
     r"""Pointwise residual constraint over an interior domain component.
 
@@ -105,6 +107,7 @@ def ContinuousPointwiseInteriorConstraint(
         sampling_mode=sampling_mode,
         fixed_batch=fixed_batch,
         fixed_batch_key=fixed_batch_key,
+        collocation_policy=collocation_policy,
     )
 
 
@@ -128,6 +131,7 @@ def ContinuousInitialFunctionConstraint(
     reduction: Literal["mean", "integral"] = "mean",
     where: Mapping[str, Any] | None = None,
     where_all: DomainFunction | None = None,
+    collocation_policy: AbstractCollocationPolicy | None = None,
 ) -> FunctionalConstraint:
     r"""Initial-condition constraint matching time derivatives on the initial slice.
 
@@ -229,4 +233,5 @@ def ContinuousInitialFunctionConstraint(
         label=label,
         over=over,
         reduction=reduction,
+        collocation_policy=collocation_policy,
     )

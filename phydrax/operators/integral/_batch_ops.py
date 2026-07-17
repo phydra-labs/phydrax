@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import coordax as cx
 import equinox as eqx
@@ -201,7 +201,10 @@ def build_quadrature(
     from ...domain._trajectory_dataset import trajectory_quadrature_weights_by_axis
     from ...domain.graph._trajectory import graph_trajectory_quadrature_weights_by_axis
 
-    graph_custom = graph_trajectory_quadrature_weights_by_axis(component, batch)
+    graph_custom = graph_trajectory_quadrature_weights_by_axis(
+        component,
+        cast(Any, batch),
+    )
     if graph_custom is not None:
         return QuadratureBatch(batch, weights_by_axis=graph_custom)
 
@@ -357,6 +360,17 @@ def _where_product(
     return m
 
 
+def _geometry_weight_product(
+    batch: PointsBatch | CoordSeparableBatch,
+    /,
+) -> cx.Field:
+    weight = cx.Field(jnp.array(1.0, dtype=float), dims=())
+    if isinstance(batch, CoordSeparableBatch):
+        for geometry_weight in batch.coord_geometry_weight_by_label.values():
+            weight = weight * geometry_weight
+    return weight
+
+
 def _weight_product(
     component: DomainComponent,
     batch: PointsBatch | CoordSeparableBatch,
@@ -465,9 +479,7 @@ def integral(
     if not isinstance(y, cx.Field):
         raise TypeError("integrand must evaluate to a coordax.Field.")
 
-    if _is_points_like_batch(batch_single):
-        axes = _axes_for_over(batch_single.structure, over)
-    else:
+    if isinstance(batch_single, CoordSeparableBatch):
         if over is None:
             dense_axis_names = batch_single.dense_structure.axis_names
             if dense_axis_names is None:
@@ -486,6 +498,8 @@ def integral(
                 axes = _axes_for_over(batch_single.dense_structure, over)
         else:
             axes = _axes_for_over(batch_single.dense_structure, over)
+    else:
+        axes = _axes_for_over(batch_single.structure, over)
 
     if quadrature is not None:
         if isinstance(quadrature, QuadratureBatch):
@@ -510,15 +524,19 @@ def integral(
                 f"QuadratureBatch missing weights for axes {tuple(missing)!r}."
             )
     else:
-        if _is_points_like_batch(batch_single):
-            wq = _default_quadrature_total_weight(component, batch_single)
+        if isinstance(batch_single, CoordSeparableBatch):
+            wq = _default_quadrature_total_weight_coord_separable(
+                component,
+                batch_single,
+            )
         else:
-            wq = _default_quadrature_total_weight_coord_separable(component, batch_single)
+            wq = _default_quadrature_total_weight(component, batch_single)
 
     m = _where_product(component, batch_single, key=key, **kwargs)
+    geometry_weight = _geometry_weight_product(batch_single)
     w_sel = _weight_product(component, batch_single, key=key, **kwargs)
 
-    acc = wq * m * w_sel * y
+    acc = wq * m * geometry_weight * w_sel * y
     for axis in axes:
         acc = _sum_over(acc, axis)
     return acc

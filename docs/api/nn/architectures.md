@@ -6,10 +6,12 @@ Common end-to-end model families (dense, separable, polynomial, and complex-valu
     Key notes:
 
     - `MLP` is a standard feed-forward network with optional residual connection.
+    - `ModifiedMLP` reuses two persistent input encoders in every hidden-layer
+      gate to improve information flow through deep coordinate networks.
     - `KAN` replaces activations with polynomial edge functions.
     - `FeynmaNN` builds complex hidden states with a sum-over-paths block.
-    - `MLP`, `KAN`, `FeynmaNN`, `FNO1d`, and `FNO2d` support `scan=True` to use
-      a scan-over-depth execution path when topology is compatible.
+    - `MLP`, `ModifiedMLP`, `KAN`, `FeynmaNN`, `FNO1d`, and `FNO2d` support
+      `scan=True` to use a scan-over-depth execution path when topology is compatible.
     - `scan=True` is primarily a compile-time optimization for deeper repeated blocks.
 
 ::: phydrax.nn.MLP
@@ -19,6 +21,14 @@ Common end-to-end model families (dense, separable, polynomial, and complex-valu
             - __call__
 
 ---
+::: phydrax.nn.ModifiedMLP
+    options:
+        members:
+            - __init__
+            - __call__
+
+---
+
 
 ::: phydrax.nn.KAN
     options:

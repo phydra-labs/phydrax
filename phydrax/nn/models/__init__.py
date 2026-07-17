@@ -7,12 +7,18 @@ from .architectures._feynmann import FeynmaNN
 from .architectures._fno import FNO1d, FNO2d
 from .architectures._kan import KAN
 from .architectures._mlp import MLP
+from .architectures._modified_mlp import ModifiedMLP
 from .architectures._separable_feynmann import SeparableFeynmaNN
 from .architectures._separable_kan import SeparableKAN
 from .architectures._separable_mlp import SeparableMLP
+from .architectures._separable_modified_mlp import SeparableModifiedMLP
 from .core._loss import add_model_loss, ModelWithLoss
 from .embeddings._fourier import (
+    ExplicitFourierFeatureEmbeddings,
+    HybridFourierFeatureEmbeddings,
+    MultiscaleFourierFeatureEmbeddings,
     RandomFourierFeatureEmbeddings,
+    TrainableFourierFeatureEmbeddings,
 )
 from .layers._linear import Linear
 from .wrappers._complex_output import ComplexOutputModel
@@ -44,10 +50,15 @@ __all__ = [
     "EquinoxStructuredModel",
     "GraphModel",
     "GraphRolloutModel",
+    "ExplicitFourierFeatureEmbeddings",
+    "HybridFourierFeatureEmbeddings",
+    "MultiscaleFourierFeatureEmbeddings",
     "RandomFourierFeatureEmbeddings",
+    "TrainableFourierFeatureEmbeddings",
     "KAN",
     "Linear",
     "MLP",
+    "ModifiedMLP",
     "ModelWithLoss",
     "ConcatenatedModel",
     "MagnitudeDirectionModel",
@@ -56,6 +67,7 @@ __all__ = [
     "RaggedSeriesModel",
     "DeepONet",
     "SeparableMLP",
+    "SeparableModifiedMLP",
     "SeparableKAN",
     "SeparableFeynmaNN",
     "FeynmaNN",

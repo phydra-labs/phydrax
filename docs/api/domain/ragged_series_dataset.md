@@ -103,7 +103,10 @@ its own case subset and materializes a prefix view whose width is that bucket's
 maximum valid length, so every case in the bucket is covered without padding to
 the global maximum length. The requested `num_cases` is split across buckets by
 case count, and bucket losses are scaled so the combined estimator matches one
-full padded constraint with the same reduction while avoiding global padding.
+full padded constraint with the same reduction while avoiding global padding. For
+many bucket shapes, call `solve(..., train_constraint_sample_size=1)` so JIT
+compiles one bucket-shaped optimizer step at a time instead of one large graph
+containing every bucket.
 
 ::: phydrax.domain.RaggedSeriesDatasetDomain
     options:

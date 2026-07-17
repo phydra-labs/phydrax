@@ -16,6 +16,7 @@ from ..domain._function import DomainFunction
 from ..domain._structure import NumPoints, ProductStructure
 from ..domain._time import TimeInterval
 from ..operators.differential._domain_ops import dt_n as _dt_n
+from ._adaptive import AbstractCollocationPolicy
 from ._functional import FunctionalConstraint
 from ._pointset import PointSetConstraint
 
@@ -56,6 +57,7 @@ def ContinuousODEConstraint(
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
     reduction: Literal["mean", "integral"] = "mean",
+    collocation_policy: AbstractCollocationPolicy | None = None,
 ) -> FunctionalConstraint:
     r"""Continuous ODE residual constraint on a `TimeInterval`.
 
@@ -89,6 +91,7 @@ def ContinuousODEConstraint(
         label=label,
         over=over,
         reduction=reduction,
+        collocation_policy=collocation_policy,
     )
 
 

@@ -92,7 +92,7 @@ class Linear(_AbstractBaseModel):
         # Base weights (V in RWF; full W otherwise)
         self.weight = _initializer_dict[initializer](in_size_, out_size_, key=wkey)
 
-        # Random Weight Factorization setup (bool or (mu, sigma) like RBA pattern)
+        # Random Weight Factorization setup
         if use_random_weight_factorization is not None and rwf is True:
             # Backward-compat for older flag; prefer explicit `rwf` if provided as tuple
             rwf_value: bool | tuple[float, float] | None = bool(

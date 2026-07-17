@@ -154,6 +154,8 @@ For full-sequence training on long, uneven records, prefer length buckets over
 global full rows:
 
 ```python
+import optax
+
 constraints = phx.constraints.RaggedSeriesSupervisedConstraint.bucketed(
     "u",
     domain.component(),
@@ -162,6 +164,11 @@ constraints = phx.constraints.RaggedSeriesSupervisedConstraint.bucketed(
     num_buckets=8,
 )
 solver = phx.solver.FunctionalSolver(functions={"u": u}, constraints=constraints)
+solver = solver.solve(
+    num_iter=1000,
+    optim=optax.rprop(1e-3),
+    train_constraint_sample_size=1,
+)
 ```
 
 The helper returns multiple ordinary constraints. Each bucket uses a fixed-width
@@ -169,7 +176,9 @@ prefix view whose width is the bucket maximum length, so it still covers the
 complete series for every case in that bucket. Bucketing is only an efficiency
 device: `num_cases` is distributed across buckets by bucket population, and
 bucket losses are scaled so the combined estimator matches one full padded
-constraint with the same reduction.
+constraint with the same reduction. Use `train_constraint_sample_size=1` when
+there are many bucket shapes; this compiles one bucket-shaped step at a time
+instead of one large graph containing every bucket.
 
 ::: phydrax.constraints.RaggedSeriesSupervisedConstraint
     options:

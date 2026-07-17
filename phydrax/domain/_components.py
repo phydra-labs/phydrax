@@ -3,7 +3,7 @@
 #
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any
+from typing import Any, cast
 
 import coordax as cx
 import jax
@@ -22,6 +22,7 @@ from ._grid import (
     AbstractAxisSpec,
     AxisDiscretization,
     broadcasted_grid,
+    cut_cell_geometry_weight_from_adf,
     GridSpec,
     sdf_mask_from_adf,
 )
@@ -582,12 +583,15 @@ class DomainComponent(StrictModule):
         )
 
         if isinstance(self.domain, GraphTrajectoryDatasetDomain):
-            return sample_graph_trajectory_component(
-                self,
-                num_points,
-                structure=structure,
-                sampler=sampler,
-                key=key,
+            return cast(
+                PointsBatch,
+                sample_graph_trajectory_component(
+                    self,
+                    num_points,
+                    structure=structure,
+                    sampler=sampler,
+                    key=key,
+                ),
             )
 
         if isinstance(self.domain, TrajectoryDatasetDomain):
@@ -815,6 +819,8 @@ class DomainComponent(StrictModule):
 
         coord_axes_by_label: dict[str, tuple[str, ...]] = {}
         coord_mask_by_label: dict[str, cx.Field] = {}
+        coord_geometry_weight_by_label: dict[str, cx.Field] = {}
+        coord_geometry_order_by_label: dict[str, int] = {}
         axis_discretization_by_axis: dict[str, AxisDiscretization] = {}
         points: dict[str, Any] = {}
 
@@ -900,6 +906,8 @@ class DomainComponent(StrictModule):
                                 "Sequence[AxisSpec], or GridSpec."
                             )
 
+                geometry_weight_arr: Array | None = None
+                geometry_order = 0
                 if isinstance(factor, _AbstractGeometry):
                     if axis_specs is not None:
                         if len(axis_specs) != var_dim:
@@ -916,6 +924,37 @@ class DomainComponent(StrictModule):
 
                         coords_tuple = tuple(coords)
                         mask_arr = sdf_mask_from_adf(factor.adf, coords_tuple)
+                        if (
+                            isinstance(n_spec, GridSpec)
+                            and n_spec.cut_cell_order > 0
+                        ):
+                            base_weights: list[Array] = []
+                            for i, coord in enumerate(coords_tuple):
+                                axis_name = _axis_name_for_coord(lbl, i)
+                                disc = axis_discretization_by_axis[axis_name]
+                                if disc.quad_weights is not None:
+                                    base_weights.append(
+                                        jnp.asarray(disc.quad_weights, dtype=float)
+                                    )
+                                else:
+                                    length = bounds[1, i] - bounds[0, i]
+                                    base_weights.append(
+                                        jnp.full(
+                                            coord.shape,
+                                            length / float(coord.shape[0]),
+                                            dtype=float,
+                                        )
+                                    )
+                            geometry_order = n_spec.cut_cell_order
+                            geometry_weight_arr = cut_cell_geometry_weight_from_adf(
+                                factor.adf,
+                                coords_tuple,
+                                bounds,
+                                tuple(base_weights),
+                                mask_arr,
+                                factor.volume,
+                                order=geometry_order,
+                            )
                         if where_fn is not None:
                             grid = broadcasted_grid(coords_tuple)
                             pts = grid.reshape((-1, var_dim))
@@ -1004,6 +1043,12 @@ class DomainComponent(StrictModule):
 
                 mask_arr = jnp.asarray(mask, dtype=bool)
                 coord_mask_by_label[lbl] = cx.Field(mask_arr, dims=axis_names)
+                if geometry_weight_arr is not None:
+                    coord_geometry_weight_by_label[lbl] = cx.Field(
+                        geometry_weight_arr,
+                        dims=axis_names,
+                    )
+                    coord_geometry_order_by_label[lbl] = geometry_order
                 continue
 
             axis = dense_structure_out.axis_for(lbl)
@@ -1050,6 +1095,12 @@ class DomainComponent(StrictModule):
             dense_structure=dense_structure_out,
             coord_axes_by_label=frozendict(coord_axes_by_label),
             coord_mask_by_label=frozendict(coord_mask_by_label),
+            coord_geometry_weight_by_label=frozendict(
+                coord_geometry_weight_by_label
+            ),
+            coord_geometry_order_by_label=frozendict(
+                coord_geometry_order_by_label
+            ),
             axis_discretization_by_axis=frozendict(axis_discretization_by_axis),
         )
 
