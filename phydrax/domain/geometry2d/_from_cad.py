@@ -21,6 +21,8 @@ import trimesh
 from jaxtyping import Array, ArrayLike, Bool, Float, Key
 
 from ..._doc import DOC_KEY0
+from .._chart import CADChartAtlas
+from .._measure_partition import GeometryMeasurePartition
 from .._sampling import get_sampler_host, seed_from_key
 from ..geometry3d._mesh import Geometry3DFromCAD
 from ..geometry3d._utils import (
@@ -60,6 +62,9 @@ class Geometry2DFromCAD(_AbstractGeometry2D):
     area_proportion: Array
     boundary_probs: Array
     interior_edge_probs: Array
+    interior_measure_partition: GeometryMeasurePartition
+    boundary_measure_partition: GeometryMeasurePartition
+    boundary_chart_atlas: CADChartAtlas
     adf: Callable[[Array], Array]
 
     def __init__(
@@ -111,6 +116,19 @@ class Geometry2DFromCAD(_AbstractGeometry2D):
             self.interior_edge_probs = jnp.array([], dtype=float)
 
         self.triangle_probs = self.area_faces / jnp.sum(self.area_faces)
+        self.interior_measure_partition = GeometryMeasurePartition(
+            self.mesh_vertices[self.mesh_faces][..., :2],
+            self.area_faces,
+            kind="triangle",
+        )
+        self.boundary_measure_partition = GeometryMeasurePartition(
+            edge_vertices[..., :2],
+            edge_lengths,
+            kind="segment",
+        )
+        self.boundary_chart_atlas = CADChartAtlas(
+            self.boundary_measure_partition
+        )
 
         self.adf = self.adf_blur(self.adf_orig, radius_fn=self.adf_orig)
 

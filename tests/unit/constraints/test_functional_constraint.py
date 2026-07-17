@@ -213,6 +213,54 @@ def test_functional_constraint_fixed_sampling_coord_separable():
     assert jnp.allclose(loss0, loss1)
 
 
+def test_functional_constraint_accepts_named_separable_batch_weight():
+    geom = Square(center=(0.0, 0.0), side=2.0)
+    component = geom.component()
+    structure = ProductStructure((("x",),))
+    one = geom.Function()(1.0)
+    constraint = FunctionalConstraint.from_operator(
+        component=component,
+        operator=lambda _u: one,
+        constraint_vars="u",
+        num_points={"x": (7, 6)},
+        structure=structure,
+        reduction="mean",
+    )
+    batch = constraint.sample(key=jr.key(12))
+    assert isinstance(batch, CoordSeparableBatch)
+    axis = batch.coord_axes_by_label["x"][0]
+    axis_size = batch.points["x"][0].data.shape[0]
+    weight = cx.Field(jnp.full((axis_size,), 2.0), dims=(axis,))
+    loss = constraint.loss(
+        {"u": geom.Function()(0.0)},
+        key=jr.key(13),
+        batch=batch,
+        batch_weight=weight,
+    )
+    assert jnp.allclose(loss, 2.0)
+
+
+def test_functional_constraint_rejects_unknown_batch_weight_axis():
+    geom = Square(center=(0.0, 0.0), side=2.0)
+    component = geom.component()
+    constraint = FunctionalConstraint.from_operator(
+        component=component,
+        operator=lambda _u: geom.Function()(1.0),
+        constraint_vars="u",
+        num_points={"x": (4, 3)},
+        structure=ProductStructure((("x",),)),
+    )
+    batch = constraint.sample(key=jr.key(14))
+    assert isinstance(batch, CoordSeparableBatch)
+    weight = cx.Field(jnp.ones((4,)), dims=("unknown_axis",))
+    with pytest.raises(ValueError, match="absent from the batch"):
+        constraint.loss(
+            {"u": geom.Function()(0.0)},
+            batch=batch,
+            batch_weight=weight,
+        )
+
+
 def test_functional_constraint_sampling_mode_validation():
     geom = Interval1d(0.0, 1.0)
     component = geom.component()

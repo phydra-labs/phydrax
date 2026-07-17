@@ -19,6 +19,7 @@ from ..domain._components import (
 from ..domain._function import DomainFunction
 from ..domain._structure import NumPoints, ProductStructure
 from ..operators.differential._domain_ops import directional_derivative, dt
+from ._adaptive import AbstractCollocationPolicy
 from ._functional import FunctionalConstraint
 from ._interpolate import idw_interpolant
 from ._pointset import PointSetConstraint
@@ -66,6 +67,7 @@ def ContinuousDirichletBoundaryConstraint(
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
     reduction: Literal["mean", "integral"] = "mean",
+    collocation_policy: AbstractCollocationPolicy | None = None,
 ) -> FunctionalConstraint:
     r"""Continuous Dirichlet boundary constraint.
 
@@ -105,6 +107,7 @@ def ContinuousDirichletBoundaryConstraint(
         label=label,
         over=over,
         reduction=reduction,
+        collocation_policy=collocation_policy,
     )
 
 
@@ -123,6 +126,7 @@ def ContinuousNeumannBoundaryConstraint(
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
     reduction: Literal["mean", "integral"] = "mean",
+    collocation_policy: AbstractCollocationPolicy | None = None,
 ) -> FunctionalConstraint:
     r"""Continuous Neumann boundary constraint.
 
@@ -166,6 +170,7 @@ def ContinuousNeumannBoundaryConstraint(
         label=label,
         over=over,
         reduction=reduction,
+        collocation_policy=collocation_policy,
     )
 
 
@@ -186,6 +191,7 @@ def ContinuousRobinBoundaryConstraint(
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
     reduction: Literal["mean", "integral"] = "mean",
+    collocation_policy: AbstractCollocationPolicy | None = None,
 ) -> FunctionalConstraint:
     r"""Continuous Robin boundary constraint.
 
@@ -232,6 +238,7 @@ def ContinuousRobinBoundaryConstraint(
         label=label,
         over=over,
         reduction=reduction,
+        collocation_policy=collocation_policy,
     )
 
 
@@ -252,6 +259,7 @@ def AbsorbingBoundaryConstraint(
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
     reduction: Literal["mean", "integral"] = "mean",
+    collocation_policy: AbstractCollocationPolicy | None = None,
 ) -> FunctionalConstraint:
     r"""Absorbing/Sommerfeld boundary constraint
 
@@ -300,6 +308,7 @@ def AbsorbingBoundaryConstraint(
         label=label,
         over=over,
         reduction=reduction,
+        collocation_policy=collocation_policy,
     )
 
 

@@ -13,6 +13,7 @@ For a conceptual overview (loss evaluation, enforced pipelines, training loop be
     - `ansatz_functions()` returns fields after applying enforced pipelines (if configured).
     - `partition_functions()` exposes the trainable/non-trainable state split used by `solve(...)`.
     - `solve(...)` updates parameters inside `functions` using Optax or evosax optimizers.
+    - `solve(..., train_constraint_sample_size=k)` trains on an unbiased subset of constraints per Optax step.
     - `solve(..., tensorboard_log_dir=...)` writes TensorBoard scalar logs.
     - `save_onnx("u", ...)` exports one named ansatz function for deployment.
     - Discrete data constraints report data-fit diagnostics alongside their loss.

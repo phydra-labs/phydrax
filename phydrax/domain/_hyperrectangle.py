@@ -11,7 +11,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike, Bool, Float, Key
 
 from .._doc import DOC_KEY0
-from ._base import _AbstractGeometry
+from ._base import _AbstractGeometry, GeometryTransitionKind
 from ._grid import broadcasted_grid
 from ._sampling import get_sampler_host, seed_from_key
 from ._structure import _validate_label
@@ -73,6 +73,10 @@ class HyperRectangle(_AbstractGeometry):
     @property
     def spatial_dim(self) -> int:
         return int(self.lower.shape[0])
+
+    @property
+    def interior_transition_kind(self) -> GeometryTransitionKind:
+        return "box_reflection"
 
     @property
     def bounds(self) -> Float[Array, "2 spatial_dim"]:

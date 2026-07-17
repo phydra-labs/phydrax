@@ -2,6 +2,7 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -76,6 +77,21 @@ def test_hyperrectangle_sampling_shapes_and_membership():
     assert bool(jnp.all(geom._on_boundary(boundary)))
     normals = geom._boundary_normals(boundary)
     assert np.allclose(np.asarray(jnp.linalg.norm(normals, axis=-1)), 1.0)
+
+
+def test_hyperrectangle_reflects_large_adaptive_moves_under_jit():
+    geom = phx.domain.HyperRectangle(
+        lower=jnp.array([-1.0, 0.0]),
+        upper=jnp.array([1.0, 2.0]),
+    )
+    points = jnp.array([[0.75, 0.25], [-0.5, 1.5]])
+    displacement = jnp.array([[4.5, -3.0], [-5.0, 6.0]])
+    transition = eqx.filter_jit(geom.transition_interior)
+    result = transition(points, displacement)
+
+    assert bool(jnp.all(result.valid))
+    assert bool(jnp.all(geom._contains(result.points)))
+    assert bool(jnp.all(result.reflection_count > 0))
 
 
 def test_hyperrectangle_coord_separable_sampling():

@@ -134,12 +134,121 @@ shape.
 During training, the current epoch index is passed to each constraint loss as `iter_` (as a JAX
 scalar), so constraints can implement schedules (annealing, curriculum weights, etc.).
 
+### Adaptive collocation policies
+
+Attach an adaptive policy with `collocation_policy=...` when constructing a
+`FunctionalConstraint`. `FunctionalSolver` initializes one immutable population per
+adaptive constraint, refreshes it before eligible optimizer steps, passes the explicit
+batch and estimator weight into the loss, and returns the updated population on the
+trained solver. Calling `solve(...)` again continues from that population.
+
+The unconditional default remains fixed scrambled Sobol sampling:
+
+```python
+sampling_mode = "fixed"
+sampler = "sobol_scrambled"
+collocation_policy = None
+```
+
+Use `phx.constraints.RECOMMENDED_COLLOCATION_DEFAULTS` to inspect that contract.
+When adaptive refinement is explicitly requested, R3 is the supported general
+starting point. Support is declared by `COLLOCATION_POLICY_SUPPORT` and
+`collocation_policy_support(...)`:
+
+- **Stable:** fixed scrambled Sobol, periodic replacement, R3, and periodic
+  separable sampling.
+- **Conditional:** RAR-D for sufficiently resolved oscillatory residuals and
+  hierarchical-axis refinement for nested coordinate-separable discretizations.
+
+For production-style adaptive runs, separate proposal generation from solver
+control with `controlled_collocation(...)`:
+
+```python
+policy = phx.constraints.controlled_collocation(
+    phx.constraints.R3(
+        refresh_every=25,
+        sampler="sobol_scrambled",
+        min_replace_fraction=0.1,
+        max_retain_fraction=0.9,
+    ),
+    schedule=phx.constraints.RefreshSchedule(25),
+    monitor=phx.constraints.ResidualMonitor(sampler="sobol_scrambled"),
+    guard=phx.constraints.RefreshGuard(
+        max_relative_regression=0.0,
+        max_consecutive_rejections=2,
+        suspension_steps=100,
+    ),
+    budget=phx.constraints.AdaptationBudget(
+        max_candidate_evaluations=100_000,
+        max_monitor_evaluations=25_000,
+    ),
+    anchors=phx.constraints.CoverageAnchors(0.25),
+)
+```
+
+The controller maintains three distinct populations:
+
+1. the mutable training population proposed by the wrapped policy,
+2. a fixed independent monitor population used for acceptance and rollback,
+3. an untouched test population owned by the application, never by the solver.
+
+A proposed population is evaluated on the next eligible control step. Monitor
+regression rejects and rolls it back; repeated rejection suspends adaptation for
+the configured cooldown. `FunctionalSolver.solve(...)` explicitly settles any
+proposal still pending after the final optimizer step, without admitting another
+proposal. Coverage anchors reserve a persistent low-discrepancy fraction of paired
+populations so residual concentration cannot consume all global coverage. Monitor
+budgets reserve the next validation evaluation before a proposal is admitted, so
+exhausting a candidate or monitor budget cannot leave the final population
+permanently unvalidated.
+
+Choose the population representation first:
+
+| Representation | Policies | Budget unit | Appropriate support |
+| --- | --- | --- | --- |
+| Paired `PointsBatch` | `PeriodicCollocation`, `R3`, `RARD` | retained points and residual candidate evaluations | General pointwise PINNs |
+| Coordinate-separable tensor | `PeriodicSeparableCollocation`, `HierarchicalAxisCollocation` | axis nodes **and** implied logical evaluations | Separable models and nested axis-aligned structure |
+
+`RARD` is retained for oscillatory or distributed residual structure when the
+candidate and training budgets are large enough to resolve the residual field.
+Its inactive slots receive zero loss weight and are activated incrementally from
+the residual-weighted candidate distribution. Use an independent monitor: the
+method is not a low-budget default.
+
+For a coordinate-separable fixed-capacity hierarchy, use
+`NestedDyadicAxisSpec(..., initial_level=...)` on every adaptive axis and attach
+`HierarchicalAxisCollocation(...)`. Inactive nodes remain in the static JAX shape but
+receive zero active weight; refreshes activate nested nodes without recompilation.
+
+Hierarchical-axis proposals must be validation-gated. They can substantially
+improve solution-grid error while worsening the independently measured PDE
+residual, so activation alone is not sufficient evidence of improvement.
+
+When `log_constraints=True`, adaptive diagnostics are appended to each training
+term: refresh counters, point/logical/axis-node counts, effective sample size,
+active counts, and candidate evaluation counts. Compare methods at equal
+**residual evaluation** and **logical evaluation** budgets; equal retained point
+counts alone are not an equal-cost comparison. Controlled policies additionally
+report refresh attempts/accepts/rejections, monitor mean/RMS/maximum, suspension
+state, and cumulative candidate, monitor, and training residual-evaluation counts.
+
+Set `profile_adaptive=True` on `solve(...)` only when measuring the eager refresh
+boundary. It device-synchronizes refresh and optimizer work and stores
+`refresh_wall_time_seconds` and `optimizer_wall_time_seconds` in
+`trained_solver.training_diagnostics`. Leave it disabled for ordinary training,
+because synchronization changes execution timing.
+
 ### `jit` and `keep_best`
 
 - If `jit=True`, the per-step update is JIT-compiled when using standard Optax optimizers.
   (Line-search optimizers are not JIT-wrapped.)
 - If `keep_best=True`, the returned solver uses the best parameter set observed over all epochs
   (by objective value); otherwise it returns the final parameters.
+- `train_constraint_sample_size=k` samples `k` training constraints per Optax step
+  and rescales their losses to estimate the full constraint sum. This is useful
+  when many constraints have different static shapes, because JIT can compile
+  smaller per-subset steps instead of one large graph containing every
+  constraint.
 
 ### Logging and TensorBoard
 

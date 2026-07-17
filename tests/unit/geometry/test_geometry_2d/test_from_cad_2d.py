@@ -45,6 +45,35 @@ def test_area_property(geometry_from_square):
     assert np.isclose(computed_area, expected_area, atol=1e-6)
 
 
+def test_measure_partitions_match_geometry_measures(geometry_from_square):
+    geom = geometry_from_square
+    interior = geom.interior_measure_partition
+    boundary = geom.boundary_measure_partition
+    assert interior.vertices.shape == (2, 3, 2)
+    assert boundary.vertices.shape == (4, 2, 2)
+    assert np.isclose(float(interior.total_measure), float(geom.area))
+    assert np.isclose(float(boundary.total_measure), float(geom.boundary_length_value))
+    points, strata, base_mass = boundary.sample(
+        8,
+        key=jax.random.key(31),
+        minimum_per_stratum=1,
+    )
+    assert points.shape == (8, 2)
+    assert set(map(int, strata)) == {0, 1, 2, 3}
+    assert np.isclose(float(jnp.sum(base_mass)), 1.0)
+
+
+def test_boundary_chart_atlas_integrates_arclength_without_seam_duplication(
+    geometry_from_square,
+):
+    geom = geometry_from_square
+    quadrature = geom.boundary_chart_atlas.tensor_quadrature(5)
+    assert quadrature.points.shape == (4, 5, 2)
+    assert jnp.all(geom._on_boundary(quadrature.points.reshape((-1, 2))))
+    measured = quadrature.integrate(jnp.ones(quadrature.weights.shape))
+    assert jnp.allclose(measured, geom.boundary_length_value)
+
+
 def test_bounds_property(geometry_from_square):
     geom = geometry_from_square
     bounds = np.asarray(geom.bounds, dtype=float)

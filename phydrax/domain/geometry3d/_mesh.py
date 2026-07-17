@@ -17,6 +17,8 @@ import trimesh
 from jaxtyping import Array, ArrayLike, Bool, Float, Key
 
 from ..._doc import DOC_KEY0
+from .._chart import CADChartAtlas
+from .._measure_partition import GeometryMeasurePartition
 from ._base import _AbstractGeometry3D
 from ._utils import (
     _boolean_mesh,
@@ -47,6 +49,8 @@ class Geometry3DFromCAD(_AbstractGeometry3D):
     triangle_probs: Array
     surface_area_value: Array
     volume_proportion: Array
+    boundary_measure_partition: GeometryMeasurePartition
+    boundary_chart_atlas: CADChartAtlas
     immersed: bool
     adf: Callable[[Array], Array]
     _boundary_normals_field: Callable[[Array], Array]
@@ -78,6 +82,14 @@ class Geometry3DFromCAD(_AbstractGeometry3D):
         triangle_areas = jnp.array(self.mesh.area_faces, dtype=float)
         self.triangle_probs = triangle_areas / jnp.sum(triangle_areas)
         self.surface_area_value = jnp.array(self.mesh.area, dtype=float)
+        self.boundary_measure_partition = GeometryMeasurePartition(
+            self.mesh_vertices[self.mesh_faces],
+            triangle_areas,
+            kind="triangle",
+        )
+        self.boundary_chart_atlas = CADChartAtlas(
+            self.boundary_measure_partition
+        )
 
         min_bounds, max_bounds = self.mesh.bounds
         bounds = max_bounds - min_bounds

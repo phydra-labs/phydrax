@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
 import coordax as cx
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
@@ -21,6 +22,7 @@ from ..domain._structure import (
     ProductStructure,
 )
 from ..operators.integral._batch_ops import integral, mean
+from ._adaptive import AbstractCollocationPolicy
 from ._base import AbstractSamplingConstraint
 from ._data_metrics import supervised_data_metrics
 from ._sampling_spec import (
@@ -28,6 +30,61 @@ from ._sampling_spec import (
     parse_sampling_num_points,
     SamplingNumPoints,
 )
+
+
+def _validate_batch_weight(
+    batch: PointsBatch | CoordSeparableBatch,
+    weight: cx.Field,
+) -> None:
+    if any(dim is None for dim in weight.dims):
+        raise ValueError("Adaptive batch weights may use only named sampling axes.")
+    if isinstance(batch, PointsBatch):
+        axes = batch.structure.axis_names
+        if axes is None:
+            raise ValueError("PointsBatch.structure must be canonicalized.")
+        allowed = frozenset(axes)
+    else:
+        dense_axes = batch.dense_structure.axis_names
+        if dense_axes is None:
+            raise ValueError("CoordSeparableBatch.dense_structure must be canonicalized.")
+        allowed = frozenset(
+            axis
+            for axes_for_label in batch.coord_axes_by_label.values()
+            for axis in axes_for_label
+        ) | frozenset(dense_axes)
+    unknown = tuple(dim for dim in weight.dims if dim not in allowed)
+    if unknown:
+        raise ValueError(
+            f"Adaptive batch weight uses axes {unknown!r} absent from the batch."
+        )
+
+
+class _BatchWeightedSquaredResidual(StrictModule, BatchAwareCallable):
+    residual: DomainFunction
+    weight: cx.Field
+
+    def __init__(self, residual: DomainFunction, weight: cx.Field):
+        self.residual = residual
+        self.weight = weight
+
+    def use_batch_call(self) -> bool:
+        return True
+
+    def __call_batch__(
+        self,
+        batch: PointsBatch | CoordSeparableBatch,
+        /,
+        *,
+        key: Key[Array, ""] = DOC_KEY0,
+        **kwargs: Any,
+    ) -> cx.Field:
+        squared = _SquaredFrobeniusResidual(self.residual).__call_batch__(
+            batch, key=key, **kwargs
+        )
+        return self.weight * squared
+
+    def __call__(self, *args: Any, key=None, **kwargs: Any):
+        raise TypeError("Adaptive batch weights require structured batch evaluation.")
 
 
 class _SquaredFrobeniusResidual(StrictModule, BatchAwareCallable):
@@ -129,6 +186,7 @@ class FunctionalConstraint(AbstractSamplingConstraint):
     data_constraint_var: str | None
     data_target: DomainFunction | None
     data_accuracy_eps: Array
+    collocation_policy: AbstractCollocationPolicy | None
 
     def __init__(
         self,
@@ -152,6 +210,7 @@ class FunctionalConstraint(AbstractSamplingConstraint):
         data_constraint_var: str | None = None,
         data_target: DomainFunction | None = None,
         data_accuracy_eps: float = 1e-12,
+        collocation_policy: AbstractCollocationPolicy | None = None,
     ):
         self.constraint_vars = () if constraint_vars is None else tuple(constraint_vars)
         self.component = component
@@ -196,6 +255,7 @@ class FunctionalConstraint(AbstractSamplingConstraint):
         )
         self.data_target = data_target
         self.data_accuracy_eps = jnp.asarray(float(data_accuracy_eps), dtype=float)
+        self.collocation_policy = collocation_policy
 
     def _sample_once(
         self,
@@ -244,6 +304,7 @@ class FunctionalConstraint(AbstractSamplingConstraint):
         data_constraint_var: str | None = None,
         data_target: DomainFunction | None = None,
         data_accuracy_eps: float = 1e-12,
+        collocation_policy: AbstractCollocationPolicy | None = None,
     ) -> "FunctionalConstraint":
         r"""Create a `FunctionalConstraint` from an operator mapping `DomainFunction`s to a residual.
 
@@ -277,6 +338,7 @@ class FunctionalConstraint(AbstractSamplingConstraint):
             data_constraint_var=data_constraint_var,
             data_target=data_target,
             data_accuracy_eps=data_accuracy_eps,
+            collocation_policy=collocation_policy,
         )
 
     def sample(
@@ -327,6 +389,52 @@ class FunctionalConstraint(AbstractSamplingConstraint):
             eps=self.data_accuracy_eps,
         )
 
+    def _residual_function(
+        self,
+        functions: Mapping[str, DomainFunction],
+        /,
+    ) -> DomainFunction:
+        res = self.residual(functions)
+        if isinstance(res, DomainFunction):
+            return res
+        base = None
+        if self.constraint_vars:
+            base = functions.get(self.constraint_vars[0])
+        if base is None:
+            for fn in functions.values():
+                if isinstance(fn, DomainFunction):
+                    base = fn
+                    break
+        domain = base.domain if base is not None else self.component.domain
+        if callable(res):
+            deps = base.deps if base is not None else domain.labels
+            return DomainFunction(domain=domain, deps=deps, func=res, metadata={})
+        return DomainFunction(domain=domain, deps=(), func=res, metadata={})
+
+    def pointwise_loss(
+        self,
+        functions: Mapping[str, DomainFunction],
+        /,
+        *,
+        batch: PointsBatch | CoordSeparableBatch,
+        key: Key[Array, ""] = DOC_KEY0,
+        **kwargs: Any,
+    ) -> cx.Field:
+        """Return the unreduced squared Frobenius residual on ``batch``."""
+        residual = self._residual_function(functions)
+        out = _SquaredFrobeniusResidual(residual).__call_batch__(
+            batch, key=key, **kwargs
+        )
+        if self.pointwise_weight is not None:
+            weight = self.pointwise_weight
+            if weight.domain.labels != residual.domain.labels:
+                weight = weight.promote(residual.domain)
+            evaluated = weight(batch, key=key, **kwargs)
+            if not isinstance(evaluated, cx.Field):
+                raise TypeError("Pointwise weight must evaluate to a coordax.Field.")
+            out = evaluated * out
+        return out
+
     def loss(
         self,
         functions: Mapping[str, DomainFunction],
@@ -334,6 +442,7 @@ class FunctionalConstraint(AbstractSamplingConstraint):
         *,
         key: Key[Array, ""] = DOC_KEY0,
         batch: PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...] | None = None,
+        batch_weight: cx.Field | None = None,
         **kwargs: Any,
     ) -> Array:
         r"""Evaluate the scalar loss for this constraint.
@@ -350,28 +459,22 @@ class FunctionalConstraint(AbstractSamplingConstraint):
         3) computes $\rho(z_i)=\|r(z_i)\|_F^2$,
         4) reduces using either a mean or an integral estimator.
         """
-        res = self.residual(functions)
-        if not isinstance(res, DomainFunction):
-            base = None
-            if self.constraint_vars:
-                base = functions.get(self.constraint_vars[0])
-            if base is None:
-                for fn in functions.values():
-                    if isinstance(fn, DomainFunction):
-                        base = fn
-                        break
-            domain = base.domain if base is not None else self.component.domain
-            if callable(res):
-                deps = base.deps if base is not None else domain.labels
-                res = DomainFunction(domain=domain, deps=deps, func=res, metadata={})
-            else:
-                res = DomainFunction(domain=domain, deps=(), func=res, metadata={})
-
+        res = self._residual_function(functions)
         batch_ = self.sample(key=key) if batch is None else batch
+        residual_callable: BatchAwareCallable
+        if batch_weight is None:
+            residual_callable = _SquaredFrobeniusResidual(res)
+        else:
+            if not isinstance(batch_, (PointsBatch, CoordSeparableBatch)):
+                raise TypeError(
+                    "Adaptive batch weights require a single structured point batch."
+                )
+            _validate_batch_weight(batch_, batch_weight)
+            residual_callable = _BatchWeightedSquaredResidual(res, batch_weight)
         f = DomainFunction(
             domain=res.domain,
             deps=res.deps,
-            func=_SquaredFrobeniusResidual(res),
+            func=residual_callable,
             metadata=res.metadata,
         )
         if self.pointwise_weight is not None:

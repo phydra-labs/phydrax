@@ -137,6 +137,39 @@ Coord-separable sampling is driven by `DomainComponent.sample_coord_separable(..
         members:
             - __init__
 
+::: phydrax.domain.NestedDyadicAxisSpec
+    options:
+        members:
+            - __init__
+
+---
+
+## CAD measure and chart structures
+
+::: phydrax.domain.GeometryMeasurePartition
+    options:
+        members:
+            - __init__
+            - sample
+
+---
+
+::: phydrax.domain.CADChartAtlas
+    options:
+        members:
+            - __init__
+            - map
+            - jacobian
+            - tensor_quadrature
+
+---
+
+::: phydrax.domain.CADChartQuadrature
+    options:
+        members:
+            - __init__
+            - integrate
+
 ---
 
 ## Axis conventions (nodes + weights)
