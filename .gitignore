@@ -25,3 +25,4 @@ scratch.py
 dist/
 site/
 _gitignore/
+benchmarks/
