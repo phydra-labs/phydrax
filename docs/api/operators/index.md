@@ -6,6 +6,8 @@ Operators build PDE terms such as gradients, divergences, Laplacians, and integr
 
 - **Differential**: $\nabla u$, $\nabla\cdot v$, $\Delta u$, surface and fractional operators.
 - **Integral**: $\int_\Omega u\,d\Omega$, means, quadrature helpers, and convolution.
+- **Path integral**: Brownian bridges, Euclidean kernels, Feynman–Kac expectations,
+  diffusion paths, and discrete first-passage observables.
 - **Functional**: norms, inner products, and averages.
 - **Linear algebra**: determinants, traces, norms, and `einsum`-style contractions.
 - **Delay**: delay operators for time-dependent fields.
@@ -19,5 +21,6 @@ Operators build PDE terms such as gradients, divergences, Laplacians, and integr
 
     - [Differential operators](../../guides_differential.md)
     - [Integrals and measures](../../guides_integrals.md)
+    - [Euclidean path integrals and Feynman–Kac expectations](../../guides_path_integrals.md)
     - [Lagrangian and Hamiltonian mechanics](../../guides_mechanics.md)
     - [Quantum operators and dynamics](../../guides_quantum.md)
