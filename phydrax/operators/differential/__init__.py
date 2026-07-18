@@ -50,6 +50,7 @@ from ._fractional_ops import (
     fractional_laplacian,
     riesz_fractional_derivative_gl_mc,
 )
+from ._lie_ops import lie_bracket
 from ._surface_ops import (
     laplace_beltrami,
     laplace_beltrami_divgrad,
@@ -86,6 +87,7 @@ __all__ = [
     "hydrostatic_pressure",
     "hydrostatic_stress",
     "bilaplacian",
+    "lie_bracket",
     "laplacian",
     "linear_elastic_cauchy_stress_2d",
     "linear_elastic_orthotropic_stress_2d",

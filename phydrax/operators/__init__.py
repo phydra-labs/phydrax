@@ -36,7 +36,10 @@ from . import (
     functional,
     graph,
     linalg,
+    mechanics,
+    quantum,
 )
+from ._composition import pullback
 
 # Re-export objects from submodules
 from .delay import (  # noqa: F401
@@ -71,6 +74,7 @@ from .differential import (  # noqa: F401
     laplace_beltrami,
     laplace_beltrami_divgrad,
     laplacian,
+    lie_bracket,
     linear_elastic_cauchy_stress_2d,
     linear_elastic_orthotropic_stress_2d,
     material_derivative,
@@ -133,10 +137,48 @@ from .integral import (  # noqa: F401
     time_convolution,
 )
 from .linalg import (  # noqa: F401
+    adjoint,
+    conjugate,
     det,
     einsum,
+    imag_part,
     norm,
+    real_part,
     trace,
+)
+from .mechanics import (  # noqa: F401
+    canonical_hamiltonian_residual,
+    canonical_hamiltonian_vector_field,
+    canonical_momentum,
+    euler_lagrange,
+    hamilton_jacobi_residual,
+    poisson_bracket,
+)
+from .quantum import (  # noqa: F401
+    anticommutator,
+    commutator,
+    density_expectation,
+    density_fidelity,
+    density_from_factor,
+    embed_operator,
+    HamiltonianAction,
+    heisenberg_residual,
+    hermiticity_residual,
+    lindblad_dissipator,
+    lindblad_residual,
+    observable_variance,
+    partial_trace,
+    purity,
+    quantum_bracket,
+    schrodinger_residual,
+    state_expectation,
+    state_fidelity,
+    state_norm_residual,
+    tensor_product,
+    trace_distance,
+    unit_trace_residual,
+    von_neumann_entropy,
+    von_neumann_residual,
 )
 
 
@@ -147,6 +189,10 @@ __all__ = [
     "functional",
     "graph",
     "linalg",
+    "mechanics",
+    "quantum",
+    # composition exports
+    "pullback",
     # delay exports
     "delay_operator",
     # differential exports
@@ -171,6 +217,7 @@ __all__ = [
     "hydrostatic_stress",
     "bilaplacian",
     "laplacian",
+    "lie_bracket",
     "fractional_laplacian",
     "linear_elastic_cauchy_stress_2d",
     "linear_elastic_orthotropic_stress_2d",
@@ -220,6 +267,38 @@ __all__ = [
     "spatial_l2_norm",
     "spatial_lp_norm",
     "spatial_mean",
+    # mechanics exports
+    "canonical_hamiltonian_residual",
+    "canonical_hamiltonian_vector_field",
+    "canonical_momentum",
+    "euler_lagrange",
+    "hamilton_jacobi_residual",
+    "poisson_bracket",
+    # quantum exports
+    "HamiltonianAction",
+    "anticommutator",
+    "commutator",
+    "density_fidelity",
+    "density_expectation",
+    "density_from_factor",
+    "embed_operator",
+    "heisenberg_residual",
+    "hermiticity_residual",
+    "lindblad_dissipator",
+    "lindblad_residual",
+    "quantum_bracket",
+    "observable_variance",
+    "purity",
+    "partial_trace",
+    "schrodinger_residual",
+    "state_expectation",
+    "state_fidelity",
+    "state_norm_residual",
+    "tensor_product",
+    "trace_distance",
+    "unit_trace_residual",
+    "von_neumann_residual",
+    "von_neumann_entropy",
     # graph exports
     "graph_advection_diffusion_residual",
     "graph_conservation_residual",
@@ -237,7 +316,11 @@ __all__ = [
     "neighbor_aggregate",
     # linalg exports
     "det",
+    "adjoint",
+    "conjugate",
     "einsum",
+    "imag_part",
     "norm",
+    "real_part",
     "trace",
 ]

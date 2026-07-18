@@ -15,6 +15,7 @@ from jaxtyping import Array, Key
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
+from .._objective import AbstractObjectiveTerm
 from .._strict import StrictModule
 from ..constraints._base import AbstractConstraint
 from ..constraints._functional import FunctionalConstraint
@@ -48,20 +49,38 @@ def _constraints_tuple(
     return out
 
 
+def _objectives_tuple(
+    value: AbstractObjectiveTerm | Sequence[AbstractObjectiveTerm],
+    /,
+) -> tuple[AbstractObjectiveTerm, ...]:
+    if isinstance(value, AbstractObjectiveTerm):
+        out = (value,)
+    else:
+        out = tuple(value)
+    bad = tuple(term for term in out if not isinstance(term, AbstractObjectiveTerm))
+    if bad:
+        raise TypeError(
+            "All objectives must be instances of AbstractObjectiveTerm; got "
+            f"{tuple(type(term).__name__ for term in bad)!r}."
+        )
+    return out
+
+
 class FunctionalSolver(StrictModule):
-    r"""Assemble constraints and model losses into a differentiable scalar loss.
+    r"""Assemble constraints, raw objectives, and model losses into a scalar functional.
 
     A `FunctionalSolver` holds:
 
     - a mapping of named fields (as `DomainFunction`s), e.g. $u_\theta$;
-    - a collection of constraints $\ell_i$ producing scalar penalties.
-    - optional model-level losses attached to the trainable models.
+    - a collection of constraints $\ell_i$ producing scalar penalties;
+    - optional raw signed objective terms $\mathcal F_j$;
+    - optional model-level losses attached to the trainable models;
     - optional eval-only constraints for validation diagnostics.
 
-    The solver loss is the (weighted) sum
+    The solver functional is
 
     $$
-    L = \sum_i \ell_i + \sum_j r_j.
+    \mathcal J = \sum_i \ell_i + \sum_j \mathcal F_j + \sum_k r_k.
     $$
 
     Optionally, *enforced constraint pipelines* can be applied to replace the raw fields
@@ -85,6 +104,7 @@ class FunctionalSolver(StrictModule):
 
     functions: frozendict[str, DomainFunction]
     constraints: tuple[AbstractConstraint, ...]
+    objectives: tuple[AbstractObjectiveTerm, ...]
     eval_constraints: tuple[AbstractConstraint, ...]
     constraint_pipelines: EnforcedConstraintPipelines | None
     collocation: tuple[Any | None, ...]
@@ -96,6 +116,7 @@ class FunctionalSolver(StrictModule):
         functions: Mapping[str, DomainFunction],
         constraints: AbstractConstraint | Sequence[AbstractConstraint],
         eval_constraints: AbstractConstraint | Sequence[AbstractConstraint] = (),
+        objectives: AbstractObjectiveTerm | Sequence[AbstractObjectiveTerm] = (),
         constraint_pipelines: EnforcedConstraintPipelines | None = None,
         constraint_terms: Sequence[
             SingleFieldEnforcedConstraint | MultiFieldEnforcedConstraint
@@ -114,6 +135,7 @@ class FunctionalSolver(StrictModule):
 
         - `functions`: Mapping `{name: DomainFunction}` defining the fields.
         - `constraints`: One or more `AbstractConstraint` instances.
+        - `objectives`: Optional raw scalar objective terms, including signed integral functionals.
         - `eval_constraints`: Optional constraints evaluated only for logging/diagnostics.
         - `constraint_pipelines`: Optional pre-built enforced constraint pipelines. If provided,
           do not also pass `constraint_terms`/`interior_data_terms`.
@@ -128,6 +150,7 @@ class FunctionalSolver(StrictModule):
         """
         self.functions = frozendict(functions)
         self.constraints = _constraints_tuple(constraints, name="constraints")
+        self.objectives = _objectives_tuple(objectives)
         self.eval_constraints = _constraints_tuple(
             eval_constraints,
             name="eval_constraints",
@@ -207,24 +230,27 @@ class FunctionalSolver(StrictModule):
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
     ) -> Array:
-        r"""Evaluate the total loss over constraints and attached model losses.
+        r"""Evaluate constraints, raw objectives, and attached model losses.
 
         This:
 
         1) applies enforced pipelines (if configured),
-        2) splits `key` into one subkey per constraint,
-        3) sums `constraint.loss(...)` over all constraints,
+        2) splits `key` across constraints and raw objectives,
+        3) sums every `loss(...)` value,
         4) adds scalar model losses attached via `model.add_model_loss(...)` or
            model `__loss__` hooks.
 
-        Any additional keyword arguments are forwarded to each constraint.
+        Additional keyword arguments are forwarded to constraints and objectives.
         """
         functions = self.ansatz_functions()
-        keys = jr.split(key, len(self.constraints))
+        num_terms = len(self.constraints) + len(self.objectives)
+        keys = jr.split(key, num_terms)
+        constraint_keys = keys[: len(self.constraints)]
+        objective_keys = keys[len(self.constraints) :]
         total = jnp.array(0.0, dtype=float)
         with derivative_runtime_context():
             for c, population, k in zip(
-                self.constraints, self.collocation, keys, strict=True
+                self.constraints, self.collocation, constraint_keys, strict=True
             ):
                 if population is not None:
                     if not isinstance(c, FunctionalConstraint):
@@ -247,10 +273,16 @@ class FunctionalSolver(StrictModule):
                 else:
                     term = c.loss(functions, key=k, **kwargs)
                 total = total + term
+            for objective, objective_key in zip(
+                self.objectives, objective_keys, strict=True
+            ):
+                total = total + objective.loss(
+                    functions, key=objective_key, **kwargs
+                )
             iter_ = kwargs.get("iter_", None)
             for term in function_model_loss_values(
                 self.functions,
-                key=jr.fold_in(key, len(self.constraints)),
+                key=jr.fold_in(key, num_terms),
                 iter_=iter_,
             ):
                 total = total + term

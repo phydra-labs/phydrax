@@ -25,6 +25,7 @@ series = jnp.asarray(
     ]
 )
 lengths = jnp.asarray([2, 3])
+targets = jnp.asarray([[4.0], [21.0]])
 
 domain = phx.domain.RaggedSeriesDatasetDomain(
     series,

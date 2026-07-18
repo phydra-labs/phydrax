@@ -1,19 +1,31 @@
 # Constraints and objectives
 
-This guide explains how Phydrax turns PDE residuals, data fits, and integral targets into scalar
-objective terms that can be summed and optimized.
+This guide distinguishes residual/data constraints from raw scalar objectives. Both
+implement `.loss(functions, key=..., ...)` and can be summed by `FunctionalSolver`,
+but they encode different mathematics.
 
-## What a constraint is
+## Constraint terms
 
-At a high level, a constraint is a scalar loss term $\ell(\theta)$ computed from a set of
-domain-aware field functions (often parameterized by neural network parameters $\theta$).
-Solvers typically minimize a weighted sum:
+A constraint is a scalar penalty $\ell(\theta)$ computed from domain-aware fields.
+Sampled residual constraints apply squared-Frobenius semantics, so they are
+nonnegative and express residual minimization or data fitting.
+
+## Raw objective terms
+
+A raw objective $\mathcal F(\theta)$ is added to the training functional without
+squaring or forcing nonnegativity. `phydrax.objectives.IntegralFunctional` evaluates
+a signed integral
 
 $$
-L(\theta) = \sum_i \ell_i(\theta).
+\mathcal F[u]=w\int_{\Omega_{\mathrm{comp}}} f[u](z)\,d\mu(z).
 $$
 
-In Phydrax, constraints are objects with a common `.loss(functions, key=..., ...)` interface.
+Use it for Ritz energies and total-potential minimization. Do not replace a residual
+constraint with a raw integral unless the underlying variational principle calls for
+that signed functional. A stationary action is not generally a minimization problem.
+`IntegralFunctional` requires its integrand to evaluate to a real scalar. Complex
+output is rejected rather than silently truncated; use `real_part(...)` only when
+selecting the real part is part of the objective's definition.
 
 ## Sampled (continuous) constraints
 
@@ -22,11 +34,14 @@ Many constraints are defined by:
 1) a **domain component** (interior, boundary, initial slice, etc.), and  
 2) a **residual operator** producing a `DomainFunction` $r(z)$ from one or more fields.
 
-The pointwise penalty is a squared Frobenius norm:
+The pointwise penalty is a Hermitian squared Frobenius norm:
 
 $$
-\rho(z) = \|r(z)\|_F^2 = \sum_i r_i(z)^2.
+\rho(z) = \|r(z)\|_F^2 = \sum_i \overline{r_i(z)}\,r_i(z).
 $$
+
+This agrees with $\sum_i r_i^2$ for real residuals and remains real and nonnegative
+for complex residuals such as Schrödinger equations.
 
 Phydrax supports two reduction modes:
 

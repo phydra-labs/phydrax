@@ -14,13 +14,14 @@ Phydrax organizes PDE/physics learning around a single pattern:
 4) build scalar objectives (functionals) as integrals/means of residuals over components,  
 5) minimize the resulting functional.
 
-Conceptually, a typical objective has the form
+Conceptually, the optimized functional has the form
 
 $$
-L[u] = \sum_i w_i\int_{\Omega_i}\rho_i(u(z))\,d\mu_i(z),
+\mathcal J[u] = \sum_i \ell_i[u] + \sum_j \mathcal F_j[u] + \sum_k r_k(\theta),
 $$
 
-where each term corresponds to a constraint, data fit, or integral target on a domain component.
+where $\ell_i$ are residual/data constraint penalties, $\mathcal F_j$ are raw scalar
+functionals such as signed energies, and $r_k$ are model-level losses.
 
 ## Core objects (mental model)
 
@@ -28,11 +29,14 @@ Most workflows are composing a few primitives:
 
 - **Domain**: a labeled product space \(\Omega=\Omega_x\times\Omega_t\times\cdots\).
 - **Component**: a subset like interior/boundary/initial slice where a term lives.
-- **DomainFunction**: a field \(u:\Omega\to\mathbb{R}^m\) with explicit label dependencies.
-- **Operators**: maps \(u\mapsto r\) like \(\nabla u\), \(\Delta u\), \(\partial_t u\), integrals, etc.
+- **DomainFunction**: a real- or complex-valued field
+  \(u:\Omega\to\mathbb{R}^m\) or \(\mathbb{C}^m\) with explicit label dependencies.
+- **Operators**: maps \(u\mapsto r\) such as differential, integral, mechanics,
+  and quantum matrix operators.
 - **Constraints**: scalar loss terms built from residuals on components.
+- **Objectives**: raw scalar terms, including signed integral energies for Ritz minimization.
 - **Model losses**: optional parameter-space penalties attached directly to models.
-- **FunctionalSolver**: sums constraints and model losses into a differentiable scalar objective and runs optimization.
+- **FunctionalSolver**: sums constraints, raw objectives, and model losses into a differentiable scalar functional and runs optimization.
 
 Optional (but central in many PDE problems):
 
@@ -45,7 +49,7 @@ If you are new to the library, start with:
 
 1. Define a domain (space, time, or products of both).
 2. Define functions on that domain.
-3. Add constraints and operators to construct a loss $L$.
+3. Add constraints, raw objectives, and operators to construct a functional $\mathcal J$.
 4. Train or evaluate with a solver.
 
 ## Example

@@ -8,7 +8,64 @@ import jax.numpy as jnp
 from jaxtyping import ArrayLike
 from opt_einsum import contract
 
-from ...domain._function import DomainFunction
+from ..._strict import StrictModule
+from ...domain._function import _drop_derivative_hook_metadata, DomainFunction
+
+
+class _PointwiseTransformCallable(StrictModule):
+    source: DomainFunction
+    operation: str
+
+    def __init__(self, source: DomainFunction, operation: str):
+        self.source = source
+        self.operation = operation
+
+    def __call__(self, *args, key=None, **kwargs):
+        value = jnp.asarray(self.source.func(*args, key=key, **kwargs))
+        if self.operation == "conjugate":
+            return jnp.conj(value)
+        if self.operation == "adjoint":
+            if value.ndim < 2:
+                raise ValueError(
+                    "adjoint requires values with at least two matrix axes; "
+                    f"got shape {value.shape}."
+                )
+            return jnp.swapaxes(jnp.conj(value), -1, -2)
+        if self.operation == "real":
+            return jnp.real(value)
+        if self.operation == "imag":
+            return jnp.imag(value)
+        raise RuntimeError(f"Unknown pointwise transform {self.operation!r}.")
+
+
+def _pointwise_transform(u: DomainFunction, operation: str, /) -> DomainFunction:
+    return DomainFunction(
+        domain=u.domain,
+        deps=u.deps,
+        func=_PointwiseTransformCallable(u, operation),
+        metadata=_drop_derivative_hook_metadata(u.metadata),
+    )
+
+
+def conjugate(u: DomainFunction, /) -> DomainFunction:
+    r"""Pointwise complex conjugate $\overline{u}$."""
+    return _pointwise_transform(u, "conjugate")
+
+
+def adjoint(u: DomainFunction, /) -> DomainFunction:
+    r"""Pointwise conjugate transpose $u^\dagger$ over the last two value axes."""
+    return _pointwise_transform(u, "adjoint")
+
+
+def real_part(u: DomainFunction, /) -> DomainFunction:
+    """Pointwise real part of a complex-valued function."""
+    return _pointwise_transform(u, "real")
+
+
+def imag_part(u: DomainFunction, /) -> DomainFunction:
+    """Pointwise imaginary part of a complex-valued function."""
+    return _pointwise_transform(u, "imag")
+
 
 
 def norm(u: DomainFunction, /, *, order: int = 2) -> DomainFunction:
@@ -152,8 +209,12 @@ def einsum(subscript: str, /, *operands: DomainFunction | ArrayLike) -> DomainFu
 
 
 __all__ = [
+    "adjoint",
+    "conjugate",
     "det",
     "einsum",
+    "imag_part",
     "norm",
+    "real_part",
     "trace",
 ]

@@ -9,7 +9,8 @@ from typing import Any, Literal
 from jaxtyping import Array, Key
 
 from .._doc import DOC_KEY0
-from .._strict import AbstractAttribute, StrictModule
+from .._objective import AbstractObjectiveTerm
+from .._strict import AbstractAttribute
 from ..domain._components import DomainComponent, DomainComponentUnion
 from ..domain._function import DomainFunction
 from ..domain._structure import (
@@ -19,7 +20,7 @@ from ..domain._structure import (
 )
 
 
-class AbstractConstraint(StrictModule):
+class AbstractConstraint(AbstractObjectiveTerm):
     r"""Common interface for all soft/penalty constraints.
 
     A constraint is an objective term $\ell(\theta)$ evaluated from a set of

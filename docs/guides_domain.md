@@ -273,10 +273,12 @@ separately in `coord_geometry_weight_by_label`; integrals multiply both. Request
 deterministic subcell estimate with `GridSpec(..., cut_cell_order=k)`:
 
 ```python
+cad = phx.domain.Circle(center=(0.0, 0.0), radius=1.0)
+
 grid = phx.domain.GridSpec(
     (
-        phx.domain.UniformAxisSpec(65),
-        phx.domain.UniformAxisSpec(65),
+        phx.domain.UniformAxisSpec(25),
+        phx.domain.UniformAxisSpec(25),
     ),
     cut_cell_order=3,
 )
