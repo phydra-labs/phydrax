@@ -8,7 +8,6 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
 import coordax as cx
-import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
@@ -110,7 +109,7 @@ class _SquaredFrobeniusResidual(StrictModule, BatchAwareCallable):
 
         data = jnp.asarray(y.data)
         dims = y.dims
-        squared = data * data
+        squared = jnp.real(jnp.conj(data) * data)
         reduction_axes = [i for i, dim in enumerate(dims) if dim is None]
         for axis in reversed(reduction_axes):
             squared = jnp.sum(squared, axis=axis)
@@ -119,7 +118,7 @@ class _SquaredFrobeniusResidual(StrictModule, BatchAwareCallable):
 
     def __call__(self, *args: Any, key=None, **kwargs: Any):
         y = jnp.asarray(self.residual.func(*args, key=key, **kwargs))
-        return jnp.sum(y * y)
+        return jnp.sum(jnp.real(jnp.conj(y) * y))
 
 
 class FunctionalConstraint(AbstractSamplingConstraint):
@@ -136,7 +135,7 @@ class FunctionalConstraint(AbstractSamplingConstraint):
     The pointwise squared residual is taken as a Frobenius norm:
 
     $$
-    \rho(z) = \|r(z)\|_F^2 = \sum_{i} r_i(z)^2,
+    \rho(z) = \|r(z)\|_F^2 = \sum_{i} |r_i(z)|^2.
     $$
 
     and the scalar loss is computed using either reduction mode.

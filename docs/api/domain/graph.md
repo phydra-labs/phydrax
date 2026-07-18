@@ -19,10 +19,32 @@ measure space. Whole-entity components such as `Nodes()`, `Edges()`, and
 indices or entity types.
 
 ```python
+import jax.numpy as jnp
 import phydrax as phx
 
+graph = phx.graph.GraphIR(
+    nodes=jnp.asarray([[0.0], [1.0]]),
+    edges=jnp.asarray([[1.0]]),
+    senders=jnp.asarray([0], dtype=jnp.int32),
+    receivers=jnp.asarray([1], dtype=jnp.int32),
+    globals=jnp.asarray([[0.0]]),
+    n_node=jnp.asarray([2], dtype=jnp.int32),
+    n_edge=jnp.asarray([1], dtype=jnp.int32),
+)
+other_graph = phx.graph.GraphIR(
+    nodes=jnp.asarray([[0.0], [1.0], [2.0]]),
+    edges=jnp.asarray([[1.0], [1.0]]),
+    senders=jnp.asarray([0, 1], dtype=jnp.int32),
+    receivers=jnp.asarray([1, 2], dtype=jnp.int32),
+    globals=jnp.asarray([[1.0]]),
+    n_node=jnp.asarray([3], dtype=jnp.int32),
+    n_edge=jnp.asarray([2], dtype=jnp.int32),
+)
+graphs = (graph, other_graph)
+lengths = jnp.asarray([3, 5], dtype=jnp.int32)
+
 graph_domain = phx.domain.GraphDomain(graph, label="mesh")
-nodes = graph_domain.component(phx.domain.Nodes())
+nodes = graph_domain.component({"mesh": phx.domain.Nodes()})
 ```
 
 ::: phydrax.domain.GraphDomain

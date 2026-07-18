@@ -16,7 +16,7 @@ from .._callable import _ensure_special_kwonly_args, _KeyIterAdapter
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
+from .._trainable import is_non_trainable_leaf, is_trainable_leaf, NonTrainableState
 from ._domain import _AbstractDomain
 from ._structure import CoordSeparableBatch, Points, PointsBatch
 
@@ -344,6 +344,14 @@ def _transpose_hook_metadata(
     return frozendict(merged)
 
 
+def _has_trainable_arrays(function: "DomainFunction", /) -> bool:
+    leaves = jax.tree_util.tree_leaves(
+        function.func,
+        is_leaf=is_non_trainable_leaf,
+    )
+    return any(is_trainable_leaf(leaf) for leaf in leaves)
+
+
 def _compose_binary_derivative_hook(
     op: Callable[[Any, Any], Any],
     /,
@@ -359,6 +367,7 @@ def _compose_binary_derivative_hook(
         operator.truediv,
     ):
         return None
+    operands_are_trainable = _has_trainable_arrays(left) or _has_trainable_arrays(right)
 
     def _hook(
         *,
@@ -370,6 +379,8 @@ def _compose_binary_derivative_hook(
         basis: Literal["poly", "fourier", "sine", "cosine"],
         periodic: bool,
     ) -> "DomainFunction | None":
+        if operands_are_trainable:
+            return None
         if backend not in ("ad", "jet"):
             return None
 

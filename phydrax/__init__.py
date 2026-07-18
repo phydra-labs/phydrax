@@ -15,6 +15,7 @@ from . import (
     export,
     graph,
     nn,
+    objectives,
     operators,
     solver,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "data_utils",
     "domain",
     "export",
+    "objectives",
     "graph",
     "nn",
     "operators",

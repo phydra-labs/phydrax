@@ -97,12 +97,18 @@ nav:
         - Physics-informed graph residuals: "cookbook/graph_physics.md"
         - Inverse + hybrid physics–data: "cookbook/inverse_and_data.md"
         - Operator learning (DatasetDomain): "cookbook/operator_learning.md"
+        - Mechanics and Deep Ritz: "cookbook/mechanics.md"
+        - Two-level quantum dynamics: "cookbook/quantum_two_level.md"
+        - Composite systems and a Bell state: "cookbook/quantum_composite.md"
+        - Open-system amplitude damping: "cookbook/quantum_open_system.md"
     - Guides:
         - Domains and sampling: "guides_domain.md"
         - Differential operators: "guides_differential.md"
         - Integrals and measures: "guides_integrals.md"
         - Constraints and objectives: "guides_constraints.md"
         - Solvers and training: "guides_solver.md"
+        - Lagrangian and Hamiltonian mechanics: "guides_mechanics.md"
+        - Quantum operators and dynamics: "guides_quantum.md"
     - Examples:
         - Overview: "examples/index.md"
     - API:
@@ -134,6 +140,8 @@ nav:
             - Functional: "api/operators/functional.md"
             - Linear algebra: "api/operators/linalg.md"
             - Delay: "api/operators/delay.md"
+            - Mechanics: "api/operators/mechanics.md"
+            - Quantum: "api/operators/quantum.md"
         - Constraints:
             - Overview: "api/constraints/index.md"
             - Core: "api/constraints/core.md"
@@ -145,6 +153,7 @@ nav:
             - Solid: "api/constraints/solid.md"
             - Thermal: "api/constraints/thermal.md"
             - Electromagnetics: "api/constraints/em.md"
+        - Objectives: "api/objectives.md"
         - Neural networks:
             - Overview: "api/nn/index.md"
             - Layers: "api/nn/layers.md"

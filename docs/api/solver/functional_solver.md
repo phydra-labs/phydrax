@@ -1,7 +1,7 @@
 # Functional solver
 
-`FunctionalSolver` is the main entry point for turning a set of fields, constraints,
-and attached model losses into a differentiable objective.
+`FunctionalSolver` is the main entry point for turning fields, residual constraints,
+raw scalar objectives, and attached model losses into a differentiable functional.
 
 For a conceptual overview (loss evaluation, enforced pipelines, training loop behavior), see
 [Guides → Solvers and training](../../guides_solver.md).
@@ -11,6 +11,8 @@ For a conceptual overview (loss evaluation, enforced pipelines, training loop be
 
     - `loss(...)` evaluates the total objective at the current parameters.
     - `ansatz_functions()` returns fields after applying enforced pipelines (if configured).
+    - `objectives` may contain signed terms such as `IntegralFunctional`; their values
+      are added directly and are not squared.
     - `partition_functions()` exposes the trainable/non-trainable state split used by `solve(...)`.
     - `solve(...)` updates parameters inside `functions` using Optax or evosax optimizers.
     - `solve(..., train_constraint_sample_size=k)` trains on an unbiased subset of constraints per Optax step.

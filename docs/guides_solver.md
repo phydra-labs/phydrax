@@ -8,16 +8,18 @@ A `FunctionalSolver` is a lightweight orchestrator that holds:
 
 - `functions`: a mapping `{name: DomainFunction}` of the current fields,
 - `constraints`: a list/tuple of constraint objects, each producing a scalar loss,
+- `objectives`: raw scalar terms such as signed integral energies,
 - model-level losses attached to models with `model.add_model_loss(...)` or a custom
   model `__loss__` hook,
 - `eval_constraints`: optional constraints used only for diagnostics/logging,
 - optional `constraint_pipelines`: enforced-constraint pipelines that replace raw fields with ansatz
   functions satisfying selected conditions exactly.
 
-The training objective is the sum of constraint losses plus any attached model losses:
+The training functional is the sum of constraint losses, raw objective terms, and
+attached model losses:
 
 $$
-L = \sum_i \ell_i + \sum_j r_j.
+\mathcal J = \sum_i \ell_i + \sum_j \mathcal F_j + \sum_k r_k.
 $$
 
 `eval_constraints` are evaluated against the same current ansatz functions, but
@@ -31,12 +33,16 @@ When you call `solver.loss(key=...)`:
 
 1) If enforced pipelines are configured, the current `functions` mapping is transformed into
    *ansatz functions* via `solver.ansatz_functions()`.
-2) The provided PRNG key is split into one subkey per constraint.
-3) Each constraint loss is evaluated and summed.
+2) The provided PRNG key is split into independent subkeys for constraints, objectives,
+   and model losses.
+3) Each constraint loss and raw objective term is evaluated and summed.
 4) Model-level losses attached to the raw trainable models are evaluated and added.
 
-Additional keyword arguments are forwarded to each constraint's `.loss(...)` method.
+Additional keyword arguments are forwarded to each constraint and objective `.loss(...)`.
 The `iter_` keyword, when present, is also forwarded to model losses.
+
+Raw objective terms may be negative. `IntegralFunctional` integrates its density
+without squaring it; use this for energy/Ritz minimization, not for a residual penalty.
 
 ## Model losses
 
