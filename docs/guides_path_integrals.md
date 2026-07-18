@@ -1,0 +1,167 @@
+# Euclidean path integrals and Feynman–Kac expectations
+
+Phydrax provides finite-dimensional, time-sliced stochastic path operators for two
+numerically controlled settings:
+
+- **Euclidean quantum propagation** with fixed-endpoint Brownian bridges;
+- **Feynman–Kac expectations** and discrete first-passage observables for Itô
+  diffusions.
+
+This API is not a generic real-time Feynman path-integral solver. It does not claim
+support for oscillatory real-time amplitudes, field-theory path measures, lattice gauge
+theory, or molecular path-integral dynamics.
+
+## Uniform time slicing
+
+`PathDiscretization(t0, t1, num_steps=...)` defines the nodes
+
+$$
+t_k=t_0+k\Delta t,
+\qquad
+\Delta t=\frac{t_1-t_0}{N}.
+$$
+
+Paths use shape `(..., num_paths, num_nodes, state_dim)`. Time and state are internal
+path dimensions, not `ProductStructure` sampling axes. This avoids constructing a
+Cartesian product over every time slice.
+
+## Euclidean fixed-endpoint kernels
+
+For mass $m>0$, Planck constant $\hbar>0$, and real scalar potential $V$, the
+Euclidean kernel is written as a free kernel times a Brownian-bridge expectation:
+
+$$
+K_E(x_1,T;x_0,0)
+=
+K_{E,0}(x_1,T;x_0,0)
+\,\mathbb E_{\mathrm{bridge}}
+\left[
+\exp\left(-\frac{1}{\hbar}\int_0^T V(q(t),t)\,dt\right)
+\right].
+$$
+
+`euclidean_kernel` samples the free bridge measure exactly and applies midpoint
+quadrature only to the potential action. It therefore does not introduce arbitrary
+bounds on every interior path coordinate.
+
+```python
+import jax.numpy as jnp
+import jax.random as jr
+import phydrax as phx
+
+slicing = phx.operators.PathDiscretization(0.0, 1.0, num_steps=32)
+omega = 0.8
+potential = lambda q, t: 0.5 * omega**2 * q[0] ** 2
+
+estimate = phx.operators.euclidean_kernel(
+    potential,
+    jnp.array([0.0]),
+    jnp.array([0.3]),
+    slicing=slicing,
+    mass=1.0,
+    hbar=1.0,
+    num_paths=2048,
+    chunk_size=256,
+    key=jr.key(0),
+)
+
+assert estimate.value > 0.0
+assert estimate.standard_error > 0.0
+```
+
+A potential may also be a trainable `DomainFunction`. Set `position_var` and
+`time_var` when its labels differ from the defaults `"q"` and `"t"`.
+`euclidean_kernel_function` wraps the scalar kernel value as a `DomainFunction` over
+two endpoint labels, so it can be sampled and composed with existing operators and
+constraints. Diagnostics remain available from direct `euclidean_kernel` calls.
+
+For the free particle, pass `potential=None`. `free_euclidean_kernel` evaluates the
+analytic normalization directly, so its Monte Carlo standard error is exactly zero.
+
+## Engineering Feynman–Kac expectations
+
+For the Itô diffusion
+
+$$
+dX_t=b(X_t,t)\,dt+\sigma(X_t,t)\,dW_t,
+$$
+
+`feynman_kac_expectation` estimates the terminal form
+
+$$
+u(x,t_0)=
+\mathbb E_{X_{t_0}=x}\left[
+ g(X_{t_1},t_1)
+ \exp\left(-\int_{t_0}^{t_1}c(X_s,s)\,ds\right)
+\right].
+$$
+
+The diffusion sampler uses Euler–Maruyama. `diffusion` may be a scalar, diagonal
+vector, dense matrix, callable, or compatible `DomainFunction`. The initial release
+supports unconstrained finite-dimensional paths; it does not silently reflect or
+absorb paths at geometry boundaries.
+
+```python
+kappa = 0.35
+wave_number = 1.1
+heat_slicing = phx.operators.PathDiscretization(0.0, 0.7, num_steps=24)
+
+heat = phx.operators.feynman_kac_expectation(
+    lambda x, t: jnp.cos(wave_number * x[0]),
+    lambda x, t: jnp.zeros_like(x),
+    jnp.sqrt(2.0 * kappa),
+    jnp.array([0.25]),
+    slicing=heat_slicing,
+    num_paths=4096,
+    key=jr.key(1),
+)
+
+analytic = jnp.cos(wave_number * 0.25) * jnp.exp(
+    -kappa * wave_number**2 * 0.7
+)
+assert jnp.abs(heat.value - analytic) < 6.0 * heat.standard_error
+```
+
+Use `feynman_kac_from_paths` when trajectories were generated separately or come from
+an empirical ensemble.
+
+## First passage and reliability
+
+`first_exit_index`, `first_exit_time`, and `survival_probability` accept an explicit
+`inside(x) -> bool` callable. A crossing is detected at the first stored node outside
+the region. A path that survives through `t1` receives index `-1` and exit time
+`inf`.
+
+This is a discrete crossing contract. Phydrax does not interpolate a crossing or
+claim continuous-time first-passage accuracy. Refine `num_steps` and report the
+remaining positive slice bias separately from the Bernoulli standard error.
+
+## Diagnostics and convergence
+
+`PathIntegralEstimate` contains:
+
+- `value`;
+- `standard_error` across independent sampled paths;
+- `effective_sample_size` (ESS) of positive Euclidean or killing weights;
+- `log_mean_weight` for stable inspection of weight scale;
+- `num_paths`.
+
+Two errors must be refined independently:
+
+1. **path-count error**: increase `num_paths` and monitor standard error and ESS;
+2. **time-slicing error**: increase `num_steps` and compare the estimated value at
+   fixed or sufficiently large path count.
+
+A small standard error does not diagnose time-slicing bias. A collapsing ESS means a
+few paths dominate the weighted estimate even if the reported value looks smooth.
+
+For reproducible optimization, keep the PRNG key fixed or pass explicit standard
+normal arrays through `brownian_bridge_from_noise` and
+`diffusion_paths_from_noise`. These common random numbers make parameter comparisons
+and gradients deterministic. Resample keys when estimating out-of-sample uncertainty.
+
+## Scope relative to FeynmaNN
+
+`FeynmaNN` is an interference-inspired neural architecture. Its internal
+sum-over-paths block is not a discretized physical trajectory measure and does not
+compute the Euclidean or Feynman–Kac estimators described here.

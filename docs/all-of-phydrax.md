@@ -269,6 +269,9 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - **Ritz/energy minimization**: use `IntegralFunctional` for the raw signed energy,
   with essential boundary conditions enforced in the ansatz.
   See [Cookbook → Mechanics and Deep Ritz](cookbook/mechanics.md).
+- **Stochastic path expectation**: use Euclidean bridge kernels for imaginary-time
+  propagation or Feynman–Kac diffusion paths for terminal PDE and reliability quantities.
+  See [Euclidean path integrals and Feynman–Kac expectations](guides_path_integrals.md).
 - **Cookbook recipes**: end-to-end patterns for Poisson, heat, inverse+data,
   operator learning, mechanics, and quantum dynamics.
   Start at [Cookbook → Overview](cookbook/index.md).
@@ -279,6 +282,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - [Domains and sampling](guides_domain.md)
 - [Differential operators](guides_differential.md)
 - [Integrals and measures](guides_integrals.md)
+- [Euclidean path integrals and Feynman–Kac expectations](guides_path_integrals.md)
 - [Lagrangian and Hamiltonian mechanics](guides_mechanics.md)
 - [Quantum operators and dynamics](guides_quantum.md)
 - [Constraints and objectives](guides_constraints.md)

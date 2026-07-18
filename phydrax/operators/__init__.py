@@ -37,6 +37,7 @@ from . import (
     graph,
     linalg,
     mechanics,
+    path_integral,
     quantum,
 )
 from ._composition import pullback
@@ -154,6 +155,26 @@ from .mechanics import (  # noqa: F401
     hamilton_jacobi_residual,
     poisson_bracket,
 )
+from .path_integral import (  # noqa: F401
+    brownian_bridge_from_noise,
+    diffusion_paths_from_noise,
+    discrete_euclidean_action,
+    euclidean_kernel,
+    euclidean_kernel_from_noise,
+    euclidean_kernel_function,
+    feynman_kac_expectation,
+    feynman_kac_from_paths,
+    first_exit_index,
+    first_exit_time,
+    free_euclidean_kernel,
+    kinetic_action,
+    PathDiscretization,
+    PathIntegralEstimate,
+    potential_action,
+    sample_brownian_bridge,
+    sample_diffusion_paths,
+    survival_probability,
+)
 from .quantum import (  # noqa: F401
     anticommutator,
     commutator,
@@ -191,6 +212,7 @@ __all__ = [
     "linalg",
     "mechanics",
     "quantum",
+    "path_integral",
     # composition exports
     "pullback",
     # delay exports
@@ -262,6 +284,25 @@ __all__ = [
     "nonlocal_integral",
     "spatial_integral",
     "time_convolution",
+    # path-integral exports
+    "PathDiscretization",
+    "PathIntegralEstimate",
+    "brownian_bridge_from_noise",
+    "diffusion_paths_from_noise",
+    "discrete_euclidean_action",
+    "euclidean_kernel",
+    "euclidean_kernel_function",
+    "euclidean_kernel_from_noise",
+    "feynman_kac_expectation",
+    "feynman_kac_from_paths",
+    "first_exit_index",
+    "first_exit_time",
+    "free_euclidean_kernel",
+    "kinetic_action",
+    "potential_action",
+    "sample_brownian_bridge",
+    "sample_diffusion_paths",
+    "survival_probability",
     # functional exports
     "spatial_inner_product",
     "spatial_l2_norm",
