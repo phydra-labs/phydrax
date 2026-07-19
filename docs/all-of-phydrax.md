@@ -72,6 +72,15 @@ The enforced route is staged as boundary → initial → interior data. See:
   the domain becomes \(\Omega_{\text{data}}\times\Omega_x\times\cdots\). See [API → Domain → Composition](api/domain/composition.md)
   and [API → NN → Architectures](api/nn/architectures.md).
 
+### Uncertainty: stochastic functions, inputs, and observations
+
+`phydrax.uq` keeps epistemic, uncertain-input, and observation axes explicit in
+named `PredictiveField` results. NUTS/HMC, Laplace approximation, deep ensembles, and
+Gaussian-process discrepancy models produce coherent epistemic draws; probability
+domains and joint QMC propagate uncertain inputs; likelihood and conformal tools
+score or calibrate observations. See
+[Guides → Uncertainty quantification](guides_uncertainty.md).
+
 ## A first real PDE example: Poisson on a square
 
 This example trains a neural field \(u_\theta(x,y)\) to satisfy
@@ -257,6 +266,8 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   See [Guides → Integrals and measures](guides_integrals.md).
 - **ODEs and dynamical systems**: treat time as a scalar domain and enforce residuals \(\dot u - f(u,t)=0\) via ODE constraints (continuous or discrete).
   See [API → Constraints → Discrete](api/constraints/discrete.md) and [API → Constraints → Continuous](api/constraints/continuous.md).
+- **Uncertainty quantification**: use NUTS/HMC or Laplace for explicit posterior problems, ensembles for neural-model epistemic variation, Gaussian processes for model discrepancy, joint QMC for uncertain inputs, likelihoods/proper scores for observations, and conformal calibration for coverage.
+  See [Guides → Uncertainty quantification](guides_uncertainty.md) and [API → Uncertainty quantification](api/uq/index.md).
 - **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,
   Poisson-bracket, or Hamilton–Jacobi operators on labeled state spaces.
   See [Guides → Lagrangian and Hamiltonian mechanics](guides_mechanics.md).
@@ -286,6 +297,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - [Lagrangian and Hamiltonian mechanics](guides_mechanics.md)
 - [Quantum operators and dynamics](guides_quantum.md)
 - [Constraints and objectives](guides_constraints.md)
+- [Uncertainty quantification](guides_uncertainty.md)
 - [Solvers and training](guides_solver.md)
 - [API reference](api/phydrax.md)
 - `phydrax.domain` for geometry, time, and sampling.

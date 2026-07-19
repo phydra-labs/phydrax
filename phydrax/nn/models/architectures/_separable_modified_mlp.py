@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import ClassVar, Literal
 
 import jax
@@ -42,6 +42,8 @@ class SeparableModifiedMLP(_AbstractStructuredInputModel):
         split_input: int | None = None,
         width_size: int = 128,
         depth: int = 6,
+        dropout: float | Sequence[float] = 0.0,
+        dropout_mode: Literal["elementwise", "feature"] = "feature",
         activation: Callable = jax.nn.tanh,
         final_activation: Callable | None = None,
         rwf: bool | tuple[float, float] = False,
@@ -55,9 +57,7 @@ class SeparableModifiedMLP(_AbstractStructuredInputModel):
         """Construct a separable modified MLP."""
         in_dim = _get_size(in_size)
         clones = (
-            int(split_input)
-            if split_input is not None and int(split_input) > 1
-            else 1
+            int(split_input) if split_input is not None and int(split_input) > 1 else 1
         )
         if in_dim == 1 and clones == 1:
             raise ValueError(
@@ -72,6 +72,8 @@ class SeparableModifiedMLP(_AbstractStructuredInputModel):
                 out_size=out_dim,
                 width_size=width_size,
                 depth=depth,
+                dropout=dropout,
+                dropout_mode=dropout_mode,
                 activation=activation,
                 final_activation=final_activation,
                 rwf=rwf,
@@ -102,7 +104,7 @@ class SeparableModifiedMLP(_AbstractStructuredInputModel):
         x: Array | tuple[Array, ...],
         /,
         *,
-        key: EvalKey = DOC_KEY0,
+        key: EvalKey = None,
     ) -> Array:
         """Evaluate pointwise or coordinate-separable input."""
         return self.model(x, key=key)

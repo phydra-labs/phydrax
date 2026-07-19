@@ -97,6 +97,7 @@ nav:
         - Physics-informed graph residuals: "cookbook/graph_physics.md"
         - Inverse + hybrid physics–data: "cookbook/inverse_and_data.md"
         - Operator learning (DatasetDomain): "cookbook/operator_learning.md"
+        - Uncertainty quantification: "cookbook/uncertainty_quantification.md"
         - Mechanics and Deep Ritz: "cookbook/mechanics.md"
         - Two-level quantum dynamics: "cookbook/quantum_two_level.md"
         - Composite systems and a Bell state: "cookbook/quantum_composite.md"
@@ -108,6 +109,7 @@ nav:
         - Euclidean path integrals and Feynman–Kac: "guides_path_integrals.md"
         - Constraints and objectives: "guides_constraints.md"
         - Solvers and training: "guides_solver.md"
+        - Uncertainty quantification: "guides_uncertainty.md"
         - Lagrangian and Hamiltonian mechanics: "guides_mechanics.md"
         - Quantum operators and dynamics: "guides_quantum.md"
     - Examples:
@@ -168,6 +170,13 @@ nav:
             - Overview: "api/solver/index.md"
             - Functional solver: "api/solver/functional_solver.md"
             - Enforced constraint pipelines: "api/solver/enforced_constraints.md"
+        - Uncertainty quantification:
+            - Overview: "api/uq/index.md"
+            - Predictive results: "api/uq/predictive.md"
+            - Inference and ensembles: "api/uq/inference.md"
+            - Likelihoods and calibration: "api/uq/calibration.md"
+            - Propagation: "api/uq/propagation.md"
+            - Global sensitivity: "api/uq/sensitivity.md"
         - Export: "api/export.md"
     - Misc:
         - Nondimensionalization: "misc/nondimensionalization.md"

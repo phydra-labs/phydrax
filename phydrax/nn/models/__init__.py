@@ -20,6 +20,7 @@ from .embeddings._fourier import (
     RandomFourierFeatureEmbeddings,
     TrainableFourierFeatureEmbeddings,
 )
+from .layers._dropout import Dropout, inference_mode
 from .layers._linear import Linear
 from .wrappers._complex_output import ComplexOutputModel
 from .wrappers._concatenated import ConcatenatedModel
@@ -46,6 +47,7 @@ from .wrappers._sequential import Sequential
 
 __all__ = [
     "ComplexOutputModel",
+    "Dropout",
     "EquinoxModel",
     "EquinoxStructuredModel",
     "GraphModel",
@@ -78,4 +80,5 @@ __all__ = [
     "LatentContractionModel",
     "Separable",
     "add_model_loss",
+    "inference_mode",
 ]

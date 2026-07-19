@@ -49,6 +49,41 @@ def train_test_split_indices(
     return perm[n_test:], perm[:n_test]
 
 
+def train_calibration_test_split_indices(
+    num_cases: int,
+    /,
+    *,
+    calibration_fraction: float = 0.2,
+    test_fraction: float = 0.2,
+    key: Key[Array, ""] = DOC_KEY0,
+    shuffle: bool = True,
+) -> tuple[Array, Array, Array]:
+    """Return disjoint non-empty train, calibration, and test case indices."""
+    n = int(num_cases)
+    if n < 3:
+        raise ValueError("num_cases must be at least 3 for a three-way split.")
+    calibration = float(calibration_fraction)
+    test = float(test_fraction)
+    if calibration <= 0.0 or test <= 0.0 or calibration + test >= 1.0:
+        raise ValueError(
+            "calibration_fraction and test_fraction must be positive and sum to less than one."
+        )
+    n_calibration = max(1, int(round(n * calibration)))
+    n_test = max(1, int(round(n * test)))
+    while n_calibration + n_test > n - 1:
+        if n_test >= n_calibration and n_test > 1:
+            n_test -= 1
+        elif n_calibration > 1:
+            n_calibration -= 1
+        else:
+            raise ValueError("Fractions leave no case for the training split.")
+    permutation = _permutation(n, key=key, shuffle=shuffle)
+    calibration_indices = permutation[:n_calibration]
+    test_indices = permutation[n_calibration : n_calibration + n_test]
+    train_indices = permutation[n_calibration + n_test :]
+    return train_indices, calibration_indices, test_indices
+
+
 def kfold_indices(
     num_cases: int,
     num_folds: int,
@@ -85,5 +120,6 @@ def kfold_indices(
 
 __all__ = [
     "kfold_indices",
+    "train_calibration_test_split_indices",
     "train_test_split_indices",
 ]

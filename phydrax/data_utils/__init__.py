@@ -11,7 +11,11 @@ that return JAX-compatible arrays where possible.
 
 from . import scalers
 from ._csv_reader import CSVReader
-from ._splits import kfold_indices, train_test_split_indices
+from ._splits import (
+    kfold_indices,
+    train_calibration_test_split_indices,
+    train_test_split_indices,
+)
 from .scalers import (
     AffineScaler,
     MaxAbsScaler,
@@ -30,6 +34,7 @@ __all__ = [
     "MinMaxScaler",
     "NormScaler",
     "StdScaler",
+    "train_calibration_test_split_indices",
     "train_test_split_indices",
     "scalers",
     "scaler_transform_fn",
