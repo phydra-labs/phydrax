@@ -272,7 +272,7 @@ remains a boolean support mask. A numerical geometry correction is stored
 separately in `coord_geometry_weight_by_label`; integrals multiply both. Request a
 deterministic subcell estimate with `GridSpec(..., cut_cell_order=k)`:
 
-```python
+```py
 grid = phx.domain.GridSpec(
     (
         phx.domain.UniformAxisSpec(65),
@@ -310,7 +310,7 @@ contains the physical Jacobian and trim semantics. Adjacent charts share only
 measure-zero seams, so summing chart weights does not double-count physical
 surface measure:
 
-```python
+```py
 import jax.numpy as jnp
 
 chart_rule = cad.boundary_chart_atlas.tensor_quadrature(6)

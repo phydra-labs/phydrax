@@ -11,7 +11,6 @@ import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array
 
-from ...._doc import DOC_KEY0
 from ....domain._grid import broadcasted_grid
 from ..._utils import _get_size
 from ..core._base import _AbstractBaseModel, _AbstractStructuredInputModel
@@ -96,7 +95,7 @@ class DeepONet(_AbstractStructuredInputModel):
         x: Array | tuple[Array, ...],
         /,
         *,
-        key: EvalKey = DOC_KEY0,
+        key: EvalKey = None,
     ) -> Array:
         if not isinstance(x, tuple):
             raise ValueError("DeepONet requires a tuple input (branch_input, coords...).")

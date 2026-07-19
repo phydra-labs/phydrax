@@ -33,6 +33,7 @@ domain = phx.domain.RaggedSeriesDatasetDomain(
     start=0.0,
     dt=0.1,
 )
+targets = jnp.sum(static, axis=1)
 
 batch = domain.points_from_indices([0, 1])
 payload = batch["data"]

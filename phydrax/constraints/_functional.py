@@ -8,7 +8,6 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
 import coordax as cx
-import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 

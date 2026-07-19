@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Literal
 
 import jax.numpy as jnp
@@ -15,8 +16,13 @@ from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
 from ..._utils import _get_size
 from ..core._base import _AbstractStructuredInputModel
-from ..core._keys import EvalKey
-from ..core._scan_utils import pack_scan_modules, scan_apply, stack_scan_dynamics
+from ..core._keys import EvalKey, fold_in_eval_key
+from ..core._scan_utils import (
+    pack_scan_modules,
+    scan_apply_with_data,
+    stack_scan_dynamics,
+)
+from ..layers._dropout import _dropout_probabilities, Dropout
 from ..layers._linear import Linear
 
 
@@ -157,13 +163,21 @@ class SpectralConv2d(StrictModule):
 class _FNOResidualStep(StrictModule):
     spectral: SpectralConv1d | SpectralConv2d
     pointwise: Linear
+    dropout: Dropout
 
-    def __init__(self, spectral: SpectralConv1d | SpectralConv2d, pointwise: Linear):
+    def __init__(
+        self,
+        spectral: SpectralConv1d | SpectralConv2d,
+        pointwise: Linear,
+        dropout: Dropout,
+    ):
         self.spectral = spectral
         self.pointwise = pointwise
+        self.dropout = dropout
 
-    def __call__(self, x: Array) -> Array:
-        return jnp.tanh(self.spectral(x) + self.pointwise(x))
+    def __call__(self, x: Array, /, *, key: EvalKey = None) -> Array:
+        hidden = jnp.tanh(self.spectral(x) + self.pointwise(x))
+        return self.dropout(hidden, key=key)
 
 
 class FNO1d(_AbstractStructuredInputModel):
@@ -185,6 +199,7 @@ class FNO1d(_AbstractStructuredInputModel):
     lift: Linear
     spectral_layers: tuple[SpectralConv1d, ...]
     pointwise_layers: tuple[Linear, ...]
+    dropouts: tuple[Dropout, ...]
     proj: Linear
     scan: bool
     _scan_enabled: bool
@@ -198,6 +213,7 @@ class FNO1d(_AbstractStructuredInputModel):
         width: int = 32,
         depth: int = 4,
         modes: int = 16,
+        dropout: float | Sequence[float] = 0.0,
         scan: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
     ):
@@ -243,6 +259,11 @@ class FNO1d(_AbstractStructuredInputModel):
             )
         self.spectral_layers = tuple(spectral)
         self.pointwise_layers = tuple(pointwise)
+        dropout_probabilities = _dropout_probabilities(dropout, int(depth))
+        self.dropouts = tuple(
+            Dropout(self.width, p=probability, mode="feature")
+            for probability in dropout_probabilities
+        )
 
         self.proj = Linear(
             in_size=self.width, out_size=out_ch, activation=None, key=keys[-1]
@@ -250,8 +271,13 @@ class FNO1d(_AbstractStructuredInputModel):
 
         if self.scan:
             steps = tuple(
-                _FNOResidualStep(spectral=s, pointwise=p)
-                for s, p in zip(self.spectral_layers, self.pointwise_layers, strict=True)
+                _FNOResidualStep(spectral=s, pointwise=p, dropout=d)
+                for s, p, d in zip(
+                    self.spectral_layers,
+                    self.pointwise_layers,
+                    self.dropouts,
+                    strict=True,
+                )
             )
             _, static, enabled = pack_scan_modules(steps)
             self._scan_enabled = enabled
@@ -263,9 +289,8 @@ class FNO1d(_AbstractStructuredInputModel):
         x: Array | tuple[Array, ...],
         /,
         *,
-        key: EvalKey = DOC_KEY0,
+        key: EvalKey = None,
     ) -> Array:
-        del key
         if not isinstance(x, tuple):
             raise ValueError("FNO1d requires a structured tuple input.")
         if len(x) != 2:
@@ -300,25 +325,40 @@ class FNO1d(_AbstractStructuredInputModel):
         xw = jnp.tanh(xw)
         if self._scan_enabled and self._scan_static is not None:
             steps = tuple(
-                _FNOResidualStep(spectral=s, pointwise=p)
-                for s, p in zip(self.spectral_layers, self.pointwise_layers, strict=True)
+                _FNOResidualStep(spectral=s, pointwise=p, dropout=d)
+                for s, p, d in zip(
+                    self.spectral_layers,
+                    self.pointwise_layers,
+                    self.dropouts,
+                    strict=True,
+                )
             )
             dynamic = stack_scan_dynamics(steps)
             if dynamic is not None:
-                xw = scan_apply(
+                sites = jnp.arange(len(steps), dtype=jnp.uint32)
+                xw = scan_apply_with_data(
                     dynamic,
                     self._scan_static,
                     xw,
-                    lambda carry, layer: layer(carry),
+                    sites,
+                    lambda carry, layer, site: layer(
+                        carry, key=fold_in_eval_key(key, site)
+                    ),
                 )
             else:
-                for spec, pw in zip(
-                    self.spectral_layers, self.pointwise_layers, strict=True
-                ):
-                    xw = jnp.tanh(spec(xw) + pw(xw))
+                for site, layer in enumerate(steps):
+                    xw = layer(xw, key=fold_in_eval_key(key, site))
         else:
-            for spec, pw in zip(self.spectral_layers, self.pointwise_layers, strict=True):
-                xw = jnp.tanh(spec(xw) + pw(xw))
+            for site, (spec, pw, dropout_layer) in enumerate(
+                zip(
+                    self.spectral_layers,
+                    self.pointwise_layers,
+                    self.dropouts,
+                    strict=True,
+                )
+            ):
+                hidden = jnp.tanh(spec(xw) + pw(xw))
+                xw = dropout_layer(hidden, key=fold_in_eval_key(key, site))
         y = self.proj(xw)
         if self.out_size == "scalar":
             return y[..., 0]
@@ -346,6 +386,7 @@ class FNO2d(_AbstractStructuredInputModel):
     lift: Linear
     spectral_layers: tuple[SpectralConv2d, ...]
     pointwise_layers: tuple[Linear, ...]
+    dropouts: tuple[Dropout, ...]
     proj: Linear
     scan: bool
     _scan_enabled: bool
@@ -360,6 +401,7 @@ class FNO2d(_AbstractStructuredInputModel):
         depth: int = 4,
         modes: int = 12,
         modes_y: int | None = None,
+        dropout: float | Sequence[float] = 0.0,
         scan: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
     ):
@@ -407,6 +449,11 @@ class FNO2d(_AbstractStructuredInputModel):
             )
         self.spectral_layers = tuple(spectral)
         self.pointwise_layers = tuple(pointwise)
+        dropout_probabilities = _dropout_probabilities(dropout, int(depth))
+        self.dropouts = tuple(
+            Dropout(self.width, p=probability, mode="feature")
+            for probability in dropout_probabilities
+        )
 
         self.proj = Linear(
             in_size=self.width, out_size=out_ch, activation=None, key=keys[-1]
@@ -414,8 +461,13 @@ class FNO2d(_AbstractStructuredInputModel):
 
         if self.scan:
             steps = tuple(
-                _FNOResidualStep(spectral=s, pointwise=p)
-                for s, p in zip(self.spectral_layers, self.pointwise_layers, strict=True)
+                _FNOResidualStep(spectral=s, pointwise=p, dropout=d)
+                for s, p, d in zip(
+                    self.spectral_layers,
+                    self.pointwise_layers,
+                    self.dropouts,
+                    strict=True,
+                )
             )
             _, static, enabled = pack_scan_modules(steps)
             self._scan_enabled = enabled
@@ -427,9 +479,8 @@ class FNO2d(_AbstractStructuredInputModel):
         x: Array | tuple[Array, ...],
         /,
         *,
-        key: EvalKey = DOC_KEY0,
+        key: EvalKey = None,
     ) -> Array:
-        del key
         if not isinstance(x, tuple):
             raise ValueError("FNO2d requires a structured tuple input.")
         if len(x) != 3:
@@ -469,25 +520,40 @@ class FNO2d(_AbstractStructuredInputModel):
         xw = jnp.tanh(xw)
         if self._scan_enabled and self._scan_static is not None:
             steps = tuple(
-                _FNOResidualStep(spectral=s, pointwise=p)
-                for s, p in zip(self.spectral_layers, self.pointwise_layers, strict=True)
+                _FNOResidualStep(spectral=s, pointwise=p, dropout=d)
+                for s, p, d in zip(
+                    self.spectral_layers,
+                    self.pointwise_layers,
+                    self.dropouts,
+                    strict=True,
+                )
             )
             dynamic = stack_scan_dynamics(steps)
             if dynamic is not None:
-                xw = scan_apply(
+                sites = jnp.arange(len(steps), dtype=jnp.uint32)
+                xw = scan_apply_with_data(
                     dynamic,
                     self._scan_static,
                     xw,
-                    lambda carry, layer: layer(carry),
+                    sites,
+                    lambda carry, layer, site: layer(
+                        carry, key=fold_in_eval_key(key, site)
+                    ),
                 )
             else:
-                for spec, pw in zip(
-                    self.spectral_layers, self.pointwise_layers, strict=True
-                ):
-                    xw = jnp.tanh(spec(xw) + pw(xw))
+                for site, layer in enumerate(steps):
+                    xw = layer(xw, key=fold_in_eval_key(key, site))
         else:
-            for spec, pw in zip(self.spectral_layers, self.pointwise_layers, strict=True):
-                xw = jnp.tanh(spec(xw) + pw(xw))
+            for site, (spec, pw, dropout_layer) in enumerate(
+                zip(
+                    self.spectral_layers,
+                    self.pointwise_layers,
+                    self.dropouts,
+                    strict=True,
+                )
+            ):
+                hidden = jnp.tanh(spec(xw) + pw(xw))
+                xw = dropout_layer(hidden, key=fold_in_eval_key(key, site))
         y = self.proj(xw)
         if self.out_size == "scalar":
             return y[..., 0]

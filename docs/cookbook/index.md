@@ -49,3 +49,4 @@ Differential operators support multiple backends (`backend="ad"|"jet"|"fd"|"basi
 - [Physics-informed graph residuals](graph_physics.md)
 - [Inverse problems + hybrid physics–data](inverse_and_data.md)
 - [Operator learning (DatasetDomain × coordinates)](operator_learning.md)
+- [Uncertainty quantification](uncertainty_quantification.md)

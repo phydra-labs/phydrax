@@ -165,6 +165,7 @@ from ._integral import (
     MagneticFluxZeroConstraint,
     SolidTotalReactionBoundaryConstraint,
 )
+from ._likelihood import SupervisedLikelihoodConstraint
 from ._ode import (
     ContinuousODEConstraint,
     DiscreteODEConstraint,
@@ -307,6 +308,7 @@ __all__ = [
     "DiscreteInterfaceTangentialHJumpConstraint",
     "DiscreteInterfaceNormalBContinuityConstraint",
     "DiscreteInteriorDataConstraint",
+    "SupervisedLikelihoodConstraint",
     "enforce_blend",
     "enforce_dirichlet",
     "enforce_initial",

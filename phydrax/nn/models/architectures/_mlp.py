@@ -6,14 +6,20 @@ from collections.abc import Callable, Sequence
 from typing import Literal
 
 import jax
+import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
 from ..._utils import _canonical_size, _get_value_shape, _identity, SizeLike
 from ..core._base import _AbstractBaseModel
-from ..core._keys import EvalKey
-from ..core._scan_utils import pack_scan_modules, scan_apply, stack_scan_dynamics
+from ..core._keys import EvalKey, fold_in_eval_key
+from ..core._scan_utils import (
+    pack_scan_modules,
+    scan_apply_with_data,
+    stack_scan_dynamics,
+)
+from ..layers._dropout import _dropout_probabilities, Dropout
 from ..layers._linear import Linear
 
 
@@ -46,6 +52,7 @@ class MLP(_AbstractBaseModel):
     """
 
     layers: tuple[Linear, ...]
+    dropouts: tuple[Dropout, ...]
     in_size: int | tuple[int, ...] | Literal["scalar"]
     out_size: int | tuple[int, ...] | Literal["scalar"]
     final_activation: Callable
@@ -63,6 +70,8 @@ class MLP(_AbstractBaseModel):
         width_size: int | None = None,
         depth: int | None = None,
         hidden_sizes: Sequence[int] | None = None,
+        dropout: float | Sequence[float] = 0.0,
+        dropout_mode: Literal["elementwise", "feature"] = "feature",
         activation: Callable = jax.nn.tanh,
         final_activation: Callable | None = None,
         skip_connection: bool = False,
@@ -85,6 +94,8 @@ class MLP(_AbstractBaseModel):
         - `width_size`: Uniform hidden width (mutually exclusive with `hidden_sizes`).
         - `depth`: Number of hidden layers (mutually exclusive with `hidden_sizes`).
         - `hidden_sizes`: Explicit hidden layer sizes.
+        - `dropout`: Drop probability shared by hidden layers, or one value per hidden layer.
+        - `dropout_mode`: Elementwise masks or feature masks broadcast over leading axes.
         - `activation`: Hidden-layer activation (callable).
         - `final_activation`: Output activation (default: identity).
         - `skip_connection`: If `True`, adds a residual connection to the pre-activation output.
@@ -184,6 +195,14 @@ class MLP(_AbstractBaseModel):
             )
 
         self.layers = tuple(layers)
+        hidden_output_sizes = tuple(int(size) for size in hidden_sizes_list)
+        dropout_probabilities = _dropout_probabilities(dropout, len(hidden_output_sizes))
+        self.dropouts = tuple(
+            Dropout(size, p=probability, mode=dropout_mode)
+            for size, probability in zip(
+                hidden_output_sizes, dropout_probabilities, strict=True
+            )
+        )
         self.in_size = in_size_c
         self.out_size = out_size_c
         self.final_activation = final_act_fn
@@ -193,8 +212,10 @@ class MLP(_AbstractBaseModel):
         self._scan_static = None
 
         if self.scan and len(self.layers) > 2:
-            repeated_layers = self.layers[1:-1]
-            _, static, enabled = pack_scan_modules(repeated_layers)
+            repeated_blocks = tuple(
+                zip(self.layers[1:-1], self.dropouts[1:], strict=True)
+            )
+            _, static, enabled = pack_scan_modules(repeated_blocks)
             self._scan_enabled = enabled
             if enabled:
                 self._scan_static = static
@@ -217,47 +238,49 @@ class MLP(_AbstractBaseModel):
         x: Array,
         /,
         *,
-        key: EvalKey = DOC_KEY0,
+        key: EvalKey = None,
     ) -> Array:
         r"""Evaluate the MLP at `x`.
 
-        **Arguments:**
-
-        - `x`: Input with trailing value shape implied by `in_size`. Leading axes are free.
-        - `key`: PRNG key forwarded to layers (most layers are deterministic and
-          ignore it; it is present for API consistency).
-
-        **Returns:**
-
-        - Output with trailing value shape implied by `out_size`. If `out_size == "scalar"`,
-          returns a scalar per leading index (no trailing value axis).
+        Active dropout requires an explicit key. Each hidden layer receives a
+        stable, distinct subkey derived from that root key.
         """
         x0 = x
         y = None
-        if self._scan_enabled and self._scan_static is not None:
-            repeated_layers = self.layers[1:-1]
-            dynamic = stack_scan_dynamics(repeated_layers)
+        hidden_count = len(self.dropouts)
+        if hidden_count and self._scan_enabled and self._scan_static is not None:
+            repeated_blocks = tuple(
+                zip(self.layers[1:-1], self.dropouts[1:], strict=True)
+            )
+            dynamic = stack_scan_dynamics(repeated_blocks)
             if dynamic is not None:
-                x = self.layers[0](x, key=key)
-                x = scan_apply(
+                site_key = fold_in_eval_key(key, 0)
+                x = self.layers[0](x, key=site_key)
+                x = self.dropouts[0](x, key=site_key)
+                sites = jnp.arange(1, hidden_count, dtype=jnp.uint32)
+                x = scan_apply_with_data(
                     dynamic,
                     self._scan_static,
                     x,
-                    lambda carry, layer: layer(carry, key=key),
+                    sites,
+                    lambda carry, block, site: block[1](
+                        block[0](carry, key=fold_in_eval_key(key, site)),
+                        key=fold_in_eval_key(key, site),
+                    ),
                 )
-                y = self.layers[-1](x, key=key)
+                y = self.layers[-1](x, key=fold_in_eval_key(key, hidden_count))
         if y is None:
-            for layer in self.layers[:-1]:
-                x = layer(x, key=key)
-            y = self.layers[-1](x, key=key)
+            for site, (layer, dropout_layer) in enumerate(
+                zip(self.layers[:-1], self.dropouts, strict=True)
+            ):
+                site_key = fold_in_eval_key(key, site)
+                x = dropout_layer(layer(x, key=site_key), key=site_key)
+            y = self.layers[-1](x, key=fold_in_eval_key(key, hidden_count))
 
-        # Residual addition before final activation
         if self.skip_connection:
             if self._residual_proj is None:
                 res = x0
             else:
-                res = self._residual_proj(x0, key=key)
+                res = self._residual_proj(x0, key=fold_in_eval_key(key, hidden_count + 1))
             y = y + res
-        # Apply final activation if provided
-        y = self.final_activation(y)
-        return y
+        return self.final_activation(y)

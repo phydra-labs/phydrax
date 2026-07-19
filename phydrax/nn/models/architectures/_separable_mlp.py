@@ -56,6 +56,8 @@ class SeparableMLP(_AbstractStructuredInputModel):
         width_size: int | None = 20,
         depth: int | None = 6,
         hidden_sizes: Sequence[int] | None = None,
+        dropout: float | Sequence[float] = 0.0,
+        dropout_mode: Literal["elementwise", "feature"] = "feature",
         activation: Callable = jax.nn.tanh,
         final_activation: Callable | None = None,
         skip_connection: bool = False,
@@ -93,6 +95,8 @@ class SeparableMLP(_AbstractStructuredInputModel):
                 width_size=width_size,
                 depth=depth,
                 hidden_sizes=hidden_sizes,
+                dropout=dropout,
+                dropout_mode=dropout_mode,
                 activation=activation,
                 final_activation=final_activation,
                 skip_connection=skip_connection,
@@ -124,7 +128,7 @@ class SeparableMLP(_AbstractStructuredInputModel):
         x: Array | tuple[Array, ...],
         /,
         *,
-        key: EvalKey = DOC_KEY0,
+        key: EvalKey = None,
     ) -> Array:
         r"""Evaluate the separable MLP.
 

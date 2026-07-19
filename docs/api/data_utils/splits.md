@@ -15,9 +15,21 @@ train_idx, test_idx = phx.data_utils.train_test_split_indices(
     key=jr.key(0),
 )
 folds = phx.data_utils.kfold_indices(10, 5, key=jr.key(1))
+train_idx, calibration_idx, test_idx = (
+    phx.data_utils.train_calibration_test_split_indices(
+        10,
+        calibration_fraction=0.2,
+        test_fraction=0.2,
+        key=jr.key(2),
+    )
+)
 ```
 
 ::: phydrax.data_utils.train_test_split_indices
+
+---
+
+::: phydrax.data_utils.train_calibration_test_split_indices
 
 ---
 

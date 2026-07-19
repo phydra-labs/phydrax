@@ -136,6 +136,17 @@ a readout model.
 ```python
 import jax.random as jr
 import phydrax as phx
+import jax.numpy as jnp
+
+series = jnp.ones((2, 3, 4))
+lengths = jnp.asarray([2, 3])
+static = jnp.ones((2, 2))
+domain = phx.domain.RaggedSeriesDatasetDomain(
+    series,
+    lengths,
+    static=static,
+    dt=0.1,
+)
 
 key_step, key_readout = jr.split(jr.key(0))
 

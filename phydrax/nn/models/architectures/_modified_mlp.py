@@ -2,18 +2,24 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Literal
 
 import jax
+import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
 from ..._utils import _canonical_size, _identity, SizeLike
 from ..core._base import _AbstractBaseModel
-from ..core._keys import EvalKey
-from ..core._scan_utils import pack_scan_modules, scan_apply, stack_scan_dynamics
+from ..core._keys import EvalKey, fold_in_eval_key
+from ..core._scan_utils import (
+    pack_scan_modules,
+    scan_apply_with_data,
+    stack_scan_dynamics,
+)
+from ..layers._dropout import _dropout_probabilities, Dropout
 from ..layers._linear import Linear
 
 
@@ -38,6 +44,7 @@ class ModifiedMLP(_AbstractBaseModel):
     encoder_u: Linear
     encoder_v: Linear
     layers: tuple[Linear, ...]
+    dropouts: tuple[Dropout, ...]
     in_size: int | tuple[int, ...] | Literal["scalar"]
     out_size: int | tuple[int, ...] | Literal["scalar"]
     final_activation: Callable
@@ -52,6 +59,8 @@ class ModifiedMLP(_AbstractBaseModel):
         out_size: SizeLike,
         width_size: int = 128,
         depth: int = 6,
+        dropout: float | Sequence[float] = 0.0,
+        dropout_mode: Literal["elementwise", "feature"] = "feature",
         activation: Callable = jax.nn.tanh,
         final_activation: Callable | None = None,
         rwf: bool | tuple[float, float] = False,
@@ -70,6 +79,8 @@ class ModifiedMLP(_AbstractBaseModel):
         - `out_size`: Output value size.
         - `width_size`: Shared hidden and encoder width.
         - `depth`: Number of modified hidden layers; must be positive.
+        - `dropout`: Drop probability shared by hidden states, or one per hidden state.
+        - `dropout_mode`: Elementwise masks or feature masks broadcast over leading axes.
         - `activation`: Encoder and hidden-layer activation.
         - `final_activation`: Optional output activation.
         - `rwf`: Random Weight Factorization configuration for linear layers.
@@ -147,6 +158,11 @@ class ModifiedMLP(_AbstractBaseModel):
             key=keys[-1],
         )
         self.layers = (*hidden, output)
+        dropout_probabilities = _dropout_probabilities(dropout, hidden_depth)
+        self.dropouts = tuple(
+            Dropout(width, p=probability, mode=dropout_mode)
+            for probability in dropout_probabilities
+        )
         self.in_size = in_size_c
         self.out_size = out_size_c
         self.final_activation = (
@@ -157,7 +173,10 @@ class ModifiedMLP(_AbstractBaseModel):
         self._scan_static = None
 
         if self.scan and hidden_depth > 1:
-            _, static, enabled = pack_scan_modules(self.layers[1:-1])
+            repeated_blocks = tuple(
+                zip(self.layers[1:-1], self.dropouts[1:], strict=True)
+            )
+            _, static, enabled = pack_scan_modules(repeated_blocks)
             self._scan_enabled = enabled
             if enabled:
                 self._scan_static = static
@@ -171,31 +190,48 @@ class ModifiedMLP(_AbstractBaseModel):
         x: Array,
         /,
         *,
-        key: EvalKey = DOC_KEY0,
+        key: EvalKey = None,
     ) -> Array:
-        """Evaluate the modified MLP at `x`."""
-        encoder_u = self.encoder_u(x, key=key)
-        encoder_v = self.encoder_v(x, key=key)
-        hidden = self._mix(self.layers[0](x, key=key), encoder_u, encoder_v)
+        """Evaluate the modified MLP at `x` with one key per hidden state."""
+        encoder_u = self.encoder_u(x, key=fold_in_eval_key(key, 0))
+        encoder_v = self.encoder_v(x, key=fold_in_eval_key(key, 1))
+        first_key = fold_in_eval_key(key, 2)
+        hidden = self._mix(self.layers[0](x, key=first_key), encoder_u, encoder_v)
+        hidden = self.dropouts[0](hidden, key=first_key)
 
         scanned = False
         if self._scan_enabled and self._scan_static is not None:
-            dynamic = stack_scan_dynamics(self.layers[1:-1])
+            repeated_blocks = tuple(
+                zip(self.layers[1:-1], self.dropouts[1:], strict=True)
+            )
+            dynamic = stack_scan_dynamics(repeated_blocks)
             if dynamic is not None:
-                hidden = scan_apply(
+                sites = jnp.arange(3, len(self.dropouts) + 2, dtype=jnp.uint32)
+                hidden = scan_apply_with_data(
                     dynamic,
                     self._scan_static,
                     hidden,
-                    lambda carry, layer: self._mix(
-                        layer(carry, key=key), encoder_u, encoder_v
+                    sites,
+                    lambda carry, block, site: block[1](
+                        self._mix(
+                            block[0](carry, key=fold_in_eval_key(key, site)),
+                            encoder_u,
+                            encoder_v,
+                        ),
+                        key=fold_in_eval_key(key, site),
                     ),
                 )
                 scanned = True
         if not scanned:
-            for layer in self.layers[1:-1]:
-                hidden = self._mix(
-                    layer(hidden, key=key), encoder_u, encoder_v
-                )
+            for site, (layer, dropout_layer) in enumerate(
+                zip(self.layers[1:-1], self.dropouts[1:], strict=True),
+                start=3,
+            ):
+                site_key = fold_in_eval_key(key, site)
+                hidden = self._mix(layer(hidden, key=site_key), encoder_u, encoder_v)
+                hidden = dropout_layer(hidden, key=site_key)
 
-        output = self.layers[-1](hidden, key=key)
+        output = self.layers[-1](
+            hidden, key=fold_in_eval_key(key, len(self.dropouts) + 2)
+        )
         return self.final_activation(output)

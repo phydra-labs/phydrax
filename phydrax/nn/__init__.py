@@ -40,6 +40,7 @@ from .models import (  # noqa: F401
     ComplexOutputModel,
     ConcatenatedModel,
     DeepONet,
+    Dropout,
     EquinoxModel,
     EquinoxStructuredModel,
     ExplicitFourierFeatureEmbeddings,
@@ -49,6 +50,7 @@ from .models import (  # noqa: F401
     GraphModel,
     GraphRolloutModel,
     HybridFourierFeatureEmbeddings,
+    inference_mode,
     KAN,
     LatentContractionModel,
     LatentExecutionPolicy,
@@ -80,6 +82,7 @@ __all__ = [
     "AdaptiveActivation",
     "Stan",
     # models exports
+    "Dropout",
     "ComplexOutputModel",
     "ConcatenatedModel",
     "ExplicitFourierFeatureEmbeddings",
@@ -113,4 +116,5 @@ __all__ = [
     "Separable",
     "SeparableFeynmaNN",
     "add_model_loss",
+    "inference_mode",
 ]

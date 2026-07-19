@@ -17,6 +17,7 @@ from . import (
     nn,
     operators,
     solver,
+    uq,
 )
 
 
@@ -30,4 +31,5 @@ __all__ = [
     "nn",
     "operators",
     "solver",
+    "uq",
 ]

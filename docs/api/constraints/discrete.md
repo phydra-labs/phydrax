@@ -401,3 +401,16 @@ only selected trailing output components while leaving the others free.
 ::: phydrax.constraints.DiscreteODEConstraint
     options:
         members: []
+
+## Probabilistic supervised constraints
+
+`SupervisedLikelihoodConstraint` shares `DatasetDomain` row-index semantics with
+`SupervisedDatasetConstraint`, but minimizes negative log likelihood and can apply a
+physical observation operator before scoring.
+
+::: phydrax.constraints.SupervisedLikelihoodConstraint
+    options:
+        members:
+            - __init__
+            - sample
+            - loss

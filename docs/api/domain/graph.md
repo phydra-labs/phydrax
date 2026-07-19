@@ -20,9 +20,21 @@ indices or entity types.
 
 ```python
 import phydrax as phx
+import jax.numpy as jnp
+
+graph = phx.graph.GraphIR(
+    nodes=jnp.asarray([[0.0], [1.0], [2.0]]),
+    senders=jnp.asarray([0, 1], dtype=jnp.int32),
+    receivers=jnp.asarray([1, 2], dtype=jnp.int32),
+    n_node=jnp.asarray([3], dtype=jnp.int32),
+    n_edge=jnp.asarray([2], dtype=jnp.int32),
+)
+graphs = (graph, graph)
+lengths = jnp.asarray([2, 3], dtype=jnp.int32)
+
 
 graph_domain = phx.domain.GraphDomain(graph, label="mesh")
-nodes = graph_domain.component(phx.domain.Nodes())
+nodes = graph_domain.component({"mesh": phx.domain.Nodes()})
 ```
 
 ::: phydrax.domain.GraphDomain
