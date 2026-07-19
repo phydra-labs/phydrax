@@ -330,6 +330,57 @@ class ParameterSubspace(StrictModule):
         return cls(tree, filter_spec)
 
     @classmethod
+    def from_subtree_paths(
+        cls,
+        tree: PyTree[Any],
+        subtree_paths: tuple[str, ...] | list[str],
+        /,
+    ) -> ParameterSubspace:
+        """Select every inexact-array leaf below explicit, disjoint PyTree paths.
+
+        This is the architecture-neutral way to select corresponding layers from
+        branched models. A path may also name one array leaf directly. Descendants
+        are matched only across a PyTree path boundary, never by a partial name.
+        """
+        requested = tuple(str(path) for path in subtree_paths)
+        if (
+            not requested
+            or any(not path for path in requested)
+            or len(set(requested)) != len(requested)
+        ):
+            raise ValueError(
+                "subtree_paths must contain distinct, non-empty named paths."
+            )
+        available = cls.array_leaf_paths(tree)
+
+        def _below(path: str, subtree_path: str, /) -> bool:
+            return (
+                path == subtree_path
+                or path.startswith(f"{subtree_path}.")
+                or path.startswith(f"{subtree_path}[")
+            )
+
+        matches = tuple(
+            tuple(path for path in available if _below(path, subtree_path))
+            for subtree_path in requested
+        )
+        missing = tuple(
+            subtree_path
+            for subtree_path, matched in zip(requested, matches, strict=True)
+            if not matched
+        )
+        if missing:
+            raise ValueError(f"Unknown parameter subtree paths: {missing!r}.")
+        selected_count = sum(len(matched) for matched in matches)
+        selected = frozenset(path for matched in matches for path in matched)
+        if len(selected) != selected_count:
+            raise ValueError("subtree_paths must select disjoint parameter subtrees.")
+        return cls.from_leaf_paths(
+            tree,
+            [path for path in available if path in selected],
+        )
+
+    @classmethod
     def last_layer(
         cls,
         tree: PyTree[Any],
@@ -337,7 +388,13 @@ class ParameterSubspace(StrictModule):
         *,
         num_leaves: int = 2,
     ) -> ParameterSubspace:
-        """Select the final inexact leaves (typically a layer weight and bias)."""
+        """Select final inexact leaves globally in deterministic PyTree order.
+
+        This convenience is leaf-order based, not architecture-aware. In a
+        branched model it selects leaves from the globally final branch rather
+        than the final layer of every branch. Use `from_subtree_paths` for the
+        latter.
+        """
         count = int(num_leaves)
         if count <= 0:
             raise ValueError("num_leaves must be positive.")

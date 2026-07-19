@@ -131,3 +131,86 @@ def test_vectorized_nuts_supports_dense_and_diagonal_mass_adaptation():
     assert jnp.all(jnp.isfinite(diagonal.samples))
     assert jnp.all(jnp.isfinite(dense.samples))
     assert diagonal.sample_memory_bytes == dense.sample_memory_bytes
+
+
+def test_nuts_and_hmc_sample_every_separable_mlp_final_layer_subtree():
+    model = phx.nn.inference_mode(
+        phx.nn.SeparableMLP(
+            in_size=2,
+            out_size="scalar",
+            latent_size=2,
+            width_size=3,
+            depth=1,
+            key=jr.key(203),
+        )
+    )
+    final_layers = tuple(
+        f".model.models[{index}].layers[{len(factor.layers) - 1}]"
+        for index, factor in enumerate(model.model.models)
+    )
+    subspace = phx.uq.ParameterSubspace.from_subtree_paths(model, final_layers)
+    expected_paths = (
+        ".model.models[0].layers[1].weight",
+        ".model.models[0].layers[1].bias",
+        ".model.models[1].layers[1].weight",
+        ".model.models[1].layers[1].bias",
+    )
+
+    assert subspace.leaf_paths == expected_paths
+    assert phx.uq.ParameterSubspace.last_layer(model).leaf_paths == expected_paths[-2:]
+
+    priors = jax.tree_util.tree_map(
+        lambda _: phx.uq.Normal(0.0, 1.0),
+        subspace.initial,
+    )
+    space = phx.uq.ParameterSpace(subspace.initial, priors=priors)
+    inputs = jnp.asarray(
+        [
+            [-0.8, -0.4],
+            [-0.3, 0.2],
+            [0.1, 0.5],
+            [0.6, -0.2],
+            [0.9, 0.7],
+        ]
+    )
+    baseline = jax.vmap(model)(inputs)
+    targets = baseline + jnp.asarray([0.02, -0.01, 0.03, -0.02, 0.01])
+
+    def predict(selected):
+        return jax.vmap(subspace.reconstruct(selected))(inputs)
+
+    problem = phx.uq.PosteriorProblem(
+        space,
+        lambda selected: -0.5 * jnp.sum(((predict(selected) - targets) / 0.1) ** 2),
+        predict=lambda selected: predict(selected),
+    )
+    problem.validate()
+
+    hmc = phx.uq.sample_hmc(
+        problem,
+        key=jr.key(204),
+        num_integration_steps=3,
+        num_chains=2,
+        num_warmup=15,
+        num_samples=8,
+        initial_step_size=0.02,
+        chain_method="vectorized",
+    )
+    nuts = phx.uq.sample_nuts(
+        problem,
+        key=jr.key(205),
+        num_chains=2,
+        num_warmup=15,
+        num_samples=8,
+        initial_step_size=0.02,
+        chain_method="vectorized",
+    )
+
+    for result in (hmc, nuts):
+        assert result.log_density.shape == (2, 8)
+        assert jnp.all(jnp.isfinite(result.log_density))
+        assert all(
+            leaf.shape[:2] == (2, 8) for leaf in jax.tree_util.tree_leaves(result.samples)
+        )
+        first_draw = jax.tree_util.tree_map(lambda leaf: leaf[0, 0], result.samples)
+        assert jnp.all(jnp.isfinite(jax.vmap(subspace.reconstruct(first_draw))(inputs)))

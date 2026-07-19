@@ -178,9 +178,47 @@ $$
 The Jacobian term is mandatory. Use `ExpBijector` for positive parameters and
 `SigmoidIntervalBijector` for bounded parameters. `ParameterSubspace` explicitly
 partitions a model PyTree into sampled leaves and a frozen complement.
-`from_leaf_paths(...)` selects exact named leaves; `last_layer(...)` selects the
-last array leaves in deterministic PyTree order. Selection is never inferred from
-which arrays happen to be trainable.
+`from_leaf_paths(...)` selects exact array leaves. `last_layer(...)` is deliberately
+generic: it selects the globally final array leaves in deterministic PyTree order;
+it does not inspect model architecture or select one final layer per branch.
+
+For a `SeparableMLP`, there is one internal MLP per input factor and no single
+shared affine output head. Select every factor's final layer explicitly with
+`from_subtree_paths(...)`:
+
+```python
+separable = phx.nn.inference_mode(
+    phx.nn.SeparableMLP(
+        in_size=2,
+        out_size="scalar",
+        latent_size=8,
+        width_size=16,
+        depth=2,
+        key=jr.key(9),
+    )
+)
+final_layer_paths = tuple(
+    f".model.models[{index}].layers[{len(factor.layers) - 1}]"
+    for index, factor in enumerate(separable.model.models)
+)
+separable_subspace = phx.uq.ParameterSubspace.from_subtree_paths(
+    separable,
+    final_layer_paths,
+)
+```
+
+This selects every inexact array below each final `Linear`, including RWF scales
+when configured and omitting absent biases naturally. If a skip projection should
+also be sampled, name its `_residual_proj` subtree separately. Do not approximate
+this selection with `last_layer(num_leaves=2 * num_factors)`: leaves are grouped by
+factor, so that selects earlier layers from the globally last factor.
+
+NUTS and HMC accept the resulting selected PyTree. Sampling one factor's final
+layer while freezing the other factors is linear in that factor's output
+parameters when its final activation is the identity. Sampling all factor heads
+jointly introduces multiplicative interactions through the separable contraction;
+NUTS/HMC remain valid, but this is not a conventional linear Bayesian last layer.
+Disable dropout with `inference_mode` before constructing any posterior.
 
 ```python
 sensor_x = jnp.linspace(0.05, 0.95, 24)

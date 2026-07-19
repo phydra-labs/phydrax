@@ -22,6 +22,7 @@
             - reconstruct
             - array_leaf_paths
             - from_leaf_paths
+            - from_subtree_paths
             - last_layer
 
 ---

@@ -135,3 +135,53 @@ def test_named_and_last_layer_parameter_subspaces_select_exact_array_leaves():
     assert eqx.is_array(last.reconstruct(last.initial)["head"]["weight"])
     with pytest.raises(ValueError, match="Unknown parameter leaf paths"):
         phx.uq.ParameterSubspace.from_leaf_paths(model, ["['missing']"])
+
+
+def test_parameter_subspace_selects_disjoint_branched_subtrees_by_exact_path():
+    model = {
+        "branches": (
+            {
+                "body": jnp.ones((3, 2)),
+                "head": {"weight": jnp.ones((2, 3)), "bias": jnp.zeros(2)},
+            },
+            {
+                "body": jnp.ones((4, 2)),
+                "head": {
+                    "weight": jnp.ones((2, 4)),
+                    "bias": jnp.zeros(2),
+                    "scale": jnp.ones(2),
+                },
+            },
+        ),
+        "head_aux": jnp.ones(1),
+    }
+    subspace = phx.uq.ParameterSubspace.from_subtree_paths(
+        model,
+        [
+            "['branches'][0]['head']",
+            "['branches'][1]['head']",
+        ],
+    )
+
+    assert subspace.leaf_paths == (
+        "['branches'][0]['head']['bias']",
+        "['branches'][0]['head']['weight']",
+        "['branches'][1]['head']['bias']",
+        "['branches'][1]['head']['scale']",
+        "['branches'][1]['head']['weight']",
+    )
+    assert subspace.total_dimension == 20
+    assert "['head_aux']" not in subspace.leaf_paths
+
+    with pytest.raises(ValueError, match="Unknown parameter subtree paths"):
+        phx.uq.ParameterSubspace.from_subtree_paths(
+            model,
+            ["['branches'][0]['hea']"],
+        )
+    with pytest.raises(ValueError, match="disjoint"):
+        phx.uq.ParameterSubspace.from_subtree_paths(
+            model,
+            ["['branches'][0]", "['branches'][0]['head']"],
+        )
+    with pytest.raises(ValueError, match="distinct, non-empty"):
+        phx.uq.ParameterSubspace.from_subtree_paths(model, [])

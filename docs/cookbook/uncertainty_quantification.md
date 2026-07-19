@@ -233,6 +233,13 @@ or `ParameterSubspace.last_layer`, then choose `curvature="diagonal"`,
 `"lanczos"`, or `"lobpcg"`. Keep NUTS as the reference whenever the selected
 dimension permits.
 
+`last_layer(...)` means the globally final array leaves, not the final layer of
+every branch. For `SeparableMLP` and other branched models, pass each final module
+path to `ParameterSubspace.from_subtree_paths(...)`; this includes all arrays in
+those modules and avoids accidentally selecting only the last coordinate factor.
+See the posterior-contract section of the UQ guide for the complete separable
+selection pattern and its nonlinear joint-posterior interpretation.
+
 ## 8. Use Pathfinder locally and tempered SMC for demonstrated multimodality
 
 Pathfinder is a fast local approximation selected along an L-BFGS path:
