@@ -134,6 +134,7 @@ model to each valid timestep, masks padded entries, pools over time, then applie
 a readout model.
 
 ```python
+import jax.numpy as jnp
 import jax.random as jr
 import phydrax as phx
 import jax.numpy as jnp
@@ -141,6 +142,21 @@ import jax.numpy as jnp
 series = jnp.ones((2, 3, 4))
 lengths = jnp.asarray([2, 3])
 static = jnp.ones((2, 2))
+domain = phx.domain.RaggedSeriesDatasetDomain(
+    series,
+    lengths,
+    static=static,
+    dt=0.1,
+)
+
+static = jnp.asarray([[1.0, 0.0], [2.0, 1.0]])
+series = jnp.asarray(
+    [
+        [[1.0, 2.0], [3.0, 4.0], [0.0, 0.0]],
+        [[5.0, 6.0], [7.0, 8.0], [9.0, 10.0]],
+    ]
+)
+lengths = jnp.asarray([2, 3])
 domain = phx.domain.RaggedSeriesDatasetDomain(
     series,
     lengths,

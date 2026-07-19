@@ -10,16 +10,16 @@ Phydrax is designed to make a single idea modular:
 > Define fields on labeled domains and minimize scalar **functionals** built from operators and
 > measures over domain components.
 
-A typical objective can be written as
+A training functional may combine three distinct kinds of scalar term:
 
 $$
-L[u] = \sum_i w_i\int_{\Omega_i}\rho_i(u(z))\,d\mu_i(z),
+\mathcal J[u] = \sum_i \ell_i[u] + \sum_j \mathcal F_j[u] + \sum_k r_k(\theta).
 $$
 
-where each $\Omega_i$ is a domain component (interior, boundary, initial slice, data subset, …),
-$\mu_i$ is the induced measure, and $\rho_i$ is a pointwise residual penalty (often a squared norm).
-The library is organized so each piece (domains, sampling, operators, constraints, solvers) cleanly
-corresponds to a part of this expression.
+Here $\ell_i$ are nonnegative residual/data constraint penalties, $\mathcal F_j$ are
+raw scalar functionals such as signed energies, and $r_k$ are model-level losses.
+Domain components and their induced measures provide the sampling and integration
+semantics for both constraints and raw integral objectives.
 
 ## The compositional contract
 
@@ -28,8 +28,10 @@ At a practical level, most workflows look like:
 1) choose a **domain** \(\Omega\) and a **component** \(\Omega_{\text{comp}}\subseteq\Omega\),  
 2) define one or more **fields** \(u_\theta:\Omega\to\mathbb{R}^m\) as `DomainFunction`s,  
 3) build **residual operators** \(r=\mathcal{N}(u_\theta,\dots)\) using `phydrax.operators`,  
-4) turn residuals into **constraint terms** \(\ell_i\) via sampling + reduction (mean/integral),  
-5) sum constraint terms and optional model losses into a **functional** and optimize with `FunctionalSolver`.
+4) turn residuals into **constraint terms** \(\ell_i\), or define signed
+   **objective terms** \(\mathcal F_j\) such as energies,
+5) sum constraints, raw objectives, and optional model losses into
+   \(\mathcal J\) and optimize with `FunctionalSolver`.
 
 Two design choices make this interoperable:
 
@@ -241,8 +243,10 @@ residuals and optional selected output components.
 
 ## Notation
 
-We use $x$ for spatial variables, $t$ for time, and $u(x, t)$ for fields. A typical
-objective aggregates constraints as $L = \sum_i w_i\,\ell_i$.
+We use $x$ for spatial variables, $t$ for time, $q$ for configuration, $v$ for
+velocity, and $p$ for canonical momentum. $\mathcal J$ denotes the full optimized
+functional, $\mathcal F$ a raw scalar objective, $L(q,v,t)$ a Lagrangian density,
+$\mathcal S$ an action, and $H(q,p,t)$ a Hamiltonian.
 
 ## By task: “what do I compose?”
 
@@ -264,7 +268,23 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   See [API → Constraints → Discrete](api/constraints/discrete.md) and [API → Constraints → Continuous](api/constraints/continuous.md).
 - **Uncertainty quantification**: use NUTS/HMC or Laplace for explicit posterior problems, ensembles for neural-model epistemic variation, Gaussian processes for model discrepancy, joint QMC for uncertain inputs, likelihoods/proper scores for observations, and conformal calibration for coverage.
   See [Guides → Uncertainty quantification](guides_uncertainty.md) and [API → Uncertainty quantification](api/uq/index.md).
-- **Cookbook recipes**: end-to-end patterns for Poisson, heat, inverse+data, and operator learning.
+- **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,
+  Poisson-bracket, or Hamilton–Jacobi operators on labeled state spaces.
+  See [Guides → Lagrangian and Hamiltonian mechanics](guides_mechanics.md).
+- **Quantum systems and dynamics**: construct composite states, local operators,
+  reduced densities, information measures, matrix commutators, and closed- or
+  open-system residuals. Complex residual penalties remain real and nonnegative.
+  See [Guides → Quantum operators and dynamics](guides_quantum.md),
+  [Cookbook → Composite systems and a Bell state](cookbook/quantum_composite.md), and
+  [Cookbook → Open-system amplitude damping](cookbook/quantum_open_system.md).
+- **Ritz/energy minimization**: use `IntegralFunctional` for the raw signed energy,
+  with essential boundary conditions enforced in the ansatz.
+  See [Cookbook → Mechanics and Deep Ritz](cookbook/mechanics.md).
+- **Stochastic path expectation**: use Euclidean bridge kernels for imaginary-time
+  propagation or Feynman–Kac diffusion paths for terminal PDE and reliability quantities.
+  See [Euclidean path integrals and Feynman–Kac expectations](guides_path_integrals.md).
+- **Cookbook recipes**: end-to-end patterns for Poisson, heat, inverse+data,
+  operator learning, mechanics, and quantum dynamics.
   Start at [Cookbook → Overview](cookbook/index.md).
 
 ## Where to go next
@@ -273,6 +293,9 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - [Domains and sampling](guides_domain.md)
 - [Differential operators](guides_differential.md)
 - [Integrals and measures](guides_integrals.md)
+- [Euclidean path integrals and Feynman–Kac expectations](guides_path_integrals.md)
+- [Lagrangian and Hamiltonian mechanics](guides_mechanics.md)
+- [Quantum operators and dynamics](guides_quantum.md)
 - [Constraints and objectives](guides_constraints.md)
 - [Uncertainty quantification](guides_uncertainty.md)
 - [Solvers and training](guides_solver.md)
@@ -280,6 +303,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - `phydrax.domain` for geometry, time, and sampling.
 - `phydrax.data_utils` for CSV loading, array scaling, and case-index splits.
 - `phydrax.constraints` for loss terms and enforced constraints.
+- `phydrax.objectives` for raw signed scalar objectives.
 - `phydrax.operators` for PDE operators.
 - `phydrax.nn` for models and wrappers.
 - `phydrax.solver` for training and evaluation loops.

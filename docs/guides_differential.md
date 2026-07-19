@@ -99,6 +99,21 @@ $$
 \end{pmatrix}.
 $$
 
+## Vector-field Lie bracket
+
+For vector fields $X,Y:\Omega_x\to\mathbb R^d$,
+`phydrax.operators.lie_bracket(X, Y, var="x")` constructs
+
+$$
+[X,Y]=D_XY-D_YX.
+$$
+
+Both outputs must be vectors whose size equals the dimension of the selected geometry
+variable. This is the geometric Lie bracket of vector fields, not the matrix
+`commutator` used for quantum operators. See
+[Quantum operators and dynamics](guides_quantum.md) for the distinction among
+vector-field, matrix, and canonical Poisson brackets.
+
 ## Backends: autodiff, finite differences, spectral/basis
 
 Many differential operators accept a `backend` keyword:

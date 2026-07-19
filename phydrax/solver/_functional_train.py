@@ -21,6 +21,7 @@ import optax
 from jax import core as jcore
 
 from .._frozendict import frozendict
+from .._objective import AbstractSamplingObjectiveTerm
 from .._trainable import combine_trainable, partition_trainable
 from ..constraints._adaptive_control import ControlledCollocationPolicy
 from ..constraints._functional import FunctionalConstraint
@@ -107,6 +108,10 @@ def _constraint_tag(index: int, name: str, /) -> str:
 
 def _model_loss_tag(index: int, name: str, /) -> str:
     return f"model_losses/{index:03d}_{_clean_tag_part(name)}"
+
+
+def _objective_tag(index: int, name: str, /) -> str:
+    return f"objectives/{index:03d}_{_clean_tag_part(name)}"
 
 
 def _metric_suffix(metrics: dict[str, Any], /) -> str:
@@ -302,6 +307,20 @@ def _write_model_loss_tensorboard_scalars(
         writer.scalar(f"train/{_model_loss_tag(i, name)}/loss", val, step)
 
 
+def _write_objective_tensorboard_scalars(
+    writer: _TensorBoardLogger,
+    *,
+    step: int,
+    objective_names: tuple[str, ...],
+    terms: Any,
+) -> None:
+    terms_arr = jnp.asarray(terms, dtype=float)
+    for i, (name, val) in enumerate(
+        zip(objective_names, list(map(float, terms_arr)), strict=True)
+    ):
+        writer.scalar(f"train/{_objective_tag(i, name)}/value", val, step)
+
+
 def _log_tensorboard_scalars(
     writer: _TensorBoardLogger,
     *,
@@ -312,6 +331,8 @@ def _log_tensorboard_scalars(
     train_constraint_names: tuple[str, ...],
     train_terms: Any,
     train_data_metrics: tuple[dict[str, Any], ...],
+    train_objective_names: tuple[str, ...],
+    train_objective_terms: Any,
     train_model_loss_names: tuple[str, ...],
     train_model_loss_terms: Any,
     eval_constraint_names: tuple[str, ...],
@@ -334,6 +355,12 @@ def _log_tensorboard_scalars(
         terms=train_terms,
         data_metrics=train_data_metrics,
         write_legacy=True,
+    )
+    _write_objective_tensorboard_scalars(
+        writer,
+        step=step,
+        objective_names=train_objective_names,
+        terms=train_objective_terms,
     )
     _write_model_loss_tensorboard_scalars(
         writer,
@@ -588,6 +615,7 @@ def solve(
             raise ValueError("tensorboard_flush_every must be positive.")
         log_constraints_ = bool(log_constraints)
         constraint_names = tuple(_constraint_label(c) for c in self.constraints)
+        objective_names = tuple(_constraint_label(term) for term in self.objectives)
         model_loss_names = function_model_loss_labels(self.functions)
         eval_constraint_names = tuple(_constraint_label(c) for c in self.eval_constraints)
         constraint_sample_size = _train_constraint_sample_size(
@@ -610,21 +638,33 @@ def solve(
                 enforced = functions
             else:
                 enforced = solver.constraint_pipelines.apply(functions)
-            keys = jr.split(key, len(constraints))
+            num_constraints = len(constraints)
+            num_objectives = len(solver.objectives)
+            num_terms = num_constraints + num_objectives
+            keys = jr.split(key, num_terms)
+            constraint_keys = keys[:num_constraints]
+            objective_keys = keys[num_constraints:]
             total = jnp.array(0.0, dtype=float)
             scale = jnp.asarray(constraint_scale, dtype=float).reshape(())
             with derivative_runtime_context():
                 if not log_constraints_:
                     for c, population, k in zip(
-                        constraints, collocation_, keys, strict=True
+                        constraints, collocation_, constraint_keys, strict=True
                     ):
                         term = _adaptive_constraint_loss(
                             c, population, enforced, key=k, iter_=iter_
                         )
                         total = total + scale * jnp.asarray(term, dtype=float).reshape(())
+                    for objective, objective_key in zip(
+                        solver.objectives, objective_keys, strict=True
+                    ):
+                        term = objective.loss(
+                            enforced, key=objective_key, iter_=iter_
+                        )
+                        total = total + jnp.asarray(term, dtype=float).reshape(())
                     for term in function_model_loss_values(
                         functions,
-                        key=jr.fold_in(key, len(constraints)),
+                        key=jr.fold_in(key, num_terms),
                         iter_=iter_,
                     ):
                         total = total + jnp.asarray(term, dtype=float).reshape(())
@@ -632,7 +672,7 @@ def solve(
 
                 terms: list[jax.Array] = []
                 for c, population, k in zip(
-                    constraints, collocation_, keys, strict=True
+                    constraints, collocation_, constraint_keys, strict=True
                 ):
                     term = _adaptive_constraint_loss(
                         c, population, enforced, key=k, iter_=iter_
@@ -641,9 +681,18 @@ def solve(
                     scaled_term = scale * raw_term
                     terms.append(scaled_term)
                     total = total + scaled_term
+                for objective, objective_key in zip(
+                    solver.objectives, objective_keys, strict=True
+                ):
+                    term = jnp.asarray(
+                        objective.loss(enforced, key=objective_key, iter_=iter_),
+                        dtype=float,
+                    ).reshape(())
+                    terms.append(term)
+                    total = total + term
                 for term in function_model_loss_values(
                     functions,
-                    key=jr.fold_in(key, len(constraints)),
+                    key=jr.fold_in(key, num_terms),
                     iter_=iter_,
                 ):
                     term = jnp.asarray(term, dtype=float).reshape(())
@@ -864,7 +913,13 @@ def solve(
                     active_constraint_indices=active_constraint_indices,
                     num_constraints=len(constraint_names),
                 )
-                train_model_loss_terms = terms_arr[active_constraint_count:]
+                objective_count = len(objective_names)
+                train_objective_terms = terms_arr[
+                    active_constraint_count : active_constraint_count + objective_count
+                ]
+                train_model_loss_terms = terms_arr[
+                    active_constraint_count + objective_count :
+                ]
                 if keep_best:
                     loss_f = float(loss_val)
                     if loss_f < best_loss:
@@ -952,6 +1007,17 @@ def solve(
                             )
                         for i, (name, val) in enumerate(
                             zip(
+                                objective_names,
+                                list(map(float, train_objective_terms)),
+                                strict=True,
+                            )
+                        ):
+                            print(
+                                f"  [objective {i}] {name}: {val:.6e}",
+                                file=out_file,
+                            )
+                        for i, (name, val) in enumerate(
+                            zip(
                                 model_loss_names,
                                 list(map(float, train_model_loss_terms)),
                                 strict=True,
@@ -986,6 +1052,8 @@ def solve(
                         train_constraint_names=constraint_names,
                         train_terms=train_constraint_terms,
                         train_data_metrics=train_data_metrics,
+                        train_objective_names=objective_names,
+                        train_objective_terms=train_objective_terms,
                         train_model_loss_names=model_loss_names,
                         train_model_loss_terms=train_model_loss_terms,
                         eval_constraint_names=eval_constraint_names,
@@ -1071,22 +1139,36 @@ def _solve_evosax(
         raise ValueError("tensorboard_flush_every must be positive.")
     log_constraints_ = bool(log_constraints)
     constraint_names = tuple(_constraint_label(c) for c in self.constraints)
+    objective_names = tuple(_constraint_label(term) for term in self.objectives)
     model_loss_names = function_model_loss_labels(self.functions)
     eval_constraint_names = tuple(_constraint_label(c) for c in self.eval_constraints)
 
     algo_params = algo.default_params
 
-    def _loss_for_params(p, non_trainable_, solver, key, iter_, batches):
+    def _loss_for_params(
+        p,
+        non_trainable_,
+        solver,
+        key,
+        iter_,
+        batches,
+        objective_batches,
+    ):
         functions = combine_trainable(p, non_trainable_)
         if solver.constraint_pipelines is None:
             enforced = functions
         else:
             enforced = solver.constraint_pipelines.apply(functions)
-        keys = jr.split(key, len(solver.constraints))
+        num_constraints = len(solver.constraints)
+        num_objectives = len(solver.objectives)
+        num_terms = num_constraints + num_objectives
+        keys = jr.split(key, num_terms)
+        constraint_keys = keys[:num_constraints]
+        objective_keys = keys[num_constraints:]
         total = jnp.array(0.0, dtype=float)
         with derivative_runtime_context():
             for c, k, batch_info in zip(
-                solver.constraints, keys, batches, strict=True
+                solver.constraints, constraint_keys, batches, strict=True
             ):
                 if batch_info is None:
                     total = total + c.loss(enforced, key=k, iter_=iter_)
@@ -1104,25 +1186,56 @@ def _solve_evosax(
                             batch=batch,
                             batch_weight=batch_weight,
                         )
+            for objective, objective_key, objective_batch in zip(
+                solver.objectives,
+                objective_keys,
+                objective_batches,
+                strict=True,
+            ):
+                if objective_batch is None:
+                    term = objective.loss(
+                        enforced, key=objective_key, iter_=iter_
+                    )
+                else:
+                    term = objective.loss(
+                        enforced,
+                        key=objective_key,
+                        iter_=iter_,
+                        batch=objective_batch,
+                    )
+                total = total + jnp.asarray(term, dtype=float).reshape(())
             for term in function_model_loss_values(
                 functions,
-                key=jr.fold_in(key, len(solver.constraints)),
+                key=jr.fold_in(key, num_terms),
                 iter_=iter_,
             ):
                 total = total + jnp.asarray(term, dtype=float).reshape(())
         return total
 
-    def _terms_for_params(p, non_trainable_, solver, key, iter_, batches):
+    def _terms_for_params(
+        p,
+        non_trainable_,
+        solver,
+        key,
+        iter_,
+        batches,
+        objective_batches,
+    ):
         functions = combine_trainable(p, non_trainable_)
         if solver.constraint_pipelines is None:
             enforced = functions
         else:
             enforced = solver.constraint_pipelines.apply(functions)
-        keys = jr.split(key, len(solver.constraints))
+        num_constraints = len(solver.constraints)
+        num_objectives = len(solver.objectives)
+        num_terms = num_constraints + num_objectives
+        keys = jr.split(key, num_terms)
+        constraint_keys = keys[:num_constraints]
+        objective_keys = keys[num_constraints:]
         terms: list[jax.Array] = []
         with derivative_runtime_context():
             for c, k, batch_info in zip(
-                solver.constraints, keys, batches, strict=True
+                solver.constraints, constraint_keys, batches, strict=True
             ):
                 if batch_info is None:
                     term = c.loss(enforced, key=k, iter_=iter_)
@@ -1139,9 +1252,27 @@ def _solve_evosax(
                             batch_weight=batch_weight,
                         )
                 terms.append(jnp.asarray(term, dtype=float).reshape(()))
+            for objective, objective_key, objective_batch in zip(
+                solver.objectives,
+                objective_keys,
+                objective_batches,
+                strict=True,
+            ):
+                if objective_batch is None:
+                    term = objective.loss(
+                        enforced, key=objective_key, iter_=iter_
+                    )
+                else:
+                    term = objective.loss(
+                        enforced,
+                        key=objective_key,
+                        iter_=iter_,
+                        batch=objective_batch,
+                    )
+                terms.append(jnp.asarray(term, dtype=float).reshape(()))
             for term in function_model_loss_values(
                 functions,
-                key=jr.fold_in(key, len(solver.constraints)),
+                key=jr.fold_in(key, num_terms),
                 iter_=iter_,
             ):
                 terms.append(jnp.asarray(term, dtype=float).reshape(()))
@@ -1285,6 +1416,17 @@ def _solve_evosax(
                     else:
                         batches.append(None)
                 batches_tuple = tuple(batches)
+                objective_batch_keys = jr.split(
+                    jr.fold_in(batch_key, 1), len(self.objectives)
+                )
+                objective_batches_tuple = tuple(
+                    objective.sample(key=objective_key)
+                    if isinstance(objective, AbstractSamplingObjectiveTerm)
+                    else None
+                    for objective, objective_key in zip(
+                        self.objectives, objective_batch_keys, strict=True
+                    )
+                )
 
                 eval_key_shared = jr.fold_in(eval_key, 1)
                 losses = jax.vmap(
@@ -1295,6 +1437,7 @@ def _solve_evosax(
                         eval_key_shared,
                         iter_,
                         batches_tuple,
+                        objective_batches_tuple,
                     )
                 )(population)
                 evo_state, _ = algo.tell(
@@ -1308,6 +1451,7 @@ def _solve_evosax(
                     eval_key_shared,
                     iter_,
                     batches_tuple,
+                    objective_batches_tuple,
                 )
                 if profile_adaptive:
                     jax.block_until_ready((evo_state, cand_params, cand_loss))
@@ -1348,7 +1492,13 @@ def _solve_evosax(
                 )
                 terms_arr = jnp.zeros((0,), dtype=float)
                 train_constraint_terms = terms_arr[: len(constraint_names)]
-                train_model_loss_terms = terms_arr[len(constraint_names) :]
+                objective_count = len(objective_names)
+                train_objective_terms = terms_arr[
+                    len(constraint_names) : len(constraint_names) + objective_count
+                ]
+                train_model_loss_terms = terms_arr[
+                    len(constraint_names) + objective_count :
+                ]
                 if log_constraints_ and (console_step or tensorboard_step):
                     terms_arr = jnp.asarray(
                         terms_fn(
@@ -1358,11 +1508,17 @@ def _solve_evosax(
                             eval_key_shared,
                             iter_,
                             batches_tuple,
+                            objective_batches_tuple,
                         ),
                         dtype=float,
                     )
                     train_constraint_terms = terms_arr[: len(constraint_names)]
-                    train_model_loss_terms = terms_arr[len(constraint_names) :]
+                    train_objective_terms = terms_arr[
+                        len(constraint_names) : len(constraint_names) + objective_count
+                    ]
+                    train_model_loss_terms = terms_arr[
+                        len(constraint_names) + objective_count :
+                    ]
                     train_data_metrics = _data_metrics_for_constraints(
                         cand_params,
                         non_trainable,
@@ -1412,6 +1568,17 @@ def _solve_evosax(
                             )
                         for i, (name, val) in enumerate(
                             zip(
+                                objective_names,
+                                list(map(float, train_objective_terms)),
+                                strict=True,
+                            )
+                        ):
+                            print(
+                                f"  [objective {i}] {name}: {val:.6e}",
+                                file=out_file,
+                            )
+                        for i, (name, val) in enumerate(
+                            zip(
                                 model_loss_names,
                                 list(map(float, train_model_loss_terms)),
                                 strict=True,
@@ -1446,6 +1613,8 @@ def _solve_evosax(
                         train_constraint_names=constraint_names,
                         train_terms=train_constraint_terms,
                         train_data_metrics=train_data_metrics,
+                        train_objective_names=objective_names,
+                        train_objective_terms=train_objective_terms,
                         train_model_loss_names=model_loss_names,
                         train_model_loss_terms=train_model_loss_terms,
                         eval_constraint_names=eval_constraint_names,
