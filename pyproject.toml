@@ -46,7 +46,7 @@ dependencies = [
     "setuptools<81",
     "tensorboard>=2.20.0",
     "tinygp>=0.3.1,<0.4",
-    "trimesh[easy]>=4.11.1",
+    "trimesh>=4.11.1",
 ]
 
 [project.optional-dependencies]
