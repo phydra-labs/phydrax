@@ -77,6 +77,22 @@ from ._metrics import (
     pinball_loss,
     student_t_crps,
 )
+from ._operator import (
+    operator_input_predictive,
+    operator_prediction_field,
+    operator_predictive_from_samples,
+    OperatorPredictionInterval,
+    OperatorPredictiveField,
+    sample_operator_predictive,
+)
+from ._operator_conformal import OperatorFunctionalConformal
+from ._operator_likelihood import FixedOperatorObservationLikelihood
+from ._operator_metrics import (
+    operator_energy_score,
+    operator_ensemble_crps,
+    operator_interval_coverage,
+    operator_interval_width,
+)
 from ._pathfinder import fit_pathfinder, PathfinderResult
 from ._posterior import (
     AbstractBijector,
@@ -163,6 +179,18 @@ __all__ = [
     "PredictiveField",
     "SampleAxis",
     "UncertaintySource",
+    "OperatorFunctionalConformal",
+    "operator_energy_score",
+    "operator_ensemble_crps",
+    "operator_interval_coverage",
+    "operator_interval_width",
+    "FixedOperatorObservationLikelihood",
+    "operator_input_predictive",
+    "operator_prediction_field",
+    "OperatorPredictionInterval",
+    "OperatorPredictiveField",
+    "operator_predictive_from_samples",
+    "sample_operator_predictive",
     "AbstractBijector",
     "ExpBijector",
     "IdentityBijector",

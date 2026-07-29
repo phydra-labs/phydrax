@@ -174,9 +174,7 @@ class _AbstractFourierFeatureEmbeddings(_AbstractBaseModel):
 
         self.in_size = in_size_c
         self.out_size = (
-            2 * int(matrix.shape[0])
-            + len(passthrough_indices)
-            + int(include_constant)
+            2 * int(matrix.shape[0]) + len(passthrough_indices) + int(include_constant)
         )
         self.embedding_matrix = matrix
         self.phases = _as_phases(phases, int(matrix.shape[0]))
@@ -276,9 +274,7 @@ class ExplicitFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
         in_dim = _get_size(_canonical_size(in_size))
         coordinate = int(coordinate)
         if coordinate < 0 or coordinate >= in_dim:
-            raise ValueError(
-                f"`coordinate` must lie in [0, {in_dim}), got {coordinate}."
-            )
+            raise ValueError(f"`coordinate` must lie in [0, {in_dim}), got {coordinate}.")
         period = float(period)
         if period <= 0.0:
             raise ValueError(f"`period` must be positive, got {period}.")
@@ -318,7 +314,7 @@ class MultiscaleFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
         self,
         *,
         in_size: SizeLike,
-        scales: ArrayLike = (1.0, 2.0, 4.0, 8.0),
+        scales: ArrayLike | Sequence[float] = (1.0, 2.0, 4.0, 8.0),
         base_wavevectors: ArrayLike | None = None,
         phases: ArrayLike | None = None,
         passthrough: Sequence[int] = (),
@@ -358,9 +354,9 @@ class MultiscaleFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
         )
         if bool(jnp.any(jnp.linalg.norm(base, axis=1) == 0.0)):
             raise ValueError("`base_wavevectors` must not contain a zero wavevector.")
-        wavevectors = (
-            scale_values[:, None, None] * base[None, :, :]
-        ).reshape((-1, in_dim))
+        wavevectors = (scale_values[:, None, None] * base[None, :, :]).reshape(
+            (-1, in_dim)
+        )
 
         self.scales = scale_values
         self.base_wavevectors = base

@@ -112,7 +112,7 @@ def _cotangent_weight_map(
             ((i, j), _cotangent_at_vertex(vk, vi, vj)),
         )
         for edge, cotangent in contributions:
-            key = tuple(sorted(edge))
+            key = (min(edge), max(edge))
             weights[key] = weights.get(key, 0.0) + 0.5 * cotangent
     return weights
 

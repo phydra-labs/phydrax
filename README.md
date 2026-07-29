@@ -139,6 +139,13 @@ Mathematical guides include
 [Lagrangian and Hamiltonian mechanics](docs/guides_mechanics.md) and
 [quantum operators and dynamics](docs/guides_quantum.md).
 
+Neural-operator support includes canonical source/query batches, DeepONet,
+N-dimensional FNO variants including the experimental-tier dealiased HOFNO, graph
+and geometry-informed operators, and transformer operators. See the
+[operator-learning cookbook](docs/cookbook/operator_learning.md) for execution
+contracts and audited architecture comparisons, and the
+[architecture API](docs/api/nn/architectures.md) for constructor details.
+
 ## Why JAX?
 
 Partial Differential Equations and their variants are most naturally expressed in the language of operators, which can be thought of as maps between function spaces. While functions map points to values (think `Array`s), operators map entire functions to new functions.

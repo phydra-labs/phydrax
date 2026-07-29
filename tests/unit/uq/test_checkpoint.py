@@ -35,7 +35,7 @@ def _problem(observation=0.5):
     )
 
 
-def test_checkpoint_archive_is_atomic_versioned_and_pickle_free(tmp_path):
+def test_checkpoint_archive_is_atomic_current_and_pickle_free(tmp_path):
     problem = _problem()
     compatibility = checkpoint_compatibility(
         problem,
@@ -59,7 +59,7 @@ def test_checkpoint_archive_is_atomic_versioned_and_pickle_free(tmp_path):
     with zipfile.ZipFile(destination) as archive:
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["format"] == "phydrax-uq-checkpoint"
-        assert manifest["schema_version"] == 1
+        assert "schema_version" not in manifest
         assert all(name.endswith(".npy") for name in archive.namelist()[1:])
 
     state, loaded_arrays = read_checkpoint_archive(

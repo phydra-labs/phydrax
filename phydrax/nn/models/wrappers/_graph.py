@@ -130,7 +130,9 @@ def _with_mapping_key(payload: Any, key: str, value: Any, /) -> dict[str, Any]:
 def _select_mapping_key(payload: Any, key: str | None, label: str, /) -> Any:
     if key is None:
         if isinstance(payload, Mapping):
-            raise ValueError(f"GraphModel output_key is required for mapping-valued {label}.")
+            raise ValueError(
+                f"GraphModel output_key is required for mapping-valued {label}."
+            )
         return payload
     if not isinstance(payload, Mapping):
         raise TypeError(f"GraphModel output_key requires mapping-valued {label}.")
@@ -234,15 +236,17 @@ def _remap_graph_axis_tree(
     num_graphs: int,
 ) -> Any:
     return jax.tree_util.tree_map(
-        lambda x: _remap_graph_axis_field(
-            x,
-            axis=axis,
-            old_graph_ids=old_graph_ids,
-            new_graph_ids=new_graph_ids,
-            num_graphs=num_graphs,
-        )
-        if isinstance(x, cx.Field)
-        else x,
+        lambda x: (
+            _remap_graph_axis_field(
+                x,
+                axis=axis,
+                old_graph_ids=old_graph_ids,
+                new_graph_ids=new_graph_ids,
+                num_graphs=num_graphs,
+            )
+            if isinstance(x, cx.Field)
+            else x
+        ),
         tree,
         is_leaf=lambda x: isinstance(x, cx.Field),
     )
@@ -264,7 +268,9 @@ def _full_entity_batch(batch: GraphBatch, kind: GraphComponentKind, /) -> GraphB
             new_graph_ids=new_graph_ids,
             num_graphs=int(batch.graph.n_node.shape[0]),
         )
-    points[batch.graph_label] = _to_axis_fields(_payload_for_kind(batch.graph, kind), axis)
+    points[batch.graph_label] = _to_axis_fields(
+        _payload_for_kind(batch.graph, kind), axis
+    )
     points[GRAPH_ENTITY_INDEX_KEY] = cx.Field(
         jnp.arange(n, dtype=jnp.int32), dims=(axis,)
     )
@@ -404,12 +410,14 @@ class GraphModel(StrictModule, BatchAwareCallable):
 
     def __call_batch__(
         self,
-        batch: GraphBatch,
+        batch: Any,
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.Field:
+        if not isinstance(batch, GraphBatch):
+            raise TypeError("GraphModel requires GraphBatch evaluation.")
         graph = batch.graph
         graph = self._install_input(
             graph,
@@ -525,12 +533,14 @@ class GraphRolloutModel(StrictModule, BatchAwareCallable):
 
     def __call_batch__(
         self,
-        batch: GraphBatch,
+        batch: Any,
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.Field:
+        if not isinstance(batch, GraphBatch):
+            raise TypeError("GraphRolloutModel requires GraphBatch evaluation.")
         graph = batch.graph
         graph = _install_graph_input(
             graph,
@@ -579,9 +589,7 @@ class GraphRolloutModel(StrictModule, BatchAwareCallable):
         )
         payload = _select_mapping_key(payload, self.output_key, self.feature)
         if payload is None:
-            raise ValueError(
-                f"GraphRolloutModel rollout has no {self.feature} payload."
-            )
+            raise ValueError(f"GraphRolloutModel rollout has no {self.feature} payload.")
 
         arr = jnp.asarray(payload)
         if arr.ndim < 2:

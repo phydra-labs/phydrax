@@ -14,7 +14,7 @@ from phydrax.domain import (
     ProductStructure,
     Square,
 )
-from phydrax.nn.models import DeepONet, FNO1d, FNO2d, MLP, SeparableMLP
+from phydrax.nn.models import DeepONet, FNO, MLP, SeparableMLP
 from phydrax.operators.differential import laplacian
 
 
@@ -64,19 +64,19 @@ def test_deeponet_domain_model_coord_separable_output_shape(scan):
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_fno1d_domain_model_coord_separable_output_shape_and_basis_laplacian(scan):
+def test_fno_one_dimensional_domain_model_output_shape_and_basis_laplacian(scan):
     n = 16
     data = jnp.ones((3, n), dtype=float)
     data_dom = DatasetDomain(data)
     geom = Interval1d(0.0, 1.0)
     domain = data_dom @ geom
 
-    model = FNO1d(
+    model = FNO(
         in_channels="scalar",
         out_channels="scalar",
         width=8,
         depth=2,
-        modes=6,
+        n_modes=(6,),
         scan=scan,
         key=jr.key(0),
     )
@@ -103,15 +103,15 @@ def test_fno1d_domain_model_coord_separable_output_shape_and_basis_laplacian(sca
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_fno1d_rejects_point_like_x_input(scan):
-    model = FNO1d(width=8, depth=2, modes=6, scan=scan, key=jr.key(0))
+def test_fno_one_dimensional_rejects_point_like_input(scan):
+    model = FNO(width=8, depth=2, n_modes=(6,), scan=scan, key=jr.key(0))
     data = jnp.ones((8,), dtype=float)
     with pytest.raises(ValueError, match="coord-separable grid evaluation"):
         _ = model((data, jnp.asarray([0.5], dtype=float)))
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_fno2d_domain_model_coord_separable_output_shape_and_basis_laplacian(scan):
+def test_fno_two_dimensional_domain_model_output_shape_and_basis_laplacian(scan):
     nx = 12
     ny = 10
     data = jnp.ones((3, nx, ny), dtype=float)
@@ -119,12 +119,12 @@ def test_fno2d_domain_model_coord_separable_output_shape_and_basis_laplacian(sca
     geom = Square(center=(0.0, 0.0), side=1.0)
     domain = data_dom @ geom
 
-    model = FNO2d(
+    model = FNO(
         in_channels="scalar",
         out_channels="scalar",
         width=8,
         depth=2,
-        modes=6,
+        n_modes=(6, 6),
         scan=scan,
         key=jr.key(0),
     )
@@ -151,8 +151,8 @@ def test_fno2d_domain_model_coord_separable_output_shape_and_basis_laplacian(sca
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
-def test_fno2d_rejects_point_like_xy_input(scan):
-    model = FNO2d(width=8, depth=2, modes=6, scan=scan, key=jr.key(0))
+def test_fno_two_dimensional_rejects_point_like_input(scan):
+    model = FNO(width=8, depth=2, n_modes=(6, 6), scan=scan, key=jr.key(0))
     data = jnp.ones((8, 8), dtype=float)
     with pytest.raises(ValueError, match="coord-separable grid evaluation"):
         _ = model(

@@ -17,6 +17,7 @@ from .._doc import DOC_KEY0
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..domain._function import BatchAwareCallable, DomainFunction
+from ..domain._irregular_trajectory_dataset import IrregularTrajectoryDatasetDomain
 from ..domain._structure import CoordSeparableBatch, PointsBatch
 from ..domain._trajectory_dataset import (
     TRAJECTORY_CASE_INDEX_KEY,
@@ -54,7 +55,11 @@ def _broadcast_like(values: Array, reference: Array, /) -> Array:
     return arr.reshape((int(arr.shape[0]),) + (1,) * (ref.ndim - 1))
 
 
-def _validate_values(domain: TrajectoryDatasetDomain, values: ArrayLike, /) -> Array:
+def _validate_values(
+    domain: TrajectoryDatasetDomain | IrregularTrajectoryDatasetDomain,
+    values: ArrayLike,
+    /,
+) -> Array:
     arr = jnp.asarray(values, dtype=float)
     if arr.ndim < 2:
         raise ValueError("values must have shape (N, T, ...) with a time axis.")

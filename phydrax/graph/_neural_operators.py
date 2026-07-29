@@ -209,6 +209,23 @@ def _node_volume(
     return out
 
 
+def _node_measure(
+    graph: GraphIR,
+    measure_key: str | None,
+    measure: Any | None,
+    /,
+    *,
+    n_node: int,
+) -> jnp.ndarray:
+    out = _node_volume(
+        graph,
+        measure_key,
+        measure,
+        n_node=n_node,
+    )
+    return jnp.maximum(out, 0.0)
+
+
 def _broadcast_node_volume(volume: jnp.ndarray, values: jnp.ndarray, /) -> jnp.ndarray:
     while volume.ndim < values.ndim:
         volume = jnp.expand_dims(volume, axis=-1)
@@ -309,8 +326,10 @@ class GraphKernelIntegral(eqx.Module):
     kernel_fn: Callable | None
     source_fn: Callable | None
     update_node_fn: Callable | None
+    source_measure: Any
     aggregate_fn: Callable = eqx.field(static=True)
     normalize: bool = eqx.field(static=True)
+    source_measure_key: str | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -319,12 +338,16 @@ class GraphKernelIntegral(eqx.Module):
         *,
         source_fn: Callable | None = None,
         update_node_fn: Callable | None = None,
+        source_measure_key: str | None = None,
+        source_measure: Any | None = None,
         aggregate_fn: Callable = segment_sum,
         normalize: bool = False,
     ):
         self.kernel_fn = kernel_fn
         self.source_fn = source_fn
         self.update_node_fn = update_node_fn
+        self.source_measure_key = source_measure_key
+        self.source_measure = source_measure
         self.aggregate_fn = aggregate_fn
         self.normalize = bool(normalize)
 
@@ -343,25 +366,37 @@ class GraphKernelIntegral(eqx.Module):
         num_edges = _num_edges(graph)
         glob_edge = _repeat_globals_for_entities(graph.globals, graph.n_edge, num_edges)
 
+        num_nodes = _num_nodes(graph, nodes)
+        edge_measure = None
+        if self.source_measure_key is not None or self.source_measure is not None:
+            node_measure = _node_measure(
+                graph,
+                self.source_measure_key,
+                self.source_measure,
+                n_node=num_nodes,
+            )
+            edge_measure = node_measure[graph.senders]
         messages = sent_source
         if self.kernel_fn is not None:
             weight = self.kernel_fn(graph.edges, sent_nodes, recv_nodes, glob_edge)
             messages = _multiply_tree(messages, weight)
+        if edge_measure is not None:
+            messages = _multiply_tree(messages, edge_measure)
 
         messages = _mask_tree(messages, graph.edge_mask)
-        num_nodes = _num_nodes(graph, nodes)
         aggregated = jtu.tree_map(
             lambda x: self.aggregate_fn(x, graph.receivers, num_nodes),
             messages,
         )
 
         if self.normalize:
-            edge_weight = (
-                jnp.ones((num_edges,), dtype=float)
-                if graph.edge_mask is None
-                else graph.edge_mask.astype(float)
-            )
-            degree = segment_sum(edge_weight, graph.receivers, num_nodes)
+            if edge_measure is None:
+                normalizer = jnp.ones((num_edges,), dtype=float)
+            else:
+                normalizer = edge_measure
+            if graph.edge_mask is not None:
+                normalizer = normalizer * graph.edge_mask.astype(normalizer.dtype)
+            degree = segment_sum(normalizer, graph.receivers, num_nodes)
             scale = jnp.where(degree > 0, 1.0 / degree, 0.0)
             aggregated = _multiply_tree(aggregated, scale)
 
@@ -438,11 +473,13 @@ class GraphNeuralOperator(eqx.Module):
     kernel_fn: Callable | None
     source_fn: Callable | None
     update_node_fn: Callable | None
+    source_measure: Any
     aggregate_fn: Callable = eqx.field(static=True)
     input_key: str | None = eqx.field(static=True)
     output_key: str | None = eqx.field(static=True)
     edge_weight_key: str | None = eqx.field(static=True)
     normalize: bool = eqx.field(static=True)
+    source_measure_key: str | None = eqx.field(static=True)
     node_type_key: str = eqx.field(static=True)
     target_node_type: int | None = eqx.field(static=True)
 
@@ -457,6 +494,8 @@ class GraphNeuralOperator(eqx.Module):
         input_key: str | None = None,
         output_key: str | None = None,
         edge_weight_key: str | None = "kernel_weight",
+        source_measure_key: str | None = None,
+        source_measure: Any | None = None,
         normalize: bool = True,
         node_type_key: str = "type",
         target_node_type: int | None = None,
@@ -468,6 +507,8 @@ class GraphNeuralOperator(eqx.Module):
         self.input_key = input_key
         self.output_key = output_key
         self.edge_weight_key = edge_weight_key
+        self.source_measure_key = source_measure_key
+        self.source_measure = source_measure
         self.normalize = bool(normalize)
         self.node_type_key = str(node_type_key)
         self.target_node_type = None if target_node_type is None else int(target_node_type)
@@ -490,21 +531,33 @@ class GraphNeuralOperator(eqx.Module):
             kernel = self.kernel_fn(graph.edges, sent_nodes, recv_nodes, glob_edge)
             messages = _multiply_tree(messages, kernel)
 
+        num_nodes = _num_nodes(graph, nodes)
+        edge_measure = None
+        if self.source_measure_key is not None or self.source_measure is not None:
+            node_measure = _node_measure(
+                graph,
+                self.source_measure_key,
+                self.source_measure,
+                n_node=num_nodes,
+            )
+            edge_measure = node_measure[graph.senders]
         edge_weight = _edge_weight(graph, self.edge_weight_key)
         if edge_weight is not None:
             messages = _multiply_tree(messages, edge_weight)
+        if edge_measure is not None:
+            messages = _multiply_tree(messages, edge_measure)
         messages = _mask_tree(messages, graph.edge_mask)
 
-        num_nodes = _num_nodes(graph, nodes)
         aggregated = jtu.tree_map(
             lambda x: self.aggregate_fn(x, graph.receivers, num_nodes),
             messages,
         )
         if self.normalize:
-            if edge_weight is None:
-                normalizer = jnp.ones((num_edges,), dtype=float)
-            else:
-                normalizer = edge_weight
+            normalizer = jnp.ones((num_edges,), dtype=float)
+            if edge_weight is not None:
+                normalizer = normalizer * edge_weight
+            if edge_measure is not None:
+                normalizer = normalizer * edge_measure
             if graph.edge_mask is not None:
                 normalizer = normalizer * graph.edge_mask.astype(normalizer.dtype)
             degree = segment_sum(normalizer, graph.receivers, num_nodes)
@@ -541,6 +594,7 @@ class GraphAttentionOperator(eqx.Module):
     value_fn: Callable | None
     logit_fn: Callable | None
     update_node_fn: Callable | None
+    source_measure: Any
     input_key: str | None = eqx.field(static=True)
     output_key: str | None = eqx.field(static=True)
     edge_bias_key: str | None = eqx.field(static=True)
@@ -548,6 +602,8 @@ class GraphAttentionOperator(eqx.Module):
     temperature: float = eqx.field(static=True)
     head_reduction: str = eqx.field(static=True)
     node_type_key: str = eqx.field(static=True)
+    source_measure_key: str | None = eqx.field(static=True)
+    measure_eps: float = eqx.field(static=True)
     target_node_type: int | None = eqx.field(static=True)
 
     def __init__(
@@ -562,6 +618,9 @@ class GraphAttentionOperator(eqx.Module):
         input_key: str | None = None,
         output_key: str | None = None,
         edge_bias_key: str | None = None,
+        source_measure_key: str | None = None,
+        source_measure: Any | None = None,
+        measure_eps: float = 1e-12,
         flow: str = "source_to_target",
         temperature: float | None = None,
         head_reduction: str = "concat",
@@ -580,6 +639,9 @@ class GraphAttentionOperator(eqx.Module):
         self.input_key = input_key
         self.output_key = output_key
         self.edge_bias_key = edge_bias_key
+        self.source_measure_key = source_measure_key
+        self.source_measure = source_measure
+        self.measure_eps = float(measure_eps)
         self.flow = flow
         self.temperature = 0.0 if temperature is None else float(temperature)
         self.head_reduction = head_reduction
@@ -649,6 +711,22 @@ class GraphAttentionOperator(eqx.Module):
                 mask = jnp.expand_dims(mask, axis=-1)
             logits = jnp.where(mask, logits, jnp.asarray(-1e30, dtype=logits.dtype))
 
+        if self.source_measure_key is not None or self.source_measure is not None:
+            node_measure = _node_measure(
+                graph,
+                self.source_measure_key,
+                self.source_measure,
+                n_node=int(nodes.shape[0]),
+            )
+            edge_measure = node_measure[source]
+            measure_logits = jnp.where(
+                edge_measure > 0.0,
+                jnp.log(jnp.maximum(edge_measure, self.measure_eps)),
+                jnp.asarray(-1e30, dtype=logits.dtype),
+            )
+            while measure_logits.ndim < logits.ndim:
+                measure_logits = jnp.expand_dims(measure_logits, axis=-1)
+            logits = logits + measure_logits
         weights = segment_softmax(logits, target, int(nodes.shape[0]))
         if graph.edge_mask is not None:
             mask = graph.edge_mask

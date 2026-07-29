@@ -62,7 +62,7 @@ def test_report_serialization_is_strict_atomic_and_category_aggregated(tmp_path)
     payload = json.loads(destination.read_text(encoding="utf-8"))
 
     assert not report.passed
-    assert payload["schema_version"] == "1.0"
+    assert "schema_version" not in payload
     assert payload["summary"]["scenarios_passed"] == 1
     assert payload["summary"]["scenarios_failed"] == 1
     assert payload["summary"]["metric_categories"]["accuracy"] == {

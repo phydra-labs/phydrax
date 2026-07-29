@@ -17,8 +17,10 @@ import jax.random as jr
 from .._frozendict import frozendict
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..nn.models.core._base import _AbstractBaseModel
+from ..nn.models.core._base import _AbstractBaseModel, _AbstractOperatorModel
 from ..nn.models.core._keys import EvalKey, split_eval_key
+from ..nn.models.core._operator import OperatorBatch
+from ._operator import operator_predictive_from_samples, OperatorPredictiveField
 from ._predictive import _sample_validity, PredictiveField, SampleAxis
 
 
@@ -122,6 +124,52 @@ class HomogeneousFunctionEnsemble(StrictModule):
             owner="Homogeneous ensemble prediction",
         )
 
+    def predict_operator(
+        self,
+        batch: OperatorBatch,
+        /,
+        *,
+        key,
+        field_name: str,
+        query_name: str,
+        input_sample_axes: Sequence[str] = (),
+        valid_policy: Literal["record", "raise"] = "record",
+    ) -> OperatorPredictiveField:
+        """Evaluate homogeneous members on one operator source/query batch."""
+        if not isinstance(batch, OperatorBatch):
+            raise TypeError("batch must be an OperatorBatch.")
+        template_member = _take_member(self.model, 0)
+        if not isinstance(template_member, _AbstractOperatorModel):
+            raise TypeError(
+                "Homogeneous operator ensembles require native operator members."
+            )
+        member_keys = jr.split(key, self.num_members)
+        template_prediction = template_member.predict(batch, key=member_keys[0])
+        template_field = template_prediction.field(field_name)
+        if template_field.query_name != query_name:
+            raise ValueError(
+                f"Output field {field_name!r} is bound to query "
+                f"{template_field.query_name!r}, not {query_name!r}."
+            )
+
+        def evaluate(member, member_key):
+            return member.predict(batch, key=member_key).field(field_name).values
+
+        data = eqx.filter_vmap(
+            evaluate,
+            in_axes=(eqx.if_array(0), 0),
+        )(self.model, member_keys)
+        return operator_predictive_from_samples(
+            data,
+            batch,
+            template_field.spec,
+            sample_axes=(SampleAxis(self.source_dim, "epistemic"),),
+            field_name=field_name,
+            query_name=query_name,
+            input_sample_axes=input_sample_axes,
+            valid_policy=valid_policy,
+        )
+
     def predict_many(
         self,
         variables: Sequence[str],
@@ -209,6 +257,75 @@ class HeterogeneousFunctionEnsemble(StrictModule):
             self.source_dim,
             valid_policy=valid_policy,
             owner="Heterogeneous ensemble prediction",
+        )
+
+    def predict_operator(
+        self,
+        batch: OperatorBatch,
+        /,
+        *,
+        key,
+        field_name: str,
+        query_name: str,
+        input_sample_axes: Sequence[str] = (),
+        valid_policy: Literal["record", "raise"] = "record",
+    ) -> OperatorPredictiveField:
+        """Evaluate heterogeneous operator members on one aligned batch."""
+        if not isinstance(batch, OperatorBatch):
+            raise TypeError("batch must be an OperatorBatch.")
+        if any(not isinstance(member, _AbstractOperatorModel) for member in self.members):
+            raise TypeError(
+                "Heterogeneous operator ensembles require native operator members."
+            )
+        operator_members = tuple(self.members)
+        first = operator_members[0]
+        first_prediction = first.predict(
+            batch,
+            key=jr.fold_in(key, self.num_members),
+        )
+        first_field = first_prediction.field(field_name)
+        if first_field.query_name != query_name:
+            raise ValueError(
+                f"Output field {field_name!r} is bound to query "
+                f"{first_field.query_name!r}, not {query_name!r}."
+            )
+        first_spec = first_field.spec
+        predictions = tuple(
+            member.predict(batch, key=member_key).field(field_name)
+            for member, member_key in zip(
+                operator_members,
+                jr.split(key, self.num_members),
+                strict=True,
+            )
+        )
+        for prediction in predictions:
+            if prediction.query_name != query_name:
+                raise ValueError(
+                    f"Output field {field_name!r} has inconsistent query bindings."
+                )
+            spec = prediction.spec
+            if (
+                spec.channels != first_spec.channels
+                or spec.component_names != first_spec.component_names
+                or prediction.values.shape != predictions[0].values.shape
+            ):
+                raise ValueError(
+                    "Heterogeneous operator predictions must have aligned output "
+                    "specifications and shapes."
+                )
+        data = jnp.stack(
+            tuple(jnp.asarray(prediction.values) for prediction in predictions),
+            axis=0,
+        )
+        return operator_predictive_from_samples(
+            data,
+            batch,
+            first_spec,
+            sample_axes=(SampleAxis(self.source_dim, "epistemic"),),
+            field_name=field_name,
+            query_name=query_name,
+            input_sample_axes=input_sample_axes,
+            valid_policy=valid_policy,
         )
 
     def predict_many(

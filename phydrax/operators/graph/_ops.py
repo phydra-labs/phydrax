@@ -33,20 +33,26 @@ def _graph_axis(batch: GraphBatch, /) -> str:
     return axis
 
 
-def _require_node_batch(batch: GraphBatch, /) -> None:
+def _require_node_batch(batch: Any, /) -> GraphBatch:
+    if not isinstance(batch, GraphBatch):
+        raise TypeError("Graph operators require GraphBatch evaluation.")
     if batch.component_kind != "nodes":
         raise ValueError(
             "This graph operator must be evaluated on a GraphBatch over Nodes(). "
             f"Got {batch.component_kind!r}."
         )
+    return batch
 
 
-def _require_edge_batch(batch: GraphBatch, /) -> None:
+def _require_edge_batch(batch: Any, /) -> GraphBatch:
+    if not isinstance(batch, GraphBatch):
+        raise TypeError("Graph operators require GraphBatch evaluation.")
     if batch.component_kind != "edges":
         raise ValueError(
             "This graph operator must be evaluated on a GraphBatch over Edges(). "
             f"Got {batch.component_kind!r}."
         )
+    return batch
 
 
 def _num_nodes(batch: GraphBatch, /) -> int:
@@ -346,14 +352,14 @@ class _GraphDegreeCallable(StrictModule, BatchAwareCallable):
 
     def __call_batch__(
         self,
-        batch: GraphBatch,
+        batch: Any,
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.Field:
         del key, kwargs
-        _require_node_batch(batch)
+        batch = _require_node_batch(batch)
         if batch.graph.senders is None or batch.graph.receivers is None:
             raise ValueError("degree requires explicit graph senders/receivers.")
 
@@ -389,13 +395,13 @@ class _NeighborAggregateCallable(StrictModule, BatchAwareCallable):
 
     def __call_batch__(
         self,
-        batch: GraphBatch,
+        batch: Any,
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.Field:
-        _require_node_batch(batch)
+        batch = _require_node_batch(batch)
         if batch.graph.senders is None or batch.graph.receivers is None:
             raise ValueError("neighbor aggregation requires explicit senders/receivers.")
 
@@ -426,13 +432,13 @@ class _GraphLaplacianCallable(StrictModule, BatchAwareCallable):
 
     def __call_batch__(
         self,
-        batch: GraphBatch,
+        batch: Any,
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.Field:
-        _require_node_batch(batch)
+        batch = _require_node_batch(batch)
         if batch.graph.senders is None or batch.graph.receivers is None:
             raise ValueError("graph_laplacian requires explicit senders/receivers.")
 
@@ -477,13 +483,13 @@ class _GraphGradientCallable(StrictModule, BatchAwareCallable):
 
     def __call_batch__(
         self,
-        batch: GraphBatch,
+        batch: Any,
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.Field:
-        _require_edge_batch(batch)
+        batch = _require_edge_batch(batch)
         if batch.graph.senders is None or batch.graph.receivers is None:
             raise ValueError("graph_gradient requires explicit senders/receivers.")
 
@@ -525,13 +531,13 @@ class _GraphDivergenceCallable(StrictModule, BatchAwareCallable):
 
     def __call_batch__(
         self,
-        batch: GraphBatch,
+        batch: Any,
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.Field:
-        _require_node_batch(batch)
+        batch = _require_node_batch(batch)
         if batch.graph.senders is None or batch.graph.receivers is None:
             raise ValueError("graph_divergence requires explicit senders/receivers.")
 

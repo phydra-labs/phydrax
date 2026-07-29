@@ -171,7 +171,8 @@ def _face_edge_map(faces: np.ndarray, /) -> dict[tuple[int, int], list[int]]:
     out: dict[tuple[int, int], list[int]] = {}
     for face_index, face in enumerate(faces):
         for edge in (face[[0, 1]], face[[1, 2]], face[[2, 0]]):
-            key = tuple(sorted((int(edge[0]), int(edge[1]))))
+            first, second = int(edge[0]), int(edge[1])
+            key = (min(first, second), max(first, second))
             out.setdefault(key, []).append(face_index)
     return out
 

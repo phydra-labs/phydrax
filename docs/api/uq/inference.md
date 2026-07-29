@@ -396,6 +396,7 @@
             - from_members
             - predict
             - predict_many
+            - predict_operator
 
 ---
 
@@ -405,6 +406,7 @@
             - __init__
             - predict
             - predict_many
+            - predict_operator
 
 ---
 

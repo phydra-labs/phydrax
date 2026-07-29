@@ -140,7 +140,7 @@ def time_convolution(
             s = t0 + dt_safe * F
             tau = t - s
             U = jax.vmap(lambda si: _u_at_time(u_args, si, key=key, **kwargs))(s)
-            K = jax.vmap(lambda ti: k(ti))(tau)
+            K = jnp.asarray(jax.vmap(lambda ti: k(ti))(tau))
             Kb = K.reshape((K.shape[0],) + (1,) * (U.ndim - 1))
             return jnp.mean(U * Kb, axis=0) * dt_safe
 

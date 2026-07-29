@@ -120,7 +120,7 @@ def pad_with_graphs(
         axis=0,
     )
 
-    if graph.senders is None:
+    if graph.senders is None or graph.receivers is None:
         senders = jnp.zeros((pad_n_edge,), dtype=jnp.int32)
         receivers = jnp.zeros((pad_n_edge,), dtype=jnp.int32)
     else:
@@ -204,7 +204,7 @@ def unpad_with_graphs(padded_graph: GraphIR) -> GraphIR:
 
     senders = None
     receivers = None
-    if padded_graph.senders is not None:
+    if padded_graph.senders is not None and padded_graph.receivers is not None:
         senders = padded_graph.senders[:real_edges]
         receivers = padded_graph.receivers[:real_edges]
 

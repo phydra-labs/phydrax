@@ -148,7 +148,7 @@ class LayoutPlan(eqx.Module):
 
         senders = None
         receivers = None
-        if graph.senders is not None:
+        if graph.senders is not None and graph.receivers is not None:
             senders = jnp.pad(
                 graph.senders,
                 (0, self.max_edges - num_edges),
@@ -197,7 +197,7 @@ class LayoutPlan(eqx.Module):
 
         senders = None
         receivers = None
-        if graph.senders is not None:
+        if graph.senders is not None and graph.receivers is not None:
             senders = graph.senders[:real_edges]
             receivers = graph.receivers[:real_edges]
 

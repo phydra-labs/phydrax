@@ -174,6 +174,8 @@ def Cylinder(
             bd.Circle(r)
         bd.extrude(amount=h)
     shp = bp.part
+    if shp is None:
+        raise RuntimeError("BuildPart did not produce a cylinder.")
     tmp = Path(tempfile.gettempdir(), f"bd3d_cylinder_{uuid4().hex}.stl").resolve()
     bd.export_stl(shp, tmp, tolerance=1e-3, angular_tolerance=5e-2)
     geom = Geometry3DFromCAD(tmp, recenter=False)
@@ -217,6 +219,8 @@ def Cone(
     with bd.BuildPart(wp) as bp:
         bd.Cone(r0, r1, h)
     shp = bp.part
+    if shp is None:
+        raise RuntimeError("BuildPart did not produce a cone.")
     tmp = Path(tempfile.gettempdir(), f"bd3d_cone_{uuid4().hex}.stl").resolve()
     bd.export_stl(shp, tmp, tolerance=1e-3, angular_tolerance=5e-2)
     geom = Geometry3DFromCAD(tmp, recenter=False)

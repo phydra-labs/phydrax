@@ -5,8 +5,6 @@
 from __future__ import annotations
 
 import inspect
-import signal
-import threading
 import time
 from contextlib import nullcontext
 from pathlib import Path
@@ -23,6 +21,14 @@ from jax import core as jcore
 from .._frozendict import frozendict
 from .._objective import AbstractSamplingObjectiveTerm
 from .._trainable import combine_trainable, partition_trainable
+from .._training import (
+    log_training_signal_stop as _log_training_signal_stop,
+    tensorboard_every as _tensorboard_every,
+    TensorBoardLogger as _TensorBoardLogger,
+    TrainingController,
+    TrainingProgress,
+    TrainingSignalGuard as _TrainingSignalGuard,
+)
 from ..constraints._adaptive_control import ControlledCollocationPolicy
 from ..constraints._functional import FunctionalConstraint
 from ..operators.differential._runtime import derivative_runtime_context
@@ -50,49 +56,6 @@ def _constraint_label(constraint: Any, /) -> str:
     if label:
         return str(label)
     return type(constraint).__name__
-
-
-class _TensorBoardLogger:
-    _event_cls: Any
-    _summary_cls: Any
-    _writer: Any
-
-    def __init__(self, log_dir: str | Path):
-        from tensorboard.compat.proto.event_pb2 import Event
-        from tensorboard.compat.proto.summary_pb2 import Summary
-        from tensorboard.summary.writer.event_file_writer import EventFileWriter
-
-        path = Path(log_dir)
-        path.mkdir(parents=True, exist_ok=True)
-        self._event_cls = Event
-        self._summary_cls = Summary
-        self._writer = EventFileWriter(str(path))
-
-    def __enter__(self) -> "_TensorBoardLogger":
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        self.flush()
-        self._writer.close()
-
-    def scalar(self, tag: str, value: Any, step: int) -> None:
-        summary = self._summary_cls(
-            value=[
-                self._summary_cls.Value(
-                    tag=str(tag),
-                    simple_value=float(jnp.asarray(value, dtype=float).reshape(())),
-                )
-            ]
-        )
-        event = self._event_cls(
-            wall_time=time.time(),
-            step=int(step),
-            summary=summary,
-        )
-        self._writer.add_event(event)
-
-    def flush(self) -> None:
-        self._writer.flush()
 
 
 def _clean_tag_part(value: str, /) -> str:
@@ -124,89 +87,16 @@ def _metric_suffix(metrics: dict[str, Any], /) -> str:
     return " " + " ".join(parts)
 
 
-class _TrainingSignalGuard:
-    """Convert process interrupts into a graceful training-loop stop request."""
-
-    _previous_handlers: dict[int, Any]
-
-    def __init__(self):
-        self._previous_handlers = {}
-        self._signum: int | None = None
-        self._reason: str | None = None
-        self._installed = False
-
-    def __enter__(self) -> "_TrainingSignalGuard":
-        if threading.current_thread() is not threading.main_thread():
-            return self
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            self._previous_handlers[int(sig)] = signal.getsignal(sig)
-            signal.signal(sig, self._handle_signal)
-        self._installed = True
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        if not self._installed:
-            return
-        for signum, handler in self._previous_handlers.items():
-            signal.signal(signum, handler)
-
-    @property
-    def stop_requested(self) -> bool:
-        return self._signum is not None or self._reason is not None
-
-    @property
-    def signal_name(self) -> str:
-        if self._signum is None:
-            return self._reason or "signal"
-        return signal.Signals(self._signum).name
-
-    def _handle_signal(self, signum: int, frame: Any) -> None:
-        del frame
-        if self._signum is None:
-            self._signum = int(signum)
-
-    def request_stop_from_exception(self, exc: BaseException, /) -> None:
-        if self.stop_requested:
-            return
-        if isinstance(exc, KeyboardInterrupt):
-            self._reason = "SIGINT"
-        else:
-            self._reason = type(exc).__name__
-
-
-def _log_training_signal_stop(
-    backend: str,
-    guard: _TrainingSignalGuard,
+def _best_display_value(
+    best_value: int | float | None,
+    loss: float,
     /,
     *,
-    completed: int,
-    total: int,
-    file: Any,
-) -> None:
-    print(
-        f"[phydrax][{backend}] received {guard.signal_name}; "
-        f"exiting training loop after {completed}/{total} iteration(s).",
-        file=file,
-        flush=True,
-    )
-
-
-def _tensorboard_every(
-    *,
-    tensorboard_log_dir: str | Path | None,
-    tensorboard_every: int | None,
-    log_every: int,
-) -> int | None:
-    if tensorboard_log_dir is None:
-        return None
-    if tensorboard_every is None:
-        return log_every if log_every > 0 else 1
-    every = int(tensorboard_every)
-    if every <= 0:
-        raise ValueError(
-            "tensorboard_every must be positive when TensorBoard is enabled."
-        )
-    return every
+    keep_best: bool,
+) -> float:
+    if keep_best and best_value is not None:
+        return float(best_value)
+    return loss
 
 
 def _train_constraint_sample_size(
@@ -426,7 +316,9 @@ def _refresh_collocation(
             refreshed.append(None)
             continue
         if not isinstance(constraint, FunctionalConstraint):
-            raise TypeError("Adaptive collocation is only valid for FunctionalConstraint.")
+            raise TypeError(
+                "Adaptive collocation is only valid for FunctionalConstraint."
+            )
         policy = constraint.collocation_policy
         if policy is None:
             raise ValueError("Adaptive population requires a collocation policy.")
@@ -464,7 +356,9 @@ def _settle_collocation(
             settled.append(None)
             continue
         if not isinstance(constraint, FunctionalConstraint):
-            raise TypeError("Adaptive collocation is only valid for FunctionalConstraint.")
+            raise TypeError(
+                "Adaptive collocation is only valid for FunctionalConstraint."
+            )
         policy = constraint.collocation_policy
         if isinstance(policy, ControlledCollocationPolicy):
             population = policy.settle(
@@ -476,6 +370,7 @@ def _settle_collocation(
             )
         settled.append(population)
     return tuple(settled)
+
 
 def _record_collocation_training_evaluations(
     solver,
@@ -498,7 +393,9 @@ def _record_collocation_training_evaluations(
             recorded.append(population)
             continue
         if not isinstance(constraint, FunctionalConstraint):
-            raise TypeError("Adaptive collocation is only valid for FunctionalConstraint.")
+            raise TypeError(
+                "Adaptive collocation is only valid for FunctionalConstraint."
+            )
         policy = constraint.collocation_policy
         if policy is None:
             raise ValueError("Adaptive population requires a collocation policy.")
@@ -509,7 +406,6 @@ def _record_collocation_training_evaluations(
             )
         recorded.append(population)
     return tuple(recorded)
-
 
 
 def _collocation_data_metrics(
@@ -527,7 +423,9 @@ def _collocation_data_metrics(
             metrics.append({})
             continue
         if not isinstance(constraint, FunctionalConstraint):
-            raise TypeError("Adaptive collocation is only valid for FunctionalConstraint.")
+            raise TypeError(
+                "Adaptive collocation is only valid for FunctionalConstraint."
+            )
         policy = constraint.collocation_policy
         if policy is None:
             raise ValueError("Adaptive population requires a collocation policy.")
@@ -631,7 +529,7 @@ def solve(
             constraint_scale,
             key,
             iter_,
-            collocation_
+            collocation_,
         ):
             functions = combine_trainable(params_, non_trainable_)
             if solver.constraint_pipelines is None:
@@ -658,9 +556,7 @@ def solve(
                     for objective, objective_key in zip(
                         solver.objectives, objective_keys, strict=True
                     ):
-                        term = objective.loss(
-                            enforced, key=objective_key, iter_=iter_
-                        )
+                        term = objective.loss(enforced, key=objective_key, iter_=iter_)
                         total = total + jnp.asarray(term, dtype=float).reshape(())
                     for term in function_model_loss_values(
                         functions,
@@ -759,7 +655,7 @@ def solve(
             constraint_scale,
             key,
             iter_,
-            collocation_
+            collocation_,
         ):
             if is_linesearch:
                 import jax.tree_util as jtu
@@ -773,7 +669,7 @@ def solve(
                         constraint_scale,
                         key,
                         iter_,
-                        collocation_
+                        collocation_,
                     )[0]
 
                 (value, _terms0), grads = loss_fn(
@@ -784,7 +680,7 @@ def solve(
                     constraint_scale,
                     key,
                     iter_,
-                    collocation_
+                    collocation_,
                 )
                 grads = jtu.tree_map(
                     lambda a: (
@@ -813,7 +709,7 @@ def solve(
                     constraint_scale,
                     key,
                     iter_,
-                    collocation_
+                    collocation_,
                 )
                 return params_, opt_state, loss_val, terms
 
@@ -825,7 +721,7 @@ def solve(
                 constraint_scale,
                 key,
                 iter_,
-                collocation_
+                collocation_,
             )
             assert _opt_standard is not None
             updates, opt_state = _opt_standard.update(grads, opt_state, params_)
@@ -839,10 +735,12 @@ def solve(
         if opt is None:
             raise ValueError("Optimizer is not configured.")
         opt_state = opt.init(params)
-        rng = jr.key(seed)
-
-        best_loss = float("inf")
-        best_params = params
+        control = TrainingController(
+            total_steps=int(num_iter),
+            key=jr.key(seed),
+            progress=TrainingProgress(best_value=float("inf")),
+        )
+        control.best_payload = params
         collocation = self.collocation
         out_file = log_fp if log_fp is not None else None
         refresh_wall_time = 0.0
@@ -861,7 +759,7 @@ def solve(
             completed = epoch
             try:
                 iter_start = time.perf_counter()
-                rng, subkey = jr.split(rng)
+                subkey = control.split_key()
                 iter_ = jnp.asarray(epoch + 1, dtype=float)
                 functions_snapshot = combine_trainable(params, non_trainable)
                 refresh_started = time.perf_counter() if profile_adaptive else 0.0
@@ -920,13 +818,11 @@ def solve(
                 train_model_loss_terms = terms_arr[
                     active_constraint_count + objective_count :
                 ]
-                if keep_best:
-                    loss_f = float(loss_val)
-                    if loss_f < best_loss:
-                        best_loss = loss_f
-                        best_params = params
-                iter_time_s = time.perf_counter() - iter_start
                 step = epoch + 1
+                control.complete_update(step)
+                if keep_best:
+                    control.select(float(loss_val), params, step=step)
+                iter_time_s = time.perf_counter() - iter_start
                 if signal_guard.stop_requested:
                     _log_training_signal_stop(
                         "optax",
@@ -985,7 +881,11 @@ def solve(
 
                 if console_step:
                     loss_f = float(loss_val)
-                    best_display = best_loss if keep_best else loss_f
+                    best_display = _best_display_value(
+                        control.progress.best_value,
+                        loss_f,
+                        keep_best=keep_best,
+                    )
                     print(
                         f"[phydrax][optax] iter {step}/{int(num_iter)} "
                         f"loss={loss_f:.6e} best={best_display:.6e} "
@@ -1042,7 +942,11 @@ def solve(
                             )
                 if tensorboard_step and tb_writer is not None:
                     loss_f = float(loss_val)
-                    best_display = best_loss if keep_best else loss_f
+                    best_display = _best_display_value(
+                        control.progress.best_value,
+                        loss_f,
+                        keep_best=keep_best,
+                    )
                     _log_tensorboard_scalars(
                         tb_writer,
                         step=step,
@@ -1074,14 +978,14 @@ def solve(
                 )
                 break
 
-        chosen = best_params if keep_best else params
+        chosen = control.selected(params) if keep_best else params
         functions = combine_trainable(chosen, non_trainable)
         settle_started = time.perf_counter() if profile_adaptive else 0.0
         collocation = _settle_collocation(
             self,
             functions,
             collocation,
-            key=jr.fold_in(rng, 991),
+            key=jr.fold_in(control.key, 991),
             iter_=completed + 1,
         )
         if profile_adaptive:
@@ -1175,9 +1079,7 @@ def _solve_evosax(
                 else:
                     batch, batch_weight = batch_info
                     if batch_weight is None:
-                        total = total + c.loss(
-                            enforced, key=k, iter_=iter_, batch=batch
-                        )
+                        total = total + c.loss(enforced, key=k, iter_=iter_, batch=batch)
                     else:
                         total = total + c.loss(
                             enforced,
@@ -1193,9 +1095,7 @@ def _solve_evosax(
                 strict=True,
             ):
                 if objective_batch is None:
-                    term = objective.loss(
-                        enforced, key=objective_key, iter_=iter_
-                    )
+                    term = objective.loss(enforced, key=objective_key, iter_=iter_)
                 else:
                     term = objective.loss(
                         enforced,
@@ -1259,9 +1159,7 @@ def _solve_evosax(
                 strict=True,
             ):
                 if objective_batch is None:
-                    term = objective.loss(
-                        enforced, key=objective_key, iter_=iter_
-                    )
+                    term = objective.loss(enforced, key=objective_key, iter_=iter_)
                 else:
                     term = objective.loss(
                         enforced,
@@ -1326,8 +1224,12 @@ def _solve_evosax(
         init_kwargs["mean"] = params
     evo_state = algo.init(key, **init_kwargs)
 
-    best_loss = float("inf")
-    best_params = params
+    control = TrainingController(
+        total_steps=int(num_iter),
+        key=key,
+        progress=TrainingProgress(best_value=float("inf")),
+    )
+    control.best_payload = params
     collocation = self.collocation
 
     log_ctx = (
@@ -1359,7 +1261,9 @@ def _solve_evosax(
             completed = epoch
             try:
                 iter_start = time.perf_counter()
-                key, ask_key, eval_key, tell_key, cand_key = jr.split(key, 5)
+                control.key, ask_key, eval_key, tell_key, cand_key = jr.split(
+                    control.key, 5
+                )
                 population, evo_state = algo.ask(ask_key, evo_state, algo_params)
                 popsize = None
                 for leaf in jax.tree_util.tree_leaves(population):
@@ -1375,7 +1279,10 @@ def _solve_evosax(
                     )
 
                 iter_ = jnp.asarray(epoch + 1, dtype=float)
-                functions_snapshot = combine_trainable(best_params, non_trainable)
+                functions_snapshot = combine_trainable(
+                    control.selected(params),
+                    non_trainable,
+                )
                 refresh_started = time.perf_counter() if profile_adaptive else 0.0
                 collocation = _refresh_collocation(
                     self,
@@ -1408,9 +1315,7 @@ def _solve_evosax(
                             raise ValueError(
                                 "Adaptive population requires a collocation policy."
                             )
-                        batches.append(
-                            policy.loss_batch_and_weight(adaptive_population)
-                        )
+                        batches.append(policy.loss_batch_and_weight(adaptive_population))
                     elif isinstance(c, AbstractSamplingConstraint):
                         batches.append((c.sample(key=k), None))
                     else:
@@ -1461,17 +1366,14 @@ def _solve_evosax(
                     collocation,
                     multiplier=popsize + 1,
                 )
-
-                if keep_best:
-                    loss_f = float(cand_loss)
-                    if loss_f < best_loss:
-                        best_loss = loss_f
-                        best_params = cand_params
-                else:
-                    best_params = cand_params
-                completed = epoch + 1
-                iter_time_s = time.perf_counter() - iter_start
                 step = epoch + 1
+                control.complete_update(step)
+                if keep_best:
+                    control.select(float(cand_loss), cand_params, step=step)
+                else:
+                    control.best_payload = cand_params
+                completed = step
+                iter_time_s = time.perf_counter() - iter_start
                 if signal_guard.stop_requested:
                     _log_training_signal_stop(
                         "evosax",
@@ -1546,7 +1448,11 @@ def _solve_evosax(
 
                 if console_step:
                     loss_f = float(cand_loss)
-                    best_display = best_loss if keep_best else loss_f
+                    best_display = _best_display_value(
+                        control.progress.best_value,
+                        loss_f,
+                        keep_best=keep_best,
+                    )
                     print(
                         f"[phydrax][evosax] iter {step}/{int(num_iter)} "
                         f"loss={loss_f:.6e} best={best_display:.6e} "
@@ -1603,7 +1509,11 @@ def _solve_evosax(
                             )
                 if tensorboard_step and tb_writer is not None:
                     loss_f = float(cand_loss)
-                    best_display = best_loss if keep_best else loss_f
+                    best_display = _best_display_value(
+                        control.progress.best_value,
+                        loss_f,
+                        keep_best=keep_best,
+                    )
                     _log_tensorboard_scalars(
                         tb_writer,
                         step=step,
@@ -1635,13 +1545,13 @@ def _solve_evosax(
                 )
                 break
 
-        functions = combine_trainable(best_params, non_trainable)
+        functions = combine_trainable(control.selected(params), non_trainable)
         settle_started = time.perf_counter() if profile_adaptive else 0.0
         collocation = _settle_collocation(
             self,
             functions,
             collocation,
-            key=jr.fold_in(key, 991),
+            key=jr.fold_in(control.key, 991),
             iter_=completed + 1,
         )
         if profile_adaptive:

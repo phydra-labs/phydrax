@@ -200,7 +200,7 @@ class _GraphTargetCallable(StrictModule, BatchAwareCallable, NonTrainableState):
 
     def __call_batch__(
         self,
-        batch: GraphBatch,
+        batch: Any,
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
@@ -258,7 +258,7 @@ class _GraphTrajectorySignalCallable(
 
     def __call_batch__(
         self,
-        batch: GraphBatch,
+        batch: Any,
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,

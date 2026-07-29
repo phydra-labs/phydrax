@@ -103,7 +103,7 @@ The repeated stress benchmark fits three independent sparse-sensor trials on
 $x\in[0.05,0.65]$ and evaluates extrapolation on $x\in[0.70,1]$. It uses paired
 proper-score wins, extrapolation error, stability, coverage efficiency, and an
 uncertainty signal to emit `promote`, `keep_experimental`, or `remove_candidate`.
-Set `PHYDRAX_UQ_STRESS_REPORT` to write its versioned JSON result:
+Set `PHYDRAX_UQ_STRESS_REPORT` to write its JSON result:
 
 ```bash
 PHYDRAX_RUN_UQ_STRESS_BENCHMARKS=1 \
@@ -123,6 +123,73 @@ PHYDRAX_UQ_MISSPEC_REPORT=/tmp/phydrax-uq-misspec.json \
 uv run pytest -q \
   tests/integration/test_uq_learned_inverse_benchmark.py::test_model_misspecification_retention_benchmark
 ```
+
+## Neural-operator uncertainty
+
+`OperatorPredictiveField` wraps `PredictiveField` without flattening the operator
+contract. It retains:
+
+- named physical case axes;
+- tensor-grid `OperatorAxis` names or point-cloud query coordinates;
+- query masks and quadrature;
+- scalar or channel-valued `OperatorOutputSpec` metadata;
+- explicit epistemic, input, and observation sample axes.
+
+This distinction is load-bearing. A stochastic realization represents one coherent
+output function over its full query set. Query points are not independent predictive
+draws, and padded points are not observations. Point-cloud coordinates may vary by
+physical case, but they must be shared across a sample axis before pointwise moments
+or quantiles are defined.
+
+### Recommended method hierarchy
+
+| Goal | First method | Escalation | Main caution |
+| --- | --- | --- | --- |
+| General operator epistemic uncertainty | Independently trained deep ensemble | Architecture-specific posterior subspace | Shared model-form error is invisible to ensemble spread |
+| Cheap stochastic diagnostic | MC dropout with coherent full-function keys | Deep ensemble | Dropout spread is not calibrated automatically |
+| Random forcing, coefficients, geometry, or initial state | Preserve named input sample axes | Joint input/epistemic predictive design | Output query geometry must align across draws |
+| Small physical or calibration parameter posterior | NUTS/HMC or dense Laplace | Pathfinder or tempered SMC when justified | Likelihood must be normalized and deterministic |
+| Selected neural-operator weights | Exact last-projection Laplace reference | Diagonal/Lanczos/LOBPCG Laplace | Full-weight inference is usually too large |
+| Distribution-free whole-field bands | `OperatorFunctionalConformal` | Score stratification or recalibration | Exchangeability does not survive arbitrary shifts |
+
+Use `HomogeneousFunctionEnsemble.predict_operator` when every member has one static
+architecture and output contract. Use
+`HeterogeneousFunctionEnsemble.predict_operator` for different widths, families, or
+external adapters; it rejects geometry or output mismatches. Use
+`sample_operator_predictive` for keyed stochastic operators such as MC dropout.
+`operator_input_predictive` reclassifies explicitly named physical case axes as
+input draws, and ensemble prediction can retain crossed epistemic/input axes.
+
+### Likelihood, calibration, and scores
+
+`FixedOperatorObservationLikelihood` defines a finite sensor likelihood over one
+fixed `OperatorBatch`. It combines query and observation masks, rejects unobserved
+physical cases, and sum-reduces all observed query/channel log densities. It does not
+insert quadrature weights: a continuum training norm and a finite-dimensional
+observation density are different mathematical objects.
+
+For neural weights, select exact subtrees with `ParameterSubspace`. Examples include
+an FNO projection, selected spectral blocks, every DeepONet branch/trunk output head,
+a local-operator decoder, or a graph readout. Never use a hard-coded global
+“last layer” count for branched models. Disable dropout before evaluating a posterior
+density.
+
+`OperatorFunctionalConformal` calibrates complete physical source/output cases. Its
+maximum score yields simultaneous field bands. Its quadrature-weighted L2 score
+yields a calibrated norm radius rather than pointwise bounds. Report marginal CRPS
+and the whole-field energy score together: they answer different questions. Report
+both pointwise and simultaneous coverage, interval width, and the exact physical
+measure used by each reduction.
+
+Resolution transfer, changed geometry, input noise, sensor dropout, and longer
+rollouts are distribution shifts. Preserve them in result metadata and evaluate them
+separately. Split-conformal nominal coverage applies to exchangeable held-out
+in-distribution cases, not automatically to any shifted row.
+
+See the [neural-operator uncertainty cookbook](cookbook/operator_uncertainty.md) and
+[operator-UQ API](api/uq/operator.md). The reproducible benchmark writes separate
+JSON and Parquet artifacts under
+`tools/operator_benchmarks/reference/converged/operator_uq_benchmarks.*`.
 
 ## Observation likelihoods and proper scores
 
@@ -483,8 +550,8 @@ result_path = phx.uq.export_result(eki, "/tmp/eki.phxuq")
 portable = phx.uq.read_result_archive(result_path)
 ```
 
-Both formats are versioned ZIP containers with JSON metadata, individual NumPy
-array members, SHA-256 checksums, atomic replacement, and no pickle or Python object
+Both are ZIP containers with JSON metadata, individual NumPy array members,
+SHA-256 checksums, atomic replacement, and no pickle or Python object
 arrays. Portable archives export representable result arrays and explicitly list
 excluded live callables. `phx.uq.to_arviz(posterior_draws)` converts MCMC chains to
 ArviZ `posterior` and `sample_stats` groups while retaining separate `chain` and
