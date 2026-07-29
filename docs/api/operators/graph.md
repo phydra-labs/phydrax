@@ -200,6 +200,61 @@ cells.
 
 ::: phydrax.graph.SimplicialHodgeLaplacian
 
+### Metric cochain complexes and DEC
+
+`CochainComplexIR` stores a canonical oriented cell complex: sparse signed
+incidences, primal and dual measures, diagonal Hodge stars, boundary masks,
+cell coordinates, and an optional precomputed harmonic subspace. Constructors
+validate chain-complex identities and positive metric data before the object can
+reach compiled execution.
+
+The functional DEC operators and their `GraphIR -> GraphIR` wrappers implement
+the exterior derivative, metric codifferential, split/full Hodge Laplacian, and
+metric harmonic projection. `CochainBoundaryPolicy("absolute" | "relative")`
+selects the active subcomplex. `reorient_cochain_complex` changes the oriented
+cell basis without changing the represented physical complex; use
+`reorient_cochain` to transform signed coefficient arrays consistently.
+
+::: phydrax.graph.CochainComplexIR
+
+---
+
+::: phydrax.graph.CochainBoundaryPolicy
+
+---
+
+::: phydrax.graph.triangle_mesh_to_cochain_complex
+
+---
+
+::: phydrax.graph.compute_harmonic_subspace
+
+---
+
+::: phydrax.graph.reorient_cochain
+
+---
+
+::: phydrax.graph.reorient_cochain_complex
+
+---
+
+::: phydrax.graph.cochain_exterior_derivative
+
+---
+
+::: phydrax.graph.cochain_codifferential
+
+---
+
+::: phydrax.graph.cochain_hodge_laplacian
+
+---
+
+::: phydrax.graph.cochain_harmonic_projection
+
+---
+
 ## Spectral graph operators
 
 Sparse polynomial and Chebyshev filters provide a scalable spectral graph

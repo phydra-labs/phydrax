@@ -260,8 +260,8 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   See [API → Constraints → Discrete](api/constraints/discrete.md).
 - **Inverse problems (unknown coefficients/parameters)**: represent unknowns as additional fields or domain parameters, and couple them in residual operators.
   See [API → Domain → Functions](api/domain/functions.md) and [API → Constraints](api/constraints/index.md).
-- **Operator learning (DeepONet/FNO)**: use `DatasetDomain` and structured models on \(\Omega_{\text{data}}\times\Omega_x\).
-  See [API → Domain → Composition](api/domain/composition.md) and [API → NN → Architectures](api/nn/architectures.md).
+- **Operator learning**: use `DatasetDomain` and structured models on \(\Omega_{\text{data}}\times\Omega_x\). The canonical `OperatorBatch` path supports independent source/query discretizations across DeepONet, graph, geometry-informed, transformer, and spectral families; validate architecture choices with the audited benchmark protocol.
+  See [Operator-learning cookbook](cookbook/operator_learning.md) and [API → NN → Architectures](api/nn/architectures.md).
 - **Integral / conservation laws**: build terms from `integral`/`mean` and use integral constraints (equality targets, flux balances, etc.).
   See [Guides → Integrals and measures](guides_integrals.md).
 - **ODEs and dynamical systems**: treat time as a scalar domain and enforce residuals \(\dot u - f(u,t)=0\) via ODE constraints (continuous or discrete).

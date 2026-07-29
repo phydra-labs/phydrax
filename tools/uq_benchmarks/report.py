@@ -139,7 +139,7 @@ class ScenarioResult:
 
 @dataclass(frozen=True)
 class BenchmarkReport:
-    """Versioned aggregate report for the complete PhydraX UQ benchmark matrix."""
+    """Aggregate report for the complete PhydraX UQ benchmark matrix."""
 
     profile: str
     root_seed: int
@@ -148,7 +148,6 @@ class BenchmarkReport:
     configuration: dict[str, Any]
     environment: dict[str, Any]
     scenarios: tuple[ScenarioResult, ...]
-    schema_version: str = "1.0"
     suite: str = "phydrax-uq-benchmark-matrix"
 
     def __post_init__(self) -> None:
@@ -204,7 +203,6 @@ class BenchmarkReport:
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            "schema_version": self.schema_version,
             "suite": self.suite,
             "profile": self.profile,
             "root_seed": self.root_seed,

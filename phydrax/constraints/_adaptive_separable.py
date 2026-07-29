@@ -392,6 +392,10 @@ def _axis_fields(batch: CoordSeparableBatch) -> dict[str, cx.Field]:
         if not isinstance(values, tuple):
             raise TypeError(f"Coordinate-separable label {label!r} must store a tuple.")
         for axis, field in zip(axes, values, strict=True):
+            if not isinstance(field, cx.Field):
+                raise TypeError(
+                    f"Coordinate-separable axis {axis!r} must store a coordax.Field."
+                )
             fields[axis] = field
     return fields
 

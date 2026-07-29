@@ -40,7 +40,7 @@ class SeparableMLP(_AbstractStructuredInputModel):
     out_size: int | Literal["scalar"]
     model: _AbstractStructuredInputModel
     _domain_input_mode: ClassVar[DomainInputMode] = "flat"
-    _supports_blockwise_input: bool = True
+    _supports_blockwise_input: ClassVar[bool] = True
 
     def __init__(
         self,

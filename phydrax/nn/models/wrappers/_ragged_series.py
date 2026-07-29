@@ -162,7 +162,7 @@ class RaggedSeriesModel(StrictModule, BatchAwareCallable):
 
     def __call_batch__(
         self,
-        batch: PointsBatch,
+        batch: Any,
         /,
         *,
         key: EvalKey = DOC_KEY0,
@@ -270,7 +270,9 @@ class MaskedSeriesPoolingModel(StrictModule):
         mask_f = mask.astype(latent.dtype)[..., None]
         pooled = jnp.sum(latent * mask_f, axis=1)
         if self.reduction == "mean":
-            denom = jnp.maximum(jnp.sum(mask_f, axis=1), jnp.asarray(1.0, dtype=pooled.dtype))
+            denom = jnp.maximum(
+                jnp.sum(mask_f, axis=1), jnp.asarray(1.0, dtype=pooled.dtype)
+            )
             pooled = pooled / denom
         elif self.scale_sampled_sum and x.sample_scale is not None:
             scale = jnp.asarray(x.sample_scale, dtype=pooled.dtype)

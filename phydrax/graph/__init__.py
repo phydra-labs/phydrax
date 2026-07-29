@@ -12,6 +12,30 @@ global features.
 
 from . import compat, nn
 from ._architectures import MeshGraphNet, MeshGraphNetBlock, RowMLP
+from ._cochain import (
+    cochain_complex_from_incidences,
+    cochain_complex_from_simplicial,
+    CochainBoundaryKind,
+    CochainBoundaryPolicy,
+    CochainComplexIR,
+    CochainIncidence,
+    compute_harmonic_subspace,
+    HarmonicSubspace,
+    reorient_cochain,
+    reorient_cochain_complex,
+    triangle_mesh_to_cochain_complex,
+)
+from ._cochain_ops import (
+    cochain_codifferential,
+    cochain_exterior_derivative,
+    cochain_harmonic_projection,
+    cochain_hodge_laplacian,
+    CochainCodifferential,
+    CochainExteriorDerivative,
+    CochainHarmonicProjection,
+    CochainHodgeLaplacian,
+    HodgeLaplacianComponent,
+)
 from ._data import Batch, Data
 from ._derived import (
     line_graph,
@@ -113,11 +137,17 @@ from ._models import (
 )
 from ._mp import MessagePassing
 from ._multigraph import (
+    gaot_operator,
+    gino_operator,
     GraphEncodeProcessDecode,
+    GraphFieldProcessor,
     query_encode_process_decode,
     query_graph_with_source_features,
     query_target_features,
     QueryGraphOperator,
+    RegionalGraphProcessor,
+    rigno_operator,
+    transolver_operator,
 )
 from ._multiscale import (
     GraphClusterPool,
@@ -161,6 +191,12 @@ from ._process import (
     rollout,
     rollout_feature_loss,
     rollout_features,
+)
+from ._query_batch import (
+    batched_knn_graph,
+    batched_knn_query_graph,
+    query_neighbors,
+    QueryNeighborhood,
 )
 from ._simplicial import (
     FormDegree,
@@ -277,6 +313,26 @@ __all__ = [
     "GraphLaplacianNormalization",
     "graph_adjacency_apply",
     "graph_laplacian_apply",
+    "CochainBoundaryKind",
+    "CochainBoundaryPolicy",
+    "CochainComplexIR",
+    "CochainIncidence",
+    "HarmonicSubspace",
+    "cochain_complex_from_incidences",
+    "cochain_complex_from_simplicial",
+    "compute_harmonic_subspace",
+    "reorient_cochain",
+    "reorient_cochain_complex",
+    "triangle_mesh_to_cochain_complex",
+    "CochainCodifferential",
+    "CochainExteriorDerivative",
+    "CochainHarmonicProjection",
+    "CochainHodgeLaplacian",
+    "HodgeLaplacianComponent",
+    "cochain_codifferential",
+    "cochain_exterior_derivative",
+    "cochain_harmonic_projection",
+    "cochain_hodge_laplacian",
     "FormDegree",
     "SimplicialComplexGraph",
     "SimplicialHodgeLaplacian",
@@ -315,9 +371,19 @@ __all__ = [
     "GraphClusterPool",
     "GraphMultiscaleBlock",
     "GraphPoolReduce",
+    "QueryNeighborhood",
+    "batched_knn_graph",
+    "batched_knn_query_graph",
+    "query_neighbors",
     "GraphEncodeProcessDecode",
+    "GraphFieldProcessor",
+    "RegionalGraphProcessor",
     "QueryGraphOperator",
     "query_encode_process_decode",
+    "gaot_operator",
+    "gino_operator",
+    "rigno_operator",
+    "transolver_operator",
     "query_graph_with_source_features",
     "query_target_features",
     "pool_graph_by_cluster",

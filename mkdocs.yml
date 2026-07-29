@@ -98,6 +98,7 @@ nav:
         - Inverse + hybrid physics–data: "cookbook/inverse_and_data.md"
         - Operator learning (DatasetDomain): "cookbook/operator_learning.md"
         - Uncertainty quantification: "cookbook/uncertainty_quantification.md"
+        - Neural-operator uncertainty: "cookbook/operator_uncertainty.md"
         - Mechanics and Deep Ritz: "cookbook/mechanics.md"
         - Two-level quantum dynamics: "cookbook/quantum_two_level.md"
         - Composite systems and a Bell state: "cookbook/quantum_composite.md"
@@ -173,6 +174,7 @@ nav:
         - Uncertainty quantification:
             - Overview: "api/uq/index.md"
             - Predictive results: "api/uq/predictive.md"
+            - Neural-operator uncertainty: "api/uq/operator.md"
             - Inference and ensembles: "api/uq/inference.md"
             - Likelihoods and calibration: "api/uq/calibration.md"
             - Propagation: "api/uq/propagation.md"

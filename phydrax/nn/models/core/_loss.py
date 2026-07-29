@@ -96,10 +96,7 @@ class ModelWithLoss(StrictModule):
         self._call_has_iter = "iter_" in params
         if self._call_has_key and params["key"].kind != inspect.Parameter.KEYWORD_ONLY:
             raise TypeError("`key` must be a keyword-only argument for model calls.")
-        if (
-            self._call_has_iter
-            and params["iter_"].kind != inspect.Parameter.KEYWORD_ONLY
-        ):
+        if self._call_has_iter and params["iter_"].kind != inspect.Parameter.KEYWORD_ONLY:
             raise TypeError("`iter_` must be a keyword-only argument for model calls.")
 
     def __call__(

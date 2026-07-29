@@ -47,6 +47,33 @@ def test_query_graph_with_source_features_installs_source_side_only():
     assert jnp.allclose(graph.nodes["u"][:, 0], jnp.array([1.0, 3.0, 0.0]))
 
 
+def test_batched_query_graph_installs_and_extracts_flattened_case_features():
+    query = phx.graph.batched_knn_query_graph(
+        jnp.array([[[0.0], [1.0]], [[10.0], [11.0]]]),
+        jnp.array([[[0.5]], [[10.5]]]),
+        k=2,
+        source_measure=jnp.full((2, 2), 0.5),
+    )
+    graph = phx.graph.query_graph_with_source_features(
+        query,
+        jnp.array([[1.0], [3.0], [5.0], [7.0]]),
+        input_key="u",
+    )
+    out = phx.graph.GraphNeuralOperator(
+        input_key="u",
+        output_key="out",
+        edge_weight_key=None,
+        source_measure_key="quadrature_weight",
+        normalize=False,
+        target_node_type=query.target_type,
+    )(graph)
+
+    assert jnp.allclose(
+        phx.graph.query_target_features(out, query, "out")[:, 0],
+        jnp.array([2.0, 6.0]),
+    )
+
+
 def test_query_graph_operator_can_gather_source_node_subset():
     query = phx.graph.radius_query_graph(
         jnp.array([[0.0]]),

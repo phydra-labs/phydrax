@@ -35,7 +35,6 @@ from ._smc import TemperedSMCResult
 
 
 _RESULT_FORMAT = "phydrax-uq-result"
-_RESULT_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -81,14 +80,13 @@ class UQResultArchive:
 
 
 def export_result(result: Any, path: str | Path, /) -> Path:
-    """Write a supported UQ result as a versioned, pickle-free archive."""
+    """Write a supported UQ result as a pickle-free archive."""
     arrays: dict[str, np.ndarray] = {}
     fields: dict[str, str] = {}
     trees: dict[str, dict[str, Any]] = {}
     kind, metadata, excluded = _adapt_result(result, arrays, fields, trees)
     manifest = {
         "format": _RESULT_FORMAT,
-        "schema_version": _RESULT_SCHEMA_VERSION,
         "result_kind": kind,
         "metadata": _json_value(metadata, path="metadata"),
         "fields": fields,
@@ -101,10 +99,24 @@ def export_result(result: Any, path: str | Path, /) -> Path:
 def read_result_archive(path: str | Path, /) -> UQResultArchive:
     """Read and checksum-validate a portable UQ result archive."""
     manifest, loaded = _read_array_archive(path)
+    expected = {
+        "format",
+        "result_kind",
+        "metadata",
+        "fields",
+        "trees",
+        "excluded",
+        "arrays",
+    }
+    missing = expected - set(manifest)
+    unknown = set(manifest) - expected
+    if missing or unknown:
+        raise CheckpointCorruptionError(
+            "Result manifest must use the current canonical fields; "
+            f"missing={sorted(missing)}, unknown={sorted(unknown)}."
+        )
     if manifest.get("format") != _RESULT_FORMAT:
         raise CheckpointCorruptionError("Archive is not a Phydrax UQ result.")
-    if manifest.get("schema_version") != _RESULT_SCHEMA_VERSION:
-        raise CheckpointCorruptionError("Result archive schema version is unsupported.")
     kind = manifest.get("result_kind")
     metadata = manifest.get("metadata")
     fields = manifest.get("fields")
@@ -177,7 +189,6 @@ def to_arviz(result: MCMCResult, /):
             "posterior": {
                 "phydrax_algorithm": result.algorithm,
                 "phydrax_chain_method": result.chain_method,
-                "phydrax_schema_version": _RESULT_SCHEMA_VERSION,
             }
         },
     )

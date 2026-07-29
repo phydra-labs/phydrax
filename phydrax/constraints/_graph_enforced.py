@@ -192,7 +192,7 @@ class _GraphValueEnforcement(StrictModule, BatchAwareCallable):
 
     def __call_batch__(
         self,
-        batch: GraphBatch,
+        batch: Any,
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,

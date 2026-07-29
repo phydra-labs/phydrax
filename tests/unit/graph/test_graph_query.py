@@ -2,6 +2,7 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import jax
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -134,3 +135,90 @@ def test_graph_neural_operator_wraps_as_graph_model_on_query_targets():
     )
 
     assert jnp.allclose(model(batch).data, jnp.array([4.0]))
+
+
+def test_batched_knn_query_graph_is_case_local_and_mask_aware():
+    source = jnp.array(
+        [
+            [[0.0], [1.0], [2.0]],
+            [[10.0], [11.0], [12.0]],
+        ]
+    )
+    target = jnp.array([[[0.2], [1.8]], [[10.2], [11.8]]])
+    source_mask = jnp.array([[True, True, True], [True, True, False]])
+    target_mask = jnp.array([[True, True], [True, False]])
+    query = phx.graph.batched_knn_query_graph(
+        source,
+        target,
+        k=2,
+        source_mask=source_mask,
+        target_mask=target_mask,
+        source_features=jnp.arange(6.0).reshape((2, 3, 1)),
+        source_measure=jnp.ones((2, 3)),
+    )
+    graph = query.graph
+
+    assert jnp.array_equal(graph.n_node, jnp.array([5, 5], dtype=jnp.int32))
+    assert jnp.array_equal(graph.n_edge, jnp.array([4, 4], dtype=jnp.int32))
+    assert jnp.all(graph.senders[:4] < 5)
+    assert jnp.all(graph.receivers[:4] < 5)
+    assert jnp.all(graph.senders[4:] >= 5)
+    assert jnp.all(graph.receivers[4:] >= 5)
+    assert jnp.array_equal(
+        graph.edge_mask,
+        jnp.array([True, True, True, True, True, True, False, False]),
+    )
+    assert jnp.array_equal(
+        graph.node_mask,
+        jnp.array([True, True, True, True, True, True, True, False, True, False]),
+    )
+
+
+def test_batched_query_graph_is_jittable_and_differentiable():
+    source = jnp.array([[[0.0], [0.5], [1.0]]])
+    target = jnp.array([[[0.2], [0.8]]])
+
+    def distances(source_points, target_points):
+        graph = phx.graph.batched_knn_query_graph(
+            source_points,
+            target_points,
+            k=2,
+            source_measure=jnp.full((1, 3), 1.0 / 3.0),
+            validate=False,
+        ).graph
+        return graph.edges["distance"]
+
+    result = jax.jit(distances)(source, target)
+    gradient = jax.grad(lambda points: jnp.sum(distances(source, points)))(target)
+
+    assert result.shape == (4, 1)
+    assert jnp.all(jnp.isfinite(result))
+    assert jnp.all(jnp.isfinite(gradient))
+
+
+def test_query_neighbors_have_stable_ties_and_periodic_minimum_image():
+    neighborhood = phx.graph.query_neighbors(
+        jnp.array([[0.25], [0.75]]),
+        jnp.array([[0.0]]),
+        max_neighbors=2,
+        periodic_lengths=(1.0,),
+    )
+
+    assert jnp.array_equal(neighborhood.indices[0, 0], jnp.array([0, 1]))
+    assert jnp.allclose(neighborhood.distance[0, 0], jnp.array([0.25, 0.25]))
+    assert jnp.allclose(
+        neighborhood.relative[0, 0, :, 0],
+        jnp.array([-0.25, 0.25]),
+    )
+
+
+def test_batched_homogeneous_knn_graph_excludes_self_edges():
+    graph = phx.graph.batched_knn_graph(
+        jnp.array([[[0.0], [1.0], [3.0]], [[10.0], [11.0], [13.0]]]),
+        k=1,
+    )
+
+    assert graph.senders.shape == (6,)
+    assert jnp.all(graph.senders != graph.receivers)
+    assert jnp.all(graph.senders[:3] < 3)
+    assert jnp.all(graph.senders[3:] >= 3)

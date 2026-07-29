@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.tree_util as jtu
 
-from phydrax.nn.models import FeynmaNN, FNO1d, FNO2d, KAN, MLP
+from phydrax.nn.models import FeynmaNN, FNO, KAN, MLP
 
 
 def _num_params(model) -> int:
@@ -111,23 +111,23 @@ def test_feynmann_scan_gradient_smoke():
     assert grads is not None
 
 
-def test_fno1d_scan_parity():
+def test_fno_one_dimensional_scan_parity():
     key = jr.key(14)
-    f_loop = FNO1d(
+    f_loop = FNO(
         in_channels="scalar",
         out_channels="scalar",
         width=8,
         depth=3,
-        modes=6,
+        n_modes=(6,),
         scan=False,
         key=key,
     )
-    f_scan = FNO1d(
+    f_scan = FNO(
         in_channels="scalar",
         out_channels="scalar",
         width=8,
         depth=3,
-        modes=6,
+        n_modes=(6,),
         scan=True,
         key=key,
     )
@@ -137,46 +137,46 @@ def test_fno1d_scan_parity():
     assert jnp.allclose(f_loop((data, x_axis)), f_scan((data, x_axis)))
 
 
-def test_fno1d_scan_parameter_count_matches_loop():
+def test_fno_one_dimensional_scan_parameter_count_matches_loop():
     key = jr.key(24)
-    f_loop = FNO1d(
+    f_loop = FNO(
         in_channels="scalar",
         out_channels="scalar",
         width=8,
         depth=3,
-        modes=6,
+        n_modes=(6,),
         scan=False,
         key=key,
     )
-    f_scan = FNO1d(
+    f_scan = FNO(
         in_channels="scalar",
         out_channels="scalar",
         width=8,
         depth=3,
-        modes=6,
+        n_modes=(6,),
         scan=True,
         key=key,
     )
     assert _num_params(f_scan) == _num_params(f_loop)
 
 
-def test_fno2d_scan_parity():
+def test_fno_two_dimensional_scan_parity():
     key = jr.key(16)
-    f_loop = FNO2d(
+    f_loop = FNO(
         in_channels="scalar",
         out_channels="scalar",
         width=8,
         depth=3,
-        modes=6,
+        n_modes=(6, 6),
         scan=False,
         key=key,
     )
-    f_scan = FNO2d(
+    f_scan = FNO(
         in_channels="scalar",
         out_channels="scalar",
         width=8,
         depth=3,
-        modes=6,
+        n_modes=(6, 6),
         scan=True,
         key=key,
     )
@@ -187,23 +187,23 @@ def test_fno2d_scan_parity():
     assert jnp.allclose(f_loop((data, x_axis, y_axis)), f_scan((data, x_axis, y_axis)))
 
 
-def test_fno2d_scan_parameter_count_matches_loop():
+def test_fno_two_dimensional_scan_parameter_count_matches_loop():
     key = jr.key(25)
-    f_loop = FNO2d(
+    f_loop = FNO(
         in_channels="scalar",
         out_channels="scalar",
         width=8,
         depth=3,
-        modes=6,
+        n_modes=(6, 6),
         scan=False,
         key=key,
     )
-    f_scan = FNO2d(
+    f_scan = FNO(
         in_channels="scalar",
         out_channels="scalar",
         width=8,
         depth=3,
-        modes=6,
+        n_modes=(6, 6),
         scan=True,
         key=key,
     )

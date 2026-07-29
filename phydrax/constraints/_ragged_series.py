@@ -330,7 +330,7 @@ class RaggedSeriesSupervisedConstraint(AbstractSamplingConstraint):
         self,
         *,
         key: Key[Array, ""] = DOC_KEY0,
-    ) -> RaggedSeriesSupervisedBatch:
+    ) -> Any:
         """Draw a case mini-batch and return aligned model inputs and targets."""
         domain = self.domain
         key_cases = key

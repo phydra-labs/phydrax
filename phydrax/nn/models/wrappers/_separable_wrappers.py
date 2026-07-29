@@ -119,9 +119,9 @@ class LatentContractionModel(_AbstractStructuredInputModel):
 
     _factor_sizes: tuple[int, ...]
     _total_in_size: int
-    _supports_blockwise_input: bool = True
-    _supports_axis_batch_input: bool
-    _warn_on_auto_fallback: bool
+    _supports_blockwise_input: ClassVar[bool] = True
+    _supports_axis_batch_input: bool  # ty: ignore[invalid-attribute-override]
+    _warn_on_auto_fallback: bool  # ty: ignore[invalid-attribute-override]
     _scan_enabled_aligned: bool
     _scan_static_aligned: object | None
     _scan_factor_size_uniform: bool
@@ -810,7 +810,7 @@ class Separable(_AbstractStructuredInputModel):
     in_size: int | Literal["scalar"]
     out_size: int | Literal["scalar"]
     _domain_input_mode: ClassVar[DomainInputMode] = "flat"
-    _supports_blockwise_input: bool = True
+    _supports_blockwise_input: ClassVar[bool] = True
 
     latent_size: int
     models: tuple[_AbstractBaseModel, ...]

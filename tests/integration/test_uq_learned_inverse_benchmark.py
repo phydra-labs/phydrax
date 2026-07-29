@@ -760,7 +760,6 @@ def _stress_retention_summary(trials):
             "accuracy_stable": accuracy_stable,
         }
     return {
-        "schema_version": 3,
         "trial_count": len(trials),
         "sensor_count": 6,
         "sensor_range": [0.05, 0.65],
@@ -1131,7 +1130,6 @@ def _misspecification_retention_summary(trials):
             "accuracy_stable": accuracy_stable,
         }
     return {
-        "schema_version": 2,
         "trial_count": len(trials),
         "truth": {
             "baseline_source": _TRUE_SOURCE,

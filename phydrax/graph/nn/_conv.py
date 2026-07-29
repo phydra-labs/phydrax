@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Literal
 
 import equinox as eqx
@@ -86,12 +87,15 @@ class GCNConv(eqx.Module):
 
         if self.add_self_loops:
             fill = 2.0 if self.improved else 1.0
-            edge_index, edge_weight = add_self_loops(
+            edge_index, loop_weight = add_self_loops(
                 edge_index,
                 edge_weight,
                 fill_value=fill,
                 num_nodes=n_nodes,
             )
+            if loop_weight is None:
+                raise RuntimeError("Self-loop insertion dropped explicit edge weights.")
+            edge_weight = loop_weight
 
         row = edge_index[0].astype(jnp.int32)
         col = edge_index[1].astype(jnp.int32)
@@ -178,12 +182,12 @@ class SAGEConv(eqx.Module):
 class GINConv(MessagePassing):
     """Graph Isomorphism Network convolution."""
 
-    mlp: eqx.Module
+    mlp: Callable[[jnp.ndarray], jnp.ndarray]
     eps: jnp.ndarray
 
     def __init__(
         self,
-        mlp: eqx.Module,
+        mlp: Callable[[jnp.ndarray], jnp.ndarray],
         *,
         eps: float = 0.0,
     ):
@@ -191,11 +195,29 @@ class GINConv(MessagePassing):
         self.mlp = mlp
         self.eps = jnp.asarray(eps)
 
-    def __call__(self, x: jnp.ndarray, edge_index: jnp.ndarray) -> jnp.ndarray:
+    def __call__(
+        self,
+        x: jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray],
+        edge_index: jnp.ndarray,
+        edge_attr: jnp.ndarray | None = None,
+        size: tuple[int, int] | None = None,
+    ) -> jnp.ndarray:
+        del edge_attr
+        edge_index = jnp.asarray(edge_index)
+        if edge_index.ndim != 2 or edge_index.shape[0] != 2:
+            raise ValueError("`edge_index` must have shape (2, num_edges).")
+
+        if isinstance(x, tuple):
+            x_src, x_dst = x
+        else:
+            x_src = x
+            x_dst = x
+
         row = edge_index[0].astype(jnp.int32)
         col = edge_index[1].astype(jnp.int32)
-        neigh = segment_sum(x[row], col, int(x.shape[0]))
-        out = (1.0 + self.eps) * x + neigh
+        num_targets = int(x_dst.shape[0]) if size is None else int(size[1])
+        neigh = segment_sum(x_src[row], col, num_targets)
+        out = (1.0 + self.eps) * x_dst + neigh
         return jax.vmap(self.mlp)(out)
 
 

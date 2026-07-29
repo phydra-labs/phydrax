@@ -43,6 +43,7 @@ dependencies = [
     "polars>=1.40.1",
     "pyvista>=0.46.4",
     "quadax>=0.2.11",
+    "scipy>=1.14",
     "setuptools<81",
     "tensorboard>=2.20.0",
     "tinygp>=0.3.1,<0.4",

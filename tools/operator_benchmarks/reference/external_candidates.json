@@ -1,0 +1,80 @@
+{
+  "verified_on": "2026-07-19",
+  "policy": {
+    "approved_code_licenses": ["Apache-2.0", "BSD-3-Clause", "MIT"],
+    "approved_weights_licenses": ["Apache-2.0", "BSD-3-Clause", "MIT"],
+    "benchmark_requirement": "strict relative-L2 improvement in every matched regime"
+  },
+  "candidates": [
+    {
+      "name": "DPOT-Tiny",
+      "source_uri": "https://github.com/thu-ml/DPOT/tree/dcd2f9a9359765e19ad63e2f3f879a2a8ce1aa17",
+      "checkpoint_uri": "https://huggingface.co/hzk17/DPOT/tree/2adec1cf9a55942f1456aa7463cd7ade908398d0",
+      "revision": "2adec1cf9a55942f1456aa7463cd7ade908398d0",
+      "code_license": null,
+      "weights_license": "Apache-2.0",
+      "input_schema_declared": true,
+      "output_schema_declared": true,
+      "preprocessing_declared": true,
+      "normalization_declared": false,
+      "dataset_provenance_declared": true,
+      "checkpoint_sha256": null,
+      "audit_reasons": [
+        "code license is absent or not approved",
+        "missing normalization contract",
+        "missing valid checkpoint SHA-256"
+      ],
+      "benchmark_status": "not-run-audit-failed",
+      "decision": "not-integrated"
+    },
+    {
+      "name": "Poseidon-T",
+      "source_uri": "https://github.com/camlab-ethz/poseidon/tree/b8fa28f59bd7f7673323f28d11a12c6f3a215c61",
+      "checkpoint_uri": "https://huggingface.co/camlab-ethz/Poseidon-T/tree/ec976ed5d25883ec9db4e486ebbeeefa9e08303b",
+      "revision": "ec976ed5d25883ec9db4e486ebbeeefa9e08303b",
+      "code_license": null,
+      "weights_license": "CC-BY-NC-4.0",
+      "input_schema_declared": true,
+      "output_schema_declared": true,
+      "preprocessing_declared": true,
+      "normalization_declared": false,
+      "dataset_provenance_declared": true,
+      "checkpoint_sha256": null,
+      "audit_reasons": [
+        "code license is absent or not approved",
+        "weights license is absent or not approved",
+        "missing normalization contract",
+        "missing valid checkpoint SHA-256"
+      ],
+      "benchmark_status": "not-run-audit-failed",
+      "decision": "not-integrated"
+    },
+    {
+      "name": "PhysicsNeMo-DoMINO",
+      "source_uri": "https://github.com/NVIDIA/physicsnemo",
+      "checkpoint_uri": "",
+      "revision": "unresolved-ngc-asset",
+      "code_license": "Apache-2.0",
+      "weights_license": null,
+      "input_schema_declared": false,
+      "output_schema_declared": false,
+      "preprocessing_declared": false,
+      "normalization_declared": false,
+      "dataset_provenance_declared": false,
+      "checkpoint_sha256": null,
+      "audit_reasons": [
+        "missing checkpoint URI",
+        "weights license is absent or not approved",
+        "missing input schema contract",
+        "missing output schema contract",
+        "missing preprocessing contract",
+        "missing normalization contract",
+        "missing dataset provenance contract",
+        "missing valid checkpoint SHA-256"
+      ],
+      "benchmark_status": "not-run-audit-failed",
+      "decision": "not-integrated"
+    }
+  ],
+  "integrated": []
+}

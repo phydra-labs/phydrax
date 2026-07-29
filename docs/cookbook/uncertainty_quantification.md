@@ -5,6 +5,10 @@ conformal calibration, uncertain-input propagation, explicit Bayesian physical
 parameters, MAP/NUTS/Laplace/Pathfinder inference, and scalable
 Gaussian-process model discrepancy.
 
+For geometry-aware output functions, independent source/query discretizations, and
+whole-field calibration, use the dedicated
+[neural-operator uncertainty recipe](operator_uncertainty.md).
+
 ## 1. Build an ensemble
 
 ```python

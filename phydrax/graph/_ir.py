@@ -129,7 +129,9 @@ class GraphIR(eqx.Module, NonTrainableState):
         self.n_edge = _ensure_int_vector("n_edge", n_edge)
         self.node_mask = None if node_mask is None else jnp.asarray(node_mask, dtype=bool)
         self.edge_mask = None if edge_mask is None else jnp.asarray(edge_mask, dtype=bool)
-        self.graph_mask = None if graph_mask is None else jnp.asarray(graph_mask, dtype=bool)
+        self.graph_mask = (
+            None if graph_mask is None else jnp.asarray(graph_mask, dtype=bool)
+        )
         if validate:
             self.validate()
 
@@ -166,41 +168,55 @@ class GraphIR(eqx.Module, NonTrainableState):
             raise ValueError("`n_node` and `n_edge` must have identical shapes.")
 
         if (self.senders is None) != (self.receivers is None):
-            raise ValueError("`senders` and `receivers` must be both None or both arrays.")
+            raise ValueError(
+                "`senders` and `receivers` must be both None or both arrays."
+            )
 
-        if self.senders is not None:
+        if self.senders is not None and self.receivers is not None:
             if self.senders.shape != self.receivers.shape:
                 raise ValueError("`senders` and `receivers` must have identical shapes.")
 
         node_size = _leaf_leading_size(self.nodes) if self.nodes is not None else None
         edge_size = _leaf_leading_size(self.edges) if self.edges is not None else None
-        global_size = _leaf_leading_size(self.globals) if self.globals is not None else None
+        global_size = (
+            _leaf_leading_size(self.globals) if self.globals is not None else None
+        )
 
         if self.graph_mask is not None:
             if int(self.graph_mask.shape[0]) != self.num_graphs:
                 raise ValueError("`graph_mask` length must match number of graphs.")
         if self.nodes is not None:
             if node_size is None:
-                raise ValueError("Node feature tree must contain at least one rank >= 1 leaf.")
+                raise ValueError(
+                    "Node feature tree must contain at least one rank >= 1 leaf."
+                )
         if self.edges is not None:
             if edge_size is None:
-                raise ValueError("Edge feature tree must contain at least one rank >= 1 leaf.")
+                raise ValueError(
+                    "Edge feature tree must contain at least one rank >= 1 leaf."
+                )
         if self.globals is not None:
             if global_size is None:
-                raise ValueError("Global feature tree must contain at least one rank >= 1 leaf.")
+                raise ValueError(
+                    "Global feature tree must contain at least one rank >= 1 leaf."
+                )
 
         if self.node_mask is not None:
             if self.node_mask.ndim != 1:
                 raise ValueError("`node_mask` must be rank-1.")
             if node_size is not None and int(self.node_mask.shape[0]) != node_size:
-                raise ValueError("`node_mask` length must match node feature leading size.")
+                raise ValueError(
+                    "`node_mask` length must match node feature leading size."
+                )
         if self.edge_mask is not None:
             if self.edge_mask.ndim != 1:
                 raise ValueError("`edge_mask` must be rank-1.")
             if self.senders is not None and int(self.edge_mask.shape[0]) != int(
                 self.senders.shape[0]
             ):
-                raise ValueError("`edge_mask` length must match senders/receivers length.")
+                raise ValueError(
+                    "`edge_mask` length must match senders/receivers length."
+                )
         if self.graph_mask is not None and self.graph_mask.ndim != 1:
             raise ValueError("`graph_mask` must be rank-1.")
 
@@ -224,9 +240,11 @@ class GraphIR(eqx.Module, NonTrainableState):
         n_nodes = int(n_node_np.sum())
         n_edges = int(n_edge_np.sum())
 
-        if self.senders is None:
+        if self.senders is None or self.receivers is None:
             if strict and n_edges != 0:
-                raise ValueError("Edge count is non-zero but senders/receivers are missing.")
+                raise ValueError(
+                    "Edge count is non-zero but senders/receivers are missing."
+                )
         else:
             if strict and int(self.senders.shape[0]) != n_edges:
                 raise ValueError("Edge index length must match `sum(n_edge)`.")
@@ -313,6 +331,9 @@ def batch_graphs(graphs: Sequence[GraphIR], /, *, validate: bool = True) -> Grap
     _require_uniform_presence("nodes", [g.nodes for g in graphs])
     _require_uniform_presence("edges", [g.edges for g in graphs])
     _require_uniform_presence("globals", [g.globals for g in graphs])
+    _require_uniform_presence("node_mask", [g.node_mask for g in graphs])
+    _require_uniform_presence("edge_mask", [g.edge_mask for g in graphs])
+    _require_uniform_presence("graph_mask", [g.graph_mask for g in graphs])
 
     n_node = jnp.concatenate([g.n_node for g in graphs], axis=0)
     n_edge = jnp.concatenate([g.n_edge for g in graphs], axis=0)
@@ -328,6 +349,31 @@ def batch_graphs(graphs: Sequence[GraphIR], /, *, validate: bool = True) -> Grap
     globals_ = None
     if graphs[0].globals is not None:
         globals_ = _concat_trees([g.globals for g in graphs])
+    node_masks = tuple(graph.node_mask for graph in graphs)
+    node_mask = (
+        None
+        if node_masks[0] is None
+        else jnp.concatenate(
+            tuple(mask for mask in node_masks if mask is not None), axis=0
+        )
+    )
+    edge_masks = tuple(graph.edge_mask for graph in graphs)
+    edge_mask = (
+        None
+        if edge_masks[0] is None
+        else jnp.concatenate(
+            tuple(mask for mask in edge_masks if mask is not None), axis=0
+        )
+    )
+    graph_masks = tuple(graph.graph_mask for graph in graphs)
+    graph_mask = (
+        None
+        if graph_masks[0] is None
+        else jnp.concatenate(
+            tuple(mask for mask in graph_masks if mask is not None),
+            axis=0,
+        )
+    )
 
     offsets = [0]
     running = 0
@@ -337,10 +383,14 @@ def batch_graphs(graphs: Sequence[GraphIR], /, *, validate: bool = True) -> Grap
 
     senders = None
     receivers = None
-    if graphs[0].senders is not None:
+    if graphs[0].senders is not None and graphs[0].receivers is not None:
         sender_parts = []
         receiver_parts = []
         for offset, graph in zip(offsets, graphs, strict=True):
+            if graph.senders is None or graph.receivers is None:
+                raise ValueError(
+                    "All graphs must either provide senders/receivers or omit both."
+                )
             sender_parts.append(graph.senders + int(offset))
             receiver_parts.append(graph.receivers + int(offset))
         senders = jnp.concatenate(sender_parts, axis=0)
@@ -354,6 +404,9 @@ def batch_graphs(graphs: Sequence[GraphIR], /, *, validate: bool = True) -> Grap
         globals=globals_,
         n_node=n_node,
         n_edge=n_edge,
+        node_mask=node_mask,
+        edge_mask=edge_mask,
+        graph_mask=graph_mask,
         validate=validate,
     )
 
@@ -370,6 +423,21 @@ def unbatch_graph(graph: GraphIR, /, *, validate: bool = True) -> tuple[GraphIR,
     node_splits = _split_tree(graph.nodes, node_offsets)
     edge_splits = _split_tree(graph.edges, edge_offsets)
     global_splits = _split_tree(graph.globals, jnp.arange(1, n_graphs, dtype=jnp.int32))
+    node_mask_splits = (
+        [None] * n_graphs
+        if graph.node_mask is None
+        else list(jnp.split(graph.node_mask, node_offsets, axis=0))
+    )
+    edge_mask_splits = (
+        [None] * n_graphs
+        if graph.edge_mask is None
+        else list(jnp.split(graph.edge_mask, edge_offsets, axis=0))
+    )
+    graph_mask_splits = (
+        [None] * n_graphs
+        if graph.graph_mask is None
+        else list(jnp.split(graph.graph_mask, jnp.arange(1, n_graphs), axis=0))
+    )
 
     if graph.nodes is None:
         node_splits = [None] * n_graphs
@@ -378,7 +446,7 @@ def unbatch_graph(graph: GraphIR, /, *, validate: bool = True) -> tuple[GraphIR,
     if graph.globals is None:
         global_splits = [None] * n_graphs
 
-    if graph.senders is None:
+    if graph.senders is None or graph.receivers is None:
         sender_splits = [None] * n_graphs
         receiver_splits = [None] * n_graphs
     else:
@@ -399,6 +467,9 @@ def unbatch_graph(graph: GraphIR, /, *, validate: bool = True) -> tuple[GraphIR,
             globals=global_splits[i],
             n_node=graph.n_node[i : i + 1],
             n_edge=graph.n_edge[i : i + 1],
+            node_mask=node_mask_splits[i],
+            edge_mask=edge_mask_splits[i],
+            graph_mask=graph_mask_splits[i],
             validate=validate,
         )
         out.append(g)

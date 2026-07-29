@@ -128,7 +128,10 @@ class GraphNetwork(eqx.Module):
                 num_segments=sum_n_node,
             )
             weights = jtu.tree_map(normalize, logits)
-            edges = self.attention_reduce_fn(edges, weights)
+            attention_reduce_fn = self.attention_reduce_fn
+            if attention_reduce_fn is None:
+                raise RuntimeError("GraphNetwork attention reducer invariant was violated.")
+            edges = attention_reduce_fn(edges, weights)
 
         if self.update_node_fn is not None:
             if edges is None:

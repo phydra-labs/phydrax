@@ -172,6 +172,12 @@ from ._ode import (
     DiscreteTimeDataConstraint,
     InitialODEConstraint,
 )
+from ._operator_dataset import (
+    DifferentialPhysicsInformedOperatorConstraint,
+    operator_constraint_suite,
+    OperatorDatasetConstraint,
+    PhysicsInformedOperatorConstraint,
+)
 from ._pointset import PointSetConstraint
 from ._ragged_series import (
     RaggedSeriesSupervisedBatch,
@@ -242,6 +248,10 @@ __all__ = [
     "TrajectorySignalInterpolation",
     "SupervisedDatasetBatch",
     "SupervisedDatasetConstraint",
+    "DifferentialPhysicsInformedOperatorConstraint",
+    "OperatorDatasetConstraint",
+    "PhysicsInformedOperatorConstraint",
+    "operator_constraint_suite",
     "GraphSupervisedConstraint",
     "GraphTarget",
     "GraphTargetInterpolation",

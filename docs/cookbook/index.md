@@ -50,6 +50,7 @@ Differential operators support multiple backends (`backend="ad"|"jet"|"fd"|"basi
 - [Inverse problems + hybrid physics–data](inverse_and_data.md)
 - [Operator learning (DatasetDomain × coordinates)](operator_learning.md)
 - [Uncertainty quantification](uncertainty_quantification.md)
+- [Neural-operator uncertainty quantification](operator_uncertainty.md)
 - [Mechanics and Deep Ritz objectives](mechanics.md)
 - [Two-level closed-system quantum dynamics](quantum_two_level.md)
 - [Composite systems and a Bell state](quantum_composite.md)

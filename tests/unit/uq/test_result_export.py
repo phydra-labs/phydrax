@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.uq._checkpoint import _json_value
+from phydrax.uq._checkpoint import _json_value, _read_array_archive
 from phydrax.uq._result_export import _adapt_result
 
 
@@ -53,6 +53,8 @@ def _assert_archive_matches_adapter(result, destination):
         expected_trees,
     )
     phx.uq.export_result(result, destination)
+    manifest, _ = _read_array_archive(destination)
+    assert "schema_version" not in manifest
     archive = phx.uq.read_result_archive(destination)
 
     assert archive.kind == expected_kind

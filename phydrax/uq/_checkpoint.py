@@ -24,7 +24,6 @@ from ._posterior import PosteriorProblem
 
 
 _CHECKPOINT_FORMAT = "phydrax-uq-checkpoint"
-_CHECKPOINT_SCHEMA_VERSION = 1
 
 
 class CheckpointError(RuntimeError):
@@ -48,10 +47,9 @@ def write_checkpoint_archive(
     state: Mapping[str, Any],
     arrays: Mapping[str, Any],
 ) -> Path:
-    """Atomically write one versioned checkpoint without pickle payloads."""
+    """Atomically write one pickle-free checkpoint."""
     manifest = {
         "format": _CHECKPOINT_FORMAT,
-        "schema_version": _CHECKPOINT_SCHEMA_VERSION,
         "kind": str(kind),
         "versions": _runtime_versions(),
         "compatibility": dict(compatibility),
@@ -69,12 +67,16 @@ def read_checkpoint_archive(
 ) -> tuple[dict[str, Any], dict[str, jax.Array]]:
     """Read and validate one checkpoint against a live problem and run."""
     manifest, arrays = _read_array_archive(path)
+    expected = {"format", "kind", "versions", "compatibility", "state", "arrays"}
+    missing = expected - set(manifest)
+    unknown = set(manifest) - expected
+    if missing or unknown:
+        raise CheckpointCorruptionError(
+            "Checkpoint manifest must use the current canonical fields; "
+            f"missing={sorted(missing)}, unknown={sorted(unknown)}."
+        )
     if manifest.get("format") != _CHECKPOINT_FORMAT:
         raise CheckpointCompatibilityError("File is not a PhydraX UQ checkpoint.")
-    if manifest.get("schema_version") != _CHECKPOINT_SCHEMA_VERSION:
-        raise CheckpointCompatibilityError(
-            "Checkpoint schema version is incompatible with this PhydraX release."
-        )
     if manifest.get("kind") != kind:
         raise CheckpointCompatibilityError(
             f"Checkpoint kind {manifest.get('kind')!r} does not match {kind!r}."

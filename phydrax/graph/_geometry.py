@@ -672,6 +672,8 @@ def query_graph_from_edges(
     *,
     source_features: Any | None = None,
     target_features: Any | None = None,
+    source_measure: Any | None = None,
+    source_measure_key: str = "quadrature_weight",
     periodic_box: Any | None = None,
     weight_kind: MollifierKind | None = "wendland_c2",
     weight_radius: float | None = None,
@@ -728,6 +730,16 @@ def query_graph_from_edges(
             axis=0,
         ),
     }
+    if source_measure is not None:
+        source_measure_ = jnp.asarray(source_measure, dtype=float).reshape((-1,))
+        if source_measure_.shape != (n_source,):
+            raise ValueError(
+                "source_measure must have one scalar quadrature weight per source node."
+            )
+        nodes[str(source_measure_key)] = jnp.concatenate(
+            (source_measure_, jnp.zeros((n_target,), dtype=source_measure_.dtype)),
+            axis=0,
+        )
     if features is not None:
         nodes["features"] = features
 
@@ -782,6 +794,8 @@ def radius_query_graph(
     radius: float,
     source_features: Any | None = None,
     target_features: Any | None = None,
+    source_measure: Any | None = None,
+    source_measure_key: str = "quadrature_weight",
     periodic_box: Any | None = None,
     include_self: bool = False,
     weight_kind: MollifierKind | None = "wendland_c2",
@@ -810,6 +824,8 @@ def radius_query_graph(
         target_idx,
         source_features=source_features,
         target_features=target_features,
+        source_measure=source_measure,
+        source_measure_key=source_measure_key,
         periodic_box=box,
         weight_kind=weight_kind,
         weight_radius=radius,
@@ -828,6 +844,8 @@ def knn_query_graph(
     k: int,
     source_features: Any | None = None,
     target_features: Any | None = None,
+    source_measure: Any | None = None,
+    source_measure_key: str = "quadrature_weight",
     periodic_box: Any | None = None,
     include_self: bool = False,
     weight_kind: MollifierKind | None = None,
@@ -857,6 +875,8 @@ def knn_query_graph(
         target_idx,
         source_features=source_features,
         target_features=target_features,
+        source_measure=source_measure,
+        source_measure_key=source_measure_key,
         periodic_box=box,
         weight_kind=weight_kind,
         weight_radius=weight_radius,

@@ -1,0 +1,122 @@
+[
+  {
+    "family": "spectral",
+    "reference_uri": "https://github.com/neuraloperator/neuraloperator/tree/86a8bc7812a31b42c4f7895693cf4ac11521c066",
+    "revision": "86a8bc7812a31b42c4f7895693cf4ac11521c066",
+    "status": "verified",
+    "checks": [
+      {
+        "name": "cp_spectral_reconstruction",
+        "family": "spectral",
+        "reference": "explicit dense Fourier weights",
+        "relative_error": 0.0,
+        "tolerance": 1e-11,
+        "passed": true
+      },
+      {
+        "name": "tucker_spectral_reconstruction",
+        "family": "spectral",
+        "reference": "explicit dense Fourier weights",
+        "relative_error": 0.0,
+        "tolerance": 1e-11,
+        "passed": true
+      }
+    ]
+  },
+  {
+    "family": "branch_trunk",
+    "reference_uri": "https://arxiv.org/abs/1910.03193",
+    "revision": "arXiv:1910.03193v3",
+    "status": "verified",
+    "checks": [
+      {
+        "name": "deeponet_explicit_contraction",
+        "family": "branch_trunk",
+        "reference": "explicit branch-trunk dot product",
+        "relative_error": 7.796602527661701e-17,
+        "tolerance": 1e-11,
+        "passed": true
+      }
+    ]
+  },
+  {
+    "family": "laplace_temporal",
+    "reference_uri": "https://arxiv.org/abs/2303.10581",
+    "revision": "arXiv:2303.10581v1",
+    "status": "verified",
+    "checks": [
+      {
+        "name": "laplace_direct_recurrent",
+        "family": "laplace_temporal",
+        "reference": "direct causal quadrature",
+        "relative_error": 4.1260196923888765e-16,
+        "tolerance": 1e-11,
+        "passed": true
+      }
+    ]
+  },
+  {
+    "family": "spherical_spectral",
+    "reference_uri": "https://github.com/NVIDIA/torch-harmonics/tree/2de7c45fb841794022a11b463dda9c64339b78cd",
+    "revision": "2de7c45fb841794022a11b463dda9c64339b78cd",
+    "status": "verified",
+    "checks": [
+      {
+        "name": "spherical_longitude_equivariance",
+        "family": "spherical_spectral",
+        "reference": "discrete longitude rotation",
+        "relative_error": 7.809200385096796e-16,
+        "tolerance": 1e-10,
+        "passed": true
+      }
+    ]
+  },
+  {
+    "family": "geometry_informed",
+    "reference_uri": "https://github.com/neuraloperator/neuraloperator/blob/86a8bc7812a31b42c4f7895693cf4ac11521c066/neuralop/layers/integral_transform.py",
+    "revision": "86a8bc7812a31b42c4f7895693cf4ac11521c066",
+    "status": "verified",
+    "checks": [
+      {
+        "name": "gino_weighted_integral_transform",
+        "family": "geometry_informed",
+        "reference": "official GINO weighted linear integral transform",
+        "relative_error": 0.0,
+        "tolerance": 1e-12,
+        "passed": true
+      }
+    ]
+  },
+  {
+    "family": "regional_graph",
+    "reference_uri": "https://github.com/camlab-ethz/rigno/blob/3e4b307c90f34237d0c1e5e497d4301116e9c3db/rigno/models/rigno.py",
+    "revision": "3e4b307c90f34237d0c1e5e497d4301116e9c3db",
+    "status": "verified",
+    "checks": [
+      {
+        "name": "rigno_regional_permutation_equivariance",
+        "family": "regional_graph",
+        "reference": "official RIGNO regional graph permutation equivariance",
+        "relative_error": 0.0,
+        "tolerance": 1e-10,
+        "passed": true
+      }
+    ]
+  },
+  {
+    "family": "geometry_transformer",
+    "reference_uri": "https://github.com/camlab-ethz/GAOT/blob/549c5a5f7113e23ba5e91469f2f8bbb1567fae46/src/model/layers/attn.py",
+    "revision": "549c5a5f7113e23ba5e91469f2f8bbb1567fae46",
+    "status": "verified",
+    "checks": [
+      {
+        "name": "gaot_measure_aware_scaled_dot_product_attention",
+        "family": "geometry_transformer",
+        "reference": "official GAOT scaled dot-product self-attention",
+        "relative_error": 0.0,
+        "tolerance": 1e-12,
+        "passed": true
+      }
+    ]
+  }
+]

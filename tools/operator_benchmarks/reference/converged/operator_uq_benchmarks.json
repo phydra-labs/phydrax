@@ -1,0 +1,285 @@
+{
+  "calibration_case_checksums": [
+    [
+      "periodic_burgers_1d",
+      "e744d85ceb9e0d65f30b71e2b23570beabe1e275f2a5fcda441352f24d29abbc"
+    ],
+    [
+      "analytic_green_query",
+      "1b2cfb3b01b5d76f252639c4a14026c7f54d9b5ccc461d50d3e4181a249e7ca3"
+    ]
+  ],
+  "metadata": {
+    "commit_identity": "working-tree",
+    "default_float_dtype": "float64",
+    "device": "cpu:cpu",
+    "jax_version": "0.10.2",
+    "phydrax_version": "0.2.2",
+    "platform": "darwin",
+    "python_version": "3.12.8",
+    "scenario_checksums": [
+      [
+        "periodic_burgers_1d",
+        "d046c7d87605bad04fa8d459e7002083c3d0635bad6fdb93c24cd95aa9e5e329"
+      ],
+      [
+        "analytic_green_query",
+        "b5b0282c35f39eb84a22dd0c44f792b96ba54beec7e3dcc04ac4e80ca047e861"
+      ]
+    ]
+  },
+  "results": [
+    {
+      "architecture": "fno",
+      "calibration_cases": 9,
+      "calibration_radius": 0.04154748855612134,
+      "ensemble_size": 4,
+      "evaluations": [
+        {
+          "compile_seconds": 0.010271292005199939,
+          "coverage_confidence_lower": null,
+          "coverage_confidence_upper": null,
+          "crps": 0.00864370435594774,
+          "energy_score": 0.010762816838377565,
+          "epistemic_standard_deviation": 0.015778543665409536,
+          "h1": 0.038609097353717266,
+          "inference_seconds": 0.02087386134856691,
+          "interval_width": 0.08309497711224267,
+          "name": "validation",
+          "nominal_coverage_compatible": null,
+          "num_cases": 9,
+          "peak_memory_bytes": null,
+          "pointwise_coverage": 1.0,
+          "query_shape": [
+            12
+          ],
+          "relative_l2": 0.020961598398995227,
+          "rollout_steps": 1,
+          "shift": "in_distribution",
+          "simultaneous_coverage": 1.0,
+          "split": "validation",
+          "total_draw_count": 4,
+          "valid_draw_count": 4
+        },
+        {
+          "compile_seconds": 0.9849173750262707,
+          "coverage_confidence_lower": 0.6096657120978346,
+          "coverage_confidence_upper": 1.0,
+          "crps": 0.00815126358699128,
+          "energy_score": 0.009847278194269657,
+          "epistemic_standard_deviation": 0.015483311742883787,
+          "h1": 0.030227904481167564,
+          "inference_seconds": 0.010333902668207884,
+          "interval_width": 0.08309497711224267,
+          "name": "train_resolution",
+          "nominal_coverage_compatible": true,
+          "num_cases": 6,
+          "peak_memory_bytes": null,
+          "pointwise_coverage": 1.0,
+          "query_shape": [
+            12
+          ],
+          "relative_l2": 0.018019677962066345,
+          "rollout_steps": 1,
+          "shift": "in_distribution",
+          "simultaneous_coverage": 1.0,
+          "split": "test",
+          "total_draw_count": 4,
+          "valid_draw_count": 4
+        },
+        {
+          "compile_seconds": 1.1542921669897623,
+          "coverage_confidence_lower": null,
+          "coverage_confidence_upper": null,
+          "crps": 0.012177293900604617,
+          "energy_score": 0.016671610780142405,
+          "epistemic_standard_deviation": 0.02722912261118575,
+          "h1": 0.06927045329550623,
+          "inference_seconds": 0.01003625001370286,
+          "interval_width": 0.08309497711224262,
+          "name": "higher_resolution",
+          "nominal_coverage_compatible": null,
+          "num_cases": 6,
+          "peak_memory_bytes": null,
+          "pointwise_coverage": 0.925925925925926,
+          "query_shape": [
+            18
+          ],
+          "relative_l2": 0.03170690464685926,
+          "rollout_steps": 1,
+          "shift": "resolution",
+          "simultaneous_coverage": 0.0,
+          "split": "test",
+          "total_draw_count": 4,
+          "valid_draw_count": 4
+        },
+        {
+          "compile_seconds": 0.8153541249921545,
+          "coverage_confidence_lower": null,
+          "coverage_confidence_upper": null,
+          "crps": 0.022685607001964467,
+          "energy_score": 0.030412138111220916,
+          "epistemic_standard_deviation": 0.049345921574666614,
+          "h1": 0.13005865605624434,
+          "inference_seconds": 0.024008083331864327,
+          "interval_width": 0.08309497711224262,
+          "name": "long_rollout",
+          "nominal_coverage_compatible": null,
+          "num_cases": 6,
+          "peak_memory_bytes": null,
+          "pointwise_coverage": 0.7407407407407407,
+          "query_shape": [
+            18
+          ],
+          "relative_l2": 0.05691707039792269,
+          "rollout_steps": 2,
+          "shift": "rollout",
+          "simultaneous_coverage": 0.0,
+          "split": "test",
+          "total_draw_count": 4,
+          "valid_draw_count": 4
+        }
+      ],
+      "family": "spectral",
+      "final_losses": [
+        0.0011504127553416978,
+        0.0018896770415519001,
+        0.00026250234077896084,
+        0.00020209943432938606
+      ],
+      "initial_losses": [
+        182.53876297510263,
+        103.48048862038323,
+        26.25869391602862,
+        5.787499625069751
+      ],
+      "laplace": {
+        "geometry_preserved": true,
+        "output_variance_mean": 0.12467188429478954,
+        "parameter_dimension": 8,
+        "parameter_variance_mean": 0.12669156683998495,
+        "posterior_sample_count": 32
+      },
+      "nominal_coverage": 0.9,
+      "observation_scale": 0.015970207084334515,
+      "parameter_count_mean": 284.0,
+      "scenario": "periodic_burgers_1d",
+      "seeds": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "training_seconds": 13.099598667002283,
+      "training_steps": [
+        5000,
+        4550,
+        5000,
+        4950
+      ],
+      "validation_losses": [
+        0.0012648161452795516,
+        0.002812048853899583,
+        0.00040979873292595344,
+        0.0003196775694377212
+      ]
+    },
+    {
+      "architecture": "deeponet",
+      "calibration_cases": 9,
+      "calibration_radius": 0.17489925718139634,
+      "ensemble_size": 4,
+      "evaluations": [
+        {
+          "compile_seconds": 0.010633666010107845,
+          "coverage_confidence_lower": null,
+          "coverage_confidence_upper": null,
+          "crps": 0.02208632246825346,
+          "energy_score": 0.024617841604441963,
+          "epistemic_standard_deviation": 0.0011572463641320834,
+          "h1": null,
+          "inference_seconds": 0.009743583330418915,
+          "interval_width": 0.3497985143627927,
+          "name": "validation",
+          "nominal_coverage_compatible": null,
+          "num_cases": 9,
+          "peak_memory_bytes": null,
+          "pointwise_coverage": 1.0,
+          "query_shape": [
+            32
+          ],
+          "relative_l2": 0.7775924846777033,
+          "rollout_steps": 1,
+          "shift": "in_distribution",
+          "simultaneous_coverage": 1.0,
+          "split": "validation",
+          "total_draw_count": 4,
+          "valid_draw_count": 4
+        },
+        {
+          "compile_seconds": 0.9437291250214912,
+          "coverage_confidence_lower": 0.6096657120978346,
+          "coverage_confidence_upper": 1.0,
+          "crps": 0.0017568602781226795,
+          "energy_score": 0.0022542600926791483,
+          "epistemic_standard_deviation": 0.0002559402547734069,
+          "h1": null,
+          "inference_seconds": 0.010432291678929081,
+          "interval_width": 0.3497985143627927,
+          "name": "changed_query_grid",
+          "nominal_coverage_compatible": true,
+          "num_cases": 6,
+          "peak_memory_bytes": null,
+          "pointwise_coverage": 1.0,
+          "query_shape": [
+            32
+          ],
+          "relative_l2": 0.5750183864793281,
+          "rollout_steps": 1,
+          "shift": "in_distribution",
+          "simultaneous_coverage": 1.0,
+          "split": "test",
+          "total_draw_count": 4,
+          "valid_draw_count": 4
+        }
+      ],
+      "family": "branch_trunk",
+      "final_losses": [
+        0.5134170873591724,
+        0.5284079911525873,
+        0.5138959282412968,
+        0.48072773808029673
+      ],
+      "initial_losses": [
+        271.27709053690955,
+        37749.12329736577,
+        1403.3482244806214,
+        113564.65953556632
+      ],
+      "laplace": null,
+      "nominal_coverage": 0.9,
+      "observation_scale": 0.04657521206896646,
+      "parameter_count_mean": 529.0,
+      "scenario": "analytic_green_query",
+      "seeds": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "training_seconds": 14.703659792023245,
+      "training_steps": [
+        5000,
+        5000,
+        1150,
+        5000
+      ],
+      "validation_losses": [
+        0.6517840488114299,
+        0.6584965398951916,
+        0.6498442411674488,
+        0.6321124708736098
+      ]
+    }
+  ]
+}

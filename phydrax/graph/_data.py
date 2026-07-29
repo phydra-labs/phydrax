@@ -122,7 +122,15 @@ class Batch(Data):
     @classmethod
     def from_data_list(cls, data_list: Sequence[Data], /) -> "Batch":
         if len(data_list) == 0:
-            return cls()
+            return cls(
+                x=None,
+                edge_index=None,
+                edge_attr=None,
+                y=None,
+                pos=None,
+                batch=None,
+                ptr=None,
+            )
 
         graphs = tuple(data.to_graph_ir(validate=True) for data in data_list)
         batched = batch_graphs(graphs, validate=True)
