@@ -138,6 +138,7 @@ def test_operator_architecture_tiers_and_recommendation_eligibility_are_exact():
             "CodomainAttention",
             "IFNO",
             "AxialFactorizedFNO",
+            "ConditionalFlowFunctionOperator",
         },
         "research": {
             "Flower",

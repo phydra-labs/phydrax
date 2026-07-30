@@ -7,8 +7,8 @@ import jax.numpy as jnp
 import pytest
 
 from phydrax._frozendict import frozendict
-from phydrax.domain import DomainFunction, Square, TimeInterval
-from phydrax.operators.differential import div
+from phydrax.domain import DomainFunction, Interval1d, Square, TimeInterval
+from phydrax.operators.differential import div, div_tensor
 
 
 def test_div_vector_field_point():
@@ -64,6 +64,20 @@ def test_div_preserves_metadata():
     )
     out = div(u)
     assert out.metadata == u.metadata
+
+
+def test_nested_divergence_drops_stale_optimized_derivative_hooks():
+    geom = Interval1d(-2.0, 2.0)
+    density = geom.Function("x")(lambda x: x[0] ** 2)
+    drift = geom.Function("x")(lambda x: jnp.asarray([2.0 * x[0]]))
+    covariance = geom.Function("x")(lambda x: jnp.asarray([[3.0 * x[0] ** 2]]))
+    adjoint = -div(drift * density, var="x") + 0.5 * div(
+        div_tensor(covariance * density, var="x"),
+        var="x",
+    )
+    point = frozendict({"x": cx.Field(jnp.asarray([0.4]), dims=(None,))})
+
+    assert jnp.allclose(adjoint(point).data, 12.0 * 0.4**2)
 
 
 def test_div_ad_engine_jvp_matches_default():

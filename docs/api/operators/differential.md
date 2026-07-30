@@ -97,6 +97,68 @@ See the guide for operator shape conventions and for the math behind surface and
 
 ::: phydrax.operators.partial_n
 
+## Stochastic differential operators
+
+For a state \(x\in\mathbb R^d\), drift \(b(x,t)\in\mathbb R^d\), and
+diffusion \(\sigma(x,t)\in\mathbb R^{d\times m}\), Phydrax uses
+
+\[
+a(x,t)=\sigma(x,t)\sigma(x,t)^\mathsf T.
+\]
+
+`diffusion` therefore has trailing shape `(state_dim, noise_dim)`;
+`covariance` has trailing shape `(state_dim, state_dim)`. Rectangular
+diffusion factors are supported. `var` names the state coordinate and only that
+coordinate is differentiated; time and parameter dependencies are carried
+through unchanged.
+
+The backward Kolmogorov generator is
+
+\[
+\mathcal L u
+=b_i\partial_i u+\frac12a_{ij}\partial_{ij}u,
+\]
+
+and the forward/Fokker--Planck adjoint is
+
+\[
+\mathcal L^\ast p
+=-\partial_i(b_i p)+\frac12\partial_i\partial_j(a_{ij}p).
+\]
+
+The derivatives apply to the complete products \(bp\) and \(ap\). This matters
+for state-dependent coefficients. `kolmogorov_generator` returns
+\(\mathcal L u\), not \(\partial_tu+\mathcal L u\);
+`fokker_planck_operator` returns \(\mathcal L^\ast p\), not the full
+\(\partial_tp-\mathcal L^\ast p\) residual. Use the stochastic continuous
+constraints below to add the time derivative with the correct sign.
+
+For `interpretation="stratonovich"`, a diffusion factor is required. Phydrax
+first converts the supplied Stratonovich drift to the equivalent Itô drift,
+
+\[
+b_i^{I}=b_i^{S}
++\frac12\sum_{j,k}\sigma_{jk}\,\partial_j\sigma_{ik},
+\]
+
+then evaluates the Itô generator or adjoint. A covariance matrix alone is
+insufficient because it does not identify the diffusion-vector fields and their
+drift correction.
+
+::: phydrax.operators.diffusion_covariance
+
+---
+
+::: phydrax.operators.stratonovich_to_ito_drift
+
+---
+
+::: phydrax.operators.kolmogorov_generator
+
+---
+
+::: phydrax.operators.fokker_planck_operator
+
 ## Surface operators
 
 ::: phydrax.operators.surface_grad

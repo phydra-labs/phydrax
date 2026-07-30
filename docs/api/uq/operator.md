@@ -31,6 +31,8 @@ invalid whole-function draw or raises immediately according to `valid_policy`.
             - epistemic_variance
             - input_variance
             - observation_variance
+            - process_variance
+            - numerical_variance
             - total_variance
             - decompose_variance
 
@@ -87,6 +89,69 @@ in an encode–process–decode model. A geometry ensemble captures parameter
 uncertainty conditional on its observed mesh; uncertain domain shapes belong in
 the input-sample axes instead.
 
+## Complete-field probability distributions
+
+`AbstractOperatorDistribution` defines a distribution over one complete output
+field per physical case. Implementations expose a deterministic `location`, keyed
+`sample`, normalized `log_prob`, the physical query/output contract, and an explicit
+uncertainty source. `AbstractProbabilisticOperatorModel` makes that distribution the
+model's primary prediction contract.
+
+Use `GaussianFunctionOperator` first. It provides an exact masked
+diagonal-plus-low-rank Gaussian density and coherent whole-field samples.
+`scale_mode="fixed"` keeps a declared diagonal noise floor while learning only the
+location and optional factors. Use `uncertainty_source="process"` for a stochastic
+transition, not `"epistemic"`; uncertainty in learned weights remains a separate
+posterior or ensemble axis.
+
+`ConditionalFlowFunctionOperator` wraps a deterministic location operator with a
+FlowJAX conditional residual flow. `OperatorBatchConditioner` builds its condition
+from named branch encoders. The output query geometry and mask are fixed when the
+flow is constructed because a finite FlowJAX event size is static. It supports
+loader-broadcast copies of that same geometry, not arbitrary-query or
+resolution-transfer inference.
+
+`OperatorDistributionNLL` trains either implementation through `fit_operator`.
+It scores the normalized execution-space density and respects valid query masks.
+No `"space=\"physical\""` shortcut is exposed: normalization transforms and their
+Jacobians must be part of a physical-space density explicitly.
+
+::: phydrax.nn.AbstractOperatorDistribution
+
+---
+
+::: phydrax.nn.AbstractProbabilisticOperatorModel
+
+---
+
+::: phydrax.nn.GaussianOperatorDistribution
+
+---
+
+::: phydrax.nn.FlowJAXOperatorDistribution
+
+---
+
+::: phydrax.nn.OperatorDistributionNLL
+
+---
+
+::: phydrax.nn.operator_distribution_nll
+
+## Distributional transition consistency
+
+`DistributionalSemigroupObjective` draws independent direct and composed process
+transitions and compares their complete-field laws with energy distance. It requires
+`uncertainty_source="process"` and stable split/folded key sites. This is a
+Chapman--Kolmogorov consistency objective; it neither couples paths by common random
+numbers nor identifies a drift/diffusion model.
+
+::: phydrax.nn.DistributionalSemigroupObjective
+
+---
+
+::: phydrax.nn.conditioned_distributional_semigroup_loss
+
 ## Fixed observation likelihood
 
 `FixedOperatorObservationLikelihood` defines a normalized finite-dimensional sensor
@@ -126,6 +191,10 @@ and upper bounds.
 ::: phydrax.uq.operator_energy_score
 
 ---
+::: phydrax.uq.operator_ensemble_energy_distance
+
+---
+
 
 ::: phydrax.uq.operator_interval_coverage
 

@@ -51,6 +51,13 @@ from ._fractional_ops import (
     riesz_fractional_derivative_gl_mc,
 )
 from ._lie_ops import lie_bracket
+from ._stochastic_ops import (
+    diffusion_covariance,
+    fokker_planck_operator,
+    kolmogorov_generator,
+    StochasticInterpretation,
+    stratonovich_to_ito_drift,
+)
 from ._surface_ops import (
     laplace_beltrami,
     laplace_beltrami_divgrad,
@@ -87,6 +94,9 @@ __all__ = [
     "hydrostatic_pressure",
     "hydrostatic_stress",
     "bilaplacian",
+    "diffusion_covariance",
+    "fokker_planck_operator",
+    "kolmogorov_generator",
     "lie_bracket",
     "laplacian",
     "linear_elastic_cauchy_stress_2d",
@@ -106,6 +116,8 @@ __all__ = [
     "viscous_stress",
     "von_mises_stress",
     "strain_rate",
+    "StochasticInterpretation",
+    "stratonovich_to_ito_drift",
     "strain_rate_magnitude",
     "div_tensor",
     "navier_stokes_divergence",

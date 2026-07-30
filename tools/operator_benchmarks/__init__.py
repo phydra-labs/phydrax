@@ -75,6 +75,16 @@ from .scenarios import (
     split_operator_scenario,
     standard_operator_benchmarks,
 )
+from .stochastic import (
+    allen_cahn_transition_data,
+    AllenCahnFlowBenchmarkResult,
+    AllenCahnFlowBenchmarkTrial,
+    run_allen_cahn_flow_benchmark,
+    run_stochastic_heat_gaussian_benchmark,
+    stochastic_heat_transition_data,
+    StochasticHeatGaussianBenchmarkResult,
+    StochasticTransitionData,
+)
 from .uq import (
     calibration_case_checksum,
     OperatorUQBenchmarkProfile,
@@ -221,4 +231,12 @@ __all__ = [
     "run_operator_uq_benchmark",
     "run_operator_uq_suite",
     "save_operator_uq_artifacts",
+    "allen_cahn_transition_data",
+    "AllenCahnFlowBenchmarkResult",
+    "AllenCahnFlowBenchmarkTrial",
+    "run_allen_cahn_flow_benchmark",
+    "run_stochastic_heat_gaussian_benchmark",
+    "stochastic_heat_transition_data",
+    "StochasticHeatGaussianBenchmarkResult",
+    "StochasticTransitionData",
 ]

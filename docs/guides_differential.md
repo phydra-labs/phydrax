@@ -114,6 +114,36 @@ variable. This is the geometric Lie bracket of vector fields, not the matrix
 [Quantum operators and dynamics](guides_quantum.md) for the distinction among
 vector-field, matrix, and canonical Poisson brackets.
 
+## Stochastic generators and adjoints
+
+For \(dX=b\,dt+\sigma\,dW\), set
+\(a=\sigma\sigma^\mathsf T\). The backward generator and its density
+adjoint are
+
+$$
+\mathcal Lu=b_i\partial_i u+\frac12a_{ij}\partial_{ij}u,
+\qquad
+\mathcal L^\ast p
+=-\partial_i(b_i p)+\frac12\partial_i\partial_j(a_{ij}p).
+$$
+
+`kolmogorov_generator` and `fokker_planck_operator` differentiate with
+respect to the selected state geometry while retaining time/parameter
+dependencies. Observable outputs may be scalar or tensor-valued; the generator
+acts componentwise. Densities must be scalar-valued.
+
+For Stratonovich input, Phydrax applies the Euclidean drift correction
+
+$$
+b_i^I=b_i^S+\frac12\sum_{j,k}\sigma_{jk}\partial_j\sigma_{ik}.
+$$
+
+The diffusion factor is required in this mode; covariance alone does not
+identify the correction. See
+[API → Operators → Differential](api/operators/differential.md) for shapes and
+[API → Constraints → Continuous](api/constraints/continuous.md) for stationary
+and time-dependent residual constructors.
+
 ## Backends: autodiff, finite differences, spectral/basis
 
 Many differential operators accept a `backend` keyword:

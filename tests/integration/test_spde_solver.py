@@ -1,0 +1,243 @@
+import jax.numpy as jnp
+import jax.random as jr
+import jax.scipy.linalg as jsp_linalg
+
+import phydrax as phx
+
+
+def _periodic_discretization(size):
+    axis = phx.domain.UniformAxisSpec(
+        size,
+        endpoint=False,
+        periodic=True,
+    ).materialize(0.0, 1.0)
+    return phx.solver.TensorGridDiscretization((axis,))
+
+
+def test_stochastic_heat_ensemble_matches_semidiscrete_gaussian_moments():
+    discretization = _periodic_discretization(4)
+    kappa, duration = 0.1, 0.05
+    initial = jnp.asarray([0.7, -0.2, 0.1, 0.4])
+    basis = phx.solver.SpatialNoiseBasis.from_spectrum(
+        discretization,
+        0.04,
+        rank=2,
+    )
+    spde = phx.solver.semidiscretize_reaction_diffusion(
+        initial,
+        discretization,
+        t0=0.0,
+        t1=duration,
+        kappa=kappa,
+        noise_basis=basis,
+    )
+    driver = spde.wiener_driver(
+        jr.key(20),
+        tolerance=1e-4,
+        realization_id="heat-moments",
+    )
+    solution = phx.solver.solve_diffrax_ensemble(
+        spde.problem,
+        save_times=jnp.asarray([duration]),
+        driver=driver,
+        num_paths=2048,
+        dt0=1e-3,
+    )
+    terminal = solution.states[:, 0, :]
+
+    drift_matrix = kappa * discretization.laplacian_matrix()
+    expected_mean = jsp_linalg.expm(duration * drift_matrix) @ initial
+    laplacian_eigenvalues, _ = discretization.eigenpairs(rank=basis.rank)
+    expected_covariance = jnp.zeros((4, 4))
+    for mode in range(basis.rank):
+        rate = float(kappa * laplacian_eigenvalues[mode])
+        factor = (
+            duration
+            if rate == 0.0
+            else (1.0 - jnp.exp(-2.0 * rate * duration)) / (2.0 * rate)
+        )
+        column = basis.diffusion_matrix[:, mode]
+        expected_covariance = expected_covariance + factor * jnp.outer(column, column)
+    empirical_mean = jnp.mean(terminal, axis=0)
+    centered = terminal - empirical_mean
+    empirical_covariance = centered.T @ centered / float(terminal.shape[0] - 1)
+    relative_covariance_error = jnp.linalg.norm(
+        empirical_covariance - expected_covariance
+    ) / jnp.linalg.norm(expected_covariance)
+
+    assert solution.states.shape == (2048, 1, 4)
+    assert jnp.all(solution.successful)
+    assert jnp.allclose(empirical_mean, expected_mean, atol=6e-3, rtol=2e-2)
+    assert relative_covariance_error < 0.12
+    assert solution.driver is driver
+    assert solution.driver.basis_id == basis.basis_id
+
+    predictive = solution.to_predictive(
+        sample_dim="path",
+        time_dim="time",
+        state_dims=("space",),
+    )
+    assert predictive.sample_axes == (phx.uq.SampleAxis("path", "process"),)
+    assert predictive.samples.shape == (2048, 1, 4)
+
+
+def test_semidiscrete_heat_replays_driver_and_changes_with_key():
+    discretization = _periodic_discretization(5)
+    basis = phx.solver.SpatialNoiseBasis.from_spectrum(
+        discretization,
+        0.02,
+        rank=2,
+    )
+    spde = phx.solver.semidiscretize_reaction_diffusion(
+        jnp.sin(2.0 * jnp.pi * discretization.axes[0].nodes),
+        discretization,
+        t0=0.0,
+        t1=0.03,
+        kappa=0.04,
+        noise_basis=basis,
+    )
+    driver = spde.wiener_driver(jr.key(21), tolerance=1e-4)
+
+    def solve(selected_driver):
+        return phx.solver.solve_diffrax_ensemble(
+            spde.problem,
+            save_times=jnp.asarray([0.03]),
+            driver=selected_driver,
+            num_paths=64,
+            dt0=1e-3,
+        )
+
+    first = solve(driver)
+    replay = solve(driver)
+    changed = solve(spde.wiener_driver(jr.key(22), tolerance=1e-4))
+
+    assert jnp.array_equal(first.states, replay.states)
+    assert not jnp.array_equal(first.states, changed.states)
+
+
+def test_stochastic_allen_cahn_semidiscretization_is_finite_and_reproducible():
+    discretization = _periodic_discretization(6)
+    basis = phx.solver.SpatialNoiseBasis.from_spectrum(
+        discretization,
+        0.01,
+        rank=3,
+    )
+    initial = 0.25 * jnp.cos(2.0 * jnp.pi * discretization.axes[0].nodes)
+    spde = phx.solver.semidiscretize_reaction_diffusion(
+        initial,
+        discretization,
+        t0=0.0,
+        t1=0.04,
+        kappa=0.02,
+        reaction=lambda t, state, args: state - state**3,
+        noise_basis=basis,
+    )
+    driver = spde.wiener_driver(jr.key(23), tolerance=1e-4)
+    first = phx.solver.solve_diffrax_ensemble(
+        spde.problem,
+        save_times=jnp.asarray([0.02, 0.04]),
+        driver=driver,
+        num_paths=32,
+        dt0=1e-3,
+    )
+    replay = phx.solver.solve_diffrax_ensemble(
+        spde.problem,
+        save_times=jnp.asarray([0.02, 0.04]),
+        driver=driver,
+        num_paths=32,
+        dt0=1e-3,
+    )
+
+    assert first.states.shape == (32, 2, 6)
+    assert jnp.all(jnp.isfinite(first.states))
+    assert jnp.array_equal(first.states, replay.states)
+
+
+def test_two_dimensional_tensor_state_preserves_channels_and_noise_axes():
+    x_axis = phx.domain.FourierAxisSpec(4).materialize(0.0, 1.0)
+    y_axis = phx.domain.FourierAxisSpec(5).materialize(0.0, 1.0)
+    discretization = phx.solver.TensorGridDiscretization((x_axis, y_axis))
+    x, y = x_axis.nodes[:, None], y_axis.nodes[None, :]
+    scalar = 0.1 * jnp.sin(2.0 * jnp.pi * x) * jnp.cos(2.0 * jnp.pi * y)
+    initial = jnp.stack((scalar, -scalar), axis=-1)
+    state_shape = initial.shape
+    weights = jnp.broadcast_to(discretization.quadrature_weights[..., None], state_shape)
+    mode = jnp.ones(state_shape) / jnp.sqrt(jnp.sum(weights))
+    basis = phx.solver.SpatialNoiseBasis.from_modes(
+        mode[..., None],
+        jnp.asarray([0.005]),
+        quadrature_weights=weights,
+        state_shape=state_shape,
+        mode_ids=("shared-channel-mode",),
+        discretization_id=discretization.discretization_id,
+    )
+    spde = phx.solver.semidiscretize_reaction_diffusion(
+        initial,
+        discretization,
+        t0=0.0,
+        t1=0.01,
+        kappa=0.01,
+        noise_basis=basis,
+    )
+    solution = phx.solver.solve_diffrax_ensemble(
+        spde.problem,
+        save_times=jnp.asarray([0.01]),
+        driver=spde.wiener_driver(jr.key(24), tolerance=1e-4),
+        num_paths=4,
+        dt0=1e-3,
+    )
+
+    assert spde.state_shape == (4, 5, 2)
+    assert spde.noise_shape == (1,)
+    assert spde.problem.diffusion(0.0, initial, None).shape == (4, 5, 2, 1)
+    assert solution.states.shape == (4, 1, 4, 5, 2)
+    assert jnp.all(jnp.isfinite(solution.states))
+
+
+def test_refined_grid_changes_discretization_and_basis_provenance():
+    coarse = _periodic_discretization(6)
+    refined = _periodic_discretization(10)
+    coarse_basis = phx.solver.SpatialNoiseBasis.from_spectrum(coarse, 0.02, rank=2)
+    refined_basis = phx.solver.SpatialNoiseBasis.from_spectrum(refined, 0.02, rank=2)
+
+    assert coarse.discretization_id != refined.discretization_id
+    assert coarse_basis.basis_id != refined_basis.basis_id
+    assert coarse_basis.discretization_id == coarse.discretization_id
+    assert refined_basis.discretization_id == refined.discretization_id
+
+
+def test_semidiscrete_stratonovich_geometric_noise_matches_analytic_moments():
+    discretization = _periodic_discretization(2)
+    initial = jnp.asarray([1.0, 1.5])
+    rate, noise, duration = 0.2, 0.4, 0.2
+    spde = phx.solver.semidiscretize_spde(
+        lambda t, state, args: rate * state,
+        initial,
+        discretization,
+        t0=0.0,
+        t1=duration,
+        diffusion=lambda t, state, args: noise * jnp.diag(state),
+        noise_shape=(2,),
+        basis_id="geometric-state-noise",
+        interpretation="stratonovich",
+    )
+    solution = phx.solver.solve_diffrax_ensemble(
+        spde.problem,
+        save_times=jnp.asarray([duration]),
+        driver=spde.wiener_driver(jr.key(25), tolerance=1e-4),
+        num_paths=2048,
+        dt0=2e-3,
+    )
+    terminal = solution.states[:, 0, :]
+    expected_mean = initial * jnp.exp((rate + 0.5 * noise**2) * duration)
+    expected_variance = (
+        initial**2
+        * jnp.exp((2.0 * rate + noise**2) * duration)
+        * (jnp.exp(noise**2 * duration) - 1.0)
+    )
+
+    assert spde.problem.interpretation == "stratonovich"
+    assert solution.interpretation == "stratonovich"
+    assert solution.solver_name == "EulerHeun"
+    assert jnp.allclose(jnp.mean(terminal, axis=0), expected_mean, rtol=0.03)
+    assert jnp.allclose(jnp.var(terminal, axis=0), expected_variance, rtol=0.15)

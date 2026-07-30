@@ -94,6 +94,7 @@ nav:
         - Overview: "cookbook/index.md"
         - Poisson (field learning): "cookbook/poisson.md"
         - Heat equation (space–time): "cookbook/heat.md"
+        - Stochastic dynamics (PINNs and SPDEs): "cookbook/stochastic_dynamics.md"
         - Physics-informed graph residuals: "cookbook/graph_physics.md"
         - Inverse + hybrid physics–data: "cookbook/inverse_and_data.md"
         - Operator learning (DatasetDomain): "cookbook/operator_learning.md"
@@ -169,6 +170,7 @@ nav:
             - Activations: "api/nn/activations.md"
         - Solver:
             - Overview: "api/solver/index.md"
+            - Differential equations: "api/solver/differential.md"
             - Functional solver: "api/solver/functional_solver.md"
             - Enforced constraint pipelines: "api/solver/enforced_constraints.md"
         - Uncertainty quantification:

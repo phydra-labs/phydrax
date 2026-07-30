@@ -224,6 +224,19 @@ def _capabilities_for(name: str, architecture: str, /) -> OperatorCapabilitySpec
                 "Poseidon",
             ),
         )
+    if architecture == "ConditionalFlowFunctionOperator":
+        return OperatorCapabilitySpec(
+            source_geometries=_ALL_GEOMETRIES,
+            query_geometries=("tensor_grid", "point_cloud"),
+            spatial_dimensions=(1, 2, 3),
+            source_query_relations=("coincident", "independent"),
+            requires_fixed_query=True,
+            quadrature="optional",
+            masks="supported",
+            topology="unused",
+            input_representations=_ALL_REPRESENTATIONS,
+            output_representations=_ALL_REPRESENTATIONS,
+        )
     if architecture in ("UPT", "ABUPT"):
         return OperatorCapabilitySpec(
             source_geometries=_ALL_GEOMETRIES,
@@ -559,6 +572,13 @@ _OPERATOR_ARCHITECTURE_STATUSES = {
         "Coherent diagonal-plus-low-rank function distributions and likelihoods are "
         "checked; calibrated operator-UQ benchmarks remain pending.",
     ),
+    "ConditionalFlowFunctionOperator": _status(
+        "ConditionalFlowFunctionOperator",
+        "ConditionalFlowFunctionOperator",
+        "experimental",
+        "Conditional FlowJAX residual densities are supported on shared fixed query "
+        "geometries; arbitrary-query and resolution-transfer claims are excluded.",
+    ),
     "Poseidon": _status(
         "Poseidon",
         "Poseidon",
@@ -681,6 +701,7 @@ _ALIAS_TARGETS = {
     "iconoperator": "InContextOperator",
     "incontextoperatornetwork": "InContextOperator",
     "gaussianoperator": "GaussianFunctionOperator",
+    "conditionalflowoperator": "ConditionalFlowFunctionOperator",
     "scot": "Poseidon",
     "denoisingpretrainedoperatortransformer": "DPOT",
     "transolverplusplus": "TransolverPlusPlus",
@@ -805,6 +826,55 @@ def operator_instance_contract(model: Any, /) -> ConfiguredOperatorContract:
                 maximum_sources=(
                     None if maximum_sources is None else maximum_sources + 1
                 ),
+            ),
+            training=wrapped.training,
+        )
+        return _reconcile_instance_contract(model, contract)
+    if model_type == "GaussianFunctionOperator":
+        wrapped = model.base.operator_contract
+        contract = ConfiguredOperatorContract(
+            architecture="GaussianFunctionOperator",
+            configuration=wrapped.configuration
+            + (
+                ("wrapped_architecture", wrapped.architecture),
+                ("out_channels", model.out_size),
+                ("factor_rank", model.factor_rank),
+                ("min_scale", model.min_scale),
+                ("factor_scale", model.factor_scale),
+                ("scale_mode", model.scale_mode),
+                ("fixed_scale", model.fixed_scale),
+                ("uncertainty_source", model.uncertainty_source),
+            ),
+            capabilities=wrapped.capabilities,
+            training=wrapped.training,
+        )
+        return _reconcile_instance_contract(model, contract)
+    if model_type == "ConditionalFlowFunctionOperator":
+        wrapped = model.location_model.operator_contract
+        supported_queries = tuple(
+            geometry
+            for geometry in wrapped.capabilities.query_geometries
+            if geometry in ("tensor_grid", "point_cloud")
+        )
+        contract = ConfiguredOperatorContract(
+            architecture="ConditionalFlowFunctionOperator",
+            configuration=wrapped.configuration
+            + (
+                ("wrapped_architecture", wrapped.architecture),
+                ("flow_type", type(model.flow).__name__),
+                ("event_size", int(model.active_indices.shape[0])),
+                ("condition_inputs", tuple(model.conditioner.encoders)),
+                ("condition_size", model.conditioner.condition_size),
+                ("query_fingerprint", model.reference_query_fingerprint),
+                ("uncertainty_source", model.uncertainty_source),
+            ),
+            capabilities=replace(
+                wrapped.capabilities,
+                query_geometries=supported_queries,
+                requires_fixed_query=True,
+                multiple_queries=False,
+                resolution_transfer=False,
+                topology="unused",
             ),
             training=wrapped.training,
         )

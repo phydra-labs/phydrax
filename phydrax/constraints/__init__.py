@@ -193,6 +193,11 @@ from ._ragged_time_series_enforced import (
     RaggedTimeSeriesHardGate,
     RaggedTimeSeriesHardInterpolation,
 )
+from ._stochastic import (
+    CoefficientField,
+    ContinuousFokkerPlanckConstraint,
+    ContinuousKolmogorovConstraint,
+)
 from ._supervised_dataset import (
     SupervisedDatasetBatch,
     SupervisedDatasetConstraint,
@@ -275,6 +280,9 @@ __all__ = [
     "AveragePressureBoundaryConstraint",
     "EMPoyntingFluxBoundaryConstraint",
     "CFDKineticEnergyFluxBoundaryConstraint",
+    "CoefficientField",
+    "ContinuousFokkerPlanckConstraint",
+    "ContinuousKolmogorovConstraint",
     "ContinuousODEConstraint",
     "DiscreteODEConstraint",
     "DiscreteTimeDataConstraint",

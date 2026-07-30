@@ -152,6 +152,8 @@ def _optional_array_equal(left: Array | None, right: Array | None, /) -> bool:
 
 
 def _queries_equal(left: FunctionSamples, right: FunctionSamples, /) -> bool:
+    if left is right:
+        return True
     if len(left.axes) != len(right.axes):
         return False
     for left_axis, right_axis in zip(left.axes, right.axes, strict=True):
@@ -406,10 +408,7 @@ class OperatorPredictionInterval(StrictModule):
                     "Operator interval bounds must have identical field contracts."
                 )
             if bool(
-                jnp.any(
-                    jnp.asarray(lower_field.values)
-                    > jnp.asarray(upper_field.values)
-                )
+                jnp.any(jnp.asarray(lower_field.values) > jnp.asarray(upper_field.values))
             ):
                 raise ValueError(
                     f"Operator interval lower bounds exceed upper bounds for {name!r}."
@@ -845,9 +844,9 @@ def sample_operator_predictive(
     for start in range(0, count, chunk):
         selected = keys[start : min(start + chunk, count)]
         values = eqx.filter_vmap(
-            lambda sample_key: model.predict(batch, key=sample_key)
-            .field(field_name)
-            .values
+            lambda sample_key: (
+                model.predict(batch, key=sample_key).field(field_name).values
+            )
         )(selected)
         parts.append(jnp.asarray(values))
     samples = jnp.concatenate(tuple(parts), axis=0)

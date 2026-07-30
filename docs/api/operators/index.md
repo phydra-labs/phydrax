@@ -4,7 +4,8 @@ Operators build PDE terms such as gradients, divergences, Laplacians, and integr
 
 ## Families
 
-- **Differential**: $\nabla u$, $\nabla\cdot v$, $\Delta u$, surface and fractional operators.
+- **Differential**: \(\nabla u\), \(\nabla\cdot v\), \(\Delta u\), stochastic
+  generators/adjoints, surface operators, and fractional operators.
 - **Integral**: $\int_\Omega u\,d\Omega$, means, quadrature helpers, and convolution.
 - **Path integral**: Brownian bridges, Euclidean kernels, Feynman–Kac expectations,
   diffusion paths, and discrete first-passage observables.
