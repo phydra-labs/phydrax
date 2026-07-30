@@ -9,9 +9,12 @@ from ._batch import (
     GRAPH_GRAPH_INDEX_KEY,
     GraphBatch,
 )
+from ._cochain import as_cochain_field, cochain_field_spec
 from ._components import (
     BoundaryEdges,
     BoundaryNodes,
+    CochainCellRegion,
+    CochainCells,
     Edges,
     EdgeSet,
     EdgeType,
@@ -45,6 +48,10 @@ __all__ = [
     "GRAPH_GRAPH_INDEX_KEY",
     "GRAPH_SAMPLE_INDEX_KEY",
     "GRAPH_TRAJECTORY_TIME_INDEX_KEY",
+    "as_cochain_field",
+    "cochain_field_spec",
+    "CochainCellRegion",
+    "CochainCells",
     "BoundaryEdges",
     "BoundaryNodes",
     "EdgeSet",

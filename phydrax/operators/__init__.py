@@ -109,6 +109,10 @@ from .functional import (  # noqa: F401
     spatial_mean,
 )
 from .graph import (  # noqa: F401
+    cochain_codifferential,
+    cochain_exterior_derivative,
+    cochain_harmonic_projection,
+    cochain_hodge_laplacian,
     degree as graph_degree,
     graph_advection_diffusion_residual,
     graph_conservation_residual,
@@ -341,6 +345,10 @@ __all__ = [
     "von_neumann_residual",
     "von_neumann_entropy",
     # graph exports
+    "cochain_codifferential",
+    "cochain_exterior_derivative",
+    "cochain_harmonic_projection",
+    "cochain_hodge_laplacian",
     "graph_advection_diffusion_residual",
     "graph_conservation_residual",
     "graph_degree",

@@ -41,6 +41,7 @@ from ._serialize import (
 from ._tokens import (
     pad_pde_tokens,
     PDE_OPERATOR_VOCABULARY,
+    PDE_TOKEN_ATTRIBUTES,
     PDE_TOKEN_KINDS,
     PDETokenBatch,
     stack_pde_tokens,
@@ -70,6 +71,7 @@ __all__ = [
     "PDERepresentation",
     "PDEValueType",
     "PDE_OPERATOR_VOCABULARY",
+    "PDE_TOKEN_ATTRIBUTES",
     "PDE_TOKEN_KINDS",
     "PDETokenBatch",
     "as_expression",

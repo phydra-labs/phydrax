@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
 from ._ir import PDEExpression, PDEProblemIR
 
@@ -48,6 +49,19 @@ def _combine_dimensions(
 
 def _same_dimension(left: tuple[float, ...], right: tuple[float, ...], /) -> bool:
     return all(abs(a - b) <= 1e-12 for a, b in zip(left, right, strict=True))
+
+
+def _require_finite(values: tuple[float, ...], name: str, /) -> None:
+    if any(not isfinite(float(value)) for value in values):
+        raise ValueError(f"{name} must be finite.")
+
+
+def _validate_expression_finite(expression: PDEExpression, /) -> None:
+    _require_finite(expression.physical_dimension, "PDE expression physical dimensions")
+    if expression.value is not None and not isfinite(float(expression.value)):
+        raise ValueError("PDE expression value must be finite.")
+    for argument in expression.args:
+        _validate_expression_finite(argument)
 
 
 def infer_expression_type(
@@ -304,6 +318,35 @@ def validate_pde_ir(problem: PDEProblemIR, /) -> PDEProblemIR:
     )
     if len(set(symbols)) != len(symbols):
         raise ValueError("PDE field and parameter symbols must not collide.")
+    for coordinate in problem.coordinates:
+        _require_finite(
+            coordinate.physical_dimension,
+            "PDE coordinate physical dimensions",
+        )
+        if coordinate.bounds is not None:
+            _require_finite(coordinate.bounds, "PDE coordinate bounds")
+            if coordinate.bounds[1] <= coordinate.bounds[0]:
+                raise ValueError("PDE coordinate upper bound must exceed lower bound.")
+    for field in problem.fields:
+        _require_finite(field.physical_dimension, "PDE field physical dimensions")
+        _require_finite(field.scale, "PDE field scale")
+        if any(value <= 0.0 for value in field.scale):
+            raise ValueError("PDE field scales must be positive.")
+    for parameter in problem.parameters:
+        _require_finite(
+            parameter.physical_dimension,
+            "PDE parameter physical dimensions",
+        )
+        _require_finite(parameter.scale, "PDE parameter scale")
+        if any(value <= 0.0 for value in parameter.scale):
+            raise ValueError("PDE parameter scales must be positive.")
+        if parameter.value is not None:
+            parameter_values = (
+                parameter.value
+                if isinstance(parameter.value, tuple)
+                else (parameter.value,)
+            )
+            _require_finite(parameter_values, "PDE parameter value")
     coordinate_names = {item.name for item in problem.coordinates}
     for field in problem.fields:
         unknown = set(field.coordinates) - coordinate_names
@@ -319,6 +362,8 @@ def validate_pde_ir(problem: PDEProblemIR, /) -> PDEProblemIR:
             )
     region_by_name = {region.name: region for region in problem.regions}
     for equation in problem.equations:
+        _validate_expression_finite(equation.lhs)
+        _validate_expression_finite(equation.rhs)
         left = infer_expression_type(equation.lhs, problem)
         right = infer_expression_type(equation.rhs, problem)
         if (
@@ -330,6 +375,8 @@ def validate_pde_ir(problem: PDEProblemIR, /) -> PDEProblemIR:
                 f"PDE equation {equation.name!r} equates incompatible values."
             )
     for condition in problem.conditions:
+        _validate_expression_finite(condition.expression)
+        _validate_expression_finite(condition.target)
         if condition.region not in region_by_name:
             raise ValueError(
                 f"PDE condition {condition.name!r} references unknown region."
@@ -359,7 +406,14 @@ def validate_pde_ir(problem: PDEProblemIR, /) -> PDEProblemIR:
         problem.nondimensionalization
     ):
         raise ValueError("Nondimensionalization keys must be unique.")
-    if any(float(value) <= 0.0 for _, value in problem.nondimensionalization):
+    nondimensionalization_values = tuple(
+        float(value) for _, value in problem.nondimensionalization
+    )
+    _require_finite(
+        nondimensionalization_values,
+        "PDE nondimensionalization scales",
+    )
+    if any(value <= 0.0 for value in nondimensionalization_values):
         raise ValueError("Nondimensionalization scales must be positive.")
     if len({name for name, _ in problem.metadata}) != len(problem.metadata):
         raise ValueError("PDE metadata keys must be unique.")

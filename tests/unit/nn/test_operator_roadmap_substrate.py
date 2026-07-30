@@ -3,6 +3,7 @@
 #
 
 import json
+import math
 
 import coordax as cx
 import equinox as eqx
@@ -14,7 +15,7 @@ import pytest
 import phydrax as phx
 from phydrax._frozendict import frozendict
 from phydrax.constraints import FunctionalConstraint
-from phydrax.domain import Interval1d, ProductStructure
+from phydrax.domain import Interval1d, LegendreAxisSpec, ProductStructure
 from phydrax.equations import (
     compile_pde_functional_constraint,
     compile_pde_problem,
@@ -626,3 +627,296 @@ def test_pde_ir_round_trip_canonical_hash_tokens_and_constraint_execution():
     )
     assert isinstance(constraint, FunctionalConstraint)
     assert jnp.allclose(constraint.loss({"u": u}), 1.0)
+
+
+@pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+@pytest.mark.parametrize(
+    ("name", "make"),
+    [
+        (
+            "coordinate bounds",
+            lambda value: PDECoordinate("x", "space", bounds=(0.0, value)),
+        ),
+        (
+            "coordinate dimension",
+            lambda value: PDECoordinate(
+                "x",
+                "space",
+                physical_dimension=(value,),
+            ),
+        ),
+        (
+            "field dimension",
+            lambda value: PDEField("u", physical_dimension=(value,)),
+        ),
+        ("field scale", lambda value: PDEField("u", scale=(value,))),
+        (
+            "parameter scalar value",
+            lambda value: phx.equations.PDEParameter("a", value=value),
+        ),
+        (
+            "parameter vector value",
+            lambda value: phx.equations.PDEParameter(
+                "a",
+                value=(0.0, value),
+                components=2,
+            ),
+        ),
+        (
+            "parameter dimension",
+            lambda value: phx.equations.PDEParameter(
+                "a",
+                physical_dimension=(value,),
+            ),
+        ),
+        (
+            "parameter scale",
+            lambda value: phx.equations.PDEParameter("a", scale=(value,)),
+        ),
+        ("expression value", lambda value: PDEExpression.constant(value)),
+        (
+            "expression dimension",
+            lambda value: PDEExpression.constant(
+                0.0,
+                physical_dimension=(value,),
+            ),
+        ),
+        (
+            "nondimensionalization",
+            lambda value: PDEProblemIR(
+                coordinates=(),
+                fields=(),
+                nondimensionalization=(("reference", value),),
+            ),
+        ),
+    ],
+)
+def test_pde_numeric_metadata_rejects_nonfinite_during_construction(
+    bad,
+    name,
+    make,
+):
+    with pytest.raises(ValueError, match="finite"):
+        make(bad)
+
+
+def test_pde_numeric_metadata_accepts_finite_zero_and_negative_dimensions():
+    problem = PDEProblemIR(
+        coordinates=(
+            PDECoordinate(
+                "x",
+                "space",
+                physical_dimension=(-1.0,),
+                bounds=(-2.0, 0.0),
+            ),
+        ),
+        fields=(
+            PDEField(
+                "u",
+                coordinates=("x",),
+                physical_dimension=(-2.0,),
+                scale=(1.0,),
+            ),
+        ),
+        parameters=(
+            phx.equations.PDEParameter(
+                "a",
+                value=0.0,
+                physical_dimension=(-3.0,),
+                scale=(2.0,),
+            ),
+        ),
+        nondimensionalization=(("x", 1.0),),
+    )
+
+    assert phx.equations.validate_pde_ir(problem) is problem
+    assert '"value":0.0' in pde_ir_to_json(problem)
+
+    object.__setattr__(problem.fields[0], "scale", (math.nan,))
+    with pytest.raises(ValueError, match="finite"):
+        phx.equations.validate_pde_ir(problem)
+
+
+def _canonical_expression_problem(expression):
+    return PDEProblemIR(
+        coordinates=(PDECoordinate("x", "space"),),
+        fields=tuple(
+            PDEField(name, coordinates=("x",))
+            for name in ("u", "v", "w", "z")
+        ),
+        equations=(PDEEquation("governing", expression),),
+    )
+
+
+def _token_arrays(tokens):
+    return tuple(
+        getattr(tokens, name)
+        for name in (
+            "kind",
+            "operator",
+            "attribute",
+            "symbol",
+            "scalar",
+            "physical_dimension",
+            "slot",
+            "parent",
+            "depth",
+            "mask",
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "expressions",
+    [
+        lambda u, v, w, z: (
+            ((u + v) + w) + z,
+            u + (v + (w + z)),
+            (u + v) + (w + z),
+            z + (w + (v + u)),
+        ),
+        lambda u, v, w, z: (
+            ((u * v) * w) * z,
+            u * (v * (w * z)),
+            (u * v) * (w * z),
+            z * (w * (v * u)),
+        ),
+    ],
+)
+def test_associative_expression_canonicalization_is_recursive(expressions):
+    fields = tuple(PDEExpression.field(name) for name in ("u", "v", "w", "z"))
+    problems = tuple(
+        _canonical_expression_problem(expression)
+        for expression in expressions(*fields)
+    )
+    payloads = tuple(pde_ir_to_json(problem) for problem in problems)
+    hashes = tuple(pde_ir_hash(problem) for problem in problems)
+    tokens = tuple(tokenize_pde_ir(problem) for problem in problems)
+
+    assert len(set(payloads)) == 1
+    assert len(set(hashes)) == 1
+    for current in tokens[1:]:
+        assert all(
+            jnp.array_equal(left, right)
+            for left, right in zip(
+                _token_arrays(tokens[0]),
+                _token_arrays(current),
+                strict=True,
+            )
+        )
+
+
+def test_nonassociative_expression_trees_remain_distinct():
+    u, v, w, _ = tuple(
+        PDEExpression.field(name) for name in ("u", "v", "w", "z")
+    )
+    expressions = (
+        (u / v) / w,
+        u / (v / w),
+        (u**2.0) ** 3.0,
+        u**6.0,
+        (u + v) * w,
+        u + (v * w),
+    )
+    hashes = {
+        _canonical_expression_problem(expression).canonical_hash
+        for expression in expressions
+    }
+    assert len(hashes) == len(expressions)
+
+
+def _compiler_backend_problem():
+    return PDEProblemIR(
+        coordinates=(PDECoordinate("x", "space"),),
+        fields=(PDEField("u", coordinates=("x",)),),
+    )
+
+
+def test_pde_compiler_executes_all_derivative_backends():
+    geometry = Interval1d(-1.0, 1.0)
+
+    @geometry.Function("x")
+    def u(x):
+        return x[0] ** 4
+
+    problem = _compiler_backend_problem()
+    field = PDEExpression.field("u")
+    for backend in ("ad", "jet"):
+        derivative = phx.equations.compile_pde_expression(
+            field.derivative("x", order=3),
+            problem,
+            fields={"u": u},
+            differential_backend=backend,
+        )
+        assert jnp.allclose(derivative.func(jnp.array([0.25])), 6.0)
+
+    finite_difference_coordinates = jnp.linspace(-1.0, 1.0, 257)
+    finite_difference = phx.equations.compile_pde_expression(
+        field.derivative("x", order=2),
+        problem,
+        fields={"u": u},
+        differential_backend="fd",
+    ).func((finite_difference_coordinates,))
+    expected = 12.0 * finite_difference_coordinates**2
+    assert jnp.allclose(
+        finite_difference[2:-2],
+        expected[2:-2],
+        rtol=2e-2,
+        atol=2e-2,
+    )
+
+    basis_coordinates = LegendreAxisSpec(24).materialize(
+        jnp.array(-1.0),
+        jnp.array(1.0),
+    ).nodes
+    basis = phx.equations.compile_pde_expression(
+        field.derivative("x", order=2),
+        problem,
+        fields={"u": u},
+        differential_backend="basis",
+    ).func((basis_coordinates,))
+    assert jnp.allclose(
+        basis,
+        12.0 * basis_coordinates**2,
+        rtol=1e-7,
+        atol=1e-7,
+    )
+
+
+def test_pde_compiler_rejects_invalid_backend_before_expression_dispatch():
+    problem = _compiler_backend_problem()
+    constant = PDEExpression.constant(1.0)
+    geometry = Interval1d(-1.0, 1.0)
+    u = geometry.Function("x")(0.0)
+
+    calls = (
+        lambda: phx.equations.compile_pde_expression(
+            constant,
+            problem,
+            fields={"u": u},
+            differential_backend="definitely_invalid",
+        ),
+        lambda: compile_pde_problem(
+            problem,
+            fields={"u": u},
+            differential_backend="definitely_invalid",
+        ),
+        lambda: compile_pde_functional_constraint(
+            constant,
+            problem,
+            component=None,
+            num_points=1,
+            structure=None,
+            differential_backend="definitely_invalid",
+        ),
+    )
+    for call in calls:
+        with pytest.raises(ValueError, match="definitely_invalid"):
+            call()
+
+
+def test_scatter_operator_graph_entities_is_exported_from_nn():
+    assert (
+        phx.nn.scatter_operator_graph_entities
+        is phx.nn.models.scatter_operator_graph_entities
+    )

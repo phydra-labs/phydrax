@@ -119,8 +119,12 @@ from .geometry3d import (  # noqa: F401
     Wedge,
 )
 from .graph import (
+    as_cochain_field,
     BoundaryEdges,
     BoundaryNodes,
+    cochain_field_spec,
+    CochainCellRegion,
+    CochainCells,
     Edges,
     EdgeSet,
     EdgeType,
@@ -153,6 +157,8 @@ __all__ = [
     # product domains / structure
     "ProbabilityDomain",
     "ProductDomain",
+    "as_cochain_field",
+    "cochain_field_spec",
     "DomainFunction",
     "structured",
     "DatasetDomain",
@@ -194,6 +200,8 @@ __all__ = [
     "FixedEnd",
     "ComponentSpec",
     "DomainComponent",
+    "CochainCellRegion",
+    "CochainCells",
     "DomainComponentUnion",
     "BoundaryEdges",
     "BoundaryNodes",

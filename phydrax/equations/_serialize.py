@@ -21,16 +21,26 @@ from ._ir import (
 from ._validate import validate_pde_ir
 
 
+def _flatten_associative(
+    expression: PDEExpression,
+    operator: str,
+    /,
+) -> tuple[PDEExpression, ...]:
+    flattened: list[PDEExpression] = []
+    for argument in expression.args:
+        if argument.op == operator:
+            flattened.extend(_flatten_associative(argument, operator))
+        else:
+            flattened.append(argument)
+    return tuple(flattened)
+
+
 def _canonical_expression(expression: PDEExpression, /) -> dict[str, Any]:
-    args = list(expression.args)
-    if expression.op in ("add", "multiply"):
-        flattened: list[PDEExpression] = []
-        for argument in args:
-            if argument.op == expression.op:
-                flattened.extend(argument.args)
-            else:
-                flattened.append(argument)
-        args = flattened
+    args = (
+        _flatten_associative(expression, expression.op)
+        if expression.op in ("add", "multiply")
+        else expression.args
+    )
     encoded_args = [_canonical_expression(argument) for argument in args]
     if expression.op in ("add", "multiply"):
         encoded_args.sort(

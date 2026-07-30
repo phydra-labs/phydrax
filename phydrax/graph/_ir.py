@@ -257,6 +257,33 @@ class GraphIR(eqx.Module, NonTrainableState):
                     raise ValueError("Edges are present but node count is zero.")
                 if np.any(senders_np >= n_nodes) or np.any(receivers_np >= n_nodes):
                     raise ValueError("Edge indices must be in [0, sum(n_node)).")
+                node_start = 0
+                edge_start = 0
+                for graph_index, (node_count, edge_count) in enumerate(
+                    zip(n_node_np, n_edge_np, strict=True)
+                ):
+                    node_end = node_start + int(node_count)
+                    edge_end = edge_start + int(edge_count)
+                    for endpoint_name, endpoints in (
+                        ("sender", senders_np),
+                        ("receiver", receivers_np),
+                    ):
+                        graph_endpoints = endpoints[edge_start:edge_end]
+                        offending = np.flatnonzero(
+                            (graph_endpoints < node_start)
+                            | (graph_endpoints >= node_end)
+                        )
+                        if offending.size:
+                            local_edge = int(offending[0])
+                            edge_position = edge_start + local_edge
+                            endpoint = int(graph_endpoints[local_edge])
+                            raise ValueError(
+                                f"Graph {graph_index} edge position {edge_position} "
+                                f"has {endpoint_name} {endpoint}; required node interval "
+                                f"[{node_start}, {node_end})."
+                            )
+                    node_start = node_end
+                    edge_start = edge_end
 
         if strict and node_size is not None and node_size != n_nodes:
             raise ValueError("Node feature leading size must equal `sum(n_node)`.")
@@ -297,7 +324,8 @@ class GraphIR(eqx.Module, NonTrainableState):
     def as_jraph_tuple(self) -> Any:
         if importlib.util.find_spec("jraph") is None:
             raise ImportError(
-                "jraph is not installed. Install with `pip install jraph` or `.[compat]`."
+                "jraph is required for `phydrax.graph.GraphIR.as_jraph_tuple`; "
+                "install it with `pip install jraph`."
             )
         jraph = importlib.import_module("jraph")
         return jraph.GraphsTuple(

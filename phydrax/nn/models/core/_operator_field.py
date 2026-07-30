@@ -11,68 +11,13 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from ...._strict import StrictModule
+from ....graph import CochainFieldSpec
 from ..._utils import _get_size
 from ._operator import OperatorOutputSpec
 from ._operator_capabilities import OperatorFieldRepresentation
 
 
 OperatorFieldRole = Literal["source", "target", "both"]
-OperatorCochainSide = Literal["primal", "dual"]
-OperatorCellOrientation = Literal["invariant", "signed"]
-OperatorCochainSampling = Literal["point_value", "cell_average", "cell_integral"]
-
-
-class OperatorCochainSpec(StrictModule):
-    """Discrete differential-form semantics for one operator field."""
-
-    degree: int
-    complex_side: OperatorCochainSide
-    cell_orientation: OperatorCellOrientation
-    sampling: OperatorCochainSampling
-
-    def __init__(
-        self,
-        degree: int,
-        /,
-        *,
-        complex_side: OperatorCochainSide = "primal",
-        cell_orientation: OperatorCellOrientation,
-        sampling: OperatorCochainSampling,
-    ):
-        resolved_degree = int(degree)
-        if resolved_degree < 0:
-            raise ValueError("Cochain degree must be non-negative.")
-        if complex_side not in ("primal", "dual"):
-            raise ValueError("complex_side must be 'primal' or 'dual'.")
-        if cell_orientation not in ("invariant", "signed"):
-            raise ValueError("cell_orientation must be 'invariant' or 'signed'.")
-        if sampling not in ("point_value", "cell_average", "cell_integral"):
-            raise ValueError(
-                "sampling must be 'point_value', 'cell_average', or 'cell_integral'."
-            )
-        self.degree = resolved_degree
-        self.complex_side = complex_side
-        self.cell_orientation = cell_orientation
-        self.sampling = sampling
-
-    def to_dict(self) -> dict[str, Any]:
-        """Return canonical JSON-compatible cochain semantics."""
-        return {
-            "degree": self.degree,
-            "complex_side": self.complex_side,
-            "cell_orientation": self.cell_orientation,
-            "sampling": self.sampling,
-        }
-
-    @classmethod
-    def from_dict(cls, value: Mapping[str, Any], /) -> "OperatorCochainSpec":
-        """Restore cochain semantics from their canonical dictionary."""
-        return cls(
-            int(value["degree"]),
-            complex_side=value.get("complex_side", "primal"),
-            cell_orientation=value["cell_orientation"],
-            sampling=value["sampling"],
-        )
 
 
 class OperatorFieldSpec(StrictModule):
@@ -89,7 +34,7 @@ class OperatorFieldSpec(StrictModule):
     physical_dimension: tuple[float, ...]
     scale: tuple[float, ...]
     offset: tuple[float, ...]
-    cochain: OperatorCochainSpec | None
+    cochain: CochainFieldSpec | None
     required: bool
 
     def __init__(
@@ -107,7 +52,7 @@ class OperatorFieldSpec(StrictModule):
         physical_dimension: Sequence[float] = (),
         scale: float | Sequence[float] = 1.0,
         offset: float | Sequence[float] = 0.0,
-        cochain: OperatorCochainSpec | None = None,
+        cochain: CochainFieldSpec | None = None,
         required: bool = True,
     ):
         resolved_name = str(name)
@@ -157,8 +102,8 @@ class OperatorFieldSpec(StrictModule):
         offsets = channel_values(offset, "offset")
         if any(value <= 0.0 for value in scales):
             raise ValueError("Field scales must be strictly positive.")
-        if cochain is not None and not isinstance(cochain, OperatorCochainSpec):
-            raise TypeError("cochain must be an OperatorCochainSpec or None.")
+        if cochain is not None and not isinstance(cochain, CochainFieldSpec):
+            raise TypeError("cochain must be a CochainFieldSpec or None.")
         if (
             cochain is not None
             and cochain.cell_orientation == "signed"
@@ -287,17 +232,13 @@ class OperatorFieldSpec(StrictModule):
             cochain=(
                 None
                 if value.get("cochain") is None
-                else OperatorCochainSpec.from_dict(value["cochain"])
+                else CochainFieldSpec.from_dict(value["cochain"])
             ),
             required=bool(value.get("required", True)),
         )
 
 
 __all__ = [
-    "OperatorCellOrientation",
-    "OperatorCochainSampling",
-    "OperatorCochainSide",
-    "OperatorCochainSpec",
     "OperatorFieldRole",
     "OperatorFieldSpec",
 ]

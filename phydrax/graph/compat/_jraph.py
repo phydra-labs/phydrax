@@ -69,8 +69,8 @@ def is_available() -> bool:
 def require_jraph() -> Any:
     if importlib.util.find_spec("jraph") is None:
         raise ImportError(
-            "jraph is required for `vertax.compat.jraph`. "
-            "Install with `pip install jraph` or `vertax[compat]`."
+            "jraph is required for `phydrax.graph.compat.jraph`; "
+            "install it with `pip install jraph`."
         )
     return importlib.import_module("jraph")
 

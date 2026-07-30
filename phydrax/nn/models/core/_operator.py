@@ -16,6 +16,7 @@ from ...._frozendict import frozendict
 from ...._strict import StrictModule
 from ....domain._grid import AxisDiscretization
 from ._operator_topology import (
+    broadcast_operator_topology,
     operator_topology_fingerprint,
     OperatorTopology,
     pad_operator_topology,
@@ -633,8 +634,6 @@ class OperatorTargetBatch(StrictModule):
         case_axes: Sequence[str] = (),
         case_shape: Sequence[int] = (),
     ):
-        if not fields:
-            raise ValueError("OperatorTargetBatch requires at least one target field.")
         field_map = frozendict({str(name): field for name, field in fields.items()})
         for name, field in field_map.items():
             if not name:
@@ -667,7 +666,11 @@ class OperatorTargetBatch(StrictModule):
     ) -> "OperatorTargetBatch":
         """Build and validate named target arrays against an operator batch."""
         if not values:
-            raise ValueError("Operator target values must not be empty.")
+            return cls(
+                {},
+                case_axes=batch.case_axes,
+                case_shape=batch.case_shape,
+            )
         names = tuple(str(name) for name in values)
         if query_names is None:
             query = next(iter(batch.queries)) if len(batch.queries) == 1 else None
@@ -1175,13 +1178,17 @@ def _stack_samples(
     topology_presence = tuple(item.topology is not None for item in prepared)
     if any(topology_presence) and not all(topology_presence):
         raise ValueError("FunctionSamples topology must all be present or all be absent.")
-    topology = (
-        stack_operator_topologies(
-            tuple(cast(OperatorTopology, item.topology) for item in prepared)
+    if all(topology_presence):
+        topologies = tuple(
+            broadcast_operator_topology(
+                cast(OperatorTopology, item.topology),
+                case_shape,
+            )
+            for item, case_shape in zip(prepared, case_shapes, strict=True)
         )
-        if all(topology_presence)
-        else None
-    )
+        topology = stack_operator_topologies(topologies)
+    else:
+        topology = None
     if first.values is None:
         if any(item.values is not None for item in prepared[1:]):
             raise ValueError("FunctionSamples values must all be present or all be None.")

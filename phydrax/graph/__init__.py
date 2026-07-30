@@ -17,14 +17,19 @@ from ._cochain import (
     cochain_complex_from_simplicial,
     CochainBoundaryKind,
     CochainBoundaryPolicy,
+    CochainCellOrientation,
     CochainComplexIR,
+    CochainFieldSpec,
     CochainIncidence,
+    CochainSampling,
+    CochainSide,
     compute_harmonic_subspace,
     HarmonicSubspace,
     reorient_cochain,
     reorient_cochain_complex,
     triangle_mesh_to_cochain_complex,
 )
+from ._cochain_metric import cochain_metric_reduce, CochainMetricReduction
 from ._cochain_ops import (
     cochain_codifferential,
     cochain_exterior_derivative,
@@ -36,6 +41,7 @@ from ._cochain_ops import (
     CochainHodgeLaplacian,
     HodgeLaplacianComponent,
 )
+from ._cochain_residual import CochainResidualProgram
 from ._data import Batch, Data
 from ._derived import (
     line_graph,
@@ -314,6 +320,12 @@ __all__ = [
     "graph_adjacency_apply",
     "graph_laplacian_apply",
     "CochainBoundaryKind",
+    "CochainCellOrientation",
+    "CochainFieldSpec",
+    "CochainSampling",
+    "CochainSide",
+    "CochainMetricReduction",
+    "CochainResidualProgram",
     "CochainBoundaryPolicy",
     "CochainComplexIR",
     "CochainIncidence",
@@ -330,6 +342,7 @@ __all__ = [
     "CochainHodgeLaplacian",
     "HodgeLaplacianComponent",
     "cochain_codifferential",
+    "cochain_metric_reduce",
     "cochain_exterior_derivative",
     "cochain_harmonic_projection",
     "cochain_hodge_laplacian",

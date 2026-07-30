@@ -171,14 +171,7 @@ from .core._operator_domain import (
     OperatorDomainLayout,
     OperatorDomainView,
 )
-from .core._operator_field import (
-    OperatorCellOrientation,
-    OperatorCochainSampling,
-    OperatorCochainSide,
-    OperatorCochainSpec,
-    OperatorFieldRole,
-    OperatorFieldSpec,
-)
+from .core._operator_field import OperatorFieldRole, OperatorFieldSpec
 from .core._operator_geometry import (
     function_samples_from_geometry,
     function_samples_from_mesh,
@@ -482,10 +475,6 @@ __all__ = [
     "CochainNeuralOperator",
     "TopologicalCochainBlock",
     "TopologicalRouteConfig",
-    "OperatorCellOrientation",
-    "OperatorCochainSampling",
-    "OperatorCochainSide",
-    "OperatorCochainSpec",
     "OperatorFieldRole",
     "PDEConditionEncoder",
     "attach_pde_condition",

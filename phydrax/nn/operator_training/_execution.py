@@ -68,6 +68,12 @@ def nondimensionalize_targets(
     /,
 ) -> OperatorTargetBatch:
     """Map physical target values into task execution units."""
+    if not targets.fields:
+        return OperatorTargetBatch(
+            {},
+            case_axes=targets.case_axes,
+            case_shape=targets.case_shape,
+        )
     expected = tuple(field.name for field in task.target_fields)
     if set(targets.fields) != set(expected):
         raise ValueError(

@@ -17,6 +17,8 @@ from ..domain._components import DomainComponent, DomainComponentUnion, Interior
 from ..domain._domain import RelabeledDomain
 from ..domain._function import BatchAwareCallable, DomainFunction
 from ..domain.graph import (
+    cochain_field_spec,
+    CochainCells,
     Edges,
     EdgeType,
     Globals,
@@ -28,6 +30,7 @@ from ..domain.graph import (
     Nodes,
     NodeType,
 )
+from ..domain.graph._cochain import _COCHAIN_FIELD_SPEC_KEY
 from ..domain.graph._components import (
     graph_component_indices,
     graph_component_kind,
@@ -124,6 +127,25 @@ def _type_mask(batch: GraphBatch, component: NodeType | EdgeType, /) -> Array:
     return _isin(type_ids.astype(jnp.int32), component.type_ids)
 
 
+def _cochain_mask(batch: GraphBatch, component: CochainCells, /) -> Array:
+    payload = batch.points.get(batch.graph_label)
+    if not isinstance(payload, Mapping):
+        raise TypeError("CochainCells enforcement requires mapping-valued node payloads.")
+    degree_field = payload.get("cell_dim")
+    if not isinstance(degree_field, cx.Field):
+        raise KeyError("CochainCells enforcement requires graph.nodes['cell_dim'].")
+    mask = jnp.asarray(degree_field.data, dtype=jnp.int32) == component.degree
+    if component.region == "all":
+        return mask
+    boundary_field = payload.get("boundary")
+    if not isinstance(boundary_field, cx.Field):
+        raise KeyError(
+            "CochainCells boundary regions require graph.nodes['boundary'] metadata."
+        )
+    boundary = jnp.asarray(boundary_field.data, dtype=bool)
+    return mask & (boundary if component.region == "boundary" else ~boundary)
+
+
 def _component_mask(
     batch: GraphBatch,
     component: DomainComponent,
@@ -140,6 +162,8 @@ def _component_mask(
     if explicit is not None:
         return valid & _isin(_local_entity_indices(batch), explicit)
 
+    if isinstance(selector, CochainCells):
+        return valid & _cochain_mask(batch, selector)
     if isinstance(selector, (NodeType, EdgeType)):
         return valid & _type_mask(batch, selector)
 
@@ -246,7 +270,21 @@ def enforce_graph_values(
     label = _graph_label_for_component(component, graph_label)
     selector = component.spec.component_for(label)
     graph_component_kind(selector)
+    if isinstance(selector, CochainCells):
+        field_spec = cochain_field_spec(u)
+        if field_spec.degree != selector.degree:
+            raise ValueError(
+                f"Cannot enforce degree-{selector.degree} cells on a degree-"
+                f"{field_spec.degree} cochain field."
+            )
     target_fn = _coerce_target(target, u)
+    if isinstance(selector, CochainCells):
+        target_metadata = target_fn.metadata.get(_COCHAIN_FIELD_SPEC_KEY)
+        if target_metadata is not None and cochain_field_spec(target_fn) != field_spec:
+            raise ValueError(
+                "Cochain enforcement targets must have the same degree, side, "
+                "orientation, and sampling semantics as the base field."
+            )
     deps = tuple(
         lbl
         for lbl in u.domain.labels
@@ -256,8 +294,28 @@ def enforce_graph_values(
         domain=u.domain,
         deps=deps,
         func=_GraphValueEnforcement(u, target_fn, component, label),
-        metadata={},
+        metadata=u.metadata,
+    )
+
+def enforce_cochain_values(
+    u: DomainFunction,
+    component: DomainComponent,
+    /,
+    *,
+    target: DomainFunction | ArrayLike | None = None,
+    graph_label: str | None = None,
+) -> DomainFunction:
+    """Exactly overwrite a declared cochain field on selected degree cells."""
+    label = _graph_label_for_component(component, graph_label)
+    selector = component.spec.component_for(label)
+    if not isinstance(selector, CochainCells):
+        raise TypeError("enforce_cochain_values requires a CochainCells component.")
+    return enforce_graph_values(
+        u,
+        component,
+        target=target,
+        graph_label=label,
     )
 
 
-__all__ = ["enforce_graph_values"]
+__all__ = ["enforce_cochain_values", "enforce_graph_values"]

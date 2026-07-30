@@ -8,19 +8,31 @@ import hashlib
 import inspect
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 
+from ..._frozendict import frozendict
+from ...graph import (
+    cochain_metric_reduce,
+    CochainMetricReduction,
+    CochainResidualProgram,
+)
 from ..models.core._operator import (
     OperatorBatch,
     OperatorPrediction,
     OperatorTargetBatch,
 )
 from ..models.core._operator_metrics import operator_l2_loss
+from ..models.core._operator_task import OperatorTask
+from ..models.core._operator_topology import (
+    broadcast_operator_topology,
+    scatter_operator_graph_entities,
+)
 
 
 @dataclass(frozen=True)
@@ -56,6 +68,20 @@ class OperatorLossContext:
         raise ValueError("Loss space must be 'execution' or 'physical'.")
 
 
+@dataclass(frozen=True)
+class CochainResidualInput:
+    """Bind one residual-program input to a prediction or source field."""
+
+    kind: Literal["prediction", "source"]
+    field: str
+
+    def __post_init__(self):
+        if self.kind not in ("prediction", "source"):
+            raise ValueError("Cochain residual input kind must be 'prediction' or 'source'.")
+        if not self.field:
+            raise ValueError("Cochain residual input field must be non-empty.")
+
+
 class AbstractOperatorLossTerm(ABC):
     """One named scalar objective evaluated against a rich operator batch."""
 
@@ -83,6 +109,230 @@ class AbstractOperatorLossTerm(ABC):
     def fingerprint(self) -> str:
         """Stable identity included in exact-resume compatibility checks."""
         raise NotImplementedError
+
+
+@dataclass(frozen=True)
+class CochainResidualLoss(AbstractOperatorLossTerm):
+    """Topology-aware physics loss evaluated by a shared cochain residual program."""
+
+    name: str
+    program: CochainResidualProgram
+    inputs: Mapping[str, CochainResidualInput]
+    output: str
+    weight: float = 1.0
+    reduction: CochainMetricReduction = "graph_mean"
+    topology_fingerprint: str | None = None
+
+    def __post_init__(self):
+        if not self.name:
+            raise ValueError("Cochain residual loss names must be non-empty.")
+        if not isinstance(self.program, CochainResidualProgram):
+            raise TypeError("program must be a CochainResidualProgram.")
+        normalized: dict[str, CochainResidualInput] = {}
+        for name, binding in self.inputs.items():
+            if not isinstance(binding, CochainResidualInput):
+                raise TypeError(
+                    f"Cochain residual input {name!r} must be a CochainResidualInput."
+                )
+            normalized[str(name)] = binding
+        if frozenset(normalized) != frozenset(self.program.input_specs):
+            raise ValueError(
+                "CochainResidualLoss inputs must exactly match the program input schema."
+            )
+        object.__setattr__(self, "inputs", frozendict(normalized))
+        if self.output not in self.program.output_specs:
+            raise KeyError(f"Unknown cochain residual output {self.output!r}.")
+        if self.reduction not in ("graph_mean", "metric_mean", "metric_sum"):
+            raise ValueError(
+                "reduction must be 'graph_mean', 'metric_mean', or 'metric_sum'."
+            )
+        if not jnp.isfinite(self.weight):
+            raise ValueError("Cochain residual loss weight must be finite.")
+        if self.topology_fingerprint is not None and not self.topology_fingerprint:
+            raise ValueError("topology_fingerprint must be non-empty when provided.")
+
+    def _samples_and_values(
+        self,
+        binding: CochainResidualInput,
+        prediction: OperatorPrediction,
+        batch: OperatorBatch,
+        task: OperatorTask | None,
+        expected: Any,
+        /,
+    ) -> tuple[Any, Array]:
+        actual_name = binding.field
+        task_field = None
+        if task is not None:
+            if binding.field not in task.field_by_name:
+                raise KeyError(f"Unknown task field {binding.field!r}.")
+            task_field = task.field_by_name[binding.field]
+            if task_field.cochain != expected:
+                raise ValueError(
+                    f"Task field {binding.field!r} cochain semantics do not match "
+                    "the residual program."
+                )
+
+        if binding.kind == "prediction":
+            if task_field is not None and not task_field.is_target:
+                raise ValueError(
+                    f"Task field {binding.field!r} is not a predicted target field."
+                )
+            predicted = prediction.field(actual_name)
+            return batch.query(predicted.query_name), predicted.values
+
+        if task_field is not None:
+            if not task_field.is_source:
+                raise ValueError(f"Task field {binding.field!r} is not a source field.")
+            assert task_field.source_name is not None
+            actual_name = task_field.source_name
+        samples = batch.input(actual_name)
+        if samples.values is None:
+            raise ValueError(f"Source field {actual_name!r} has no sampled values.")
+        return samples, jnp.asarray(samples.values)
+
+    def __call__(
+        self,
+        model: Any,
+        prediction: OperatorPrediction,
+        batch: OperatorBatch,
+        targets: OperatorTargetBatch,
+        /,
+        *,
+        key: Key[Array, ""],
+        step: Array,
+        training: bool,
+        context: OperatorLossContext,
+    ) -> Array:
+        del model, prediction, batch, targets, step, training
+        physical_prediction, physical_batch, _ = context.view("physical")
+        task = context.task
+        if task is not None and not isinstance(task, OperatorTask):
+            raise TypeError("Operator loss context task must be an OperatorTask.")
+
+        reference_samples = None
+        reference_fingerprint = None
+        full_fields: dict[str, Array] = {}
+        coverage_by_input: dict[str, Array] = {}
+        for name, expected in self.program.input_specs.items():
+            samples, values = self._samples_and_values(
+                self.inputs[name],
+                physical_prediction,
+                physical_batch,
+                task,
+                expected,
+            )
+            topology = samples.topology
+            if (
+                topology is None
+                or topology.kind != "cell_complex"
+                or topology.entity != "node"
+            ):
+                raise ValueError(
+                    f"Cochain residual input {name!r} requires node-based "
+                    "cell-complex topology."
+                )
+            fingerprint = topology.graph_fingerprint
+            if reference_fingerprint is None:
+                reference_fingerprint = fingerprint
+                reference_samples = samples
+            elif fingerprint != reference_fingerprint:
+                raise ValueError(
+                    "Cochain residual inputs do not share one canonical topology."
+                )
+            if (
+                self.topology_fingerprint is not None
+                and fingerprint != self.topology_fingerprint
+            ):
+                raise ValueError(
+                    "Cochain residual topology does not match its declared fingerprint."
+                )
+            full_fields[name] = scatter_operator_graph_entities(
+                samples,
+                values,
+                case_shape=physical_batch.case_shape,
+            )
+            coverage_by_input[name] = scatter_operator_graph_entities(
+                samples,
+                jnp.ones(
+                    physical_batch.case_shape + samples.sample_shape,
+                    dtype=bool,
+                ),
+                case_shape=physical_batch.case_shape,
+            )
+
+        if reference_samples is None:
+            raise ValueError("Cochain residual loss has no bound input samples.")
+        assert reference_samples.topology is not None
+        topology = broadcast_operator_topology(
+            reference_samples.topology,
+            physical_batch.case_shape,
+        )
+        graph = topology.graph
+        if not isinstance(graph.nodes, Mapping):
+            raise ValueError("Cochain residual topology requires named node metadata.")
+        cell_degree = jnp.asarray(graph.nodes["cell_dim"], dtype=jnp.int32)
+        valid_nodes = (
+            jnp.ones(cell_degree.shape, dtype=bool)
+            if graph.node_mask is None
+            else jnp.asarray(graph.node_mask, dtype=bool)
+        )
+        for name, expected in self.program.input_specs.items():
+            required = valid_nodes & (cell_degree == expected.degree)
+            full_fields[name] = eqx.error_if(
+                full_fields[name],
+                jnp.any(required & ~jnp.asarray(coverage_by_input[name], dtype=bool)),
+                f"Cochain residual input {name!r} does not cover every degree-"
+                f"{expected.degree} cell.",
+            )
+
+        residual = self.program(graph, full_fields, key=key)[self.output]
+        squared = jnp.real(jnp.conj(residual) * residual)
+        if squared.ndim > 1:
+            squared = jnp.sum(squared, axis=tuple(range(1, squared.ndim)))
+        output_spec = self.program.output_specs[self.output]
+        active = valid_nodes & (cell_degree == output_spec.degree)
+        if "hodge_star" not in graph.nodes:
+            raise ValueError("Cochain residual topology requires Hodge-star metadata.")
+        metric = jnp.asarray(graph.nodes["hodge_star"], dtype=squared.dtype)
+        positions = jnp.arange(cell_degree.shape[0], dtype=jnp.int32)
+        ends = jnp.cumsum(jnp.asarray(graph.n_node, dtype=jnp.int32))
+        graph_index = jnp.searchsorted(ends, positions, side="right").astype(jnp.int32)
+        graph_index = jnp.where(positions < jnp.sum(graph.n_node), graph_index, -1)
+        value = cochain_metric_reduce(
+            squared,
+            metric,
+            graph_index,
+            n_graph=int(graph.n_node.shape[0]),
+            reduction=self.reduction,
+            entity_mask=active,
+        )
+        return jnp.asarray(self.weight, dtype=value.dtype) * value
+
+    @property
+    def fingerprint(self) -> str:
+        payload = json.dumps(
+            {
+                "kind": "cochain_residual",
+                "name": self.name,
+                "weight": self.weight,
+                "program": self.program.fingerprint,
+                "inputs": {
+                    name: {
+                        "kind": binding.kind,
+                        "field": binding.field,
+                    }
+                    for name, binding in sorted(self.inputs.items())
+                },
+                "output": self.output,
+                "reduction": self.reduction,
+                "topology_fingerprint": self.topology_fingerprint,
+                "space": "physical",
+            },
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -256,6 +506,8 @@ class SupervisedOperatorLoss(AbstractOperatorLossTerm):
 
 __all__ = [
     "AbstractOperatorLossTerm",
+    "CochainResidualInput",
+    "CochainResidualLoss",
     "OperatorLossContext",
     "OperatorLossTerm",
     "SupervisedOperatorLoss",
