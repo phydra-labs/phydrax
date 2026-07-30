@@ -72,13 +72,15 @@ The enforced route is staged as boundary → initial → interior data. See:
   the domain becomes \(\Omega_{\text{data}}\times\Omega_x\times\cdots\). See [API → Domain → Composition](api/domain/composition.md)
   and [API → NN → Architectures](api/nn/architectures.md).
 
-### Uncertainty: stochastic functions, inputs, and observations
+### Uncertainty: stochastic functions, processes, inputs, and observations
 
-`phydrax.uq` keeps epistemic, uncertain-input, and observation axes explicit in
-named `PredictiveField` results. NUTS/HMC, Laplace approximation, deep ensembles, and
-Gaussian-process discrepancy models produce coherent epistemic draws; probability
-domains and joint QMC propagate uncertain inputs; likelihood and conformal tools
-score or calibrate observations. See
+`phydrax.uq` keeps epistemic, uncertain-input, observation, stochastic-process,
+and numerical axes explicit in named `PredictiveField` results. NUTS/HMC, Laplace
+approximation, deep ensembles, and Gaussian-process discrepancy models produce
+coherent epistemic draws; probability domains and joint QMC propagate uncertain
+inputs; `solve_diffrax_ensemble` produces replayable process paths; complete-field
+Gaussian or conditional-flow operators learn transition distributions; likelihood
+and conformal tools score or calibrate observations. See
 [Guides → Uncertainty quantification](guides_uncertainty.md).
 
 ## A first real PDE example: Poisson on a square
@@ -264,8 +266,24 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   See [Operator-learning cookbook](cookbook/operator_learning.md) and [API → NN → Architectures](api/nn/architectures.md).
 - **Integral / conservation laws**: build terms from `integral`/`mean` and use integral constraints (equality targets, flux balances, etc.).
   See [Guides → Integrals and measures](guides_integrals.md).
-- **ODEs and dynamical systems**: treat time as a scalar domain and enforce residuals \(\dot u - f(u,t)=0\) via ODE constraints (continuous or discrete).
-  See [API → Constraints → Discrete](api/constraints/discrete.md) and [API → Constraints → Continuous](api/constraints/continuous.md).
+- **ODEs, SDEs, and semidiscrete SPDEs**: either learn a trajectory by enforcing
+  \(\dot u-f(u,t)=0\) with continuous/discrete ODE constraints, or integrate an
+  explicit finite-dimensional initial-value problem with `DifferentialProblem` and
+  `solve_diffrax`. `solve_diffrax_ensemble` uses replayable `WienerDriver` objects
+  and returns process-labeled path ensembles for Itô or Stratonovich systems.
+  Spatial stochastic systems use `TensorGridDiscretization` or an existing
+  manifold `SpectralDiscretization`, a finite-rank `SpatialNoiseBasis`, and
+  `semidiscretize_spde`/`semidiscretize_reaction_diffusion` before entering the
+  same differential backend.
+  See [API → Solver → Differential equations](api/solver/differential.md).
+- **Stochastic PINNs / density equations**: use
+  `ContinuousKolmogorovConstraint` for stationary or backward equations and
+  `ContinuousFokkerPlanckConstraint` for stationary or forward density equations.
+  Drift, diffusion, and covariance can be fixed fields or named trainable fields.
+  Positivity, per-time normalization, initial data, and boundary conditions remain
+  explicit, separately composed constraints or ansätze.
+  See [API → Constraints → Continuous](api/constraints/continuous.md) and
+  [API → Operators → Differential](api/operators/differential.md).
 - **Uncertainty quantification**: use NUTS/HMC or Laplace for explicit posterior problems, ensembles for neural-model epistemic variation, Gaussian processes for model discrepancy, joint QMC for uncertain inputs, likelihoods/proper scores for observations, and conformal calibration for coverage.
   See [Guides → Uncertainty quantification](guides_uncertainty.md) and [API → Uncertainty quantification](api/uq/index.md).
 - **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,
@@ -283,8 +301,9 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - **Stochastic path expectation**: use Euclidean bridge kernels for imaginary-time
   propagation or Feynman–Kac diffusion paths for terminal PDE and reliability quantities.
   See [Euclidean path integrals and Feynman–Kac expectations](guides_path_integrals.md).
-- **Cookbook recipes**: end-to-end patterns for Poisson, heat, inverse+data,
-  operator learning, mechanics, and quantum dynamics.
+- **Cookbook recipes**: end-to-end patterns for Poisson, deterministic and
+  stochastic heat/reaction--diffusion, stochastic PINNs, inverse+data, operator
+  learning, mechanics, and quantum dynamics.
   Start at [Cookbook → Overview](cookbook/index.md).
 
 ## Where to go next

@@ -7,18 +7,24 @@ has an explicit named sample dimension and a source label.
 
 ## Uncertainty sources
 
-Phydrax distinguishes three sources:
+Phydrax distinguishes five sources:
 
 - **epistemic**: variation across posterior draws, independently fitted models, or
   latent model-discrepancy functions;
 - **input**: variation caused by uncertain parameters, coefficients, forcing, or
   initial conditions;
-- **observation**: explicitly sampled measurement noise.
+- **observation**: explicitly sampled measurement noise;
+- **process**: intrinsic stochastic forcing or a learned stochastic transition law;
+- **numerical**: uncertainty attributed to a discretization, truncation, or solver
+  approximation.
 
 A `PredictiveField` may contain several source axes. `mean`, `variance`, `std`,
-`quantile`, and `interval` accept a source selection. Total variance adds mean
-conditional observation variance when it is supplied; it never silently merges
-unidentified axes.
+`quantile`, and `interval` accept a source selection. `decompose_variance()` keeps
+the five meanings separate. Total variance reduces every declared sample source and
+adds mean conditional observation variance when supplied; it never silently labels
+or merges unidentified axes. The source is a provenance statement, not an estimator:
+a Diffrax path ensemble supplies `process` draws but does not estimate `numerical`
+error automatically.
 
 ```python
 import coordax as cx
@@ -36,6 +42,63 @@ prediction = phx.uq.PredictiveField(
 mean = prediction.mean()
 variance = prediction.epistemic_variance()
 ```
+
+## SDE and semidiscrete SPDE path ensembles
+
+`DifferentialProblem` and `solve_diffrax_ensemble` generate finite-dimensional
+Itô or Stratonovich path ensembles. For spatial stochastic dynamics, first
+choose an `AbstractSpatialDiscretization`, then a finite-rank
+`SpatialNoiseBasis`, and compose a `SemidiscreteSPDE`. The resulting leading
+path axis is intrinsic `process` variation:
+
+```python
+import jax.numpy as jnp
+import jax.random as jr
+import phydrax as phx
+
+axis = phx.domain.FourierAxisSpec(32).materialize(0.0, 1.0)
+space = phx.solver.TensorGridDiscretization((axis,))
+noise = phx.solver.SpatialNoiseBasis.from_spectrum(
+    space,
+    lambda eigenvalue: 0.01 * jnp.exp(-0.1 * eigenvalue),
+    rank=6,
+)
+spde = phx.solver.semidiscretize_reaction_diffusion(
+    jnp.sin(2.0 * jnp.pi * axis.nodes),
+    space,
+    t0=0.0,
+    t1=0.2,
+    kappa=0.02,
+    noise_basis=noise,
+)
+driver = spde.wiener_driver(jr.key(0), realization_id="heat-0")
+solution = phx.solver.solve_diffrax_ensemble(
+    spde.problem,
+    save_times=jnp.linspace(0.0, 0.2, 21),
+    driver=driver,
+    num_paths=128,
+    dt0=1e-3,
+)
+prediction = solution.to_predictive(
+    sample_dim="path",
+    time_dim="time",
+    state_dims=("space",),
+)
+```
+
+Reusing the same driver reproduces every Brownian path; changing its key changes
+the realization. `basis_id` records the spatial noise modes, eigenvalues,
+quadrature, and discretization identity. A refined grid or changed truncation
+therefore receives a different fingerprint.
+
+The path axis alone says nothing about numerical uncertainty. To quantify
+spatial truncation, time stepping, or solver error, run an explicit discretization
+ensemble and label that additional axis `numerical`. Do not merge those runs
+into the process axis: process covariance and numerical sensitivity answer
+different questions.
+
+For the full method-of-lines and noise-basis contracts, see
+[API → Solver → Differential equations](api/solver/differential.md).
 
 ## Stochastic evaluation keys and dropout
 
@@ -133,7 +196,7 @@ contract. It retains:
 - tensor-grid `OperatorAxis` names or point-cloud query coordinates;
 - query masks and quadrature;
 - scalar or channel-valued `OperatorOutputSpec` metadata;
-- explicit epistemic, input, and observation sample axes.
+- explicit epistemic, input, observation, process, and numerical sample axes.
 
 This distinction is load-bearing. A stochastic realization represents one coherent
 output function over its full query set. Query points are not independent predictive
@@ -151,6 +214,7 @@ or quantiles are defined.
 | Small physical or calibration parameter posterior | NUTS/HMC or dense Laplace | Pathfinder or tempered SMC when justified | Likelihood must be normalized and deterministic |
 | Selected neural-operator weights | Exact last-projection Laplace reference | Diagonal/Lanczos/LOBPCG Laplace | Full-weight inference is usually too large |
 | Distribution-free whole-field bands | `OperatorFunctionalConformal` | Score stratification or recalibration | Exchangeability does not survive arbitrary shifts |
+| Learned stochastic transition law | `GaussianFunctionOperator` with `uncertainty_source="process"` | Fixed-query `ConditionalFlowFunctionOperator` for demonstrated non-Gaussian residuals | A learned density is not a drift/diffusion identification |
 
 Use `HomogeneousFunctionEnsemble.predict_operator` when every member has one static
 architecture and output contract. Use
@@ -159,6 +223,42 @@ external adapters; it rejects geometry or output mismatches. Use
 `sample_operator_predictive` for keyed stochastic operators such as MC dropout.
 `operator_input_predictive` reclassifies explicitly named physical case axes as
 input draws, and ensemble prediction can retain crossed epistemic/input axes.
+
+### Distributional operator models
+
+`AbstractProbabilisticOperatorModel.distribution(batch)` returns one
+`AbstractOperatorDistribution` per physical operator case. The distribution event
+is the complete valid query field, not one point. `location`, `sample`, and
+`log_prob` therefore preserve case, query, mask, output-channel, and uncertainty
+source metadata.
+
+`GaussianFunctionOperator` is the default transition-density baseline. Its wrapped
+operator emits the location, an optional learned diagonal scale, and optional
+low-rank loadings shared across the output field. Set `scale_mode="fixed"` to
+represent only a declared noise floor plus learned factors; set
+`uncertainty_source="process"` for stochastic dynamics and `"observation"` only
+when the distribution represents sensor noise. `OperatorDistributionNLL` evaluates
+the exact masked complete-field density during `fit_operator`.
+
+`ConditionalFlowFunctionOperator` uses a FlowJAX conditional coupling flow for a
+non-Gaussian residual around a deterministic location operator. An
+`OperatorBatchConditioner` encodes named source functions into the condition vector.
+The output event, mask, and physical query geometry are constructor-fixed. Loader
+case broadcasting of that same geometry is accepted; changed nodes, weights, masks,
+event size, or output channels are rejected. Use this path only after held-out NLL,
+energy distance, tail behavior, or basin probabilities show a gain over the Gaussian
+baseline.
+
+`DistributionalSemigroupObjective` compares independently sampled direct and
+composed transition laws with whole-field energy distance. It requires
+`uncertainty_source="process"` and separate keys for the direct, first, and second
+transitions. It tests equality in distribution; it does not assert common Brownian
+paths or identify a continuous-time SDE.
+
+Use `operator_ensemble_energy_distance` for two process ensembles. It applies the
+query mask and either physical quadrature or a declared uniform measure. Continue to
+report marginal CRPS and calibration separately: distributional proximity,
+pointwise calibration, and simultaneous field coverage are different contracts.
 
 ### Likelihood, calibration, and scores
 

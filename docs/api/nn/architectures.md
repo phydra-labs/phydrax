@@ -740,11 +740,26 @@ is supervised in-context conditioning, not bundled task-distribution
 pretraining.
 
 `GaussianFunctionOperator` wraps a base operator whose channel-last output
-contains mean, unconstrained scale, and optional low-rank factors. Its
+contains a mean, an optional unconstrained scale, and optional low-rank factors. Its
 `GaussianOperatorDistribution` reuses latent factor draws across the complete
 query field, rather than treating query points as independent calls. Geometry,
 masks, and query constraints are inherited from the wrapped base model; research
 status is not a calibration claim.
+
+All distributional operators implement `AbstractProbabilisticOperatorModel` and
+return an `AbstractOperatorDistribution` over the complete valid output field.
+`GaussianFunctionOperator(scale_mode="fixed")` keeps a declared diagonal noise
+floor and learns only the location and optional low-rank factors. The wrapper's
+`uncertainty_source` must describe what is sampled: use `process` for stochastic
+dynamics and `observation` for a sensor model.
+
+`ConditionalFlowFunctionOperator` uses a FlowJAX coupling flow for a non-Gaussian
+residual around any deterministic Phydrax operator. `OperatorBatchConditioner`
+concatenates named `FixedBranchEncoder` or `IntegralBranchEncoder` outputs. Its
+finite output event, shared query geometry, quadrature, and mask are
+constructor-fixed; this is a fixed-discretization transition density, not an
+arbitrary-query neural operator. Retain it only when held-out distributional
+metrics improve over the Gaussian baseline.
 
 `PDEConditionEncoder` embeds canonical `PDETokenBatch` trees.
 `attach_pde_condition` adds the encoded result as a named, one-anchor
@@ -802,6 +817,14 @@ neural semantic channel.
 
 ---
 
+::: phydrax.nn.AbstractOperatorDistribution
+
+---
+
+::: phydrax.nn.AbstractProbabilisticOperatorModel
+
+---
+
 ::: phydrax.nn.GaussianFunctionOperator
     options:
         members:
@@ -813,6 +836,32 @@ neural semantic channel.
 ---
 
 ::: phydrax.nn.GaussianOperatorDistribution
+
+---
+
+
+::: phydrax.nn.OperatorBatchConditioner
+    options:
+        members:
+            - __init__
+            - __call__
+
+---
+
+::: phydrax.nn.ConditionalFlowFunctionOperator
+    options:
+        members:
+            - __init__
+            - distribution
+            - sample
+
+---
+
+::: phydrax.nn.FlowJAXOperatorDistribution
+
+---
+
+::: phydrax.nn.conditional_coupling_flow_operator
 
 ---
 
@@ -986,7 +1035,7 @@ every PDE:
 | Tier | Exact registry entries | Recommendation eligible |
 | --- | --- | --- |
 | Stable | `FNO`, `TFNO`, `DeepONet`, `MIONet`, `PODDeepONet` | Yes |
-| Experimental | `HOFNO`, `CNO`, `GraphNeuralOperator`, `SFNO`, `LocalDifferentialOperator`, `LocalGlobalOperator`, `LocalIntegralOperator`, `OperatorAttention`, `SliceAttention`, `AxialOperatorAttention`, `CodomainAttention`, `IFNO`, `AxialFactorizedFNO` | No |
+| Experimental | `HOFNO`, `CNO`, `GraphNeuralOperator`, `SFNO`, `LocalDifferentialOperator`, `LocalGlobalOperator`, `LocalIntegralOperator`, `OperatorAttention`, `SliceAttention`, `AxialOperatorAttention`, `CodomainAttention`, `IFNO`, `AxialFactorizedFNO`, `ConditionalFlowFunctionOperator` | No |
 | Research | `Flower`, `UNO`, `LaplaceTemporalOperator`, `GINO`, `GeometryInformedFlower`, `RIGNO`, `GAOT`, `WaveletNeuralOperator`, `MultiwaveletOperator`, `ManifoldSpectralOperator`, `CoordinateConditionedOperator`, `UPT`, `CochainNeuralOperator`, `ABUPT`, `CoDANO`, `EqGINO`, `InContextOperator`, `GaussianFunctionOperator`, `Poseidon`, `DPOT`, `Transolver`, `TransolverPlusPlus`, `GNOT`, `KoopmanTemporalOperator`, `GreenKernelOperator` | No |
 
 TFNO is `FNO(factorization="tucker")`. MIONet is a product-fusion `DeepONet`
@@ -1055,6 +1104,7 @@ The benchmark harness enforces the same source/query protocol across families.
 | `CoordinateConditionedOperator` | Any branch-encoder source geometry | Yes | NOMAD-style nonlinear coordinate decoding; one global function latent can bottleneck complex fields |
 | `InContextOperator` | Weighted demonstrations plus current source/query | Yes | Supervised function demonstrations; static prompt capacity and no bundled task-distribution pretraining |
 | `GaussianFunctionOperator` | Inherited from its base operator | Inherited | Coherent diagonal-plus-low-rank function distributions; calibration and geometry validity are not added by the wrapper |
+| `ConditionalFlowFunctionOperator` | Constructor-fixed tensor grid or point cloud with one shared mask | No | Conditional non-Gaussian complete-field density; finite FlowJAX event size forbids changed query geometry or resolution transfer |
 | `PDEConditionEncoder` | Canonical PDE-IR token tree | Conditioning branch only | Structure-aware global equation conditioning; the downstream operator must consume it and no PDE is enforced automatically |
 | `Poseidon` | Constructor-fixed 2D tensor grid | No | Native scOT-style multiscale architecture; divisibility constraints and no bundled pretraining/checkpoint |
 | `DPOT` | Fixed 2D grid with history/forecast axes | No in space; fixed forecast axis | AFNO autoregression and denoising corruption; static horizon/shape and no bundled large-scale pretraining/checkpoint |

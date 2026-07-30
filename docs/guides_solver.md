@@ -2,6 +2,34 @@
 
 This guide explains how `FunctionalSolver` evaluates losses and how `solve()` updates parameters.
 
+## Functional minimization versus trajectory integration
+
+`FunctionalSolver` and the differential backend solve different problems:
+
+| Path | Computes | Typical use |
+| --- | --- | --- |
+| `FunctionalSolver` | Parameters minimizing residual, data, integral, and model-loss terms | PINNs, inverse problems, variational objectives |
+| `solve_diffrax` | One finite-dimensional ODE/SDE trajectory | Numerical reference solves, differentiable simulation |
+| `solve_diffrax_ensemble` | Independent SDE trajectories with retained driver provenance | Process uncertainty, stochastic transition data |
+
+An SDE is specified by `DifferentialProblem(drift, initial_state, diffusion=...)`
+and an explicit `WienerDriver`. The driver owns the Brownian key, finite noise
+shape, approximation tolerance, optional Levy-area kind, and basis/realization
+metadata. Reusing it replays the path. The default Itô and Stratonovich methods
+are fixed-step Euler--Maruyama and Euler--Heun, so `dt0` is required; pass native
+Diffrax solver, controller, event, and adjoint objects when a different method is
+needed.
+
+`DifferentialSolution.to_predictive()` converts an ensemble to a
+`PredictiveField` whose leading sample axis is labeled `process`. This label means
+intrinsic stochastic forcing. Time-step or spatial-discretization error is
+`numerical` uncertainty and is not estimated or inserted automatically. Spatial
+SDE/SPDE models must expose a finite-dimensional semidiscretization and a declared
+noise basis.
+
+See [API → Solver → Differential equation integration](api/solver/differential.md)
+for the complete shape, replay, and result contract.
+
 ## What `FunctionalSolver` does
 
 A `FunctionalSolver` is a lightweight orchestrator that holds:

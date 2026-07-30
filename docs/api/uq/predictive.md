@@ -19,6 +19,8 @@
             - epistemic_variance
             - input_variance
             - observation_variance
+            - process_variance
+            - numerical_variance
             - decompose_variance
             - total_variance
 

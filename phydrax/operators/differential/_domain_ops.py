@@ -27,6 +27,10 @@ from ...domain._function import (
 from ...domain._model_function import _ConcatenatedModelCallable
 from ...domain._scalar import _AbstractScalarDomain
 from ...nn._utils import _get_size
+from ._array_ops import (
+    _basis_nth_derivative,
+    _fd_nth_derivative,
+)
 from ._hooks import (
     DERIVATIVE_HOOK_KEY,
     get_derivative_hook,
@@ -572,161 +576,6 @@ def _latent_try_partial_n_eval(
             out = jnp.transpose(out, perm)
 
     return out, None
-
-
-def _fd_first_derivative(
-    y: jax.Array, /, *, dx: jax.Array, axis: int, periodic: bool
-) -> jax.Array:
-    dx_ = jnp.asarray(dx, dtype=float).reshape(())
-    if periodic:
-        return (jnp.roll(y, -1, axis=axis) - jnp.roll(y, 1, axis=axis)) / (2.0 * dx_)
-
-    y0 = jnp.moveaxis(y, axis, 0)
-    n = y0.shape[0]
-    if n < 2:
-        return jnp.zeros_like(y)
-    out0 = jnp.zeros_like(y0)
-    out0 = out0.at[1:-1].set((y0[2:] - y0[:-2]) / (2.0 * dx_))
-    out0 = out0.at[0].set((y0[1] - y0[0]) / dx_)
-    out0 = out0.at[-1].set((y0[-1] - y0[-2]) / dx_)
-    return jnp.moveaxis(out0, 0, axis)
-
-
-def _fd_nth_derivative(
-    y: jax.Array, /, *, dx: jax.Array, axis: int, order: int, periodic: bool
-) -> jax.Array:
-    order_i = int(order)
-
-    def _step(_: int, out_i: jax.Array) -> jax.Array:
-        return _fd_first_derivative(out_i, dx=dx, axis=axis, periodic=periodic)
-
-    return jax.lax.fori_loop(0, order_i, _step, y)
-
-
-def _barycentric_diff_matrix(x: jax.Array, /) -> jax.Array:
-    x1 = jnp.asarray(x, dtype=float).reshape((-1,))
-    n = int(x1.shape[0])
-    if n < 2:
-        return jnp.zeros((n, n), dtype=float)
-    diff = x1[:, None] - x1[None, :]
-    diff_safe = diff + jnp.eye(n, dtype=float)
-    w = 1.0 / jnp.prod(diff_safe, axis=1)
-    D = (w[None, :] / w[:, None]) / diff_safe
-    D = D - jnp.diag(jnp.diag(D))
-    D = D.at[jnp.arange(n), jnp.arange(n)].set(-jnp.sum(D, axis=1))
-    return D
-
-
-def _poly_nth_derivative(
-    y: jax.Array, x: jax.Array, /, *, axis: int, order: int
-) -> jax.Array:
-    order_i = int(order)
-    D = _barycentric_diff_matrix(x)
-
-    def _step(_: int, out_i: jax.Array) -> jax.Array:
-        out0 = jnp.moveaxis(out_i, axis, 0)
-        n = int(out0.shape[0])
-        flat = out0.reshape((n, -1))
-        dflat = D @ flat
-        return jnp.moveaxis(dflat.reshape(out0.shape), 0, axis)
-
-    return jax.lax.fori_loop(0, order_i, _step, y)
-
-
-def _fourier_nth_derivative(
-    y: jax.Array, x: jax.Array, /, *, axis: int, order: int
-) -> jax.Array:
-    x1 = jnp.asarray(x, dtype=float).reshape((-1,))
-    n = int(x1.shape[0])
-    if n < 2:
-        return jnp.zeros_like(y)
-
-    dx = x1[1] - x1[0]
-    k = 2.0 * jnp.pi * jnp.fft.fftfreq(n, d=dx)
-    shape = [1] * y.ndim
-    shape[int(axis)] = n
-    k = k.reshape(tuple(shape))
-
-    yhat = jnp.fft.fft(y, axis=axis)
-    mult = (1j * k) ** int(order)
-    dy = jnp.fft.ifft(mult * yhat, axis=axis)
-    if not jnp.iscomplexobj(y):
-        dy = jnp.real(dy)
-    return dy
-
-
-def _cosine_nth_derivative(
-    y: jax.Array, x: jax.Array, /, *, axis: int, order: int
-) -> jax.Array:
-    x1 = jnp.asarray(x, dtype=float).reshape((-1,))
-    n = int(x1.shape[0])
-    if n < 2:
-        return jnp.zeros_like(y)
-
-    dx = x1[1] - x1[0]
-    m = 2 * (n - 1)
-
-    y0 = jnp.moveaxis(y, axis, 0)
-    y_ext = jnp.concatenate([y0, y0[-2:0:-1]], axis=0)
-
-    k = 2.0 * jnp.pi * jnp.fft.fftfreq(m, d=dx)
-    shape = [m] + [1] * (y_ext.ndim - 1)
-    k = k.reshape(tuple(shape))
-
-    yhat = jnp.fft.fft(y_ext, axis=0)
-    mult = (1j * k) ** int(order)
-    dy_ext = jnp.fft.ifft(mult * yhat, axis=0)[:n]
-
-    if not jnp.iscomplexobj(y):
-        dy_ext = jnp.real(dy_ext)
-    return jnp.moveaxis(dy_ext, 0, axis)
-
-
-def _sine_nth_derivative(
-    y: jax.Array, x: jax.Array, /, *, axis: int, order: int
-) -> jax.Array:
-    x1 = jnp.asarray(x, dtype=float).reshape((-1,))
-    n = int(x1.shape[0])
-    if n < 2:
-        return jnp.zeros_like(y)
-
-    dx = x1[1] - x1[0]
-    m = 2 * n
-
-    y0 = jnp.moveaxis(y, axis, 0)
-    y_ext = jnp.concatenate([y0, -y0[::-1]], axis=0)
-
-    k = 2.0 * jnp.pi * jnp.fft.fftfreq(m, d=dx)
-    shape = [m] + [1] * (y_ext.ndim - 1)
-    k = k.reshape(tuple(shape))
-
-    yhat = jnp.fft.fft(y_ext, axis=0)
-    mult = (1j * k) ** int(order)
-    dy_ext = jnp.fft.ifft(mult * yhat, axis=0)[:n]
-
-    if not jnp.iscomplexobj(y):
-        dy_ext = jnp.real(dy_ext)
-    return jnp.moveaxis(dy_ext, 0, axis)
-
-
-def _basis_nth_derivative(
-    y: jax.Array,
-    x: jax.Array,
-    /,
-    *,
-    axis: int,
-    order: int,
-    basis: Literal["poly", "fourier", "sine", "cosine"],
-) -> jax.Array:
-    if int(order) == 0:
-        return y
-    if basis == "fourier":
-        return _fourier_nth_derivative(y, x, axis=axis, order=order)
-    if basis == "cosine":
-        return _cosine_nth_derivative(y, x, axis=axis, order=order)
-    if basis == "sine":
-        return _sine_nth_derivative(y, x, axis=axis, order=order)
-    return _poly_nth_derivative(y, x, axis=axis, order=order)
 
 
 def grad(
@@ -1344,7 +1193,7 @@ def div(
             )
         return jnp.trace(jac, axis1=-2, axis2=-1)
 
-    return DomainFunction(domain=u.domain, deps=u.deps, func=_div, metadata=u.metadata)
+    return DomainFunction(domain=u.domain, deps=u.deps, func=_div, metadata=g.metadata)
 
 
 def curl(
@@ -1415,7 +1264,7 @@ def curl(
         curl_z = jac[..., 1, 0] - jac[..., 0, 1]
         return jnp.stack((curl_x, curl_y, curl_z), axis=-1)
 
-    return DomainFunction(domain=u.domain, deps=u.deps, func=_curl, metadata=u.metadata)
+    return DomainFunction(domain=u.domain, deps=u.deps, func=_curl, metadata=g.metadata)
 
 
 def div_tensor(
@@ -1475,7 +1324,7 @@ def div_tensor(
             )
         return oe.contract("...iji->...j", g)
 
-    return DomainFunction(domain=T.domain, deps=T.deps, func=_divT, metadata=T.metadata)
+    return DomainFunction(domain=T.domain, deps=T.deps, func=_divT, metadata=gT.metadata)
 
 
 def cauchy_strain(
@@ -1607,7 +1456,12 @@ def _trace_last2(T: DomainFunction, /, *, keepdims: bool = False) -> DomainFunct
             return tr[..., None, None]
         return tr
 
-    return DomainFunction(domain=T.domain, deps=T.deps, func=_tr, metadata=T.metadata)
+    return DomainFunction(
+        domain=T.domain,
+        deps=T.deps,
+        func=_tr,
+        metadata=_strip_derivative_hook_metadata(T.metadata),
+    )
 
 
 def cauchy_stress(
@@ -2101,7 +1955,10 @@ def bilaplacian(
             return jnp.zeros_like(y)
 
         return DomainFunction(
-            domain=u.domain, deps=u.deps, func=_zero, metadata=u.metadata
+            domain=u.domain,
+            deps=u.deps,
+            func=_zero,
+            metadata=_strip_derivative_hook_metadata(u.metadata),
         )
     _ensure_ad_engine_backend(backend, ad_engine)
     mode_eff = _resolve_ad_mode(mode, ad_engine)
@@ -2224,7 +2081,12 @@ def bilaplacian(
 
         return total
 
-    return DomainFunction(domain=u.domain, deps=u.deps, func=_bilap, metadata=u.metadata)
+    return DomainFunction(
+        domain=u.domain,
+        deps=u.deps,
+        func=_bilap,
+        metadata=_strip_derivative_hook_metadata(u.metadata),
+    )
 
 
 def partial(
@@ -2869,7 +2731,12 @@ def div_k_grad(
 
         return dot_term + k_lap
 
-    return DomainFunction(domain=joined, deps=deps, func=_op, metadata=u.metadata)
+    return DomainFunction(
+        domain=joined,
+        deps=deps,
+        func=_op,
+        metadata=_strip_derivative_hook_metadata(u.metadata),
+    )
 
 
 def div_diag_k_grad(
@@ -3027,7 +2894,12 @@ def div_diag_k_grad(
                 )
             return term1 + term2
 
-        return DomainFunction(domain=joined, deps=deps, func=_op, metadata=u.metadata)
+        return DomainFunction(
+            domain=joined,
+            deps=deps,
+            func=_op,
+            metadata=_strip_derivative_hook_metadata(u.metadata),
+        )
 
     if backend != "jet":
         raise ValueError("backend must be 'ad' or 'jet'.")
@@ -3134,7 +3006,12 @@ def div_diag_k_grad(
         assert total is not None
         return total
 
-    return DomainFunction(domain=joined, deps=deps, func=_op, metadata=u.metadata)
+    return DomainFunction(
+        domain=joined,
+        deps=deps,
+        func=_op,
+        metadata=_strip_derivative_hook_metadata(u.metadata),
+    )
 
 
 def div_K_grad(
@@ -3227,7 +3104,12 @@ def div_K_grad(
         Kx_exp = Kx.reshape(Kx.shape[:-2] + (1,) * int(out_rank) + Kx.shape[-2:])
         return oe.contract("...ij,...j->...i", Kx_exp, gu_x)
 
-    flux = DomainFunction(domain=joined, deps=deps, func=_flux, metadata=u.metadata)
+    flux = DomainFunction(
+        domain=joined,
+        deps=deps,
+        func=_flux,
+        metadata=_strip_derivative_hook_metadata(u.metadata),
+    )
     return div(
         flux,
         var=var,
@@ -3421,7 +3303,12 @@ def pk1_from_pk2(
         Sx = jnp.asarray(S2.func(*s_args, key=key, **kwargs))
         return Fx @ Sx
 
-    return DomainFunction(domain=joined, deps=deps, func=_op, metadata=u.metadata)
+    return DomainFunction(
+        domain=joined,
+        deps=deps,
+        func=_op,
+        metadata=_strip_derivative_hook_metadata(u.metadata),
+    )
 
 
 def cauchy_from_pk2(
@@ -3477,7 +3364,12 @@ def cauchy_from_pk2(
         J = jnp.linalg.det(Fx)
         return (Fx @ Sx @ jnp.swapaxes(Fx, -1, -2)) / J[..., None, None]
 
-    return DomainFunction(domain=joined, deps=deps, func=_op, metadata=u.metadata)
+    return DomainFunction(
+        domain=joined,
+        deps=deps,
+        func=_op,
+        metadata=_strip_derivative_hook_metadata(u.metadata),
+    )
 
 
 def neo_hookean_pk1(
@@ -3548,7 +3440,12 @@ def neo_hookean_pk1(
         k_v = jnp.asarray(k2.func(*k_args, key=key, **kwargs))
         return mu_v * (Fx - FinvT) + k_v * jnp.log(J)[..., None, None] * FinvT
 
-    return DomainFunction(domain=joined, deps=deps, func=_op, metadata=u.metadata)
+    return DomainFunction(
+        domain=joined,
+        deps=deps,
+        func=_op,
+        metadata=_strip_derivative_hook_metadata(u.metadata),
+    )
 
 
 def neo_hookean_cauchy(
@@ -3621,7 +3518,12 @@ def neo_hookean_cauchy(
         vol = (k_v * jnp.log(J) / J)[..., None, None] * I
         return term + vol
 
-    return DomainFunction(domain=joined, deps=deps, func=_op, metadata=u.metadata)
+    return DomainFunction(
+        domain=joined,
+        deps=deps,
+        func=_op,
+        metadata=_strip_derivative_hook_metadata(u.metadata),
+    )
 
 
 def deviatoric_stress(
@@ -3777,7 +3679,10 @@ def von_mises_stress(
         return jnp.sqrt(jnp.maximum(3.0 * j2, 0.0))
 
     return DomainFunction(
-        domain=sigma.domain, deps=sigma.deps, func=_op, metadata=sigma.metadata
+        domain=sigma.domain,
+        deps=sigma.deps,
+        func=_op,
+        metadata=_strip_derivative_hook_metadata(sigma.metadata),
     )
 
 
@@ -3989,7 +3894,12 @@ def linear_elastic_cauchy_stress_2d(
             axis=-1,
         )
 
-    return DomainFunction(domain=joined, deps=deps, func=_op, metadata=u.metadata)
+    return DomainFunction(
+        domain=joined,
+        deps=deps,
+        func=_op,
+        metadata=_strip_derivative_hook_metadata(u.metadata),
+    )
 
 
 def linear_elastic_orthotropic_stress_2d(
@@ -4121,4 +4031,9 @@ def linear_elastic_orthotropic_stress_2d(
             axis=-1,
         )
 
-    return DomainFunction(domain=joined, deps=deps, func=_op, metadata=u.metadata)
+    return DomainFunction(
+        domain=joined,
+        deps=deps,
+        func=_op,
+        metadata=_strip_derivative_hook_metadata(u.metadata),
+    )

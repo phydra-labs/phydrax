@@ -23,6 +23,11 @@ from ._dataset import (
     OperatorSplitPolicy,
     split_operator_dataset,
 )
+from ._distributional import (
+    DistributionReduction,
+    operator_distribution_nll,
+    OperatorDistributionNLL,
+)
 from ._dtype import DTypeName, OperatorDTypePolicy
 from ._fit import (
     fit_operator,
@@ -83,8 +88,10 @@ from ._sampling import (
     take_query_targets,
 )
 from ._semigroup import (
+    conditioned_distributional_semigroup_loss,
     conditioned_semigroup_consistency_loss,
     ConditionedSemigroupObjective,
+    DistributionalSemigroupObjective,
     SemigroupKeyMode,
     SemigroupReduction,
 )
@@ -149,8 +156,10 @@ __all__ = [
     "TeacherForcingSchedule",
     "autoregressive_operator_loss",
     "autoregressive_operator_rollout",
+    "conditioned_distributional_semigroup_loss",
     "conditioned_semigroup_consistency_loss",
     "ConditionedSemigroupObjective",
+    "DistributionalSemigroupObjective",
     "SemigroupKeyMode",
     "SemigroupReduction",
     "PreparedOperatorInput",
@@ -172,6 +181,9 @@ __all__ = [
     "operator_dataset_from_cases",
     "save_operator_training_checkpoint",
     "SupervisedOperatorLoss",
+    "DistributionReduction",
+    "OperatorDistributionNLL",
+    "operator_distribution_nll",
     "split_operator_dataset",
     "AnchorQuerySamplingPolicy",
     "CallbackOperatorCaseSource",

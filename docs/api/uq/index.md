@@ -12,8 +12,9 @@ source/query geometry, physical case axes, masks, quadrature, and channel metada
 survive stochastic reduction, posterior prediction, calibration, and scoring.
 
 All predictive samples retain explicit `coordax.Field` dimensions. Source axes are
-labeled as epistemic, input, or observation uncertainty; no method infers a source
-from axis position.
+labeled as epistemic, input, observation, process, or numerical uncertainty; no
+method infers a source from axis position. Complete-field Gaussian and conditional
+flow operator distributions use the same labels and query metadata.
 
 Stochastic predictions carry a source-axis `valid` mask. Reductions ignore invalid
 realizations; evaluators can instead request fail-fast validation.

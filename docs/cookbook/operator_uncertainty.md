@@ -3,7 +3,8 @@
 This recipe keeps uncertainty attached to the same geometry-aware contract used by
 neural operators. A predictive result retains physical case axes, tensor-grid or
 point-cloud query geometry, quadrature, masks, and output channels. Stochastic axes
-remain separately labeled as epistemic, input, or observation uncertainty.
+remain separately labeled as epistemic, input, observation, process, or numerical
+uncertainty.
 
 ## 1. Build a source/query batch and ensemble
 

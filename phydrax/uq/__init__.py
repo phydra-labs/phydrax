@@ -67,6 +67,7 @@ from ._map import find_map, MAPConvergenceError, MAPResult
 from ._mcmc import MCMCChainWarmup, MCMCResult, sample_hmc, sample_nuts
 from ._metrics import (
     calibration_error,
+    energy_distance,
     energy_score,
     ensemble_crps,
     gaussian_crps,
@@ -90,6 +91,7 @@ from ._operator_likelihood import FixedOperatorObservationLikelihood
 from ._operator_metrics import (
     operator_energy_score,
     operator_ensemble_crps,
+    operator_ensemble_energy_distance,
     operator_interval_coverage,
     operator_interval_width,
 )
@@ -167,6 +169,7 @@ __all__ = [
     "StudentTLikelihood",
     "GaussianScaleCalibrator",
     "calibration_error",
+    "energy_distance",
     "energy_score",
     "ensemble_crps",
     "gaussian_crps",
@@ -181,6 +184,7 @@ __all__ = [
     "UncertaintySource",
     "OperatorFunctionalConformal",
     "operator_energy_score",
+    "operator_ensemble_energy_distance",
     "operator_ensemble_crps",
     "operator_interval_coverage",
     "operator_interval_width",

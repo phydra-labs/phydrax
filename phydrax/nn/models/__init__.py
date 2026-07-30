@@ -37,6 +37,12 @@ from .architectures._flower import (
     FlowerQueryMode,
     FlowerTransitionMode,
 )
+from .architectures._flowjax_operator import (
+    conditional_coupling_flow_operator,
+    ConditionalFlowFunctionOperator,
+    FlowJAXOperatorDistribution,
+    OperatorBatchConditioner,
+)
 from .architectures._fno import (
     AxialFactorizedFNO,
     FNO,
@@ -159,7 +165,11 @@ from .core._operator_context import (
     PooledGeometryContext,
     SampledAnchorContext,
 )
-from .core._operator_distribution import GaussianOperatorDistribution
+from .core._operator_distribution import (
+    AbstractOperatorDistribution,
+    AbstractProbabilisticOperatorModel,
+    GaussianOperatorDistribution,
+)
 from .core._operator_domain import (
     operator_domain_view_from_coord_separable,
     operator_domain_view_from_graph,
@@ -462,6 +472,12 @@ __all__ = [
     "CoordinateConditionedOperator",
     "CoordinateDecoderState",
     "FiLMCoordinateDecoder",
+    "AbstractOperatorDistribution",
+    "AbstractProbabilisticOperatorModel",
+    "conditional_coupling_flow_operator",
+    "ConditionalFlowFunctionOperator",
+    "FlowJAXOperatorDistribution",
+    "OperatorBatchConditioner",
     "GaussianFunctionOperator",
     "GaussianOperatorDistribution",
     "gaussian_operator_nll",

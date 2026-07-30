@@ -45,6 +45,15 @@ $u|_{\\partial \\Omega} = g$ or $u|_{t=0} = u_0$ without penalty terms.
     ```
 """
 
+from ._differential import (
+    DifferentialInterpretation,
+    DifferentialProblem,
+    DifferentialSolution,
+    DifferentialVectorField,
+    LevyAreaKind,
+    WienerDriver,
+)
+from ._diffrax_backend import solve_diffrax, solve_diffrax_ensemble
 from ._enforced_constraint_pipeline import (
     EnforcedConstraintPipeline,
     EnforcedConstraintPipelines,
@@ -53,9 +62,35 @@ from ._enforced_constraint_pipeline import (
     SingleFieldEnforcedConstraint,
 )
 from ._functional_solver import FunctionalSolver
+from ._noise import SpatialNoiseBasis
+from ._spatial import (
+    AbstractSpatialDiscretization,
+    SpectralSpatialDiscretization,
+    TensorGridDiscretization,
+)
+from ._spde import (
+    SemidiscreteSPDE,
+    semidiscretize_reaction_diffusion,
+    semidiscretize_spde,
+)
 
 
 __all__ = [
+    "AbstractSpatialDiscretization",
+    "DifferentialInterpretation",
+    "DifferentialProblem",
+    "DifferentialSolution",
+    "DifferentialVectorField",
+    "LevyAreaKind",
+    "WienerDriver",
+    "SemidiscreteSPDE",
+    "SpatialNoiseBasis",
+    "SpectralSpatialDiscretization",
+    "TensorGridDiscretization",
+    "semidiscretize_reaction_diffusion",
+    "semidiscretize_spde",
+    "solve_diffrax",
+    "solve_diffrax_ensemble",
     "FunctionalSolver",
     "EnforcedConstraintPipeline",
     "EnforcedConstraintPipelines",

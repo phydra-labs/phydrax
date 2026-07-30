@@ -46,6 +46,7 @@ Differential operators support multiple backends (`backend="ad"|"jet"|"fd"|"basi
 
 - [Poisson (field learning, soft vs enforced BC)](poisson.md)
 - [Heat equation (space–time, initial conditions, optional sensors)](heat.md)
+- [Stochastic dynamics (PINNs, SDEs, and semidiscrete SPDEs)](stochastic_dynamics.md)
 - [Physics-informed graph residuals](graph_physics.md)
 - [Inverse problems + hybrid physics–data](inverse_and_data.md)
 - [Operator learning (DatasetDomain × coordinates)](operator_learning.md)

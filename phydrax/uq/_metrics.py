@@ -105,6 +105,15 @@ def ensemble_crps(
     return first - pair_term
 
 
+def _powered_euclidean_norm(difference: Array, exponent: float, /) -> Array:
+    squared = jnp.sum(jnp.asarray(difference) ** 2, axis=-1)
+    if exponent == 2.0:
+        return squared
+    positive = squared > 0.0
+    safe_squared = jnp.where(positive, squared, jnp.ones_like(squared))
+    return jnp.where(positive, safe_squared ** (0.5 * exponent), 0.0)
+
+
 def energy_score(
     samples: ArrayLike,
     target: ArrayLike,
@@ -126,7 +135,7 @@ def energy_score(
     target_flat = jnp.asarray(target, dtype=float).reshape((-1,))
     if target_flat.shape[0] != flat.shape[1]:
         raise ValueError("target shape must match one sample's event shape.")
-    first = jnp.mean(jnp.linalg.norm(flat - target_flat, axis=1) ** exponent)
+    first = jnp.mean(_powered_euclidean_norm(flat - target_flat, exponent))
     block = count if chunk_size is None else int(chunk_size)
     if block <= 0:
         raise ValueError("chunk_size must be positive.")
@@ -135,9 +144,57 @@ def energy_score(
         left = flat[start_i : start_i + block]
         for start_j in range(0, count, block):
             right = flat[start_j : start_j + block]
-            distances = jnp.linalg.norm(left[:, None, :] - right[None, :, :], axis=-1)
-            pair_sum = pair_sum + jnp.sum(distances**exponent)
+            distances = _powered_euclidean_norm(
+                left[:, None, :] - right[None, :, :],
+                exponent,
+            )
+            pair_sum = pair_sum + jnp.sum(distances)
     return first - 0.5 * pair_sum / float(count**2)
+
+
+def energy_distance(
+    left_samples: ArrayLike,
+    right_samples: ArrayLike,
+    /,
+    *,
+    sample_axis: int = 0,
+    beta: float = 1.0,
+    chunk_size: int | None = None,
+) -> Array:
+    """Empirical multivariate energy distance between two sample ensembles."""
+    exponent = float(beta)
+    if not 0.0 < exponent <= 2.0:
+        raise ValueError("beta must satisfy 0 < beta <= 2.")
+    left = jnp.moveaxis(jnp.asarray(left_samples, dtype=float), sample_axis, 0)
+    right = jnp.moveaxis(jnp.asarray(right_samples, dtype=float), sample_axis, 0)
+    if left.shape[1:] != right.shape[1:]:
+        raise ValueError("Energy-distance ensembles must have equal event shapes.")
+    left_count, right_count = int(left.shape[0]), int(right.shape[0])
+    if left_count <= 0 or right_count <= 0:
+        raise ValueError("Energy-distance ensembles must be non-empty.")
+    left_flat = left.reshape((left_count, -1))
+    right_flat = right.reshape((right_count, -1))
+    block = max(left_count, right_count) if chunk_size is None else int(chunk_size)
+    if block <= 0:
+        raise ValueError("chunk_size must be positive.")
+
+    def pair_mean(first: Array, second: Array) -> Array:
+        total = jnp.asarray(0.0, dtype=first.dtype)
+        for start_i in range(0, int(first.shape[0]), block):
+            first_block = first[start_i : start_i + block]
+            for start_j in range(0, int(second.shape[0]), block):
+                second_block = second[start_j : start_j + block]
+                distances = _powered_euclidean_norm(
+                    first_block[:, None, :] - second_block[None, :, :],
+                    exponent,
+                )
+                total = total + jnp.sum(distances)
+        return total / float(int(first.shape[0]) * int(second.shape[0]))
+
+    cross = pair_mean(left_flat, right_flat)
+    within_left = pair_mean(left_flat, left_flat)
+    within_right = pair_mean(right_flat, right_flat)
+    return 2.0 * cross - within_left - within_right
 
 
 def pinball_loss(prediction: ArrayLike, target: ArrayLike, quantile: float, /) -> Array:
@@ -265,6 +322,7 @@ __all__ = [
     "GaussianScaleCalibrator",
     "calibration_error",
     "energy_score",
+    "energy_distance",
     "ensemble_crps",
     "gaussian_crps",
     "interval_coverage",

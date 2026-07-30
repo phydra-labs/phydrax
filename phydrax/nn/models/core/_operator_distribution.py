@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from abc import abstractmethod
 from math import prod
 
 import jax
@@ -11,11 +12,171 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
-from ...._strict import StrictModule
-from ._operator import FunctionSamples, OperatorOutputSpec, OperatorPrediction
+from ...._doc import DOC_KEY0
+from ...._strict import AbstractAttribute, StrictModule
+from ...._uncertainty import UncertaintySource, validate_uncertainty_source
+from ._base import _AbstractOperatorModel
+from ._keys import EvalKey
+from ._operator import (
+    FunctionSamples,
+    OperatorBatch,
+    OperatorOutputSpec,
+    OperatorPrediction,
+)
 
 
-class GaussianOperatorDistribution(StrictModule):
+class AbstractOperatorDistribution(StrictModule):
+    """Distribution over one complete operator-output field per physical case."""
+
+    query: AbstractAttribute[FunctionSamples]
+    output_spec: AbstractAttribute[OperatorOutputSpec]
+    case_axes: AbstractAttribute[tuple[str, ...]]
+    case_shape: AbstractAttribute[tuple[int, ...]]
+    uncertainty_source: AbstractAttribute[UncertaintySource]
+
+    @property
+    @abstractmethod
+    def location(self) -> Array:
+        """Deterministic representative; not necessarily the distribution mean."""
+        raise NotImplementedError
+
+    @property
+    def event_shape(self) -> tuple[int, ...]:
+        return self.query.sample_shape + self.output_spec.channel_shape
+
+    @property
+    def event_size(self) -> int:
+        return prod(self.event_shape)
+
+    @abstractmethod
+    def sample(
+        self,
+        key: Key[Array, ""],
+        sample_shape: tuple[int, ...] = (),
+    ) -> Array:
+        raise NotImplementedError
+
+    @abstractmethod
+    def log_prob(self, target: Array, /) -> Array:
+        raise NotImplementedError
+
+    def negative_log_likelihood(
+        self,
+        target: Array,
+        /,
+        *,
+        reduction: str = "mean",
+    ) -> Array:
+        values = -self.log_prob(target)
+        if reduction == "none":
+            return values
+        if reduction == "sum":
+            return jnp.sum(values)
+        if reduction == "mean":
+            return jnp.mean(values)
+        raise ValueError(
+            "Operator distribution reduction must be 'none', 'sum', or 'mean'."
+        )
+
+    def location_prediction(self) -> OperatorPrediction:
+        return OperatorPrediction.from_field(
+            "output",
+            self.location,
+            "query",
+            self.query,
+            spec=self.output_spec,
+            case_axes=self.case_axes,
+            case_shape=self.case_shape,
+        )
+
+
+class AbstractProbabilisticOperatorModel(_AbstractOperatorModel):
+    """Neural operator whose primary output is a complete-field distribution."""
+
+    @abstractmethod
+    def distribution(
+        self,
+        batch: OperatorBatch,
+        /,
+        *,
+        key: EvalKey = DOC_KEY0,
+    ) -> AbstractOperatorDistribution:
+        raise NotImplementedError
+
+    def __call_operator_batch__(
+        self,
+        batch: OperatorBatch,
+        /,
+        *,
+        key: EvalKey = DOC_KEY0,
+    ) -> Array:
+        return self.distribution(batch, key=key).location
+
+    def __call__(
+        self,
+        x: OperatorBatch,
+        /,
+        *,
+        key: EvalKey = DOC_KEY0,
+    ) -> Array:
+        if not isinstance(x, OperatorBatch):
+            raise TypeError(f"{type(self).__name__} requires an OperatorBatch.")
+        return self.__call_operator_batch__(x, key=key)
+
+    def sample(
+        self,
+        batch: OperatorBatch,
+        /,
+        *,
+        num_samples: int,
+        key: Array,
+    ) -> Array:
+        count = int(num_samples)
+        if count <= 0:
+            raise ValueError("num_samples must be positive.")
+        parameter_key, sample_key = jr.split(key)
+        return self.distribution(batch, key=parameter_key).sample(
+            sample_key,
+            (count,),
+        )
+
+    def sample_predictive(
+        self,
+        batch: OperatorBatch,
+        /,
+        *,
+        num_samples: int,
+        key: Array,
+        sample_dim: str | None = None,
+    ):
+        """Return coordinate-aware samples labeled by their uncertainty source."""
+        from ....uq._operator import operator_predictive_from_samples
+        from ....uq._predictive import SampleAxis
+
+        count = int(num_samples)
+        if count <= 0:
+            raise ValueError("num_samples must be positive.")
+        parameter_key, sample_key = jr.split(key)
+        distribution = self.distribution(batch, key=parameter_key)
+        source = distribution.uncertainty_source
+        default_dim = (
+            "__phydra_uq_aleatoric"
+            if source == "observation"
+            else f"__phydra_uq_{source}"
+        )
+        dim = default_dim if sample_dim is None else sample_dim
+        samples = distribution.sample(sample_key, (count,))
+        return operator_predictive_from_samples(
+            samples,
+            batch,
+            distribution.output_spec,
+            sample_axes=(SampleAxis(dim, source),),
+            field_name="output",
+            query_name=batch.single_query_name(),
+        )
+
+
+class GaussianOperatorDistribution(AbstractOperatorDistribution):
     """Diagonal-plus-low-rank Gaussian distribution over complete output fields."""
 
     mean: Array
@@ -25,6 +186,7 @@ class GaussianOperatorDistribution(StrictModule):
     output_spec: OperatorOutputSpec
     case_axes: tuple[str, ...]
     case_shape: tuple[int, ...]
+    uncertainty_source: UncertaintySource
 
     def __init__(
         self,
@@ -36,6 +198,7 @@ class GaussianOperatorDistribution(StrictModule):
         output_spec: OperatorOutputSpec,
         case_axes: tuple[str, ...] = (),
         case_shape: tuple[int, ...] = (),
+        uncertainty_source: UncertaintySource = "observation",
     ):
         mean_array = jnp.asarray(mean)
         scale_array = jnp.asarray(scale)
@@ -54,7 +217,9 @@ class GaussianOperatorDistribution(StrictModule):
         else:
             factor_array = jnp.asarray(factors)
             if factor_array.ndim != mean_array.ndim + 1:
-                raise ValueError("Gaussian operator factors require one trailing rank axis.")
+                raise ValueError(
+                    "Gaussian operator factors require one trailing rank axis."
+                )
             if factor_array.shape[:-1] != expected:
                 raise ValueError("Gaussian operator factors must align with the mean.")
         self.mean = mean_array
@@ -64,18 +229,18 @@ class GaussianOperatorDistribution(StrictModule):
         self.output_spec = output_spec
         self.case_axes = axes
         self.case_shape = cases
+        self.uncertainty_source = validate_uncertainty_source(
+            uncertainty_source,
+            owner="GaussianOperatorDistribution uncertainty_source",
+        )
 
     @property
     def rank(self) -> int:
         return int(self.factors.shape[-1])
 
     @property
-    def event_shape(self) -> tuple[int, ...]:
-        return self.query.sample_shape + self.output_spec.channel_shape
-
-    @property
-    def event_size(self) -> int:
-        return prod(self.event_shape)
+    def location(self) -> Array:
+        return self.mean
 
     def _flat_mask(self) -> Array:
         mask = self.query.mask_array(case_shape=self.case_shape)
@@ -128,9 +293,7 @@ class GaussianOperatorDistribution(StrictModule):
                 (samples, cases, self.rank),
                 dtype=self.mean.dtype,
             )
-            values = values + jnp.einsum(
-                "scr,cer->sce", latent_noise, factors
-            )
+            values = values + jnp.einsum("scr,cer->sce", latent_noise, factors)
         mask = self._flat_mask()
         values = jnp.where(mask[None, ...], values, 0.0)
         return values.reshape(shape + self.case_shape + self.event_shape)
@@ -158,9 +321,7 @@ class GaussianOperatorDistribution(StrictModule):
             mask_case: Array,
         ) -> Array:
             residual = jnp.where(mask_case, target_case - mean_case, 0.0)
-            inverse_diagonal = jnp.where(
-                mask_case, jnp.reciprocal(scale_case**2), 0.0
-            )
+            inverse_diagonal = jnp.where(mask_case, jnp.reciprocal(scale_case**2), 0.0)
             quadratic = jnp.sum(residual**2 * inverse_diagonal)
             log_determinant = jnp.sum(
                 jnp.where(mask_case, 2.0 * jnp.log(scale_case), 0.0)
@@ -181,39 +342,17 @@ class GaussianOperatorDistribution(StrictModule):
                     jnp.log(jnp.diag(cholesky))
                 )
             count = jnp.sum(mask_case)
-            return -0.5 * (
-                quadratic + log_determinant + count * jnp.log(2.0 * jnp.pi)
-            )
+            return -0.5 * (quadratic + log_determinant + count * jnp.log(2.0 * jnp.pi))
 
         result = jax.vmap(case_log_prob)(mean, target_flat, scale, factors, mask)
         return result.reshape(self.case_shape)
 
-    def negative_log_likelihood(
-        self,
-        target: Array,
-        /,
-        *,
-        reduction: str = "mean",
-    ) -> Array:
-        values = -self.log_prob(target)
-        if reduction == "none":
-            return values
-        if reduction == "sum":
-            return jnp.sum(values)
-        if reduction == "mean":
-            return jnp.mean(values)
-        raise ValueError("Gaussian operator reduction must be 'none', 'sum', or 'mean'.")
-
     def mean_prediction(self) -> OperatorPrediction:
-        return OperatorPrediction.from_field(
-            "output",
-            self.mean,
-            "query",
-            self.query,
-            spec=self.output_spec,
-            case_axes=self.case_axes,
-            case_shape=self.case_shape,
-        )
+        return self.location_prediction()
 
 
-__all__ = ["GaussianOperatorDistribution"]
+__all__ = [
+    "AbstractOperatorDistribution",
+    "AbstractProbabilisticOperatorModel",
+    "GaussianOperatorDistribution",
+]

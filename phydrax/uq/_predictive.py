@@ -13,9 +13,11 @@ from jaxtyping import Array
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
-
-
-UncertaintySource = Literal["epistemic", "input", "observation"]
+from .._uncertainty import (
+    UNCERTAINTY_SOURCES,
+    UncertaintySource,
+    validate_uncertainty_source,
+)
 
 
 class SampleAxis(StrictModule):
@@ -27,12 +29,11 @@ class SampleAxis(StrictModule):
     def __init__(self, dim: str, source: UncertaintySource):
         if not isinstance(dim, str) or not dim:
             raise ValueError("SampleAxis.dim must be a non-empty string.")
-        if source not in ("epistemic", "input", "observation"):
-            raise ValueError(
-                "SampleAxis.source must be 'epistemic', 'input', or 'observation'."
-            )
         self.dim = dim
-        self.source = source
+        self.source = validate_uncertainty_source(
+            source,
+            owner="SampleAxis.source",
+        )
 
 
 class PredictionInterval(StrictModule):
@@ -149,9 +150,7 @@ class PredictiveField(StrictModule):
         else:
             selected = tuple(sources)
         invalid = tuple(
-            source
-            for source in selected
-            if source not in ("epistemic", "input", "observation")
+            source for source in selected if source not in UNCERTAINTY_SOURCES
         )
         if invalid:
             raise ValueError(f"Unknown uncertainty sources: {invalid!r}.")
@@ -254,6 +253,12 @@ class PredictiveField(StrictModule):
         sample_dims = tuple(axis.dim for axis in self.sample_axes)
         return _masked_moment(field, sample_dims, self.valid, 1)
 
+    def process_variance(self) -> cx.Field:
+        return self.variance(sources="process")
+
+    def numerical_variance(self) -> cx.Field:
+        return self.variance(sources="numerical")
+
     def total_variance(self) -> cx.Field:
         sample_variance = self.variance()
         if self.conditional_variance is None:
@@ -272,6 +277,10 @@ class PredictiveField(StrictModule):
             parts["epistemic"] = self.epistemic_variance()
         if "input" in sources:
             parts["input"] = self.input_variance()
+        if "process" in sources:
+            parts["process"] = self.process_variance()
+        if "numerical" in sources:
+            parts["numerical"] = self.numerical_variance()
         if "observation" in sources or self.conditional_variance is not None:
             parts["observation"] = self.observation_variance()
         parts["total"] = self.total_variance()

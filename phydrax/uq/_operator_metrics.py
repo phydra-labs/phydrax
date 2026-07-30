@@ -6,11 +6,13 @@ from __future__ import annotations
 
 from typing import Literal
 
+import equinox as eqx
 import jax.numpy as jnp
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
 from ..nn.models.core._operator import OperatorOutputSpec, OperatorPrediction
-from ._metrics import energy_score, ensemble_crps
+from ._metrics import energy_distance, energy_score, ensemble_crps
 from ._operator import (
     _expected_output_shape,
     _output_mask,
@@ -103,6 +105,55 @@ def operator_energy_score(
         )
     )
     return _reduce_cases(per_case, prediction.case_shape, reduction=reduction)
+
+
+def operator_ensemble_energy_distance(
+    left: OperatorPredictiveField,
+    right: OperatorPredictiveField,
+    /,
+    *,
+    measure: Measure = "quadrature",
+    beta: float = 1.0,
+    chunk_size: int | None = None,
+    reduction: OperatorReduction = "mean",
+) -> Array:
+    """Whole-field energy distance between two operator ensembles."""
+    _require_predictive(left)
+    _require_predictive(right)
+    if (
+        left.case_axes != right.case_axes
+        or left.case_shape != right.case_shape
+        or left.output_spec.channels != right.output_spec.channels
+        or left.output_spec.component_names != right.output_spec.component_names
+        or not _queries_equal(left.query, right.query)
+    ):
+        raise ValueError("Operator ensembles must share one physical output contract.")
+    left_samples = _sample_case_event(left)
+    right_samples = _sample_case_event(right)
+    count = _case_count(left.case_shape)
+    mask = left.output_mask().reshape((count, -1))
+    weights = _energy_weights(
+        left.query,
+        left.output_spec,
+        left.case_shape,
+        measure=measure,
+    ).reshape((count, -1))
+    scale = jnp.sqrt(jnp.where(mask, weights, 0.0))
+    scaled_left = left_samples * scale[None, ...]
+    scaled_right = right_samples * scale[None, ...]
+    per_case = jnp.stack(
+        tuple(
+            energy_distance(
+                scaled_left[:, index, :],
+                scaled_right[:, index, :],
+                sample_axis=0,
+                beta=beta,
+                chunk_size=chunk_size,
+            )
+            for index in range(count)
+        )
+    )
+    return _reduce_cases(per_case, left.case_shape, reduction=reduction)
 
 
 def operator_interval_coverage(
@@ -203,11 +254,6 @@ def operator_interval_width(
 def _require_predictive(prediction: OperatorPredictiveField, /) -> None:
     if not isinstance(prediction, OperatorPredictiveField):
         raise TypeError("prediction must be an OperatorPredictiveField.")
-    valid = prediction.predictive.valid
-    if valid is not None and not bool(jnp.all(jnp.asarray(valid.data))):
-        raise ValueError(
-            "Operator proper scores require every requested predictive draw to be valid."
-        )
 
 
 def _sample_case_event(prediction: OperatorPredictiveField, /) -> Array:
@@ -223,6 +269,16 @@ def _sample_case_event(prediction: OperatorPredictiveField, /) -> Array:
     ordered_dims = sample_dims + case_dims + event_dims
     permutation = tuple(dims.index(dim) for dim in ordered_dims)
     data = jnp.asarray(prediction.predictive.samples.data)
+    valid = prediction.predictive.valid
+    if valid is not None:
+        invalid = ~jnp.all(jnp.asarray(valid.data))
+        message = (
+            "Operator proper scores require every requested predictive draw to be valid."
+        )
+        if isinstance(invalid, jax_core.Tracer):
+            data = eqx.error_if(data, invalid, message)
+        elif bool(invalid):
+            raise ValueError(message)
     if permutation != tuple(range(data.ndim)):
         data = jnp.transpose(data, permutation)
     sample_count = 1
@@ -351,6 +407,7 @@ def _validate_measure(measure: str, /) -> None:
 
 __all__ = [
     "operator_energy_score",
+    "operator_ensemble_energy_distance",
     "operator_ensemble_crps",
     "operator_interval_coverage",
     "operator_interval_width",
