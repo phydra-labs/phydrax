@@ -597,7 +597,7 @@ for any of the geometry architectures above.
 `CochainNeuralOperator` acts on typed discrete differential forms over one
 `CochainComplexIR`. Each `OperatorFieldSpec` declares its cochain degree,
 primal/dual side, orientation law, and sampling semantics through
-`OperatorCochainSpec`. `function_samples_from_cochain` then binds values,
+`phydrax.graph.CochainFieldSpec`. `function_samples_from_cochain` then binds values,
 physical Hodge-star measures, boundary masks, coordinates, and the shared
 cell-complex topology into canonical `FunctionSamples`.
 
@@ -616,7 +616,7 @@ The default route set excludes the dense harmonic projection. Enable
 boundary policies select different closed subcomplexes and must match between
 sample construction and model execution.
 
-::: phydrax.nn.OperatorCochainSpec
+::: phydrax.graph.CochainFieldSpec
 
 ---
 
@@ -751,6 +751,17 @@ status is not a calibration claim.
 `FunctionSamples` branch. The downstream model must be configured to consume
 that branch. This preserves PDE-IR structure as conditioning metadata; it does
 not enforce the PDE or provide equation-to-solution pretraining.
+
+The token tree is generated from the canonical expression traversal: addition
+and multiplication are recursively flattened and sorted, while argument slots
+remain explicit for noncommutative operators. Declaration and attribute tokens
+cover coordinate kind, size, bounds, periodicity, field representation and
+scales, parameter values and scales, region and condition kinds, derivative
+order and axis, component selection, and nondimensionalization. Symbol
+conditioning uses declaration/reference equality rather than lexical names, so
+a consistent alpha-renaming leaves the encoding unchanged while `u + u` remains
+distinct from `u + v`. Arbitrary `PDEProblemIR.metadata` is provenance, not a
+neural semantic channel.
 
 ::: phydrax.nn.FiLMCoordinateDecoder
     options:
@@ -1441,11 +1452,15 @@ compatibility.
 `SupervisedOperatorLoss` supplies a named, measure-aware L2 objective.
 `OperatorLossTerm` adapts a stable custom scalar objective, and
 `WeakOperatorLoss` evaluates residual moments against one or more test
-functions. Every term declares `space="physical"` or `"execution"`; physical is
-the default. `OperatorLossContext` carries paired predictions, batches, and
-targets for both spaces. `OperatorOutputPipeline` applies exact hard-constraint
-and conservation transforms only after dimensionalization, inside both fitting
-and `TrainedOperator` inference.
+functions. `CochainResidualLoss` scatters typed prediction/source samples onto
+their canonical cell complex, evaluates a `CochainResidualProgram`, and applies
+a segmented Hodge-aware reduction. Every generic term declares
+`space="physical"` or `"execution"`; physical is the default.
+`OperatorLossContext` carries paired predictions, batches, and targets for both
+spaces. `OperatorOutputPipeline` applies exact hard-constraint and conservation
+transforms only after dimensionalization, inside both fitting and
+`TrainedOperator` inference. Targetless fitting requires explicit physics terms
+and explicit or previously fitted output scaling.
 
 ---
 
@@ -1459,6 +1474,18 @@ and `TrainedOperator` inference.
 
 ::: phydrax.nn.WeakOperatorLoss
 
+
+---
+
+::: phydrax.nn.OperatorLossContext
+
+---
+
+::: phydrax.nn.CochainResidualInput
+
+---
+
+::: phydrax.nn.CochainResidualLoss
 ---
 
 ::: phydrax.nn.HardConstraintTransform

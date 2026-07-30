@@ -103,11 +103,11 @@ def get_sampler_host(
     if sampler_ == "latin_hypercube":
         engine = LatinHypercube(dim_, seed=seed)
     elif sampler_ == "halton":
-        engine = Halton(dim_, seed=seed)
+        engine = Halton(dim_, scramble=False, seed=seed)
     elif sampler_ == "halton_scrambled":
         engine = Halton(dim_, scramble=True, seed=seed)
     elif sampler_ == "sobol":
-        engine = Sobol(dim_, seed=seed)
+        engine = Sobol(dim_, scramble=False, seed=seed)
     else:  # "sobol_scrambled"
         engine = Sobol(dim_, scramble=True, seed=seed)
 

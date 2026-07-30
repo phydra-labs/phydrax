@@ -255,6 +255,53 @@ cell basis without changing the represented physical complex; use
 
 ---
 
+### Typed cochain fields and domain-level DEC
+
+`CochainFieldSpec` is the shared semantic contract used by graph domains,
+cochain neural operators, and residual programs. The domain-level DEC functions
+accept a declared cochain `DomainFunction`, preserve or change its degree as
+mathematically required, and return another `DomainFunction`. They execute the
+same sparse kernels as the array-level functions above.
+
+::: phydrax.graph.CochainFieldSpec
+
+---
+
+::: phydrax.operators.cochain_exterior_derivative
+
+---
+
+::: phydrax.operators.cochain_codifferential
+
+---
+
+::: phydrax.operators.cochain_hodge_laplacian
+
+---
+
+::: phydrax.operators.cochain_harmonic_projection
+
+### Shared residual programs and metric reduction
+
+`CochainResidualProgram` declares named input/output cochain schemas around one
+full-complex residual callable. The same program can be bound to
+`CochainResidualConstraint` for a fixed-complex PINN or to
+`CochainResidualLoss` for operator training. Its fingerprint includes the
+explicit callable identity and every field semantic.
+
+`cochain_metric_reduce` first reduces each nonempty graph segment and then
+averages segments. `graph_mean` is an arithmetic cell mean, `metric_mean` is a
+Hodge-star-normalized mean, and `metric_sum` retains Hodge-star mass. Entity
+masks exclude padding; optional segment weights compose graph-time quadrature.
+
+::: phydrax.graph.CochainResidualProgram
+
+---
+
+::: phydrax.graph.cochain_metric_reduce
+
+---
+
 ## Spectral graph operators
 
 Sparse polynomial and Chebyshev filters provide a scalable spectral graph

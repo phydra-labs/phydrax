@@ -13,6 +13,7 @@ from .._components import _AbstractVarComponent, Interior
 
 
 GraphComponentKind = Literal["nodes", "edges", "globals"]
+CochainCellRegion = Literal["all", "interior", "boundary"]
 
 
 def _entity_indices(indices: ArrayLike, /) -> Array:
@@ -102,6 +103,28 @@ class Globals(_AbstractVarComponent):
         """Create a graph-global component marker."""
 
 
+class CochainCells(_AbstractVarComponent):
+    """Select cells of one cochain degree and geometric boundary region."""
+
+    degree: int
+    region: CochainCellRegion
+
+    def __init__(
+        self,
+        degree: int,
+        /,
+        *,
+        region: CochainCellRegion = "all",
+    ):
+        resolved_degree = int(degree)
+        if resolved_degree < 0:
+            raise ValueError("Cochain cell degree must be non-negative.")
+        if region not in ("all", "interior", "boundary"):
+            raise ValueError("Cochain cell region must be 'all', 'interior', or 'boundary'.")
+        self.degree = resolved_degree
+        self.region = region
+
+
 class NodeSet(_AbstractNodeSubset):
     """Marker selecting explicit local node indices.
 
@@ -154,7 +177,10 @@ def graph_component_kind(component: _AbstractVarComponent, /) -> GraphComponentK
     """Return the graph entity kind selected by a component marker."""
     if isinstance(component, Interior):
         return "nodes"
-    if isinstance(component, (Nodes, _AbstractNodeSubset, _AbstractNodeTypeSubset)):
+    if isinstance(
+        component,
+        (Nodes, CochainCells, _AbstractNodeSubset, _AbstractNodeTypeSubset),
+    ):
         return "nodes"
     if isinstance(component, (Edges, _AbstractEdgeSubset, _AbstractEdgeTypeSubset)):
         return "edges"
@@ -205,6 +231,32 @@ def _entity_type_payload(graph: Any, component: _AbstractGraphTypeSubset, kind: 
     return type_arr.astype(jnp.int32)
 
 
+def _cochain_cell_indices(graph: Any, component: CochainCells, /) -> Array:
+    if not isinstance(graph.nodes, Mapping):
+        raise TypeError("CochainCells requires mapping-valued graph nodes.")
+    if "cell_dim" not in graph.nodes:
+        raise KeyError("CochainCells requires graph.nodes['cell_dim'].")
+    cell_dim = jnp.asarray(graph.nodes["cell_dim"])
+    if cell_dim.ndim != 1 or not jnp.issubdtype(cell_dim.dtype, jnp.integer):
+        raise TypeError("graph.nodes['cell_dim'] must be a rank-1 integer array.")
+    mask = cell_dim.astype(jnp.int32) == component.degree
+    if component.region != "all":
+        if "boundary" not in graph.nodes:
+            raise KeyError(
+                "Boundary-aware CochainCells requires graph.nodes['boundary']."
+            )
+        boundary = jnp.asarray(graph.nodes["boundary"])
+        if boundary.ndim != 1 or boundary.shape != cell_dim.shape:
+            raise ValueError("graph.nodes['boundary'] must match graph cell count.")
+        boundary = boundary.astype(bool)
+        mask = mask & (
+            boundary if component.region == "boundary" else ~boundary
+        )
+    if graph.node_mask is not None:
+        mask = mask & jnp.asarray(graph.node_mask, dtype=bool)
+    return jnp.asarray(np.nonzero(np.asarray(mask))[0], dtype=jnp.int32)
+
+
 def _validate_explicit_indices(idx: Array, *, size: int, kind: GraphComponentKind) -> Array:
     idx = jnp.asarray(idx, dtype=jnp.int32)
     idx_np = np.asarray(idx)
@@ -228,6 +280,10 @@ def graph_component_indices_for_graph(
     explicit = graph_component_indices(component)
     if explicit is not None:
         return _validate_explicit_indices(explicit, size=size, kind=kind)
+    if isinstance(component, CochainCells):
+        if kind != "nodes":
+            raise TypeError("CochainCells can select only graph nodes.")
+        return _cochain_cell_indices(graph, component)
     if isinstance(component, _AbstractGraphTypeSubset):
         if kind == "globals":
             raise TypeError("Graph type subsets can select only nodes or edges.")
@@ -245,6 +301,8 @@ def graph_component_indices_for_graph(
 __all__ = [
     "BoundaryEdges",
     "BoundaryNodes",
+    "CochainCellRegion",
+    "CochainCells",
     "EdgeType",
     "EdgeSet",
     "Edges",

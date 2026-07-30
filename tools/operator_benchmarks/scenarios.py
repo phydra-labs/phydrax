@@ -9,6 +9,7 @@ import jax.random as jr
 import numpy as np
 
 from phydrax.graph import (
+    CochainFieldSpec,
     compute_harmonic_subspace,
     triangle_mesh_to_cochain_complex,
 )
@@ -17,7 +18,6 @@ from phydrax.nn import (
     FunctionSamples,
     OperatorAxis,
     OperatorBatch,
-    OperatorCochainSpec,
     OperatorFieldSpec,
     OperatorProblemSpec,
     OperatorQuerySpec,
@@ -4198,8 +4198,8 @@ def _annulus_triangle_complex(radial_layers: int, angular_points: int, /):
     )
 
 
-def _cochain_semantics(degree: int) -> OperatorCochainSpec:
-    return OperatorCochainSpec(
+def _cochain_semantics(degree: int) -> CochainFieldSpec:
+    return CochainFieldSpec(
         degree,
         cell_orientation="invariant" if int(degree) == 0 else "signed",
         sampling="point_value" if int(degree) == 0 else "cell_integral",

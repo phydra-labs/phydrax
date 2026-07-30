@@ -278,6 +278,17 @@ equation as a `PDETokenBatch`, then call `attach_pde_condition`. The result is a
 named one-anchor source branch, so the selected multi-input architecture must
 declare and consume that branch; attaching it does not enforce the equation.
 
+`tokenize_pde_ir` includes the execution-relevant PDE schema rather than only
+the expression operators: coordinate bounds and periodicity, representations,
+component and derivative axes, parameter vectors and scales, conditions,
+regions, and nondimensionalization all affect the conditioning. Canonically
+equivalent associative expressions produce identical tokens. Consistent
+renaming of declared coordinates, fields, parameters, equations, conditions,
+and regions does not change the encoder result because symbol identity is
+represented relationally, not through lexical embeddings. Free-form problem
+metadata remains outside the neural input.
+
+
 ```python
 pde_encoder = phx.nn.PDEConditionEncoder(
     width=8,
@@ -819,12 +830,13 @@ and preserve query masks whenever cardinality varies. `assume_uniform_measure`
 is an explicit approximation for point samples with genuinely equal cell
 measure, not a remedy for missing mesh volumes.
 
-## Typed cochains and metric DEC routes
+## Typed cochains, metric DEC routes, and topological PINO
 
 Use `CochainNeuralOperator` when unknowns live on different cell degrees of one
 oriented complex—for example, vertex pressure and edge flux. Do not flatten
 these fields into an untyped point cloud: incidence signs, Hodge-star measures,
-boundary cells, and degree determine the operator.
+boundary cells, and degree determine both the neural operator and its physics
+loss.
 
 ```python
 cochain_vertices = jnp.asarray(
@@ -845,44 +857,83 @@ cochain_batch = phx.nn.OperatorBatch(
         )
     },
     queries={
+        "vertices": phx.nn.function_samples_from_cochain(
+            cochain_complex,
+            0,
+            values=None,
+        ),
         "edges": phx.nn.function_samples_from_cochain(
             cochain_complex,
             1,
             values=None,
-        )
+        ),
     },
     case_axes=("case",),
     case_shape=(2,),
+)
+zero_form = phx.graph.CochainFieldSpec(
+    0,
+    cell_orientation="invariant",
+    sampling="point_value",
+)
+one_form = phx.graph.CochainFieldSpec(
+    1,
+    cell_orientation="signed",
+    sampling="cell_integral",
 )
 cochain_fields = (
     phx.nn.OperatorFieldSpec(
         "forcing",
         role="source",
         source_name="forcing",
-        cochain=phx.nn.OperatorCochainSpec(
-            0,
-            cell_orientation="invariant",
-            sampling="point_value",
-        ),
+        cochain=zero_form,
+    ),
+    phx.nn.OperatorFieldSpec(
+        "pressure",
+        role="target",
+        query_name="vertices",
+        cochain=zero_form,
     ),
     phx.nn.OperatorFieldSpec(
         "flux",
         role="target",
         query_name="edges",
-        cochain=phx.nn.OperatorCochainSpec(
-            1,
-            cell_orientation="signed",
-            sampling="cell_integral",
+        cochain=one_form,
+    ),
+)
+cochain_task = phx.nn.OperatorTask(
+    "mixed-darcy",
+    fields=cochain_fields,
+    queries=(
+        phx.nn.OperatorQuerySpec(
+            "vertices",
+            geometry_kind="cell_complex",
+            coordinate_components=("x", "y"),
+            topology_site="cell",
+            quadrature="physical_required",
         ),
+        phx.nn.OperatorQuerySpec(
+            "edges",
+            geometry_kind="cell_complex",
+            coordinate_components=("x", "y"),
+            topology_site="cell",
+            quadrature="physical_required",
+        ),
+    ),
+    problem=phx.nn.OperatorProblemSpec(
+        source_query_relation="shared_topology",
+        query_is_fixed=False,
+        requires_resolution_transfer=True,
     ),
 )
 cochain_operator = phx.nn.CochainNeuralOperator(
     cochain_fields,
-    width=8,
-    depth=2,
+    width=2,
+    depth=1,
     key=jr.key(25),
 )
 cochain_prediction = cochain_operator.predict(cochain_batch)
+assert cochain_prediction.field("pressure").values.shape == (2, 4)
 assert cochain_prediction.field("flux").values.shape == (2, 5)
 ```
 
@@ -892,8 +943,105 @@ because it requires topology-level preprocessing:
 `compute_harmonic_subspace(complex_ir)` followed by
 `complex_ir.with_harmonic_subspace(...)` and
 `TopologicalRouteConfig(harmonic=True)`. Absolute and relative boundary
-policies are distinct operators; use the same policy when constructing samples
-and the model.
+policies are distinct operators; use the same policy when constructing samples,
+the neural operator, and physics residuals.
+
+### Physics-only topological operator fitting
+
+`CochainResidualProgram` lets a fixed-complex DEC PINN and an operator-level
+topological PINO execute one residual definition. Operator inputs bind each
+declared program field either to a predicted output or to a sampled source.
+Sparse per-degree samples are scattered onto the canonical cell complex,
+degree-masked, evaluated, and then gathered through a Hodge-aware segmented
+reduction.
+
+```python
+def mixed_darcy_residual(graph, fields, *, key):
+    del key
+    pressure_gradient = phx.graph.cochain_exterior_derivative(
+        graph,
+        fields["pressure"],
+        0,
+        boundary_policy="absolute",
+    )
+    flux_divergence = phx.graph.cochain_codifferential(
+        graph,
+        fields["flux"],
+        1,
+        boundary_policy="absolute",
+    )
+    return {
+        "constitutive": fields["flux"] + pressure_gradient,
+        "mass": flux_divergence - fields["forcing"],
+    }
+
+
+darcy_program = phx.graph.CochainResidualProgram(
+    inputs={
+        "pressure": zero_form,
+        "flux": one_form,
+        "forcing": zero_form,
+    },
+    outputs={
+        "constitutive": one_form,
+        "mass": zero_form,
+    },
+    residual_fn=mixed_darcy_residual,
+    identity="cookbook.operator.mixed_darcy.v1",
+)
+residual_inputs = {
+    "pressure": phx.nn.CochainResidualInput("prediction", "pressure"),
+    "flux": phx.nn.CochainResidualInput("prediction", "flux"),
+    "forcing": phx.nn.CochainResidualInput("source", "forcing"),
+}
+physics_losses = (
+    phx.nn.CochainResidualLoss(
+        name="constitutive",
+        program=darcy_program,
+        inputs=residual_inputs,
+        output="constitutive",
+        reduction="metric_mean",
+    ),
+    phx.nn.CochainResidualLoss(
+        name="mass",
+        program=darcy_program,
+        inputs=residual_inputs,
+        output="mass",
+        reduction="metric_sum",
+    ),
+)
+targetless = phx.nn.OperatorDataset(
+    cochain_batch,
+    phx.nn.OperatorTargetBatch.from_arrays({}, cochain_batch),
+)
+fit = phx.nn.fit_operator(
+    cochain_operator,
+    targetless,
+    task=cochain_task,
+    training_evidence=phx.nn.OperatorTrainingEvidence("task_specific"),
+    loss_terms=physics_losses,
+    normalization=None,
+    batch_size=1,
+    epochs=1,
+    steps=1,
+)
+```
+
+Targetless fitting is allowed only with explicit physics loss terms. It cannot
+use `normalization="fit"` because no supervised output targets exist from which
+to estimate output scale; pass physical nondimensionalization explicitly or a
+previously fitted normalization policy. Program identity, field bindings,
+reduction, optional topology lock, and every other loss setting enter the exact
+checkpoint contract, so changing the residual rejects resume rather than
+silently continuing a different optimization problem.
+
+`graph_mean` treats every cell equally within a complex, `metric_mean`
+normalizes by Hodge-star mass, and `metric_sum` retains that mass. Every
+nonempty complex contributes one segment regardless of mesh cardinality, and
+padded cells are excluded. Set `topology_fingerprint` on a
+`CochainResidualLoss` when training must remain locked to one exact canonical
+complex; omit it for topology-varying batches that still satisfy the declared
+field schema.
 
 The benchmark ladders `cochain_mixed_darcy` and
 `cochain_annulus_harmonic` exercise, respectively, joint zero-/one-form

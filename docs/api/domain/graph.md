@@ -179,6 +179,31 @@ constraint, function, or sample is defined on.
     options:
         members: []
 
+### Cochain cells and typed fields
+
+`CochainCells(degree, region=...)` selects all, interior, or geometric boundary
+cells of one degree from the node representation of a canonical cochain
+complex. Selection remains local to each graph in dataset and trajectory
+batches and excludes padded nodes.
+
+`as_cochain_field` attaches a `CochainFieldSpec` to a graph-backed
+`DomainFunction` and masks every other degree to zero. `cochain_field_spec`
+recovers that declaration for validation by DEC operators, constraints, and
+hard enforcement.
+
+::: phydrax.domain.CochainCells
+    options:
+        members:
+            - __init__
+
+---
+
+::: phydrax.domain.as_cochain_field
+
+---
+
+::: phydrax.domain.cochain_field_spec
+
 ## Explicit Graph Subsets
 
 Explicit subsets are local to each graph case. For a `GraphDatasetDomain`, the

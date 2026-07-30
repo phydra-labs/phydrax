@@ -306,10 +306,19 @@ def _resolve_output_map(
     model: _AbstractOperatorModel,
     targets: OperatorTargetBatch,
     output_field_map: Mapping[str, str] | None,
+    task: OperatorTask | None,
     /,
 ) -> dict[str, str]:
     declared = tuple(model.operator_output_specs)
-    target_names = tuple(targets.fields)
+    target_names = (
+        tuple(targets.fields)
+        if targets.fields
+        else (
+            tuple(field.name for field in task.target_fields)
+            if task is not None
+            else declared
+        )
+    )
     if output_field_map is None:
         if set(declared) == set(target_names):
             resolved = {name: name for name in declared}
@@ -317,8 +326,8 @@ def _resolve_output_map(
             resolved = {declared[0]: target_names[0]}
         else:
             raise ValueError(
-                "output_field_map is required when model outputs and target fields "
-                "do not have identical names."
+                "output_field_map is required when model outputs and physical output "
+                "fields do not have identical names."
             )
     else:
         resolved = {
@@ -326,7 +335,10 @@ def _resolve_output_map(
             for model_name, target_name in output_field_map.items()
         }
     if set(resolved) != set(declared) or set(resolved.values()) != set(target_names):
-        raise ValueError("output_field_map must bijectively map every model output to a target.")
+        raise ValueError(
+            "output_field_map must bijectively map every model output to a physical "
+            "output field."
+        )
     return resolved
 
 
@@ -490,6 +502,11 @@ def fit_operator(
     if normalization == "fit":
         if not isinstance(train, OperatorDataset):
             raise ValueError("normalization='fit' requires an in-memory OperatorDataset.")
+        if not train.targets.fields:
+            raise ValueError(
+                "normalization='fit' requires supervised targets; targetless physics "
+                "training must use explicit physical scaling or a fitted policy."
+            )
         normalization_batch, normalization_targets = _nondimensionalize(
             train.batch,
             train.targets,
@@ -564,7 +581,12 @@ def fit_operator(
         model,
         first.targets,
         output_field_map,
+        task,
     )
+    if loss_terms is None and not first.targets.fields:
+        raise ValueError(
+            "Targetless operator fitting requires explicit physics loss_terms."
+        )
     terms = (
         _default_losses(resolved_output_map, physical_names=task is not None)
         if loss_terms is None

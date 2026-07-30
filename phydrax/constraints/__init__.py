@@ -115,6 +115,7 @@ from ._bc_thermal import (
     DiscreteHeatFluxBoundaryConstraint,
     DiscreteRobinBoundaryConstraint,
 )
+from ._cochain import cochain_residual_field, CochainResidualConstraint
 from ._continuous_interior import (
     ContinuousInitialFunctionConstraint,
     ContinuousPointwiseInteriorConstraint,
@@ -152,7 +153,7 @@ from ._graph_data import (
     GraphTrajectorySignal,
     GraphTrajectorySupervisedConstraint,
 )
-from ._graph_enforced import enforce_graph_values
+from ._graph_enforced import enforce_cochain_values, enforce_graph_values
 from ._integral import (
     AveragePressureBoundaryConstraint,
     CFDBoundaryFlowRateConstraint,
@@ -206,6 +207,8 @@ from ._trajectory_data import (
 
 
 __all__ = [
+    "CochainResidualConstraint",
+    "cochain_residual_field",
     "AbstractCollocationPolicy",
     "CollocationPolicy",
     "CollocationPopulation",
@@ -257,6 +260,7 @@ __all__ = [
     "GraphTargetInterpolation",
     "GraphTrajectorySignal",
     "GraphTrajectorySupervisedConstraint",
+    "enforce_cochain_values",
     "enforce_graph_values",
     "IntegralEqualityConstraint",
     "ContinuousPointwiseInteriorConstraint",

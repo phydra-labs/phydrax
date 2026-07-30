@@ -87,7 +87,11 @@ def _write_blocks_to_temp_script(md_path: Path, blocks: list[str], tmp_dir: Path
 
 def _shrink_doc_iterations(code: str) -> str:
     code = re.sub(r"num_iter\s*=\s*\d+", "num_iter=5", code)
-    code = re.sub(r"num_points\s*=\s*\d+", "num_points=16", code)
+    code = re.sub(
+        r"num_points\s*=\s*(\d+)",
+        lambda match: f"num_points={min(int(match.group(1)), 16)}",
+        code,
+    )
     code = re.sub(r"width_size\s*=\s*\d+", "width_size=8", code)
     code = re.sub(r"depth\s*=\s*\d+", "depth=1", code)
     code = re.sub(r"latent_size\s*=\s*\d+", "latent_size=4", code)

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import isfinite
 from typing import Any, Literal
 
 
@@ -71,8 +72,23 @@ _VALID_OPS = {
 }
 
 
+def _finite_float(value: float, name: str, /) -> float:
+    result = float(value)
+    if not isfinite(result):
+        raise ValueError(f"{name} must be finite.")
+    return result
+
+
+def _finite_values(
+    values: tuple[float, ...] | list[float],
+    name: str,
+    /,
+) -> tuple[float, ...]:
+    return tuple(_finite_float(value, name) for value in values)
+
+
 def _dimension(values: tuple[float, ...] | list[float], /) -> tuple[float, ...]:
-    return tuple(float(value) for value in values)
+    return _finite_values(values, "PDE physical dimensions")
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,7 +112,10 @@ class PDECoordinate:
             self, "physical_dimension", _dimension(self.physical_dimension)
         )
         if self.bounds is not None:
-            bounds = (float(self.bounds[0]), float(self.bounds[1]))
+            bounds = _finite_values(
+                [self.bounds[0], self.bounds[1]],
+                "PDE coordinate bounds",
+            )
             if bounds[1] <= bounds[0]:
                 raise ValueError("PDE coordinate upper bound must exceed lower bound.")
             object.__setattr__(self, "bounds", bounds)
@@ -133,7 +152,7 @@ class PDEField:
         object.__setattr__(
             self, "physical_dimension", _dimension(self.physical_dimension)
         )
-        scales = tuple(float(value) for value in self.scale)
+        scales = _finite_values(list(self.scale), "PDE field scale")
         if len(scales) not in (1, self.components) or any(value <= 0.0 for value in scales):
             raise ValueError("PDE field scale must be positive and scalar or per-component.")
         object.__setattr__(self, "scale", scales)
@@ -161,15 +180,15 @@ class PDEParameter:
         object.__setattr__(
             self, "physical_dimension", _dimension(self.physical_dimension)
         )
-        scales = tuple(float(item) for item in self.scale)
+        scales = _finite_values(list(self.scale), "PDE parameter scale")
         if len(scales) not in (1, self.components) or any(item <= 0.0 for item in scales):
             raise ValueError("PDE parameter scale must be positive and scalar or per-component.")
         object.__setattr__(self, "scale", scales)
         if self.value is not None:
             value = (
-                float(self.value)
+                _finite_float(self.value, "PDE parameter value")
                 if isinstance(self.value, (int, float))
-                else tuple(float(item) for item in self.value)
+                else _finite_values(list(self.value), "PDE parameter value")
             )
             if isinstance(value, tuple) and len(value) != self.components:
                 raise ValueError("PDE parameter value must match its component count.")
@@ -197,6 +216,12 @@ class PDEExpression:
         object.__setattr__(
             self, "physical_dimension", _dimension(self.physical_dimension)
         )
+        if self.value is not None:
+            object.__setattr__(
+                self,
+                "value",
+                _finite_float(self.value, "PDE expression value"),
+            )
         if int(self.order) <= 0:
             raise ValueError("PDE derivative order must be positive.")
         object.__setattr__(self, "order", int(self.order))
@@ -403,10 +428,23 @@ class PDEProblemIR:
             "equations",
             "conditions",
             "regions",
-            "nondimensionalization",
             "metadata",
         ):
             object.__setattr__(self, attribute, tuple(getattr(self, attribute)))
+        nondimensionalization = tuple(
+            (
+                name,
+                _finite_float(value, "PDE nondimensionalization scale"),
+            )
+            for name, value in self.nondimensionalization
+        )
+        if any(value <= 0.0 for _, value in nondimensionalization):
+            raise ValueError("Nondimensionalization scales must be positive.")
+        object.__setattr__(
+            self,
+            "nondimensionalization",
+            nondimensionalization,
+        )
 
     @property
     def canonical_hash(self) -> str:

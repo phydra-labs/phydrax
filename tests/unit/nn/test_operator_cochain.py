@@ -52,7 +52,7 @@ def _fields():
             role="both",
             source_name="vertex_source",
             query_name="vertex_query",
-            cochain=phx.nn.OperatorCochainSpec(
+            cochain=phx.graph.CochainFieldSpec(
                 0,
                 cell_orientation="invariant",
                 sampling="point_value",
@@ -63,7 +63,7 @@ def _fields():
             role="both",
             source_name="edge_source",
             query_name="edge_query",
-            cochain=phx.nn.OperatorCochainSpec(
+            cochain=phx.graph.CochainFieldSpec(
                 1,
                 cell_orientation="signed",
                 sampling="cell_integral",
@@ -192,7 +192,7 @@ def test_cochain_field_semantics_roundtrip_through_operator_task():
             "invalid",
             role="source",
             offset=1.0,
-            cochain=phx.nn.OperatorCochainSpec(
+            cochain=phx.graph.CochainFieldSpec(
                 1,
                 cell_orientation="signed",
                 sampling="cell_integral",
@@ -347,7 +347,7 @@ def test_harmonic_route_requires_and_uses_precomputed_topological_basis():
             role="both",
             source_name="edge_source",
             query_name="edge_query",
-            cochain=phx.nn.OperatorCochainSpec(
+            cochain=phx.graph.CochainFieldSpec(
                 1,
                 cell_orientation="signed",
                 sampling="cell_integral",
@@ -541,3 +541,194 @@ def test_multi_field_training_and_checkpoint_resume_are_exact(tmp_path):
             strict=True,
         )
     )
+
+
+def _source_matching_program(*, identity="tests.cochain.source_matching"):
+    zero_spec = phx.graph.CochainFieldSpec(
+        0,
+        cell_orientation="invariant",
+        sampling="point_value",
+    )
+
+    def residual(graph, fields, *, key):
+        del graph, key
+        return {"residual": fields["u"] - 0.1 * fields["forcing"]}
+
+    return phx.graph.CochainResidualProgram(
+        inputs={"u": zero_spec, "forcing": zero_spec},
+        outputs={"residual": zero_spec},
+        residual_fn=residual,
+        identity=identity,
+    )
+
+
+def _source_matching_loss(
+    *,
+    identity="tests.cochain.source_matching",
+    topology_fingerprint=None,
+):
+    return phx.nn.CochainResidualLoss(
+        name="zero_form_physics",
+        program=_source_matching_program(identity=identity),
+        inputs={
+            "u": phx.nn.CochainResidualInput("prediction", "vertex"),
+            "forcing": phx.nn.CochainResidualInput("source", "vertex"),
+        },
+        output="residual",
+        reduction="metric_mean",
+        topology_fingerprint=topology_fingerprint,
+    )
+
+
+def _targetless_dataset(*, cases=2):
+    batch = _batch(cases=cases)
+    targets = phx.nn.OperatorTargetBatch.from_arrays({}, batch)
+    return phx.nn.OperatorDataset(batch, targets)
+
+
+def _small_cochain_model(*, key):
+    return phx.nn.CochainNeuralOperator(
+        _fields(),
+        width=3,
+        depth=1,
+        key=key,
+    )
+
+
+def _physics_loss_value(term, model, dataset):
+    prediction = model.predict(dataset.batch)
+    context = phx.nn.OperatorLossContext(
+        prediction,
+        dataset.batch,
+        dataset.targets,
+        prediction,
+        dataset.batch,
+        dataset.targets,
+        task=_task(),
+    )
+    return term(
+        model,
+        prediction,
+        dataset.batch,
+        dataset.targets,
+        key=jr.key(91),
+        step=jnp.asarray(0),
+        training=False,
+        context=context,
+    )
+
+
+def test_cochain_residual_loss_scatters_sparse_fields_and_locks_topology():
+    dataset = _targetless_dataset(cases=2)
+    model = _small_cochain_model(key=jr.key(30))
+    term = _source_matching_loss()
+    value = _physics_loss_value(term, model, dataset)
+    topology = dataset.batch.input("vertex_source").topology
+
+    assert topology is not None
+    assert jnp.isfinite(value)
+    assert value > 0.0
+    assert term.fingerprint == _source_matching_loss().fingerprint
+    assert term.fingerprint != _source_matching_loss(
+        identity="tests.cochain.changed_source_matching"
+    ).fingerprint
+
+    locked = _source_matching_loss(topology_fingerprint="not-this-topology")
+    with pytest.raises(ValueError, match="does not match its declared fingerprint"):
+        _physics_loss_value(locked, model, dataset)
+
+
+def test_targetless_cochain_pino_update_and_checkpoint_resume_are_exact(tmp_path):
+    dataset = _targetless_dataset(cases=2)
+    model = _small_cochain_model(key=jr.key(31))
+    term = _source_matching_loss()
+    common = {
+        "task": _task(),
+        "training_evidence": phx.nn.OperatorTrainingEvidence(
+            regime="task_specific"
+        ),
+        "loss_terms": (term,),
+        "learning_rate": 1e-3,
+        "batch_size": 2,
+        "epochs": 2,
+        "shuffle": False,
+        "seed": 19,
+        "normalization": None,
+        "checkpoint_every": 1,
+    }
+    initial_loss = _physics_loss_value(term, model, dataset)
+    uninterrupted = phx.nn.fit_operator(
+        model,
+        dataset,
+        steps=2,
+        **common,
+    )
+    trained_loss = _physics_loss_value(term, uninterrupted.execution_model, dataset)
+
+    checkpoint = tmp_path / "targetless-cochain-checkpoint"
+    first = phx.nn.fit_operator(
+        model,
+        dataset,
+        steps=1,
+        checkpoint_path=checkpoint,
+        **common,
+    )
+    resumed = phx.nn.fit_operator(
+        model,
+        dataset,
+        steps=2,
+        checkpoint_path=checkpoint,
+        resume=True,
+        **common,
+    )
+
+    assert trained_loss < initial_loss
+    assert first.progress.update_step == 1
+    assert resumed.resumed_from_step == 1
+    uninterrupted_prediction = uninterrupted.execution_model.predict(dataset.batch)
+    resumed_prediction = resumed.execution_model.predict(dataset.batch)
+    for name in ("vertex", "edge"):
+        assert jnp.array_equal(
+            resumed_prediction.field(name).values,
+            uninterrupted_prediction.field(name).values,
+        )
+
+    changed_common = dict(common)
+    changed_common["loss_terms"] = (
+        _source_matching_loss(identity="tests.cochain.incompatible_physics"),
+    )
+    with pytest.raises(ValueError, match="checkpoint contract mismatch"):
+        phx.nn.fit_operator(
+            model,
+            dataset,
+            steps=2,
+            checkpoint_path=checkpoint,
+            resume=True,
+            **changed_common,
+        )
+
+
+def test_targetless_operator_fit_requires_explicit_physics_and_scaling():
+    dataset = _targetless_dataset(cases=2)
+    model = _small_cochain_model(key=jr.key(32))
+    common = {
+        "task": _task(),
+        "training_evidence": phx.nn.OperatorTrainingEvidence(
+            regime="task_specific"
+        ),
+        "batch_size": 2,
+        "steps": 1,
+        "shuffle": False,
+        "seed": 20,
+    }
+
+    with pytest.raises(ValueError, match="explicit physics loss_terms"):
+        phx.nn.fit_operator(model, dataset, **common)
+    with pytest.raises(ValueError, match="supervised targets"):
+        phx.nn.fit_operator(
+            model,
+            dataset,
+            loss_terms=(_source_matching_loss(),),
+            normalization="fit",
+            **common,
+        )

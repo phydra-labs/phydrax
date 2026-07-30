@@ -4,6 +4,12 @@
 
 """Graph operators for graph-domain `DomainFunction`s."""
 
+from ._cochain import (
+    cochain_codifferential,
+    cochain_exterior_derivative,
+    cochain_harmonic_projection,
+    cochain_hodge_laplacian,
+)
 from ._ops import (
     degree,
     divergence,
@@ -34,6 +40,10 @@ __all__ = [
     "GraphDivergenceSign",
     "GraphFlow",
     "GraphReduce",
+    "cochain_codifferential",
+    "cochain_exterior_derivative",
+    "cochain_harmonic_projection",
+    "cochain_hodge_laplacian",
     "degree",
     "divergence",
     "graph_div",

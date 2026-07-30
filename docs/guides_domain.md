@@ -224,6 +224,15 @@ batch = domain.component().sample(
 )
 ```
 
+### Deterministic and scrambled low-discrepancy samplers
+
+`sampler="halton"` and `sampler="sobol"` select the standard unscrambled
+low-discrepancy sequences. Their points are independent of the supplied random
+key or host seed. Use `"halton_scrambled"` or `"sobol_scrambled"` when randomized
+scrambling is required; a fixed key or seed reproduces the same scrambled
+sequence, while different keys or seeds produce different points. Host samplers
+and JAX callback samplers follow the same naming and reproducibility contract.
+
 ## Coord-separable grid sampling (`CoordSeparableBatch`)
 
 For spectral/basis operators and neural operators, it is often preferable to sample *1D axes*

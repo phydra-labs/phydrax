@@ -13,7 +13,12 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 from ...._strict import StrictModule
-from ....equations import PDE_OPERATOR_VOCABULARY, PDE_TOKEN_KINDS, PDETokenBatch
+from ....equations import (
+    PDE_OPERATOR_VOCABULARY,
+    PDE_TOKEN_ATTRIBUTES,
+    PDE_TOKEN_KINDS,
+    PDETokenBatch,
+)
 from ..core._operator import FunctionSamples, OperatorBatch
 from ..layers._linear import Linear
 
@@ -23,9 +28,12 @@ class PDEConditionEncoder(StrictModule):
 
     kind_embeddings: Array
     operator_embeddings: Array
+    attribute_embeddings: Array
     depth_embeddings: Array
     scalar_projection: Linear
+    slot_projection: Linear
     dimension_projection: Linear
+    symbol_attention_biases: Array
     parent_projections: tuple[Linear, ...]
     query_projections: tuple[Linear, ...]
     key_projections: tuple[Linear, ...]
@@ -51,13 +59,16 @@ class PDEConditionEncoder(StrictModule):
         self.width = int(width)
         self.dimension_rank = int(dimension_rank)
         self.max_tree_depth = int(max_tree_depth)
-        keys = iter(jr.split(key, 7 * int(depth) + 5))
+        keys = iter(jr.split(key, 7 * int(depth) + 8))
         scale = 1.0 / sqrt(float(width))
         self.kind_embeddings = scale * jr.normal(
             next(keys), (len(PDE_TOKEN_KINDS), self.width)
         )
         self.operator_embeddings = scale * jr.normal(
             next(keys), (len(PDE_OPERATOR_VOCABULARY), self.width)
+        )
+        self.attribute_embeddings = scale * jr.normal(
+            next(keys), (len(PDE_TOKEN_ATTRIBUTES), self.width)
         )
         self.depth_embeddings = scale * jr.normal(
             next(keys), (self.max_tree_depth + 1, self.width)
@@ -68,11 +79,21 @@ class PDEConditionEncoder(StrictModule):
             activation=None,
             key=next(keys),
         )
+        self.slot_projection = Linear(
+            in_size=1,
+            out_size=self.width,
+            activation=None,
+            key=next(keys),
+        )
         self.dimension_projection = Linear(
             in_size=max(1, self.dimension_rank),
             out_size=self.width,
             activation=None,
             key=next(keys),
+        )
+        self.symbol_attention_biases = scale * jr.normal(
+            next(keys),
+            (int(depth),),
         )
         self.parent_projections = tuple(
             Linear(
@@ -148,12 +169,29 @@ class PDEConditionEncoder(StrictModule):
         self,
         hidden: Array,
         parent: Array,
+        symbol: Array,
         mask: Array,
     ) -> Array:
         token_count = hidden.shape[0]
         parent_index = jnp.clip(parent, 0, token_count - 1)
         parent_mask = (parent >= 0) & mask
-        for parent_projection, query, key, value, output, ff_in, ff_out in zip(
+        same_symbol = (
+            (symbol[:, None] == symbol[None, :])
+            & (symbol[:, None] != 0)
+            & mask[:, None]
+            & mask[None, :]
+        )
+        for (
+            symbol_bias,
+            parent_projection,
+            query,
+            key,
+            value,
+            output,
+            ff_in,
+            ff_out,
+        ) in zip(
+            self.symbol_attention_biases,
             self.parent_projections,
             self.query_projections,
             self.key_projections,
@@ -171,6 +209,7 @@ class PDEConditionEncoder(StrictModule):
             keys = key(normalized)
             values = value(normalized)
             logits = jnp.einsum("id,jd->ij", queries, keys) / sqrt(float(self.width))
+            logits = logits + symbol_bias * same_symbol
             logits = jnp.where(mask[None, :], logits, -jnp.inf)
             attention = jnn.softmax(logits, axis=-1)
             attended = jnp.einsum("ij,jd->id", attention, values)
@@ -190,16 +229,23 @@ class PDEConditionEncoder(StrictModule):
         case_shape = tokens.batch_shape
         token_count = tokens.max_tokens
         scalar = jnp.sign(tokens.scalar) * jnp.log1p(jnp.abs(tokens.scalar))
+        slot = jnp.where(
+            tokens.slot >= 0,
+            jnp.log1p(tokens.slot.astype(scalar.dtype)) + 1.0,
+            0.0,
+        )
         dimension = tokens.physical_dimension
         if self.dimension_rank == 0:
             dimension = jnp.zeros(case_shape + (token_count, 1), dtype=scalar.dtype)
         hidden = (
             self.kind_embeddings[tokens.kind]
             + self.operator_embeddings[tokens.operator]
+            + self.attribute_embeddings[tokens.attribute]
             + self.depth_embeddings[
                 jnp.clip(tokens.depth, 0, self.max_tree_depth)
             ]
             + self.scalar_projection(scalar[..., None])
+            + self.slot_projection(slot[..., None])
             + self.dimension_projection(dimension)
         )
         cases = 1
@@ -208,6 +254,7 @@ class PDEConditionEncoder(StrictModule):
         encoded = jax.vmap(self._encode_case)(
             hidden.reshape((cases, token_count, self.width)),
             tokens.parent.reshape((cases, token_count)),
+            tokens.symbol.reshape((cases, token_count)),
             tokens.mask.reshape((cases, token_count)),
         )
         return encoded.reshape(case_shape + (self.width,))

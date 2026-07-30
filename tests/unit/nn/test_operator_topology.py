@@ -201,3 +201,43 @@ def test_topology_fingerprint_changes_with_connectivity_not_only_sample_shape():
 
     assert phx.nn.operator_graph_fingerprint(first.graph) != phx.nn.operator_graph_fingerprint(second.graph)
     assert phx.nn.operator_topology_fingerprint(first) != phx.nn.operator_topology_fingerprint(second)
+
+
+def test_stack_operator_batches_broadcasts_shared_inner_case_topology():
+    first = _batch()
+    second = _batch()
+    stacked = phx.nn.stack_operator_batches(
+        (first, second),
+        case_axis="outer",
+    )
+
+    assert stacked.case_axes == ("outer", "case")
+    assert stacked.case_shape == (2, 2)
+    for samples in (stacked.input("u"), stacked.query("query")):
+        assert samples.topology is not None
+        assert samples.topology.case_shape == stacked.case_shape
+        assert samples.topology.graph.num_graphs == 4
+        assert samples.topology.sample_entities.shape == (2, 2, 3)
+
+    outer = phx.nn.slice_operator_batch(stacked, 1, axis="outer")
+    inner = phx.nn.slice_operator_batch(outer, 0, axis="case")
+    assert outer.input("u").topology is not None
+    assert outer.input("u").topology.case_shape == (2,)
+    assert inner.input("u").topology is not None
+    assert inner.input("u").topology.case_shape == ()
+    assert jnp.array_equal(inner.input("u").values, second.input("u").values[0])
+
+    model = phx.nn.NativeGraphOperator(
+        phx.graph.GraphNeuralOperator(
+            input_key="features",
+            output_key="result",
+            edge_weight_key=None,
+            normalize=False,
+        ),
+        in_size="scalar",
+        out_size="scalar",
+        source_name="u",
+        output_key="result",
+    )
+    expected = jnp.stack((model(first), model(second)))
+    assert jnp.array_equal(model(stacked), expected)

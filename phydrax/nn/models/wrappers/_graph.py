@@ -51,14 +51,6 @@ def _num_nodes(graph: GraphIR, /) -> int:
     return int(graph.num_nodes)
 
 
-def _real_num_nodes(graph: GraphIR, /) -> int:
-    return int(jnp.asarray(graph.n_node).sum())
-
-
-def _real_num_graphs(graph: GraphIR, /) -> int:
-    if graph.graph_mask is not None:
-        return int(jnp.asarray(graph.graph_mask).astype(jnp.int32).sum())
-    return int(graph.num_graphs)
 
 
 def _num_entities(graph: GraphIR, kind: GraphComponentKind, /) -> int:
@@ -141,29 +133,23 @@ def _select_mapping_key(payload: Any, key: str | None, label: str, /) -> Any:
     return payload[key]
 
 
+def _graph_ids_from_counts(counts: Array, size: int, /) -> jnp.ndarray:
+    positions = jnp.arange(int(size), dtype=jnp.int32)
+    counts_array = jnp.asarray(counts, dtype=jnp.int32)
+    ends = jnp.cumsum(counts_array)
+    ids = jnp.searchsorted(ends, positions, side="right").astype(jnp.int32)
+    return jnp.where(positions < jnp.sum(counts_array), ids, -1)
+
+
 def _node_graph_ids(graph: GraphIR, /) -> jnp.ndarray:
-    graph_ids = jnp.arange(graph.n_node.shape[0], dtype=jnp.int32)
-    real = jnp.repeat(
-        graph_ids,
-        graph.n_node,
-        axis=0,
-        total_repeat_length=_real_num_nodes(graph),
-    )
-    del graph_ids
-    return _pad_ids_to_length(real, _num_nodes(graph))
+    return _graph_ids_from_counts(graph.n_node, _num_nodes(graph))
 
 
 def _edge_graph_ids(graph: GraphIR, /) -> jnp.ndarray:
-    graph_ids = jnp.arange(graph.n_edge.shape[0], dtype=jnp.int32)
-    real_num_edges = int(jnp.asarray(graph.n_edge).sum())
-    real = jnp.repeat(
-        graph_ids,
+    return _graph_ids_from_counts(
         graph.n_edge,
-        axis=0,
-        total_repeat_length=real_num_edges,
+        _num_entities(graph, "edges"),
     )
-    del graph_ids
-    return _pad_ids_to_length(real, _num_entities(graph, "edges"))
 
 
 def _global_graph_ids(graph: GraphIR, /) -> jnp.ndarray:

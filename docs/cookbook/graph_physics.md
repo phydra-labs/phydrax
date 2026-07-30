@@ -774,66 +774,181 @@ components, graph models, and constraints remain unchanged.
     assert jnp.allclose(jnp.ravel(model(batch).data), jnp.array([1.5, 2.0, 2.5]))
     ```
 
-## Simplicial complexes and Hodge operators
+## Metric cochains, DEC, and topological PINNs
 
-Triangular meshes can also be lifted into a signed simplicial complex. Vertices,
-edge cells, and face cells become typed graph nodes, and boundary/incidence
-maps become typed graph edges. This exposes discrete exterior-calculus style
-operators through the same graph-model and constraint path.
+Use the metric cochain path when the unknown is a discrete differential form,
+not merely a feature attached to an arbitrary graph node. A
+`CochainComplexIR` carries signed incidences, primal/dual measures, diagonal
+Hodge stars, geometric boundary masks, cell coordinates, and optional harmonic
+bases. These arrays are immutable domain state; only the field models are
+trainable.
+
+Four related terms are intentionally distinct:
+
+- a **graph PINN** uses graph gradient, divergence, or Laplacian operators on an
+  arbitrary `GraphIR`;
+- a **DEC topological PINN** solves for typed k-cochains on one supplied cell
+  complex and uses `d`, `δ`, and the Hodge Laplacian in its residual;
+- a **topological PINO** learns a map across cases or complexes with
+  `CochainNeuralOperator` and evaluates the same declared cochain residual in
+  operator training;
+- persistent-homology or persistence-diagram learning is a different problem.
+  Phydrax can use a precomputed harmonic subspace, but it does not infer
+  persistent homology from an ordinary coordinate PINN.
+
+### A mixed zero-/one-form residual
+
+The following assembly represents pressure as an invariant vertex 0-cochain
+and flux as an orientation-signed edge 1-cochain. `as_cochain_field` both
+records the semantic contract and makes the field identically zero on every
+other cell degree.
 
 !!! example
     ```python
     import jax.numpy as jnp
     import phydrax as phx
 
-    bundle = phx.graph.triangle_mesh_to_simplicial_graph(
-        jnp.array([[0, 1, 2]], dtype=jnp.int32)
+    vertices = jnp.asarray(
+        [
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [1.0, 1.0],
+            [0.0, 1.0],
+            [0.5, 0.5],
+        ]
     )
-    domain = phx.domain.GraphDomain(bundle.graph)
+    faces = jnp.asarray(
+        [[0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4]],
+        dtype=jnp.int32,
+    )
+    complex_ir = phx.graph.triangle_mesh_to_cochain_complex(vertices, faces)
+    domain = phx.domain.GraphDomain(complex_ir.graph)
     structure = phx.domain.ProductStructure((("graph",),))
-    vertex_cells = domain.component({"graph": bundle.vertex_cells_component()})
-    vertex_count = 3
-    vertex_batch = vertex_cells.sample(vertex_count, structure=structure)
-    vertex_values = jnp.array([0.0, 1.0, 0.0])
 
-    @domain.Function("graph")
-    def u(cell):
-        return jnp.where(
-            cell.get("cell_dim") == 0,
-            vertex_values[cell.get("local_index")],
-            0.0,
-        )
-
-    hodge_l0 = domain.GraphModel(
-        phx.graph.SimplicialHodgeLaplacian(0, input_key="u", output_key="lap_u"),
-        input_fn=u,
-        input_key="u",
-        output_key="lap_u",
+    zero_form = phx.graph.CochainFieldSpec(
+        0,
+        cell_orientation="invariant",
+        sampling="point_value",
     )
-    assert jnp.allclose(hodge_l0(vertex_batch).data, jnp.array([-1.0, 2.0, -1.0]))
+    one_form = phx.graph.CochainFieldSpec(
+        1,
+        cell_orientation="signed",
+        sampling="cell_integral",
+    )
 
     @domain.Function("graph")
-    def constant_u(cell):
-        del cell
-        return 1.0
+    def raw_pressure(cell):
+        return jnp.sum(cell["coordinates"])
 
-    def residual(f):
-        return domain.GraphModel(
-            phx.graph.SimplicialHodgeLaplacian(0, input_key="u", output_key="lap_u"),
-            input_fn=f,
-            input_key="u",
-            output_key="lap_u",
+    @domain.Function("graph")
+    def raw_flux(cell):
+        return jnp.zeros_like(cell["primal_measure"])
+
+    @domain.Function("graph")
+    def raw_source(cell):
+        return jnp.ones_like(cell["primal_measure"])
+
+    pressure = phx.domain.as_cochain_field(raw_pressure, zero_form)
+    flux = phx.domain.as_cochain_field(raw_flux, one_form)
+    source = phx.domain.as_cochain_field(raw_source, zero_form)
+
+    boundary_vertices = domain.component(
+        {"graph": phx.domain.CochainCells(0, region="boundary")}
+    )
+    pressure = phx.constraints.enforce_cochain_values(
+        pressure,
+        boundary_vertices,
+        target=0.0,
+    )
+
+    def darcy_residual(graph, fields, *, key):
+        del key
+        pressure_gradient = phx.graph.cochain_exterior_derivative(
+            graph,
+            fields["pressure"],
+            0,
+            boundary_policy="absolute",
         )
+        flux_divergence = phx.graph.cochain_codifferential(
+            graph,
+            fields["flux"],
+            1,
+            boundary_policy="absolute",
+        )
+        return {
+            "constitutive": fields["flux"] + pressure_gradient,
+            "mass": flux_divergence - fields["source"],
+        }
 
-    hodge_constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=vertex_cells,
-        operator=residual,
-        constraint_vars="u",
-        num_points=vertex_count,
+    program = phx.graph.CochainResidualProgram(
+        inputs={
+            "pressure": zero_form,
+            "flux": one_form,
+            "source": zero_form,
+        },
+        outputs={
+            "constitutive": one_form,
+            "mass": zero_form,
+        },
+        residual_fn=darcy_residual,
+        identity="cookbook.mixed_darcy.v1",
+    )
+
+    fields = {"p": pressure, "q": flux, "f": source}
+    field_map = {"pressure": "p", "flux": "q", "source": "f"}
+    edge_cells = domain.component({"graph": phx.domain.CochainCells(1)})
+    interior_vertices = domain.component(
+        {"graph": phx.domain.CochainCells(0, region="interior")}
+    )
+    constitutive = phx.constraints.CochainResidualConstraint.from_program(
+        component=edge_cells,
+        program=program,
+        field_map=field_map,
+        output="constitutive",
+        num_points=complex_ir.cell_entities(one_form.degree).size,
         structure=structure,
+        reduction="metric_mean",
+        sampling_mode="fixed",
     )
-    assert hodge_constraint.loss({"u": constant_u}) < 1e-12
+    mass = phx.constraints.CochainResidualConstraint.from_program(
+        component=interior_vertices,
+        program=program,
+        field_map=field_map,
+        output="mass",
+        num_points=1,
+        structure=structure,
+        reduction="metric_sum",
+        sampling_mode="fixed",
+    )
+    solver = phx.solver.FunctionalSolver(
+        functions=fields,
+        constraints=(constitutive, mass),
+    )
+    loss = solver.loss()
     ```
+
+`CochainResidualProgram` is the shared residual core: the fixed-complex
+constraint above and `CochainResidualLoss` in operator training execute the
+same callable and validate the same degree schema. Give the program an explicit
+stable `identity` when checkpoints must remain exactly resumable.
+
+`CochainResidualConstraint` reduces a squared residual per graph or graph-time
+segment. `graph_mean` is an arithmetic cell mean, `metric_mean` normalizes by
+the segment Hodge-star mass, and `metric_sum` retains physical mass. Padding is
+masked before reduction, differently sized meshes contribute one graph segment
+each, and graph-trajectory quadrature multiplies—not replaces—the cochain
+metric. Use `metric_sum` for an integral law and `metric_mean` when the objective
+should not scale with physical domain measure.
+
+The domain-level operators
+`phx.operators.cochain_exterior_derivative`,
+`phx.operators.cochain_codifferential`,
+`phx.operators.cochain_hodge_laplacian`, and
+`phx.operators.cochain_harmonic_projection` return ordinary
+`DomainFunction`s. Compatible cochain arithmetic preserves field semantics;
+combining different degrees drops that contract and is rejected by downstream
+cochain operators. Absolute and relative boundary policies are distinct closed
+subcomplexes and must be chosen deliberately.
 
 ## MeshGraphNet and multiscale blocks
 

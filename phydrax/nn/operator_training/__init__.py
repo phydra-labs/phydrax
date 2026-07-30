@@ -35,6 +35,8 @@ from ._linearization import linearize_operator, OperatorLinearization
 from ._loader import OperatorBatchLoader, OperatorTrainingBatch
 from ._losses import (
     AbstractOperatorLossTerm,
+    CochainResidualInput,
+    CochainResidualLoss,
     OperatorLossContext,
     OperatorLossTerm,
     SupervisedOperatorLoss,
@@ -111,6 +113,8 @@ __all__ = [
     "OperatorArtifactTrainingState",
     "AffineNormalizer",
     "AbstractOperatorLossTerm",
+    "CochainResidualInput",
+    "CochainResidualLoss",
     "AbstractOperatorOutputTransform",
     "ConservationProjection",
     "HardConstraintTransform",

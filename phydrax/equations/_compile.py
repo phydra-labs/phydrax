@@ -19,8 +19,20 @@ if TYPE_CHECKING:
 
 
 
-DifferentialBackend = Literal["ad", "fd", "basis"]
+DifferentialBackend = Literal["ad", "jet", "fd", "basis"]
 IntegralCompiler = Callable[[Any, str, PDEProblemIR], Any]
+
+
+_DIFFERENTIAL_BACKENDS = ("ad", "jet", "fd", "basis")
+
+
+def _validate_differential_backend(backend: str, /) -> DifferentialBackend:
+    if backend not in _DIFFERENTIAL_BACKENDS:
+        raise ValueError(
+            f"Unknown differential backend {backend!r}; expected one of "
+            f"{_DIFFERENTIAL_BACKENDS}."
+        )
+    return backend
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +104,7 @@ def compile_pde_expression(
     integral_compiler: IntegralCompiler | None = None,
 ) -> Any:
     """Compile a validated expression DAG to native PhydraX operations."""
+    differential_backend = _validate_differential_backend(differential_backend)
     infer_expression_type(expression, problem)
     parameter_values: dict[str, Any] = {
         item.name: item.value for item in problem.parameters if item.value is not None
@@ -162,15 +175,17 @@ def compile_pde_expression(
             "curl",
             "laplacian",
         ):
-            from ..operators.differential import curl, div, grad, laplacian
-            from ..operators.differential._domain_ops import partial
+            from ..operators.differential import curl, div, grad, laplacian, partial_n
 
         if node.op == "derivative":
             assert node.coordinate is not None
-            result = _require_domain_function(args[0], node.op)
-            for _ in range(node.order):
-                result = partial(result, var=node.coordinate, axis=node.axis)
-            return result
+            return partial_n(
+                _require_domain_function(args[0], node.op),
+                var=node.coordinate,
+                axis=node.axis,
+                order=node.order,
+                backend=differential_backend,
+            )
         if node.op == "gradient":
             assert node.coordinate is not None
             return grad(
@@ -224,6 +239,7 @@ def make_pde_operator(
     integral_compiler: IntegralCompiler | None = None,
 ) -> Callable[..., Any]:
     """Adapt an expression to the operator signature used by PhydraX constraints."""
+    differential_backend = _validate_differential_backend(differential_backend)
     names = (
         tuple(field.name for field in problem.fields)
         if field_names is None
@@ -319,6 +335,7 @@ def compile_pde_problem(
     integral_compiler: IntegralCompiler | None = None,
 ) -> CompiledPDEProblem:
     """Compile every equation and restriction to executable residuals."""
+    differential_backend = _validate_differential_backend(differential_backend)
     validate_pde_ir(problem)
 
     def compile_expression(expression: PDEExpression) -> Any:

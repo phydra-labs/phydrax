@@ -18,6 +18,7 @@ from ..domain._structure import (
     PointsBatch,
     ProductStructure,
 )
+from ..domain.graph._batch import GraphBatch
 
 
 class AbstractConstraint(AbstractObjectiveTerm):
@@ -69,5 +70,5 @@ class AbstractSamplingConstraint(AbstractConstraint):
         self,
         *,
         key: Key[Array, ""] = DOC_KEY0,
-    ) -> PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...]:
+    ) -> PointsBatch | CoordSeparableBatch | GraphBatch | tuple[PointsBatch, ...]:
         raise NotImplementedError

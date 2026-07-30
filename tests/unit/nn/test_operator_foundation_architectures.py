@@ -704,3 +704,369 @@ def test_pde_condition_encoder_respects_semantic_hash_and_attaches_case_conditio
     assert jnp.allclose(condition.values[:, 0], jnp.broadcast_to(encoded_a, (2, 4)))
     assert jnp.array_equal(condition.mask_array(case_shape=(2,)), jnp.ones((2, 1)))
     _assert_finite_model_gradient(encoder, lambda item: jnp.sum(item(tokens_a) ** 2))
+
+
+def _semantic_token_arrays(tokens):
+    return tuple(
+        getattr(tokens, name)
+        for name in (
+            "kind",
+            "operator",
+            "attribute",
+            "symbol",
+            "scalar",
+            "physical_dimension",
+            "slot",
+            "parent",
+            "depth",
+            "mask",
+        )
+    )
+
+
+def _semantic_problem(
+    *,
+    coordinates=None,
+    fields=None,
+    parameters=(),
+    expression=None,
+    regions=(),
+    conditions=(),
+    nondimensionalization=(),
+    metadata=(),
+):
+    coordinates = (
+        (phx.equations.PDECoordinate("x", "space"),)
+        if coordinates is None
+        else coordinates
+    )
+    fields = (
+        (phx.equations.PDEField("u", coordinates=("x",)),)
+        if fields is None
+        else fields
+    )
+    equations = (
+        ()
+        if expression is None
+        else (phx.equations.PDEEquation("governing", expression),)
+    )
+    return phx.equations.PDEProblemIR(
+        coordinates=coordinates,
+        fields=fields,
+        parameters=parameters,
+        equations=equations,
+        regions=regions,
+        conditions=conditions,
+        nondimensionalization=nondimensionalization,
+        metadata=metadata,
+    )
+
+
+def test_pde_condition_encoder_distinguishes_execution_semantics():
+    expression = phx.equations.PDEExpression
+    u = expression.field("u")
+    vector_fields = (
+        phx.equations.PDEField(
+            "u",
+            representation="vector",
+            components=2,
+            coordinates=("x",),
+        ),
+    )
+    two_fields = (
+        phx.equations.PDEField("u", coordinates=("x",)),
+        phx.equations.PDEField("v", coordinates=("x",)),
+    )
+    xy_coordinates = (
+        phx.equations.PDECoordinate("x", "space"),
+        phx.equations.PDECoordinate("y", "space"),
+    )
+    xy_fields = (
+        phx.equations.PDEField("u", coordinates=("x", "y")),
+    )
+    boundary_region = phx.equations.PDERegion(
+        "restricted",
+        "boundary",
+        ("x",),
+    )
+    initial_region = phx.equations.PDERegion(
+        "restricted",
+        "initial",
+        ("x",),
+    )
+    pairs = (
+        (
+            _semantic_problem(expression=u.derivative("x", order=1)),
+            _semantic_problem(expression=u.derivative("x", order=2)),
+        ),
+        (
+            _semantic_problem(
+                coordinates=xy_coordinates,
+                fields=xy_fields,
+                expression=u.derivative("x"),
+            ),
+            _semantic_problem(
+                coordinates=xy_coordinates,
+                fields=xy_fields,
+                expression=u.derivative("y"),
+            ),
+        ),
+        (
+            _semantic_problem(
+                fields=vector_fields,
+                expression=u.component(0),
+            ),
+            _semantic_problem(
+                fields=vector_fields,
+                expression=u.component(1),
+            ),
+        ),
+        (
+            _semantic_problem(fields=two_fields, expression=u + u),
+            _semantic_problem(
+                fields=two_fields,
+                expression=u + expression.field("v"),
+            ),
+        ),
+        (
+            _semantic_problem(
+                fields=(phx.equations.PDEField("u", representation="scalar"),),
+            ),
+            _semantic_problem(fields=vector_fields),
+        ),
+        (
+            _semantic_problem(
+                parameters=(
+                    phx.equations.PDEParameter(
+                        "a",
+                        value=(1.0, 2.0),
+                        components=2,
+                        scale=(1.0, 1.0),
+                    ),
+                ),
+            ),
+            _semantic_problem(
+                parameters=(
+                    phx.equations.PDEParameter(
+                        "a",
+                        value=(1.0, 3.0),
+                        components=2,
+                        scale=(1.0, 2.0),
+                    ),
+                ),
+            ),
+        ),
+        (
+            _semantic_problem(
+                coordinates=(
+                    phx.equations.PDECoordinate(
+                        "x",
+                        "space",
+                        bounds=(0.0, 1.0),
+                        periodic=False,
+                    ),
+                ),
+            ),
+            _semantic_problem(
+                coordinates=(
+                    phx.equations.PDECoordinate(
+                        "x",
+                        "space",
+                        bounds=(-1.0, 1.0),
+                        periodic=True,
+                    ),
+                ),
+            ),
+        ),
+        (
+            _semantic_problem(
+                regions=(boundary_region,),
+                conditions=(
+                    phx.equations.PDECondition(
+                        "restriction",
+                        "boundary",
+                        u,
+                        region="restricted",
+                    ),
+                ),
+            ),
+            _semantic_problem(
+                regions=(initial_region,),
+                conditions=(
+                    phx.equations.PDECondition(
+                        "restriction",
+                        "initial",
+                        u,
+                        region="restricted",
+                    ),
+                ),
+            ),
+        ),
+        (
+            _semantic_problem(
+                coordinates=xy_coordinates,
+                fields=xy_fields,
+                regions=(
+                    phx.equations.PDERegion(
+                        "x_boundary",
+                        "boundary",
+                        ("x",),
+                    ),
+                    phx.equations.PDERegion(
+                        "y_boundary",
+                        "boundary",
+                        ("y",),
+                    ),
+                ),
+                conditions=(
+                    phx.equations.PDECondition(
+                        "restriction",
+                        "boundary",
+                        u,
+                        region="x_boundary",
+                    ),
+                ),
+            ),
+            _semantic_problem(
+                coordinates=xy_coordinates,
+                fields=xy_fields,
+                regions=(
+                    phx.equations.PDERegion(
+                        "x_boundary",
+                        "boundary",
+                        ("x",),
+                    ),
+                    phx.equations.PDERegion(
+                        "y_boundary",
+                        "boundary",
+                        ("y",),
+                    ),
+                ),
+                conditions=(
+                    phx.equations.PDECondition(
+                        "restriction",
+                        "boundary",
+                        u,
+                        region="y_boundary",
+                    ),
+                ),
+            ),
+        ),
+        (
+            _semantic_problem(nondimensionalization=(("x", 1.0),)),
+            _semantic_problem(nondimensionalization=(("x", 2.0),)),
+        ),
+    )
+    encoder = phx.nn.PDEConditionEncoder(
+        width=16,
+        depth=2,
+        dimension_rank=0,
+        key=jr.key(120),
+    )
+
+    for left, right in pairs:
+        left_tokens = phx.equations.tokenize_pde_ir(left)
+        right_tokens = phx.equations.tokenize_pde_ir(right)
+        assert any(
+            left_array.shape != right_array.shape
+            or not jnp.array_equal(left_array, right_array)
+            for left_array, right_array in zip(
+                _semantic_token_arrays(left_tokens),
+                _semantic_token_arrays(right_tokens),
+                strict=True,
+            )
+        )
+        assert not jnp.allclose(
+            encoder(left_tokens),
+            encoder(right_tokens),
+            rtol=1e-8,
+            atol=1e-9,
+        )
+
+
+def test_pde_condition_encoder_is_alpha_renaming_invariant():
+    expression = phx.equations.PDEExpression
+    original = _semantic_problem(
+        coordinates=(phx.equations.PDECoordinate("x", "space"),),
+        fields=(
+            phx.equations.PDEField("u", coordinates=("x",)),
+            phx.equations.PDEField("v", coordinates=("x",)),
+        ),
+        expression=expression.field("u") + expression.field("v"),
+        nondimensionalization=(("x", 2.0),),
+    )
+    renamed = _semantic_problem(
+        coordinates=(phx.equations.PDECoordinate("position", "space"),),
+        fields=(
+            phx.equations.PDEField("temperature", coordinates=("position",)),
+            phx.equations.PDEField("pressure", coordinates=("position",)),
+        ),
+        expression=(
+            expression.field("temperature")
+            + expression.field("pressure")
+        ),
+        nondimensionalization=(("position", 2.0),),
+    )
+    original_tokens = phx.equations.tokenize_pde_ir(original)
+    renamed_tokens = phx.equations.tokenize_pde_ir(renamed)
+    encoder = phx.nn.PDEConditionEncoder(
+        width=16,
+        depth=2,
+        dimension_rank=0,
+        key=jr.key(121),
+    )
+
+    assert original.canonical_hash != renamed.canonical_hash
+    assert jnp.allclose(
+        encoder(original_tokens),
+        encoder(renamed_tokens),
+        rtol=1e-8,
+        atol=1e-8,
+    )
+
+
+def test_pde_token_padding_and_stacking_preserve_semantic_channels():
+    first = phx.equations.tokenize_pde_ir(
+        _semantic_problem(
+            expression=phx.equations.PDEExpression.field("u").derivative(
+                "x",
+                order=2,
+            ),
+        )
+    )
+    second = phx.equations.tokenize_pde_ir(
+        _semantic_problem(nondimensionalization=(("x", 3.0),))
+    )
+    padded = phx.equations.pad_pde_tokens(first, first.max_tokens + 3)
+    stacked = phx.equations.stack_pde_tokens((first, second))
+
+    assert jnp.array_equal(padded.attribute[: first.max_tokens], first.attribute)
+    assert jnp.array_equal(padded.slot[: first.max_tokens], first.slot)
+    assert jnp.array_equal(padded.slot[-3:], -jnp.ones((3,), dtype=jnp.int32))
+    assert stacked.batch_shape == (2,)
+    assert stacked.attribute.shape == stacked.mask.shape
+    assert stacked.slot.shape == stacked.mask.shape
+
+
+def test_arbitrary_pde_metadata_stays_outside_neural_semantics():
+    first = _semantic_problem(metadata=(("provenance", "experiment-a"),))
+    second = _semantic_problem(metadata=(("provenance", "experiment-b"),))
+    first_tokens = phx.equations.tokenize_pde_ir(first)
+    second_tokens = phx.equations.tokenize_pde_ir(second)
+    encoder = phx.nn.PDEConditionEncoder(
+        width=8,
+        depth=1,
+        dimension_rank=0,
+        key=jr.key(122),
+    )
+
+    assert first.canonical_hash != second.canonical_hash
+    assert all(
+        jnp.array_equal(left, right)
+        for left, right in zip(
+            _semantic_token_arrays(first_tokens),
+            _semantic_token_arrays(second_tokens),
+            strict=True,
+        )
+    )
+    assert jnp.allclose(encoder(first_tokens), encoder(second_tokens))
