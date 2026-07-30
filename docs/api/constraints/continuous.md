@@ -73,6 +73,16 @@ optimized jointly with the primary field:
 import jax.numpy as jnp
 import phydrax as phx
 
+state = phx.domain.Interval1d(-1.0, 1.0)
+time = phx.domain.TimeInterval(0.0, 1.0)
+domain = state @ time
+u = domain.Function("x", "t")(
+    lambda x, t: jnp.exp(-(x[0] ** 2) - t)
+)
+drift = domain.Function("x", "t")(
+    lambda x, t: jnp.asarray([-x[0]])
+)
+
 scale = domain.Parameter(0.2)
 sigma = scale * jnp.ones((1, 1))
 

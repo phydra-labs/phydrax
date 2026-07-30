@@ -20,6 +20,11 @@ are fixed-step Euler--Maruyama and Euler--Heun, so `dt0` is required; pass nativ
 Diffrax solver, controller, event, and adjoint objects when a different method is
 needed.
 
+Pass `dense=True` to either integration function when states must be evaluated between
+saved times. `DifferentialSolution.evaluate(query_times)` accepts arbitrarily shaped
+shared query arrays and returns `sample_shape + query_shape + state_shape`; dense data
+is not retained by default.
+
 `DifferentialSolution.to_predictive()` converts an ensemble to a
 `PredictiveField` whose leading sample axis is labeled `process`. This label means
 intrinsic stochastic forcing. Time-step or spatial-discretization error is

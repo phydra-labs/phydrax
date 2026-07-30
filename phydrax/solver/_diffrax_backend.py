@@ -16,6 +16,74 @@ from jaxtyping import Array, ArrayLike
 from ._differential import DifferentialProblem, DifferentialSolution, WienerDriver
 
 
+class _VectorizedDenseInterpolation(eqx.Module):
+    """Dense Diffrax interpolation over shared arbitrarily shaped query times."""
+
+    interpolation: dfx.DenseInterpolation
+    sample_shape: tuple[int, ...] = eqx.field(static=True)
+
+    def __init__(
+        self,
+        interpolation: dfx.DenseInterpolation,
+        sample_shape: tuple[int, ...],
+        /,
+    ):
+        samples = tuple(int(size) for size in sample_shape)
+        batch_shape = tuple(jnp.shape(interpolation.t0_if_trivial))
+        if batch_shape != samples:
+            raise ValueError(
+                "Dense interpolation batch shape must match the solution sample shape; "
+                f"got {batch_shape} and {samples}."
+            )
+        batch_ndim = len(samples)
+        self.interpolation = jax.tree.map(
+            lambda value: value.reshape((-1,) + value.shape[batch_ndim:]),
+            interpolation,
+            is_leaf=eqx.is_array,
+        )
+        self.sample_shape = samples
+
+    @eqx.filter_jit
+    def evaluate(
+        self,
+        query_times: ArrayLike,
+        /,
+        *,
+        left: bool = True,
+    ) -> Array:
+        """Evaluate every realization on one shared scalar or array of times."""
+        if not isinstance(left, bool):
+            raise TypeError("left must be a bool.")
+        query = jnp.asarray(query_times)
+        if jnp.iscomplexobj(query):
+            raise TypeError("Dense interpolation query times must be real-valued.")
+        if query.size == 0:
+            raise ValueError("Dense interpolation query times must be non-empty.")
+        query = query.astype(float)
+        query = eqx.error_if(
+            query,
+            ~jnp.all(jnp.isfinite(query)),
+            "Dense interpolation query times must be finite.",
+        )
+        bounds = jax.vmap(
+            lambda interpolation: jnp.stack((interpolation.t0, interpolation.t1))
+        )(self.interpolation)
+        lower = jnp.max(jnp.minimum(bounds[:, 0], bounds[:, 1]))
+        upper = jnp.min(jnp.maximum(bounds[:, 0], bounds[:, 1]))
+        query = eqx.error_if(
+            query,
+            jnp.any((query < lower) | (query > upper)),
+            "Dense interpolation query times must lie within every solution interval.",
+        )
+        flat_times = query.reshape(-1)
+        values = jax.vmap(
+            lambda interpolation: jax.vmap(
+                lambda time: interpolation.evaluate(time, left=left)
+            )(flat_times)
+        )(self.interpolation)
+        return values.reshape(self.sample_shape + query.shape + values.shape[2:])
+
+
 def _save_times(problem: DifferentialProblem, values: ArrayLike, /) -> Array:
     times = jnp.asarray(values, dtype=float)
     if times.ndim != 1 or int(times.shape[0]) <= 0:
@@ -91,6 +159,7 @@ def _native_solution(
     adjoint: Any,
     dt0: ArrayLike | None,
     event: Any | None,
+    dense: bool,
     max_steps: int | None,
     throw: bool,
 ):
@@ -126,7 +195,7 @@ def _native_solution(
         dt0=dt0,
         y0=problem.initial_state,
         args=problem.args,
-        saveat=dfx.SaveAt(ts=save_times),
+        saveat=dfx.SaveAt(ts=save_times, dense=dense),
         stepsize_controller=stepsize_controller,
         adjoint=adjoint,
         event=event,
@@ -143,6 +212,13 @@ def _valid_values(times: Array, states: Array, /, *, sample_ndim: int) -> Array:
     return jnp.isfinite(times) & finite_states
 
 
+def _dense_interpolation(native: Any, sample_shape: tuple[int, ...], /) -> Any:
+    interpolation = native.interpolation
+    if interpolation is None:
+        raise RuntimeError("Diffrax did not return the requested dense interpolation.")
+    return _VectorizedDenseInterpolation(interpolation, sample_shape)
+
+
 def solve_diffrax(
     problem: DifferentialProblem,
     /,
@@ -156,6 +232,7 @@ def solve_diffrax(
     event: Any | None = None,
     rtol: float = 1e-6,
     atol: float = 1e-8,
+    dense: bool = False,
     max_steps: int | None = 4096,
     throw: bool = False,
 ) -> DifferentialSolution:
@@ -164,6 +241,8 @@ def solve_diffrax(
         raise TypeError("solve_diffrax requires a DifferentialProblem.")
     if driver is not None and not isinstance(driver, WienerDriver):
         raise TypeError("driver must be a WienerDriver or None.")
+    if not isinstance(dense, bool):
+        raise TypeError("dense must be a bool.")
     times = _save_times(problem, save_times)
     selected_solver = _resolved_solver(problem, solver)
     controller = _resolved_controller(
@@ -183,6 +262,7 @@ def solve_diffrax(
         adjoint=selected_adjoint,
         dt0=dt0,
         event=event,
+        dense=dense,
         max_steps=max_steps,
         throw=throw,
     )
@@ -192,6 +272,7 @@ def solve_diffrax(
         times=native_times,
         states=native_states,
         valid=_valid_values(native_times, native_states, sample_ndim=0),
+        interpolation=_dense_interpolation(native, ()) if dense else None,
         backend_result=native.result,
         stats=native.stats,
         event_mask=native.event_mask,
@@ -217,6 +298,7 @@ def solve_diffrax_ensemble(
     rtol: float = 1e-6,
     atol: float = 1e-8,
     max_steps: int | None = 4096,
+    dense: bool = False,
     throw: bool = False,
 ) -> DifferentialSolution:
     """Solve independent SDE realizations with one leading process-sample axis."""
@@ -226,6 +308,8 @@ def solve_diffrax_ensemble(
         raise ValueError("solve_diffrax_ensemble requires a stochastic problem.")
     if not isinstance(driver, WienerDriver):
         raise TypeError("driver must be a WienerDriver.")
+    if not isinstance(dense, bool):
+        raise TypeError("dense must be a bool.")
     count = int(num_paths)
     if count <= 0:
         raise ValueError("num_paths must be positive.")
@@ -251,6 +335,7 @@ def solve_diffrax_ensemble(
             adjoint=selected_adjoint,
             dt0=dt0,
             event=event,
+            dense=dense,
             max_steps=max_steps,
             throw=throw,
         )
@@ -263,6 +348,7 @@ def solve_diffrax_ensemble(
         states=native_states,
         valid=_valid_values(native_times, native_states, sample_ndim=1),
         sample_shape=(count,),
+        interpolation=_dense_interpolation(native, (count,)) if dense else None,
         backend_result=native.result,
         stats=native.stats,
         event_mask=native.event_mask,

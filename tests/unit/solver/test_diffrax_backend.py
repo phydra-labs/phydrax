@@ -54,6 +54,57 @@ def test_solve_diffrax_ode_is_accurate_differentiable_and_jittable():
     assert jnp.allclose(derivative, 2.0 * jnp.exp(0.7), rtol=3e-5)
 
 
+def test_dense_ode_evaluates_vector_times_and_remains_differentiable():
+    query_times = jnp.asarray([[0.0, 0.25], [0.5, 1.0]])
+    solution = phx.solver.solve_diffrax(
+        _geometric_problem(),
+        save_times=jnp.asarray([0.0, 1.0]),
+        dense=True,
+    )
+    values = solution.evaluate(query_times)
+    compiled = eqx.filter_jit(lambda solved, query: solved.evaluate(query))(
+        solution, query_times
+    )
+
+    def interpolated_terminal(rate):
+        solved = phx.solver.solve_diffrax(
+            _geometric_problem(rate),
+            save_times=jnp.asarray([0.0]),
+            dense=True,
+        )
+        return solved.evaluate(jnp.asarray(1.0))[0]
+
+    derivative = jax.grad(interpolated_terminal)(jnp.asarray(0.7))
+    expected = 2.0 * jnp.exp(0.7 * query_times)
+
+    assert solution.has_dense_interpolation
+    assert values.shape == (2, 2, 1)
+    assert jnp.allclose(values[..., 0], expected, rtol=2e-5, atol=2e-6)
+    assert jnp.array_equal(compiled, values)
+    assert jnp.allclose(derivative, 2.0 * jnp.exp(0.7), rtol=3e-5)
+
+
+def test_dense_interpolation_is_opt_in_and_rejects_out_of_range_times():
+    plain = phx.solver.solve_diffrax(
+        _geometric_problem(),
+        save_times=jnp.asarray([0.0, 1.0]),
+    )
+    dense = phx.solver.solve_diffrax(
+        _geometric_problem(),
+        save_times=jnp.asarray([0.0, 1.0]),
+        dense=True,
+    )
+
+    assert not plain.has_dense_interpolation
+    with pytest.raises(ValueError, match="no dense interpolation"):
+        plain.evaluate(jnp.asarray(0.5))
+    with pytest.raises(
+        (ValueError, eqx.EquinoxRuntimeError),
+        match="within every solution interval",
+    ):
+        dense.evaluate(jnp.asarray(1.1))
+
+
 def test_solve_diffrax_sde_replays_driver_and_changes_with_key():
     problem = _brownian_problem()
     times = jnp.asarray([0.25, 0.5, 1.0])
@@ -114,6 +165,26 @@ def test_solve_diffrax_ensemble_has_process_axis_and_brownian_moments():
     assert jnp.allclose(jnp.var(terminal), 1.0, rtol=0.2, atol=0.1)
 
 
+def test_dense_sde_ensemble_preserves_sample_query_and_state_axes():
+    saved_times = jnp.asarray([0.0, 0.5, 1.0])
+    solution = phx.solver.solve_diffrax_ensemble(
+        _brownian_problem(),
+        save_times=saved_times,
+        driver=phx.solver.WienerDriver(jr.key(9), (1,), tolerance=1e-3),
+        num_paths=4,
+        dt0=0.01,
+        dense=True,
+    )
+    query_times = jnp.asarray([[0.0, 0.5], [0.75, 1.0]])
+
+    values = solution.evaluate(query_times)
+
+    assert solution.has_dense_interpolation
+    assert values.shape == (4, 2, 2, 1)
+    assert jnp.all(jnp.isfinite(values))
+    assert jnp.array_equal(solution.evaluate(saved_times), solution.states)
+
+
 def test_stratonovich_defaults_to_euler_heun_and_accepts_explicit_solver():
     problem = _brownian_problem(interpretation="stratonovich")
     driver = phx.solver.WienerDriver(jr.key(5), (1,), tolerance=1e-3)
@@ -156,6 +227,12 @@ def test_diffrax_contract_rejects_invalid_problem_driver_and_save_configuration(
         )
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="time interval"):
         phx.solver.solve_diffrax(deterministic, save_times=jnp.asarray([1.1]))
+    with pytest.raises(TypeError, match="dense must be a bool"):
+        phx.solver.solve_diffrax(
+            deterministic,
+            save_times=jnp.asarray([1.0]),
+            dense=1,
+        )
     with pytest.raises(ValueError, match="require a WienerDriver"):
         phx.solver.solve_diffrax(
             stochastic,

@@ -62,6 +62,36 @@ solution = phx.solver.solve_diffrax(
 
 ::: phydrax.solver.solve_diffrax
 
+## Dense vector interpolation
+
+Pass `dense=True` to retain Diffrax's local interpolants and enable
+`DifferentialSolution.evaluate`. Query times may be a scalar or an arbitrarily shaped
+array:
+
+```python
+solution = phx.solver.solve_diffrax(
+    problem,
+    save_times=jnp.asarray([0.0, 2.0]),
+    dense=True,
+)
+query_times = jnp.asarray([[0.1, 0.4], [1.2, 1.8]])
+interpolated = solution.evaluate(query_times)
+assert interpolated.shape == (2, 2, 1)
+```
+
+For one trajectory, the output shape is `query_times.shape + state_shape`. For an
+ensemble it is `sample_shape + query_times.shape + state_shape`: every realization is
+evaluated on the same query array without flattening either the process or query axes.
+Scalar query times omit the query axis. Dense evaluation remains JAX-transformable and
+differentiable through the solve.
+
+Dense output is opt-in because it retains per-step interpolation data. Query times must
+be non-empty, finite, and inside the interval available to every realization; this is
+the common interval when event termination differs across an ensemble. The `left`
+argument selects the left or right limit at a jump. `has_dense_interpolation` reports
+whether evaluation is available. The vectorization is implemented internally by
+Phydrax and requires no interpolation package beyond Diffrax.
+
 ## SDE solve and process ensemble
 
 The default Itô solver is fixed-step Euler--Maruyama (`diffrax.Euler`); the default
@@ -257,4 +287,6 @@ integration and stochastic provenance needed to reproduce a path ensemble.
             - __init__
             - num_times
             - successful
+            - has_dense_interpolation
+            - evaluate
             - to_predictive

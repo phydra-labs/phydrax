@@ -140,6 +140,7 @@ class DifferentialSolution(StrictModule):
     states: Array
     valid: Array
     sample_shape: tuple[int, ...]
+    interpolation: Any | None
     backend_result: Any
     stats: frozendict[str, Any]
     event_mask: Any
@@ -155,6 +156,7 @@ class DifferentialSolution(StrictModule):
         states: ArrayLike,
         valid: ArrayLike,
         sample_shape: Sequence[int] = (),
+        interpolation: Any | None = None,
         backend_result: Any,
         stats: dict[str, Any] | frozendict[str, Any],
         event_mask: Any = None,
@@ -195,10 +197,15 @@ class DifferentialSolution(StrictModule):
                 raise ValueError(
                     "DifferentialSolution realization keys must align with sample_shape."
                 )
+        if interpolation is not None and not callable(
+            getattr(interpolation, "evaluate", None)
+        ):
+            raise TypeError("DifferentialSolution interpolation must define evaluate().")
         self.times = times_array
         self.states = states_array
         self.valid = valid_array
         self.sample_shape = samples
+        self.interpolation = interpolation
         self.backend_result = backend_result
         self.stats = frozendict(dict(stats))
         self.event_mask = event_mask
@@ -215,6 +222,26 @@ class DifferentialSolution(StrictModule):
     def successful(self) -> Array:
         """Whether every requested saved value is finite for each realization."""
         return jnp.all(self.valid, axis=-1)
+
+    @property
+    def has_dense_interpolation(self) -> bool:
+        """Whether dense evaluation is available between saved times."""
+        return self.interpolation is not None
+
+    def evaluate(
+        self,
+        query_times: ArrayLike,
+        /,
+        *,
+        left: bool = True,
+    ) -> Array:
+        """Evaluate dense output with shape sample_shape + query_shape + state_shape."""
+        if self.interpolation is None:
+            raise ValueError(
+                "DifferentialSolution has no dense interpolation; "
+                "call solve_diffrax or solve_diffrax_ensemble with dense=True."
+            )
+        return self.interpolation.evaluate(query_times, left=left)
 
     def to_predictive(
         self,
