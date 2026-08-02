@@ -13,6 +13,7 @@ from .._doc import DOC_KEY0
 from ..domain._components import DomainComponent, DomainComponentUnion
 from ..domain._function import DomainFunction
 from ..domain._structure import CoordSeparableBatch, PointsBatch, ProductStructure
+from ..metrix import RiemannianMetric
 from ..operators.differential import (
     dt,
     fokker_planck_operator,
@@ -84,6 +85,7 @@ def ContinuousKolmogorovConstraint(
     evolution_var: str | None,
     diffusion: CoefficientField | None = None,
     covariance: CoefficientField | None = None,
+    metric: RiemannianMetric | None = None,
     interpretation: StochasticInterpretation = "ito",
     state_var: str = "x",
     num_points: SamplingNumPoints,
@@ -107,7 +109,8 @@ def ContinuousKolmogorovConstraint(
     :math:`\partial_t u+\mathcal{L}u`. With ``evolution_var=None``, it is the
     stationary residual :math:`\mathcal{L}u`. Coefficients may be fixed
     ``DomainFunction`` objects or names in the solver's function mapping; named
-    coefficients remain jointly trainable.
+    coefficients remain jointly trainable. ``metric`` selects the covariant
+    generator while preserving coordinate Itô drift inputs.
     """
     if not isinstance(constraint_var, str) or not constraint_var:
         raise ValueError("constraint_var must be a non-empty field name.")
@@ -131,6 +134,7 @@ def ContinuousKolmogorovConstraint(
             diffusion=diffusion_field,
             covariance=covariance_field,
             interpretation=interpretation,
+            metric=metric,
             var=state_var,
         )
         if evolution_var is None:
@@ -165,6 +169,7 @@ def ContinuousFokkerPlanckConstraint(
     evolution_var: str | None,
     diffusion: CoefficientField | None = None,
     covariance: CoefficientField | None = None,
+    metric: RiemannianMetric | None = None,
     interpretation: StochasticInterpretation = "ito",
     state_var: str = "x",
     num_points: SamplingNumPoints,
@@ -186,7 +191,8 @@ def ContinuousFokkerPlanckConstraint(
 
     With ``evolution_var`` set, the residual is
     :math:`\partial_t p-\mathcal{L}^*p`. With ``evolution_var=None``, it is the
-    stationary residual :math:`\mathcal{L}^*p`. Positivity, normalization, initial
+    stationary residual :math:`\mathcal{L}^*p`. When ``metric`` is supplied,
+    density is relative to Riemannian volume. Positivity, normalization, initial
     data, and boundary conditions are deliberately separate constraints or ansatzes.
     """
     if not isinstance(constraint_var, str) or not constraint_var:
@@ -211,6 +217,7 @@ def ContinuousFokkerPlanckConstraint(
             diffusion=diffusion_field,
             covariance=covariance_field,
             interpretation=interpretation,
+            metric=metric,
             var=state_var,
         )
         if evolution_var is None:

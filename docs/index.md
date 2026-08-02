@@ -29,6 +29,9 @@ Most workflows are composing a few primitives:
 
 - **Domain**: a labeled product space \(\Omega=\Omega_x\times\Omega_t\times\cdots\).
 - **Component**: a subset like interior/boundary/initial slice where a term lives.
+- **Metrix**: explicit coordinate charts, tensor laws, Riemannian metrics,
+  connections, curvature, embedded geometry, and metric-aware stochastic
+  operators.
 - **DomainFunction**: a real- or complex-valued field
   \(u:\Omega\to\mathbb{R}^m\) or \(\mathbb{C}^m\) with explicit label dependencies.
 - **Operators**: maps \(u\mapsto r\) such as differential, integral, mechanics,

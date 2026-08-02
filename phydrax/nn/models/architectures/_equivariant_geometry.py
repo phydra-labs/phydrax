@@ -11,6 +11,7 @@ import equinox as eqx
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jax import core as jax_core
 from jaxtyping import Array, Key
 
@@ -30,8 +31,16 @@ def _tensor_basis(dtype: jnp.dtype, /) -> Array:
     inverse_root_six = 1.0 / sqrt(6.0)
     return jnp.asarray(
         (
-            ((inverse_root_two, 0.0, 0.0), (0.0, -inverse_root_two, 0.0), (0.0, 0.0, 0.0)),
-            ((inverse_root_six, 0.0, 0.0), (0.0, inverse_root_six, 0.0), (0.0, 0.0, -2.0 * inverse_root_six)),
+            (
+                (inverse_root_two, 0.0, 0.0),
+                (0.0, -inverse_root_two, 0.0),
+                (0.0, 0.0, 0.0),
+            ),
+            (
+                (inverse_root_six, 0.0, 0.0),
+                (0.0, inverse_root_six, 0.0),
+                (0.0, 0.0, -2.0 * inverse_root_six),
+            ),
             ((0.0, inverse_root_two, 0.0), (inverse_root_two, 0.0, 0.0), (0.0, 0.0, 0.0)),
             ((0.0, 0.0, inverse_root_two), (0.0, 0.0, 0.0), (inverse_root_two, 0.0, 0.0)),
             ((0.0, 0.0, 0.0), (0.0, 0.0, inverse_root_two), (0.0, inverse_root_two, 0.0)),
@@ -83,7 +92,9 @@ class O3Representation(StrictModule, NonTrainableState):
             )
         )
         if any(value < 0 for value in counts) or not any(counts):
-            raise ValueError("O3Representation needs non-negative, non-empty multiplicities.")
+            raise ValueError(
+                "O3Representation needs non-negative, non-empty multiplicities."
+            )
         (
             self.scalars,
             self.pseudoscalars,
@@ -127,10 +138,8 @@ class O3Representation(StrictModule, NonTrainableState):
         tensor_coefficients = take(self.tensors, 5)
         pseudotensor_coefficients = take(self.pseudotensors, 5)
         basis = _tensor_basis(array.dtype)
-        tensors = jnp.einsum("...mk,kij->...mij", tensor_coefficients, basis)
-        pseudotensors = jnp.einsum(
-            "...mk,kij->...mij", pseudotensor_coefficients, basis
-        )
+        tensors = oe.contract("...mk,kij->...mij", tensor_coefficients, basis)
+        pseudotensors = oe.contract("...mk,kij->...mij", pseudotensor_coefficients, basis)
         return O3Features(
             scalars=scalars,
             pseudoscalars=pseudoscalars,
@@ -142,17 +151,15 @@ class O3Representation(StrictModule, NonTrainableState):
 
     def join(self, features: O3Features, /) -> Array:
         basis = _tensor_basis(features.scalars.dtype)
-        tensor_coefficients = jnp.einsum("...mij,kij->...mk", features.tensors, basis)
-        pseudotensor_coefficients = jnp.einsum(
+        tensor_coefficients = oe.contract("...mij,kij->...mk", features.tensors, basis)
+        pseudotensor_coefficients = oe.contract(
             "...mij,kij->...mk", features.pseudotensors, basis
         )
         parts = (
             features.scalars,
             features.pseudoscalars,
             features.vectors.reshape(features.vectors.shape[:-2] + (-1,)),
-            features.pseudovectors.reshape(
-                features.pseudovectors.shape[:-2] + (-1,)
-            ),
+            features.pseudovectors.reshape(features.pseudovectors.shape[:-2] + (-1,)),
             tensor_coefficients.reshape(tensor_coefficients.shape[:-2] + (-1,)),
             pseudotensor_coefficients.reshape(
                 pseudotensor_coefficients.shape[:-2] + (-1,)
@@ -171,14 +178,12 @@ class O3Representation(StrictModule, NonTrainableState):
                 raise ValueError("O(3) transform matrix must be orthogonal.")
         determinant = jnp.linalg.det(matrix)
         features = self.split(values)
-        vectors = jnp.einsum("ij,...mj->...mi", matrix, features.vectors)
-        pseudovectors = determinant * jnp.einsum(
+        vectors = oe.contract("ij,...mj->...mi", matrix, features.vectors)
+        pseudovectors = determinant * oe.contract(
             "ij,...mj->...mi", matrix, features.pseudovectors
         )
-        tensors = jnp.einsum(
-            "ia,...mab,jb->...mij", matrix, features.tensors, matrix
-        )
-        pseudotensors = determinant * jnp.einsum(
+        tensors = oe.contract("ia,...mab,jb->...mij", matrix, features.tensors, matrix)
+        pseudotensors = determinant * oe.contract(
             "ia,...mab,jb->...mij", matrix, features.pseudotensors, matrix
         )
         return self.join(
@@ -246,7 +251,7 @@ class RadialMap(eqx.Module):
         )
 
     def __call__(self, radial: Array, /) -> Array:
-        return jnp.einsum("...k,koi->...oi", radial, self.weight)
+        return oe.contract("...k,koi->...oi", radial, self.weight)
 
 
 def _radial_map(
@@ -278,15 +283,11 @@ def _zero_features(
         pseudoscalars=jnp.zeros(
             (batch, queries, representation.pseudoscalars), dtype=dtype
         ),
-        vectors=jnp.zeros(
-            (batch, queries, representation.vectors, 3), dtype=dtype
-        ),
+        vectors=jnp.zeros((batch, queries, representation.vectors, 3), dtype=dtype),
         pseudovectors=jnp.zeros(
             (batch, queries, representation.pseudovectors, 3), dtype=dtype
         ),
-        tensors=jnp.zeros(
-            (batch, queries, representation.tensors, 3, 3), dtype=dtype
-        ),
+        tensors=jnp.zeros((batch, queries, representation.tensors, 3, 3), dtype=dtype),
         pseudotensors=jnp.zeros(
             (batch, queries, representation.pseudotensors, 3, 3), dtype=dtype
         ),
@@ -295,8 +296,8 @@ def _zero_features(
 
 def _symmetric_traceless(left: Array, right: Array, /) -> Array:
     outer = 0.5 * (
-        jnp.einsum("...i,...j->...ij", left, right)
-        + jnp.einsum("...i,...j->...ij", right, left)
+        oe.contract("...i,...j->...ij", left, right)
+        + oe.contract("...i,...j->...ij", right, left)
     )
     trace = jnp.sum(left * right, axis=-1)
     identity = jnp.eye(3, dtype=outer.dtype)
@@ -408,7 +409,7 @@ class EquivariantIntegralLayer(eqx.Module):
 
     @staticmethod
     def _reduce(message: Array, weights: Array, /) -> Array:
-        return jnp.einsum("bqs...,bs->bq...", message, weights)
+        return oe.contract("bqs...,bs->bq...", message, weights)
 
     def __call__(
         self,
@@ -452,53 +453,43 @@ class EquivariantIntegralLayer(eqx.Module):
 
         if self.ss is not None:
             scalars = scalars + self._reduce(
-                jnp.einsum("bqsoi,bsi->bqso", self.ss(radial), features.scalars),
+                oe.contract("bqsoi,bsi->bqso", self.ss(radial), features.scalars),
                 weights,
             )
-        vector_projection = jnp.einsum(
-            "bsic,bqsc->bqsi", features.vectors, unit
-        )
+        vector_projection = oe.contract("bsic,bqsc->bqsi", features.vectors, unit)
         if self.sv is not None:
             scalars = scalars + self._reduce(
-                jnp.einsum("bqsoi,bqsi->bqso", self.sv(radial), vector_projection),
+                oe.contract("bqsoi,bqsi->bqso", self.sv(radial), vector_projection),
                 weights,
             )
-        tensor_projection = jnp.einsum(
-            "bsicd,bqscd->bqsi", features.tensors, dyad
-        )
+        tensor_projection = oe.contract("bsicd,bqscd->bqsi", features.tensors, dyad)
         if self.st is not None:
             scalars = scalars + self._reduce(
-                jnp.einsum("bqsoi,bqsi->bqso", self.st(radial), tensor_projection),
+                oe.contract("bqsoi,bqsi->bqso", self.st(radial), tensor_projection),
                 weights,
             )
         if self.pp is not None:
             pseudoscalars = pseudoscalars + self._reduce(
-                jnp.einsum(
-                    "bqsoi,bsi->bqso", self.pp(radial), features.pseudoscalars
-                ),
+                oe.contract("bqsoi,bsi->bqso", self.pp(radial), features.pseudoscalars),
                 weights,
             )
-        axial_projection = jnp.einsum(
-            "bsic,bqsc->bqsi", features.pseudovectors, unit
-        )
+        axial_projection = oe.contract("bsic,bqsc->bqsi", features.pseudovectors, unit)
         if self.pa is not None:
             pseudoscalars = pseudoscalars + self._reduce(
-                jnp.einsum("bqsoi,bqsi->bqso", self.pa(radial), axial_projection),
+                oe.contract("bqsoi,bqsi->bqso", self.pa(radial), axial_projection),
                 weights,
             )
-        pseudotensor_projection = jnp.einsum(
+        pseudotensor_projection = oe.contract(
             "bsicd,bqscd->bqsi", features.pseudotensors, dyad
         )
         if self.pt is not None:
             pseudoscalars = pseudoscalars + self._reduce(
-                jnp.einsum(
-                    "bqsoi,bqsi->bqso", self.pt(radial), pseudotensor_projection
-                ),
+                oe.contract("bqsoi,bqsi->bqso", self.pt(radial), pseudotensor_projection),
                 weights,
             )
 
         if self.vs is not None:
-            coefficient = jnp.einsum(
+            coefficient = oe.contract(
                 "bqsoi,bsi->bqso", self.vs(radial), features.scalars
             )
             vectors = vectors + self._reduce(
@@ -506,13 +497,11 @@ class EquivariantIntegralLayer(eqx.Module):
             )
         if self.vv is not None:
             vectors = vectors + self._reduce(
-                jnp.einsum(
-                    "bqsoi,bsic->bqsoc", self.vv(radial), features.vectors
-                ),
+                oe.contract("bqsoi,bsic->bqsoc", self.vv(radial), features.vectors),
                 weights,
             )
         if self.vv_longitudinal is not None:
-            coefficient = jnp.einsum(
+            coefficient = oe.contract(
                 "bqsoi,bqsi->bqso",
                 self.vv_longitudinal(radial),
                 vector_projection,
@@ -525,20 +514,18 @@ class EquivariantIntegralLayer(eqx.Module):
                 unit[..., None, :], features.pseudovectors[:, None, ...], axis=-1
             )
             vectors = vectors + self._reduce(
-                jnp.einsum("bqsoi,bqsic->bqsoc", self.va_cross(radial), crossed),
+                oe.contract("bqsoi,bqsic->bqsoc", self.va_cross(radial), crossed),
                 weights,
             )
         if self.vt is not None:
-            applied = jnp.einsum(
-                "bsicd,bqsd->bqsic", features.tensors, unit
-            )
+            applied = oe.contract("bsicd,bqsd->bqsic", features.tensors, unit)
             vectors = vectors + self._reduce(
-                jnp.einsum("bqsoi,bqsic->bqsoc", self.vt(radial), applied),
+                oe.contract("bqsoi,bqsic->bqsoc", self.vt(radial), applied),
                 weights,
             )
 
         if self.ap is not None:
-            coefficient = jnp.einsum(
+            coefficient = oe.contract(
                 "bqsoi,bsi->bqso", self.ap(radial), features.pseudoscalars
             )
             pseudovectors = pseudovectors + self._reduce(
@@ -546,13 +533,11 @@ class EquivariantIntegralLayer(eqx.Module):
             )
         if self.aa is not None:
             pseudovectors = pseudovectors + self._reduce(
-                jnp.einsum(
-                    "bqsoi,bsic->bqsoc", self.aa(radial), features.pseudovectors
-                ),
+                oe.contract("bqsoi,bsic->bqsoc", self.aa(radial), features.pseudovectors),
                 weights,
             )
         if self.aa_longitudinal is not None:
-            coefficient = jnp.einsum(
+            coefficient = oe.contract(
                 "bqsoi,bqsi->bqso",
                 self.aa_longitudinal(radial),
                 axial_projection,
@@ -565,20 +550,18 @@ class EquivariantIntegralLayer(eqx.Module):
                 unit[..., None, :], features.vectors[:, None, ...], axis=-1
             )
             pseudovectors = pseudovectors + self._reduce(
-                jnp.einsum("bqsoi,bqsic->bqsoc", self.av_cross(radial), crossed),
+                oe.contract("bqsoi,bqsic->bqsoc", self.av_cross(radial), crossed),
                 weights,
             )
         if self.apt is not None:
-            applied = jnp.einsum(
-                "bsicd,bqsd->bqsic", features.pseudotensors, unit
-            )
+            applied = oe.contract("bsicd,bqsd->bqsic", features.pseudotensors, unit)
             pseudovectors = pseudovectors + self._reduce(
-                jnp.einsum("bqsoi,bqsic->bqsoc", self.apt(radial), applied),
+                oe.contract("bqsoi,bqsic->bqsoc", self.apt(radial), applied),
                 weights,
             )
 
         if self.ts is not None:
-            coefficient = jnp.einsum(
+            coefficient = oe.contract(
                 "bqsoi,bsi->bqso", self.ts(radial), features.scalars
             )
             tensors = tensors + self._reduce(
@@ -589,20 +572,16 @@ class EquivariantIntegralLayer(eqx.Module):
         )
         if self.tv is not None:
             tensors = tensors + self._reduce(
-                jnp.einsum(
-                    "bqsoi,bqsicd->bqsocd", self.tv(radial), vector_tensor
-                ),
+                oe.contract("bqsoi,bqsicd->bqsocd", self.tv(radial), vector_tensor),
                 weights,
             )
         if self.tt is not None:
             tensors = tensors + self._reduce(
-                jnp.einsum(
-                    "bqsoi,bsicd->bqsocd", self.tt(radial), features.tensors
-                ),
+                oe.contract("bqsoi,bsicd->bqsocd", self.tt(radial), features.tensors),
                 weights,
             )
         if self.tt_longitudinal is not None:
-            coefficient = jnp.einsum(
+            coefficient = oe.contract(
                 "bqsoi,bqsi->bqso",
                 self.tt_longitudinal(radial),
                 tensor_projection,
@@ -612,7 +591,7 @@ class EquivariantIntegralLayer(eqx.Module):
             )
 
         if self.tp is not None:
-            coefficient = jnp.einsum(
+            coefficient = oe.contract(
                 "bqsoi,bsi->bqso", self.tp(radial), features.pseudoscalars
             )
             pseudotensors = pseudotensors + self._reduce(
@@ -623,14 +602,12 @@ class EquivariantIntegralLayer(eqx.Module):
         )
         if self.ta is not None:
             pseudotensors = pseudotensors + self._reduce(
-                jnp.einsum(
-                    "bqsoi,bqsicd->bqsocd", self.ta(radial), axial_tensor
-                ),
+                oe.contract("bqsoi,bqsicd->bqsocd", self.ta(radial), axial_tensor),
                 weights,
             )
         if self.tpt is not None:
             pseudotensors = pseudotensors + self._reduce(
-                jnp.einsum(
+                oe.contract(
                     "bqsoi,bsicd->bqsocd",
                     self.tpt(radial),
                     features.pseudotensors,
@@ -638,7 +615,7 @@ class EquivariantIntegralLayer(eqx.Module):
                 weights,
             )
         if self.tpt_longitudinal is not None:
-            coefficient = jnp.einsum(
+            coefficient = oe.contract(
                 "bqsoi,bqsi->bqso",
                 self.tpt_longitudinal(radial),
                 pseudotensor_projection,
@@ -718,7 +695,7 @@ class O3PointwiseLinear(eqx.Module):
     def _mix(weight: Array | None, values: Array, out_count: int, /) -> Array:
         if weight is None:
             return jnp.zeros(values.shape[:-1] + (out_count,), dtype=values.dtype)
-        return jnp.einsum("oi,...i->...o", weight, values)
+        return oe.contract("oi,...i->...o", weight, values)
 
     @staticmethod
     def _mix_geometric(
@@ -731,7 +708,7 @@ class O3PointwiseLinear(eqx.Module):
             return jnp.zeros(
                 values.shape[:-2] + (out_count, values.shape[-1]), dtype=values.dtype
             )
-        return jnp.einsum("oi,...ic->...oc", weight, values)
+        return oe.contract("oi,...ic->...oc", weight, values)
 
     @staticmethod
     def _mix_tensor(
@@ -741,10 +718,8 @@ class O3PointwiseLinear(eqx.Module):
         /,
     ) -> Array:
         if weight is None:
-            return jnp.zeros(
-                values.shape[:-3] + (out_count, 3, 3), dtype=values.dtype
-            )
-        return jnp.einsum("oi,...icd->...ocd", weight, values)
+            return jnp.zeros(values.shape[:-3] + (out_count, 3, 3), dtype=values.dtype)
+        return oe.contract("oi,...icd->...ocd", weight, values)
 
     def __call__(self, values: Array, /) -> Array:
         features = self.in_representation.split(values)
@@ -936,7 +911,9 @@ class EquivariantGeometryOperator(AbstractEncodedOperatorModel):
             case_shape=batch.case_shape, flatten=True
         ).reshape((cases, count, -1))
         if int(coordinates.shape[-1]) != 3:
-            raise ValueError("Equivariant geometry coordinates must be three-dimensional.")
+            raise ValueError(
+                "Equivariant geometry coordinates must be three-dimensional."
+            )
         weights = source.quadrature(case_shape=batch.case_shape).reshape((cases, count))
         mask = source.mask_array(case_shape=batch.case_shape).reshape((cases, count))
         hidden = o3_gated_activation(
@@ -951,9 +928,10 @@ class EquivariantGeometryOperator(AbstractEncodedOperatorModel):
                 source_mask=mask,
                 target_mask=mask,
             )
-            hidden = o3_gated_activation(
-                hidden + update, self.hidden_representation
-            ) * mask[..., None]
+            hidden = (
+                o3_gated_activation(hidden + update, self.hidden_representation)
+                * mask[..., None]
+            )
         return EquivariantOperatorState(
             values=hidden,
             coordinates=coordinates,
@@ -1031,6 +1009,7 @@ def EqGINO(
         source_key=source_key,
         key=key,
     )
+
 
 __all__ = [
     "EqGINO",

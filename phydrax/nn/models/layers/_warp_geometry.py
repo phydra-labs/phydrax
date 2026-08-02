@@ -11,53 +11,17 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array
 
 from ...._strict import StrictModule
+from ....metrix import DENSITY_TENSOR, SCALAR_TENSOR, TensorType
 
 
 WarpBoundaryMode: TypeAlias = Literal["periodic", "reflect", "clamp", "constant"]
 WarpMaskMode: TypeAlias = Literal["reject", "renormalize", "strict"]
-WarpVariance: TypeAlias = Literal["contravariant", "covariant"]
+
 _VALID_MASK_MODES = frozenset(("reject", "renormalize", "strict"))
-
-
-class WarpFieldSpec(StrictModule):
-    """Geometric transformation law for a field transported by a warp.
-
-    ``variance`` lists one transformation rule for each trailing tensor axis.
-    ``density_weight=1`` applies the volume-form Jacobian used by densities.
-    """
-
-    variance: tuple[WarpVariance, ...]
-    density_weight: float
-
-    def __init__(
-        self,
-        variance: Sequence[WarpVariance] = (),
-        /,
-        *,
-        density_weight: float = 0.0,
-    ):
-        variance_ = tuple(variance)
-        invalid = tuple(
-            value
-            for value in variance_
-            if value not in ("contravariant", "covariant")
-        )
-        if invalid:
-            raise ValueError(
-                "Warp tensor variance must be 'contravariant' or 'covariant'; "
-                f"got {invalid}."
-            )
-        if float(density_weight) < 0.0:
-            raise ValueError("density_weight must be non-negative.")
-        self.variance = variance_
-        self.density_weight = float(density_weight)
-
-
-SCALAR_WARP_FIELD = WarpFieldSpec()
-DENSITY_WARP_FIELD = WarpFieldSpec(density_weight=1.0)
 
 
 class RectilinearWarpDiagnostics(StrictModule):
@@ -191,9 +155,7 @@ def _prepare_axis_nodes(
 ) -> tuple[Array, ...]:
     if axis_nodes is None:
         return _canonical_axis_nodes(spatial_shape, boundary, dtype)
-    nodes = tuple(
-        jnp.asarray(value, dtype=dtype).reshape((-1,)) for value in axis_nodes
-    )
+    nodes = tuple(jnp.asarray(value, dtype=dtype).reshape((-1,)) for value in axis_nodes)
     if len(nodes) != len(spatial_shape):
         raise ValueError(
             f"axis_nodes must provide {len(spatial_shape)} axes; got {len(nodes)}."
@@ -214,13 +176,17 @@ def _prepare_axis_nodes(
         outside = (values[0] < -1.0) | (
             values[-1] >= 1.0 if mode == "periodic" else values[-1] > 1.0
         )
-        nodes = nodes[:axis] + (
-            eqx.error_if(
-                values,
-                outside,
-                "Normalized warp nodes must lie in the configured domain.",
-            ),
-        ) + nodes[axis + 1 :]
+        nodes = (
+            nodes[:axis]
+            + (
+                eqx.error_if(
+                    values,
+                    outside,
+                    "Normalized warp nodes must lie in the configured domain.",
+                ),
+            )
+            + nodes[axis + 1 :]
+        )
     return nodes
 
 
@@ -235,7 +201,9 @@ def _broadcast_source_mask(
         return jnp.broadcast_to(mask, batch_shape + spatial_shape)
     expected = batch_shape + spatial_shape
     if mask.shape != expected:
-        raise ValueError(f"source_mask must have shape {spatial_shape} or {expected}; got {mask.shape}.")
+        raise ValueError(
+            f"source_mask must have shape {spatial_shape} or {expected}; got {mask.shape}."
+        )
     return mask
 
 
@@ -305,11 +273,7 @@ def sample_rectilinear_grid(
             )
             mask = None
 
-    index_dtype = (
-        jnp.int64
-        if bool(jax.config.read("jax_enable_x64"))
-        else jnp.int32
-    )
+    index_dtype = jnp.int64 if bool(jax.config.read("jax_enable_x64")) else jnp.int32
     if prod(spatial_shape) > jnp.iinfo(index_dtype).max:
         raise ValueError("Rectilinear grid is too large for JAX gather indices.")
     lower_indices: list[Array] = []
@@ -326,9 +290,7 @@ def sample_rectilinear_grid(
             lower = jnp.mod(upper_raw - 1, size)
             upper = jnp.mod(upper_raw, size)
             lower_coordinate = axis_values[lower] - jnp.where(upper_raw == 0, 2.0, 0.0)
-            upper_coordinate = axis_values[upper] + jnp.where(
-                upper_raw == size, 2.0, 0.0
-            )
+            upper_coordinate = axis_values[upper] + jnp.where(upper_raw == size, 2.0, 0.0)
         else:
             if mode == "reflect":
                 reflected = jnp.mod(coordinate + 1.0, 4.0)
@@ -367,9 +329,7 @@ def sample_rectilinear_grid(
         weight = jnp.ones(batch_shape + query_shape, dtype=dtype)
         for axis in range(dimensions):
             upper_corner = bool(corner & (1 << axis))
-            indices.append(
-                upper_indices[axis] if upper_corner else lower_indices[axis]
-            )
+            indices.append(upper_indices[axis] if upper_corner else lower_indices[axis])
             fraction = fractions[axis]
             weight = weight * (fraction if upper_corner else 1.0 - fraction)
         linear_index = indices[0]
@@ -474,9 +434,7 @@ def warp_jacobian(
         if mode == "periodic":
             derivative = _periodic_axis_derivative(field, axis_values, array_axis)
         else:
-            derivative = jnp.asarray(
-                jnp.gradient(field, axis_values, axis=array_axis)
-            )
+            derivative = jnp.asarray(jnp.gradient(field, axis_values, axis=array_axis))
         columns.append(derivative)
     gradient = jnp.stack(columns, axis=-1)
     identity = jnp.eye(dimensions, dtype=gradient.dtype)
@@ -493,7 +451,7 @@ def normalized_lattice_from_nodes(axis_nodes: Sequence[Array], /) -> Array:
 def _transform_tensor(
     sampled: Array,
     jacobian: Array,
-    spec: WarpFieldSpec,
+    spec: TensorType,
     /,
 ) -> Array:
     dimensions = int(jacobian.shape[-1])
@@ -520,7 +478,7 @@ def _transform_tensor(
                     inverse = jnp.linalg.inv(matrices)
                 matrix = inverse
             transformed = jnp.moveaxis(transformed, tensor_axis + 1, -1)
-            transformed = jnp.einsum("nij,n...j->n...i", matrix, transformed)
+            transformed = oe.contract("nij,n...j->n...i", matrix, transformed)
             transformed = jnp.moveaxis(transformed, -1, tensor_axis + 1)
         transformed = transformed.reshape(sampled.shape)
     if spec.density_weight:
@@ -541,7 +499,7 @@ def warp_field(
     source_mask: Array | None = None,
     mask_mode: WarpMaskMode = "renormalize",
     fill_value: float = 0.0,
-    field_spec: WarpFieldSpec = SCALAR_WARP_FIELD,
+    field_spec: TensorType = SCALAR_TENSOR,
     return_diagnostics: bool = False,
 ) -> Array | tuple[Array, RectilinearWarpDiagnostics]:
     """Transport a scalar, density, vector, covector, or tensor field by a warp."""
@@ -604,19 +562,15 @@ def conservative_remap(
     return warp_field(
         density,
         displacement,
-        field_spec=DENSITY_WARP_FIELD,
+        field_spec=DENSITY_TENSOR,
         **kwargs,
     )
 
 
 __all__ = [
-    "DENSITY_WARP_FIELD",
     "GaussianWarpRoute",
     "RectilinearWarpDiagnostics",
-    "SCALAR_WARP_FIELD",
-    "WarpFieldSpec",
     "WarpMaskMode",
-    "WarpVariance",
     "conservative_remap",
     "normalized_axis_nodes",
     "normalized_lattice_from_nodes",

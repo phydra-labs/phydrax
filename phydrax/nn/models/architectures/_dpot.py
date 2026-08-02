@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
@@ -210,23 +211,23 @@ class _AFNO2D(StrictModule):
         modes_width = min(self.modes[1], frequency_width)
         active = blocks[:, :modes_height, :modes_width]
         first_real = jax.nn.gelu(
-            jnp.einsum("...bi,bio->...bo", active.real, self.first_real)
-            - jnp.einsum("...bi,bio->...bo", active.imag, self.first_imag)
+            oe.contract("...bi,bio->...bo", active.real, self.first_real)
+            - oe.contract("...bi,bio->...bo", active.imag, self.first_imag)
             + self.first_real_bias
         )
         first_imag = jax.nn.gelu(
-            jnp.einsum("...bi,bio->...bo", active.imag, self.first_real)
-            + jnp.einsum("...bi,bio->...bo", active.real, self.first_imag)
+            oe.contract("...bi,bio->...bo", active.imag, self.first_real)
+            + oe.contract("...bi,bio->...bo", active.real, self.first_imag)
             + self.first_imag_bias
         )
         second_real = (
-            jnp.einsum("...bi,bio->...bo", first_real, self.second_real)
-            - jnp.einsum("...bi,bio->...bo", first_imag, self.second_imag)
+            oe.contract("...bi,bio->...bo", first_real, self.second_real)
+            - oe.contract("...bi,bio->...bo", first_imag, self.second_imag)
             + self.second_real_bias
         )
         second_imag = (
-            jnp.einsum("...bi,bio->...bo", first_imag, self.second_real)
-            + jnp.einsum("...bi,bio->...bo", first_real, self.second_imag)
+            oe.contract("...bi,bio->...bo", first_imag, self.second_real)
+            + oe.contract("...bi,bio->...bo", first_real, self.second_imag)
             + self.second_imag_bias
         )
         transformed = (
@@ -331,7 +332,7 @@ class _TemporalAggregator(StrictModule):
         if self.exponential_embedding:
             time = jnp.linspace(0.0, 1.0, self.history_steps)[:, None]
             values = values * jnp.cos(time * self.frequencies)
-        return jnp.einsum("tij,bhwti->bhwj", self.weight, values)
+        return oe.contract("tij,bhwti->bhwj", self.weight, values)
 
 
 class DPOT(_AbstractOperatorModel):

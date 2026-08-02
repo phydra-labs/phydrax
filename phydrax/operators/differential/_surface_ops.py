@@ -13,19 +13,8 @@ import opt_einsum as oe
 from ...domain._components import DomainComponent
 from ...domain._function import DomainFunction
 from ...domain._scalar import _AbstractScalarDomain
+from ...metrix import RiemannianMetric, tangent_projector_from_normal
 from ._domain_ops import _factor_and_dim, _resolve_var, curl, grad
-
-
-def _proj_from_normals(n):
-    eps = jnp.finfo(float).eps
-    n = jnp.asarray(n, dtype=float)
-    nrm = jnp.linalg.norm(n, axis=-1, keepdims=True) + eps
-    n = n / nrm
-    d = int(n.shape[-1])
-    I = jnp.eye(d, dtype=n.dtype)
-    I = jnp.broadcast_to(I, n.shape[:-1] + (d, d))
-    nnT = oe.contract("...i,...j->...ij", n, n)
-    return I - nnT
 
 
 def tangential_component(
@@ -131,7 +120,7 @@ def surface_grad(
         gv = jnp.asarray(g.func(*[args[i] for i in g_pos], key=key, **kwargs))
         nv = jnp.asarray(n2.func(*[args[i] for i in n_pos], key=key, **kwargs))
         nv = jax.lax.stop_gradient(nv)
-        P = _proj_from_normals(nv)
+        P = tangent_projector_from_normal(nv)
 
         if gv.ndim == nv.ndim:
             return oe.contract("...ij,...j->...i", P, gv)
@@ -195,7 +184,7 @@ def surface_div(
         Jv = jnp.asarray(J.func(*[args[i] for i in j_pos], key=key, **kwargs))
         nv = jnp.asarray(n2.func(*[args[i] for i in n_pos], key=key, **kwargs))
         nv = jax.lax.stop_gradient(nv)
-        P = _proj_from_normals(nv)
+        P = tangent_projector_from_normal(nv)
         if Jv.ndim < 2 or P.ndim < 2:
             raise ValueError(
                 "surface_div expects a Jacobian and projector with at least 2 dims."
@@ -312,7 +301,7 @@ def surface_curl_vector(
 
 def laplace_beltrami(
     u: DomainFunction,
-    component: DomainComponent,
+    component: DomainComponent | RiemannianMetric,
     /,
     *,
     var: str | None = None,
@@ -344,6 +333,16 @@ def laplace_beltrami(
 
     - A `DomainFunction` representing $\Delta_\Gamma u$.
     """
+    if isinstance(component, RiemannianMetric):
+        if curvature_aware or variant is not None:
+            raise ValueError(
+                "curvature_aware and variant are only valid for boundary-component "
+                "Laplace-Beltrami operators."
+            )
+        from ._riemannian_ops import intrinsic_laplace_beltrami
+
+        return intrinsic_laplace_beltrami(u, component, var=var, mode=mode)
+
     if variant == "divgrad" or (curvature_aware and variant is None):
         return laplace_beltrami_divgrad(u, component, var=var, mode=mode)
 
@@ -370,7 +369,7 @@ def laplace_beltrami(
             raise ValueError(
                 f"laplace_beltrami expected normal last axis {var_dim}, got {nv.shape[-1]}."
             )
-        P = _proj_from_normals(nv)
+        P = tangent_projector_from_normal(nv)
         if Hv.ndim == P.ndim:
             return oe.contract("...ij,...jk,...ki->...", P, Hv, P)
         if Hv.ndim == P.ndim + 1:

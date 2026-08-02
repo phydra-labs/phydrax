@@ -14,6 +14,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
@@ -348,11 +349,11 @@ class SpectralSpatialDiscretization(AbstractSpatialDiscretization):
 
     def laplacian(self, state: ArrayLike, /) -> Array:
         array = self._validate_state(state)
-        coefficients = jnp.einsum("mp,p...->m...", self.plan.analysis, array)
+        coefficients = oe.contract("mp,p...->m...", self.plan.analysis, array)
         scale = self.plan.eigenvalues.reshape(
             (self.plan.num_modes,) + (1,) * (coefficients.ndim - 1)
         )
-        return -jnp.einsum("pm,m...->p...", self.plan.synthesis, scale * coefficients)
+        return -oe.contract("pm,m...->p...", self.plan.synthesis, scale * coefficients)
 
     def flatten(self, state: ArrayLike, /) -> Array:
         return self._validate_state(state)

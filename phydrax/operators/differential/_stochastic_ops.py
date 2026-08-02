@@ -7,11 +7,13 @@ from __future__ import annotations
 from typing import Any, Literal
 
 import jax.numpy as jnp
+import opt_einsum as oe
 
 from ..._strict import StrictModule
 from ...domain._base import _AbstractGeometry
 from ...domain._function import DomainFunction
 from ...domain._scalar import _AbstractScalarDomain
+from ...metrix import LeviCivitaConnection, RiemannianMetric
 from ._domain_ops import (
     _factor_and_dim,
     _strip_derivative_hook_metadata,
@@ -19,6 +21,11 @@ from ._domain_ops import (
     div_tensor,
     grad,
     hessian,
+)
+from ._riemannian_ops import (
+    covariant_hessian as riemannian_covariant_hessian,
+    riemannian_div,
+    riemannian_div_tensor,
 )
 
 
@@ -106,7 +113,50 @@ class _StratonovichCorrectionCallable(StrictModule):
                 "grad(diffusion) must have trailing shape "
                 f"{expected}; got {derivative.shape}."
             )
-        return 0.5 * jnp.einsum("...jk,...ikj->...i", sigma, derivative)
+        return 0.5 * oe.contract("...jk,...ikj->...i", sigma, derivative)
+
+
+class _CoordinateToCovariantDriftCallable(StrictModule):
+    drift: DomainFunction
+    covariance: DomainFunction
+    metric: RiemannianMetric
+    drift_positions: tuple[int, ...]
+    covariance_positions: tuple[int, ...]
+    coordinate_position: int
+    state_dim: int
+
+    def __call__(self, *args: Any, key=None, **kwargs: Any):
+        drift = jnp.asarray(
+            self.drift.func(
+                *_field_args(args, self.drift_positions),
+                key=key,
+                **kwargs,
+            )
+        )
+        covariance = jnp.asarray(
+            self.covariance.func(
+                *_field_args(args, self.covariance_positions),
+                key=key,
+                **kwargs,
+            )
+        )
+        expected = (self.state_dim, self.state_dim)
+        if drift.shape[-1:] != (self.state_dim,):
+            raise ValueError(
+                f"drift must have trailing shape ({self.state_dim},); got {drift.shape}."
+            )
+        if covariance.shape[-2:] != expected:
+            raise ValueError(
+                f"covariance must have trailing shape {expected}; got {covariance.shape}."
+            )
+        coefficients = LeviCivitaConnection(self.metric).coefficients(
+            args[self.coordinate_position]
+        )
+        return drift + 0.5 * oe.contract(
+            "...kij,...ij->...k",
+            coefficients,
+            covariance,
+        )
 
 
 class _KolmogorovCallable(StrictModule):
@@ -251,6 +301,39 @@ def stratonovich_to_ito_drift(
     return drift_promoted + correction
 
 
+def _coordinate_to_covariant_drift(
+    drift: DomainFunction,
+    covariance: DomainFunction,
+    metric: RiemannianMetric,
+    /,
+    *,
+    var: str,
+    state_dim: int,
+) -> DomainFunction:
+    domain, (drift_promoted, covariance_promoted) = _join_fields(drift, covariance)
+    deps = tuple(
+        label
+        for label in domain.labels
+        if label == var
+        or label in drift_promoted.deps
+        or label in covariance_promoted.deps
+    )
+    return DomainFunction(
+        domain=domain,
+        deps=deps,
+        func=_CoordinateToCovariantDriftCallable(
+            drift=drift_promoted,
+            covariance=covariance_promoted,
+            metric=metric,
+            drift_positions=_positions(deps, drift_promoted),
+            covariance_positions=_positions(deps, covariance_promoted),
+            coordinate_position=deps.index(var),
+            state_dim=int(state_dim),
+        ),
+        metadata=_strip_derivative_hook_metadata(drift_promoted.metadata),
+    )
+
+
 def _resolved_coefficients(
     drift: DomainFunction,
     *,
@@ -258,6 +341,8 @@ def _resolved_coefficients(
     covariance: DomainFunction | None,
     interpretation: StochasticInterpretation,
     var: str,
+    metric: RiemannianMetric | None,
+    state_dim: int,
 ) -> tuple[DomainFunction, DomainFunction | None]:
     if diffusion is not None and covariance is not None:
         raise ValueError("Provide either diffusion or covariance, not both.")
@@ -267,11 +352,22 @@ def _resolved_coefficients(
                 "Stratonovich operators require diffusion; covariance alone cannot "
                 "determine the drift correction."
             )
-        corrected = stratonovich_to_ito_drift(drift, diffusion, var=var)
-        return corrected, diffusion_covariance(diffusion)
-    if diffusion is not None:
-        return drift, diffusion_covariance(diffusion)
-    return drift, covariance
+        resolved_drift = stratonovich_to_ito_drift(drift, diffusion, var=var)
+        resolved_covariance = diffusion_covariance(diffusion)
+    else:
+        resolved_drift = drift
+        resolved_covariance = (
+            diffusion_covariance(diffusion) if diffusion is not None else covariance
+        )
+    if metric is not None and resolved_covariance is not None:
+        resolved_drift = _coordinate_to_covariant_drift(
+            resolved_drift,
+            resolved_covariance,
+            metric,
+            var=var,
+            state_dim=state_dim,
+        )
+    return resolved_drift, resolved_covariance
 
 
 def kolmogorov_generator(
@@ -281,15 +377,17 @@ def kolmogorov_generator(
     *,
     diffusion: DomainFunction | None = None,
     covariance: DomainFunction | None = None,
+    metric: RiemannianMetric | None = None,
     interpretation: StochasticInterpretation = "ito",
     var: str = "x",
 ) -> DomainFunction:
     r"""Apply a backward Kolmogorov generator to an observable.
 
-    The returned field is :math:`\mathcal{L}u`, not the full evolution residual.
     Scalar, vector, and tensor observables are handled componentwise. For
-    ``interpretation="stratonovich"``, the diffusion vector fields are converted to
-    their equivalent Itô drift before applying the generator.
+    ``interpretation="stratonovich"``, the coordinate diffusion fields are first
+    converted to Itô coefficients. When ``metric`` is supplied, coordinate Itô drift
+    is converted to covariant vector drift and the diffusion contracts a covariant
+    Hessian.
     """
     observable_field = _require_function(observable, "observable")
     drift_field = _require_function(drift, "drift")
@@ -302,13 +400,20 @@ def kolmogorov_generator(
     interpretation_value = _require_interpretation(interpretation)
     factor, state_dim = _factor_and_dim(observable_field, var)
     if isinstance(factor, _AbstractScalarDomain):
-        raise ValueError("var must name a Euclidean geometry state variable.")
+        raise ValueError("var must name a geometry state variable.")
+    if metric is not None and metric.chart.dimension != state_dim:
+        raise ValueError(
+            f"Metric chart dimension {metric.chart.dimension} does not match "
+            f"state dimension {state_dim}."
+        )
     drift_ito, covariance_ito = _resolved_coefficients(
         drift_field,
         diffusion=diffusion_field,
         covariance=covariance_field,
         interpretation=interpretation_value,
         var=var,
+        metric=metric,
+        state_dim=int(state_dim),
     )
     fields = [observable_field, drift_ito]
     if covariance_ito is not None:
@@ -319,7 +424,13 @@ def kolmogorov_generator(
     covariance_promoted = promoted[2] if covariance_ito is not None else None
     observable_gradient = grad(observable_promoted, var=var)
     observable_hessian = (
-        hessian(observable_promoted, var=var) if covariance_promoted is not None else None
+        (
+            hessian(observable_promoted, var=var)
+            if metric is None
+            else riemannian_covariant_hessian(observable_promoted, metric, var=var)
+        )
+        if covariance_promoted is not None
+        else None
     )
     used_fields = [observable_gradient, drift_promoted]
     if observable_hessian is not None and covariance_promoted is not None:
@@ -381,20 +492,18 @@ def fokker_planck_operator(
     *,
     diffusion: DomainFunction | None = None,
     covariance: DomainFunction | None = None,
+    metric: RiemannianMetric | None = None,
     interpretation: StochasticInterpretation = "ito",
     var: str = "x",
 ) -> DomainFunction:
     r"""Apply the forward Kolmogorov/Fokker--Planck operator to a density.
 
-    This returns
-
-    .. math::
-
-        \mathcal{L}^*p=-\nabla\!\cdot(bp)
-        +\tfrac12\partial_i\partial_j(a_{ij}p),
-
-    including derivatives of state-dependent covariance fields. It does not add a
-    time derivative or impose positivity, normalization, initial, or boundary data.
+    Without ``metric`` this is the coordinate-density operator
+    ``-∂_i(b^i p) + 1/2 ∂_i∂_j(a^ij p)``. With ``metric`` it is the
+    Riemannian-volume-density operator
+    ``-∇_i(b^i p) + 1/2 ∇_i∇_j(a^ij p)``. Coordinate Itô drift is converted to
+    the equivalent covariant vector drift. The result does not add a time
+    derivative or impose positivity, normalization, initial, or boundary data.
     """
     density_field = _require_function(density, "density")
     drift_field = _require_function(drift, "drift")
@@ -407,13 +516,20 @@ def fokker_planck_operator(
     interpretation_value = _require_interpretation(interpretation)
     factor, state_dim = _factor_and_dim(density_field, var)
     if isinstance(factor, _AbstractScalarDomain):
-        raise ValueError("var must name a Euclidean geometry state variable.")
+        raise ValueError("var must name a geometry state variable.")
+    if metric is not None and metric.chart.dimension != state_dim:
+        raise ValueError(
+            f"Metric chart dimension {metric.chart.dimension} does not match "
+            f"state dimension {state_dim}."
+        )
     drift_ito, covariance_ito = _resolved_coefficients(
         drift_field,
         diffusion=diffusion_field,
         covariance=covariance_field,
         interpretation=interpretation_value,
         var=var,
+        metric=metric,
+        state_dim=int(state_dim),
     )
     drift_times_density = _density_product(
         density_field,
@@ -421,7 +537,11 @@ def fokker_planck_operator(
         state_dim=int(state_dim),
         tensor=False,
     )
-    out = -div(drift_times_density, var=var)
+    out = (
+        -div(drift_times_density, var=var)
+        if metric is None
+        else -riemannian_div(drift_times_density, metric, var=var)
+    )
     if covariance_ito is None:
         return out
     covariance_times_density = _density_product(
@@ -430,8 +550,14 @@ def fokker_planck_operator(
         state_dim=int(state_dim),
         tensor=True,
     )
-    return out + 0.5 * div(
-        div_tensor(covariance_times_density, var=var),
+    if metric is None:
+        return out + 0.5 * div(
+            div_tensor(covariance_times_density, var=var),
+            var=var,
+        )
+    return out + 0.5 * riemannian_div(
+        riemannian_div_tensor(covariance_times_density, metric, var=var),
+        metric,
         var=var,
     )
 

@@ -67,3 +67,12 @@ fixed-time slices, etc.) and wrap these into `DomainComponent` objects.
             - __init__
             - measure
             - sample
+
+
+## Metric volume
+
+`with_riemannian_measure` multiplies a component's existing integration weight
+by `sqrt(det(g))` for one labeled coordinate factor. Sampling locations,
+filters, masks, and all other product-measure factors remain unchanged.
+
+::: phydrax.domain.with_riemannian_measure

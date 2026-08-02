@@ -6,6 +6,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 import pytest
 from jax.scipy.special import sph_harm_y
 
@@ -576,7 +577,7 @@ def test_spherical_degree_filter_is_equivariant_to_arbitrary_rotation():
             [-jnp.sin(beta), 0.0, jnp.cos(beta)],
         ]
     )
-    rotated = jnp.einsum("...i,ij->...j", points, rotation_z @ rotation_y)
+    rotated = oe.contract("...i,ij->...j", points, rotation_z @ rotation_y)
     x, y, z = rotated[..., 0], rotated[..., 1], rotated[..., 2]
     degree_two_field = x * y + 0.3 * (y**2 - z**2)
     output = layer(degree_two_field[..., None], axes)[..., 0]

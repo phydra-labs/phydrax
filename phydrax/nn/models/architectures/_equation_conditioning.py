@@ -10,6 +10,7 @@ import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ...._strict import StrictModule
@@ -208,11 +209,11 @@ class PDEConditionEncoder(StrictModule):
             queries = query(normalized)
             keys = key(normalized)
             values = value(normalized)
-            logits = jnp.einsum("id,jd->ij", queries, keys) / sqrt(float(self.width))
+            logits = oe.contract("id,jd->ij", queries, keys) / sqrt(float(self.width))
             logits = logits + symbol_bias * same_symbol
             logits = jnp.where(mask[None, :], logits, -jnp.inf)
             attention = jnn.softmax(logits, axis=-1)
-            attended = jnp.einsum("ij,jd->id", attention, values)
+            attended = oe.contract("ij,jd->id", attention, values)
             hidden = hidden + output(attended)
             hidden = hidden + ff_out(ff_in(self._normalize(hidden)))
             hidden = hidden * mask[:, None]
@@ -241,9 +242,7 @@ class PDEConditionEncoder(StrictModule):
             self.kind_embeddings[tokens.kind]
             + self.operator_embeddings[tokens.operator]
             + self.attribute_embeddings[tokens.attribute]
-            + self.depth_embeddings[
-                jnp.clip(tokens.depth, 0, self.max_tree_depth)
-            ]
+            + self.depth_embeddings[jnp.clip(tokens.depth, 0, self.max_tree_depth)]
             + self.scalar_projection(scalar[..., None])
             + self.slot_projection(slot[..., None])
             + self.dimension_projection(dimension)

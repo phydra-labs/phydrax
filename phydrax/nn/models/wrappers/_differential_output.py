@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array
 
 from ...._doc import DOC_KEY0
@@ -36,9 +37,7 @@ class DifferentialNormalization(StrictModule):
         field = jnp.asarray(field_scale, dtype=float).reshape((-1,))
         if int(coordinate.size) == 0 or int(field.size) == 0:
             raise ValueError("Differential normalization scales must not be empty.")
-        if bool(jnp.any(~jnp.isfinite(coordinate))) or bool(
-            jnp.any(coordinate == 0.0)
-        ):
+        if bool(jnp.any(~jnp.isfinite(coordinate))) or bool(jnp.any(coordinate == 0.0)):
             raise ValueError("Coordinate scales must be finite and nonzero.")
         if bool(jnp.any(~jnp.isfinite(field))):
             raise ValueError("Field scales must be finite.")
@@ -90,7 +89,7 @@ class LinearDifferentialTransform(StrictModule):
         return int(self.coefficients.shape[2])
 
     def __call__(self, jacobian: Array, /) -> Array:
-        return jnp.einsum("ofc,...fc->...o", self.coefficients, jacobian)
+        return oe.contract("ofc,...fc->...o", self.coefficients, jacobian)
 
 
 def _field_channels(out_size: Any, /) -> int:
@@ -172,10 +171,14 @@ class DifferentialFieldDecoder(_AbstractBaseModel):
             step_ = jnp.full((dimension,), step_)
         else:
             step_ = step_.reshape((-1,))
-        if step_.shape != (dimension,) or bool(jnp.any(step_ <= 0.0)) or bool(
-            jnp.any(~jnp.isfinite(step_))
+        if (
+            step_.shape != (dimension,)
+            or bool(jnp.any(step_ <= 0.0))
+            or bool(jnp.any(~jnp.isfinite(step_)))
         ):
-            raise ValueError("Finite-difference step must be finite and positive per axis.")
+            raise ValueError(
+                "Finite-difference step must be finite and positive per axis."
+            )
         normalizer = (
             DifferentialNormalization(jnp.ones(dimension), jnp.ones(channels))
             if normalization is None
@@ -201,9 +204,7 @@ class DifferentialFieldDecoder(_AbstractBaseModel):
 
     def _jacobian(self, point: Array, key: EvalKey, /) -> Array:
         if self.backend == "autodiff":
-            jacobian = jax.jacfwd(lambda coordinate: self._field(coordinate, key))(
-                point
-            )
+            jacobian = jax.jacfwd(lambda coordinate: self._field(coordinate, key))(point)
         elif self.backend == "central_difference":
             basis = jnp.eye(self.coord_dim, dtype=point.dtype) * self.step[:, None]
             plus = jax.vmap(lambda offset: self._field(point + offset, key))(basis)
@@ -252,9 +253,9 @@ class DifferentialFieldDecoder(_AbstractBaseModel):
             )
         leading = coordinates.shape[:-1]
         flattened = coordinates.reshape((-1, self.coord_dim))
-        transformed = jax.vmap(
-            lambda point: self._transform(self._jacobian(point, key))
-        )(flattened)
+        transformed = jax.vmap(lambda point: self._transform(self._jacobian(point, key)))(
+            flattened
+        )
         channel_shape = (
             ()
             if self.out_size == "scalar"

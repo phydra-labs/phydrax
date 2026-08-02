@@ -968,10 +968,10 @@ coordinates, Jacobian, determinant, interpolation support, and probabilistic
 route scale without changing the ordinary model return type.
 
 `MultiheadWarp` is the regular-grid routing layer. `warp_field` and
-`conservative_remap` expose scalar, density, vector, covector, and tensor
-pullbacks through `WarpFieldSpec`. `ManifoldMultiheadWarp` instead requires a
-caller-supplied tangent projector and retraction; ambient Euclidean
-displacement is not treated as intrinsically valid manifold transport.
+`conservative_remap` expose scalar, density, vector, covector, and mixed-tensor
+pullbacks through `phydrax.metrix.TensorType`. `ManifoldMultiheadWarp` instead
+requires a caller-supplied ambient tangent projector and retraction; ambient
+Euclidean displacement is not treated as intrinsically valid manifold transport.
 
 ---
 
@@ -1016,7 +1016,7 @@ displacement is not treated as intrinsically valid manifold transport.
 
 ---
 
-::: phydrax.nn.WarpFieldSpec
+::: phydrax.metrix.TensorType
 
 ---
 

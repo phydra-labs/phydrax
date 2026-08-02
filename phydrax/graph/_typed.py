@@ -6,6 +6,7 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 
 from ._graph import ensure_graph
 from ._ir import GraphIR
@@ -151,7 +152,9 @@ def _node_features(graph: GraphIR, input_key: str | None, /) -> jnp.ndarray:
     return _as_2d(f"nodes[{input_key!r}]", graph.nodes[input_key])
 
 
-def _with_node_output(graph: GraphIR, value: jnp.ndarray, output_key: str | None, /) -> Any:
+def _with_node_output(
+    graph: GraphIR, value: jnp.ndarray, output_key: str | None, /
+) -> Any:
     if output_key is None:
         return value
     nodes = {} if graph.nodes is None else dict(graph.nodes)
@@ -159,9 +162,13 @@ def _with_node_output(graph: GraphIR, value: jnp.ndarray, output_key: str | None
     return nodes
 
 
-def _oriented_edges(graph: GraphIR, flow: GraphFlow, /) -> tuple[jnp.ndarray, jnp.ndarray]:
+def _oriented_edges(
+    graph: GraphIR, flow: GraphFlow, /
+) -> tuple[jnp.ndarray, jnp.ndarray]:
     if graph.senders is None or graph.receivers is None:
-        raise ValueError("RelationalGraphConvolution requires explicit senders/receivers.")
+        raise ValueError(
+            "RelationalGraphConvolution requires explicit senders/receivers."
+        )
     if flow == "source_to_target":
         return graph.senders, graph.receivers
     if flow == "target_to_source":
@@ -178,7 +185,9 @@ def _edge_weights(graph: GraphIR, edge_weight_key: str | None, /) -> jnp.ndarray
         if not isinstance(graph.edges, Mapping):
             raise TypeError("edge_weight_key requires mapping-valued graph edges.")
         if edge_weight_key not in graph.edges:
-            raise KeyError(f"Graph edges do not contain edge_weight_key {edge_weight_key!r}.")
+            raise KeyError(
+                f"Graph edges do not contain edge_weight_key {edge_weight_key!r}."
+            )
         out = jnp.asarray(graph.edges[edge_weight_key], dtype=float)
         if out.ndim == 2 and int(out.shape[1]) == 1:
             out = out[:, 0]
@@ -195,10 +204,8 @@ def _relation_transform(nodes: jnp.ndarray, relation_weights: jnp.ndarray) -> jn
     if relation_weights.ndim == 2:
         return nodes * relation_weights
     if relation_weights.ndim == 3:
-        return jnp.einsum("ef,efo->eo", nodes, relation_weights)
-    raise ValueError(
-        "relation_weights must have shape (R,), (R, F), or (R, F, O)."
-    )
+        return oe.contract("ef,efo->eo", nodes, relation_weights)
+    raise ValueError("relation_weights must have shape (R,), (R, F), or (R, F, O).")
 
 
 def _self_transform(nodes: jnp.ndarray, self_weight: Any) -> jnp.ndarray:
@@ -250,11 +257,15 @@ class RelationalGraphConvolution(eqx.Module):
     ):
         weights = jnp.asarray(relation_weights, dtype=float)
         if weights.ndim not in (1, 2, 3):
-            raise ValueError("relation_weights must have shape (R,), (R, F), or (R, F, O).")
+            raise ValueError(
+                "relation_weights must have shape (R,), (R, F), or (R, F, O)."
+            )
         if int(weights.shape[0]) <= 0:
             raise ValueError("relation_weights must contain at least one relation.")
         self.relation_weights = weights
-        self.self_weight = None if self_weight is None else jnp.asarray(self_weight, dtype=float)
+        self.self_weight = (
+            None if self_weight is None else jnp.asarray(self_weight, dtype=float)
+        )
         self.edge_type_key = str(edge_type_key)
         self.edge_weight_key = edge_weight_key
         self.input_key = input_key
@@ -285,7 +296,9 @@ class RelationalGraphConvolution(eqx.Module):
         if self.self_weight is not None:
             out = out + _self_transform(nodes, self.self_weight)
         out = _mask_nodes(out, graph.node_mask)
-        return graph.replace(nodes=_with_node_output(graph, out, self.output_key), validate=False)
+        return graph.replace(
+            nodes=_with_node_output(graph, out, self.output_key), validate=False
+        )
 
 
 __all__ = [

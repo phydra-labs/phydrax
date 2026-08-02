@@ -10,6 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
@@ -85,7 +86,9 @@ class KoopmanTemporalOperator(_AbstractOperatorModel):
         if self.spatial_ndim <= 0:
             raise ValueError("spatial_ndim must be positive.")
         if self.latent_size <= 0 or int(hidden_size) <= 0 or int(depth) < 0:
-            raise ValueError("latent_size and hidden_size must be positive; depth cannot be negative.")
+            raise ValueError(
+                "latent_size and hidden_size must be positive; depth cannot be negative."
+            )
         if evolution not in ("discrete", "continuous"):
             raise ValueError("evolution must be 'discrete' or 'continuous'.")
         if not self.time_axis:
@@ -115,10 +118,14 @@ class KoopmanTemporalOperator(_AbstractOperatorModel):
         unconstrained_decay = float(initial_decay) - self.min_decay
         initial_raw_decay = jnp.log(jnp.expm1(unconstrained_decay))
         self.raw_decay = jnp.full((self.latent_size,), initial_raw_decay)
-        self.skew_parameter = float(skew_scale) * jr.normal(
-            skew_key,
-            (self.latent_size, self.latent_size),
-        ) / jnp.sqrt(float(self.latent_size))
+        self.skew_parameter = (
+            float(skew_scale)
+            * jr.normal(
+                skew_key,
+                (self.latent_size, self.latent_size),
+            )
+            / jnp.sqrt(float(self.latent_size))
+        )
 
     def decay_rates(self, /) -> Array:
         """Return the strictly positive learned decay rates."""
@@ -166,7 +173,7 @@ class KoopmanTemporalOperator(_AbstractOperatorModel):
             orthogonal = jnp.linalg.solve(identity + skew, identity - skew)
             retention = jnp.exp(-self.decay_rates())
             powered = retention[None, :] ** flat_times[:, None]
-            matrices = jnp.einsum(
+            matrices = oe.contract(
                 "li,ti,mi->tlm",
                 orthogonal,
                 powered,
@@ -188,9 +195,13 @@ class KoopmanTemporalOperator(_AbstractOperatorModel):
         /,
     ) -> int:
         if not source.axes or source.coordinates is not None:
-            raise ValueError("KoopmanTemporalOperator source requires tensor-product axes.")
+            raise ValueError(
+                "KoopmanTemporalOperator source requires tensor-product axes."
+            )
         if not query.axes or query.coordinates is not None:
-            raise ValueError("KoopmanTemporalOperator query requires tensor-product axes.")
+            raise ValueError(
+                "KoopmanTemporalOperator query requires tensor-product axes."
+            )
         if len(source.axes) != self.spatial_ndim:
             raise ValueError(
                 f"Expected {self.spatial_ndim} source spatial axes, got {len(source.axes)}."
@@ -201,7 +212,9 @@ class KoopmanTemporalOperator(_AbstractOperatorModel):
             )
         source_names = tuple(axis.name for axis in source.axes)
         if self.time_axis in source_names:
-            raise ValueError("The source field must represent the state at elapsed time zero.")
+            raise ValueError(
+                "The source field must represent the state at elapsed time zero."
+            )
         query_names = tuple(axis.name for axis in query.axes)
         if query_names.count(self.time_axis) != 1:
             raise ValueError(f"Query requires exactly one {self.time_axis!r} time axis.")
@@ -227,9 +240,10 @@ class KoopmanTemporalOperator(_AbstractOperatorModel):
         sample_ndim = len(sample_shape)
         if tuple(int(size) for size in values.shape[:case_ndim]) != case_shape:
             raise ValueError("Source values do not match OperatorBatch.case_shape.")
-        if tuple(
-            int(size) for size in values.shape[case_ndim : case_ndim + sample_ndim]
-        ) != sample_shape:
+        if (
+            tuple(int(size) for size in values.shape[case_ndim : case_ndim + sample_ndim])
+            != sample_shape
+        ):
             raise ValueError("Source values do not align with the source tensor grid.")
         trailing = tuple(int(size) for size in values.shape[case_ndim + sample_ndim :])
         in_count = _get_size(self.in_size)
@@ -252,7 +266,9 @@ class KoopmanTemporalOperator(_AbstractOperatorModel):
         mask = source.mask_array(case_shape=case_shape)
         safe_values = jnp.where(mask[..., None], values, 0.0)
         features = jnp.concatenate((safe_values, coordinates), axis=-1)
-        flat_features = features.reshape((-1, _get_size(self.in_size) + self.spatial_ndim))
+        flat_features = features.reshape(
+            (-1, _get_size(self.in_size) + self.spatial_ndim)
+        )
         observables = jax.vmap(lambda feature: self.encoder(feature, key=None))(
             flat_features
         ).reshape(case_shape + source.sample_shape + (self.latent_size,))
@@ -283,11 +299,15 @@ class KoopmanTemporalOperator(_AbstractOperatorModel):
 
         time_nodes = query.axes[time_index].nodes
         transitions = self.evolution_matrix(time_nodes)
-        evolved = jnp.einsum("...l,tlm->...tm", latent, transitions)
-        latent_grid_shape = case_shape + tuple(
-            int(axis.size) if index == time_index else 1
-            for index, axis in enumerate(query.axes)
-        ) + (self.latent_size,)
+        evolved = oe.contract("...l,tlm->...tm", latent, transitions)
+        latent_grid_shape = (
+            case_shape
+            + tuple(
+                int(axis.size) if index == time_index else 1
+                for index, axis in enumerate(query.axes)
+            )
+            + (self.latent_size,)
+        )
         evolved = evolved.reshape(latent_grid_shape)
         evolved = jnp.broadcast_to(
             evolved,
@@ -300,9 +320,7 @@ class KoopmanTemporalOperator(_AbstractOperatorModel):
             axis=-1,
         )
         decoder_features = jnp.concatenate((evolved, spatial_coordinates), axis=-1)
-        flattened = decoder_features.reshape(
-            (-1, self.latent_size + self.spatial_ndim)
-        )
+        flattened = decoder_features.reshape((-1, self.latent_size + self.spatial_ndim))
         decoded = jax.vmap(lambda feature: self.decoder(feature, key=None))(flattened)
         out_count = _get_size(self.out_size)
         output = decoded.reshape(case_shape + query.sample_shape + (out_count,))

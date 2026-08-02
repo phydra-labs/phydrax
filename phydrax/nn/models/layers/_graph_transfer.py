@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
@@ -536,9 +537,9 @@ class GeometryMomentEmbedding(eqx.Module):
         mass = jnp.sum(selected, axis=-1, keepdims=True)
         normalized = jnp.where(mass > 0.0, selected / mass, jnp.zeros_like(selected))
         relative = neighborhood.relative / self.radius
-        mean = jnp.einsum("ctn,ctnd->ctd", normalized, relative)
+        mean = oe.contract("ctn,ctnd->ctd", normalized, relative)
         centered = relative - mean[..., None, :]
-        covariance = jnp.einsum(
+        covariance = oe.contract(
             "ctn,ctni,ctnj->ctij",
             normalized,
             centered,

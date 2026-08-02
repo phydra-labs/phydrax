@@ -51,6 +51,13 @@ from ._fractional_ops import (
     riesz_fractional_derivative_gl_mc,
 )
 from ._lie_ops import lie_bracket
+from ._riemannian_ops import (
+    covariant_derivative,
+    covariant_hessian,
+    riemannian_div,
+    riemannian_div_tensor,
+    riemannian_grad,
+)
 from ._stochastic_ops import (
     diffusion_covariance,
     fokker_planck_operator,
@@ -82,6 +89,8 @@ __all__ = [
     "deviatoric_stress",
     "directional_derivative",
     "div",
+    "covariant_derivative",
+    "covariant_hessian",
     "div_cauchy_stress",
     "div_diag_k_grad",
     "div_K_grad",
@@ -98,6 +107,9 @@ __all__ = [
     "fokker_planck_operator",
     "kolmogorov_generator",
     "lie_bracket",
+    "riemannian_div",
+    "riemannian_div_tensor",
+    "riemannian_grad",
     "laplacian",
     "linear_elastic_cauchy_stress_2d",
     "linear_elastic_orthotropic_stress_2d",

@@ -14,6 +14,7 @@ import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import opt_einsum as oe
 from jax import core as jax_core
 from jaxtyping import Array, Key
 
@@ -123,7 +124,7 @@ def _pad_right(values: Array, spatial_axis: int, boundary: WaveletBoundary, /) -
 
 def _apply_axis_matrix(values: Array, matrix: Array, spatial_axis: int, /) -> Array:
     moved = jnp.moveaxis(values, spatial_axis, -2)
-    transformed = jnp.einsum("ij,...jc->...ic", matrix, moved)
+    transformed = oe.contract("ij,...jc->...ic", matrix, moved)
     return jnp.moveaxis(transformed, -2, spatial_axis)
 
 
@@ -146,9 +147,7 @@ class WaveletLevelPlan(eqx.Module, NonTrainableState):
     ):
         shape = tuple(int(size) for size in input_shape)
         padded = tuple(size + size % 2 for size in shape)
-        matrices = tuple(
-            _analysis_matrix(size, wavelet, boundary) for size in padded
-        )
+        matrices = tuple(_analysis_matrix(size, wavelet, boundary) for size in padded)
         self.analysis_matrices = tuple(jnp.asarray(item[0]) for item in matrices)
         self.synthesis_matrices = tuple(jnp.asarray(item[1]) for item in matrices)
         self.input_shape = shape
@@ -219,13 +218,18 @@ class MultiresolutionTransform(eqx.Module, NonTrainableState):
     @property
     def subband_labels(self) -> tuple[tuple[int, ...], ...]:
         zero = (0,) * self.spatial_ndim
-        return tuple(label for label in product((0, 1), repeat=self.spatial_ndim) if label != zero)
+        return tuple(
+            label for label in product((0, 1), repeat=self.spatial_ndim) if label != zero
+        )
 
     def analysis(self, values: Array, /) -> WaveletCoefficients:
         low = jnp.asarray(values)
         if low.ndim < self.spatial_ndim + 1:
             raise ValueError("Wavelet values require spatial axes and a channel axis.")
-        if tuple(int(size) for size in low.shape[-self.spatial_ndim - 1 : -1]) != self.spatial_shape:
+        if (
+            tuple(int(size) for size in low.shape[-self.spatial_ndim - 1 : -1])
+            != self.spatial_shape
+        ):
             raise ValueError(
                 f"Wavelet values must end in spatial/channel shape {self.spatial_shape} + "
                 f"(channels,); got {low.shape}."
@@ -277,9 +281,7 @@ class MultiresolutionTransform(eqx.Module, NonTrainableState):
                     return bands[prefix]
                 lower = combine(axis + 1, prefix + (0,))
                 upper = combine(axis + 1, prefix + (1,))
-                return jnp.concatenate(
-                    (lower, upper), axis=spatial_start + axis
-                )
+                return jnp.concatenate((lower, upper), axis=spatial_start + axis)
 
             reconstructed = combine(0, ())
             for axis in reversed(range(self.spatial_ndim)):
@@ -329,8 +331,7 @@ class WaveletSpectralConvND(eqx.Module):
         )
         self.detail_weights = tuple(
             tuple(
-                scale
-                * jr.normal(next(keys), (self.out_channels, self.in_channels))
+                scale * jr.normal(next(keys), (self.out_channels, self.in_channels))
                 for _ in range(transform.detail_count)
             )
             for _ in range(transform.levels)
@@ -338,7 +339,7 @@ class WaveletSpectralConvND(eqx.Module):
 
     @staticmethod
     def _mix(weight: Array, values: Array, /) -> Array:
-        return jnp.einsum("oi,...i->...o", weight, values)
+        return oe.contract("oi,...i->...o", weight, values)
 
     def __call__(self, values: Array, /) -> Array:
         array = jnp.asarray(values)
@@ -376,7 +377,9 @@ def _grid_values(
         return values[..., None]
     expected = scalar_shape + (channels,)
     if tuple(int(size) for size in values.shape) != expected:
-        raise ValueError(f"Grid source values must have shape {expected}; got {values.shape}.")
+        raise ValueError(
+            f"Grid source values must have shape {expected}; got {values.shape}."
+        )
     return values
 
 
@@ -387,7 +390,9 @@ def _validate_tensor_grid(
     /,
 ) -> None:
     if not source.axes or not query.axes:
-        raise ValueError("Wavelet operators require tensor-product source and query axes.")
+        raise ValueError(
+            "Wavelet operators require tensor-product source and query axes."
+        )
     if source.sample_shape != spatial_shape or query.sample_shape != spatial_shape:
         raise ValueError(
             f"Wavelet source/query grids must both have shape {spatial_shape}."
@@ -498,7 +503,9 @@ class WaveletNeuralOperator(_AbstractOperatorModel):
         key: EvalKey = DOC_KEY0,
     ) -> Array:
         source = self._source(batch)
-        _validate_tensor_grid(source, batch.require_single_query(), self.transform.spatial_shape)
+        _validate_tensor_grid(
+            source, batch.require_single_query(), self.transform.spatial_shape
+        )
         values = _grid_values(
             source,
             batch.case_shape,
@@ -514,9 +521,7 @@ class WaveletNeuralOperator(_AbstractOperatorModel):
                 hidden, key=fold_in_eval_key(key, 2 * index + 1)
             )
             hidden = self.activation(hidden + update)
-        output = self.projection(
-            hidden, key=fold_in_eval_key(key, 2 * self.depth + 1)
-        )
+        output = self.projection(hidden, key=fold_in_eval_key(key, 2 * self.depth + 1))
         query_mask = batch.require_single_query().mask_array(case_shape=batch.case_shape)
         output = output * query_mask[..., None]
         return output[..., 0] if self.out_size == "scalar" else output
@@ -571,7 +576,8 @@ def _alpert_analysis(order: int, /) -> np.ndarray:
         local_coordinate = 4.0 * points - (1.0 if branch == 0 else 3.0)
         fine_values = np.stack(
             [
-                sqrt(2.0) * sqrt(2 * degree + 1)
+                sqrt(2.0)
+                * sqrt(2 * degree + 1)
                 * np.polynomial.legendre.legval(
                     local_coordinate,
                     [0.0] * degree + [1.0],
@@ -659,17 +665,17 @@ class AlpertMultiwaveletTransform(eqx.Module, NonTrainableState):
             )
         padded = self._pad(array)
         cells = self.padded_points // self.order
-        samples = padded.reshape(padded.shape[:-2] + (cells, self.order, padded.shape[-1]))
-        low = jnp.einsum("mp,...cpi->...cmi", self.base_analysis, samples)
+        samples = padded.reshape(
+            padded.shape[:-2] + (cells, self.order, padded.shape[-1])
+        )
+        low = oe.contract("mp,...cpi->...cmi", self.base_analysis, samples)
         details: list[Array] = []
         for _ in range(self.levels):
             cells = int(low.shape[-3])
             paired = low.reshape(
                 low.shape[:-3] + (cells // 2, 2 * self.order, low.shape[-1])
             )
-            transformed = jnp.einsum(
-                "mn,...pni->...pmi", self.level_analysis, paired
-            )
+            transformed = oe.contract("mn,...pni->...pmi", self.level_analysis, paired)
             low = transformed[..., : self.order, :]
             details.append(transformed[..., self.order :, :])
         return MultiwaveletCoefficients(low=low, details=tuple(details))
@@ -680,13 +686,15 @@ class AlpertMultiwaveletTransform(eqx.Module, NonTrainableState):
         low = jnp.asarray(coefficients.low)
         for detail in reversed(coefficients.details):
             merged = jnp.concatenate((low, detail), axis=-2)
-            fine = jnp.einsum("nm,...pmi->...pni", self.level_synthesis, merged)
+            fine = oe.contract("nm,...pmi->...pni", self.level_synthesis, merged)
             low = fine.reshape(
                 fine.shape[:-3]
                 + (int(fine.shape[-3]) * 2, self.order, int(fine.shape[-1]))
             )
-        samples = jnp.einsum("pm,...cmi->...cpi", self.base_synthesis, low)
-        output = samples.reshape(samples.shape[:-3] + (self.padded_points, samples.shape[-1]))
+        samples = oe.contract("pm,...cmi->...cpi", self.base_synthesis, low)
+        output = samples.reshape(
+            samples.shape[:-3] + (self.padded_points, samples.shape[-1])
+        )
         return output[..., : self.num_points, :]
 
     def __call__(self, values: Array, /) -> MultiwaveletCoefficients:
@@ -730,10 +738,8 @@ class MultiwaveletSpectralConv1D(eqx.Module):
         flattened = values.reshape(
             values.shape[:-2] + (self.transform.order * self.in_channels,)
         )
-        mixed = jnp.einsum("oi,...i->...o", weight, flattened)
-        return mixed.reshape(
-            mixed.shape[:-1] + (self.transform.order, self.out_channels)
-        )
+        mixed = oe.contract("oi,...i->...o", weight, flattened)
+        return mixed.reshape(mixed.shape[:-1] + (self.transform.order, self.out_channels))
 
     def __call__(self, values: Array, /) -> Array:
         array = jnp.asarray(values)
@@ -837,7 +843,9 @@ class MultiwaveletOperator(_AbstractOperatorModel):
         if self.source_key is not None:
             return batch.input(self.source_key)
         if len(batch.inputs) != 1:
-            raise ValueError("MultiwaveletOperator requires source_key for multiple inputs.")
+            raise ValueError(
+                "MultiwaveletOperator requires source_key for multiple inputs."
+            )
         return next(iter(batch.inputs.values()))
 
     def __call_operator_batch__(
@@ -850,9 +858,7 @@ class MultiwaveletOperator(_AbstractOperatorModel):
         source = self._source(batch)
         spatial_shape = (self.transform.num_points,)
         _validate_tensor_grid(source, batch.require_single_query(), spatial_shape)
-        values = _grid_values(
-            source, batch.case_shape, self.in_channels, spatial_shape
-        )
+        values = _grid_values(source, batch.case_shape, self.in_channels, spatial_shape)
         source_mask = source.mask_array(case_shape=batch.case_shape)
         hidden = self.lift(values * source_mask[..., None], key=fold_in_eval_key(key, 0))
         for index, (multiwavelet, pointwise) in enumerate(
@@ -862,9 +868,7 @@ class MultiwaveletOperator(_AbstractOperatorModel):
                 hidden, key=fold_in_eval_key(key, 2 * index + 1)
             )
             hidden = self.activation(hidden + update)
-        output = self.projection(
-            hidden, key=fold_in_eval_key(key, 2 * self.depth + 1)
-        )
+        output = self.projection(hidden, key=fold_in_eval_key(key, 2 * self.depth + 1))
         query_mask = batch.require_single_query().mask_array(case_shape=batch.case_shape)
         output = output * query_mask[..., None]
         return output[..., 0] if self.out_size == "scalar" else output

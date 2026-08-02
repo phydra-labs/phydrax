@@ -260,6 +260,13 @@ In Phydrax, these operators are exposed as `surface_grad`, `surface_div`, and
     Surface operators are intended to be evaluated on boundary components so that the geometry
     can supply consistent normals.
 
+For a field already expressed in local coordinates with a
+`phydrax.metrix.RiemannianMetric`, pass the metric instead of a boundary
+component. That overload computes
+\(\Delta_g u=g^{ij}(\partial_i\partial_j u-\Gamma^k_{ij}\partial_k u)\)
+intrinsically and does not require ambient normals. See
+[API → Metrix → Connections and intrinsic operators](api/metrix/connections.md).
+
 ## Fractional operators
 
 Phydrax includes a small set of fractional derivative operators, primarily for experimentation.

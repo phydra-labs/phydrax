@@ -3,6 +3,7 @@
 #
 
 import jax.numpy as jnp
+import opt_einsum as oe
 
 import phydrax as phx
 
@@ -40,7 +41,7 @@ def test_euclidean_edge_features_are_rigid_motion_invariant():
         graph.edges["squared_distance"],
         moved.edges["squared_distance"],
     )
-    expected_relative = jnp.einsum("ij,ej->ei", rotation, graph.edges["relative"])
+    expected_relative = oe.contract("ij,ej->ei", rotation, graph.edges["relative"])
     assert jnp.allclose(moved.edges["relative"], expected_relative)
 
 
@@ -69,7 +70,7 @@ def test_equivariant_graph_convolution_respects_rigid_motion():
     out = model(graph)
     moved_out = model(moved)
     rotation = jnp.array([[0.0, -1.0], [1.0, 0.0]])
-    expected_vector = jnp.einsum("ij,njf->nif", rotation, out.nodes["vector"])
+    expected_vector = oe.contract("ij,njf->nif", rotation, out.nodes["vector"])
 
     assert jnp.allclose(moved_out.nodes["scalar"], out.nodes["scalar"])
     assert jnp.allclose(moved_out.nodes["vector"], expected_vector)

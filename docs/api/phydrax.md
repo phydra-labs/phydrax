@@ -3,6 +3,8 @@
 Top-level package namespace. Most functionality lives in subpackages:
 
 - `phydrax.domain`: domains, geometry, sampling, and domain functions
+- `phydrax.metrix`: coordinate charts, tensors, Riemannian metrics, curvature,
+  embedded geometry, and metric-aware stochastic calculus
 - `phydrax.data_utils`: CSV loading and array scaling helpers
 - `phydrax.operators`: differential/integral operators on `DomainFunction`s
 - `phydrax.constraints`: residual and data penalty terms

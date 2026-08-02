@@ -10,6 +10,7 @@ from math import prod
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
@@ -261,7 +262,7 @@ class GaussianOperatorDistribution(AbstractOperatorDistribution):
         factors = self.factors.reshape((cases, self.event_size, self.rank))
         mask = self._flat_mask()
         diagonal = jax.vmap(jnp.diag)(jnp.where(mask, scale**2, 0.0))
-        covariance = diagonal + jnp.einsum(
+        covariance = diagonal + oe.contract(
             "cer,cfr->cef", factors * mask[..., None], factors * mask[..., None]
         )
         return covariance.reshape(self.case_shape + (self.event_size, self.event_size))
@@ -293,7 +294,7 @@ class GaussianOperatorDistribution(AbstractOperatorDistribution):
                 (samples, cases, self.rank),
                 dtype=self.mean.dtype,
             )
-            values = values + jnp.einsum("scr,cer->sce", latent_noise, factors)
+            values = values + oe.contract("scr,cer->sce", latent_noise, factors)
         mask = self._flat_mask()
         values = jnp.where(mask[None, ...], values, 0.0)
         return values.reshape(shape + self.case_shape + self.event_shape)

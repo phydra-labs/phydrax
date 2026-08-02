@@ -10,6 +10,7 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
@@ -232,7 +233,7 @@ class GreenKernelOperator(_AbstractOperatorModel):
         learned_kernel = _apply_rows(kernel, features, key).reshape(
             features.shape[:-1] + (self.latent_channels, channels)
         )
-        messages = jnp.einsum("bqslc,bsc->bqsl", learned_kernel, source_values)
+        messages = oe.contract("bqslc,bsc->bqsl", learned_kernel, source_values)
         return jnp.sum(messages * source_weights[:, None, :, None], axis=2)
 
     def __call_operator_batch__(
@@ -244,21 +245,18 @@ class GreenKernelOperator(_AbstractOperatorModel):
     ) -> Array:
         forcing = batch.input(self.forcing_key)
         boundary = batch.input(self.boundary_key)
-        forcing_coordinates = _coordinates(
-            forcing, batch.case_shape, "Interior forcing"
+        forcing_coordinates = _coordinates(forcing, batch.case_shape, "Interior forcing")
+        boundary_coordinates = _coordinates(boundary, batch.case_shape, "Boundary data")
+        query_coordinates = _coordinates(
+            batch.require_single_query(), batch.case_shape, "Query"
         )
-        boundary_coordinates = _coordinates(
-            boundary, batch.case_shape, "Boundary data"
-        )
-        query_coordinates = _coordinates(batch.require_single_query(), batch.case_shape, "Query")
         if (
             int(forcing_coordinates.shape[-1]) != self.coord_dim
             or int(boundary_coordinates.shape[-1]) != self.coord_dim
             or int(query_coordinates.shape[-1]) != self.coord_dim
         ):
             raise ValueError(
-                "Forcing, boundary, and query coordinate dimensions must match "
-                "coord_dim."
+                "Forcing, boundary, and query coordinate dimensions must match coord_dim."
             )
 
         forcing_values = _values(
@@ -273,16 +271,16 @@ class GreenKernelOperator(_AbstractOperatorModel):
             self.boundary_channels,
             "Boundary data",
         )
-        forcing_weights = _physical_weights(
-            forcing, batch.case_shape, "Interior forcing"
-        )
-        boundary_weights = _physical_weights(
-            boundary, batch.case_shape, "Boundary data"
-        )
-        query_mask = batch.require_single_query().mask_array(case_shape=batch.case_shape).reshape(
-            (
-                prod(batch.case_shape) if batch.case_shape else 1,
-                prod(batch.require_single_query().sample_shape),
+        forcing_weights = _physical_weights(forcing, batch.case_shape, "Interior forcing")
+        boundary_weights = _physical_weights(boundary, batch.case_shape, "Boundary data")
+        query_mask = (
+            batch.require_single_query()
+            .mask_array(case_shape=batch.case_shape)
+            .reshape(
+                (
+                    prod(batch.case_shape) if batch.case_shape else 1,
+                    prod(batch.require_single_query().sample_shape),
+                )
             )
         )
         forcing_eval_key, boundary_eval_key, head_eval_key = split_eval_key(key, 3)

@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
@@ -29,7 +30,9 @@ def _eigenspace_groups(eigenvalues: np.ndarray, tolerance: float, /) -> np.ndarr
     groups = np.zeros(eigenvalues.size, dtype=np.int32)
     group = 0
     for index in range(1, eigenvalues.size):
-        scale = max(1.0, abs(float(eigenvalues[index - 1])), abs(float(eigenvalues[index])))
+        scale = max(
+            1.0, abs(float(eigenvalues[index - 1])), abs(float(eigenvalues[index]))
+        )
         if abs(float(eigenvalues[index] - eigenvalues[index - 1])) > tolerance * scale:
             group += 1
         groups[index] = group
@@ -97,9 +100,7 @@ class SpectralDiscretization(eqx.Module, NonTrainableState):
             raise ValueError("Spectral transforms must be finite.")
         if bool(jnp.any(~jnp.isfinite(eigenvalues_))):
             raise ValueError("Spectral eigenvalues must be finite.")
-        if bool(jnp.any(~jnp.isfinite(quadrature))) or bool(
-            jnp.any(quadrature <= 0.0)
-        ):
+        if bool(jnp.any(~jnp.isfinite(quadrature))) or bool(jnp.any(quadrature <= 0.0)):
             raise ValueError("Spectral quadrature must be finite and positive.")
         if not str(basis_id):
             raise ValueError("Spectral basis_id must not be empty.")
@@ -305,10 +306,10 @@ class ManifoldSpectralConv(eqx.Module):
                 "Manifold spectral values must end in source points/channels "
                 f"{(self.source.num_points, self.in_channels)}; got {array.shape}."
             )
-        coefficients = jnp.einsum("mp,...pc->...mc", self.source.analysis, array)
+        coefficients = oe.contract("mp,...pc->...mc", self.source.analysis, array)
         mode_weight = self.weight[self.source.group_ids]
-        transformed = jnp.einsum("moc,...mc->...mo", mode_weight, coefficients)
-        return jnp.einsum("pm,...mo->...po", self.target.synthesis, transformed)
+        transformed = oe.contract("moc,...mc->...mo", mode_weight, coefficients)
+        return oe.contract("pm,...mo->...po", self.target.synthesis, transformed)
 
 
 class ManifoldSpectralOperator(_AbstractOperatorModel):
@@ -420,7 +421,9 @@ class ManifoldSpectralOperator(_AbstractOperatorModel):
         if prod(source.sample_shape) != self.source_plan.num_points:
             raise ValueError("Source sample count does not match the spectral plan.")
         if prod(batch.require_single_query().sample_shape) != self.target_plan.num_points:
-            raise ValueError("Query sample count does not match the target spectral plan.")
+            raise ValueError(
+                "Query sample count does not match the target spectral plan."
+            )
         values = jnp.asarray(source.values)
         sample_ndim = len(source.sample_shape)
         trailing = values.shape[len(batch.case_shape) + sample_ndim :]
@@ -453,12 +456,16 @@ class ManifoldSpectralOperator(_AbstractOperatorModel):
             hidden,
             key=fold_in_eval_key(key, 2 * self.depth + 1),
         )
-        query_mask = batch.require_single_query().mask_array(case_shape=batch.case_shape).reshape(
-            batch.case_shape + (self.target_plan.num_points, 1)
+        query_mask = (
+            batch.require_single_query()
+            .mask_array(case_shape=batch.case_shape)
+            .reshape(batch.case_shape + (self.target_plan.num_points, 1))
         )
         output = output * query_mask
         output = output.reshape(
-            batch.case_shape + batch.require_single_query().sample_shape + (self.out_channels,)
+            batch.case_shape
+            + batch.require_single_query().sample_shape
+            + (self.out_channels,)
         )
         return output[..., 0] if self.out_size == "scalar" else output
 

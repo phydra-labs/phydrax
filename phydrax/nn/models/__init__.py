@@ -267,18 +267,14 @@ from .layers._spectral import BasisSpectralConvND, BasisTransformPlan
 from .layers._warp import MultiheadWarp, WarpBoundaryMode
 from .layers._warp_geometry import (
     conservative_remap,
-    DENSITY_WARP_FIELD,
     GaussianWarpRoute,
     normalized_axis_nodes,
     normalized_lattice_from_nodes,
     RectilinearWarpDiagnostics,
     sample_rectilinear_grid,
-    SCALAR_WARP_FIELD,
     warp_field,
     warp_jacobian,
-    WarpFieldSpec,
     WarpMaskMode,
-    WarpVariance,
 )
 from .wrappers._complex_output import ComplexOutputModel
 from .wrappers._concatenated import ConcatenatedModel
@@ -543,11 +539,7 @@ __all__ = [
     "sphere_tangent_projection",
     "RectilinearWarpDiagnostics",
     "GaussianWarpRoute",
-    "WarpFieldSpec",
-    "SCALAR_WARP_FIELD",
-    "DENSITY_WARP_FIELD",
     "WarpMaskMode",
-    "WarpVariance",
     "conservative_remap",
     "normalized_axis_nodes",
     "normalized_lattice_from_nodes",

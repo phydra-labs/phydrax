@@ -145,6 +145,22 @@ then evaluates the Itô generator or adjoint. A covariance matrix alone is
 insufficient because it does not identify the diffusion-vector fields and their
 drift correction.
 
+When `metric=` is supplied, the stochastic operators use the corresponding
+Riemannian chart. The supplied Itô drift remains a **coordinate** drift and is
+converted to the vector drift
+\(b_{\mathrm{cov}}^k=b_I^k+\tfrac12\Gamma^k_{ij}a^{ij}\). The backward operator
+contracts \(a^{ij}\) with a covariant Hessian. The forward density is then
+relative to \(d\mathrm{vol}_g\), and the adjoint becomes
+
+\[
+\mathcal L^\ast p
+=-\nabla_i(b_{\mathrm{cov}}^i p)
++\frac12\nabla_i\nabla_j(a^{ij}p).
+\]
+
+See [API → Metrix → Stochastic geometry](../metrix/stochastic.md) for the
+coordinate/covariant distinction and array-callable kernels.
+
 ::: phydrax.operators.diffusion_covariance
 
 ---
@@ -158,6 +174,30 @@ drift correction.
 ---
 
 ::: phydrax.operators.fokker_planck_operator
+
+## Riemannian differential operators
+
+These adapters apply Metrix geometry to labeled `DomainFunction` objects.
+`laplace_beltrami` accepts either a `RiemannianMetric` for intrinsic coordinate
+calculus or a `DomainComponent` for the existing normal-based surface calculus.
+
+::: phydrax.operators.riemannian_grad
+
+---
+
+::: phydrax.operators.riemannian_div
+
+---
+
+::: phydrax.operators.riemannian_div_tensor
+
+---
+
+::: phydrax.operators.covariant_hessian
+
+---
+
+::: phydrax.operators.covariant_derivative
 
 ## Surface operators
 

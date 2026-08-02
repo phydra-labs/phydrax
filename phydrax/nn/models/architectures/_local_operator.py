@@ -9,6 +9,7 @@ from typing import Literal
 
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array
 
 from ....graph._query_batch import query_neighbors
@@ -95,8 +96,8 @@ def _neighbor_data(
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
     cases, query_count = int(query.shape[0]), int(query.shape[1])
     source_count = int(source_coordinates.shape[1])
-    neighbor_count = source_count if max_neighbors is None else min(
-        int(max_neighbors), source_count
+    neighbor_count = (
+        source_count if max_neighbors is None else min(int(max_neighbors), source_count)
     )
     neighborhood = query_neighbors(
         source_coordinates,
@@ -263,7 +264,9 @@ class LocalIntegralOperator(_AbstractOperatorModel):
         output = jnp.concatenate(chunks, axis=1)
         output = output * mask[..., None]
         output = output.reshape(
-            case_shape + batch.require_single_query().sample_shape + (_get_size(self.out_size),)
+            case_shape
+            + batch.require_single_query().sample_shape
+            + (_get_size(self.out_size),)
         )
         if self.out_size == "scalar":
             return output[..., 0]
@@ -389,7 +392,7 @@ class LocalDifferentialOperator(_AbstractOperatorModel):
                 pair_weights / denominator,
                 jnp.zeros_like(pair_weights),
             )
-            center = jnp.einsum("cqs,cqsi->cqi", normalized_weights, source_data)
+            center = oe.contract("cqs,cqsi->cqi", normalized_weights, source_data)
             differences = source_data - center[:, :, None, :]
             kernel_inputs = jnp.concatenate(
                 (
@@ -408,7 +411,7 @@ class LocalDifferentialOperator(_AbstractOperatorModel):
                     _get_size(self.in_size),
                 )
             )
-            chunk = jnp.einsum(
+            chunk = oe.contract(
                 "cqsoi,cqsi,cqs->cqo",
                 kernels,
                 differences,
@@ -420,7 +423,9 @@ class LocalDifferentialOperator(_AbstractOperatorModel):
         output = jnp.concatenate(chunks, axis=1)
         output = output * query_mask[..., None]
         output = output.reshape(
-            case_shape + batch.require_single_query().sample_shape + (_get_size(self.out_size),)
+            case_shape
+            + batch.require_single_query().sample_shape
+            + (_get_size(self.out_size),)
         )
         if self.out_size == "scalar":
             return output[..., 0]

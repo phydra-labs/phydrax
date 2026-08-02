@@ -4,6 +4,7 @@
 
 import coordax as cx
 import jax.numpy as jnp
+import opt_einsum as oe
 import pytest
 
 from phydrax._frozendict import frozendict
@@ -107,7 +108,7 @@ def test_einsum_constant_matrix_and_domain_vector():
     pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
     result = jnp.asarray(out(pts).data)
 
-    expected = jnp.asarray(jnp.einsum("ij,j->i", k_mat, jnp.array([2.0, 3.0, -1.0])))
+    expected = jnp.asarray(oe.contract("ij,j->i", k_mat, jnp.array([2.0, 3.0, -1.0])))
     assert result.shape == (3,)
     assert jnp.allclose(result, expected)
 

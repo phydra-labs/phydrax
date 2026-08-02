@@ -10,6 +10,7 @@ from typing import cast, Literal
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
@@ -241,7 +242,7 @@ class BasisSpectralConvND(StrictModule):
             )
 
         letters = "abcdefghijklmnopqrstuvwxyz"[:ndim]
-        coefficients = jnp.einsum(
+        coefficients = oe.contract(
             f"...{letters}i,io{letters}->...{letters}o",
             coefficients,
             self.weight,
