@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import opt_einsum as oe
 import polars as pl
 
 import phydrax as phx
@@ -1943,7 +1944,7 @@ def native_kernel_parity_checks() -> tuple[KernelParityCheck, ...]:
         deeponet_batch.case_shape,
         key=None,
     )
-    explicit = jnp.einsum("cql,cl->cq", basis[..., 0, :], coefficients)
+    explicit = oe.contract("cql,cl->cq", basis[..., 0, :], coefficients)
     explicit = explicit + deeponet.bias[0]
     deeponet_error = _relative_array_error(deeponet(deeponet_batch), explicit)
     checks.append(
@@ -2140,7 +2141,7 @@ def native_kernel_parity_checks() -> tuple[KernelParityCheck, ...]:
     attention_value = self_attention.value(attention_values).reshape(
         (1, 4, self_attention.heads, self_attention.head_dim)
     )
-    attention_logits = jnp.einsum(
+    attention_logits = oe.contract(
         "bqhd,bkhd->bhqk",
         attention_query,
         attention_key,
@@ -2155,7 +2156,7 @@ def native_kernel_parity_checks() -> tuple[KernelParityCheck, ...]:
         axis=-1,
     )
     attention_explicit = self_attention.output(
-        jnp.einsum(
+        oe.contract(
             "bhqk,bkhd->bqhd",
             attention_weights,
             attention_value,

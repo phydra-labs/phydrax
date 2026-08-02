@@ -31,6 +31,9 @@ Most workflows are composing a few primitives:
 
 - **Domain**: a labeled product space $\Omega=\Omega_x\times\Omega_t\times\cdots$.
 - **Component**: a subset like interior/boundary/initial slice where a term lives.
+- **Metrix**: differentiable coordinate and Riemannian geometry—charts, tensor
+  transformations, metrics, connections, curvature, embedded charts, and
+  metric-aware stochastic operators.
 - **DomainFunction**: a real- or complex-valued field $u:\Omega\to\mathbb{R}^m$
   or $\mathbb{C}^m$ with explicit label dependencies.
 - **Operators**: maps $u\mapsto r$ such as differential, integral, mechanics,
@@ -138,6 +141,9 @@ Can be found [here](https://phydra-labs.github.io/phydrax).
 Mathematical guides include
 [Lagrangian and Hamiltonian mechanics](docs/guides_mechanics.md) and
 [quantum operators and dynamics](docs/guides_quantum.md).
+[Metrix](docs/api/metrix/index.md) adds metric-aware differential geometry for
+curvilinear PDEs, manifold PINNs, embedded geometry, and Riemannian stochastic
+generators.
 
 Neural-operator support includes canonical source/query batches, DeepONet,
 N-dimensional FNO variants including the experimental-tier dealiased HOFNO, graph

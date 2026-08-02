@@ -80,6 +80,7 @@ from ._ragged_series_dataset import (
     RaggedSeriesDatasetDomain,
     RaggedSeriesSampling,
 )
+from ._riemannian_measure import with_riemannian_measure
 from ._scalar import ScalarInterval
 from ._structure import (
     CoordSeparableBatch,
@@ -201,6 +202,7 @@ __all__ = [
     "ComponentSpec",
     "DomainComponent",
     "CochainCellRegion",
+    "with_riemannian_measure",
     "CochainCells",
     "DomainComponentUnion",
     "BoundaryEdges",

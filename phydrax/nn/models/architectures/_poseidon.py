@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
@@ -386,14 +387,14 @@ class _WindowAttention2D(StrictModule):
         query = self.query(windows).reshape(shape)
         key = self.key(windows).reshape(shape)
         value = self.value(windows).reshape(shape)
-        logits = jnp.einsum("bqhd,bkhd->bhqk", query, key) / sqrt(float(self.head_dim))
+        logits = oe.contract("bqhd,bkhd->bhqk", query, key) / sqrt(float(self.head_dim))
         logits = logits + self._relative_position_bias()[None, ...]
         separation = jnp.abs(coordinates[:, :, None, :] - coordinates[:, None, :, :])
         same_region = jnp.all(separation < self.window_size, axis=-1)
         pair_mask = valid[:, :, None] & valid[:, None, :] & same_region
         logits = jnp.where(pair_mask[:, None, :, :], logits, -1e30)
         weights = jax.nn.softmax(logits, axis=-1)
-        attended = jnp.einsum("bhqk,bkhd->bqhd", weights, value)
+        attended = oe.contract("bhqk,bkhd->bqhd", weights, value)
         attended = attended * valid[:, :, None, None].astype(attended.dtype)
         attended = self.output(attended.reshape(windows.shape))
         return self._unpartition(

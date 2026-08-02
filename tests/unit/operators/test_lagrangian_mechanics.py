@@ -3,6 +3,7 @@
 #
 
 import jax.numpy as jnp
+import opt_einsum as oe
 import pytest
 
 import phydrax as phx
@@ -49,7 +50,7 @@ def test_euler_lagrange_matches_coupled_matrix_equation():
 
     @tangent.Function("q", "v")
     def lagrangian(q, v):
-        return 0.5 * jnp.dot(v, v) - 0.5 * jnp.einsum("i,ij,j->", q, stiffness, q)
+        return 0.5 * jnp.dot(v, v) - 0.5 * oe.contract("i,ij,j->", q, stiffness, q)
 
     @time.Function("t")
     def trajectory(t):

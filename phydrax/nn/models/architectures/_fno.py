@@ -14,6 +14,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
@@ -215,7 +216,7 @@ class SpectralConvND(StrictModule):
         assert self.core is not None
         core = self.core[(corner, slice(None), slice(None), *mode_slices)]
         letters = ascii_lowercase[: len(modes)]
-        return jnp.einsum(
+        return oe.contract(
             f"ir,os,rs{letters}->io{letters}",
             self.factor_in,
             self.factor_out,
@@ -259,7 +260,7 @@ class SpectralConvND(StrictModule):
             spatial_slices = tuple(slices)
             block = transformed[(..., *spatial_slices, slice(None))]
             weight = self._dense_weight(corner, modes)
-            result = jnp.einsum(
+            result = oe.contract(
                 f"...{letters}i,io{letters}->...{letters}o",
                 block,
                 weight,

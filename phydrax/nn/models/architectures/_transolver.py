@@ -12,6 +12,7 @@ import jax
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
@@ -97,9 +98,7 @@ class _PhysicsSliceTokenizer(StrictModule):
         restricted = jnn.softmax(restricted_logits, axis=-1)
         # The forward pass is an exact top-k partition. The dense softmax gradient
         # keeps the assignment head trainable for the top-k=1 Transolver path.
-        return soft_membership + jax.lax.stop_gradient(
-            restricted - soft_membership
-        )
+        return soft_membership + jax.lax.stop_gradient(restricted - soft_membership)
 
     def __call__(
         self,
@@ -125,7 +124,7 @@ class _PhysicsSliceTokenizer(StrictModule):
         slice_measure = jnp.sum(weighted_memberships, axis=1)
         slice_mask = slice_measure > 0.0
         normalizer = jnp.where(slice_mask, slice_measure, 1.0)
-        tokens = jnp.einsum(
+        tokens = oe.contract(
             "bns,bnc->bsc", weighted_memberships, self.value(safe_features)
         )
         tokens = (tokens / normalizer[..., None]) * slice_mask[..., None]
@@ -194,15 +193,18 @@ class Transolver(AbstractEncodedOperatorModel):
         self.source_key = None if source_key is None else str(source_key)
         self.in_size = in_channels
         self.out_size = out_channels
-        if min(
-            self.in_channels,
-            self.out_channels,
-            self.coord_dim,
-            self.width,
-            self.num_slices,
-            self.depth,
-            self.num_heads,
-        ) <= 0:
+        if (
+            min(
+                self.in_channels,
+                self.out_channels,
+                self.coord_dim,
+                self.width,
+                self.num_slices,
+                self.depth,
+                self.num_heads,
+            )
+            <= 0
+        ):
             raise ValueError("Transolver dimensions must be positive.")
         if self.slice_top_k <= 0 or self.slice_top_k > self.num_slices:
             raise ValueError("slice_top_k must be between one and num_slices.")
@@ -265,9 +267,7 @@ class Transolver(AbstractEncodedOperatorModel):
             accumulation_dtype=accumulation_dtype,
             key=keys[4],
         )
-        self.decoder_norm = eqx.nn.RMSNorm(
-            self.width, eps=1e-6, use_bias=False
-        )
+        self.decoder_norm = eqx.nn.RMSNorm(self.width, eps=1e-6, use_bias=False)
         self.projection = Linear(
             in_size=self.width,
             out_size=self.out_channels,
@@ -294,9 +294,7 @@ class Transolver(AbstractEncodedOperatorModel):
         del key
         source = self._source(batch)
         values = _flatten_function_values(source, batch.case_shape, self.in_channels)
-        coordinates, quadrature, source_mask = _flatten_geometry(
-            source, batch.case_shape
-        )
+        coordinates, quadrature, source_mask = _flatten_geometry(source, batch.case_shape)
         if int(coordinates.shape[-1]) != self.coord_dim:
             raise ValueError(
                 f"Transolver expected coordinate dimension {self.coord_dim}; "
@@ -311,9 +309,10 @@ class Transolver(AbstractEncodedOperatorModel):
         source_mask = source_mask.reshape((cases, point_count))
         safe_values = jnp.where(source_mask[..., None], values, 0.0)
         safe_coordinates = jnp.where(source_mask[..., None], coordinates, 0.0)
-        source_features = self.source_lift(
-            jnp.concatenate((safe_values, safe_coordinates), axis=-1)
-        ) * source_mask[..., None]
+        source_features = (
+            self.source_lift(jnp.concatenate((safe_values, safe_coordinates), axis=-1))
+            * source_mask[..., None]
+        )
         tokens, slice_measure, slice_mask = self.tokenizer(
             source_features, quadrature, source_mask
         )
@@ -372,9 +371,10 @@ class Transolver(AbstractEncodedOperatorModel):
             source_mask=state.mask.reshape((cases, self.num_slices)),
             query_mask=query_mask,
         )
-        decoded = _feature_norm(
-            self.decoder_norm, query_features + decoded
-        ) * query_mask[..., None]
+        decoded = (
+            _feature_norm(self.decoder_norm, query_features + decoded)
+            * query_mask[..., None]
+        )
         output = self.projection(decoded) * query_mask[..., None]
         shaped = output.reshape(
             state.case_shape + query.sample_shape + (self.out_channels,)

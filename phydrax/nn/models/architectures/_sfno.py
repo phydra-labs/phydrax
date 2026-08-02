@@ -9,6 +9,7 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jax.scipy.special import sph_harm_y
 from jaxtyping import Array, Key
 
@@ -204,15 +205,15 @@ class SphericalSpectralConv(StrictModule):
         basis = transform.basis
         weights = transform.weights
         flattened = array.reshape(array.shape[:-3] + (-1, self.in_channels))
-        coefficients = jnp.einsum(
+        coefficients = oe.contract(
             "nm,...ni,...n->...mi",
             jnp.conj(basis),
             flattened,
             weights,
         )
         mode_weight = self.weight[self.degree]
-        output_coefficients = jnp.einsum("...mi,mio->...mo", coefficients, mode_weight)
-        output = jnp.einsum("nm,...mo->...no", basis, output_coefficients).real
+        output_coefficients = oe.contract("...mi,mio->...mo", coefficients, mode_weight)
+        output = oe.contract("nm,...mo->...no", basis, output_coefficients).real
         return output.reshape(array.shape[:-3] + sample_shape + (self.out_channels,))
 
 
@@ -367,7 +368,10 @@ class SFNO(_AbstractOperatorModel):
         axes = source.axes or batch.require_single_query().axes
         if len(axes) != 2 or source.values is None:
             raise ValueError("SFNO requires colatitude and longitude grid axes.")
-        if source.axes and source.sample_shape != batch.require_single_query().sample_shape:
+        if (
+            source.axes
+            and source.sample_shape != batch.require_single_query().sample_shape
+        ):
             raise ValueError("SFNO requires coincident source and query grids.")
         weights = source.weights(case_shape=batch.case_shape)
         return self._evaluate(

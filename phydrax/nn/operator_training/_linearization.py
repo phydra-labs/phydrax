@@ -9,6 +9,7 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ..._doc import DOC_KEY0
@@ -58,7 +59,9 @@ def _predict(
         return operator.predict_prevalidated(batch, key=key)
     prediction = operator(batch, key=key)
     if not isinstance(prediction, OperatorPrediction):
-        raise TypeError("Physical linearization requires named OperatorPrediction output.")
+        raise TypeError(
+            "Physical linearization requires named OperatorPrediction output."
+        )
     return prediction
 
 
@@ -71,7 +74,9 @@ def _field_name(prediction: OperatorPrediction, requested: str | None) -> str:
             )
         return str(requested)
     if len(prediction.fields) != 1:
-        raise ValueError("field_name is required for multi-output operator linearization.")
+        raise ValueError(
+            "field_name is required for multi-output operator linearization."
+        )
     return next(iter(prediction.fields))
 
 
@@ -83,7 +88,7 @@ def _apply_channel_metric(values: Array, metric: Array | None, /) -> Array:
         raise ValueError(
             "Channel metric must be square and match the trailing channel dimension."
         )
-    return jnp.einsum("ij,...j->...i", matrix, values)
+    return oe.contract("ij,...j->...i", matrix, values)
 
 
 def _riesz_map(
@@ -121,7 +126,7 @@ def _inverse_riesz_map(
         raise ValueError(
             "Channel metric must be square and match the trailing channel dimension."
         )
-    return jnp.einsum("ij,...j->...i", jnp.linalg.inv(matrix), unweighted)
+    return oe.contract("ij,...j->...i", jnp.linalg.inv(matrix), unweighted)
 
 
 @dataclass(frozen=True)

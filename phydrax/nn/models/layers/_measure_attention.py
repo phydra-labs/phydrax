@@ -9,6 +9,7 @@ from typing import Literal
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
@@ -73,16 +74,14 @@ def _dense_softmax_attention(
     /,
 ) -> Array:
     safe_mask, log_measure, any_source = _softmax_measure(measure)
-    logits = (
-        jnp.einsum("bqhd,bshd->bhqs", query, key) * _attention_scale(query)
-    )
+    logits = oe.contract("bqhd,bshd->bhqs", query, key) * _attention_scale(query)
     logits = jnp.where(
         safe_mask[:, None, None, :],
         logits + log_measure[:, None, None, :],
         -jnp.inf,
     )
     attention = jnn.softmax(logits, axis=-1)
-    attended = jnp.einsum("bhqs,bshd->bqhd", attention, value)
+    attended = oe.contract("bhqs,bshd->bqhd", attention, value)
     return jnp.where(any_source[:, None, None, None], attended, 0.0)
 
 
@@ -115,11 +114,10 @@ def _blockwise_softmax_attention(
         block_value = value[:, start:stop]
         block_measure = measure[:, start:stop]
         valid = block_measure > 0.0
-        logits = jnp.einsum("bhqd,bshd->bhqs", q, block_key) * scale
+        logits = oe.contract("bhqd,bshd->bhqs", q, block_key) * scale
         logits = jnp.where(
             valid[:, None, None, :],
-            logits
-            + jnp.log(jnp.where(valid, block_measure, 1.0))[:, None, None, :],
+            logits + jnp.log(jnp.where(valid, block_measure, 1.0))[:, None, None, :],
             -jnp.inf,
         )
         block_max = jnp.max(logits, axis=-1)
@@ -135,18 +133,15 @@ def _blockwise_softmax_attention(
             -jnp.inf,
         )
         exponential = jnp.exp(shifted)
-        running_sum = running_sum * previous_scale + jnp.sum(
-            exponential, axis=-1
-        )
-        accumulator = accumulator * previous_scale[..., None] + jnp.einsum(
+        running_sum = running_sum * previous_scale + jnp.sum(exponential, axis=-1)
+        accumulator = accumulator * previous_scale[..., None] + oe.contract(
             "bhqs,bshd->bhqd", exponential, block_value
         )
         running_max = updated_max
     normalized = jnp.where(
         running_sum[..., None] > 0.0,
-        accumulator / jnp.maximum(
-            running_sum[..., None], jnp.finfo(accumulator.dtype).tiny
-        ),
+        accumulator
+        / jnp.maximum(running_sum[..., None], jnp.finfo(accumulator.dtype).tiny),
         0.0,
     )
     return jnp.transpose(normalized, (0, 2, 1, 3))
@@ -197,10 +192,10 @@ def _linear_attention(
     q = jnn.elu(query) + 1.0
     k = jnn.elu(key) + 1.0
     weighted_key = k * measure[:, :, None, None]
-    covariance = jnp.einsum("bshd,bshv->bhdv", weighted_key, value)
-    attended = jnp.einsum("bqhd,bhdv->bqhv", q, covariance)
+    covariance = oe.contract("bshd,bshv->bhdv", weighted_key, value)
+    attended = oe.contract("bqhd,bhdv->bqhv", q, covariance)
     if normalize:
-        normalizer = jnp.einsum("bqhd,bhd->bqh", q, jnp.sum(weighted_key, axis=1))
+        normalizer = oe.contract("bqhd,bhd->bqh", q, jnp.sum(weighted_key, axis=1))
         positive_normalizer = normalizer > 0.0
         attended = attended / jnp.where(
             positive_normalizer[..., None],
@@ -267,8 +262,7 @@ class MeasureAwareAttention(StrictModule):
             raise ValueError("block_size must be positive.")
         if self.kernel != "softmax" and self.execution not in ("auto", "dense"):
             raise ValueError(
-                "Non-softmax attention kernels accept only 'auto' or 'dense' "
-                "execution."
+                "Non-softmax attention kernels accept only 'auto' or 'dense' execution."
             )
         if self.accumulation_dtype not in ("input", "float32", "float64"):
             raise ValueError(
@@ -303,9 +297,7 @@ class MeasureAwareAttention(StrictModule):
 
     def project_query(self, query: Array, /) -> Array:
         projected = self.query(query)
-        return projected.reshape(
-            query.shape[:-1] + (self.num_heads, self.head_dim)
-        )
+        return projected.reshape(query.shape[:-1] + (self.num_heads, self.head_dim))
 
     def project_source(self, source: Array, /) -> tuple[Array, Array]:
         shape = source.shape[:-1] + (self.num_heads, self.head_dim)
@@ -336,9 +328,7 @@ class MeasureAwareAttention(StrictModule):
             raise ValueError("Projected key/value have incompatible head dimensions.")
         if int(k.shape[1]) == 0:
             raise ValueError("Projected attention requires at least one source.")
-        if not all(
-            jnp.issubdtype(array.dtype, jnp.floating) for array in (q, k, v)
-        ):
+        if not all(jnp.issubdtype(array.dtype, jnp.floating) for array in (q, k, v)):
             raise ValueError("Projected attention arrays must have floating dtype.")
         dtype = (
             jnp.result_type(q.dtype, k.dtype, v.dtype)

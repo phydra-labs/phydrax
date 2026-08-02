@@ -6,6 +6,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 import pytest
 
 import phydrax as phx
@@ -191,7 +192,7 @@ def test_affine_warp_jacobian_and_determinant_are_exact_on_nonuniform_nodes():
     y = jnp.array([-1.0, -0.7, 0.15, 0.6, 1.0])
     coordinates = _lattice((x, y))
     gradient = jnp.array([[0.2, -0.1], [0.3, 0.4]])
-    displacement = jnp.einsum("...j,ij->...i", coordinates, gradient)
+    displacement = oe.contract("...j,ij->...i", coordinates, gradient)
 
     jacobian = phx.nn.warp_jacobian(
         displacement,
@@ -228,7 +229,7 @@ def test_vector_covector_and_rank_two_tensor_transformation_laws(variance, compo
         displacement,
         boundary=("clamp", "clamp"),
         axis_nodes=(x, y),
-        field_spec=phx.nn.WarpFieldSpec(variance),
+        field_spec=phx.metrix.TensorType(variance),
     )
     if variance == ("contravariant",):
         expected = components / scales
@@ -336,9 +337,9 @@ def test_probabilistic_warp_mean_and_sample_routes_are_coherent_and_differentiab
     sampled_output = layer(values, key=sample_key)
     sampled_diagnostics = layer.diagnostics(values, key=sample_key)
     expected_sample = layer.base.transport(values, sampled_diagnostics.displacement)
-    value_gradient = jax.grad(
-        lambda field: jnp.mean(layer(field, key=sample_key) ** 2)
-    )(values)
+    value_gradient = jax.grad(lambda field: jnp.mean(layer(field, key=sample_key) ** 2))(
+        values
+    )
     _, parameter_gradient = eqx.filter_value_and_grad(
         lambda current: jnp.mean(current(values, key=sample_key) ** 2)
     )(layer)

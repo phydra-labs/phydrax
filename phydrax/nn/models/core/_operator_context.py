@@ -13,6 +13,7 @@ from typing import Literal
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jax import core as jax_core
 from jaxtyping import Array, Key
 
@@ -118,7 +119,9 @@ class EncodedOperatorState(StrictModule):
         if not layers:
             layers = (values_,)
         if any(layer.shape != values_.shape for layer in layers):
-            raise ValueError("Every encoded layer value must match the context value shape.")
+            raise ValueError(
+                "Every encoded layer value must match the context value shape."
+            )
         keys = tuple(jnp.asarray(value) for value in projected_keys)
         projected = tuple(jnp.asarray(value) for value in projected_values)
         if len(keys) != len(projected):
@@ -314,26 +317,24 @@ class PooledGeometryContext(AbstractOperatorContextStrategy):
         )
         assignment = jnn.one_hot(segment, self.num_tokens, dtype=flattened.dtype)
         effective = weights * mask.astype(weights.dtype)
-        mass = jnp.einsum("bn,nm->bm", effective, assignment)
+        mass = oe.contract("bn,nm->bm", effective, assignment)
         denominator = jnp.maximum(mass, jnp.finfo(flattened.dtype).tiny)
-        pooled_values = jnp.einsum(
-            "bn,bnc,nm->bmc", effective, flattened, assignment
-        ) / denominator[..., None]
-        pooled_coordinates = jnp.einsum(
-            "bn,bnd,nm->bmd", effective, coordinates, assignment
-        ) / denominator[..., None]
+        pooled_values = (
+            oe.contract("bn,bnc,nm->bmc", effective, flattened, assignment)
+            / denominator[..., None]
+        )
+        pooled_coordinates = (
+            oe.contract("bn,bnd,nm->bmd", effective, coordinates, assignment)
+            / denominator[..., None]
+        )
         pooled_mask = mass > 0.0
         pooled_values = jnp.where(pooled_mask[..., None], pooled_values, 0.0)
-        pooled_coordinates = jnp.where(
-            pooled_mask[..., None], pooled_coordinates, 0.0
-        )
+        pooled_coordinates = jnp.where(pooled_mask[..., None], pooled_coordinates, 0.0)
         shape = case_shape + (self.num_tokens,)
         return EncodedOperatorState(
             kind="pooled_geometry",
             values=pooled_values.reshape(shape + (self.channels,)),
-            coordinates=pooled_coordinates.reshape(
-                shape + (int(coordinates.shape[-1]),)
-            ),
+            coordinates=pooled_coordinates.reshape(shape + (int(coordinates.shape[-1]),)),
             weights=mass.reshape(shape),
             mask=pooled_mask.reshape(shape),
             case_shape=case_shape,
@@ -374,9 +375,9 @@ class SampledAnchorContext(AbstractOperatorContextStrategy):
                 f"Cannot select {self.num_anchors} anchors from {count} samples."
             )
         if indices is None:
-            shared = jnp.rint(
-                jnp.linspace(0, count - 1, self.num_anchors)
-            ).astype(jnp.int32)
+            shared = jnp.rint(jnp.linspace(0, count - 1, self.num_anchors)).astype(
+                jnp.int32
+            )
             selected = jnp.broadcast_to(shared, (cases, self.num_anchors))
         else:
             selected_ = jnp.asarray(indices, dtype=jnp.int32)
@@ -399,18 +400,14 @@ class SampledAnchorContext(AbstractOperatorContextStrategy):
             selected[..., None], selected.shape + (int(coordinates.shape[-1]),)
         )
         anchor_values = jnp.take_along_axis(flattened, channel_index, axis=1)
-        anchor_coordinates = jnp.take_along_axis(
-            coordinates, coordinate_index, axis=1
-        )
+        anchor_coordinates = jnp.take_along_axis(coordinates, coordinate_index, axis=1)
         anchor_weights = jnp.take_along_axis(weights, selected, axis=1)
         anchor_mask = jnp.take_along_axis(mask, selected, axis=1)
         shape = case_shape + (self.num_anchors,)
         return EncodedOperatorState(
             kind="sampled_anchor",
             values=anchor_values.reshape(shape + (self.channels,)),
-            coordinates=anchor_coordinates.reshape(
-                shape + (int(coordinates.shape[-1]),)
-            ),
+            coordinates=anchor_coordinates.reshape(shape + (int(coordinates.shape[-1]),)),
             weights=anchor_weights.reshape(shape),
             mask=anchor_mask.reshape(shape),
             case_shape=case_shape,

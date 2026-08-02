@@ -15,6 +15,7 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ..._doc import DOC_KEY0
@@ -102,7 +103,7 @@ def operator_hilbert_inner_product(
             raise ValueError(
                 f"channel_metric must have shape {(channels, channels)}; got {metric.shape}."
             )
-        density = jnp.einsum(
+        density = oe.contract(
             "...i,ij,...j->...",
             jnp.conj(left_array),
             metric,
@@ -280,6 +281,7 @@ def _broadcast_field_value(value: Any, field: OperatorFieldBatch, /) -> Array:
 
 class AbstractOperatorOutputTransform(ABC):
     """Metadata-preserving differentiable transform of one physical prediction."""
+
     field_name: str
 
     @abstractmethod
@@ -500,7 +502,6 @@ class OperatorOutputPipeline(eqx.Module):
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-
 def operator_weak_form_loss(
     residual: Any,
     test_functions: Any,
@@ -532,7 +533,7 @@ def operator_weak_form_loss(
     residual_flat = residual_array.reshape((case_count, sample_count, channel_count))
     tests_flat = tests.reshape((case_count, sample_count, tests.shape[-1]))
     weights = query.weights(case_shape=case).reshape((case_count, sample_count))
-    moments = jnp.einsum(
+    moments = oe.contract(
         "cst,csk,cs->ctk",
         jnp.conj(tests_flat),
         residual_flat,
@@ -540,7 +541,7 @@ def operator_weak_form_loss(
     )
     energy = jnp.abs(moments) ** 2
     if normalize_tests:
-        test_energy = jnp.einsum(
+        test_energy = oe.contract(
             "cst,cst,cs->ct",
             jnp.conj(tests_flat),
             tests_flat,

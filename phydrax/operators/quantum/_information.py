@@ -10,6 +10,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import jax.scipy as jsp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
@@ -27,9 +28,7 @@ def _coerce_entropy_base(base: ArrayLike, /) -> Array:
         raise ValueError(f"entropy base must be a scalar, got shape {value.shape}.")
     if jnp.iscomplexobj(value):
         raise TypeError("entropy base must be real.")
-    if isinstance(base, Real) and (
-        isinstance(base, bool) or base <= 0 or base == 1
-    ):
+    if isinstance(base, Real) and (isinstance(base, bool) or base <= 0 or base == 1):
         raise ValueError("entropy base must be positive and unequal to one.")
     return value
 
@@ -73,7 +72,7 @@ class _PurityCallable(StrictModule):
             self.density.func(*args, key=key, **kwargs),
             role="density operator",
         )
-        return jnp.real(jnp.einsum("ij,ji->", density, density))
+        return jnp.real(oe.contract("ij,ji->", density, density))
 
 
 class _EntropyCallable(StrictModule):
@@ -170,9 +169,9 @@ class _DensityFidelityCallable(StrictModule):
                 "Density-operator dimensions must match for density_fidelity; "
                 f"got {left_eigenvectors.shape} and {right_eigenvectors.shape}."
             )
-        left_root = (
-            left_eigenvectors * jnp.sqrt(left_eigenvalues)[None, :]
-        ) @ jnp.conj(left_eigenvectors.T)
+        left_root = (left_eigenvectors * jnp.sqrt(left_eigenvalues)[None, :]) @ jnp.conj(
+            left_eigenvectors.T
+        )
         right_root = (
             right_eigenvectors * jnp.sqrt(right_eigenvalues)[None, :]
         ) @ jnp.conj(right_eigenvectors.T)

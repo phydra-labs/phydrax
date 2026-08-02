@@ -11,6 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
@@ -196,13 +197,13 @@ class LaplaceTemporalOperator(_AbstractOperatorModel):
         )
         left_weight = 0.5 * partial_width[..., None] * left_kernel
         right_weight = 0.5 * partial_width[..., None] * right_kernel
-        left_response = jnp.einsum(
+        left_response = oe.contract(
             "cqnp,cni,pio->cqo",
             left_weight,
             left_values,
             self.residue,
         )
-        right_response = jnp.einsum(
+        right_response = oe.contract(
             "cqnp,cqni,pio->cqo",
             right_weight,
             right_values,
@@ -222,14 +223,18 @@ class LaplaceTemporalOperator(_AbstractOperatorModel):
             axis=1,
         )
         held = held * has_past[..., None]
-        response = response + jnp.einsum("cqi,io->cqo", held, self.direct_weight)
+        response = response + oe.contract("cqi,io->cqo", held, self.direct_weight)
         response = response + self.bias
-        query_mask = batch.require_single_query().mask_array(case_shape=case_shape).reshape(
-            query_time.shape
+        query_mask = (
+            batch.require_single_query()
+            .mask_array(case_shape=case_shape)
+            .reshape(query_time.shape)
         )
         response = response * query_mask[..., None]
         output = response.reshape(
-            case_shape + batch.require_single_query().sample_shape + (_get_size(self.out_size),)
+            case_shape
+            + batch.require_single_query().sample_shape
+            + (_get_size(self.out_size),)
         )
         if self.out_size == "scalar":
             return output[..., 0]
@@ -258,8 +263,10 @@ class LaplaceTemporalOperator(_AbstractOperatorModel):
             case_ndim=len(batch.case_axes),
         )
         source_mask = source.mask_array(case_shape=case_shape).reshape(source_time.shape)
-        query_mask = batch.require_single_query().mask_array(case_shape=case_shape).reshape(
-            query_time.shape
+        query_mask = (
+            batch.require_single_query()
+            .mask_array(case_shape=case_shape)
+            .reshape(query_time.shape)
         )
         valid_interval = source_mask[:, :-1] & source_mask[:, 1:]
         delta = jnp.diff(source_time, axis=1)
@@ -288,9 +295,11 @@ class LaplaceTemporalOperator(_AbstractOperatorModel):
             )
             candidate = transition[..., None] * current_state + increment
             next_state = jnp.where(valid[:, None, None], candidate, current_state)
-            response = 2.0 * jnp.real(jnp.einsum("cpi,pio->co", next_state, self.residue))
+            response = 2.0 * jnp.real(
+                oe.contract("cpi,pio->co", next_state, self.residue)
+            )
             held = right * valid[:, None]
-            response = response + jnp.einsum(
+            response = response + oe.contract(
                 "ci,io->co",
                 held,
                 self.direct_weight,
@@ -308,7 +317,7 @@ class LaplaceTemporalOperator(_AbstractOperatorModel):
             ),
         )
         initial = (
-            jnp.einsum(
+            oe.contract(
                 "ci,io->co",
                 values[:, 0, :] * source_mask[:, :1],
                 self.direct_weight,
@@ -321,7 +330,9 @@ class LaplaceTemporalOperator(_AbstractOperatorModel):
         )
         response = response * query_mask[..., None]
         output = response.reshape(
-            case_shape + batch.require_single_query().sample_shape + (_get_size(self.out_size),)
+            case_shape
+            + batch.require_single_query().sample_shape
+            + (_get_size(self.out_size),)
         )
         if self.out_size == "scalar":
             return output[..., 0]

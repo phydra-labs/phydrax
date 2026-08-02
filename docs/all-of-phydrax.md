@@ -83,6 +83,16 @@ Gaussian or conditional-flow operators learn transition distributions; likelihoo
 and conformal tools score or calibrate observations. See
 [Guides → Uncertainty quantification](guides_uncertainty.md).
 
+### Geometry: Euclidean coordinates vs metric-aware calculus
+
+`phydrax.metrix` supplies explicit charts, tensor transformation laws,
+positive-definite metric fields, Levi-Civita operators, curvature, embedded
+charts, and metric-aware stochastic generators. Use it when a PDE, PINN, or
+operator is posed in curvilinear coordinates or on a parameterized manifold.
+Bounds, seams, sampling, and admissibility remain domain concerns; metric volume
+can be attached to a component with `with_riemannian_measure`. See
+[API → Metrix](api/metrix/index.md).
+
 ## A first real PDE example: Poisson on a square
 
 This example trains a neural field \(u_\theta(x,y)\) to satisfy
@@ -276,6 +286,11 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   `semidiscretize_spde`/`semidiscretize_reaction_diffusion` before entering the
   same differential backend.
   See [API → Solver → Differential equations](api/solver/differential.md).
+- **Curvilinear or manifold PDE/PINN**: define a `CoordinateChart` and
+  `RiemannianMetric`, then use `riemannian_grad`, `riemannian_div`,
+  `covariant_hessian`, or the metric overload of `laplace_beltrami`. Attach
+  `sqrt(det(g))` to component integration with `with_riemannian_measure`.
+  See [API → Metrix](api/metrix/index.md).
 - **Stochastic PINNs / density equations**: use
   `ContinuousKolmogorovConstraint` for stationary or backward equations and
   `ContinuousFokkerPlanckConstraint` for stationary or forward density equations.
@@ -311,6 +326,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - [Cookbook](cookbook/index.md)
 - [Domains and sampling](guides_domain.md)
 - [Differential operators](guides_differential.md)
+- [Metrix: differentiable geometry](api/metrix/index.md)
 - [Integrals and measures](guides_integrals.md)
 - [Euclidean path integrals and Feynman–Kac expectations](guides_path_integrals.md)
 - [Lagrangian and Hamiltonian mechanics](guides_mechanics.md)
@@ -320,6 +336,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - [Solvers and training](guides_solver.md)
 - [API reference](api/phydrax.md)
 - `phydrax.domain` for geometry, time, and sampling.
+- `phydrax.metrix` for charts, tensors, metrics, curvature, and stochastic geometry.
 - `phydrax.data_utils` for CSV loading, array scaling, and case-index splits.
 - `phydrax.constraints` for loss terms and enforced constraints.
 - `phydrax.objectives` for raw signed scalar objectives.

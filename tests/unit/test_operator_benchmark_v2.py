@@ -4,6 +4,7 @@ from pathlib import Path
 
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 import polars as pl
 import pytest
 
@@ -767,7 +768,7 @@ def test_irregular_and_graph_shifts_reuse_the_same_physical_realizations():
     shifted_kernel = -jnp.log(
         jnp.sqrt(jnp.sum(shifted_displacement**2, axis=-1) + 1e-3)
     ) / (2.0 * jnp.pi)
-    expected_shifted_target = jnp.einsum(
+    expected_shifted_target = oe.contract(
         "qs,cs,s->cq",
         shifted_kernel,
         shifted_samples.values,
@@ -1046,8 +1047,7 @@ def test_cochain_benchmarks_preserve_typed_fields_and_matched_architectures(
         prediction = architecture.build(mixed, seed=7).predict(mixed.train_batch)
         assert tuple(prediction.fields) == ("pressure", "flux")
         assert all(
-            jnp.all(jnp.isfinite(field.values))
-            for field in prediction.fields.values()
+            jnp.all(jnp.isfinite(field.values)) for field in prediction.fields.values()
         )
 
 
@@ -1084,9 +1084,10 @@ def test_named_multi_field_benchmark_reports_each_physical_field():
     assert evaluation.relative_l2 == max(
         field.relative_l2 for field in evaluation.field_metrics
     )
-    assert {
-        field["name"] for field in payload["evaluations"][0]["field_metrics"]
-    } == {"pressure", "flux"}
+    assert {field["name"] for field in payload["evaluations"][0]["field_metrics"]} == {
+        "pressure",
+        "flux",
+    }
 
 
 def test_scenario_audit_rejects_nonfinite_numerical_data(quick_ladders):

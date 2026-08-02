@@ -64,6 +64,12 @@ in evolution mode. Both use `FunctionalConstraint`, so fixed/resampled batches,
 sampling structures, weights, reductions, and adaptive collocation have the
 same meaning as for other continuous residuals.
 
+Passing `metric=` selects the covariant generator and Riemannian-volume
+Fokker--Planck adjoint. Drift inputs retain coordinate Itô semantics and are
+converted internally; with `interpretation="stratonovich"`, the coordinate
+Stratonovich correction is applied first. See
+[API → Metrix → Stochastic geometry](../metrix/stochastic.md).
+
 Drift, diffusion, and covariance coefficients can be supplied as
 `DomainFunction` objects or as names in the solver's `functions` mapping. A
 named coefficient is part of `constraint_vars`, so its trainable leaves are

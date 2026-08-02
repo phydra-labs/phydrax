@@ -13,6 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
@@ -212,7 +213,7 @@ class _DepthwiseSpectralConvND(StrictModule):
             ) + (slice(0, modes[-1]),)
             block = transformed[(..., *slices, slice(None))]
             weight = self.weight[(corner, slice(None), *mode_slices)]
-            result = jnp.einsum(
+            result = oe.contract(
                 f"...{letters}c,c{letters}->...{letters}c",
                 block,
                 weight,

@@ -132,6 +132,14 @@ nav:
             - Sampling: "api/domain/sampling.md"
             - Components: "api/domain/components.md"
             - Functions: "api/domain/functions.md"
+        - Metrix:
+            - Overview: "api/metrix/index.md"
+            - Charts and tensors: "api/metrix/charts.md"
+            - Metrics and metric jets: "api/metrix/metrics.md"
+            - Connections and intrinsic operators: "api/metrix/connections.md"
+            - Curvature: "api/metrix/curvature.md"
+            - Embedded geometry: "api/metrix/embedded.md"
+            - Stochastic geometry: "api/metrix/stochastic.md"
         - Data utilities:
             - Overview: "api/data_utils/index.md"
             - CSV reader: "api/data_utils/csv.md"

@@ -12,6 +12,7 @@ import equinox as eqx
 import jax.nn as jnn
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
@@ -105,7 +106,9 @@ class GNOT(_AbstractOperatorModel):
         if min(hidden_width, encoder_hidden, fusion_hidden) <= 0:
             raise ValueError("GNOT hidden widths must be positive.")
         if min(int(encoder_depth), int(fusion_depth), int(transformer_depth)) <= 0:
-            raise ValueError("GNOT encoder, fusion, and transformer depths must be positive.")
+            raise ValueError(
+                "GNOT encoder, fusion, and transformer depths must be positive."
+            )
         if int(num_heads) <= 0:
             raise ValueError("num_heads must be positive.")
         resolved_head_dim = (
@@ -203,8 +206,10 @@ class GNOT(_AbstractOperatorModel):
         if int(query_coordinates.shape[-1]) != self.coord_dim:
             raise ValueError("GNOT query coordinate dimension does not match coord_dim.")
         query_mask = _sample_mask(batch.require_single_query(), case_shape)
-        query_measure = batch.require_single_query().quadrature(case_shape=case_shape).reshape(
-            (cases, query_count)
+        query_measure = (
+            batch.require_single_query()
+            .quadrature(case_shape=case_shape)
+            .reshape((cases, query_count))
         )
         if self.query_channels == 0:
             query_inputs = query_coordinates
@@ -247,9 +252,7 @@ class GNOT(_AbstractOperatorModel):
             source_features = encoder(
                 jnp.concatenate((source_coordinates, source_values), axis=-1)
             ).reshape((cases, source_count, self.hidden_channels))
-            source_mask = _sample_mask(source, case_shape).reshape(
-                (cases, source_count)
-            )
+            source_mask = _sample_mask(source, case_shape).reshape((cases, source_count))
             source_measure = source.quadrature(case_shape=case_shape).reshape(
                 (cases, source_count)
             )
@@ -263,9 +266,7 @@ class GNOT(_AbstractOperatorModel):
             normalized_weights = source.weights(
                 normalized=True, case_shape=case_shape
             ).reshape((cases, source_count))
-            summary = jnp.einsum(
-                "bs,bsw->bw", normalized_weights, source_features
-            )
+            summary = oe.contract("bs,bsw->bw", normalized_weights, source_features)
             summary = jnp.broadcast_to(
                 summary[:, None, :],
                 (cases, query_count, self.hidden_channels),
@@ -277,9 +278,7 @@ class GNOT(_AbstractOperatorModel):
         stacked_values = jnp.stack(branch_values, axis=-2)
         gates = jnn.softmax(jnp.stack(branch_logits, axis=-1), axis=-1)
         fused = query_features + jnp.sum(stacked_values * gates[..., None], axis=-2)
-        refined = jnp.asarray(
-            self.processor(fused, query_measure, flat_query_mask)
-        )
+        refined = jnp.asarray(self.processor(fused, query_measure, flat_query_mask))
         output = self.projection(refined) * flat_query_mask[..., None]
         shaped = output.reshape(
             case_shape

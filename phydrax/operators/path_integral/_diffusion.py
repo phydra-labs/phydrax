@@ -10,6 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
 
 from ..._doc import DOC_KEY0
@@ -103,7 +104,7 @@ def _apply_diffusion(
             state_dim,
             state_dim,
         ):
-            out = jnp.einsum("nij,nj->ni", coefficient, flat_increment)
+            out = oe.contract("nij,nj->ni", coefficient, flat_increment)
         else:
             raise ValueError(
                 "callable diffusion must return a scalar, diagonal vector, or "
@@ -116,7 +117,7 @@ def _apply_diffusion(
         elif coefficient.shape == (state_dim,):
             out = coefficient * flat_increment
         elif coefficient.shape == (state_dim, state_dim):
-            out = jnp.einsum("ij,nj->ni", coefficient, flat_increment)
+            out = oe.contract("ij,nj->ni", coefficient, flat_increment)
         else:
             raise ValueError(
                 "diffusion must be a scalar, state_dim vector, state_dim square "
