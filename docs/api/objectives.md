@@ -8,3 +8,5 @@ not impose squared-residual semantics or nonnegativity.
 ::: phydrax.objectives.AbstractSamplingObjectiveTerm
 
 ::: phydrax.objectives.IntegralFunctional
+
+::: phydrax.objectives.AdaptiveIntegralFunctional

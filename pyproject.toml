@@ -45,7 +45,7 @@ dependencies = [
     "orthax>=0.2.7",
     "polars>=1.40.1",
     "pyvista>=0.46.4",
-    "quadax>=0.2.11",
+    "quadax>=0.2.13,<0.3",
     "scipy>=1.14",
     "setuptools<81",
     "shapely>=2.0",

@@ -139,6 +139,11 @@ from .graph import (  # noqa: F401
     neighbor_aggregate,
 )
 from .integral import (  # noqa: F401
+    adaptive_integral,
+    AdaptiveIntegralResult,
+    AdaptiveQuadratureConfig,
+    AdaptiveQuadratureMethod,
+    AdaptiveSubintervals,
     build_ball_quadrature,
     build_quadrature,
     integral,
@@ -297,6 +302,11 @@ __all__ = [
     "caputo_time_fractional",
     "caputo_time_fractional_dw",
     # integral exports
+    "AdaptiveIntegralResult",
+    "AdaptiveQuadratureConfig",
+    "AdaptiveQuadratureMethod",
+    "AdaptiveSubintervals",
+    "adaptive_integral",
     "build_ball_quadrature",
     "build_quadrature",
     "integrate_boundary",

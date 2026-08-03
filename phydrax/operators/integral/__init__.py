@@ -2,6 +2,13 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from ._adaptive import (
+    adaptive_integral,
+    AdaptiveIntegralResult,
+    AdaptiveQuadratureConfig,
+    AdaptiveQuadratureMethod,
+    AdaptiveSubintervals,
+)
 from ._batch_ops import (
     build_quadrature,
     integral,
@@ -22,6 +29,11 @@ from ._time_convolution import time_convolution
 
 
 __all__ = [
+    "AdaptiveIntegralResult",
+    "AdaptiveQuadratureConfig",
+    "AdaptiveQuadratureMethod",
+    "AdaptiveSubintervals",
+    "adaptive_integral",
     "build_ball_quadrature",
     "build_quadrature",
     "integrate_boundary",
