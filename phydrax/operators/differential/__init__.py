@@ -66,8 +66,8 @@ from ._stochastic_ops import (
     stratonovich_to_ito_drift,
 )
 from ._surface_ops import (
+    ambient_surface_hessian_trace,
     laplace_beltrami,
-    laplace_beltrami_divgrad,
     surface_curl_scalar,
     surface_curl_vector,
     surface_div,
@@ -133,8 +133,8 @@ __all__ = [
     "strain_rate_magnitude",
     "div_tensor",
     "navier_stokes_divergence",
+    "ambient_surface_hessian_trace",
     "laplace_beltrami",
-    "laplace_beltrami_divgrad",
     "surface_curl_scalar",
     "surface_curl_vector",
     "surface_div",

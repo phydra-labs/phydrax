@@ -81,7 +81,6 @@ class CochainFieldSpec(StrictModule):
         )
 
 
-
 def _host_array(name: str, value: Any, /, *, dtype: Any | None = None) -> np.ndarray:
     array = np.asarray(value, dtype=dtype)
     if np.any(~np.isfinite(array)):
@@ -232,9 +231,13 @@ class HarmonicSubspace(StrictModule, NonTrainableState):
         basis_tuple = tuple(jnp.asarray(value) for value in bases)
         eigenvalue_tuple = tuple(jnp.asarray(value) for value in eigenvalues)
         rank_tuple = tuple(int(value) for value in ranks)
-        if len(basis_tuple) != len(rank_tuple) or len(eigenvalue_tuple) != len(rank_tuple):
+        if len(basis_tuple) != len(rank_tuple) or len(eigenvalue_tuple) != len(
+            rank_tuple
+        ):
             raise ValueError("Harmonic basis, eigenvalue, and rank counts must match.")
-        if int(max_modes) < 0 or any(rank < 0 or rank > int(max_modes) for rank in rank_tuple):
+        if int(max_modes) < 0 or any(
+            rank < 0 or rank > int(max_modes) for rank in rank_tuple
+        ):
             raise ValueError("Harmonic ranks must lie in [0, max_modes].")
         for basis, values, rank in zip(
             basis_tuple, eigenvalue_tuple, rank_tuple, strict=True
@@ -295,7 +298,9 @@ class CochainComplexIR(StrictModule, NonTrainableState):
         max_degree = len(counts) - 1
         incidence_tuple = tuple(incidences)
         if len(incidence_tuple) != max_degree:
-            raise ValueError("One incidence is required between every consecutive degree.")
+            raise ValueError(
+                "One incidence is required between every consecutive degree."
+            )
         for degree, incidence in enumerate(incidence_tuple, start=1):
             if not isinstance(incidence, CochainIncidence):
                 raise TypeError("incidences must contain CochainIncidence objects.")
@@ -304,7 +309,9 @@ class CochainComplexIR(StrictModule, NonTrainableState):
                 or incidence.lower_count != counts[degree - 1]
                 or incidence.upper_count != counts[degree]
             ):
-                raise ValueError("Incidence degrees and dimensions must match cell counts.")
+                raise ValueError(
+                    "Incidence degrees and dimensions must match cell counts."
+                )
 
         stars = self._degree_values("hodge_stars", hodge_stars, counts, positive=True)
         primal = self._degree_values(
@@ -317,7 +324,9 @@ class CochainComplexIR(StrictModule, NonTrainableState):
         )
         dual = self._degree_values(
             "dual_measures",
-            tuple(np.asarray(primal[k]) * np.asarray(stars[k]) for k in range(len(counts)))
+            tuple(
+                np.asarray(primal[k]) * np.asarray(stars[k]) for k in range(len(counts))
+            )
             if dual_measures is None
             else dual_measures,
             counts,
@@ -429,7 +438,9 @@ class CochainComplexIR(StrictModule, NonTrainableState):
             dimensions.add(int(array.shape[1]))
             points.append(jnp.asarray(array))
         if len(dimensions) > 1 or (dimensions and any(value is None for value in points)):
-            raise ValueError("Coordinates must be present with one common dimension at all degrees.")
+            raise ValueError(
+                "Coordinates must be present with one common dimension at all degrees."
+            )
         return tuple(points)
 
     @staticmethod
@@ -489,7 +500,10 @@ class CochainComplexIR(StrictModule, NonTrainableState):
 
     def _build_graph(self) -> GraphIR:
         degrees = np.concatenate(
-            [np.full((count,), degree, dtype=np.int32) for degree, count in enumerate(self.cell_counts)]
+            [
+                np.full((count,), degree, dtype=np.int32)
+                for degree, count in enumerate(self.cell_counts)
+            ]
         )
         local_indices = np.concatenate(
             [np.arange(count, dtype=np.int32) for count in self.cell_counts]
@@ -524,8 +538,13 @@ class CochainComplexIR(StrictModule, NonTrainableState):
         directions: list[np.ndarray] = []
         incidence_degrees: list[np.ndarray] = []
         for incidence in self.incidences:
-            lower = np.asarray(incidence.lower_indices) + self.cell_offsets[incidence.degree - 1]
-            upper = np.asarray(incidence.upper_indices) + self.cell_offsets[incidence.degree]
+            lower = (
+                np.asarray(incidence.lower_indices)
+                + self.cell_offsets[incidence.degree - 1]
+            )
+            upper = (
+                np.asarray(incidence.upper_indices) + self.cell_offsets[incidence.degree]
+            )
             coefficient = np.asarray(incidence.signs)
             count = lower.size
             senders.extend((lower, upper))
@@ -543,7 +562,9 @@ class CochainComplexIR(StrictModule, NonTrainableState):
                     np.full((count,), incidence.degree, dtype=np.int32),
                 )
             )
-        sender_array = np.concatenate(senders) if senders else np.zeros((0,), dtype=np.int32)
+        sender_array = (
+            np.concatenate(senders) if senders else np.zeros((0,), dtype=np.int32)
+        )
         receiver_array = (
             np.concatenate(receivers) if receivers else np.zeros((0,), dtype=np.int32)
         )
@@ -611,7 +632,9 @@ class CochainComplexIR(StrictModule, NonTrainableState):
                 np.asarray(incidence.lower_indices)
             ]
             if np.any(upper_boundary & ~lower_boundary):
-                raise ValueError("Boundary masks must define a closed boundary subcomplex.")
+                raise ValueError(
+                    "Boundary masks must define a closed boundary subcomplex."
+                )
 
 
 def cochain_complex_from_incidences(
@@ -647,7 +670,9 @@ def cochain_complex_from_simplicial(
     from ._simplicial import SimplicialComplexGraph
 
     if not isinstance(complex_graph, SimplicialComplexGraph):
-        raise TypeError("cochain_complex_from_simplicial requires SimplicialComplexGraph.")
+        raise TypeError(
+            "cochain_complex_from_simplicial requires SimplicialComplexGraph."
+        )
     edge_vertices = np.asarray(complex_graph.edge_vertices, dtype=np.int32)
     edge_ids = np.repeat(np.arange(edge_vertices.shape[0], dtype=np.int32), 2)
     b1 = CochainIncidence(
@@ -686,8 +711,6 @@ def triangle_mesh_to_cochain_complex(
     mesh_vertices: Any,
     mesh_faces: Any,
     /,
-    *,
-    boundary_policy: CochainBoundaryKind = "absolute",
 ) -> CochainComplexIR:
     """Build a positive barycentric metric cochain complex from a triangle mesh."""
     from ._simplicial import triangle_mesh_to_simplicial_graph
@@ -696,8 +719,10 @@ def triangle_mesh_to_cochain_complex(
     faces = np.asarray(mesh_faces)
     if vertices.ndim != 2 or vertices.shape[1] < 2:
         raise ValueError("mesh_vertices must have shape (vertices, embedding_dim >= 2).")
-    if faces.ndim != 2 or faces.shape[1] != 3 or not np.issubdtype(
-        faces.dtype, np.integer
+    if (
+        faces.ndim != 2
+        or faces.shape[1] != 3
+        or not np.issubdtype(faces.dtype, np.integer)
     ):
         raise ValueError("mesh_faces must have integer shape (faces, 3).")
     faces = faces.astype(np.int32, copy=False)
@@ -708,9 +733,7 @@ def triangle_mesh_to_cochain_complex(
         num_vertices=int(vertices.shape[0]),
     )
     edge_vertices = np.asarray(bundle.edge_vertices, dtype=np.int32)
-    edge_points = 0.5 * (
-        vertices[edge_vertices[:, 0]] + vertices[edge_vertices[:, 1]]
-    )
+    edge_points = 0.5 * (vertices[edge_vertices[:, 0]] + vertices[edge_vertices[:, 1]])
     face_points = np.mean(vertices[faces], axis=1)
     first = vertices[faces[:, 1]] - vertices[faces[:, 0]]
     second = vertices[faces[:, 2]] - vertices[faces[:, 0]]
@@ -742,7 +765,6 @@ def triangle_mesh_to_cochain_complex(
     boundary_vertex = np.zeros((vertices.shape[0],), dtype=bool)
     boundary_vertex[edge_vertices[boundary_edge].reshape((-1,))] = True
     boundary_face = np.zeros((faces.shape[0],), dtype=bool)
-    CochainBoundaryPolicy(boundary_policy)
     return cochain_complex_from_simplicial(
         bundle,
         (
@@ -808,23 +830,36 @@ def compute_harmonic_subspace(
         laplacian = sp.csr_matrix((active_count, active_count), dtype=float)
         if degree > 0:
             boundary = _restricted_boundary_matrix(complex_ir, degree, policy)
-            transformed = sqrt_metric @ boundary.T @ sp.diags(
-                1.0 / np.sqrt(
-                    np.asarray(complex_ir.hodge_stars[degree - 1])[
-                        np.asarray(complex_ir.active_mask(degree - 1, policy), dtype=bool)
-                    ]
+            transformed = (
+                sqrt_metric
+                @ boundary.T
+                @ sp.diags(
+                    1.0
+                    / np.sqrt(
+                        np.asarray(complex_ir.hodge_stars[degree - 1])[
+                            np.asarray(
+                                complex_ir.active_mask(degree - 1, policy), dtype=bool
+                            )
+                        ]
+                    )
                 )
             )
             laplacian = laplacian + transformed @ transformed.T
         if degree < complex_ir.max_degree:
             boundary = _restricted_boundary_matrix(complex_ir, degree + 1, policy)
-            transformed = sp.diags(
-                np.sqrt(
-                    np.asarray(complex_ir.hodge_stars[degree + 1])[
-                        np.asarray(complex_ir.active_mask(degree + 1, policy), dtype=bool)
-                    ]
+            transformed = (
+                sp.diags(
+                    np.sqrt(
+                        np.asarray(complex_ir.hodge_stars[degree + 1])[
+                            np.asarray(
+                                complex_ir.active_mask(degree + 1, policy), dtype=bool
+                            )
+                        ]
+                    )
                 )
-            ) @ boundary.T @ inverse_sqrt
+                @ boundary.T
+                @ inverse_sqrt
+            )
             laplacian = laplacian + transformed.T @ transformed
         laplacian = 0.5 * (laplacian + laplacian.T)
         scale = max(1.0, float(np.max(np.abs(laplacian.data), initial=0.0)))
@@ -914,9 +949,13 @@ def reorient_cochain_complex(
     signs = tuple(np.asarray(value, dtype=float) for value in orientation_signs)
     if len(signs) != len(complex_ir.cell_counts):
         raise ValueError("orientation_signs must provide one vector per degree.")
-    for degree, (value, count) in enumerate(zip(signs, complex_ir.cell_counts, strict=True)):
+    for degree, (value, count) in enumerate(
+        zip(signs, complex_ir.cell_counts, strict=True)
+    ):
         if value.shape != (count,) or np.any(np.abs(value) != 1.0):
-            raise ValueError(f"orientation_signs[{degree}] must contain {count} values ±1.")
+            raise ValueError(
+                f"orientation_signs[{degree}] must contain {count} values ±1."
+            )
     incidences = []
     for incidence in complex_ir.incidences:
         coefficient = (

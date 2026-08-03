@@ -11,12 +11,14 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._callable import _ensure_special_kwonly_args
+from ..domain._base import _AbstractGeometry
 from ..domain._components import (
     Boundary,
     DomainComponent,
     DomainComponentUnion,
     FixedStart,
 )
+from ..domain._domain import RelabeledDomain
 from ..domain._function import DomainFunction
 from ..domain._structure import NumPoints, ProductStructure
 from ..operators.differential import cauchy_stress
@@ -58,6 +60,49 @@ def _normal(
     if isinstance(component, DomainComponentUnion):
         raise TypeError("Boundary normals require a single DomainComponent, not a union.")
     return component.normal(var=var)
+
+
+def _boundary_component(
+    domain,
+    /,
+    *,
+    var: str | None,
+    where: Mapping[str, Callable] | None,
+    where_all: DomainFunction | None,
+) -> tuple[str, DomainComponent]:
+    if var is None:
+        geometry_labels: list[str] = []
+        for label in domain.labels:
+            factor = domain.factor(label)
+            if isinstance(factor, RelabeledDomain):
+                factor = factor.base
+            if isinstance(factor, _AbstractGeometry):
+                geometry_labels.append(label)
+        if len(geometry_labels) != 1:
+            raise ValueError(
+                "Boundary integration requires var=... unless the domain has "
+                "exactly one geometry label."
+            )
+        resolved_var = geometry_labels[0]
+    else:
+        if var not in domain.labels:
+            raise KeyError(f"Label {var!r} not in domain {domain.labels}.")
+        resolved_var = var
+
+    factor = domain.factor(resolved_var)
+    if isinstance(factor, RelabeledDomain):
+        factor = factor.base
+    if not isinstance(factor, _AbstractGeometry):
+        raise TypeError(
+            f"Boundary integration requires a geometry label, got "
+            f"{type(factor).__name__} for {resolved_var!r}."
+        )
+    component = domain.component(
+        {resolved_var: Boundary()},
+        where=where,
+        where_all=where_all,
+    )
+    return resolved_var, component
 
 
 def _dot(a: DomainFunction, b: DomainFunction) -> DomainFunction:
@@ -145,6 +190,7 @@ def ContinuousIntegralBoundaryConstraint(
     operator: Callable[..., DomainFunction] | DomainFunction,
     /,
     *,
+    var: str | None = None,
     num_points: NumPoints | tuple[Any, ...],
     structure: ProductStructure | None = None,
     sampler: str = "latin_hypercube",
@@ -166,14 +212,17 @@ def ContinuousIntegralBoundaryConstraint(
     where `operator` receives the boundary normal field $n(x)$ as an additional
     argument.
     """
-    component = domain.component(
-        {domain.label: Boundary()}, where=where, where_all=where_all
+    resolved_var, component = _boundary_component(
+        domain,
+        var=var,
+        where=where,
+        where_all=where_all,
     )
     structure = _default_structure(component) if structure is None else structure
     op = _ensure_operator(operator)
 
     def operator_with_normals(*funcs: DomainFunction) -> DomainFunction:
-        return op(*funcs, _normal(component, var="x"))
+        return op(*funcs, _normal(component, var=resolved_var))
 
     return IntegralEqualityConstraint.from_operator(
         component=component,
@@ -239,7 +288,7 @@ def EMBoundaryChargeConstraint(
     /,
     *,
     total_free_charge: ArrayLike,
-    var: str = "x",
+    var: str | None = None,
     num_points: NumPoints | tuple[Any, ...],
     structure: ProductStructure | None = None,
     sampler: str = "latin_hypercube",
@@ -263,11 +312,14 @@ def EMBoundaryChargeConstraint(
     if q is None:
         raise ValueError("total_free_charge must be array-like.")
 
-    component = domain.component(
-        {domain.label: Boundary()}, where=where, where_all=where_all
+    resolved_var, component = _boundary_component(
+        domain,
+        var=var,
+        where=where,
+        where_all=where_all,
     )
     structure = _default_structure(component) if structure is None else structure
-    n = _normal(component, var=var)
+    n = _normal(component, var=resolved_var)
 
     def operator(u: DomainFunction, /) -> DomainFunction:
         return _dot(u, n)
@@ -291,7 +343,7 @@ def MagneticFluxZeroConstraint(
     domain,
     /,
     *,
-    var: str = "x",
+    var: str | None = None,
     num_points: NumPoints | tuple[Any, ...],
     structure: ProductStructure | None = None,
     sampler: str = "latin_hypercube",
@@ -309,11 +361,14 @@ def MagneticFluxZeroConstraint(
     \int_{\partial\Omega} B\cdot n\,dS = 0.
     $$
     """
-    component = domain.component(
-        {domain.label: Boundary()}, where=where, where_all=where_all
+    resolved_var, component = _boundary_component(
+        domain,
+        var=var,
+        where=where,
+        where_all=where_all,
     )
     structure = _default_structure(component) if structure is None else structure
-    n = _normal(component, var=var)
+    n = _normal(component, var=resolved_var)
 
     def operator(u: DomainFunction, /) -> DomainFunction:
         return _dot(u, n)
@@ -338,7 +393,7 @@ def CFDBoundaryFlowRateConstraint(
     /,
     *,
     flow_rate: ArrayLike,
-    var: str = "x",
+    var: str | None = None,
     num_points: NumPoints | tuple[Any, ...],
     structure: ProductStructure | None = None,
     sampler: str = "latin_hypercube",
@@ -362,11 +417,14 @@ def CFDBoundaryFlowRateConstraint(
     if target is None:
         raise ValueError("flow_rate must be array-like.")
 
-    component = domain.component(
-        {domain.label: Boundary()}, where=where, where_all=where_all
+    resolved_var, component = _boundary_component(
+        domain,
+        var=var,
+        where=where,
+        where_all=where_all,
     )
     structure = _default_structure(component) if structure is None else structure
-    n = _normal(component, var=var)
+    n = _normal(component, var=resolved_var)
 
     def operator(u: DomainFunction, /) -> DomainFunction:
         return _dot(u, n)
@@ -391,7 +449,7 @@ def CFDKineticEnergyFluxBoundaryConstraint(
     /,
     *,
     target_total_power: ArrayLike,
-    var: str = "x",
+    var: str | None = None,
     num_points: NumPoints | tuple[Any, ...],
     structure: ProductStructure | None = None,
     sampler: str = "latin_hypercube",
@@ -413,11 +471,14 @@ def CFDKineticEnergyFluxBoundaryConstraint(
     if target is None:
         raise ValueError("target_total_power must be array-like.")
 
-    component = domain.component(
-        {domain.label: Boundary()}, where=where, where_all=where_all
+    resolved_var, component = _boundary_component(
+        domain,
+        var=var,
+        where=where,
+        where_all=where_all,
     )
     structure = _default_structure(component) if structure is None else structure
-    n = _normal(component, var=var)
+    n = _normal(component, var=resolved_var)
 
     def operator(u: DomainFunction, /) -> DomainFunction:
         return 0.5 * _dot(u, u) * _dot(u, n)
@@ -444,7 +505,7 @@ def SolidTotalReactionBoundaryConstraint(
     lambda_: ArrayLike,
     mu: ArrayLike,
     target_reaction: ArrayLike,
-    var: str = "x",
+    var: str | None = None,
     num_points: NumPoints | tuple[Any, ...],
     structure: ProductStructure | None = None,
     sampler: str = "latin_hypercube",
@@ -467,16 +528,24 @@ def SolidTotalReactionBoundaryConstraint(
     if target is None:
         raise ValueError("target_reaction must be array-like.")
 
-    component = domain.component(
-        {domain.label: Boundary()}, where=where, where_all=where_all
+    resolved_var, component = _boundary_component(
+        domain,
+        var=var,
+        where=where,
+        where_all=where_all,
     )
     structure = _default_structure(component) if structure is None else structure
     lambda_fn = _as_domain_function(lambda_, domain, name="lambda_")
     mu_fn = _as_domain_function(mu, domain, name="mu")
-    n = _normal(component, var=var)
+    n = _normal(component, var=resolved_var)
 
     def operator(u: DomainFunction, /) -> DomainFunction:
-        sigma = cauchy_stress(u, lambda_=lambda_fn, mu=mu_fn, var=var)
+        sigma = cauchy_stress(
+            u,
+            lambda_=lambda_fn,
+            mu=mu_fn,
+            var=resolved_var,
+        )
         return _matvec(sigma, n)
 
     return IntegralEqualityConstraint.from_operator(
@@ -498,6 +567,7 @@ def AveragePressureBoundaryConstraint(
     domain,
     /,
     *,
+    var: str | None = None,
     mean_pressure: ArrayLike,
     num_points: NumPoints | tuple[Any, ...],
     structure: ProductStructure | None = None,
@@ -526,8 +596,11 @@ def AveragePressureBoundaryConstraint(
     def operator(p: DomainFunction, /) -> DomainFunction:
         return p
 
-    component = domain.component(
-        {domain.label: Boundary()}, where=where, where_all=where_all
+    _, component = _boundary_component(
+        domain,
+        var=var,
+        where=where,
+        where_all=where_all,
     )
     structure = _default_structure(component) if structure is None else structure
 
@@ -551,6 +624,7 @@ def EMPoyntingFluxBoundaryConstraint(
     domain,
     /,
     *,
+    var: str | None = None,
     target_total_power: ArrayLike,
     num_points: NumPoints | tuple[Any, ...],
     structure: ProductStructure | None = None,
@@ -573,11 +647,14 @@ def EMPoyntingFluxBoundaryConstraint(
     if target is None:
         raise ValueError("target_total_power must be array-like.")
 
-    component = domain.component(
-        {domain.label: Boundary()}, where=where, where_all=where_all
+    resolved_var, component = _boundary_component(
+        domain,
+        var=var,
+        where=where,
+        where_all=where_all,
     )
     structure = _default_structure(component) if structure is None else structure
-    n = _normal(component, var="x")
+    n = _normal(component, var=resolved_var)
 
     def operator(E: DomainFunction, H: DomainFunction, /) -> DomainFunction:
         s = _cross(E, H)

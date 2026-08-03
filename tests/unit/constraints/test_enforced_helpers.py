@@ -64,6 +64,52 @@ def test_enforce_dirichlet_enforces_values_on_boundary():
     assert jnp.allclose(out, 2.0)
 
 
+def test_direct_boundary_enforcers_reject_filtered_components():
+    geom = Interval1d(0.0, 1.0)
+    time = TimeInterval(0.0, 1.0)
+    domain = geom @ time
+    component = domain.component(
+        {"x": Boundary()},
+        where={"x": lambda x: x[0] < 0.5},
+    )
+
+    @domain.Function("x", "t")
+    def scalar(x, t):
+        return x[0] + t
+
+    @domain.Function("x", "t")
+    def vector(x, t):
+        return jnp.array([x[0] + t])
+
+    builders = (
+        lambda: enforce_dirichlet(scalar, component),
+        lambda: enforce_neumann(scalar, component),
+        lambda: enforce_robin(
+            scalar,
+            component,
+            dirichlet_coeff=1.0,
+            neumann_coeff=1.0,
+        ),
+        lambda: enforce_sommerfeld(scalar, component),
+        lambda: enforce_traction(
+            vector,
+            component,
+            lambda_=1.0,
+            mu=1.0,
+        ),
+    )
+    for build in builders:
+        with pytest.raises(ValueError, match="enforce_blend"):
+            build()
+
+    globally_filtered = domain.component(
+        {"x": Boundary()},
+        where_all=lambda x, t: x[0] < 0.5,
+    )
+    with pytest.raises(ValueError, match="enforce_blend"):
+        enforce_dirichlet(scalar, globally_filtered)
+
+
 def test_enforce_neumann_enforces_normal_derivative_on_boundary():
     geom = Interval1d(0.0, 1.0)
     component = geom.component({"x": Boundary()})
@@ -187,9 +233,10 @@ def test_enforce_blend_combines_subset_pieces_without_leakage():
     base = geom.Function()(0.0)
     left_component = geom.component({"x": Boundary()}, where={"x": left_where})
     right_component = geom.component({"x": Boundary()}, where={"x": right_where})
+    full_boundary = geom.component({"x": Boundary()})
 
-    left_piece = enforce_dirichlet(base, left_component, target=1.0)
-    right_piece = enforce_dirichlet(base, right_component, target=2.0)
+    left_piece = enforce_dirichlet(base, full_boundary, target=1.0)
+    right_piece = enforce_dirichlet(base, full_boundary, target=2.0)
 
     blended = enforce_blend(
         base,
@@ -218,9 +265,10 @@ def test_enforce_blend_coord_separable_spacetime_runs():
 
     left_component = domain.component({"x": Boundary()}, where={"x": left_where})
     right_component = domain.component({"x": Boundary()}, where={"x": right_where})
+    full_boundary = domain.component({"x": Boundary()})
 
-    left_piece = enforce_dirichlet(u, left_component, var="x", target=1.0)
-    right_piece = enforce_dirichlet(u, right_component, var="x", target=2.0)
+    left_piece = enforce_dirichlet(u, full_boundary, var="x", target=1.0)
+    right_piece = enforce_dirichlet(u, full_boundary, var="x", target=2.0)
 
     blended = enforce_blend(
         u,

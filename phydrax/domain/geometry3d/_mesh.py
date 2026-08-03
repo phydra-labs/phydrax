@@ -51,7 +51,6 @@ class Geometry3DFromCAD(_AbstractGeometry3D):
     volume_proportion: Array
     boundary_measure_partition: GeometryMeasurePartition
     boundary_chart_atlas: CADChartAtlas
-    immersed: bool
     adf: Callable[[Array], Array]
     _boundary_normals_field: Callable[[Array], Array]
 
@@ -60,7 +59,6 @@ class Geometry3DFromCAD(_AbstractGeometry3D):
         mesh: trimesh.Trimesh | meshio.Mesh | Path | str,
         *,
         recenter: bool = False,
-        immersed: bool = False,
     ):
         cleanup_path: Path | None = None
         if isinstance(mesh, (Path, str)):
@@ -87,16 +85,13 @@ class Geometry3DFromCAD(_AbstractGeometry3D):
             triangle_areas,
             kind="triangle",
         )
-        self.boundary_chart_atlas = CADChartAtlas(
-            self.boundary_measure_partition
-        )
+        self.boundary_chart_atlas = CADChartAtlas(self.boundary_measure_partition)
 
         min_bounds, max_bounds = self.mesh.bounds
         bounds = max_bounds - min_bounds
         self.volume_proportion = jnp.array(
             self.mesh.volume / np.prod(bounds), dtype=float
         )
-        self.immersed = immersed
 
         self.adf = self.adf_blur(self.adf_orig, radius_fn=self.adf_orig)
         from ._normals import make_smooth_mesh_normal_field
@@ -270,11 +265,7 @@ class Geometry3DFromCAD(_AbstractGeometry3D):
             raise ValueError(f"translate offset must have shape (3,), got {vec.shape!r}")
         mesh = self.mesh.copy()
         mesh.apply_translation(np.asarray(vec, dtype=float))
-        return Geometry3DFromCAD(
-            mesh,
-            recenter=False,
-            immersed=self.immersed,
-        )
+        return Geometry3DFromCAD(mesh, recenter=False)
 
     def scale(self, factor: ArrayLike) -> "Geometry3DFromCAD":
         r"""Return a uniformly scaled copy of the geometry.
@@ -289,11 +280,7 @@ class Geometry3DFromCAD(_AbstractGeometry3D):
         scale_val = float(factor_arr)
         mesh = self.mesh.copy()
         mesh.apply_scale(scale_val)
-        return Geometry3DFromCAD(
-            mesh,
-            recenter=False,
-            immersed=self.immersed,
-        )
+        return Geometry3DFromCAD(mesh, recenter=False)
 
     def _make_mesh_sdf(
         self, *, eps: float | None = None

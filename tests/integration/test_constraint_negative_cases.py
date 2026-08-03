@@ -7,6 +7,7 @@ import pytest
 
 from phydrax.constraints import ContinuousInitialConstraint, FunctionalConstraint
 from phydrax.domain import (
+    Boundary,
     CoordSeparableBatch,
     DomainComponentUnion,
     Interior,
@@ -19,7 +20,7 @@ from phydrax.domain import (
 def test_coord_separable_rejects_component_union():
     geom = Interval1d(0.0, 1.0)
     c1 = geom.component({"x": Interior()})
-    c2 = geom.component({"x": Interior()})
+    c2 = geom.component({"x": Boundary()})
     union = DomainComponentUnion((c1, c2))
 
     with pytest.raises(ValueError, match="coord-separable sampling is not supported"):

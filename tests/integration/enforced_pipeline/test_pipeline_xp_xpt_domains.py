@@ -72,17 +72,18 @@ def test_xp_steady_state_explicit_anchors():
 
     left = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] < 0.5})
     right = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] > 0.5})
+    full_boundary = domain.component({"x": Boundary()})
 
     constraints = [
         SingleFieldEnforcedConstraint(
             "u",
             left,
-            lambda f: enforce_dirichlet(f, left, var="x", target=1.0),
+            lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
         ),
         SingleFieldEnforcedConstraint(
             "u",
             right,
-            lambda f: enforce_dirichlet(f, right, var="x", target=2.0),
+            lambda f: enforce_dirichlet(f, full_boundary, var="x", target=2.0),
         ),
     ]
 
@@ -154,17 +155,18 @@ def test_xpt_transient_explicit_anchors():
     left = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] < 0.5})
     right = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] > 0.5})
     initial = domain.component({"t": FixedStart()})
+    full_boundary = domain.component({"x": Boundary()})
 
     constraints = [
         SingleFieldEnforcedConstraint(
             "u",
             left,
-            lambda f: enforce_dirichlet(f, left, var="x", target=1.0),
+            lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
         ),
         SingleFieldEnforcedConstraint(
             "u",
             right,
-            lambda f: enforce_dirichlet(f, right, var="x", target=2.0),
+            lambda f: enforce_dirichlet(f, full_boundary, var="x", target=2.0),
         ),
         SingleFieldEnforcedConstraint(
             "u",

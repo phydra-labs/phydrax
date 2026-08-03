@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+import warnings
 from collections.abc import Callable
 from math import prod
 from typing import Any, Literal
@@ -15,6 +16,9 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import opt_einsum as oe
+import scipy.linalg as scipy_linalg
+import scipy.sparse as scipy_sparse
+import scipy.sparse.linalg as scipy_sparse_linalg
 from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
@@ -46,6 +50,54 @@ def _canonicalize_eigenvector_signs(vectors: np.ndarray, /) -> np.ndarray:
         if result[pivot, mode] < 0.0:
             result[:, mode] *= -1.0
     return result
+
+
+_DENSE_GENERALIZED_EIGH_THRESHOLD = 256
+
+
+def _finite_symmetric_matrix(value: Any, /, *, name: str):
+    if scipy_sparse.issparse(value):
+        matrix = value.astype(float).tocsr(copy=True)
+        if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
+            raise ValueError(f"{name} must be a square matrix.")
+        matrix.sum_duplicates()
+        matrix.sort_indices()
+        if np.any(~np.isfinite(matrix.data)):
+            raise ValueError(f"{name} must be finite.")
+        scale = max(
+            1.0,
+            float(np.max(np.abs(matrix.data))) if matrix.data.size else 0.0,
+        )
+        difference = matrix - matrix.T
+        error = float(np.max(np.abs(difference.data))) if difference.data.size else 0.0
+        if error > 1e-10 * scale:
+            raise ValueError(f"{name} must be symmetric.")
+        return ((matrix + matrix.T) * 0.5).tocsr()
+
+    matrix = np.asarray(value, dtype=float)
+    if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
+        raise ValueError(f"{name} must be a square matrix.")
+    if np.any(~np.isfinite(matrix)):
+        raise ValueError(f"{name} must be finite.")
+    scale = max(1.0, float(np.max(np.abs(matrix))) if matrix.size else 0.0)
+    if not np.allclose(matrix, matrix.T, rtol=1e-10, atol=1e-10 * scale):
+        raise ValueError(f"{name} must be symmetric.")
+    return 0.5 * (matrix + matrix.T)
+
+
+def _update_matrix_digest(digest: Any, matrix: Any, /) -> None:
+    if scipy_sparse.issparse(matrix):
+        csr = matrix.tocsr(copy=True)
+        csr.sum_duplicates()
+        csr.sort_indices()
+        digest.update(b"csr")
+        digest.update(np.asarray(csr.shape, dtype=np.int64).tobytes())
+        digest.update(np.asarray(csr.indptr, dtype=np.int64).tobytes())
+        digest.update(np.asarray(csr.indices, dtype=np.int64).tobytes())
+        digest.update(np.asarray(csr.data, dtype=float).tobytes())
+        return
+    digest.update(b"dense")
+    digest.update(np.ascontiguousarray(np.asarray(matrix, dtype=float)).tobytes())
 
 
 class SpectralDiscretization(eqx.Module, NonTrainableState):
@@ -169,9 +221,9 @@ class SpectralDiscretization(eqx.Module, NonTrainableState):
         )
 
     @classmethod
-    def from_laplacian(
+    def from_stiffness(
         cls,
-        laplacian: Any,
+        stiffness: Any,
         mass: Any,
         /,
         *,
@@ -179,45 +231,188 @@ class SpectralDiscretization(eqx.Module, NonTrainableState):
         group_tolerance: float = 1e-7,
         basis_id: str | None = None,
     ) -> "SpectralDiscretization":
-        stiffness = np.asarray(laplacian, dtype=float)
-        if stiffness.ndim != 2 or stiffness.shape[0] != stiffness.shape[1]:
-            raise ValueError("Laplacian must be a square matrix.")
-        count = stiffness.shape[0]
-        mass_array = np.asarray(mass, dtype=float)
-        if mass_array.ndim == 1:
-            if mass_array.shape != (count,):
-                raise ValueError("Diagonal mass must have one entry per point.")
-            mass_matrix = np.diag(mass_array)
-            measure = mass_array
-        elif mass_array.shape == (count, count):
-            mass_matrix = mass_array
-            measure = np.diag(mass_array)
+        r"""Construct low modes of a positive-semidefinite stiffness operator.
+
+        Solves the generalized eigenproblem $K v = \lambda M v$, where $K$
+        represents the positive-semidefinite operator $-\Delta$ and $M$ is a
+        positive mass matrix. Sparse inputs use a sparse partial eigensolve.
+        """
+        stiffness_matrix = _finite_symmetric_matrix(stiffness, name="Stiffness")
+        count = int(stiffness_matrix.shape[0])
+        if count == 0:
+            raise ValueError("Stiffness must not be empty.")
+
+        diagonal_mass = False
+        if scipy_sparse.issparse(mass):
+            mass_matrix = _finite_symmetric_matrix(mass, name="Mass")
+            if mass_matrix.shape != (count, count):
+                raise ValueError("Mass matrix shape must match stiffness.")
+            measure = np.asarray(mass_matrix.diagonal(), dtype=float)
         else:
-            raise ValueError("Mass must be diagonal entries or a square matrix.")
+            mass_array = np.asarray(mass, dtype=float)
+            if mass_array.ndim == 1:
+                if mass_array.shape != (count,):
+                    raise ValueError("Diagonal mass must have one entry per point.")
+                if np.any(~np.isfinite(mass_array)):
+                    raise ValueError("Mass must be finite.")
+                measure = np.array(mass_array, dtype=float, copy=True)
+                mass_matrix = scipy_sparse.diags(measure, format="csr")
+                diagonal_mass = True
+            elif mass_array.shape == (count, count):
+                mass_matrix = _finite_symmetric_matrix(mass_array, name="Mass")
+                measure = np.asarray(np.diag(mass_matrix), dtype=float)
+            else:
+                raise ValueError("Mass must be diagonal entries or a square matrix.")
+
+        if np.any(~np.isfinite(measure)) or np.any(measure <= 0.0):
+            raise ValueError("Mass diagonal must be finite and strictly positive.")
+
         modes = int(n_modes)
         if modes <= 0 or modes > count:
             raise ValueError("n_modes must lie between one and the matrix size.")
-        stiffness = 0.5 * (stiffness + stiffness.T)
-        mass_matrix = 0.5 * (mass_matrix + mass_matrix.T)
-        cholesky = np.linalg.cholesky(mass_matrix)
-        inverse = np.linalg.solve(cholesky, np.eye(count))
-        transformed = inverse @ stiffness @ inverse.T
-        transformed = 0.5 * (transformed + transformed.T)
-        values, vectors = np.linalg.eigh(transformed)
-        order = np.argsort(values, kind="stable")[:modes]
-        values = values[order]
-        physical = inverse.T @ vectors[:, order]
+
+        if not diagonal_mass:
+            if scipy_sparse.issparse(mass_matrix):
+                if count == 1:
+                    smallest_mass = float(mass_matrix[0, 0])
+                else:
+                    smallest_mass = float(
+                        scipy_sparse_linalg.eigsh(
+                            mass_matrix,
+                            k=1,
+                            which="SA",
+                            return_eigenvectors=False,
+                        )[0]
+                    )
+                if not np.isfinite(smallest_mass) or smallest_mass <= 0.0:
+                    raise ValueError("Mass matrix must be positive definite.")
+            else:
+                try:
+                    scipy_linalg.cholesky(
+                        mass_matrix,
+                        lower=True,
+                        check_finite=False,
+                    )
+                except np.linalg.LinAlgError as exc:
+                    raise ValueError("Mass matrix must be positive definite.") from exc
+
+        use_dense = (
+            count <= _DENSE_GENERALIZED_EIGH_THRESHOLD
+            or 5 * modes >= count
+            or (
+                not scipy_sparse.issparse(stiffness_matrix)
+                and not scipy_sparse.issparse(mass_matrix)
+            )
+        )
+        if use_dense:
+            stiffness_dense = (
+                stiffness_matrix.toarray()
+                if scipy_sparse.issparse(stiffness_matrix)
+                else stiffness_matrix
+            )
+            mass_dense = (
+                mass_matrix.toarray()
+                if scipy_sparse.issparse(mass_matrix)
+                else mass_matrix
+            )
+            try:
+                values, physical = scipy_linalg.eigh(
+                    stiffness_dense,
+                    mass_dense,
+                    subset_by_index=(0, modes - 1),
+                    check_finite=False,
+                )
+            except np.linalg.LinAlgError as exc:
+                raise ValueError(
+                    "Generalized stiffness eigendecomposition failed; "
+                    "mass must be positive definite."
+                ) from exc
+        else:
+            stiffness_sparse = (
+                stiffness_matrix.tocsr()
+                if scipy_sparse.issparse(stiffness_matrix)
+                else scipy_sparse.csr_matrix(stiffness_matrix)
+            )
+            mass_sparse = (
+                mass_matrix.tocsr()
+                if scipy_sparse.issparse(mass_matrix)
+                else scipy_sparse.csr_matrix(mass_matrix)
+            )
+            rng = np.random.default_rng(0)
+            initial = rng.standard_normal((count, modes))
+            initial[:, 0] = 1.0
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                values, physical = scipy_sparse_linalg.lobpcg(
+                    stiffness_sparse,
+                    initial,
+                    B=mass_sparse,
+                    largest=False,
+                    tol=1e-9,
+                    maxiter=500,
+                )
+
+            stiffness_times_physical = np.asarray(
+                stiffness_sparse @ physical,
+                dtype=float,
+            )
+            mass_times_physical = np.asarray(mass_sparse @ physical, dtype=float)
+            residual = (
+                stiffness_times_physical
+                - mass_times_physical * np.asarray(values)[None, :]
+            )
+            stiffness_scale = float(np.max(np.asarray(abs(stiffness_sparse).sum(axis=1))))
+            mass_scale = float(np.max(np.asarray(abs(mass_sparse).sum(axis=1))))
+            vector_norm = np.linalg.norm(physical, axis=0)
+            denominator = (
+                stiffness_scale + np.abs(np.asarray(values)) * mass_scale
+            ) * vector_norm
+            relative_residual = np.linalg.norm(residual, axis=0) / np.maximum(
+                denominator,
+                np.finfo(float).tiny,
+            )
+            if np.any(~np.isfinite(relative_residual)) or np.any(
+                relative_residual > 1e-7
+            ):
+                raise RuntimeError(
+                    "Sparse stiffness eigendecomposition failed to converge; "
+                    f"maximum relative residual is "
+                    f"{float(np.max(relative_residual))}."
+                )
+
+        order = np.argsort(values, kind="stable")
+        values = np.asarray(values[order], dtype=float)
+        physical = np.asarray(physical[:, order], dtype=float)
+        spectral_scale = max(
+            1.0,
+            float(np.max(np.abs(values))) if values.size else 0.0,
+        )
+        negative_tolerance = 1e-8 * spectral_scale
+        if np.any(values < -negative_tolerance):
+            raise ValueError(
+                "Stiffness must be positive semidefinite; "
+                f"smallest generalized eigenvalue is {float(values[0])}."
+            )
+        values = np.maximum(values, 0.0)
+
+        mass_times_physical = np.asarray(mass_matrix @ physical, dtype=float)
+        norms = np.sqrt(np.sum(physical * mass_times_physical, axis=0))
+        if np.any(~np.isfinite(norms)) or np.any(norms <= 0.0):
+            raise ValueError("Stiffness eigenvectors must have positive mass norm.")
+        physical = physical / norms[None, :]
         physical = _canonicalize_eigenvector_signs(physical)
+        mass_times_physical = np.asarray(mass_matrix @ physical, dtype=float)
         groups = _eigenspace_groups(values, float(group_tolerance))
+
         identifier = basis_id
         if identifier is None:
             digest = hashlib.sha256()
-            digest.update(np.ascontiguousarray(stiffness).tobytes())
-            digest.update(np.ascontiguousarray(mass_matrix).tobytes())
+            _update_matrix_digest(digest, stiffness_matrix)
+            _update_matrix_digest(digest, mass_matrix)
             digest.update(str(modes).encode("utf-8"))
             identifier = digest.hexdigest()
         return cls(
-            analysis=physical.T @ mass_matrix,
+            analysis=mass_times_physical.T,
             synthesis=physical,
             eigenvalues=values,
             group_ids=groups,
@@ -243,14 +438,20 @@ class SpectralDiscretization(eqx.Module, NonTrainableState):
 
         points = np.asarray(vertices, dtype=float)
         sender, receiver, edge_weight = mesh_cotangent_weights(vertices, faces)
-        sender_ = np.asarray(sender, dtype=int)
-        receiver_ = np.asarray(receiver, dtype=int)
+        sender_ = np.asarray(sender, dtype=np.int32)
+        receiver_ = np.asarray(receiver, dtype=np.int32)
         weights = np.asarray(edge_weight, dtype=float)
-        stiffness = np.zeros((points.shape[0], points.shape[0]), dtype=float)
-        np.add.at(stiffness, (sender_, sender_), weights)
-        np.add.at(stiffness, (sender_, receiver_), -weights)
+        rows = np.concatenate((sender_, sender_))
+        columns = np.concatenate((sender_, receiver_))
+        data = np.concatenate((weights, -weights))
+        stiffness = scipy_sparse.coo_matrix(
+            (data, (rows, columns)),
+            shape=(points.shape[0], points.shape[0]),
+            dtype=float,
+        ).tocsr()
+        stiffness.sum_duplicates()
         mass = np.asarray(mesh_lumped_vertex_areas(vertices, faces), dtype=float)
-        return cls.from_laplacian(
+        return cls.from_stiffness(
             stiffness,
             mass,
             n_modes=n_modes,

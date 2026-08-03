@@ -1228,7 +1228,11 @@ preserving mesh metadata in the graph payload.
 
     def residual(f):
         return domain.GraphModel(
-            phx.graph.MeshCotangentLaplacian(input_key="u", output_key="lap_u"),
+            phx.graph.MeshCotangentLaplacian(
+                sign="neighbor_minus_self",
+                input_key="u",
+                output_key="lap_u",
+            ),
             input_fn=f,
             input_key="u",
             output_key="lap_u",

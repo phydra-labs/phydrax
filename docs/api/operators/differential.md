@@ -178,8 +178,8 @@ coordinate/covariant distinction and array-callable kernels.
 ## Riemannian differential operators
 
 These adapters apply Metrix geometry to labeled `DomainFunction` objects.
-`laplace_beltrami` accepts either a `RiemannianMetric` for intrinsic coordinate
-calculus or a `DomainComponent` for the existing normal-based surface calculus.
+`laplace_beltrami` requires a `RiemannianMetric` and performs intrinsic
+coordinate calculus. It does not dispatch on a boundary component.
 
 ::: phydrax.operators.riemannian_grad
 
@@ -199,7 +199,15 @@ calculus or a `DomainComponent` for the existing normal-based surface calculus.
 
 ::: phydrax.operators.covariant_derivative
 
+---
+
+::: phydrax.operators.laplace_beltrami
+
 ## Surface operators
+
+These operators use an embedded geometry's outward normal. The ambient Hessian
+trace is extension-dependent; it is not the intrinsic Laplace--Beltrami
+operator on a general curved surface.
 
 ::: phydrax.operators.surface_grad
 
@@ -221,11 +229,7 @@ calculus or a `DomainComponent` for the existing normal-based surface calculus.
 
 ---
 
-::: phydrax.operators.laplace_beltrami
-
----
-
-::: phydrax.operators.laplace_beltrami_divgrad
+::: phydrax.operators.ambient_surface_hessian_trace
 
 ## Fractional derivatives
 

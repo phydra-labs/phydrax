@@ -35,16 +35,17 @@ def test_pde_toy_steady_pipeline_zero_loss():
 
     left = geom.component({"x": Boundary()}, where={"x": lambda p: p[0] < 0.5})
     right = geom.component({"x": Boundary()}, where={"x": lambda p: p[0] >= 0.5})
+    full_boundary = geom.component({"x": Boundary()})
 
     left_constraint = SingleFieldEnforcedConstraint(
         "u",
         left,
-        lambda f: enforce_dirichlet(f, left, var="x", target=1.0),
+        lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
     )
     right_constraint = SingleFieldEnforcedConstraint(
         "u",
         right,
-        lambda f: enforce_dirichlet(f, right, var="x", target=1.0),
+        lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
     )
 
     anchors = {"x": jnp.array([[0.25], [0.75]], dtype=float)}
@@ -111,16 +112,17 @@ def test_pde_toy_steady_pipeline_zero_loss_basis_backend_coord_separable():
 
     left = geom.component({"x": Boundary()}, where={"x": lambda p: p[0] < 0.5})
     right = geom.component({"x": Boundary()}, where={"x": lambda p: p[0] >= 0.5})
+    full_boundary = geom.component({"x": Boundary()})
 
     left_constraint = SingleFieldEnforcedConstraint(
         "u",
         left,
-        lambda f: enforce_dirichlet(f, left, var="x", target=1.0),
+        lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
     )
     right_constraint = SingleFieldEnforcedConstraint(
         "u",
         right,
-        lambda f: enforce_dirichlet(f, right, var="x", target=1.0),
+        lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
     )
 
     anchors = {"x": jnp.array([[0.25], [0.75]], dtype=float)}
@@ -195,17 +197,18 @@ def test_pde_toy_transient_pipeline_zero_loss():
     left = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] < 0.5})
     right = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] >= 0.5})
     initial = domain.component({"t": FixedStart()})
+    full_boundary = domain.component({"x": Boundary()})
 
     constraints = [
         SingleFieldEnforcedConstraint(
             "u",
             left,
-            lambda f: enforce_dirichlet(f, left, var="x", target=1.0),
+            lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
         ),
         SingleFieldEnforcedConstraint(
             "u",
             right,
-            lambda f: enforce_dirichlet(f, right, var="x", target=1.0),
+            lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
         ),
         SingleFieldEnforcedConstraint(
             "u",

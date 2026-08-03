@@ -9,6 +9,7 @@ import jax.random as jr
 import numpy as np
 import opt_einsum as oe
 import pytest
+import trimesh
 
 import phydrax as phx
 
@@ -241,7 +242,7 @@ def test_manifold_spectral_operator_runs_valid_small_laplacian_plan():
             [-1.0, 0.0, -1.0, 2.0],
         ]
     )
-    plan = phx.nn.SpectralDiscretization.from_laplacian(
+    plan = phx.nn.SpectralDiscretization.from_stiffness(
         laplacian, np.ones((4,)), n_modes=4, basis_id="cycle-4"
     )
     coordinates = jnp.array([[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0]])
@@ -279,6 +280,46 @@ def test_manifold_spectral_operator_runs_valid_small_laplacian_plan():
     assert jnp.allclose(compiled, eager)
     assert jnp.array_equal(eager[2:], jnp.zeros((2,)))
     _assert_finite_model_gradient(model, lambda item: jnp.sum(item(batch) ** 2))
+
+
+def test_stiffness_plan_rejects_negative_semidefinite_operator():
+    differential_laplacian = np.array(
+        [
+            [-2.0, 1.0, 0.0, 1.0],
+            [1.0, -2.0, 1.0, 0.0],
+            [0.0, 1.0, -2.0, 1.0],
+            [1.0, 0.0, 1.0, -2.0],
+        ]
+    )
+
+    with pytest.raises(ValueError, match="positive semidefinite"):
+        phx.nn.SpectralDiscretization.from_stiffness(
+            differential_laplacian,
+            np.ones((4,)),
+            n_modes=4,
+        )
+
+
+def test_triangle_mesh_plan_preserves_sparse_sphere_eigenspace_multiplicities():
+    mesh = trimesh.creation.icosphere(subdivisions=3, radius=1.0)
+    plan = phx.nn.SpectralDiscretization.from_triangle_mesh(
+        np.asarray(mesh.vertices),
+        np.asarray(mesh.faces),
+        n_modes=9,
+    )
+    eigenvalues = np.asarray(plan.eigenvalues)
+
+    assert plan.analysis.shape == (9, mesh.vertices.shape[0])
+    assert plan.synthesis.shape == (mesh.vertices.shape[0], 9)
+    assert np.allclose(plan.analysis @ plan.synthesis, np.eye(9), atol=1e-6)
+    assert np.isclose(eigenvalues[0], 0.0, atol=1e-8)
+    assert np.allclose(eigenvalues[1:4], 2.0, rtol=0.02)
+    assert np.allclose(eigenvalues[4:9], 6.0, rtol=0.02)
+    assert np.array_equal(
+        np.bincount(np.asarray(plan.group_ids)),
+        np.array([1, 3, 5]),
+    )
+    assert np.ptp(np.asarray(plan.synthesis)[:, 0]) < 1e-8
 
 
 def test_upt_and_abupt_preserve_case_and_source_query_masks():

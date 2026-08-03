@@ -336,6 +336,21 @@ def _enforced_constraint_weight_fn(
     return _weight_point
 
 
+def _reject_filtered_boundary(
+    component: DomainComponent,
+    /,
+    *,
+    var: str,
+    op_name: str,
+) -> None:
+    if component.where or component.where_all is not None:
+        raise ValueError(
+            f"{op_name} cannot directly enforce a filtered Boundary() component "
+            f"for {var!r}: its signed-distance gate vanishes on the full boundary. "
+            "Build one ansatz per boundary piece and combine them with enforce_blend."
+        )
+
+
 def enforce_dirichlet(
     u: DomainFunction,
     component: DomainComponent,
@@ -386,6 +401,11 @@ def enforce_dirichlet(
             raise ValueError(
                 "enforce_dirichlet for geometry vars requires component Boundary()."
             )
+        _reject_filtered_boundary(
+            component,
+            var=var,
+            op_name="enforce_dirichlet",
+        )
         phi = component.sdf(var=var)
         return blend_with_gate(value_fn, u, phi)
 
@@ -445,6 +465,7 @@ def enforce_neumann(
     comp = component.spec.component_for(var)
     if not isinstance(comp, Boundary):
         raise ValueError("enforce_neumann requires component Boundary() for var.")
+    _reject_filtered_boundary(component, var=var, op_name="enforce_neumann")
 
     phi = component.sdf(var=var)
     n = component.normal(var=var)
@@ -528,6 +549,7 @@ def enforce_traction(
     comp = component.spec.component_for(var)
     if not isinstance(comp, Boundary):
         raise ValueError("enforce_traction requires component Boundary() for var.")
+    _reject_filtered_boundary(component, var=var, op_name="enforce_traction")
 
     phi = component.sdf(var=var)
     n = component.normal(var=var)
@@ -616,6 +638,7 @@ def enforce_robin(
     comp = component.spec.component_for(var)
     if not isinstance(comp, Boundary):
         raise ValueError("enforce_robin requires component Boundary() for var.")
+    _reject_filtered_boundary(component, var=var, op_name="enforce_robin")
 
     g = 0.0 if target is None else _coerce_value(target, u)
     a = 1.0 if dirichlet_coeff is None else _coerce_value(dirichlet_coeff, u)
@@ -706,6 +729,7 @@ def enforce_sommerfeld(
     comp = component.spec.component_for(var)
     if not isinstance(comp, Boundary):
         raise ValueError("enforce_sommerfeld requires component Boundary() for var.")
+    _reject_filtered_boundary(component, var=var, op_name="enforce_sommerfeld")
 
     phi = component.sdf(var=var)
     n = component.normal(var=var)

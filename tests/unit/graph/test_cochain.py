@@ -10,27 +10,17 @@ import phydrax as phx
 
 
 def _square_complex():
-    vertices = np.asarray(
-        [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
-    )
+    vertices = np.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
     faces = np.asarray([[0, 1, 2], [0, 2, 3]], dtype=np.int32)
     return phx.graph.triangle_mesh_to_cochain_complex(vertices, faces)
 
 
 def _annulus_complex():
-    outer = np.asarray(
-        [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]
-    )
+    outer = np.asarray([[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]])
     vertices = np.concatenate((outer, 0.4 * outer), axis=0)
     faces = np.asarray(
-        [
-            (index, (index + 1) % 4, 4 + (index + 1) % 4)
-            for index in range(4)
-        ]
-        + [
-            (index, 4 + (index + 1) % 4, 4 + index)
-            for index in range(4)
-        ],
+        [(index, (index + 1) % 4, 4 + (index + 1) % 4) for index in range(4)]
+        + [(index, 4 + (index + 1) % 4, 4 + index) for index in range(4)],
         dtype=np.int32,
     )
     return phx.graph.triangle_mesh_to_cochain_complex(vertices, faces)
@@ -80,12 +70,8 @@ def test_sparse_dec_operators_satisfy_exactness_adjointness_and_positive_energy(
     left_inner_product = jnp.sum(star * derivative * one_form)
     right_inner_product = jnp.sum(star * zero_form * codifferential)
 
-    lower = phx.graph.cochain_hodge_laplacian(
-        graph, one_form, 1, component="lower"
-    )
-    upper = phx.graph.cochain_hodge_laplacian(
-        graph, one_form, 1, component="upper"
-    )
+    lower = phx.graph.cochain_hodge_laplacian(graph, one_form, 1, component="lower")
+    upper = phx.graph.cochain_hodge_laplacian(graph, one_form, 1, component="upper")
     complete = phx.graph.cochain_hodge_laplacian(graph, one_form, 1)
     energy = jnp.sum(star * one_form * complete)
 
@@ -204,30 +190,22 @@ def test_orientation_changes_conjugate_exterior_codifferential_and_laplacian():
         phx.graph.reorient_cochain(one_form, signs[1]),
     )
 
-    derivative = phx.graph.cochain_exterior_derivative(
-        complex_ir.graph, packed_zero, 0
-    )
+    derivative = phx.graph.cochain_exterior_derivative(complex_ir.graph, packed_zero, 0)
     transformed_derivative = phx.graph.cochain_exterior_derivative(
         reoriented.graph, reoriented_zero, 0
     )
-    codifferential = phx.graph.cochain_codifferential(
-        complex_ir.graph, packed_one, 1
-    )
+    codifferential = phx.graph.cochain_codifferential(complex_ir.graph, packed_one, 1)
     transformed_codifferential = phx.graph.cochain_codifferential(
         reoriented.graph, reoriented_one, 1
     )
-    laplacian = phx.graph.cochain_hodge_laplacian(
-        complex_ir.graph, packed_one, 1
-    )
+    laplacian = phx.graph.cochain_hodge_laplacian(complex_ir.graph, packed_one, 1)
     transformed_laplacian = phx.graph.cochain_hodge_laplacian(
         reoriented.graph, reoriented_one, 1
     )
 
     assert jnp.allclose(
         transformed_derivative[_degree_slice(reoriented, 1)],
-        phx.graph.reorient_cochain(
-            derivative[_degree_slice(complex_ir, 1)], signs[1]
-        ),
+        phx.graph.reorient_cochain(derivative[_degree_slice(complex_ir, 1)], signs[1]),
         atol=1e-12,
     )
     assert jnp.allclose(
@@ -239,9 +217,7 @@ def test_orientation_changes_conjugate_exterior_codifferential_and_laplacian():
     )
     assert jnp.allclose(
         transformed_laplacian[_degree_slice(reoriented, 1)],
-        phx.graph.reorient_cochain(
-            laplacian[_degree_slice(complex_ir, 1)], signs[1]
-        ),
+        phx.graph.reorient_cochain(laplacian[_degree_slice(complex_ir, 1)], signs[1]),
         atol=1e-12,
     )
 
@@ -310,9 +286,7 @@ def test_cochain_cells_select_degree_boundary_and_padded_dataset_offsets():
     )
 
     base_dataset = phx.domain.GraphDatasetDomain((small.graph, large.graph))
-    dataset = base_dataset.with_layout(
-        base_dataset.layout_for_batch_size(2, multiple=4)
-    )
+    dataset = base_dataset.with_layout(base_dataset.layout_for_batch_size(2, multiple=4))
     dataset_batch = dataset.points_from_indices(
         [0, 1],
         component=phx.domain.CochainCells(0, region="interior"),

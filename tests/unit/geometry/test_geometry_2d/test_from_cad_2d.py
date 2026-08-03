@@ -10,6 +10,7 @@ import trimesh
 from jax import numpy as jnp
 from numpy.typing import ArrayLike
 
+from phydrax.domain import Circle
 from phydrax.domain.geometry2d import Geometry2DFromCAD
 
 
@@ -61,6 +62,21 @@ def test_measure_partitions_match_geometry_measures(geometry_from_square):
     assert points.shape == (8, 2)
     assert set(map(int, strata)) == {0, 1, 2, 3}
     assert np.isclose(float(jnp.sum(base_mass)), 1.0)
+
+
+def test_curved_boundary_normals_obey_divergence_theorem():
+    geom = Circle(center=(0.0, 0.0), radius=1.0)
+    quadrature = geom.boundary_chart_atlas.tensor_quadrature(3)
+    points = np.asarray(quadrature.points).reshape((-1, 2))
+    weights = np.asarray(quadrature.weights).reshape((-1,))
+    normals = np.asarray(geom._boundary_normals(points))
+
+    closure = np.sum(weights[:, None] * normals, axis=0)
+    position_flux = np.sum(weights * np.sum(points * normals, axis=-1))
+
+    assert np.allclose(np.linalg.norm(normals, axis=-1), 1.0, atol=1e-6)
+    assert np.allclose(closure, 0.0, atol=1e-6)
+    assert np.isclose(position_flux, 2.0 * float(geom.area), atol=1e-5)
 
 
 def test_boundary_chart_atlas_integrates_arclength_without_seam_duplication(

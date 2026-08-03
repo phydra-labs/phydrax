@@ -118,6 +118,50 @@ def _sanitize_meshio_mesh(
     return mesh
 
 
+def _validate_watertight_solid_mesh(mesh: trimesh.Trimesh, /) -> None:
+    vertices = np.asarray(mesh.vertices, dtype=float)
+    faces = np.asarray(mesh.faces)
+    if vertices.ndim != 2 or vertices.shape[1] != 3 or vertices.shape[0] < 4:
+        raise ValueError(
+            "Geometry3DFromCAD requires at least four finite 3D mesh vertices."
+        )
+    if not np.all(np.isfinite(vertices)):
+        raise ValueError("Geometry3DFromCAD mesh vertices must be finite.")
+    if (
+        faces.ndim != 2
+        or faces.shape[1] != 3
+        or faces.shape[0] < 4
+        or not np.issubdtype(faces.dtype, np.integer)
+    ):
+        raise ValueError(
+            "Geometry3DFromCAD requires at least four triangular mesh faces."
+        )
+
+    areas = np.asarray(mesh.area_faces, dtype=float)
+    if areas.shape != (faces.shape[0],) or np.any(~np.isfinite(areas)):
+        raise ValueError("Geometry3DFromCAD mesh face areas must be finite.")
+    if np.any(areas <= 0.0):
+        raise ValueError("Geometry3DFromCAD mesh faces must have positive area.")
+    if not bool(mesh.is_watertight):
+        raise ValueError("Geometry3DFromCAD requires a watertight surface mesh.")
+    if not bool(mesh.is_winding_consistent):
+        raise ValueError("Geometry3DFromCAD requires consistently wound mesh faces.")
+
+    volume = float(mesh.volume)
+    if not np.isfinite(volume) or volume <= 0.0:
+        raise ValueError(
+            "Geometry3DFromCAD requires a finite, strictly positive enclosed volume."
+        )
+    bounds = np.asarray(mesh.bounds, dtype=float)
+    if bounds.shape != (2, 3) or np.any(~np.isfinite(bounds)):
+        raise ValueError("Geometry3DFromCAD mesh bounds must be finite.")
+    bounding_volume = float(np.prod(bounds[1] - bounds[0]))
+    if not np.isfinite(bounding_volume) or bounding_volume <= 0.0:
+        raise ValueError(
+            "Geometry3DFromCAD requires a finite, strictly positive bounding-box volume."
+        )
+
+
 def _sanitize_mesh(
     mesh: trimesh.Trimesh | meshio.Mesh | Path | str,
     *,
@@ -128,16 +172,21 @@ def _sanitize_mesh(
         mesh = trimesh.load_mesh(mesh_path)
 
     if isinstance(mesh, meshio.Mesh):
-        mesh = _sanitize_meshio_mesh(mesh, output_type="trimesh", recenter=recenter)
+        mesh = _sanitize_meshio_mesh(mesh, output_type="trimesh", recenter=False)
 
-    assert isinstance(mesh, trimesh.Trimesh)
+    if not isinstance(mesh, trimesh.Trimesh):
+        raise TypeError(
+            "Geometry3DFromCAD requires a triangular trimesh.Trimesh or meshio.Mesh."
+        )
+    if not np.all(np.isfinite(np.asarray(mesh.vertices, dtype=float))):
+        raise ValueError("Geometry3DFromCAD mesh vertices must be finite.")
 
     mesh.remove_unreferenced_vertices()
     mesh.update_faces(mesh.unique_faces())
     mesh.update_faces(mesh.nondegenerate_faces())
-    mesh.remove_infinite_values()
-    mesh.fill_holes()
     mesh.fix_normals()
+    mesh.remove_unreferenced_vertices()
+    _validate_watertight_solid_mesh(mesh)
 
     if recenter:
         mesh.apply_translation(-mesh.center_mass)

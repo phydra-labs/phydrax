@@ -37,16 +37,17 @@ def test_boundary_subset_blend_matches_pieces():
 
     left_component = geom.component({"x": Boundary()}, where={"x": left_where})
     right_component = geom.component({"x": Boundary()}, where={"x": right_where})
+    full_boundary = geom.component({"x": Boundary()})
 
     left_constraint = SingleFieldEnforcedConstraint(
         "u",
         left_component,
-        lambda f: enforce_dirichlet(f, left_component, var="x", target=1.0),
+        lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
     )
     right_constraint = SingleFieldEnforcedConstraint(
         "u",
         right_component,
-        lambda f: enforce_dirichlet(f, right_component, var="x", target=2.0),
+        lambda f: enforce_dirichlet(f, full_boundary, var="x", target=2.0),
     )
 
     pipelines = EnforcedConstraintPipelines.build(

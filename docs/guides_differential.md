@@ -224,48 +224,63 @@ This is the preferred mode for spectral operators and neural operators (FNO/Deep
 
 ## Surface differential operators
 
-Several operators act on fields restricted to a geometry boundary (surface/curve). These use the
-outward unit normal $n$ provided by the geometry and project ambient derivatives onto the tangent
-space.
+Here **surface** means one smooth boundary component of an embedded geometry.
+This is distinct from the additive face collection returned by a product domain's
+`boundary()` method and from signed simplicial/cochain boundary maps. Normal-based
+surface operators require a single `DomainComponent`, not a
+`DomainComponentUnion`.
 
-Let $\Gamma = \partial\Omega_x$ be a smooth boundary in $\mathbb{R}^d$ with unit normal
-$n(x)\in\mathbb{R}^d$. Define the tangential projector
-
-$$
-P(x) = I - n(x)\,n(x)^\top.
-$$
-
-For a scalar field $u$, the **surface gradient** is
+Let \(\Gamma=\partial\Omega_x\) be embedded in \(\mathbb{R}^d\), with outward
+unit normal \(n\) and tangent projector
 
 $$
-\nabla_\Gamma u = P\,\nabla u.
+P = I - n n^\top.
 $$
 
-For a (tangent) vector field $v$, the **surface divergence** is
+For an ambient scalar field \(u\) and vector field \(v\), Phydrax defines
 
 $$
-\nabla_\Gamma\cdot v = \text{tr}\!\left(P\,\nabla v\right).
+\nabla_\Gamma u = P\nabla u,
+\qquad
+\nabla_\Gamma\cdot v = \operatorname{tr}(P\nabla v).
 $$
 
-The **Laplace–Beltrami** operator is the surface analogue of the Laplacian:
+These are exposed as `surface_grad` and `surface_div`; use
+`tangential_component` to apply \(P\) directly to a vector field. In three
+ambient dimensions, the two surface-curl conventions are explicit:
 
 $$
-\Delta_\Gamma u = \nabla_\Gamma\cdot(\nabla_\Gamma u).
+\operatorname{curl}_\Gamma u = n\times\nabla_\Gamma u,
+\qquad
+\operatorname{curl}_\Gamma v = n\cdot(\nabla\times v),
 $$
 
-In Phydrax, these operators are exposed as `surface_grad`, `surface_div`, and
-`laplace_beltrami` (see [API → Operators → Differential](api/operators/differential.md)).
+implemented by `surface_curl_scalar` and `surface_curl_vector`.
 
-!!! note
-    Surface operators are intended to be evaluated on boundary components so that the geometry
-    can supply consistent normals.
+Operator composition follows the normal provider's autodiff contract. Analytic
+normal fields may contribute curvature derivatives; mesh-derived normals are
+intentionally nondifferentiable. Use metric-coordinate calculus whenever an
+exact curved-manifold identity is required.
 
-For a field already expressed in local coordinates with a
-`phydrax.metrix.RiemannianMetric`, pass the metric instead of a boundary
-component. That overload computes
-\(\Delta_g u=g^{ij}(\partial_i\partial_j u-\Gamma^k_{ij}\partial_k u)\)
-intrinsically and does not require ambient normals. See
-[API → Metrix → Connections and intrinsic operators](api/metrix/connections.md).
+`ambient_surface_hessian_trace(u, component)` computes
+\(\operatorname{tr}(P(\nabla^2u)P)\). This is an **ambient,
+extension-dependent contraction**. It equals the intrinsic
+Laplace--Beltrami operator only when the ambient extension is compatible with
+the surface, such as a closest-point extension or a flat surface.
+
+For a field expressed in local manifold coordinates, the intrinsic operator is
+
+$$
+\Delta_g u =
+\frac{1}{\sqrt{\lvert g\rvert}}
+\partial_i\left(\sqrt{\lvert g\rvert}\,g^{ij}\partial_j u\right).
+$$
+
+Call `laplace_beltrami(u, metric)` with a
+`phydrax.metrix.RiemannianMetric`. It does not accept a boundary component or
+use ambient normals. See
+[API → Metrix → Connections and intrinsic operators](api/metrix/connections.md)
+and [API → Operators → Differential](api/operators/differential.md).
 
 ## Fractional operators
 

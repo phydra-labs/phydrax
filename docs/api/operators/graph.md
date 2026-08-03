@@ -210,8 +210,10 @@ reach compiled execution.
 
 The functional DEC operators and their `GraphIR -> GraphIR` wrappers implement
 the exterior derivative, metric codifferential, split/full Hodge Laplacian, and
-metric harmonic projection. `CochainBoundaryPolicy("absolute" | "relative")`
-selects the active subcomplex. `reorient_cochain_complex` changes the oriented
+metric harmonic projection. `triangle_mesh_to_cochain_complex` always builds
+the complete oriented topology; boundary behavior belongs to the consuming
+operator. `CochainBoundaryPolicy("absolute" | "relative")` selects that
+operator's active subcomplex. `reorient_cochain_complex` changes the oriented
 cell basis without changing the represented physical complex; use
 `reorient_cochain` to transform signed coefficient arrays consistently.
 
@@ -362,7 +364,11 @@ interactions and hierarchy-aware graph neural operators.
 ## Mesh calculus
 
 Mesh-calculus helpers build geometry-aware `GraphIR` objects and executable
-cotangent operators for triangular surface meshes.
+cotangent operators for triangular surface meshes. `MeshCotangentLaplacian`
+requires an explicit sign: `"neighbor_minus_self"` approximates the
+negative-semidefinite differential Laplacian \(\Delta\), while
+`"self_minus_neighbor"` is the positive-semidefinite stiffness convention
+\(-\Delta\).
 
 ::: phydrax.graph.mesh_to_cotangent_graph
 

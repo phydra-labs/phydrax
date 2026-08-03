@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast
 
 import coordax as cx
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -154,7 +155,7 @@ class _NormalCallable(StrictModule):
         n = jnp.asarray(self.geom._boundary_normals(pts), dtype=float)
         eps = jnp.finfo(float).eps
         nrm = jnp.linalg.norm(n, axis=-1, keepdims=True) + eps
-        n = jax.lax.stop_gradient(n / nrm)
+        n = n / nrm
         if pts_in.ndim == 0:
             return n.reshape(())
         return n.reshape(pts_in.shape)
@@ -417,7 +418,9 @@ class DomainComponent(StrictModule):
         if not graph_labels:
             return None
         if len(graph_labels) > 1:
-            raise ValueError("Sampling multiple GraphDomain factors is not supported yet.")
+            raise ValueError(
+                "Sampling multiple GraphDomain factors is not supported yet."
+            )
 
         graph_label = graph_labels[0]
         graph_factor = self.domain.factor(graph_label)
@@ -924,10 +927,7 @@ class DomainComponent(StrictModule):
 
                         coords_tuple = tuple(coords)
                         mask_arr = sdf_mask_from_adf(factor.adf, coords_tuple)
-                        if (
-                            isinstance(n_spec, GridSpec)
-                            and n_spec.cut_cell_order > 0
-                        ):
+                        if isinstance(n_spec, GridSpec) and n_spec.cut_cell_order > 0:
                             base_weights: list[Array] = []
                             for i, coord in enumerate(coords_tuple):
                                 axis_name = _axis_name_for_coord(lbl, i)
@@ -1095,12 +1095,8 @@ class DomainComponent(StrictModule):
             dense_structure=dense_structure_out,
             coord_axes_by_label=frozendict(coord_axes_by_label),
             coord_mask_by_label=frozendict(coord_mask_by_label),
-            coord_geometry_weight_by_label=frozendict(
-                coord_geometry_weight_by_label
-            ),
-            coord_geometry_order_by_label=frozendict(
-                coord_geometry_order_by_label
-            ),
+            coord_geometry_weight_by_label=frozendict(coord_geometry_weight_by_label),
+            coord_geometry_order_by_label=frozendict(coord_geometry_order_by_label),
             axis_discretization_by_axis=frozendict(axis_discretization_by_axis),
         )
 
@@ -1213,22 +1209,40 @@ class DomainComponent(StrictModule):
 
 
 class DomainComponentUnion(StrictModule):
-    r"""A finite union of `DomainComponent` terms.
+    r"""An additive collection of measure-disjoint domain components.
 
-    This is used to represent components that are naturally unions, e.g. for a time
-    interval $[t_0,t_1]$ the boundary is $\{t=t_0\}\cup\{t=t_1\}$.
+    This represents components that decompose naturally into disjoint terms, such
+    as the two endpoints of an interval or the codimension-one faces of a product
+    domain. All terms must use the same compatible labeled domain.
 
-    The total measure is the sum of term measures, and sampling allocates points
-    across terms.
+    Measures and sampling allocations are additive. Arbitrary filter overlap
+    cannot be detected, so callers must ensure distinct filtered terms are
+    measure-disjoint; intersections are otherwise counted once per term.
     """
 
     terms: tuple[DomainComponent, ...]
 
     def __init__(self, terms: tuple[DomainComponent, ...]):
-        """Create a union from non-empty `terms`."""
-        if not terms:
+        """Create an additive collection from non-empty compatible terms."""
+        resolved_terms = tuple(terms)
+        if not resolved_terms:
             raise ValueError("DomainComponentUnion.terms must be non-empty.")
-        self.terms = terms
+        if not all(isinstance(term, DomainComponent) for term in resolved_terms):
+            raise TypeError("DomainComponentUnion terms must be DomainComponent values.")
+
+        domain = resolved_terms[0].domain
+        for index, term in enumerate(resolved_terms):
+            if term.domain.labels != domain.labels or not domain.equivalent(term.domain):
+                raise ValueError(
+                    "DomainComponentUnion terms must share the same compatible "
+                    "labeled domain."
+                )
+            for previous in resolved_terms[:index]:
+                if bool(eqx.tree_equal(term, previous)):
+                    raise ValueError(
+                        "DomainComponentUnion terms must not contain duplicates."
+                    )
+        self.terms = resolved_terms
 
     @property
     def domain(self) -> _AbstractDomain:
@@ -1239,7 +1253,7 @@ class DomainComponentUnion(StrictModule):
         return self.domain.labels
 
     def measure(self) -> Array:
-        r"""Return the total measure $\mu(\cup_i \Omega_i)=\sum_i \mu(\Omega_i)$."""
+        r"""Return the sum of term measures $\sum_i \mu(\Omega_i)$."""
         m = jnp.array(0.0, dtype=float)
         for term in self.terms:
             m = m + term.measure()

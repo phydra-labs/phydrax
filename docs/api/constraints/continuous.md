@@ -20,6 +20,11 @@ multiplier or a pointwise `DomainFunction`.
 
 ## Integral constraints
 
+Boundary-integral helpers accept `var` to select the geometry label. When it is
+omitted, Phydrax infers the sole geometry label and raises on an ambiguous
+domain. In a product domain, only that factor is changed to `Boundary()`; the
+other factors retain their component defaults.
+
 ::: phydrax.constraints.ContinuousIntegralInteriorConstraint
 
 ---

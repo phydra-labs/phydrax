@@ -30,6 +30,25 @@ def test_initialization(geometry_from_cube):
     assert geom.mesh_faces.shape[1] == 3
 
 
+def test_initialization_rejects_open_surface_mesh():
+    mesh = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
+    mesh.update_faces(np.arange(mesh.faces.shape[0]) != 0)
+    mesh.remove_unreferenced_vertices()
+
+    with pytest.raises(ValueError, match="watertight"):
+        Geometry3DFromCAD(mesh=mesh, recenter=False)
+
+
+def test_initialization_rejects_nonfinite_vertices():
+    mesh = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
+    vertices = np.asarray(mesh.vertices).copy()
+    vertices[0, 0] = np.nan
+    invalid = trimesh.Trimesh(vertices=vertices, faces=mesh.faces, process=False)
+
+    with pytest.raises(ValueError, match="finite"):
+        Geometry3DFromCAD(mesh=invalid, recenter=False)
+
+
 def test_volume_property(geometry_from_cube):
     geom = geometry_from_cube
     expected_volume = 1.0  # Cube with side length 1m
