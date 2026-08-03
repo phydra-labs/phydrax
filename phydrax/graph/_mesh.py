@@ -261,6 +261,7 @@ class MeshCotangentLaplacian(eqx.Module):
         self,
         /,
         *,
+        sign: MeshLaplacianSign,
         weight: Any = None,
         mass: Any = None,
         weight_key: str | None = "cotangent_weight",
@@ -268,7 +269,6 @@ class MeshCotangentLaplacian(eqx.Module):
         input_key: str | None = None,
         output_key: str | None = None,
         normalize_by_mass: bool = True,
-        sign: MeshLaplacianSign = "neighbor_minus_self",
     ):
         if sign not in ("neighbor_minus_self", "self_minus_neighbor"):
             raise ValueError(
@@ -329,7 +329,9 @@ class MeshCotangentLaplacian(eqx.Module):
     def __call__(self, graph: GraphIR) -> GraphIR:
         graph = ensure_graph(graph, validate=False)
         if graph.senders is None or graph.receivers is None:
-            raise ValueError("MeshCotangentLaplacian requires explicit senders/receivers.")
+            raise ValueError(
+                "MeshCotangentLaplacian requires explicit senders/receivers."
+            )
 
         nodes = self._node_field(graph)
         sent = _tree_index(nodes, graph.senders)

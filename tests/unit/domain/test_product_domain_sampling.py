@@ -7,7 +7,9 @@ import pytest
 
 from phydrax.domain import (
     Boundary,
+    DomainComponentUnion,
     FixedStart,
+    Interior,
     Interval1d,
     ProductStructure,
     TimeInterval,
@@ -91,3 +93,26 @@ def test_coord_separable_sampling_rejects_boundary_component():
             dense_structure=dense_structure,
             key=jr.key(0),
         )
+
+
+def test_product_boundary_is_additive_component_collection():
+    domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
+    boundary = domain.boundary()
+
+    assert isinstance(boundary, DomainComponentUnion)
+    assert len(boundary.terms) == 3
+    assert all(term.domain.equivalent(domain) for term in boundary.terms)
+    assert float(boundary.measure()) == pytest.approx(4.0)
+
+
+def test_component_collection_rejects_invalid_terms():
+    domain = Interval1d(0.0, 1.0)
+    term = domain.component({"x": Interior()})
+    incompatible = Interval1d(0.0, 2.0).component({"x": Interior()})
+
+    with pytest.raises(ValueError, match="non-empty"):
+        DomainComponentUnion(())
+    with pytest.raises(ValueError, match="duplicates"):
+        DomainComponentUnion((term, term))
+    with pytest.raises(ValueError, match="compatible labeled domain"):
+        DomainComponentUnion((term, incompatible))

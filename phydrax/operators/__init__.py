@@ -47,6 +47,7 @@ from .delay import (  # noqa: F401
     delay as delay_operator,
 )
 from .differential import (  # noqa: F401
+    ambient_surface_hessian_trace,
     bilaplacian,
     caputo_time_fractional,
     caputo_time_fractional_dw,
@@ -78,7 +79,6 @@ from .differential import (  # noqa: F401
     hydrostatic_stress,
     kolmogorov_generator,
     laplace_beltrami,
-    laplace_beltrami_divgrad,
     laplacian,
     lie_bracket,
     linear_elastic_cauchy_stress_2d,
@@ -287,11 +287,11 @@ __all__ = [
     "stratonovich_to_ito_drift",
     "div_tensor",
     "navier_stokes_divergence",
+    "ambient_surface_hessian_trace",
     "laplace_beltrami",
     "riemannian_div",
     "riemannian_div_tensor",
     "riemannian_grad",
-    "laplace_beltrami_divgrad",
     "surface_curl_scalar",
     "surface_curl_vector",
     "surface_div",

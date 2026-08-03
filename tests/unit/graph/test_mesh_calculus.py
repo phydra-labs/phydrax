@@ -77,7 +77,9 @@ def test_mesh_cotangent_laplacian_zero_for_constant_field():
         validate=False,
     )
 
-    out = phx.graph.MeshCotangentLaplacian(input_key="u", output_key="lap_u")(graph)
+    out = phx.graph.MeshCotangentLaplacian(
+        sign="neighbor_minus_self", input_key="u", output_key="lap_u"
+    )(graph)
 
     assert jnp.allclose(out.nodes["lap_u"], jnp.zeros((3,)))
 
@@ -90,7 +92,9 @@ def test_mesh_cotangent_laplacian_known_linear_field_on_open_triangle():
         validate=False,
     )
 
-    out = phx.graph.MeshCotangentLaplacian(input_key="u", output_key="lap_u")(graph)
+    out = phx.graph.MeshCotangentLaplacian(
+        sign="neighbor_minus_self", input_key="u", output_key="lap_u"
+    )(graph)
 
     assert jnp.allclose(out.nodes["lap_u"], jnp.array([3.0, -3.0, 0.0]))
 
@@ -109,7 +113,9 @@ def test_mesh_cotangent_laplacian_integrates_with_graph_model_keys():
 
     def residual(f):
         return domain.GraphModel(
-            phx.graph.MeshCotangentLaplacian(input_key="u", output_key="lap_u"),
+            phx.graph.MeshCotangentLaplacian(
+                sign="neighbor_minus_self", input_key="u", output_key="lap_u"
+            ),
             input_fn=f,
             input_key="u",
             output_key="lap_u",

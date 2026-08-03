@@ -39,16 +39,17 @@ def test_mixed_constraints_steady_state():
     right_component = geom.component(
         {"x": Boundary()}, where={"x": lambda p: p[0] >= 0.5}
     )
+    full_boundary = geom.component({"x": Boundary()})
 
     left_constraint = SingleFieldEnforcedConstraint(
         "u",
         left_component,
-        lambda f: enforce_dirichlet(f, left_component, var="x", target=1.0),
+        lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
     )
     right_constraint = SingleFieldEnforcedConstraint(
         "u",
         right_component,
-        lambda f: enforce_dirichlet(f, right_component, var="x", target=2.0),
+        lambda f: enforce_dirichlet(f, full_boundary, var="x", target=2.0),
     )
 
     anchors = {"x": jnp.array([[0.25], [0.75]], dtype=float)}

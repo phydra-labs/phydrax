@@ -2,6 +2,11 @@
 
 ## Mesh-based geometries
 
+`Geometry3DFromCAD` represents an enclosed solid. Input surface meshes must be
+finite, nondegenerate, consistently oriented, and watertight after
+sanitization; open or zero-volume surfaces are rejected before distance fields,
+sampling, or boundary normals are constructed.
+
 ### Boolean / CSG operations
 
 `Geometry3DFromCAD` supports boolean operations via operator overloading:

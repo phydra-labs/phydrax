@@ -1,6 +1,7 @@
 import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
+import pytest
 
 import phydrax as phx
 from phydrax._frozendict import frozendict
@@ -62,6 +63,37 @@ def test_domain_function_riemannian_operators_match_polar_identities():
     assert jnp.allclose(jnp.asarray(hessian(points).data)[..., 1, 1], 2.0 * radii**2)
     assert jnp.allclose(jnp.asarray(metric_derivative(points).data), 0.0, atol=1e-9)
     assert jnp.allclose(jnp.asarray(inverse_divergence(points).data), 0.0, atol=1e-9)
+
+
+def test_laplace_beltrami_matches_unit_sphere_eigenfunction():
+    chart = phx.metrix.CoordinateChart("sphere", ("theta", "phi"))
+    embedded = phx.metrix.EmbeddedChart(
+        chart,
+        lambda q: jnp.array(
+            [
+                jnp.sin(q[0]) * jnp.cos(q[1]),
+                jnp.sin(q[0]) * jnp.sin(q[1]),
+                jnp.cos(q[0]),
+            ]
+        ),
+        3,
+    )
+    metric = embedded.induced_metric()
+    domain = phx.domain.Square(center=(1.5, 0.0), side=2.0)
+    scalar = domain.Function("x")(lambda q: jnp.sin(q[0]) * jnp.cos(q[1]))
+    points = _points([[0.6, -0.7], [1.1, 0.4], [2.2, 0.8]])
+
+    laplacian = phx.operators.laplace_beltrami(scalar, metric, var="x")
+    values = jnp.asarray(laplacian(points).data)
+    expected = (
+        -2.0
+        * jnp.sin(jnp.asarray(points["x"].data)[:, 0])
+        * jnp.cos(jnp.asarray(points["x"].data)[:, 1])
+    )
+
+    assert jnp.allclose(values, expected, atol=1e-9)
+    with pytest.raises(TypeError, match="RiemannianMetric"):
+        phx.operators.laplace_beltrami(scalar, domain.component(), var="x")
 
 
 def test_riemannian_measure_multiplies_existing_component_weights():

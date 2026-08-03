@@ -211,6 +211,29 @@ def test_integral_constraints_1d_zero_loss():
         assert _jit_loss(constraint, functions) < 1e-6
 
 
+def test_boundary_integral_resolves_relabeled_geometry_in_product_domain():
+    space = Interval1d(0.0, 1.0).relabel("space")
+    time = TimeInterval(0.0, 1.0)
+    domain = space @ time
+    structure = ProductStructure((("space",), ("t",)))
+
+    @domain.Function("space", "t")
+    def u(space_coordinate, time_coordinate):
+        del space_coordinate, time_coordinate
+        return 1.0
+
+    constraint = ContinuousIntegralBoundaryConstraint(
+        "u",
+        domain,
+        lambda value, normal: value,
+        num_points=(8, 8),
+        structure=structure,
+        equal_to=2.0,
+    )
+
+    assert _jit_loss(constraint, {"u": u}) < 1e-6
+
+
 def test_integral_initial_constraint_zero():
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)

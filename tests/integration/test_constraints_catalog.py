@@ -392,6 +392,65 @@ def test_thermal_constraints_continuous_and_discrete():
         _assert_zero_loss(constraint, functions)
 
 
+def test_thermal_constraints_use_physical_outward_flux_sign():
+    geom = Interval1d(0.0, 1.0)
+    component = geom.component({"x": Boundary()})
+    structure = ProductStructure((("x",),))
+    conductivity = 2.0
+    convection = 4.0
+
+    @geom.Function("x")
+    def temperature(x):
+        return x[0] ** 2
+
+    @geom.Function("x")
+    def outward_flux(x):
+        return -2.0 * conductivity * x[0]
+
+    @geom.Function("x")
+    def ambient_temperature(x):
+        return x[0] ** 2 + 2.0 * conductivity * x[0] / convection
+
+    points = {"x": jnp.array([[0.0], [1.0]], dtype=float)}
+    constraints = [
+        ContinuousHeatFluxBoundaryConstraint(
+            "T",
+            component,
+            k=conductivity,
+            flux=outward_flux,
+            num_points=8,
+            structure=structure,
+        ),
+        ContinuousConvectionBoundaryConstraint(
+            "T",
+            component,
+            h=convection,
+            k=conductivity,
+            ambient_temp=ambient_temperature,
+            num_points=8,
+            structure=structure,
+        ),
+        DiscreteHeatFluxBoundaryConstraint(
+            "T",
+            component,
+            points=points,
+            values=jnp.array([0.0, -2.0 * conductivity]),
+            k=conductivity,
+        ),
+        DiscreteConvectionBoundaryConstraint(
+            "T",
+            component,
+            points=points,
+            ambient_values=jnp.array([0.0, 1.0 + 2.0 * conductivity / convection]),
+            h=convection,
+            k=conductivity,
+        ),
+    ]
+
+    for constraint in constraints:
+        _assert_zero_loss(constraint, {"T": temperature})
+
+
 def test_em_constraints_continuous_and_discrete():
     geom = Cube(center=(0.0, 0.0, 0.0), side=2.0)
     component = geom.component({"x": Boundary()})

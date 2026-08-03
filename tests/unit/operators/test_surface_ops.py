@@ -6,13 +6,27 @@ import coordax as cx
 import jax.numpy as jnp
 
 from phydrax._frozendict import frozendict
-from phydrax.domain import Boundary, Square
+from phydrax.domain import Boundary, Cube, Square
 from phydrax.operators.differential import (
-    laplace_beltrami,
+    ambient_surface_hessian_trace,
+    surface_curl_scalar,
+    surface_curl_vector,
     surface_div,
     surface_grad,
     tangential_component,
 )
+
+
+class _RadialNormalComponent:
+    def __init__(self, domain):
+        self.domain = domain
+
+    def normal(self, *, var):
+        @self.domain.Function(var)
+        def radial(point):
+            return point / jnp.linalg.norm(point)
+
+        return radial
 
 
 def test_surface_grad_scalar_flat_edge_projection():
@@ -50,7 +64,7 @@ def test_surface_div_vector_flat_edge():
     assert jnp.allclose(val, jnp.ones_like(x), atol=1e-6)
 
 
-def test_laplace_beltrami_scalar_flat_edge():
+def test_ambient_surface_hessian_trace_flat_edge():
     geom = Square(center=(0.0, 0.0), side=2.0)
     component = geom.component({"x": Boundary()})
 
@@ -61,13 +75,74 @@ def test_laplace_beltrami_scalar_flat_edge():
     def u(p):
         return p[0] ** 2 + p[1] ** 2
 
-    lb = laplace_beltrami(u, component)
-    val = jnp.asarray(lb(frozendict({"x": cx.Field(pts, dims=("n", None))})).data)
+    trace = ambient_surface_hessian_trace(u, component)
+    val = jnp.asarray(trace(frozendict({"x": cx.Field(pts, dims=("n", None))})).data)
     assert jnp.allclose(val, 2.0 * jnp.ones_like(x), atol=1e-5)
 
-    lb2 = laplace_beltrami(u, component, curvature_aware=True)
-    val2 = jnp.asarray(lb2(frozendict({"x": cx.Field(pts, dims=("n", None))})).data)
-    assert jnp.allclose(val2, 2.0 * jnp.ones_like(x), atol=1e-5)
+
+def test_surface_curl_scalar_on_flat_face():
+    geom = Cube(center=(0.0, 0.0, 0.0), side=2.0)
+    component = geom.component({"x": Boundary()})
+    points = jnp.array([[0.2, 0.3, 1.0], [-0.4, 0.1, 1.0]])
+
+    @geom.Function("x")
+    def scalar(point):
+        return point[0] ** 2 + point[1]
+
+    result = surface_curl_scalar(scalar, component)
+    values = jnp.asarray(
+        result(frozendict({"x": cx.Field(points, dims=("n", None))})).data
+    )
+    expected = jnp.stack(
+        (
+            -jnp.ones((points.shape[0],)),
+            2.0 * points[:, 0],
+            jnp.zeros((points.shape[0],)),
+        ),
+        axis=-1,
+    )
+
+    assert jnp.allclose(values, expected, atol=1e-6)
+
+
+def test_surface_curl_vector_on_flat_face():
+    geom = Cube(center=(0.0, 0.0, 0.0), side=2.0)
+    component = geom.component({"x": Boundary()})
+    points = jnp.array([[0.2, 0.3, 1.0], [-0.4, 0.1, 1.0]])
+
+    @geom.Function("x")
+    def vector(point):
+        return jnp.array([-0.5 * point[1], 0.5 * point[0], 0.0])
+
+    result = surface_curl_vector(vector, component)
+    values = jnp.asarray(
+        result(frozendict({"x": cx.Field(points, dims=("n", None))})).data
+    )
+
+    assert jnp.allclose(values, jnp.ones((points.shape[0],)), atol=1e-6)
+
+
+def test_surface_div_grad_uses_differentiable_normal_provider():
+    geom = Cube(center=(0.0, 0.0, 0.0), side=2.0)
+    component = _RadialNormalComponent(geom)
+    points = jnp.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.6, 0.8, 0.0],
+            [-0.5, 0.5, jnp.sqrt(0.5)],
+        ]
+    )
+
+    @geom.Function("x")
+    def scalar(point):
+        return point[0]
+
+    result = surface_div(surface_grad(scalar, component), component)
+    values = jnp.asarray(
+        result(frozendict({"x": cx.Field(points, dims=("n", None))})).data
+    )
+
+    assert jnp.allclose(values, -2.0 * points[:, 0], atol=1e-6)
 
 
 def test_tangential_component_projection():

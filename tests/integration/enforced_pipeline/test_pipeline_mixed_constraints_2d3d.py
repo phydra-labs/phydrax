@@ -55,18 +55,19 @@ def test_mixed_constraints_2d_transient():
 
     left = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] < -0.9})
     right = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] > 0.9})
+    full_boundary = domain.component({"x": Boundary()})
     initial = domain.component({"t": FixedStart()})
 
     constraints = [
         SingleFieldEnforcedConstraint(
             "u",
             left,
-            lambda f: enforce_dirichlet(f, left, var="x", target=1.0),
+            lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
         ),
         SingleFieldEnforcedConstraint(
             "u",
             right,
-            lambda f: enforce_dirichlet(f, right, var="x", target=2.0),
+            lambda f: enforce_dirichlet(f, full_boundary, var="x", target=2.0),
         ),
         SingleFieldEnforcedConstraint(
             "u",
@@ -150,18 +151,19 @@ def test_mixed_constraints_3d_transient():
 
     left = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] < -0.9})
     right = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] > 0.9})
+    full_boundary = domain.component({"x": Boundary()})
     initial = domain.component({"t": FixedStart()})
 
     constraints = [
         SingleFieldEnforcedConstraint(
             "u",
             left,
-            lambda f: enforce_dirichlet(f, left, var="x", target=1.0),
+            lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
         ),
         SingleFieldEnforcedConstraint(
             "u",
             right,
-            lambda f: enforce_dirichlet(f, right, var="x", target=2.0),
+            lambda f: enforce_dirichlet(f, full_boundary, var="x", target=2.0),
         ),
         SingleFieldEnforcedConstraint(
             "u",

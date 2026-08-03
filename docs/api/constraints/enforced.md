@@ -17,6 +17,14 @@ see [Enforced constraint pipelines](../solver/enforced_constraints.md).
       boundary normals and can be used in spectral/FNO-style or graph-batch
       evaluations.
 
+!!! warning
+    A `Boundary()` component restricted by `where` or `where_all` is not a
+    valid input to a direct geometry hard enforcer. Its signed-distance gate
+    vanishes on the full boundary and would enforce outside the requested
+    subset. Phydrax rejects this case. Construct each piece's ansatz against an
+    unfiltered `Boundary()` component, then associate those ansätze with the
+    filtered components passed to `enforce_blend`.
+
 ::: phydrax.constraints.enforce_dirichlet
 
 ---

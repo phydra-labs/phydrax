@@ -174,10 +174,11 @@ def test_identity_remainder_toggle_changes_output():
         return x[0] * 0.0 + 10.0
 
     left = geom.component({"x": Boundary()}, where={"x": lambda p: p[0] < 0.5})
+    full_boundary = geom.component({"x": Boundary()})
     left_constraint = SingleFieldEnforcedConstraint(
         "u",
         left,
-        lambda f: enforce_dirichlet(f, left, var="x", target=1.0),
+        lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
     )
 
     pipes_no = EnforcedConstraintPipelines.build(

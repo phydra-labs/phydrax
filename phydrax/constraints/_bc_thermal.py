@@ -65,15 +65,15 @@ def ContinuousHeatFluxBoundaryConstraint(
 ) -> FunctionalConstraint:
     r"""Prescribed heat-flux (Neumann) boundary condition.
 
-    Enforces $k\,\partial T/\partial n = q$ on the boundary component, where
-    $q$ is the heat flux (default $0$).
+    Enforces the physical outward conductive heat flux
+    $-k\,\partial T/\partial n = q$ (default $q=0$).
 
     **Arguments:**
 
     - `temperature_var`: Name of the temperature field.
     - `component`: Boundary component.
     - `k`: Thermal conductivity.
-    - `flux`: Target flux $q$ (defaults to 0).
+    - `flux`: Target physical outward heat flux $q$ (defaults to 0).
     - `var`: Geometry variable used to compute normals.
     - `mode`: Differentiation mode (`"reverse"` or `"forward"`).
     - `num_points`: Number of boundary samples.
@@ -93,7 +93,7 @@ def ContinuousHeatFluxBoundaryConstraint(
 
     def operator(u: DomainFunction, /) -> DomainFunction:
         dd = directional_derivative(u, n, var=var, mode=mode)
-        return k * dd - target
+        return -k * dd - target
 
     return FunctionalConstraint.from_operator(
         component=component,
@@ -129,7 +129,7 @@ def ContinuousConvectionBoundaryConstraint(
 ) -> FunctionalConstraint:
     r"""Convection (Robin) boundary condition.
 
-    Enforces $k\,\partial T/\partial n = h\,(T - T_\infty)$ on the boundary
+    Enforces $-k\,\partial T/\partial n = h\,(T - T_\infty)$ on the boundary
     component, where $T_\infty$ is the ambient temperature (default $0$).
 
     **Arguments:**
@@ -158,7 +158,7 @@ def ContinuousConvectionBoundaryConstraint(
 
     def operator(u: DomainFunction, /) -> DomainFunction:
         dd = directional_derivative(u, n, var=var, mode=mode)
-        return k * dd - h * (u - ambient)
+        return -k * dd - h * (u - ambient)
 
     return FunctionalConstraint.from_operator(
         component=component,
@@ -230,7 +230,7 @@ def DiscreteHeatFluxBoundaryConstraint(
 ) -> PointSetConstraint:
     r"""Discrete heat-flux (Neumann-type) constraint at explicit anchor points.
 
-    Enforces $k\,\partial T/\partial n = q$ at the provided points.
+    Enforces the physical outward heat flux $-k\,\partial T/\partial n = q$.
     """
     n = _normal(component, var=var)
     target = _interp_target(component, points, values)
@@ -238,7 +238,7 @@ def DiscreteHeatFluxBoundaryConstraint(
     def residual(functions: Mapping[str, DomainFunction], /) -> DomainFunction:
         u = functions[temperature_var]
         dudn = directional_derivative(u, n, var=var, mode=mode)
-        return k * dudn - target
+        return -k * dudn - target
 
     return PointSetConstraint.from_points(
         component=component,
@@ -267,8 +267,8 @@ def DiscreteConvectionBoundaryConstraint(
 ) -> PointSetConstraint:
     r"""Discrete convection (Robin) constraint at explicit anchor points.
 
-    Enforces $k\,\partial T/\partial n = h\,(T - T_\infty)$ at the provided points,
-    where $T_\infty$ is given by `ambient_values` (interpolated when needed).
+    Enforces $-k\,\partial T/\partial n = h\,(T - T_\infty)$ at the provided
+    points, where $T_\infty$ is given by `ambient_values`.
     """
     n = _normal(component, var=var)
     ambient = _interp_target(component, points, ambient_values)
@@ -276,7 +276,7 @@ def DiscreteConvectionBoundaryConstraint(
     def residual(functions: Mapping[str, DomainFunction], /) -> DomainFunction:
         u = functions[temperature_var]
         dudn = directional_derivative(u, n, var=var, mode=mode)
-        return k * dudn - h * (u - ambient)
+        return -k * dudn - h * (u - ambient)
 
     return PointSetConstraint.from_points(
         component=component,

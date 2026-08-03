@@ -294,6 +294,13 @@ fixed/aligned manifold basis. A target plan permits a pre-aligned
 cross-discretization, not arbitrary query coordinates or independently
 remeshed manifolds with unresolved eigenbasis alignment.
 
+`SpectralDiscretization.from_stiffness(K, M, ...)` uses the finite-element
+convention \(K\succeq0\), \(M\succ0\) and solves \(K v=\lambda M v\).
+`from_triangle_mesh(...)` assembles cotangent stiffness and lumped mass as
+sparse matrices and computes only the requested low modes for large meshes;
+small or nearly full spectra use a dense solve. Repeated eigenvalues are grouped
+as one eigenspace for basis-gauge-safe spectral mixing.
+
 ::: phydrax.nn.IFNO
     options:
         members:

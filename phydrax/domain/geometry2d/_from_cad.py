@@ -126,9 +126,7 @@ class Geometry2DFromCAD(_AbstractGeometry2D):
             edge_lengths,
             kind="segment",
         )
-        self.boundary_chart_atlas = CADChartAtlas(
-            self.boundary_measure_partition
-        )
+        self.boundary_chart_atlas = CADChartAtlas(self.boundary_measure_partition)
 
         self.adf = self.adf_blur(self.adf_orig, radius_fn=self.adf_orig)
 
@@ -721,11 +719,21 @@ class Geometry2DFromCAD(_AbstractGeometry2D):
         if pts.ndim != 2 or pts.shape[1] != 2:
             raise ValueError(f"Expected points with shape (N, 2), got {pts.shape}.")
 
-        zeros = jnp.zeros((pts.shape[0], 1), dtype=pts.dtype)
-        points_3d = jnp.concatenate([pts, zeros], axis=1)
+        z_mid = jnp.full(
+            (pts.shape[0], 1),
+            2.0 * self.diameter,
+            dtype=pts.dtype,
+        )
+        points_3d = jnp.concatenate([pts, z_mid], axis=1)
         normals_3d = self.geom_3d_extruded._boundary_normals(points_3d)
         normals_2d = normals_3d[:, :2]
-        nrm = jnp.linalg.norm(normals_2d, axis=1, keepdims=True) + jnp.finfo(float).eps
+        nrm = jnp.linalg.norm(normals_2d, axis=1, keepdims=True)
+        eps = jnp.finfo(pts.dtype).eps
+        normals_2d = eqx.error_if(
+            normals_2d,
+            (~jnp.all(jnp.isfinite(normals_2d))) | jnp.any(nrm <= 32.0 * eps),
+            "2D boundary normal projection produced a zero or non-finite vector.",
+        )
         normals_2d = normals_2d / nrm
 
         if squeeze:

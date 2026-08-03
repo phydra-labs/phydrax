@@ -188,6 +188,12 @@ Components are created with `domain.component(...)`:
 component = domain.component({"t": phx.domain.FixedStart()})  # initial-time slice
 ```
 
+A product domain's `boundary()` method returns a `DomainComponentUnion`: one
+additive term for each codimension-one face. This collection models a
+measure-disjoint decomposition, so all terms share the same domain and exact
+duplicates are rejected. It is not a geometric Boolean union; overlapping
+filtered terms would be counted once per term.
+
 ### Filtering with `where` and `where_all`
 
 Sampling can be restricted by predicates:

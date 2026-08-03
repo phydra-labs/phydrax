@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from typing import Literal
 
-import jax
 import jax.numpy as jnp
 import opt_einsum as oe
 
@@ -63,7 +62,6 @@ def tangential_component(
     def _op(*args, key=None, **kwargs):
         wv = jnp.asarray(w2.func(*[args[i] for i in w_pos], key=key, **kwargs))
         nv = jnp.asarray(n2.func(*[args[i] for i in n_pos], key=key, **kwargs))
-        nv = jax.lax.stop_gradient(nv)
         dot = jnp.sum(wv * nv, axis=-1, keepdims=True)
         return wv - dot * nv
 
@@ -119,7 +117,6 @@ def surface_grad(
     def _op(*args, key=None, **kwargs):
         gv = jnp.asarray(g.func(*[args[i] for i in g_pos], key=key, **kwargs))
         nv = jnp.asarray(n2.func(*[args[i] for i in n_pos], key=key, **kwargs))
-        nv = jax.lax.stop_gradient(nv)
         P = tangent_projector_from_normal(nv)
 
         if gv.ndim == nv.ndim:
@@ -183,7 +180,6 @@ def surface_div(
     def _op(*args, key=None, **kwargs):
         Jv = jnp.asarray(J.func(*[args[i] for i in j_pos], key=key, **kwargs))
         nv = jnp.asarray(n2.func(*[args[i] for i in n_pos], key=key, **kwargs))
-        nv = jax.lax.stop_gradient(nv)
         P = tangent_projector_from_normal(nv)
         if Jv.ndim < 2 or P.ndim < 2:
             raise ValueError(
@@ -240,7 +236,6 @@ def surface_curl_scalar(
 
     def _op(*args, key=None, **kwargs):
         nv = jnp.asarray(n2.func(*[args[i] for i in n_pos], key=key, **kwargs))
-        nv = jax.lax.stop_gradient(nv)
         gv = jnp.asarray(sg2.func(*[args[i] for i in sg_pos], key=key, **kwargs))
         return jnp.cross(nv, gv)
 
@@ -292,60 +287,46 @@ def surface_curl_vector(
 
     def _op(*args, key=None, **kwargs):
         nv = jnp.asarray(n2.func(*[args[i] for i in n_pos], key=key, **kwargs))
-        nv = jax.lax.stop_gradient(nv)
         cv = jnp.asarray(c2.func(*[args[i] for i in c_pos], key=key, **kwargs))
         return jnp.sum(nv * cv, axis=-1)
 
     return DomainFunction(domain=joined, deps=deps, func=_op, metadata=v.metadata)
 
 
-def laplace_beltrami(
+def ambient_surface_hessian_trace(
     u: DomainFunction,
-    component: DomainComponent | RiemannianMetric,
+    component: DomainComponent,
     /,
     *,
     var: str | None = None,
-    curvature_aware: bool = False,
-    variant: Literal["contraction", "divgrad"] | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
 ) -> DomainFunction:
-    r"""Laplace–Beltrami operator on a boundary component.
+    r"""Trace an ambient Hessian over a boundary tangent space.
 
-    The Laplace–Beltrami operator $\Delta_{\Gamma}$ is the surface analogue of the
-    Laplacian. Two common realizations are supported:
+    With outward unit normal $n$ and tangent projector $P=I-n\otimes n$, this
+    operator computes
 
-    - projection–contraction form (default): $\Delta_{\Gamma} u \approx \text{tr}(P\,\nabla^2 u\,P)$;
-    - divergence-of-surface-gradient (via `variant="divgrad"`): $\Delta_{\Gamma} u =
-      \nabla_{\Gamma}\cdot\nabla_{\Gamma}u$.
+    $$
+    \operatorname{tr}\left(P\,\nabla^2u\,P\right).
+    $$
 
-    The `curvature_aware=True` option selects the `divgrad` variant by default.
+    This is an ambient, extension-dependent contraction. It agrees with the
+    intrinsic Laplace--Beltrami operator only when the ambient extension of
+    $u$ is compatible with the surface, including flat surfaces and
+    closest-point extensions. Use `laplace_beltrami` with a
+    `RiemannianMetric` for intrinsic curved-manifold calculus.
 
     **Arguments:**
 
-    - `u`: Field to differentiate.
-    - `component`: Boundary `DomainComponent` used to supply the unit normal field.
+    - `u`: Ambient field to differentiate.
+    - `component`: Boundary component supplying the unit normal field.
     - `var`: Geometry label.
-    - `curvature_aware`: If `True`, defaults to `variant="divgrad"`.
-    - `variant`: `"contraction"` (projection–contraction) or `"divgrad"`.
-    - `mode`: Autodiff mode used by the underlying `grad`/`surface_grad`.
+    - `mode`: Autodiff mode used to construct the ambient Hessian.
 
     **Returns:**
 
-    - A `DomainFunction` representing $\Delta_\Gamma u$.
+    - A `DomainFunction` representing the tangent-space Hessian trace.
     """
-    if isinstance(component, RiemannianMetric):
-        if curvature_aware or variant is not None:
-            raise ValueError(
-                "curvature_aware and variant are only valid for boundary-component "
-                "Laplace-Beltrami operators."
-            )
-        from ._riemannian_ops import intrinsic_laplace_beltrami
-
-        return intrinsic_laplace_beltrami(u, component, var=var, mode=mode)
-
-    if variant == "divgrad" or (curvature_aware and variant is None):
-        return laplace_beltrami_divgrad(u, component, var=var, mode=mode)
-
     var = _resolve_var(u, var)
     _, var_dim = _factor_and_dim(u, var)
 
@@ -353,7 +334,6 @@ def laplace_beltrami(
     joined = u.domain.join(n.domain)
     u2 = u.promote(joined)
     n2 = n.promote(joined)
-
     H = grad(grad(u2, var=var, mode=mode), var=var, mode=mode)
 
     deps = tuple(lbl for lbl in joined.labels if (lbl in H.deps) or (lbl in n2.deps))
@@ -364,10 +344,10 @@ def laplace_beltrami(
     def _op(*args, key=None, **kwargs):
         Hv = jnp.asarray(H.func(*[args[i] for i in h_pos], key=key, **kwargs))
         nv = jnp.asarray(n2.func(*[args[i] for i in n_pos], key=key, **kwargs))
-        nv = jax.lax.stop_gradient(nv)
         if nv.shape[-1] != var_dim:
             raise ValueError(
-                f"laplace_beltrami expected normal last axis {var_dim}, got {nv.shape[-1]}."
+                "ambient_surface_hessian_trace expected normal last axis "
+                f"{var_dim}, got {nv.shape[-1]}."
             )
         P = tangent_projector_from_normal(nv)
         if Hv.ndim == P.ndim:
@@ -375,38 +355,40 @@ def laplace_beltrami(
         if Hv.ndim == P.ndim + 1:
             return oe.contract("...ij,...mjk,...ki->...m", P, Hv, P)
         raise ValueError(
-            f"laplace_beltrami got incompatible ranks: H.ndim={Hv.ndim}, P.ndim={P.ndim}."
+            "ambient_surface_hessian_trace got incompatible ranks: "
+            f"H.ndim={Hv.ndim}, P.ndim={P.ndim}."
         )
 
     return DomainFunction(domain=joined, deps=deps, func=_op, metadata=u.metadata)
 
 
-def laplace_beltrami_divgrad(
+def laplace_beltrami(
     u: DomainFunction,
-    component: DomainComponent,
+    metric: RiemannianMetric,
     /,
     *,
     var: str | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
 ) -> DomainFunction:
-    r"""Laplace–Beltrami operator via surface divergence of the surface gradient.
+    r"""Apply the intrinsic Laplace--Beltrami operator.
 
-    Implements
+    For a scalar field $u$ and Riemannian metric $g$, this computes
 
     $$
-    \Delta_{\Gamma} u = \nabla_{\Gamma}\cdot(\nabla_{\Gamma}u).
+    \Delta_g u
+    = \frac{1}{\sqrt{\lvert g\rvert}}
+      \partial_i\left(\sqrt{\lvert g\rvert}\,g^{ij}\partial_j u\right).
     $$
 
-    **Arguments:**
-
-    - `u`: Field to differentiate.
-    - `component`: Boundary `DomainComponent`.
-    - `var`: Geometry label.
-    - `mode`: Autodiff mode used by `surface_grad`/`surface_div`.
-
-    **Returns:**
-
-    - A `DomainFunction` representing $\Delta_\Gamma u$.
+    Boundary-component normal projections are intentionally not accepted here;
+    use `ambient_surface_hessian_trace` for the extension-dependent ambient
+    contraction.
     """
-    g = surface_grad(u, component, var=var, mode=mode)
-    return surface_div(g, component, var=var, mode=mode)
+    if not isinstance(metric, RiemannianMetric):
+        raise TypeError(
+            "laplace_beltrami requires a RiemannianMetric; "
+            "use ambient_surface_hessian_trace for a boundary component."
+        )
+    from ._riemannian_ops import intrinsic_laplace_beltrami
+
+    return intrinsic_laplace_beltrami(u, metric, var=var, mode=mode)

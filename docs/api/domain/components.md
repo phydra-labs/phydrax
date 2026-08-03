@@ -48,6 +48,13 @@ fixed-time slices, etc.) and wrap these into `DomainComponent` objects.
 
 ## Domain components
 
+`DomainComponentUnion` is an additive collection of measure-disjoint
+components, not an arbitrary geometric set union. It requires at least one
+term, rejects duplicate terms, and requires every term to use the same
+compatible labeled domain. Measures and sample allocations add across terms;
+callers remain responsible for ensuring that separately filtered terms do not
+overlap.
+
 ::: phydrax.domain.DomainComponent
     options:
         members:
