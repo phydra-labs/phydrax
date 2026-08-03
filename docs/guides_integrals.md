@@ -78,6 +78,55 @@ $$
 
 For coord-separable batches, `over="x"` integrates over the coord-separable axes for that label.
 
+## One-dimensional adaptive quadrature
+
+`adaptive_integral` uses Quadax's globally adaptive Gauss–Kronrod,
+Clenshaw–Curtis, or tanh–sinh rules when the required accuracy matters more than
+a fixed sample budget. It does not consume a sampled batch. Instead, the selected
+component must have exactly one `Interior()` label backed by `ScalarInterval` or
+`Interval1d`; every other product-domain label must be fixed. Fixed factors retain
+their unit-mass Dirac semantics.
+
+`component.where`, `component.where_all`, and `component.weight_all` are evaluated
+at every adaptive node. Supply known discontinuities or singular locations as
+strictly increasing `breakpoints`; this initializes separate subintervals on each
+side of the difficult point.
+
+```python
+import phydrax as phx
+
+time = phx.domain.ScalarInterval(0.0, 1.0, label="t")
+
+@time.Function("t")
+def cubic(t):
+    return t**3
+
+quadrature = phx.operators.AdaptiveQuadratureConfig(
+    method="gauss_kronrod",
+    absolute_tolerance=1e-10,
+    relative_tolerance=1e-10,
+    collect_subintervals=True,
+)
+result = phx.operators.adaptive_integral(
+    cubic,
+    component=time.component(),
+    quadrature=quadrature,
+)
+value = result.value
+```
+
+`AdaptiveIntegralResult` reports the estimated error, function-evaluation count,
+status bitmask, and optional padded subinterval arrays plus their active count.
+The default `throw=True` turns any nonzero Quadax status into a JIT-safe error;
+use `throw=False` only when the caller explicitly handles `result.successful`.
+`AdaptiveIntegralFunctional` always rejects a failed quadrature before
+contributing its raw signed scalar to `FunctionalSolver`.
+
+The operator is JIT-compatible and differentiable through the selected adaptive
+execution. A stochastic integrand receives the same key at every node so one
+quadrature call estimates a deterministic realization rather than mixing
+independent noise into its local error estimates.
+
 ## Examples
 
 !!! example

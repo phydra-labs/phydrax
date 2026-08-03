@@ -18,6 +18,22 @@
 
 ---
 
+::: phydrax.operators.AdaptiveQuadratureConfig
+
+---
+
+::: phydrax.operators.adaptive_integral
+
+---
+
+::: phydrax.operators.AdaptiveIntegralResult
+
+---
+
+::: phydrax.operators.AdaptiveSubintervals
+
+---
+
 ::: phydrax.operators.integral._batch_ops.integral
 
 ---
