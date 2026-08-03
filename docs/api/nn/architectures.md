@@ -1477,6 +1477,15 @@ output pipeline. `OperatorFitResult.execution_model` and
 and all callable schedules require stable identities for exact-resume
 compatibility.
 
+Optimizers with distinct training and evaluation iterates can supply
+`evaluation_parameters(optimizer_state, training_parameters)`. Validation,
+best-model selection, `execution_model`, and `last_execution_model` then use that
+evaluation view; gradients and updates continue to use raw training parameters.
+Checkpointed runs must also supply a stable `evaluation_parameters_id`. The
+identifier is part of the exact-resume contract, so changing or omitting it rejects
+resume before training continues. With the default `None` lifecycle, existing
+checkpoint fingerprints are unchanged.
+
 ---
 
 ::: phydrax.nn.fit_operator

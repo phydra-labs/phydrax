@@ -17,6 +17,7 @@ from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._objective import AbstractObjectiveTerm
 from .._strict import StrictModule
+from .._training import EvaluationParametersFn
 from ..constraints._base import AbstractConstraint
 from ..constraints._functional import FunctionalConstraint
 from ..domain._function import DomainFunction
@@ -296,6 +297,7 @@ class FunctionalSolver(StrictModule):
         | optax.GradientTransformationExtraArgs
         | Any
         | None = None,
+        evaluation_parameters: EvaluationParametersFn | None = None,
         seed: int = 0,
         jit: bool = True,
         keep_best: bool = True,
@@ -316,6 +318,10 @@ class FunctionalSolver(StrictModule):
         - If `optim` is an Optax `GradientTransformation`, a standard gradient step is used.
         - If `optim` is an Optax `GradientTransformationExtraArgs`, a line-search style update is used.
         - Otherwise, `optim` is treated as an evosax algorithm instance.
+        - `evaluation_parameters`, when provided, maps optimizer state and raw training
+          parameters to the parameter view used for diagnostics, model selection, and
+          the returned solver. This supports optimizers such as Optax schedule-free
+          transformations without changing the gradient/update parameter lifecycle.
 
         During training, each constraint loss receives an `iter_` keyword argument (the
         1-based iteration index as a JAX scalar) to enable schedules.
@@ -347,6 +353,7 @@ class FunctionalSolver(StrictModule):
             self,
             num_iter=num_iter,
             optim=optim,
+            evaluation_parameters=evaluation_parameters,
             seed=seed,
             jit=jit,
             keep_best=keep_best,

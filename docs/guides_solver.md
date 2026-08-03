@@ -168,6 +168,28 @@ shape.
 - an Optax `GradientTransformationExtraArgs` (line-search style optimizers),
 - an evosax algorithm instance (evolutionary strategies).
 
+### Optimizer evaluation parameters
+
+Some Optax transformations update raw training parameters but prescribe a different
+parameter view for validation and model selection. Pass that transformation as
+`evaluation_parameters(state, training_parameters)`. Gradients and optimizer updates
+continue to use the raw parameters; diagnostics, best-state selection, and returned
+functions use the transformed view. The transform must preserve the parameter PyTree,
+leaf shapes, and dtypes.
+
+```py
+import optax
+
+optimizer = optax.contrib.schedule_free(optax.sgd(1e-3), 1e-3)
+solver = solver.solve(
+    num_iter=1000,
+    optim=optimizer,
+    evaluation_parameters=optax.contrib.schedule_free_eval_params,
+)
+```
+
+This contract is available for Optax optimizers, not evosax algorithms.
+
 ### Iteration counter (`iter_`)
 
 During training, the current epoch index is passed to each constraint loss as `iter_` (as a JAX
