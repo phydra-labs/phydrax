@@ -7,17 +7,51 @@ from __future__ import annotations
 import signal
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
 
 SelectionMode = Literal["min", "max"]
+EvaluationParametersFn = Callable[[Any, Any], Any]
+
+
+def resolve_evaluation_parameters(
+    transform: EvaluationParametersFn | None,
+    optimizer_state: Any,
+    training_parameters: Any,
+    /,
+) -> Any:
+    """Return the optimizer-prescribed evaluation view of training parameters."""
+
+    if transform is None:
+        return training_parameters
+    evaluation_parameters = transform(optimizer_state, training_parameters)
+    expected_structure = jax.tree_util.tree_structure(training_parameters)
+    actual_structure = jax.tree_util.tree_structure(evaluation_parameters)
+    if actual_structure != expected_structure:
+        raise ValueError(
+            "evaluation_parameters must preserve the training-parameter PyTree structure."
+        )
+    expected_leaves = jax.tree_util.tree_leaves(training_parameters)
+    actual_leaves = jax.tree_util.tree_leaves(evaluation_parameters)
+    for expected, actual in zip(expected_leaves, actual_leaves, strict=True):
+        if eqx.is_array(expected) != eqx.is_array(actual) or (
+            eqx.is_array(expected)
+            and (expected.shape != actual.shape or expected.dtype != actual.dtype)
+        ):
+            raise ValueError(
+                "evaluation_parameters must preserve every training-parameter "
+                "leaf shape and dtype."
+            )
+    return evaluation_parameters
 
 
 @dataclass(frozen=True, slots=True)
@@ -321,6 +355,7 @@ def log_training_signal_stop(
 
 
 __all__ = [
+    "EvaluationParametersFn",
     "SelectionMode",
     "TensorBoardLogger",
     "TrainingCallback",
@@ -328,6 +363,7 @@ __all__ = [
     "TrainingEvent",
     "TrainingProgress",
     "TrainingSignalGuard",
+    "resolve_evaluation_parameters",
     "log_training_signal_stop",
     "tensorboard_every",
     "training_key",

@@ -22,7 +22,9 @@ from .._frozendict import frozendict
 from .._objective import AbstractSamplingObjectiveTerm
 from .._trainable import combine_trainable, partition_trainable
 from .._training import (
+    EvaluationParametersFn,
     log_training_signal_stop as _log_training_signal_stop,
+    resolve_evaluation_parameters,
     tensorboard_every as _tensorboard_every,
     TensorBoardLogger as _TensorBoardLogger,
     TrainingController,
@@ -217,6 +219,7 @@ def _log_tensorboard_scalars(
     step: int,
     loss: Any,
     best_loss: float,
+    evaluation_loss: Any | None,
     iter_time_s: float,
     train_constraint_names: tuple[str, ...],
     train_terms: Any,
@@ -232,6 +235,8 @@ def _log_tensorboard_scalars(
 ) -> None:
     writer.scalar("train/loss", loss, step)
     writer.scalar("train/best_loss", best_loss, step)
+    if evaluation_loss is not None:
+        writer.scalar("eval/loss", evaluation_loss, step)
     writer.scalar("train/iter_time_s", iter_time_s, step)
 
     if not log_constraints:
@@ -440,6 +445,7 @@ def solve(
     optim: optax.GradientTransformation
     | optax.GradientTransformationExtraArgs
     | Any = optax.rprop(1e-3),
+    evaluation_parameters: EvaluationParametersFn | None = None,
     seed: int = 0,
     jit: bool = True,
     keep_best: bool = True,
@@ -469,6 +475,10 @@ def solve(
     elif isinstance(optim, optax.GradientTransformation):
         _opt_standard = optim
     else:
+        if evaluation_parameters is not None:
+            raise ValueError(
+                "evaluation_parameters is supported only for Optax optimizers."
+            )
         return _solve_evosax(
             self,
             num_iter=num_iter,
@@ -730,17 +740,27 @@ def solve(
 
         if jit and not is_linesearch:
             solve_step_constraints = eqx.filter_jit(solve_step_constraints)
+        selection_loss_fn = (
+            eqx.filter_jit(_loss_wrt_params)
+            if jit and evaluation_parameters is not None
+            else _loss_wrt_params
+        )
 
         opt = _opt_linesearch if is_linesearch else _opt_standard
         if opt is None:
             raise ValueError("Optimizer is not configured.")
         opt_state = opt.init(params)
+        current_evaluation_params = resolve_evaluation_parameters(
+            evaluation_parameters,
+            opt_state,
+            params,
+        )
         control = TrainingController(
             total_steps=int(num_iter),
             key=jr.key(seed),
             progress=TrainingProgress(best_value=float("inf")),
         )
-        control.best_payload = params
+        control.best_payload = current_evaluation_params
         collocation = self.collocation
         out_file = log_fp if log_fp is not None else None
         refresh_wall_time = 0.0
@@ -784,6 +804,7 @@ def solve(
                 active_collocation = tuple(
                     collocation[index] for index in active_constraint_indices
                 )
+                pre_update_params = params
                 params, opt_state, loss_val, terms = solve_step_constraints(
                     params,
                     non_trainable,
@@ -820,8 +841,36 @@ def solve(
                 ]
                 step = epoch + 1
                 control.complete_update(step)
+                current_evaluation_params = resolve_evaluation_parameters(
+                    evaluation_parameters,
+                    opt_state,
+                    params,
+                )
+                evaluation_loss = None
                 if keep_best:
-                    control.select(float(loss_val), params, step=step)
+                    if evaluation_parameters is None:
+                        selection_parameters = (
+                            params if is_linesearch else pre_update_params
+                        )
+                        selection_loss = loss_val
+                    else:
+                        evaluation_loss, _ = selection_loss_fn(
+                            current_evaluation_params,
+                            non_trainable,
+                            self,
+                            active_constraints,
+                            constraint_scale,
+                            subkey,
+                            iter_,
+                            active_collocation,
+                        )
+                        selection_parameters = current_evaluation_params
+                        selection_loss = evaluation_loss
+                    control.select(
+                        float(selection_loss),
+                        selection_parameters,
+                        step=step,
+                    )
                 iter_time_s = time.perf_counter() - iter_start
                 if signal_guard.stop_requested:
                     _log_training_signal_stop(
@@ -843,7 +892,7 @@ def solve(
                 )
                 if log_constraints_ and (console_step or tensorboard_step):
                     train_data_metrics = _data_metrics_wrt_constraints(
-                        params,
+                        current_evaluation_params,
                         non_trainable,
                         self,
                         self.constraints,
@@ -863,7 +912,7 @@ def solve(
                         )
                     )
                     eval_terms = _terms_wrt_constraints(
-                        params,
+                        current_evaluation_params,
                         non_trainable,
                         self,
                         self.eval_constraints,
@@ -871,7 +920,7 @@ def solve(
                         iter_,
                     )
                     eval_data_metrics = _data_metrics_wrt_constraints(
-                        params,
+                        current_evaluation_params,
                         non_trainable,
                         self,
                         self.eval_constraints,
@@ -886,10 +935,15 @@ def solve(
                         loss_f,
                         keep_best=keep_best,
                     )
+                    evaluation_suffix = (
+                        ""
+                        if evaluation_loss is None
+                        else f" eval_loss={float(evaluation_loss):.6e}"
+                    )
                     print(
                         f"[phydrax][optax] iter {step}/{int(num_iter)} "
-                        f"loss={loss_f:.6e} best={best_display:.6e} "
-                        f"iter_time={iter_time_s:.3f}s",
+                        f"loss={loss_f:.6e}{evaluation_suffix} "
+                        f"best={best_display:.6e} iter_time={iter_time_s:.3f}s",
                         file=out_file,
                     )
                     if log_constraints_:
@@ -952,6 +1006,7 @@ def solve(
                         step=step,
                         loss=loss_val,
                         best_loss=best_display,
+                        evaluation_loss=evaluation_loss,
                         iter_time_s=iter_time_s,
                         train_constraint_names=constraint_names,
                         train_terms=train_constraint_terms,
@@ -978,7 +1033,16 @@ def solve(
                 )
                 break
 
-        chosen = control.selected(params) if keep_best else params
+        current_evaluation_params = resolve_evaluation_parameters(
+            evaluation_parameters,
+            opt_state,
+            params,
+        )
+        chosen = (
+            control.selected(current_evaluation_params)
+            if keep_best
+            else current_evaluation_params
+        )
         functions = combine_trainable(chosen, non_trainable)
         settle_started = time.perf_counter() if profile_adaptive else 0.0
         collocation = _settle_collocation(
@@ -1519,6 +1583,7 @@ def _solve_evosax(
                         step=step,
                         loss=cand_loss,
                         best_loss=best_display,
+                        evaluation_loss=None,
                         iter_time_s=iter_time_s,
                         train_constraint_names=constraint_names,
                         train_terms=train_constraint_terms,

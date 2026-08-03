@@ -23,6 +23,8 @@ import optax
 from ..._frozendict import frozendict
 from ..._trainable import combine_trainable, partition_trainable
 from ..._training import (
+    EvaluationParametersFn,
+    resolve_evaluation_parameters,
     TensorBoardLogger,
     TrainingCallback,
     TrainingController,
@@ -408,6 +410,8 @@ def fit_operator(
     include_model_losses: bool = True,
     optimizer: optax.GradientTransformation | optax.GradientTransformationExtraArgs | None = None,
     optimizer_id: str | None = None,
+    evaluation_parameters: EvaluationParametersFn | None = None,
+    evaluation_parameters_id: str | None = None,
     learning_rate: float = 1e-3,
     epochs: int = 1,
     steps: int | None = None,
@@ -436,7 +440,13 @@ def fit_operator(
     artifact_id: str = "",
     provenance: dict[str, Any] | None = None,
 ) -> OperatorFitResult:
-    """Fit a neural operator through one deterministic production control plane."""
+    """Fit a neural operator through one deterministic production control plane.
+
+    ``evaluation_parameters`` maps ``(optimizer_state, training_parameters)`` to
+    the parameter view used for validation, best-model selection, and returned
+    execution models. Checkpointed fits require ``evaluation_parameters_id`` so
+    resume cannot silently change that lifecycle contract.
+    """
     if not isinstance(model, _AbstractOperatorModel):
         raise TypeError("fit_operator requires a PhydraX operator model.")
     if int(epochs) < 0:
@@ -449,6 +459,23 @@ def fit_operator(
         raise ValueError("checkpoint_every must be positive.")
     if int(tensorboard_every) <= 0:
         raise ValueError("tensorboard_every must be positive.")
+    if evaluation_parameters is None:
+        if evaluation_parameters_id is not None:
+            raise ValueError("evaluation_parameters_id requires evaluation_parameters.")
+        resolved_evaluation_parameters_id = None
+    else:
+        if not callable(evaluation_parameters):
+            raise TypeError("evaluation_parameters must be callable.")
+        resolved_evaluation_parameters_id = (
+            None
+            if evaluation_parameters_id is None
+            else str(evaluation_parameters_id).strip()
+        )
+        if checkpoint_path is not None and not resolved_evaluation_parameters_id:
+            raise ValueError(
+                "Checkpointed fits with evaluation_parameters require a stable "
+                "evaluation_parameters_id."
+            )
     if task is not None and not isinstance(task, OperatorTask):
         raise TypeError("task must be an OperatorTask.")
     if task is None and training_evidence is not None:
@@ -667,6 +694,12 @@ def fit_operator(
 
     parameters, fixed = partition_trainable(model)
     optimizer_state = optimizer.init(parameters)
+    evaluated_parameters = resolve_evaluation_parameters(
+        evaluation_parameters,
+        optimizer_state,
+        parameters,
+    )
+    evaluation_model = combine_trainable(evaluated_parameters, fixed)
     gradient_accumulator = _tree_zeros(parameters)
     accumulated_cases = 0.0
     accumulated_microsteps = 0
@@ -839,7 +872,7 @@ def fit_operator(
             else ()
         ),
     )
-    best_model = model
+    best_model = evaluation_model
     train_steps: list[int] = []
     train_history: list[dict[str, float]] = []
     validation_steps: list[int] = []
@@ -848,58 +881,53 @@ def fit_operator(
     resumed_from_step = 0
     prior_training_seconds = 0.0
 
-    fit_contract = _canonical_json(
-        {
-            "model_contract": operator_contract_fingerprint(model.operator_contract),
-            "task_fingerprint": None if task is None else task.fingerprint,
-            "output_field_map": resolved_output_map,
-            "loss_terms": [term.fingerprint for term in terms],
-            "include_model_losses": bool(include_model_losses),
-            "optimizer_id": resolved_optimizer_id,
-            "gradient_accumulation": int(gradient_accumulation),
-            "normalization": (
-                None
-                if resolved_normalization is None
-                else resolved_normalization.to_dict()
-            ),
-            "fixed_query_fingerprints": fixed_query_fingerprints,
-            "dtype_policy": resolved_dtype.to_dict(),
-            "mixed_precision": (
-                None if mixed_precision is None else asdict(mixed_precision)
-            ),
-            "output_pipeline": (
-                None if output_pipeline is None else output_pipeline.fingerprint
-            ),
-            "validation_policy": (
-                None if validation_config is None else asdict(validation_config)
-            ),
-            "train_loader": raw_train_loader.configuration(),
-            "validation_loader": (
-                None
-                if raw_validation_loader is None
-                else raw_validation_loader.configuration()
-            ),
-            "train_provenance": _source_provenance_fingerprint(
-                raw_train_loader.source
-            ),
-            "validation_provenance": (
-                None
-                if raw_validation_loader is None
-                else _source_provenance_fingerprint(raw_validation_loader.source)
-            ),
-            "sharding": (
-                None
-                if sharding_policy is None
-                else {
-                    "mesh_axis": sharding_policy.mesh_axis,
-                    "case_axis": sharding_policy.case_axis,
-                    "mesh_shape": list(sharding_policy.mesh.devices.shape),
-                    "device_count": int(sharding_policy.mesh.devices.size),
-                }
-            ),
-            "configuration": {} if configuration is None else dict(configuration),
-        }
-    )
+    fit_contract_data = {
+        "model_contract": operator_contract_fingerprint(model.operator_contract),
+        "task_fingerprint": None if task is None else task.fingerprint,
+        "output_field_map": resolved_output_map,
+        "loss_terms": [term.fingerprint for term in terms],
+        "include_model_losses": bool(include_model_losses),
+        "optimizer_id": resolved_optimizer_id,
+        "gradient_accumulation": int(gradient_accumulation),
+        "normalization": (
+            None if resolved_normalization is None else resolved_normalization.to_dict()
+        ),
+        "fixed_query_fingerprints": fixed_query_fingerprints,
+        "dtype_policy": resolved_dtype.to_dict(),
+        "mixed_precision": (None if mixed_precision is None else asdict(mixed_precision)),
+        "output_pipeline": (
+            None if output_pipeline is None else output_pipeline.fingerprint
+        ),
+        "validation_policy": (
+            None if validation_config is None else asdict(validation_config)
+        ),
+        "train_loader": raw_train_loader.configuration(),
+        "validation_loader": (
+            None
+            if raw_validation_loader is None
+            else raw_validation_loader.configuration()
+        ),
+        "train_provenance": _source_provenance_fingerprint(raw_train_loader.source),
+        "validation_provenance": (
+            None
+            if raw_validation_loader is None
+            else _source_provenance_fingerprint(raw_validation_loader.source)
+        ),
+        "sharding": (
+            None
+            if sharding_policy is None
+            else {
+                "mesh_axis": sharding_policy.mesh_axis,
+                "case_axis": sharding_policy.case_axis,
+                "mesh_shape": list(sharding_policy.mesh.devices.shape),
+                "device_count": int(sharding_policy.mesh.devices.size),
+            }
+        ),
+        "configuration": {} if configuration is None else dict(configuration),
+    }
+    if resolved_evaluation_parameters_id is not None:
+        fit_contract_data["evaluation_parameters_id"] = resolved_evaluation_parameters_id
+    fit_contract = _canonical_json(fit_contract_data)
     schema = {
         "batch": operator_batch_schema(first.batch, target=first.targets),
     }
@@ -962,10 +990,20 @@ def fit_operator(
         prior_training_seconds = float(metadata["training_seconds"])
         resumed_from_step = progress.update_step
         parameters, fixed = partition_trainable(model)
+        evaluated_parameters = resolve_evaluation_parameters(
+            evaluation_parameters,
+            optimizer_state,
+            parameters,
+        )
+        evaluation_model = combine_trainable(evaluated_parameters, fixed)
     else:
-        initial_metrics = evaluate(model, raw_train_loader, 0)
+        initial_metrics = evaluate(evaluation_model, raw_train_loader, 0)
         if raw_validation_loader is not None:
-            validation_metrics = evaluate(model, raw_validation_loader, 0)
+            validation_metrics = evaluate(
+                evaluation_model,
+                raw_validation_loader,
+                0,
+            )
             validation_steps.append(0)
             validation_history.append(validation_metrics)
             assert validation_config is not None
@@ -978,7 +1016,7 @@ def fit_operator(
                 best_value=validation_metrics[validation_config.monitor],
                 best_step=0,
             )
-            control.best_payload = model
+            control.best_payload = evaluation_model
 
     def save_progress(training_seconds: float) -> None:
         if checkpoint is None:
@@ -1025,7 +1063,11 @@ def fit_operator(
             )
         control.emit("checkpoint", metrics={"step": control.progress.update_step})
 
-    def consider_validation(metrics: Mapping[str, float]) -> None:
+    def consider_validation(
+        metrics: Mapping[str, float],
+        current_evaluation_model: _AbstractOperatorModel,
+        /,
+    ) -> None:
         nonlocal best_model
         assert validation_config is not None
         score = float(metrics[validation_config.monitor])
@@ -1048,17 +1090,20 @@ def fit_operator(
             else score > previous + required
         )
         if strict_better:
-            best_model = model
-            control.best_payload = model
+            best_model = current_evaluation_model
+            control.best_payload = current_evaluation_model
         stale = 0 if meaningful else control.progress.stale_validations + 1
-        stopped = (
-            validation_config.patience is not None
-            and stale >= int(validation_config.patience)
+        stopped = validation_config.patience is not None and stale >= int(
+            validation_config.patience
         )
         control.progress = replace(
             control.progress,
             best_value=score if strict_better else previous,
-            best_step=(control.progress.update_step if strict_better else control.progress.best_step),
+            best_step=(
+                control.progress.update_step
+                if strict_better
+                else control.progress.best_step
+            ),
             stale_validations=stale,
             stopped_early=stopped,
         )
@@ -1197,8 +1242,17 @@ def fit_operator(
                         and validation_config is not None
                         and update_step % int(validation_config.every) == 0
                     ):
+                        evaluated_parameters = resolve_evaluation_parameters(
+                            evaluation_parameters,
+                            optimizer_state,
+                            parameters,
+                        )
+                        evaluation_model = combine_trainable(
+                            evaluated_parameters,
+                            fixed,
+                        )
                         validation_metrics = evaluate(
-                            model,
+                            evaluation_model,
                             raw_validation_loader,
                             update_step,
                         )
@@ -1208,7 +1262,7 @@ def fit_operator(
                             raise KeyError(
                                 f"Unknown validation monitor {validation_config.monitor!r}."
                             )
-                        consider_validation(validation_metrics)
+                        consider_validation(validation_metrics, evaluation_model)
                         control.emit("validation_end", metrics=validation_metrics)
                         if tensorboard is not None:
                             for name, value in validation_metrics.items():
@@ -1233,6 +1287,12 @@ def fit_operator(
         stopped_by_signal = signal_guard.stop_requested
 
     training_seconds = prior_training_seconds + time.perf_counter() - started
+    evaluated_parameters = resolve_evaluation_parameters(
+        evaluation_parameters,
+        optimizer_state,
+        parameters,
+    )
+    evaluation_model = combine_trainable(evaluated_parameters, fixed)
     if (
         raw_validation_loader is not None
         and validation_config is not None
@@ -1242,18 +1302,18 @@ def fit_operator(
         )
     ):
         validation_metrics = evaluate(
-            model,
+            evaluation_model,
             raw_validation_loader,
             control.progress.update_step,
         )
         validation_steps.append(control.progress.update_step)
         validation_history.append(validation_metrics)
-        consider_validation(validation_metrics)
+        consider_validation(validation_metrics, evaluation_model)
     save_progress(training_seconds)
     selected_model = (
         best_model
         if validation_config is not None and validation_config.select_best
-        else model
+        else evaluation_model
     )
     final_metrics = evaluate(
         selected_model,
@@ -1289,7 +1349,7 @@ def fit_operator(
     )
     return OperatorFitResult(
         execution_model=selected_model,
-        last_execution_model=model,
+        last_execution_model=evaluation_model,
         trained_operator=trained,
         output_field_map=frozendict(resolved_output_map),
         output_pipeline=output_pipeline,
