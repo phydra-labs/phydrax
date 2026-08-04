@@ -13,6 +13,7 @@ import jax.tree_util as jtu
 from jaxtyping import Array, Key
 
 from .._doc import DOC_KEY0
+from .._sampling import AntitheticDesign, design_capabilities
 from .._strict import StrictModule
 from ..domain._components import DomainComponentUnion
 from ..domain._function import DomainFunction
@@ -36,17 +37,13 @@ from ._monte_carlo import (
 from ._multilevel import integrate_multilevel, materialize_multilevel
 from ._plans import (
     AdaptiveQuadraturePlan,
-    AntitheticDesign,
     CellQuadraturePlan,
     FixedQuadraturePlan,
-    IIDDesign,
     ImportanceSamplingPlan,
-    LatinHypercubeDesign,
     MonteCarloPlan,
     MultilevelMonteCarloPlan,
     ProductIntegrationPlan,
     QuasiMonteCarloPlan,
-    RandomizedQMCDesign,
     SelfNormalizedEstimator,
     SparseGridPlan,
     StratifiedMonteCarloPlan,
@@ -95,12 +92,8 @@ def _requires_random_key(plan: Any, /) -> bool:
         return True
     if isinstance(plan, (MonteCarloPlan, QuasiMonteCarloPlan)):
         design = plan.design
-        if isinstance(design, RandomizedQMCDesign):
-            return design.scrambled
-        if isinstance(design, AntitheticDesign):
-            base = design.base
-            return not (isinstance(base, RandomizedQMCDesign) and not base.scrambled)
-        return isinstance(design, (IIDDesign, LatinHypercubeDesign))
+        base = design.base if isinstance(design, AntitheticDesign) else design
+        return design_capabilities(base).randomized
     return False
 
 
@@ -117,15 +110,10 @@ def _is_deterministic_plan(plan: Any, /) -> bool:
         ),
     ):
         return True
-    if isinstance(plan, QuasiMonteCarloPlan):
-        return not plan.design.scrambled
-    if isinstance(plan, MonteCarloPlan):
+    if isinstance(plan, (MonteCarloPlan, QuasiMonteCarloPlan)):
         design = plan.design
-        if isinstance(design, RandomizedQMCDesign):
-            return not design.scrambled
-        if isinstance(design, AntitheticDesign):
-            base = design.base
-            return isinstance(base, RandomizedQMCDesign) and not base.scrambled
+        base = design.base if isinstance(design, AntitheticDesign) else design
+        return not design_capabilities(base).randomized
     return False
 
 

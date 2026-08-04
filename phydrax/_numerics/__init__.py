@@ -2,14 +2,14 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from ._barycentric import barycentric_basis, barycentric_interpolate
-from ._designs import (
+from .._sampling import (
     host_design,
     host_design_factory,
     normalize_design_name,
     seed_from_key,
     unit_design,
 )
+from ._barycentric import barycentric_basis, barycentric_interpolate
 from ._quadrature_rules import (
     clenshaw_curtis_data,
     gauss_kronrod_data,

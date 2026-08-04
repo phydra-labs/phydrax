@@ -10,7 +10,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 import jax.numpy as jnp
 from jaxtyping import Array, Bool, Key
 
-from ._sampling import get_sampler
+from .._sampling import get_sampler
 from ._scalar import _AbstractScalarDomain
 
 

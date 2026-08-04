@@ -23,7 +23,7 @@ from jaxtyping import Array, ArrayLike, Bool, Float, Key
 from ..._doc import DOC_KEY0
 from .._chart import CADChartAtlas
 from .._measure_partition import GeometryMeasurePartition
-from .._sampling import get_sampler_host, seed_from_key
+from ..._sampling import get_sampler_host, seed_from_key
 from ..geometry3d._mesh import Geometry3DFromCAD
 from ..geometry3d._utils import (
     _boolean_mesh,

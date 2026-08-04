@@ -247,6 +247,17 @@ Randomized-QMC uncertainty is computed across independently scrambled replicates
 Unscrambled QMC is deterministic, permits one replicate, and reports no uncertainty.
 The estimate's evaluation count includes every replicate.
 
+Direct component integration and `ProductIntegrationPlan` use the same canonical
+reference designs and exact target-measure transports as domain sampling. An axis
+group such as `("x", "t")` consumes one joint design over the sum of both factors'
+reference dimensions. Independent one-dimensional Sobol sequences are never
+substituted for that joint net.
+
+Integration remains responsible for target masses, masks, importance or Jacobian
+weights, replicate diagnostics, and uncertainty estimates. Sharing the reference
+transport does not turn weighted integration realizations into ordinary
+`PointsBatch` objects.
+
 ## Importance sampling and weighted samples
 
 ```python

@@ -4,8 +4,15 @@
 
 import jax.random as jr
 import numpy as np
+import pytest
 
-from phydrax.domain._sampling import get_sampler, get_sampler_host
+import phydrax as phx
+from phydrax._sampling import (
+    derive_key,
+    get_sampler,
+    get_sampler_host,
+    SampleAddress,
+)
 
 
 def test_hammersley_sampler_is_deterministic_and_bounded():
@@ -84,3 +91,94 @@ def test_qmc_callback_wrappers_preserve_scrambling_semantics():
         assert np.array_equal(scrambled_first, scrambled_repeat)
         assert not np.array_equal(scrambled_first, scrambled_second)
         assert not np.array_equal(plain_first, scrambled_first)
+
+
+def test_typed_design_capabilities_and_random_access():
+    design = phx.sampling.SobolDesign()
+    capabilities = phx.sampling.design_capabilities(design)
+
+    full = phx.sampling.materialize_design(
+        design,
+        count=8,
+        dimension=3,
+        key=None,
+    )
+    suffix = phx.sampling.materialize_design(
+        design,
+        count=5,
+        dimension=3,
+        key=None,
+        start=3,
+    )
+    empty = phx.sampling.materialize_design(
+        design,
+        count=0,
+        dimension=3,
+        key=None,
+    )
+
+    assert capabilities.prefix_stable
+    assert capabilities.random_access
+    assert not capabilities.randomized
+    assert not capabilities.factorwise_composable
+    assert phx.sampling.design_capabilities(
+        phx.sampling.LatinHypercubeDesign()
+    ).factorwise_composable
+    assert np.array_equal(suffix, full[3:])
+    assert phx.sampling.design_signature(design) == "sobol:v1"
+    assert empty.shape == (0, 3)
+
+    with pytest.raises(ValueError, match="start index"):
+        phx.sampling.materialize_design(
+            phx.sampling.LatinHypercubeDesign(),
+            count=4,
+            dimension=2,
+            key=jr.key(0),
+            start=1,
+        )
+
+
+def test_semantic_sample_addresses_are_stable_and_distinct():
+    root = jr.key(11)
+    address = SampleAddress(
+        "domain",
+        "paired-block",
+        target=("x", "t"),
+        role="sobol_scrambled",
+    )
+    repeat = SampleAddress(
+        "domain",
+        "paired-block",
+        target=("x", "t"),
+        role="sobol_scrambled",
+    )
+    other = SampleAddress(
+        "domain",
+        "paired-block",
+        target=("x", "p"),
+        role="sobol_scrambled",
+    )
+    next_version = SampleAddress(
+        "domain",
+        "paired-block",
+        algorithm_version=2,
+        target=("x", "t"),
+        role="sobol_scrambled",
+    )
+
+    assert np.array_equal(
+        jr.key_data(derive_key(root, address, 3)),
+        jr.key_data(derive_key(root, repeat, 3)),
+    )
+    assert not np.array_equal(
+        jr.key_data(derive_key(root, address, 3)),
+        jr.key_data(derive_key(root, other, 3)),
+    )
+    assert not np.array_equal(
+        jr.key_data(derive_key(root, address, 3)),
+        jr.key_data(derive_key(root, address, 4)),
+    )
+    assert not np.array_equal(
+        jr.key_data(derive_key(root, address, 3)),
+        jr.key_data(derive_key(root, next_version, 3)),
+    )

@@ -12,6 +12,12 @@ import equinox as eqx
 
 from .._frozendict import frozendict
 from .._numerics import normalize_anisotropy, normalize_axis_rules, SmolyakAxisRule
+from .._sampling import (
+    AntitheticDesign,
+    IIDDesign,
+    LatinHypercubeDesign,
+    RandomizedQMCDesign,
+)
 from .._strict import StrictModule
 from ._rules import (
     GaussKronrodRule,
@@ -19,65 +25,6 @@ from ._rules import (
     IntervalRule,
     ReferenceRule,
 )
-
-
-class IIDDesign(StrictModule):
-    """Independent target or proposal sampling."""
-
-    def __init__(self):
-        pass
-
-
-class LatinHypercubeDesign(StrictModule):
-    """Randomized Latin-hypercube stratification in a unit cube."""
-
-    def __init__(self):
-        pass
-
-
-class AntitheticDesign(StrictModule):
-    """Pair a base design through an explicit measure-preserving involution."""
-
-    base: Any
-    involution: Any
-
-    def __init__(self, base: Any | None = None, *, involution: Callable | None = None):
-        base_ = IIDDesign() if base is None else base
-        if not isinstance(base_, (IIDDesign, LatinHypercubeDesign)):
-            raise TypeError(
-                "AntitheticDesign base must be IIDDesign or LatinHypercubeDesign."
-            )
-        self.base = base_
-        self.involution = involution
-
-
-class RandomizedQMCDesign(StrictModule):
-    """Sobol or Halton point design with optional independent scrambles."""
-
-    sequence: Literal["sobol", "halton"] = eqx.field(static=True)
-    scrambled: bool = eqx.field(static=True)
-    num_replicates: int = eqx.field(static=True)
-    allow_arbitrary_count: bool = eqx.field(static=True)
-
-    def __init__(
-        self,
-        *,
-        sequence: Literal["sobol", "halton"] = "sobol",
-        scrambled: bool = True,
-        num_replicates: int = 8,
-        allow_arbitrary_count: bool = False,
-    ):
-        if sequence not in ("sobol", "halton"):
-            raise ValueError("QMC sequence must be 'sobol' or 'halton'.")
-        replicas = int(num_replicates)
-        if replicas < 1:
-            raise ValueError("num_replicates must be positive.")
-        if not scrambled and replicas != 1:
-            raise ValueError("Unscrambled QMC has one deterministic replicate.")
-        self.sequence = sequence
-        self.scrambled = bool(scrambled)
-        self.num_replicates = replicas
-        self.allow_arbitrary_count = bool(allow_arbitrary_count)
 
 
 class StratifiedDesign(StrictModule):

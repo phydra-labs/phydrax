@@ -14,6 +14,16 @@ from jaxtyping import Array, ArrayLike, Key
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
+from .._sampling import (
+    derive_key,
+    DESIGN_ALGORITHM_VERSION,
+    design_capabilities,
+    design_name,
+    DesignLike,
+    materialize_design,
+    resolve_design,
+    SampleAddress,
+)
 from .._strict import StrictModule
 from ._base import _AbstractGeometry
 from ._dataset import DatasetDomain
@@ -569,13 +579,14 @@ class DomainComponent(StrictModule):
         num_points: NumPoints,
         *,
         structure: ProductStructure,
-        sampler: str = "latin_hypercube",
+        sampler: DesignLike = "latin_hypercube",
         key: Key[Array, ""] = DOC_KEY0,
     ) -> PointsBatch:
         from ._irregular_trajectory_dataset import (
             IrregularTrajectoryDatasetDomain,
             sample_irregular_trajectory_component,
         )
+        from ._reference import reference_transport
         from ._trajectory_dataset import (
             sample_trajectory_component,
             TrajectoryDatasetDomain,
@@ -585,6 +596,9 @@ class DomainComponent(StrictModule):
             sample_graph_trajectory_component,
         )
 
+        design = resolve_design(sampler)
+        sampler_name = design_name(design)
+
         if isinstance(self.domain, GraphTrajectoryDatasetDomain):
             return cast(
                 PointsBatch,
@@ -592,7 +606,7 @@ class DomainComponent(StrictModule):
                     self,
                     num_points,
                     structure=structure,
-                    sampler=sampler,
+                    sampler=sampler_name,
                     key=key,
                 ),
             )
@@ -602,7 +616,7 @@ class DomainComponent(StrictModule):
                 self,
                 num_points,
                 structure=structure,
-                sampler=sampler,
+                sampler=sampler_name,
                 key=key,
             )
 
@@ -611,14 +625,14 @@ class DomainComponent(StrictModule):
                 self,
                 num_points,
                 structure=structure,
-                sampler=sampler,
+                sampler=sampler_name,
                 key=key,
             )
 
         graph_batch = self._sample_graph_batch(
             num_points,
             structure=structure,
-            sampler=sampler,
+            sampler=sampler_name,
             key=key,
         )
         if graph_batch is not None:
@@ -652,6 +666,60 @@ class DomainComponent(StrictModule):
 
         block_keys = jr.split(key, len(structure.blocks) + 1)
         keys_for_blocks = block_keys[1:]
+
+        transported: dict[str, Any] = {}
+        capabilities = design_capabilities(design)
+        for block_index, block in enumerate(structure.blocks):
+            if len(block) == 1:
+                continue
+            block_transports = []
+            unsupported = []
+            for label in block:
+                factor = self.domain.factor(label)
+                if isinstance(factor, RelabeledDomain):
+                    factor = factor.base
+                transport = reference_transport(
+                    factor,
+                    self.spec.component_for(label),
+                )
+                if transport is None:
+                    unsupported.append(label)
+                else:
+                    block_transports.append((label, transport))
+
+            if unsupported:
+                if not capabilities.factorwise_composable:
+                    raise ValueError(
+                        f"{sampler_name!r} requires one exact joint reference "
+                        f"transport for paired block {block!r}; unsupported labels="
+                        f"{tuple(unsupported)!r}. Use a factorwise-composable "
+                        "design, split the labels into separate blocks, or provide "
+                        "exact transports."
+                    )
+                continue
+
+            reference_dimension = sum(
+                transport.reference_dimension for _, transport in block_transports
+            )
+            address = SampleAddress(
+                "domain",
+                "paired-block",
+                algorithm_version=DESIGN_ALGORITHM_VERSION,
+                target=block,
+                role=sampler_name,
+            )
+            design_key = derive_key(key, address)
+            unit = materialize_design(
+                design,
+                count=num_points_by_block[block_index],
+                dimension=reference_dimension,
+                key=design_key,
+            )
+            offset = 0
+            for label, transport in block_transports:
+                next_offset = offset + transport.reference_dimension
+                transported[label] = transport.map(unit[:, offset:next_offset])
+                offset = next_offset
 
         points: dict[str, Any] = {}
         for lbl in self.domain.labels:
@@ -688,9 +756,36 @@ class DomainComponent(StrictModule):
             bi = label_to_block_index[lbl]
             n = num_points_by_block[bi]
 
+            if lbl in transported:
+                samples = transported[lbl]
+                if isinstance(factor, _AbstractGeometry):
+                    arr = jnp.asarray(samples, dtype=float)
+                    if arr.ndim == 1:
+                        arr = arr.reshape((-1, 1))
+                    points[lbl] = _as_field(arr, dims=(axis, None))
+                    continue
+                if isinstance(factor, _AbstractScalarDomain):
+                    arr = jnp.asarray(samples, dtype=float).reshape((-1,))
+                    points[lbl] = _as_field(arr, dims=(axis,))
+                    continue
+                if isinstance(factor, DatasetDomain):
+
+                    def _transported_field(value):
+                        arr = jnp.asarray(value)
+                        return _as_field(
+                            arr,
+                            dims=(axis,) + (None,) * (arr.ndim - 1),
+                        )
+
+                    points[lbl] = jax.tree_util.tree_map(
+                        _transported_field,
+                        samples,
+                    )
+                    continue
+
             if isinstance(factor, _AbstractGeometry):
                 k = jr.fold_in(keys_for_blocks[bi], label_to_idx[lbl])
-                arr = _sample_geometry(factor, comp, n, sampler=sampler, key=k)
+                arr = _sample_geometry(factor, comp, n, sampler=sampler_name, key=k)
                 if arr.ndim == 1:
                     arr = arr.reshape((-1, 1))
                 points[lbl] = _as_field(arr, dims=(axis, None))
@@ -698,15 +793,15 @@ class DomainComponent(StrictModule):
 
             if isinstance(factor, _AbstractScalarDomain):
                 k = jr.fold_in(keys_for_blocks[bi], label_to_idx[lbl])
-                arr = _sample_scalar(factor, comp, n, sampler=sampler, key=k).reshape(
-                    (-1,)
-                )
+                arr = _sample_scalar(
+                    factor, comp, n, sampler=sampler_name, key=k
+                ).reshape((-1,))
                 points[lbl] = _as_field(arr, dims=(axis,))
                 continue
 
             if isinstance(factor, (DatasetDomain, RaggedSeriesDatasetDomain)):
                 k = jr.fold_in(keys_for_blocks[bi], label_to_idx[lbl])
-                samples = factor.sample(n, sampler=sampler, key=k)
+                samples = factor.sample(n, sampler=sampler_name, key=k)
 
                 def _to_field(v):
                     arr = jnp.asarray(v)

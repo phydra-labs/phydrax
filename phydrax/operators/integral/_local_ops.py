@@ -11,7 +11,7 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 
-from ..._numerics import unit_design
+from ..._sampling import unit_design
 from ...domain._function import DomainFunction
 from ..differential._domain_ops import _factor_and_dim
 from ._ctx import _compile_ctx_integrand

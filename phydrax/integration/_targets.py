@@ -363,7 +363,13 @@ MultilevelSampler: TypeAlias = Callable[[int, Array, Any], Any]
 
 
 class MultilevelTarget(StrictModule):
-    """A coupled stochastic hierarchy whose finest-level expectation is estimated."""
+    """A random-access coupled hierarchy with prefix-stable global sample indices.
+
+    The sampler receives explicit global indices. Its returned values must depend on
+    those indices, the hierarchy level, and the root key—not on request batching or
+    call order. Multilevel execution validates the returned indices and fine/coarse
+    pair identities before admitting every batch.
+    """
 
     hierarchy: Any
     sampler: MultilevelSampler

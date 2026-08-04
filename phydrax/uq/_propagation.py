@@ -12,8 +12,8 @@ import jax
 import jax.numpy as jnp
 
 from .._frozendict import frozendict
+from .._sampling import get_sampler
 from .._strict import StrictModule
-from ..domain._sampling import get_sampler
 from ._distributions import AbstractDistribution
 from ._predictive import PredictiveField, SampleAxis
 

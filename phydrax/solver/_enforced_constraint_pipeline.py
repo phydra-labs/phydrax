@@ -773,7 +773,6 @@ def _initial_overlay_boundary_compatible(
     u_base: DomainFunction,
     boundary_overlays: Sequence["_BoundaryBlendOverlay"],
     initial_overlay: "_InitialEnforcedOverlay",
-    sampler: str,
     key: Key[Array, ""],
     num_probe: int = 64,
     atol: float = 1e-8,
@@ -832,7 +831,7 @@ def _initial_overlay_boundary_compatible(
             batch = component.sample(
                 n_probe,
                 structure=structure,
-                sampler=sampler,
+                sampler="uniform",
                 key=jr.fold_in(key, i),
             )
             vals = jnp.asarray(diff(batch, key=jr.fold_in(key, i + 10_000)).data)
@@ -1907,7 +1906,6 @@ class EnforcedConstraintPipeline(StrictModule):
                 u_base=u_base,
                 boundary_overlays=self.boundary,
                 initial_overlay=self.initial_overlay,
-                sampler=sampler,
                 key=jr.fold_in(key, 42_791),
             )
         )

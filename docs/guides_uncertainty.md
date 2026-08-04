@@ -1273,6 +1273,11 @@ Use `sample_joint` for propagation and sensitivity. It generates one scrambled-S
 marginal inverse CDF. Never create $d$ unrelated one-dimensional Sobol sequences;
 that destroys the joint low-discrepancy design.
 
+The same reference-design engine powers paired domain sampling and Monte Carlo
+integration. String shorthands such as `"sobol_scrambled"` and typed
+`phx.sampling.SobolDesign(scrambled=True)` therefore share one scrambling,
+reproducibility, and capability contract.
+
 ```python
 def forward(diffusivity, source):
     return diffusivity + source

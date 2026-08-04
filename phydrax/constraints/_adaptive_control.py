@@ -16,6 +16,7 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 from .._doc import DOC_KEY0
+from .._sampling import design_name, DesignLike, resolve_design, UnitDesign
 from .._strict import StrictModule
 from ..domain._components import DomainComponentUnion
 from ..domain._structure import CoordSeparableBatch, PointsBatch
@@ -131,13 +132,18 @@ class RefreshSchedule(StrictModule):
 class ResidualMonitor(StrictModule):
     """Configuration for an independent fixed collocation monitor population."""
 
-    sampler: str
+    sampler: UnitDesign
     epsilon: Array
 
-    def __init__(self, *, sampler: str = "sobol_scrambled", epsilon: float = 1e-12):
+    def __init__(
+        self,
+        *,
+        sampler: DesignLike = "sobol_scrambled",
+        epsilon: float = 1e-12,
+    ):
         if float(epsilon) <= 0.0:
             raise ValueError("ResidualMonitor.epsilon must be positive.")
-        self.sampler = str(sampler)
+        self.sampler = resolve_design(sampler)
         self.epsilon = jnp.asarray(epsilon, dtype=float)
 
 
@@ -655,7 +661,7 @@ def _sample_monitor_batch(
     constraint: FunctionalConstraint,
     /,
     *,
-    sampler: str,
+    sampler: DesignLike,
     key: Key[Array, ""],
 ) -> PointsBatch | CoordSeparableBatch:
     if constraint.coord_sampling is not None:
@@ -665,7 +671,7 @@ def _sample_monitor_batch(
             constraint.coord_sampling,
             num_points=constraint.num_points,
             dense_structure=constraint.dense_structure,
-            sampler=sampler,
+            sampler=design_name(sampler),
             key=key,
         )
     else:
