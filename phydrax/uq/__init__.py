@@ -84,6 +84,7 @@ from ._filter_checkpoint import (
     write_filter_checkpoint,
     write_kalman_filter_checkpoint,
 )
+from ._integration import particle_posterior_measure
 from ._kalman import (
     initialize_kalman_filter,
     kalman_filter,
@@ -345,6 +346,7 @@ __all__ = [
     "ParticleFilterStatus",
     "ParticleFilterStep",
     "particle_filter_step",
+    "particle_posterior_measure",
     "resample_indices",
     "read_particle_filter_checkpoint",
     "ResamplingMethod",

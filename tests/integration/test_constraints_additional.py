@@ -90,7 +90,7 @@ def test_integral_constraint_over_axis_constant():
     def u(x, t):
         return 1.0
 
-    expected = 1.0 / float(num_t)
+    expected = 1.0
     constraint = IntegralEqualityConstraint.from_operator(
         component=component,
         operator=lambda f: f,

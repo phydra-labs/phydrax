@@ -4,6 +4,7 @@
 
 import jax.numpy as jnp
 
+import phydrax as phx
 from phydrax.domain import DomainFunction, Interval1d, Square, TimeInterval
 from phydrax.operators.functional import (
     spatial_inner_product,
@@ -18,7 +19,10 @@ def test_spatial_mean_constant_matches_constant(sample_batch):
     batch = sample_batch(component, blocks=(("x",),), num_points=2048, key=0)
 
     u = DomainFunction(domain=geom, deps=(), func=2.0)
-    val = jnp.asarray(spatial_mean(u, batch, component=component).data)
+    realization = phx.integration.from_samples(
+        phx.integration.mean_over(component), batch
+    )
+    val = jnp.asarray(spatial_mean(u, realization).data)
     assert jnp.allclose(val, 2.0, atol=1e-12, rtol=0.0)
 
 
@@ -31,7 +35,10 @@ def test_spatial_mean_time_broadcasts_over_space(sample_batch):
     def u(t):
         return t
 
-    out = jnp.asarray(spatial_mean(u, batch, component=component, over="x").data)
+    realization = phx.integration.from_samples(
+        phx.integration.mean_over(component, axes="x"), batch
+    )
+    out = jnp.asarray(spatial_mean(u, realization).data)
     t = jnp.asarray(batch.points["t"].data)
     assert out.shape == t.shape
     assert jnp.allclose(out, t, atol=1e-12, rtol=0.0)
@@ -44,7 +51,8 @@ def test_spatial_inner_product_constant(sample_batch):
 
     u = DomainFunction(domain=geom, deps=(), func=2.0)
     v = DomainFunction(domain=geom, deps=(), func=3.0)
-    val = jnp.asarray(spatial_inner_product(u, v, batch, component=component).data)
+    realization = phx.integration.from_samples(phx.integration.over(component), batch)
+    val = jnp.asarray(spatial_inner_product(u, v, realization).data)
     assert jnp.allclose(val, 6.0, atol=1e-12, rtol=0.0)
 
 
@@ -54,5 +62,6 @@ def test_spatial_l2_norm_constant_matches_closed_form(sample_batch):
     batch = sample_batch(component, blocks=(("x",),), num_points=2048, key=3)
 
     u = DomainFunction(domain=geom, deps=(), func=2.0)
-    val = jnp.asarray(spatial_l2_norm(u, batch, component=component).data)
+    realization = phx.integration.from_samples(phx.integration.over(component), batch)
+    val = jnp.asarray(spatial_l2_norm(u, realization).data)
     assert jnp.allclose(val, 4.0, atol=1e-12, rtol=0.0)

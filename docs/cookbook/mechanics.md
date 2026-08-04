@@ -37,12 +37,12 @@ def energy_density(functions):
 
 
 energy = phx.objectives.IntegralFunctional(
-    component=geom.component(),
+    target=phx.integration.over(geom.component()),
+    plan=phx.integration.FixedQuadraturePlan(
+        phx.integration.GaussLegendreRule(16)
+    ),
     integrand=energy_density,
-    num_points={"x": phx.domain.LegendreAxisSpec(16)},
-    structure=phx.domain.ProductStructure((("x",),)),
-    sampling_mode="fixed",
-    fixed_batch_key=jr.key(0),
+    materialization_policy="fixed",
     label="poisson_energy",
 )
 solver = phx.solver.FunctionalSolver(

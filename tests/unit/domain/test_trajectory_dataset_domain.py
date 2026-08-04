@@ -14,6 +14,7 @@ from phydrax.domain import (
     UniformAxisSpec,
 )
 from phydrax.domain._trajectory_dataset import TRAJECTORY_CASE_INDEX_KEY
+from phydrax.integration import from_samples, over
 from phydrax.operators.differential import partial_t
 from phydrax.operators.integral import integral
 
@@ -44,7 +45,8 @@ def test_trajectory_dataset_probability_integral_of_constant_is_one():
     structure = ProductStructure((("data", "t"),))
     batch = component.sample(17, structure=structure, key=jr.key(1))
 
-    out = integral(1.0, batch, component=component)
+    realization = from_samples(over(component), batch)
+    out = integral(1.0, realization)
     assert jnp.allclose(jnp.asarray(out.data), 1.0)
 
 

@@ -320,19 +320,22 @@ Mesh-backed 3D CAD geometries expose a surface-triangle
 `boundary_measure_partition` and `boundary_chart_atlas`. A 3D interior
 volume-cell partition is intentionally not synthesized from a surface mesh.
 
-`CADChartAtlas.tensor_quadrature(order)` maps Gauss-Legendre reference axes to
-physical edges or Duffy-mapped triangles. `CADChartQuadrature.weights` already
-contains the physical Jacobian and trim semantics. Adjacent charts share only
-measure-zero seams, so summing chart weights does not double-count physical
-surface measure:
+Fixed boundary integration lowers every CAD chart through the unified integration
+API. Reference nodes are mapped to physical edges or Duffy-mapped triangles and
+multiplied by the chart Jacobian and trim mask. Adjacent charts share only
+measure-zero seams, so chart reduction does not double-count physical surface
+measure:
 
 ```py
-import jax.numpy as jnp
+import phydrax as phx
 
-chart_rule = cad.boundary_chart_atlas.tensor_quadrature(6)
-surface_measure = chart_rule.integrate(
-    jnp.ones(chart_rule.weights.shape)
+target = phx.integration.over(
+    cad.component({"x": phx.domain.Boundary()})
 )
+plan = phx.integration.FixedQuadraturePlan(
+    phx.integration.GaussLegendreRule(6)
+)
+surface_measure = phx.integration.integrate(1.0, target, plan).value
 ```
 
 ## Phase-space product domains (position–momentum)

@@ -7,6 +7,7 @@ import inspect
 from collections.abc import Callable, Mapping
 from typing import Any, Literal, TYPE_CHECKING
 
+import jax
 import jax.numpy as jnp
 
 from .._strict import StrictModule
@@ -15,19 +16,6 @@ from .._strict import StrictModule
 if TYPE_CHECKING:
     pass
 
-
-class _VectorCoords(tuple):
-    def __new__(cls, comps: tuple[Any, ...]):
-        return super().__new__(cls, comps)
-
-    def __getitem__(self, idx):
-        if idx is Ellipsis:
-            return jnp.stack(self, axis=-1)[idx]
-        if isinstance(idx, (int, slice)):
-            return super().__getitem__(idx)
-        if isinstance(idx, tuple):
-            return jnp.stack(self, axis=-1)[idx]
-        return super().__getitem__(idx)
 
 
 class _AbstractDomain(StrictModule):
@@ -152,37 +140,36 @@ class _AbstractDomain(StrictModule):
                     }
 
                 coord_indices = [
-                    i
-                    for i, arg in enumerate(args)
-                    if isinstance(arg, tuple) and not isinstance(arg, _VectorCoords)
+                    i for i, arg in enumerate(args) if isinstance(arg, tuple)
                 ]
                 if not coord_indices:
                     return func(*args, **out_kwargs)
 
-                axis_pos: dict[tuple[int, int], int] = {}
-                total_axes = 0
-                for i in coord_indices:
-                    coords = args[i]
-                    for j in range(len(coords)):
-                        axis_pos[(i, j)] = total_axes
-                        total_axes += 1
-
-                if total_axes == 0:
+                coord_values = tuple(
+                    jnp.asarray(coord).reshape((-1,))
+                    for i in coord_indices
+                    for coord in args[i]
+                )
+                if not coord_values:
                     return func(*args, **out_kwargs)
 
-                new_args = list(args)
-                for i in coord_indices:
-                    coords = args[i]
-                    reshaped = []
-                    for j, coord in enumerate(coords):
-                        arr = jnp.asarray(coord).reshape((-1,))
-                        shape = [1] * total_axes
-                        shape[axis_pos[(i, j)]] = int(arr.shape[0])
-                        reshaped.append(jnp.reshape(arr, tuple(shape)))
-                    if reshaped:
-                        reshaped = list(jnp.broadcast_arrays(*reshaped))
-                    new_args[i] = _VectorCoords(tuple(reshaped))
-                return func(*new_args, **out_kwargs)
+                def call_point(*values):
+                    new_args = list(args)
+                    offset = 0
+                    for i in coord_indices:
+                        count = len(args[i])
+                        new_args[i] = jnp.stack(values[offset : offset + count])
+                        offset += count
+                    return func(*new_args, **out_kwargs)
+
+                mapped = call_point
+                for position in reversed(range(len(coord_values))):
+                    in_axes = tuple(
+                        0 if index == position else None
+                        for index in range(len(coord_values))
+                    )
+                    mapped = jax.vmap(mapped, in_axes=in_axes, out_axes=0)
+                return mapped(*coord_values)
 
             return DomainFunction(domain=self, deps=deps, func=_wrap_coord_separable)
 

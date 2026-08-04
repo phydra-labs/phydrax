@@ -24,6 +24,7 @@ from phydrax.domain import (
     Square,
     TimeInterval,
 )
+from phydrax.integration import from_samples, mean_over
 from phydrax.operators.differential import directional_derivative, dt, partial_x
 from phydrax.operators.integral import mean
 from phydrax.solver import (
@@ -528,7 +529,8 @@ def test_operator_stack_with_pipeline():
     )
     du = partial_x(u_enforced)
 
-    eval_jit = eqx.filter_jit(lambda: mean(du, batch, component=component).data)
+    realization = from_samples(mean_over(component), batch)
+    eval_jit = eqx.filter_jit(lambda: mean(du, realization).data)
     out = eval_jit()
     assert jnp.allclose(out, 1.0, atol=0.2)
 
@@ -668,6 +670,7 @@ def test_where_all_weight_all_mean():
 
     component = geom.component(where_all=mask, weight_all=weight)
     batch = _line_batch(geom, xs=jnp.array([0.25, 0.75], dtype=float))
-    eval_jit = eqx.filter_jit(lambda: mean(u, batch, component=component).data)
+    realization = from_samples(mean_over(component), batch)
+    eval_jit = eqx.filter_jit(lambda: mean(u, realization).data)
     out = eval_jit().reshape(())
     assert jnp.allclose(out, 0.75, atol=1e-6)

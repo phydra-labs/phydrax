@@ -23,7 +23,7 @@ from ._realization import is_stochastic_realization, StochasticRealization
 from ._wiener import WienerRealization
 
 
-BSDEQuadrature: TypeAlias = Literal["left", "midpoint", "trapezoid"]
+BSDEQuadrature: TypeAlias = Literal["left", "trapezoid"]
 BSDEObjectiveMode: TypeAlias = Literal["terminal", "local", "global", "joint"]
 BSDEControlMode: TypeAlias = Literal["explicit", "autodiff"]
 
@@ -149,6 +149,11 @@ class BSDEPathBatch(StrictModule):
     @property
     def successful(self) -> Array:
         return jnp.all(self.valid, axis=-1)
+
+    @property
+    def path_valid(self) -> Array:
+        """Per-path eligibility shared by BSDE objectives and integrations."""
+        return self.successful
 
 
 class BSDEProblem(StrictModule):
@@ -428,7 +433,7 @@ def evaluate_bsde(
     quadrature: BSDEQuadrature = "left",
     key: Key[Array, ""] = jr.key(0),
 ) -> BSDEEvaluation:
-    """Evaluate one Markovian BSDE with an Itô left-point stochastic integral."""
+    """Evaluate one Markovian BSDE on explicitly aligned path intervals."""
     if not isinstance(problem, BSDEProblem):
         raise TypeError("problem must be a BSDEProblem.")
     if not isinstance(paths, BSDEPathBatch):
@@ -440,12 +445,11 @@ def evaluate_bsde(
         raise ValueError("Path and BSDE state/noise shapes do not match.")
     if control_mode not in ("explicit", "autodiff"):
         raise ValueError("control_mode must be 'explicit' or 'autodiff'.")
-    if quadrature not in ("left", "midpoint", "trapezoid"):
-        raise ValueError("quadrature must be 'left', 'midpoint', or 'trapezoid'.")
+    if quadrature not in ("left", "trapezoid"):
+        raise ValueError("quadrature must be 'left' or 'trapezoid'.")
     if control_mode == "explicit" and control_predictor is None:
         raise ValueError("Explicit BSDE control requires control_predictor.")
-    value_key, control_key, generator_key = jr.split(key, 3)
-    del generator_key
+    value_key, control_key, right_control_key = jr.split(key, 3)
     values = _pointwise_values(
         value_predictor,
         paths.times,
@@ -458,14 +462,8 @@ def evaluate_bsde(
     right_states = paths.states[..., 1:, *([slice(None)] * len(problem.state_shape))]
     left_times = paths.times[:-1]
     right_times = paths.times[1:]
-    midpoint_states = 0.5 * (left_states + right_states)
-    midpoint_times = 0.5 * (left_times + right_times)
-    if quadrature == "midpoint":
-        generator_states = midpoint_states
-        generator_times = midpoint_times
-    else:
-        generator_states = left_states
-        generator_times = left_times
+    generator_states = left_states
+    generator_times = left_times
     if control_mode == "autodiff":
         controls = _pointwise_autodiff_control(
             value_predictor,
@@ -485,17 +483,7 @@ def evaluate_bsde(
             key=control_key,
             output_shape=problem.output_shape + problem.noise_shape,
         )
-    if quadrature == "midpoint":
-        generator_y = _pointwise_values(
-            value_predictor,
-            midpoint_times,
-            midpoint_states,
-            problem,
-            key=value_key,
-            output_shape=problem.output_shape,
-        )
-    else:
-        generator_y = values[..., :-1, *([slice(None)] * len(problem.output_shape))]
+    generator_y = values[..., :-1, *([slice(None)] * len(problem.output_shape))]
     sample_count = prod(paths.sample_shape) if paths.sample_shape else 1
     state_size = prod(problem.state_shape)
     output_size = prod(problem.output_shape)
@@ -524,7 +512,7 @@ def evaluate_bsde(
                 right_times,
                 right_states,
                 problem,
-                key=control_key,
+                key=right_control_key,
             )
         else:
             if control_predictor is None:
@@ -534,7 +522,7 @@ def evaluate_bsde(
                 right_times,
                 right_states,
                 problem,
-                key=control_key,
+                key=right_control_key,
                 output_shape=problem.output_shape + problem.noise_shape,
             )
         flat_right_y = values[
@@ -592,7 +580,7 @@ def evaluate_bsde(
         martingale, problem.output_shape
     )
     valid_paths = (
-        paths.successful
+        paths.path_valid
         & jnp.all(interval_valid & finite, axis=-1)
         & _event_finite(terminal_residual, problem.output_shape)
     )

@@ -89,15 +89,19 @@ def test_graph_domain_integral_measure_modes():
     probability_domain = phx.domain.GraphDomain(graph, measure="probability")
     probability_component = probability_domain.component({"graph": phx.domain.Nodes()})
     probability_batch = probability_component.sample(3, structure=structure)
-    prob_integral = phx.operators.integral(
-        1.0, probability_batch, component=probability_component
+    probability_realization = phx.integration.from_samples(
+        phx.integration.over(probability_component), probability_batch
     )
+    prob_integral = phx.operators.integral(1.0, probability_realization)
     assert jnp.allclose(prob_integral.data, 1.0)
 
     count_domain = phx.domain.GraphDomain(graph, measure="count")
     count_component = count_domain.component({"graph": phx.domain.Nodes()})
     count_batch = count_component.sample(3, structure=structure)
-    count_integral = phx.operators.integral(1.0, count_batch, component=count_component)
+    count_realization = phx.integration.from_samples(
+        phx.integration.over(count_component), count_batch
+    )
+    count_integral = phx.operators.integral(1.0, count_realization)
     assert jnp.allclose(count_integral.data, 3.0)
 
 

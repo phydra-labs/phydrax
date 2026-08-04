@@ -152,8 +152,8 @@ def nonlocal_integral(
     \approx \sum_{j=1}^{N_y} w_j\,\mathcal{I}(\cdot),
     $$
 
-    where the integrand is provided as `integrand(ctx)` and is evaluated on a context
-    dictionary containing (at least) the keys:
+    The integrand may receive the whole context through a single parameter named
+    `ctx` or `context`, or select context values by matching parameter names:
 
     - `"x"`: Full coordinate (including time if `time_var` is provided).
     - `"y"`: Full coordinate (including time if `time_var` is provided).
@@ -164,6 +164,9 @@ def nonlocal_integral(
     - `"uy"`: Value $u(y)$.
     - `"du"`: $u(y)-u(x)$.
     - `"xi"`: displacement $y-x$ in space.
+
+    For compatibility, `value`, `delta`/`delta_value`, and `displacement` select
+    `"uy"`, `"du"`, and `"xi"`, respectively.
 
     **Arguments:**
 

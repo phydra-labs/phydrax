@@ -4,13 +4,9 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
-import jax.tree_util as jtu
 
 from phydrax.constraints import (
     ContinuousConvectionBoundaryConstraint,
@@ -51,7 +47,6 @@ from phydrax.constraints import (
     DiscreteRobinBoundaryConstraint,
     DiscreteTractionBoundaryConstraint,
     DiscreteZeroNormalGradientVelocityBoundaryConstraint,
-    FunctionalConstraint,
 )
 from phydrax.domain import (
     Boundary,
@@ -59,36 +54,16 @@ from phydrax.domain import (
     FixedStart,
     Interval1d,
     ProductStructure,
-    QuadratureBatch,
     Square,
     TimeInterval,
 )
 
 
-def _uniform_quadrature(batch: Any) -> QuadratureBatch:
-    weights_by_axis = {}
-    for block, axis in zip(
-        batch.structure.blocks, batch.structure.axis_names, strict=True
-    ):
-        ref_label = block[0]
-        field = batch.points[ref_label]
-        leaves = jtu.tree_leaves(field, is_leaf=lambda x: isinstance(x, cx.Field))
-        leaf_field = leaves[0]
-        n = int(leaf_field.named_shape[axis])
-        weights_by_axis[axis] = cx.Field(jnp.full((n,), 1.0 / float(n)), dims=(axis,))
-    return QuadratureBatch(batch, weights_by_axis=weights_by_axis)
-
-
 def _assert_zero_loss(constraint, functions, *, atol=1e-5):
     key = jr.key(0)
-    kwargs = {}
-    inner = constraint
-    if isinstance(inner, FunctionalConstraint):
-        batch = inner.sample(key=key)
-        kwargs["quadrature"] = _uniform_quadrature(batch)
-    loss_fn = eqx.filter_jit(lambda k: constraint.loss(functions, key=k, **kwargs))
-    val = loss_fn(key)
-    assert jnp.allclose(val, 0.0, atol=atol)
+    loss_fn = eqx.filter_jit(lambda k: constraint.loss(functions, key=k))
+    value = loss_fn(key)
+    assert jnp.allclose(value, 0.0, atol=atol)
 
 
 def test_functional_boundary_and_initial_constraints():

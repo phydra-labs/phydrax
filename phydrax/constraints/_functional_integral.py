@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 import coordax as cx
 import jax.numpy as jnp
+import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
 from .._doc import DOC_KEY0
@@ -22,7 +23,7 @@ from ..domain._structure import (
     PointsBatch,
     ProductStructure,
 )
-from ..operators.integral._batch_ops import integral
+from ..integration import from_samples, over, reduce
 from ._base import AbstractSamplingConstraint
 from ._sampling_spec import (
     CoordSamplingMap,
@@ -237,15 +238,15 @@ class IntegralEqualityConstraint(AbstractSamplingConstraint):
             else:
                 f = DomainFunction(domain=domain, deps=(), func=f, metadata={})
 
-        batch_ = self.sample(key=key) if batch is None else batch
-        out = integral(
-            f,
-            batch_,
-            component=self.component,
-            over=self.over,
-            key=key,
-            **kwargs,
-        )
+        if batch is None:
+            sampling_key, evaluation_key = jr.split(key)
+            batch_ = self.sample(key=sampling_key)
+        else:
+            batch_ = batch
+            evaluation_key = key
+        target = over(self.component, axes=self.over)
+        realization = from_samples(target, batch_, key=evaluation_key)
+        out = reduce(f, realization, **kwargs).value
         if not isinstance(out, cx.Field):
             raise TypeError("Expected integral to return a coordax.Field.")
 

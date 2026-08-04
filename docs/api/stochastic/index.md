@@ -24,6 +24,23 @@ The central invariants are explicit:
 - [Filtering and smoothing](../uq/filtering.md)
 - [Differential, jump, hybrid, and SPDE integration](../solver/differential.md)
 
+## Trajectory measures
+
+`trajectory_measure` exposes either masked time marginals or complete path units
+as an external weighted integration target. `time_measure` exposes each saved,
+possibly irregular path schedule as deterministic left-point or trapezoid
+quadrature. Neither adapter resamples the trajectory or consumes a key.
+
+::: phydrax.stochastic.StochasticTrajectory
+
+---
+
+::: phydrax.stochastic.trajectory_measure
+
+---
+
+::: phydrax.stochastic.time_measure
+
 ## Realization provenance
 
 ::: phydrax.stochastic.WienerRealization

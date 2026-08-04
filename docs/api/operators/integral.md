@@ -1,40 +1,16 @@
-# Integral operators
+# Integral field operators
 
 !!! note
-    For a more detailed mathematical guide (measures, sampling, quadrature), see
-    [Guides → Integrals and measures](../../guides_integrals.md).
+    Global measure-aware quadrature and sampling live under
+    [`phydrax.integration`](../integration.md). See
+    [Integrals and measures](../../guides_integrals.md) for the target/plan/estimate
+    workflow.
 
-!!! note
-    When integrating over a `CoordSeparableBatch`, Phydrax uses per-axis quadrature weights
-    from `batch.axis_discretization_by_axis` when available (e.g. Gauss–Legendre weights
-    from `LegendreAxisSpec`). Otherwise it falls back to uniform per-axis weights based on
-    the factor's axis-aligned bounding box.
+The operators below construct or reduce domain fields inside larger operator
+expressions. They are retained for local, nonlocal, spatial, and convolutional field
+transforms. New global integrals should use `phydrax.integration.integrate`.
 
-::: phydrax.operators.build_quadrature
-
----
-
-::: phydrax.operators.build_ball_quadrature
-
----
-
-::: phydrax.operators.AdaptiveQuadratureConfig
-
----
-
-::: phydrax.operators.adaptive_integral
-
----
-
-::: phydrax.operators.AdaptiveIntegralResult
-
----
-
-::: phydrax.operators.AdaptiveSubintervals
-
----
-
-::: phydrax.operators.integral._batch_ops.integral
+::: phydrax.operators.integral
 
 ---
 

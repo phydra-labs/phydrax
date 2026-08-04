@@ -19,6 +19,12 @@ from ._bsde import (
     evaluate_bsde,
     semilinear_pde_residual,
 )
+from ._integration import (
+    time_measure,
+    trajectory_measure,
+    TrajectoryMeasureMode,
+    TrajectoryTimeRule,
+)
 from ._jump import (
     AbstractJumpProcess,
     JUMP_INVALID_INTENSITY,
@@ -244,6 +250,10 @@ __all__ = [
     "StateSpaceProblem",
     "realization_independence_labels",
     "StochasticTrajectory",
+    "time_measure",
+    "trajectory_measure",
+    "TrajectoryMeasureMode",
+    "TrajectoryTimeRule",
     "StochasticTransitionView",
     "StochasticRealization",
     "TransitionWeighting",

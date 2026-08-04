@@ -73,7 +73,7 @@ class BSDEObjective(AbstractSamplingObjectiveTerm):
             raise ValueError("Autodiff control does not accept control_name.")
         if mode not in ("terminal", "local", "global", "joint"):
             raise ValueError("Unknown BSDE objective mode.")
-        if quadrature not in ("left", "midpoint", "trapezoid"):
+        if quadrature not in ("left", "trapezoid"):
             raise ValueError("Unknown BSDE quadrature.")
         if sampling_mode not in ("resample", "fixed"):
             raise ValueError("sampling_mode must be 'resample' or 'fixed'.")
@@ -131,7 +131,8 @@ class BSDEObjective(AbstractSamplingObjectiveTerm):
         )
         if self.control_name is not None and control is None:
             raise KeyError(f"Missing BSDE control function {self.control_name!r}.")
-        paths = self.sample(key=key) if batch is None else batch
+        sampling_key, evaluation_key = jr.split(key)
+        paths = self.sample(key=sampling_key) if batch is None else batch
         evaluation = evaluate_bsde(
             self.problem,
             paths,
@@ -139,7 +140,7 @@ class BSDEObjective(AbstractSamplingObjectiveTerm):
             control_predictor=control,
             control_mode=self.control_mode,
             quadrature=self.quadrature,
-            key=key,
+            key=evaluation_key,
         )
         return bsde_objective_loss(
             evaluation,

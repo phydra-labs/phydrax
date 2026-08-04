@@ -251,6 +251,38 @@ prediction = paths.to_predictive(
 )
 ```
 
+### Measure-aware path observables
+
+Convert the solver result once, then compose deterministic space and time
+quadrature with the empirical path measure:
+
+```python
+trajectory = paths.to_stochastic_trajectory(
+    realization_axes=("path",),
+    state_axes=("space",),
+    discretization_id=space.discretization_id,
+    basis_id=noise.basis_id,
+)
+path_measure = phx.stochastic.trajectory_measure(trajectory, mode="path")
+time_measure = phx.stochastic.time_measure(trajectory, rule="trapezoid")
+space_measure = phx.solver.spatial_measure(space, spatial_dims="space")
+
+space_integrals = phx.integration.integrate(path_measure.samples, space_measure)
+time_integrals = phx.integration.integrate(space_integrals.value, time_measure)
+expected_space_time_integral = phx.integration.integrate(
+    time_integrals.value,
+    path_measure,
+)
+assert expected_space_time_integral.successful
+```
+
+The three stages have distinct semantics: physical spatial quadrature,
+irregular saved-time quadrature per path, then empirical expectation over
+complete paths. A failed path can produce `NO_VALID_SAMPLES` at the time stage
+without poisoning the final expectation because the path measure excludes it.
+Use `mode="marginal"` instead when the estimand is a time-indexed ensemble
+mean and individual failed states should be excluded independently.
+
 `prediction` labels the path axis as `process`. Reusing `realization` replays the
 same global Brownian paths, even when a time horizon is split across solves. Changing
 the root key changes paths; changing the grid, rank, spectrum, or modes changes

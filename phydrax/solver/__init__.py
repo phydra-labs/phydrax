@@ -79,6 +79,7 @@ from ._fbsde import (
     solve_coupled_fbsde_explicit,
 )
 from ._functional_solver import FunctionalSolver
+from ._integration import spatial_measure
 from ._jump import (
     finite_state_generator,
     FiniteStateGenerator,
@@ -156,6 +157,7 @@ __all__ = [
     "SpectralSpatialDiscretization",
     "SpectralMatrixRepresentation",
     "TensorGridDiscretization",
+    "spatial_measure",
     "WeakObservableEstimate",
     "WienerTerm",
     "semidiscretize_reaction_diffusion",

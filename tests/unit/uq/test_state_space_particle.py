@@ -209,3 +209,69 @@ def test_particle_filter_reports_all_invalid_likelihoods():
         phx.uq.bootstrap_particle_filter(
             jr.key(17), problem, num_particles=16, raise_on_failure=True
         )
+
+
+def test_particle_posterior_measure_matches_weighted_filtering_marginals():
+    result = phx.uq.bootstrap_particle_filter(
+        jr.key(18),
+        _problem(),
+        num_particles=128,
+        resampling_policy="never",
+    )
+    target = phx.uq.particle_posterior_measure(result)
+
+    estimate = phx.integration.integrate(lambda particles: particles, target)
+
+    weights = jnp.exp(result.posterior_log_weights)
+    expected = jnp.sum(weights[..., None] * result.predicted_particles, axis=-2)
+    assert estimate.value.dims == ("time", None)
+    assert jnp.allclose(estimate.value.data, expected)
+    assert jnp.all(estimate.successful)
+    assert jnp.array_equal(
+        estimate.diagnostics.active_samples,
+        jnp.full((2,), result.num_particles),
+    )
+    assert not estimate.diagnostics.independent
+    assert estimate.error_estimate is None
+    assert jnp.array_equal(
+        estimate.diagnostics.ancestry_ids,
+        result.ancestor_indices,
+    )
+
+
+def test_particle_posterior_measure_masks_failed_filtering_steps():
+    base = _problem()
+    invalid_observation = phx.stochastic.CallableObservationModel(
+        lambda state, time: jnp.zeros((1,)),
+        lambda value, state, time, mask: jnp.asarray(-jnp.inf),
+        lambda key, state, time, sample_shape: jnp.zeros(sample_shape + (1,)),
+        state_shape=(1,),
+        observation_shape=(1,),
+        observation_id="integration-invalid",
+    )
+    problem = phx.stochastic.StateSpaceProblem(
+        phx.stochastic.StateSpaceModel(
+            base.model.prior,
+            base.model.transition,
+            invalid_observation,
+            model_id="integration-invalid-model",
+        ),
+        base.observations,
+        initial_time=0.0,
+        problem_id="integration-invalid-problem",
+    )
+    result = phx.uq.bootstrap_particle_filter(
+        jr.key(19),
+        problem,
+        num_particles=16,
+    )
+
+    estimate = phx.integration.integrate(
+        lambda particles: particles,
+        phx.uq.particle_posterior_measure(result),
+    )
+
+    assert jnp.all(
+        estimate.status == int(phx.integration.IntegrationStatus.NO_VALID_SAMPLES)
+    )
+    assert jnp.all(jnp.isnan(estimate.value.data))

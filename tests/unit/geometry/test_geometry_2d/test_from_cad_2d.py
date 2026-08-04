@@ -10,6 +10,7 @@ import trimesh
 from jax import numpy as jnp
 from numpy.typing import ArrayLike
 
+import phydrax as phx
 from phydrax.domain import Circle
 from phydrax.domain.geometry2d import Geometry2DFromCAD
 
@@ -66,9 +67,13 @@ def test_measure_partitions_match_geometry_measures(geometry_from_square):
 
 def test_curved_boundary_normals_obey_divergence_theorem():
     geom = Circle(center=(0.0, 0.0), radius=1.0)
-    quadrature = geom.boundary_chart_atlas.tensor_quadrature(3)
-    points = np.asarray(quadrature.points).reshape((-1, 2))
-    weights = np.asarray(quadrature.weights).reshape((-1,))
+    component = geom.component({"x": phx.domain.Boundary()})
+    realization = phx.integration.materialize(
+        phx.integration.over(component),
+        phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(3)),
+    )
+    points = np.asarray(realization.batch.points["x"].data)
+    weights = np.asarray(realization.batch.weights.data)
     normals = np.asarray(geom._boundary_normals(points))
 
     closure = np.sum(weights[:, None] * normals, axis=0)
@@ -79,15 +84,20 @@ def test_curved_boundary_normals_obey_divergence_theorem():
     assert np.isclose(position_flux, 2.0 * float(geom.area), atol=1e-5)
 
 
-def test_boundary_chart_atlas_integrates_arclength_without_seam_duplication(
+def test_boundary_chart_lowering_integrates_arclength_without_seam_duplication(
     geometry_from_square,
 ):
     geom = geometry_from_square
-    quadrature = geom.boundary_chart_atlas.tensor_quadrature(5)
-    assert quadrature.points.shape == (4, 5, 2)
-    assert jnp.all(geom._on_boundary(quadrature.points.reshape((-1, 2))))
-    measured = quadrature.integrate(jnp.ones(quadrature.weights.shape))
-    assert jnp.allclose(measured, geom.boundary_length_value)
+    component = geom.component({"x": phx.domain.Boundary()})
+    target = phx.integration.over(component)
+    plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(5))
+    realization = phx.integration.materialize(target, plan)
+    points = realization.batch.points["x"].data
+    estimate = phx.integration.reduce(1.0, realization)
+
+    assert points.shape == (20, 2)
+    assert jnp.all(geom._on_boundary(points))
+    assert jnp.allclose(estimate.value.data, geom.boundary_length_value)
 
 
 def test_bounds_property(geometry_from_square):

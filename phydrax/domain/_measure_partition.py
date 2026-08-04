@@ -39,7 +39,9 @@ class GeometryMeasurePartition(StrictModule):
                 f"(num_strata, {simplex_size}, spatial_dim)."
             )
         if int(vertices_.shape[0]) == 0:
-            raise ValueError("Geometry measure partitions must contain at least one stratum.")
+            raise ValueError(
+                "Geometry measure partitions must contain at least one stratum."
+            )
         if measures_.shape != vertices_.shape[:1]:
             raise ValueError("Partition measures must have shape (num_strata,).")
         if bool(jnp.any(~jnp.isfinite(measures_))) or bool(jnp.any(measures_ <= 0.0)):

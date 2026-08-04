@@ -36,6 +36,8 @@ Most workflows are composing a few primitives:
   \(u:\Omega\to\mathbb{R}^m\) or \(\mathbb{C}^m\) with explicit label dependencies.
 - **Operators**: maps \(u\mapsto r\) such as differential, integral, mechanics,
   and quantum matrix operators.
+- **Integration**: explicit targets define measures, plans define numerical
+  realizations, and estimates carry method-valid diagnostics and provenance.
 - **Constraints**: scalar loss terms built from residuals on components.
 - **Objectives**: raw scalar terms, including signed integral energies for Ritz minimization.
 - **Model losses**: optional parameter-space penalties attached directly to models.
