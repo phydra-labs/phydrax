@@ -14,11 +14,18 @@ import numpy as np
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ._fractional import FractionalGaussianRealization
 from ._jump import PoissonClockRealization
+from ._levy import LevyProcessRealization
 from ._wiener import WienerRealization
 
 
-AtomicStochasticRealization: TypeAlias = WienerRealization | PoissonClockRealization
+AtomicStochasticRealization: TypeAlias = (
+    WienerRealization
+    | PoissonClockRealization
+    | LevyProcessRealization
+    | FractionalGaussianRealization
+)
 
 
 def _digest(parts: tuple[str, ...], /, *, prefix: bytes) -> str:
@@ -51,7 +58,7 @@ def _atomic_independence_labels(
 
 
 class CompositeStochasticRealization(StrictModule):
-    """Named Wiener and Poisson realizations sharing one sample layout and support."""
+    """Named atomic realizations sharing one sample layout and support."""
 
     components: frozendict[str, AtomicStochasticRealization]
     sample_shape: tuple[int, ...] = eqx.field(static=True)
@@ -71,11 +78,20 @@ class CompositeStochasticRealization(StrictModule):
             raise ValueError("Composite realization names must be non-empty strings.")
         values = tuple(resolved.values())
         if any(
-            not isinstance(value, (WienerRealization, PoissonClockRealization))
+            not isinstance(
+                value,
+                (
+                    WienerRealization,
+                    PoissonClockRealization,
+                    LevyProcessRealization,
+                    FractionalGaussianRealization,
+                ),
+            )
             for value in values
         ):
             raise TypeError(
-                "Composite components must be Wiener or Poisson realizations."
+                "Composite components must be Wiener, Poisson, Lévy, or "
+                "fractional Gaussian realizations."
             )
         sample_shape = values[0].sample_shape
         support = values[0].support
@@ -138,14 +154,24 @@ class CompositeStochasticRealization(StrictModule):
 
 
 StochasticRealization: TypeAlias = (
-    WienerRealization | PoissonClockRealization | CompositeStochasticRealization
+    WienerRealization
+    | PoissonClockRealization
+    | LevyProcessRealization
+    | FractionalGaussianRealization
+    | CompositeStochasticRealization
 )
 
 
 def is_stochastic_realization(value: object, /) -> bool:
     return isinstance(
         value,
-        (WienerRealization, PoissonClockRealization, CompositeStochasticRealization),
+        (
+            WienerRealization,
+            PoissonClockRealization,
+            LevyProcessRealization,
+            FractionalGaussianRealization,
+            CompositeStochasticRealization,
+        ),
     )
 
 

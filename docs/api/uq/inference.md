@@ -222,6 +222,34 @@
             - predict
             - predict_observations
 
+## Conditional SMC and particle MCMC
+
+`conditional_particle_filter` preserves one reference trajectory while running the
+ordinary state-space transition and observation contracts. Ancestor sampling is
+explicit. `particle_gibbs` alternates conditional filtering and coherent path draws.
+`particle_marginal_metropolis_hastings` uses an unbiased particle likelihood estimate
+inside a parameter proposal and reports every filter evaluation, acceptance decision,
+and failure. Both algorithms retain the seed lineage required to replay their
+auxiliary randomness.
+
+::: phydrax.uq.conditional_particle_filter
+
+---
+
+::: phydrax.uq.particle_gibbs
+
+---
+
+::: phydrax.uq.ParticleGibbsResult
+
+---
+
+::: phydrax.uq.particle_marginal_metropolis_hastings
+
+---
+
+::: phydrax.uq.ParticleMarginalMetropolisHastingsResult
+
 ## Ensemble Kalman inversion
 
 ::: phydrax.uq.fit_eki

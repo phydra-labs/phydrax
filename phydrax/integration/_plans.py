@@ -357,6 +357,76 @@ class ImportanceSamplingPlan(StrictModule):
         self.support_policy = support_policy
 
 
+class MultilevelMonteCarloPlan(StrictModule):
+    """Fixed or variance-cost-adaptive multilevel Monte Carlo allocation."""
+
+    initial_samples: int | tuple[int, ...] = eqx.field(static=True)
+    samples_per_level: tuple[int, ...] | None = eqx.field(static=True)
+    target_rmse: float | None = eqx.field(static=True)
+    max_samples_per_level: int | tuple[int, ...] = eqx.field(static=True)
+    batch_size: int = eqx.field(static=True)
+    variance_fraction: float = eqx.field(static=True)
+    max_rounds: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        /,
+        *,
+        initial_samples: int | Sequence[int] = 16,
+        samples_per_level: Sequence[int] | None = None,
+        target_rmse: float | None = None,
+        max_samples_per_level: int | Sequence[int] = 1_000_000,
+        batch_size: int = 1024,
+        variance_fraction: float = 0.5,
+        max_rounds: int = 20,
+    ):
+        def counts(
+            value: int | Sequence[int],
+            name: str,
+            minimum: int,
+        ) -> int | tuple[int, ...]:
+            if isinstance(value, int):
+                resolved: int | tuple[int, ...] = int(value)
+                values = (resolved,)
+            else:
+                resolved = tuple(int(item) for item in value)
+                values = resolved
+            if not values or any(item < minimum for item in values):
+                raise ValueError(f"{name} values must be at least {minimum}.")
+            return resolved
+
+        initial = counts(initial_samples, "initial_samples", 2)
+        fixed = (
+            None
+            if samples_per_level is None
+            else tuple(int(value) for value in samples_per_level)
+        )
+        if fixed is not None and (not fixed or any(value < 2 for value in fixed)):
+            raise ValueError("samples_per_level values must be at least two.")
+        rmse = None if target_rmse is None else float(target_rmse)
+        if rmse is not None and (not math.isfinite(rmse) or rmse <= 0.0):
+            raise ValueError("target_rmse must be finite and positive.")
+        if fixed is None and rmse is None:
+            raise ValueError("Adaptive MLMC requires target_rmse.")
+        maximum = counts(max_samples_per_level, "max_samples_per_level", 2)
+        chunk = int(batch_size)
+        if chunk < 1:
+            raise ValueError("batch_size must be positive.")
+        fraction = float(variance_fraction)
+        if not math.isfinite(fraction) or not 0.0 < fraction < 1.0:
+            raise ValueError("variance_fraction must lie strictly between zero and one.")
+        rounds = int(max_rounds)
+        if rounds < 1:
+            raise ValueError("max_rounds must be positive.")
+        self.initial_samples = initial
+        self.samples_per_level = fixed
+        self.target_rmse = rmse
+        self.max_samples_per_level = maximum
+        self.batch_size = chunk
+        self.variance_fraction = fraction
+        self.max_rounds = rounds
+
+
 class SparseGridPlan(StrictModule):
     """Smolyak sparse-grid integration with explicit per-axis rule families."""
 
@@ -433,6 +503,7 @@ IntegrationPlan: TypeAlias = (
     | StratifiedMonteCarloPlan
     | QuasiMonteCarloPlan
     | ImportanceSamplingPlan
+    | MultilevelMonteCarloPlan
     | SparseGridPlan
     | CellQuadraturePlan
     | ProductIntegrationPlan
@@ -449,6 +520,7 @@ __all__ = [
     "ImportanceSamplingPlan",
     "IntegrationPlan",
     "LatinHypercubeDesign",
+    "MultilevelMonteCarloPlan",
     "MonteCarloPlan",
     "ProductIntegrationPlan",
     "QuasiMonteCarloPlan",

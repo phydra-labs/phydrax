@@ -116,6 +116,86 @@ method selection, and uncertainty contracts.
 
 ::: phydrax.integration.ProductIntegrationPlan
 
+## Coupled multilevel estimation
+
+A `MultilevelTarget` supplies paired fine/coarse samples from one validated stochastic
+hierarchy. `MultilevelMonteCarloPlan` allocates work from measured correction variance
+and cost, in batches, while retaining attempted and valid counts independently. The
+estimator is resumable: initialization, advancement, and finalization expose the same
+state used by the one-shot `integrate` call. Checkpoints and portable result archives
+are checksummed and reject hierarchy, sampler, observable, or plan mismatches.
+
+::: phydrax.integration.MultilevelMonteCarloPlan
+
+---
+
+::: phydrax.integration.MultilevelSampleBatch
+
+---
+
+::: phydrax.integration.MultilevelEstimatorState
+
+---
+
+::: phydrax.integration.MultilevelDiagnostics
+
+---
+
+::: phydrax.integration.initialize_multilevel
+
+---
+
+::: phydrax.integration.advance_multilevel
+
+---
+
+::: phydrax.integration.finalize_multilevel
+
+---
+
+::: phydrax.integration.write_multilevel_checkpoint
+
+---
+
+::: phydrax.integration.read_multilevel_checkpoint
+
+## Rare-event splitting
+
+Adaptive multilevel splitting consumes a canonical stochastic path event and two
+ordinary solver callbacks: one initial population sampler and one continuation
+sampler. Quantile levels, killed/branched ancestry, path scores, probability factors,
+and stopping status remain explicit. Replication reports between-run uncertainty; a
+single adaptively branched population is not mislabeled as IID Monte Carlo.
+
+::: phydrax.integration.AdaptiveMultilevelSplittingPlan
+
+---
+
+::: phydrax.integration.adaptive_multilevel_splitting
+
+---
+
+::: phydrax.integration.replicate_adaptive_multilevel_splitting
+
+---
+
+::: phydrax.integration.AdaptiveMultilevelSplittingResult
+
+## Smolyak control hierarchies
+
+`SmolyakSurrogateHierarchyAdapter` pairs a deterministic sparse-grid surrogate with
+the expensive model using a prefix-stable input sampler. Level zero estimates the
+surrogate expectation; level one estimates the paired fine-minus-surrogate correction.
+The adapter emits ordinary `MultilevelSampleBatch` objects, so variance and cost
+allocation use the same multilevel estimator rather than a second control-variate
+implementation.
+
+::: phydrax.integration.SmolyakSurrogateHierarchyAdapter
+
+---
+
+::: phydrax.integration.smolyak_surrogate_expectation
+
 ## Sampling designs and estimators
 
 ::: phydrax.integration.IIDDesign

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import sqrt
+from typing import cast
 
 import diffrax as dfx
 import jax
@@ -427,7 +428,7 @@ def _brownian_terminal_values(
             key=path_key,
             levy_area=dfx.BrownianIncrement,
         )
-        return sign * tree.evaluate(0.0, duration)[0]
+        return sign * cast(Array, tree.evaluate(0.0, duration))[0]
 
     return jax.vmap(one)(keys, signs).reshape(realization.sample_shape)
 
@@ -606,12 +607,137 @@ def run_commutative_noise_benchmark() -> CommutativeNoiseBenchmarkResult:
     )
 
 
+@dataclass(frozen=True)
+class MultilevelMonteCarloBenchmarkResult:
+    estimate: phx.integration.IntegrationEstimate
+    exact_expectation: float
+    absolute_error: float
+    equivalent_fine_paths: int
+    ordinary_monte_carlo_error: float
+    ordinary_monte_carlo_standard_error: float
+
+    @property
+    def passed(self) -> bool:
+        diagnostics = self.estimate.diagnostics
+        return (
+            bool(self.estimate.successful)
+            and self.absolute_error <= 3.0 * float(diagnostics.rmse_estimate)
+            and bool(
+                diagnostics.correction_variance_norms[-1]
+                < diagnostics.correction_variance_norms[0]
+            )
+            and bool(jnp.all(jnp.diff(diagnostics.mean_costs) > 0.0))
+        )
+
+
+def run_multilevel_monte_carlo_benchmark(
+    key: Key[Array, ""],
+    /,
+    *,
+    target_rmse: float = 0.04,
+    initial_samples: int = 64,
+) -> MultilevelMonteCarloBenchmarkResult:
+    """Compare coupled MLMC with equal-work finest-level Monte Carlo for geometric SDE."""
+    drift = 0.3
+    diffusion = 0.45
+    duration = 1.0
+    steps = (4, 8, 16, 32)
+    levels = tuple(
+        phx.stochastic.StochasticLevelSpec(
+            f"gbm-{index}",
+            index,
+            refinement_axes=("time",),
+            resolutions=(duration / count,),
+            state_shape=(1,),
+            problem_id="geometric-brownian-motion",
+            observable_id="terminal-state",
+            solver_id="euler-maruyama",
+            approximation_id=f"steps-{count}",
+            parent_level_id=None if index == 0 else f"gbm-{index - 1}",
+        )
+        for index, count in enumerate(steps)
+    )
+    hierarchy = phx.stochastic.StochasticHierarchy(
+        levels,
+        hierarchy_id="gbm-mlmc-benchmark",
+    )
+
+    def euler(normals, step):
+        return jnp.prod(
+            1.0 + drift * step + diffusion * jnp.sqrt(step) * normals,
+            axis=-1,
+        )
+
+    def sampler(level_index, sample_indices, root_key):
+        level_key = jr.fold_in(root_key, level_index)
+        keys = jax.vmap(lambda index: jr.fold_in(level_key, index))(sample_indices)
+        fine_steps = steps[level_index]
+        fine_step = duration / fine_steps
+        normals = jax.vmap(lambda sample_key: jr.normal(sample_key, (fine_steps,)))(keys)
+        fine = euler(normals, fine_step)
+        coarse = None
+        work = fine_steps
+        if level_index > 0:
+            coarse_normals = jnp.sum(
+                normals.reshape((normals.shape[0], fine_steps // 2, 2)),
+                axis=-1,
+            ) / sqrt(2.0)
+            coarse = euler(coarse_normals, 2.0 * fine_step)
+            work += fine_steps // 2
+        return phx.integration.MultilevelSampleBatch(
+            fine,
+            coarse,
+            sample_indices,
+            jnp.full(sample_indices.shape, float(work)),
+            level_index=level_index,
+            pair_ids=sample_indices,
+            provenance="gbm-euler-prefix-sampler",
+        )
+
+    target = phx.integration.multilevel(
+        hierarchy,
+        sampler,
+        sampler_id="gbm-euler-prefix-sampler",
+    )
+    estimate = phx.integration.integrate(
+        lambda samples, level: samples,
+        target,
+        phx.integration.MultilevelMonteCarloPlan(
+            initial_samples=initial_samples,
+            target_rmse=target_rmse,
+            max_samples_per_level=200_000,
+            batch_size=16_384,
+            max_rounds=12,
+        ),
+        key=key,
+    )
+    diagnostics = estimate.diagnostics
+    total_work = float(jnp.sum(diagnostics.attempted_counts * diagnostics.mean_costs))
+    equivalent_paths = max(int(total_work // steps[-1]), 2)
+    baseline_key = jr.fold_in(key, 2**31 - 1)
+    baseline_normals = jr.normal(baseline_key, (equivalent_paths, steps[-1]))
+    baseline_values = euler(baseline_normals, duration / steps[-1])
+    baseline_mean = jnp.mean(baseline_values)
+    baseline_standard_error = jnp.std(baseline_values, ddof=1) / sqrt(equivalent_paths)
+    exact = float(jnp.exp(drift * duration))
+    return MultilevelMonteCarloBenchmarkResult(
+        estimate,
+        exact,
+        abs(float(estimate.value) - exact),
+        equivalent_paths,
+        abs(float(baseline_mean) - exact),
+        float(baseline_standard_error),
+    )
+
+
 __all__ = [
     "CommutativeNoiseBenchmarkResult",
+    "MultilevelMonteCarloBenchmarkResult",
     "MultiplicativeReactionDiffusionBenchmarkResult",
     "StochasticAdvectionDiffusionBenchmarkResult",
     "StochasticHeatConvergenceBenchmarkResult",
     "run_commutative_noise_benchmark",
+    "run_multilevel_monte_carlo_benchmark",
     "run_multiplicative_reaction_diffusion_benchmark",
     "run_stochastic_advection_diffusion_benchmark",
     "run_stochastic_heat_convergence_benchmark",

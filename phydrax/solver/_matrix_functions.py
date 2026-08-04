@@ -387,8 +387,6 @@ def matrix_function_action(
             value,
             _scalar_function(step_value * spectral.eigenvalues, kind),
         )
-    if method == "chebyshev" and spectral_bounds is None:
-        raise ValueError("The Chebyshev method requires spectral_bounds.")
     if method == "lanczos" and not self_adjoint:
         raise ValueError("Lanczos requires a declared mass-self-adjoint operator.")
 
@@ -413,6 +411,8 @@ def matrix_function_action(
         return (root * image).reshape((-1,))
 
     if method == "chebyshev":
+        if spectral_bounds is None:
+            raise ValueError("The Chebyshev method requires spectral_bounds.")
         result = _chebyshev_action(
             transformed_operator,
             transformed,

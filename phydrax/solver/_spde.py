@@ -557,7 +557,9 @@ def semidiscretize_reaction_diffusion(
             spectral_representation=spectral,
             compatible_noise_eigenvalues=compatible_eigenvalues,
             compatible_noise_basis_id=(
-                None if compatible_eigenvalues is None else noise_basis.basis_id
+                None
+                if compatible_eigenvalues is None or noise_basis is None
+                else noise_basis.basis_id
             ),
         )
         drift = semilinear

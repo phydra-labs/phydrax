@@ -114,3 +114,83 @@ invalidates the affected path and is available through status diagnostics.
 ---
 
 ::: phydrax.stochastic.jump_bsde_diagnostics
+
+## Least-squares backward schemes
+
+`solve_bsde_least_squares` performs pathwise backward dynamic programming on a
+`BSDEPathBatch`. A regression basis defines finite features without owning a training
+loop; the built-in polynomial basis has an explicit feature cap. Regressions use
+weighted masked least squares with ridge regularization, optional standardization, and
+Picard iteration for nonlinear generators. Diagnostics retain rank, condition
+estimates, valid sample counts, residuals, and convergence per time step.
+
+::: phydrax.solver.AbstractBSDERegressionBasis
+
+---
+
+::: phydrax.solver.PolynomialBSDERegressionBasis
+
+---
+
+::: phydrax.solver.CallableBSDERegressionBasis
+
+---
+
+::: phydrax.solver.solve_bsde_least_squares
+
+---
+
+::: phydrax.solver.LeastSquaresBSDEResult
+
+---
+
+::: phydrax.solver.least_squares_bsde_diagnostics
+
+## Reflected path-dependent BSDEs
+
+`ReflectedPathDependentBSDEProblem` evaluates coefficients against complete causal
+state histories and declares optional lower and upper obstacles. The solver projects
+the continuation value at each backward node, records both reflection increments,
+checks obstacle ordering, and keeps terminal compatibility separate from local
+regression validity. This is a discrete reflected scheme, not a claim of automatic
+continuous-time obstacle resolution.
+
+::: phydrax.stochastic.ReflectedPathDependentBSDEProblem
+
+---
+
+::: phydrax.solver.solve_reflected_path_dependent_bsde
+
+---
+
+::: phydrax.solver.ReflectedPathDependentBSDEResult
+
+---
+
+::: phydrax.solver.reflected_path_dependent_bsde_diagnostics
+
+## Empirical mean-field control
+
+`EmpiricalMeanField` stores a weighted Lagrangian particle law over time and returns
+interpolated `MeanFieldSnapshot` objects with the finite support, weights, mean,
+covariance, and effective sample size still visible. `MeanFieldBSDEProblem` freezes
+that measure flow into a canonical BSDE. The control adapter turns a declared policy,
+running cost, and controlled drift into the corresponding Hamiltonian generator.
+
+::: phydrax.stochastic.EmpiricalMeanField
+
+---
+
+::: phydrax.stochastic.MeanFieldSnapshot
+
+---
+
+::: phydrax.stochastic.MeanFieldBSDEControlAdapter
+
+---
+
+::: phydrax.stochastic.MeanFieldBSDEProblem
+
+---
+
+::: phydrax.stochastic.adapt_mean_field_control_bsde
