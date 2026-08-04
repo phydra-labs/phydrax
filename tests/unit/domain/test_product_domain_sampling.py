@@ -3,18 +3,23 @@
 #
 
 import jax.random as jr
+import numpy as np
 import pytest
+from scipy.stats.qmc import Sobol
 
 from phydrax.domain import (
     Boundary,
+    DatasetDomain,
     DomainComponentUnion,
     FixedStart,
+    HyperRectangle,
     Interior,
     Interval1d,
     ProductStructure,
     TimeInterval,
 )
 from phydrax.domain._structure import CoordSeparableBatch
+from phydrax.sampling import SobolDesign
 
 
 def test_product_domain_sampling_produces_labeled_points_batch():
@@ -39,6 +44,74 @@ def test_product_domain_sampling_produces_labeled_points_batch():
     assert t.dims == (axis_t,)
     assert x.data.shape == (3, 1)
     assert t.data.shape == (4,)
+
+
+def test_same_block_sobol_uses_one_joint_reference_design():
+    domain = TimeInterval(0.0, 1.0).relabel("x") @ TimeInterval(0.0, 1.0)
+    structure = ProductStructure((("x", "t"),))
+
+    batch = domain.component().sample(
+        8,
+        structure=structure,
+        sampler=SobolDesign(),
+        key=jr.key(0),
+    )
+
+    actual = np.column_stack((batch["x"].data, batch["t"].data))
+    expected = Sobol(2, scramble=False).random(8)
+
+    assert np.array_equal(actual, expected)
+    assert np.mean((actual[:, 0] - actual[:, 1]) ** 2) > 0.0
+
+
+def test_joint_design_slices_multidimensional_reference_transports():
+    box = HyperRectangle([1.0, 10.0], [3.0, 14.0], label="x")
+    domain = box @ TimeInterval(-1.0, 1.0)
+    structure = ProductStructure((("x", "t"),))
+
+    batch = domain.component().sample(
+        8,
+        structure=structure,
+        sampler=SobolDesign(),
+        key=jr.key(0),
+    )
+
+    unit = Sobol(3, scramble=False).random(8)
+    expected_x = np.column_stack(
+        (
+            1.0 + 2.0 * unit[:, 0],
+            10.0 + 4.0 * unit[:, 1],
+        )
+    )
+    expected_t = -1.0 + 2.0 * unit[:, 2]
+
+    assert np.array_equal(batch["x"].data, expected_x)
+    assert np.array_equal(batch["t"].data, expected_t)
+
+
+def test_joint_design_preserves_finite_dataset_rows():
+    dataset = DatasetDomain(
+        {"value": np.asarray([10.0, 20.0, 30.0, 40.0])},
+        label="data",
+    )
+    domain = dataset @ TimeInterval(0.0, 1.0)
+    structure = ProductStructure((("data", "t"),))
+
+    batch = domain.component().sample(
+        8,
+        structure=structure,
+        sampler=SobolDesign(),
+        key=jr.key(0),
+    )
+
+    unit = Sobol(2, scramble=False).random(8)
+    indices = np.floor(4 * unit[:, 0]).astype(int)
+
+    assert np.array_equal(
+        batch["data"]["value"].data,
+        np.asarray([10.0, 20.0, 30.0, 40.0])[indices],
+    )
+    assert np.array_equal(batch["t"].data, unit[:, 1])
 
 
 def test_fixed_start_excludes_time_axis_from_structure():

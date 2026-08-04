@@ -19,6 +19,47 @@ Phydrax supports two complementary structured sampling modes:
 `TrajectoryDatasetDomain` is paired-only: its dataset row and time label must stay
 on the same sampling axis.
 
+## Joint block designs
+
+A paired block is also one joint reference design. For
+`ProductStructure((("x", "t"),))`, Phydrax generates one design spanning the
+combined reference dimensions of `"x"` and `"t"` and then maps its column slices
+through exact target-measure transports. Fixed labels consume no dimensions.
+
+Supported exact transports include scalar intervals, probability inverse CDFs,
+`Interval1d`, `HyperRectangle` interiors and boundaries, and finite
+`DatasetDomain` rows. IID and Latin-hypercube designs may use independent native
+factor samplers when an exact transport is unavailable: both preserve their design
+contract under factorwise composition. Sobol, Halton, and Hammersley multi-label
+blocks reject that case because factorwise sequences would not preserve the
+requested joint design.
+
+Component `where` and `where_all` predicates remain target-measure masks; paired
+sampling does not reinterpret them as rejection-conditioning predicates.
+
+Typed designs and string shorthands are equivalent:
+
+```python
+import jax.random as jr
+import phydrax as phx
+
+x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
+t = phx.domain.TimeInterval(0.0, 2.0, label="t")
+component = (x @ t).component()
+
+typed = phx.sampling.SobolDesign(scrambled=True)
+batch = component.sample(
+    256,
+    structure=phx.domain.ProductStructure((("x", "t"),)),
+    sampler=typed,
+    key=jr.key(0),
+)
+```
+
+Use `phx.sampling.design_capabilities(typed)` to inspect randomized,
+count-dependent, prefix-stable, random-access, factorwise-composable, and
+JAX-native properties.
+
 Coord-separable sampling is driven by `DomainComponent.sample_coord_separable(...)`, which takes:
 
 - `coord_separable`: a mapping from unary label (e.g. `"x"` or `"t"`) to either
@@ -56,6 +97,20 @@ Coord-separable sampling is driven by `DomainComponent.sample_coord_separable(..
             - __init__
             - canonicalize
             - axis_for
+
+## Typed reference designs
+
+::: phydrax.sampling.IIDDesign
+
+::: phydrax.sampling.LatinHypercubeDesign
+
+::: phydrax.sampling.HammersleyDesign
+
+::: phydrax.sampling.HaltonDesign
+
+::: phydrax.sampling.SobolDesign
+
+::: phydrax.sampling.DesignCapabilities
 
 ---
 

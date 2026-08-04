@@ -14,7 +14,7 @@ from jaxtyping import Array, Key
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
-from .._numerics import unit_design
+from .._sampling import design_capabilities, design_name, materialize_design
 from ..domain._base import _AbstractGeometry
 from ..domain._components import (
     Boundary,
@@ -107,14 +107,7 @@ def _default_structure(component: DomainComponent, /) -> ProductStructure:
 
 
 def _design_sampler(design: Any, /) -> str:
-    if isinstance(design, IIDDesign):
-        return "uniform"
-    if isinstance(design, LatinHypercubeDesign):
-        return "latin_hypercube"
-    if isinstance(design, RandomizedQMCDesign):
-        suffix = "_scrambled" if design.scrambled else ""
-        return f"{design.sequence}{suffix}"
-    raise TypeError(f"Unsupported direct sample design {type(design).__name__}.")
+    return design_name(design)
 
 
 def _materialize_probability(
@@ -208,16 +201,6 @@ def _fixed_point(factor: Any, selector: Any, /) -> cx.Field:
     raise TypeError("Unsupported fixed factor in sample design.")
 
 
-def _base_unit_name(design: Any, /) -> str:
-    if isinstance(design, IIDDesign):
-        return "uniform"
-    if isinstance(design, LatinHypercubeDesign):
-        return "latin_hypercube"
-    if isinstance(design, RandomizedQMCDesign):
-        return design.sequence + ("_scrambled" if design.scrambled else "")
-    raise TypeError("Antithetic base design must be IID, Latin hypercube, or QMC.")
-
-
 def _materialize_antithetic(
     target: ComponentTarget | DensityTarget | ProbabilityTarget,
     plan: MonteCarloPlan,
@@ -268,9 +251,14 @@ def _materialize_antithetic(
             "supply external paired samples for general geometry."
         )
     pairs = plan.num_samples // 2
-    name = _base_unit_name(design.base)
-    design_key = None if name in ("sobol", "halton", "hammersley") else key
-    unit = unit_design(name, count=pairs, dimension=len(varying), key=design_key)
+    capabilities = design_capabilities(design.base)
+    design_key = key if capabilities.randomized else None
+    unit = materialize_design(
+        design.base,
+        count=pairs,
+        dimension=len(varying),
+        key=design_key,
+    )
     if design.involution is None:
         reflected = 1.0 - unit
     else:

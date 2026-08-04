@@ -12,8 +12,8 @@ import jax.numpy as jnp
 import opt_einsum as oe
 
 from ..._doc import DOC_KEY0
+from ..._sampling import get_sampler
 from ...domain._function import DomainFunction
-from ...domain._sampling import get_sampler
 from ...domain._scalar import _AbstractScalarDomain
 from ..integral._local_ops import _uniform_ball_rule
 from ._domain_ops import _factor_and_dim, _resolve_var, grad

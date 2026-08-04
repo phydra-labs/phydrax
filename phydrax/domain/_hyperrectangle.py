@@ -11,9 +11,9 @@ import numpy as np
 from jaxtyping import Array, ArrayLike, Bool, Float, Key
 
 from .._doc import DOC_KEY0
+from .._sampling import get_sampler_host, seed_from_key
 from ._base import _AbstractGeometry, GeometryTransitionKind
 from ._grid import broadcasted_grid
-from ._sampling import get_sampler_host, seed_from_key
 from ._structure import _validate_label
 
 

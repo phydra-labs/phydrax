@@ -216,6 +216,19 @@ Examples:
 - `ProductStructure((("x", "t"),))` samples paired space-time points.
 - `ProductStructure((("x",), ("t",)))` samples space and time independently (Cartesian product).
 
+Within one block, Phydrax materializes one reference-space design whose dimension is
+the sum of the active factors' reference dimensions, then slices its columns through
+the factors' exact target-measure transports. A two-dimensional box paired with time
+therefore consumes one three-dimensional design. Fixed labels consume no reference
+dimensions. This distinction is essential for Sobol, Halton, and Hammersley designs:
+several repeated one-dimensional sequences are not a multidimensional low-discrepancy
+design.
+
+IID sampling can fall back to independent native factor samplers because that still
+produces the correct product measure. A non-IID multi-label block without exact
+reference transports is rejected instead of silently weakening its design. Split such
+labels into separate blocks when separate designs are intended.
+
 ```python
 import equinox as eqx
 import jax.random as jr
@@ -238,6 +251,26 @@ key or host seed. Use `"halton_scrambled"` or `"sobol_scrambled"` when randomize
 scrambling is required; a fixed key or seed reproduces the same scrambled
 sequence, while different keys or seeds produce different points. Host samplers
 and JAX callback samplers follow the same naming and reproducibility contract.
+
+The equivalent typed forms live under `phx.sampling`:
+
+```python
+batch = domain.component().sample(
+    128,
+    structure=structure,
+    sampler=phx.sampling.SobolDesign(scrambled=True),
+    key=jr.key(0),
+)
+```
+
+`phx.sampling.design_capabilities(...)` reports whether a design is randomized,
+count-dependent, prefix-stable, random-access, factorwise-composable, or JAX-native.
+IID and Latin-hypercube designs are factorwise-composable. Hammersley is finite and
+count-dependent; Sobol and Halton are sequences whose joint dimensions must stay
+together.
+
+Per-label `where` and global `where_all` component predicates remain indicator masks
+on the target measure. They do not condition the reference design by rejection.
 
 ## Coord-separable grid sampling (`CoordSeparableBatch`)
 

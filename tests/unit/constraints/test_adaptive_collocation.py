@@ -13,6 +13,7 @@ from phydrax.constraints import (
     RARD,
 )
 from phydrax.domain import Interval1d, PointsBatch, ProductStructure
+from phydrax.sampling import HaltonDesign
 
 
 def _interval_constraint(policy, *, num_points=32):
@@ -54,6 +55,26 @@ def test_periodic_collocation_replaces_a_fixed_size_population():
     assert refreshed.batch.structure == initial.batch.structure
     assert _coordinates(refreshed).shape == _coordinates(initial).shape
     assert not jnp.allclose(_coordinates(refreshed), _coordinates(initial))
+
+
+def test_collocation_policy_accepts_typed_reference_design():
+    policy = R3(
+        refresh_every=1,
+        sampler=HaltonDesign(scrambled=True),
+    )
+    _domain, constraint, functions = _interval_constraint(policy)
+    population = policy.initialize(constraint, key=jr.key(2))
+
+    refreshed = policy.refresh(
+        constraint,
+        functions,
+        population,
+        key=jr.key(3),
+        iter_=1,
+    )
+
+    assert isinstance(policy.sampler, HaltonDesign)
+    assert isinstance(refreshed.batch, PointsBatch)
 
 
 

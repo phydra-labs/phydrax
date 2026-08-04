@@ -18,6 +18,7 @@ from jaxtyping import Array, Key
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
+from .._sampling import DesignLike, resolve_design, UnitDesign
 from .._strict import StrictModule
 from ..domain._structure import PointsBatch
 
@@ -148,7 +149,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
 
     algorithm: CollocationAlgorithm
     refresh_every: int
-    sampler: str
+    sampler: UnitDesign
     candidate_multiplier: int
     exponent: Array
     uniform_floor: Array
@@ -163,7 +164,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
         algorithm: CollocationAlgorithm = "periodic",
         *,
         refresh_every: int = 100,
-        sampler: str = "sobol_scrambled",
+        sampler: DesignLike = "sobol_scrambled",
         candidate_multiplier: int = 10,
         exponent: float = 1.0,
         uniform_floor: float = 1.0,
@@ -193,7 +194,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
             raise ValueError("epsilon must be positive.")
         self.algorithm = algorithm
         self.refresh_every = int(refresh_every)
-        self.sampler = str(sampler)
+        self.sampler = resolve_design(sampler)
         self.candidate_multiplier = int(candidate_multiplier)
         self.exponent = jnp.asarray(exponent, dtype=float)
         self.uniform_floor = jnp.asarray(uniform_floor, dtype=float)

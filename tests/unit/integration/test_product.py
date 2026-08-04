@@ -115,6 +115,33 @@ def test_mixed_qmc_needs_replicates_for_uncertainty():
     assert randomized.error_kind == "randomized-qmc-replicate-error"
 
 
+def test_grouped_qmc_uses_one_joint_reference_design():
+    x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
+    y = phx.domain.ScalarInterval(0.0, 1.0, label="y")
+    domain = phx.domain.ProductDomain(x, y)
+    function = domain.Function("x", "y")(lambda x, y: (x - y) ** 2)
+    plan = phx.integration.ProductIntegrationPlan(
+        {
+            ("x", "y"): phx.integration.QuasiMonteCarloPlan(
+                8,
+                scrambled=False,
+                num_replicates=1,
+            )
+        }
+    )
+
+    realization = phx.integration.materialize(
+        phx.integration.over(domain.component()),
+        plan,
+    )
+    estimate = phx.integration.reduce(function, realization)
+
+    x_points = realization.batch.batches[0].points["x"].data
+    y_points = realization.batch.batches[0].points["y"].data
+    assert not jnp.array_equal(x_points, y_points)
+    assert estimate.value.data == pytest.approx(0.125)
+
+
 def test_product_plan_requires_exact_nonfixed_label_coverage():
     domain, function = _product_problem()
     plan = phx.integration.ProductIntegrationPlan(

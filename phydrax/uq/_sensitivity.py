@@ -13,8 +13,8 @@ import jax.numpy as jnp
 from jaxtyping import ArrayLike
 
 from .._frozendict import frozendict
+from .._sampling import get_sampler
 from .._strict import StrictModule
-from ..domain._sampling import get_sampler
 from ._distributions import AbstractDistribution
 
 

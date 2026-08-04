@@ -14,7 +14,7 @@ from jaxtyping import Array, ArrayLike
 from ..._doc import DOC_KEY0
 from ...domain._domain import RelabeledDomain
 from ...domain._function import DomainFunction
-from ...domain._sampling import get_sampler
+from ..._sampling import get_sampler
 from ...domain._scalar import _AbstractScalarDomain
 
 

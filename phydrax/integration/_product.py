@@ -8,13 +8,20 @@ from typing import Any
 
 import coordax as cx
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
-from .._numerics import unit_design
+from .._sampling import (
+    derive_key,
+    DESIGN_ALGORITHM_VERSION,
+    design_name,
+    materialize_design,
+    SampleAddress,
+)
 from .._strict import StrictModule
 from ..domain._base import _AbstractGeometry
 from ..domain._components import (
@@ -27,6 +34,7 @@ from ..domain._components import (
 from ..domain._domain import RelabeledDomain
 from ..domain._function import DomainFunction
 from ..domain._probability import ProbabilityDomain
+from ..domain._reference import reference_transport
 from ..domain._scalar import _AbstractScalarDomain
 from ..domain._structure import PointsBatch, ProductStructure
 from ._batches import PointIntegrationBatch
@@ -41,7 +49,6 @@ from ._plans import (
     AntitheticDesign,
     FixedQuadraturePlan,
     IIDDesign,
-    LatinHypercubeDesign,
     MonteCarloPlan,
     ProductIntegrationPlan,
     QuasiMonteCarloPlan,
@@ -123,30 +130,6 @@ def _groups(
             f"missing={missing!r}, extra={extra!r}."
         )
     return tuple(groups)
-
-
-def _design_name(design: Any, /) -> tuple[str, bool]:
-    if isinstance(design, IIDDesign):
-        return "uniform", True
-    if isinstance(design, LatinHypercubeDesign):
-        return "latin_hypercube", True
-    if isinstance(design, RandomizedQMCDesign):
-        return (
-            design.sequence + ("_scrambled" if design.scrambled else ""),
-            design.scrambled,
-        )
-    raise TypeError(f"Unsupported product sample design {type(design).__name__}.")
-
-
-def _map_unit(factor: Any, unit: Array, /) -> Array:
-    if isinstance(factor, ProbabilityDomain):
-        epsilon = jnp.finfo(jnp.asarray(unit).dtype).eps
-        return factor.distribution.icdf(jnp.clip(unit, epsilon, 1.0 - epsilon))
-    if isinstance(factor, _AbstractScalarDomain):
-        lower = factor.fixed("start")
-        upper = factor.fixed("end")
-        return lower + unit * (upper - lower)
-    raise TypeError("Product stochastic plans support scalar/probability factors.")
 
 
 def _map_canonical(factor: Any, node: Array, /) -> tuple[Array, Array]:
@@ -246,7 +229,7 @@ def materialize_product(
     deterministic_axes: list[str] = []
     factor_plans = tuple(factor_plan for _, factor_plan in groups)
     for replica in range(replicas):
-        points: dict[str, cx.Field] = {}
+        points: dict[str, Any] = {}
         weights_by_axis: dict[str, cx.Field] = {}
         for label in fixed_labels:
             points[label] = _fixed_field(
@@ -308,20 +291,45 @@ def materialize_product(
                 continue
             design = factor_plan.design
             count = factor_plan.num_samples
+            transports = tuple(
+                reference_transport(factor, component.spec.component_for(label))
+                for label, factor in zip(labels, factors, strict=True)
+            )
+            unsupported_labels = tuple(
+                label
+                for label, transport in zip(labels, transports, strict=True)
+                if transport is None
+            )
+            if unsupported_labels:
+                raise TypeError(
+                    "Product stochastic plans require exact target-measure reference "
+                    f"transports; unsupported labels={unsupported_labels!r}."
+                )
+            reference_dimension = sum(
+                transport.reference_dimension
+                for transport in transports
+                if transport is not None
+            )
+            base_design = design.base if isinstance(design, AntitheticDesign) else design
+            name = design_name(base_design)
+            address = SampleAddress(
+                "integration",
+                "product-group",
+                algorithm_version=DESIGN_ALGORITHM_VERSION,
+                target=labels,
+                role=name,
+            )
+            design_key = derive_key(key, address, replica)
             if isinstance(design, AntitheticDesign):
                 if count % 2:
                     raise ValueError(
                         "Antithetic product factors require even num_samples."
                     )
-                name, randomized = _design_name(design.base)
                 pair_count = count // 2
-                design_key = (
-                    jr.fold_in(key, group_index * 1009 + replica) if randomized else None
-                )
-                first = unit_design(
-                    name,
+                first = materialize_design(
+                    base_design,
                     count=pair_count,
-                    dimension=len(labels),
+                    dimension=reference_dimension,
                     key=design_key,
                 )
                 second = (
@@ -329,23 +337,37 @@ def materialize_product(
                     if design.involution is None
                     else jnp.asarray(design.involution(first), dtype=float)
                 )
+                if second.shape != first.shape:
+                    raise ValueError(
+                        "Antithetic involution must preserve the design shape."
+                    )
                 unit = jnp.concatenate((first, second), axis=0)
             else:
-                name, randomized = _design_name(design)
-                design_key = (
-                    jr.fold_in(key, group_index * 1009 + replica) if randomized else None
-                )
-                unit = unit_design(
-                    name,
+                unit = materialize_design(
+                    design,
                     count=count,
-                    dimension=len(labels),
+                    dimension=reference_dimension,
                     key=design_key,
                 )
             axis = structure.axis_for(labels[0])
             if axis is None:
                 raise RuntimeError("Stochastic product factor has no axis.")
-            for column, (label, factor) in enumerate(zip(labels, factors, strict=True)):
-                points[label] = cx.Field(_map_unit(factor, unit[:, column]), dims=(axis,))
+            offset = 0
+            for label, transport in zip(labels, transports, strict=True):
+                if transport is None:
+                    raise RuntimeError("Validated reference transport is unavailable.")
+                next_offset = offset + transport.reference_dimension
+                mapped = transport.map(unit[:, offset:next_offset])
+
+                def _sample_field(value):
+                    array = jnp.asarray(value)
+                    return cx.Field(
+                        array,
+                        dims=(axis,) + (None,) * (array.ndim - 1),
+                    )
+
+                points[label] = jax.tree_util.tree_map(_sample_field, mapped)
+                offset = next_offset
             group_mass = jnp.asarray(1.0)
             for label in labels:
                 group_mass = group_mass * label_measure(component, label)

@@ -12,7 +12,7 @@ import numpy as np
 from jaxtyping import Array, Bool, Key
 
 from ..._doc import DOC_KEY0
-from .._sampling import get_sampler_host, seed_from_key
+from ..._sampling import get_sampler_host, seed_from_key
 
 
 _SDF_INSIDE_TOL = -1e-8
