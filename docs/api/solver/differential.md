@@ -449,6 +449,32 @@ use the validated Diffrax backend unless `fallback="error"` is requested.
 
 ::: phydrax.solver.solve_semilinear_spde
 
+### Higher-order mild schemes and stochastic collocation
+
+`solve_semilinear_spde(..., scheme="exponential_milstein")` adds the commutative
+Milstein factor-JVP correction before applying the linear semigroup. It is available
+only for explicitly commutative finite-rank Itô noise; unsupported structure follows
+the declared `fallback` policy. `"auto"` preserves exact modal convolution for
+compatible additive noise and otherwise selects exponential Euler.
+
+`StochasticCollocationPlan` is the non-sampling alternative for a finite collection of
+independent random inputs. It materializes tensor or sparse Smolyak nodes in reference
+coordinates, maps them through probability-domain transforms, evaluates one supplied
+deterministic solver per node, and returns normalized quadrature weights plus
+node-by-node status. It does not reinterpret collocation error as process sampling
+uncertainty.
+
+
+::: phydrax.solver.StochasticCollocationPlan
+
+---
+
+::: phydrax.solver.run_stochastic_collocation
+
+---
+
+::: phydrax.solver.StochasticCollocationResult
+
 ### Declared SPDE solution concepts
 
 `SPDESolutionSpec` distinguishes strong, weak, and mild formulations and records
@@ -487,6 +513,106 @@ finite-horizon and stationary solution-aware truncation.
 ---
 
 ::: phydrax.solver.NoiseTruncationStudy
+
+## Coupled, Lévy, rough, memory, and particle dynamics
+
+### Coupled hierarchy execution
+
+`solve_coupled_hierarchy` runs one validated `StochasticHierarchy` through a
+level-specific solver callback. Every adjacent result carries its shared realization,
+pair IDs, coarse/fine validity, observables, and cost. This is the solver-side bridge
+for strong convergence studies and multilevel estimators.
+
+`CoupledLevelSolver` is the callback contract
+`(level, realization, coarse_result, state_transfer) -> result`.
+
+
+::: phydrax.solver.CoupledHierarchyResult
+
+---
+
+::: phydrax.solver.solve_coupled_hierarchy
+
+### Infinite-activity Lévy equations
+
+`LevySDEProblem` binds an explicit Lévy process to drift and jump-vector fields.
+`solve_levy_sde` supports Euler or jump-adapted Euler on a fixed output grid. Small
+jumps are either truncated or replaced by their declared Gaussian covariance; the
+result records the cutoff, represented-jump completeness, closure, and realization
+identities. No finite-variance assumption is made for the full stable process.
+
+::: phydrax.solver.LevySDEProblem
+
+---
+
+::: phydrax.solver.LevySDESolution
+
+---
+
+::: phydrax.solver.solve_levy_sde
+
+### Rough differential equations
+
+`RoughDifferentialProblem` expects vector fields with shape
+`state_shape + (driver_dimension,)`. The Davie scheme consumes both signature levels
+and obtains directional derivatives by JAX JVP; Euler intentionally ignores level two.
+Save times must be nodes of the lifted partition.
+
+::: phydrax.solver.RoughDifferentialProblem
+
+---
+
+::: phydrax.solver.RoughDifferentialSolution
+
+---
+
+::: phydrax.solver.solve_rough_differential
+
+### Volterra and delay equations
+
+The Volterra solver applies explicit left-point deterministic and stochastic
+convolutions. Kernels may be scalar or state-shaped; stochastic coefficients retain a
+separate declared noise shape. The delay solver supports one or more positive constant
+delays, evaluates a user history before the initial time, and linearly interpolates
+only already-computed states. Both consume one global Wiener realization and return a
+`MemoryEquationSolution`.
+
+::: phydrax.solver.StochasticVolterraProblem
+
+---
+
+::: phydrax.solver.solve_stochastic_volterra
+
+---
+
+::: phydrax.solver.StochasticDelayProblem
+
+---
+
+::: phydrax.solver.solve_stochastic_delay
+
+---
+
+::: phydrax.solver.MemoryEquationSolution
+
+### Interacting McKean--Vlasov particles
+
+`InteractingParticleProblem` passes the current weighted `MeanFieldSnapshot` to each
+particle drift and diffusion. Idiosyncratic noise has one component per particle;
+optional common noise is represented by a second global Wiener realization.
+`InteractingParticleSolution` retains particle validity, empirical means and
+covariances, and can expose either one selected empirical measure flow or the complete
+coupled population trajectory.
+
+::: phydrax.solver.InteractingParticleProblem
+
+---
+
+::: phydrax.solver.InteractingParticleSolution
+
+---
+
+::: phydrax.solver.solve_interacting_particles
 
 ## Result contract
 

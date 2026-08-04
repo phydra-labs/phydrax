@@ -359,6 +359,51 @@ class MappedTarget(StrictModule):
         self.target_mass = target_mass
 
 
+MultilevelSampler: TypeAlias = Callable[[int, Array, Any], Any]
+
+
+class MultilevelTarget(StrictModule):
+    """A coupled stochastic hierarchy whose finest-level expectation is estimated."""
+
+    hierarchy: Any
+    sampler: MultilevelSampler
+    sampler_id: str = eqx.field(static=True)
+    normalized: bool = eqx.field(static=True, default=True)
+
+    def __init__(
+        self,
+        hierarchy: Any,
+        sampler: MultilevelSampler,
+        /,
+        *,
+        sampler_id: str,
+    ):
+        from ..stochastic._hierarchy import StochasticHierarchy
+
+        if not isinstance(hierarchy, StochasticHierarchy):
+            raise TypeError("hierarchy must be a StochasticHierarchy.")
+        if not callable(sampler):
+            raise TypeError("sampler must be callable.")
+        identifier = str(sampler_id)
+        if not identifier:
+            raise ValueError("sampler_id must be non-empty.")
+        self.hierarchy = hierarchy
+        self.sampler = sampler
+        self.sampler_id = identifier
+        self.normalized = True
+
+
+def multilevel(
+    hierarchy: Any,
+    sampler: MultilevelSampler,
+    /,
+    *,
+    sampler_id: str,
+) -> MultilevelTarget:
+    """Construct a coupled multilevel expectation target."""
+    return MultilevelTarget(hierarchy, sampler, sampler_id=sampler_id)
+
+
 IntegrationTarget: TypeAlias = (
     ComponentTarget
     | ProbabilityTarget
@@ -366,6 +411,7 @@ IntegrationTarget: TypeAlias = (
     | DiscreteMeasureTarget
     | MappedTarget
     | WeightedSampleTarget
+    | MultilevelTarget
 )
 
 
@@ -495,12 +541,15 @@ __all__ = [
     "DiscreteMeasureTarget",
     "IntegrationTarget",
     "MappedTarget",
+    "MultilevelSampler",
+    "MultilevelTarget",
     "ProbabilityTarget",
     "WeightedSampleTarget",
     "density",
     "discrete",
     "expectation",
     "mapped",
+    "multilevel",
     "mean_over",
     "normalized_density",
     "over",

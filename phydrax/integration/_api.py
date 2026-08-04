@@ -33,6 +33,7 @@ from ._monte_carlo import (
     materialize_monte_carlo,
     materialize_stratified,
 )
+from ._multilevel import integrate_multilevel, materialize_multilevel
 from ._plans import (
     AdaptiveQuadraturePlan,
     AntitheticDesign,
@@ -42,6 +43,7 @@ from ._plans import (
     ImportanceSamplingPlan,
     LatinHypercubeDesign,
     MonteCarloPlan,
+    MultilevelMonteCarloPlan,
     ProductIntegrationPlan,
     QuasiMonteCarloPlan,
     RandomizedQMCDesign,
@@ -61,6 +63,7 @@ from ._targets import (
     DensityTarget,
     DiscreteMeasureTarget,
     MappedTarget,
+    MultilevelTarget,
     ProbabilityTarget,
     WeightedSampleTarget,
 )
@@ -85,7 +88,10 @@ def _base_target(target: Any, /) -> Any:
 def _requires_random_key(plan: Any, /) -> bool:
     if isinstance(plan, ProductIntegrationPlan):
         return any(_requires_random_key(factor) for factor in plan.plans.values())
-    if isinstance(plan, (ImportanceSamplingPlan, StratifiedMonteCarloPlan)):
+    if isinstance(
+        plan,
+        (ImportanceSamplingPlan, StratifiedMonteCarloPlan, MultilevelMonteCarloPlan),
+    ):
         return True
     if isinstance(plan, (MonteCarloPlan, QuasiMonteCarloPlan)):
         design = plan.design
@@ -177,6 +183,10 @@ def materialize(
         batch = materialize_stratified(target, plan, key=sampling_key)
     elif isinstance(plan, ImportanceSamplingPlan):
         batch = materialize_importance(target, plan, key=sampling_key)
+    elif isinstance(plan, MultilevelMonteCarloPlan):
+        if not isinstance(target, MultilevelTarget):
+            raise TypeError("MultilevelMonteCarloPlan requires a multilevel target.")
+        batch = materialize_multilevel(target, plan, sampling_key)
     elif isinstance(plan, SparseGridPlan):
         batch = materialize_sparse_grid(target, plan)
     elif isinstance(plan, CellQuadraturePlan):
@@ -290,6 +300,10 @@ def reduce(
         return integrate_discrete_measure(
             integrand, target, realization.batch, key=key, kwargs=kwargs
         )
+    if isinstance(plan, MultilevelMonteCarloPlan):
+        if not isinstance(target, MultilevelTarget):
+            raise TypeError("MultilevelMonteCarloPlan requires a multilevel target.")
+        return integrate_multilevel(integrand, realization.batch, **kwargs)
     base = _base_target(target)
     if plan is None and isinstance(base, ComponentTarget):
         if isinstance(target, DensityTarget):

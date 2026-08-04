@@ -292,22 +292,31 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   See [API → UQ → Neural-operator uncertainty](api/uq/operator.md#process-consistent-operator-transitions).
 - **Integral / conservation laws**: build terms from `integral`/`mean` and use integral constraints (equality targets, flux balances, etc.).
   See [Guides → Integrals and measures](guides_integrals.md).
-- **ODEs, SDEs, jump processes, hybrid systems, and semidiscrete SPDEs**:
-  either learn a trajectory by enforcing \(\dot u-f(u,t)=0\) with
-  continuous/discrete ODE constraints, or integrate an explicit
-  finite-dimensional initial-value problem. `solve_diffrax_ensemble` consumes a
-  global `WienerRealization`, whose support, prefix-stable path keys, sample
-  shape, and coupling identity define reproducible Itô or Stratonovich path
-  ensembles. `solve_next_reaction` and `solve_direct_ssa` consume a
-  `PoissonClockRealization`; `solve_jump_differential` combines its integrated
-  hazards with an ODE or globally coupled SDE. Spatial stochastic systems use
-  `TensorGridDiscretization` or an existing manifold
-  `SpectralDiscretization`, a finite-rank `SpatialNoiseBasis`, and a
-  semidiscretizer. Explicit semilinear splits can use matrix-function actions
-  and exact compatible modal stochastic convolution; generic systems retain
-  the Diffrax backend. Canonical `StochasticTrajectory` results preserve
-  case/realization axes and leakage-relevant coupling provenance.
+- **ODEs, SDEs, Lévy/rough/memory equations, interacting particles, and
+  semidiscrete SPDEs**: either learn a trajectory by enforcing
+  \(\dot u-f(u,t)=0\), or integrate an explicit finite-dimensional problem.
+  Brownian, Poisson, stable Lévy, and fractional Gaussian realizations own
+  replayable global randomness rather than acting as local seed wrappers.
+  Native solvers cover Itô/Stratonovich SDEs, finite-activity jump and hybrid
+  systems, truncated or Gaussian-closed stable Lévy equations, step-two rough
+  equations, stochastic Volterra and delay equations, and empirical
+  McKean--Vlasov particles with idiosyncratic and common noise. Spatial systems
+  combine a tensor or spectral discretization with finite-rank noise.
+  Semilinear splits support exact compatible modal convolution, exponential
+  Euler, and commutative exponential Milstein; general systems retain the
+  Diffrax backend. Stochastic collocation provides a separate deterministic
+  quadrature path for finite-dimensional random inputs.
   See [API → Solver → Differential equations](api/solver/differential.md).
+- **Coupled estimation and rare events**: declare refinement axes and
+  coarse/fine transfers in a `StochasticHierarchy`, run paired levels with one
+  realization, and allocate multilevel Monte Carlo work from measured
+  correction variance and cost. Estimator state, checkpoints, and result
+  archives preserve hierarchy and sampler identities. Canonical path events
+  drive stopping diagnostics and adaptive multilevel splitting; Girsanov and
+  jump compensator changes expose explicit path weights. A Smolyak surrogate can
+  enter the same hierarchy as a paired control level.
+  See [API → Integration](api/integration.md) and
+  [API → Stochastic processes](api/stochastic/index.md).
 - **Martingale and stopping-time validation**: declare observables and generator
   actions with `MartingaleProblem`, then evaluate interval or stopped
   martingale increments, predictable brackets, quadratic variation, and
@@ -315,19 +324,22 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   independence clusters rather than treating coupled paths as independent.
   See [API → Stochastic → Martingales](api/stochastic/martingales.md).
 - **Filtering and smoothing**: compose a state prior, transition kernel,
-  observation model, and masked observation schedule in `StateSpaceProblem`.
-  Use exact Kalman/RTS inference, bootstrap particle filtering with two
-  smoothing semantics, or the high-dimensional ensemble transform filter and
-  smoother. Differential, jump, hybrid, finite-state, and neural-operator
-  transition adapters preserve the same status and process-provenance
-  contract.
+  observation model, and masked schedule in `StateSpaceProblem`. Exact
+  finite-state and linear-Gaussian marginal likelihoods avoid latent-path
+  sampling. Bootstrap, guided, and Rao--Blackwellized particle filters,
+  conditional SMC, fixed-lag and fixed-interval smoothers, particle Gibbs,
+  particle marginal Metropolis--Hastings, and the high-dimensional ensemble
+  transform filter all preserve the same status, ancestry, and process
+  provenance contracts. Identifiability reports separate observation rank from
+  posterior contraction.
   See [Filtering cookbook](cookbook/filtering.md) and
   [API → UQ → Filtering](api/uq/filtering.md).
 - **Backward stochastic equations**: evaluate terminal, local, and global
-  BSDE residuals with explicit or autodifferentiated controls; attach them to
-  `FunctionalSolver` with `BSDEObjective`; simulate explicitly coupled
-  forward-backward systems; and include finite-activity compensated jump
-  increments with composite-realization validation.
+  residuals with explicit or autodifferentiated controls; attach them to
+  `FunctionalSolver`; or solve backward by masked regularized least-squares
+  regression with Picard iteration. Finite-activity compensated jumps,
+  reflected path-dependent obstacles, and empirical mean-field Hamiltonian
+  control have distinct declared contracts and diagnostics.
   See [BSDE cookbook](cookbook/bsde.md) and
   [API → Stochastic → BSDE](api/stochastic/bsde.md).
 - **Static random fields and stochastic coefficient processes**: synthesize

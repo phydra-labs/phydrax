@@ -84,6 +84,26 @@ from ._filter_checkpoint import (
     write_filter_checkpoint,
     write_kalman_filter_checkpoint,
 )
+from ._fixed_lag import (
+    fixed_lag_kalman_smoother,
+    fixed_lag_particle_smoother,
+    FixedLagKalmanSmootherResult,
+    FixedLagParticleSmootherResult,
+)
+from ._guided_particle import (
+    AbstractParticleProposal,
+    AuxiliaryResamplingPolicy,
+    BootstrapParticleProposal,
+    CallableGuidedParticleProposal,
+    guided_particle_filter,
+    guided_particle_filter_status_name,
+    GUIDED_PARTICLE_PROPOSAL_FAILURE,
+    GuidedParticleFilterResult,
+    GuidedParticleFilterState,
+    GuidedParticleFilterStatus,
+    LinearGaussianGuidedParticleProposal,
+    ParticleProposalSample,
+)
 from ._integration import particle_posterior_measure
 from ._kalman import (
     initialize_kalman_filter,
@@ -180,6 +200,18 @@ from ._particle import (
     sample_particle_backward_paths,
     write_particle_filter_checkpoint,
 )
+from ._particle_mcmc import (
+    AbstractParameterProposal,
+    CallableParameterProposal,
+    conditional_particle_filter,
+    ConditionalParticleFilterResult,
+    GaussianRandomWalkProposal,
+    particle_gibbs,
+    particle_marginal_metropolis_hastings,
+    ParticleGibbsResult,
+    ParticleMarginalMetropolisHastingsResult,
+    sample_conditional_particle_path,
+)
 from ._pathfinder import fit_pathfinder, PathfinderResult
 from ._posterior import (
     AbstractBijector,
@@ -245,6 +277,16 @@ from ._process_validation import (
     TrajectoryScoreDiagnostics,
 )
 from ._propagation import propagate, RandomSampleBatch, sample_joint
+from ._rao_blackwellized import (
+    ConditionalLinearObservation,
+    ConditionalLinearTransition,
+    InitialLinearGaussian,
+    rao_blackwellized_particle_filter,
+    RaoBlackwellizedFilterResult,
+    RaoBlackwellizedFilterState,
+    RaoBlackwellizedStateSpaceModel,
+    RaoBlackwellizedStateSpaceProblem,
+)
 from ._result_export import (
     decode_parameter_name,
     encode_parameter_name,
@@ -255,6 +297,20 @@ from ._result_export import (
 )
 from ._sensitivity import sobol_indices, SobolResult
 from ._smc import sample_tempered_smc, TemperedSMCResult
+from ._state_space_inference import (
+    EXACT_STATE_SPACE_DEGENERATE_LIKELIHOOD,
+    exact_state_space_log_likelihood,
+    EXACT_STATE_SPACE_NONFINITE,
+    EXACT_STATE_SPACE_STATE_MISMATCH,
+    EXACT_STATE_SPACE_SUCCESS,
+    EXACT_STATE_SPACE_TRANSITION_FAILURE,
+    ExactStateSpaceLikelihood,
+    ExactStateSpaceMethod,
+    FiniteStateFilterResult,
+    state_space_identifiability,
+    StateSpaceIdentifiabilityReport,
+    StateSpaceMarginalLikelihood,
+)
 from ._whitening import GaussianPriorWhitening
 
 
@@ -313,6 +369,22 @@ __all__ = [
     "write_ensemble_filter_checkpoint",
     "write_filter_checkpoint",
     "write_kalman_filter_checkpoint",
+    "AbstractParticleProposal",
+    "AuxiliaryResamplingPolicy",
+    "BootstrapParticleProposal",
+    "CallableGuidedParticleProposal",
+    "GUIDED_PARTICLE_PROPOSAL_FAILURE",
+    "guided_particle_filter",
+    "GuidedParticleFilterResult",
+    "GuidedParticleFilterState",
+    "GuidedParticleFilterStatus",
+    "guided_particle_filter_status_name",
+    "LinearGaussianGuidedParticleProposal",
+    "ParticleProposalSample",
+    "fixed_lag_kalman_smoother",
+    "fixed_lag_particle_smoother",
+    "FixedLagKalmanSmootherResult",
+    "FixedLagParticleSmootherResult",
     "initialize_kalman_filter",
     "KALMAN_INNOVATION_COVARIANCE_FAILURE",
     "KALMAN_NONFINITE",
@@ -329,6 +401,18 @@ __all__ = [
     "KalmanStatus",
     "rts_smoother",
     "sample_kalman_smoother_paths",
+    "EXACT_STATE_SPACE_DEGENERATE_LIKELIHOOD",
+    "EXACT_STATE_SPACE_NONFINITE",
+    "EXACT_STATE_SPACE_STATE_MISMATCH",
+    "EXACT_STATE_SPACE_SUCCESS",
+    "EXACT_STATE_SPACE_TRANSITION_FAILURE",
+    "exact_state_space_log_likelihood",
+    "ExactStateSpaceLikelihood",
+    "ExactStateSpaceMethod",
+    "FiniteStateFilterResult",
+    "state_space_identifiability",
+    "StateSpaceIdentifiabilityReport",
+    "StateSpaceMarginalLikelihood",
     "bootstrap_particle_filter",
     "effective_sample_size",
     "initialize_particle_filter",
@@ -354,6 +438,16 @@ __all__ = [
     "sample_particle_ancestry_paths",
     "sample_particle_backward_paths",
     "write_particle_filter_checkpoint",
+    "AbstractParameterProposal",
+    "CallableParameterProposal",
+    "conditional_particle_filter",
+    "ConditionalParticleFilterResult",
+    "GaussianRandomWalkProposal",
+    "particle_gibbs",
+    "ParticleGibbsResult",
+    "particle_marginal_metropolis_hastings",
+    "ParticleMarginalMetropolisHastingsResult",
+    "sample_conditional_particle_path",
     "AbstractLikelihood",
     "GaussianLikelihood",
     "GaussianLocationScaleLikelihood",
@@ -414,6 +508,14 @@ __all__ = [
     "ProcessValidationSplit",
     "trajectory_score_diagnostics",
     "TrajectoryScoreDiagnostics",
+    "ConditionalLinearObservation",
+    "ConditionalLinearTransition",
+    "InitialLinearGaussian",
+    "rao_blackwellized_particle_filter",
+    "RaoBlackwellizedFilterResult",
+    "RaoBlackwellizedFilterState",
+    "RaoBlackwellizedStateSpaceModel",
+    "RaoBlackwellizedStateSpaceProblem",
     "PredictionInterval",
     "PredictiveField",
     "SampleAxis",

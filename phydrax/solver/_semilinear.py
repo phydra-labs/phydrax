@@ -14,7 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..stochastic import WienerRealization
-from ._differential import DifferentialSolution
+from ._differential import DifferentialProblem, DifferentialSolution
 from ._matrix_functions import (
     matrix_exponential_action,
     matrix_phi1_action,
@@ -25,6 +25,16 @@ from ._spde import SemidiscreteSPDE
 
 
 SemilinearFallback: TypeAlias = Literal["diffrax", "error"]
+SemilinearSPDEScheme: TypeAlias = Literal[
+    "auto",
+    "exponential_euler",
+    "exponential_milstein",
+]
+_ResolvedSemilinearSPDEScheme: TypeAlias = Literal[
+    "exact_additive",
+    "exponential_euler",
+    "exponential_milstein",
+]
 
 
 def _stochastic_convolution_time_factor(
@@ -116,14 +126,13 @@ def _step_schedule(
     )
 
 
-def _unsupported_reason(
+def _realization_unsupported_reason(
     spde: SemidiscreteSPDE,
     realization: WienerRealization | None,
     /,
+    *,
+    require_increments: bool,
 ) -> str | None:
-    drift = spde.semilinear_drift
-    if drift is None:
-        return "the semidiscrete problem has no explicit semilinear decomposition"
     problem = spde.problem
     if not problem.stochastic:
         if realization is not None:
@@ -131,10 +140,6 @@ def _unsupported_reason(
         return None
     if problem.interpretation != "ito":
         return "the specialized solver currently supports only Itô equations"
-    if not problem.additive_noise:
-        return "the specialized solver currently supports only additive noise"
-    if spde.noise_basis is None:
-        return "additive stochastic convolution requires a SpatialNoiseBasis"
     if realization is None:
         return "stochastic problems require a Wiener realization"
     if realization.noise_shape != problem.noise_shape:
@@ -145,6 +150,32 @@ def _unsupported_reason(
         problem.t1
     ):
         return "the Wiener realization support does not cover the problem interval"
+    if require_increments and realization.levy_area != "brownian":
+        return "the specialized scheme requires Brownian increments"
+    return None
+
+
+def _exact_additive_unsupported_reason(
+    spde: SemidiscreteSPDE,
+    realization: WienerRealization | None,
+    /,
+) -> str | None:
+    reason = _realization_unsupported_reason(
+        spde,
+        realization,
+        require_increments=False,
+    )
+    if reason is not None:
+        return reason
+    problem = spde.problem
+    if not problem.stochastic:
+        return "exact stochastic convolution requires a stochastic problem"
+    if not problem.additive_noise:
+        return "exact stochastic convolution requires additive noise"
+    if spde.noise_basis is None:
+        return "additive stochastic convolution requires a SpatialNoiseBasis"
+    drift = spde.semilinear_drift
+    assert drift is not None
     if (
         drift.compatible_noise_eigenvalues is None
         or drift.compatible_noise_basis_id != spde.noise_basis.basis_id
@@ -152,6 +183,92 @@ def _unsupported_reason(
     ):
         return "the linear operator and additive noise basis do not share declared modes"
     return None
+
+
+def _resolved_specialization(
+    spde: SemidiscreteSPDE,
+    realization: WienerRealization | None,
+    scheme: SemilinearSPDEScheme,
+    /,
+) -> tuple[_ResolvedSemilinearSPDEScheme | None, str | None]:
+    if spde.semilinear_drift is None:
+        return None, "the semidiscrete problem has no explicit semilinear decomposition"
+    if scheme == "auto":
+        if spde.problem.stochastic:
+            exact_reason = _exact_additive_unsupported_reason(spde, realization)
+            if exact_reason is None:
+                return "exact_additive", None
+        reason = _realization_unsupported_reason(
+            spde,
+            realization,
+            require_increments=spde.problem.stochastic,
+        )
+        return (None, reason) if reason is not None else ("exponential_euler", None)
+    reason = _realization_unsupported_reason(
+        spde,
+        realization,
+        require_increments=spde.problem.stochastic,
+    )
+    if reason is not None:
+        return None, reason
+    if scheme == "exponential_euler":
+        return scheme, None
+    if not spde.problem.stochastic:
+        return None, "exponential Milstein requires a stochastic problem"
+    if any(
+        term.structure not in ("additive", "commutative")
+        for term in spde.problem.wiener_terms
+    ):
+        return None, "exponential Milstein requires declared commutative noise"
+    return scheme, None
+
+
+def _diffusion_columns(
+    problem: DifferentialProblem,
+    time: Array,
+    state: Array,
+    /,
+) -> Array:
+    state_shape = tuple(state.shape)
+    columns = []
+    for term in problem.wiener_terms:
+        value = jnp.asarray(term.coefficient(time, state, problem.args))
+        expected = state_shape + term.noise_shape
+        if tuple(value.shape) != expected:
+            raise ValueError(
+                f"WienerTerm {term.name!r} coefficient must return shape "
+                f"{expected}; got {value.shape}."
+            )
+        columns.append(value.reshape(state_shape + (term.noise_size,)))
+    return jnp.concatenate(columns, axis=-1)
+
+
+def _milstein_increment(
+    problem: DifferentialProblem,
+    time: Array,
+    state: Array,
+    step: Array,
+    wiener_increment: Array,
+    diffusion: Array,
+    /,
+) -> Array:
+    """Compute the commutative Milstein correction with factor JVPs."""
+    directions = jnp.moveaxis(diffusion, -1, 0)
+
+    def differentiate(direction):
+        return jax.jvp(
+            lambda value: _diffusion_columns(problem, time, value),
+            (state,),
+            (direction,),
+        )[1]
+
+    derivatives = jax.vmap(differentiate)(directions)
+    noise_size = int(wiener_increment.size)
+    flattened = derivatives.reshape((noise_size, int(state.size), noise_size))
+    iterated = wiener_increment[:, None] * wiener_increment[None, :] - step * jnp.eye(
+        noise_size, dtype=wiener_increment.dtype
+    )
+    return (0.5 * jnp.einsum("ksj,kj->s", flattened, iterated)).reshape(state.shape)
 
 
 def _solve_diffrax_fallback(
@@ -171,7 +288,22 @@ def _solve_diffrax_fallback(
 ) -> DifferentialSolution:
     from ._diffrax_backend import solve_diffrax, solve_diffrax_ensemble
 
-    kwargs = dict(
+    if realization is not None and realization.sample_shape:
+        return solve_diffrax_ensemble(
+            spde.problem,
+            save_times=save_times,
+            realization=realization,
+            solver=solver,
+            stepsize_controller=stepsize_controller,
+            adjoint=adjoint,
+            dt0=dt,
+            rtol=rtol,
+            atol=atol,
+            max_steps=max_steps,
+            throw=throw,
+        )
+    return solve_diffrax(
+        spde.problem,
         save_times=save_times,
         realization=realization,
         solver=solver,
@@ -183,9 +315,6 @@ def _solve_diffrax_fallback(
         max_steps=max_steps,
         throw=throw,
     )
-    if realization is not None and realization.sample_shape:
-        return solve_diffrax_ensemble(spde.problem, **kwargs)
-    return solve_diffrax(spde.problem, **kwargs)
 
 
 def solve_semilinear_spde(
@@ -195,6 +324,7 @@ def solve_semilinear_spde(
     save_times: ArrayLike,
     realization: WienerRealization | None = None,
     dt: float,
+    scheme: SemilinearSPDEScheme = "auto",
     matrix_function_policy: MatrixFunctionPolicy | None = None,
     fallback: SemilinearFallback = "diffrax",
     diffrax_solver: Any | None = None,
@@ -205,17 +335,22 @@ def solve_semilinear_spde(
     max_steps: int | None = 4096,
     throw: bool = False,
 ) -> DifferentialSolution:
-    """Integrate a semilinear SPDE with exact compatible stochastic convolution.
+    """Integrate a semilinear SPDE with a matrix-free exponential scheme.
 
-    The supported specialization is fixed-step Itô exponential Euler with additive
-    finite-rank noise. Unsupported problems lower to the existing Diffrax backend by
-    default; ``fallback="error"`` exposes the unsupported reason instead.
+    ``"auto"`` preserves exact modal stochastic convolution for compatible
+    additive noise and otherwise selects exponential Euler. Exponential Milstein
+    uses factor JVPs and requires explicitly declared commutative Itô noise.
+    Unsupported problems lower to Diffrax by default.
     """
     if not isinstance(spde, SemidiscreteSPDE):
         raise TypeError("solve_semilinear_spde requires a SemidiscreteSPDE.")
     step_limit = float(dt)
     if not isfinite(step_limit) or step_limit <= 0.0:
         raise ValueError("dt must be finite and positive.")
+    if scheme not in ("auto", "exponential_euler", "exponential_milstein"):
+        raise ValueError(
+            "scheme must be 'auto', 'exponential_euler', or 'exponential_milstein'."
+        )
     if fallback not in ("diffrax", "error"):
         raise ValueError("fallback must be 'diffrax' or 'error'.")
     policy = (
@@ -225,7 +360,7 @@ def solve_semilinear_spde(
     )
     if not isinstance(policy, MatrixFunctionPolicy):
         raise TypeError("matrix_function_policy must be a MatrixFunctionPolicy.")
-    reason = _unsupported_reason(spde, realization)
+    resolved_scheme, reason = _resolved_specialization(spde, realization, scheme)
     if reason is not None:
         if fallback == "error":
             raise ValueError(
@@ -244,6 +379,7 @@ def solve_semilinear_spde(
             max_steps=max_steps,
             throw=throw,
         )
+    assert resolved_scheme is not None
 
     drift = spde.semilinear_drift
     assert drift is not None
@@ -256,23 +392,42 @@ def solve_semilinear_spde(
     num_steps = int(steps.size)
     initial_state = spde.problem.initial_state
     stochastic = spde.problem.stochastic
+    exact_additive = resolved_scheme == "exact_additive"
     noise_basis = spde.noise_basis
     noise_eigenvalues = drift.compatible_noise_eigenvalues
 
-    def one_path(path_key, path_sign):
+    if stochastic and not exact_additive:
+        assert realization is not None
+        ends = jnp.asarray(spde.problem.t0) + jnp.cumsum(steps)
+        starts = jnp.concatenate((jnp.asarray(spde.problem.t0)[None], ends[:-1]))
+        support_start, support_end = realization.support
+        starts = jnp.clip(starts, support_start, support_end)
+        ends = jnp.clip(ends, support_start, support_end)
+        path_increments = realization.increments(
+            starts,
+            ends,
+            dtype=initial_state.real.dtype,
+        )
+    else:
+        sample_shape = () if realization is None else realization.sample_shape
+        path_increments = jnp.zeros(sample_shape + (num_steps, 0))
+
+    def exponential_action(value, step_value):
+        return matrix_exponential_action(
+            drift.linear_operator,
+            value,
+            step_value,
+            policy=policy,
+            spectral=drift.spectral_representation,
+            spectral_bounds=drift.spectral_bounds,
+            self_adjoint=drift.mass_self_adjoint,
+            mass_weights=drift.mass_weights,
+        )
+
+    def one_path(path_key, path_sign, wiener_increments):
         def advance(carry, item):
             time, state = carry
-            step_value, step_index = item
-            propagated = matrix_exponential_action(
-                drift.linear_operator,
-                state,
-                step_value,
-                policy=policy,
-                spectral=drift.spectral_representation,
-                spectral_bounds=drift.spectral_bounds,
-                self_adjoint=drift.mass_self_adjoint,
-                mass_weights=drift.mass_weights,
-            )
+            step_value, step_index, wiener_increment = item
             nonlinear = drift.nonlinear(time, state, spde.problem.args)
             nonlinear_update = step_value * matrix_phi1_action(
                 drift.linear_operator,
@@ -284,22 +439,42 @@ def solve_semilinear_spde(
                 self_adjoint=drift.mass_self_adjoint,
                 mass_weights=drift.mass_weights,
             )
-            if stochastic:
+            if exact_additive:
                 assert noise_basis is not None
                 assert noise_eigenvalues is not None
                 step_key = jr.fold_in(path_key, step_index)
                 normal = path_sign * jr.normal(
                     step_key,
                     (noise_basis.rank,),
-                    dtype=state.dtype,
+                    dtype=state.real.dtype,
                 )
+                propagated = exponential_action(state, step_value)
                 noise_update = exact_modal_stochastic_convolution(
                     noise_basis,
                     noise_eigenvalues,
                     step_value,
                     normal,
                 )
+            elif stochastic:
+                diffusion = _diffusion_columns(spde.problem, time, state)
+                local_noise = jnp.tensordot(
+                    diffusion,
+                    wiener_increment,
+                    axes=((-1,), (0,)),
+                )
+                if resolved_scheme == "exponential_milstein":
+                    local_noise = local_noise + _milstein_increment(
+                        spde.problem,
+                        time,
+                        state,
+                        step_value,
+                        wiener_increment,
+                        diffusion,
+                    )
+                propagated = exponential_action(state + local_noise, step_value)
+                noise_update = jnp.zeros_like(state)
             else:
+                propagated = exponential_action(state, step_value)
                 noise_update = jnp.zeros_like(state)
             next_state = propagated + nonlinear_update + noise_update
             return (time + step_value, next_state), next_state
@@ -307,7 +482,11 @@ def solve_semilinear_spde(
         _, stepped = jax.lax.scan(
             advance,
             (jnp.asarray(spde.problem.t0), initial_state),
-            (steps, jnp.arange(num_steps, dtype=jnp.uint32)),
+            (
+                steps,
+                jnp.arange(num_steps, dtype=jnp.uint32),
+                wiener_increments,
+            ),
         )
         complete = jnp.concatenate((initial_state[None, ...], stepped), axis=0)
         return complete[save_indices]
@@ -317,17 +496,30 @@ def solve_semilinear_spde(
         if realization.sample_shape:
             flat_keys = realization.path_keys.reshape((-1,))
             flat_signs = realization.path_signs.reshape((-1,))
-            states = jax.vmap(one_path)(flat_keys, flat_signs).reshape(
-                realization.sample_shape + (int(saved.size),) + spde.state_shape
+            flat_increments = path_increments.reshape(
+                (realization.num_paths, num_steps, path_increments.shape[-1])
             )
+            states = jax.vmap(one_path)(
+                flat_keys,
+                flat_signs,
+                flat_increments,
+            ).reshape(realization.sample_shape + (int(saved.size),) + spde.state_shape)
             times = jnp.broadcast_to(saved, realization.sample_shape + saved.shape)
             sample_shape = realization.sample_shape
         else:
-            states = one_path(realization.path_keys, realization.path_signs)
+            states = one_path(
+                realization.path_keys,
+                realization.path_signs,
+                path_increments,
+            )
             times = saved
             sample_shape = ()
     else:
-        states = one_path(jr.key(0), jnp.asarray(1.0))
+        states = one_path(
+            jr.key(0),
+            jnp.asarray(1.0),
+            path_increments,
+        )
         times = saved
         sample_shape = ()
     state_axes = tuple(range(len(sample_shape) + 1, states.ndim))
@@ -336,6 +528,11 @@ def solve_semilinear_spde(
         jnp.full(sample_shape, num_steps, dtype=jnp.int32)
         if sample_shape
         else jnp.asarray(num_steps, dtype=jnp.int32)
+    )
+    solver_name = (
+        "SemilinearExponentialMilstein"
+        if resolved_scheme == "exponential_milstein"
+        else "SemilinearExponentialEuler"
     )
     return DifferentialSolution(
         times=times,
@@ -347,18 +544,21 @@ def solve_semilinear_spde(
             "num_steps": stats_steps,
             "matrix_function_method": policy.method,
             "differentiation": policy.differentiation,
-            "exact_stochastic_convolution": bool(stochastic),
+            "scheme": resolved_scheme,
+            "exact_stochastic_convolution": exact_additive,
+            "uses_realization_increments": bool(stochastic and not exact_additive),
         },
         event_mask=None,
         realization=realization,
         wiener_term_slices=spde.problem.wiener_term_slices,
-        solver_name="SemilinearExponentialEuler",
+        solver_name=solver_name,
         interpretation=spde.problem.interpretation,
     )
 
 
 __all__ = [
     "SemilinearFallback",
+    "SemilinearSPDEScheme",
     "exact_modal_stochastic_convolution",
     "solve_semilinear_spde",
 ]

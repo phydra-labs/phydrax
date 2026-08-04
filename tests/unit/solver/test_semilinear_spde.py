@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy.linalg as jsp_linalg
+import pytest
 
 import phydrax as phx
 
@@ -176,3 +177,142 @@ def test_exact_modal_stochastic_convolution_replays_and_matches_covariance():
     assert trajectory.realizations == (realization,)
     assert trajectory.discretization_id == discretization.discretization_id
     assert trajectory.basis_id == basis.basis_id
+
+
+def _geometric_spde(*, duration, rate=-0.2, noise=0.7, structure="commutative"):
+    discretization = _periodic_discretization(2)
+    initial = jnp.asarray([0.8, 1.3])
+    spectral = phx.solver.SpectralMatrixRepresentation(
+        jnp.full((2,), rate),
+        jnp.eye(2),
+        jnp.eye(2),
+        state_shape=initial.shape,
+        representation_id="geometric-linear-drift",
+    )
+    spde = phx.solver.semidiscretize_semilinear_spde(
+        lambda state: rate * state,
+        None,
+        initial,
+        discretization,
+        t0=0.0,
+        t1=duration,
+        operator_id="geometric-linear-drift",
+        diffusion=lambda time, state, args: noise * jnp.diag(state),
+        noise_shape=(2,),
+        basis_id="geometric-commutative-noise",
+        noise_structure=structure,
+        spectral_representation=spectral,
+    )
+    return spde, initial
+
+
+def test_multiplicative_exponential_euler_uses_global_wiener_increments():
+    duration, rate, noise = 0.2, -0.2, 0.7
+    spde, initial = _geometric_spde(
+        duration=duration,
+        rate=rate,
+        noise=noise,
+    )
+    realization = spde.wiener_realization(
+        jr.key(31),
+        sample_shape=(32,),
+        tolerance=1e-5,
+    )
+    solution = phx.solver.solve_semilinear_spde(
+        spde,
+        save_times=jnp.asarray([duration]),
+        realization=realization,
+        dt=duration,
+        scheme="exponential_euler",
+        fallback="error",
+    )
+    increments = realization.increments(
+        jnp.asarray([0.0]),
+        jnp.asarray([duration]),
+    )[:, 0]
+    expected = jnp.exp(rate * duration) * (initial + noise * initial * increments)
+
+    assert solution.solver_name == "SemilinearExponentialEuler"
+    assert solution.stats["scheme"] == "exponential_euler"
+    assert solution.stats["uses_realization_increments"]
+    assert jnp.allclose(solution.states[:, 0], expected, rtol=1e-11, atol=1e-11)
+
+
+def test_exponential_milstein_matches_one_step_factor_jvp_and_is_higher_order():
+    duration, rate, noise = 0.5, -0.2, 0.7
+    spde, initial = _geometric_spde(
+        duration=duration,
+        rate=rate,
+        noise=noise,
+    )
+    realization = spde.wiener_realization(
+        jr.key(32),
+        sample_shape=(512,),
+        tolerance=1e-5,
+    )
+    one_step = phx.solver.solve_semilinear_spde(
+        spde,
+        save_times=jnp.asarray([duration]),
+        realization=realization,
+        dt=duration,
+        scheme="exponential_milstein",
+        fallback="error",
+    )
+    total_increment = realization.increments(
+        jnp.asarray([0.0]),
+        jnp.asarray([duration]),
+    )[:, 0]
+    expected_one_step = (
+        jnp.exp(rate * duration)
+        * initial
+        * (
+            1.0
+            + noise * total_increment
+            + 0.5 * noise**2 * (total_increment**2 - duration)
+        )
+    )
+    exact = initial * jnp.exp(
+        (rate - 0.5 * noise**2) * duration + noise * total_increment
+    )
+
+    def terminal(scheme, step):
+        return phx.solver.solve_semilinear_spde(
+            spde,
+            save_times=jnp.asarray([duration]),
+            realization=realization,
+            dt=step,
+            scheme=scheme,
+            fallback="error",
+        ).states[:, 0]
+
+    euler_fine = terminal("exponential_euler", duration / 8.0)
+    milstein_coarse = terminal("exponential_milstein", duration / 4.0)
+    milstein_fine = terminal("exponential_milstein", duration / 8.0)
+    euler_error = jnp.sqrt(jnp.mean((euler_fine - exact) ** 2))
+    milstein_coarse_error = jnp.sqrt(jnp.mean((milstein_coarse - exact) ** 2))
+    milstein_fine_error = jnp.sqrt(jnp.mean((milstein_fine - exact) ** 2))
+
+    assert one_step.solver_name == "SemilinearExponentialMilstein"
+    assert jnp.allclose(
+        one_step.states[:, 0],
+        expected_one_step,
+        rtol=1e-11,
+        atol=1e-11,
+    )
+    assert milstein_fine_error < 0.7 * milstein_coarse_error
+    assert milstein_fine_error < 0.4 * euler_error
+
+
+def test_exponential_milstein_rejects_undeclared_commutativity():
+    spde, _ = _geometric_spde(duration=0.1, structure="general")
+    realization = spde.wiener_realization(jr.key(33), tolerance=1e-5)
+
+    with pytest.raises(ValueError, match="declared commutative noise"):
+        phx.solver.solve_semilinear_spde(
+            spde,
+            save_times=jnp.asarray([0.1]),
+            realization=realization,
+            dt=0.1,
+            scheme="exponential_milstein",
+            fallback="error",
+        )

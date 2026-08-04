@@ -107,6 +107,68 @@ regression over the retained forecast and analysis ensembles.
 
 ::: phydrax.uq.ensemble_filter_diagnostics
 
+## Exact state-space likelihoods
+
+`exact_state_space_log_likelihood` dispatches only to a mathematically exact
+finite-state forward recursion or linear-Gaussian Kalman innovation likelihood.
+`StateSpaceMarginalLikelihood` exposes that result to posterior inference without
+resampling latent paths. `state_space_identifiability` reports effective observation
+rank and prior-to-posterior contraction; it is a diagnostic, not an automatic
+regularizer.
+
+::: phydrax.uq.exact_state_space_log_likelihood
+
+---
+
+::: phydrax.uq.StateSpaceMarginalLikelihood
+
+---
+
+::: phydrax.uq.ExactStateSpaceLikelihood
+
+---
+
+::: phydrax.uq.state_space_identifiability
+
+## Guided, Rao--Blackwellized, and fixed-lag particle methods
+
+Guided filtering separates the proposal from the canonical transition. Every proposal
+returns the sampled state, proposal log density, look-ahead score, and validity needed
+for the exact importance correction. The bootstrap and fully adapted
+linear-Gaussian proposals are built in; custom proposals implement the same contract.
+
+`rao_blackwellized_particle_filter` samples a nonlinear state while propagating the
+conditionally linear state by Kalman recursion. It therefore requires an explicit
+conditional-linear model rather than attempting to discover one from arbitrary
+callables. Fixed-lag smoothers expose the deliberate memory/latency approximation for
+both Kalman and particle histories.
+
+::: phydrax.uq.AbstractParticleProposal
+
+---
+
+::: phydrax.uq.LinearGaussianGuidedParticleProposal
+
+---
+
+::: phydrax.uq.guided_particle_filter
+
+---
+
+::: phydrax.uq.RaoBlackwellizedStateSpaceProblem
+
+---
+
+::: phydrax.uq.rao_blackwellized_particle_filter
+
+---
+
+::: phydrax.uq.fixed_lag_kalman_smoother
+
+---
+
+::: phydrax.uq.fixed_lag_particle_smoother
+
 ## Checkpoint and portable result contracts
 
 Filter checkpoints are atomic, pickle-free archives with checksummed arrays and exact

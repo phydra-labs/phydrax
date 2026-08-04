@@ -2,6 +2,7 @@ import jax.random as jr
 
 from tools.stochastic_convergence import (
     run_commutative_noise_benchmark,
+    run_multilevel_monte_carlo_benchmark,
     run_multiplicative_reaction_diffusion_benchmark,
     run_stochastic_advection_diffusion_benchmark,
     run_stochastic_heat_convergence_benchmark,
@@ -42,3 +43,18 @@ def test_commutative_noise_benchmark_separates_levy_area_regimes():
 
     assert result.passed
     assert result.commutative_flow_order_error < result.noncommutative_flow_order_error
+
+
+def test_multilevel_monte_carlo_reports_coupled_variance_cost_decay():
+    result = run_multilevel_monte_carlo_benchmark(
+        jr.key(8),
+        target_rmse=0.08,
+        initial_samples=32,
+    )
+
+    assert result.passed
+    assert result.estimate.diagnostics.sample_counts[0] > 32
+    assert (
+        result.estimate.diagnostics.correction_variance_norms[-1]
+        < result.estimate.diagnostics.correction_variance_norms[0]
+    )
