@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any
+from typing import Any, Literal
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -103,6 +103,18 @@ class Uniform(AbstractDistribution):
         value_array = jnp.asarray(value)
         return (value_array >= self.low) & (value_array <= self.high)
 
+    @property
+    def reference_measure(self) -> Literal["uniform"]:
+        return "uniform"
+
+    def to_reference(self, value: ArrayLike, /) -> Array:
+        value_array = jnp.asarray(value, dtype=float)
+        return 2.0 * (value_array - self.low) / (self.high - self.low) - 1.0
+
+    def from_reference(self, value: ArrayLike, /) -> Array:
+        reference = jnp.asarray(value, dtype=float)
+        return self.low + 0.5 * (reference + 1.0) * (self.high - self.low)
+
 
 class Normal(AbstractDistribution):
     location: Array
@@ -147,6 +159,16 @@ class Normal(AbstractDistribution):
 
     def contains(self, value: ArrayLike, /) -> Array:
         return jnp.isfinite(jnp.asarray(value))
+
+    @property
+    def reference_measure(self) -> Literal["standard-normal"]:
+        return "standard-normal"
+
+    def to_reference(self, value: ArrayLike, /) -> Array:
+        return (jnp.asarray(value, dtype=float) - self.location) / self.scale
+
+    def from_reference(self, value: ArrayLike, /) -> Array:
+        return self.location + self.scale * jnp.asarray(value, dtype=float)
 
 
 class LogNormal(AbstractDistribution):
@@ -207,6 +229,18 @@ class LogNormal(AbstractDistribution):
     def contains(self, value: ArrayLike, /) -> Array:
         value_array = jnp.asarray(value)
         return jnp.isfinite(value_array) & (value_array > 0.0)
+
+    @property
+    def reference_measure(self) -> Literal["standard-normal"]:
+        return "standard-normal"
+
+    def to_reference(self, value: ArrayLike, /) -> Array:
+        value_array = jnp.asarray(value, dtype=float)
+        return (jnp.log(value_array) - self.location) / self.scale
+
+    def from_reference(self, value: ArrayLike, /) -> Array:
+        reference = jnp.asarray(value, dtype=float)
+        return jnp.exp(self.location + self.scale * reference)
 
 
 class EmpiricalDistribution(AbstractDistribution):

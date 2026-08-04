@@ -395,21 +395,66 @@ mask and status.
 
 ## Sparse grids and product plans
 
-A Smolyak sparse grid integrates several coupled scalar axes with nested
-Clenshaw--Curtis rules:
+A `SparseGridPlan` couples scalar axes through a weighted total-degree Smolyak
+index set. For dimension `d`, level `L`, and positive anisotropy `a`, Phydrax uses
+
+`{alpha in N_0^d : sum(a[j] * alpha[j]) <= L - 1}`.
+
+The bounded default is a nested Clenshaw--Curtis sequence with one midpoint at
+axis level zero and `2**level + 1` nodes afterward:
 
 ```python
-plan = phx.integration.SparseGridPlan(3, 5)
+plan = phx.integration.SparseGridPlan(
+    3,
+    5,
+    anisotropy=(1.0, 1.5, 3.0),
+)
 ```
 
-Its deterministic error indicator is the difference from the previous nested level.
-This is reported as `error_kind="sparse-grid-level-difference"`; it is not a
-statistical standard error.
+Anisotropy accepts finite positive real values. Smaller values refine an axis
+more aggressively. Node identity is structural, so reuse between nested levels
+does not depend on rounded floating-point coordinates.
 
-Anisotropic plans use a downward-closed hierarchical-difference index set, so they
-preserve constants under the same measure semantics as isotropic plans. Sparse grids
-support interior scalar/probability factors and fixed slices; boundary selectors
-require a boundary-capable fixed plan.
+Standard-normal reference measures use normalized Gauss--Hermite rules:
+
+```python
+normal = phx.domain.ProbabilityDomain(
+    phx.uq.Normal(2.0, 0.5),
+    label="z",
+)
+plan = phx.integration.SparseGridPlan(
+    1,
+    5,
+    axis_rules="gauss-hermite",
+)
+mean_square = phx.integration.integrate(
+    normal.Function("z")(lambda z: z**2),
+    phx.integration.over(normal.component()),
+    plan,
+)
+```
+
+For mixed products, pass one rule per coupled axis. `"clenshaw-curtis"` supports
+bounded scalar factors and bounded uniform-reference probability factors.
+`"gauss-hermite"` requires a `ProbabilityDomain` whose distribution declares a
+standard-normal reference transform. Built-in `Normal` and `LogNormal`
+distributions provide that transform.
+
+The deterministic error indicator is the difference from the immediately
+coarser level. It is reported as
+`error_kind="sparse-grid-level-difference"` and is not a statistical standard
+error. Diagnostics separately report current and previous node counts, the
+number of nonzero tensor terms, and the resolved axis rules.
+
+Sparse grids support interior scalar/probability factors and fixed slices;
+boundary selectors require a boundary-capable fixed plan.
+
+!!! warning "Node-count migration"
+    Multivariate sparse grids now use the conventional one-point
+    Clenshaw--Curtis base rule. Existing constructors remain valid, but node
+    locations, evaluation counts, and output ordering differ from releases that
+    started every axis with both endpoints. Output ordering was never a public
+    contract.
 
 Use `ProductIntegrationPlan` when factor groups need different methods:
 

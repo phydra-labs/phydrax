@@ -117,6 +117,9 @@ class SparseGridDiagnostics(StrictModule):
     level_difference: Array | None
     level: int = eqx.field(static=True)
     num_unique_nodes: int = eqx.field(static=True)
+    previous_num_unique_nodes: int = eqx.field(static=True)
+    num_terms: int = eqx.field(static=True)
+    axis_rules: tuple[str, ...] = eqx.field(static=True)
 
 
 class MappedIntegrationDiagnostics(StrictModule):

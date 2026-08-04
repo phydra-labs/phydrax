@@ -73,7 +73,7 @@ from ._hyperrectangle import HyperRectangle
 from ._irregular_trajectory_dataset import IrregularTrajectoryDatasetDomain
 from ._measure_partition import GeometryMeasurePartition
 from ._model_function import structured
-from ._probability import ProbabilityDomain
+from ._probability import ProbabilityDomain, ReferenceDistribution
 from ._product_domain import ProductDomain
 from ._ragged_series_dataset import (
     RAGGED_SERIES_INDEX_KEY,
@@ -156,6 +156,7 @@ __all__ = [
     "TimeInterval",
     # product domains / structure
     "ProbabilityDomain",
+    "ReferenceDistribution",
     "ProductDomain",
     "as_cochain_field",
     "cochain_field_spec",

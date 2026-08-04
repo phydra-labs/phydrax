@@ -11,6 +11,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 
 from .._frozendict import frozendict
+from .._numerics import normalize_anisotropy, normalize_axis_rules, SmolyakAxisRule
 from .._strict import StrictModule
 from ._rules import (
     GaussKronrodRule,
@@ -357,11 +358,12 @@ class ImportanceSamplingPlan(StrictModule):
 
 
 class SparseGridPlan(StrictModule):
-    """Smolyak sparse-grid integration with nested Clenshaw--Curtis rules."""
+    """Smolyak sparse-grid integration with explicit per-axis rule families."""
 
     dimension: int = eqx.field(static=True)
     level: int = eqx.field(static=True)
-    anisotropy: tuple[int, ...] | None = eqx.field(static=True)
+    anisotropy: tuple[float, ...] = eqx.field(static=True)
+    axis_rules: tuple[SmolyakAxisRule, ...] = eqx.field(static=True)
 
     def __init__(
         self,
@@ -369,21 +371,24 @@ class SparseGridPlan(StrictModule):
         level: int,
         /,
         *,
-        anisotropy: Sequence[int] | None = None,
+        anisotropy: Sequence[float] | None = None,
+        axis_rules: (
+            SmolyakAxisRule | Sequence[SmolyakAxisRule] | None
+        ) = "clenshaw-curtis",
     ):
         dimension_ = int(dimension)
         level_ = int(level)
         if dimension_ < 1 or level_ < 1:
             raise ValueError("Sparse-grid dimension and level must be positive.")
-        anisotropy_ = None if anisotropy is None else tuple(int(x) for x in anisotropy)
-        if anisotropy_ is not None:
-            if len(anisotropy_) != dimension_ or any(x < 1 for x in anisotropy_):
-                raise ValueError(
-                    "anisotropy must contain one positive integer per dimension."
-                )
         self.dimension = dimension_
         self.level = level_
-        self.anisotropy = anisotropy_
+        self.anisotropy = normalize_anisotropy(dimension_, anisotropy)
+        self.axis_rules = normalize_axis_rules(
+            dimension_,
+            axis_rules,
+            default="clenshaw-curtis",
+            allowed=("clenshaw-curtis", "gauss-hermite"),
+        )
 
 
 class CellQuadraturePlan(StrictModule):
