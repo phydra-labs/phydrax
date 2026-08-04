@@ -14,6 +14,7 @@ from ..domain._components import DomainComponentUnion, Fixed, FixedEnd, FixedSta
 from ..domain._function import DomainFunction
 from ..domain._structure import CoordSeparableBatch, PointsBatch, ProductStructure
 from ..operators.differential._domain_ops import dt_n
+from ..stochastic import SPDESolutionSpec, validate_spde_formulation
 from ._adaptive import AbstractCollocationPolicy
 from ._functional import FunctionalConstraint
 from ._sampling_spec import SamplingNumPoints
@@ -40,6 +41,7 @@ def ContinuousPointwiseInteriorConstraint(
     where: Mapping[str, Any] | None = None,
     where_all: DomainFunction | None = None,
     collocation_policy: AbstractCollocationPolicy | None = None,
+    solution_spec: SPDESolutionSpec | None = None,
 ) -> FunctionalConstraint:
     r"""Pointwise residual constraint over an interior domain component.
 
@@ -86,7 +88,11 @@ def ContinuousPointwiseInteriorConstraint(
       and `fixed_batch` is not provided.
     - `where`: Optional per-label filters, treated as indicator functions.
     - `where_all`: Optional global filter, evaluated on the full point tuple.
+    - `solution_spec`: Optional declared SPDE solution concept. Pointwise residuals
+      reject unregularized rough forcing or non-strong concepts.
     """
+    if solution_spec is not None:
+        validate_spde_formulation(solution_spec, "pointwise_strong")
     component = domain.component(where=where, where_all=where_all)
     if isinstance(component, DomainComponentUnion):
         raise TypeError(

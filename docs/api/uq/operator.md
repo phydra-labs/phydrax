@@ -138,13 +138,106 @@ Jacobians must be part of a physical-space density explicitly.
 
 ::: phydrax.nn.operator_distribution_nll
 
-## Distributional transition consistency
+## Process-consistent operator transitions
 
-`DistributionalSemigroupObjective` draws independent direct and composed process
-transitions and compares their complete-field laws with energy distance. It requires
-`uncertainty_source="process"` and stable split/folded key sites. This is a
-Chapman--Kolmogorov consistency objective; it neither couples paths by common random
-numbers nor identifies a drift/diffusion model.
+`OperatorTransitionSpec` identifies state, duration, optional source-time,
+typed driver fields, and the output query on a canonical `OperatorBatch`;
+unassigned inputs remain fixed forcing or parameter conditioning.
+`OperatorDriverBinding` names each model input, realization component, driver
+kind, and quantity. Wiener bindings expose increments. Jump bindings expose
+event times, offsets, channels, marks, masks, or per-channel counts.
+
+`OperatorMarginalTransition` adapts an
+`AbstractProbabilisticOperatorModel` into an
+`AbstractMarginalTransitionLaw`. Its complete-field distribution must declare
+`uncertainty_source="process"`. `marginal_operator_rollout` generates a
+replayable Markov chain but does not claim that independently sampled steps
+share one driving path.
+
+`OperatorPathwiseTransition` instead conditions an operator on one explicit
+additive Wiener segment. `pathwise_operator_rollout` evaluates every segment
+from one global `WienerRealization`. `OperatorJumpTransition` conditions on a
+canonical `JumpEventBatch`. `OperatorProcessTransition` accepts multiple typed
+Wiener and jump fields at once; `process_operator_rollout` derives all segments
+from one `CompositeStochasticRealization` and explicit named event batches.
+The resulting `StochasticOperatorRollout` wraps a provenance-preserving
+`StochasticTrajectory`; `to_predictive()` retains process samples separately
+from physical cases and every other uncertainty source.
+
+Use `operator_markov_chain_nll` for adjacent teacher-forced likelihoods,
+`direct_operator_horizon_nll` for direct initial-to-horizon likelihoods,
+`semigroup_objective` for marginal Chapman--Kolmogorov consistency, and
+`cocycle_objective` for pathwise composition.
+`operator_weak_generator_objective` matches a general observable generator.
+`jump_generator_observable` evaluates the nonlocal generator declared by a
+jump process, and `operator_jump_generator_objective` compares it with a
+learned marginal transition. `DistributionalSemigroupObjective` remains the
+callback-based batch-training form of a complete-field energy-distance
+semigroup loss.
+
+::: phydrax.nn.OperatorTransitionSpec
+
+---
+
+::: phydrax.nn.OperatorDriverBinding
+
+---
+
+::: phydrax.nn.OperatorProcessDistribution
+
+---
+
+::: phydrax.nn.OperatorMarginalTransition
+
+---
+
+::: phydrax.nn.OperatorPathwiseTransition
+
+---
+
+::: phydrax.nn.OperatorProcessTransition
+
+---
+
+::: phydrax.nn.OperatorJumpTransition
+
+---
+
+::: phydrax.nn.StochasticOperatorRollout
+
+---
+
+::: phydrax.nn.marginal_operator_rollout
+
+---
+
+::: phydrax.nn.pathwise_operator_rollout
+
+---
+
+::: phydrax.nn.process_operator_rollout
+
+---
+
+::: phydrax.nn.operator_markov_chain_nll
+
+---
+
+::: phydrax.nn.direct_operator_horizon_nll
+
+---
+
+::: phydrax.stochastic.jump_generator_observable
+
+---
+
+::: phydrax.nn.operator_jump_generator_objective
+
+---
+
+::: phydrax.nn.operator_weak_generator_objective
+
+---
 
 ::: phydrax.nn.DistributionalSemigroupObjective
 

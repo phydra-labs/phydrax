@@ -5,6 +5,7 @@ from tools.operator_benchmarks import (
     allen_cahn_transition_data,
     run_allen_cahn_flow_benchmark,
     run_stochastic_heat_gaussian_benchmark,
+    run_stochastic_heat_process_benchmark,
     stochastic_heat_transition_data,
 )
 
@@ -28,21 +29,24 @@ def test_stochastic_heat_transition_generator_replays_and_matches_linear_moments
         dt0=0.004,
         noise_rank=2,
     )
-    dataset = first.operator_dataset()
-    empirical_mean = jnp.mean(first.final_states, axis=1)
+    axis = first.metadata["operator_axis"]
+    analytic_mean = first.metadata["analytic_mean"]
+    analytic_covariance = first.metadata["analytic_covariance"]
+    dataset = first.operator_dataset(source_axes=(axis,))
+    empirical_mean = jnp.mean(first.target_states[:, :, 0, :], axis=1)
 
-    assert first.initial_states.shape == (3, 6)
-    assert first.final_states.shape == (3, 64, 6)
-    assert first.analytic_mean.shape == (3, 6)
-    assert first.analytic_covariance.shape == (6, 6)
-    assert jnp.array_equal(first.final_states, replay.final_states)
+    assert first.source_states.shape == (3, 64, 1, 6)
+    assert first.target_states.shape == (3, 64, 1, 6)
+    assert analytic_mean.shape == (3, 6)
+    assert analytic_covariance.shape == (6, 6)
+    assert jnp.array_equal(first.target_states, replay.target_states)
     assert dataset.size == 3 * 64
     assert dataset.batch.case_shape == (3 * 64,)
     assert all(
-        record.identities["initial_state"] == f"state:{index // 64}"
+        record.identities["physical_case"] == f"heat-case:{index // 64}"
         for index, record in enumerate(dataset.provenance)
     )
-    assert jnp.sqrt(jnp.mean((empirical_mean - first.analytic_mean) ** 2)) < 0.03
+    assert jnp.sqrt(jnp.mean((empirical_mean - analytic_mean) ** 2)) < 0.03
 
 
 def test_stochastic_heat_low_rank_gaussian_retention_gate():
@@ -66,6 +70,32 @@ def test_stochastic_heat_low_rank_gaussian_retention_gate():
     assert result.low_rank_covariance_error < 1e-8
     assert result.location_rmse < 0.04
     assert result.fine_grid_finite
+
+
+def test_stochastic_heat_reference_transition_is_one_coherent_process():
+    data = stochastic_heat_transition_data(
+        jr.key(10),
+        grid_size=6,
+        num_cases=2,
+        num_realizations=8,
+        duration=0.04,
+        dt0=0.004,
+        noise_rank=2,
+    )
+    result = run_stochastic_heat_process_benchmark(
+        jr.key(11),
+        data=data,
+        num_realizations=1024,
+    )
+
+    assert result.passed
+    assert result.direct_mean_relative_error < 1e-10
+    assert result.direct_covariance_relative_error < 1e-8
+    assert result.rollout_mean_relative_error < 0.05
+    assert result.rollout_covariance_relative_error < 0.2
+    assert result.semigroup_error < 0.01
+    assert result.replay_exact
+    assert result.predictive_process_axis
 
 
 def test_allen_cahn_flowjax_benchmark_retains_distributional_gain_in_two_of_three_seeds():

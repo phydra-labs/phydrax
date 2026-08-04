@@ -4,16 +4,17 @@
 
 from __future__ import annotations
 
+from math import prod
 from typing import Any
 
 import diffrax as dfx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.random as jr
 from jaxtyping import Array, ArrayLike
 
-from ._differential import DifferentialProblem, DifferentialSolution, WienerDriver
+from ..stochastic import WienerRealization
+from ._differential import DifferentialProblem, DifferentialSolution
 
 
 class _VectorizedDenseInterpolation(eqx.Module):
@@ -123,6 +124,83 @@ def _vector_field(function):
     return evaluate
 
 
+def _combined_diffusion(problem: DifferentialProblem, path_sign: Array, /):
+    def evaluate(time, state, args):
+        state_shape = tuple(jnp.shape(state))
+        columns = []
+        for term in problem.wiener_terms:
+            value = jnp.asarray(term.coefficient(time, state, args))
+            expected_shape = state_shape + term.noise_shape
+            if tuple(value.shape) != expected_shape:
+                raise ValueError(
+                    f"WienerTerm {term.name!r} coefficient must return shape "
+                    f"{expected_shape}; got {value.shape}."
+                )
+            columns.append(value.reshape(state_shape + (term.noise_size,)))
+        return path_sign * jnp.concatenate(columns, axis=-1)
+
+    return evaluate
+
+
+def _validated_stochastic_solver(
+    problem: DifferentialProblem,
+    solver: Any,
+    realization: WienerRealization,
+    /,
+) -> None:
+    is_ito = isinstance(solver, dfx.AbstractItoSolver)
+    is_stratonovich = isinstance(solver, dfx.AbstractStratonovichSolver)
+    if not is_ito and not is_stratonovich:
+        raise ValueError(
+            "A stochastic problem requires a Diffrax solver explicitly marked as "
+            "Itô or Stratonovich."
+        )
+    if not problem.additive_noise:
+        if problem.interpretation == "ito" and not is_ito:
+            raise ValueError("An Itô problem requires an Itô-compatible solver.")
+        if problem.interpretation == "stratonovich" and not is_stratonovich:
+            raise ValueError(
+                "A Stratonovich problem requires a Stratonovich-compatible solver."
+            )
+
+    if isinstance(solver, dfx.AbstractSRK):
+        provided = _levy_area(realization.levy_area)
+        required = solver.minimal_levy_area
+        if not issubclass(provided, required):
+            raise ValueError(
+                f"{type(solver).__name__} requires {required.__name__}, but the "
+                f"Wiener realization provides {provided.__name__}."
+            )
+
+
+def _validated_realization_interval(
+    problem: DifferentialProblem,
+    realization: WienerRealization,
+    /,
+) -> tuple[Array, Array]:
+    if problem.noise_shape != realization.noise_shape:
+        raise ValueError(
+            "Wiener realization noise_shape must match the problem's combined "
+            f"noise shape; got {realization.noise_shape} and {problem.noise_shape}."
+        )
+    if problem.noise_id is not None and realization.noise_id != problem.noise_id:
+        raise ValueError(
+            "Wiener realization noise_id must match the problem's stochastic basis."
+        )
+    support_start, support_end = realization.support
+    start = eqx.error_if(
+        problem.t0,
+        problem.t0 < support_start,
+        "DifferentialProblem t0 lies before the Wiener realization support.",
+    )
+    end = eqx.error_if(
+        problem.t1,
+        problem.t1 > support_end,
+        "DifferentialProblem t1 lies after the Wiener realization support.",
+    )
+    return start, end
+
+
 def _resolved_solver(problem: DifferentialProblem, solver: Any | None, /) -> Any:
     if solver is not None:
         return solver
@@ -152,8 +230,9 @@ def _native_solution(
     problem: DifferentialProblem,
     save_times: Array,
     *,
-    driver: WienerDriver | None,
-    driver_key: Array | None,
+    realization: WienerRealization | None,
+    path_key: Array | None,
+    path_sign: Array | None,
     solver: Any,
     stepsize_controller: Any,
     adjoint: Any,
@@ -165,34 +244,51 @@ def _native_solution(
 ):
     drift_term = dfx.ODETerm(_vector_field(problem.drift))
     if problem.stochastic:
-        if driver is None or driver_key is None:
-            raise ValueError("Stochastic problems require a WienerDriver.")
+        if realization is None or path_key is None or path_sign is None:
+            raise ValueError("Stochastic problems require a WienerRealization.")
         if dt0 is None:
             raise ValueError("Stochastic Diffrax solves require an explicit dt0.")
-        assert problem.diffusion is not None
+        start, end = _validated_realization_interval(problem, realization)
+        resolved_dt0 = jnp.asarray(dt0)
+        if isinstance(stepsize_controller, dfx.ConstantStepSize):
+            resolved_dt0 = eqx.error_if(
+                resolved_dt0,
+                jnp.abs(resolved_dt0) <= realization.tolerance,
+                "WienerRealization tolerance must be strictly smaller than the "
+                "fixed integration step.",
+            )
         real_dtype = jnp.asarray(problem.initial_state).real.dtype
         brownian = dfx.VirtualBrownianTree(
-            t0=problem.t0,
-            t1=problem.t1,
-            tol=driver.tolerance,
-            shape=jax.ShapeDtypeStruct(driver.noise_shape, real_dtype),
-            key=driver_key,
-            levy_area=_levy_area(driver.levy_area),
+            t0=realization.support[0],
+            t1=realization.support[1],
+            tol=realization.tolerance,
+            shape=jax.ShapeDtypeStruct(realization.noise_shape, real_dtype),
+            key=path_key,
+            levy_area=_levy_area(realization.levy_area),
         )
         terms = dfx.MultiTerm(
             drift_term,
-            dfx.ControlTerm(_vector_field(problem.diffusion), brownian),
+            dfx.ControlTerm(
+                _combined_diffusion(
+                    problem,
+                    jnp.asarray(path_sign, dtype=real_dtype),
+                ),
+                brownian,
+            ),
         )
     else:
-        if driver is not None or driver_key is not None:
-            raise ValueError("Deterministic problems do not accept a WienerDriver.")
+        if realization is not None or path_key is not None or path_sign is not None:
+            raise ValueError("Deterministic problems do not accept a WienerRealization.")
+        start = problem.t0
+        end = problem.t1
+        resolved_dt0 = dt0
         terms = drift_term
     return dfx.diffeqsolve(
         terms,
         solver,
-        t0=problem.t0,
-        t1=problem.t1,
-        dt0=dt0,
+        t0=start,
+        t1=end,
+        dt0=resolved_dt0,
         y0=problem.initial_state,
         args=problem.args,
         saveat=dfx.SaveAt(ts=save_times, dense=dense),
@@ -219,12 +315,28 @@ def _dense_interpolation(native: Any, sample_shape: tuple[int, ...], /) -> Any:
     return _VectorizedDenseInterpolation(interpolation, sample_shape)
 
 
+def _reshape_native_sample_shape(native: Any, sample_shape: tuple[int, ...], /) -> Any:
+    count = prod(sample_shape)
+
+    def reshape(value):
+        if eqx.is_array(value):
+            if value.ndim == 0 or int(value.shape[0]) != count:
+                raise ValueError(
+                    "Vectorized Diffrax output does not align with the realization "
+                    f"sample shape {sample_shape}."
+                )
+            return value.reshape(sample_shape + value.shape[1:])
+        return value
+
+    return jax.tree.map(reshape, native, is_leaf=eqx.is_array)
+
+
 def solve_diffrax(
     problem: DifferentialProblem,
     /,
     *,
     save_times: ArrayLike,
-    driver: WienerDriver | None = None,
+    realization: WienerRealization | None = None,
     solver: Any | None = None,
     stepsize_controller: Any | None = None,
     adjoint: Any | None = None,
@@ -236,15 +348,28 @@ def solve_diffrax(
     max_steps: int | None = 4096,
     throw: bool = False,
 ) -> DifferentialSolution:
-    """Solve one finite-dimensional ODE or SDE through Diffrax."""
+    """Solve one finite-dimensional ODE or globally defined SDE realization."""
     if not isinstance(problem, DifferentialProblem):
         raise TypeError("solve_diffrax requires a DifferentialProblem.")
-    if driver is not None and not isinstance(driver, WienerDriver):
-        raise TypeError("driver must be a WienerDriver or None.")
+    if realization is not None and not isinstance(realization, WienerRealization):
+        raise TypeError("realization must be a WienerRealization or None.")
     if not isinstance(dense, bool):
         raise TypeError("dense must be a bool.")
+    if problem.stochastic:
+        if realization is None:
+            raise ValueError("Stochastic problems require a WienerRealization.")
+        if realization.sample_shape:
+            raise ValueError(
+                "solve_diffrax requires a scalar realization; use "
+                "solve_diffrax_ensemble for a realization batch."
+            )
+    elif realization is not None:
+        raise ValueError("Deterministic problems do not accept a WienerRealization.")
+
     times = _save_times(problem, save_times)
     selected_solver = _resolved_solver(problem, solver)
+    if realization is not None:
+        _validated_stochastic_solver(problem, selected_solver, realization)
     controller = _resolved_controller(
         problem,
         stepsize_controller,
@@ -255,8 +380,9 @@ def solve_diffrax(
     native = _native_solution(
         problem,
         times,
-        driver=driver,
-        driver_key=None if driver is None else driver.key,
+        realization=realization,
+        path_key=None if realization is None else realization.path_keys,
+        path_sign=None if realization is None else realization.path_signs,
         solver=selected_solver,
         stepsize_controller=controller,
         adjoint=selected_adjoint,
@@ -276,8 +402,8 @@ def solve_diffrax(
         backend_result=native.result,
         stats=native.stats,
         event_mask=native.event_mask,
-        driver=driver,
-        realization_keys=None if driver is None else driver.key,
+        realization=realization,
+        wiener_term_slices=problem.wiener_term_slices,
         solver_name=type(selected_solver).__name__,
         interpretation=problem.interpretation,
     )
@@ -288,8 +414,7 @@ def solve_diffrax_ensemble(
     /,
     *,
     save_times: ArrayLike,
-    driver: WienerDriver,
-    num_paths: int,
+    realization: WienerRealization,
     solver: Any | None = None,
     stepsize_controller: Any | None = None,
     adjoint: Any | None = None,
@@ -301,20 +426,22 @@ def solve_diffrax_ensemble(
     dense: bool = False,
     throw: bool = False,
 ) -> DifferentialSolution:
-    """Solve independent SDE realizations with one leading process-sample axis."""
+    """Solve the coupled SDE batch encoded by one Wiener realization."""
     if not isinstance(problem, DifferentialProblem):
         raise TypeError("solve_diffrax_ensemble requires a DifferentialProblem.")
     if not problem.stochastic:
         raise ValueError("solve_diffrax_ensemble requires a stochastic problem.")
-    if not isinstance(driver, WienerDriver):
-        raise TypeError("driver must be a WienerDriver.")
+    if not isinstance(realization, WienerRealization):
+        raise TypeError("realization must be a WienerRealization.")
+    if not realization.sample_shape:
+        raise ValueError(
+            "solve_diffrax_ensemble requires a realization with non-empty sample_shape."
+        )
     if not isinstance(dense, bool):
         raise TypeError("dense must be a bool.")
-    count = int(num_paths)
-    if count <= 0:
-        raise ValueError("num_paths must be positive.")
     times = _save_times(problem, save_times)
     selected_solver = _resolved_solver(problem, solver)
+    _validated_stochastic_solver(problem, selected_solver, realization)
     controller = _resolved_controller(
         problem,
         stepsize_controller,
@@ -322,14 +449,18 @@ def solve_diffrax_ensemble(
         atol=atol,
     )
     selected_adjoint = dfx.RecursiveCheckpointAdjoint() if adjoint is None else adjoint
-    keys = jr.split(driver.key, count)
+    count = realization.num_paths
+    key_shape = tuple(realization.root_key.shape)
+    keys = realization.path_keys.reshape((count,) + key_shape)
+    signs = realization.path_signs.reshape((count,))
 
-    def one(key):
+    def one(key, sign):
         return _native_solution(
             problem,
             times,
-            driver=driver,
-            driver_key=key,
+            realization=realization,
+            path_key=key,
+            path_sign=sign,
             solver=selected_solver,
             stepsize_controller=controller,
             adjoint=selected_adjoint,
@@ -340,20 +471,29 @@ def solve_diffrax_ensemble(
             throw=throw,
         )
 
-    native = jax.vmap(one)(keys)
+    native = _reshape_native_sample_shape(
+        jax.vmap(one)(keys, signs),
+        realization.sample_shape,
+    )
     native_times = jnp.asarray(native.ts)
     native_states = jnp.asarray(native.ys)
     return DifferentialSolution(
         times=native_times,
         states=native_states,
-        valid=_valid_values(native_times, native_states, sample_ndim=1),
-        sample_shape=(count,),
-        interpolation=_dense_interpolation(native, (count,)) if dense else None,
+        valid=_valid_values(
+            native_times,
+            native_states,
+            sample_ndim=len(realization.sample_shape),
+        ),
+        sample_shape=realization.sample_shape,
+        interpolation=(
+            _dense_interpolation(native, realization.sample_shape) if dense else None
+        ),
         backend_result=native.result,
         stats=native.stats,
         event_mask=native.event_mask,
-        driver=driver,
-        realization_keys=keys,
+        realization=realization,
+        wiener_term_slices=problem.wiener_term_slices,
         solver_name=type(selected_solver).__name__,
         interpretation=problem.interpretation,
     )

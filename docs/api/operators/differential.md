@@ -145,6 +145,13 @@ then evaluates the Itô generator or adjoint. A covariance matrix alone is
 insufficient because it does not identify the diffusion-vector fields and their
 drift correction.
 
+For Euclidean diffusion factors,
+`kolmogorov_generator(..., contraction="auto")` contracts each diffusion column
+with a Hessian-vector product and avoids both dense Hessian and covariance
+materialization. Select `contraction="dense"` only when a dense covariance is
+intentional. `StochasticTracePolicy` provides a separate randomized,
+matrix-free trace estimator with visible probe uncertainty.
+
 When `metric=` is supplied, the stochastic operators use the corresponding
 Riemannian chart. The supplied Itô drift remains a **coordinate** drift and is
 converted to the vector drift
@@ -174,6 +181,30 @@ coordinate/covariant distinction and array-callable kernels.
 ---
 
 ::: phydrax.operators.fokker_planck_operator
+
+---
+
+::: phydrax.operators.probability_current
+
+---
+
+::: phydrax.operators.directional_stratonovich_correction
+
+---
+
+::: phydrax.operators.StochasticTracePolicy
+
+---
+
+::: phydrax.operators.StochasticOperatorEstimate
+
+---
+
+::: phydrax.operators.estimate_stochastic_trace
+
+---
+
+::: phydrax.operators.estimate_kolmogorov_generator
 
 ## Riemannian differential operators
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import abc
 import hashlib
+import heapq
 from collections.abc import Sequence
 from math import prod
 from typing import Any, Literal
@@ -48,6 +49,126 @@ def _canonicalize_mode_signs(modes: np.ndarray, /) -> np.ndarray:
     return out
 
 
+def _axis_data(
+    axis: AxisDiscretization,
+    basis: _TensorBasis,
+    /,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    nodes = np.asarray(axis.nodes, dtype=float)
+    weights = np.asarray(axis.quad_weights, dtype=float)
+    spacing = np.diff(nodes)
+    if not np.allclose(spacing, spacing[0], rtol=1e-10, atol=1e-12):
+        raise ValueError("Exact tensor eigensystems require uniformly spaced axes.")
+
+    if basis in ("uniform", "fourier", "sine"):
+        expected = np.full_like(weights, weights[0])
+    else:
+        pattern = np.ones_like(weights)
+        pattern[[0, -1]] = 0.5
+        expected = pattern * (np.sum(weights) / np.sum(pattern))
+    if not np.allclose(weights, expected, rtol=1e-9, atol=1e-12):
+        raise ValueError(
+            f"{basis} axis quadrature weights are incompatible with its exact "
+            "weighted eigensystem."
+        )
+    return nodes, weights, float(spacing[0])
+
+
+def _axis_eigenvalues(
+    axis: AxisDiscretization,
+    basis: _TensorBasis,
+    /,
+) -> np.ndarray:
+    """Return one exact axis spectrum in deterministic real-mode order."""
+    nodes, _, spacing = _axis_data(axis, basis)
+    count = int(nodes.size)
+    if basis in ("uniform", "fourier"):
+        mode_indices = np.arange(count, dtype=int)
+        frequencies = ((mode_indices + 1) // 2).astype(float)
+        frequencies[0] = 0.0
+        if basis == "uniform":
+            return 4.0 * np.sin(np.pi * frequencies / float(count)) ** 2 / spacing**2
+        return (2.0 * np.pi * frequencies / (float(count) * spacing)) ** 2
+    if basis == "sine":
+        frequencies = np.arange(1, count + 1, dtype=float)
+        return (np.pi * frequencies / (float(count) * spacing)) ** 2
+    frequencies = np.arange(count, dtype=float)
+    return (np.pi * frequencies / (float(count - 1) * spacing)) ** 2
+
+
+def _axis_modes(
+    axis: AxisDiscretization,
+    basis: _TensorBasis,
+    mode_indices: np.ndarray,
+    /,
+) -> np.ndarray:
+    """Evaluate only selected real axis modes, using O(axis_size * rank) memory."""
+    nodes, weights, _ = _axis_data(axis, basis)
+    count = int(nodes.size)
+    requested = np.asarray(mode_indices, dtype=int).reshape((-1,))
+    if np.any(requested < 0) or np.any(requested >= count):
+        raise ValueError("Axis mode index lies outside the eigensystem.")
+    unique, inverse = np.unique(requested, return_inverse=True)
+    node_indices = np.arange(count, dtype=float)
+    modes = np.empty((count, unique.size), dtype=float)
+    for column, mode_index in enumerate(unique):
+        if basis in ("uniform", "fourier"):
+            if mode_index == 0:
+                modes[:, column] = 1.0
+                continue
+            frequency = (int(mode_index) + 1) // 2
+            angle = 2.0 * np.pi * float(frequency) * node_indices / float(count)
+            modes[:, column] = np.cos(angle) if mode_index % 2 == 1 else np.sin(angle)
+        elif basis == "sine":
+            frequency = int(mode_index) + 1
+            modes[:, column] = np.sin(
+                np.pi * (node_indices + 0.5) * float(frequency) / float(count)
+            )
+        else:
+            modes[:, column] = np.cos(
+                np.pi * node_indices * float(mode_index) / float(count - 1)
+            )
+
+    norms = np.sqrt(np.sum(weights[:, None] * modes**2, axis=0))
+    modes = _canonicalize_mode_signs(modes / norms[None, :])
+    gram = modes.T @ (weights[:, None] * modes)
+    if not np.allclose(gram, np.eye(unique.size), rtol=1e-9, atol=1e-10):
+        raise ValueError(
+            f"{basis} axis modes failed their weighted orthonormality contract."
+        )
+    return modes[:, inverse]
+
+
+def _smallest_tensor_indices(
+    axis_eigenvalues: tuple[np.ndarray, ...],
+    retained: int,
+    /,
+) -> tuple[tuple[int, ...], ...]:
+    """Select the smallest tensor sums without materializing their full product."""
+    start = (0,) * len(axis_eigenvalues)
+    queue: list[tuple[float, tuple[int, ...]]] = [(0.0, start)]
+    seen = {start}
+    selected: list[tuple[int, ...]] = []
+    while len(selected) < retained:
+        _, indices = heapq.heappop(queue)
+        selected.append(indices)
+        for axis_index, values in enumerate(axis_eigenvalues):
+            if indices[axis_index] + 1 >= values.size:
+                continue
+            neighbor = list(indices)
+            neighbor[axis_index] += 1
+            neighbor_tuple = tuple(neighbor)
+            if neighbor_tuple in seen:
+                continue
+            seen.add(neighbor_tuple)
+            total = sum(
+                float(axis_eigenvalues[index][mode])
+                for index, mode in enumerate(neighbor_tuple)
+            )
+            heapq.heappush(queue, (total, neighbor_tuple))
+    return tuple(selected)
+
+
 class AbstractSpatialDiscretization(StrictModule):
     """Matrix-free spatial state contract for method-of-lines problems.
 
@@ -73,6 +194,12 @@ class AbstractSpatialDiscretization(StrictModule):
     @property
     @abc.abstractmethod
     def discretization_id(self) -> str:
+        raise NotImplementedError
+
+    @property
+    @abc.abstractmethod
+    def points(self) -> Array | None:
+        """Flattened spatial coordinates, when the discretization has them."""
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -108,7 +235,7 @@ class TensorGridDiscretization(AbstractSpatialDiscretization):
     axes: tuple[AxisDiscretization, ...]
     _state_shape: tuple[int, ...] = eqx.field(static=True)
     _quadrature_weights: Array
-    points: Array
+    _points: Array
     basis: tuple[_TensorBasis, ...] = eqx.field(static=True)
     boundary_conditions: tuple[str, ...] = eqx.field(static=True)
     _discretization_id: str = eqx.field(static=True)
@@ -188,7 +315,7 @@ class TensorGridDiscretization(AbstractSpatialDiscretization):
         self.axes = axes_value
         self._state_shape = shape
         self._quadrature_weights = jnp.broadcast_to(tensor_weights, shape)
-        self.points = broadcasted_grid(tuple(axis.nodes for axis in axes_value)).reshape(
+        self._points = broadcasted_grid(tuple(axis.nodes for axis in axes_value)).reshape(
             (-1, len(axes_value))
         )
         self.basis = tuple(basis)
@@ -228,6 +355,10 @@ class TensorGridDiscretization(AbstractSpatialDiscretization):
     @property
     def discretization_id(self) -> str:
         return self._discretization_id
+
+    @property
+    def points(self) -> Array:
+        return self._points
 
     def _validate_state(self, state: ArrayLike, /) -> Array:
         array = jnp.asarray(state)
@@ -286,23 +417,45 @@ class TensorGridDiscretization(AbstractSpatialDiscretization):
         return columns.T
 
     def eigenpairs(self, *, rank: int | None = None) -> tuple[Array, Array]:
+        """Return the smallest separable tensor modes without a dense Laplacian."""
         count = self.num_points
         retained = count if rank is None else int(rank)
         if retained <= 0 or retained > count:
             raise ValueError(f"rank must lie in [1, {count}].")
-        laplacian = np.asarray(self.laplacian_matrix(), dtype=float)
-        weights = np.asarray(self.quadrature_weights, dtype=float).reshape((-1,))
-        root = np.sqrt(weights)
-        transformed = -(root[:, None] * laplacian) / root[None, :]
-        transformed = 0.5 * (transformed + transformed.T)
-        eigenvalues, weighted_modes = np.linalg.eigh(transformed)
-        order = np.argsort(eigenvalues, kind="stable")[:retained]
-        eigenvalues = np.maximum(eigenvalues[order], 0.0)
-        modes = weighted_modes[:, order] / root[:, None]
-        modes = _canonicalize_mode_signs(modes)
-        return jnp.asarray(eigenvalues), jnp.asarray(
-            modes.reshape(self.state_shape + (retained,))
+
+        axis_eigenvalues = tuple(
+            _axis_eigenvalues(axis, basis)
+            for axis, basis in zip(self.axes, self.basis, strict=True)
         )
+        selected = _smallest_tensor_indices(axis_eigenvalues, retained)
+        selected_array = np.asarray(selected, dtype=int)
+        eigenvalues = np.asarray(
+            [
+                sum(
+                    float(axis_eigenvalues[axis_index][mode_index])
+                    for axis_index, mode_index in enumerate(indices)
+                )
+                for indices in selected
+            ],
+            dtype=float,
+        )
+
+        modes = np.ones(self.state_shape + (retained,), dtype=float)
+        for axis_index, (axis, basis) in enumerate(
+            zip(self.axes, self.basis, strict=True)
+        ):
+            selected_modes = _axis_modes(
+                axis,
+                basis,
+                selected_array[:, axis_index],
+            )
+            reshape = [1] * len(self.state_shape) + [retained]
+            reshape[axis_index] = self.state_shape[axis_index]
+            modes *= selected_modes.reshape(tuple(reshape))
+        modes = _canonicalize_mode_signs(modes.reshape((count, retained))).reshape(
+            self.state_shape + (retained,)
+        )
+        return jnp.asarray(eigenvalues), jnp.asarray(modes)
 
 
 class SpectralSpatialDiscretization(AbstractSpatialDiscretization):
@@ -337,6 +490,10 @@ class SpectralSpatialDiscretization(AbstractSpatialDiscretization):
     @property
     def discretization_id(self) -> str:
         return self._discretization_id
+
+    @property
+    def points(self) -> None:
+        return None
 
     def _validate_state(self, state: ArrayLike, /) -> Array:
         array = jnp.asarray(state)

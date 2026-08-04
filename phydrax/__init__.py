@@ -20,6 +20,7 @@ from . import (
     objectives,
     operators,
     solver,
+    stochastic,
     uq,
 )
 
@@ -37,5 +38,6 @@ __all__ = [
     "nn",
     "operators",
     "solver",
+    "stochastic",
     "uq",
 ]

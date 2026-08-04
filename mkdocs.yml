@@ -95,6 +95,8 @@ nav:
         - Poisson (field learning): "cookbook/poisson.md"
         - Heat equation (space–time): "cookbook/heat.md"
         - Stochastic dynamics (PINNs and SPDEs): "cookbook/stochastic_dynamics.md"
+        - Filtering and smoothing: "cookbook/filtering.md"
+        - Backward stochastic equations: "cookbook/bsde.md"
         - Physics-informed graph residuals: "cookbook/graph_physics.md"
         - Inverse + hybrid physics–data: "cookbook/inverse_and_data.md"
         - Operator learning (DatasetDomain): "cookbook/operator_learning.md"
@@ -176,6 +178,11 @@ nav:
             - Wrappers: "api/nn/wrappers.md"
             - Embeddings: "api/nn/embeddings.md"
             - Activations: "api/nn/activations.md"
+        - Stochastic processes:
+            - Overview: "api/stochastic/index.md"
+            - State-space models: "api/stochastic/state_space.md"
+            - Martingales and stopping: "api/stochastic/martingales.md"
+            - Backward stochastic equations: "api/stochastic/bsde.md"
         - Solver:
             - Overview: "api/solver/index.md"
             - Differential equations: "api/solver/differential.md"
@@ -187,6 +194,7 @@ nav:
             - Neural-operator uncertainty: "api/uq/operator.md"
             - Inference and ensembles: "api/uq/inference.md"
             - Likelihoods and calibration: "api/uq/calibration.md"
+            - Filtering and smoothing: "api/uq/filtering.md"
             - Propagation: "api/uq/propagation.md"
             - Global sensitivity: "api/uq/sensitivity.md"
         - Export: "api/export.md"

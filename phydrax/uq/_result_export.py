@@ -17,6 +17,8 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 
+from ..stochastic._bsde import BSDEEvaluation
+from ..stochastic._jump_bsde import JumpBSDEEvaluation
 from ._checkpoint import (
     _json_value,
     _read_array_archive,
@@ -26,10 +28,13 @@ from ._checkpoint import (
 from ._diagnostics import MCMCConvergenceReport
 from ._discrepancy_diagnostics import DiscrepancyIdentifiabilityReport
 from ._eki import EnsembleKalmanResult
+from ._ensemble_filter import EnsembleFilterResult, EnsembleSmootherResult
+from ._kalman import KalmanFilterResult, KalmanSmootherResult
 from ._laplace import LaplaceResult
 from ._laplax_backend import StructuredLaplaceResult
 from ._map import MAPResult
 from ._mcmc import MCMCResult
+from ._particle import ParticleFilterResult
 from ._pathfinder import PathfinderResult
 from ._smc import TemperedSMCResult
 
@@ -215,6 +220,63 @@ def decode_parameter_name(name: str, /) -> str:
 
 
 def _adapt_result(result, arrays, fields, trees):
+    if isinstance(result, KalmanFilterResult):
+        metadata = _put_kalman_filter_result(result, arrays, fields, prefix="")
+        return "kalman_filter", metadata, ()
+
+    if isinstance(result, KalmanSmootherResult):
+        for name, value in (
+            ("means", result.means),
+            ("covariances", result.covariances),
+            ("gains", result.gains),
+            ("valid", result.valid),
+        ):
+            _put_field(fields, arrays, name, value)
+        metadata = _put_kalman_filter_result(
+            result.filter_result, arrays, fields, prefix="filter."
+        )
+        return "kalman_smoother", metadata, ()
+
+    if isinstance(result, ParticleFilterResult):
+        metadata = _put_particle_filter_result(result, arrays, fields, prefix="")
+        return "particle_filter", metadata, ("problem",)
+
+    if isinstance(result, EnsembleFilterResult):
+        metadata = _put_ensemble_filter_result(result, arrays, fields, prefix="")
+        return "ensemble_filter", metadata, ("problem",)
+
+    if isinstance(result, EnsembleSmootherResult):
+        _put_field(fields, arrays, "ensembles", result.ensembles)
+        _put_field(fields, arrays, "valid", result.valid)
+        metadata = _put_ensemble_filter_result(
+            result.filter_result, arrays, fields, prefix="filter."
+        )
+        metadata["pseudoinverse_tolerance"] = result.pseudoinverse_tolerance
+        return "ensemble_smoother", metadata, ("filter_result.problem",)
+
+    if isinstance(result, JumpBSDEEvaluation):
+        metadata = _put_bsde_evaluation(result.base, arrays, fields, prefix="base.")
+        for name, value in (
+            ("jump_sums", result.jump_sums),
+            ("compensator_increments", result.compensator_increments),
+            ("compensated_jump_increments", result.compensated_jump_increments),
+            ("local_residuals", result.local_residuals),
+            ("global_residual", result.global_residual),
+            ("valid_paths", result.valid_paths),
+        ):
+            _put_field(fields, arrays, name, value)
+        for label, value in result.event_counts.items():
+            _put_field(fields, arrays, f"event_counts.{label}", value)
+        for label, value in result.event_status.items():
+            _put_field(fields, arrays, f"event_status.{label}", value)
+        metadata["problem_id"] = result.problem_id
+        metadata["jump_labels"] = list(result.event_counts)
+        return "jump_bsde_evaluation", metadata, ("base.paths.realization",)
+
+    if isinstance(result, BSDEEvaluation):
+        metadata = _put_bsde_evaluation(result, arrays, fields, prefix="")
+        return "bsde_evaluation", metadata, ("paths.realization",)
+
     if isinstance(result, EnsembleKalmanResult):
         for name in (
             "initial_unconstrained_ensemble",
@@ -462,6 +524,197 @@ def _adapt_result(result, arrays, fields, trees):
         "Unsupported UQ result type for export: "
         f"{type(result).__module__}.{type(result).__qualname__}."
     )
+
+
+def _put_kalman_filter_result(result, arrays, fields, *, prefix):
+    for name, value in (
+        ("predicted_means", result.predicted_means),
+        ("predicted_covariances", result.predicted_covariances),
+        ("filtered_means", result.filtered_means),
+        ("filtered_covariances", result.filtered_covariances),
+        ("transition_matrices", result.transition_matrices),
+        ("innovations", result.innovations),
+        ("innovation_covariances", result.innovation_covariances),
+        (
+            "normalized_innovation_squared",
+            result.normalized_innovation_squared,
+        ),
+        ("incremental_log_likelihood", result.incremental_log_likelihood),
+        ("cumulative_log_likelihood", result.cumulative_log_likelihood),
+        ("observed_counts", result.observed_counts),
+        ("step_valid", result.step_valid),
+        ("valid", result.valid),
+        ("status", result.status),
+        ("final_state.mean", result.final_state.mean),
+        ("final_state.covariance", result.final_state.covariance),
+        ("final_state.time", result.final_state.time),
+        ("final_state.log_likelihood", result.final_state.log_likelihood),
+        ("final_state.valid", result.final_state.valid),
+        ("final_state.status", result.final_state.status),
+    ):
+        _put_field(fields, arrays, prefix + name, value)
+    return {
+        "state_shape": list(result.state_shape),
+        "observation_shape": list(result.observation_shape),
+        "case_shape": list(result.case_shape),
+        "case_ids": list(result.case_ids),
+        "model_id": result.model_id,
+        "problem_id": result.problem_id,
+        "sequence_id": result.sequence_id,
+        "covariance_regularization": result.covariance_regularization,
+        "final_step_index": result.final_state.step_index,
+    }
+
+
+def _put_particle_filter_result(result, arrays, fields, *, prefix):
+    for name, value in (
+        ("predicted_particles", result.predicted_particles),
+        ("posterior_log_weights", result.posterior_log_weights),
+        ("particles", result.particles),
+        ("log_weights", result.log_weights),
+        ("ancestor_indices", result.ancestor_indices),
+        ("transition_valid", result.transition_valid),
+        ("effective_sample_sizes", result.effective_sample_sizes),
+        ("resampled", result.resampled),
+        ("incremental_log_likelihood", result.incremental_log_likelihood),
+        ("cumulative_log_likelihood", result.cumulative_log_likelihood),
+        ("step_valid", result.step_valid),
+        ("valid", result.valid),
+        ("status", result.status),
+        ("times", result.times),
+        ("final_state.particles", result.final_state.particles),
+        ("final_state.log_weights", result.final_state.log_weights),
+        ("final_state.time", result.final_state.time),
+        ("final_state.log_likelihood", result.final_state.log_likelihood),
+        ("final_state.valid", result.final_state.valid),
+        ("final_state.status", result.final_state.status),
+        ("final_state.root_key", jr.key_data(result.final_state.root_key)),
+    ):
+        _put_field(fields, arrays, prefix + name, value)
+    return {
+        "state_shape": list(result.state_shape),
+        "observation_shape": list(result.observation_shape),
+        "case_shape": list(result.case_shape),
+        "case_axes": list(result.case_axes),
+        "case_ids": list(result.case_ids),
+        "num_particles": result.num_particles,
+        "model_id": result.model_id,
+        "problem_id": result.problem_id,
+        "sequence_id": result.sequence_id,
+        "resampling_method": result.resampling_method,
+        "resampling_policy": result.resampling_policy,
+        "resampling_threshold": result.resampling_threshold,
+        "final_step_index": result.final_state.step_index,
+    }
+
+
+def _put_ensemble_filter_result(result, arrays, fields, *, prefix):
+    for name, value in (
+        ("forecast_ensembles", result.forecast_ensembles),
+        ("analysis_ensembles", result.analysis_ensembles),
+        ("forecast_observations", result.forecast_observations),
+        ("innovations", result.innovations),
+        (
+            "normalized_innovation_squared",
+            result.normalized_innovation_squared,
+        ),
+        ("incremental_log_likelihood", result.incremental_log_likelihood),
+        ("cumulative_log_likelihood", result.cumulative_log_likelihood),
+        ("observed_counts", result.observed_counts),
+        ("step_valid", result.step_valid),
+        ("valid", result.valid),
+        ("status", result.status),
+        ("times", result.times),
+        ("final_state.ensemble", result.final_state.ensemble),
+        ("final_state.time", result.final_state.time),
+        ("final_state.log_likelihood", result.final_state.log_likelihood),
+        ("final_state.valid", result.final_state.valid),
+        ("final_state.status", result.final_state.status),
+        ("final_state.root_key", jr.key_data(result.final_state.root_key)),
+    ):
+        _put_field(fields, arrays, prefix + name, value)
+    return {
+        "state_shape": list(result.state_shape),
+        "observation_shape": list(result.observation_shape),
+        "case_shape": list(result.case_shape),
+        "case_axes": list(result.case_axes),
+        "case_ids": list(result.case_ids),
+        "ensemble_size": result.ensemble_size,
+        "model_id": result.model_id,
+        "problem_id": result.problem_id,
+        "sequence_id": result.sequence_id,
+        "inflation": result.inflation,
+        "covariance_regularization": result.covariance_regularization,
+        "final_step_index": result.final_state.step_index,
+    }
+
+
+def _put_bsde_evaluation(result, arrays, fields, *, prefix):
+    for name, value in (
+        ("values", result.values),
+        ("controls", result.controls),
+        ("generator_values", result.generator_values),
+        ("terminal_residual", result.terminal_residual),
+        ("local_residuals", result.local_residuals),
+        ("global_residual", result.global_residual),
+        ("martingale_increments", result.martingale_increments),
+        ("valid_paths", result.valid_paths),
+        ("paths.times", result.paths.times),
+        ("paths.states", result.paths.states),
+        ("paths.wiener_increments", result.paths.wiener_increments),
+        ("paths.valid", result.paths.valid),
+    ):
+        _put_field(fields, arrays, prefix + name, value)
+    for label, events in result.paths.jump_events.items():
+        for name, value in (
+            ("times", events.times),
+            ("channels", events.channels),
+            ("marks", events.marks),
+            ("valid", events.valid),
+            ("status", events.status),
+        ):
+            _put_field(
+                fields,
+                arrays,
+                f"{prefix}paths.jump_events.{label}.{name}",
+                value,
+            )
+        if events.pre_states is not None:
+            _put_field(
+                fields,
+                arrays,
+                f"{prefix}paths.jump_events.{label}.pre_states",
+                events.pre_states,
+            )
+            _put_field(
+                fields,
+                arrays,
+                f"{prefix}paths.jump_events.{label}.post_states",
+                events.post_states,
+            )
+    realization = result.paths.realization
+    metadata = {
+        "quadrature": result.quadrature,
+        "control_mode": result.control_mode,
+        "sample_shape": list(result.paths.sample_shape),
+        "state_shape": list(result.paths.state_shape),
+        "noise_shape": list(result.paths.noise_shape),
+        "path_id": result.paths.path_id,
+        "process_id": result.paths.process_id,
+        "jump_labels": list(result.paths.jump_events),
+        "realization_type": None,
+        "realization_id": None,
+        "coupling_id": None,
+    }
+    if realization is not None:
+        metadata.update(
+            {
+                "realization_type": type(realization).__name__,
+                "realization_id": realization.realization_id,
+                "coupling_id": realization.coupling_id,
+            }
+        )
+    return metadata
 
 
 def _put_field(fields, arrays, name, value):

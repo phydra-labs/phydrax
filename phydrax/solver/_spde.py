@@ -12,13 +12,20 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
 from .._strict import StrictModule
+from ..stochastic import (
+    LevyAreaKind,
+    SPDESolutionSpec,
+    WienerRealization,
+)
 from ._differential import (
     DifferentialInterpretation,
     DifferentialProblem,
-    LevyAreaKind,
-    WienerDriver,
+    NoiseStructure,
+    WienerTerm,
 )
+from ._matrix_functions import SpectralMatrixRepresentation
 from ._noise import SpatialNoiseBasis
+from ._semilinear_drift import SemilinearDrift
 from ._spatial import AbstractSpatialDiscretization
 
 
@@ -93,12 +100,63 @@ class _ReactionDiffusionDrift(StrictModule):
         return coefficient_array * self.discretization.laplacian(state_array) + reaction
 
 
+class _ScaledLaplacianOperator(StrictModule):
+    discretization: AbstractSpatialDiscretization
+    coefficient: Array
+
+    def __call__(self, state: Array) -> Array:
+        return self.coefficient * self.discretization.laplacian(state)
+
+
+def _compatible_noise_eigenvalues(
+    discretization: AbstractSpatialDiscretization,
+    noise_basis: SpatialNoiseBasis | None,
+    coefficient: Array,
+    /,
+) -> Array | None:
+    if (
+        noise_basis is None
+        or coefficient.shape != ()
+        or noise_basis.discretization_id != discretization.discretization_id
+    ):
+        return None
+    laplacian_eigenvalues, modes = discretization.eigenpairs(rank=noise_basis.rank)
+    if modes.shape != noise_basis.modes.shape or not bool(
+        jnp.allclose(modes, noise_basis.modes, rtol=1e-6, atol=1e-7)
+    ):
+        return None
+    return -coefficient * laplacian_eigenvalues
+
+
+def _spectral_linear_representation(
+    discretization: AbstractSpatialDiscretization,
+    coefficient: Array,
+    state_shape: tuple[int, ...],
+    /,
+) -> SpectralMatrixRepresentation | None:
+    from ._spatial import SpectralSpatialDiscretization
+
+    if not isinstance(discretization, SpectralSpatialDiscretization):
+        return None
+    if coefficient.shape != () or state_shape != discretization.state_shape:
+        return None
+    return SpectralMatrixRepresentation(
+        -coefficient * discretization.plan.eigenvalues,
+        discretization.plan.analysis,
+        discretization.plan.synthesis,
+        state_shape=state_shape,
+        representation_id=discretization.discretization_id,
+    )
+
+
 class SemidiscreteSPDE(StrictModule):
     """Finite-dimensional method-of-lines problem plus spatial/noise provenance."""
 
     problem: DifferentialProblem
     spatial_discretization: AbstractSpatialDiscretization
     noise_basis: SpatialNoiseBasis | None
+    semilinear_drift: SemilinearDrift | None
+    solution_spec: SPDESolutionSpec = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
     noise_shape: tuple[int, ...] = eqx.field(static=True)
     discretization_id: str = eqx.field(static=True)
@@ -110,6 +168,8 @@ class SemidiscreteSPDE(StrictModule):
         problem: DifferentialProblem,
         spatial_discretization: AbstractSpatialDiscretization,
         noise_basis: SpatialNoiseBasis | None,
+        semilinear_drift: SemilinearDrift | None = None,
+        solution_spec: SPDESolutionSpec | None = None,
         state_shape: Sequence[int],
         noise_shape: Sequence[int],
         basis_id: str | None,
@@ -120,33 +180,94 @@ class SemidiscreteSPDE(StrictModule):
             raise TypeError(
                 "spatial_discretization must implement AbstractSpatialDiscretization."
             )
+        if noise_basis is not None and not isinstance(noise_basis, SpatialNoiseBasis):
+            raise TypeError("noise_basis must be a SpatialNoiseBasis or None.")
+        state = tuple(int(size) for size in state_shape)
+        noise = tuple(int(size) for size in noise_shape)
+        if state != tuple(problem.initial_state.shape):
+            raise ValueError("state_shape must match the differential problem state.")
+        if noise != problem.noise_shape:
+            raise ValueError("noise_shape must match the differential problem noise.")
+        if basis_id != problem.noise_id:
+            raise ValueError("basis_id must match the differential problem noise_id.")
+        if noise_basis is not None and noise_basis.basis_id != basis_id:
+            raise ValueError("noise_basis identity must match basis_id.")
+        if semilinear_drift is not None:
+            if not isinstance(semilinear_drift, SemilinearDrift):
+                raise TypeError("semilinear_drift must be a SemilinearDrift or None.")
+            if semilinear_drift.state_shape != state:
+                raise ValueError("semilinear_drift state_shape must match the problem.")
+            declared = semilinear_drift(problem.t0, problem.initial_state, problem.args)
+            actual = problem.drift(problem.t0, problem.initial_state, problem.args)
+            if not bool(jnp.allclose(declared, actual, rtol=1e-6, atol=1e-7)):
+                raise ValueError(
+                    "semilinear_drift must reproduce the differential problem drift."
+                )
+        if solution_spec is None:
+            resolved_solution = SPDESolutionSpec(
+                "strong",
+                noise_regularization=("finite_rank" if problem.stochastic else "none"),
+                cutoff_id=problem.noise_id,
+            )
+        else:
+            if not isinstance(solution_spec, SPDESolutionSpec):
+                raise TypeError("solution_spec must be an SPDESolutionSpec or None.")
+            resolved_solution = solution_spec
+        if problem.stochastic and resolved_solution.noise_regularization == "none":
+            raise ValueError(
+                "A stochastic semidiscrete problem cannot declare noise_regularization='none'."
+            )
+        if not problem.stochastic and resolved_solution.noise_regularization != "none":
+            raise ValueError(
+                "A deterministic semidiscrete problem must declare "
+                "noise_regularization='none'."
+            )
+        if resolved_solution.rough_forcing and resolved_solution.cutoff_id is None:
+            raise ValueError(
+                "A finite-dimensional approximation of rough forcing requires cutoff_id."
+            )
         self.problem = problem
         self.spatial_discretization = spatial_discretization
         self.noise_basis = noise_basis
-        self.state_shape = tuple(int(size) for size in state_shape)
-        self.noise_shape = tuple(int(size) for size in noise_shape)
+        self.state_shape = state
+        self.semilinear_drift = semilinear_drift
+        self.solution_spec = resolved_solution
+        self.noise_shape = noise
         self.discretization_id = spatial_discretization.discretization_id
         self.basis_id = basis_id
 
-    def wiener_driver(
+    def wiener_realization(
         self,
         key: Key[Array, ""],
         /,
         *,
+        support: tuple[float, float] | None = None,
+        sample_shape: Sequence[int] = (),
         tolerance: float = 1e-3,
         levy_area: LevyAreaKind = "brownian",
-        realization_id: str | int | None = None,
-    ) -> WienerDriver:
-        """Create a driver synchronized with this problem's retained noise basis."""
+        label: str | None = None,
+        coupling_id: str | None = None,
+    ) -> WienerRealization:
+        """Create a global realization synchronized with the retained noise basis."""
         if not self.problem.stochastic:
-            raise ValueError("Deterministic semidiscrete problems have no Wiener driver.")
-        return WienerDriver(
+            raise ValueError(
+                "Deterministic semidiscrete problems have no Wiener realization."
+            )
+        resolved_support = (
+            (float(self.problem.t0), float(self.problem.t1))
+            if support is None
+            else support
+        )
+        return WienerRealization(
             key,
-            self.noise_shape,
+            self.problem.noise_shape,
+            support=resolved_support,
+            sample_shape=sample_shape,
             tolerance=tolerance,
             levy_area=levy_area,
-            basis_id=self.basis_id,
-            realization_id=realization_id,
+            noise_id=self.problem.noise_id,
+            label=label,
+            coupling_id=coupling_id,
         )
 
 
@@ -159,11 +280,14 @@ def semidiscretize_spde(
     t0: ArrayLike,
     t1: ArrayLike,
     args: Any = None,
+    semilinear_drift: SemilinearDrift | None = None,
     diffusion: Callable[[Array, Array, Any], ArrayLike] | None = None,
     noise_basis: SpatialNoiseBasis | None = None,
     noise_shape: Sequence[int] | None = None,
     basis_id: str | None = None,
+    noise_structure: NoiseStructure | None = None,
     interpretation: DifferentialInterpretation = "ito",
+    solution_spec: SPDESolutionSpec | None = None,
 ) -> SemidiscreteSPDE:
     r"""Compose a validated finite-rank method-of-lines SPDE.
 
@@ -187,6 +311,11 @@ def semidiscretize_spde(
             f"{spatial_shape}; got {state.shape}."
         )
     state_shape = tuple(int(size) for size in state.shape)
+    if semilinear_drift is not None:
+        if not isinstance(semilinear_drift, SemilinearDrift):
+            raise TypeError("semilinear_drift must be a SemilinearDrift or None.")
+        if semilinear_drift.state_shape != state_shape:
+            raise ValueError("semilinear_drift state_shape must match initial_state.")
     if noise_basis is not None:
         if not isinstance(noise_basis, SpatialNoiseBasis):
             raise TypeError("noise_basis must be a SpatialNoiseBasis or None.")
@@ -209,6 +338,11 @@ def semidiscretize_spde(
             if diffusion is None
             else _BasisAmplitudeDiffusion(diffusion, noise_basis)
         )
+        resolved_structure: NoiseStructure = (
+            ("additive" if diffusion is None else "general")
+            if noise_structure is None
+            else noise_structure
+        )
     elif diffusion is not None:
         if noise_shape is None:
             raise ValueError(
@@ -221,13 +355,16 @@ def semidiscretize_spde(
         if resolved_basis_id == "":
             raise ValueError("basis_id must be non-empty or None.")
         effective_diffusion = diffusion
+        resolved_structure = "general" if noise_structure is None else noise_structure
     else:
-        if noise_shape is not None or basis_id is not None:
+        if noise_shape is not None or basis_id is not None or noise_structure is not None:
             raise ValueError(
-                "noise_shape and basis_id are only valid for stochastic problems."
+                "noise_shape, basis_id, and noise_structure are only valid for "
+                "stochastic problems."
             )
         resolved_noise_shape = ()
         resolved_basis_id = None
+        resolved_structure = "general"
         effective_diffusion = None  # type: ignore[assignment]
 
     validated_drift = _ValidatedVectorField(drift, state_shape, "drift")
@@ -244,22 +381,102 @@ def semidiscretize_spde(
     validated_drift(jnp.asarray(t0, dtype=float), state, args)
     if validated_diffusion is not None:
         validated_diffusion(jnp.asarray(t0, dtype=float), state, args)
+    wiener_terms = (
+        ()
+        if validated_diffusion is None
+        else (
+            WienerTerm(
+                "forcing",
+                validated_diffusion,
+                resolved_noise_shape,
+                structure=resolved_structure,
+                basis_id=resolved_basis_id,
+            ),
+        )
+    )
     problem = DifferentialProblem(
         validated_drift,
         state,
         t0=t0,
         t1=t1,
         args=args,
-        diffusion=validated_diffusion,
+        wiener_terms=wiener_terms,
         interpretation=interpretation,
     )
     return SemidiscreteSPDE(
         problem=problem,
         spatial_discretization=spatial_discretization,
         noise_basis=noise_basis,
+        semilinear_drift=semilinear_drift,
         state_shape=state_shape,
-        noise_shape=resolved_noise_shape,
-        basis_id=resolved_basis_id,
+        noise_shape=problem.noise_shape,
+        basis_id=problem.noise_id,
+        solution_spec=solution_spec,
+    )
+
+
+def semidiscretize_semilinear_spde(
+    linear_operator: Callable[[Array], ArrayLike],
+    nonlinear_drift: Callable[[Array, Array, Any], ArrayLike] | None,
+    initial_state: ArrayLike,
+    spatial_discretization: AbstractSpatialDiscretization,
+    /,
+    *,
+    t0: ArrayLike,
+    t1: ArrayLike,
+    operator_id: str,
+    args: Any = None,
+    diffusion: Callable[[Array, Array, Any], ArrayLike] | None = None,
+    noise_basis: SpatialNoiseBasis | None = None,
+    noise_shape: Sequence[int] | None = None,
+    basis_id: str | None = None,
+    noise_structure: NoiseStructure | None = None,
+    interpretation: DifferentialInterpretation = "ito",
+    solution_spec: SPDESolutionSpec | None = None,
+    mass_self_adjoint: bool = False,
+    mass_weights: ArrayLike | None = None,
+    spectral_bounds: tuple[float, float] | None = None,
+    spectral_representation: SpectralMatrixRepresentation | None = None,
+    compatible_noise_eigenvalues: ArrayLike | None = None,
+) -> SemidiscreteSPDE:
+    """Semidiscretize an explicitly decomposed semilinear stochastic equation."""
+    state_shape = tuple(int(size) for size in jnp.asarray(initial_state).shape)
+    compatible_basis_id = (
+        None
+        if compatible_noise_eigenvalues is None
+        else (
+            noise_basis.basis_id
+            if noise_basis is not None
+            else (None if basis_id is None else str(basis_id))
+        )
+    )
+    semilinear = SemilinearDrift(
+        linear_operator,
+        nonlinear_drift,
+        state_shape=state_shape,
+        operator_id=operator_id,
+        mass_self_adjoint=mass_self_adjoint,
+        mass_weights=mass_weights,
+        spectral_bounds=spectral_bounds,
+        spectral_representation=spectral_representation,
+        compatible_noise_eigenvalues=compatible_noise_eigenvalues,
+        compatible_noise_basis_id=compatible_basis_id,
+    )
+    return semidiscretize_spde(
+        semilinear,
+        initial_state,
+        spatial_discretization,
+        t0=t0,
+        t1=t1,
+        args=args,
+        semilinear_drift=semilinear,
+        diffusion=diffusion,
+        noise_basis=noise_basis,
+        noise_shape=noise_shape,
+        basis_id=basis_id,
+        noise_structure=noise_structure,
+        interpretation=interpretation,
+        solution_spec=solution_spec,
     )
 
 
@@ -276,6 +493,8 @@ def semidiscretize_reaction_diffusion(
     noise_basis: SpatialNoiseBasis | None = None,
     noise_amplitude: Callable[[Array, Array, Any], ArrayLike] | None = None,
     interpretation: DifferentialInterpretation = "ito",
+    noise_structure: NoiseStructure | None = None,
+    solution_spec: SPDESolutionSpec | None = None,
 ) -> SemidiscreteSPDE:
     r"""Semidiscretize stochastic reaction--diffusion dynamics.
 
@@ -290,19 +509,58 @@ def semidiscretize_reaction_diffusion(
     """
     if reaction is not None and not callable(reaction):
         raise TypeError("reaction must be callable or None.")
-    if callable(kappa) is False:
-        coefficient = jnp.asarray(kappa)
-        if coefficient.shape not in ((), tuple(jnp.asarray(initial_state).shape)):
-            raise ValueError("kappa must be scalar or have exact initial-state shape.")
-    if noise_amplitude is not None and noise_basis is None:
-        raise ValueError("noise_amplitude requires a noise_basis.")
     state_shape = tuple(int(size) for size in jnp.asarray(initial_state).shape)
-    drift = _ReactionDiffusionDrift(
-        spatial_discretization,
-        kappa,
-        reaction,
-        state_shape,
-    )
+    semilinear: SemilinearDrift | None
+    if callable(kappa):
+        drift: Callable[[Array, Array, Any], ArrayLike] = _ReactionDiffusionDrift(
+            spatial_discretization,
+            kappa,
+            reaction,
+            state_shape,
+        )
+        semilinear = None
+    else:
+        coefficient = jnp.asarray(kappa)
+        if coefficient.shape not in ((), state_shape):
+            raise ValueError("kappa must be scalar or have exact initial-state shape.")
+        linear_operator = _ScaledLaplacianOperator(
+            spatial_discretization,
+            coefficient,
+        )
+        compatible_eigenvalues = _compatible_noise_eigenvalues(
+            spatial_discretization,
+            noise_basis,
+            coefficient,
+        )
+        spectral = _spectral_linear_representation(
+            spatial_discretization,
+            coefficient,
+            state_shape,
+        )
+        bounds = None
+        if spectral is not None:
+            lower = float(jnp.min(spectral.eigenvalues))
+            upper = float(jnp.max(spectral.eigenvalues))
+            if lower < upper:
+                bounds = (lower, upper)
+        semilinear = SemilinearDrift(
+            linear_operator,
+            reaction,
+            state_shape=state_shape,
+            operator_id=(
+                f"{spatial_discretization.discretization_id}:"
+                f"scaled-laplacian:{coefficient!r}"
+            ),
+            mass_self_adjoint=coefficient.shape == (),
+            mass_weights=spatial_discretization.quadrature_weights,
+            spectral_bounds=bounds,
+            spectral_representation=spectral,
+            compatible_noise_eigenvalues=compatible_eigenvalues,
+            compatible_noise_basis_id=(
+                None if compatible_eigenvalues is None else noise_basis.basis_id
+            ),
+        )
+        drift = semilinear
     return semidiscretize_spde(
         drift,
         initial_state,
@@ -310,14 +568,18 @@ def semidiscretize_reaction_diffusion(
         t0=t0,
         t1=t1,
         args=args,
+        semilinear_drift=semilinear,
         diffusion=noise_amplitude,
         noise_basis=noise_basis,
+        noise_structure=noise_structure,
         interpretation=interpretation,
+        solution_spec=solution_spec,
     )
 
 
 __all__ = [
     "SemidiscreteSPDE",
     "semidiscretize_reaction_diffusion",
+    "semidiscretize_semilinear_spde",
     "semidiscretize_spde",
 ]

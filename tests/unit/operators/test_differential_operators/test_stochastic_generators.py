@@ -214,3 +214,94 @@ def test_stochastic_operator_contracts_reject_ambiguous_or_malformed_fields():
             drift,
             diffusion=diffusion,
         ).func(point)
+
+
+def test_factor_hvp_generator_matches_dense_contraction_componentwise():
+    observable = _square_function(
+        lambda x: jnp.asarray(
+            [
+                x[0] ** 4 + x[0] * x[1],
+                jnp.sin(x[0]) + 2.0 * x[1] ** 2,
+            ]
+        )
+    )
+    drift = _square_function(lambda x: jnp.asarray([0.2 * x[0], -0.3 * x[1]]))
+    diffusion = _square_function(
+        lambda x: jnp.asarray([[1.0, x[0], 0.2], [0.4, -0.5, x[1]]])
+    )
+    point = jnp.asarray([0.3, -0.4])
+
+    factor_hvp = phx.operators.kolmogorov_generator(
+        observable,
+        drift,
+        diffusion=diffusion,
+    )
+    dense = phx.operators.kolmogorov_generator(
+        observable,
+        drift,
+        diffusion=diffusion,
+        contraction="dense",
+    )
+
+    assert jnp.allclose(factor_hvp.func(point), dense.func(point))
+    assert jnp.allclose(
+        eqx.filter_jit(lambda x: factor_hvp.func(x))(point),
+        dense.func(point),
+    )
+
+
+def test_stochastic_trace_estimate_reports_replayable_probe_uncertainty():
+    matrix = jnp.asarray([[1.4, 0.3, -0.2], [0.3, 0.8, 0.1], [-0.2, 0.1, 1.1]])
+    state = jnp.asarray([0.2, -0.4, 0.7])
+    observable = lambda x: jnp.asarray(
+        [jnp.dot(x, x), x[0] ** 4 + 2.0 * x[1] ** 2 + x[2] ** 2]
+    )
+    exact = jnp.einsum(
+        "ij,oij->o",
+        matrix,
+        jax.jacrev(jax.jacrev(observable))(state),
+    )
+    policy = phx.operators.StochasticTracePolicy(2048)
+
+    first = phx.operators.estimate_stochastic_trace(
+        observable,
+        state,
+        lambda x, vector: matrix @ vector,
+        jax.random.key(17),
+        policy=policy,
+    )
+    replay = phx.operators.estimate_stochastic_trace(
+        observable,
+        state,
+        lambda x, vector: matrix @ vector,
+        jax.random.key(17),
+        policy=policy,
+    )
+
+    assert jnp.array_equal(first.value, replay.value)
+    assert jnp.array_equal(first.standard_error, replay.standard_error)
+    assert jnp.all(jnp.abs(first.value - exact) <= 5.0 * first.standard_error + 1e-12)
+    assert first.num_probes == 2048
+
+
+def test_probability_current_divergence_is_fokker_planck_operator():
+    density = _square_function(lambda x: jnp.exp(-jnp.dot(x, x)))
+    drift = _square_function(lambda x: jnp.asarray([0.3 * x[0], -0.4 * x[1]]))
+    diffusion = _square_function(lambda x: jnp.asarray([[1.0, 0.2], [x[0], 0.7]]))
+    current = phx.operators.probability_current(
+        density,
+        drift,
+        diffusion=diffusion,
+    )
+    forward = phx.operators.fokker_planck_operator(
+        density,
+        drift,
+        diffusion=diffusion,
+    )
+    point = jnp.asarray([0.3, -0.4])
+
+    assert current.func(point).shape == (2,)
+    assert jnp.allclose(
+        forward.func(point),
+        -phx.operators.div(current, var="x").func(point),
+    )
