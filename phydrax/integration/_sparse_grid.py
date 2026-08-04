@@ -14,7 +14,13 @@ from jaxtyping import Array, Key
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
-from .._numerics import clenshaw_curtis_data
+from .._numerics import (
+    axis_level,
+    normalize_axis_rules,
+    smolyak_axis_data,
+    smolyak_terms,
+    SmolyakAxisRule,
+)
 from .._strict import StrictModule
 from ..domain._base import _AbstractGeometry
 from ..domain._components import (
@@ -47,6 +53,9 @@ class SparseGridRealization(StrictModule):
     previous: PointIntegrationBatch | None
     level: int
     num_unique_nodes: int
+    previous_num_unique_nodes: int
+    num_terms: int
+    axis_rules: tuple[SmolyakAxisRule, ...]
 
     def __init__(
         self,
@@ -55,11 +64,18 @@ class SparseGridRealization(StrictModule):
         /,
         *,
         level: int,
+        num_terms: int,
+        axis_rules: tuple[SmolyakAxisRule, ...],
     ):
         self.batch = batch
         self.previous = previous
         self.level = int(level)
         self.num_unique_nodes = int(batch.weights.data.size)
+        self.previous_num_unique_nodes = (
+            0 if previous is None else int(previous.weights.data.size)
+        )
+        self.num_terms = int(num_terms)
+        self.axis_rules = axis_rules
 
 
 def _unwrap(factor: Any, /) -> Any:
@@ -69,54 +85,58 @@ def _unwrap(factor: Any, /) -> Any:
 def _smolyak_rule(
     dimension: int,
     level: int,
-    anisotropy: tuple[int, ...] | None,
+    anisotropy: tuple[float, ...] | None,
     /,
+    axis_rules: SmolyakAxisRule | tuple[SmolyakAxisRule, ...] = "clenshaw-curtis",
 ) -> tuple[np.ndarray, np.ndarray]:
     dimension_ = int(dimension)
-    level_ = int(level)
-    maximum_weight = level_ - 1
-    anisotropy_ = (1,) * dimension_ if anisotropy is None else anisotropy
-    table: dict[tuple[float, ...], float] = {}
-    for index in itertools.product(range(1, level_ + 1), repeat=dimension_):
-        weighted_sum = sum(
-            weight * (entry - 1) for weight, entry in zip(anisotropy_, index, strict=True)
+    rules = normalize_axis_rules(
+        dimension_,
+        axis_rules,
+        default="clenshaw-curtis",
+        allowed=("clenshaw-curtis", "gauss-hermite"),
+    )
+    terms = smolyak_terms(dimension_, int(level), anisotropy)
+    table: dict[
+        tuple[tuple[str, int, int], ...],
+        tuple[tuple[float, ...], float],
+    ] = {}
+    for term in terms:
+        one_dimensional = tuple(
+            smolyak_axis_data(rule, axis_level(term.index, axis))
+            for axis, rule in enumerate(rules)
         )
-        if weighted_sum > maximum_weight:
-            continue
-        coefficient = sum(
-            (-1) ** sum(corner)
-            for corner in itertools.product((0, 1), repeat=dimension_)
-            if weighted_sum
-            + sum(weight * step for weight, step in zip(anisotropy_, corner, strict=True))
-            <= maximum_weight
-        )
-        if coefficient == 0:
-            continue
-        one_dimensional = []
-        for entry in index:
-            order = 2 ** (entry - 1) + 1
-            data = clenshaw_curtis_data(order)
-            one_dimensional.append(
-                (
-                    np.asarray(data.nodes, dtype=float),
-                    np.asarray(data.weights, dtype=float),
-                )
+        if any(data.quadrature_weights is None for data in one_dimensional):
+            raise ValueError(
+                "Every sparse-grid integration rule needs quadrature weights."
             )
-        node_ranges = tuple(range(nodes.shape[0]) for nodes, _ in one_dimensional)
+        node_ranges = tuple(range(data.nodes.shape[0]) for data in one_dimensional)
         for position in itertools.product(*node_ranges):
-            node = tuple(
-                float(one_dimensional[axis][0][point])
+            identifier = tuple(
+                one_dimensional[axis].node_ids[point]
                 for axis, point in enumerate(position)
             )
-            weight = float(coefficient)
+            node = tuple(
+                float(one_dimensional[axis].nodes[point])
+                for axis, point in enumerate(position)
+            )
+            weight = float(term.coefficient)
             for axis, point in enumerate(position):
-                weight *= float(one_dimensional[axis][1][point])
-            key = tuple(float(np.round(value, 15)) for value in node)
-            table[key] = table.get(key, 0.0) + weight
+                quadrature_weights = one_dimensional[axis].quadrature_weights
+                assert quadrature_weights is not None
+                weight *= float(quadrature_weights[point])
+            if identifier in table:
+                existing_node, existing_weight = table[identifier]
+                table[identifier] = (existing_node, existing_weight + weight)
+            else:
+                table[identifier] = (node, weight)
     ordered = tuple(sorted(table))
-    nodes = np.asarray(ordered, dtype=float).reshape((-1, dimension_))
-    weights = np.asarray(tuple(table[node] for node in ordered), dtype=float)
-    active = np.abs(weights) > 32.0 * np.finfo(float).eps
+    nodes = np.asarray(tuple(table[key][0] for key in ordered), dtype=float).reshape(
+        (-1, dimension_)
+    )
+    weights = np.asarray(tuple(table[key][1] for key in ordered), dtype=float)
+    weight_scale = max(1.0, float(np.max(np.abs(weights), initial=0.0)))
+    active = np.abs(weights) > 64.0 * np.finfo(float).eps * weight_scale
     return nodes[active], weights[active]
 
 
@@ -183,17 +203,37 @@ def _materialize_level(
     if any(not isinstance(factor, _AbstractScalarDomain) for factor in factors):
         raise TypeError("Sparse grids currently support scalar and probability factors.")
     canonical_nodes, canonical_weights = _smolyak_rule(
-        plan.dimension, level, plan.anisotropy
+        plan.dimension,
+        level,
+        plan.anisotropy,
+        plan.axis_rules,
     )
     mapped_columns: list[Array] = []
     scale = jnp.asarray(1.0, dtype=float)
-    for axis, factor in enumerate(factors):
+    for axis, (label, factor, rule) in enumerate(
+        zip(varying, factors, plan.axis_rules, strict=True)
+    ):
         coordinate = jnp.asarray(canonical_nodes[:, axis], dtype=float)
-        if isinstance(factor, ProbabilityDomain):
+        if rule == "gauss-hermite":
+            if not isinstance(factor, ProbabilityDomain):
+                raise TypeError(
+                    f"Gauss--Hermite axis {label!r} requires a probability factor."
+                )
+            if (
+                not factor.supports_reference_transform
+                or factor.reference_measure != "standard-normal"
+            ):
+                raise ValueError(
+                    f"Gauss--Hermite axis {label!r} requires a standard-normal "
+                    "reference transform."
+                )
+            mapped = factor.from_reference(coordinate)
+        elif isinstance(factor, ProbabilityDomain):
             support = factor.distribution.support
             if support is None:
                 raise ValueError(
-                    "Clenshaw--Curtis sparse grids require bounded probability support."
+                    f"Clenshaw--Curtis axis {label!r} requires bounded "
+                    "probability support."
                 )
             mapped = factor.distribution.icdf(0.5 * (coordinate + 1.0))
             scale = scale * 0.5
@@ -229,7 +269,7 @@ def _materialize_level(
         weights,
         axes=(axis_name,),
         target_mass=component.measure(),
-        provenance=f"smolyak:level-{level}",
+        provenance=(f"smolyak:level-{level}:rules-{'+'.join(plan.axis_rules)}"),
     )
 
 
@@ -238,13 +278,20 @@ def materialize_sparse_grid(
     plan: SparseGridPlan,
     /,
 ) -> SparseGridRealization:
-    """Materialize a nested Smolyak rule and its coarser comparison level."""
+    """Materialize a Smolyak rule and its immediately coarser comparison."""
     base = target.base if isinstance(target, DensityTarget) else target
     if not isinstance(base, ComponentTarget):
         raise TypeError("Sparse grids require a component-based target.")
     batch = _materialize_level(base, plan, plan.level)
     previous = None if plan.level == 1 else _materialize_level(base, plan, plan.level - 1)
-    return SparseGridRealization(batch, previous, level=plan.level)
+    num_terms = len(smolyak_terms(plan.dimension, plan.level, plan.anisotropy))
+    return SparseGridRealization(
+        batch,
+        previous,
+        level=plan.level,
+        num_terms=num_terms,
+        axis_rules=plan.axis_rules,
+    )
 
 
 def integrate_sparse_grid(
@@ -256,7 +303,7 @@ def integrate_sparse_grid(
     key: Key[Array, ""] = DOC_KEY0,
     kwargs: dict[str, Any] | None = None,
 ) -> IntegrationEstimate:
-    """Reduce a Smolyak batch and report its nested-level difference."""
+    """Reduce a Smolyak batch and report its deterministic level difference."""
     if isinstance(target, DensityTarget):
         current = integrate_fixed_density(
             integrand, target, realization.batch, key=key, kwargs=kwargs
@@ -299,6 +346,9 @@ def integrate_sparse_grid(
         level_difference=level_difference,
         level=realization.level,
         num_unique_nodes=realization.num_unique_nodes,
+        previous_num_unique_nodes=realization.previous_num_unique_nodes,
+        num_terms=realization.num_terms,
+        axis_rules=realization.axis_rules,
     )
     return IntegrationEstimate(
         current.value,

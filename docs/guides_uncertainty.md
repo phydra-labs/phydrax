@@ -1295,6 +1295,49 @@ prediction = phx.uq.propagate(
 `propagate` records non-finite realizations in `PredictiveField.valid`, or raises with
 `valid_policy="raise"`. Chunked and unchunked evaluation preserve the same samples.
 
+### Reusable sparse parameter surrogates
+
+For repeatedly evaluated low- or moderate-effective-dimensional observables,
+fit a non-trainable Smolyak surrogate over the labeled uncertain-input domain:
+
+```python
+diffusivity = phx.domain.ProbabilityDomain(
+    phx.uq.LogNormal(-2.0, 0.25),
+    label="diffusivity",
+)
+source = phx.domain.ProbabilityDomain(
+    phx.uq.Normal(1.0, 0.1),
+    label="source",
+)
+parameter_domain = diffusivity @ source
+
+@parameter_domain.Function("diffusivity", "source")
+def observable(diffusivity, source):
+    return jnp.stack(
+        (
+            diffusivity + source,
+            diffusivity * source,
+        )
+    )
+
+surrogate = phx.operators.interpolate_smolyak(
+    observable,
+    phx.operators.SmolyakInterpolationPlan(
+        2,
+        5,
+        axis_rules="auto",
+    ),
+)
+```
+
+`Normal` and `LogNormal` parameters are interpolated in standard-normal
+reference coordinates. `Uniform` parameters use a bounded uniform reference.
+The surrogate snapshots one coupled batch of source evaluations, preserves
+vector/tensor outputs, and can subsequently be differentiated or integrated
+under an explicit measure. It is a deterministic approximation and does not
+introduce posterior or sampling uncertainty. See
+[Smolyak interpolation](api/operators/interpolation.md).
+
 ## Sobol sensitivity
 
 `sobol_indices` uses Saltelli first-order and Jansen total-order estimators. Base

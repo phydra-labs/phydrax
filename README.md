@@ -40,6 +40,8 @@ Most workflows are composing a few primitives:
   and quantum matrix operators.
 - **Integration**: explicit targets define measures, plans define numerical
   realizations, and estimates carry method-valid diagnostics and provenance.
+- **Interpolation**: reusable anisotropic Smolyak surrogates preserve labeled
+  domains, array-valued outputs, and JAX differentiation.
 - **Stochastic processes**: reproducible process realizations, trajectories,
   martingales, state-space models, BSDEs, and finite-rank spatial noise.
 - **Constraints**: scalar loss terms built from residuals on components.

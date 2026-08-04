@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, Literal, Protocol, runtime_checkable
 
 import jax.numpy as jnp
 from jaxtyping import Array, Bool, Key
@@ -18,6 +18,18 @@ def _open_unit_interval(values: Any, /) -> Array:
     unit = jnp.asarray(values, dtype=float)
     epsilon = jnp.finfo(unit.dtype).eps
     return jnp.clip(unit, epsilon, 1.0 - epsilon)
+
+
+@runtime_checkable
+class ReferenceDistribution(Protocol):
+    """Distribution with an explicit canonical-coordinate bijection."""
+
+    @property
+    def reference_measure(self) -> Literal["uniform", "standard-normal"]: ...
+
+    def to_reference(self, value: Any, /) -> Array: ...
+
+    def from_reference(self, value: Any, /) -> Array: ...
 
 
 class ProbabilityDomain(_AbstractScalarDomain):
@@ -64,6 +76,35 @@ class ProbabilityDomain(_AbstractScalarDomain):
             return jnp.asarray(support[1], dtype=float).reshape(())
         raise ValueError("fixed(which) must be 'start' or 'end'.")
 
+    @property
+    def supports_reference_transform(self) -> bool:
+        return isinstance(self.distribution, ReferenceDistribution)
+
+    @property
+    def reference_measure(self) -> Literal["uniform", "standard-normal"]:
+        if not isinstance(self.distribution, ReferenceDistribution):
+            raise ValueError(
+                "This probability distribution has no canonical reference transform."
+            )
+        measure = self.distribution.reference_measure
+        if measure not in ("uniform", "standard-normal"):
+            raise ValueError("reference_measure must be 'uniform' or 'standard-normal'.")
+        return measure
+
+    def to_reference(self, value: Any, /) -> Array:
+        if not isinstance(self.distribution, ReferenceDistribution):
+            raise ValueError(
+                "This probability distribution has no canonical reference transform."
+            )
+        return jnp.asarray(self.distribution.to_reference(value), dtype=float)
+
+    def from_reference(self, value: Any, /) -> Array:
+        if not isinstance(self.distribution, ReferenceDistribution):
+            raise ValueError(
+                "This probability distribution has no canonical reference transform."
+            )
+        return jnp.asarray(self.distribution.from_reference(value), dtype=float)
+
     def sample(
         self,
         num_points: int,
@@ -93,4 +134,4 @@ class ProbabilityDomain(_AbstractScalarDomain):
         return jnp.asarray(self.distribution.contains(points), dtype=bool)
 
 
-__all__ = ["ProbabilityDomain"]
+__all__ = ["ProbabilityDomain", "ReferenceDistribution"]

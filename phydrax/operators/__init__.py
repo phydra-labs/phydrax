@@ -13,6 +13,7 @@ structure across dense and coord-separable batches.
 
 - **Differential**: $\\nabla u$, $\\nabla \\cdot v$, $\\Delta u$, surface operators.
 - **Integral**: $\\int_\\Omega u \\, d\\Omega$ and weighted variants.
+- **Interpolation**: reusable sparse polynomial `DomainFunction` surrogates.
 - **Functional**: $\\|u\\|_p$, inner products, and averages.
 - **Linear algebra**: determinants, traces, norms.
 
@@ -35,6 +36,7 @@ from . import (
     differential,
     functional,
     graph,
+    interpolation,
     linalg,
     mechanics,
     path_integral,
@@ -158,6 +160,12 @@ from .integral import (  # noqa: F401
     spatial_integral,
     time_convolution,
 )
+from .interpolation import (  # noqa: F401
+    interpolate_smolyak,
+    SmolyakInterpolant,
+    SmolyakInterpolationPlan,
+    SmolyakInterpolationRule,
+)
 from .linalg import (  # noqa: F401
     adjoint,
     conjugate,
@@ -230,6 +238,7 @@ __all__ = [
     "differential",
     "functional",
     "graph",
+    "interpolation",
     "linalg",
     "mechanics",
     "quantum",
@@ -313,6 +322,11 @@ __all__ = [
     "caputo_time_fractional",
     "caputo_time_fractional_dw",
     # integral exports
+    # interpolation exports
+    "SmolyakInterpolant",
+    "SmolyakInterpolationPlan",
+    "SmolyakInterpolationRule",
+    "interpolate_smolyak",
     "integrate_boundary",
     "integrate_interior",
     "integral",

@@ -9,6 +9,8 @@
             - sample
             - icdf
             - log_prob
+            - to_reference
+            - from_reference
 
 ---
 
@@ -20,6 +22,8 @@
             - icdf
             - log_prob
 
+            - to_reference
+            - from_reference
 ---
 
 ::: phydrax.uq.LogNormal
@@ -30,6 +34,8 @@
             - icdf
             - log_prob
 
+            - to_reference
+            - from_reference
 ---
 
 ::: phydrax.uq.EmpiricalDistribution
@@ -48,8 +54,16 @@
             - __init__
             - sample
             - fixed
+            - supports_reference_transform
+            - reference_measure
+            - to_reference
+            - from_reference
 
 ---
+::: phydrax.domain.ReferenceDistribution
+
+---
+
 
 ::: phydrax.uq.RandomSampleBatch
     options:
