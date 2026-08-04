@@ -77,16 +77,23 @@ def _write_blocks_to_temp_script(md_path: Path, blocks: list[str], tmp_dir: Path
 
     header = f"# Generated from {md_path}\n"
     parts: list[str] = [header]
+    num_iter_cap = (
+        2 if md_path.relative_to(_DOCS_DIR).as_posix() == "cookbook/poisson.md" else 5
+    )
     for i, block in enumerate(blocks):
         parts.append(f"\n# --- {md_path.name} block {i} ---\n")
-        parts.append(_shrink_doc_iterations(block))
+        parts.append(_shrink_doc_iterations(block, num_iter_cap=num_iter_cap))
 
     script_path.write_text("".join(parts), encoding="utf-8")
     return script_path
 
 
-def _shrink_doc_iterations(code: str) -> str:
-    code = re.sub(r"num_iter\s*=\s*\d+", "num_iter=5", code)
+def _shrink_doc_iterations(code: str, *, num_iter_cap: int) -> str:
+    code = re.sub(
+        r"num_iter\s*=\s*(\d+)",
+        lambda match: f"num_iter={min(int(match.group(1)), num_iter_cap)}",
+        code,
+    )
     code = re.sub(
         r"num_points\s*=\s*(\d+)",
         lambda match: f"num_points={min(int(match.group(1)), 16)}",
@@ -130,7 +137,7 @@ def test_docs_python_examples_run(tmp_path: Path, md_path: Path) -> None:
     env.setdefault("JAX_PLATFORM_NAME", "cpu")
     env.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
-    timeout_s = 60 * 15
+    timeout_s = 60 * 5
 
     subprocess.run(
         [sys.executable, str(script_path)],

@@ -2,7 +2,6 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from typing import cast
 
 import coordax as cx
 import equinox as eqx
@@ -16,6 +15,7 @@ from phydrax.domain import (
     Square,
     TimeInterval,
 )
+from phydrax.integration import from_samples, over
 from phydrax.nn.models import LatentContractionModel
 from phydrax.nn.models.core._base import _AbstractBaseModel
 from phydrax.operators.differential import partial_t, partial_x, partial_y
@@ -219,25 +219,18 @@ def test_latent_contraction_product_domain_integral_over_x():
         key=jr.key(1),
     )
 
-    out = integral(u, sep, component=component, over="x")
+    target = over(component, axes="x")
+    realization = from_samples(target, sep)
+    out = integral(u, realization)
     p_axis = sep.dense_structure.axis_for("p")
     t_axis = sep.dense_structure.axis_for("t")
     p_field = _scalar_field_from_dense(sep.points["p"], p_axis)
     t_field = _scalar_field_from_dense(sep.points["t"], t_axis)
     area = jnp.asarray(geom.volume, dtype=float)
-    param_base = cast(Interval1d, param.base)
-    p_weight = jnp.asarray(param_base.volume, dtype=float) / float(
-        sep.points["p"].data.shape[0]
-    )
-    t_weight = jnp.asarray(time.measure, dtype=float) / float(
-        sep.points["t"].data.shape[0]
-    )
-    expected = area * p_weight * t_weight * (p_field + 1.0) * (t_field + 2.0)
+    expected = area * (p_field + 1.0) * (t_field + 2.0)
     _assert_field_allclose(out, expected)
 
-    eval_jit = eqx.filter_jit(
-        lambda b: integral(u, b, component=component, over="x").data
-    )
+    eval_jit = eqx.filter_jit(lambda b: integral(u, from_samples(target, b)).data)
     _assert_array_allclose(eval_jit(sep), expected.data)
 
 

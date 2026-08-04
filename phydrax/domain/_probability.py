@@ -14,6 +14,12 @@ from ._sampling import get_sampler
 from ._scalar import _AbstractScalarDomain
 
 
+def _open_unit_interval(values: Any, /) -> Array:
+    unit = jnp.asarray(values, dtype=float)
+    epsilon = jnp.finfo(unit.dtype).eps
+    return jnp.clip(unit, epsilon, 1.0 - epsilon)
+
+
 class ProbabilityDomain(_AbstractScalarDomain):
     """A labeled scalar random variable carrying unit probability measure."""
 
@@ -72,7 +78,7 @@ class ProbabilityDomain(_AbstractScalarDomain):
             return jnp.asarray(
                 self.distribution.sample(key, sample_shape=(count,)), dtype=float
             )
-        unit = get_sampler(sampler)(count, 1, key).reshape((count,))
+        unit = _open_unit_interval(get_sampler(sampler)(count, 1, key)).reshape((count,))
         return jnp.asarray(self.distribution.icdf(unit), dtype=float)
 
     def equivalent(self, other: object, /) -> bool:

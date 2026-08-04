@@ -15,7 +15,7 @@ from ..._doc import DOC_KEY0
 from ...domain._function import DomainFunction
 from ...domain._sampling import get_sampler
 from ...domain._scalar import _AbstractScalarDomain
-from ..integral._quadrature import build_ball_quadrature
+from ..integral._local_ops import _uniform_ball_rule
 from ._domain_ops import _factor_and_dim, _resolve_var, grad
 
 
@@ -99,7 +99,7 @@ def fractional_laplacian(
         radius = float(jnp.linalg.norm(maxs - mins) + 1e-12)
     R = float(radius)
 
-    bq = build_ball_quadrature(radius=R, dim=int(var_dim), num_points=int(num_points))
+    bq = _uniform_ball_rule(R, int(var_dim), int(num_points))
     offsets = jnp.asarray(bq["offsets"], dtype=float)  # (N, d)
     w = jnp.asarray(bq["weights"], dtype=float)  # (N,)
     r_off = jnp.linalg.norm(offsets, axis=1)  # (N,)

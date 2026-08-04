@@ -158,7 +158,7 @@ def test_bsde_quadrature_modes_are_explicit_and_finite():
     value = lambda time, state: jnp.asarray([state[0] + time])
     control = lambda time, state: jnp.ones((1, 1))
 
-    for quadrature in ("left", "midpoint", "trapezoid"):
+    for quadrature in ("left", "trapezoid"):
         evaluation = phx.stochastic.evaluate_bsde(
             problem,
             paths,
@@ -168,6 +168,15 @@ def test_bsde_quadrature_modes_are_explicit_and_finite():
         )
         assert jnp.all(jnp.isfinite(evaluation.local_residuals))
         assert phx.stochastic.bsde_objective_loss(evaluation, mode="joint") > 0.0
+
+    with pytest.raises(ValueError, match="left.*trapezoid"):
+        phx.stochastic.evaluate_bsde(
+            problem,
+            paths,
+            value,
+            control_predictor=control,
+            quadrature="midpoint",
+        )
 
 
 def test_differential_solution_conversion_collapses_shared_batched_time_grid():

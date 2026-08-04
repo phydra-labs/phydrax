@@ -120,6 +120,7 @@ nav:
         - Overview: "examples/index.md"
     - API:
         - Overview: "api/phydrax.md"
+        - Integration: "api/integration.md"
         - Domains:
             - Overview: "api/domain/index.md"
             - Time: "api/domain/time.md"

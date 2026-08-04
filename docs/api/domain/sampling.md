@@ -64,15 +64,6 @@ Coord-separable sampling is driven by `DomainComponent.sample_coord_separable(..
         members:
             - __init__
 
----
-
-::: phydrax.domain.QuadratureBatch
-    options:
-        members:
-            - __init__
-            - total_weight
-
----
 
 ::: phydrax.domain.CoordSeparableBatch
     options:
@@ -158,17 +149,10 @@ Coord-separable sampling is driven by `DomainComponent.sample_coord_separable(..
     options:
         members:
             - __init__
+            - num_charts
+            - reference_dim
             - map
             - jacobian
-            - tensor_quadrature
-
----
-
-::: phydrax.domain.CADChartQuadrature
-    options:
-        members:
-            - __init__
-            - integrate
 
 ---
 

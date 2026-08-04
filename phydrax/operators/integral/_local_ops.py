@@ -4,14 +4,50 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
+import jax.scipy as jsp
 
+from ..._numerics import unit_design
 from ...domain._function import DomainFunction
 from ..differential._domain_ops import _factor_and_dim
 from ._ctx import _compile_ctx_integrand
+
+
+def _uniform_ball_rule(
+    radius: float,
+    dimension: int,
+    count: int,
+    /,
+) -> dict[str, jax.Array]:
+    """Build a deterministic equal-weight Halton rule on a Euclidean ball."""
+    radius_ = float(radius)
+    dimension_ = int(dimension)
+    count_ = int(count)
+    if radius_ <= 0.0 or dimension_ <= 0 or count_ <= 0:
+        raise ValueError("radius, dimension, and count must be positive.")
+    design = unit_design("halton", count=count_, dimension=dimension_ + 1, key=None)
+    probability = jnp.clip(
+        design[:, :dimension_],
+        jnp.finfo(float).eps,
+        1.0 - jnp.finfo(float).eps,
+    )
+    direction = jsp.special.ndtri(probability)
+    direction = direction / jnp.linalg.norm(direction, axis=1, keepdims=True)
+    radial = radius_ * jnp.power(design[:, -1], 1.0 / dimension_)
+    offsets = radial[:, None] * direction
+    volume = (
+        math.pi ** (0.5 * dimension_)
+        * radius_**dimension_
+        / math.gamma(0.5 * dimension_ + 1.0)
+    )
+    return {
+        "offsets": offsets,
+        "weights": jnp.full((count_,), volume / count_, dtype=float),
+    }
 
 
 def local_integral(
@@ -37,9 +73,11 @@ def local_integral(
     v(x) \approx \sum_{j=1}^{N_\xi} w_j\,\mathcal{I}(x, x+\xi_j, u(x), u(x+\xi_j), \xi_j, \dots).
     $$
 
-    The integrand is provided as `integrand(ctx)` and receives a context dictionary
-    similar to `nonlocal_integral`, including keys `"x"`, `"y"`, `"ux"`, `"uy"`, `"du"`,
-    and `"xi"`.
+    The integrand may receive the whole context through a single parameter named
+    `ctx` or `context`, or select context values by matching parameter names. Available
+    keys include `"x"`, `"y"`, `"ux"`, `"uy"`, `"du"`, and `"xi"`. For compatibility,
+    `value`, `delta`/`delta_value`, and `displacement` select `"uy"`, `"du"`, and
+    `"xi"`, respectively.
 
     **Notes:**
 

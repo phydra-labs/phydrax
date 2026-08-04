@@ -1,146 +1,488 @@
 # Integrals and measures
 
-Phydrax's integral operators (`integral`, `mean`, and friends) estimate integrals over a
-`DomainComponent` with a domain-aware measure.
+Phydrax integration is organized around three explicit objects:
 
-## Measure \(\mu\) induced by the domain and component {: data-toc-label="Measure μ induced by the domain and component"}
+1. a **target** defines the measure and normalization convention;
+2. a **plan** defines how that target is discretized or sampled;
+3. an **estimate** returns the value, status, diagnostics, provenance, and only a
+   method-valid error estimate.
 
-Given a component \(\Omega_{\text{comp}}\subseteq \Omega\) (interior, boundary, fixed slice, etc.),
-Phydrax interprets `integral(f, ..., component=...)` as estimating
+The same execution path supports fixed and adaptive quadrature, Monte Carlo,
+randomized quasi-Monte Carlo, importance sampling, sparse grids, mapped cells, and
+mixed product plans.
 
-$$
-\int_{\Omega_{\text{comp}}} f(z)\,d\mu(z).
-$$
+## Targets define the mathematical quantity
 
-The measure depends on the factor type and the component selection:
+A plan never decides whether an integral is normalized. The target does.
 
-- **Geometry factors**:
-  - `Interior()`: \(\mu(\Omega_x)\) is the geometry volume/area/length (`factor.volume`).
-  - `Boundary()`: \(\mu(\partial\Omega_x)\) is the boundary measure (`factor.boundary_measure_value`).
-  - `Fixed(...)`: counting measure on the fixed slice.
-- **Scalar interval factors** (e.g. time):
-  - `Interior()`: \(\mu(\Omega_t)\) is the interval measure (`factor.measure`).
-  - `Boundary()`: defaults to 2-point counting measure (endpoints).
-  - `FixedStart` / `FixedEnd` / `Fixed(...)`: counting measure on the fixed time.
-- **Dataset factors** (`DatasetDomain`):
-  - `Interior()`: either \(\mu(\Omega_{\text{data}})=1\) (`measure="probability"`) or
-    \(\mu(\Omega_{\text{data}})=N\) (`measure="count"`).
-- **Trajectory datasets** (`TrajectoryDatasetDomain`):
-  - default paired weights estimate an expectation over valid row-time samples;
-  - `measure="time_integral_average"` estimates the average row-wise time integral;
-  - `measure="time_integral_sum"` estimates the sum of row-wise time integrals.
+| Constructor | Quantity |
+| --- | --- |
+| `over(component)` | $\int f\,d\mu$ under the component's physical/counting measure |
+| `mean_over(component)` | $\int f\,d\mu / \int 1\,d\mu$ |
+| `expectation(probability)` | $\mathbb E_p[f]$ for a `ProbabilityDomain` |
+| `density(base, log_density)` | $\int f\exp(\ell)\,d\nu$ relative to the base target $\nu$ |
+| `normalized_density(base, log_density)` | $\int f\exp(\ell)\,d\nu / \int \exp(\ell)\,d\nu$ |
+| `mapped(rule, mapping, jacobian)` | reference-cell quadrature mapped to physical coordinates |
+| `weighted(samples, log_weights)` | reduction of externally supplied raw log weights |
+| `discrete(points, weights, axes=...)` | deterministic reduction under supplied nonnegative quadrature weights |
 
-## Sampling structure: paired vs coord-separable
+For component targets, the induced measure follows the selected component:
 
-Phydrax supports two structured sampling modes that affect how integrals are reduced:
+- geometry `Interior()` uses physical volume, area, or length;
+- geometry `Boundary()` uses boundary arclength or surface measure;
+- scalar-interval `Interior()` uses interval length;
+- scalar-interval `Boundary()` uses endpoint counting measure;
+- fixed slices use unit-mass Dirac semantics;
+- dataset components use the domain's declared probability or count measure.
 
-- `PointsBatch` (paired sampling): you choose a `ProductStructure` and sample points per block.
-- `CoordSeparableBatch` (coord-separable sampling): you sample 1D coordinate axes for selected unary labels
-  and evaluate on a Cartesian grid, optionally with per-axis discretization metadata.
+`component.where`, `component.where_all`, and `component.weight_all` remain part of
+the target measure. They are applied at quadrature or sample points before reduction.
+A normalized target divides by the correspondingly filtered and weighted mass.
 
-### Default weights
+`density(base, ...)` preserves the base target's measure. In particular,
+`density(mean_over(component), ...)` integrates against the normalized component
+measure; only `normalized_density(...)` additionally normalizes by the supplied
+density mass.
 
-If you do not supply an explicit `QuadratureBatch`, then:
-
-For `PointsBatch`, Phydrax uses a uniform Monte Carlo-style weight on each sampling axis:
-
-$$
-w_a = \frac{\mu_a}{n_a},
-$$
-
-where \(n_a\) is the number of points on axis \(a\) and \(\mu_a\) is the product measure of the labels in that block.
-
-For `CoordSeparableBatch`, Phydrax multiplies per-axis weights:
-
-- if `AxisDiscretization.quad_weights` is present (e.g. Gauss–Legendre), those weights are used;
-- otherwise weights fall back to uniform weights based on per-label measure (geometry AABB lengths or scalar interval measure).
-
-## Filtering and weighting (`where`, `weight_all`)
-
-Integrals can be restricted and reweighted via the component:
-
-- `component.where` / `component.where_all` act as indicator functions (masking out samples).
-- `component.weight_all` multiplies the integrand by a user-defined weight field.
-
-Conceptually, Phydrax estimates
-
-$$
-\int_{\Omega_{\text{comp}}} \mathbf{1}_{\text{where}}(z)\,w(z)\,f(z)\,d\mu(z).
-$$
-
-## Choosing reduction axes (`over=...`)
-
-`over` controls which axes to integrate over:
-
-- `over=None`: integrate over all axes implied by the batch.
-- `over="x"`: integrate over the axis associated with label `"x"` (requires `"x"` to be a singleton block in paired sampling).
-- `over=("x","t")`: integrate over a specific paired block.
-
-For coord-separable batches, `over="x"` integrates over the coord-separable axes for that label.
-
-## One-dimensional adaptive quadrature
-
-`adaptive_integral` uses Quadax's globally adaptive Gauss–Kronrod,
-Clenshaw–Curtis, or tanh–sinh rules when the required accuracy matters more than
-a fixed sample budget. It does not consume a sampled batch. Instead, the selected
-component must have exactly one `Interior()` label backed by `ScalarInterval` or
-`Interval1d`; every other product-domain label must be fixed. Fixed factors retain
-their unit-mass Dirac semantics.
-
-`component.where`, `component.where_all`, and `component.weight_all` are evaluated
-at every adaptive node. Supply known discontinuities or singular locations as
-strictly increasing `breakpoints`; this initializes separate subintervals on each
-side of the difficult point.
+## Basic fixed quadrature
 
 ```python
 import phydrax as phx
 
-time = phx.domain.ScalarInterval(0.0, 1.0, label="t")
+space = phx.domain.ScalarInterval(-1.0, 2.0, label="x")
 
-@time.Function("t")
-def cubic(t):
-    return t**3
+@space.Function("x")
+def square(x):
+    return x**2
 
-quadrature = phx.operators.AdaptiveQuadratureConfig(
-    method="gauss_kronrod",
-    absolute_tolerance=1e-10,
-    relative_tolerance=1e-10,
-    collect_subintervals=True,
+target = phx.integration.over(space.component())
+plan = phx.integration.FixedQuadraturePlan(
+    phx.integration.GaussLegendreRule(24)
 )
-result = phx.operators.adaptive_integral(
-    cubic,
-    component=time.component(),
-    quadrature=quadrature,
-)
-value = result.value
+estimate = phx.integration.integrate(square, target, plan)
+
+value = estimate.value
+assert estimate.successful
 ```
 
-`AdaptiveIntegralResult` reports the estimated error, function-evaluation count,
-status bitmask, and optional padded subinterval arrays plus their active count.
-The default `throw=True` turns any nonzero Quadax status into a JIT-safe error;
-use `throw=False` only when the caller explicitly handles `result.successful`.
-`AdaptiveIntegralFunctional` always rejects a failed quadrature before
-contributing its raw signed scalar to `FunctionalSolver`.
+Fixed plans support interval rules such as `GaussLegendreRule`,
+`GaussKronrodRule`, `ClenshawCurtisRule`, and `TanhSinhRule`. A deterministic fixed
+rule reports no statistical uncertainty. `error_estimate is None` is deliberate.
 
-The operator is JIT-compatible and differentiable through the selected adaptive
-execution. A stochastic integrand receives the same key at every node so one
-quadrature call estimates a deterministic realization rather than mixing
-independent noise into its local error estimates.
+A `ProbabilityDomain` used through `over(probability.component())` is lowered through
+its quantile map and retains unit probability mass. This is measure-equivalent to
+`expectation(probability)`; it is not a Lebesgue integral over the support endpoints.
 
-## Examples
+## Materialize once, reduce many times
 
-!!! example
-    Gauss–Legendre quadrature on an interval:
+Separate materialization from reduction when multiple integrands share a target and
+plan:
 
-    ```python
-    import phydrax as phx
+```python
+realization = phx.integration.materialize(target, plan)
 
-    geom = phx.domain.Interval1d(-1.0, 2.0)
+integral_square = phx.integration.reduce(square, realization)
+integral_one = phx.integration.reduce(1.0, realization)
+```
 
-    @geom.Function("x")
-    def u(x):
-        return x[0] ** 2
+`IntegrationRealization` carries the typed target, plan, batch, and execution key.
+Reusing it guarantees that stochastic integrands see the same sample design. This is
+the preferred common-random-number pattern for comparisons and parameter sweeps.
 
-    batch = geom.component().sample_coord_separable({"x": phx.domain.LegendreAxisSpec(24)})
-    val = phx.operators.integral(u, batch, component=geom.component())
-    ```
+`integrate(integrand, target, plan)` is exactly the one-shot materialize-and-reduce
+form.
+
+An integrand may itself be any nonempty PyTree of `DomainFunction`, callable, or
+array leaves. Reduction preserves that container structure and every leaf dtype in
+`estimate.value`; method diagnostics are returned with the same leaf structure.
+
+## Adaptive one-dimensional quadrature
+
+Use `AdaptiveQuadraturePlan` for a single active scalar interval. All other product
+factors must be fixed.
+
+```python
+plan = phx.integration.AdaptiveQuadraturePlan(
+    phx.integration.GaussKronrodRule(21),
+    absolute_tolerance=1e-10,
+    relative_tolerance=1e-10,
+    max_intervals=256,
+    breakpoints=(0.25,),
+    collect_partition=True,
+)
+estimate = phx.integration.integrate(square, target, plan)
+```
+
+The global stopping test is
+
+$$
+e \leq \varepsilon_{\mathrm{abs}}
+       + \varepsilon_{\mathrm{rel}}|I|.
+$$
+
+The diagnostics expose the active interval count, bounds, local integral estimates,
+embedded-rule errors, and partition contributions when requested. The global error is
+the sum of active local embedded-rule errors. `throw=True` turns a failed status into
+a JIT-safe runtime error; set `throw=False` only when the caller checks
+`estimate.successful`.
+
+Known discontinuities or singular locations belong in `breakpoints`; they seed
+separate initial intervals. Adaptive execution is differentiable through the selected
+refinement path, but refinement decisions are discrete.
+
+## Monte Carlo and variance reduction
+
+```python
+import jax.random as jr
+plan = phx.integration.MonteCarloPlan(4096)
+estimate = phx.integration.integrate(
+    square,
+    target,
+    plan,
+    key=jr.key(0),
+)
+```
+
+In normal code, import `jax.random as jr` and pass `key=jr.key(0)`. Randomized plans
+require an explicit key; deterministic plans reject `key=` because they do not
+consume one.
+
+Available direct designs are:
+
+- `IIDDesign()` (the default);
+- `LatinHypercubeDesign()` for scalar and box-like component targets;
+- `AntitheticDesign(involution=...)` for an explicit measure-preserving pairing.
+
+Antithetic diagnostics reduce pair means, not individual draws. A standard error is
+reported only with at least two independent IID pairs. A single pair and antithetic
+Latin-hypercube designs still return an estimate but deliberately report no
+uncertainty. Antithetic plans require an even sample count.
+
+A control variate states both the control and its known expectation:
+
+```python
+@space.Function("x")
+def x_control(x):
+    return x
+
+control = phx.integration.ControlVariateEstimator(
+    (x_control,),
+    (0.5,),
+    pilot_samples=128,
+)
+plan = phx.integration.MonteCarloPlan(
+    4096,
+    control_variate=control,
+)
+```
+
+When coefficients are omitted, ordinary IID plans fit them on the first
+`pilot_samples` and estimate on the disjoint remainder. Pilot observations are never
+reused in the reported estimate or uncertainty. Alternatively, supply coefficients
+explicitly. `same_sample_asymptotic=True` is an opt-in asymptotic mode and is named as
+such because its finite-sample error estimate does not account for fitted-coefficient
+uncertainty.
+
+## Stratified Monte Carlo
+
+`StratifiedMonteCarloPlan` requires an explicit positive-measure partition, such as a
+`GeometryMeasurePartition` over boundary segments or interior simplices.
+
+```python
+partition = phx.domain.GeometryMeasurePartition(
+    (
+        ((-1.0,), (0.5,)),
+        ((0.5,), (2.0,)),
+    ),
+    (1.5, 1.5),
+    kind="segment",
+)
+
+@space.Function("x")
+def stratified_square(x):
+    return x[0] ** 2
+
+design = phx.integration.StratifiedDesign(
+    partition,
+    allocation="proportional",  # or "equal" / "explicit"
+)
+plan = phx.integration.StratifiedMonteCarloPlan(2048, design)
+estimate = phx.integration.integrate(
+    stratified_square, target, plan, key=jr.key(1)
+)
+```
+
+The estimator is
+
+$$
+\widehat I = \sum_h \mu_h\,\overline f_h,
+$$
+
+and its variance estimate is
+
+$$
+\widehat{\mathrm{Var}}(\widehat I)
+= \sum_h \mu_h^2 s_h^2/n_h.
+$$
+
+Allocations are deterministic for a fixed key and guarantee at least two samples per
+stratum. `allocation="explicit"` accepts relative allocation weights whose length must
+match the partition.
+
+## Quasi-Monte Carlo
+
+```python
+plan = phx.integration.QuasiMonteCarloPlan(
+    1024,
+    sequence="sobol",
+    scrambled=True,
+    num_replicates=8,
+)
+estimate = phx.integration.integrate(square, target, plan, key=jr.key(2))
+```
+
+Sobol sample counts must be powers of two by default. Set
+`allow_arbitrary_count=True` only when that loss of balance is intentional.
+Randomized-QMC uncertainty is computed across independently scrambled replicates.
+Unscrambled QMC is deterministic, permits one replicate, and reports no uncertainty.
+The estimate's evaluation count includes every replicate.
+
+## Importance sampling and weighted samples
+
+```python
+probability = phx.domain.ProbabilityDomain(
+    phx.uq.Normal(0.0, 1.0),
+    label="z",
+)
+proposal = phx.uq.Normal(0.0, 2.0)
+
+@probability.Function("z")
+def field(z):
+    return z**2
+
+plan = phx.integration.ImportanceSamplingPlan(
+    4096,
+    proposal,
+    self_normalized=True,
+)
+estimate = phx.integration.integrate(
+    field,
+    phx.integration.expectation(probability),
+    plan,
+    key=jr.key(3),
+)
+```
+
+Importance materialization retains raw target-to-proposal log ratios. Log weights are
+normalized with a log-sum-exp calculation only during reduction. Diagnostics include
+the estimated normalizer, normalizer error, entropy, coefficient of variation,
+maximum normalized weight, effective sample size, finite-weight counts, and full
+log-weighted moment diagnostics.
+
+Self-normalization changes the estimand: it is a ratio estimator, not an unbiased
+substitute for an ordinary importance estimate. Strict support handling is the only
+supported policy. Built-in distributions combine support metadata with deterministic
+target-quantile checks and report `PROPOSAL_SUPPORT_FAILURE`. Custom distributions
+must provide truthful `support`, `contains`, and `icdf` semantics; black-box support
+cannot be inferred exactly from finite samples.
+
+For external weighted samples, use `weighted(...)`; this API accepts raw log
+weights, explicit sample axes, masks, target mass, support validity, and
+producer-owned stratum, pair, replicate, and ancestry IDs. Set
+`independent=True` only when the sampled units genuinely have independent
+provenance. Otherwise Phydrax returns the estimate and weight diagnostics but
+deliberately leaves `error_estimate=None`. Effective sample size diagnoses
+weight degeneracy; it never certifies independence. Use `from_samples(...)`
+separately to attach authoritative component-measure weights to an existing
+structured point batch.
+
+## External discrete and weighted measures
+
+`discrete(...)` and `weighted(...)` are already-materialized targets. They take
+no integration plan and consume no random key:
+
+```python
+import coordax as cx
+import jax.numpy as jnp
+
+nodes = cx.Field(jnp.asarray([0.0, 0.5, 1.0]), dims=("node",))
+weights = cx.Field(jnp.asarray([0.25, 0.5, 0.25]), dims=("node",))
+target = phx.integration.discrete(nodes, weights, axes="node")
+estimate = phx.integration.integrate(lambda x: x**2, target)
+
+samples = cx.Field(
+    jnp.arange(2 * 4, dtype=float).reshape((2, 4)),
+    dims=("case", "particle"),
+)
+log_weights = cx.Field(jnp.zeros((2, 4)), dims=("case", "particle"))
+empirical = phx.integration.weighted(
+    samples,
+    log_weights,
+    sample_axes="particle",
+    independent=False,
+)
+means = phx.integration.integrate(lambda values: values, empirical)
+```
+
+Named weight fields make reduced and retained axes explicit. A target may
+reduce several sample axes at once; every other weight axis is retained.
+Masks are evaluated per retained slice. An empty slice reports
+`NO_VALID_SAMPLES`, an included invalid log weight reports `INVALID_WEIGHTS`,
+and an included nonfinite value reports `NONFINITE_INTEGRAND`. Masked or
+zero-weight nonfinite values do not poison a valid reduction.
+
+`normalized=True` computes a weighted mean. With `normalized=False`, supplied
+`target_mass` scales the normalized mean to a known physical mass; without
+`target_mass`, raw log weights define the ordinary sample-mean estimator.
+Self-normalization, known-mass scaling, and raw-weight estimation are distinct
+estimands.
+
+## Trajectory, filtering, time, and spatial measures
+
+Producer adapters expose existing stochastic and spatial objects without
+resampling them:
+
+```python
+trajectory = phx.stochastic.StochasticTrajectory(
+    jnp.asarray([0.0, 0.4, 1.0]),
+    jnp.arange(2 * 3 * 4, dtype=float).reshape((2, 3, 4)),
+    realization_axes=("path",),
+    realization_shape=(2,),
+    state_axes=("space",),
+    realizations=(None,),
+)
+marginal = phx.stochastic.trajectory_measure(trajectory, mode="marginal")
+path = phx.stochastic.trajectory_measure(trajectory, mode="path")
+time = phx.stochastic.time_measure(trajectory, rule="trapezoid")
+
+marginal_mean = phx.integration.integrate(lambda states: states, marginal)
+time_integrals = phx.integration.integrate(path.samples, time)
+path_expectation = phx.integration.integrate(time_integrals.value, path)
+
+space_axis = phx.domain.FourierAxisSpec(4).materialize(0.0, 1.0)
+spatial_discretization = phx.solver.TensorGridDiscretization((space_axis,))
+space = phx.solver.spatial_measure(
+    spatial_discretization,
+    spatial_dims="space",
+)
+spatial_integrals = phx.integration.integrate(path.samples, space)
+```
+
+For a `ParticleFilterResult` named `filter_result`,
+`phx.uq.particle_posterior_measure(filter_result)` returns a weighted target;
+integrating a particle observable against it retains case and filtering-time
+axes.
+
+Marginal trajectory measures retain time and mask failed states independently.
+Path measures exclude an entire path after any failed saved state. IID standard
+errors are enabled only when trajectory realization metadata declares distinct
+independent path units. Missing, antithetic, coupled, or shared-noise metadata
+suppresses the standard error.
+
+`time_measure(...)` uses each path's saved schedule and supports left-point and
+trapezoid rules on strictly increasing irregular times. Validity masks must be
+contiguous prefixes; fewer than two active nodes produce
+`NO_VALID_SAMPLES`. `spatial_measure(...)` reuses deterministic physical
+quadrature, including separable tensor-grid weights, and reports fixed
+diagnostics. Particle posterior measures retain physical case and filtering
+time axes, preserve ancestry, mask failed steps and particles, and always
+suppress IID uncertainty because filtering particles are dependent.
+
+Reductions compose without a fused product abstraction. For a stochastic
+field, reduce space first, then sampled time, then complete paths. Each stage
+retains every axis needed by the next stage and contains failures through its
+mask and status.
+
+## Sparse grids and product plans
+
+A Smolyak sparse grid integrates several coupled scalar axes with nested
+Clenshaw--Curtis rules:
+
+```python
+plan = phx.integration.SparseGridPlan(3, 5)
+```
+
+Its deterministic error indicator is the difference from the previous nested level.
+This is reported as `error_kind="sparse-grid-level-difference"`; it is not a
+statistical standard error.
+
+Anisotropic plans use a downward-closed hierarchical-difference index set, so they
+preserve constants under the same measure semantics as isotropic plans. Sparse grids
+support interior scalar/probability factors and fixed slices; boundary selectors
+require a boundary-capable fixed plan.
+
+Use `ProductIntegrationPlan` when factor groups need different methods:
+
+```python
+plan = phx.integration.ProductIntegrationPlan(
+    {
+        ("x", "y"): phx.integration.SparseGridPlan(2, 4),
+        "t": phx.integration.FixedQuadraturePlan(
+            phx.integration.GaussLegendreRule(8)
+        ),
+    }
+)
+```
+
+Axis groups must be disjoint and cover every active label exactly once. Fixed labels
+need no plan. Mixed deterministic/stochastic products preserve the stochastic axis in
+the reduction and compute uncertainty only after deterministic factors have been
+integrated out. Randomized-QMC factors need independent replicates before the product
+estimate can report uncertainty.
+
+Product plans honor `target.axes`: only selected factor axes and their geometry
+corrections are reduced. Control variates are supported by direct Monte Carlo and QMC
+plans, but are rejected inside product factors rather than silently ignored.
+
+## Mapped reference cells and CAD boundaries
+
+`mapped(reference_rule, mapping, jacobian)` handles arbitrary supplied
+reference-to-physical maps. `CellQuadraturePlan` selects the reference rule used for
+the mapped realization.
+
+Supplying `target_mass=` makes that mass authoritative: mapped weights are rescaled
+to it, and diagnostics report the same physical mass.
+
+CAD geometries expose chart atlases internally. Boundary lowering maps reference
+nodes through every segment or face chart, multiplies by chart Jacobians, and honors
+trim masks. Measure-zero chart seams are not sampled twice. For analytic geometry,
+physical boundary weights and normals are derived from the geometry's measure
+partition.
+
+## Estimate contract and failures
+
+Every `IntegrationEstimate` contains:
+
+- `value`: a `coordax.Field`, or an integrand-matching PyTree of fields, preserving
+  non-integrated output axes and dtypes;
+- `status` and `successful`;
+- `num_evaluations`;
+- `error_estimate` and `error_kind`, when the method justifies them;
+- typed method-specific `diagnostics`;
+- `provenance` identifying the method, target kind, and realization.
+
+Inside compiled code, branch with JAX control flow on the array-valued `status` or
+`successful` fields. Convert a concrete status to a message only outside compiled
+execution:
+
+```python
+ok = estimate.successful
+message = phx.integration.status_message(estimate.status)
+```
+
+`IntegrationStatus` distinguishes non-finite integrands, invalid normalization mass,
+invalid bounds or weights, exhausted adaptive budgets, proposal-support failures, and
+unsampled strata. A deterministic rule never fabricates a variance estimate from its
+node values.
+
+## Integral objectives
+
+`phx.objectives.IntegralFunctional` accepts the same `target` and `plan`.
+`materialization_policy="fixed"` reuses one realization across objective calls;
+`"per_step"` materializes from the call key; and `"caller"` requires an explicit
+realization. Raw signed integral functionals are added directly to `FunctionalSolver`;
+residual constraints remain nonnegative losses.
+
+The local, nonlocal, spatial, and time-convolution operators under
+`phx.operators` remain field-transform operators. They are separate from the global
+measure-aware integration API described here.

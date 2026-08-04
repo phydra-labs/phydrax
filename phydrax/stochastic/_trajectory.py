@@ -281,6 +281,16 @@ class StochasticTrajectory(StrictModule):
         return jnp.all(self.valid, axis=-1)
 
     @property
+    def marginal_valid(self) -> Array:
+        """Per-saved-state eligibility for marginal empirical reductions."""
+        return self.valid
+
+    @property
+    def path_valid(self) -> Array:
+        """Per-path eligibility for complete-path empirical reductions."""
+        return self.successful
+
+    @property
     def trajectory_ids(self) -> tuple[str, ...]:
         out: list[str] = []
         for case_id, realization in zip(self.case_ids, self.realizations, strict=True):

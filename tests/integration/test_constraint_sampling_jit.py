@@ -11,6 +11,7 @@ import jax.tree_util as jtu
 from phydrax.constraints import (
     ContinuousDirichletBoundaryConstraint,
     ContinuousInitialConstraint,
+    FunctionalConstraint,
     IntegralEqualityConstraint,
 )
 from phydrax.constraints._continuous_interior import ContinuousPointwiseInteriorConstraint
@@ -21,10 +22,21 @@ from phydrax.domain import (
     Interval1d,
     PointsBatch,
     ProductStructure,
-    QuadratureBatch,
     TimeInterval,
 )
+from phydrax.domain._function import BatchAwareCallable
 from phydrax.domain._structure import CoordSeparableBatch
+
+
+class _KeyConsumingResidual(BatchAwareCallable):
+    def __call_batch__(self, batch, /, *, key, **kwargs):
+        del kwargs
+        reference = batch["x"]
+        draw = jr.uniform(key)
+        return cx.Field(
+            jnp.broadcast_to(draw, reference.data.shape),
+            dims=reference.dims,
+        )
 
 
 def _sum_fields(tree) -> jnp.ndarray:
@@ -44,7 +56,7 @@ def _jit_sample_sum(constraint):
             for item in batch:
                 total = total + _sum_fields(item.points)
             return total
-        if isinstance(batch, (PointsBatch, QuadratureBatch, CoordSeparableBatch)):
+        if isinstance(batch, (PointsBatch, CoordSeparableBatch)):
             return _sum_fields(batch.points)
         return _sum_fields(batch)
 
@@ -129,3 +141,50 @@ def test_sampling_jit_integral_constraint():
     )
     total = _jit_sample_sum(constraint)
     assert jnp.isfinite(total)
+
+
+def test_functional_constraint_splits_sampling_and_evaluation_keys():
+    geom = Interval1d(0.0, 1.0)
+    component = geom.component()
+    structure = ProductStructure((("x",),))
+    function = geom.Function("x")(_KeyConsumingResidual())
+    constraint = FunctionalConstraint.from_operator(
+        component=component,
+        operator=lambda u: u,
+        constraint_vars="u",
+        num_points=8,
+        structure=structure,
+    )
+    caller_key = jr.key(21)
+    _, evaluation_key = jr.split(caller_key)
+
+    sampled_loss = constraint.loss({"u": function}, key=caller_key)
+    supplied_batch = constraint.sample(key=jr.key(22))
+    supplied_loss = constraint.loss(
+        {"u": function},
+        key=caller_key,
+        batch=supplied_batch,
+    )
+
+    assert jnp.allclose(sampled_loss, jr.uniform(evaluation_key) ** 2, atol=1e-14)
+    assert jnp.allclose(supplied_loss, jr.uniform(caller_key) ** 2, atol=1e-14)
+
+
+def test_integral_constraint_splits_sampling_and_evaluation_keys():
+    geom = Interval1d(0.0, 1.0)
+    component = geom.component()
+    structure = ProductStructure((("x",),))
+    function = geom.Function("x")(_KeyConsumingResidual())
+    constraint = IntegralEqualityConstraint.from_operator(
+        component=component,
+        operator=lambda u: u,
+        constraint_vars="u",
+        num_points=8,
+        structure=structure,
+    )
+    caller_key = jr.key(23)
+    _, evaluation_key = jr.split(caller_key)
+
+    loss = constraint.loss({"u": function}, key=caller_key)
+
+    assert jnp.allclose(loss, jr.uniform(evaluation_key) ** 2, atol=1e-14)

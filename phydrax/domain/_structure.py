@@ -230,63 +230,6 @@ class PointsBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
         return len(self.points)
 
 
-class QuadratureBatch(StrictModule):
-    r"""Quadrature weights associated with a `PointsBatch`.
-
-    A `QuadratureBatch` stores one 1D weight field per sampling axis. The total
-    tensor-product weight is
-
-    $$
-    w(z) = \prod_{a \in \mathcal{A}} w_a,
-    $$
-
-    where each $w_a$ is a `coordax.Field` with dims `(a,)`. These weights are used by
-    integral estimators such as `phydrax.operators.integral`.
-    """
-
-    batch: PointsBatch
-    weights_by_axis: frozendict[str, cx.Field]
-
-    def __init__(
-        self,
-        batch: PointsBatch,
-        *,
-        weights_by_axis: frozendict[str, cx.Field] | Mapping[str, cx.Field],
-    ):
-        weights = frozendict(weights_by_axis)
-        axis_names = batch.structure.axis_names
-        if axis_names is None:
-            raise ValueError(
-                "QuadratureBatch requires a canonicalized ProductStructure (axis_names set)."
-            )
-        for axis, w in weights.items():
-            if axis not in axis_names:
-                raise ValueError(
-                    "Quadrature weights provided for unknown axis "
-                    f"{axis!r}; expected one of {axis_names}."
-                )
-            if not isinstance(w, cx.Field):
-                raise TypeError(
-                    f"Quadrature weight for axis {axis!r} must be a coordax.Field."
-                )
-            if w.dims != (axis,):
-                raise ValueError(
-                    f"Quadrature weight for axis {axis!r} must have dims ({axis!r},), got {w.dims}."
-                )
-        self.batch = batch
-        self.weights_by_axis = weights
-
-    def total_weight(self) -> cx.Field:
-        r"""Return the product weight field.
-
-        If `weights_by_axis = {a: w_a}`, returns $w=\prod_a w_a$ as a `coordax.Field`.
-        """
-        w_total = cx.Field(jnp.array(1.0, dtype=float), dims=())
-        for w in self.weights_by_axis.values():
-            w_total = w_total * w
-        return w_total
-
-
 class CoordSeparableBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
     r"""A batch that separates coordinate axes for selected geometry labels.
 
@@ -419,12 +362,8 @@ class CoordSeparableBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
             )
         for label, order in geometry_order_by_label.items():
             if int(order) <= 0:
-                raise ValueError(
-                    f"Geometry probe order for {label!r} must be positive."
-                )
-        unknown_geometry_weights = (
-            geometry_weight_by_label.keys() - axes_by_label.keys()
-        )
+                raise ValueError(f"Geometry probe order for {label!r} must be positive.")
+        unknown_geometry_weights = geometry_weight_by_label.keys() - axes_by_label.keys()
         if unknown_geometry_weights:
             raise ValueError(
                 "Found geometry weights for unknown coord-separable labels "
@@ -469,7 +408,6 @@ __all__ = [
     "NumPoints",
     "ProductStructure",
     "PointsBatch",
-    "QuadratureBatch",
     "CoordSeparableBatch",
     "_axis_name_for_coord",
 ]

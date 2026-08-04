@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 import coordax as cx
 import jax.numpy as jnp
+import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
 from .._doc import DOC_KEY0
@@ -20,7 +21,7 @@ from ..domain._structure import (
     PointsBatch,
     ProductStructure,
 )
-from ..operators.integral._batch_ops import integral, mean
+from ..integration import from_samples, mean_over, over, reduce
 from ._adaptive import AbstractCollocationPolicy
 from ._base import AbstractSamplingConstraint
 from ._data_metrics import supervised_data_metrics
@@ -421,9 +422,7 @@ class FunctionalConstraint(AbstractSamplingConstraint):
     ) -> cx.Field:
         """Return the unreduced squared Frobenius residual on ``batch``."""
         residual = self._residual_function(functions)
-        out = _SquaredFrobeniusResidual(residual).__call_batch__(
-            batch, key=key, **kwargs
-        )
+        out = _SquaredFrobeniusResidual(residual).__call_batch__(batch, key=key, **kwargs)
         if self.pointwise_weight is not None:
             weight = self.pointwise_weight
             if weight.domain.labels != residual.domain.labels:
@@ -459,7 +458,12 @@ class FunctionalConstraint(AbstractSamplingConstraint):
         4) reduces using either a mean or an integral estimator.
         """
         res = self._residual_function(functions)
-        batch_ = self.sample(key=key) if batch is None else batch
+        if batch is None:
+            sampling_key, evaluation_key = jr.split(key)
+            batch_ = self.sample(key=sampling_key)
+        else:
+            batch_ = batch
+            evaluation_key = key
         residual_callable: BatchAwareCallable
         if batch_weight is None:
             residual_callable = _SquaredFrobeniusResidual(res)
@@ -481,24 +485,13 @@ class FunctionalConstraint(AbstractSamplingConstraint):
             if w.domain.labels != f.domain.labels:
                 w = w.promote(f.domain)
             f = w * f
-        if self.reduction == "mean":
-            out = mean(
-                f,
-                batch_,
-                component=self.component,
-                over=self.over,
-                key=key,
-                **kwargs,
-            )
-        else:
-            out = integral(
-                f,
-                batch_,
-                component=self.component,
-                over=self.over,
-                key=key,
-                **kwargs,
-            )
+        target = (
+            mean_over(self.component, axes=self.over)
+            if self.reduction == "mean"
+            else over(self.component, axes=self.over)
+        )
+        realization = from_samples(target, batch_, key=evaluation_key)
+        out = reduce(f, realization, **kwargs).value
         if not isinstance(out, cx.Field):
             raise TypeError("Expected reduction to return a coordax.Field.")
         if out.dims != ():

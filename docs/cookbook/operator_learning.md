@@ -57,10 +57,8 @@ For this runnable example, we choose a simple analytic “operator” that maps 
     # Supervised target u_true(data, x): analytic mapping from coefficients to a function of x
     @domain.Function("data", "x")
     def u_true(c, x):
-        x_axis = x[0]
         ks = jnp.arange(1, K + 1, dtype=float)
-        basis = jnp.sin(jnp.pi * ks[:, None] * x_axis[None, :])  # (K, nx)
-        return basis.T @ c  # (nx,)
+        return jnp.sum(c * jnp.sin(jnp.pi * ks * x[0]))
 
     # Supervised residual on Ω_data × Ω_x.
     def residual(u_f):

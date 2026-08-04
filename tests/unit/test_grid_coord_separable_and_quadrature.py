@@ -11,6 +11,7 @@ from phydrax.domain import (
     ProductStructure,
     TimeInterval,
 )
+from phydrax.integration import from_samples, over
 from phydrax.operators.integral import integral
 
 
@@ -42,7 +43,8 @@ def test_coord_separable_legendre_axis_spec_integral_matches_closed_form():
         return x[0] ** 2
 
     batch = component.sample_coord_separable({"x": LegendreAxisSpec(6)})
-    out = integral(u, batch, component=component)
+    realization = from_samples(over(component), batch)
+    out = integral(u, realization)
     expected = (2.0**3 - (-1.0) ** 3) / 3.0
     assert jnp.allclose(jnp.asarray(out.data), expected, rtol=1e-7, atol=1e-7)
 
@@ -77,5 +79,6 @@ def test_coord_separable_scalar_time_axis_integral_constant():
         num_points=5,
         dense_structure=ProductStructure((("x",),)),
     )
-    out = integral(u, batch, component=component)
+    realization = from_samples(over(component), batch)
+    out = integral(u, realization)
     assert jnp.allclose(jnp.asarray(out.data), 2.0, rtol=1e-7, atol=1e-7)

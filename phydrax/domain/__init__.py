@@ -44,7 +44,7 @@ from . import (
     graph,
 )
 from ._base import GeometryTransitionKind, GeometryTransitionResult
-from ._chart import CADChartAtlas, CADChartQuadrature
+from ._chart import CADChartAtlas
 from ._components import (
     Boundary,
     ComponentSpec,
@@ -86,7 +86,6 @@ from ._structure import (
     CoordSeparableBatch,
     PointsBatch,
     ProductStructure,
-    QuadratureBatch,
 )
 from ._time import TimeInterval
 from ._trajectory_dataset import (
@@ -177,10 +176,8 @@ __all__ = [
     "HyperRectangle",
     "GeometryMeasurePartition",
     "CADChartAtlas",
-    "CADChartQuadrature",
     "ProductStructure",
     "PointsBatch",
-    "QuadratureBatch",
     "CoordSeparableBatch",
     # grid/basis specs
     "AbstractAxisSpec",

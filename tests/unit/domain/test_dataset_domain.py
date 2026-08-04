@@ -7,6 +7,7 @@ import jax.random as jr
 
 from phydrax.domain import DatasetDomain, FourierAxisSpec, Interval1d, ProductStructure
 from phydrax.domain._dataset import DATASET_INDEX_KEY
+from phydrax.integration import from_samples, over
 from phydrax.operators.integral import integral
 
 
@@ -47,7 +48,8 @@ def test_dataset_domain_integral_probability_measure_is_average():
 
     batch = component.sample(3, structure=structure, key=jr.key(0))
     u = dom.Function()(1.0)
-    out = integral(u, batch, component=component)
+    realization = from_samples(over(component), batch)
+    out = integral(u, realization)
     assert jnp.allclose(jnp.asarray(out.data), 1.0)
 
 
@@ -59,7 +61,8 @@ def test_dataset_domain_integral_count_measure_is_sum():
 
     batch = component.sample(3, structure=structure, key=jr.key(0))
     u = dom.Function()(1.0)
-    out = integral(u, batch, component=component)
+    realization = from_samples(over(component), batch)
+    out = integral(u, realization)
     assert jnp.allclose(jnp.asarray(out.data), 5.0)
 
 

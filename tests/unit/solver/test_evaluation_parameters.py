@@ -19,11 +19,10 @@ def _scalar_solver(initial: float, *, target: float = 0.0, integrand=None):
         else integrand
     )
     objective = phx.objectives.IntegralFunctional(
-        component=domain.component(),
+        target=phx.integration.over(domain.component()),
+        plan=phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(8)),
         integrand=density,
-        num_points={"x": phx.domain.LegendreAxisSpec(8)},
-        structure=phx.domain.ProductStructure((("x",),)),
-        sampling_mode="fixed",
+        materialization_policy="fixed",
     )
     return phx.solver.FunctionalSolver(
         functions={"u": field},

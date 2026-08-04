@@ -70,6 +70,13 @@ explicit smoothing semantics.
 
 ::: phydrax.uq.particle_filter_diagnostics
 
+`particle_posterior_measure` exposes forecast particles and posterior log
+weights as a planless weighted integration target. It retains case and filtering
+time axes, masks inactive or failed particles, preserves ancestor indices, and
+does not report an IID standard error.
+
+::: phydrax.uq.particle_posterior_measure
+
 ## Ensemble transform filtering
 
 The deterministic ensemble transform Kalman filter performs analysis solves in
