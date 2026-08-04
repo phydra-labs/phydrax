@@ -768,6 +768,22 @@ constructor-fixed; this is a fixed-discretization transition density, not an
 arbitrary-query neural operator. Retain it only when held-out distributional
 metrics improve over the Gaussian baseline.
 
+`LatentFlowJAXCoefficientProcess` is the finite-dimensional process counterpart.
+It wraps a conditional FlowJAX residual law over a latent coefficient state.
+`conditional_coupling_flow_process` supplies the standard current-state and
+time conditioner with an identity residual location. The class implements
+`AbstractMarginalTransitionLaw` only: it does not invent a pathwise driver or
+cocycle from independent transition samples. Use `semigroup_objective` to train
+or diagnose Chapman--Kolmogorov consistency.
+
+`OperatorTransitionSpec`, `OperatorMarginalTransition`, and
+`OperatorPathwiseTransition` connect these complete-field models to the common
+stochastic-process contracts without adding stochastic semantics to the
+architecture itself. Marginal rollouts are Markov chains; only a pathwise
+adapter driven by one explicit `WienerRealization` carries common-path and
+cocycle provenance. See
+[Neural-operator uncertainty](../uq/operator.md#process-consistent-operator-transitions).
+
 `PDEConditionEncoder` embeds canonical `PDETokenBatch` trees.
 `attach_pde_condition` adds the encoded result as a named, one-anchor
 `FunctionSamples` branch. The downstream model must be configured to consume
@@ -869,6 +885,30 @@ neural semantic channel.
 ---
 
 ::: phydrax.nn.conditional_coupling_flow_operator
+
+---
+
+::: phydrax.nn.StateTimeProcessConditioner
+
+---
+
+::: phydrax.nn.IdentityCoefficientTransition
+
+---
+
+::: phydrax.nn.LatentFlowJAXCoefficientProcess
+    options:
+        members:
+            - __init__
+            - marginal_transition
+
+---
+
+::: phydrax.nn.FlowJAXProcessDistribution
+
+---
+
+::: phydrax.nn.conditional_coupling_flow_process
 
 ---
 

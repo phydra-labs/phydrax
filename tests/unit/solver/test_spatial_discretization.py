@@ -75,6 +75,46 @@ def test_tensor_grid_laplacian_preserves_channels_and_compiles():
     assert jnp.allclose(actual, expected, atol=5e-11)
 
 
+def test_tensor_eigenpairs_use_exact_separable_modes_and_stable_ordering():
+    x_axis = phx.domain.FourierAxisSpec(32).materialize(0.0, 1.0)
+    y_axis = phx.domain.CosineAxisSpec(33).materialize(0.0, 1.0)
+    discretization = phx.solver.TensorGridDiscretization((x_axis, y_axis))
+
+    eigenvalues, modes = discretization.eigenpairs(rank=8)
+    flattened = modes.reshape((discretization.num_points, 8))
+    weights = discretization.quadrature_weights.reshape((-1, 1))
+
+    assert modes.shape == (32, 33, 8)
+    assert jnp.allclose(
+        eigenvalues[:5],
+        jnp.asarray([0.0, jnp.pi**2, 4.0 * jnp.pi**2] + [4.0 * jnp.pi**2] * 2),
+        atol=1e-12,
+    )
+    assert jnp.allclose(flattened.T @ (weights * flattened), jnp.eye(8), atol=1e-12)
+    assert jnp.allclose(
+        discretization.laplacian(modes),
+        -modes * eigenvalues,
+        atol=2e-9,
+    )
+
+
+def test_tensor_eigenpairs_scale_to_large_product_grids_at_low_rank():
+    axes = tuple(phx.domain.FourierAxisSpec(64).materialize(0.0, 1.0) for _ in range(2))
+    discretization = phx.solver.TensorGridDiscretization(axes)
+
+    eigenvalues, modes = discretization.eigenpairs(rank=6)
+
+    assert discretization.num_points == 4096
+    assert eigenvalues.shape == (6,)
+    assert modes.shape == (64, 64, 6)
+
+    long_axis = phx.domain.FourierAxisSpec(10_000).materialize(0.0, 1.0)
+    long_grid = phx.solver.TensorGridDiscretization((long_axis,))
+    long_eigenvalues, long_modes = long_grid.eigenpairs(rank=4)
+    assert long_eigenvalues.shape == (4,)
+    assert long_modes.shape == (10_000, 4)
+
+
 def test_explicit_laplacian_agrees_with_matrix_free_application():
     axis = phx.domain.UniformAxisSpec(
         7,

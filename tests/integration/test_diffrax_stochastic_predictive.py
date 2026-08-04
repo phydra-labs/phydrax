@@ -11,20 +11,29 @@ def test_diffrax_ensemble_converts_to_process_predictive_field():
         jnp.asarray([1.0, -1.0]),
         t0=0.0,
         t1=0.5,
-        diffusion=lambda t, state, args: 0.2 * jnp.eye(2),
+        wiener_terms=(
+            phx.solver.WienerTerm(
+                "state-space",
+                lambda t, state, args: 0.2 * jnp.eye(2),
+                (2,),
+                structure="additive",
+                basis_id="state-space",
+            ),
+        ),
         interpretation="ito",
     )
     solution = phx.solver.solve_diffrax_ensemble(
         problem,
         save_times=jnp.asarray([0.0, 0.25, 0.5]),
-        driver=phx.solver.WienerDriver(
+        realization=phx.stochastic.WienerRealization(
             jr.key(12),
             (2,),
+            support=(0.0, 0.5),
+            sample_shape=(32,),
             tolerance=1e-3,
-            basis_id="state-space",
-            realization_id="integration-test",
+            noise_id="state-space",
+            label="integration-test",
         ),
-        num_paths=32,
         dt0=0.01,
     )
     predictive = solution.to_predictive(

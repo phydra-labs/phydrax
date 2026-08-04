@@ -1,6 +1,7 @@
 import jax.numpy as jnp
 import jax.random as jr
 import optax
+import pytest
 
 import phydrax as phx
 
@@ -192,3 +193,60 @@ def test_fokker_planck_constraint_composes_with_explicit_density_normalization()
     )
 
     assert solver.loss(key=jr.key(13)) < 1e-12
+
+
+def test_probability_flux_boundary_constraint_enforces_reflecting_current():
+    domain = phx.domain.Interval1d(-2.0, 2.0)
+    component = domain.component({"x": phx.domain.Boundary()})
+    structure = phx.domain.ProductStructure((("x",),))
+    theta, sigma = 0.8, 0.6
+    density = domain.Function("x")(lambda x: jnp.exp(-theta * x[0] ** 2 / sigma**2))
+    drift = domain.Function("x")(lambda x: jnp.asarray([-theta * x[0]]))
+    diffusion = domain.Function("x")(lambda x: jnp.asarray([[sigma]]))
+    constraint = phx.constraints.ContinuousProbabilityFluxBoundaryConstraint(
+        "p",
+        component,
+        drift=drift,
+        diffusion=diffusion,
+        num_points=16,
+        structure=structure,
+        sampling_mode="fixed",
+        fixed_batch_key=jr.key(14),
+    )
+
+    assert constraint.loss({"p": density}, key=jr.key(15)) < 1e-12
+
+
+def test_pointwise_spde_residual_rejects_rough_or_non_strong_solution_concepts():
+    domain = phx.domain.Interval1d(0.0, 1.0)
+    structure = phx.domain.ProductStructure((("x",),))
+    rough = phx.stochastic.SPDESolutionSpec(
+        "mild",
+        noise_regularization="space_time_white",
+        cutoff_id="fourier:64",
+    )
+
+    with pytest.raises(ValueError, match="pointwise strong residual"):
+        phx.constraints.ContinuousPointwiseInteriorConstraint(
+            "u",
+            domain,
+            lambda u: u,
+            num_points=8,
+            structure=structure,
+            solution_spec=rough,
+        )
+
+    regularized = phx.stochastic.SPDESolutionSpec(
+        "strong",
+        noise_regularization="finite_rank",
+        cutoff_id="fourier:64",
+    )
+    constraint = phx.constraints.ContinuousPointwiseInteriorConstraint(
+        "u",
+        domain,
+        lambda u: u,
+        num_points=8,
+        structure=structure,
+        solution_spec=regularized,
+    )
+    assert isinstance(constraint, phx.constraints.FunctionalConstraint)

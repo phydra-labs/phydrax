@@ -197,6 +197,7 @@ from ._stochastic import (
     CoefficientField,
     ContinuousFokkerPlanckConstraint,
     ContinuousKolmogorovConstraint,
+    ContinuousProbabilityFluxBoundaryConstraint,
 )
 from ._supervised_dataset import (
     SupervisedDatasetBatch,
@@ -282,6 +283,7 @@ __all__ = [
     "CFDKineticEnergyFluxBoundaryConstraint",
     "CoefficientField",
     "ContinuousFokkerPlanckConstraint",
+    "ContinuousProbabilityFluxBoundaryConstraint",
     "ContinuousKolmogorovConstraint",
     "ContinuousODEConstraint",
     "DiscreteODEConstraint",

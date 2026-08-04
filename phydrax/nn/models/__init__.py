@@ -43,6 +43,13 @@ from .architectures._flowjax_operator import (
     FlowJAXOperatorDistribution,
     OperatorBatchConditioner,
 )
+from .architectures._flowjax_process import (
+    conditional_coupling_flow_process,
+    FlowJAXProcessDistribution,
+    IdentityCoefficientTransition,
+    LatentFlowJAXCoefficientProcess,
+    StateTimeProcessConditioner,
+)
 from .architectures._fno import (
     AxialFactorizedFNO,
     FNO,
@@ -315,6 +322,11 @@ from .wrappers._sequential import Sequential
 
 
 __all__ = [
+    "conditional_coupling_flow_process",
+    "FlowJAXProcessDistribution",
+    "IdentityCoefficientTransition",
+    "LatentFlowJAXCoefficientProcess",
+    "StateTimeProcessConditioner",
     "AxialFactorizedFNO",
     "IFNO",
     "IFNOConvergence",

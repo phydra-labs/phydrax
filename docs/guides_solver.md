@@ -10,13 +10,18 @@ This guide explains how `FunctionalSolver` evaluates losses and how `solve()` up
 | --- | --- | --- |
 | `FunctionalSolver` | Parameters minimizing residual, data, integral, and model-loss terms | PINNs, inverse problems, variational objectives |
 | `solve_diffrax` | One finite-dimensional ODE/SDE trajectory | Numerical reference solves, differentiable simulation |
-| `solve_diffrax_ensemble` | Independent SDE trajectories with retained driver provenance | Process uncertainty, stochastic transition data |
+| `solve_diffrax_ensemble` | Coupled SDE trajectories with retained realization provenance | Process uncertainty, stochastic transition data |
 
-An SDE is specified by `DifferentialProblem(drift, initial_state, diffusion=...)`
-and an explicit `WienerDriver`. The driver owns the Brownian key, finite noise
-shape, approximation tolerance, optional Levy-area kind, and basis/realization
-metadata. Reusing it replays the path. The default Itô and Stratonovich methods
-are fixed-step Euler--Maruyama and Euler--Heun, so `dt0` is required; pass native
+An SDE is specified by `DifferentialProblem` with one or more named `WienerTerm`
+objects and an explicit `phx.stochastic.WienerRealization`. The problem declares
+coefficient shapes and Itô/Stratonovich semantics. The realization owns a global
+support interval, Brownian root key, sample shape, approximation tolerance,
+Lévy-area level, and optional noise-basis identity. Reusing it over subintervals,
+models, or discretizations queries the same global paths.
+
+The default Itô and Stratonovich methods are fixed-step Euler--Maruyama and
+Euler--Heun, so `dt0` is required. Phydrax rejects interpretation, basis, support,
+fixed-step tolerance, and Lévy-area mismatches before entering Diffrax. Pass native
 Diffrax solver, controller, event, and adjoint objects when a different method is
 needed.
 

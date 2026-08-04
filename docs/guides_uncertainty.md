@@ -71,12 +71,16 @@ spde = phx.solver.semidiscretize_reaction_diffusion(
     kappa=0.02,
     noise_basis=noise,
 )
-driver = spde.wiener_driver(jr.key(0), realization_id="heat-0")
+realization = spde.wiener_realization(
+    jr.key(0),
+    sample_shape=(128,),
+    tolerance=1e-4,
+    label="heat-0",
+)
 solution = phx.solver.solve_diffrax_ensemble(
     spde.problem,
     save_times=jnp.linspace(0.0, 0.2, 21),
-    driver=driver,
-    num_paths=128,
+    realization=realization,
     dt0=1e-3,
 )
 prediction = solution.to_predictive(
@@ -86,10 +90,21 @@ prediction = solution.to_predictive(
 )
 ```
 
-Reusing the same driver reproduces every Brownian path; changing its key changes
-the realization. `basis_id` records the spatial noise modes, eigenvalues,
-quadrature, and discretization identity. A refined grid or changed truncation
-therefore receives a different fingerprint.
+Reusing the same realization reproduces every Brownian path, including across
+subinterval solves. Changing its root key changes the realization. `noise_id`
+records the spatial noise modes, eigenvalues, quadrature, and discretization identity.
+A refined grid or changed truncation therefore receives a different fingerprint and
+cannot be paired accidentally.
+
+For tensor grids, `space.eigenpairs(rank=...)` forms exact separable modes and
+selects only the requested lowest tensor sums. Kernel-defined covariance uses
+`SpatialNoiseBasis.from_kernel_covariance`, whose Matfree pivoted-Cholesky path
+queries entries on demand. A covariance available only as a state-shaped matvec
+uses `SpatialNoiseBasis.from_covariance_operator(..., key=..., oversampling=...)`
+and randomized Nyström. Both routes expose their method, rank, tolerance,
+residual estimate, convergence flag, and seed/sketch provenance through
+`noise.approximation`; check that record before treating a truncation as
+numerically adequate.
 
 The path axis alone says nothing about numerical uncertainty. To quantify
 spatial truncation, time stepping, or solver error, run an explicit discretization
@@ -99,6 +114,450 @@ different questions.
 
 For the full method-of-lines and noise-basis contracts, see
 [API → Solver → Differential equations](api/solver/differential.md).
+
+
+### Semilinear integration, trajectories, and convergence
+
+When the semidiscrete drift has a meaningful split
+\(F_h(U)=A_hU+N_h(U)\), preserve it with
+`semidiscretize_semilinear_spde`. `solve_semilinear_spde` then selects a
+fixed-step exponential-Euler path when all of the following are declared:
+
+- Itô interpretation and additive finite-rank noise;
+- an explicit `SemilinearDrift` with a stable `operator_id`;
+- a matrix-function policy for applying \(\exp(hA_h)\) and
+  \(\varphi_1(hA_h)\) without assembling a global operator matrix;
+- compatible noise/operator eigenvalues for exact modal stochastic convolution.
+
+Exact tensor/spectral action is used when supplied. Otherwise the matrix-function
+policy selects Chebyshev for bounded self-adjoint operators, Lanczos for
+mass-self-adjoint operators, or Arnoldi for general operators. Unsupported
+specializations lower to the validated Diffrax path by default; set
+`fallback="error"` when silent lowering would invalidate an experiment.
+
+`DifferentialSolution.to_stochastic_trajectory()` converts solver output into
+`StochasticTrajectory`, whose array contract is
+`case_shape + realization_shape + (time,) + state_shape`. It retains physical
+case IDs, parameter IDs, realization/coupling IDs, discretization/basis IDs,
+validity masks, and named axes. `adjacent_transitions()` and
+`transitions(source_indices, target_indices)` are lazy views; their
+`operator_dataset()` adapter groups train/validation/test splits by physical
+case, realization, and coupling identity rather than leaking neighboring states
+across splits.
+
+Convergence claims use `SPDEConvergenceStudy`, not one mixed refinement sweep.
+Refine exactly one of time step, spatial resolution, noise rank, or ensemble
+size while holding the other contracts fixed. Strong/pathwise levels must share
+one explicit `coupling_id`. Weak estimates report Monte Carlo standard error and
+confidence intervals. `NoiseTruncationStudy.from_compatible_spectrum` reports
+raw covariance tails separately from finite-horizon and stationary
+solution-weighted tails; these are generally different orderings.
+
+### Weak, mild, and density-equation physics
+
+`SPDESolutionSpec` declares `strong`, `weak`, or `mild` semantics together with
+the forcing regularization and cutoff identity. Pointwise strong stochastic
+residuals reject rough space-time-white forcing; selecting `weak` or `mild`
+changes the mathematical contract rather than suppressing the validation.
+
+For finite-dimensional generators, a supplied diffusion factor makes
+`kolmogorov_generator(..., contraction="auto")` use exact
+factor-Hessian-vector products. It never constructs the covariance or Hessian.
+`StochasticTracePolicy` and `estimate_stochastic_trace` provide an explicit
+matrix-free Hutchinson alternative with probe count, distribution, and Monte
+Carlo standard error. `directional_stratonovich_correction` computes the
+Stratonovich-to-Itô correction by JVPs.
+
+`probability_current` returns the advective-diffusive Fokker--Planck current.
+`ContinuousProbabilityFluxBoundaryConstraint` constrains its outward normal
+component; the default target is zero and therefore represents a reflecting
+boundary. Positivity, normalization, initial data, and flux remain separate
+constraints.
+
+## Static random fields
+
+`phydrax.stochastic` separates a Gaussian coefficient realization from spatial
+synthesis and semantic use:
+
+```python
+basis = phx.solver.SpatialNoiseBasis.from_spectrum(
+    space,
+    lambda eigenvalue: 0.2 / (1.0 + eigenvalue),
+    rank=8,
+)
+synthesis = phx.stochastic.SpatialBasisSynthesis.from_spatial_noise_basis(
+    basis,
+    mean=0.0,
+)
+log_conductivity = phx.stochastic.StaticGaussianRandomField(
+    synthesis,
+    role="coefficient",
+    source="log-conductivity",
+)
+realization = log_conductivity.realize(
+    jr.key(1),
+    sample_shape=(256,),
+    label="material-inputs",
+)
+sample = log_conductivity.sample(realization)
+```
+
+Roles are explicit: `input`, `initial_condition`, `coefficient`,
+`boundary_data`, `forcing`, or `observation`. A nonlinear transform is also
+explicit:
+
+```python
+conductivity = log_conductivity.transform(
+    jnp.exp,
+    transform_id="exp-lognormal-v1",
+)
+positive_sample = conductivity.sample(realization)
+```
+
+The transformed sample keeps the latent realization and coupling identities but
+receives a distinct field identity. `gaussian_field_diagnostics` checks latent
+coefficient covariance, spatial pointwise variance, and exact replay.
+
+Cross-resolution common random numbers require
+`GaussianFieldCoupling((coarse_field, fine_field))`. It aligns standardized
+coefficients by stable `mode_ids` and samples the union of required modes.
+Passing the same PRNG key to two unrelated fields is intentionally insufficient:
+different bases receive different coupling identities, and a realization
+missing required mode IDs is rejected.
+
+## Finite latent stochastic processes
+
+Pathwise stochastic flow and marginal transition density are distinct
+interfaces:
+
+- `AbstractPathwiseTransition` consumes an explicit driver segment and defines
+  how adjacent segments compose;
+- `AbstractMarginalTransitionLaw` returns an
+  `AbstractProcessDistribution` after integrating out the driver.
+
+`LatentGaussianCoefficientProcess` implements both for
+\(dC_t=\mu\,dt+L\,dW_t\). Its `ProcessRealization` owns one global
+`WienerRealization`, so repeated or refined queries evaluate the same path:
+
+```python
+process = phx.stochastic.LatentGaussianCoefficientProcess(
+    jnp.asarray([0.1, -0.2]),
+    jnp.asarray([[0.3, 0.0], [0.1, 0.25]]),
+)
+process_realization = process.realize(
+    jr.key(2),
+    jnp.zeros((2,)),
+    support=(0.0, 1.0),
+    sample_shape=(512,),
+)
+trajectory = process.evaluate(
+    process_realization,
+    jnp.asarray([0.0, 0.25, 0.5, 1.0]),
+)
+marginal = process.marginal_transition(
+    jnp.zeros((2,)),
+    t0=0.0,
+    t1=1.0,
+)
+```
+
+`process_query_consistency` compares shared times across two query grids.
+`cocycle_objective` tests pathwise composition with the same driver segments.
+`semigroup_objective` is a Monte Carlo Chapman--Kolmogorov loss for a marginal
+law. `process_sample_statistics` and `gaussian_process_diagnostics` expose
+finite-sample moments, log density, replay, query consistency, cocycle error,
+and empirical Gaussian-moment error.
+
+`phx.nn.conditional_coupling_flow_process` builds a
+`LatentFlowJAXCoefficientProcess` for non-Gaussian latent transition marginals.
+It intentionally implements only `AbstractMarginalTransitionLaw`: independent
+FlowJAX transition draws do not identify a common driving path and must not be
+used to claim cocycle consistency.
+
+### Finite-activity jump processes
+
+`AbstractJumpProcess` separates a process law from a stochastic realization.
+`JumpProcess` accepts callable channel intensities, state updates, and optional
+mark sampling. `MassActionJumpProcess` provides combinatorial propensities,
+stoichiometric updates, and conservation residuals for reaction systems.
+
+`PoissonClockRealization` stores prefix-stable unit-rate thresholds and mark
+keys for each channel and path. Increasing `max_events_per_channel` with
+`extend()` preserves every existing threshold and mark. A solver result uses
+`JumpEventBatch`: valid events are identified by an explicit prefix mask, and
+each path has a success, capacity, invalid-intensity, or solver-failure status.
+Never infer validity from a padding time or channel.
+
+```python
+process = phx.stochastic.JumpProcess(
+    lambda t, state, args: jnp.asarray([2.0]),
+    lambda state, channel, mark, args: state + jnp.asarray([1.0]),
+    state_shape=(1,),
+    num_channels=1,
+    process_id="counting-process",
+)
+clock = phx.stochastic.PoissonClockRealization(
+    jr.key(4),
+    1,
+    support=(0.0, 1.0),
+    max_events_per_channel=16,
+    sample_shape=(512,),
+    process_id=process.process_id,
+)
+jump_solution = phx.solver.solve_next_reaction(
+    process,
+    clock,
+    jnp.asarray([0.0]),
+    t0=0.0,
+    t1=1.0,
+    save_times=jnp.linspace(0.0, 1.0, 11),
+)
+```
+
+`solve_next_reaction` advances one internal clock per channel.
+`solve_direct_ssa` samples the total rate and channel directly. Both are exact
+for the finite-activity pure jump contract, where the state and rates remain
+constant between events.
+
+`JumpDifferentialProblem` combines a jump process with a
+`DifferentialProblem`. `solve_jump_differential` augments the continuous state
+with cumulative hazards, localizes threshold crossings, applies the jump map,
+and continues. The continuous part may be an ODE or an SDE. An SDE solve uses
+one global `WienerRealization` across every event restart and returns a
+`CompositeStochasticRealization` with named `"wiener"` and `"jump"`
+components. This is the supported route for state-dependent integrated
+hazards and globally coupled jump diffusions.
+
+`finite_state_generator` constructs an explicit generator only for a supplied
+finite state set. Use it as a small-system reference, not as the simulation
+backend for an unbounded state space.
+
+### Martingale problems and stopping-time diagnostics
+
+`MartingaleProblem` evaluates a declared observable against its continuous and
+finite-activity jump generator on a canonical `StochasticTrajectory`.
+`martingale_increments` supports left, midpoint, and trapezoid quadrature;
+`stopped_martingale_increments` truncates those same paths at explicit stopping
+indices. Predictable brackets and quadratic covariation remain aligned to the
+trajectory intervals.
+
+Use `martingale_validation_report` to combine cluster-aware moment tests,
+quadratic-variation checks, and optional jump-compensator diagnostics. The
+realization-independence label is the statistical unit: antithetic or otherwise
+coupled paths do not become independent merely because they occupy different
+array rows. See [API → Stochastic → Martingales](api/stochastic/martingales.md).
+
+### State-space filtering and smoothing
+
+`StateSpaceProblem` combines an explicit state prior, transition kernel,
+observation model, and `ObservationSequence`. The sequence retains physical
+case axes, timestamps, channel masks, padded-step validity, stable case IDs,
+and a sequence ID. Analytic marginal kernels and solver-backed differential,
+jump, hybrid, finite-state, or neural-operator kernels implement the same
+transition-sample contract.
+
+`phydrax.uq` supplies exact Kalman/RTS inference for linear-Gaussian models,
+bootstrap particle filtering with genealogy and backward simulation, and an
+ensemble transform Kalman filter/smoother that works in member and observation
+space. Every filter has streaming and batch execution, status-aware
+diagnostics, predictive conversion, and pickle-free compatible checkpoints.
+Complete histories can be exported as portable results.
+
+See the [filtering cookbook](cookbook/filtering.md),
+[state-space API](api/stochastic/state_space.md), and
+[filtering API](api/uq/filtering.md).
+
+### Backward stochastic equations
+
+`BSDEProblem` binds a forward-path sampler, drift, diffusion, backward
+generator, and terminal condition. `evaluate_bsde` returns terminal,
+interval-local, and global trajectory residuals with an explicit quadrature
+rule. A supplied control model represents $Z$ directly; autodiff instead
+computes $Z=\nabla_xu\,\sigma$ and exposes the corresponding semilinear PDE
+residual. `BSDEObjective` attaches the same decomposition to
+`FunctionalSolver` with fixed or resampled paths.
+
+`solve_coupled_fbsde_explicit` supports forward drift and diffusion depending
+on current value/control predictions. `JumpBSDEProblem` adds finite-activity
+jump controls and exact user-declared compensator rates. Composite Wiener and
+Poisson provenance is validated, and event-capacity or solver failures remain
+invalid paths rather than being dropped.
+
+See the [BSDE cookbook](cookbook/bsde.md) and
+[BSDE API](api/stochastic/bsde.md).
+
+### Process-consistent neural-operator transitions
+
+`OperatorTransitionSpec` binds a canonical `OperatorBatch` to the evolving
+state, duration, optional source time, optional driver, output query, and output
+field. Every other input remains fixed forcing, geometry, or parameter
+conditioning when the state advances. The state samples and output query must
+use identical geometry.
+
+A probabilistic complete-field operator becomes a marginal stochastic law
+through `OperatorMarginalTransition`:
+
+```py
+spec = phx.nn.OperatorTransitionSpec(
+    phx.nn.OperatorOutputSpec("scalar"),
+    state_input="state",
+    duration_input="duration",
+)
+law = phx.nn.OperatorMarginalTransition(
+    probabilistic_operator,
+    transition_batch,
+    spec,
+    process_id="stochastic-heat",
+)
+rollout = phx.nn.marginal_operator_rollout(
+    law,
+    jnp.asarray([0.0, 0.1, 0.25, 0.5]),
+    key=jr.key(3),
+    num_realizations=512,
+)
+predictive = rollout.to_predictive()
+```
+
+The model distribution must declare `uncertainty_source="process"`.
+`marginal_operator_rollout` samples a Markov chain and records a replayable
+chain ID, but deliberately stores no `WienerRealization`: its independent
+transition samples do not establish a common driving path. The returned
+`StochasticTrajectory` has explicit physical-case, realization, time, query,
+and channel axes. `to_predictive()` maps each realization axis to a
+`PredictiveField` process-sample axis without merging it with epistemic, input,
+observation, or numerical uncertainty.
+
+An operator conditioned on explicit additive Wiener increments instead uses
+`OperatorPathwiseTransition` and one typed driver binding:
+
+```py
+path_spec = phx.nn.OperatorTransitionSpec(
+    phx.nn.OperatorOutputSpec("scalar"),
+    driver_bindings=(
+        phx.nn.OperatorDriverBinding(
+            "driver",
+            "wiener",
+            kind="wiener",
+            quantity="increment",
+        ),
+    ),
+)
+flow = phx.nn.OperatorPathwiseTransition(
+    driver_conditioned_operator,
+    transition_batch_with_driver,
+    path_spec,
+    process_id="driven-stochastic-heat",
+)
+pathwise = phx.nn.pathwise_operator_rollout(
+    flow,
+    wiener_realization,
+    jnp.asarray([0.0, 0.1, 0.25, 0.5]),
+)
+```
+
+This rollout queries every segment from one global `WienerRealization`,
+preserves its realization and coupling IDs, and supports a genuine cocycle
+check. A driver whose `noise_shape` equals the operator driver-event shape is
+shared deliberately across physical cases; prefixing that shape with the
+operator `case_shape` supplies case-specific driver fields. The rollout records
+which mode was used. Its default segment-composition rule is addition; a
+different driver algebra requires a different `AbstractPathwiseTransition`.
+
+Multiple stochastic drivers use `OperatorProcessTransition`. Each
+`OperatorDriverBinding` declares a model input, named realization component,
+driver kind, and quantity. Wiener components provide increments; jump
+components provide event times, offsets, channels, marks, masks, or
+per-channel counts. `OperatorJumpTransition` is the jump-only specialization.
+
+```py
+mixed_spec = phx.nn.OperatorTransitionSpec(
+    phx.nn.OperatorOutputSpec("scalar"),
+    driver_bindings=(
+        phx.nn.OperatorDriverBinding(
+            "noise",
+            "wiener",
+            kind="wiener",
+            quantity="increment",
+        ),
+        phx.nn.OperatorDriverBinding(
+            "counts",
+            "jump",
+            kind="jump",
+            quantity="channel_counts",
+        ),
+    ),
+)
+mixed_law = phx.nn.OperatorProcessTransition(
+    mixed_driver_operator,
+    transition_batch_with_drivers,
+    mixed_spec,
+    process_id="mixed-stochastic-operator",
+)
+driver = phx.stochastic.CompositeStochasticRealization(
+    {"wiener": wiener_realization, "jump": poisson_realization}
+)
+mixed_rollout = phx.nn.process_operator_rollout(
+    mixed_law,
+    driver,
+    times,
+    jump_events={"jump": jump_solution.events},
+)
+```
+
+`jump_generator_observable` evaluates the declared nonlocal jump generator on
+an observable, including marked transitions.
+`operator_jump_generator_objective` compares that target with the
+small-time observable increment of a learned marginal law.
+
+Use `operator_markov_chain_nll` for teacher-forced adjacent transitions and
+`direct_operator_horizon_nll` when every horizon is supervised directly from
+the same initial field. `operator_weak_generator_objective` matches observable
+increments to a declared infinitesimal generator. `semigroup_objective` tests
+the marginal Chapman--Kolmogorov law, while `cocycle_objective` is reserved for
+pathwise transitions with explicit driver segments. These objectives are
+complementary; a low one-step likelihood does not imply temporal consistency.
+
+Random initial conditions remain an `input` uncertainty axis outside a process
+realization. Driver variation is always `process`. Model ensembles remain
+`epistemic`, and discretization studies remain `numerical`; none of these axes
+is inferred or merged automatically.
+
+### Process diagnostics, calibration, and retention
+
+Stochastic validation must preserve complete realization paths:
+
+- `horizon_score_diagnostics` reports horizon-indexed marginal CRPS and energy
+  scores without collapsing time;
+- `trajectory_score_diagnostics` treats each complete trajectory as one
+  multivariate event and adds a dependence-sensitive variogram score;
+- `observable_rank_diagnostics` and `pit_diagnostics` evaluate declared
+  observables rather than flattening unrelated coordinates;
+- `temporal_moment_diagnostics` reports means, covariance,
+  cross-covariance, correlation, and lag autocorrelation;
+- `semigroup_mc_diagnostics` reports candidate, reference, and excess
+  Monte Carlo uncertainty instead of treating a noisy estimate as exact;
+- `jump_event_diagnostics` reports successful-path counts, interarrival
+  moments, channel frequencies, and channel-conditional mark moments;
+- `first_passage_diagnostics` retains right censoring and checks an analytic
+  CDF with a simultaneous finite-sample bound.
+
+Numerical error is not process uncertainty.
+`paired_refinement_uncertainty` requires coupled coarse/fine paths or physical
+cases and applies an explicit Richardson correction.
+`predictive_variance_decomposition` accepts that result as a separate
+outer `"numerical"` component; a predictive sample axis merely labeled
+`"numerical"` is rejected as insufficient evidence.
+
+`ProcessValidationSplit` requires disjoint physical case identities for
+training, calibration, and test sets. `HorizonScaleCalibrator` fits
+horizon-specific scales. `ProcessConformalCalibrator` supports pointwise,
+simultaneous trajectory, and weighted trajectory scores.
+`process_calibration_report` always retains raw and calibrated scores.
+`process_shift_evaluation_matrix` requires in-distribution, rollout-horizon,
+covariance, initial-condition, and parameter-regime scenarios with paired
+seeds. Finally, `process_retention_report` combines replay, provenance,
+temporal, semigroup, calibration, shift, and uncertainty-decomposition gates
+into one explicit pass/fail artifact.
 
 ## Stochastic evaluation keys and dropout
 

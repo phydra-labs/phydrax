@@ -21,7 +21,8 @@ realizations; evaluators can instead request fail-fast validation.
 
 - [Predictive results](predictive.md)
 - [Inference and ensembles](inference.md)
-- [Likelihoods and calibration](calibration.md)
+- [Likelihoods, process diagnostics, calibration, and retention](calibration.md)
+- [Filtering, smoothing, and state estimation](filtering.md)
 - [Neural-operator uncertainty](operator.md)
 - [Uncertain-input propagation](propagation.md)
 - [Global sensitivity](sensitivity.md)

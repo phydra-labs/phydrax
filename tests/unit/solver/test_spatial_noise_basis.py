@@ -71,6 +71,9 @@ def test_mode_and_discrete_covariance_constructors_reconstruct_covariance():
         covariance,
         atol=2e-12,
     )
+    assert from_covariance.approximation is not None
+    assert from_covariance.approximation.method == "dense_eigh"
+    assert from_covariance.approximation.residual_estimate == 0.0
 
 
 def test_kernel_covariance_uses_discretization_coordinates_and_weighted_kl():
@@ -88,6 +91,58 @@ def test_kernel_covariance_uses_discretization_coordinates_and_weighted_kl():
     expected = kernel(points[:, None, :], points[None, :, :])
 
     assert jnp.allclose(basis.reconstructed_covariance(), expected, atol=2e-12)
+
+    assert basis.approximation is not None
+    assert basis.approximation.method == "pivoted_cholesky"
+    assert basis.approximation.rank == 7
+    assert basis.approximation.residual_kind == "relative_trace"
+    assert basis.approximation.residual_estimate < 1e-10
+    assert basis.approximation.converged
+
+
+def test_randomized_covariance_operator_retains_weighted_kl_modes_and_seed():
+    discretization = _periodic_grid(8)
+    diagonal = jnp.arange(8.0, 0.0, -1.0)
+
+    def covariance_operator(state):
+        return diagonal * state
+
+    basis = phx.solver.SpatialNoiseBasis.from_covariance_operator(
+        covariance_operator,
+        discretization,
+        rank=3,
+        key=jr.key(12),
+        oversampling=5,
+        tolerance=0.6,
+        diagnostic_probes=4,
+    )
+    replay = phx.solver.SpatialNoiseBasis.from_covariance_operator(
+        covariance_operator,
+        discretization,
+        rank=3,
+        key=jr.key(12),
+        oversampling=5,
+        tolerance=0.6,
+        diagnostic_probes=4,
+    )
+    approximation = basis.approximation
+
+    assert approximation is not None
+    assert approximation.method == "randomized_nystrom"
+    assert approximation.seed == (0, 12)
+    assert approximation.sketch_size == 8
+    assert approximation.residual_kind == "relative_frobenius"
+    assert approximation.converged
+    assert basis.basis_id == replay.basis_id
+    assert jnp.allclose(basis.eigenvalues, diagonal[:3] / 8.0, atol=2e-12)
+    expected_relative_residual = jnp.linalg.vector_norm(diagonal[3:]) / (
+        jnp.linalg.vector_norm(diagonal)
+    )
+    assert jnp.allclose(
+        approximation.residual_estimate,
+        expected_relative_residual,
+        atol=2e-12,
+    )
 
 
 def test_basis_provenance_is_stable_and_changes_with_meaningful_inputs():
@@ -108,7 +163,7 @@ def test_basis_provenance_is_stable_and_changes_with_meaningful_inputs():
     assert same_a.basis_id != changed_grid.basis_id
 
 
-def test_noise_basis_provenance_reaches_wiener_driver():
+def test_noise_basis_provenance_reaches_wiener_realization():
     discretization = _periodic_grid(6)
     basis = phx.solver.SpatialNoiseBasis.from_spectrum(
         discretization,
@@ -123,16 +178,20 @@ def test_noise_basis_provenance_reaches_wiener_driver():
         kappa=0.02,
         noise_basis=basis,
     )
-    driver = spde.wiener_driver(
+    realization = spde.wiener_realization(
         jr.key(4),
         tolerance=1e-4,
-        realization_id="basis-test",
+        label="basis-test",
     )
 
-    assert driver.noise_shape == (2,)
-    assert driver.basis_id == basis.basis_id
-    assert driver.realization_id == "basis-test"
-    assert jnp.array_equal(jr.key_data(driver.key), jr.key_data(jr.key(4)))
+    assert realization.noise_shape == (2,)
+    assert realization.noise_id == basis.basis_id
+    assert realization.label == "basis-test"
+    assert len(realization.realization_id) == 64
+    assert jnp.array_equal(
+        jr.key_data(realization.root_key),
+        jr.key_data(jr.key(4)),
+    )
 
 
 def test_noise_basis_rejects_invalid_rank_modes_and_covariances():
@@ -175,4 +234,53 @@ def test_noise_basis_rejects_invalid_rank_modes_and_covariances():
             state_shape=(4,),
             quadrature_weights=discretization.quadrature_weights,
             rank=2,
+        )
+
+
+def test_semidiscrete_spde_preserves_declared_solution_concept_and_cutoff():
+    discretization = _periodic_grid(6)
+    basis = phx.solver.SpatialNoiseBasis.from_spectrum(
+        discretization,
+        0.05,
+        rank=2,
+    )
+    declared = phx.stochastic.SPDESolutionSpec(
+        "mild",
+        noise_regularization="space_time_white",
+        cutoff_id=basis.basis_id,
+    )
+    spde = phx.solver.semidiscretize_reaction_diffusion(
+        jnp.zeros((6,)),
+        discretization,
+        t0=0.0,
+        t1=0.1,
+        kappa=0.02,
+        noise_basis=basis,
+        solution_spec=declared,
+    )
+    deterministic = phx.solver.semidiscretize_reaction_diffusion(
+        jnp.zeros((6,)),
+        discretization,
+        t0=0.0,
+        t1=0.1,
+        kappa=0.02,
+    )
+
+    assert spde.solution_spec is declared
+    assert spde.solution_spec.concept == "mild"
+    assert spde.solution_spec.rough_forcing
+    assert deterministic.solution_spec.noise_regularization == "none"
+
+    with pytest.raises(ValueError, match="requires cutoff_id"):
+        phx.solver.semidiscretize_reaction_diffusion(
+            jnp.zeros((6,)),
+            discretization,
+            t0=0.0,
+            t1=0.1,
+            kappa=0.02,
+            noise_basis=basis,
+            solution_spec=phx.stochastic.SPDESolutionSpec(
+                "mild",
+                noise_regularization="space_time_white",
+            ),
         )

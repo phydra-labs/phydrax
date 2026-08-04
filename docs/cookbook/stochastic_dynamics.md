@@ -1,6 +1,6 @@
 # Stochastic dynamics: PINNs, SDEs, and semidiscrete SPDEs
 
-Phydrax supports two complementary stochastic workflows:
+This page covers two complementary stochastic workflows:
 
 1. **learn an equation solution** with backward-Kolmogorov or Fokker--Planck residual constraints;
 2. **simulate paths** after spatial semidiscretization with a finite-rank Wiener process and Diffrax.
@@ -8,6 +8,13 @@ Phydrax supports two complementary stochastic workflows:
 They solve different problems. A stochastic PINN represents an observable or density as a
 `DomainFunction`; a path solver returns realizations of a finite-dimensional SDE. Do not
 interpret a path ensemble as a learned density, or a residual-trained density as sampled paths.
+
+For latent-state estimation over those dynamics, use the
+[filtering and smoothing recipe](filtering.md). For terminal-value stochastic
+representations and semilinear PDE losses, use the
+[backward stochastic equation recipe](bsde.md). Martingale, filtering, and
+BSDE APIs share the same trajectory validity and realization-provenance
+contracts.
 
 ## Backward Kolmogorov PINN
 
@@ -225,16 +232,16 @@ heat = phx.solver.semidiscretize_reaction_diffusion(
     noise_basis=noise,
     interpretation="ito",
 )
-driver = heat.wiener_driver(
+realization = heat.wiener_realization(
     jr.key(2),
+    sample_shape=(128,),
     tolerance=1e-4,
-    realization_id="stochastic-heat-0",
+    label="stochastic-heat-0",
 )
 paths = phx.solver.solve_diffrax_ensemble(
     heat.problem,
     save_times=jnp.linspace(0.0, 0.2, 21),
-    driver=driver,
-    num_paths=128,
+    realization=realization,
     dt0=1e-3,
 )
 prediction = paths.to_predictive(
@@ -244,9 +251,10 @@ prediction = paths.to_predictive(
 )
 ```
 
-`prediction` labels the path axis as `process`. Reusing `driver` replays the same
-Brownian realizations. Changing the key changes paths; changing the grid, rank, spectrum,
-or modes changes `basis_id`.
+`prediction` labels the path axis as `process`. Reusing `realization` replays the
+same global Brownian paths, even when a time horizon is split across solves. Changing
+the root key changes paths; changing the grid, rank, spectrum, or modes changes
+`noise_id`.
 
 `TensorGridDiscretization` also supports periodic finite differences, sine bases with
 homogeneous Dirichlet semantics, cosine bases with homogeneous Neumann semantics, and

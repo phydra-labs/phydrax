@@ -4,36 +4,101 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Sequence
-from math import isfinite
+from math import prod
 from typing import Any, Literal, TypeAlias
 
 import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
-import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jaxtyping import Array, ArrayLike
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
 from .._uncertainty import UncertaintySource, validate_uncertainty_source
+from ..stochastic import WienerRealization
 
 
 DifferentialInterpretation: TypeAlias = Literal["ito", "stratonovich"]
-LevyAreaKind: TypeAlias = Literal["brownian", "space_time", "space_time_time"]
+NoiseStructure: TypeAlias = Literal["additive", "commutative", "general"]
 DifferentialVectorField: TypeAlias = Callable[[Array, Array, Any], ArrayLike]
 
 
+class WienerTerm(StrictModule):
+    """One named independent Wiener source in a differential problem."""
+
+    name: str = eqx.field(static=True)
+    coefficient: DifferentialVectorField
+    noise_shape: tuple[int, ...] = eqx.field(static=True)
+    structure: NoiseStructure = eqx.field(static=True)
+    basis_id: str | None = eqx.field(static=True)
+
+    def __init__(
+        self,
+        name: str,
+        coefficient: DifferentialVectorField,
+        noise_shape: Sequence[int],
+        /,
+        *,
+        structure: NoiseStructure = "general",
+        basis_id: str | None = None,
+    ):
+        if not isinstance(name, str) or not name:
+            raise ValueError("WienerTerm name must be a non-empty string.")
+        if not callable(coefficient):
+            raise TypeError("WienerTerm coefficient must be callable.")
+        shape = tuple(int(size) for size in noise_shape)
+        if any(size <= 0 for size in shape):
+            raise ValueError("WienerTerm noise dimensions must be positive.")
+        if structure not in ("additive", "commutative", "general"):
+            raise ValueError(
+                "WienerTerm structure must be 'additive', 'commutative', or 'general'."
+            )
+        if basis_id is not None and (not isinstance(basis_id, str) or not basis_id):
+            raise ValueError("WienerTerm basis_id must be non-empty or None.")
+        self.name = name
+        self.coefficient = coefficient
+        self.noise_shape = shape
+        self.structure = structure
+        self.basis_id = basis_id
+
+    @property
+    def noise_size(self) -> int:
+        """Flattened control dimension contributed by this term."""
+        return prod(self.noise_shape) if self.noise_shape else 1
+
+
+def _noise_identity(terms: tuple[WienerTerm, ...], /) -> str | None:
+    if not terms or all(term.basis_id is None for term in terms):
+        return None
+    if len(terms) == 1:
+        return terms[0].basis_id
+    digest = hashlib.sha256()
+    digest.update(b"phydrax-wiener-terms\0")
+    for term in terms:
+        digest.update(
+            repr((term.name, term.noise_shape, term.structure, term.basis_id)).encode(
+                "utf-8"
+            )
+        )
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 class DifferentialProblem(StrictModule):
-    """Finite-dimensional initial-value problem with optional stochastic forcing."""
+    """Finite-dimensional initial-value problem with named stochastic forcing."""
 
     drift: DifferentialVectorField
     initial_state: Array
     t0: Array
     t1: Array
     args: Any
-    diffusion: DifferentialVectorField | None
-    interpretation: DifferentialInterpretation
+    wiener_terms: tuple[WienerTerm, ...]
+    wiener_term_slices: frozendict[str, tuple[int, int]] = eqx.field(static=True)
+    noise_shape: tuple[int, ...] = eqx.field(static=True)
+    noise_id: str | None = eqx.field(static=True)
+    interpretation: DifferentialInterpretation = eqx.field(static=True)
 
     def __init__(
         self,
@@ -44,13 +109,11 @@ class DifferentialProblem(StrictModule):
         t0: ArrayLike,
         t1: ArrayLike,
         args: Any = None,
-        diffusion: DifferentialVectorField | None = None,
+        wiener_terms: Sequence[WienerTerm] = (),
         interpretation: DifferentialInterpretation = "ito",
     ):
         if not callable(drift):
             raise TypeError("DifferentialProblem drift must be callable.")
-        if diffusion is not None and not callable(diffusion):
-            raise TypeError("DifferentialProblem diffusion must be callable or None.")
         start = jnp.asarray(t0, dtype=float)
         end = jnp.asarray(t1, dtype=float)
         if start.shape != () or end.shape != ():
@@ -67,74 +130,53 @@ class DifferentialProblem(StrictModule):
         )
         if interpretation not in ("ito", "stratonovich"):
             raise ValueError("interpretation must be 'ito' or 'stratonovich'.")
+
+        state = jnp.asarray(initial_state)
+        terms = tuple(wiener_terms)
+        if any(not isinstance(term, WienerTerm) for term in terms):
+            raise TypeError("wiener_terms must contain only WienerTerm objects.")
+        names = tuple(term.name for term in terms)
+        if len(set(names)) != len(names):
+            raise ValueError("WienerTerm names must be unique within a problem.")
+
+        offset = 0
+        slices: dict[str, tuple[int, int]] = {}
+        for term in terms:
+            expected_shape = tuple(state.shape) + term.noise_shape
+            coefficient = jnp.asarray(term.coefficient(start, state, args))
+            if tuple(coefficient.shape) != expected_shape:
+                raise ValueError(
+                    f"WienerTerm {term.name!r} coefficient must return shape "
+                    f"{expected_shape}; got {coefficient.shape}."
+                )
+            slices[term.name] = (offset, offset + term.noise_size)
+            offset += term.noise_size
+
         self.drift = drift
-        self.initial_state = jnp.asarray(initial_state)
+        self.initial_state = state
         self.t0 = start
         self.t1 = end
         self.args = args
-        self.diffusion = diffusion
+        self.wiener_terms = terms
+        self.wiener_term_slices = frozendict(slices)
+        self.noise_shape = (offset,) if terms else ()
+        self.noise_id = _noise_identity(terms)
         self.interpretation = interpretation
 
     @property
     def stochastic(self) -> bool:
-        return self.diffusion is not None
+        return bool(self.wiener_terms)
 
-
-class WienerDriver(StrictModule):
-    """One reproducible finite-dimensional Wiener-process realization."""
-
-    key: Array
-    noise_shape: tuple[int, ...]
-    tolerance: float
-    levy_area: LevyAreaKind
-    basis_id: str | None
-    realization_id: str | int | None
-
-    def __init__(
-        self,
-        key: Key[Array, ""],
-        noise_shape: Sequence[int] = (),
-        /,
-        *,
-        tolerance: float = 1e-3,
-        levy_area: LevyAreaKind = "brownian",
-        basis_id: str | None = None,
-        realization_id: str | int | None = None,
-    ):
-        try:
-            key_data = jr.key_data(key)
-        except (TypeError, ValueError) as exc:
-            raise TypeError("WienerDriver key must be a scalar JAX PRNG key.") from exc
-        if key_data.shape != (2,):
-            raise ValueError("WienerDriver key must be one scalar JAX PRNG key.")
-        shape = tuple(int(size) for size in noise_shape)
-        if any(size <= 0 for size in shape):
-            raise ValueError("WienerDriver noise dimensions must be positive.")
-        tolerance_value = float(tolerance)
-        if not isfinite(tolerance_value) or tolerance_value <= 0.0:
-            raise ValueError("WienerDriver tolerance must be finite and positive.")
-        if levy_area not in ("brownian", "space_time", "space_time_time"):
-            raise ValueError(
-                "levy_area must be 'brownian', 'space_time', or 'space_time_time'."
-            )
-        if basis_id is not None and (not isinstance(basis_id, str) or not basis_id):
-            raise ValueError("WienerDriver basis_id must be a non-empty string or None.")
-        if realization_id is not None and not isinstance(realization_id, (str, int)):
-            raise TypeError(
-                "WienerDriver realization_id must be a string, integer, or None."
-            )
-        if isinstance(realization_id, str) and not realization_id:
-            raise ValueError("WienerDriver realization_id must not be empty.")
-        self.key = key
-        self.noise_shape = shape
-        self.tolerance = tolerance_value
-        self.levy_area = levy_area
-        self.basis_id = basis_id
-        self.realization_id = realization_id
+    @property
+    def additive_noise(self) -> bool:
+        """Whether every stochastic term declares state-independent noise."""
+        return self.stochastic and all(
+            term.structure == "additive" for term in self.wiener_terms
+        )
 
 
 class DifferentialSolution(StrictModule):
-    """Saved trajectory values plus solver and stochastic-driver provenance."""
+    """Saved trajectory values plus solver and stochastic-realization provenance."""
 
     times: Array
     states: Array
@@ -144,10 +186,10 @@ class DifferentialSolution(StrictModule):
     backend_result: Any
     stats: frozendict[str, Any]
     event_mask: Any
-    driver: WienerDriver | None
-    realization_keys: Array | None
-    solver_name: str
-    interpretation: DifferentialInterpretation
+    realization: WienerRealization | None
+    wiener_term_slices: frozendict[str, tuple[int, int]] = eqx.field(static=True)
+    solver_name: str = eqx.field(static=True)
+    interpretation: DifferentialInterpretation = eqx.field(static=True)
 
     def __init__(
         self,
@@ -160,8 +202,10 @@ class DifferentialSolution(StrictModule):
         backend_result: Any,
         stats: dict[str, Any] | frozendict[str, Any],
         event_mask: Any = None,
-        driver: WienerDriver | None = None,
-        realization_keys: Array | None = None,
+        realization: WienerRealization | None = None,
+        wiener_term_slices: dict[str, tuple[int, int]]
+        | frozendict[str, tuple[int, int]]
+        | None = None,
         solver_name: str,
         interpretation: DifferentialInterpretation,
     ):
@@ -191,11 +235,13 @@ class DifferentialSolution(StrictModule):
             raise ValueError("DifferentialSolution solver_name must be non-empty.")
         if interpretation not in ("ito", "stratonovich"):
             raise ValueError("interpretation must be 'ito' or 'stratonovich'.")
-        if realization_keys is not None:
-            key_data = jr.key_data(realization_keys)
-            if key_data.shape[:-1] != samples or key_data.shape[-1:] != (2,):
+        if realization is not None:
+            if not isinstance(realization, WienerRealization):
+                raise TypeError("realization must be a WienerRealization or None.")
+            if realization.sample_shape != samples:
                 raise ValueError(
-                    "DifferentialSolution realization keys must align with sample_shape."
+                    "DifferentialSolution realization sample_shape must match the "
+                    f"solution; got {realization.sample_shape} and {samples}."
                 )
         if interpolation is not None and not callable(
             getattr(interpolation, "evaluate", None)
@@ -209,8 +255,10 @@ class DifferentialSolution(StrictModule):
         self.backend_result = backend_result
         self.stats = frozendict(dict(stats))
         self.event_mask = event_mask
-        self.driver = driver
-        self.realization_keys = realization_keys
+        self.realization = realization
+        self.wiener_term_slices = frozendict(
+            {} if wiener_term_slices is None else dict(wiener_term_slices)
+        )
         self.solver_name = solver_name
         self.interpretation = interpretation
 
@@ -242,6 +290,38 @@ class DifferentialSolution(StrictModule):
                 "call solve_diffrax or solve_diffrax_ensemble with dense=True."
             )
         return self.interpolation.evaluate(query_times, left=left)
+
+    def to_stochastic_trajectory(
+        self,
+        /,
+        *,
+        initial_state: ArrayLike | None = None,
+        initial_time: ArrayLike | None = None,
+        realization_axes: Sequence[str] | None = None,
+        state_axes: Sequence[str] = ("state",),
+        case_id: str = "case:0",
+        parameter_id: str | None = None,
+        discretization_id: str | None = None,
+        basis_id: str | None = None,
+        approximation_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> Any:
+        """Convert to an axis-explicit stochastic trajectory without flattening paths."""
+        from ..stochastic._trajectory import StochasticTrajectory
+
+        return StochasticTrajectory.from_solution(
+            self,
+            initial_state=initial_state,
+            initial_time=initial_time,
+            realization_axes=realization_axes,
+            state_axes=state_axes,
+            case_id=case_id,
+            parameter_id=parameter_id,
+            discretization_id=discretization_id,
+            basis_id=basis_id,
+            approximation_id=approximation_id,
+            metadata=metadata,
+        )
 
     def to_predictive(
         self,
@@ -291,6 +371,6 @@ __all__ = [
     "DifferentialProblem",
     "DifferentialSolution",
     "DifferentialVectorField",
-    "LevyAreaKind",
-    "WienerDriver",
+    "NoiseStructure",
+    "WienerTerm",
 ]

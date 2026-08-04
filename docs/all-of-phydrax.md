@@ -77,10 +77,15 @@ The enforced route is staged as boundary → initial → interior data. See:
 `phydrax.uq` keeps epistemic, uncertain-input, observation, stochastic-process,
 and numerical axes explicit in named `PredictiveField` results. NUTS/HMC, Laplace
 approximation, deep ensembles, and Gaussian-process discrepancy models produce
-coherent epistemic draws; probability domains and joint QMC propagate uncertain
-inputs; `solve_diffrax_ensemble` produces replayable process paths; complete-field
-Gaussian or conditional-flow operators learn transition distributions; likelihood
-and conformal tools score or calibrate observations. See
+coherent epistemic draws; probability domains, static random fields, and joint
+QMC propagate uncertain inputs. Global Wiener, Poisson-clock, composite, and
+coefficient-process realizations provide replayable process paths.
+Complete-field Gaussian or conditional-flow operators define transition
+marginals; typed Wiener/jump operator adapters define pathwise or composite
+process transitions without pretending that independent marginal draws share
+a path. Process diagnostics, calibration reports, shift matrices, and
+retention gates keep raw results, statistical uncertainty, and provenance
+explicit. See
 [Guides → Uncertainty quantification](guides_uncertainty.md).
 
 ### Geometry: Euclidean coordinates vs metric-aware calculus
@@ -274,18 +279,63 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   See [API → Domain → Functions](api/domain/functions.md) and [API → Constraints](api/constraints/index.md).
 - **Operator learning**: use `DatasetDomain` and structured models on \(\Omega_{\text{data}}\times\Omega_x\). The canonical `OperatorBatch` path supports independent source/query discretizations across DeepONet, graph, geometry-informed, transformer, and spectral families; validate architecture choices with the audited benchmark protocol.
   See [Operator-learning cookbook](cookbook/operator_learning.md) and [API → NN → Architectures](api/nn/architectures.md).
+- **Stochastic neural operators**: declare state, duration, optional source-time,
+  typed drivers, query, and output roles with `OperatorTransitionSpec`. Adapt a
+  process-valued probabilistic operator with `OperatorMarginalTransition`, an
+  additive Wiener operator with `OperatorPathwiseTransition`, a jump-conditioned
+  operator with `OperatorJumpTransition`, or a mixed-driver operator with
+  `OperatorProcessTransition`. Their rollouts produce canonical
+  `StochasticTrajectory` and `PredictiveField` results with physical cases,
+  process realizations, time, geometry, and provenance kept separate. Train or
+  diagnose adjacent likelihood, direct-horizon likelihood, semigroup, cocycle,
+  weak-generator, and nonlocal jump-generator contracts independently.
+  See [API → UQ → Neural-operator uncertainty](api/uq/operator.md#process-consistent-operator-transitions).
 - **Integral / conservation laws**: build terms from `integral`/`mean` and use integral constraints (equality targets, flux balances, etc.).
   See [Guides → Integrals and measures](guides_integrals.md).
-- **ODEs, SDEs, and semidiscrete SPDEs**: either learn a trajectory by enforcing
-  \(\dot u-f(u,t)=0\) with continuous/discrete ODE constraints, or integrate an
-  explicit finite-dimensional initial-value problem with `DifferentialProblem` and
-  `solve_diffrax`. `solve_diffrax_ensemble` uses replayable `WienerDriver` objects
-  and returns process-labeled path ensembles for Itô or Stratonovich systems.
-  Spatial stochastic systems use `TensorGridDiscretization` or an existing
-  manifold `SpectralDiscretization`, a finite-rank `SpatialNoiseBasis`, and
-  `semidiscretize_spde`/`semidiscretize_reaction_diffusion` before entering the
-  same differential backend.
+- **ODEs, SDEs, jump processes, hybrid systems, and semidiscrete SPDEs**:
+  either learn a trajectory by enforcing \(\dot u-f(u,t)=0\) with
+  continuous/discrete ODE constraints, or integrate an explicit
+  finite-dimensional initial-value problem. `solve_diffrax_ensemble` consumes a
+  global `WienerRealization`, whose support, prefix-stable path keys, sample
+  shape, and coupling identity define reproducible Itô or Stratonovich path
+  ensembles. `solve_next_reaction` and `solve_direct_ssa` consume a
+  `PoissonClockRealization`; `solve_jump_differential` combines its integrated
+  hazards with an ODE or globally coupled SDE. Spatial stochastic systems use
+  `TensorGridDiscretization` or an existing manifold
+  `SpectralDiscretization`, a finite-rank `SpatialNoiseBasis`, and a
+  semidiscretizer. Explicit semilinear splits can use matrix-function actions
+  and exact compatible modal stochastic convolution; generic systems retain
+  the Diffrax backend. Canonical `StochasticTrajectory` results preserve
+  case/realization axes and leakage-relevant coupling provenance.
   See [API → Solver → Differential equations](api/solver/differential.md).
+- **Martingale and stopping-time validation**: declare observables and generator
+  actions with `MartingaleProblem`, then evaluate interval or stopped
+  martingale increments, predictable brackets, quadratic variation, and
+  finite-activity jump compensators. Statistical reports use realization
+  independence clusters rather than treating coupled paths as independent.
+  See [API → Stochastic → Martingales](api/stochastic/martingales.md).
+- **Filtering and smoothing**: compose a state prior, transition kernel,
+  observation model, and masked observation schedule in `StateSpaceProblem`.
+  Use exact Kalman/RTS inference, bootstrap particle filtering with two
+  smoothing semantics, or the high-dimensional ensemble transform filter and
+  smoother. Differential, jump, hybrid, finite-state, and neural-operator
+  transition adapters preserve the same status and process-provenance
+  contract.
+  See [Filtering cookbook](cookbook/filtering.md) and
+  [API → UQ → Filtering](api/uq/filtering.md).
+- **Backward stochastic equations**: evaluate terminal, local, and global
+  BSDE residuals with explicit or autodifferentiated controls; attach them to
+  `FunctionalSolver` with `BSDEObjective`; simulate explicitly coupled
+  forward-backward systems; and include finite-activity compensated jump
+  increments with composite-realization validation.
+  See [BSDE cookbook](cookbook/bsde.md) and
+  [API → Stochastic → BSDE](api/stochastic/bsde.md).
+- **Static random fields and stochastic coefficient processes**: synthesize
+  replayable Gaussian fields from a `SpatialNoiseBasis`, attach an explicit
+  input role, and use stable mode IDs for deliberate cross-resolution coupling.
+  `LatentGaussianCoefficientProcess` supplies reusable pathwise realizations;
+  `LatentFlowJAXCoefficientProcess` supplies learned marginal transition laws.
+  See [Guides → Uncertainty quantification](guides_uncertainty.md).
 - **Curvilinear or manifold PDE/PINN**: define a `CoordinateChart` and
   `RiemannianMetric`, then use `riemannian_grad`, `riemannian_div`,
   `covariant_hessian`, or the metric overload of `laplace_beltrami`. Attach
@@ -294,9 +344,12 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - **Stochastic PINNs / density equations**: use
   `ContinuousKolmogorovConstraint` for stationary or backward equations and
   `ContinuousFokkerPlanckConstraint` for stationary or forward density equations.
-  Drift, diffusion, and covariance can be fixed fields or named trainable fields.
-  Positivity, per-time normalization, initial data, and boundary conditions remain
-  explicit, separately composed constraints or ansätze.
+  Exact factor-HVP or explicit stochastic-trace contractions avoid dense
+  Hessians. `ContinuousProbabilityFluxBoundaryConstraint` adds reflecting or
+  prescribed-flux boundaries. Strong, weak, and mild SPDE solution concepts are
+  declared explicitly; rough white-noise forcing is rejected by pointwise
+  strong residuals. Positivity, per-time normalization, and initial data remain
+  separate constraints or ansätze.
   See [API → Constraints → Continuous](api/constraints/continuous.md) and
   [API → Operators → Differential](api/operators/differential.md).
 - **Uncertainty quantification**: use NUTS/HMC or Laplace for explicit posterior problems, ensembles for neural-model epistemic variation, Gaussian processes for model discrepancy, joint QMC for uncertain inputs, likelihoods/proper scores for observations, and conformal calibration for coverage.
@@ -342,4 +395,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - `phydrax.objectives` for raw signed scalar objectives.
 - `phydrax.operators` for PDE operators.
 - `phydrax.nn` for models and wrappers.
+- `phydrax.stochastic` for Wiener and Poisson paths, composite realizations,
+  stochastic trajectories, random fields, coefficient processes, coupling, and
+  path/marginal transition contracts.
 - `phydrax.solver` for training and evaluation loops.

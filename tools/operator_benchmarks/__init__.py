@@ -79,11 +79,13 @@ from .stochastic import (
     allen_cahn_transition_data,
     AllenCahnFlowBenchmarkResult,
     AllenCahnFlowBenchmarkTrial,
+    LinearGaussianReferenceOperator,
     run_allen_cahn_flow_benchmark,
     run_stochastic_heat_gaussian_benchmark,
+    run_stochastic_heat_process_benchmark,
     stochastic_heat_transition_data,
     StochasticHeatGaussianBenchmarkResult,
-    StochasticTransitionData,
+    StochasticHeatProcessBenchmarkResult,
 )
 from .uq import (
     calibration_case_checksum,
@@ -234,9 +236,11 @@ __all__ = [
     "allen_cahn_transition_data",
     "AllenCahnFlowBenchmarkResult",
     "AllenCahnFlowBenchmarkTrial",
+    "LinearGaussianReferenceOperator",
     "run_allen_cahn_flow_benchmark",
     "run_stochastic_heat_gaussian_benchmark",
+    "run_stochastic_heat_process_benchmark",
     "stochastic_heat_transition_data",
     "StochasticHeatGaussianBenchmarkResult",
-    "StochasticTransitionData",
+    "StochasticHeatProcessBenchmarkResult",
 ]

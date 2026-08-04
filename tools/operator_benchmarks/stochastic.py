@@ -12,79 +12,88 @@ from jaxtyping import Array, Key
 import phydrax as phx
 
 
-@dataclass(frozen=True)
-class StochasticTransitionData:
-    """Repeated transition realizations for one fixed spatial discretization."""
+def _metadata(
+    data: phx.stochastic.StochasticTransitionView,
+    name: str,
+):
+    if name not in data.metadata:
+        raise ValueError(f"Stochastic benchmark metadata is missing {name!r}.")
+    return data.metadata[name]
 
-    axis: phx.nn.OperatorAxis
-    initial_states: Array
-    final_states: Array
-    duration: float
-    drift_matrix: Array
-    noise_matrix: Array
-    analytic_mean: Array | None = None
-    analytic_covariance: Array | None = None
 
-    @property
-    def num_cases(self) -> int:
-        return int(self.initial_states.shape[0])
+def _axis(
+    data: phx.stochastic.StochasticTransitionView,
+) -> phx.nn.OperatorAxis:
+    value = _metadata(data, "operator_axis")
+    if not isinstance(value, phx.nn.OperatorAxis):
+        raise TypeError("Stochastic benchmark operator_axis metadata is invalid.")
+    return value
 
-    @property
-    def num_realizations(self) -> int:
-        return int(self.final_states.shape[1])
 
-    @property
-    def grid_size(self) -> int:
-        return int(self.initial_states.shape[-1])
-
-    def evaluation_batch(
-        self, case_indices: Sequence[int] | None = None
-    ) -> phx.nn.OperatorBatch:
-        indices = (
-            jnp.arange(self.num_cases, dtype=jnp.int32)
-            if case_indices is None
-            else jnp.asarray(tuple(case_indices), dtype=jnp.int32)
+def _physical_initial_states(
+    data: phx.stochastic.StochasticTransitionView,
+) -> Array:
+    values = data.source_states.reshape(
+        (
+            data.num_cases,
+            data.num_realizations,
+            data.num_pairs,
         )
-        states = self.initial_states[indices]
-        durations = jnp.full_like(states, self.duration)
-        return phx.nn.OperatorBatch(
-            inputs={
-                "state": phx.nn.FunctionSamples(values=states, axes=(self.axis,)),
-                "duration": phx.nn.FunctionSamples(values=durations, axes=(self.axis,)),
-            },
-            queries={"query": phx.nn.FunctionSamples(values=None, axes=(self.axis,))},
-            case_axes=("case",),
+        + data.trajectory.state_shape
+    )
+    reference = values[:, 0, 0]
+    if not bool(jnp.allclose(values, reference[:, None, None])):
+        raise ValueError(
+            "Benchmark evaluation requires one shared source state per physical case."
         )
+    return reference
 
-    def operator_dataset(
-        self,
-        case_indices: Sequence[int] | None = None,
-    ) -> phx.nn.OperatorDataset:
-        indices = (
-            tuple(range(self.num_cases))
-            if case_indices is None
-            else tuple(int(index) for index in case_indices)
-        )
-        states = self.initial_states[jnp.asarray(indices, dtype=jnp.int32)]
-        targets = self.final_states[jnp.asarray(indices, dtype=jnp.int32)]
-        repeated_states = jnp.repeat(states, self.num_realizations, axis=0)
-        flat_targets = targets.reshape((-1, self.grid_size))
-        durations = jnp.full_like(repeated_states, self.duration)
-        provenance = tuple(
-            phx.nn.OperatorCaseProvenance(
-                f"state:{case_index}:draw:{draw}",
-                identities={"initial_state": f"state:{case_index}"},
-            )
-            for case_index in indices
-            for draw in range(self.num_realizations)
-        )
-        return phx.nn.operator_dataset_from_arrays(
-            {"state": repeated_states, "duration": durations},
-            {"output": flat_targets},
-            source_axes={"state": (self.axis,), "duration": (self.axis,)},
-            query_axes=(self.axis,),
-            provenance=provenance,
-        )
+
+def _final_states(
+    data: phx.stochastic.StochasticTransitionView,
+) -> Array:
+    if data.num_pairs != 1:
+        raise ValueError("Stochastic benchmarks require exactly one transition per path.")
+    return data.target_states.reshape(
+        (data.num_cases, data.num_realizations) + data.trajectory.state_shape
+    )
+
+
+def _evaluation_batch(
+    data: phx.stochastic.StochasticTransitionView,
+    case_indices: Sequence[int] | None = None,
+) -> phx.nn.OperatorBatch:
+    indices = (
+        jnp.arange(data.num_cases, dtype=jnp.int32)
+        if case_indices is None
+        else jnp.asarray(tuple(case_indices), dtype=jnp.int32)
+    )
+    states = _physical_initial_states(data)[indices]
+    durations = jnp.full_like(states, data.duration)
+    axis = _axis(data)
+    return phx.nn.OperatorBatch(
+        inputs={
+            "state": phx.nn.FunctionSamples(values=states, axes=(axis,)),
+            "duration": phx.nn.FunctionSamples(values=durations, axes=(axis,)),
+        },
+        queries={"query": phx.nn.FunctionSamples(values=None, axes=(axis,))},
+        case_axes=("case",),
+    )
+
+
+def _operator_dataset(
+    data: phx.stochastic.StochasticTransitionView,
+    case_indices: Sequence[int] | None = None,
+) -> phx.nn.OperatorDataset:
+    dataset = data.operator_dataset(source_axes=(_axis(data),))
+    if case_indices is None:
+        return dataset
+    block = data.num_realizations * data.num_pairs
+    selected = jnp.asarray(
+        tuple(case * block + offset for case in case_indices for offset in range(block)),
+        dtype=jnp.int32,
+    )
+    return dataset.take(selected)
 
 
 def _smooth_initial_states(key: Key[Array, ""], cases: int, size: int, /) -> Array:
@@ -123,6 +132,103 @@ def _linear_transition_moments(
     return mean, 0.5 * (covariance + covariance.T)
 
 
+class LinearGaussianReferenceOperator(phx.nn.AbstractProbabilisticOperatorModel):
+    """Exact transition law for a finite-dimensional self-adjoint linear SDE."""
+
+    drift_eigenvalues: Array
+    drift_eigenvectors: Array
+    modal_noise_covariance: Array
+    diagonal_jitter: float
+    in_size: str
+    out_size: str
+
+    def __init__(
+        self,
+        drift_matrix: Array,
+        noise_matrix: Array,
+        /,
+        *,
+        diagonal_jitter: float = 1e-6,
+    ):
+        drift = jnp.asarray(drift_matrix)
+        noise = jnp.asarray(noise_matrix)
+        if drift.ndim != 2 or drift.shape[0] != drift.shape[1]:
+            raise ValueError("drift_matrix must be square.")
+        if noise.ndim != 2 or noise.shape[0] != drift.shape[0]:
+            raise ValueError(
+                "noise_matrix must have one row per drift_matrix state dimension."
+            )
+        if not bool(jnp.allclose(drift, drift.T, rtol=1e-10, atol=1e-12)):
+            raise ValueError(
+                "LinearGaussianReferenceOperator requires self-adjoint drift."
+            )
+        if float(diagonal_jitter) <= 0.0:
+            raise ValueError("diagonal_jitter must be positive.")
+        eigenvalues, eigenvectors = jnp.linalg.eigh(drift)
+        transformed_noise = eigenvectors.T @ noise
+        self.drift_eigenvalues = eigenvalues
+        self.drift_eigenvectors = eigenvectors
+        self.modal_noise_covariance = transformed_noise @ transformed_noise.T
+        self.diagonal_jitter = float(diagonal_jitter)
+        self.in_size = "scalar"
+        self.out_size = "scalar"
+
+    @property
+    def operator_output_specs(self):
+        return {"output": phx.nn.OperatorOutputSpec("scalar")}
+
+    def distribution(self, batch, /, *, key=None):
+        del key
+        states = batch.input("state").values
+        durations = batch.input("duration").values
+        if states is None or durations is None:
+            raise ValueError("Reference transitions require state and duration values.")
+        size = int(self.drift_eigenvalues.shape[0])
+        if states.shape != batch.case_shape + (size,):
+            raise ValueError(
+                "Reference transition state shape must be "
+                f"{batch.case_shape + (size,)}; got {states.shape}."
+            )
+        flat_states = states.reshape((-1, size))
+        flat_durations = durations[..., 0].reshape((-1,))
+
+        def transition_moments(state, duration):
+            decay = jnp.exp(self.drift_eigenvalues * duration)
+            mean = self.drift_eigenvectors @ (decay * (self.drift_eigenvectors.T @ state))
+            sums = self.drift_eigenvalues[:, None] + self.drift_eigenvalues[None, :]
+            integral = jnp.where(
+                jnp.abs(sums) > 1e-12,
+                jnp.expm1(sums * duration) / sums,
+                duration,
+            )
+            covariance = (
+                self.drift_eigenvectors
+                @ (self.modal_noise_covariance * integral)
+                @ self.drift_eigenvectors.T
+            )
+            covariance = 0.5 * (covariance + covariance.T)
+            eigenvalues, eigenvectors = jnp.linalg.eigh(covariance)
+            factors = eigenvectors * jnp.sqrt(jnp.maximum(eigenvalues, 0.0))
+            return mean, factors
+
+        means, factors = jax.vmap(transition_moments)(
+            flat_states,
+            flat_durations,
+        )
+        mean = means.reshape(batch.case_shape + (size,))
+        factor = factors.reshape(batch.case_shape + (size, size))
+        return phx.nn.GaussianOperatorDistribution(
+            mean=mean,
+            scale=jnp.full_like(mean, self.diagonal_jitter),
+            factors=factor,
+            query=batch.require_single_query(),
+            output_spec=phx.nn.OperatorOutputSpec("scalar"),
+            case_axes=batch.case_axes,
+            case_shape=batch.case_shape,
+            uncertainty_source="process",
+        )
+
+
 def stochastic_heat_transition_data(
     key: Key[Array, ""],
     /,
@@ -135,8 +241,8 @@ def stochastic_heat_transition_data(
     noise_rank: int = 3,
     noise_scale: float = 0.35,
     dt0: float = 2e-3,
-) -> StochasticTransitionData:
-    """Generate semidiscrete stochastic-heat transitions through Diffrax."""
+) -> phx.stochastic.StochasticTransitionView:
+    """Generate canonical stochastic-heat trajectory transitions."""
     size, cases, draws = int(grid_size), int(num_cases), int(num_realizations)
     if size < 3 or cases <= 0 or draws <= 0:
         raise ValueError(
@@ -144,7 +250,7 @@ def stochastic_heat_transition_data(
         )
     if duration <= 0.0 or diffusivity <= 0.0 or dt0 <= 0.0:
         raise ValueError("duration, diffusivity, and dt0 must be positive.")
-    initial_key, driver_key = jr.split(key)
+    initial_key, realization_key = jr.split(key)
     initial = _smooth_initial_states(initial_key, cases, size)
     axis_discretization = phx.domain.UniformAxisSpec(
         size,
@@ -160,7 +266,7 @@ def stochastic_heat_transition_data(
     drift = float(diffusivity) * spatial.laplacian_matrix()
     noise = noise_basis.diffusion_matrix
     save_time = jnp.asarray([duration])
-    final: list[Array] = []
+    trajectories: list[phx.stochastic.StochasticTrajectory] = []
     for case in range(cases):
         spde = phx.solver.semidiscretize_reaction_diffusion(
             initial[case],
@@ -170,19 +276,29 @@ def stochastic_heat_transition_data(
             kappa=float(diffusivity),
             noise_basis=noise_basis,
         )
-        driver = spde.wiener_driver(
-            jr.fold_in(driver_key, case),
-            tolerance=min(float(dt0), 1e-3),
-            realization_id=f"heat-case-{case}",
+        realization = spde.wiener_realization(
+            jr.fold_in(realization_key, case),
+            sample_shape=(draws,),
+            tolerance=min(0.5 * float(dt0), 1e-3),
+            label=f"heat-case-{case}",
         )
         solution = phx.solver.solve_diffrax_ensemble(
             spde.problem,
             save_times=save_time,
-            driver=driver,
-            num_paths=draws,
+            realization=realization,
             dt0=dt0,
         )
-        final.append(solution.states[:, 0, :])
+        trajectories.append(
+            solution.to_stochastic_trajectory(
+                initial_state=initial[case],
+                initial_time=0.0,
+                realization_axes=("realization",),
+                state_axes=("x",),
+                case_id=f"heat-case:{case}",
+                discretization_id=spatial.discretization_id,
+                basis_id=noise_basis.basis_id,
+            )
+        )
     mean, covariance = _linear_transition_moments(
         drift,
         noise,
@@ -195,16 +311,18 @@ def stochastic_heat_transition_data(
         quadrature_weights=axis_discretization.quad_weights,
         periodic=True,
     )
-    return StochasticTransitionData(
-        axis,
-        initial,
-        jnp.stack(tuple(final)),
-        float(duration),
-        drift,
-        noise,
-        mean,
-        covariance,
+    trajectory = phx.stochastic.StochasticTrajectory.stack_cases(
+        trajectories,
+        case_axis="case",
+        metadata={
+            "operator_axis": axis,
+            "drift_matrix": drift,
+            "noise_matrix": noise,
+            "analytic_mean": mean,
+            "analytic_covariance": covariance,
+        },
     )
+    return trajectory.adjacent_transitions()
 
 
 def allen_cahn_transition_data(
@@ -219,10 +337,10 @@ def allen_cahn_transition_data(
     noise_rank: int = 3,
     noise_scale: float = 0.7,
     dt0: float = 5e-3,
-) -> StochasticTransitionData:
-    """Generate fixed-grid stochastic Allen--Cahn transition realizations."""
+) -> phx.stochastic.StochasticTransitionView:
+    """Generate canonical stochastic Allen--Cahn trajectory transitions."""
     size, cases, draws = int(grid_size), int(num_cases), int(num_realizations)
-    initial_key, driver_key = jr.split(key)
+    initial_key, realization_key = jr.split(key)
     initial = 0.35 * _smooth_initial_states(initial_key, cases, size)
     axis_discretization = phx.domain.UniformAxisSpec(
         size,
@@ -237,7 +355,7 @@ def allen_cahn_transition_data(
     )
     drift = float(diffusivity) * spatial.laplacian_matrix()
     noise = noise_basis.diffusion_matrix
-    final: list[Array] = []
+    trajectories: list[phx.stochastic.StochasticTrajectory] = []
     for case in range(cases):
         spde = phx.solver.semidiscretize_reaction_diffusion(
             initial[case],
@@ -248,33 +366,45 @@ def allen_cahn_transition_data(
             reaction=lambda t, state, args: state - state**3,
             noise_basis=noise_basis,
         )
-        driver = spde.wiener_driver(
-            jr.fold_in(driver_key, case),
-            tolerance=min(float(dt0), 1e-3),
-            realization_id=f"allen-cahn-case-{case}",
+        realization = spde.wiener_realization(
+            jr.fold_in(realization_key, case),
+            sample_shape=(draws,),
+            tolerance=min(0.5 * float(dt0), 1e-3),
+            label=f"allen-cahn-case-{case}",
         )
         solution = phx.solver.solve_diffrax_ensemble(
             spde.problem,
             save_times=jnp.asarray([duration]),
-            driver=driver,
-            num_paths=draws,
+            realization=realization,
             dt0=dt0,
         )
-        final.append(solution.states[:, 0, :])
+        trajectories.append(
+            solution.to_stochastic_trajectory(
+                initial_state=initial[case],
+                initial_time=0.0,
+                realization_axes=("realization",),
+                state_axes=("x",),
+                case_id=f"allen-cahn-case:{case}",
+                discretization_id=spatial.discretization_id,
+                basis_id=noise_basis.basis_id,
+            )
+        )
     axis = phx.nn.OperatorAxis(
         "x",
         axis_discretization.nodes,
         quadrature_weights=axis_discretization.quad_weights,
         periodic=True,
     )
-    return StochasticTransitionData(
-        axis,
-        initial,
-        jnp.stack(tuple(final)),
-        float(duration),
-        drift,
-        noise,
+    trajectory = phx.stochastic.StochasticTrajectory.stack_cases(
+        trajectories,
+        case_axis="case",
+        metadata={
+            "operator_axis": axis,
+            "drift_matrix": drift,
+            "noise_matrix": noise,
+        },
     )
+    return trajectory.adjacent_transitions()
 
 
 @dataclass(frozen=True)
@@ -310,7 +440,7 @@ def run_stochastic_heat_gaussian_benchmark(
     key: Key[Array, ""],
     /,
     *,
-    data: StochasticTransitionData | None = None,
+    data: phx.stochastic.StochasticTransitionView | None = None,
     evaluation_samples: int = 256,
     jitter: float = 1e-4,
 ) -> StochasticHeatGaussianBenchmarkResult:
@@ -318,11 +448,12 @@ def run_stochastic_heat_gaussian_benchmark(
     dataset = (
         stochastic_heat_transition_data(jr.fold_in(key, 0)) if data is None else data
     )
-    if dataset.analytic_mean is None or dataset.analytic_covariance is None:
+    mean = _metadata(dataset, "analytic_mean")
+    covariance = _metadata(dataset, "analytic_covariance")
+    if mean is None or covariance is None:
         raise ValueError("The stochastic-heat benchmark requires analytic moments.")
-    batch = dataset.evaluation_batch()
+    batch = _evaluation_batch(dataset)
     query = batch.require_single_query()
-    covariance = dataset.analytic_covariance
     eigenvalues, eigenvectors = jnp.linalg.eigh(covariance)
     keep = eigenvalues > max(float(jitter) ** 2, 1e-12)
     factors = eigenvectors[:, keep] * jnp.sqrt(jnp.maximum(eigenvalues[keep], 0.0))
@@ -330,9 +461,9 @@ def run_stochastic_heat_gaussian_benchmark(
         factors,
         (dataset.num_cases,) + factors.shape,
     )
-    fixed_scale = jnp.full_like(dataset.analytic_mean, float(jitter))
+    fixed_scale = jnp.full_like(mean, float(jitter))
     low_rank = phx.nn.GaussianOperatorDistribution(
-        mean=dataset.analytic_mean,
+        mean=mean,
         scale=fixed_scale,
         factors=factors,
         query=query,
@@ -343,10 +474,10 @@ def run_stochastic_heat_gaussian_benchmark(
     )
     diagonal_scale = jnp.broadcast_to(
         jnp.sqrt(jnp.maximum(jnp.diag(covariance), 0.0) + float(jitter) ** 2),
-        dataset.analytic_mean.shape,
+        mean.shape,
     )
     diagonal = phx.nn.GaussianOperatorDistribution(
-        mean=dataset.analytic_mean,
+        mean=mean,
         scale=diagonal_scale,
         factors=None,
         query=query,
@@ -357,7 +488,7 @@ def run_stochastic_heat_gaussian_benchmark(
     )
     diagonal_key, low_rank_key = jr.split(jr.fold_in(key, 1))
     count = int(evaluation_samples)
-    reference = jnp.moveaxis(dataset.final_states, 1, 0)
+    reference = jnp.moveaxis(_final_states(dataset), 1, 0)
     if reference.shape[0] > count:
         reference = reference[:count]
     diagonal_samples = diagonal.sample(diagonal_key, (reference.shape[0],))
@@ -373,27 +504,29 @@ def run_stochastic_heat_gaussian_benchmark(
         low_rank_predictive,
         reference_predictive,
     )
-    true_covariance = covariance + float(jitter) ** 2 * jnp.eye(dataset.grid_size)
+    grid_size = _axis(dataset).size
+    true_covariance = covariance + float(jitter) ** 2 * jnp.eye(grid_size)
     diagonal_error = jnp.linalg.norm(diagonal.dense_covariance()[0] - true_covariance)
     low_rank_error = jnp.linalg.norm(low_rank.dense_covariance()[0] - true_covariance)
-    empirical_mean = jnp.mean(dataset.final_states, axis=1)
-    location_rmse = jnp.sqrt(jnp.mean((empirical_mean - dataset.analytic_mean) ** 2))
+    final_states = _final_states(dataset)
+    empirical_mean = jnp.mean(final_states, axis=1)
+    location_rmse = jnp.sqrt(jnp.mean((empirical_mean - mean) ** 2))
     fine_data = stochastic_heat_transition_data(
         jr.fold_in(key, 2),
-        grid_size=2 * dataset.grid_size,
+        grid_size=2 * grid_size,
         num_cases=1,
         num_realizations=2,
         duration=dataset.duration,
-        noise_rank=int(dataset.noise_matrix.shape[-1]),
+        noise_rank=int(_metadata(dataset, "noise_matrix").shape[-1]),
         dt0=min(dataset.duration / 10.0, 5e-3),
     )
-    fine_covariance = fine_data.analytic_covariance
+    fine_covariance = _metadata(fine_data, "analytic_covariance")
     if fine_covariance is None:
         raise AssertionError(
             "Stochastic-heat data unexpectedly omitted analytic covariance."
         )
     fine_finite = bool(
-        jnp.all(jnp.isfinite(fine_data.final_states))
+        jnp.all(jnp.isfinite(_final_states(fine_data)))
         & jnp.all(jnp.isfinite(fine_covariance))
     )
     return StochasticHeatGaussianBenchmarkResult(
@@ -403,6 +536,133 @@ def run_stochastic_heat_gaussian_benchmark(
         float(low_rank_error),
         float(location_rmse),
         fine_finite,
+    )
+
+
+@dataclass(frozen=True)
+class StochasticHeatProcessBenchmarkResult:
+    direct_mean_relative_error: float
+    direct_covariance_relative_error: float
+    rollout_mean_relative_error: float
+    rollout_covariance_relative_error: float
+    semigroup_error: float
+    replay_exact: bool
+    predictive_process_axis: bool
+
+    @property
+    def passed(self) -> bool:
+        return (
+            self.direct_mean_relative_error < 1e-5
+            and self.direct_covariance_relative_error < 1e-5
+            and self.rollout_mean_relative_error < 0.12
+            and self.rollout_covariance_relative_error < 0.25
+            and self.semigroup_error < 0.2
+            and self.replay_exact
+            and self.predictive_process_axis
+        )
+
+
+def run_stochastic_heat_process_benchmark(
+    key: Key[Array, ""],
+    /,
+    *,
+    data: phx.stochastic.StochasticTransitionView | None = None,
+    num_realizations: int = 2048,
+) -> StochasticHeatProcessBenchmarkResult:
+    """Validate an exact stochastic-heat transition as one coherent process."""
+    dataset = (
+        stochastic_heat_transition_data(
+            jr.fold_in(key, 0),
+            grid_size=8,
+            num_cases=3,
+            num_realizations=32,
+        )
+        if data is None
+        else data
+    )
+    count = int(num_realizations)
+    if count < 2:
+        raise ValueError("num_realizations must be at least two.")
+    drift = _metadata(dataset, "drift_matrix")
+    noise = _metadata(dataset, "noise_matrix")
+    true_mean = _metadata(dataset, "analytic_mean")
+    true_covariance = _metadata(dataset, "analytic_covariance")
+    if any(value is None for value in (drift, noise, true_mean, true_covariance)):
+        raise ValueError("Stochastic-heat process validation requires analytic metadata.")
+
+    batch = _evaluation_batch(dataset)
+    initial_states = _physical_initial_states(dataset)
+    transition = phx.nn.OperatorMarginalTransition(
+        LinearGaussianReferenceOperator(drift, noise),
+        batch,
+        phx.nn.OperatorTransitionSpec(phx.nn.OperatorOutputSpec("scalar")),
+        process_id="analytic-stochastic-heat",
+    )
+    direct = transition.marginal_transition(
+        initial_states,
+        t0=0.0,
+        t1=dataset.duration,
+    )
+    operator_distribution = direct.operator_distribution
+    if not isinstance(operator_distribution, phx.nn.GaussianOperatorDistribution):
+        raise TypeError("Analytic heat transition must return a Gaussian distribution.")
+    direct_covariance = operator_distribution.dense_covariance()
+    expected_covariance = jnp.broadcast_to(
+        true_covariance,
+        direct_covariance.shape,
+    )
+
+    def relative_error(value, reference):
+        return jnp.linalg.norm(value - reference) / jnp.maximum(
+            jnp.linalg.norm(reference),
+            1e-12,
+        )
+
+    times = jnp.asarray([0.0, 0.5 * dataset.duration, dataset.duration])
+    rollout_key, objective_key = jr.split(jr.fold_in(key, 1))
+    rollout = phx.nn.marginal_operator_rollout(
+        transition,
+        times,
+        initial_state=initial_states,
+        key=rollout_key,
+        num_realizations=count,
+    )
+    replay = phx.nn.marginal_operator_rollout(
+        transition,
+        times,
+        initial_state=initial_states,
+        key=rollout_key,
+        num_realizations=count,
+    )
+    final_states = rollout.states[:, :, -1]
+    empirical_mean = jnp.mean(final_states, axis=1)
+    centered = final_states - empirical_mean[:, None]
+    empirical_covariance = jnp.einsum(
+        "cri,crj->cij",
+        centered,
+        centered,
+    ) / float(count - 1)
+    predictive = rollout.to_predictive()
+    semigroup_error = phx.stochastic.semigroup_objective(
+        transition,
+        initial_states,
+        t0=0.0,
+        tmid=0.5 * dataset.duration,
+        t1=dataset.duration,
+        key=objective_key,
+        num_samples=min(count, 1024),
+    )
+    return StochasticHeatProcessBenchmarkResult(
+        float(relative_error(direct.location, true_mean)),
+        float(relative_error(direct_covariance, expected_covariance)),
+        float(relative_error(empirical_mean, true_mean)),
+        float(relative_error(empirical_covariance, expected_covariance)),
+        float(semigroup_error),
+        bool(jnp.array_equal(rollout.states, replay.states)),
+        (
+            len(predictive.sample_axes) == 1
+            and predictive.sample_axes[0].source == "process"
+        ),
     )
 
 
@@ -449,7 +709,7 @@ class AllenCahnFlowBenchmarkResult:
 
 
 def _fit_allen_cahn_trial(
-    data: StochasticTransitionData,
+    data: phx.stochastic.StochasticTransitionView,
     seed: int,
     *,
     steps: int,
@@ -457,14 +717,15 @@ def _fit_allen_cahn_trial(
     evaluation_samples: int,
 ) -> AllenCahnFlowBenchmarkTrial:
     split = max(1, data.num_cases - max(1, data.num_cases // 4))
-    train = data.operator_dataset(range(split))
+    train = _operator_dataset(data, range(split))
     evaluation_indices = tuple(range(split, data.num_cases))
-    evaluation_batch = data.evaluation_batch(evaluation_indices)
-    reference = jnp.moveaxis(data.final_states[jnp.asarray(evaluation_indices)], 1, 0)
+    evaluation_batch = _evaluation_batch(data, evaluation_indices)
+    reference = jnp.moveaxis(_final_states(data)[jnp.asarray(evaluation_indices)], 1, 0)
     if reference.shape[0] > evaluation_samples:
         reference = reference[:evaluation_samples]
+    grid_size = _axis(data).size
     location = phx.nn.FNO(
-        n_modes=(max(1, data.grid_size // 3),),
+        n_modes=(max(1, grid_size // 3),),
         in_channels="scalar",
         out_channels="scalar",
         width=8,
@@ -475,7 +736,7 @@ def _fit_allen_cahn_trial(
     )
     encoder = phx.nn.FixedBranchEncoder(
         phx.nn.MLP(
-            in_size=data.grid_size,
+            in_size=grid_size,
             out_size=8,
             width_size=16,
             depth=1,
@@ -495,7 +756,7 @@ def _fit_allen_cahn_trial(
         nn_depth=1,
     )
     gaussian_base = phx.nn.FNO(
-        n_modes=(max(1, data.grid_size // 3),),
+        n_modes=(max(1, grid_size // 3),),
         in_channels="scalar",
         out_channels=4,
         width=8,
@@ -597,7 +858,7 @@ def run_allen_cahn_flow_benchmark(
     key: Key[Array, ""],
     /,
     *,
-    data: StochasticTransitionData | None = None,
+    data: phx.stochastic.StochasticTransitionView | None = None,
     seeds: Sequence[int] = (0, 1, 2),
     steps: int = 100,
     batch_size: int = 32,
@@ -624,10 +885,12 @@ def run_allen_cahn_flow_benchmark(
 __all__ = [
     "AllenCahnFlowBenchmarkResult",
     "AllenCahnFlowBenchmarkTrial",
+    "LinearGaussianReferenceOperator",
     "StochasticHeatGaussianBenchmarkResult",
-    "StochasticTransitionData",
+    "StochasticHeatProcessBenchmarkResult",
     "allen_cahn_transition_data",
     "run_allen_cahn_flow_benchmark",
     "run_stochastic_heat_gaussian_benchmark",
+    "run_stochastic_heat_process_benchmark",
     "stochastic_heat_transition_data",
 ]

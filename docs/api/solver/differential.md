@@ -3,39 +3,61 @@
 The differential backend integrates finite-dimensional initial-value problems through
 [Diffrax](https://docs.kidger.site/diffrax/). It is separate from `FunctionalSolver`:
 `FunctionalSolver` minimizes a physics/data functional, while `solve_diffrax` numerically
-integrates a supplied drift and optional diffusion.
+integrates a supplied drift and optional named stochastic terms.
 
-## Problem and driver contract
+## Problem, Wiener terms, and realization contract
 
 `DifferentialProblem` represents
 
 $$
-dY_t = f(t,Y_t,a)\,dt + g(t,Y_t,a)\,dW_t.
+dY_t = f(t,Y_t,a)\,dt + \sum_k g_k(t,Y_t,a)\,dW_t^{(k)}.
 $$
 
-Omit `diffusion` for an ODE. For an SDE, `WienerDriver.noise_shape` declares the
-finite-dimensional Wiener increment seen by `g`. For a state vector of size $n$ and
-`noise_shape=(m,)`, `g` normally returns an $n\times m$ array. Spatial SPDEs must first
-be semidiscretized to a finite state; the driver metadata can record the retained noise
-basis and realization identity.
+Omit `wiener_terms` for an ODE. Each named `WienerTerm` declares one independent
+Wiener source: its coefficient, native noise shape, optional basis identity, and
+mathematical structure (`additive`, `commutative`, or `general`). For a state of shape
+`state_shape`, the coefficient must return `state_shape + noise_shape`. The backend
+flattens and concatenates the terms in declared order; `DifferentialSolution` retains
+the corresponding named column slices.
 
-A driver owns its PRNG key. Reusing the same `WienerDriver` replays the same Brownian
-path; changing its key changes the path. `basis_id` and `realization_id` are provenance,
-not numerical inputs. Use `levy_area="space_time"` or `"space_time_time"` only with a
-solver that requires the corresponding Levy-area information.
+A `WienerRealization` defines one global Brownian path or coupled path batch. Its
+`support` is independent of any one solve interval, so solving adjacent subintervals
+with the same realization queries one continuous path. It stores the root key, global
+support, combined noise shape, sample shape, Brownian-tree tolerance, Lévy-area level,
+and optional noise-basis identity. Path keys use `jax.random.fold_in`: increasing the
+ensemble size preserves every existing path prefix.
+
+`realization_id` is a computed fingerprint of all path-defining inputs. `label` is
+human-readable metadata. `coupling_id` identifies paths intended for common-random-
+number comparisons. `WienerRealization.antithetic` constructs explicit `(+W,-W)`
+pairs. Reuse one realization across models, parameters, or coarse/fine grids when
+common randomness is required.
 
 ::: phydrax.solver.DifferentialProblem
     options:
         members:
             - __init__
             - stochastic
+            - additive_noise
 
 ---
 
-::: phydrax.solver.WienerDriver
+::: phydrax.solver.WienerTerm
     options:
         members:
             - __init__
+            - noise_size
+
+---
+
+::: phydrax.stochastic.WienerRealization
+    options:
+        members:
+            - __init__
+            - independent
+            - antithetic
+            - num_paths
+            - path_keys
 
 ## ODE solve
 
@@ -95,10 +117,17 @@ Phydrax and requires no interpolation package beyond Diffrax.
 ## SDE solve and process ensemble
 
 The default Itô solver is fixed-step Euler--Maruyama (`diffrax.Euler`); the default
-Stratonovich solver is `diffrax.EulerHeun`. SDE calls require both a `WienerDriver` and
-an explicit `dt0`. Pass an explicit Diffrax solver/controller for higher-order,
-adaptive, stiff, or event-aware integration; compatibility between its stochastic
-term, interpretation, and Levy-area requirement remains the caller's responsibility.
+Stratonovich solver is `diffrax.EulerHeun`. SDE calls require a
+`WienerRealization` and explicit `dt0`. Before entering Diffrax, Phydrax validates:
+
+- the problem interval lies inside the realization's global support,
+- combined noise shape and basis identity agree,
+- a fixed-step solve uses a Brownian-tree tolerance strictly smaller than `dt0`,
+- general Itô/Stratonovich problems use a solver with the matching interpretation,
+- the realization supplies the solver's minimum Lévy-area level.
+
+Explicitly additive noise may use either interpretation-specific solver because the
+Itô and Stratonovich equations coincide in that case.
 
 ```python
 import jax.numpy as jnp
@@ -110,21 +139,30 @@ problem = phx.solver.DifferentialProblem(
     jnp.zeros((2,)),
     t0=0.0,
     t1=1.0,
-    diffusion=lambda t, y, args: 0.3 * jnp.eye(2),
+    wiener_terms=(
+        phx.solver.WienerTerm(
+            "state-noise",
+            lambda t, y, args: 0.3 * jnp.eye(2),
+            (2,),
+            structure="additive",
+            basis_id="state-space",
+        ),
+    ),
     interpretation="ito",
 )
-driver = phx.solver.WienerDriver(
+realization = phx.stochastic.WienerRealization(
     jr.key(0),
     (2,),
+    support=(0.0, 1.0),
+    sample_shape=(128,),
     tolerance=1e-3,
-    basis_id="state-space",
-    realization_id="run-0",
+    noise_id="state-space",
+    label="run-0",
 )
 ensemble = phx.solver.solve_diffrax_ensemble(
     problem,
     save_times=jnp.linspace(0.0, 1.0, 11),
-    driver=driver,
-    num_paths=128,
+    realization=realization,
     dt0=1e-2,
 )
 predictive = ensemble.to_predictive(
@@ -134,12 +172,103 @@ predictive = ensemble.to_predictive(
 )
 ```
 
-`solve_diffrax_ensemble` splits the driver key once per path and returns arrays with
-shape `sample_shape + (num_times,) + state_shape`. `to_predictive` labels that leading
-axis as `process` uncertainty by default. It does not reinterpret discretization or
-solver error as process uncertainty.
+The realization owns the sample shape; `solve_diffrax_ensemble` does not accept a
+separate path count. Results have shape
+`sample_shape + (num_times,) + state_shape`. `to_predictive` currently requires one
+sample axis and labels it as `process` uncertainty by default. It does not reinterpret
+discretization or solver error as process uncertainty.
 
 ::: phydrax.solver.solve_diffrax_ensemble
+
+## Finite-activity jump and hybrid solves
+
+Pure jump models implement `AbstractJumpProcess`. `JumpProcess` supplies
+callable intensities, jump maps, and optional marked jumps;
+`MassActionJumpProcess` supplies combinatorial reaction propensities and
+stoichiometric updates. A matching `PoissonClockRealization` owns unit-rate
+thresholds and mark keys for every channel and path.
+
+Use `solve_next_reaction` to advance channel-specific internal clocks or
+`solve_direct_ssa` to sample from the total hazard. Both return `JumpSolution`
+with a canonical `JumpEventBatch`. The event batch carries a valid-prefix mask
+and one status per path: success, event-capacity exhaustion, invalid intensity,
+or solver failure. Increase capacity with
+`PoissonClockRealization.extend`; extending preserves all existing thresholds
+and marks.
+
+```python
+import jax.numpy as jnp
+import jax.random as jr
+import phydrax as phx
+
+process = phx.stochastic.JumpProcess(
+    lambda t, state, args: jnp.asarray([2.0]),
+    lambda state, channel, mark, args: state + jnp.asarray([1.0]),
+    state_shape=(1,),
+    num_channels=1,
+    process_id="counting-process",
+)
+clock = phx.stochastic.PoissonClockRealization(
+    jr.key(1),
+    1,
+    support=(0.0, 1.0),
+    max_events_per_channel=16,
+    sample_shape=(256,),
+    process_id=process.process_id,
+)
+solution = phx.solver.solve_next_reaction(
+    process,
+    clock,
+    jnp.asarray([0.0]),
+    t0=0.0,
+    t1=1.0,
+    save_times=jnp.linspace(0.0, 1.0, 11),
+)
+```
+
+`JumpDifferentialProblem` combines the jump process with a
+`DifferentialProblem`. `solve_jump_differential` integrates each
+state-dependent cumulative hazard and localizes threshold crossings with a
+Diffrax event root. Between crossings, the continuous component may be an ODE
+or SDE. For an SDE, pass one global `WienerRealization`; the result retains a
+`CompositeStochasticRealization` containing the Wiener and Poisson drivers.
+After event localization, the stochastic segment is evaluated at the exact
+located endpoint so restarting at a jump does not replace the global Brownian
+path with a dense-interpolation approximation.
+
+`finite_state_generator` constructs an explicit continuous-time Markov-chain
+generator only for declared finite state sets. `boundary_policy="raise"`
+rejects transitions leaving the set; `"leak"` records the escaped rate.
+
+::: phydrax.solver.JumpSolution
+
+---
+
+::: phydrax.solver.JumpDifferentialProblem
+
+---
+
+::: phydrax.solver.JumpDifferentialSolution
+
+---
+
+::: phydrax.solver.solve_next_reaction
+
+---
+
+::: phydrax.solver.solve_direct_ssa
+
+---
+
+::: phydrax.solver.solve_jump_differential
+
+---
+
+::: phydrax.solver.FiniteStateGenerator
+
+---
+
+::: phydrax.solver.finite_state_generator
 
 ## Semidiscrete SPDEs
 
@@ -158,10 +287,10 @@ B=\Phi\operatorname{diag}(\sqrt{q_1},\ldots,\sqrt{q_r}),
 \Phi^\mathsf TM\Phi=I,
 \]
 
-where \(M\) is the spatial quadrature mass. `SemidiscreteSPDE.wiener_driver`
-then derives `noise_shape=(r,)` and propagates the basis fingerprint. This
-prevents a driver and diffusion factor from silently disagreeing about retained
-noise modes.
+where \(M\) is the spatial quadrature mass.
+`SemidiscreteSPDE.wiener_realization` derives the combined noise shape and propagates
+the basis fingerprint as `noise_id`. A mismatched realization and retained noise basis
+therefore fail before integration.
 
 ### Spatial discretizations
 
@@ -176,9 +305,11 @@ noise modes.
 | `cosine` | even-extension spectral derivative | homogeneous Neumann |
 
 Tensor-grid states begin with the declared spatial shape; trailing channel axes
-are preserved by `laplacian`, `flatten`, and `unflatten`.
-`laplacian_matrix()` is an explicit diagnostic for small systems. Ordinary
-integration should use the matrix-free application.
+are preserved by `laplacian`, `flatten`, and `unflatten`. `eigenpairs(rank=...)`
+combines exact one-dimensional spectra and selects only the lowest requested
+tensor sums. It does not assemble the full tensor Laplacian or enumerate every
+product mode. `laplacian_matrix()` remains an explicit diagnostic for small
+systems; ordinary integration and low-rank spectral noise do not use it.
 
 `SpectralSpatialDiscretization` wraps an existing
 `phydrax.nn.SpectralDiscretization`. It reuses that plan's analysis, synthesis,
@@ -198,18 +329,35 @@ a second manifold eigenbasis convention.
 ### Finite-rank spatial noise
 
 Construct a basis from explicit weighted-orthonormal modes, a covariance
-spectrum evaluated on low Laplacian modes, a nodal covariance matrix, or a
-continuous kernel sampled at the discretization points. Full-rank covariance
-factorization reconstructs the supplied nodal covariance; a smaller `rank`
-is an explicit KL truncation. Negative covariance eigenvalues, non-orthonormal
-modes, shape mismatches, and ranks larger than the discrete state are rejected
-before integration.
+spectrum evaluated on low Laplacian modes, a nodal covariance matrix, a
+continuous kernel, or a covariance matvec:
+
+- `from_discrete_covariance` performs a dense weighted eigendecomposition and is
+  intended for small matrices.
+- `from_kernel_covariance` uses Matfree pivoted Cholesky. It evaluates scalar
+  kernel entries on demand and stores \(O(nr)\) values rather than an
+  \(n\times n\) covariance.
+- `from_covariance_operator` accepts a state-shaped covariance matvec and uses a
+  seeded Matfree randomized Nyström sketch. `oversampling` controls sketch
+  width.
+
+Approximate constructors attach `SpatialNoiseApproximation` at
+`basis.approximation`. It records the method, requested and retained ranks,
+residual kind and estimate, tolerance, convergence flag, and—when randomized—
+the key data and sketch size. A non-converged factor remains inspectable rather
+than silently being presented as exact. Negative covariance eigenvalues,
+non-orthonormal modes, shape mismatches, and ranks larger than the discrete
+state are rejected before integration.
 
 `basis_id` hashes state shape, modes, covariance eigenvalues, quadrature,
 mode IDs, and spatial discretization provenance. It changes when the grid,
-rank, spectrum, or modes change.
+rank, spectrum, modes, or randomized seed changes.
 
 ::: phydrax.solver.SpatialNoiseBasis
+
+---
+
+::: phydrax.solver.SpatialNoiseApproximation
 
 ### Composition and integration
 
@@ -237,16 +385,16 @@ spde = phx.solver.semidiscretize_reaction_diffusion(
     noise_basis=noise,
     interpretation="ito",
 )
-driver = spde.wiener_driver(
+realization = spde.wiener_realization(
     jr.key(0),
+    sample_shape=(128,),
     tolerance=1e-4,
-    realization_id="allen-cahn-0",
+    label="allen-cahn-0",
 )
 ensemble = phx.solver.solve_diffrax_ensemble(
     spde.problem,
     save_times=jnp.linspace(0.0, 0.2, 21),
-    driver=driver,
-    num_paths=128,
+    realization=realization,
     dt0=1e-3,
 )
 ```
@@ -258,9 +406,9 @@ ensemble = phx.solver.solve_diffrax_ensemble(
 pointwise, or full diffusion amplitude. Initial state, drift, diffusion, basis,
 and noise shapes are checked eagerly.
 
-Both Itô and Stratonovich interpretations pass unchanged into
-`DifferentialProblem`; the usual Diffrax solver/Levy-area compatibility rules
-still apply. These APIs solve a finite-rank semidiscrete system. They do not
+Both Itô and Stratonovich interpretations pass into `DifferentialProblem`.
+Phydrax validates interpretation and Lévy-area compatibility before calling Diffrax.
+These APIs solve a finite-rank semidiscrete system. They do not
 claim direct infinite-dimensional white-noise integration or automatic
 discretization-error uncertainty.
 
@@ -274,12 +422,84 @@ discretization-error uncertainty.
 
 ::: phydrax.solver.semidiscretize_reaction_diffusion
 
+### Semilinear exponential integration
+
+`semidiscretize_semilinear_spde` preserves an explicit linear/nonlinear split.
+`solve_semilinear_spde` specializes to fixed-step exponential Euler with exact
+compatible modal stochastic convolution for additive finite-rank Itô noise.
+`MatrixFunctionPolicy` selects exact spectral, Chebyshev, Lanczos, or Arnoldi
+actions without requiring a global operator matrix. Unsupported specializations
+use the validated Diffrax backend unless `fallback="error"` is requested.
+
+::: phydrax.solver.SemilinearDrift
+
+---
+
+::: phydrax.solver.MatrixFunctionPolicy
+
+---
+
+::: phydrax.solver.SpectralMatrixRepresentation
+
+---
+
+::: phydrax.solver.semidiscretize_semilinear_spde
+
+---
+
+::: phydrax.solver.solve_semilinear_spde
+
+### Declared SPDE solution concepts
+
+`SPDESolutionSpec` distinguishes strong, weak, and mild formulations and records
+whether the forcing is smooth, spatially truncated, or space-time white.
+Pointwise strong stochastic constraints reject unregularized rough forcing
+rather than evaluating a mathematically undefined residual.
+
+::: phydrax.stochastic.SPDESolutionSpec
+
+### Convergence and noise truncation
+
+`SPDEConvergenceStudy` refines one axis at a time: time, space, retained noise
+rank, or ensemble size. Strong/pathwise levels require one common `coupling_id`.
+Weak observables carry sampling error and confidence intervals.
+`NoiseTruncationStudy` keeps raw covariance truncation separate from
+finite-horizon and stationary solution-aware truncation.
+
+::: phydrax.solver.SPDEConvergenceLevel
+
+---
+
+::: phydrax.solver.SPDEConvergenceStudy
+
+---
+
+::: phydrax.solver.WeakObservableEstimate
+
+---
+
+::: phydrax.solver.weak_observable_estimate
+
+---
+
+::: phydrax.solver.NoiseTruncationLevel
+
+---
+
+::: phydrax.solver.NoiseTruncationStudy
+
 ## Result contract
 
 `DifferentialSolution.valid` marks finite saved states. `successful` reduces that mask
 across saved times for each realization. `backend_result`, `stats`, `event_mask`,
-`solver_name`, `interpretation`, the driver, and per-realization keys preserve the
-integration and stochastic provenance needed to reproduce a path ensemble.
+`solver_name`, `interpretation`, the `WienerRealization`, and named Wiener-term slices
+preserve the integration and stochastic provenance needed to reproduce or couple a
+path ensemble.
+
+`to_stochastic_trajectory` preserves physical-case and realization axes instead
+of flattening them. `StochasticTrajectory` retains validity, path/coupling,
+parameter, discretization, basis, and approximation provenance. Its transition
+views can be adapted directly to leakage-aware operator datasets.
 
 ::: phydrax.solver.DifferentialSolution
     options:
@@ -290,3 +510,22 @@ integration and stochastic provenance needed to reproduce a path ensemble.
             - has_dense_interpolation
             - evaluate
             - to_predictive
+            - to_stochastic_trajectory
+
+---
+
+::: phydrax.stochastic.StochasticTrajectory
+    options:
+        members:
+            - __init__
+            - from_solution
+            - stack_cases
+            - adjacent_transitions
+            - transitions
+
+---
+
+::: phydrax.stochastic.StochasticTransitionView
+    options:
+        members:
+            - operator_dataset

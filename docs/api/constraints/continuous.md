@@ -119,8 +119,21 @@ activation or ansatz, an integral equality constraint for normalization, and
 the corresponding initial/boundary constraints. This separation prevents the
 dynamics residual from silently changing the density model.
 
+`ContinuousProbabilityFluxBoundaryConstraint` applies the same drift,
+diffusion/covariance, metric, and interpretation semantics to
+\(n\mathbin{\cdot}J\) on a boundary. Its default target is zero (reflecting or
+no-flux); a nonzero target is an explicitly prescribed probability flux.
+
+When `solution_spec=` is supplied to a pointwise interior constraint, strong
+SPDE residuals are accepted only for declared smooth or spatially truncated
+forcing. Rough space-time-white forcing requires a weak or mild formulation.
+
 ::: phydrax.constraints.ContinuousKolmogorovConstraint
 
 ---
 
 ::: phydrax.constraints.ContinuousFokkerPlanckConstraint
+
+---
+
+::: phydrax.constraints.ContinuousProbabilityFluxBoundaryConstraint

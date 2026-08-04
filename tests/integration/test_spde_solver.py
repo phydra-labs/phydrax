@@ -31,16 +31,16 @@ def test_stochastic_heat_ensemble_matches_semidiscrete_gaussian_moments():
         kappa=kappa,
         noise_basis=basis,
     )
-    driver = spde.wiener_driver(
+    realization = spde.wiener_realization(
         jr.key(20),
+        sample_shape=(2048,),
         tolerance=1e-4,
-        realization_id="heat-moments",
+        label="heat-moments",
     )
     solution = phx.solver.solve_diffrax_ensemble(
         spde.problem,
         save_times=jnp.asarray([duration]),
-        driver=driver,
-        num_paths=2048,
+        realization=realization,
         dt0=1e-3,
     )
     terminal = solution.states[:, 0, :]
@@ -69,8 +69,8 @@ def test_stochastic_heat_ensemble_matches_semidiscrete_gaussian_moments():
     assert jnp.all(solution.successful)
     assert jnp.allclose(empirical_mean, expected_mean, atol=6e-3, rtol=2e-2)
     assert relative_covariance_error < 0.12
-    assert solution.driver is driver
-    assert solution.driver.basis_id == basis.basis_id
+    assert solution.realization is realization
+    assert solution.realization.noise_id == basis.basis_id
 
     predictive = solution.to_predictive(
         sample_dim="path",
@@ -81,7 +81,7 @@ def test_stochastic_heat_ensemble_matches_semidiscrete_gaussian_moments():
     assert predictive.samples.shape == (2048, 1, 4)
 
 
-def test_semidiscrete_heat_replays_driver_and_changes_with_key():
+def test_semidiscrete_heat_replays_realization_and_changes_with_key():
     discretization = _periodic_discretization(5)
     basis = phx.solver.SpatialNoiseBasis.from_spectrum(
         discretization,
@@ -96,20 +96,29 @@ def test_semidiscrete_heat_replays_driver_and_changes_with_key():
         kappa=0.04,
         noise_basis=basis,
     )
-    driver = spde.wiener_driver(jr.key(21), tolerance=1e-4)
+    realization = spde.wiener_realization(
+        jr.key(21),
+        sample_shape=(64,),
+        tolerance=1e-4,
+    )
 
-    def solve(selected_driver):
+    def solve(selected_realization):
         return phx.solver.solve_diffrax_ensemble(
             spde.problem,
             save_times=jnp.asarray([0.03]),
-            driver=selected_driver,
-            num_paths=64,
+            realization=selected_realization,
             dt0=1e-3,
         )
 
-    first = solve(driver)
-    replay = solve(driver)
-    changed = solve(spde.wiener_driver(jr.key(22), tolerance=1e-4))
+    first = solve(realization)
+    replay = solve(realization)
+    changed = solve(
+        spde.wiener_realization(
+            jr.key(22),
+            sample_shape=(64,),
+            tolerance=1e-4,
+        )
+    )
 
     assert jnp.array_equal(first.states, replay.states)
     assert not jnp.array_equal(first.states, changed.states)
@@ -132,19 +141,21 @@ def test_stochastic_allen_cahn_semidiscretization_is_finite_and_reproducible():
         reaction=lambda t, state, args: state - state**3,
         noise_basis=basis,
     )
-    driver = spde.wiener_driver(jr.key(23), tolerance=1e-4)
+    realization = spde.wiener_realization(
+        jr.key(23),
+        sample_shape=(32,),
+        tolerance=1e-4,
+    )
     first = phx.solver.solve_diffrax_ensemble(
         spde.problem,
         save_times=jnp.asarray([0.02, 0.04]),
-        driver=driver,
-        num_paths=32,
+        realization=realization,
         dt0=1e-3,
     )
     replay = phx.solver.solve_diffrax_ensemble(
         spde.problem,
         save_times=jnp.asarray([0.02, 0.04]),
-        driver=driver,
-        num_paths=32,
+        realization=realization,
         dt0=1e-3,
     )
 
@@ -182,14 +193,22 @@ def test_two_dimensional_tensor_state_preserves_channels_and_noise_axes():
     solution = phx.solver.solve_diffrax_ensemble(
         spde.problem,
         save_times=jnp.asarray([0.01]),
-        driver=spde.wiener_driver(jr.key(24), tolerance=1e-4),
-        num_paths=4,
+        realization=spde.wiener_realization(
+            jr.key(24),
+            sample_shape=(4,),
+            tolerance=1e-4,
+        ),
         dt0=1e-3,
     )
 
     assert spde.state_shape == (4, 5, 2)
     assert spde.noise_shape == (1,)
-    assert spde.problem.diffusion(0.0, initial, None).shape == (4, 5, 2, 1)
+    assert spde.problem.wiener_terms[0].coefficient(0.0, initial, None).shape == (
+        4,
+        5,
+        2,
+        1,
+    )
     assert solution.states.shape == (4, 1, 4, 5, 2)
     assert jnp.all(jnp.isfinite(solution.states))
 
@@ -224,8 +243,11 @@ def test_semidiscrete_stratonovich_geometric_noise_matches_analytic_moments():
     solution = phx.solver.solve_diffrax_ensemble(
         spde.problem,
         save_times=jnp.asarray([duration]),
-        driver=spde.wiener_driver(jr.key(25), tolerance=1e-4),
-        num_paths=2048,
+        realization=spde.wiener_realization(
+            jr.key(25),
+            sample_shape=(2048,),
+            tolerance=1e-4,
+        ),
         dt0=2e-3,
     )
     terminal = solution.states[:, 0, :]

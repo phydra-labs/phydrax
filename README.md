@@ -152,6 +152,15 @@ and geometry-informed operators, and transformer operators. See the
 contracts and audited architecture comparisons, and the
 [architecture API](docs/api/nn/architectures.md) for constructor details.
 
+Stochastic support includes reproducible SDE/SPDE path ensembles, finite-rank
+spatial noise, semilinear exponential integration, convergence/error-budget
+diagnostics, strong/weak/mild physics contracts, static random fields, latent
+coefficient processes, and process-consistent marginal or pathwise
+neural-operator rollouts. See the
+[uncertainty guide](docs/guides_uncertainty.md),
+[neural-operator uncertainty API](docs/api/uq/operator.md), and
+[differential solver API](docs/api/solver/differential.md).
+
 ## Why JAX?
 
 Partial Differential Equations and their variants are most naturally expressed in the language of operators, which can be thought of as maps between function spaces. While functions map points to values (think `Array`s), operators map entire functions to new functions.
