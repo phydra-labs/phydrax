@@ -15,9 +15,10 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import opt_einsum as oe
-from jaxtyping import Array, Key
+from jaxtyping import Array, ArrayLike, Key
 
 from ...._doc import DOC_KEY0
+from ...._interpolation import fourier_resample as _fourier_resample
 from ...._strict import StrictModule
 from ..._utils import _get_size
 from ..core._base import _AbstractOperatorModel
@@ -279,43 +280,15 @@ def spectral_resample(
     values: Array,
     output_shape: Sequence[int],
     /,
+    *,
+    phase_offsets: Sequence[ArrayLike] | None = None,
 ) -> Array:
-    """Band-limited resampling over the trailing spatial axes before channels."""
-    array = jnp.asarray(values)
-    shape = tuple(int(size) for size in output_shape)
-    ndim = len(shape)
-    if not shape or any(size <= 0 for size in shape):
-        raise ValueError("output_shape must contain positive spatial sizes.")
-    if array.ndim < ndim + 1:
-        raise ValueError("spectral_resample expects trailing spatial axes and channels.")
-    spatial_axes = tuple(range(array.ndim - ndim - 1, array.ndim - 1))
-    source_shape = tuple(int(array.shape[axis]) for axis in spatial_axes)
-    transformed = jnp.fft.fftshift(
-        jnp.fft.fftn(array, axes=spatial_axes, norm="forward"),
-        axes=spatial_axes,
+    """Band-limited resampling over spatial axes, with optional period shifts."""
+    return _fourier_resample(
+        values,
+        output_shape,
+        phase_offsets=phase_offsets,
     )
-    transformed_shape = list(transformed.shape)
-    for axis, size in zip(spatial_axes, shape, strict=True):
-        transformed_shape[axis] = size
-    resized = jnp.zeros(tuple(transformed_shape), dtype=transformed.dtype)
-
-    source_slices: list[slice] = [slice(None)] * array.ndim
-    target_slices: list[slice] = [slice(None)] * array.ndim
-    for axis, source_size, target_size in zip(
-        spatial_axes, source_shape, shape, strict=True
-    ):
-        count = min(source_size, target_size)
-        source_start = (source_size - count) // 2
-        target_start = (target_size - count) // 2
-        source_slices[axis] = slice(source_start, source_start + count)
-        target_slices[axis] = slice(target_start, target_start + count)
-    resized = resized.at[tuple(target_slices)].set(transformed[tuple(source_slices)])
-    result = jnp.fft.ifftn(
-        jnp.fft.ifftshift(resized, axes=spatial_axes),
-        axes=spatial_axes,
-        norm="forward",
-    )
-    return result.real if not jnp.issubdtype(array.dtype, jnp.complexfloating) else result
 
 
 class MultiScaleSpectralConvND(StrictModule):

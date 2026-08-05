@@ -15,6 +15,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._frozendict import frozendict
+from .._interpolation import apply_gather_stencil, linear_stencil_from_indices
 from .._strict import StrictModule
 from ..stochastic import StochasticTrajectory, WienerRealization
 
@@ -616,9 +617,13 @@ def solve_stochastic_delay(
                         (value - grid[left]) / denominator,
                         0.0,
                     )
-                    return (1.0 - fraction) * state_buffer[
-                        left
-                    ] + fraction * state_buffer[right]
+                    stencil = linear_stencil_from_indices(
+                        left,
+                        right,
+                        fraction,
+                        source_size=num_times,
+                    )
+                    return apply_gather_stencil(state_buffer, stencil).values
 
                 return jax.lax.cond(
                     query <= problem.t0,

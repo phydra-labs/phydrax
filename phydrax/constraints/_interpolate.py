@@ -7,11 +7,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._frozendict import frozendict
+from .._interpolation import apply_gather_stencil, inverse_distance_stencil
 from .._strict import StrictModule
 from ..domain._base import _AbstractGeometry
 from ..domain._domain import _AbstractDomain, RelabeledDomain
@@ -152,29 +152,16 @@ class _IDWInterpolant(StrictModule):
                 diff = (a - x_scalar) / scale
                 dist2 = dist2 + diff * diff
 
-        dmin = jnp.min(dist2)
-        argmin = jnp.argmin(dist2)
-
-        y = jnp.asarray(self.values, dtype=float)
-        if y.ndim == 1:
-            y_rows = y.reshape((n, 1))
-        else:
-            y_rows = y
-
-        def _snap(_: Any):
-            return y_rows[argmin]
-
-        def _interp(_: Any):
-            power = 0.5 * self.idw_exponent
-            w_raw = (dist2 + self.eps) ** (-power)
-            w = w_raw / (jnp.sum(w_raw) + self.eps)
-            out = jnp.sum(w[:, None] * y_rows, axis=0)
-            return out
-
-        out = jax.lax.cond(dmin < self.eps_snap, _snap, _interp, operand=None)
-        if y.ndim == 1:
-            return out.reshape(())
-        return out
+        stencil = inverse_distance_stencil(
+            jnp.arange(n, dtype=jnp.int32),
+            dist2,
+            source_size=n,
+            power=self.idw_exponent,
+            regularization=self.eps,
+            snap_tolerance_squared=self.eps_snap,
+            snap_policy="first",
+        )
+        return apply_gather_stencil(self.values, stencil).values
 
 
 def idw_interpolant(

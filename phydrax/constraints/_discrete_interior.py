@@ -7,11 +7,14 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from typing import Literal
 
-import interpax
-import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._interpolation import (
+    cubic_hermite_interpolate,
+    inverse_distance_stencil,
+    local_cubic_slopes,
+)
 from ..domain._components import (
     DomainComponent,
     DomainComponentUnion,
@@ -219,10 +222,9 @@ def _sensor_track_target(
     single_time = int(t.shape[0]) < 2
     if single_time:
         vals0 = vals_t[0]
-        spline = None
+        slopes = None
     else:
-        slopes = interpax.approx_df(t, vals_t, axis=0)
-        spline = interpax.CubicHermiteSpline(t, vals_t, slopes, axis=0, check=False)
+        slopes = local_cubic_slopes(t, vals_t)
 
     eps = float(eps_snap)
     exponent = float(idw_exponent)
@@ -255,20 +257,21 @@ def _sensor_track_target(
         for term in d2_terms[1:]:
             d2 = d2 + term
 
-        min_idx = jnp.argmin(d2, axis=0)
-        min_val = jnp.min(d2, axis=0)
-        if eps > 0.0:
-            is_snap = min_val < eps
-        else:
-            is_snap = min_val <= 0.0
-
-        w = (1.0 / (d2 + eps) ** exponent).astype(float)
-        w = w / jnp.sum(w, axis=0, keepdims=True)
-
-        snap_w = jax.nn.one_hot(min_idx, w.shape[0], dtype=w.dtype)
-        if snap_w.ndim == 2:
-            snap_w = jnp.swapaxes(snap_w, 0, 1)
-        return jnp.where(is_snap[None, :], snap_w, w)
+        distance_squared = jnp.moveaxis(d2, 0, -1)
+        indices = jnp.broadcast_to(
+            jnp.arange(int(d2.shape[0]), dtype=jnp.int32),
+            distance_squared.shape,
+        )
+        stencil = inverse_distance_stencil(
+            indices,
+            distance_squared,
+            source_size=int(d2.shape[0]),
+            power=2.0 * exponent,
+            regularization=eps,
+            snap_tolerance_squared=eps,
+            snap_policy="first",
+        )
+        return jnp.moveaxis(stencil.weights, -1, 0)
 
     def _target(*args, key=None, **kwargs):
         del key, kwargs
@@ -280,8 +283,14 @@ def _sensor_track_target(
         if single_time:
             y_eval = vals0
         else:
-            assert spline is not None
-            y_eval = spline(t_eval)
+            assert slopes is not None
+            y_eval = cubic_hermite_interpolate(
+                t,
+                vals_t,
+                t_eval,
+                slopes=slopes,
+                bounds="extrapolate",
+            ).values
         return jnp.tensordot(w, y_eval, axes=([0], [0]))
 
     deps = labels + (time_var,)

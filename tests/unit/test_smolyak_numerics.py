@@ -11,8 +11,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from phydrax._interpolation import barycentric_interpolate
 from phydrax._numerics import (
-    barycentric_interpolate,
     clenshaw_curtis_data,
     dense_index,
     smolyak_axis_data,

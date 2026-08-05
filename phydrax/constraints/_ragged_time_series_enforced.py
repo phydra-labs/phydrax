@@ -14,6 +14,11 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
 from .._doc import DOC_KEY0
+from .._interpolation import (
+    cubic_hermite_segment,
+    linear_segment,
+    local_cubic_slope,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..domain._function import BatchAwareCallable, DomainFunction
@@ -185,9 +190,15 @@ class _RaggedTimeSeriesTable(StrictModule, NonTrainableState):
     ) -> Array:
         prev_idx = jnp.maximum(node_idx - 1, 0)
         next_idx = jnp.minimum(node_idx + 1, lengths - 1)
-        steps = jnp.maximum(next_idx - prev_idx, 1).astype(float)
-        diff = values[case_idx, next_idx] - values[case_idx, prev_idx]
-        return diff / (dt * _broadcast_like(steps, diff))
+        return local_cubic_slope(
+            values[case_idx, prev_idx],
+            values[case_idx, node_idx],
+            values[case_idx, next_idx],
+            previous_width=dt,
+            next_width=dt,
+            has_previous=node_idx > 0,
+            has_next=node_idx < lengths - 1,
+        )
 
     def _linear_targets(
         self,
@@ -204,14 +215,13 @@ class _RaggedTimeSeriesTable(StrictModule, NonTrainableState):
     ) -> tuple[Array, ...]:
         y0 = values[case_idx, k0]
         y1 = values[case_idx, k1]
-        s_b = _broadcast_like(s, y0)
-        target = (1.0 - s_b) * y0 + s_b * y1
+        target = linear_segment(y0, y1, s, dt)
         node_target = values[case_idx, node_idx]
         on_node_b = _broadcast_like(on_node.astype(float), target)
         target = on_node_b * node_target + (1.0 - on_node_b) * target
         if int(max_order) == 0:
             return (target,)
-        target_dt = (y1 - y0) / dt
+        target_dt = linear_segment(y0, y1, s, dt, derivative_order=1)
         return (target, target_dt)
 
     def _cubic_hermite_targets(
@@ -233,34 +243,33 @@ class _RaggedTimeSeriesTable(StrictModule, NonTrainableState):
         m0 = self._node_slope(values, case_idx, k0, lengths, dt)
         m1 = self._node_slope(values, case_idx, k1, lengths, dt)
 
-        s2 = s * s
-        s3 = s2 * s
-        h00 = _broadcast_like(2.0 * s3 - 3.0 * s2 + 1.0, y0)
-        h10 = _broadcast_like(s3 - 2.0 * s2 + s, y0)
-        h01 = _broadcast_like(-2.0 * s3 + 3.0 * s2, y0)
-        h11 = _broadcast_like(s3 - s2, y0)
-        target = h00 * y0 + h10 * dt * m0 + h01 * y1 + h11 * dt * m1
-
+        target = cubic_hermite_segment(y0, y1, m0, m1, s, dt)
         node_target = values[case_idx, node_idx]
         on_node_b = _broadcast_like(on_node.astype(float), target)
         target = on_node_b * node_target + (1.0 - on_node_b) * target
         if int(max_order) == 0:
             return (target,)
 
-        h00_d1 = _broadcast_like(6.0 * s2 - 6.0 * s, y0)
-        h10_d1 = _broadcast_like(3.0 * s2 - 4.0 * s + 1.0, y0)
-        h01_d1 = _broadcast_like(-6.0 * s2 + 6.0 * s, y0)
-        h11_d1 = _broadcast_like(3.0 * s2 - 2.0 * s, y0)
-        target_dt = (h00_d1 * y0 + h10_d1 * dt * m0 + h01_d1 * y1 + h11_d1 * dt * m1) / dt
+        target_dt = cubic_hermite_segment(
+            y0,
+            y1,
+            m0,
+            m1,
+            s,
+            dt,
+            derivative_order=1,
+        )
         if int(max_order) == 1:
             return (target, target_dt)
 
-        h00_d2 = _broadcast_like(12.0 * s - 6.0, y0)
-        h10_d2 = _broadcast_like(6.0 * s - 4.0, y0)
-        h01_d2 = _broadcast_like(-12.0 * s + 6.0, y0)
-        h11_d2 = _broadcast_like(6.0 * s - 2.0, y0)
-        target_d2t = (h00_d2 * y0 + h10_d2 * dt * m0 + h01_d2 * y1 + h11_d2 * dt * m1) / (
-            dt * dt
+        target_d2t = cubic_hermite_segment(
+            y0,
+            y1,
+            m0,
+            m1,
+            s,
+            dt,
+            derivative_order=2,
         )
         return (target, target_dt, target_d2t)
 

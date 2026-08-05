@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array
 
+from ...._interpolation import apply_gather_stencil, rectilinear_stencil
 from ...._strict import StrictModule
 from ....metrix import DENSITY_TENSOR, SCALAR_TENSOR, TensorType
 
@@ -273,104 +274,27 @@ def sample_rectilinear_grid(
             )
             mask = None
 
-    index_dtype = jnp.int64 if bool(jax.config.read("jax_enable_x64")) else jnp.int32
-    if prod(spatial_shape) > jnp.iinfo(index_dtype).max:
-        raise ValueError("Rectilinear grid is too large for JAX gather indices.")
-    lower_indices: list[Array] = []
-    upper_indices: list[Array] = []
-    fractions: list[Array] = []
-    outside = jnp.zeros(batch_shape + query_shape, dtype=bool)
-    for axis, (size, mode, axis_values) in enumerate(
-        zip(spatial_shape, modes, nodes, strict=True)
-    ):
-        coordinate = query[..., axis]
-        if mode == "periodic":
-            coordinate = jnp.mod(coordinate + 1.0, 2.0) - 1.0
-            upper_raw = jnp.searchsorted(axis_values, coordinate, side="right")
-            lower = jnp.mod(upper_raw - 1, size)
-            upper = jnp.mod(upper_raw, size)
-            lower_coordinate = axis_values[lower] - jnp.where(upper_raw == 0, 2.0, 0.0)
-            upper_coordinate = axis_values[upper] + jnp.where(upper_raw == size, 2.0, 0.0)
-        else:
-            if mode == "reflect":
-                reflected = jnp.mod(coordinate + 1.0, 4.0)
-                coordinate = jnp.where(reflected <= 2.0, reflected - 1.0, 3.0 - reflected)
-            elif mode == "clamp":
-                coordinate = jnp.clip(coordinate, -1.0, 1.0)
-            elif mode == "constant":
-                outside = outside | (coordinate < -1.0) | (coordinate > 1.0)
-                coordinate = jnp.clip(coordinate, -1.0, 1.0)
-            upper_raw = jnp.searchsorted(axis_values, coordinate, side="right")
-            upper = jnp.clip(upper_raw, 1, size - 1)
-            lower = upper - 1
-            lower_coordinate = axis_values[lower]
-            upper_coordinate = axis_values[upper]
-        denominator = jnp.maximum(
-            upper_coordinate - lower_coordinate,
-            jnp.finfo(dtype).eps,
-        )
-        fraction = jnp.clip((coordinate - lower_coordinate) / denominator, 0.0, 1.0)
-        lower_indices.append(lower.astype(index_dtype))
-        upper_indices.append(upper.astype(index_dtype))
-        fractions.append(fraction)
-
-    batch_count = prod(batch_shape) if batch_shape else 1
-    query_count = prod(query_shape)
+    periods = tuple(2.0 if mode == "periodic" else None for mode in modes)
+    stencil = rectilinear_stencil(
+        nodes,
+        query,
+        boundary=modes,
+        batch_shape=batch_shape,
+        periods=periods,
+        axis_bounds=((-1.0, 1.0),) * dimensions,
+    )
     channels = int(array.shape[-1])
-    flat_values = array.reshape((batch_count, prod(spatial_shape), channels))
-    flat_mask = None if mask is None else mask.reshape((batch_count, prod(spatial_shape)))
-    output = jnp.zeros(batch_shape + query_shape + (channels,), dtype=array.dtype)
-    valid_weight = jnp.zeros(batch_shape + query_shape, dtype=dtype)
-    strict_support = jnp.ones(batch_shape + query_shape, dtype=bool)
-    tolerance = jnp.finfo(dtype).eps
-
-    for corner in range(1 << dimensions):
-        indices = []
-        weight = jnp.ones(batch_shape + query_shape, dtype=dtype)
-        for axis in range(dimensions):
-            upper_corner = bool(corner & (1 << axis))
-            indices.append(upper_indices[axis] if upper_corner else lower_indices[axis])
-            fraction = fractions[axis]
-            weight = weight * (fraction if upper_corner else 1.0 - fraction)
-        linear_index = indices[0]
-        for axis in range(1, dimensions):
-            linear_index = linear_index * spatial_shape[axis] + indices[axis]
-        flat_index = linear_index.reshape((batch_count, query_count))
-        gathered = jnp.take_along_axis(
-            flat_values,
-            flat_index[..., None],
-            axis=1,
-        ).reshape(batch_shape + query_shape + (channels,))
-        if flat_mask is None:
-            corner_valid = jnp.ones(batch_shape + query_shape, dtype=bool)
-        else:
-            corner_valid = jnp.take_along_axis(
-                flat_mask,
-                flat_index,
-                axis=1,
-            ).reshape(batch_shape + query_shape)
-        effective_weight = weight * corner_valid.astype(dtype)
-        safe_gathered = jnp.where(corner_valid[..., None], gathered, 0)
-        output = output + (
-            safe_gathered * effective_weight[..., None].astype(array.dtype)
-        )
-        valid_weight = valid_weight + effective_weight
-        strict_support = strict_support & (corner_valid | (weight <= tolerance))
-
-    if mask is not None and mask_mode == "renormalize":
-        support = valid_weight > tolerance
-        output = output / jnp.maximum(valid_weight, tolerance)[..., None].astype(
-            array.dtype
-        )
-    elif mask is not None and mask_mode == "strict":
-        support = strict_support
-    else:
-        support = jnp.ones(batch_shape + query_shape, dtype=bool)
-    if "constant" in modes:
-        support = support & ~outside
+    flat_mask = None if mask is None else mask.reshape((-1,))
+    interpolation = apply_gather_stencil(
+        array.reshape((-1, channels)),
+        stencil,
+        source_mask=flat_mask,
+        mask_mode=mask_mode,
+    )
+    support = interpolation.support
     output = jnp.where(
         support[..., None],
-        output,
+        interpolation.values,
         jnp.asarray(fill_value, dtype=array.dtype),
     )
     if return_support:

@@ -8,7 +8,6 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-import interpax
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -16,6 +15,11 @@ from jaxtyping import Array, ArrayLike, Key
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
+from .._interpolation import (
+    cubic_hermite_interpolate,
+    inverse_distance_stencil,
+    local_cubic_slopes,
+)
 from .._strict import StrictModule
 from ..constraints._enforced import _enforced_constraint_weight_fn, enforce_initial
 from ..domain._base import _AbstractGeometry
@@ -1139,12 +1143,16 @@ def _idw_weights(
     idw_exponent: Array,
     eps: float,
 ) -> Array:
-    p = jnp.asarray(idw_exponent, dtype=float)
-    d2 = jnp.asarray(d2, dtype=float)
-
-    w = jnp.where(p == 2.0, 1.0 / (d2 + eps), 1.0 / ((d2 + eps) ** (p / 2.0)))
-    wsum = jnp.sum(w) + eps
-    return w / wsum
+    distances = jnp.asarray(d2, dtype=float)
+    count = int(distances.shape[0])
+    stencil = inverse_distance_stencil(
+        jnp.arange(count, dtype=jnp.int32),
+        distances,
+        source_size=count,
+        power=idw_exponent,
+        regularization=eps,
+    )
+    return stencil.weights
 
 
 class _InteriorDataOverlay(StrictModule):
@@ -1256,10 +1264,7 @@ class _InteriorDataOverlay(StrictModule):
 
             values_scaled = values / m_track[..., None]
             values_scaled_t = jnp.moveaxis(values_scaled, 1, 0)
-            if n_count < 2:
-                slopes_values_t = jnp.zeros_like(values_scaled_t)
-            else:
-                slopes_values_t = interpax.approx_df(times, values_scaled_t, axis=0)
+            slopes_values_t = local_cubic_slopes(times, values_scaled_t)
 
             lengthscale = float(src.lengthscales.get(src.space_label, 1.0))
             track_sources.append(
@@ -1427,24 +1432,22 @@ class _InteriorDataOverlay(StrictModule):
                     if u_scaled_t.ndim == 2 and track.values_scaled_t.ndim == 3:
                         u_scaled_t = u_scaled_t[..., None]
 
-                    if n_count < 2:
-                        slopes_u_scaled_t = jnp.zeros_like(u_scaled_t)
-                    else:
-                        slopes_u_scaled_t = interpax.approx_df(times, u_scaled_t, axis=0)
-
-                    y_spline = interpax.CubicHermiteSpline(
+                    slopes_u_scaled_t = local_cubic_slopes(times, u_scaled_t)
+                    t_query = jnp.asarray(z[track.time_label], dtype=float)
+                    y_scaled = cubic_hermite_interpolate(
                         times,
                         track.values_scaled_t,
-                        track.slopes_values_t,
-                        axis=0,
-                        check=False,
-                    )
-                    u_spline = interpax.CubicHermiteSpline(
-                        times, u_scaled_t, slopes_u_scaled_t, axis=0, check=False
-                    )
-                    t_query = jnp.asarray(z[track.time_label], dtype=float)
-                    y_scaled = y_spline(t_query)
-                    u_scaled_q = u_spline(t_query)
+                        t_query,
+                        slopes=track.slopes_values_t,
+                        bounds="extrapolate",
+                    ).values
+                    u_scaled_q = cubic_hermite_interpolate(
+                        times,
+                        u_scaled_t,
+                        t_query,
+                        slopes=slopes_u_scaled_t,
+                        bounds="extrapolate",
+                    ).values
                     r_track = y_scaled - u_scaled_q
                     if r_track.ndim == 2 and r_track.shape[1] == 1:
                         r_track = r_track.reshape((-1,))
@@ -1615,19 +1618,21 @@ class _InteriorDataOverlay(StrictModule):
                     d2 = d2 + d2_add
 
             n = int(src_index.shape[0])
-            p = idw_exp.reshape((n,) + (1,) * total_axes)
-            w_raw = jnp.where(
-                p == 2.0, 1.0 / (d2 + 1e-12), 1.0 / ((d2 + 1e-12) ** (p / 2.0))
+            distance_squared = jnp.moveaxis(d2, 0, -1)
+            candidate_indices = jnp.broadcast_to(
+                jnp.arange(n, dtype=jnp.int32),
+                distance_squared.shape,
             )
-            wsum = jnp.sum(w_raw, axis=0) + 1e-12
-            w_idw = w_raw / wsum
-
-            jstar = jnp.argmin(d2, axis=0)
-            d2_min = jnp.min(d2, axis=0)
-            eps_here = jnp.take(eps_snap, jstar)
-            is_snap = d2_min < eps_here
-            w_snap = jax.nn.one_hot(jstar, n, axis=0, dtype=float)
-            w = jnp.where(is_snap[None, ...], w_snap, w_idw)
+            stencil = inverse_distance_stencil(
+                candidate_indices,
+                distance_squared,
+                source_size=n,
+                power=idw_exp,
+                regularization=1e-12,
+                snap_tolerance_squared=eps_snap,
+                snap_policy="first",
+            )
+            w = jnp.moveaxis(stencil.weights, -1, 0)
 
             if any(env_enabled):
                 psi_src: list[Array] = []

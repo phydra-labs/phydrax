@@ -47,6 +47,15 @@ Phydrax supports two complementary evaluation regimes:
 - `PointsBatch` (paired sampling): typical PINN-style collocation constraints. See [Guides → Domains and sampling](guides_domain.md).
 - `CoordSeparableBatch` (axis/grid sampling): spectral/basis operators and neural operators (FNO/DeepONet). See [Guides → Differential operators](guides_differential.md).
 
+Sampling owns sites and measure metadata; interpolation owns deterministic
+reconstruction of stored values at query sites. They share typed axis and batch
+metadata without collapsing into one operation. Temporal nearest/linear/Hermite
+maps, inverse-distance reconstruction, rectilinear warps, parity-correct Fourier
+transfer to aligned or shifted grids, arbitrary-point periodic Fourier
+evaluation, and sparse Smolyak interpolation use a common private numerical
+substrate while retaining their distinct boundary, support, and derivative
+contracts. See [API → Operators → Interpolation](api/operators/interpolation.md).
+
 ### Differentiation: AD / jets / FD / basis
 
 Differential operators support multiple backends (`backend="ad"|"jet"|"fd"|"basis"`) and autodiff modes

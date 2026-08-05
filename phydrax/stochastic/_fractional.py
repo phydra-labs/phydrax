@@ -16,6 +16,7 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, ArrayLike, Key
 
+from .._interpolation import linear_interpolate
 from .._strict import StrictModule
 
 
@@ -317,15 +318,14 @@ class FractionalGaussianRealization(StrictModule):
         paths = self.values.reshape(
             (self.num_paths, int(self.grid.size), self.process.dimension)
         )
-
-        def interpolate_path(path):
-            return jax.vmap(
-                lambda component: jnp.interp(flat_query, self.grid, component),
-                in_axes=1,
-                out_axes=1,
-            )(path)
-
-        values = jax.vmap(interpolate_path)(paths)
+        interpolated = linear_interpolate(
+            self.grid,
+            paths,
+            flat_query,
+            axis=1,
+            bounds="clip",
+        ).values
+        values = jnp.moveaxis(interpolated, 1, 0)
         return values.reshape(self.sample_shape + query.shape + (self.process.dimension,))
 
     def increments(

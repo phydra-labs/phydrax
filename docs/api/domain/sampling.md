@@ -19,6 +19,13 @@ Phydrax supports two complementary structured sampling modes:
 `TrajectoryDatasetDomain` is paired-only: its dataset row and time label must stay
 on the same sampling axis.
 
+Sampling and interpolation are adjacent but distinct. Sampling returns source
+sites, masks, axis identities, and measure metadata. Interpolation may later
+reconstruct stored values at query sites, but it neither changes the sampled
+measure nor supplies quadrature weights. A `CoordSeparableBatch` provides the
+canonical source-axis metadata used by structured consumers; each consumer
+still chooses its explicit boundary and support policy.
+
 ## Joint block designs
 
 A paired block is also one joint reference design. For
