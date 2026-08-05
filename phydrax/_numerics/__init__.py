@@ -9,7 +9,6 @@ from .._sampling import (
     seed_from_key,
     unit_design,
 )
-from ._barycentric import barycentric_basis, barycentric_interpolate
 from ._quadrature_rules import (
     clenshaw_curtis_data,
     gauss_kronrod_data,
@@ -45,8 +44,6 @@ __all__ = [
     "QuadratureRuleData",
     "WeightedMomentsDiagnostics",
     "axis_level",
-    "barycentric_basis",
-    "barycentric_interpolate",
     "clenshaw_curtis_data",
     "gauss_kronrod_data",
     "gauss_legendre_data",

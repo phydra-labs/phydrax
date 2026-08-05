@@ -14,6 +14,11 @@ import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
 from .._doc import DOC_KEY0
+from .._interpolation import (
+    apply_gather_stencil,
+    linear_stencil_from_indices,
+    nearest_stencil_from_indices,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..domain._components import DomainComponent
@@ -383,7 +388,13 @@ class _NearestTrajectorySignal(StrictModule, BatchAwareCallable, NonTrainableSta
         lengths = self.domain.lengths[case_idx]
         time_idx = jnp.clip(tau, 0, lengths - 1)
         values = jax.lax.stop_gradient(self.values)
-        out = values[case_idx, time_idx]
+        time_count = int(values.shape[1])
+        source = values.reshape((-1,) + values.shape[2:])
+        stencil = nearest_stencil_from_indices(
+            case_idx * time_count + time_idx,
+            source_size=int(source.shape[0]),
+        )
+        out = apply_gather_stencil(source, stencil).values
         dims = time_field.dims + (None,) * max(out.ndim - len(time_field.dims), 0)
         return cx.Field(out, dims=dims)
 
@@ -394,9 +405,7 @@ class _IrregularNearestTrajectorySignal(
     domain: IrregularTrajectoryDatasetDomain
     values: Array
 
-    def __init__(
-        self, *, domain: IrregularTrajectoryDatasetDomain, values: ArrayLike
-    ):
+    def __init__(self, *, domain: IrregularTrajectoryDatasetDomain, values: ArrayLike):
         self.domain = domain
         self.values = _validate_values(domain, values)
 
@@ -429,7 +438,13 @@ class _IrregularNearestTrajectorySignal(
         t = jnp.asarray(time_field.data, dtype=float)
         time_idx = self.domain.nearest_time_indices(case_idx, t)
         values = jax.lax.stop_gradient(self.values)
-        out = values[case_idx, time_idx]
+        time_count = int(values.shape[1])
+        source = values.reshape((-1,) + values.shape[2:])
+        stencil = nearest_stencil_from_indices(
+            case_idx * time_count + time_idx,
+            source_size=int(source.shape[0]),
+        )
+        out = apply_gather_stencil(source, stencil).values
         dims = time_field.dims + (None,) * max(out.ndim - len(time_field.dims), 0)
         return cx.Field(out, dims=dims)
 
@@ -503,23 +518,47 @@ class _IrregularTrajectorySignalTable(StrictModule, NonTrainableState):
         if not isinstance(time_field, cx.Field):
             raise TypeError("Trajectory time values must be stored as a Field.")
         case_idx = jnp.asarray(case_field.data, dtype=jnp.int32)
-        t = jnp.asarray(time_field.data, dtype=float)
-        lower, upper, frac = self.domain.bracketing_time_indices(case_idx, t)
+        times = jnp.asarray(time_field.data, dtype=float)
+        lower, upper, fraction = self.domain.bracketing_time_indices(
+            case_idx,
+            times,
+        )
         values = jax.lax.stop_gradient(self.values)
-        y0 = values[case_idx, lower]
-        y1 = values[case_idx, upper]
-        frac_b = _broadcast_like(frac, y0)
-        target = (1.0 - frac_b) * y0 + frac_b * y1
+        time_count = int(values.shape[1])
+        source = values.reshape((-1,) + values.shape[2:])
+        lower_global = case_idx * time_count + lower
+        upper_global = case_idx * time_count + upper
+        target_stencil = linear_stencil_from_indices(
+            lower_global,
+            upper_global,
+            fraction,
+            source_size=int(source.shape[0]),
+        )
+        target = apply_gather_stencil(source, target_stencil).values
         if order == 0:
             return (target,)
 
         t0 = self.domain.times[case_idx, lower]
         t1 = self.domain.times[case_idx, upper]
         lengths = self.domain.lengths[case_idx]
-        denom = jnp.where(lengths > 1, t1 - t0, 1.0)
-        slope = (y1 - y0) / _broadcast_like(denom, y0)
-        slope = jnp.where(_broadcast_like(lengths > 1, slope), slope, 0.0)
-        return (target, slope)
+        width = jnp.where(lengths > 1, t1 - t0, 1.0)
+        derivative_stencil = linear_stencil_from_indices(
+            lower_global,
+            upper_global,
+            fraction,
+            source_size=int(source.shape[0]),
+            derivative_order=1,
+            interval_width=width,
+        )
+        derivative = apply_gather_stencil(source, derivative_stencil).values
+        derivative = jnp.where(
+            (lengths > 1).reshape(
+                lengths.shape + (1,) * (derivative.ndim - lengths.ndim)
+            ),
+            derivative,
+            0.0,
+        )
+        return (target, derivative)
 
 
 class _IrregularInterpolatedTrajectorySignal(
@@ -554,18 +593,6 @@ class _IrregularInterpolatedTrajectorySignal(
         out = targets[self.order]
         dims = time_field.dims + (None,) * max(out.ndim - len(time_field.dims), 0)
         return cx.Field(out, dims=dims)
-
-
-def _broadcast_like(values: Array, reference: Array, /) -> Array:
-    arr = jnp.asarray(values)
-    ref = jnp.asarray(reference)
-    if arr.ndim == ref.ndim:
-        return arr
-    if arr.ndim != 1:
-        raise ValueError(
-            f"Cannot broadcast shape {arr.shape} against reference shape {ref.shape}."
-        )
-    return arr.reshape((int(arr.shape[0]),) + (1,) * (ref.ndim - 1))
 
 
 def _irregular_trajectory_signal(
@@ -675,7 +702,9 @@ def TrajectorySignal(
     matching the domain lengths. Interpolated signals are non-trainable solver
     state and support time derivatives according to the interpolation order.
     """
-    if not isinstance(domain, (TrajectoryDatasetDomain, IrregularTrajectoryDatasetDomain)):
+    if not isinstance(
+        domain, (TrajectoryDatasetDomain, IrregularTrajectoryDatasetDomain)
+    ):
         raise TypeError("TrajectorySignal requires a trajectory dataset domain.")
     var = domain.time_label if time_var is None else str(time_var)
     if var != domain.time_label:

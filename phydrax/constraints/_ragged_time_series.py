@@ -15,6 +15,11 @@ from jaxtyping import Array, ArrayLike, Key
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
+from .._interpolation import (
+    apply_gather_stencil,
+    linear_stencil_from_indices,
+    nearest_stencil_from_indices,
+)
 from .._strict import StrictModule
 from ..domain._components import DomainComponent
 from ..domain._function import DomainFunction
@@ -110,7 +115,14 @@ def _validate_values(
 
 
 def _gather_nearest(values: Array, case_indices: Array, time_indices: Array, /) -> Array:
-    return values[case_indices, time_indices]
+    time_count = int(values.shape[1])
+    source = values.reshape((-1,) + values.shape[2:])
+    indices = case_indices * time_count + time_indices
+    stencil = nearest_stencil_from_indices(
+        indices,
+        source_size=int(source.shape[0]),
+    )
+    return apply_gather_stencil(source, stencil).values
 
 
 def _gather_linear(
@@ -122,13 +134,16 @@ def _gather_linear(
 ) -> tuple[Array, Array]:
     lower = jnp.floor(tau).astype(jnp.int32)
     upper = jnp.minimum(lower + 1, lengths - 1)
-    frac = tau - lower.astype(float)
-    lower_values = values[case_indices, lower]
-    upper_values = values[case_indices, upper]
-    frac_shape = (int(frac.shape[0]),) + (1,) * max(values.ndim - 2, 0)
-    frac_w = frac.reshape(frac_shape)
-    target = (1.0 - frac_w) * lower_values + frac_w * upper_values
-    return target, lower
+    fraction = tau - lower.astype(float)
+    time_count = int(values.shape[1])
+    source = values.reshape((-1,) + values.shape[2:])
+    stencil = linear_stencil_from_indices(
+        case_indices * time_count + lower,
+        case_indices * time_count + upper,
+        fraction,
+        source_size=int(source.shape[0]),
+    )
+    return apply_gather_stencil(source, stencil).values, lower
 
 
 def _gather_linear_irregular(
@@ -138,13 +153,16 @@ def _gather_linear_irregular(
     times: Array,
     /,
 ) -> tuple[Array, Array]:
-    lower, upper, frac = domain.bracketing_time_indices(case_indices, times)
-    lower_values = values[case_indices, lower]
-    upper_values = values[case_indices, upper]
-    frac_shape = (int(frac.shape[0]),) + (1,) * max(values.ndim - 2, 0)
-    frac_w = frac.reshape(frac_shape)
-    target = (1.0 - frac_w) * lower_values + frac_w * upper_values
-    return target, lower
+    lower, upper, fraction = domain.bracketing_time_indices(case_indices, times)
+    time_count = int(values.shape[1])
+    source = values.reshape((-1,) + values.shape[2:])
+    stencil = linear_stencil_from_indices(
+        case_indices * time_count + lower,
+        case_indices * time_count + upper,
+        fraction,
+        source_size=int(source.shape[0]),
+    )
+    return apply_gather_stencil(source, stencil).values, lower
 
 
 def _validate_num_points(num_points: RaggedNumPoints, /) -> RaggedNumPoints:
@@ -421,7 +439,9 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
         self.constraint_vars = (str(constraint_var),)
         self.component = component
         if structure is None and isinstance(n, tuple):
-            self.structure = ProductStructure(((domain.data_label,), (domain.time_label,)))
+            self.structure = ProductStructure(
+                ((domain.data_label,), (domain.time_label,))
+            )
         else:
             self.structure = structure or ProductStructure((domain.labels,))
         self.dense_structure = None
@@ -453,7 +473,9 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
     @property
     def domain(self) -> TrajectoryDatasetDomain | IrregularTrajectoryDatasetDomain:
         domain = self.component.domain
-        if not isinstance(domain, (TrajectoryDatasetDomain, IrregularTrajectoryDatasetDomain)):
+        if not isinstance(
+            domain, (TrajectoryDatasetDomain, IrregularTrajectoryDatasetDomain)
+        ):
             raise TypeError(
                 "RaggedTimeSeriesDataConstraint domain is not a trajectory domain."
             )
@@ -507,14 +529,10 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
                         )
                     else:
                         time_indices = domain.nearest_time_indices(case_indices, tau)
-                        target = _gather_nearest(
-                            self.values, case_indices, time_indices
-                        )
+                        target = _gather_nearest(self.values, case_indices, time_indices)
                     times = tau
                 else:
-                    tau = jr.uniform(key_time, shape=(n,)) * (
-                        lengths.astype(float) - 1.0
-                    )
+                    tau = jr.uniform(key_time, shape=(n,)) * (lengths.astype(float) - 1.0)
                     if self.interpolation == "linear":
                         target, time_indices = _gather_linear(
                             self.values, case_indices, tau, lengths
@@ -522,9 +540,7 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
                     else:
                         time_indices = jnp.rint(tau).astype(jnp.int32)
                         time_indices = jnp.clip(time_indices, 0, lengths - 1)
-                        target = _gather_nearest(
-                            self.values, case_indices, time_indices
-                        )
+                        target = _gather_nearest(self.values, case_indices, time_indices)
                     times = domain.start + domain.dt * tau
             else:
                 u = jr.uniform(key_time, shape=(n,))
@@ -613,9 +629,7 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
                 times = domain.start + domain.dt * tau
         else:
             u = jr.uniform(key_time, shape=(n_cases, n_times))
-            time_indices = jnp.floor(u * lengths[:, None].astype(float)).astype(
-                jnp.int32
-            )
+            time_indices = jnp.floor(u * lengths[:, None].astype(float)).astype(jnp.int32)
             time_indices = jnp.clip(time_indices, 0, lengths[:, None] - 1)
             times = domain.observation_times(case_grid, time_indices)
             target = _gather_nearest_grid(self.values, case_indices, time_indices)

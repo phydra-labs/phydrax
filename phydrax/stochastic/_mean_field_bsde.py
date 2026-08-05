@@ -13,6 +13,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+from .._interpolation import apply_gather_stencil, linear_stencil_from_indices
 from .._strict import StrictModule
 from ._bsde import BSDEPathBatch, BSDEProblem
 
@@ -185,11 +186,12 @@ class EmpiricalMeanField(StrictModule):
         left_time = self.times[lower]
         right_time = self.times[upper]
         alpha = jnp.clip((query - left_time) / (right_time - left_time), 0.0, 1.0)
+        time_count = int(self.times.shape[0])
         flat_particles = self.particles.reshape(
-            (self.num_particles, self.times.shape[0]) + self.state_shape
+            (self.num_particles, time_count) + self.state_shape
         )
-        flat_weights = self.weights.reshape((self.num_particles, self.times.shape[0]))
-        flat_valid = self.valid.reshape((self.num_particles, self.times.shape[0]))
+        flat_weights = self.weights.reshape((self.num_particles, time_count))
+        flat_valid = self.valid.reshape((self.num_particles, time_count))
         left_valid = flat_valid[:, lower]
         right_valid = flat_valid[:, upper]
         interpolation_valid = jnp.where(
@@ -197,21 +199,25 @@ class EmpiricalMeanField(StrictModule):
             left_valid,
             jnp.where(alpha == 1.0, right_valid, left_valid & right_valid),
         )
+        particle_index = jnp.arange(self.num_particles, dtype=jnp.int32)
+        fraction = jnp.broadcast_to(alpha, (self.num_particles,))
+        stencil = linear_stencil_from_indices(
+            particle_index * time_count + lower,
+            particle_index * time_count + upper,
+            fraction,
+            source_size=self.num_particles * time_count,
+        )
         event_suffix = (1,) * len(self.state_shape)
-        left_particles = jnp.where(
-            left_valid.reshape(left_valid.shape + event_suffix),
-            flat_particles[:, lower],
+        safe_particles = jnp.where(
+            flat_valid.reshape(flat_valid.shape + event_suffix),
+            flat_particles,
             0.0,
         )
-        right_particles = jnp.where(
-            right_valid.reshape(right_valid.shape + event_suffix),
-            flat_particles[:, upper],
-            0.0,
-        )
-        particles = (1.0 - alpha) * left_particles + alpha * right_particles
-        raw_weights = (1.0 - alpha) * flat_weights[:, lower] + alpha * flat_weights[
-            :, upper
-        ]
+        particles = apply_gather_stencil(
+            safe_particles.reshape((-1,) + self.state_shape),
+            stencil,
+        ).values
+        raw_weights = apply_gather_stencil(flat_weights.reshape((-1,)), stencil).values
         raw_weights = jnp.where(interpolation_valid, raw_weights, 0.0)
         mass = jnp.sum(raw_weights)
         normalized = raw_weights / jnp.maximum(mass, jnp.finfo(raw_weights.dtype).tiny)

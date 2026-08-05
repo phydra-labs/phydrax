@@ -13,6 +13,11 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
 from .._doc import DOC_KEY0
+from .._interpolation import (
+    apply_gather_stencil,
+    linear_stencil_from_indices,
+    nearest_stencil_from_indices,
+)
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..domain._components import DomainComponent
@@ -115,14 +120,15 @@ def _validate_graph_trajectory_case_arrays(
     entity_sizes: list[int] = []
     running = 0
     trailing_shape = None
-    for graph, length, value in zip(domain.graphs, domain.lengths.tolist(), cases, strict=True):
+    for graph, length, value in zip(
+        domain.graphs, domain.lengths.tolist(), cases, strict=True
+    ):
         expected_entities = _size_for_kind(graph, kind)
         expected_length = int(length)
         arr = jnp.asarray(value, dtype=float)
         if arr.ndim < 2:
             raise ValueError(
-                "Graph trajectory target case arrays must have shape "
-                "(time, entity, ...)."
+                "Graph trajectory target case arrays must have shape (time, entity, ...)."
             )
         if int(arr.shape[0]) != expected_length:
             raise ValueError(
@@ -167,7 +173,9 @@ def _graph_axis(batch: GraphBatch, /) -> str:
 
 
 def _local_entity_indices(batch: GraphBatch, /) -> Array:
-    entity = jnp.asarray(_required_field(batch, GRAPH_ENTITY_INDEX_KEY).data, dtype=jnp.int32)
+    entity = jnp.asarray(
+        _required_field(batch, GRAPH_ENTITY_INDEX_KEY).data, dtype=jnp.int32
+    )
     offset_field = batch.points.get(GRAPH_ENTITY_OFFSET_KEY)
     if isinstance(offset_field, cx.Field):
         offset = jnp.asarray(offset_field.data, dtype=jnp.int32)
@@ -176,7 +184,9 @@ def _local_entity_indices(batch: GraphBatch, /) -> Array:
 
 
 def _dataset_indices(batch: GraphBatch, /) -> Array:
-    return jnp.asarray(_required_field(batch, GRAPH_DATASET_INDEX_KEY).data, dtype=jnp.int32)
+    return jnp.asarray(
+        _required_field(batch, GRAPH_DATASET_INDEX_KEY).data, dtype=jnp.int32
+    )
 
 
 def _field_from_target(batch: GraphBatch, value: Array, /) -> cx.Field:
@@ -219,9 +229,7 @@ class _GraphTargetCallable(StrictModule, BatchAwareCallable, NonTrainableState):
         return _field_from_target(batch, self.values[flat_idx])
 
 
-class _GraphTrajectorySignalCallable(
-    StrictModule, BatchAwareCallable, NonTrainableState
-):
+class _GraphTrajectorySignalCallable(StrictModule, BatchAwareCallable, NonTrainableState):
     domain: GraphTrajectoryDatasetDomain
     values: Array
     offsets: Array
@@ -281,28 +289,47 @@ class _GraphTrajectorySignalCallable(
             if isinstance(time_field, cx.Field):
                 time_idx = jnp.asarray(time_field.data, dtype=jnp.int32)
             else:
-                t = jnp.asarray(_required_field(batch, self.domain.time_label).data, dtype=float)
-                time_idx = jnp.rint((t - self.domain.start) / self.domain.dt).astype(jnp.int32)
+                t = jnp.asarray(
+                    _required_field(batch, self.domain.time_label).data,
+                    dtype=float,
+                )
+                time_idx = jnp.rint((t - self.domain.start) / self.domain.dt).astype(
+                    jnp.int32
+                )
             time_idx = jnp.clip(time_idx, 0, lengths - 1)
+            stencil = nearest_stencil_from_indices(
+                self._flat_index(case_idx, time_idx, local_idx),
+                source_size=int(self.values.shape[0]),
+            )
             return _field_from_target(
                 batch,
-                self.values[self._flat_index(case_idx, time_idx, local_idx)],
+                apply_gather_stencil(self.values, stencil).values,
             )
 
         if self.interpolation != "linear":
-            raise ValueError("GraphTrajectorySignal interpolation must be 'nearest' or 'linear'.")
+            raise ValueError(
+                "GraphTrajectorySignal interpolation must be 'nearest' or 'linear'."
+            )
 
-        t = jnp.asarray(_required_field(batch, self.domain.time_label).data, dtype=float)
+        t = jnp.asarray(
+            _required_field(batch, self.domain.time_label).data,
+            dtype=float,
+        )
         tau = (t - self.domain.start) / self.domain.dt
         lo = jnp.floor(tau).astype(jnp.int32)
         lo = jnp.clip(lo, 0, lengths - 1)
         hi = jnp.clip(lo + 1, 0, lengths - 1)
-        alpha = jnp.clip(tau - lo.astype(float), 0.0, 1.0)
-        y_lo = self.values[self._flat_index(case_idx, lo, local_idx)]
-        y_hi = self.values[self._flat_index(case_idx, hi, local_idx)]
-        while alpha.ndim < y_lo.ndim:
-            alpha = jnp.expand_dims(alpha, axis=-1)
-        return _field_from_target(batch, (1.0 - alpha) * y_lo + alpha * y_hi)
+        fraction = jnp.clip(tau - lo.astype(float), 0.0, 1.0)
+        stencil = linear_stencil_from_indices(
+            self._flat_index(case_idx, lo, local_idx),
+            self._flat_index(case_idx, hi, local_idx),
+            fraction,
+            source_size=int(self.values.shape[0]),
+        )
+        return _field_from_target(
+            batch,
+            apply_gather_stencil(self.values, stencil).values,
+        )
 
 
 def GraphTarget(
@@ -400,7 +427,9 @@ def GraphSupervisedConstraint(
     difference from `GraphTarget(...)`.
     """
     if not isinstance(component.domain, GraphDatasetDomain):
-        raise TypeError("GraphSupervisedConstraint requires a GraphDatasetDomain component.")
+        raise TypeError(
+            "GraphSupervisedConstraint requires a GraphDatasetDomain component."
+        )
     domain = component.domain
     kind = _component_kind_for_constraint(component, domain.label)
     target = GraphTarget(domain, values, component_kind=kind)

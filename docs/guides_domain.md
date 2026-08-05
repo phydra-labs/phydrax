@@ -308,6 +308,24 @@ batch, including:
 This is how Phydrax keeps sampling, quadrature, and operator discretization consistent without
 manual bookkeeping.
 
+## Sampling metadata and reconstruction
+
+Coord-separable sampling describes where values live. Deterministic
+interpolation describes how stored values are reconstructed elsewhere. Phydrax
+keeps these responsibilities separate: `AxisDiscretization` carries canonical
+nodes and basis metadata, while trajectory, rectilinear, inverse-distance, and
+Fourier adapters choose method-specific reconstruction rules.
+
+For example, a rectilinear warp can normalize the physical nodes from an
+`AxisDiscretization`, then apply its declared clamp, reflect, periodic, or
+constant boundary mode. A Fourier transfer consumes a periodic sampled grid
+but does not reinterpret its quadrature weights. Interpolated support is a
+boolean statement about reconstruction; it is not a physical measure or an
+integration weight.
+
+See [API → Operators → Interpolation](api/operators/interpolation.md) for the
+method taxonomy and numerical invariants.
+
 ### Nested axes and CAD cut-cell weights
 
 `NestedDyadicAxisSpec(capacity, initial_level=...)` materializes a fixed-capacity

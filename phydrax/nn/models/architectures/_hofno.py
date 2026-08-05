@@ -17,6 +17,7 @@ import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
+from ...._interpolation import fourier_resample as _fourier_resample
 from ...._strict import StrictModule
 from ..._utils import _get_size
 from ..core._base import _AbstractOperatorModel
@@ -41,95 +42,13 @@ AliasingPolicy = Literal["collocation", "dealiased"]
 SpectralChannelMixing = Literal["depthwise", "dense"]
 
 
-def _resize_fourier_axis(
-    coefficients: Array,
-    axis: int,
-    target_size: int,
-    /,
-) -> Array:
-    """Resize one unshifted Fourier axis with exact even-Nyquist handling."""
-
-    source_size = int(coefficients.shape[axis])
-    target_size = int(target_size)
-    if source_size == target_size:
-        return coefficients
-    target_minimum = -(target_size // 2)
-    target_maximum = (target_size - 1) // 2
-    primary_indices = []
-    primary_weights = []
-    secondary_indices = []
-    secondary_weights = []
-    for source_index in range(source_size):
-        source_maximum = (source_size - 1) // 2
-        frequency = (
-            source_index if source_index <= source_maximum else source_index - source_size
-        )
-        mappings: tuple[tuple[int, float], ...]
-        if (
-            target_size > source_size
-            and source_size % 2 == 0
-            and source_index == source_size // 2
-        ):
-            mappings = (
-                (-source_size // 2, 0.5),
-                (source_size // 2, 0.5),
-            )
-        else:
-            canonical = (
-                -target_size // 2
-                if target_size % 2 == 0 and frequency == target_size // 2
-                else frequency
-            )
-            mappings = ((canonical, 1.0),)
-
-        valid = tuple(
-            (mapped_frequency % target_size, weight)
-            for mapped_frequency, weight in mappings
-            if target_minimum <= mapped_frequency <= target_maximum
-        )
-        primary_indices.append(valid[0][0] if valid else 0)
-        primary_weights.append(valid[0][1] if valid else 0.0)
-        secondary_indices.append(valid[1][0] if len(valid) > 1 else 0)
-        secondary_weights.append(valid[1][1] if len(valid) > 1 else 0.0)
-
-    moved = jnp.moveaxis(coefficients, axis, 0)
-    weight_shape = (source_size,) + (1,) * (moved.ndim - 1)
-    output = jnp.zeros(
-        (target_size, *moved.shape[1:]),
-        dtype=coefficients.dtype,
-    )
-    output = output.at[jnp.asarray(primary_indices)].add(
-        moved * jnp.asarray(primary_weights, dtype=moved.real.dtype).reshape(weight_shape)
-    )
-    output = output.at[jnp.asarray(secondary_indices)].add(
-        moved
-        * jnp.asarray(secondary_weights, dtype=moved.real.dtype).reshape(weight_shape)
-    )
-    return jnp.moveaxis(output, 0, axis)
-
-
 def _dealiased_spectral_resample(
     values: Array,
     output_shape: Sequence[int],
     /,
 ) -> Array:
     """Band-limited periodic resampling that preserves real Nyquist modes."""
-
-    array = jnp.asarray(values)
-    shape = tuple(int(size) for size in output_shape)
-    ndim = len(shape)
-    if not shape or any(size <= 0 for size in shape):
-        raise ValueError("output_shape must contain positive spatial sizes.")
-    if array.ndim < ndim + 1:
-        raise ValueError(
-            "Dealiased spectral resampling expects spatial axes before channels."
-        )
-    spatial_axes = tuple(range(array.ndim - ndim - 1, array.ndim - 1))
-    coefficients = jnp.fft.fftn(array, axes=spatial_axes, norm="forward")
-    for axis, size in zip(spatial_axes, shape, strict=True):
-        coefficients = _resize_fourier_axis(coefficients, axis, size)
-    result = jnp.fft.ifftn(coefficients, axes=spatial_axes, norm="forward")
-    return result.real if not jnp.issubdtype(array.dtype, jnp.complexfloating) else result
+    return _fourier_resample(values, output_shape)
 
 
 def _complex_normal(key: Key[Array, ""], shape: tuple[int, ...], scale: float) -> Array:

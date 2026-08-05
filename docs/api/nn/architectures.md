@@ -236,6 +236,21 @@ order-ablation studies, not an alias for the stable `FNO` architecture.
 `BasisSpectralConvND` provides quadrature-projected Fourier, sine, cosine, and
 Legendre policies for nonperiodic or nonuniform tensor axes.
 
+Periodic grid reconstruction is shared across spectral architectures and public
+array-level evaluation. `spectral_resample` transfers to an aligned or
+period-shifted uniform grid. `sample_fourier_grid` evaluates paired arbitrary
+coordinates with an exact direct backend or an explicitly tolerance-controlled
+NUFFT backend. Both preserve channel-last fields and leading case axes; the
+point sampler also accepts physical uniform axis nodes and periods.
+
+::: phydrax.nn.spectral_resample
+
+---
+
+::: phydrax.nn.sample_fourier_grid
+
+---
+
 ::: phydrax.nn.FNO
     options:
         members:

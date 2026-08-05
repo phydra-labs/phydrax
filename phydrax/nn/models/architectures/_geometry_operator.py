@@ -9,10 +9,10 @@ from math import prod
 from typing import Any, Literal
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ...._interpolation import apply_gather_stencil, inverse_distance_stencil
 from ....graph._query_batch import query_neighbors
 from ..._utils import _get_size
 from ..core._keys import EvalKey, split_eval_key
@@ -282,12 +282,18 @@ class TensorGridProcessor(eqx.Module):
                         f"got {condition_array.shape}."
                     )
                 inputs[name] = FunctionSamples(values=condition_array)
-            latent_batch = OperatorBatch(inputs=inputs, queries={"query": FunctionSamples(
-                values=None,
-                axes=axes,
-                mask=grid_mask,
-            )}, case_axes=tuple(case_axes),
-            case_shape=case_shape if case_shape else None,)
+            latent_batch = OperatorBatch(
+                inputs=inputs,
+                queries={
+                    "query": FunctionSamples(
+                        values=None,
+                        axes=axes,
+                        mask=grid_mask,
+                    )
+                },
+                case_axes=tuple(case_axes),
+                case_shape=case_shape if case_shape else None,
+            )
             if return_diagnostics:
                 if not self.supports_diagnostics:
                     raise ValueError(
@@ -304,9 +310,7 @@ class TensorGridProcessor(eqx.Module):
 
         if output.ndim == len(case_shape) + len(self.geometry.shape):
             output = output[..., None]
-        output = output.reshape(
-            case_shape + (self.geometry.point_count, self.channels)
-        )
+        output = output.reshape(case_shape + (self.geometry.point_count, self.channels))
         output = output * jnp.asarray(mask, dtype=bool)[..., None].astype(output.dtype)
         return output, diagnostics
 
@@ -421,9 +425,7 @@ class _GeometryOperatorCore(eqx.Module):
             raise ValueError("latent_support_neighbors must be positive.")
         if latent_support_radius is not None and float(latent_support_radius) <= 0.0:
             raise ValueError("latent_support_radius must be positive when supplied.")
-        support_key = (
-            None if latent_support_key is None else str(latent_support_key)
-        )
+        support_key = None if latent_support_key is None else str(latent_support_key)
         if support_key is not None and support_key in condition_names:
             raise ValueError("A latent support input cannot be a case condition.")
         if (conditions_ or support_key is not None) and (
@@ -454,9 +456,7 @@ class _GeometryOperatorCore(eqx.Module):
                     "Multiple encoded sources require conservation_source_key."
                 )
             if conservation_key is not None and keys_ and conservation_key not in keys_:
-                raise ValueError(
-                    "conservation_source_key must name an encoded source."
-                )
+                raise ValueError("conservation_source_key must name an encoded source.")
             conservation_index = (
                 0
                 if conservation_key is None
@@ -484,9 +484,7 @@ class _GeometryOperatorCore(eqx.Module):
         self.latent_support_threshold = float(latent_support_threshold)
         self.latent_support_neighbors = int(latent_support_neighbors)
         self.latent_support_radius = (
-            None
-            if latent_support_radius is None
-            else float(latent_support_radius)
+            None if latent_support_radius is None else float(latent_support_radius)
         )
         self.conserve_mass = bool(conserve_mass)
         self.conservation_source_key = conservation_key
@@ -589,31 +587,27 @@ class _GeometryOperatorCore(eqx.Module):
             target_chunk_size=256,
         )
         case_count = prod(case_shape) if case_shape else 1
-        flat_values = source_values.reshape((case_count, source_count))
-        gathered = jax.vmap(lambda values, indices: values[indices])(
-            flat_values,
-            neighborhood.indices,
+        case_offsets = (jnp.arange(case_count, dtype=jnp.int32) * source_count).reshape(
+            (case_count, 1, 1)
         )
-        valid = neighborhood.mask
+        indices = neighborhood.indices + case_offsets
         tolerance = jnp.sqrt(jnp.finfo(source_values.dtype).eps)
-        exact = valid & (neighborhood.distance <= tolerance)
-        inverse_distance = jnp.where(
-            valid,
-            jnp.reciprocal(jnp.maximum(neighborhood.distance, tolerance)),
-            0.0,
+        stencil = inverse_distance_stencil(
+            indices,
+            neighborhood.distance_squared,
+            source_size=case_count * source_count,
+            valid=neighborhood.mask,
+            power=1.0,
+            snap_tolerance_squared=tolerance * tolerance,
+            snap_policy="average",
+            snap_inclusive=True,
         )
-        weights = jnp.where(
-            jnp.any(exact, axis=-1, keepdims=True),
-            exact.astype(source_values.dtype),
-            inverse_distance,
+        interpolation = apply_gather_stencil(
+            source_values.reshape((-1,)),
+            stencil,
         )
-        denominator = jnp.sum(weights, axis=-1)
-        interpolated = jnp.sum(gathered * weights, axis=-1) / jnp.maximum(
-            denominator,
-            jnp.asarray(1.0, dtype=source_values.dtype),
-        )
-        interpolated = interpolated.reshape(latent_coordinates.shape[:-1])
-        interpolation_support = (denominator > 0.0).reshape(
+        interpolated = interpolation.values.reshape(latent_coordinates.shape[:-1])
+        interpolation_support = interpolation.support.reshape(
             latent_coordinates.shape[:-1]
         )
         if self.latent_support_kind == "occupancy":

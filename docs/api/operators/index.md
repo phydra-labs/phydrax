@@ -24,7 +24,7 @@ Operators build PDE terms such as gradients, divergences, Laplacians, and integr
 
     - [Differential operators](../../guides_differential.md)
     - [Integrals and measures](../../guides_integrals.md)
-    - [Smolyak interpolation](interpolation.md)
+    - [Interpolation and Smolyak surrogates](interpolation.md)
     - [Euclidean path integrals and Feynman–Kac expectations](../../guides_path_integrals.md)
     - [Lagrangian and Hamiltonian mechanics](../../guides_mechanics.md)
     - [Quantum operators and dynamics](../../guides_quantum.md)

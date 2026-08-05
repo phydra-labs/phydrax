@@ -1,4 +1,139 @@
-# Smolyak interpolation
+# Interpolation
+
+Interpolation reconstructs values stored at discrete source sites. It does not
+choose those sites: domain sampling still owns point generation, joint design
+semantics, masks, measures, and coord-separable axis metadata. Integration,
+stochastic ancestry resampling, and conservative state transfer likewise retain
+their own contracts.
+
+## Native reconstruction substrate
+
+Phydrax uses one private, JAX-native numerical substrate for deterministic
+reconstruction while keeping the existing semantic APIs:
+
+- trajectory and ragged-series adapters use explicit nearest, piecewise-linear,
+  and local cubic-Hermite maps;
+- point-data and latent-support adapters share normalized inverse-distance
+  weights while retaining their geometry-specific candidate searches;
+- rectilinear warps use multilinear maps with explicit periodic, reflected,
+  clamped, or constant boundaries and explicit source-mask policy;
+- FNO, CNO, and HOFNO resolution changes share one parity-correct Fourier
+  transfer, including even-grid Nyquist splitting and merging;
+- Smolyak interpolation retains its sparse combination structure and uses the
+  shared barycentric basis primitive.
+
+The common operation is a sparse or structured map from source values to query
+values. Map construction owns indices, weights, validity, and support; map
+application handles arbitrary trailing payload dimensions without replicating
+source rows. Unsupported queries remain explicit. Mask behavior is selected as
+strict rejection, valid-weight renormalization, or an adapter-owned fill value.
+
+Method-specific semantics are intentionally not hidden behind a universal
+string-dispatched public function. Nearest ties, temporal extrapolation,
+periodic seams, inverse-distance snap behavior, and conservative transfer are
+different contracts. Use the domain, constraint, or neural-operator API that
+owns those semantics.
+
+Interpolation weights reproduce constants when they form a partition of unity.
+That statement does not imply conservation against a physical measure.
+Quadrature and conservative transfer remain separate measure-aware operations.
+
+## Fourier reconstruction
+
+Periodic tensor grids have one coefficient substrate with three evaluation
+paths:
+
+- `fourier_resample(values, output_shape)` transfers a field to an aligned,
+  endpoint-excluded uniform grid;
+- `fourier_resample(..., phase_offsets=offsets)` evaluates a shifted uniform
+  grid through coefficient-space phase factors and FFT resizing;
+- `fourier_interpolate(values, coordinates, spatial_ndim=...)` evaluates paired
+  arbitrary coordinates directly or with NUFFTAX Type 2.
+
+These are reconstruction operations, not sampling policies. Domain sampling
+still chooses sites, keys, masks, and measures. Fourier reconstruction consumes
+stored periodic-grid values and query coordinates; it does not generate points
+or infer source masks.
+
+The low-level point evaluator uses
+`values.shape = batch_shape + source_shape + payload_shape` and
+`coordinates.shape = batch_shape + query_shape + (spatial_ndim,)`.
+`payload_ndim` identifies the trailing payload axes. Batch shapes must match
+exactly, so shared coordinates should be explicitly broadcast when values have
+case axes. The public neural adapter specializes this to channel-last fields:
+
+```python
+sampled = phx.nn.sample_fourier_grid(
+    values,       # batch_shape + source_shape + (channels,)
+    coordinates,  # batch_shape + query_shape + (spatial_ndim,)
+    spatial_ndim=2,
+)
+```
+
+Without explicit axis nodes, `sample_fourier_grid` uses the normalized periodic
+axes `-1 + 2*j/n`, with period two. Physical axes are supplied as one strictly
+increasing, endpoint-excluded uniform node vector and one positive period per
+spatial dimension:
+
+```python
+sampled = phx.nn.sample_fourier_grid(
+    values,
+    sensor_coordinates,
+    spatial_ndim=2,
+    axis_nodes=(x_nodes, y_nodes),
+    periods=(x_period, y_period),
+)
+```
+
+Queries are wrapped periodically. Consequently the support result is all true
+after finite-input and axis validation:
+
+```python
+sampled, support = phx.nn.sample_fourier_grid(
+    values,
+    sensor_coordinates,
+    spatial_ndim=2,
+    return_support=True,
+)
+```
+
+`method="direct"` is the exact, roundoff-limited reference implementation and
+is appropriate for small query sets or small mode products. It supports any
+positive number of spatial dimensions. `method="nufft"` delegates one-, two-,
+or three-dimensional point evaluation to NUFFTAX Type 2 and requires an
+explicit approximation tolerance:
+
+```python
+sampled = phx.nn.sample_fourier_grid(
+    values,
+    sensor_coordinates,
+    spatial_ndim=2,
+    method="nufft",
+    tolerance=1e-6,
+    query_chunk_size=4096,
+)
+```
+
+`query_chunk_size` is static and uses padded `jax.lax.map` chunks, bounding the
+largest point batch seen by either backend without exposing padded outputs.
+NUFFT tolerance controls kernel construction; it is not a strict pointwise
+error guarantee. Use the direct method as an oracle when calibrating a
+tolerance for a new dtype, dimensionality, spectrum, or workload.
+
+Even source axes need special treatment because one real-grid Nyquist
+coefficient represents both signed frequencies away from the source grid.
+Phydrax splits every even-axis Nyquist coefficient before shifted or arbitrary
+evaluation, then merges target modes for regular-grid resampling. This preserves
+odd/even, real/complex, and multidimensional Nyquist-corner semantics.
+
+Fourier interpolation is global and signed. It therefore cannot be represented
+faithfully as a local nonnegative `GatherStencil`, and it does not support
+source-hole masking or local mask renormalization. Use rectilinear or
+inverse-distance reconstruction for those contracts. NUFFT Type 1 is an adjoint
+point-to-coefficient operation, not interpolation, and is intentionally not
+part of this API.
+
+## Smolyak interpolation
 
 Phydrax fits reusable sparse polynomial surrogates as ordinary
 `DomainFunction` objects. The fitted nodal state is immutable and excluded from

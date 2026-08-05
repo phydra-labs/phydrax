@@ -39,9 +39,7 @@ def _point_batch(*, cases=0, condition=None, query_weights=None, query_mask=None
     source_weights = jnp.array([0.05, 0.1, 0.15, 0.2, 0.2, 0.15, 0.1, 0.05])
     if cases:
         coordinates = jnp.broadcast_to(nodes[None, :, None], (cases, 8, 1))
-        query_coordinates = jnp.broadcast_to(
-            query_nodes[None, :, None], (cases, 5, 1)
-        )
+        query_coordinates = jnp.broadcast_to(query_nodes[None, :, None], (cases, 5, 1))
         values = jnp.broadcast_to(values[None, :], (cases, 8))
         source_weights = jnp.broadcast_to(source_weights[None, :], (cases, 8))
         inputs = {
@@ -53,24 +51,35 @@ def _point_batch(*, cases=0, condition=None, query_weights=None, query_mask=None
         }
         if condition is not None:
             inputs["dt"] = phx.nn.FunctionSamples(values=condition)
-        return phx.nn.OperatorBatch(inputs=inputs, queries={"query": phx.nn.FunctionSamples(
-            values=None,
-            coordinates=query_coordinates,
-            quadrature_weights=query_weights,
-            mask=query_mask,
-        )}, case_axes=("case",),)
-    return phx.nn.OperatorBatch(inputs={
-        "u": phx.nn.FunctionSamples(
-            values=values,
-            coordinates=nodes[:, None],
-            quadrature_weights=source_weights,
+        return phx.nn.OperatorBatch(
+            inputs=inputs,
+            queries={
+                "query": phx.nn.FunctionSamples(
+                    values=None,
+                    coordinates=query_coordinates,
+                    quadrature_weights=query_weights,
+                    mask=query_mask,
+                )
+            },
+            case_axes=("case",),
         )
-    }, queries={"query": phx.nn.FunctionSamples(
-        values=None,
-        coordinates=query_nodes[:, None],
-        quadrature_weights=query_weights,
-        mask=query_mask,
-    )}, )
+    return phx.nn.OperatorBatch(
+        inputs={
+            "u": phx.nn.FunctionSamples(
+                values=values,
+                coordinates=nodes[:, None],
+                quadrature_weights=source_weights,
+            )
+        },
+        queries={
+            "query": phx.nn.FunctionSamples(
+                values=None,
+                coordinates=query_nodes[:, None],
+                quadrature_weights=query_weights,
+                mask=query_mask,
+            )
+        },
+    )
 
 
 def test_geometry_informed_flower_runs_jit_and_has_finite_gradients():
@@ -98,21 +107,26 @@ def test_geometry_informed_flower_projects_explicit_hard_latent_support(support_
     sdf = jnp.abs(nodes - 0.5) - 0.3
     expected_mask = sdf < 0.0
     support_values = expected_mask.astype(float) if support_kind == "occupancy" else sdf
-    batch = phx.nn.OperatorBatch(inputs={
-        "u": phx.nn.FunctionSamples(
-            values=jnp.sin(2.0 * jnp.pi * nodes),
-            coordinates=nodes[:, None],
-            quadrature_weights=jnp.full((8,), 1.0 / 8.0),
-            mask=expected_mask,
-        ),
-        "support": phx.nn.FunctionSamples(
-            values=support_values,
-            coordinates=nodes[:, None],
-        ),
-    }, queries={"query": phx.nn.FunctionSamples(
-        values=None,
-        coordinates=nodes[expected_mask, None],
-    )}, )
+    batch = phx.nn.OperatorBatch(
+        inputs={
+            "u": phx.nn.FunctionSamples(
+                values=jnp.sin(2.0 * jnp.pi * nodes),
+                coordinates=nodes[:, None],
+                quadrature_weights=jnp.full((8,), 1.0 / 8.0),
+                mask=expected_mask,
+            ),
+            "support": phx.nn.FunctionSamples(
+                values=support_values,
+                coordinates=nodes[:, None],
+            ),
+        },
+        queries={
+            "query": phx.nn.FunctionSamples(
+                values=None,
+                coordinates=nodes[expected_mask, None],
+            )
+        },
+    )
     model = _model(
         key=jr.key(2),
         flower_levels=2,
@@ -129,6 +143,42 @@ def test_geometry_informed_flower_projects_explicit_hard_latent_support(support_
     assert jnp.allclose(diagnostics.latent_support, support_values)
     assert isinstance(diagnostics.processor, phx.nn.FlowerDiagnostics)
     assert len(diagnostics.processor.blocks) == 3
+
+
+def test_latent_inverse_distance_support_reproduces_constant_fields_far_away():
+    nodes = (jnp.arange(8, dtype=float) + 0.5) / 8.0
+    support_coordinates = (100.0 + jnp.arange(8, dtype=float))[:, None]
+    batch = phx.nn.OperatorBatch(
+        inputs={
+            "u": phx.nn.FunctionSamples(
+                values=jnp.sin(2.0 * jnp.pi * nodes),
+                coordinates=nodes[:, None],
+                quadrature_weights=jnp.full((8,), 1.0 / 8.0),
+            ),
+            "support": phx.nn.FunctionSamples(
+                values=jnp.full((8,), 0.25),
+                coordinates=support_coordinates,
+            ),
+        },
+        queries={
+            "query": phx.nn.FunctionSamples(
+                values=None,
+                coordinates=nodes[:, None],
+            )
+        },
+    )
+    model = _model(
+        key=jr.key(20),
+        latent_support_key="support",
+        latent_support_kind="occupancy",
+        latent_support_neighbors=4,
+        latent_support_threshold=0.1,
+    )
+
+    _output, diagnostics = model.evaluate_with_diagnostics(batch)
+
+    assert jnp.allclose(diagnostics.latent_support, 0.25)
+    assert jnp.all(diagnostics.latent_mask)
 
 
 def test_geometry_informed_flower_propagates_case_conditions_and_diagnostics():

@@ -5,6 +5,7 @@
 """Reusable neural network layers."""
 
 from ._dropout import Dropout, inference_mode
+from ._fourier_sampling import FourierEvaluationMethod, sample_fourier_grid
 from ._graph_transfer import (
     GeometryMomentEmbedding,
     GraphAttentionTransfer,
@@ -58,6 +59,8 @@ __all__ = [
     "AttentionKernel",
     "MeasureAwareAttention",
     "OperatorTransformerProcessor",
+    "FourierEvaluationMethod",
+    "sample_fourier_grid",
     "GeometryMomentEmbedding",
     "GraphAttentionTransfer",
     "GraphKernelTransfer",

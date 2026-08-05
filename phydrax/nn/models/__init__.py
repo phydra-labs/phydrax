@@ -243,6 +243,7 @@ from .embeddings._fourier import (
     TrainableFourierFeatureEmbeddings,
 )
 from .layers._dropout import Dropout, inference_mode
+from .layers._fourier_sampling import FourierEvaluationMethod, sample_fourier_grid
 from .layers._graph_transfer import (
     GeometryMomentEmbedding,
     GraphAttentionTransfer,
@@ -363,6 +364,8 @@ __all__ = [
     "BasisSpectralConvND",
     "BasisTransformPlan",
     "Dropout",
+    "FourierEvaluationMethod",
+    "sample_fourier_grid",
     "EquinoxModel",
     "EquinoxStructuredModel",
     "GraphModel",

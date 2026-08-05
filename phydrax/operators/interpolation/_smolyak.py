@@ -18,9 +18,9 @@ from jaxtyping import Array, Key
 
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
+from ..._interpolation import barycentric_basis
 from ..._numerics import (
     axis_level,
-    barycentric_basis,
     smolyak_axis_data,
     smolyak_terms,
     SmolyakAxisRule,

@@ -7,10 +7,10 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
-import interpax
 import jax.numpy as jnp
 from jaxtyping import ArrayLike
 
+from .._interpolation import cubic_hermite_interpolate, local_cubic_slopes
 from ..domain._components import FixedStart
 from ..domain._function import DomainFunction
 from ..domain._structure import NumPoints, ProductStructure
@@ -206,11 +206,16 @@ def DiscreteTimeDataConstraint(
     if y.shape[0] != t.shape[0]:
         raise ValueError("values must have shape (T, ...) matching times.")
 
-    slopes = interpax.approx_df(t, y, axis=0)
-    spline = interpax.CubicHermiteSpline(t, y, slopes, axis=0, check=False)
+    slopes = local_cubic_slopes(t, y)
 
     def target_fn(t_eval):
-        return spline(t_eval)
+        return cubic_hermite_interpolate(
+            t,
+            y,
+            t_eval,
+            slopes=slopes,
+            bounds="extrapolate",
+        ).values
 
     target = DomainFunction(
         domain=domain, deps=(domain.label,), func=target_fn, metadata={}
