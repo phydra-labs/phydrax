@@ -94,7 +94,6 @@ def _neighbor_data(
     radius: float | None,
     max_neighbors: int | None,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
-    cases, query_count = int(query.shape[0]), int(query.shape[1])
     source_count = int(source_coordinates.shape[1])
     neighbor_count = (
         source_count if max_neighbors is None else min(int(max_neighbors), source_count)
@@ -106,30 +105,9 @@ def _neighbor_data(
         max_neighbors=neighbor_count,
         radius=radius,
     )
-    indices = neighborhood.indices
-    expanded_values = jnp.broadcast_to(
-        source_values[:, None, :, :],
-        (cases, query_count, source_count, source_values.shape[-1]),
-    )
-    expanded_coordinates = jnp.broadcast_to(
-        source_coordinates[:, None, :, :],
-        (cases, query_count, source_count, source_coordinates.shape[-1]),
-    )
-    expanded_weights = jnp.broadcast_to(
-        source_weights[:, None, :],
-        (cases, query_count, source_count),
-    )
-    source_data = jnp.take_along_axis(
-        expanded_values,
-        indices[..., None],
-        axis=2,
-    )
-    source_position = jnp.take_along_axis(
-        expanded_coordinates,
-        indices[..., None],
-        axis=2,
-    )
-    selected_weights = jnp.take_along_axis(expanded_weights, indices, axis=2)
+    source_data = neighborhood.gather(source_values)
+    source_position = neighborhood.gather(source_coordinates)
+    selected_weights = neighborhood.gather(source_weights)
     query_position = jnp.broadcast_to(
         query[:, :, None, :],
         source_position.shape,

@@ -19,6 +19,7 @@ from scipy.sparse.linalg import eigsh
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..sparse import EdgeRelation, SparseLinearMap
 from ._ir import GraphIR
 
 
@@ -195,6 +196,26 @@ class CochainIncidence(StrictModule, NonTrainableState):
             upper,
             dense[lower, upper],
         )
+
+    def exterior_derivative_map(self) -> SparseLinearMap:
+        """Return ``B_degree.T`` as a lower-to-upper sparse linear action."""
+        relation = EdgeRelation(
+            self.lower_indices,
+            self.upper_indices,
+            source_size=self.lower_count,
+            target_size=self.upper_count,
+        )
+        return SparseLinearMap(relation, self.signs)
+
+    def boundary_map(self) -> SparseLinearMap:
+        """Return ``B_degree`` as an upper-to-lower sparse linear action."""
+        relation = EdgeRelation(
+            self.upper_indices,
+            self.lower_indices,
+            source_size=self.upper_count,
+            target_size=self.lower_count,
+        )
+        return SparseLinearMap(relation, self.signs)
 
     def scipy_matrix(self) -> sp.csr_matrix:
         """Return the host-side sparse boundary matrix."""

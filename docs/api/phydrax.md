@@ -10,11 +10,46 @@ Top-level package namespace. Most functionality lives in subpackages:
 - `phydrax.constraints`: residual and data penalty terms
 - `phydrax.objectives`: raw signed scalar objectives and integral functionals
 - `phydrax.nn`: neural network components and structured models
+- `phydrax.sparse`: JAX-native sparse relations, routing, reductions, and linear actions
 - `phydrax.solver`: functional solvers and direct ODE/SDE, jump, hybrid, and
   semidiscrete SPDE integration
 - `phydrax.stochastic`: global Wiener/Poisson/composite realizations, random
   fields, process laws, and explicit path coupling
 - `phydrax.export`: deployment helpers for learned inference functions
+
+## Sparse execution substrate
+
+`phydrax.sparse` factors out the gather–message–reduce mechanics shared by
+fixed interpolation stencils, case-local neighborhoods, graph edges, and
+cochain incidence maps. `EdgeRelation` represents arbitrary source-to-target
+routes; `RowRelation` represents fixed-width target rows with explicit case
+boundaries. Invalid capacity slots are numerically inert under routing and
+reduction, including when their stored payloads are non-finite.
+
+`SparseLinearMap` attaches scalar route coefficients and exposes forward,
+transpose, and conjugate-adjoint actions while preserving trailing payload
+dimensions. Dense and SciPy conversions are explicit interoperability
+operations, not execution fallbacks. Sparse-grid quadrature, sparse Gaussian
+process approximations, stochastic probes, and generic matrix-free callables
+remain in their semantic subsystems.
+
+::: phydrax.sparse.EdgeRelation
+
+---
+
+::: phydrax.sparse.RowRelation
+
+---
+
+::: phydrax.sparse.SparseLinearMap
+
+---
+
+::: phydrax.sparse.gather_routes
+
+---
+
+::: phydrax.sparse.route_reduce
 
 ## Stochastic realizations and fields
 

@@ -22,6 +22,7 @@ from . import (
     operators,
     sampling,
     solver,
+    sparse,
     stochastic,
     uq,
 )
@@ -41,6 +42,7 @@ __all__ = [
     "nn",
     "operators",
     "sampling",
+    "sparse",
     "solver",
     "stochastic",
     "uq",

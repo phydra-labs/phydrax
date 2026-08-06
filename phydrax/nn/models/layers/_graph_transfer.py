@@ -527,13 +527,7 @@ class GeometryMomentEmbedding(eqx.Module):
             raise ValueError(
                 "GeometryMomentEmbedding source_measure must have shape (case, source)."
             )
-        cases, targets, neighbors = neighborhood.indices.shape
-        expanded = jnp.broadcast_to(
-            measure[:, None, :],
-            (cases, targets, int(measure.shape[-1])),
-        )
-        selected = jnp.take_along_axis(expanded, neighborhood.indices, axis=2)
-        selected = selected * neighborhood.mask.astype(selected.dtype)
+        selected = neighborhood.gather(measure)
         mass = jnp.sum(selected, axis=-1, keepdims=True)
         normalized = jnp.where(mass > 0.0, selected / mass, jnp.zeros_like(selected))
         relative = neighborhood.relative / self.radius

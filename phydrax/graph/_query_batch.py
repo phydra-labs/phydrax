@@ -10,6 +10,7 @@ from typing import Any, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 
+from ..sparse import gather_routes, RowRelation
 from ._geometry import mollified_kernel_weight, MollifierKind, QueryGraph
 from ._ir import GraphIR
 
@@ -17,12 +18,70 @@ from ._ir import GraphIR
 class QueryNeighborhood(eqx.Module):
     """Fixed-capacity, case-local source neighborhoods for target points."""
 
-    indices: jnp.ndarray
+    relation: RowRelation
     relative: jnp.ndarray
     distance: jnp.ndarray
     distance_squared: jnp.ndarray
-    mask: jnp.ndarray
     count: jnp.ndarray
+
+    def __init__(
+        self,
+        *,
+        indices: Any,
+        relative: Any,
+        distance: Any,
+        distance_squared: Any,
+        mask: Any,
+        count: Any,
+        source_size: int,
+    ):
+        index_array = jnp.asarray(indices)
+        if index_array.ndim != 3:
+            raise ValueError(
+                "QueryNeighborhood indices must have shape (case, target, neighbor)."
+            )
+        relation = RowRelation(
+            index_array,
+            source_size=source_size,
+            valid=mask,
+            case_shape=(int(index_array.shape[0]),),
+        )
+        relative_array = jnp.asarray(relative)
+        distance_array = jnp.asarray(distance)
+        distance_squared_array = jnp.asarray(distance_squared)
+        count_array = jnp.asarray(count, dtype=jnp.int32)
+        if relative_array.shape[:-1] != relation.route_shape:
+            raise ValueError(
+                "QueryNeighborhood relative vectors must align with its routes."
+            )
+        if (
+            distance_array.shape != relation.route_shape
+            or distance_squared_array.shape != relation.route_shape
+        ):
+            raise ValueError("QueryNeighborhood distances must align with its routes.")
+        if count_array.shape != relation.output_shape:
+            raise ValueError("QueryNeighborhood count must match its target shape.")
+        self.relation = relation
+        self.relative = relative_array
+        self.distance = distance_array
+        self.distance_squared = distance_squared_array
+        self.count = count_array
+
+    @property
+    def indices(self) -> jnp.ndarray:
+        return self.relation.source_indices
+
+    @property
+    def mask(self) -> jnp.ndarray:
+        return self.relation.valid
+
+    @property
+    def source_size(self) -> int:
+        return self.relation.source_size
+
+    def gather(self, source_values: Any, /) -> Any:
+        """Gather case-local source values without source-target replication."""
+        return gather_routes(self.relation, source_values)
 
 
 def _case_shape(
@@ -209,6 +268,7 @@ def _query_neighbors_block(
         distance_squared=selected_distance_squared,
         mask=selected_mask,
         count=jnp.sum(selected_mask, axis=-1, dtype=jnp.int32),
+        source_size=int(source.shape[1]),
     )
 
 
@@ -280,6 +340,7 @@ def query_neighbors(
         ),
         mask=jnp.concatenate([block.mask for block in blocks], axis=1),
         count=jnp.concatenate([block.count for block in blocks], axis=1),
+        source_size=source_count,
     )
 
 

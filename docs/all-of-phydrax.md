@@ -48,13 +48,15 @@ Phydrax supports two complementary evaluation regimes:
 - `CoordSeparableBatch` (axis/grid sampling): spectral/basis operators and neural operators (FNO/DeepONet). See [Guides → Differential operators](guides_differential.md).
 
 Sampling owns sites and measure metadata; interpolation owns deterministic
-reconstruction of stored values at query sites. They share typed axis and batch
-metadata without collapsing into one operation. Temporal nearest/linear/Hermite
-maps, inverse-distance reconstruction, rectilinear warps, parity-correct Fourier
-transfer to aligned or shifted grids, arbitrary-point periodic Fourier
-evaluation, and sparse Smolyak interpolation use a common private numerical
-substrate while retaining their distinct boundary, support, and derivative
-contracts. See [API → Operators → Interpolation](api/operators/interpolation.md).
+reconstruction of stored values at query sites. Low-level source-to-target
+execution is shared through `phydrax.sparse`: arbitrary edge relations,
+fixed-width case-local rows, robust masked routing, target reduction, and
+weighted forward/transpose/adjoint actions. Interpolation stencils,
+`QueryNeighborhood`, `GraphIR`, and cochain incidences retain their own
+geometry, topology, support, and measure semantics above that substrate.
+Fourier evaluation, sparse Smolyak approximation, sparse Gaussian processes,
+and stochastic estimators remain specialized methods rather than sparse
+storage types. See [API → Operators → Interpolation](api/operators/interpolation.md).
 
 ### Differentiation: AD / jets / FD / basis
 
@@ -424,6 +426,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - [API reference](api/phydrax.md)
 - `phydrax.domain` for geometry, time, and sampling.
 - `phydrax.sampling` for typed reference designs and capability inspection.
+- `phydrax.sparse` for JAX-native relations, routing kernels, and sparse linear actions.
 - `phydrax.metrix` for charts, tensors, metrics, curvature, and stochastic geometry.
 - `phydrax.data_utils` for CSV loading, array scaling, and case-index splits.
 - `phydrax.constraints` for loss terms and enforced constraints.
