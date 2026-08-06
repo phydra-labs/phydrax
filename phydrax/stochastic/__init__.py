@@ -32,6 +32,20 @@ from ._events import (
     TerminalSetEvent,
     ThresholdCrossingEvent,
 )
+from ._feynman_kac import (
+    feynman_kac_label_diagnostics,
+    FeynmanKacControlTargetMode,
+    FeynmanKacLabelBatch,
+    FeynmanKacLabelDiagnostics,
+    FeynmanKacPathBatch,
+    FeynmanKacRefreshMode,
+    FeynmanKacSamplingMode,
+    FeynmanKacSamplingPlan,
+    FeynmanKacTimeWeighting,
+    query_feynman_kac_labels,
+    sample_feynman_kac_paths,
+    trajectory_node_feynman_kac_labels,
+)
 from ._fractional import (
     FractionalGaussianInterpolation,
     FractionalGaussianProcess,
@@ -186,6 +200,12 @@ from ._state_space import (
     StateSpaceProblem,
     TransitionSample,
 )
+from ._state_time import (
+    trajectory_state_time_measure,
+    trajectory_state_time_samples,
+    TrajectoryStateTimeMode,
+    TrajectoryStateTimeSamples,
+)
 from ._trajectory import (
     StochasticDriverSegmentReference,
     StochasticTrajectory,
@@ -235,6 +255,15 @@ __all__ = [
     "CrossingDirection",
     "FractionalGaussianInterpolation",
     "FractionalGaussianProcess",
+    "FeynmanKacControlTargetMode",
+    "FeynmanKacLabelBatch",
+    "feynman_kac_label_diagnostics",
+    "FeynmanKacLabelDiagnostics",
+    "FeynmanKacPathBatch",
+    "FeynmanKacRefreshMode",
+    "FeynmanKacSamplingMode",
+    "FeynmanKacSamplingPlan",
+    "FeynmanKacTimeWeighting",
     "FractionalGaussianRealization",
     "cocycle_objective",
     "GaussianProcessDiagnostics",
@@ -334,6 +363,13 @@ __all__ = [
     "realization_independence_labels",
     "StochasticTrajectory",
     "StochasticHierarchy",
+    "query_feynman_kac_labels",
+    "sample_feynman_kac_paths",
+    "trajectory_node_feynman_kac_labels",
+    "trajectory_state_time_measure",
+    "trajectory_state_time_samples",
+    "TrajectoryStateTimeMode",
+    "TrajectoryStateTimeSamples",
     "StochasticLevelSpec",
     "SymmetricStableLevyProcess",
     "time_measure",

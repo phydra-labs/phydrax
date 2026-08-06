@@ -82,6 +82,24 @@ from ._coupled import (
     CoupledValidity,
     solve_coupled_hierarchy,
 )
+from ._deep_bsde import DeepBSDEResult, solve_deep_bsde
+from ._deep_picard import (
+    DeepPicardDiagnostics,
+    DeepPicardInitialSource,
+    DeepPicardResult,
+    PicardSourceContext,
+    solve_deep_picard,
+    StructuredPicardSource,
+    StructuredSourceBuilder,
+)
+from ._deep_splitting import (
+    DeepSplittingDiagnostics,
+    DeepSplittingInterpolation,
+    DeepSplittingResult,
+    DeepSplittingSamplingMode,
+    DeepSplittingSolution,
+    solve_deep_splitting,
+)
 from ._differential import (
     DifferentialInterpretation,
     DifferentialProblem,
@@ -229,6 +247,16 @@ __all__ = [
     "CoupledFBSDEProblem",
     "CoupledFBSDEResult",
     "BSDERegressionScheme",
+    "DeepBSDEResult",
+    "DeepPicardDiagnostics",
+    "DeepPicardInitialSource",
+    "DeepPicardResult",
+    "DeepSplittingDiagnostics",
+    "DeepSplittingInterpolation",
+    "DeepSplittingResult",
+    "DeepSplittingSamplingMode",
+    "DeepSplittingSolution",
+    "PicardSourceContext",
     "CallableBSDERegressionBasis",
     "DelayHistory",
     "DelayVectorField",
@@ -330,6 +358,11 @@ __all__ = [
     "solve_coupled_fbsde_explicit",
     "solve_interacting_particles",
     "solve_rough_differential",
+    "solve_deep_picard",
+    "solve_deep_bsde",
+    "solve_deep_splitting",
+    "StructuredPicardSource",
+    "StructuredSourceBuilder",
     "solve_semilinear_spde",
     "solve_stochastic_delay",
     "solve_stochastic_volterra",

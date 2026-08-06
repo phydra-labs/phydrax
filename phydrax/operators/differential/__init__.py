@@ -2,6 +2,16 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from ._dimension_estimators import (
+    coordinate_divergence_samples,
+    coordinate_second_derivative_samples,
+    dimension_sum_samples,
+    DimensionOperatorEstimate,
+    DimensionOperatorSamples,
+    DimensionSamplingMode,
+    DimensionSamplingPolicy,
+    estimate_dimension_sum,
+)
 from ._domain_ops import (
     bilaplacian,
     cauchy_from_pk2,
@@ -64,7 +74,10 @@ from ._stochastic_estimators import (
     estimate_stochastic_trace,
     factor_hvp_contraction,
     ProbeDistribution,
+    stochastic_divergence_samples,
+    stochastic_trace_samples,
     StochasticOperatorEstimate,
+    StochasticOperatorSamples,
     StochasticTracePolicy,
 )
 from ._stochastic_ops import (
@@ -92,6 +105,14 @@ from ._time_fractional_ops import (
 
 
 __all__ = [
+    "coordinate_divergence_samples",
+    "coordinate_second_derivative_samples",
+    "DimensionOperatorEstimate",
+    "DimensionOperatorSamples",
+    "DimensionSamplingMode",
+    "DimensionSamplingPolicy",
+    "dimension_sum_samples",
+    "estimate_dimension_sum",
     "cauchy_from_pk2",
     "cauchy_strain",
     "cauchy_stress",
@@ -147,6 +168,9 @@ __all__ = [
     "von_mises_stress",
     "strain_rate",
     "StochasticInterpretation",
+    "stochastic_divergence_samples",
+    "StochasticOperatorSamples",
+    "stochastic_trace_samples",
     "StochasticOperatorEstimate",
     "StochasticTracePolicy",
     "stratonovich_to_ito_drift",

@@ -343,12 +343,19 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   posterior contraction.
   See [Filtering cookbook](cookbook/filtering.md) and
   [API → UQ → Filtering](api/uq/filtering.md).
-- **Backward stochastic equations**: evaluate terminal, local, and global
-  residuals with explicit or autodifferentiated controls; attach them to
-  `FunctionalSolver`; or solve backward by masked regularized least-squares
-  regression with Picard iteration. Finite-activity compensated jumps,
-  reflected path-dependent obstacles, and empirical mean-field Hamiltonian
-  control have distinct declared contracts and diagnostics.
+- **Backward stochastic equations and semilinear high-dimensional PDEs**:
+  evaluate terminal, local, and global BSDE residuals with explicit or
+  autodifferentiated controls; fit one time-conditioned field from trajectory-node
+  or query-conditioned Feynman--Kac labels; or alternate frozen labels and global
+  optimization with Deep Picard iteration. Label batches retain conditional Monte
+  Carlo errors and path-dependence clusters. Masked regularized least-squares,
+  finite-activity compensated jumps, reflected path-dependent obstacles, empirical
+  mean-field Hamiltonian control, and structured matrix-free nonlinear Picard
+  sources have distinct declared contracts and diagnostics.
+  `tools/high_dimensional_pde_benchmarks.py --suite methods` exercises the public
+  query-conditioned label path and, with `--include-training`, the global Deep Picard
+  training path. Its common result schema separates value/control, global-field,
+  terminal, and estimator errors instead of treating unlike targets as one metric.
   See [BSDE cookbook](cookbook/bsde.md) and
   [API → Stochastic → BSDE](api/stochastic/bsde.md).
 - **Static random fields and stochastic coefficient processes**: synthesize
@@ -362,16 +369,22 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   `covariant_hessian`, or the metric overload of `laplace_beltrami`. Attach
   `sqrt(det(g))` to component integration with `with_riemannian_measure`.
   See [API → Metrix](api/metrix/index.md).
-- **Stochastic PINNs / density equations**: use
+- **Stochastic PINNs, randomized residuals, and density equations**: use
   `ContinuousKolmogorovConstraint` for stationary or backward equations and
   `ContinuousFokkerPlanckConstraint` for stationary or forward density equations.
-  Exact factor-HVP or explicit stochastic-trace contractions avoid dense
-  Hessians. `ContinuousProbabilityFluxBoundaryConstraint` adds reflecting or
-  prescribed-flux boundaries. Strong, weak, and mild SPDE solution concepts are
-  declared explicitly; rough white-noise forcing is rejected by pointwise
-  strong residuals. Positivity, per-time normalization, and initial data remain
-  separate constraints or ansätze.
-  See [API → Constraints → Continuous](api/constraints/continuous.md) and
+  Exact factor-HVP contractions avoid dense Hessians. When exact coordinate sums are
+  still too expensive, raw Hutchinson probes or unbiased coordinate sampling expose
+  estimator uncertainty to signed U-statistic, independent-product, or biased
+  plug-in residual objectives. PDE-IR compilation statically rejects nonlinear
+  combinations that would bias randomized intermediates.
+
+  For high-dimensional density evolution with simulable particles,
+  `trajectory_state_time_samples` plus `ScoreMatchingObjective` learns
+  \(\nabla_x\log p_t(x)\) without representing or normalizing \(p_t\). This produces
+  a score field, not a reconstructed density. Probability-flux boundaries, strong,
+  weak, and mild SPDE solution concepts remain separate explicit contracts.
+  See [Stochastic-dynamics cookbook](cookbook/stochastic_dynamics.md),
+  [API → Objectives](api/objectives.md), and
   [API → Operators → Differential](api/operators/differential.md).
 - **Uncertainty quantification**: use NUTS/HMC or Laplace for explicit posterior problems, ensembles for neural-model epistemic variation, Gaussian processes for model discrepancy, joint QMC for uncertain inputs, likelihoods/proper scores for observations, and conformal calibration for coverage.
   See [Guides → Uncertainty quantification](guides_uncertainty.md) and [API → Uncertainty quantification](api/uq/index.md).

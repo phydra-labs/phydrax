@@ -82,6 +82,34 @@ The `iter_` keyword, when present, is also forwarded to model losses.
 Raw objective terms may be negative. `IntegralFunctional` integrates its density
 without squaring it; use this for energy/Ritz minimization, not for a residual penalty.
 
+### Sampled objective materialization
+
+Objectives derived from `AbstractSamplingObjectiveTerm` own two stages:
+
+1. `sample(key=...)` materializes an immutable batch of paths, labels, particles, or
+   derivative probes;
+2. `loss(..., batch=batch)` evaluates the current model on that batch.
+
+For Optax training, `FunctionalSolver` performs stage 1 once per optimizer update,
+outside `filter_value_and_grad` and the compiled loss. The identical batch is reused
+for every value, gradient, line-search, and same-update parameter-view evaluation.
+This prevents differentiation through Monte Carlo target construction and prevents
+an optimizer population from silently receiving different targets within one update.
+Evosax likewise materializes one batch per population update.
+
+Fixed sampled objectives return the same batch on every call and are the default for
+common-random-number comparisons. Resampled objectives receive deterministic fresh
+subkeys each update. Multiple sampled objectives receive distinct subkeys. Keep probe
+counts, path counts, and other batch-shape policy fields fixed during one JIT-compiled
+run.
+
+Some sampled losses are signed estimators of nonnegative mathematical quantities. In
+particular, a randomized-residual U-statistic can be negative on one finite batch even
+though its expectation is a squared residual. Do not use the noisiest training draw
+for `keep_best` selection. Prefer fixed probes for deterministic optimization or an
+independent validation objective whose estimator matches the model-selection
+criterion.
+
 ## Model losses
 
 Use model losses for parameter-space penalties that are not residuals over a domain,

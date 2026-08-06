@@ -41,6 +41,25 @@ quadrature. Neither adapter resamples the trajectory or consumes a key.
 
 ::: phydrax.stochastic.time_measure
 
+## State-time particle adapters
+
+`trajectory_state_time_samples` preserves every valid trajectory node as a structured
+particle with explicit state, time, path, independence, and time-index fields.
+`TrajectoryStateTimeMode` is `"global"` or `"per_time"` and controls the declared
+normalization semantics of the adapter. The result can be consumed directly by score
+matching or exposed as a generic `WeightedSampleTarget`; no resampling or density
+reconstruction occurs.
+
+::: phydrax.stochastic.TrajectoryStateTimeSamples
+
+---
+
+::: phydrax.stochastic.trajectory_state_time_samples
+
+---
+
+::: phydrax.stochastic.trajectory_state_time_measure
+
 ## Realization provenance
 
 ::: phydrax.stochastic.WienerRealization
