@@ -20,6 +20,7 @@ from .._strict import StrictModule
 from .._training import EvaluationParametersFn
 from ..constraints._base import AbstractConstraint
 from ..constraints._functional import FunctionalConstraint
+from ..domain._base import EnforcementGateMethod
 from ..domain._function import DomainFunction
 from ..operators.differential._runtime import derivative_runtime_context
 from ._enforced_constraint_pipeline import (
@@ -125,6 +126,9 @@ class FunctionalSolver(StrictModule):
         interior_data_terms: Sequence[EnforcedInteriorData] = (),
         evolution_var: str = "t",
         include_identity_remainder: bool = True,
+        gate_method: EnforcementGateMethod = "auto",
+        gate_saturation_fraction: float = 0.5,
+        gate_linear_fraction: float = 0.5,
         boundary_weight_num_reference: int = 500_000,
         boundary_weight_sampler: str = "latin_hypercube",
         boundary_weight_key: Key[Array, ""] = DOC_KEY0,
@@ -145,6 +149,11 @@ class FunctionalSolver(StrictModule):
         - `interior_data_terms`: Enforced interior data sources used to build `EnforcedConstraintPipelines`.
         - `evolution_var`: Name of the time-like label used for initial staging (default `"t"`).
         - `include_identity_remainder`: Boundary blending option for enforced pipelines.
+        - `gate_method`: CAD enforcement-gate implementation. ``"auto"`` selects the
+          global R-equivalence gate; ``"compact"`` selects the compact fallback.
+        - `gate_saturation_fraction`: Relative extent of compact CAD gates.
+        - `gate_linear_fraction`: Fraction of the compact gate extent retaining a
+          linear boundary profile.
         - `boundary_weight_num_reference`: Number of reference samples used for boundary blending weights.
         - `boundary_weight_sampler`: Sampler used to draw boundary blending references.
         - `boundary_weight_key`: PRNG key used to draw boundary blending references.
@@ -168,7 +177,10 @@ class FunctionalSolver(StrictModule):
                 constraints=constraint_terms,
                 interior_data=interior_data_terms,
                 evolution_var=str(evolution_var),
+                gate_method=gate_method,
                 include_identity_remainder=bool(include_identity_remainder),
+                gate_saturation_fraction=gate_saturation_fraction,
+                gate_linear_fraction=gate_linear_fraction,
                 num_reference=int(boundary_weight_num_reference),
                 sampler=str(boundary_weight_sampler),
                 key=boundary_weight_key,
@@ -277,9 +289,7 @@ class FunctionalSolver(StrictModule):
             for objective, objective_key in zip(
                 self.objectives, objective_keys, strict=True
             ):
-                total = total + objective.loss(
-                    functions, key=objective_key, **kwargs
-                )
+                total = total + objective.loss(functions, key=objective_key, **kwargs)
             iter_ = kwargs.get("iter_", None)
             for term in function_model_loss_values(
                 self.functions,

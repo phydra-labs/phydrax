@@ -12,6 +12,7 @@ from jaxtyping import Array, ArrayLike, Bool, Float, Key
 
 from ..._doc import DOC_KEY0
 from ..._sampling import get_sampler_host, seed_from_key
+from .._base import EnforcementGateMethod
 from ._base import _AbstractGeometry1D
 
 
@@ -47,6 +48,31 @@ class Interval1d(_AbstractGeometry1D):
     @property
     def adf(self) -> Callable[[Array], Array]:
         return self._adf
+
+    @property
+    def _enforcement_gate_builder(
+        self,
+    ) -> Callable[..., Callable[[Array], Array]]:
+        return self._make_enforcement_gate
+
+    def _make_enforcement_gate(
+        self,
+        *,
+        method: EnforcementGateMethod = "auto",
+        saturation_fraction: float = 0.5,
+        linear_fraction: float = 0.5,
+    ) -> Callable[[Array], Array]:
+        """Build the interval's fixed analytic dimensionless gate.
+
+        The interval has an exact smooth gate, so mesh-specific method and profile
+        controls do not alter it.
+        """
+        del method, saturation_fraction, linear_fraction
+
+        def gate(points: Array) -> Array:
+            return -4.0 * self.adf(points) / self.length
+
+        return jax.jit(gate)
 
     @property
     def length(self) -> Array:
@@ -219,11 +245,11 @@ class Interval1d(_AbstractGeometry1D):
         return jnp.where(pts < midpoint, -jnp.ones_like(pts), jnp.ones_like(pts))
 
     def _adf(self, points: Array) -> Array:
-        """Signed distance to the interval [start, end].
+        """Smooth signed boundary-defining field for ``[start, end]``.
 
-        Negative inside the interval, 0 on the boundary, positive outside.
-        Uses a parabolic surrogate with unit slope at the
-        endpoints.
+        The field is negative inside, zero at both endpoints, and positive outside,
+        with outward unit derivative at the endpoints. It is not the exact distance:
+        its parabolic interior deliberately remains differentiable at the midpoint.
         """
         x = jnp.asarray(points, dtype=float)
         a = self.start

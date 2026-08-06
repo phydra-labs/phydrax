@@ -168,6 +168,24 @@ exactly by construction (rather than penalizing violations).
 Pipelines are applied before any soft constraints are evaluated, so all residuals see the
 post-processed (enforced) fields.
 
+Geometry Dirichlet ansätze and pipeline preservation overlays use a dimensionless
+gate that is broad by default. CAD Neumann, Robin, Sommerfeld, and traction ansätze
+use a dimensional rescaling of the same global R-equivalence profile whose outward
+normal derivative is one. Their interior residuals use the factor gradient as a
+smooth normal extension; it equals the outward unit normal at regular boundary
+points but can vanish at medial sets. Public normal calculations continue to use the
+geometry ADF and normal provider. Select `gate_method="compact"` to use the compact
+Dirichlet and overlay fallback; only then do `gate_saturation_fraction` and
+`gate_linear_fraction` tune its transition. Exact analytic geometry gates ignore
+these mesh-specific controls.
+
+Boundary constraints whose operators contain spatial derivatives must declare
+that order on `SingleFieldEnforcedConstraint` or
+`MultiFieldEnforcedConstraint`. Set `max_derivative_order=0` for Dirichlet
+values and `max_derivative_order=1` for Neumann, Robin, Sommerfeld, or traction
+conditions. Later initial/data overlays are then multiplied by
+$\beta^{K+1}$, preserving boundary derivatives through order $K$.
+
 See [API → Solver → Enforced constraint pipelines](api/solver/enforced_constraints.md) for the pipeline
 types and constructors.
 

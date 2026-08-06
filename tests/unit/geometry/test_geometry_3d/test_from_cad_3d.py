@@ -342,3 +342,85 @@ def test_sample_interior_separable(geometry_from_cube):
             )
             # The point should be in the positive octant
             assert np.all(point > 0)
+
+
+def test_boundary_factor_is_scale_covariant_with_unit_face_gradient():
+    scales = (1e-7, 1.0)
+    normalized_points = jnp.array(
+        [
+            [0.5, 0.0, 0.0],
+            [0.49, 0.1, -0.1],
+            [0.4, -0.15, 0.15],
+            [0.0, 0.0, 0.0],
+            [0.75, 0.1, -0.1],
+        ]
+    )
+    normalized_values = []
+    normalized_ansatz_values = []
+    normalized_gate_values = []
+    normalized_gate_gradients = []
+    normalized_gate_midpoints = []
+
+    for scale in scales:
+        geometry = Geometry3DFromCAD(
+            trimesh.creation.box(extents=(scale, scale, scale)),
+            recenter=False,
+        )
+        boundary_point = jnp.array([0.5 * scale, 0.0, 0.0])
+        assert abs(float(geometry.boundary_factor(boundary_point))) <= 1e-12 * scale
+        assert jnp.allclose(
+            jax.grad(geometry.boundary_factor)(boundary_point),
+            jnp.array([1.0, 0.0, 0.0]),
+            atol=1e-12,
+            rtol=0.0,
+        )
+        ansatz_factor = geometry.boundary_ansatz_factor
+        assert abs(float(ansatz_factor(boundary_point))) <= 1e-12 * scale
+        assert jnp.allclose(
+            jax.grad(ansatz_factor)(boundary_point),
+            jnp.array([1.0, 0.0, 0.0]),
+            atol=1e-10,
+            rtol=0.0,
+        )
+        normalized_ansatz_values.append(ansatz_factor(scale * normalized_points) / scale)
+        gate = geometry.make_enforcement_gate()
+        normalized_gate_values.append(gate(scale * normalized_points))
+        normalized_gate_gradients.append(scale * jax.grad(gate)(boundary_point))
+        normalized_gate_midpoints.append(gate(jnp.array([0.25 * scale, 0.0, 0.0])))
+        normalized_values.append(
+            geometry.boundary_factor(scale * normalized_points) / scale
+        )
+
+    assert jnp.allclose(
+        normalized_values[0],
+        normalized_values[1],
+        atol=1e-10,
+        rtol=1e-10,
+    )
+    assert jnp.allclose(
+        normalized_ansatz_values[0],
+        normalized_ansatz_values[1],
+        atol=1e-10,
+        rtol=1e-10,
+    )
+    assert jnp.allclose(
+        normalized_gate_values[0],
+        normalized_gate_values[1],
+        atol=1e-10,
+        rtol=1e-10,
+    )
+    assert jnp.allclose(
+        normalized_gate_gradients[0],
+        normalized_gate_gradients[1],
+        atol=1e-10,
+        rtol=1e-10,
+    )
+    assert jnp.allclose(
+        normalized_gate_midpoints[0],
+        normalized_gate_midpoints[1],
+        atol=1e-10,
+        rtol=1e-10,
+    )
+    assert float(normalized_gate_midpoints[0]) > 0.75
+    assert jnp.allclose(normalized_gate_values[0][0], 0.0, atol=1e-10)
+    assert float(normalized_gate_values[0][3]) > 0.9

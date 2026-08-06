@@ -72,131 +72,275 @@ The remaining sections specify concrete constructions and the invariance proofs.
 
 ## A.2. Boundary enforced ansätze
 
-Let $\Omega\subset\mathbb R^d$ be a geometry factor with boundary $\partial\Omega$.
-Assume a signed distance–like function $\phi:\Omega\to\mathbb R$ satisfying $\phi=0$ on $\partial\Omega$,
-and an outward unit normal $n$ on $\partial\Omega$.
+Let $\Omega\subset\mathbb R^d$ be a geometry factor with boundary
+$\partial\Omega$. Phydrax keeps three zero-set-preserving fields distinct:
 
-The statements below are written in an ideal smooth setting; in practice Phydrax uses an
-approximate distance function and numerically defined boundary normals. Exactness claims
-should be interpreted as exact for the idealized $\phi,n$, and “up to numerical tolerance”
-in typical discretized settings.
+- a signed distance-like geometry field $\phi$, used by geometry operations and
+  public normal construction;
+- a dimensionless enforcement gate $\beta$, with $\beta=0$ on
+  $\partial\Omega$ and $\beta=\mathcal O(1)$ in the interior, for value ansätze
+  and constraint-preserving overlays; and
+- a dimensional boundary ansatz factor $\psi$, with $\psi=0$ and
+  $\partial_n\psi=1$ on $\partial\Omega$, for derivative hard constraints.
+
+The outward unit normal is denoted by $n$. Derivative ansätze use the canonical
+off-boundary extension $\nu=\nabla\psi$. At every regular boundary point,
+$\nu=n$; in the interior, $\nu$ is not normalized and may vanish smoothly at a
+medial set. For CAD geometries, all three fields share the same boundary zero set
+up to floating-point tolerance; mesh edges and vertices use the established
+outward pseudonormal because a unique classical normal does not exist.
 
 ### A.2.1. Dirichlet (value) constraints
 
 Given a target $g:\partial\Omega\to\mathbb R^C$, define:
 
 $$
-u^\star(x)\;=\; g(x) + \phi(x)\,\bigl(u(x)-g(x)\bigr).
+u^\star(x)\;=\; g(x) + \beta(x)\,\bigl(u(x)-g(x)\bigr).
 $$
 
-**Proposition A.1 (Dirichlet exactness).** If $\phi=0$ on $\partial\Omega$, then $u^\star=g$ on $\partial\Omega$.
+**Proposition A.1 (Dirichlet exactness).** If $\beta=0$ on
+$\partial\Omega$, then $u^\star=g$ on $\partial\Omega$.
 
-*Proof.* For $x\in\partial\Omega$, $\phi(x)=0$ implies $u^\star(x)=g(x)$. $\square$
+*Proof.* For $x\in\partial\Omega$, $\beta(x)=0$ implies
+$u^\star(x)=g(x)$. $\square$
 
 ### A.2.2. Neumann (normal derivative) constraints
 
-Given a target $g:\partial\Omega\to\mathbb R^C$ for $\partial_n u=g$, define:
+Given a target $g:\partial\Omega\to\mathbb R^C$ for $\partial_n u=g$, define
+$\nu=\nabla\psi$ and:
 
 $$
-u^\star \;=\; u + \frac{\phi}{\partial_n\phi}\,\bigl(g-\partial_n u\bigr).
+u^\star \;=\; u + \psi\,\bigl(g-D_\nu u\bigr).
 $$
 
-**Proposition A.2 (Neumann exactness).** Assume $u,\phi$ are differentiable and $\partial_n\phi\neq 0$ on $\partial\Omega$.
-Then $\partial_n u^\star=g$ on $\partial\Omega$.
+**Proposition A.2 (Neumann exactness).** Assume $u,\psi$ are differentiable,
+$\psi=0$, and $\partial_n\psi=1$ on $\partial\Omega$. Then
+$\partial_n u^\star=g$ on every regular boundary point.
 
-*Proof.* Differentiate along $n$:
+*Proof.* Because $\psi$ is constant on the boundary, its tangential derivatives
+vanish there. Hence $\nu=\nabla\psi=n$ and $D_\nu u=\partial_nu$ on the boundary.
+Differentiating the ansatz along $n$ gives:
 
 $$
 \partial_n u^\star
-=\partial_n u + \partial_n\left(\frac{\phi}{\partial_n\phi}\right)\bigl(g-\partial_n u\bigr)
-+ \frac{\phi}{\partial_n\phi}\bigl(\partial_n g - \partial_n\partial_n u\bigr).
+=\partial_n u + \partial_n\psi\bigl(g-D_\nu u\bigr)
++ \psi\,\partial_n\bigl(g-D_\nu u\bigr).
 $$
 
-On $\partial\Omega$, $\phi=0$ annihilates the last term. Moreover,
+On $\partial\Omega$, $\psi=0$ annihilates the last term and
+$\partial_n\psi=1$, hence
+$\partial_n u^\star=\partial_n u+(g-\partial_nu)=g$. $\square$
 
-$$
-\partial_n\left(\frac{\phi}{\partial_n\phi}\right)
-=\frac{\partial_n\phi}{\partial_n\phi}+\phi\cdot(\cdots)=1
-\quad\text{on }\partial\Omega.
-$$
-
-Hence $\partial_n u^\star=\partial_n u + (g-\partial_n u)=g$ on $\partial\Omega$. $\square$
+Using $\nu$ rather than normalizing a nearest-boundary field changes no boundary
+operator. It only chooses a differentiable interior extension for the residual,
+avoiding artificial normal jumps where nearest boundary points are nonunique.
 
 ### A.2.3. Robin (mixed) constraints
 
-For $a\,u + b\,\partial_n u = g$ on $\partial\Omega$, one may use the analogous correction:
+For $a\,u + b\,\partial_n u = g$ on $\partial\Omega$, use
 
 $$
-u^\star \;=\; u + \frac{\phi}{b\,\partial_n\phi}\,\bigl(g-a\,u-b\,\partial_n u\bigr),
+u^\star \;=\; u + \frac{\psi}{b}\,
+\bigl(g-a\,u-b\,D_\nu u\bigr),
 $$
 
-under the nondegeneracy assumption $b\,\partial_n\phi\neq 0$ on $\partial\Omega$.
-The proof is the same as Proposition A.2: the correction term vanishes on the boundary but has
-the correct first normal derivative to cancel the residual of the Robin operator.
+under the nondegeneracy assumption $b\neq0$ on $\partial\Omega$. The proof is
+the same as Proposition A.2 because $D_\nu u=\partial_nu$ on the boundary.
 
-### A.2.4. Approximate distance field (ADF) and blur
+### A.2.4. Scale-normalized boundary fields
 
-PCI relies on a signed distance–like function $\phi$ to build boundary factors and normals.
-Phydrax constructs a smooth **approximate distance field (ADF)** from a mesh and, by default,
-applies a local Gaussian blur to improve stability of downstream derivatives.
+Hard constraints need a reliable zero set, while PDE optimization also needs
+well-conditioned derivatives. Phydrax therefore keeps five mesh-geometry roles
+distinct:
 
-#### A.2.4.1. Base smooth distance (mesh ADF)
+- `predicate_sdf`: a signed distance-like field used for inside/outside classification;
+- `boundary_factor` (also exposed as `adf`): the compact dimensional geometry
+  field $\phi$ used by geometry operations and public normal construction;
+- `make_enforcement_gate(...)`: the dimensionless field $\beta$ used by
+  Dirichlet ansätze and preservation overlays;
+- `boundary_ansatz_factor`: the dimensional unit-jet field $\psi$ used by
+  derivative hard constraints, with $\nu=\nabla\psi$ as their canonical
+  off-boundary normal extension; and
+- the boundary-normal provider: the outward analytic or mesh pseudonormal field.
 
-Let $\mathcal M$ be a triangulated surface defining $\partial\Omega$. For each query point $x$,
-Phydrax computes a smooth proxy distance by combining candidate triangle distances with a soft-min:
-
-$$
-d(x)\;\approx\;\operatorname{softmin}_\beta\{\,d_T(x)\,\}_{T\in\mathcal C(x)},
-$$
-
-where $d_T(x)$ is the point-to-triangle distance and $\mathcal C(x)$ is a BVH-selected candidate
-set (beam traversal of a packed AABB tree). The softness parameter $\beta>0$ controls the
-sharpness of the soft-min; smaller $\beta$ yields a smoother blend of nearby triangle distances.
-
-For 2D geometries built from CAD, Phydrax extrudes the mesh to 3D and evaluates the 3D ADF away
-from end caps so that the resulting distance coincides with the 2D boundary distance on the
-side walls.
-
-An optional **squash** transform can be applied:
+Let $D>0$ be the geometry diameter and $c$ the center of its axis-aligned bounds.
+All mesh-distance calculations use normalized coordinates
 
 $$
-\rho(s)=\delta\,\operatorname{tanh}\!\left(\frac{s}{\delta}\right),
+y=\frac{x-c}{D}.
 $$
 
-which is linear near $s=0$ but saturates in the interior to limit curvature. The *unsquashed*
-field (pre-$\operatorname{tanh}$) is exposed as `adf_orig`.
-
-#### A.2.4.2. Local ADF blur
-
-Given a base field $\phi_{\text{orig}}$ (typically `adf_orig`), the blurred ADF is defined by
-sampling in a local neighborhood:
+This makes BVH geometry, regularizers, soft-min sharpness, collar widths, and
+saturation thresholds independent of the physical coordinate scale. Returned values
+are multiplied by $D$, so uniform scaling by $s>0$ satisfies
 
 $$
-\phi_{\text{blur}}(x)
+\phi_{s\Omega}(s x)=s\,\phi_\Omega(x).
+$$
+
+#### A.2.4.1. Boundary-preserving smooth extension
+
+The mesh construction computes a closest-point signed distance $d_{\mathrm{exact}}$
+and a soft candidate-triangle extension $d_{\mathrm{soft}}$. It does not blend them at
+the boundary. For a normalized collar radius $r_0$, the blend is
+
+$$
+q
 =
-\frac{\phi_{\text{orig}}(x)+\sum_{i=1}^m w_i(x)\,\phi_{\text{orig}}(x+r(x)u_i)}
-{1+\sum_{i=1}^m w_i(x)}.
+d_{\mathrm{exact}}
++B\!\left(\lvert d_{\mathrm{exact}}\rvert\right)
+\left(d_{\mathrm{soft}}-d_{\mathrm{exact}}\right),
 $$
 
-Here $(u_i)$ are deterministic offsets on the unit disk (2D Fibonacci disk) or unit ball
-(3D Fibonacci sphere with radial stratification). The radius is adaptive:
+where $B=0$ on $[0,r_0/2]$, $B=1$ on $[r_0,\infty)$, and the transition is the
+order-five generalized smoothstep
 
 $$
-r(x)=\max\!\bigl(\sqrt{\phi_{\text{orig}}(x)^2+\varepsilon^2}-\varepsilon,\ r_{\min}\bigr),
+B(u)=462u^6-1980u^7+3465u^8-3080u^9+1386u^{10}-252u^{11},
+\qquad
+u=\frac{2\lvert d_{\mathrm{exact}}\rvert-r_0}{r_0}
 $$
 
-and the Gaussian weights are
+clipped to $[0,1]$. Thus $q=d_{\mathrm{exact}}$ throughout an open boundary collar,
+rather than merely agreeing at one point. In the closest-point custom derivative,
+queries within a scale-normalized numerical collar use the mesh pseudonormal directly.
+This removes the machine-epsilon transition that would otherwise create unbounded
+higher derivatives at the zero set.
+
+For planar CAD geometry, the triangulation is extruded only to reuse the 3D mesh
+kernel; queries are evaluated on the sidewall away from the end caps. The final
+boundary-factor scale is the planar diameter, not the artificial extrusion height.
+
+#### A.2.4.2. Compact smooth saturation
+
+The closest-point map is nonsmooth at medial sets. The dimensional
+boundary-defining factor does not need to carry that nonsmoothness into a PDE
+residual. Let
 
 $$
-w_i(x)=\exp\!\left(-\frac{\|r(x)\,u_i\|^2}{2(\sigma\,r(x))^2+\varepsilon}\right),
+\delta=0.05D,\qquad r=\frac{|q|}{\delta},
 $$
 
-with $\sigma=\texttt{sigma_scale}$. The parameters $(\varepsilon,r_{\min})$ prevent numerical
-instabilities and collapse of the kernel near the boundary.
+and define
 
-**Implementation note.** By default, `geom.adf` is set to the blurred field
-$\phi_{\text{blur}}=\texttt{adf_blur}(\texttt{adf_orig})$, while `adf_orig` provides the
-unsquashed base field. Thus enforced boundary ansätze use the blurred ADF by default.
+$$
+G(u)
+=u-66u^7+\frac{495}{2}u^8-385u^9+308u^{10}-126u^{11}+21u^{12}.
+$$
+
+The final factor is
+
+$$
+\phi(q)=
+\begin{cases}
+q, & r\le \tfrac12,\\[2mm]
+\operatorname{sign}(q)\,\delta
+\left[\tfrac12+\tfrac12G(2r-1)\right],
+& \tfrac12<r<1,\\[2mm]
+\operatorname{sign}(q)\,\tfrac34\delta, & r\ge 1.
+\end{cases}
+$$
+
+The polynomial agrees with the identity through sixth order at the inner join and is
+flat through sixth order at the outer join. Consequently:
+
+$$
+\phi=0,\qquad \nabla\phi=n,\qquad \|\nabla\phi\|=1
+\quad\text{on a regular boundary face},
+$$
+
+the whole inner collar is exactly linear, and all derivatives vanish once the plateau
+is reached. Medial-axis candidate changes beyond the saturation threshold therefore
+cannot enter any derivative of the enforced ansatz. The sign remains negative inside
+and positive outside.
+
+`adf_orig` exposes the unsquashed smooth distance-like source for diagnostics and
+classification. `adf_blur(...)` remains an explicit utility, but a blur is not applied
+to the final boundary factor: averaging across the zero set would move the boundary
+and destroy the hard-constraint guarantee.
+
+#### A.2.4.3. Dimensionless optimization gate
+
+The compact saturation used by the geometry ADF is not a good universal
+multiplier for a PINN ansatz: it can attenuate the network over most of the
+domain while concentrating large second and higher derivatives in a thin
+transition. Dirichlet ansätze and pipeline preservation overlays therefore use
+the global gate $\beta$, while derivative hard constraints use its dimensional
+unit-jet counterpart $\psi$.
+
+Let $L$ be the shortest positive span of the geometry's axis-aligned bounds.
+For the CAD default, let $d_i(x)$ be distances to the triangles in the
+BVH-selected candidate beam. Away from the boundary collar, Phydrax uses the
+order-12 negative-power R-equivalence field
+
+$$
+r(x)=\left(\sum_i d_i(x)^{-12}\right)^{-1/12}.
+$$
+
+This field is bounded by the nearest candidate distance but combines competing
+patches smoothly instead of selecting one. In the collar
+$\operatorname{dist}(x,\partial\Omega)\le L/8$, the source is the exact mesh
+distance; a $C^6$ transition couples it to $r$ by distance $L/4$. Thus the gate
+has the exact mesh zero set and local boundary behavior without extending a
+nearest-facet field to the medial axis.
+
+For an interior signed source $q\le0$, define
+
+$$
+z=1.15\frac{-q}{L/2},
+\qquad
+\beta=z(2-z).
+$$
+
+The dimensionless calibration compensates for the amplitude reduction inherent
+in a negative-power aggregate. The resulting gate is zero on the boundary,
+order one across the interior, scale invariant
+$\beta_{r\Omega}(rx)=\beta_\Omega(x)$, and has no manufactured compact-to-flat
+transition. `method="auto"` and `method="global_r_equivalence"` select this CAD
+gate. `method="compact"` retains the $C^6$ compact transform from A.2.4.2;
+`saturation_fraction` and `linear_fraction` configure only that fallback.
+
+For the signed source convention $q<0$ inside and $\partial_n q=1$ at a regular
+boundary point,
+
+$$
+\partial_n\beta=-\frac{4.6}{L}.
+$$
+
+Derivative hard constraints therefore use
+
+$$
+\psi=-\frac{L}{4.6}\,\beta,
+\qquad
+\psi|_{\partial\Omega}=0,
+\qquad
+\partial_n\psi|_{\partial\Omega}=1,
+\qquad
+\nu=\nabla\psi.
+$$
+
+This constant boundary-jet normalization stays finite throughout the interior.
+The unnormalized extension $\nu$ may vanish at an interior maximum, which is
+smooth and harmless because $\nu=n$ on the boundary. This intentionally avoids
+both a discontinuous everywhere-unit normal extension and the pointwise quotient
+$\beta/\partial_n\beta$, which is singular where the broad gate reaches an
+interior maximum.
+
+For an interval $[a,b]$, Phydrax uses the analytic gate
+$4(x-a)(b-x)/(b-a)^2$. For an axis-aligned hyperrectangle it uses the product
+of these per-axis gates. These exact analytic profiles are dimensionless, smooth,
+equal to one at the box center, and unaffected by mesh-specific `method`,
+`saturation_fraction`, or `linear_fraction` controls. At a genuine sharp CAD edge
+or corner, no globally smooth defining function can also retain a unique nonzero
+normal; those features keep the documented finite pseudoderivative convention.
+
+For mesh-only input, the R-equivalence aggregate is evaluated over a finite
+BVH candidate beam. It is therefore not invariant under retessellation: changing
+facet density can shift interior amplitudes even when the represented surface
+is nearly unchanged. Boundary zeros, sign, and uniform-scale covariance remain
+the enforced contracts. Candidate routing is discrete as well; the negative
+power suppresses omitted distant facets, but Phydrax does not claim a global
+smoothness guarantee across every possible beam-selection change.
 
 ## A.3. Piecewise boundary constraints and blending
 
@@ -372,6 +516,16 @@ In the gated branch, boundary constraints remain satisfied by construction becau
 boundary. The gate is chosen to vanish to sufficiently high order to preserve boundary constraints involving spatial
 derivatives up to a prescribed order.
 
+For boundary labels $\ell$ with constrained derivative order $K_\ell$, the
+implementation uses
+
+$$
+\gamma(x)=\prod_\ell |\beta_\ell(x_\ell)|^{K_\ell+1}.
+$$
+
+The dimensionless base gate $\beta_\ell$ controls conditioning; the exponent
+controls vanishing order and therefore which boundary derivatives are preserved.
+
 **Remark (initial exactness tradeoff).** If the initial-enforcement map produces a candidate with
 $u_{\text{init}}(\cdot,t_0)=g_0(\cdot)$, then on the initial slice:
 
@@ -388,7 +542,9 @@ satisfied approximately away from the boundary (subject to compatibility at $\pa
 
 ### A.6.1. Vanishing-order lemma (derivative preservation)
 
-Let $s$ be a local normal coordinate to $\partial\Omega$ (e.g. $s=\phi(x)$). Consider an update:
+Let $s$ be a local normal coordinate to $\partial\Omega$ (for example,
+$s=\phi(x)$). The base enforcement gate satisfies
+$\beta(x)=\mathcal O(|s|)$ near a regular boundary point. Consider an update:
 
 $$
 u_{\text{new}} = u + \gamma(s)\,(v-u),
@@ -436,30 +592,36 @@ where $y_m$ is represented by an interpolant (e.g. a cubic Hermite spline in tim
 
 ### A.7.2. The protecting gate M(z)
 
-Let boundary constraints for a geometry label $\ell=x$ involve derivatives up to order $K_x$ (e.g. Dirichlet: $K_x=0$,
-Neumann/Robin: $K_x=1$). Let initial constraints fix time derivatives up to order $K_t$.
+Let boundary constraints for a geometry label $\ell=x$ involve derivatives up
+to order $K_x$ (e.g. Dirichlet: $K_x=0$, Neumann/Robin: $K_x=1$). Let initial
+constraints fix time derivatives up to order $K_t$.
 
 Define a gate:
 
 $$
 M(z)
 =
-\Bigl(\prod_{\ell\in\mathcal B} |\phi_\ell(z_\ell)|^{K_\ell+1}\Bigr)
+\Bigl(\prod_{\ell\in\mathcal B}
+|\beta_\ell(z_\ell)|^{K_\ell+1}\Bigr)
 \cdot (\mathop{\text{max}}(t-t_0,0))^{K_t+1},
 $$
 
-with $\mathcal B\subseteq \mathcal L$ the set of geometry labels with boundary constraints and $\phi_\ell$ a signed
-distance–like function for that geometry factor.
+with $\mathcal B\subseteq\mathcal L$ the set of geometry labels with boundary
+constraints and $\beta_\ell$ the dimensionless enforcement gate for that
+geometry factor.
 
-On domains where $t\ge t_0$ identically, $\mathop{\text{max}}(t-t_0,0)=t-t_0$, so this reduces to $(t-t_0)^{K_t+1}$. The $\text{max}$ form
-is convenient to keep $M$ nonnegative and real-valued.
+On domains where $t\ge t_0$ identically,
+$\mathop{\text{max}}(t-t_0,0)=t-t_0$, so this reduces to
+$(t-t_0)^{K_t+1}$. The $\text{max}$ form is convenient to keep $M$
+nonnegative and real-valued.
 
 Key properties:
 
-- $M(z)=0$ on constrained boundary sets (where $\phi_\ell=0$),
+- $M(z)=0$ on constrained boundary sets (where $\beta_\ell=0$),
 - $M(z)=0$ on the initial slice $t=t_0$,
-- $M$ vanishes to high enough order so that derivatives of $M(\cdot)h(\cdot)$ up to the constrained orders also vanish
-  on those sets (formalized below).
+- $M$ vanishes to high enough order so that derivatives of
+  $M(\cdot)h(\cdot)$ up to the constrained orders also vanish on those sets
+  (formalized below).
 
 Anchors/tracks are required to satisfy $M(z_i)>0$; placing an interior anchor on a constrained set is incompatible with
 the goal of preserving those enforced constraints.

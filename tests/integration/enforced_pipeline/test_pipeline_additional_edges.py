@@ -25,8 +25,14 @@ from phydrax.domain import (
     TimeInterval,
 )
 from phydrax.integration import from_samples, mean_over
-from phydrax.operators.differential import directional_derivative, dt, partial_x
+from phydrax.operators.differential import (
+    cauchy_stress,
+    directional_derivative,
+    dt,
+    partial_x,
+)
 from phydrax.operators.integral import mean
+from phydrax.operators.linalg import einsum
 from phydrax.solver import (
     EnforcedConstraintPipelines,
     EnforcedInteriorData,
@@ -507,6 +513,42 @@ def test_pipeline_points_vs_coord_separable():
     assert jnp.allclose(out_sep, out_dense, atol=1e-6)
 
 
+def test_gated_pipeline_points_vs_coord_separable():
+    geom = Interval1d(0.0, 1.0)
+    boundary = geom.component({"x": Boundary()})
+
+    @geom.Function("x")
+    def u(x):
+        return x[0] ** 2
+
+    constraint = SingleFieldEnforcedConstraint(
+        "u",
+        boundary,
+        lambda f: enforce_dirichlet(f, boundary, var="x", target=0.0),
+    )
+    interior = EnforcedInteriorData(
+        "u",
+        points={"x": jnp.array([[0.25]], dtype=float)},
+        values=jnp.array([0.125], dtype=float),
+    )
+    pipes = EnforcedConstraintPipelines.build(
+        functions={"u": u},
+        constraints=[constraint],
+        interior_data=[interior],
+    )
+    u_enforced = pipes.apply({"u": u})["u"]
+    eval_jit = eqx.filter_jit(lambda f, b: f(b).data)
+
+    component = geom.component()
+    sep = component.sample_coord_separable({"x": 6}, num_points=())
+    x_axis = sep.points["x"][0].data
+    dense = _line_batch(geom, xs=x_axis)
+
+    out_sep = eval_jit(u_enforced, sep).reshape((-1,))
+    out_dense = eval_jit(u_enforced, dense).reshape((-1,))
+    assert jnp.allclose(out_sep, out_dense, atol=1e-6)
+
+
 def test_operator_stack_with_pipeline():
     geom = Interval1d(0.0, 1.0)
 
@@ -674,3 +716,106 @@ def test_where_all_weight_all_mean():
     eval_jit = eqx.filter_jit(lambda: mean(u, realization).data)
     out = eval_jit().reshape(())
     assert jnp.allclose(out, 0.75, atol=1e-6)
+
+
+def test_enforce_traction_cancels_nonzero_affine_boundary_traction():
+    geom = Square(center=(0.0, 0.0), side=2.0)
+    component = geom.component({"x": Boundary()})
+
+    @geom.Function("x")
+    def u(x):
+        return jnp.array([x[0], 0.0])
+
+    u_enforced = enforce_traction(
+        u,
+        component,
+        var="x",
+        lambda_=1.0,
+        mu=1.0,
+        target=jnp.array([0.0, 0.0]),
+    )
+    stress = cauchy_stress(
+        u_enforced,
+        lambda_=1.0,
+        mu=1.0,
+        var="x",
+    )
+    traction = einsum("...ij,...j->...i", stress, component.normal(var="x"))
+
+    structure = ProductStructure((("x",),)).canonicalize(geom.labels)
+    axis_names = structure.axis_names
+    assert axis_names is not None
+    axis = axis_names[0]
+    points = PointsBatch(
+        points=frozendict(
+            {
+                "x": cx.Field(
+                    jnp.array(
+                        [
+                            [-1.0, 0.2],
+                            [1.0, -0.3],
+                            [0.4, -1.0],
+                            [-0.2, 1.0],
+                        ],
+                        dtype=float,
+                    ),
+                    dims=(axis, None),
+                )
+            }
+        ),
+        structure=structure,
+    )
+
+    out = eqx.filter_jit(lambda f, b: f(b).data)(traction, points)
+    assert jnp.allclose(out, 0.0, atol=1e-5)
+
+
+def test_enforce_neumann_cad_ansatz_is_bounded_in_the_interior():
+    geom = Square(center=(0.0, 0.0), side=2.0)
+    component = geom.component({"x": Boundary()})
+
+    @geom.Function("x")
+    def u(x):
+        return x[0] * 0.0
+
+    u_enforced = enforce_neumann(
+        u,
+        component,
+        var="x",
+        target=1.0,
+        mode="forward",
+    )
+    coordinates = jnp.linspace(-0.95, 0.95, 101)
+    structure = ProductStructure((("x",),)).canonicalize(geom.labels)
+    axis_names = structure.axis_names
+    assert axis_names is not None
+    points = PointsBatch(
+        points=frozendict(
+            {
+                "x": cx.Field(
+                    jnp.stack((coordinates, jnp.zeros_like(coordinates)), axis=-1),
+                    dims=(axis_names[0], None),
+                )
+            }
+        ),
+        structure=structure,
+    )
+
+    values = jnp.asarray(u_enforced(points).data)
+    assert jnp.all(jnp.isfinite(values))
+    assert jnp.max(jnp.abs(values)) < 1.0
+
+    normal = component.normal(var="x")
+    du_dn = directional_derivative(u_enforced, normal, var="x", mode="forward")
+    boundary_points = PointsBatch(
+        points=frozendict(
+            {
+                "x": cx.Field(
+                    jnp.array([[-1.0, 0.0], [1.0, 0.0]]),
+                    dims=(axis_names[0], None),
+                )
+            }
+        ),
+        structure=structure,
+    )
+    assert jnp.allclose(du_dn(boundary_points).data, 1.0, atol=1e-3)

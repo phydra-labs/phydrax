@@ -17,6 +17,12 @@ import trimesh
 from jaxtyping import Array, ArrayLike, Bool, Float, Key
 
 from ..._doc import DOC_KEY0
+from .._base import (
+    _make_compact_enforcement_gate,
+    _make_global_boundary_ansatz_factor,
+    _make_global_enforcement_gate,
+    EnforcementGateMethod,
+)
 from .._chart import CADChartAtlas
 from .._measure_partition import GeometryMeasurePartition
 from ._base import _AbstractGeometry3D
@@ -37,8 +43,11 @@ class Geometry3DFromCAD(_AbstractGeometry3D):
     - boundary points $x\in\partial\Omega$ by sampling triangles proportional to their area;
     - interior points $x\in\Omega$ via mesh-based strategies (see `sample_interior`).
 
-    A smooth signed distance-like function $\phi(x)$ is provided via `adf`, and is
-    used for containment tests and for estimating boundary normals.
+    `predicate_sdf` supplies signed classification values. `boundary_factor` (also
+    exposed as `adf`) supplies the compact dimensional field used by geometry
+    operations. `boundary_ansatz_factor` supplies the globally conditioned,
+    dimensional unit-jet field for derivative hard constraints, and
+    `make_enforcement_gate` supplies the dimensionless Dirichlet and overlay gate.
     """
 
     mesh: trimesh.Trimesh
@@ -51,6 +60,8 @@ class Geometry3DFromCAD(_AbstractGeometry3D):
     volume_proportion: Array
     boundary_measure_partition: GeometryMeasurePartition
     boundary_chart_atlas: CADChartAtlas
+    predicate_sdf: Callable[[Array], Array]
+    boundary_factor: Callable[[Array], Array]
     adf: Callable[[Array], Array]
     _boundary_normals_field: Callable[[Array], Array]
 
@@ -93,10 +104,60 @@ class Geometry3DFromCAD(_AbstractGeometry3D):
             self.mesh.volume / np.prod(bounds), dtype=float
         )
 
-        self.adf = self.adf_blur(self.adf_orig, radius_fn=self.adf_orig)
+        from ._sdf import make_compact_boundary_factor
+
+        self.predicate_sdf = self.adf_orig
+        self.boundary_factor = make_compact_boundary_factor(
+            self.predicate_sdf,
+            scale=self.diameter,
+        )
+        self.adf = self.boundary_factor
         from ._normals import make_smooth_mesh_normal_field
 
         self._boundary_normals_field = make_smooth_mesh_normal_field(self)
+
+    @ft.cached_property
+    def _enforcement_distance(self) -> Callable[[Array], Array]:
+        """R-equivalent distance source with an exact local boundary collar."""
+        length = self.enforcement_characteristic_length
+        return self._make_smooth_mesh_sdf(
+            squash=False,
+            r0=0.25 * length,
+            equivalence_power=12.0,
+        )
+
+    @ft.cached_property
+    def boundary_ansatz_factor(self) -> Callable[[Array], Array]:
+        """Globally conditioned CAD factor with an outward unit boundary jet."""
+        return _make_global_boundary_ansatz_factor(
+            self._enforcement_distance,
+            scale=self.enforcement_characteristic_length,
+        )
+
+    @property
+    def _enforcement_gate_builder(
+        self,
+    ) -> Callable[..., Callable[[Array], Array]]:
+        return self._make_enforcement_gate
+
+    def _make_enforcement_gate(
+        self,
+        *,
+        method: EnforcementGateMethod,
+        saturation_fraction: float,
+        linear_fraction: float,
+    ) -> Callable[[Array], Array]:
+        if method == "compact":
+            return _make_compact_enforcement_gate(
+                self._enforcement_distance,
+                scale=self.enforcement_characteristic_length,
+                saturation_fraction=saturation_fraction,
+                linear_fraction=linear_fraction,
+            )
+        return _make_global_enforcement_gate(
+            self._enforcement_distance,
+            scale=self.enforcement_characteristic_length,
+        )
 
     @ft.cached_property
     def _mesh_signature(self) -> tuple[np.ndarray, np.ndarray]:
@@ -119,14 +180,14 @@ class Geometry3DFromCAD(_AbstractGeometry3D):
 
     @ft.cached_property
     def adf_alt(self) -> Callable[[Array], Array]:
-        """Alternative ADF using an exact BVH traversal for the `d_exact` term."""
+        """Legacy original-coordinate ADF retained for diagnostics."""
         from ._sdf import make_smooth_mesh_sdf_alt
 
         return make_smooth_mesh_sdf_alt(self)
 
     @ft.cached_property
     def adf_orig(self) -> Callable[[Array], Array]:
-        """Unsquashed smooth distance (returns `d` before tanh saturation)."""
+        """Unsquashed smooth distance-like source used by geometric predicates."""
         from ._sdf import make_smooth_mesh_sdf
 
         return make_smooth_mesh_sdf(self, squash=False)
@@ -298,6 +359,7 @@ class Geometry3DFromCAD(_AbstractGeometry3D):
         beam_steps: int | None = None,
         r0: float | None = None,
         rho_delta: float | None = None,
+        equivalence_power: float | None = None,
         squash: bool = True,
     ) -> Callable[[jnp.ndarray], jnp.ndarray]:
         from ._sdf import make_smooth_mesh_sdf
@@ -310,6 +372,7 @@ class Geometry3DFromCAD(_AbstractGeometry3D):
             beam_steps=beam_steps,
             r0=r0,
             rho_delta=rho_delta,
+            equivalence_power=equivalence_power,
             squash=squash,
         )
 
@@ -348,7 +411,7 @@ class Geometry3DFromCAD(_AbstractGeometry3D):
         z_diff = verts[:, None, 2] - verts[None, :, 2]
         squared_distances = x_diff**2 + y_diff**2 + z_diff**2
         max_squared_distance = jnp.max(squared_distances)
-        return jnp.sqrt(max_squared_distance + jnp.finfo(float).eps).item()
+        return jnp.sqrt(max_squared_distance).item()
 
     def _boundary_normals_orig_nograd(
         self, points: Array

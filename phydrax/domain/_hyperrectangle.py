@@ -12,7 +12,7 @@ from jaxtyping import Array, ArrayLike, Bool, Float, Key
 
 from .._doc import DOC_KEY0
 from .._sampling import get_sampler_host, seed_from_key
-from ._base import _AbstractGeometry, GeometryTransitionKind
+from ._base import _AbstractGeometry, EnforcementGateMethod, GeometryTransitionKind
 from ._grid import broadcasted_grid
 from ._structure import _validate_label
 
@@ -69,6 +69,30 @@ class HyperRectangle(_AbstractGeometry):
     @property
     def adf(self) -> Callable[[Array], Array]:
         return self._adf
+
+    @property
+    def _enforcement_gate_builder(
+        self,
+    ) -> Callable[..., Callable[[Array], Array]]:
+        return self._make_enforcement_gate
+
+    def _make_enforcement_gate(
+        self,
+        *,
+        method: EnforcementGateMethod = "auto",
+        saturation_fraction: float = 0.5,
+        linear_fraction: float = 0.5,
+    ) -> Callable[[Array], Array]:
+        """Build the analytic dimensionless product gate for a box."""
+        widths = self.upper - self.lower
+
+        def gate(points: Array) -> Array:
+            pts, single = self._points_2d(points)
+            axis_gates = 4.0 * (pts - self.lower) * (self.upper - pts) / (widths * widths)
+            values = jnp.prod(axis_gates, axis=-1)
+            return values[0] if single else values
+
+        return jax.jit(gate)
 
     @property
     def spatial_dim(self) -> int:
