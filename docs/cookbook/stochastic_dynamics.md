@@ -38,6 +38,7 @@ import jax
 import jax.scipy.special as jsp_special
 import jax.numpy as jnp
 import jax.random as jr
+import optax
 import phydrax as phx
 
 sigma_value = 0.7
@@ -200,6 +201,103 @@ from the dynamics residual. Add absorbing, reflecting, or zero-flux boundary
 constraints when the truncated state domain requires them. This separation
 makes each failure diagnosable and still permits an unnormalized stationary
 eigenfunction when normalization is not part of the task.
+
+## Particle-first score matching in high dimension
+
+Directly representing a normalized density over a high-dimensional state is often the
+wrong target. If the SDE can be simulated, adapt its valid trajectory nodes to
+state-time particles and learn
+
+\[
+s_\theta(t,x)\approx\nabla_x\log p_t(x)
+\]
+
+with the Hyvärinen objective
+
+\[
+\mathbb E_{p_t}\left[\tfrac12\|s_\theta(t,X_t)\|^2+
+\nabla_x\!\cdot s_\theta(t,X_t)\right].
+\]
+
+The following executable example uses Gaussian particles at one saved time and a
+trainable four-dimensional score field:
+
+```python
+score_dimension = 4
+score_time = jnp.asarray(0.5)
+particle_trajectory = phx.stochastic.StochasticTrajectory(
+    jnp.asarray([score_time]),
+    jr.normal(jr.key(4), (128, 1, score_dimension)),
+    realization_axes=("path",),
+    realization_shape=(128,),
+    time_axis="saved_time",
+    state_axes=("state",),
+)
+score_domain = phx.domain.HyperRectangle(
+    jnp.full((score_dimension,), -5.0),
+    jnp.full((score_dimension,), 5.0),
+    label="x",
+) @ phx.domain.TimeInterval(0.0, 1.0)
+score_model = phx.nn.MLP(
+    in_size=score_dimension + 1,
+    out_size=score_dimension,
+    width_size=32,
+    depth=2,
+    key=jr.key(5),
+)
+score = score_domain.Model("x", "t")(score_model)
+particles = phx.stochastic.trajectory_state_time_samples(
+    particle_trajectory,
+    state_label="x",
+    time_label="t",
+)
+score_objective = phx.objectives.ScoreMatchingObjective(
+    "score",
+    particles,
+    policy=phx.objectives.ScoreMatchingPolicy(
+        "implicit",
+        num_probes=8,
+        distribution="rademacher",
+    ),
+    sampling_mode="fixed",
+)
+score_solver = phx.solver.FunctionalSolver(
+    functions={"score": score},
+    constraints=(),
+    objectives=(score_objective,),
+)
+score_solver = score_solver.solve(
+    num_iter=2000,
+    optim=optax.adam(1e-3),
+    keep_best=False,
+)
+diagnostics = score_objective.diagnostics(
+    score_solver.functions,
+    key=jr.key(6),
+)
+```
+
+`method="implicit"` estimates only the divergence with JVP probes; it does not form a
+dense Jacobian. `method="exact"` is useful for small-dimensional validation.
+`method="sliced"` uses projected score matching. In every mode the score output must
+have exactly the state shape.
+
+The adapter retains validity masks, state-time weights, path identities, independence
+labels, and time coverage. Path-standard-error diagnostics reduce complete paths
+rather than pretending that all time nodes are independent. For fresh simulation each
+optimizer update, pass a callable returning a `StochasticTrajectory` and select
+`sampling_mode="resample"`; the provider is called once outside differentiation.
+
+This workflow returns a score field, not a normalized density. Density reconstruction,
+likelihood evaluation, and sampling from a learned distribution require a separate
+flow, transport, or reverse-time model and are not implied by score matching.
+
+The `implicit-score-matching` entry in
+`tools/high_dimensional_pde_benchmarks.py --suite methods` constructs
+`TrajectoryStateTimeSamples`, evaluates `ScoreMatchingObjective` on the analytic
+Ornstein--Uhlenbeck score, and compares the empirical Hyvärinen objective with its
+closed-form expectation. The record includes path-cluster standard error, score-field
+RMSE, divergence error, valid fraction, runtime, and particle working-set size.
 
 ## Stochastic heat equation by method of lines
 

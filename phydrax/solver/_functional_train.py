@@ -52,6 +52,15 @@ class _SupportsDataMetrics(Protocol):
         **kwargs: Any,
     ) -> dict[str, Any]: ...
 
+def _sample_objective_batches(objectives: tuple[Any, ...], /, *, key: Any):
+    keys = jr.split(key, len(objectives))
+    return tuple(
+        objective.sample(key=objective_key)
+        if isinstance(objective, AbstractSamplingObjectiveTerm)
+        else None
+        for objective, objective_key in zip(objectives, keys, strict=True)
+    )
+
 
 def _constraint_label(constraint: Any, /) -> str:
     label = getattr(constraint, "label", None)
@@ -540,6 +549,7 @@ def solve(
             key,
             iter_,
             collocation_,
+            objective_batches_,
         ):
             functions = combine_trainable(params_, non_trainable_)
             if solver.constraint_pipelines is None:
@@ -563,10 +573,23 @@ def solve(
                             c, population, enforced, key=k, iter_=iter_
                         )
                         total = total + scale * jnp.asarray(term, dtype=float).reshape(())
-                    for objective, objective_key in zip(
-                        solver.objectives, objective_keys, strict=True
+                    for objective, objective_key, objective_batch in zip(
+                        solver.objectives,
+                        objective_keys,
+                        objective_batches_,
+                        strict=True,
                     ):
-                        term = objective.loss(enforced, key=objective_key, iter_=iter_)
+                        if objective_batch is None:
+                            term = objective.loss(
+                                enforced, key=objective_key, iter_=iter_
+                            )
+                        else:
+                            term = objective.loss(
+                                enforced,
+                                key=objective_key,
+                                iter_=iter_,
+                                batch=objective_batch,
+                            )
                         total = total + jnp.asarray(term, dtype=float).reshape(())
                     for term in function_model_loss_values(
                         functions,
@@ -587,13 +610,22 @@ def solve(
                     scaled_term = scale * raw_term
                     terms.append(scaled_term)
                     total = total + scaled_term
-                for objective, objective_key in zip(
-                    solver.objectives, objective_keys, strict=True
+                for objective, objective_key, objective_batch in zip(
+                    solver.objectives,
+                    objective_keys,
+                    objective_batches_,
+                    strict=True,
                 ):
-                    term = jnp.asarray(
-                        objective.loss(enforced, key=objective_key, iter_=iter_),
-                        dtype=float,
-                    ).reshape(())
+                    if objective_batch is None:
+                        term = objective.loss(enforced, key=objective_key, iter_=iter_)
+                    else:
+                        term = objective.loss(
+                            enforced,
+                            key=objective_key,
+                            iter_=iter_,
+                            batch=objective_batch,
+                        )
+                    term = jnp.asarray(term, dtype=float).reshape(())
                     terms.append(term)
                     total = total + term
                 for term in function_model_loss_values(
@@ -666,6 +698,7 @@ def solve(
             key,
             iter_,
             collocation_,
+            objective_batches_,
         ):
             if is_linesearch:
                 import jax.tree_util as jtu
@@ -680,6 +713,7 @@ def solve(
                         key,
                         iter_,
                         collocation_,
+                        objective_batches_,
                     )[0]
 
                 (value, _terms0), grads = loss_fn(
@@ -691,6 +725,7 @@ def solve(
                     key,
                     iter_,
                     collocation_,
+                    objective_batches_,
                 )
                 grads = jtu.tree_map(
                     lambda a: (
@@ -720,6 +755,7 @@ def solve(
                     key,
                     iter_,
                     collocation_,
+                    objective_batches_,
                 )
                 return params_, opt_state, loss_val, terms
 
@@ -732,6 +768,7 @@ def solve(
                 key,
                 iter_,
                 collocation_,
+                objective_batches_,
             )
             assert _opt_standard is not None
             updates, opt_state = _opt_standard.update(grads, opt_state, params_)
@@ -804,6 +841,10 @@ def solve(
                 active_collocation = tuple(
                     collocation[index] for index in active_constraint_indices
                 )
+                objective_batches = _sample_objective_batches(
+                    self.objectives,
+                    key=jr.fold_in(subkey, 211),
+                )
                 pre_update_params = params
                 params, opt_state, loss_val, terms = solve_step_constraints(
                     params,
@@ -815,6 +856,7 @@ def solve(
                     subkey,
                     iter_,
                     active_collocation,
+                    objective_batches,
                 )
                 if profile_adaptive:
                     jax.block_until_ready((params, opt_state, loss_val))
@@ -863,6 +905,7 @@ def solve(
                             subkey,
                             iter_,
                             active_collocation,
+                            objective_batches,
                         )
                         selection_parameters = current_evaluation_params
                         selection_loss = evaluation_loss
@@ -1385,16 +1428,9 @@ def _solve_evosax(
                     else:
                         batches.append(None)
                 batches_tuple = tuple(batches)
-                objective_batch_keys = jr.split(
-                    jr.fold_in(batch_key, 1), len(self.objectives)
-                )
-                objective_batches_tuple = tuple(
-                    objective.sample(key=objective_key)
-                    if isinstance(objective, AbstractSamplingObjectiveTerm)
-                    else None
-                    for objective, objective_key in zip(
-                        self.objectives, objective_batch_keys, strict=True
-                    )
+                objective_batches_tuple = _sample_objective_batches(
+                    self.objectives,
+                    key=jr.fold_in(batch_key, 1),
                 )
 
                 eval_key_shared = jr.fold_in(eval_key, 1)

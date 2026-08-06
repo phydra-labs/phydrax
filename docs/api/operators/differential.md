@@ -206,6 +206,99 @@ coordinate/covariant distinction and array-callable kernels.
 
 ::: phydrax.operators.estimate_kolmogorov_generator
 
+### Raw probes and coordinate sampling
+
+The `estimate_*` functions above return a mean and Monte Carlo standard error.
+Estimator-aware objectives need the realizations themselves. `stochastic_trace_samples`
+and `stochastic_divergence_samples` return a leading probe axis together with its mean,
+sample variance, standard error, and dependence IDs. Both paths use JVP/HVP
+contractions; neither constructs a \(d\times d\) Hessian.
+
+::: phydrax.operators.StochasticOperatorSamples
+
+---
+
+::: phydrax.operators.stochastic_trace_samples
+
+---
+
+::: phydrax.operators.stochastic_divergence_samples
+
+`DimensionSamplingPolicy` targets operators that are explicit sums of coordinate
+contributions. Uniform sampling scales each selected term by the total dimension;
+importance sampling with replacement scales it by the inverse selection probability.
+Sampling without replacement applies the finite-population correction to the reported
+standard error. Selecting every coordinate without replacement is the exact sum and
+has zero sampling uncertainty.
+
+`coordinate_second_derivative_samples` estimates a Laplacian from sampled diagonal
+Hessian entries. `coordinate_divergence_samples` estimates a divergence from sampled
+Jacobian diagonal entries. Their cost scales with the selected subset size rather than
+requiring a materialized dense Hessian or Jacobian. The estimator remains useful only
+when coordinate contributions have manageable variance; increase the subset or use
+importance probabilities when a few coordinates dominate.
+`DimensionSamplingMode` is the `"uniform"` or `"importance"` literal policy type.
+`DimensionOperatorEstimate` is the reduced value-and-standard-error result.
+
+::: phydrax.operators.DimensionSamplingPolicy
+
+---
+
+::: phydrax.operators.DimensionOperatorSamples
+
+---
+
+::: phydrax.operators.DimensionOperatorEstimate
+
+---
+
+::: phydrax.operators.dimension_sum_samples
+
+---
+
+::: phydrax.operators.estimate_dimension_sum
+
+---
+
+::: phydrax.operators.coordinate_second_derivative_samples
+
+---
+
+::: phydrax.operators.coordinate_divergence_samples
+
+### Randomized PDE IR compilation
+
+`RandomizedDifferentialPlan` lowers recognized scalar PDE-IR `laplacian` and
+`divergence` nodes to Hutchinson or coordinate-sampling realizations and returns a
+`RandomizedResidualObjective`. Static analysis runs first and reports the exact and
+randomized node paths. It rejects nested randomized derivatives, nonlinear
+transformations or products that would bias the estimator, randomized denominators,
+unsupported integrals, and non-scalar equations. There is no silent biased fallback.
+Deterministic coefficient-only contractions remain exact when `prefer_exact=True`.
+`RandomizedDifferentialMethod` selects `"hutchinson"` or `"dimension"`;
+`RandomizedNodeCoupling` selects independent or common random numbers across
+recognized IR nodes. `CompiledRandomizedPDEObjective` packages the objective, static
+report, and source equation. `compile_randomized_pde_objective` is the equivalent
+noun-ordered entry point.
+
+::: phydrax.equations.RandomizedDifferentialPlan
+
+---
+
+::: phydrax.equations.RandomizedCompilationReport
+
+---
+
+::: phydrax.equations.CompiledRandomizedPDEObjective
+
+---
+
+::: phydrax.equations.analyze_randomized_compilation
+
+---
+
+::: phydrax.equations.compile_pde_randomized_objective
+
 ## Riemannian differential operators
 
 These adapters apply Metrix geometry to labeled `DomainFunction` objects.

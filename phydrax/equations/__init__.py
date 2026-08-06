@@ -31,6 +31,16 @@ from ._ir import (
     PDERegionKind,
     PDERepresentation,
 )
+from ._randomized_compile import (
+    analyze_randomized_compilation,
+    compile_pde_randomized_objective,
+    compile_randomized_pde_objective,
+    CompiledRandomizedPDEObjective,
+    RandomizedCompilationReport,
+    RandomizedDifferentialMethod,
+    RandomizedDifferentialPlan,
+    RandomizedNodeCoupling,
+)
 from ._serialize import (
     pde_ir_from_dict,
     pde_ir_from_json,
@@ -51,9 +61,11 @@ from ._validate import infer_expression_type, PDEValueType, validate_pde_ir
 
 
 __all__ = [
+    "analyze_randomized_compilation",
     "CompiledPDECondition",
     "CompiledPDEEquation",
     "CompiledPDEProblem",
+    "CompiledRandomizedPDEObjective",
     "DifferentialBackend",
     "IntegralCompiler",
     "PDECondition",
@@ -77,6 +89,8 @@ __all__ = [
     "as_expression",
     "compile_pde_expression",
     "compile_pde_functional_constraint",
+    "compile_pde_randomized_objective",
+    "compile_randomized_pde_objective",
     "compile_pde_problem",
     "infer_expression_type",
     "make_pde_operator",
@@ -88,5 +102,9 @@ __all__ = [
     "pde_ir_to_json",
     "stack_pde_tokens",
     "tokenize_pde_ir",
+    "RandomizedCompilationReport",
+    "RandomizedDifferentialMethod",
+    "RandomizedDifferentialPlan",
+    "RandomizedNodeCoupling",
     "validate_pde_ir",
 ]

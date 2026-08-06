@@ -63,6 +63,186 @@ control models can be ordinary callables or labeled `DomainFunction` objects.
 
 ::: phydrax.objectives.BSDEObjective
 
+## Global-in-time Feynman--Kac regression
+
+`FeynmanKacSamplingPlan` turns a `BSDEProblem` into frozen supervised labels for one
+global time-conditioned value field. The numerical policy is explicit: terminal
+time, temporal quadrature, continuation count, antithetic coupling, path chunking,
+control-target construction, and fixed-versus-resampled refresh all contribute to a
+stable `plan_id`.
+
+`FeynmanKacSamplingMode`, `FeynmanKacControlTargetMode`,
+`FeynmanKacRefreshMode`, and `FeynmanKacTimeWeighting` expose the corresponding
+literal policy types.
+
+Two sampling modes have different estimands:
+
+- `sampling_mode="trajectory_nodes"` reuses a `BSDEPathBatch`. Every valid
+  \((t_i,X_{t_i})\) is a regression input, while future terminal and generator terms
+  on that same path form its target. Nodes from one trajectory remain one dependence
+  cluster.
+- `sampling_mode="queries"` starts independent continuation ensembles at explicit
+  \((t,x)\) queries. `num_paths_per_query` controls conditional Monte Carlo error;
+  the query distribution controls where the learned global field is accurate.
+
+`FeynmanKacLabelBatch` retains value and optional control targets, Monte Carlo
+standard errors, validity, weights, dependence clusters, and problem/process/plan
+identities. Martingale control labels estimate \(Z\) from aligned Wiener increments.
+Malliavin labels require an explicit verified weight callable. Antithetic members are
+not counted as independent paths in reported standard errors.
+
+::: phydrax.stochastic.FeynmanKacSamplingPlan
+
+---
+
+::: phydrax.stochastic.FeynmanKacPathBatch
+
+---
+
+::: phydrax.stochastic.FeynmanKacLabelBatch
+
+---
+
+::: phydrax.stochastic.sample_feynman_kac_paths
+
+---
+
+::: phydrax.stochastic.trajectory_node_feynman_kac_labels
+
+---
+
+::: phydrax.stochastic.query_feynman_kac_labels
+
+---
+
+::: phydrax.stochastic.feynman_kac_label_diagnostics
+
+`FeynmanKacRegressionObjective` applies `stop_gradient` to all generated targets and
+performs weighted value regression, with an optional separately weighted control
+term. Its sample provider is invoked once per optimizer update by
+`FunctionalSolver`, outside the differentiated loss. Fixed labels therefore provide
+common-random-number replay; resampled labels provide a fresh Monte Carlo target.
+
+::: phydrax.objectives.FeynmanKacRegressionObjective
+
+## Deep Picard iteration
+
+`solve_deep_picard` alternates between frozen Feynman--Kac target generation and
+ordinary `FunctionalSolver` optimization of one global value field. Each outer step
+records iterate contraction, target and terminal error, control error when requested,
+target variance, and valid-path fraction. Target damping changes the iteration but
+not its fixed point. Nonconvergence returns a valid result with `converged=False`;
+`raise_on_failure` semantics are deliberately absent.
+
+`DeepPicardInitialSource` selects zero or current-model initialization;
+`StructuredSourceBuilder` is the callable contract for constructing a
+`StructuredPicardSource` from each frozen context.
+
+For semilinear problems, the frozen source is the `BSDEProblem.generator`. For
+structured fully nonlinear sources, `StructuredPicardSource` receives a
+`PicardSourceContext` exposing value, gradient, \(Z=\nabla u\,\sigma\), directional
+Hessian contractions, and \(\operatorname{tr}(\sigma\sigma^\mathsf T\nabla^2u)\)
+through factor-HVPs. There is no dense-Hessian callback. Supply a separate validation
+query distribution when the training queries do not represent the desired error
+measure.
+
+::: phydrax.solver.solve_deep_picard
+
+---
+
+::: phydrax.solver.DeepPicardResult
+
+---
+
+::: phydrax.solver.DeepPicardDiagnostics
+
+---
+
+::: phydrax.solver.StructuredPicardSource
+
+---
+
+::: phydrax.solver.PicardSourceContext
+
+## Deep BSDE terminal shooting
+
+`DeepBSDEShootingObjective` implements the canonical forward rollout
+
+$$
+Y_{i+1}=Y_i-f(t_i,X_i,Y_i,Z_i)\Delta t_i+Z_i\Delta W_i
+$$
+
+and minimizes only the terminal mismatch against \(g(X_T)\). The initial-value
+function and explicit control function are ordinary entries in a `FunctionalSolver`;
+a `Domain.Parameter` is the direct representation of one learned \(Y_0\).
+`deep_bsde_rollout` supports arbitrary declared output and noise event shapes and
+masks invalid paths before they can contaminate gradients.
+
+`solve_deep_bsde` appends the shooting objective temporarily, trains both functions,
+removes that temporary objective, and evaluates the result on a separately sampled or
+explicitly supplied validation batch. The returned object is a localized shooting
+solution, not a global value field. Use a state-dependent initial-value function only
+when intentionally amortizing over an initial-state distribution.
+
+::: phydrax.objectives.DeepBSDEShootingObjective
+
+---
+
+::: phydrax.objectives.deep_bsde_rollout
+
+---
+
+::: phydrax.objectives.DeepBSDEShootingDiagnostics
+
+---
+
+::: phydrax.solver.solve_deep_bsde
+
+---
+
+::: phydrax.solver.DeepBSDEResult
+
+## Backward deep splitting
+
+`deep_splitting_labels` constructs the explicit right-endpoint target
+
+$$
+\widehat U_i =
+U_{i+1}(X_{i+1})
++\Delta t_i f(t_{i+1},X_{i+1},U_{i+1},Z_{i+1}),
+\qquad
+Z_{i+1}=\nabla_xU_{i+1}\,\sigma .
+$$
+
+Targets are stopped before differentiation. `solve_deep_splitting` trains one
+conditional-expectation regression at a time in reverse temporal order, optionally
+warm-starting each slice from its successor. Every resampled optimizer update receives
+one newly materialized path batch; fixed paths provide common-random-number replay.
+
+`DeepSplittingSolution` retains every learned slice plus the exact terminal condition.
+It evaluates declared nodes directly and supports JAX-compatible nearest or linear
+temporal interpolation. `as_domain_function` exposes that interpolant through the
+normal labeled field API. A held-out one-step RMSE includes irreducible transition
+noise; it is a regression diagnostic, not by itself a global solution-error estimate.
+
+::: phydrax.objectives.deep_splitting_labels
+
+---
+
+::: phydrax.objectives.DeepSplittingRegressionObjective
+
+---
+
+::: phydrax.solver.solve_deep_splitting
+
+---
+
+::: phydrax.solver.DeepSplittingSolution
+
+---
+
+::: phydrax.solver.DeepSplittingResult
+
 ## Coupled forward-backward simulation
 
 `solve_coupled_fbsde_explicit` performs Euler--Maruyama forward steps whose drift and

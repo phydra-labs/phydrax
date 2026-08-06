@@ -43,7 +43,8 @@ Most workflows are composing a few primitives:
 - **Interpolation**: reusable anisotropic Smolyak surrogates preserve labeled
   domains, array-valued outputs, and JAX differentiation.
 - **Stochastic processes**: reproducible process realizations, trajectories,
-  martingales, state-space models, BSDEs, and finite-rank spatial noise.
+  martingales, state-space models, BSDEs, Feynman--Kac regression, and finite-rank
+  spatial noise.
 - **Constraints**: scalar loss terms built from residuals on components.
 - **Objectives**: raw scalar terms, including signed integral energies for Ritz minimization.
 - **Model losses**: optional parameter-space penalties attached directly to models.
@@ -166,6 +167,30 @@ neural-operator rollouts. See the
 [uncertainty guide](docs/guides_uncertainty.md),
 [neural-operator uncertainty API](docs/api/uq/operator.md), and
 [differential solver API](docs/api/solver/differential.md).
+
+High-dimensional PDE support is structure-aware rather than a claim that one generic
+PINN removes the curse of dimensionality. Semilinear parabolic equations can use
+query-conditioned or trajectory-node Feynman--Kac labels, global Deep Picard,
+localized Deep BSDE terminal shooting, or backward Deep Splitting slice regression.
+Strong-form residuals can use raw Hutchinson probes or unbiased coordinate sampling
+without dense Hessians; high-dimensional density dynamics can learn time-conditioned
+scores from particles. The executable benchmark harness exercises those production
+paths rather than renamed analytic baselines:
+
+```bash
+python tools/high_dimensional_pde_benchmarks.py \
+  --suite methods --dimensions 10,100,1000 --include-training
+```
+
+The checked benchmark output for dimensions 10, 100, and 1000 is
+[`benchmarks/high_dimensional_methods.json`](benchmarks/high_dimensional_methods.json).
+
+Deep Picard, Deep BSDE, and Deep Splitting are emitted only for dimensions declared
+by their method specifications. Every record reports error, estimator uncertainty
+when applicable, compile and steady runtime, valid fraction, and an explicit
+working-set estimate. See the [BSDE cookbook](docs/cookbook/bsde.md),
+[stochastic-dynamics cookbook](docs/cookbook/stochastic_dynamics.md), and
+[randomized differential API](docs/api/operators/differential.md#raw-probes-and-coordinate-sampling).
 
 ## Why JAX?
 
