@@ -9,17 +9,16 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..sparse import gather_routes, route_reduce, RowRelation
 from ._types import InterpolationResult, MaskMode
 
 
 class GatherStencil(StrictModule):
     """A fixed-capacity sparse linear map from source sites to query sites."""
 
-    indices: Array
+    relation: RowRelation
     weights: Array
-    valid: Array
     support: Array
-    source_size: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -29,47 +28,49 @@ class GatherStencil(StrictModule):
         source_size: int,
         valid: ArrayLike | None = None,
         support: ArrayLike | None = None,
+        case_shape: tuple[int, ...] = (),
     ):
-        indices_ = jnp.asarray(indices)
-        if not jnp.issubdtype(indices_.dtype, jnp.integer):
-            raise TypeError("GatherStencil indices must have an integer dtype.")
-        if indices_.ndim < 1 or int(indices_.shape[-1]) <= 0:
-            raise ValueError(
-                "GatherStencil indices must end in a non-empty stencil axis."
-            )
-
+        relation = RowRelation(
+            indices,
+            source_size=source_size,
+            valid=valid,
+            case_shape=case_shape,
+        )
         weights_ = jnp.asarray(weights)
         if not jnp.issubdtype(weights_.dtype, jnp.inexact):
             weights_ = weights_.astype(float)
-        if weights_.shape != indices_.shape:
+        if weights_.shape != relation.route_shape:
             raise ValueError("GatherStencil weights must match indices shape.")
 
-        source_size_ = int(source_size)
-        if source_size_ <= 0:
-            raise ValueError("GatherStencil source_size must be positive.")
-
-        valid_ = (
-            jnp.ones(indices_.shape, dtype=bool)
-            if valid is None
-            else jnp.asarray(valid, dtype=bool)
-        )
-        if valid_.shape != indices_.shape:
-            raise ValueError("GatherStencil valid must match indices shape.")
-
-        query_shape = indices_.shape[:-1]
         support_ = (
-            jnp.any(valid_, axis=-1)
+            jnp.any(relation.valid, axis=-1)
             if support is None
             else jnp.asarray(support, dtype=bool)
         )
-        if support_.shape != query_shape:
-            raise ValueError("GatherStencil support must match the indices query shape.")
+        if support_.shape != relation.output_shape:
+            raise ValueError(
+                "GatherStencil support must match the relation output shape."
+            )
 
-        self.indices = indices_
+        self.relation = relation
         self.weights = weights_
-        self.valid = valid_
         self.support = support_
-        self.source_size = source_size_
+
+    @property
+    def indices(self) -> Array:
+        return self.relation.source_indices
+
+    @property
+    def valid(self) -> Array:
+        return self.relation.valid
+
+    @property
+    def source_size(self) -> int:
+        return self.relation.source_size
+
+    @property
+    def case_shape(self) -> tuple[int, ...]:
+        return self.relation.case_shape
 
 
 def gather_patches(
@@ -79,22 +80,18 @@ def gather_patches(
 ) -> tuple[Array, Array]:
     """Gather source payloads with invalid indices made numerically inert."""
     array = jnp.asarray(values)
-    if array.ndim < 1 or int(array.shape[0]) != stencil.source_size:
+    expected = stencil.relation.input_shape
+    if (
+        array.ndim < len(expected)
+        or tuple(int(size) for size in array.shape[: len(expected)]) != expected
+    ):
         raise ValueError(
-            "Gather source values must have one leading entry per source site."
+            f"Gather source values must begin with source shape {expected}; "
+            f"got {array.shape}."
         )
     if not jnp.issubdtype(array.dtype, jnp.inexact):
         array = array.astype(float)
-
-    in_bounds = (stencil.indices >= 0) & (stencil.indices < stencil.source_size)
-    array = eqx.error_if(
-        array,
-        jnp.any(stencil.valid & ~in_bounds),
-        "A valid gather stencil index is outside the source array.",
-    )
-    valid = stencil.valid & in_bounds
-    safe_indices = jnp.where(valid, stencil.indices, 0)
-    return array[safe_indices], valid
+    return gather_routes(stencil.relation, array), stencil.valid
 
 
 def apply_gather_stencil(
@@ -112,9 +109,10 @@ def apply_gather_stencil(
     patches, valid = gather_patches(values, stencil)
     if source_mask is not None:
         mask = jnp.asarray(source_mask, dtype=bool)
-        if mask.shape != (stencil.source_size,):
+        if mask.shape != stencil.relation.input_shape:
             raise ValueError(
-                f"source_mask must have shape {(stencil.source_size,)}, got {mask.shape}."
+                "source_mask must have shape "
+                f"{stencil.relation.input_shape}, got {mask.shape}."
             )
         if mask_mode == "reject":
             patches = eqx.error_if(
@@ -123,9 +121,7 @@ def apply_gather_stencil(
                 "Gather interpolation in reject mode does not permit source holes.",
             )
         else:
-            safe_indices = jnp.where(valid, stencil.indices, 0)
-            valid = valid & mask[safe_indices]
-
+            valid = valid & gather_routes(stencil.relation, mask)
     weights = jnp.where(valid, stencil.weights, 0)
     scale = jnp.maximum(1.0, jnp.max(jnp.abs(stencil.weights)))
     tolerance = jnp.finfo(stencil.weights.real.dtype).eps * scale
@@ -138,7 +134,7 @@ def apply_gather_stencil(
         material = jnp.abs(stencil.weights) > tolerance
         support = stencil.support & jnp.all(valid | ~material, axis=-1)
 
-    payload_ndim = patches.ndim - weights.ndim
+    payload_ndim = patches.ndim - len(stencil.relation.route_shape)
     expanded_valid = valid.reshape(valid.shape + (1,) * payload_ndim)
     safe_patches = jnp.where(
         expanded_valid,
@@ -146,10 +142,8 @@ def apply_gather_stencil(
         jnp.zeros((), dtype=patches.dtype),
     )
     expanded_weights = weights.reshape(weights.shape + (1,) * payload_ndim)
-    output = jnp.sum(
-        safe_patches * expanded_weights.astype(patches.dtype),
-        axis=-1 - payload_ndim,
-    )
+    messages = safe_patches * expanded_weights.astype(patches.dtype)
+    output = route_reduce(stencil.relation, messages)
     support_expanded = support.reshape(support.shape + (1,) * payload_ndim)
     output = jnp.where(support_expanded, output, jnp.zeros((), dtype=output.dtype))
     return InterpolationResult(output, support)

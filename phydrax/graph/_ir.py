@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Literal
 
 import equinox as eqx
 import jax.core as jcore
@@ -12,6 +12,7 @@ import jax.tree_util as jtu
 import numpy as np
 
 from .._trainable import NonTrainableState
+from ..sparse import EdgeRelation
 
 
 _MISSING = object()
@@ -163,6 +164,45 @@ class GraphIR(eqx.Module, NonTrainableState):
             return jnp.zeros((2, 0), dtype=jnp.int32)
         return jnp.stack([self.senders, self.receivers], axis=0)
 
+    def edge_relation(
+        self,
+        /,
+        *,
+        node_count: int | None = None,
+        flow: Literal["source_to_target", "target_to_source"] = "source_to_target",
+    ) -> EdgeRelation:
+        """Return the graph routes as a sparse relation without copying payloads."""
+        if self.senders is None or self.receivers is None:
+            raise ValueError("GraphIR has no explicit edge relation.")
+        if flow == "source_to_target":
+            source, target = self.senders, self.receivers
+        elif flow == "target_to_source":
+            source, target = self.receivers, self.senders
+        else:
+            raise ValueError("flow must be 'source_to_target' or 'target_to_source'.")
+
+        if node_count is not None:
+            count = int(node_count)
+        elif self.node_mask is not None:
+            count = int(self.node_mask.shape[0])
+        else:
+            payload_count = _leaf_leading_size(self.nodes)
+            if payload_count is not None:
+                count = payload_count
+            elif _contains_tracer(self.n_node):
+                raise ValueError(
+                    "node_count is required for a payload-free traced GraphIR."
+                )
+            else:
+                count = int(np.asarray(self.n_node).sum())
+        return EdgeRelation(
+            source,
+            target,
+            source_size=count,
+            target_size=count,
+            valid=self.edge_mask,
+        )
+
     def validate(self, *, strict: bool = True) -> None:
         if self.n_node.shape != self.n_edge.shape:
             raise ValueError("`n_node` and `n_edge` must have identical shapes.")
@@ -270,8 +310,7 @@ class GraphIR(eqx.Module, NonTrainableState):
                     ):
                         graph_endpoints = endpoints[edge_start:edge_end]
                         offending = np.flatnonzero(
-                            (graph_endpoints < node_start)
-                            | (graph_endpoints >= node_end)
+                            (graph_endpoints < node_start) | (graph_endpoints >= node_end)
                         )
                         if offending.size:
                             local_edge = int(offending[0])

@@ -7,6 +7,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
 
+from ..sparse import gather_routes, mask_routes, route_reduce
 from ._graph import ensure_graph
 from ._ir import GraphIR
 from ._kernels import segment_softmax, segment_sum
@@ -22,10 +23,6 @@ def _tree_leading_size(tree: ArrayTree) -> int:
     if not leaves:
         raise ValueError("Feature tree must contain at least one array leaf.")
     return int(jnp.asarray(leaves[0]).shape[0])
-
-
-def _tree_index(tree: ArrayTree, index: jnp.ndarray) -> ArrayTree:
-    return jtu.tree_map(lambda x: x[index], tree)
 
 
 def _multiply_leaf(value: Any, weight: Any, /) -> jnp.ndarray:
@@ -57,19 +54,13 @@ def _multiply_tree(tree: ArrayTree, weight: Any, /) -> ArrayTree:
 def _mask_tree(tree: ArrayTree, mask: jnp.ndarray | None, /) -> ArrayTree:
     if mask is None:
         return tree
-    return jtu.tree_map(
-        lambda x: _multiply_leaf(x, mask.astype(x.dtype)),
-        tree,
-    )
 
+    def mask_leaf(value: Any, /) -> jnp.ndarray:
+        array = jnp.asarray(value)
+        expanded = mask.reshape(mask.shape + (1,) * (array.ndim - mask.ndim))
+        return jnp.where(expanded, array, jnp.zeros((), dtype=array.dtype))
 
-def _tree_segment_sum(
-    tree: ArrayTree,
-    segment_ids: jnp.ndarray,
-    num_segments: int,
-    /,
-) -> ArrayTree:
-    return jtu.tree_map(lambda x: segment_sum(x, segment_ids, num_segments), tree)
+    return jtu.tree_map(mask_leaf, tree)
 
 
 def _pad_tree_leading(tree: ArrayTree, target: int, /) -> ArrayTree:
@@ -242,13 +233,10 @@ def _finite_volume_divergence(
     normalize_by_volume: bool,
     sign: FiniteVolumeSign,
 ) -> jnp.ndarray:
-    if graph.senders is None or graph.receivers is None:
-        raise ValueError("Finite-volume graph operators require explicit senders/receivers.")
     n_node = _num_graph_nodes(graph)
-    if graph.edge_mask is not None:
-        flux = _multiply_leaf(flux, graph.edge_mask.astype(flux.dtype))
-    incoming = segment_sum(flux, graph.receivers, n_node)
-    outgoing = segment_sum(flux, graph.senders, n_node)
+    relation = graph.edge_relation(node_count=n_node)
+    incoming = route_reduce(relation, flux)
+    outgoing = route_reduce(relation.transpose(), flux)
     if sign == "in_minus_out":
         out = incoming - outgoing
     elif sign == "out_minus_in":
@@ -273,7 +261,9 @@ def _edge_bias(graph: GraphIR, edge_bias_key: str | None, /) -> jnp.ndarray | No
     if bias.ndim == 2 and int(bias.shape[1]) == 1:
         return bias[:, 0]
     if bias.ndim not in (1, 2):
-        raise ValueError("edge attention bias must have shape (n_edge,), (n_edge, 1), or (n_edge, n_head).")
+        raise ValueError(
+            "edge attention bias must have shape (n_edge,), (n_edge, 1), or (n_edge, n_head)."
+        )
     return bias
 
 
@@ -359,14 +349,15 @@ class GraphKernelIntegral(eqx.Module):
             raise ValueError("GraphKernelIntegral requires explicit senders/receivers.")
 
         nodes = graph.nodes
+        num_nodes = _num_nodes(graph, nodes)
+        relation = graph.edge_relation(node_count=num_nodes)
         source = nodes if self.source_fn is None else self.source_fn(nodes)
-        sent_source = _tree_index(source, graph.senders)
-        sent_nodes = _tree_index(nodes, graph.senders)
-        recv_nodes = _tree_index(nodes, graph.receivers)
+        sent_source = gather_routes(relation, source)
+        sent_nodes = gather_routes(relation, nodes)
+        recv_nodes = gather_routes(relation.transpose(), nodes)
         num_edges = _num_edges(graph)
         glob_edge = _repeat_globals_for_entities(graph.globals, graph.n_edge, num_edges)
 
-        num_nodes = _num_nodes(graph, nodes)
         edge_measure = None
         if self.source_measure_key is not None or self.source_measure is not None:
             node_measure = _node_measure(
@@ -375,7 +366,7 @@ class GraphKernelIntegral(eqx.Module):
                 self.source_measure,
                 n_node=num_nodes,
             )
-            edge_measure = node_measure[graph.senders]
+            edge_measure = node_measure[relation.source_indices]
         messages = sent_source
         if self.kernel_fn is not None:
             weight = self.kernel_fn(graph.edges, sent_nodes, recv_nodes, glob_edge)
@@ -383,9 +374,9 @@ class GraphKernelIntegral(eqx.Module):
         if edge_measure is not None:
             messages = _multiply_tree(messages, edge_measure)
 
-        messages = _mask_tree(messages, graph.edge_mask)
+        messages = mask_routes(relation, messages)
         aggregated = jtu.tree_map(
-            lambda x: self.aggregate_fn(x, graph.receivers, num_nodes),
+            lambda x: self.aggregate_fn(x, relation.target_indices, num_nodes),
             messages,
         )
 
@@ -394,9 +385,7 @@ class GraphKernelIntegral(eqx.Module):
                 normalizer = jnp.ones((num_edges,), dtype=float)
             else:
                 normalizer = edge_measure
-            if graph.edge_mask is not None:
-                normalizer = normalizer * graph.edge_mask.astype(normalizer.dtype)
-            degree = segment_sum(normalizer, graph.receivers, num_nodes)
+            degree = route_reduce(relation, normalizer)
             scale = jnp.where(degree > 0, 1.0 / degree, 0.0)
             aggregated = _multiply_tree(aggregated, scale)
 
@@ -423,7 +412,9 @@ class GraphDiffusion(eqx.Module):
         sign: str = "in_minus_out",
     ):
         if sign not in ("in_minus_out", "out_minus_in"):
-            raise ValueError("GraphDiffusion sign must be 'in_minus_out' or 'out_minus_in'.")
+            raise ValueError(
+                "GraphDiffusion sign must be 'in_minus_out' or 'out_minus_in'."
+            )
         self.conductivity_fn = conductivity_fn
         self.update_node_fn = update_node_fn
         self.sign = sign
@@ -436,19 +427,20 @@ class GraphDiffusion(eqx.Module):
             raise ValueError("GraphDiffusion requires explicit senders/receivers.")
 
         nodes = graph.nodes
-        sent = _tree_index(nodes, graph.senders)
-        recv = _tree_index(nodes, graph.receivers)
+        num_nodes = _num_nodes(graph, nodes)
+        relation = graph.edge_relation(node_count=num_nodes)
+        sent = gather_routes(relation, nodes)
+        recv = gather_routes(relation.transpose(), nodes)
         gradient = jtu.tree_map(lambda r, s: r - s, recv, sent)
         num_edges = _num_edges(graph)
         glob_edge = _repeat_globals_for_entities(graph.globals, graph.n_edge, num_edges)
         if self.conductivity_fn is not None:
             conductivity = self.conductivity_fn(graph.edges, sent, recv, glob_edge)
             gradient = _multiply_tree(gradient, conductivity)
-        gradient = _mask_tree(gradient, graph.edge_mask)
+        gradient = mask_routes(relation, gradient)
 
-        num_nodes = _num_nodes(graph, nodes)
-        incoming = _tree_segment_sum(gradient, graph.receivers, num_nodes)
-        outgoing = _tree_segment_sum(gradient, graph.senders, num_nodes)
+        incoming = route_reduce(relation, gradient)
+        outgoing = route_reduce(relation.transpose(), gradient)
         if self.sign == "in_minus_out":
             diffused = jtu.tree_map(lambda inc, out: inc - out, incoming, outgoing)
         else:
@@ -511,7 +503,9 @@ class GraphNeuralOperator(eqx.Module):
         self.source_measure = source_measure
         self.normalize = bool(normalize)
         self.node_type_key = str(node_type_key)
-        self.target_node_type = None if target_node_type is None else int(target_node_type)
+        self.target_node_type = (
+            None if target_node_type is None else int(target_node_type)
+        )
 
     def __call__(self, graph: GraphIR) -> GraphIR:
         graph = ensure_graph(graph, validate=False)
@@ -519,10 +513,12 @@ class GraphNeuralOperator(eqx.Module):
             raise ValueError("GraphNeuralOperator requires explicit senders/receivers.")
 
         nodes = _node_field(graph, self.input_key, name="GraphNeuralOperator")
+        num_nodes = _num_nodes(graph, nodes)
+        relation = graph.edge_relation(node_count=num_nodes)
         source = nodes if self.source_fn is None else self.source_fn(nodes)
-        sent_source = _tree_index(source, graph.senders)
-        sent_nodes = _tree_index(nodes, graph.senders)
-        recv_nodes = _tree_index(nodes, graph.receivers)
+        sent_source = gather_routes(relation, source)
+        sent_nodes = gather_routes(relation, nodes)
+        recv_nodes = gather_routes(relation.transpose(), nodes)
         num_edges = _num_edges(graph)
         glob_edge = _repeat_globals_for_entities(graph.globals, graph.n_edge, num_edges)
 
@@ -531,7 +527,6 @@ class GraphNeuralOperator(eqx.Module):
             kernel = self.kernel_fn(graph.edges, sent_nodes, recv_nodes, glob_edge)
             messages = _multiply_tree(messages, kernel)
 
-        num_nodes = _num_nodes(graph, nodes)
         edge_measure = None
         if self.source_measure_key is not None or self.source_measure is not None:
             node_measure = _node_measure(
@@ -540,16 +535,16 @@ class GraphNeuralOperator(eqx.Module):
                 self.source_measure,
                 n_node=num_nodes,
             )
-            edge_measure = node_measure[graph.senders]
+            edge_measure = node_measure[relation.source_indices]
         edge_weight = _edge_weight(graph, self.edge_weight_key)
         if edge_weight is not None:
             messages = _multiply_tree(messages, edge_weight)
         if edge_measure is not None:
             messages = _multiply_tree(messages, edge_measure)
-        messages = _mask_tree(messages, graph.edge_mask)
+        messages = mask_routes(relation, messages)
 
         aggregated = jtu.tree_map(
-            lambda x: self.aggregate_fn(x, graph.receivers, num_nodes),
+            lambda x: self.aggregate_fn(x, relation.target_indices, num_nodes),
             messages,
         )
         if self.normalize:
@@ -558,9 +553,7 @@ class GraphNeuralOperator(eqx.Module):
                 normalizer = normalizer * edge_weight
             if edge_measure is not None:
                 normalizer = normalizer * edge_measure
-            if graph.edge_mask is not None:
-                normalizer = normalizer * graph.edge_mask.astype(normalizer.dtype)
-            degree = segment_sum(normalizer, graph.receivers, num_nodes)
+            degree = route_reduce(relation, normalizer)
             scale = jnp.where(degree > 0, 1.0 / degree, 0.0)
             aggregated = _multiply_tree(aggregated, scale)
 
@@ -646,11 +639,15 @@ class GraphAttentionOperator(eqx.Module):
         self.temperature = 0.0 if temperature is None else float(temperature)
         self.head_reduction = head_reduction
         self.node_type_key = str(node_type_key)
-        self.target_node_type = None if target_node_type is None else int(target_node_type)
+        self.target_node_type = (
+            None if target_node_type is None else int(target_node_type)
+        )
 
     def _oriented_edges(self, graph: GraphIR, /) -> tuple[jnp.ndarray, jnp.ndarray]:
         if graph.senders is None or graph.receivers is None:
-            raise ValueError("GraphAttentionOperator requires explicit senders/receivers.")
+            raise ValueError(
+                "GraphAttentionOperator requires explicit senders/receivers."
+            )
         if self.flow == "source_to_target":
             return graph.senders, graph.receivers
         return graph.receivers, graph.senders
@@ -693,9 +690,19 @@ class GraphAttentionOperator(eqx.Module):
     def __call__(self, graph: GraphIR) -> GraphIR:
         graph = ensure_graph(graph, validate=False)
         nodes = _node_array(graph, self.input_key, name="GraphAttentionOperator")
-        queries = nodes if self.query_fn is None else jnp.asarray(self.query_fn(nodes), dtype=float)
-        keys = nodes if self.key_fn is None else jnp.asarray(self.key_fn(nodes), dtype=float)
-        values = nodes if self.value_fn is None else jnp.asarray(self.value_fn(nodes), dtype=float)
+        queries = (
+            nodes
+            if self.query_fn is None
+            else jnp.asarray(self.query_fn(nodes), dtype=float)
+        )
+        keys = (
+            nodes if self.key_fn is None else jnp.asarray(self.key_fn(nodes), dtype=float)
+        )
+        values = (
+            nodes
+            if self.value_fn is None
+            else jnp.asarray(self.value_fn(nodes), dtype=float)
+        )
         if queries.ndim != 2 or keys.ndim != 2 or values.ndim != 2:
             raise ValueError("query_fn, key_fn, and value_fn must return rank-2 arrays.")
         if queries.shape != keys.shape:
@@ -746,7 +753,9 @@ class GraphAttentionOperator(eqx.Module):
             else:
                 out = headed.reshape((headed.shape[0], headed.shape[1] * headed.shape[2]))
 
-        glob_node = _repeat_globals_for_entities(graph.globals, graph.n_node, int(nodes.shape[0]))
+        glob_node = _repeat_globals_for_entities(
+            graph.globals, graph.n_node, int(nodes.shape[0])
+        )
         if self.update_node_fn is not None:
             out = self.update_node_fn(nodes, out, glob_node)
         out = _mask_node_type(
@@ -756,7 +765,9 @@ class GraphAttentionOperator(eqx.Module):
             node_type_key=self.node_type_key,
         )
         out = _mask_tree(out, graph.node_mask)
-        return graph.replace(nodes=_with_node_output(graph, out, self.output_key), validate=False)
+        return graph.replace(
+            nodes=_with_node_output(graph, out, self.output_key), validate=False
+        )
 
 
 class GraphFiniteVolumeDivergence(eqx.Module):
@@ -800,7 +811,9 @@ class GraphFiniteVolumeDivergence(eqx.Module):
             normalize_by_volume=self.normalize_by_volume,
             sign=self.sign,
         )
-        return graph.replace(nodes=_with_node_output(graph, out, self.output_key), validate=False)
+        return graph.replace(
+            nodes=_with_node_output(graph, out, self.output_key), validate=False
+        )
 
 
 class GraphFiniteVolumeDiffusion(eqx.Module):
@@ -859,7 +872,9 @@ class GraphFiniteVolumeDiffusion(eqx.Module):
     def __call__(self, graph: GraphIR) -> GraphIR:
         graph = ensure_graph(graph, validate=False)
         if graph.senders is None or graph.receivers is None:
-            raise ValueError("GraphFiniteVolumeDiffusion requires explicit senders/receivers.")
+            raise ValueError(
+                "GraphFiniteVolumeDiffusion requires explicit senders/receivers."
+            )
         nodes = _node_array(graph, self.input_key, name="GraphFiniteVolumeDiffusion")
         sent = nodes[graph.senders]
         recv = nodes[graph.receivers]
@@ -886,7 +901,9 @@ class GraphFiniteVolumeDiffusion(eqx.Module):
             normalize_by_volume=self.normalize_by_volume,
             sign=self.sign,
         )
-        return graph.replace(nodes=_with_node_output(graph, out, self.output_key), validate=False)
+        return graph.replace(
+            nodes=_with_node_output(graph, out, self.output_key), validate=False
+        )
 
 
 class GraphProcessor(eqx.Module):

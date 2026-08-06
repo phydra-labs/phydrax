@@ -587,23 +587,20 @@ class _GeometryOperatorCore(eqx.Module):
             target_chunk_size=256,
         )
         case_count = prod(case_shape) if case_shape else 1
-        case_offsets = (jnp.arange(case_count, dtype=jnp.int32) * source_count).reshape(
-            (case_count, 1, 1)
-        )
-        indices = neighborhood.indices + case_offsets
         tolerance = jnp.sqrt(jnp.finfo(source_values.dtype).eps)
         stencil = inverse_distance_stencil(
-            indices,
+            neighborhood.indices,
             neighborhood.distance_squared,
-            source_size=case_count * source_count,
+            source_size=source_count,
             valid=neighborhood.mask,
+            case_shape=(case_count,),
             power=1.0,
             snap_tolerance_squared=tolerance * tolerance,
             snap_policy="average",
             snap_inclusive=True,
         )
         interpolation = apply_gather_stencil(
-            source_values.reshape((-1,)),
+            source_values.reshape((case_count, source_count)),
             stencil,
         )
         interpolated = interpolation.values.reshape(latent_coordinates.shape[:-1])

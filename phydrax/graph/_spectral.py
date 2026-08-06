@@ -7,9 +7,9 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
 
+from ..sparse import linear_apply, route_reduce
 from ._graph import ensure_graph
 from ._ir import GraphIR
-from ._kernels import segment_sum
 
 
 GraphFilterOperator = Literal["laplacian", "adjacency"]
@@ -55,7 +55,13 @@ def _multiply_tree(tree: Any, weight: Any, /) -> Any:
 def _mask_tree(tree: Any, mask: jnp.ndarray | None, /) -> Any:
     if mask is None:
         return tree
-    return jtu.tree_map(lambda x: _multiply_leaf(x, mask.astype(x.dtype)), tree)
+
+    def mask_leaf(value: Any, /) -> jnp.ndarray:
+        array = jnp.asarray(value)
+        expanded = mask.reshape(mask.shape + (1,) * (array.ndim - mask.ndim))
+        return jnp.where(expanded, array, jnp.zeros((), dtype=array.dtype))
+
+    return jtu.tree_map(mask_leaf, tree)
 
 
 def _tree_add(a: Any, b: Any, /) -> Any:
@@ -68,10 +74,6 @@ def _tree_sub(a: Any, b: Any, /) -> Any:
 
 def _tree_zeros_like(tree: Any, /) -> Any:
     return jtu.tree_map(jnp.zeros_like, tree)
-
-
-def _tree_index(tree: Any, index: jnp.ndarray, /) -> Any:
-    return jtu.tree_map(lambda x: x[index], tree)
 
 
 def _as_feature_mapping(value: Any, /) -> dict[str, Any]:
@@ -124,22 +126,12 @@ def _edge_weight(
     if out.ndim == 2 and int(out.shape[1]) == 1:
         out = out[:, 0]
     if out.ndim != 1:
-        raise ValueError("Graph spectral edge weights must have shape (n_edge,) or (n_edge, 1).")
+        raise ValueError(
+            "Graph spectral edge weights must have shape (n_edge,) or (n_edge, 1)."
+        )
     if int(out.shape[0]) != int(graph.senders.shape[0]):
         raise ValueError("Graph spectral edge weights must match edge count.")
-    if graph.edge_mask is not None:
-        out = out * graph.edge_mask.astype(out.dtype)
     return out
-
-
-def _oriented_edges(graph: GraphIR, flow: GraphFlow, /) -> tuple[jnp.ndarray, jnp.ndarray]:
-    if graph.senders is None or graph.receivers is None:
-        raise ValueError("Spectral graph operators require explicit senders/receivers.")
-    if flow == "source_to_target":
-        return graph.senders, graph.receivers
-    if flow == "target_to_source":
-        return graph.receivers, graph.senders
-    raise ValueError("flow must be 'source_to_target' or 'target_to_source'.")
 
 
 def graph_adjacency_apply(
@@ -159,21 +151,23 @@ def graph_adjacency_apply(
     x = graph.nodes if nodes is None else nodes
     if x is None:
         raise ValueError("graph_adjacency_apply requires node features.")
-    source, target = _oriented_edges(graph, flow)
     n = _num_nodes(graph, x)
+    relation = graph.edge_relation(node_count=n, flow=flow)
     edge_weight = _edge_weight(graph, weight=weight, weight_key=weight_key)
-    degree = segment_sum(edge_weight, target, n)
-    messages = _tree_index(x, source)
+    degree = route_reduce(relation, edge_weight)
 
     if normalization == "random_walk":
         inv_degree = jnp.where(degree > 0, 1.0 / degree, 0.0)
-        edge_weight = edge_weight * inv_degree[target]
+        edge_weight = edge_weight * inv_degree[relation.target_indices]
     elif normalization == "symmetric":
         inv_sqrt = jnp.where(degree > 0, jax_lax_rsqrt(degree), 0.0)
-        edge_weight = edge_weight * inv_sqrt[source] * inv_sqrt[target]
+        edge_weight = (
+            edge_weight
+            * inv_sqrt[relation.source_indices]
+            * inv_sqrt[relation.target_indices]
+        )
 
-    messages = _multiply_tree(messages, edge_weight)
-    out = jtu.tree_map(lambda y: segment_sum(y, target, n), messages)
+    out = linear_apply(relation, edge_weight, x)
     return _mask_tree(out, graph.node_mask)
 
 
@@ -198,10 +192,10 @@ def graph_laplacian_apply(
     x = graph.nodes if nodes is None else nodes
     if x is None:
         raise ValueError("graph_laplacian_apply requires node features.")
-    source, target = _oriented_edges(graph, flow)
     n = _num_nodes(graph, x)
+    relation = graph.edge_relation(node_count=n, flow=flow)
     edge_weight = _edge_weight(graph, weight=weight, weight_key=weight_key)
-    degree = segment_sum(edge_weight, target, n)
+    degree = route_reduce(relation, edge_weight)
 
     if normalization == "none":
         adjacency = graph_adjacency_apply(
@@ -327,7 +321,9 @@ class GraphLaplacianOperator(eqx.Module):
             flow=self.flow,
             normalization=self.normalization,
         )
-        return graph.replace(nodes=_with_node_output(graph, out, self.output_key), validate=False)
+        return graph.replace(
+            nodes=_with_node_output(graph, out, self.output_key), validate=False
+        )
 
 
 class GraphPolynomialFilter(eqx.Module):
@@ -388,9 +384,13 @@ class GraphPolynomialFilter(eqx.Module):
                 flow=self.flow,
                 normalization=self.normalization,
             )
-            out = _tree_add(out, _apply_coefficient(term, _coeff_at(self.coefficients, k)))
+            out = _tree_add(
+                out, _apply_coefficient(term, _coeff_at(self.coefficients, k))
+            )
         out = _mask_tree(out, graph.node_mask)
-        return graph.replace(nodes=_with_node_output(graph, out, self.output_key), validate=False)
+        return graph.replace(
+            nodes=_with_node_output(graph, out, self.output_key), validate=False
+        )
 
 
 class GraphChebyshevFilter(eqx.Module):
@@ -459,14 +459,18 @@ class GraphChebyshevFilter(eqx.Module):
             out = _tree_add(out, _apply_coefficient(t1, _coeff_at(self.coefficients, 1)))
             prev, current = t0, t1
             for k in range(2, self.order + 1):
-                next_term = _tree_sub(_multiply_tree(self._scaled_laplacian(graph, current), 2.0), prev)
+                next_term = _tree_sub(
+                    _multiply_tree(self._scaled_laplacian(graph, current), 2.0), prev
+                )
                 out = _tree_add(
                     out,
                     _apply_coefficient(next_term, _coeff_at(self.coefficients, k)),
                 )
                 prev, current = current, next_term
         out = _mask_tree(out, graph.node_mask)
-        return graph.replace(nodes=_with_node_output(graph, out, self.output_key), validate=False)
+        return graph.replace(
+            nodes=_with_node_output(graph, out, self.output_key), validate=False
+        )
 
 
 __all__ = [

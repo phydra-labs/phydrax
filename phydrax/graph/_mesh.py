@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
 
+from ..sparse import gather_routes, mask_routes, route_reduce
 from ._geometry import (
     _face_geometry,
     _triangle_adjacency,
@@ -18,7 +19,6 @@ from ._geometry import (
 )
 from ._graph import ensure_graph
 from ._ir import GraphIR
-from ._kernels import segment_sum
 
 
 MeshLaplacianSign = Literal["neighbor_minus_self", "self_minus_neighbor"]
@@ -29,10 +29,6 @@ def _tree_leading_size(tree: Any) -> int:
     if not leaves:
         raise ValueError("Feature tree must contain at least one array leaf.")
     return int(jnp.asarray(leaves[0]).shape[0])
-
-
-def _tree_index(tree: Any, index: jnp.ndarray, /) -> Any:
-    return jtu.tree_map(lambda x: x[index], tree)
 
 
 def _multiply_leaf(value: Any, weight: Any, /) -> jnp.ndarray:
@@ -64,14 +60,13 @@ def _multiply_tree(tree: Any, weight: Any, /) -> Any:
 def _mask_tree(tree: Any, mask: jnp.ndarray | None, /) -> Any:
     if mask is None:
         return tree
-    return jtu.tree_map(
-        lambda x: _multiply_leaf(x, mask.astype(x.dtype)),
-        tree,
-    )
 
+    def mask_leaf(value: Any, /) -> jnp.ndarray:
+        array = jnp.asarray(value)
+        expanded = mask.reshape(mask.shape + (1,) * (array.ndim - mask.ndim))
+        return jnp.where(expanded, array, jnp.zeros((), dtype=array.dtype))
 
-def _tree_segment_sum(tree: Any, segment_ids: jnp.ndarray, num_segments: int, /) -> Any:
-    return jtu.tree_map(lambda x: segment_sum(x, segment_ids, num_segments), tree)
+    return jtu.tree_map(mask_leaf, tree)
 
 
 def _num_nodes(graph: GraphIR, nodes: Any, /) -> int:
@@ -334,16 +329,18 @@ class MeshCotangentLaplacian(eqx.Module):
             )
 
         nodes = self._node_field(graph)
-        sent = _tree_index(nodes, graph.senders)
-        recv = _tree_index(nodes, graph.receivers)
+        node_count = _num_nodes(graph, nodes)
+        relation = graph.edge_relation(node_count=node_count)
+        sent = gather_routes(relation, nodes)
+        recv = gather_routes(relation.transpose(), nodes)
         if self.sign == "neighbor_minus_self":
             messages = jtu.tree_map(lambda s, r: s - r, sent, recv)
         else:
             messages = jtu.tree_map(lambda s, r: r - s, sent, recv)
 
         messages = _multiply_tree(messages, self._edge_weight(graph))
-        messages = _mask_tree(messages, graph.edge_mask)
-        out = _tree_segment_sum(messages, graph.receivers, _num_nodes(graph, nodes))
+        messages = mask_routes(relation, messages)
+        out = route_reduce(relation, messages)
 
         if self.normalize_by_mass:
             mass = jnp.asarray(self._mass(graph))

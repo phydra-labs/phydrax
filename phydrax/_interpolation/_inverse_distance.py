@@ -55,6 +55,7 @@ def inverse_distance_stencil(
     /,
     *,
     source_size: int,
+    case_shape: tuple[int, ...] = (),
     valid: ArrayLike | None = None,
     power: ArrayLike = 2.0,
     regularization: ArrayLike = 0.0,
@@ -190,6 +191,7 @@ def inverse_distance_stencil(
         source_size=source_size,
         valid=valid_,
         support=map_support,
+        case_shape=case_shape,
     )
 
 

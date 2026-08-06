@@ -15,6 +15,7 @@ from jax import core as jax_core
 from jaxtyping import Array
 
 from .._strict import StrictModule
+from ..sparse import EdgeRelation, linear_apply
 from ._cochain import CochainBoundaryKind, CochainBoundaryPolicy
 from ._ir import GraphIR
 from ._kernels import segment_sum
@@ -88,6 +89,15 @@ def _forward_incidence_mask(
     return mask
 
 
+def _incidence_relation(
+    graph: GraphIR,
+    node_count: int,
+    valid: Array,
+    /,
+) -> EdgeRelation:
+    return graph.edge_relation(node_count=node_count).with_valid(valid)
+
+
 def _validate_values(values: Any, node_count: int, /) -> Array:
     array = jnp.asarray(values)
     if array.ndim == 0 or int(array.shape[0]) != node_count:
@@ -115,15 +125,11 @@ def cochain_exterior_derivative(
     source_active = _active_nodes(graph, nodes, source_degree, policy)
     target_active = _active_nodes(graph, nodes, source_degree + 1, policy)
     route_active = source_active | target_active
-    mask = _forward_incidence_mask(
-        graph, edges, source_degree + 1, route_active
-    )
-    assert graph.senders is not None
-    assert graph.receivers is not None
+    mask = _forward_incidence_mask(graph, edges, source_degree + 1, route_active)
+    node_count = _node_count(graph, nodes)
+    relation = _incidence_relation(graph, node_count, mask)
     signs = jnp.asarray(edges["incidence_sign"], dtype=array.dtype)
-    coefficient = _reshape_coefficient(signs * mask.astype(array.dtype), array)
-    messages = coefficient * array[graph.senders]
-    output = segment_sum(messages, graph.receivers, _node_count(graph, nodes))
+    output = linear_apply(relation, signs, array)
     target_shape = (target_active.shape[0],) + (1,) * (array.ndim - 1)
     return jnp.where(target_active.reshape(target_shape), output, 0)
 
@@ -147,13 +153,12 @@ def cochain_codifferential(
     upper_active = _active_nodes(graph, nodes, source_degree, policy)
     route_active = lower_active | upper_active
     mask = _forward_incidence_mask(graph, edges, source_degree, route_active)
-    assert graph.senders is not None
-    assert graph.receivers is not None
+    node_count = _node_count(graph, nodes)
+    relation = _incidence_relation(graph, node_count, mask)
     signs = jnp.asarray(edges["incidence_sign"], dtype=array.dtype)
     star = jnp.asarray(nodes["hodge_star"], dtype=array.dtype)
-    coefficient = signs * mask.astype(array.dtype) * star[graph.receivers]
-    messages = _reshape_coefficient(coefficient, array) * array[graph.receivers]
-    accumulated = segment_sum(messages, graph.senders, _node_count(graph, nodes))
+    weighted = array * _reshape_coefficient(star, array)
+    accumulated = linear_apply(relation.transpose(), signs, weighted)
     inverse_star = jnp.where(star > 0, 1.0 / star, 0.0)
     output = accumulated * inverse_star.reshape(
         (inverse_star.shape[0],) + (1,) * (array.ndim - 1)
@@ -173,7 +178,9 @@ def cochain_hodge_laplacian(
 ) -> Array:
     """Apply a lower, upper, or complete metric Hodge Laplacian."""
     if component not in ("lower", "upper", "complete"):
-        raise ValueError("Hodge Laplacian component must be 'lower', 'upper', or 'complete'.")
+        raise ValueError(
+            "Hodge Laplacian component must be 'lower', 'upper', or 'complete'."
+        )
     nodes, _ = _cochain_payload(graph)
     resolved_degree = int(degree)
     if resolved_degree < 0:
@@ -221,7 +228,10 @@ def cochain_harmonic_projection(
     nodes, _ = _cochain_payload(graph)
     if "harmonic_basis" not in nodes or not isinstance(graph.globals, Mapping):
         raise ValueError("GraphIR has no precomputed harmonic subspace.")
-    if "harmonic_rank" not in graph.globals or "harmonic_boundary_policy" not in graph.globals:
+    if (
+        "harmonic_rank" not in graph.globals
+        or "harmonic_boundary_policy" not in graph.globals
+    ):
         raise ValueError("GraphIR harmonic metadata is incomplete.")
     policy = CochainBoundaryPolicy(boundary_policy)
     boundary_code = jnp.asarray(graph.globals["harmonic_boundary_policy"])
