@@ -55,7 +55,20 @@ class _MeshSDFImpl:
         V_in = jnp.asarray(self.mesh_vertices)
         if dtype is None:
             dtype = V_in.dtype
-        V = jnp.asarray(V_in, dtype=dtype)
+        if bvh is None:
+            bounds_min = np.min(np.asarray(self.mesh_vertices, dtype=float), axis=0)
+            bounds_max = np.max(np.asarray(self.mesh_vertices, dtype=float), axis=0)
+            origin_value = 0.5 * (bounds_min + bounds_max)
+            distance_scale_value = float(np.linalg.norm(bounds_max - bounds_min))
+            if not np.isfinite(distance_scale_value) or distance_scale_value <= 0.0:
+                raise ValueError("Mesh diameter must be finite and positive.")
+        else:
+            # A caller-supplied BVH uses the caller's coordinate system.
+            origin_value = np.zeros((3,), dtype=float)
+            distance_scale_value = 1.0
+        world_origin = jnp.asarray(origin_value, dtype=dtype)
+        distance_scale = jnp.asarray(distance_scale_value, dtype=dtype)
+        V = (jnp.asarray(V_in, dtype=dtype) - world_origin) / distance_scale
         F = jnp.asarray(self.mesh_faces)
 
         if V.ndim != 2 or V.shape[-1] != 3:
@@ -72,7 +85,7 @@ class _MeshSDFImpl:
             elif dtype == jnp.float32:
                 eps = 1e-9
             else:
-                eps = 1e-12
+                eps = 1e-15
 
         eps = jnp.array(eps, dtype=dtype)
         zero = jnp.array(0.0, dtype=dtype)
@@ -90,8 +103,8 @@ class _MeshSDFImpl:
         # ---------------------------------------------------------------------
         # Pseudonormal sign precomputation (host-side, static)
         # ---------------------------------------------------------------------
-        V_np = np.asarray(self.mesh.vertices, dtype=float)
-        F_np = np.asarray(self.mesh.faces, dtype=np.int64)
+        V_np = np.asarray(V, dtype=float)
+        F_np = np.asarray(self.mesh_faces, dtype=np.int64)
         a_np = V_np[F_np[:, 0]]
         b_np = V_np[F_np[:, 1]]
         c_np = V_np[F_np[:, 2]]
@@ -220,25 +233,25 @@ class _MeshSDFImpl:
 
             vc = d1 * d4 - d3 * d2
             cond_ab = (vc <= zero) & (d1 >= zero) & (d3 <= zero)
-            t_ab = d1 / (d1 - d3 + eps)
+            t_ab = d1 / jnp.maximum(d1 - d3, eps)
             diff_ab = u + t_ab[..., None] * ab_t
             dist2_ab = _dot(diff_ab, diff_ab)
 
             vb = d5 * d2 - d1 * d6
             cond_ac = (vb <= zero) & (d2 >= zero) & (d6 <= zero)
-            t_ac = d2 / (d2 - d6 + eps)
+            t_ac = d2 / jnp.maximum(d2 - d6, eps)
             diff_ac = u + t_ac[..., None] * ac_t
             dist2_ac = _dot(diff_ac, diff_ac)
 
             va = d3 * d6 - d5 * d4
             cond_bc = (va <= zero) & ((d4 - d3) >= zero) & ((d5 - d6) >= zero)
-            t_bc = (d4 - d3) / ((d4 - d3) + (d5 - d6) + eps)
+            t_bc = (d4 - d3) / jnp.maximum((d4 - d3) + (d5 - d6), eps)
             diff_bc = v + t_bc[..., None] * bc_t
             dist2_bc = _dot(diff_bc, diff_bc)
 
             denom = va + vb + vc
-            v_face = vb / (denom + eps)
-            w_face = vc / (denom + eps)
+            v_face = vb / jnp.maximum(denom, eps)
+            w_face = vc / jnp.maximum(denom, eps)
             diff_face = u + v_face[..., None] * ab_t + w_face[..., None] * ac_t
             dist2_face = _dot(diff_face, diff_face)
 
@@ -282,22 +295,22 @@ class _MeshSDFImpl:
 
             vc = d1 * d4 - d3 * d2
             cond_ab = (vc <= zero) & (d1 >= zero) & (d3 <= zero)
-            t_ab = d1 / (d1 - d3 + eps)
+            t_ab = d1 / jnp.maximum(d1 - d3, eps)
             diff_ab = u + t_ab[..., None] * ab_t
 
             vb = d5 * d2 - d1 * d6
             cond_ac = (vb <= zero) & (d2 >= zero) & (d6 <= zero)
-            t_ac = d2 / (d2 - d6 + eps)
+            t_ac = d2 / jnp.maximum(d2 - d6, eps)
             diff_ac = u + t_ac[..., None] * ac_t
 
             va = d3 * d6 - d5 * d4
             cond_bc = (va <= zero) & ((d4 - d3) >= zero) & ((d5 - d6) >= zero)
-            t_bc = (d4 - d3) / ((d4 - d3) + (d5 - d6) + eps)
+            t_bc = (d4 - d3) / jnp.maximum((d4 - d3) + (d5 - d6), eps)
             diff_bc = v + t_bc[..., None] * bc_t
 
             denom = va + vb + vc
-            v_face = vb / (denom + eps)
-            w_face = vc / (denom + eps)
+            v_face = vb / jnp.maximum(denom, eps)
+            w_face = vc / jnp.maximum(denom, eps)
             diff_face = u + v_face[..., None] * ab_t + w_face[..., None] * ac_t
 
             diff = diff_face
@@ -338,8 +351,8 @@ class _MeshSDFImpl:
             points: jnp.ndarray,
         ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
             """Return (signed, diff, side, unsigned, n_pseudo) for points."""
-            pts, out_shape, is_single = _coerce_points3(points)
-
+            pts_world, out_shape, is_single = _coerce_points3(points)
+            pts = (pts_world - world_origin) / distance_scale
             tri, valid = beam_select_leaf_items(
                 pts, bvh=bvh, beam_width=beam_width, steps=beam_steps
             )
@@ -376,7 +389,7 @@ class _MeshSDFImpl:
 
             unsigned = jnp.sqrt(jnp.maximum(dist2_min, zero))
             sgn = jnp.where(side < zero, -one, one)
-            signed = sgn * unsigned
+            signed = sgn * unsigned * distance_scale
 
             if is_single:
                 return (
@@ -404,18 +417,34 @@ class _MeshSDFImpl:
             (points,) = primals
             (t_points,) = tangents
 
-            val, diff, side, unsigned, n_pseudo = _sdf_primal_and_geom(points)
-            if t_points is None:
-                return val, jnp.zeros_like(val)
-
+            # Nearest-feature routing is discrete, and a polyhedral distance has no
+            # classical higher derivative at edge/vertex seams. Freeze that geometry
+            # under nested AD; the smooth envelope supplies derivatives away from
+            # the exact collar, while this exact field retains its unit first jet.
+            points_stopped = jax.lax.stop_gradient(points)
+            val, diff, side, unsigned, n_pseudo = _sdf_primal_and_geom(points_stopped)
+            boundary_collar = jnp.sqrt(eps)
+            safe_unsigned = jnp.maximum(unsigned, boundary_collar)
             sgn = jnp.where(side < zero, -one, one)
-            raw = sgn[..., None] * (-diff) / (unsigned[..., None] + eps)
-            raw_norm = jnp.sqrt(_dot(raw, raw))
-            use_cp = raw_norm > jnp.asarray(0.5, dtype=dtype)
-            grad_cp = raw / raw_norm[..., None]
+            raw = sgn[..., None] * (-diff) / safe_unsigned[..., None]
+            raw_norm_sq = _dot(raw, raw)
+            safe_raw_norm = jnp.sqrt(
+                jnp.maximum(raw_norm_sq, jnp.asarray(0.25, dtype=dtype))
+            )
+            grad_cp = raw / safe_raw_norm[..., None]
+            use_cp = unsigned > boundary_collar
             grad = jnp.where(use_cp[..., None], grad_cp, n_pseudo)
-            t_val = _dot(grad, t_points)
-            return val, t_val
+
+            points_array = jnp.asarray(points, dtype=dtype)
+            linear_primal = _dot(points_array, grad)
+            primal_val = (
+                jax.lax.stop_gradient(val)
+                + linear_primal
+                - jax.lax.stop_gradient(linear_primal)
+            )
+            if t_points is None:
+                return primal_val, jnp.zeros_like(val)
+            return primal_val, _dot(grad, t_points)
 
         return jax.jit(sdf)
 
@@ -430,10 +459,10 @@ class _MeshSDFImpl:
     ) -> Callable[[jnp.ndarray], jnp.ndarray]:
         """Build an exact (global-nearest) mesh SDF via BVH stack traversal.
 
-        This is an alternative to the default beam-selected implementation used by
-        `_make_mesh_sdf`. It is primarily intended as a reference/diagnostic
-        implementation when candidate-routing seams from the beam selection are
-        undesirable.
+        The smooth boundary factor uses this traversal for its exact boundary collar,
+        avoiding candidate-routing seams on dense or highly nonuniform meshes. The
+        beam-selected implementation remains available for sampling and containment
+        paths that prioritize throughput.
         """
         if leaf_size <= 0:
             raise ValueError(f"leaf_size must be positive, got {leaf_size}.")
@@ -441,7 +470,20 @@ class _MeshSDFImpl:
         V_in = jnp.asarray(self.mesh_vertices)
         if dtype is None:
             dtype = V_in.dtype
-        V = jnp.asarray(V_in, dtype=dtype)
+        if bvh is None:
+            bounds_min = np.min(np.asarray(self.mesh_vertices, dtype=float), axis=0)
+            bounds_max = np.max(np.asarray(self.mesh_vertices, dtype=float), axis=0)
+            origin_value = 0.5 * (bounds_min + bounds_max)
+            distance_scale_value = float(np.linalg.norm(bounds_max - bounds_min))
+            if not np.isfinite(distance_scale_value) or distance_scale_value <= 0.0:
+                raise ValueError("Mesh diameter must be finite and positive.")
+        else:
+            # A caller-supplied BVH uses the caller's coordinate system.
+            origin_value = np.zeros((3,), dtype=float)
+            distance_scale_value = 1.0
+        world_origin = jnp.asarray(origin_value, dtype=dtype)
+        distance_scale = jnp.asarray(distance_scale_value, dtype=dtype)
+        V = (jnp.asarray(V_in, dtype=dtype) - world_origin) / distance_scale
         F = jnp.asarray(self.mesh_faces)
 
         if V.ndim != 2 or V.shape[-1] != 3:
@@ -457,7 +499,7 @@ class _MeshSDFImpl:
             elif dtype == jnp.float32:
                 eps = 1e-9
             else:
-                eps = 1e-12
+                eps = 1e-15
 
         eps = jnp.asarray(eps, dtype=dtype)
         zero = jnp.asarray(0.0, dtype=dtype)
@@ -474,8 +516,8 @@ class _MeshSDFImpl:
         # ---------------------------------------------------------------------
         # Pseudonormal sign precomputation (host-side, static)
         # ---------------------------------------------------------------------
-        V_np = np.asarray(self.mesh.vertices, dtype=float)
-        F_np = np.asarray(self.mesh.faces, dtype=np.int64)
+        V_np = np.asarray(V, dtype=float)
+        F_np = np.asarray(self.mesh_faces, dtype=np.int64)
         a_np = V_np[F_np[:, 0]]
         b_np = V_np[F_np[:, 1]]
         c_np = V_np[F_np[:, 2]]
@@ -615,25 +657,25 @@ class _MeshSDFImpl:
 
             vc = d1 * d4 - d3 * d2
             cond_ab = (vc <= zero) & (d1 >= zero) & (d3 <= zero)
-            t_ab = d1 / (d1 - d3 + eps)
+            t_ab = d1 / jnp.maximum(d1 - d3, eps)
             diff_ab = u + t_ab[..., None] * ab_t
             dist2_ab = _dot(diff_ab, diff_ab)
 
             vb = d5 * d2 - d1 * d6
             cond_ac = (vb <= zero) & (d2 >= zero) & (d6 <= zero)
-            t_ac = d2 / (d2 - d6 + eps)
+            t_ac = d2 / jnp.maximum(d2 - d6, eps)
             diff_ac = u + t_ac[..., None] * ac_t
             dist2_ac = _dot(diff_ac, diff_ac)
 
             va = d3 * d6 - d5 * d4
             cond_bc = (va <= zero) & ((d4 - d3) >= zero) & ((d5 - d6) >= zero)
-            t_bc = (d4 - d3) / ((d4 - d3) + (d5 - d6) + eps)
+            t_bc = (d4 - d3) / jnp.maximum((d4 - d3) + (d5 - d6), eps)
             diff_bc = v + t_bc[..., None] * bc_t
             dist2_bc = _dot(diff_bc, diff_bc)
 
             denom = va + vb + vc
-            v_face = vb / (denom + eps)
-            w_face = vc / (denom + eps)
+            v_face = vb / jnp.maximum(denom, eps)
+            w_face = vc / jnp.maximum(denom, eps)
             diff_face = u + v_face[..., None] * ab_t + w_face[..., None] * ac_t
             dist2_face = _dot(diff_face, diff_face)
 
@@ -677,22 +719,22 @@ class _MeshSDFImpl:
 
             vc = d1 * d4 - d3 * d2
             cond_ab = (vc <= zero) & (d1 >= zero) & (d3 <= zero)
-            t_ab = d1 / (d1 - d3 + eps)
+            t_ab = d1 / jnp.maximum(d1 - d3, eps)
             diff_ab = u + t_ab * ab_t
 
             vb = d5 * d2 - d1 * d6
             cond_ac = (vb <= zero) & (d2 >= zero) & (d6 <= zero)
-            t_ac = d2 / (d2 - d6 + eps)
+            t_ac = d2 / jnp.maximum(d2 - d6, eps)
             diff_ac = u + t_ac * ac_t
 
             va = d3 * d6 - d5 * d4
             cond_bc = (va <= zero) & ((d4 - d3) >= zero) & ((d5 - d6) >= zero)
-            t_bc = (d4 - d3) / ((d4 - d3) + (d5 - d6) + eps)
+            t_bc = (d4 - d3) / jnp.maximum((d4 - d3) + (d5 - d6), eps)
             diff_bc = v + t_bc * bc_t
 
             denom = va + vb + vc
-            v_face = vb / (denom + eps)
-            w_face = vc / (denom + eps)
+            v_face = vb / jnp.maximum(denom, eps)
+            w_face = vc / jnp.maximum(denom, eps)
             diff_face = u + v_face * ab_t + w_face * ac_t
 
             diff = diff_face
@@ -738,18 +780,15 @@ class _MeshSDFImpl:
             best_d20 = inf
             best_tri0 = jnp.int32(0)
 
-            def _cond(state):
-                _, sp, _, _ = state
-                return sp > 0
-
             def _push(stack, sp, node):
                 stack = stack.at[sp].set(node)
                 return stack, sp + jnp.int32(1)
 
-            def _body(state):
+            def _body(_, state):
                 stack, sp, best_d2, best_tri = state
-                sp = sp - jnp.int32(1)
-                node = stack[sp]
+                active = sp > 0
+                sp = jnp.maximum(sp - jnp.int32(1), jnp.int32(0))
+                node = jnp.where(active, stack[sp], jnp.int32(-1))
                 state = (stack, sp, best_d2, best_tri)
 
                 def _process_node(state):
@@ -838,16 +877,19 @@ class _MeshSDFImpl:
 
                 return jax.lax.cond(node >= 0, _process_node, lambda s: s, state)
 
-            stack, sp, best_d2, best_tri = jax.lax.while_loop(
-                _cond, _body, (stack, sp0, best_d20, best_tri0)
+            stack, sp, best_d2, best_tri = jax.lax.fori_loop(
+                0,
+                int(bbox_min.shape[0]),
+                _body,
+                (stack, sp0, best_d20, best_tri0),
             )
             return best_d2, best_tri
 
         def _sdf_primal_and_geom(
             points: jnp.ndarray,
         ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-            pts, out_shape, is_single = _coerce_points3(points)
-
+            pts_world, out_shape, is_single = _coerce_points3(points)
+            pts = (pts_world - world_origin) / distance_scale
             dist2_min, best_tri = jax.vmap(_traverse_best_triangle)(pts)
             unsigned = jnp.sqrt(jnp.maximum(dist2_min, zero))
 
@@ -870,7 +912,7 @@ class _MeshSDFImpl:
 
             diff, side, n_pseudo = jax.vmap(_geom_for_best)(pts, best_tri)
             sgn = jnp.where(side < zero, -one, one)
-            signed = sgn * unsigned
+            signed = sgn * unsigned * distance_scale
 
             if is_single:
                 return (
@@ -898,18 +940,32 @@ class _MeshSDFImpl:
             (points,) = primals
             (t_points,) = tangents
 
-            val, diff, side, unsigned, n_pseudo = _sdf_primal_and_geom(points)
-            if t_points is None:
-                return val, jnp.zeros_like(val)
-
+            # See the beam-search implementation above: freeze the selected mesh
+            # feature under higher AD and expose its stable unit first derivative.
+            points_stopped = jax.lax.stop_gradient(points)
+            val, diff, side, unsigned, n_pseudo = _sdf_primal_and_geom(points_stopped)
+            boundary_collar = jnp.sqrt(eps)
+            safe_unsigned = jnp.maximum(unsigned, boundary_collar)
             sgn = jnp.where(side < zero, -one, one)
-            raw = sgn[..., None] * (-diff) / (unsigned[..., None] + eps)
-            raw_norm = jnp.sqrt(_dot(raw, raw))
-            use_cp = raw_norm > jnp.asarray(0.5, dtype=dtype)
-            grad_cp = raw / raw_norm[..., None]
+            raw = sgn[..., None] * (-diff) / safe_unsigned[..., None]
+            raw_norm_sq = _dot(raw, raw)
+            safe_raw_norm = jnp.sqrt(
+                jnp.maximum(raw_norm_sq, jnp.asarray(0.25, dtype=dtype))
+            )
+            grad_cp = raw / safe_raw_norm[..., None]
+            use_cp = unsigned > boundary_collar
             grad = jnp.where(use_cp[..., None], grad_cp, n_pseudo)
-            t_val = _dot(grad, t_points)
-            return val, t_val
+
+            points_array = jnp.asarray(points, dtype=dtype)
+            linear_primal = _dot(points_array, grad)
+            primal_val = (
+                jax.lax.stop_gradient(val)
+                + linear_primal
+                - jax.lax.stop_gradient(linear_primal)
+            )
+            if t_points is None:
+                return primal_val, jnp.zeros_like(val)
+            return primal_val, _dot(grad, t_points)
 
         return jax.jit(sdf)
 
@@ -923,25 +979,46 @@ class _MeshSDFImpl:
         beam_steps: int | None = None,
         r0: float | None = None,
         rho_delta: float | None = None,
+        equivalence_power: float | None = None,
         squash: bool = True,
     ) -> Callable[[jnp.ndarray], jnp.ndarray]:
         """Build a pointwise smoothed mesh SDF with exact boundary behaviour.
 
         This returns a signed distance-like function `phi(p)` that:
-        - Matches the exact mesh SDF to first order at the boundary (phi=0 and dphi/dn=1).
-        - Replaces the non-smooth min over triangles by a soft-min over a BVH-selected leaf beam,
-          yielding meaningful higher derivatives away from the boundary layer.
+        - Equals the exact mesh SDF throughout an open boundary collar, with a stable
+          pseudonormal custom derivative at the zero set.
+        - Replaces the non-smooth min over triangles by a smooth aggregate over a
+          BVH-selected leaf beam away from that collar.
 
         Notes
         -----
         - Candidate triangle selection is treated as non-differentiable routing via
-          `stop_gradient`, so JAX higher derivatives reflect the soft-min distance
-          within the selected candidate set.
+          `stop_gradient`, so JAX higher derivatives reflect the smooth distance
+          aggregate within the selected candidate set.
+        - ``equivalence_power`` selects an inverse-power R-equivalence aggregate;
+          ``None`` retains the Gibbs-weighted RMS aggregate.
         """
         if beam_width <= 0:
             raise ValueError(f"beam_width must be positive, got {beam_width}.")
+        if equivalence_power is not None:
+            equivalence_power = float(equivalence_power)
+            if not np.isfinite(equivalence_power) or equivalence_power <= 0.0:
+                raise ValueError(
+                    "equivalence_power must be finite and positive, "
+                    f"got {equivalence_power}."
+                )
 
-        V = jnp.asarray(self.mesh_vertices)
+        V_world = jnp.asarray(self.mesh_vertices)
+        dtype = V_world.dtype
+        bounds_min = np.min(np.asarray(self.mesh_vertices, dtype=float), axis=0)
+        bounds_max = np.max(np.asarray(self.mesh_vertices, dtype=float), axis=0)
+        origin_value = 0.5 * (bounds_min + bounds_max)
+        distance_scale_value = float(np.linalg.norm(bounds_max - bounds_min))
+        if not np.isfinite(distance_scale_value) or distance_scale_value <= 0.0:
+            raise ValueError("Mesh diameter must be finite and positive.")
+        world_origin = jnp.asarray(origin_value, dtype=dtype)
+        distance_scale = jnp.asarray(distance_scale_value, dtype=dtype)
+        V = (V_world - world_origin) / distance_scale
         F = jnp.asarray(self.mesh_faces)
 
         if V.ndim != 2 or V.shape[-1] != 3:
@@ -951,29 +1028,30 @@ class _MeshSDFImpl:
         if int(F.shape[0]) == 0:
             raise ValueError("Mesh has no faces; cannot build an SDF.")
 
-        dtype = V.dtype
-
         if eps is None:
             if dtype == jnp.float16:
                 eps = 1e-4
             elif dtype == jnp.float32:
                 eps = 1e-9
             else:
-                eps = 1e-12
+                eps = 1e-15
         eps = jnp.asarray(eps, dtype=dtype)
         zero = jnp.asarray(0.0, dtype=dtype)
         one = jnp.asarray(1.0, dtype=dtype)
         inf = jnp.asarray(jnp.inf, dtype=dtype)
 
-        # Default smooth-min sharpness based on a fraction of the diameter.
+        # Work in normalized coordinates so all regularization is scale-covariant.
         if beta is None:
-            smooth_radius = float(0.075 * (self.diameter or 1.0))
-            beta = 1.0 / (smooth_radius * smooth_radius + 1e-30)
+            beta = 1.0 / (0.075**2 + 1e-30)
+        else:
+            beta = float(beta) * distance_scale_value**2
         beta = jnp.asarray(beta, dtype=dtype)
         if float(beta) <= 0.0:
             raise ValueError(f"beta must be positive, got {beta}.")
         if r0 is None:
-            r0 = float(0.05 * (self.diameter or 1.0))
+            r0 = 0.05
+        else:
+            r0 = float(r0) / distance_scale_value
         r0 = jnp.asarray(r0, dtype=dtype)
 
         # Boundary-linear, interior-saturating transform:
@@ -983,7 +1061,9 @@ class _MeshSDFImpl:
         squash_flag = bool(squash)
         if squash_flag:
             if rho_delta is None:
-                rho_delta = float(0.0111 * (self.diameter or 1.0))
+                rho_delta = 0.0111
+            else:
+                rho_delta = float(rho_delta) / distance_scale_value
             rho_delta = jnp.asarray(rho_delta, dtype=dtype)
             rho_delta = jnp.maximum(rho_delta, jnp.asarray(1e-12, dtype=dtype))
 
@@ -998,7 +1078,7 @@ class _MeshSDFImpl:
         # ---------------------------------------------------------------------
         # Static BVH (AABB tree) build (host-side)
         # ---------------------------------------------------------------------
-        V_np = np.asarray(self.mesh.vertices, dtype=float)
+        V_np = np.asarray(V, dtype=float)
         F_np = np.asarray(self.mesh.faces, dtype=np.int64)
         a_np = V_np[F_np[:, 0]]
         b_np = V_np[F_np[:, 1]]
@@ -1021,7 +1101,7 @@ class _MeshSDFImpl:
         if beam_steps <= 0:
             raise ValueError(f"beam_steps must be positive, got {beam_steps}.")
 
-        sdf_exact = _MeshSDFImpl._make_mesh_sdf(self, eps=eps, bvh=bvh)
+        sdf_exact = _MeshSDFImpl._make_mesh_sdf_traversal(self, eps=eps)
 
         def _point_triangle_dist2_a_ab_ac(
             p: jnp.ndarray,
@@ -1051,25 +1131,25 @@ class _MeshSDFImpl:
 
             vc = d1 * d4 - d3 * d2
             cond_ab = (vc <= zero) & (d1 >= zero) & (d3 <= zero)
-            t_ab = d1 / (d1 - d3 + eps)
+            t_ab = d1 / jnp.maximum(d1 - d3, eps)
             diff_ab = u + t_ab[..., None] * ab_t
             dist2_ab = _dot(diff_ab, diff_ab)
 
             vb = d5 * d2 - d1 * d6
             cond_ac = (vb <= zero) & (d2 >= zero) & (d6 <= zero)
-            t_ac = d2 / (d2 - d6 + eps)
+            t_ac = d2 / jnp.maximum(d2 - d6, eps)
             diff_ac = u + t_ac[..., None] * ac_t
             dist2_ac = _dot(diff_ac, diff_ac)
 
             va = d3 * d6 - d5 * d4
             cond_bc = (va <= zero) & ((d4 - d3) >= zero) & ((d5 - d6) >= zero)
-            t_bc = (d4 - d3) / ((d4 - d3) + (d5 - d6) + eps)
+            t_bc = (d4 - d3) / jnp.maximum((d4 - d3) + (d5 - d6), eps)
             diff_bc = v + t_bc[..., None] * bc_t
             dist2_bc = _dot(diff_bc, diff_bc)
 
             denom = va + vb + vc
-            v_face = vb / (denom + eps)
-            w_face = vc / (denom + eps)
+            v_face = vb / jnp.maximum(denom, eps)
+            w_face = vc / jnp.maximum(denom, eps)
             diff_face = u + v_face[..., None] * ab_t + w_face[..., None] * ac_t
             dist2_face = _dot(diff_face, diff_face)
 
@@ -1107,9 +1187,10 @@ class _MeshSDFImpl:
             return pts.reshape((-1, 3)), out_shape, False
 
         def sdf_smooth(points: jnp.ndarray) -> jnp.ndarray:
-            pts, out_shape, is_single = _coerce_points3(points)
+            pts_world, out_shape, is_single = _coerce_points3(points)
+            pts = (pts_world - world_origin) / distance_scale
 
-            d_exact = sdf_exact(pts)
+            d_exact = sdf_exact(pts_world) / distance_scale
             d_for_blend = jax.lax.stop_gradient(d_exact)
 
             pts_select = jax.lax.stop_gradient(pts)
@@ -1127,28 +1208,55 @@ class _MeshSDFImpl:
             dist2_use = jnp.where(valid, dist2, zero)
             has_valid = jnp.any(valid, axis=1)
 
-            scaled = jnp.where(valid, -beta * dist2, -inf)
-            logZ = jax.scipy.special.logsumexp(scaled, axis=1, keepdims=True)
-            weights = jnp.exp(scaled - logZ)
-            weights = jnp.where(valid, weights, zero)
-            m = jnp.sum(weights * dist2_use, axis=1)
-            unsigned_smooth = jnp.sqrt(jnp.maximum(m, zero))
+            if equivalence_power is None:
+                scaled = jnp.where(valid, -beta * dist2, -inf)
+                logZ = jax.scipy.special.logsumexp(scaled, axis=1, keepdims=True)
+                weights = jnp.exp(scaled - logZ)
+                weights = jnp.where(valid, weights, zero)
+                m = jnp.sum(weights * dist2_use, axis=1)
+                unsigned_smooth = jnp.sqrt(jnp.maximum(m, eps))
+            else:
+                power = jnp.asarray(equivalence_power, dtype=dtype)
+                log_inverse_distance = jnp.where(
+                    valid,
+                    -0.5 * power * jnp.log(jnp.maximum(dist2, eps)),
+                    -inf,
+                )
+                log_inverse_sum = jax.scipy.special.logsumexp(
+                    log_inverse_distance, axis=1
+                )
+                unsigned_smooth = jnp.exp(-log_inverse_sum / power)
             unsigned = jnp.where(has_valid, unsigned_smooth, jnp.abs(d_exact))
 
             sgn = jnp.where(d_exact < zero, -one, one)
             sgn = jax.lax.stop_gradient(sgn)
             d_smooth = sgn * unsigned
 
-            inv_r0 = one / (r0 + eps)
-            t = (d_for_blend * inv_r0) ** 2
-            t = jnp.minimum(t, one)
-            S = t * t * (3.0 - 2.0 * t)
+            blend_start = 0.5 * r0
+            blend_width = r0 - blend_start
+            blend_coordinate_raw = jnp.clip(
+                (jnp.abs(d_for_blend) - blend_start) / (blend_width + eps),
+                zero,
+                one,
+            )
+            blend_active = jnp.abs(d_for_blend) > blend_start
+            blend_coordinate = jnp.where(blend_active, blend_coordinate_raw, one)
+            S = (
+                462.0 * blend_coordinate**6
+                - 1980.0 * blend_coordinate**7
+                + 3465.0 * blend_coordinate**8
+                - 3080.0 * blend_coordinate**9
+                + 1386.0 * blend_coordinate**10
+                - 252.0 * blend_coordinate**11
+            )
+            S = jnp.where(blend_active, S, zero)
 
             d = d_exact + S * (d_smooth - d_exact)
             if squash_flag:
                 out = rho_delta * jnp.tanh(d / rho_delta)
             else:
                 out = d
+            out = out * distance_scale
             if is_single:
                 return out.reshape(())
             return out.reshape(out_shape)
@@ -1166,7 +1274,7 @@ class _MeshSDFImpl:
         r0: float | None = None,
         rho_delta: float | None = None,
     ) -> Callable[[jnp.ndarray], jnp.ndarray]:
-        """Like `_make_smooth_mesh_sdf`, but uses the exact BVH traversal for `d_exact`."""
+        """Build the legacy original-coordinate smooth SDF for diagnostics."""
         if beam_width <= 0:
             raise ValueError(f"beam_width must be positive, got {beam_width}.")
 
@@ -1188,7 +1296,7 @@ class _MeshSDFImpl:
             elif dtype == jnp.float32:
                 eps = 1e-9
             else:
-                eps = 1e-12
+                eps = 1e-15
         eps = jnp.asarray(eps, dtype=dtype)
         zero = jnp.asarray(0.0, dtype=dtype)
         one = jnp.asarray(1.0, dtype=dtype)
@@ -1269,25 +1377,25 @@ class _MeshSDFImpl:
 
             vc = d1 * d4 - d3 * d2
             cond_ab = (vc <= zero) & (d1 >= zero) & (d3 <= zero)
-            t_ab = d1 / (d1 - d3 + eps)
+            t_ab = d1 / jnp.maximum(d1 - d3, eps)
             diff_ab = u + t_ab[..., None] * ab_t
             dist2_ab = _dot(diff_ab, diff_ab)
 
             vb = d5 * d2 - d1 * d6
             cond_ac = (vb <= zero) & (d2 >= zero) & (d6 <= zero)
-            t_ac = d2 / (d2 - d6 + eps)
+            t_ac = d2 / jnp.maximum(d2 - d6, eps)
             diff_ac = u + t_ac[..., None] * ac_t
             dist2_ac = _dot(diff_ac, diff_ac)
 
             va = d3 * d6 - d5 * d4
             cond_bc = (va <= zero) & ((d4 - d3) >= zero) & ((d5 - d6) >= zero)
-            t_bc = (d4 - d3) / ((d4 - d3) + (d5 - d6) + eps)
+            t_bc = (d4 - d3) / jnp.maximum((d4 - d3) + (d5 - d6), eps)
             diff_bc = v + t_bc[..., None] * bc_t
             dist2_bc = _dot(diff_bc, diff_bc)
 
             denom = va + vb + vc
-            v_face = vb / (denom + eps)
-            w_face = vc / (denom + eps)
+            v_face = vb / jnp.maximum(denom, eps)
+            w_face = vc / jnp.maximum(denom, eps)
             diff_face = u + v_face[..., None] * ab_t + w_face[..., None] * ac_t
             dist2_face = _dot(diff_face, diff_face)
 
@@ -1436,6 +1544,7 @@ def make_smooth_mesh_sdf(
     beam_steps: int | None = None,
     r0: float | None = None,
     rho_delta: float | None = None,
+    equivalence_power: float | None = None,
     squash: bool = True,
 ) -> Callable[[jnp.ndarray], jnp.ndarray]:
     return _MeshSDFImpl._make_smooth_mesh_sdf(
@@ -1446,6 +1555,7 @@ def make_smooth_mesh_sdf(
         beam_steps=beam_steps,
         r0=r0,
         rho_delta=rho_delta,
+        equivalence_power=equivalence_power,
         squash=squash,
     )
 
@@ -1460,10 +1570,10 @@ def make_smooth_mesh_sdf_alt(
     r0: float | None = None,
     rho_delta: float | None = None,
 ) -> Callable[[jnp.ndarray], jnp.ndarray]:
-    """Smooth mesh SDF using exact BVH traversal for the `d_exact` term.
+    """Build the legacy original-coordinate smooth SDF for diagnostics.
 
-    This keeps the same soft-min smoothing as `make_smooth_mesh_sdf`, but replaces the
-    "exact" distance used in the boundary blending with a global-nearest BVH traversal.
+    Unlike the scale-normalized default, this variant shares one physical-coordinate
+    BVH between its global-nearest and soft-min terms.
     """
     return _MeshSDFImpl._make_smooth_mesh_sdf_alt(
         geom,
@@ -1476,8 +1586,87 @@ def make_smooth_mesh_sdf_alt(
     )
 
 
+def make_compact_boundary_factor(
+    distance: Callable[[jnp.ndarray], jnp.ndarray],
+    *,
+    scale: float,
+    saturation_fraction: float = 0.05,
+    linear_fraction: float = 0.5,
+) -> Callable[[jnp.ndarray], jnp.ndarray]:
+    r"""Compactly saturate a signed-distance-like field after an exact linear collar.
+
+    The scalar transform is odd and exactly the identity while
+    ``|distance| <= linear_fraction * saturation_fraction * scale``. A C6 transition
+    then reaches an exact plateau at ``saturation_fraction * scale``. Consequently,
+    the transform preserves every boundary derivative while preventing distant
+    medial-axis nonsmoothness from entering derivatives of the boundary factor.
+    """
+    scale_value = float(scale)
+    saturation_value = float(saturation_fraction)
+    linear_value = float(linear_fraction)
+    if not np.isfinite(scale_value) or scale_value <= 0.0:
+        raise ValueError(f"scale must be finite and positive, got {scale!r}.")
+    if not np.isfinite(saturation_value) or not 0.0 < saturation_value < 1.0:
+        raise ValueError(
+            "saturation_fraction must be finite and strictly between zero and one."
+        )
+    if not np.isfinite(linear_value) or not 0.0 < linear_value < 1.0:
+        raise ValueError(
+            "linear_fraction must be finite and strictly between zero and one."
+        )
+    delta_value = scale_value * saturation_value
+    transition_width = 1.0 - linear_value
+    plateau = linear_value + 0.5 * transition_width
+
+    def boundary_factor(points: jnp.ndarray) -> jnp.ndarray:
+        signed = jnp.asarray(distance(points))
+        delta = jnp.asarray(delta_value, dtype=signed.dtype)
+        z = jnp.abs(signed) / delta
+        u_raw = jnp.clip(
+            (z - linear_value) / transition_width,
+            jnp.asarray(0.0, dtype=signed.dtype),
+            jnp.asarray(1.0, dtype=signed.dtype),
+        )
+        # The transition polynomial is inactive in the linear collar. Evaluating
+        # its zero powers there can still produce 0*NaN tangents under nested AD
+        # when ``distance`` has a custom JVP, so keep the inactive input at one.
+        u = jnp.where(
+            z > linear_value,
+            u_raw,
+            jnp.asarray(1.0, dtype=signed.dtype),
+        )
+
+        # Integral of one minus the order-five generalized smoothstep. It agrees
+        # with ``u`` through sixth order at zero and is flat through sixth order at one.
+        transition = (
+            u
+            - 66.0 * u**7
+            + 247.5 * u**8
+            - 385.0 * u**9
+            + 308.0 * u**10
+            - 126.0 * u**11
+            + 21.0 * u**12
+        )
+        magnitude = linear_value + transition_width * transition
+        transition_denominator = jnp.where(
+            z > linear_value, z, jnp.asarray(1.0, dtype=signed.dtype)
+        )
+        plateau_denominator = jnp.where(z >= 1.0, z, jnp.asarray(1.0, dtype=signed.dtype))
+        ratio_transition = magnitude / transition_denominator
+        ratio_plateau = plateau / plateau_denominator
+        ratio = jnp.where(
+            z <= linear_value,
+            jnp.asarray(1.0, dtype=signed.dtype),
+            jnp.where(z < 1.0, ratio_transition, ratio_plateau),
+        )
+        return signed * ratio
+
+    return jax.jit(boundary_factor)
+
+
 __all__ = [
     "make_mesh_inside_predicate_fast",
+    "make_compact_boundary_factor",
     "make_mesh_sdf",
     "make_mesh_sdf_fast",
     "make_smooth_mesh_sdf",

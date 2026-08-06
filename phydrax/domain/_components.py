@@ -25,7 +25,7 @@ from .._sampling import (
     SampleAddress,
 )
 from .._strict import StrictModule
-from ._base import _AbstractGeometry
+from ._base import _AbstractGeometry, EnforcementGateMethod
 from ._dataset import DatasetDomain
 from ._domain import _AbstractDomain, RelabeledDomain
 from ._function import DomainFunction
@@ -205,6 +205,53 @@ class _SdfCallable(StrictModule):
         pts = pts_in.reshape((-1, d))
         sdf = self.geom.adf(pts)
         return jnp.asarray(sdf, dtype=float).reshape(pts_in.shape[:-1])
+
+
+class _EnforcementGateCallable(StrictModule):
+    gate: Callable[[Array], Array]
+    dim: int
+
+    def __init__(
+        self,
+        geom: _AbstractGeometry,
+        *,
+        method: EnforcementGateMethod,
+        saturation_fraction: float,
+        linear_fraction: float,
+    ):
+        self.gate = geom.make_enforcement_gate(
+            method=method,
+            saturation_fraction=saturation_fraction,
+            linear_fraction=linear_fraction,
+        )
+        self.dim = int(geom.var_dim)
+
+    def __call__(self, x: Any, /, *, key=None, **kwargs: Any) -> Array:
+        del key, kwargs
+        if isinstance(x, tuple):
+            coords = tuple(jnp.asarray(c, dtype=float).reshape((-1,)) for c in x)
+            if len(coords) != self.dim:
+                raise ValueError(
+                    "coord-separable enforcement gate expects "
+                    f"{self.dim} coordinate arrays, got {len(coords)}."
+                )
+            grid = broadcasted_grid(coords)
+            points = grid.reshape((-1, self.dim))
+            values = self.gate(points)
+            return jnp.asarray(values, dtype=float).reshape(grid.shape[:-1])
+
+        points_in = jnp.asarray(x, dtype=float)
+        if points_in.ndim == 0:
+            if self.dim != 1:
+                raise ValueError("Expected a geometry point with shape (..., dim).")
+            return jnp.asarray(self.gate(points_in.reshape(())), dtype=float).reshape(())
+        if points_in.ndim == 1:
+            return jnp.asarray(self.gate(points_in), dtype=float)
+        if points_in.shape[-1] != self.dim:
+            raise ValueError("Expected a geometry point with shape (..., dim).")
+        points = points_in.reshape((-1, self.dim))
+        values = self.gate(points)
+        return jnp.asarray(values, dtype=float).reshape(points_in.shape[:-1])
 
 
 def _sample_geometry(
@@ -1281,13 +1328,17 @@ class DomainComponent(StrictModule):
         )
 
     def sdf(self, /, *, var: str) -> DomainFunction:
-        r"""Return a `DomainFunction` for the signed distance field $\phi(x)$.
+        r"""Return the geometry's signed boundary-defining field $\phi(x)$.
 
-        The sign convention is geometry-dependent but typically:
+        The field preserves the geometry zero set and uses the convention
 
         - $\phi(x) < 0$ inside $\Omega$,
         - $\phi(x) = 0$ on $\partial\Omega$,
         - $\phi(x) > 0$ outside $\Omega$.
+
+        Its magnitude is not guaranteed to equal metric distance away from the
+        boundary. CAD geometries compactly saturate this geometry field; derivative
+        hard constraints use their separately conditioned unit-jet ansatz factor.
         """
         if var not in self.domain.labels:
             raise KeyError(f"Label {var!r} not in domain {self.domain.labels}.")
@@ -1301,6 +1352,51 @@ class DomainComponent(StrictModule):
             )
 
         return DomainFunction(domain=self.domain, deps=(var,), func=_SdfCallable(factor))
+
+    def enforcement_gate(
+        self,
+        /,
+        *,
+        method: EnforcementGateMethod = "auto",
+        var: str,
+        saturation_fraction: float = 0.5,
+        linear_fraction: float = 0.5,
+    ) -> DomainFunction:
+        r"""Return a dimensionless gate for optimization-conditioned hard constraints.
+
+        The gate is zero on the selected geometry boundary and positive, typically
+        order one, in the interior. Unlike :meth:`sdf`, it is not used to define
+        normals or derivative boundary conditions.
+        """
+        if var not in self.domain.labels:
+            raise KeyError(f"Label {var!r} not in domain {self.domain.labels}.")
+
+        component = self.spec.component_for(var)
+        if not isinstance(component, Boundary):
+            raise ValueError(
+                "DomainComponent.enforcement_gate is only defined for Boundary() "
+                "components."
+            )
+
+        factor = self.domain.factor(var)
+        if isinstance(factor, RelabeledDomain):
+            factor = factor.base
+        if not isinstance(factor, _AbstractGeometry):
+            raise TypeError(
+                "enforcement_gate(var=...) requires a geometry label, "
+                f"got {type(factor).__name__}."
+            )
+
+        return DomainFunction(
+            domain=self.domain,
+            deps=(var,),
+            func=_EnforcementGateCallable(
+                factor,
+                method=method,
+                saturation_fraction=saturation_fraction,
+                linear_fraction=linear_fraction,
+            ),
+        )
 
 
 class DomainComponentUnion(StrictModule):

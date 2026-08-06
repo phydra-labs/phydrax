@@ -3,6 +3,7 @@
 #
 
 import coordax as cx
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -368,3 +369,130 @@ def test_enforce_initial_supports_coord_separable_sampling():
     out = jnp.asarray(u_enforced(batch).data).reshape((-1,))
     assert jnp.allclose(out[0], 2.0, atol=1e-10)
     assert jnp.all(jnp.isfinite(out))
+
+
+def test_enforce_dirichlet_uses_dimensionless_geometry_gate():
+    geom = Interval1d(0.0, 100.0)
+    component = geom.component({"x": Boundary()})
+
+    @geom.Function("x")
+    def u(x):
+        del x
+        return jnp.asarray(1.0)
+
+    gate = component.enforcement_gate(var="x")
+    batch = _points_on_interval(geom, jnp.array([0.0, 50.0, 100.0]))
+    gate_values = jnp.asarray(gate(batch).data).reshape((-1,))
+    sdf_values = jnp.asarray(component.sdf(var="x")(batch).data).reshape((-1,))
+    enforced_values = jnp.asarray(
+        enforce_dirichlet(u, component, target=0.0)(batch).data
+    ).reshape((-1,))
+
+    assert jnp.allclose(gate_values, jnp.array([0.0, 1.0, 0.0]))
+    assert jnp.allclose(enforced_values, gate_values)
+    assert jnp.allclose(sdf_values[1], -25.0)
+
+
+@pytest.mark.parametrize(
+    ("saturation_fraction", "linear_fraction"),
+    ((0.0, 0.5), (0.6, 0.5), (0.5, 0.0), (0.5, 1.0)),
+)
+def test_enforcement_gate_rejects_invalid_profile_fractions(
+    saturation_fraction,
+    linear_fraction,
+):
+    geom = Interval1d(0.0, 1.0)
+    component = geom.component({"x": Boundary()})
+
+    with pytest.raises(ValueError):
+        component.enforcement_gate(
+            var="x",
+            saturation_fraction=saturation_fraction,
+            linear_fraction=linear_fraction,
+        )
+
+
+def test_interval_derivative_ansatze_are_continuous_at_midpoint():
+    geom = Interval1d(0.0, 1.0)
+    boundary = geom.component({"x": Boundary()})
+
+    @geom.Function("x")
+    def scalar(x):
+        return x[0]
+
+    @geom.Function("x")
+    def displacement(x):
+        return jnp.asarray([x[0]])
+
+    neumann = enforce_neumann(scalar, boundary, target=0.0)
+    robin = enforce_robin(
+        scalar,
+        boundary,
+        dirichlet_coeff=1.0,
+        neumann_coeff=1.0,
+        target=0.0,
+    )
+    traction = enforce_traction(
+        displacement,
+        boundary,
+        target=jnp.zeros((1,)),
+        lambda_=1.0,
+        mu=1.0,
+    )
+
+    time = TimeInterval(0.0, 1.0)
+    domain = geom @ time
+    spacetime_boundary = domain.component({"x": Boundary()})
+
+    @domain.Function("x", "t")
+    def wave(x, t):
+        return x[0] + t
+
+    sommerfeld = enforce_sommerfeld(
+        wave,
+        spacetime_boundary,
+        wavespeed=1.0,
+        target=0.0,
+    )
+
+    epsilon = 1e-6
+    points = jnp.asarray([[0.5 - epsilon], [0.5], [0.5 + epsilon]])
+    time_value = jnp.asarray(0.25)
+    profiles = (
+        jax.vmap(neumann.func)(points),
+        jax.vmap(robin.func)(points),
+        jax.vmap(lambda x: sommerfeld.func(x, time_value))(points),
+        jax.vmap(traction.func)(points)[:, 0],
+    )
+
+    for profile in profiles:
+        assert jnp.all(jnp.isfinite(profile))
+        assert jnp.max(jnp.abs(jnp.diff(profile))) < 1e-4
+        assert jnp.allclose(profile[1], 0.5 * (profile[0] + profile[2]), atol=1e-8)
+
+
+def test_interval_nonzero_neumann_and_robin_targets_are_exact():
+    geom = Interval1d(0.0, 1.0)
+    boundary = geom.component({"x": Boundary()})
+
+    @geom.Function("x")
+    def u(x):
+        return x[0] ** 2
+
+    normal = boundary.normal(var="x")
+    batch = _points_on_interval(geom, jnp.asarray([0.0, 1.0]))
+
+    neumann = enforce_neumann(u, boundary, target=1.25)
+    neumann_derivative = directional_derivative(neumann, normal, var="x")
+    assert jnp.allclose(neumann_derivative(batch).data, 1.25, atol=1e-8)
+
+    robin = enforce_robin(
+        u,
+        boundary,
+        dirichlet_coeff=2.0,
+        neumann_coeff=0.5,
+        target=3.0,
+    )
+    robin_derivative = directional_derivative(robin, normal, var="x")
+    residual = 2.0 * robin(batch).data + 0.5 * robin_derivative(batch).data
+    assert jnp.allclose(residual, 3.0, atol=1e-8)

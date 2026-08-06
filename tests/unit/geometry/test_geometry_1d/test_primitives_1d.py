@@ -2,6 +2,7 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -63,3 +64,29 @@ def test_boundary_normals(simple_interval):
     expected_normals = np.array([[-1.0], [1.0]])
     computed_normals = simple_interval._boundary_normals(points)
     assert np.allclose(computed_normals, expected_normals, atol=1e-6)
+
+
+def test_boundary_fields_are_scale_covariant():
+    normalized_points = jnp.asarray([[0.0], [0.25], [0.5], [0.75], [1.0]])
+    normalized_factors = []
+    gate_values = []
+
+    for scale in (1e-7, 1.0):
+        interval = Interval1d(0.0, scale)
+        factor = interval.boundary_ansatz_factor
+        normalized_factors.append(factor(scale * normalized_points) / scale)
+        gate_values.append(interval.make_enforcement_gate()(scale * normalized_points))
+
+        assert jnp.allclose(
+            jax.grad(factor)(jnp.asarray([0.0])),
+            jnp.asarray([-1.0]),
+            atol=1e-10,
+        )
+        assert jnp.allclose(
+            jax.grad(factor)(jnp.asarray([scale])),
+            jnp.asarray([1.0]),
+            atol=1e-10,
+        )
+
+    assert jnp.allclose(normalized_factors[0], normalized_factors[1], atol=1e-10)
+    assert jnp.allclose(gate_values[0], gate_values[1], atol=1e-10)

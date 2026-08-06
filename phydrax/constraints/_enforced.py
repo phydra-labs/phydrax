@@ -18,7 +18,7 @@ from .._bvh import beam_select_leaf_items, build_point_bvh
 from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
-from ..domain._base import _AbstractGeometry
+from ..domain._base import _AbstractGeometry, EnforcementGateMethod
 from ..domain._components import (
     Boundary,
     DomainComponent,
@@ -35,6 +35,7 @@ from ..operators.differential._domain_ops import (
     cauchy_stress,
     directional_derivative,
     dt,
+    grad,
     partial_n,
 )
 from ..operators.differential._hooks import (
@@ -336,6 +337,35 @@ def _enforced_constraint_weight_fn(
     return _weight_point
 
 
+def _boundary_ansatz_factor(
+    component: DomainComponent,
+    factor: _AbstractGeometry,
+    *,
+    var: str,
+) -> DomainFunction:
+    return DomainFunction(
+        domain=component.domain,
+        deps=(var,),
+        func=factor.boundary_ansatz_factor,
+        metadata={},
+    )
+
+
+def _boundary_ansatz_normal_extension(
+    psi: DomainFunction,
+    *,
+    var: str,
+    mode: Literal["reverse", "forward"],
+) -> DomainFunction:
+    r"""Return the canonical smooth normal extension $\nu=\nabla\psi$.
+
+    The unit-jet contract for ``psi`` gives $\nu=n$ on every regular boundary
+    point. Unlike an everywhere-normalized nearest-boundary field, ``nu`` may
+    vanish in the interior and therefore need not jump across a medial set.
+    """
+    return grad(psi, var=var, mode=mode)
+
+
 def _reject_filtered_boundary(
     component: DomainComponent,
     /,
@@ -346,7 +376,7 @@ def _reject_filtered_boundary(
     if component.where or component.where_all is not None:
         raise ValueError(
             f"{op_name} cannot directly enforce a filtered Boundary() component "
-            f"for {var!r}: its signed-distance gate vanishes on the full boundary. "
+            f"for {var!r}: its geometry gate vanishes on the full boundary. "
             "Build one ansatz per boundary piece and combine them with enforce_blend."
         )
 
@@ -358,21 +388,28 @@ def enforce_dirichlet(
     *,
     var: str = "x",
     target: DomainFunction | ArrayLike | None = None,
+    gate_method: EnforcementGateMethod = "auto",
+    gate_saturation_fraction: float = 0.5,
+    gate_linear_fraction: float = 0.5,
 ) -> DomainFunction:
     r"""Enforced Dirichlet ansatz enforcing $u=g$ on a component.
 
-    Constructs an ansatz $u^*$ that satisfies the Dirichlet condition exactly on the
-    selected component (boundary or fixed slice). For a geometry boundary with signed
-    distance field $\phi$ (so $\phi=0$ on $\partial\Omega$), this uses
+    For a geometry boundary, this uses a dimensionless enforcement gate $b$ that is
+    zero on $\partial\Omega$ and order one in the interior:
 
     $$
-    u^*(x) = g(x) + \phi(x)\,(u(x) - g(x)),
+    u^*(x) = g(x) + b(x)\,(u(x) - g(x)).
     $$
 
-    which guarantees $u^*(x)=g(x)$ on $\partial\Omega$.
+    The gate is intentionally distinct from the geometry's signed boundary-defining
+    field. Boundary-normal APIs continue to use that geometry field. Derivative hard
+    constraints instead use a dimensional unit-jet factor $\psi$ and its canonical
+    smooth extension $\nu=\nabla\psi$. ``gate_method="auto"`` uses the global
+    R-equivalence gate for CAD geometry; the saturation and linear fractions configure
+    the explicit ``"compact"`` fallback. Exact analytic gates ignore these mesh controls.
 
-    For scalar domains (e.g. time), an appropriate vanishing factor $\phi(t)$ is
-    constructed from $(t-t_0)$, $(t-t_1)$, etc.
+    For scalar domains (e.g. time), an appropriate vanishing factor is constructed
+    directly from $(t-t_0)$, $(t-t_1)$, etc.
     """
     if isinstance(component, DomainComponentUnion):
         raise TypeError(
@@ -406,8 +443,13 @@ def enforce_dirichlet(
             var=var,
             op_name="enforce_dirichlet",
         )
-        phi = component.sdf(var=var)
-        return blend_with_gate(value_fn, u, phi)
+        gate = component.enforcement_gate(
+            method=gate_method,
+            var=var,
+            saturation_fraction=gate_saturation_fraction,
+            linear_fraction=gate_linear_fraction,
+        )
+        return blend_with_gate(value_fn, u, gate)
 
     if isinstance(factor, _AbstractScalarDomain):
         t = DomainFunction(domain=component.domain, deps=(var,), func=_IdentityCallable())
@@ -438,15 +480,19 @@ def enforce_neumann(
 ) -> DomainFunction:
     r"""Enforced Neumann ansatz enforcing $\partial u/\partial n = g$ on a boundary.
 
-    For a geometry boundary with signed distance field $\phi$ and outward normal $n$,
+    For a geometry boundary, let $\psi$ be a dimensional ansatz factor satisfying
+    $\psi=0$ and $\partial_n\psi=1$, and define its canonical interior normal
+    extension $\nu=\nabla\psi$. Because $\nu=n$ on every regular boundary point,
     this constructs
 
     $$
-    u^* = u + \frac{\phi}{\partial\phi/\partial n}\,\bigl(g - \partial u/\partial n\bigr),
+    u^* = u + \psi\,\bigl(g - D_\nu u\bigr),
     $$
 
-    which yields $\partial u^*/\partial n = g$ on $\partial\Omega$ under mild regularity
-    assumptions.
+    which yields $\partial u^*/\partial n = g$ on $\partial\Omega$ under mild
+    regularity assumptions. Unlike an everywhere-normalized nearest-boundary field,
+    $\nu$ can vanish smoothly at medial sets. CAD geometries use the globally
+    conditioned R-equivalence profile for $\psi$ rather than the compact geometry ADF.
     """
     if isinstance(component, DomainComponentUnion):
         raise TypeError(
@@ -467,14 +513,13 @@ def enforce_neumann(
         raise ValueError("enforce_neumann requires component Boundary() for var.")
     _reject_filtered_boundary(component, var=var, op_name="enforce_neumann")
 
-    phi = component.sdf(var=var)
-    n = component.normal(var=var)
+    psi = _boundary_ansatz_factor(component, factor, var=var)
+    normal_extension = _boundary_ansatz_normal_extension(psi, var=var, mode=mode)
 
-    du_dn = directional_derivative(u, n, var=var, mode=mode)
-    dphi_dn = directional_derivative(phi, n, var=var, mode=mode)
+    du_dnu = directional_derivative(u, normal_extension, var=var, mode=mode)
 
     value = 0.0 if target is None else _coerce_value(target, u)
-    out = u + (phi / dphi_dn) * (value - du_dn)
+    out = u + psi * (value - du_dnu)
     return _guard_no_coord_separable(out, var=var, op_name="enforce_neumann")
 
 
@@ -498,8 +543,13 @@ def enforce_traction(
     \sigma(u^*)\,n = t_{\text{target}}
     $$
 
-    on the boundary by adding a displacement correction proportional to the signed
-    distance $\phi$.
+    on the boundary by adding a displacement correction proportional to the
+    dimensional unit-jet ansatz factor $\psi$.
+
+    Interior residuals and decompositions use $\nu=\nabla\psi$ in place of an
+    everywhere-normalized pseudonormal. Since $\nu=n$ on every regular boundary point,
+    this leaves the stated boundary traction unchanged while avoiding artificial
+    medial-set jumps.
 
     Let
 
@@ -522,15 +572,14 @@ def enforce_traction(
     and return the hard-constraint ansatz
 
     $$
-    u^*(x) \;=\; u(x) + \phi(x)\,v(x).
+    u^*(x) \;=\; u(x) + \psi(x)\,v(x).
     $$
 
-    In the idealized setting where $\phi$ is a signed distance field near the boundary
-    (so $\partial\phi/\partial n \approx 1$) and $v$ varies slowly in the normal
-    direction, the induced traction correction is approximately
-    $\sigma(\phi v)\,n \approx \mu\,v_t + (\lambda+2\mu)\,v_n$ (with
-    $v_n=(v\cdot n)\,n$ and $v_t=v-v_n$), making $u^*$ enforce the target traction to
-    first order.
+    Since $\partial\psi/\partial n=1$ on the boundary, when $v$ varies slowly in
+    the normal direction the induced traction correction is approximately
+    $\sigma(\psi v)\,n \approx \mu\,v_t + (\lambda+2\mu)\,v_n$ (with
+    $v_n=(v\cdot n)\,n$ and $v_t=v-v_n$), making $u^*$ enforce the target traction
+    to first order.
     """
     if isinstance(component, DomainComponentUnion):
         raise TypeError(
@@ -551,8 +600,8 @@ def enforce_traction(
         raise ValueError("enforce_traction requires component Boundary() for var.")
     _reject_filtered_boundary(component, var=var, op_name="enforce_traction")
 
-    phi = component.sdf(var=var)
-    n = component.normal(var=var)
+    psi = _boundary_ansatz_factor(component, factor, var=var)
+    normal_extension = _boundary_ansatz_normal_extension(psi, var=var, mode=mode)
 
     if target is None:
         target_val: DomainFunction | ArrayLike = 0.0
@@ -579,17 +628,17 @@ def enforce_traction(
     )
 
     sigma = cauchy_stress(u, lambda_=lambda_fn, mu=mu_fn, var=var, mode=mode)
-    traction = einsum("...ij,...j->...i", sigma, n)
+    traction = einsum("...ij,...j->...i", sigma, normal_extension)
 
     r = target_fn - traction
-    r_dot_n = einsum("...i,...i->...", r, n)
-    r_n = einsum("...,...i->...i", r_dot_n, n)
+    r_dot_n = einsum("...i,...i->...", r, normal_extension)
+    r_n = einsum("...,...i->...i", r_dot_n, normal_extension)
     r_t = r - r_n
 
     denom_n = lambda_fn + 2.0 * mu_fn
     v = (r_t / mu_fn) + (r_n / denom_n)
 
-    out = u + phi * v
+    out = u + psi * v
     return _guard_no_coord_separable(out, var=var, op_name="enforce_traction")
 
 
@@ -606,20 +655,18 @@ def enforce_robin(
 ) -> DomainFunction:
     r"""Enforced Robin ansatz enforcing $a\,u + b\,\partial u/\partial n = g$.
 
-    On a geometry boundary, this constructs a corrected field that satisfies the Robin
-    condition exactly by using a signed distance factor $\phi$ and normal derivative
-    of $\phi$.
-
-    Let $r = g - a\,u - b\,\partial u/\partial n$ be the residual. With signed distance
-    field $\phi$ and outward normal $n$, define $d\phi/dn = \partial\phi/\partial n$.
-    The returned ansatz is
+    On a geometry boundary, let $\psi$ be a dimensional ansatz factor satisfying
+    $\psi=0$ and $\partial_n\psi=1$, and let $\nu=\nabla\psi$. Define the
+    extended residual $r=g-a\,u-b\,D_\nu u$. Since $\nu=n$ on the boundary, the
+    returned ansatz
 
     $$
-    u^* \;=\; u + \frac{\phi}{b\,(\partial\phi/\partial n)}\,r,
+    u^* \;=\; u + \frac{\psi}{b}\,r
     $$
 
-    which yields $a\,u^* + b\,\partial u^*/\partial n = g$ on $\partial\Omega$ under
-    mild regularity assumptions.
+    yields $a\,u^* + b\,\partial u^*/\partial n = g$ on $\partial\Omega$ under
+    mild regularity assumptions, without requiring a discontinuous unit-normal
+    extension in the interior.
     """
     if isinstance(component, DomainComponentUnion):
         raise TypeError(
@@ -650,10 +697,9 @@ def enforce_robin(
         if b_val.shape == () and float(b_val) == 0.0:
             return enforce_dirichlet(u, component, var=var, target=g / a)
 
-    phi = component.sdf(var=var)
-    n = component.normal(var=var)
-    du_dn = directional_derivative(u, n, var=var, mode=mode)
-    dphi_dn = directional_derivative(phi, n, var=var, mode=mode)
+    psi = _boundary_ansatz_factor(component, factor, var=var)
+    normal_extension = _boundary_ansatz_normal_extension(psi, var=var, mode=mode)
+    du_dnu = directional_derivative(u, normal_extension, var=var, mode=mode)
 
     if isinstance(a, DomainFunction):
         a_fn = a
@@ -669,8 +715,8 @@ def enforce_robin(
     else:
         g_fn = DomainFunction(domain=u.domain, deps=(), func=g, metadata={})
 
-    r = g_fn - a_fn * u - b_fn * du_dn
-    out = u + (phi / (b_fn * dphi_dn)) * r
+    r = g_fn - a_fn * u - b_fn * du_dnu
+    out = u + (psi / b_fn) * r
     return _guard_no_coord_separable(out, var=var, op_name="enforce_robin")
 
 
@@ -693,22 +739,22 @@ def enforce_sommerfeld(
     \frac{\partial u}{\partial n} + \frac{1}{c}\frac{\partial u}{\partial t} = g
     $$
 
-    on the selected boundary component by correcting $u$ using a signed-distance factor.
-
-    With signed distance field $\phi$ and $d\phi/dn = \partial\phi/\partial n$, let
+    on the selected boundary component using a dimensional ansatz factor $\psi$
+    satisfying $\psi=0$ and $\partial_n\psi=1$. With the smooth interior extension
+    $\nu=\nabla\psi$, let
 
     $$
-    r = g - \frac{\partial u}{\partial n} - \frac{1}{c}\frac{\partial u}{\partial t}.
+    r = g - D_\nu u - \frac{1}{c}\frac{\partial u}{\partial t}.
     $$
 
     The returned ansatz is
 
     $$
-    u^* \;=\; u + \frac{\phi}{\partial\phi/\partial n}\,r,
+    u^* \;=\; u + \psi\,r,
     $$
 
-    which yields the Sommerfeld condition on $\partial\Omega$ under the same
-    assumptions as `enforce_neumann`.
+    which yields the Sommerfeld condition on $\partial\Omega$ because $\nu=n$
+    there, under the same assumptions as `enforce_neumann`.
     """
     if isinstance(component, DomainComponentUnion):
         raise TypeError(
@@ -731,11 +777,10 @@ def enforce_sommerfeld(
         raise ValueError("enforce_sommerfeld requires component Boundary() for var.")
     _reject_filtered_boundary(component, var=var, op_name="enforce_sommerfeld")
 
-    phi = component.sdf(var=var)
-    n = component.normal(var=var)
-    du_dn = directional_derivative(u, n, var=var, mode=mode)
+    psi = _boundary_ansatz_factor(component, factor, var=var)
+    normal_extension = _boundary_ansatz_normal_extension(psi, var=var, mode=mode)
+    du_dnu = directional_derivative(u, normal_extension, var=var, mode=mode)
     du_dt = dt(u, var=time_var, mode=mode)
-    dphi_dn = directional_derivative(phi, n, var=var, mode=mode)
 
     c = 1.0 if wavespeed is None else _coerce_value(wavespeed, u)
     g = 0.0 if target is None else _coerce_value(target, u)
@@ -749,8 +794,8 @@ def enforce_sommerfeld(
     else:
         g_fn = DomainFunction(domain=u.domain, deps=(), func=g, metadata={})
 
-    r = g_fn - du_dn - (1.0 / c_fn) * du_dt
-    out = u + (phi / dphi_dn) * r
+    r = g_fn - du_dnu - (1.0 / c_fn) * du_dt
+    out = u + psi * r
     return _guard_no_coord_separable(out, var=var, op_name="enforce_sommerfeld")
 
 

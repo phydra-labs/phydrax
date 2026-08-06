@@ -22,6 +22,11 @@ For a conceptual overview (loss evaluation, enforced pipelines, training loop be
     - `solve(..., tensorboard_log_dir=...)` writes TensorBoard scalar logs.
     - `save_onnx("u", ...)` exports one named ansatz function for deployment.
     - Discrete data constraints report data-fit diagnostics alongside their loss.
+    - `gate_method="auto"` selects the global, dimensionless CAD R-equivalence
+      preservation gate. Select `"compact"` to use the compact fallback;
+      `gate_saturation_fraction` and `gate_linear_fraction` then configure its
+      transition. Configure a boundary term's gate on `enforce_dirichlet` itself.
+      None of these settings changes derivative constraints.
 
 ## Typical usage
 

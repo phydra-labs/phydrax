@@ -45,6 +45,7 @@ vector.
     options:
         members:
             - __init__
+            - make_enforcement_gate
             - label
             - spatial_dim
             - bounds

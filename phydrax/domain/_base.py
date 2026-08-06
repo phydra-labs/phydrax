@@ -3,6 +3,7 @@
 #
 
 import functools as ft
+import math
 from abc import abstractmethod
 from collections.abc import Callable, Sequence
 from typing import Literal, TypeAlias
@@ -17,6 +18,16 @@ from .._strict import AbstractAttribute, StrictModule
 from ._domain import _AbstractUnaryDomain
 
 
+EnforcementGateMethod: TypeAlias = Literal[
+    "auto",
+    "global_r_equivalence",
+    "compact",
+]
+
+_GLOBAL_GATE_CALIBRATION = 1.15
+_GLOBAL_GATE_BOUNDARY_SLOPE = 4.0 * _GLOBAL_GATE_CALIBRATION
+
+
 GeometryTransitionKind: TypeAlias = Literal[
     "unsupported",
     "interval_reflection",
@@ -25,6 +36,83 @@ GeometryTransitionKind: TypeAlias = Literal[
     "mesh_walk",
     "chart_retraction",
 ]
+
+
+def _validate_enforcement_gate_fractions(
+    saturation_fraction: float,
+    linear_fraction: float,
+) -> tuple[float, float]:
+    saturation = float(saturation_fraction)
+    linear = float(linear_fraction)
+    if not math.isfinite(saturation) or not 0.0 < saturation <= 0.5:
+        raise ValueError(
+            "saturation_fraction must be finite and in the interval (0, 0.5]."
+        )
+    if not math.isfinite(linear) or not 0.0 < linear < 1.0:
+        raise ValueError(
+            "linear_fraction must be finite and strictly between zero and one."
+        )
+    return saturation, linear
+
+
+def _make_compact_enforcement_gate(
+    distance: Callable[[Array], Array],
+    *,
+    scale: float,
+    saturation_fraction: float,
+    linear_fraction: float,
+) -> Callable[[Array], Array]:
+    from .geometry3d._sdf import make_compact_boundary_factor
+
+    compact = make_compact_boundary_factor(
+        distance,
+        scale=scale,
+        saturation_fraction=saturation_fraction,
+        linear_fraction=linear_fraction,
+    )
+    plateau = (
+        saturation_fraction * scale * (linear_fraction + 0.5 * (1.0 - linear_fraction))
+    )
+
+    def gate(points: Array) -> Array:
+        return -compact(points) / plateau
+
+    return jax.jit(gate)
+
+
+def _make_global_enforcement_gate(
+    distance: Callable[[Array], Array],
+    *,
+    scale: float,
+) -> Callable[[Array], Array]:
+    """Map a smooth signed distance source to a broad dimensionless gate."""
+    half_span = jnp.asarray(0.5 * scale, dtype=float)
+
+    def gate(points: Array) -> Array:
+        coordinate = -_GLOBAL_GATE_CALIBRATION * distance(points) / half_span
+        interior = coordinate * (2.0 - coordinate)
+        exterior = 2.0 * coordinate / (1.0 + jnp.abs(coordinate))
+        return jnp.where(coordinate >= 0.0, interior, exterior)
+
+    return jax.jit(gate)
+
+
+def _make_global_boundary_ansatz_factor(
+    distance: Callable[[Array], Array],
+    *,
+    scale: float,
+) -> Callable[[Array], Array]:
+    r"""Build a dimensional global gate with outward unit boundary derivative."""
+    gate = _make_global_enforcement_gate(distance, scale=scale)
+    coefficient = jnp.asarray(
+        -float(scale) / _GLOBAL_GATE_BOUNDARY_SLOPE,
+        dtype=float,
+    )
+
+    def factor(points: Array) -> Array:
+        return coefficient * gate(points)
+
+    return jax.jit(factor)
 
 
 class GeometryTransitionResult(StrictModule):
@@ -63,7 +151,13 @@ class GeometryTransitionResult(StrictModule):
 
 
 class _AbstractGeometry(_AbstractUnaryDomain):
-    """Abstract (spatial) geometry."""
+    """Abstract spatial geometry.
+
+    ``adf`` is the signed boundary-defining factor used by differentiable geometry
+    consumers and normal construction. ``boundary_ansatz_factor`` is the dimensional
+    unit-boundary-jet field used by derivative hard constraints; CAD implementations
+    may give it a smoother global interior profile than ``adf``.
+    """
 
     adf: AbstractAttribute[Callable[[Array], Array]]
 
@@ -88,6 +182,78 @@ class _AbstractGeometry(_AbstractUnaryDomain):
     @property
     def var_dim(self) -> int:
         return int(self.spatial_dim)
+
+    @property
+    def enforcement_characteristic_length(self) -> float:
+        """Shortest bounding-box span used to scale a dimensionless solver gate."""
+        bounds = jnp.asarray(self.bounds, dtype=float)
+        widths = bounds[1] - bounds[0]
+        length = float(jnp.min(widths))
+        if not math.isfinite(length) or length <= 0.0:
+            raise ValueError(
+                f"{type(self).__name__} must have a finite positive bounding-box span."
+            )
+        return length
+
+    @property
+    def boundary_ansatz_factor(self) -> Callable[[Array], Array]:
+        r"""Dimensional vanishing factor with outward unit boundary derivative.
+
+        The default is ``adf``. CAD geometries override it with a globally smooth
+        R-equivalence profile while retaining the same boundary zero and first jet.
+        """
+        return self.adf
+
+    def make_enforcement_gate(
+        self,
+        *,
+        method: EnforcementGateMethod = "auto",
+        saturation_fraction: float = 0.5,
+        linear_fraction: float = 0.5,
+    ) -> Callable[[Array], Array]:
+        r"""Build a dimensionless, optimization-conditioned Dirichlet gate.
+
+        The gate is zero on the boundary, positive inside, and order one away from
+        it. It is deliberately separate from ``adf`` and
+        ``boundary_ansatz_factor``: boundary-normal APIs use ``adf``, while derivative
+        hard constraints use the dimensional unit-jet ansatz factor and its gradient.
+        ``method="auto"`` selects an exact analytic gate when available and the global
+        R-equivalence gate for CAD meshes. Analytic builders retain their fixed exact
+        profiles; ``method`` and the profile fractions control CAD or generic fallbacks.
+        """
+        saturation, linear = _validate_enforcement_gate_fractions(
+            saturation_fraction, linear_fraction
+        )
+        if method not in ("auto", "global_r_equivalence", "compact"):
+            raise ValueError(
+                "method must be 'auto', 'global_r_equivalence', or 'compact', "
+                f"got {method!r}."
+            )
+        builder = self._enforcement_gate_builder
+        if builder is not None:
+            return builder(
+                method=method,
+                saturation_fraction=saturation,
+                linear_fraction=linear,
+            )
+        if method == "global_r_equivalence":
+            return _make_global_enforcement_gate(
+                self.adf,
+                scale=self.enforcement_characteristic_length,
+            )
+        return _make_compact_enforcement_gate(
+            self.adf,
+            scale=self.enforcement_characteristic_length,
+            saturation_fraction=saturation,
+            linear_fraction=linear,
+        )
+
+    @property
+    def _enforcement_gate_builder(
+        self,
+    ) -> Callable[..., Callable[[Array], Array]] | None:
+        """Return an optional geometry-specific gate builder."""
+        return None
 
     @property
     @abstractmethod
@@ -215,9 +381,9 @@ class _AbstractGeometry(_AbstractUnaryDomain):
             crossing = current + lower[:, None] * remaining
             normal = normal_batch(crossing)
             tail = (1.0 - lower)[:, None] * remaining
-            reflected_tail = tail - 2.0 * jnp.sum(
-                tail * normal, axis=1, keepdims=True
-            ) * normal
+            reflected_tail = (
+                tail - 2.0 * jnp.sum(tail * normal, axis=1, keepdims=True) * normal
+            )
             inside_crossing = crossing - inset * normal
             current = jnp.where(outside[:, None], inside_crossing, proposed)
             remaining = jnp.where(outside[:, None], reflected_tail, 0.0)
@@ -267,10 +433,14 @@ class _AbstractGeometry(_AbstractUnaryDomain):
 
         gradient = gradients(pts)
         norm_sq = jnp.sum(gradient * gradient, axis=1, keepdims=True)
-        tangent = delta - (
-            jnp.sum(delta * gradient, axis=1, keepdims=True)
-            / jnp.maximum(norm_sq, jnp.finfo(pts.dtype).eps)
-        ) * gradient
+        tangent = (
+            delta
+            - (
+                jnp.sum(delta * gradient, axis=1, keepdims=True)
+                / jnp.maximum(norm_sq, jnp.finfo(pts.dtype).eps)
+            )
+            * gradient
+        )
         retracted = pts + tangent
         proposed = retracted
         for _ in range(6):

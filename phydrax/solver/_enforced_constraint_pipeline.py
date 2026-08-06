@@ -22,7 +22,7 @@ from .._interpolation import (
 )
 from .._strict import StrictModule
 from ..constraints._enforced import _enforced_constraint_weight_fn, enforce_initial
-from ..domain._base import _AbstractGeometry
+from ..domain._base import _AbstractGeometry, EnforcementGateMethod
 from ..domain._components import (
     Boundary,
     DomainComponent,
@@ -788,6 +788,11 @@ def _initial_overlay_boundary_compatible(
         for piece in overlay.pieces:
             if isinstance(piece, MultiFieldEnforcedConstraint):
                 return False
+            # A value-only probe cannot establish compatibility of derivative
+            # boundary conditions. Conservatively retain the powered boundary
+            # gate so later stages cannot alter the declared boundary jet.
+            if int(piece.max_derivative_order) > 0:
+                return False
 
     def _get_field_unavailable(name: str, /) -> DomainFunction:
         raise KeyError(
@@ -1161,7 +1166,7 @@ class _InteriorDataOverlay(StrictModule):
     evolution_var: str
     max_init_order: int
     t0: Array | None
-    geometry_factors: frozendict[str, _AbstractGeometry]
+    geometry_gates: frozendict[str, Callable[[Array], Array]]
     m_anchor: Array
     track_sources: tuple[_TrackOverlaySource, ...]
 
@@ -1174,6 +1179,9 @@ class _InteriorDataOverlay(StrictModule):
         gate_exponents: Mapping[str, int],
         evolution_var: str,
         max_init_order: int,
+        gate_method: EnforcementGateMethod,
+        gate_saturation_fraction: float,
+        gate_linear_fraction: float,
     ):
         self.anchor_set = anchor_set
         self.gate_exponents = frozendict(
@@ -1189,23 +1197,27 @@ class _InteriorDataOverlay(StrictModule):
                 t0 = jnp.asarray(factor.fixed("start"), dtype=float).reshape(())
         self.t0 = t0
 
-        geom: dict[str, _AbstractGeometry] = {}
-        for lbl in self.gate_exponents:
-            factor = _unwrap_factor(domain.factor(lbl))
+        gates: dict[str, Callable[[Array], Array]] = {}
+        for label in self.gate_exponents:
+            factor = _unwrap_factor(domain.factor(label))
             if not isinstance(factor, _AbstractGeometry):
                 raise TypeError(
                     "Boundary gating exponents must refer to geometry labels."
                 )
-            geom[lbl] = factor
-        self.geometry_factors = frozendict(geom)
+            gates[label] = factor.make_enforcement_gate(
+                method=gate_method,
+                saturation_fraction=gate_saturation_fraction,
+                linear_fraction=gate_linear_fraction,
+            )
+        self.geometry_gates = frozendict(gates)
 
         # Precompute M(anchor_i) to validate anchors and reuse inside the overlay.
         n = int(self.anchor_set.source_index.shape[0])
         m_anchor = jnp.ones((n,), dtype=float)
         for lbl, p in self.gate_exponents.items():
             x = jnp.asarray(self.anchor_set.anchors[lbl], dtype=float)
-            sdf = jax.vmap(self.geometry_factors[lbl].adf)(x)
-            m_anchor = m_anchor * (jnp.abs(sdf) ** int(p))
+            gate = self.geometry_gates[lbl](x)
+            m_anchor = m_anchor * (jnp.abs(gate) ** int(p))
 
         q = (self.max_init_order + 1) if self.max_init_order >= 0 else 0
         if q > 0:
@@ -1251,8 +1263,8 @@ class _InteriorDataOverlay(StrictModule):
                     raise ValueError(
                         "Hermite sensor tracks require boundary gating on the space label only."
                     )
-                sdf = jax.vmap(self.geometry_factors[lbl].adf)(sensors)
-                m_track = m_track * (jnp.abs(sdf) ** int(p))[:, None]
+                gate = self.geometry_gates[lbl](sensors)
+                m_track = m_track * (jnp.abs(gate) ** int(p))[:, None]
 
             if q > 0:
                 if self.t0 is None:
@@ -1302,7 +1314,7 @@ class _InteriorDataOverlay(StrictModule):
         track_sources = self.track_sources
 
         gate_exps = dict(self.gate_exponents)
-        geom_factors = dict(self.geometry_factors)
+        geom_gates = dict(self.geometry_gates)
         q = (self.max_init_order + 1) if self.max_init_order >= 0 else 0
         t0 = self.t0 if self.t0 is not None else jnp.asarray(0.0, dtype=float)
         evolution_var = self.evolution_var
@@ -1313,10 +1325,10 @@ class _InteriorDataOverlay(StrictModule):
         def _M_query(z_by_label: Mapping[str, Array], /) -> Array:
             m = jnp.asarray(1.0, dtype=float)
             for lbl, p in gate_exps.items():
-                sdf = jnp.asarray(
-                    geom_factors[lbl].adf(z_by_label[lbl]), dtype=float
-                ).reshape(())
-                m = m * (jnp.abs(sdf) ** int(p))
+                gate = jnp.asarray(geom_gates[lbl](z_by_label[lbl]), dtype=float).reshape(
+                    ()
+                )
+                m = m * (jnp.abs(gate) ** int(p))
             if q > 0:
                 t = jnp.asarray(z_by_label[evolution_var], dtype=float).reshape(())
                 m = m * (jnp.maximum(t - t0, 0.0) ** int(q))
@@ -1659,9 +1671,9 @@ class _InteriorDataOverlay(StrictModule):
                 corr = jnp.sum(wpsi[..., None] * r_b, axis=0)
 
             m_q = jnp.asarray(1.0, dtype=float)
-            for lbl, pwr in gate_exps.items():
-                sdf = jnp.asarray(geom_factors[lbl].adf(_geom_coords(lbl)), dtype=float)
-                m_q = m_q * (jnp.abs(sdf) ** int(pwr))
+            for lbl, power in gate_exps.items():
+                gate = jnp.asarray(geom_gates[lbl](_geom_coords(lbl)), dtype=float)
+                m_q = m_q * (jnp.abs(gate) ** int(power))
             if q > 0:
                 t = jnp.asarray(z[evolution_var], dtype=float).reshape(())
                 m_q = m_q * (jnp.maximum(t - t0, 0.0) ** int(q))
@@ -1757,6 +1769,9 @@ class EnforcedConstraintPipeline(StrictModule):
         interior_data: Sequence[EnforcedInteriorData] = (),
         evolution_var: str = "t",
         include_identity_remainder: bool = True,
+        gate_method: EnforcementGateMethod = "auto",
+        gate_saturation_fraction: float = 0.5,
+        gate_linear_fraction: float = 0.5,
         num_reference: int = 3_000_000,
         sampler: str = "latin_hypercube",
         key: Key[Array, ""] = DOC_KEY0,
@@ -1778,6 +1793,12 @@ class EnforcedConstraintPipeline(StrictModule):
         - `include_identity_remainder`: When blending multiple boundary pieces,
           include a remainder weight for the identity map (keeps $u$ unchanged
           away from all pieces).
+        - `gate_method`: CAD gate implementation. ``"auto"`` selects the global
+          R-equivalence gate; ``"compact"`` selects the compact fallback.
+        - `gate_saturation_fraction`: Relative extent of compact CAD preservation
+          gates. Used only when ``gate_method="compact"``.
+        - `gate_linear_fraction`: Fraction of the compact gate extent retaining a
+          linear boundary profile.
         - `num_reference`: Reference sample count used to normalize boundary blend weights.
         - `sampler`: Sampler used to draw reference points.
         - `key`: PRNG key used to draw reference points.
@@ -1933,58 +1954,33 @@ class EnforcedConstraintPipeline(StrictModule):
                 gate_factors_list.append(factor)
             gate_factors = tuple(gate_factors_list)
             gate_powers = tuple(int(boundary_exps[lbl]) for lbl in gate_labels)
-            gate_scales = tuple(
-                float(
-                    jnp.max(
-                        jnp.abs(
-                            jnp.asarray(
-                                f.adf(
-                                    f.sample_interior(
-                                        int(num_reference),
-                                        sampler=sampler,
-                                        key=jr.fold_in(key, i + 1),
-                                    )
-                                ),
-                                dtype=float,
-                            )
-                        )
-                    )
-                    + 1e-12
+            gate_functions = tuple(
+                factor.make_enforcement_gate(
+                    method=gate_method,
+                    saturation_fraction=gate_saturation_fraction,
+                    linear_fraction=gate_linear_fraction,
                 )
-                for i, f in enumerate(gate_factors)
-            )
-            gate_widths = tuple(
-                float(
-                    jnp.linalg.norm(
-                        jnp.asarray(f.mesh_bounds, dtype=float)[1]
-                        - jnp.asarray(f.mesh_bounds, dtype=float)[0]
-                    )
-                    + 1e-12
-                )
-                * 0.05
-                for f in gate_factors
+                for factor in gate_factors
             )
 
             def _gate(*args, key=None, **kwargs):
                 del key, kwargs
-                m = jnp.asarray(1.0, dtype=float)
-                for arg, factor, power, width, scale in zip(
+                value = jnp.asarray(1.0, dtype=float)
+                for arg, gate, power in zip(
                     args,
-                    gate_factors,
+                    gate_functions,
                     gate_powers,
-                    gate_widths,
-                    gate_scales,
                     strict=True,
                 ):
-                    sdf = jnp.asarray(factor.adf(arg), dtype=float)
-                    w = jnp.asarray(width, dtype=float)
-                    s = jnp.asarray(scale, dtype=float)
-                    x = jnp.abs(sdf) / (w * s + 1e-12)
+                    gate_value = jnp.clip(
+                        jnp.abs(jnp.asarray(gate(arg), dtype=float)),
+                        0.0,
+                        1.0,
+                    )
                     if int(power) != 1:
-                        x = x ** int(power)
-                    gamma = 1.0 - jnp.exp(-(x * x))
-                    m = m * gamma
-                return m
+                        gate_value = gate_value ** int(power)
+                    value = value * gate_value
+                return value
 
             self.boundary_gate = DomainFunction(
                 domain=u_base.domain,
@@ -2003,8 +1999,11 @@ class EnforcedConstraintPipeline(StrictModule):
                 u_base.domain,
                 anchor_set,
                 gate_exponents=boundary_exps,
+                gate_method=gate_method,
                 evolution_var=self.evolution_var,
                 max_init_order=max_init_order,
+                gate_saturation_fraction=gate_saturation_fraction,
+                gate_linear_fraction=gate_linear_fraction,
             )
         self.interior_data = interior_data_overlay
 
@@ -2091,6 +2090,9 @@ class EnforcedConstraintPipelines(StrictModule):
         interior_data: Sequence[EnforcedInteriorData] = (),
         evolution_var: str = "t",
         include_identity_remainder: bool = True,
+        gate_method: EnforcementGateMethod = "auto",
+        gate_saturation_fraction: float = 0.5,
+        gate_linear_fraction: float = 0.5,
         num_reference: int = 3_000_000,
         sampler: str = "latin_hypercube",
         key: Key[Array, ""] = DOC_KEY0,
@@ -2119,6 +2121,9 @@ class EnforcedConstraintPipelines(StrictModule):
                 constraints=cs,
                 interior_data=ds,
                 evolution_var=evolution_var,
+                gate_method=gate_method,
+                gate_saturation_fraction=gate_saturation_fraction,
+                gate_linear_fraction=gate_linear_fraction,
                 include_identity_remainder=include_identity_remainder,
                 num_reference=num_reference,
                 sampler=sampler,

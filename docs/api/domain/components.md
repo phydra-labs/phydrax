@@ -65,6 +65,7 @@ overlap.
             - normals
             - normal
             - sdf
+            - enforcement_gate
 
 ---
 

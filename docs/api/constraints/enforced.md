@@ -25,6 +25,17 @@ see [Enforced constraint pipelines](../solver/enforced_constraints.md).
     unfiltered `Boundary()` component, then associate those ansätze with the
     filtered components passed to `enforce_blend`.
 
+!!! info
+    Geometry value and derivative ansätze intentionally use different units.
+    `enforce_dirichlet` uses a dimensionless enforcement gate that is zero on the
+    boundary and order one in the interior. Neumann, Robin, traction, and Sommerfeld
+    use the dimensional `boundary_ansatz_factor`, whose outward boundary derivative
+    is one, and its gradient as a smooth off-boundary normal extension. This gradient
+    agrees with the outward unit normal on regular boundary points but need not remain
+    unit length in the interior. Public normal calculations continue to use the
+    geometry ADF and normal provider. The compact gate remains an explicit option for
+    Dirichlet and preservation overlays.
+
 ::: phydrax.constraints.enforce_dirichlet
 
 ---

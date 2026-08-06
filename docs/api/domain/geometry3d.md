@@ -7,6 +7,15 @@ finite, nondegenerate, consistently oriented, and watertight after
 sanitization; open or zero-volume surfaces are rejected before distance fields,
 sampling, or boundary normals are constructed.
 
+CAD geometry exposes four distinct scalar fields. `predicate_sdf` is used for
+inside/outside classification. `boundary_factor` (also available as `adf`) is the
+scale-covariant, compactly saturated field used by geometry operations and normal
+construction; it equals signed distance in a boundary collar but does not claim
+metric distance in the interior. `boundary_ansatz_factor` is a dimensional,
+unit-boundary-jet rescaling of the global R-equivalence profile used by derivative
+hard constraints. `make_enforcement_gate(...)` supplies the corresponding
+dimensionless gate for Dirichlet ansätze and preservation overlays.
+
 ### Boolean / CSG operations
 
 `Geometry3DFromCAD` supports boolean operations via operator overloading:
@@ -33,6 +42,8 @@ sampling, or boundary normals are constructed.
     options:
         members:
             - __init__
+            - boundary_ansatz_factor
+            - make_enforcement_gate
             - __add__
             - __sub__
             - __and__

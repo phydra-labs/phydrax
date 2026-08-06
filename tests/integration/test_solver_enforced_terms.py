@@ -180,7 +180,7 @@ def test_enforced_constraints_respected_with_latent_contraction_model():
 
     @domain.Function("x")
     def u0_target(x):
-        return x[0]
+        return jnp.sin(jnp.pi * x[0])
 
     @domain.Function("x")
     def ut0_target(x):
@@ -226,7 +226,7 @@ def test_enforced_constraints_respected_with_latent_contraction_model():
     x_vals = jnp.linspace(0.0, 1.0, 17)
     x_interior = x_vals[1:-1]
     u_init = jax.vmap(lambda x: u.func(jnp.asarray([x]), 0.0))(x_interior).reshape((-1,))
-    assert jnp.max(jnp.abs(u_init - x_interior)) < 1e-6
+    assert jnp.max(jnp.abs(u_init - jnp.sin(jnp.pi * x_interior))) < 1e-6
 
     corner = u.func(jnp.asarray([1.0]), 0.0)
     assert jnp.abs(corner) < 1e-6

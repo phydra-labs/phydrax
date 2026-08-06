@@ -21,10 +21,17 @@ import trimesh
 from jaxtyping import Array, ArrayLike, Bool, Float, Key
 
 from ..._doc import DOC_KEY0
+from ..._sampling import get_sampler_host, seed_from_key
+from .._base import (
+    _make_compact_enforcement_gate,
+    _make_global_boundary_ansatz_factor,
+    _make_global_enforcement_gate,
+    EnforcementGateMethod,
+)
 from .._chart import CADChartAtlas
 from .._measure_partition import GeometryMeasurePartition
-from ..._sampling import get_sampler_host, seed_from_key
 from ..geometry3d._mesh import Geometry3DFromCAD
+from ..geometry3d._sdf import make_compact_boundary_factor
 from ..geometry3d._utils import (
     _boolean_mesh,
     _canonicalize_mesh_arrays,
@@ -44,8 +51,11 @@ class Geometry2DFromCAD(_AbstractGeometry2D):
     - interior points $x\in\Omega$ by sampling triangles proportional to their area;
     - boundary points $x\in\partial\Omega$ by sampling edges proportional to length.
 
-    The geometry also provides a smooth signed distance-like function $\phi(x)$ (via
-    `adf`) that is used for containment tests and for estimating normals when needed.
+    `predicate_sdf` supplies signed classification values. `boundary_factor` (also
+    exposed as `adf`) supplies the compact dimensional field used by geometry
+    operations. `boundary_ansatz_factor` supplies the globally conditioned,
+    dimensional unit-jet field for derivative hard constraints, and
+    `make_enforcement_gate` supplies the dimensionless Dirichlet and overlay gate.
     """
 
     mesh: meshio.Mesh
@@ -65,6 +75,8 @@ class Geometry2DFromCAD(_AbstractGeometry2D):
     interior_measure_partition: GeometryMeasurePartition
     boundary_measure_partition: GeometryMeasurePartition
     boundary_chart_atlas: CADChartAtlas
+    predicate_sdf: Callable[[Array], Array]
+    boundary_factor: Callable[[Array], Array]
     adf: Callable[[Array], Array]
 
     def __init__(
@@ -128,7 +140,55 @@ class Geometry2DFromCAD(_AbstractGeometry2D):
         )
         self.boundary_chart_atlas = CADChartAtlas(self.boundary_measure_partition)
 
-        self.adf = self.adf_blur(self.adf_orig, radius_fn=self.adf_orig)
+        self.predicate_sdf = self.adf_orig
+        self.boundary_factor = make_compact_boundary_factor(
+            self.predicate_sdf,
+            scale=self.diameter,
+        )
+        self.adf = self.boundary_factor
+
+    @cached_property
+    def _enforcement_distance(self) -> Callable[[Array], Array]:
+        """R-equivalent distance source with an exact local boundary collar."""
+        length = self.enforcement_characteristic_length
+        return self._make_smooth_mesh_sdf(
+            squash=False,
+            r0=0.25 * length,
+            equivalence_power=12.0,
+        )
+
+    @cached_property
+    def boundary_ansatz_factor(self) -> Callable[[Array], Array]:
+        """Globally conditioned CAD factor with an outward unit boundary jet."""
+        return _make_global_boundary_ansatz_factor(
+            self._enforcement_distance,
+            scale=self.enforcement_characteristic_length,
+        )
+
+    @property
+    def _enforcement_gate_builder(
+        self,
+    ) -> Callable[..., Callable[[Array], Array]]:
+        return self._make_enforcement_gate
+
+    def _make_enforcement_gate(
+        self,
+        *,
+        method: EnforcementGateMethod,
+        saturation_fraction: float,
+        linear_fraction: float,
+    ) -> Callable[[Array], Array]:
+        if method == "compact":
+            return _make_compact_enforcement_gate(
+                self._enforcement_distance,
+                scale=self.enforcement_characteristic_length,
+                saturation_fraction=saturation_fraction,
+                linear_fraction=linear_fraction,
+            )
+        return _make_global_enforcement_gate(
+            self._enforcement_distance,
+            scale=self.enforcement_characteristic_length,
+        )
 
     @cached_property
     def _mesh_signature(self) -> tuple[np.ndarray, np.ndarray]:
@@ -168,6 +228,7 @@ class Geometry2DFromCAD(_AbstractGeometry2D):
         beam_steps: int | None = None,
         r0: float | None = None,
         rho_delta: float | None = None,
+        equivalence_power: float | None = None,
         squash: bool = True,
     ) -> Callable[[Array], Array]:
         sdf_3d = self.geom_3d_extruded._make_smooth_mesh_sdf(
@@ -177,6 +238,7 @@ class Geometry2DFromCAD(_AbstractGeometry2D):
             beam_steps=beam_steps,
             r0=r0,
             rho_delta=rho_delta,
+            equivalence_power=equivalence_power,
             squash=squash,
         )
         z0 = jnp.asarray(self.diameter * 2.0, dtype=float)
@@ -218,7 +280,7 @@ class Geometry2DFromCAD(_AbstractGeometry2D):
 
     @cached_property
     def adf_orig(self) -> Callable[[Array], Array]:
-        """Unsquashed smooth distance (returns `d` before tanh saturation)."""
+        """Unsquashed smooth distance-like source used by geometric predicates."""
         return self._make_smooth_mesh_sdf(squash=False)
 
     def adf_blur(
@@ -447,8 +509,7 @@ class Geometry2DFromCAD(_AbstractGeometry2D):
         squared_distances = x_diff**2 + y_diff**2
 
         max_squared_distance = np.max(squared_distances)
-        max_distance = np.sqrt(max_squared_distance + np.finfo(float).eps)
-        return max_distance
+        return float(np.sqrt(max_squared_distance))
 
     @cached_property
     def _geom_3d_extruded(self):

@@ -43,7 +43,7 @@ from . import (
     geometry3d,
     graph,
 )
-from ._base import GeometryTransitionKind, GeometryTransitionResult
+from ._base import EnforcementGateMethod, GeometryTransitionKind, GeometryTransitionResult
 from ._chart import CADChartAtlas
 from ._components import (
     Boundary,
@@ -151,6 +151,7 @@ __all__ = [
     "geometry3d",
     # time domain
     "ScalarInterval",
+    "EnforcementGateMethod",
     "GeometryTransitionKind",
     "GeometryTransitionResult",
     "TimeInterval",
