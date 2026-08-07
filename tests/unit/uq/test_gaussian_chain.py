@@ -127,6 +127,45 @@ def test_parallel_filter_matches_irregular_masked_padded_batch():
     assert jnp.array_equal(parallel.filtered_means[1, -1], parallel.filtered_means[1, -2])
 
 
+def test_parallel_filter_preserves_multidimensional_case_batches():
+    case_shape = (2, 2)
+    num_steps = 5
+    observations = phx.stochastic.ObservationSequence(
+        jnp.linspace(0.1, 0.5, num_steps),
+        jnp.arange(20, dtype=float).reshape(case_shape + (num_steps, 1)) / 10.0,
+        case_axes=("row", "column"),
+        case_shape=case_shape,
+        case_ids=("00", "01", "10", "11"),
+    )
+    covariance = jnp.asarray([[[[0.4]], [[0.5]]], [[[0.6]], [[0.7]]]])
+    prior = phx.stochastic.GaussianStatePrior(
+        jnp.zeros(case_shape + (1,)),
+        covariance,
+        state_shape=(1,),
+    )
+    transition = phx.stochastic.LinearGaussianTransitionKernel(
+        jnp.asarray([[1.0]]), jnp.asarray([[0.05]]), state_shape=(1,)
+    )
+    observation = phx.stochastic.LinearGaussianObservationModel(
+        jnp.asarray([[1.0]]),
+        jnp.asarray([[0.2]]),
+        state_shape=(1,),
+        observation_shape=(1,),
+    )
+    problem = phx.stochastic.StateSpaceProblem(
+        phx.stochastic.StateSpaceModel(
+            prior, transition, observation, model_id="matrix-case-model"
+        ),
+        observations,
+        initial_time=jnp.zeros(case_shape),
+        problem_id="matrix-case-problem",
+    )
+    sequential = phx.uq.kalman_filter(problem, method="sequential")
+    parallel = phx.uq.kalman_filter(problem, method="parallel")
+    _assert_filter_equivalent(sequential, parallel)
+    assert parallel.filtered_means.shape == case_shape + (num_steps, 1)
+
+
 def test_parallel_filter_freezes_failed_cases_exactly():
     problem = _problem(failed=True)
     sequential = phx.uq.kalman_filter(problem, method="sequential")

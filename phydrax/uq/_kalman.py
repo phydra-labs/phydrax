@@ -542,8 +542,8 @@ def _parallel_kalman_filter(
         1,
     )
     initial_mean = prior.mean.reshape((case_count, state_size))
-    initial_covariance = jnp.broadcast_to(
-        prior.covariance, (case_count, state_size, state_size)
+    initial_covariance = prior.covariance.reshape(
+        (case_count, state_size, state_size)
     )
     filtered_mean, filtered_covariance = associative_gaussian_filter(
         initial_mean,
