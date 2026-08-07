@@ -106,6 +106,15 @@ def test_spd_congruence_retraction_and_inverse_are_positive_definite():
     assert jnp.isfinite(gradient)
 
 
+def test_spd_retraction_gradient_is_finite_at_repeated_eigenvalues():
+    geometry = SymmetricPositiveDefiniteStateGeometry(2)
+    local = jnp.array([[0.15, -0.05], [-0.05, -0.1]])
+    gradient = jax.grad(
+        lambda base: jnp.sum(geometry.retract(base, local))
+    )(jnp.eye(2))
+    assert jnp.all(jnp.isfinite(gradient))
+
+
 def test_embedded_and_pointwise_adapters_preserve_explicit_contracts():
     sphere = EmbeddedStateGeometry(
         membership=lambda state: jnp.isclose(jnp.linalg.norm(state), 1.0),

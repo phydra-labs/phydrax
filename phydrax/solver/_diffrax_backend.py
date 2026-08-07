@@ -267,6 +267,14 @@ def _resolved_controller(
     rtol: float,
     atol: float,
 ) -> Any:
+    if (
+        isinstance(solver, AbstractGeometricSolver)
+        and controller is not None
+        and not isinstance(controller, dfx.ConstantStepSize)
+    ):
+        raise ValueError(
+            "Geometric solvers require diffrax.ConstantStepSize."
+        )
     if controller is not None:
         return controller
     if problem.stochastic or isinstance(solver, AbstractGeometricSolver):

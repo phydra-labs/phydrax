@@ -790,18 +790,19 @@ class SymmetricPositiveDefiniteStateGeometry(AbstractStateGeometry):
         self.retraction_method = "congruence-exponential"
         self.trivial = False
 
-    def _spectral_factors(self, state: Array, /) -> tuple[Array, Array]:
-        eigenvalues, eigenvectors = jnp.linalg.eigh(_symmetric(state))
-        safe = jnp.maximum(eigenvalues, jnp.finfo(state.dtype).tiny)
-        square_root = (
-            eigenvectors
-            * jnp.expand_dims(jnp.sqrt(safe), axis=-2)
-        ) @ _transpose(eigenvectors)
-        inverse_root = (
-            eigenvectors
-            * jnp.expand_dims(jax.lax.rsqrt(safe), axis=-2)
-        ) @ _transpose(eigenvectors)
-        return square_root, inverse_root
+    def _congruence_factor(self, state: Array, /) -> Array:
+        return jnp.linalg.cholesky(_symmetric(state))
+
+    def _inverse_congruence(
+        self,
+        factor: Array,
+        value: Array,
+        /,
+    ) -> Array:
+        left_solved = jnp.linalg.solve(factor, value)
+        return _transpose(
+            jnp.linalg.solve(factor, _transpose(left_solved))
+        )
 
     def contains(self, state: ArrayLike, /) -> Array:
         matrix = _matrix_shape(state, self.dimension, "SPD(n) state")
@@ -836,8 +837,8 @@ class SymmetricPositiveDefiniteStateGeometry(AbstractStateGeometry):
     ) -> Array:
         matrix = _matrix_shape(state, self.dimension, "SPD(n) state")
         projected = self.project_tangent(matrix, tangent)
-        _, inverse_root = self._spectral_factors(matrix)
-        return _symmetric(inverse_root @ projected @ inverse_root)
+        factor = self._congruence_factor(matrix)
+        return _symmetric(self._inverse_congruence(factor, projected))
 
     def from_local(
         self,
@@ -852,8 +853,8 @@ class SymmetricPositiveDefiniteStateGeometry(AbstractStateGeometry):
             "SPD(n) local tangent",
         )
         _same_shape(local, matrix, "SPD(n) local tangent")
-        square_root, _ = self._spectral_factors(matrix)
-        return _symmetric(square_root @ _symmetric(local) @ square_root)
+        factor = self._congruence_factor(matrix)
+        return _symmetric(factor @ _symmetric(local) @ _transpose(factor))
 
     def retract(
         self,
@@ -868,9 +869,9 @@ class SymmetricPositiveDefiniteStateGeometry(AbstractStateGeometry):
             "SPD(n) local tangent",
         )
         _same_shape(local, matrix, "SPD(n) local tangent")
-        square_root, _ = self._spectral_factors(matrix)
+        factor = self._congruence_factor(matrix)
         return _symmetric(
-            square_root @ _matrix_exponential(_symmetric(local)) @ square_root
+            factor @ _matrix_exponential(_symmetric(local)) @ _transpose(factor)
         )
 
     def inverse_retract(
@@ -882,8 +883,8 @@ class SymmetricPositiveDefiniteStateGeometry(AbstractStateGeometry):
         matrix = _matrix_shape(state, self.dimension, "SPD(n) state")
         target = _matrix_shape(point, self.dimension, "SPD(n) retraction point")
         _same_shape(target, matrix, "SPD(n) retraction point")
-        _, inverse_root = self._spectral_factors(matrix)
-        relative = _symmetric(inverse_root @ target @ inverse_root)
+        factor = self._congruence_factor(matrix)
+        relative = _symmetric(self._inverse_congruence(factor, target))
         eigenvalues, eigenvectors = jnp.linalg.eigh(relative)
         logarithm = (
             eigenvectors

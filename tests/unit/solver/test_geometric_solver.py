@@ -76,6 +76,14 @@ def test_problem_validates_membership_and_rejects_ordinary_solver():
             solver=dfx.Euler(),
             dt0=0.01,
         )
+    with pytest.raises(ValueError, match="ConstantStepSize"):
+        phx.solver.solve_diffrax(
+            problem,
+            save_times=jnp.asarray([1.0]),
+            solver=phx.solver.RKMK(problem.state_geometry),
+            stepsize_controller=dfx.PIDController(rtol=1e-4, atol=1e-6),
+            dt0=0.01,
+        )
 
 
 def test_euclidean_geometric_euler_agrees_with_ordinary_euler():
