@@ -42,6 +42,11 @@ from ._stochastic import (
     covariant_fokker_planck_operator,
     covariant_kolmogorov_generator,
 )
+from ._state_geometry import (
+    AbstractStateGeometry,
+    EuclideanStateGeometry,
+    LocalRetraction,
+)
 from ._tensor import (
     contract_indices,
     COVECTOR_TENSOR,
@@ -62,14 +67,17 @@ from ._validation import MetricValidationReport, validate_metric
 
 
 __all__ = [
+    "AbstractStateGeometry",
     "COVECTOR_TENSOR",
     "ChartTransition",
     "CoordinateChart",
     "EmbeddedChart",
+    "EuclideanStateGeometry",
     "LeviCivitaConnection",
     "MetricJet",
     "MetricValidationReport",
     "RiemannianMetric",
+    "LocalRetraction",
     "DENSITY_TENSOR",
     "SCALAR_TENSOR",
     "TensorType",
