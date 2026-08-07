@@ -96,6 +96,22 @@ def test_special_orthogonal_retractions_preserve_group(method):
 
 def test_so_exponential_inverse_rejects_rotations_outside_local_neighborhood():
     geometry = SpecialOrthogonalStateGeometry(2)
+    radius = jnp.asarray(0.499)
+    angle = 2.0 * jnp.arctan(radius)
+    supported = jnp.array([[0.0, -angle], [angle, 0.0]])
+    direction = jnp.array([[0.0, -0.17], [0.17, 0.0]])
+    supported_point, point_tangent = jax.jvp(
+        lambda local: geometry.retract(jnp.eye(2), local),
+        (supported,),
+        (direction,),
+    )
+    recovered, recovered_tangent = jax.jvp(
+        lambda point: geometry.inverse_retract(jnp.eye(2), point),
+        (supported_point,),
+        (point_tangent,),
+    )
+    assert jnp.allclose(recovered, supported, atol=2e-12)
+    assert jnp.allclose(recovered_tangent, direction, atol=2e-11)
     local = jnp.array([[0.0, -2.0], [2.0, 0.0]])
     point = geometry.retract(jnp.eye(2), local)
     with pytest.raises(Exception, match="principal local rotation"):
@@ -201,6 +217,10 @@ def test_embedded_and_pointwise_adapters_preserve_explicit_contracts():
     assert bool(sphere.contains(point))
     assert not sphere.supports_exact_pullback
     assert not sphere.supports_commutator_free
+    with pytest.raises(ValueError, match="inverse_retraction callable"):
+        sphere.inverse_retract(base, point)
+    with pytest.raises(ValueError, match="inverse_retraction callable"):
+        sphere.interpolate(base, point, 1.0)
 
     pointwise = PointwiseStateGeometry(
         SpecialOrthogonalStateGeometry(2),

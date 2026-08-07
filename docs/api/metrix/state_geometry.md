@@ -15,14 +15,18 @@ records both a stable retraction ID and the resolved method.
 - `EuclideanStateGeometry` is the identity/addition geometry. It is marked
   trivial, so ordinary Diffrax solvers remain supported.
 - `EmbeddedStateGeometry` adapts explicit membership, tangent-projection, and
-  retraction callables. RKMK/SRKMK require both explicit inverse-retraction and
-  pullback callables; the generic projection fallback is not treated as an
-  inverse differential.
+  retraction callables. Without an explicit inverse-retraction callable,
+  `inverse_retract` and interpolation reject rather than substituting a
+  projected chord. RKMK/SRKMK require both explicit inverse-retraction and
+  pullback callables.
 - `PointwiseStateGeometry` applies one geometry independently across leading
   point axes while preserving those axes and its wrapped capabilities.
 - `SpecialOrthogonalStateGeometry` represents SO(n), using skew tangent
-  coordinates and either an exponential or Cayley retraction. It supplies the
-  shared trivialization required by commutator-free tableaux.
+  coordinates and either an exponential or Cayley retraction. Its degree-63
+  principal logarithm accepts Cayley spectral radius below 0.5; exact solver
+  pullbacks differentiate the supplied local retraction without using that
+  logarithm. SO(n) supplies the shared trivialization required by
+  commutator-free tableaux.
 - `SymmetricPositiveDefiniteStateGeometry` represents SPD(n), using symmetric
   tangent coordinates and a congruence/exponential retraction. It has exact
   local pullbacks but no shared group trivialization, so use RKMK rather than

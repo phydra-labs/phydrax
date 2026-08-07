@@ -71,9 +71,12 @@ rather than the commutator-free solver. `SRKMK` is the explicit Stratonovich
 solver for nontrivial geometry. Generic Itô geometry is intentionally rejected
 rather than approximated by projection.
 
-SO(n) supports exponential and Cayley retractions. Its exponential inverse is a
-principal local logarithm and explicitly rejects steps outside its supported
-neighborhood. SPD(n) uses a symmetric congruence/exponential retraction. Dense
+SO(n) supports exponential and Cayley retractions. The exponential
+`inverse_retract` uses a degree-63 Cayley/atanh series and accepts only a Cayley
+spectral radius strictly below 0.5; it explicitly rejects points outside that
+numerically justified local neighborhood. Solver pullbacks differentiate the
+known local retraction directly and therefore do not depend on this logarithm
+cutoff. SPD(n) uses a symmetric congruence/exponential retraction. Dense
 interpolation and root-finding events evaluate through the same retraction, so
 queried states remain on the declared state space.
 `DifferentialSolution.state_geometry_id`, `solver_id`, and `resolved_method`

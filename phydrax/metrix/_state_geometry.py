@@ -381,7 +381,10 @@ class EmbeddedStateGeometry(AbstractStateGeometry):
         point_array = jnp.asarray(point)
         _same_shape(point_array, state_array, "Embedded retraction point")
         if self.inverse_retraction is None:
-            return self.project_tangent(state_array, point_array - state_array)
+            raise ValueError(
+                "Embedded inverse_retract requires an explicit "
+                "inverse_retraction callable."
+            )
         local = jnp.asarray(self.inverse_retraction(state_array, point_array))
         _same_shape(local, state_array, "Embedded inverse retraction")
         return local
@@ -668,14 +671,14 @@ def _principal_local_so_logarithm(value: Array, /) -> Array:
     radius = jnp.linalg.norm(cayley, ord=2, axis=(-2, -1))
     cayley = eqx.error_if(
         cayley,
-        jnp.any(radius >= 0.9),
+        jnp.any(radius >= 0.5),
         "SO exponential inverse_retract requires a principal local rotation "
-        "with Cayley radius below 0.9.",
+        "with Cayley radius below 0.5.",
     )
     square = cayley @ cayley
     term = cayley
     series = cayley
-    for denominator in range(3, 32, 2):
+    for denominator in range(3, 64, 2):
         term = term @ square
         series = series + term / denominator
     return _skew(2.0 * series)
@@ -811,6 +814,44 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
             return 2.0 * _skew(cayley)
         return _principal_local_so_logarithm(relative)
 
+    def _skew_basis(self, dtype, /) -> Array:
+        matrices = []
+        for row in range(self.dimension):
+            for column in range(row + 1, self.dimension):
+                matrix = jnp.zeros(
+                    (self.dimension, self.dimension),
+                    dtype=dtype,
+                )
+                matrix = matrix.at[row, column].set(1.0)
+                matrix = matrix.at[column, row].set(-1.0)
+                matrices.append(matrix)
+        return jnp.stack(matrices)
+
+    def _one_pullback(
+        self,
+        state: Array,
+        local_tangent: Array,
+        tangent: Array,
+        /,
+    ) -> Array:
+        basis = self._skew_basis(state.dtype)
+        coordinates = 0.5 * jnp.sum(
+            basis * local_tangent,
+            axis=(-2, -1),
+        )
+
+        def evaluate(values):
+            local = jnp.tensordot(values, basis, axes=1)
+            return self.retract(state, local).reshape((-1,))
+
+        jacobian = jax.jacfwd(evaluate)(coordinates)
+        right_hand_side = tangent.reshape((-1,))
+        local_velocity = jnp.linalg.solve(
+            _transpose(jacobian) @ jacobian,
+            _transpose(jacobian) @ right_hand_side,
+        )
+        return _skew(jnp.tensordot(local_velocity, basis, axes=1))
+
     def pullback(
         self,
         state: ArrayLike,
@@ -828,12 +869,16 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
         )
         point = self.retract(matrix, local)
         vector = self.project_tangent(point, tangent)
-        _, velocity = jax.jvp(
-            lambda target: self.inverse_retract(matrix, target),
-            (point,),
-            (vector,),
+        if matrix.ndim == 2:
+            return self._one_pullback(matrix, local, vector)
+        leading = matrix.shape[:-2]
+        shape = (-1, self.dimension, self.dimension)
+        velocities = jax.vmap(self._one_pullback)(
+            matrix.reshape(shape),
+            local.reshape(shape),
+            vector.reshape(shape),
         )
-        return _skew(velocity)
+        return velocities.reshape(leading + (self.dimension, self.dimension))
 
 
 class SymmetricPositiveDefiniteStateGeometry(AbstractStateGeometry):
