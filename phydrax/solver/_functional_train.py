@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import inspect
 import time
 from contextlib import nullcontext
 from pathlib import Path
@@ -16,6 +15,8 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import optax
+from evosax.algorithms.distribution_based.base import DistributionBasedAlgorithm
+from evosax.algorithms.population_based.base import PopulationBasedAlgorithm
 from jax import core as jcore
 
 from .._frozendict import frozendict
@@ -51,6 +52,7 @@ class _SupportsDataMetrics(Protocol):
         key: Any,
         **kwargs: Any,
     ) -> dict[str, Any]: ...
+
 
 def _sample_objective_batches(objectives: tuple[Any, ...], /, *, key: Any):
     keys = jr.split(key, len(objectives))
@@ -473,7 +475,7 @@ def solve(
     if isinstance(optim, str):
         raise TypeError(
             "optim must be an optimizer object (e.g. optax.adam(...), optax.lbfgs(...), "
-            "or an evosax algorithm instance), not a string."
+            "or an evosax distribution-based algorithm instance), not a string."
         )
 
     _opt_linesearch: optax.GradientTransformationExtraArgs | None = None
@@ -483,12 +485,23 @@ def solve(
         _opt_linesearch = optim
     elif isinstance(optim, optax.GradientTransformation):
         _opt_standard = optim
-    else:
+    elif isinstance(optim, PopulationBasedAlgorithm):
         if evaluation_parameters is not None:
             raise ValueError(
                 "evaluation_parameters is supported only for Optax optimizers."
             )
-        return _solve_evosax(
+        raise NotImplementedError(
+            "FunctionalSolver does not accept Evosax population-based algorithms: "
+            "they require an explicit initial population and finite search-space "
+            "semantics. For bounded geometry design, use "
+            "DesignConstraintSystem.search(...)."
+        )
+    elif isinstance(optim, DistributionBasedAlgorithm):
+        if evaluation_parameters is not None:
+            raise ValueError(
+                "evaluation_parameters is supported only for Optax optimizers."
+            )
+        return _solve_evosax_distribution(
             self,
             num_iter=num_iter,
             algo=optim,
@@ -503,6 +516,11 @@ def solve(
             tensorboard_flush_every=tensorboard_flush_every,
             profile_adaptive=profile_adaptive,
             train_constraint_sample_size=train_constraint_sample_size,
+        )
+    else:
+        raise TypeError(
+            "optim must be an Optax transformation or an Evosax distribution-based "
+            "algorithm instance."
         )
 
     log_ctx = (
@@ -1113,11 +1131,11 @@ def solve(
         return eqx.tree_at(lambda s: s.training_diagnostics, result, diagnostics)
 
 
-def _solve_evosax(
+def _solve_evosax_distribution(
     self: "FunctionalSolver",
     *,
     num_iter: int,
-    algo: Any,
+    algo: DistributionBasedAlgorithm,
     seed: int,
     jit: bool,
     keep_best: bool,
@@ -1322,17 +1340,7 @@ def _solve_evosax(
     terms_fn = eqx.filter_jit(_terms_for_params) if jit else _terms_for_params
 
     key = jr.key(seed)
-    init_sig = inspect.signature(algo.init)
-    init_params = init_sig.parameters
-    accepts_var_kwargs = any(
-        p.kind == inspect.Parameter.VAR_KEYWORD for p in init_params.values()
-    )
-    init_kwargs = {}
-    if accepts_var_kwargs or ("params" in init_params):
-        init_kwargs["params"] = algo_params
-    if accepts_var_kwargs or ("mean" in init_params):
-        init_kwargs["mean"] = params
-    evo_state = algo.init(key, **init_kwargs)
+    evo_state = algo.init(key, mean=params, params=algo_params)
 
     control = TrainingController(
         total_steps=int(num_iter),

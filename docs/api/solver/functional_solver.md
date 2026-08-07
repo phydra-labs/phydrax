@@ -14,7 +14,9 @@ For a conceptual overview (loss evaluation, enforced pipelines, training loop be
     - `objectives` may contain signed terms such as `IntegralFunctional`; their values
       are added directly and are not squared.
     - `partition_functions()` exposes the trainable/non-trainable state split used by `solve(...)`.
-    - `solve(...)` updates parameters inside `functions` using Optax or evosax optimizers.
+    - `solve(...)` accepts standard and line-search Optax transformations, plus
+      Evosax distribution-based algorithms. Population-based Evosax algorithms
+      require a separate finite search-space contract and are rejected.
     - `solve(..., evaluation_parameters=...)` keeps optimizer updates on raw training
       parameters while using the optimizer-prescribed view for diagnostics, selection,
       and returned functions.
