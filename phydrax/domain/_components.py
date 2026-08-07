@@ -294,8 +294,8 @@ class DomainComponent(StrictModule):
         domain: Domain,
         spec: SelectionSpec | None = None,
         where: Mapping[str, Callable] | None = None,
-        where_all: DomainFunction | None = None,
-        weight_all: DomainFunction | None = None,
+        where_all: DomainFunction | Callable | None = None,
+        weight_all: DomainFunction | Callable | None = None,
         density_normalized: bool = False,
     ):
         self.domain = domain
@@ -314,27 +314,17 @@ class DomainComponent(StrictModule):
             )
             for factor in self.domain.joint_factors
         )
-        self.where = frozendict(where or {})
-        self.where_all = where_all
-        self.weight_all = weight_all
-        self.density_normalized = bool(density_normalized)
+        where_all_ = where_all
+        if where_all_ is not None and not isinstance(where_all_, DomainFunction):
+            where_all_ = self.domain.Function(*self.domain.labels)(where_all_)
+        weight_all_ = weight_all
+        if weight_all_ is not None and not isinstance(weight_all_, DomainFunction):
+            weight_all_ = self.domain.Function(*self.domain.labels)(weight_all_)
 
-        if self.where_all is not None and not isinstance(self.where_all, DomainFunction):
-            self.where_all = DomainFunction(
-                domain=self.domain,
-                deps=self.domain.labels,
-                func=self.where_all,
-                metadata={},
-            )
-        if self.weight_all is not None and not isinstance(
-            self.weight_all, DomainFunction
-        ):
-            self.weight_all = DomainFunction(
-                domain=self.domain,
-                deps=self.domain.labels,
-                func=self.weight_all,
-                metadata={},
-            )
+        self.where = frozendict(where or {})
+        self.where_all = where_all_
+        self.weight_all = weight_all_
+        self.density_normalized = bool(density_normalized)
 
     def factor_component(self, label: str, /) -> FactorComponent:
         """Return the bound joint-factor component that owns ``label``."""

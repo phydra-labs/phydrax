@@ -8,21 +8,27 @@ import operator
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
+import coordax as cx
 import jax
 import jax.core as jax_core
 import jax.numpy as jnp
 import opt_einsum as oe
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike, Key
 
 from phydrax.domain import (
+    BatchEvaluator,
     BinaryFieldEvaluator,
     ConcatenatedModelEvaluator,
     CoordinateSpec,
     DomainFunction,
+    GridBatch,
     SwapAxesFieldEvaluator,
     UnaryFieldEvaluator,
 )
 
+from ..._doc import DOC_KEY0
+from ..._strict import StrictModule
+from ...domain._evaluation import evaluate_pointwise_callable
 from ...nn._utils import _get_size
 from ._array_ops import (
     _basis_nth_derivative,
@@ -40,6 +46,94 @@ from ._runtime import get_partial_eval_cache
 _ADEngine = Literal["auto", "reverse", "forward", "jvp"]
 
 
+class _DiscreteDerivativeEvaluator(StrictModule, BatchEvaluator):
+    """Preserve coordinate-separable batches for finite and basis derivatives."""
+
+    source: DomainFunction
+    pointwise: Callable
+    variable: str
+    coordinate_axis: int
+    order: int
+    backend: Literal["fd", "basis"]
+    basis: Literal["poly", "fourier", "sine", "cosine"]
+    periodic: bool
+
+    def __init__(
+        self,
+        source: DomainFunction,
+        pointwise: Callable,
+        /,
+        *,
+        variable: str,
+        coordinate_axis: int,
+        order: int,
+        backend: Literal["fd", "basis"],
+        basis: Literal["poly", "fourier", "sine", "cosine"],
+        periodic: bool,
+    ):
+        self.source = source
+        self.pointwise = pointwise
+        self.variable = str(variable)
+        self.coordinate_axis = int(coordinate_axis)
+        self.order = int(order)
+        self.backend = backend
+        self.basis = basis
+        self.periodic = bool(periodic)
+
+    def __call__(self, *args, key=None, **kwargs):
+        return self.pointwise(*args, key=key, **kwargs)
+
+    def __call_batch__(
+        self,
+        batch: Any,
+        /,
+        *,
+        key: Key[Array, ""] = DOC_KEY0,
+        **kwargs: Any,
+    ) -> cx.Field:
+        if isinstance(batch, GridBatch) and self.variable in batch.coord_axes_by_label:
+            coordinate_fields = batch.points[self.variable]
+            if not isinstance(coordinate_fields, tuple):
+                raise TypeError(
+                    "Coordinate-separable derivative inputs must be tuples of fields."
+                )
+            axis_names = batch.coord_axes_by_label[self.variable]
+            coordinate_field = coordinate_fields[self.coordinate_axis]
+            coordinate = jnp.asarray(coordinate_field.data)
+            source = self.source(batch, key=key, **kwargs)
+            axis = source.dims.index(axis_names[self.coordinate_axis])
+            if self.backend == "fd":
+                spacing = (
+                    coordinate[1] - coordinate[0]
+                    if coordinate.shape[0] > 1
+                    else jnp.asarray(1.0, dtype=coordinate.dtype)
+                )
+                values = _fd_nth_derivative(
+                    jnp.asarray(source.data),
+                    dx=spacing,
+                    axis=axis,
+                    order=self.order,
+                    periodic=self.periodic,
+                )
+            else:
+                values = _basis_nth_derivative(
+                    jnp.asarray(source.data),
+                    coordinate,
+                    axis=axis,
+                    order=self.order,
+                    basis=self.basis,
+                )
+            return cx.Field(values, dims=source.dims)
+        return evaluate_pointwise_callable(
+            self,
+            deps=self.source.deps,
+            domain_labels=self.source.domain.labels,
+            points=batch,
+            key=key,
+            kwargs=kwargs,
+        )
+
+
 def _unwrap_factor(factor: object, /) -> object:
     return factor
 
@@ -51,9 +145,7 @@ def _resolve_var(u: DomainFunction, var: str | None, /) -> str:
         return var
 
     differentiable = tuple(
-        label
-        for label in u.domain.labels
-        if u.domain.coordinate(label).differentiable
+        label for label in u.domain.labels if u.domain.coordinate(label).differentiable
     )
 
     if len(differentiable) != 1:
@@ -139,8 +231,6 @@ def _latent_model_from_domain_function(
     if isinstance(raw_model, LatentContractionModel):
         return raw_model, u.func
     return None
-
-
 
 
 def _const_scalar(fn: DomainFunction, /) -> float | None:
@@ -280,8 +370,6 @@ def _try_derivative_rule(
     if out is not None and not isinstance(out, DomainFunction):
         raise TypeError("DerivativeRule.derive must return a DomainFunction or None.")
     return out
-
-
 
 
 def _emit_latent_fallback_warning(u: DomainFunction, reason: str, /) -> None:
@@ -2114,14 +2202,16 @@ def partial(
 
     use_jvp = ad_engine == "jvp"
     if not use_jvp:
-        hooked = _try_derivative_rule(u,
-        var=var,
-        axis=axis,
-        order=1,
-        mode=mode_eff,
-        backend="ad",
-        basis="poly",
-        periodic=False,)
+        hooked = _try_derivative_rule(
+            u,
+            var=var,
+            axis=axis,
+            order=1,
+            mode=mode_eff,
+            backend="ad",
+            basis="poly",
+            periodic=False,
+        )
         if hooked is not None:
             return hooked
 
@@ -2327,14 +2417,16 @@ def partial_n(
             raise ValueError(f"axis must be in [0,{int(var_dim)}), got {axis_i}.")
 
     if backend == "ad" or backend == "jet":
-        hooked = _try_derivative_rule(u,
-        var=var,
-        axis=axis,
-        order=order_i,
-        mode=mode_eff,
-        backend=backend,
-        basis=basis,
-        periodic=periodic,)
+        hooked = _try_derivative_rule(
+            u,
+            var=var,
+            axis=axis,
+            order=order_i,
+            mode=mode_eff,
+            backend=backend,
+            basis=basis,
+            periodic=periodic,
+        )
         if hooked is not None:
             return hooked
         structured = _try_structured_partial_n(
@@ -2450,7 +2542,26 @@ def partial_n(
             v = jnp.zeros_like(x).at[..., axis_i].set(1.0)
         return _return(jet_dn(f, x, v, n=order_i))
 
-    return DomainFunction(domain=u.domain, deps=u.deps, func=_nth, metadata=out_metadata)
+    evaluator = (
+        _DiscreteDerivativeEvaluator(
+            u,
+            _nth,
+            variable=var,
+            coordinate_axis=axis_i,
+            order=order_i,
+            backend=backend,
+            basis=basis,
+            periodic=periodic,
+        )
+        if backend in ("fd", "basis")
+        else _nth
+    )
+    return DomainFunction(
+        domain=u.domain,
+        deps=u.deps,
+        func=evaluator,
+        metadata=out_metadata,
+    )
 
 
 def partial_x(
