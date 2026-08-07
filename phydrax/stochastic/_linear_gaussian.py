@@ -217,10 +217,6 @@ class LinearGaussianDynamics(StrictModule):
         covariance = van_loan_exponential[:size, size:] @ transition.T
         covariance = 0.5 * (covariance + covariance.T)
 
-        is_zero = duration == jnp.zeros((), dtype=dtype)
-        transition = jnp.where(is_zero, jnp.eye(size, dtype=dtype), transition)
-        affine = jnp.where(is_zero, jnp.zeros_like(affine), affine)
-        covariance = jnp.where(is_zero, jnp.zeros_like(covariance), covariance)
         return LinearGaussianParameters(transition, affine, covariance)
 
     def discretize(self, t0: ArrayLike, t1: ArrayLike, /) -> LinearGaussianParameters:

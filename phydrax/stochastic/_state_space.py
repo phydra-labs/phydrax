@@ -619,6 +619,10 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
                 raise TypeError(
                     "covariance must be omitted when using a parameterization object."
                 )
+            if callable(offset) or bool(jnp.any(jnp.asarray(offset) != 0.0)):
+                raise TypeError(
+                    "offset must be omitted when using a parameterization object."
+                )
             parameterization = transition
             if state_shape is not None and _shape(
                 state_shape, owner="state_shape"

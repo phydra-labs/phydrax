@@ -315,6 +315,34 @@ def associative_gaussian_smoother(
     return prefixes.offset[::-1], smoothed_covariances, gains
 
 
+def associative_freeze(
+    initial: Array,
+    values: Array,
+    accepted: Array,
+    /,
+) -> Array:
+    """Retain the most recent accepted value with an associative prefix scan."""
+    flags = jnp.concatenate(
+        (jnp.ones((1,) + accepted.shape[1:], dtype=bool), accepted), axis=0
+    )
+    seeded_values = jnp.concatenate((initial[None, ...], values), axis=0)
+
+    def select_latest(left, right):
+        left_flag, left_value = left
+        right_flag, right_value = right
+        selector = right_flag.reshape(
+            right_flag.shape + (1,) * (right_value.ndim - right_flag.ndim)
+        )
+        return left_flag | right_flag, jnp.where(
+            selector, right_value, left_value
+        )
+
+    _, prefixes = jax.lax.associative_scan(
+        select_latest, (flags, seeded_values), axis=0
+    )
+    return prefixes[1:]
+
+
 def associative_affine_values(
     transitions: Array,
     offsets: Array,
@@ -337,6 +365,7 @@ def associative_affine_values(
 
 
 __all__ = [
+    "associative_freeze",
     "associative_gaussian_filter",
     "associative_gaussian_smoother",
     "combine_gaussian_filter_elements",

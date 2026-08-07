@@ -16,6 +16,7 @@ from jaxtyping import Array, Key
 from .._strict import StrictModule
 from ._gaussian_chain import (
     associative_affine_values,
+    associative_freeze,
     associative_gaussian_filter,
     associative_gaussian_smoother,
 )
@@ -463,74 +464,61 @@ def _parallel_kalman_filter(
     covariance_regularization: float,
     raise_on_failure: bool,
 ) -> KalmanFilterResult:
-    sequential = _sequential_kalman_filter(
-        problem,
-        covariance_regularization=covariance_regularization,
-        raise_on_failure=False,
-    )
     prior, transition, observation = _linear_problem(problem)
     sequence = problem.observations
     state_size, observation_size, case_count, case_shape = _sizes(problem)
     num_steps = sequence.num_steps
-    current_times = problem.initial_time.reshape((case_count,))
+    initial_times = problem.initial_time.reshape((case_count,))
     flat_times = sequence.times.reshape((case_count, num_steps))
     flat_active = sequence.step_valid.reshape((case_count, num_steps))
-
-    transitions: list[Array] = []
-    offsets: list[Array] = []
-    process_covariances: list[Array] = []
-    observation_matrices: list[Array] = []
-    observation_offsets: list[Array] = []
-    observation_covariances: list[Array] = []
-    for index in range(num_steps):
-        active = flat_active[:, index]
-        target_time = flat_times[:, index]
-        safe_time = jnp.where(active, target_time, current_times)
-        matrix, offset, process_covariance = _transition_parameters(
-            transition, current_times, safe_time
-        )
-        matrix = jnp.broadcast_to(matrix, (case_count, state_size, state_size))
-        offset = jnp.broadcast_to(offset, (case_count, state_size))
-        process_covariance = jnp.broadcast_to(
-            process_covariance, (case_count, state_size, state_size)
-        )
-        matrix = jnp.where(
-            active[:, None, None],
-            matrix,
-            jnp.eye(state_size, dtype=matrix.dtype)[None, ...],
-        )
-        offset = jnp.where(active[:, None], offset, 0.0)
-        process_covariance = jnp.where(
-            active[:, None, None], process_covariance, 0.0
-        )
-        obs_matrix, obs_offset, obs_covariance = _observation_parameters(
-            observation, safe_time
-        )
-        transitions.append(matrix)
-        offsets.append(offset)
-        process_covariances.append(process_covariance)
-        observation_matrices.append(
-            jnp.broadcast_to(
-                obs_matrix, (case_count, observation_size, state_size)
-            )
-        )
-        observation_offsets.append(
-            jnp.broadcast_to(obs_offset, (case_count, observation_size))
-        )
-        observation_covariances.append(
-            jnp.broadcast_to(
-                obs_covariance,
-                (case_count, observation_size, observation_size),
-            )
-        )
-        current_times = safe_time
-
-    transition_array = jnp.stack(transitions)
-    offset_array = jnp.stack(offsets)
-    process_covariance_array = jnp.stack(process_covariances)
-    observation_matrix_array = jnp.stack(observation_matrices)
-    observation_offset_array = jnp.stack(observation_offsets)
-    observation_covariance_array = jnp.stack(observation_covariances)
+    active_time_major = jnp.swapaxes(flat_active, 0, 1)
+    target_times = jnp.swapaxes(flat_times, 0, 1)
+    safe_times = associative_freeze(
+        initial_times, target_times, active_time_major
+    )
+    start_times = jnp.concatenate(
+        (initial_times[None, ...], safe_times[:-1]), axis=0
+    )
+    transition_array, offset_array, process_covariance_array = (
+        _transition_parameters(transition, start_times, safe_times)
+    )
+    transition_array = transition_array.reshape(
+        (num_steps, case_count, state_size, state_size)
+    )
+    offset_array = offset_array.reshape(
+        (num_steps, case_count, state_size)
+    )
+    process_covariance_array = process_covariance_array.reshape(
+        (num_steps, case_count, state_size, state_size)
+    )
+    transition_array = jnp.where(
+        active_time_major[..., None, None],
+        transition_array,
+        jnp.eye(state_size, dtype=transition_array.dtype),
+    )
+    offset_array = jnp.where(
+        active_time_major[..., None], offset_array, 0.0
+    )
+    process_covariance_array = jnp.where(
+        active_time_major[..., None, None],
+        process_covariance_array,
+        0.0,
+    )
+    (
+        observation_matrix_array,
+        observation_offset_array,
+        observation_covariance_array,
+    ) = _observation_parameters(observation, safe_times)
+    observation_matrix_array = observation_matrix_array.reshape(
+        (num_steps, case_count, observation_size, state_size)
+    )
+    observation_offset_array = observation_offset_array.reshape(
+        (num_steps, case_count, observation_size)
+    )
+    observation_covariance_array = observation_covariance_array.reshape(
+        (num_steps, case_count, observation_size, observation_size)
+    )
+    current_times = safe_times[-1]
     observations = jnp.swapaxes(
         sequence.values.reshape((case_count, num_steps, observation_size)), 0, 1
     )
@@ -609,109 +597,212 @@ def _parallel_kalman_filter(
     solved_innovation = jax.scipy.linalg.solve_triangular(
         scale, innovation[..., None], lower=True
     )[..., 0]
-    normalized_innovation_squared = jnp.sum(solved_innovation**2, axis=-1)
+    raw_nis = jnp.sum(solved_innovation**2, axis=-1)
     observed_counts = jnp.sum(masks, axis=-1)
+    raw_logdet = 2.0 * jnp.sum(jnp.log(diagonal), axis=-1)
+    raw_increment = -0.5 * (
+        raw_nis
+        + raw_logdet
+        + observed_counts * jnp.log(2.0 * jnp.pi)
+    )
+    raw_covariance_valid = jnp.all(
+        jnp.isfinite(scale), axis=(-1, -2)
+    ) & jnp.all(diagonal > 0.0, axis=-1)
+    raw_finite = (
+        jnp.all(jnp.isfinite(filtered_mean), axis=-1)
+        & jnp.all(jnp.isfinite(filtered_covariance), axis=(-1, -2))
+        & jnp.isfinite(raw_increment)
+    )
+    raw_step_success = ~active_time_major | (
+        raw_covariance_valid & raw_finite
+    )
+    raw_alive_after = jax.lax.associative_scan(
+        jnp.logical_and, raw_step_success, axis=0
+    )
+    raw_alive_before = jnp.concatenate(
+        (jnp.ones_like(raw_alive_after[:1]), raw_alive_after[:-1]), axis=0
+    )
+    raw_accepted = (
+        active_time_major
+        & raw_alive_before
+        & raw_covariance_valid
+        & raw_finite
+    )
+    frozen_mean = associative_freeze(initial_mean, filtered_mean, raw_accepted)
+    frozen_covariance = associative_freeze(
+        initial_covariance, filtered_covariance, raw_accepted
+    )
+
+    previous_mean = jnp.concatenate((initial_mean[None, ...], frozen_mean[:-1]))
+    previous_covariance = jnp.concatenate(
+        (initial_covariance[None, ...], frozen_covariance[:-1])
+    )
+    predicted_mean = (
+        jnp.einsum("tcij,tcj->tci", transition_array, previous_mean)
+        + offset_array
+    )
+    predicted_covariance = (
+        jnp.einsum(
+            "tcij,tcjk,tclk->tcil",
+            transition_array,
+            previous_covariance,
+            transition_array,
+        )
+        + process_covariance_array
+    )
+    predicted_covariance = 0.5 * (
+        predicted_covariance + jnp.swapaxes(predicted_covariance, -1, -2)
+    )
+    predicted_observation = (
+        jnp.einsum(
+            "tcij,tcj->tci", observation_matrix_array, predicted_mean
+        )
+        + observation_offset_array
+    )
+    innovation = jnp.where(
+        masks, observations - predicted_observation, 0.0
+    )
+    innovation_covariance = (
+        jnp.einsum(
+            "tcij,tcjk,tclk->tcil",
+            effective_matrix,
+            predicted_covariance,
+            effective_matrix,
+        )
+        + effective_covariance
+    )
+    scale = jnp.linalg.cholesky(innovation_covariance)
+    diagonal = jnp.diagonal(scale, axis1=-2, axis2=-1)
+    covariance_valid = jnp.all(
+        jnp.isfinite(scale), axis=(-1, -2)
+    ) & jnp.all(diagonal > 0.0, axis=-1)
+    cross_covariance = (
+        predicted_covariance @ jnp.swapaxes(effective_matrix, -1, -2)
+    )
+    gain = jnp.swapaxes(
+        jnp.linalg.solve(
+            innovation_covariance,
+            jnp.swapaxes(cross_covariance, -1, -2),
+        ),
+        -1,
+        -2,
+    )
+    updated_mean = predicted_mean + jnp.einsum(
+        "tcij,tcj->tci", gain, innovation
+    )
+    identity = jnp.eye(state_size, dtype=predicted_mean.dtype)
+    update_operator = identity - gain @ effective_matrix
+    updated_covariance = (
+        update_operator
+        @ predicted_covariance
+        @ jnp.swapaxes(update_operator, -1, -2)
+        + gain @ effective_covariance @ jnp.swapaxes(gain, -1, -2)
+    )
+    updated_covariance = 0.5 * (
+        updated_covariance + jnp.swapaxes(updated_covariance, -1, -2)
+    )
+    solved_innovation = jax.scipy.linalg.solve_triangular(
+        scale, innovation[..., None], lower=True
+    )[..., 0]
+    normalized_innovation_squared = jnp.sum(
+        solved_innovation**2, axis=-1
+    )
     logdet = 2.0 * jnp.sum(jnp.log(diagonal), axis=-1)
-    increments = -0.5 * (
+    log_likelihood = -0.5 * (
         normalized_innovation_squared
         + logdet
         + observed_counts * jnp.log(2.0 * jnp.pi)
     )
+    finite = (
+        jnp.all(jnp.isfinite(updated_mean), axis=-1)
+        & jnp.all(jnp.isfinite(updated_covariance), axis=(-1, -2))
+        & jnp.isfinite(log_likelihood)
+    )
+    step_success = ~active_time_major | (covariance_valid & finite)
+    alive_after = jax.lax.associative_scan(
+        jnp.logical_and, step_success, axis=0
+    )
+    alive_before = jnp.concatenate(
+        (jnp.ones_like(alive_after[:1]), alive_after[:-1]), axis=0
+    )
+    valid = alive_before & covariance_valid & finite
+    accepted = active_time_major & valid
+    filtered_mean = associative_freeze(initial_mean, updated_mean, accepted)
+    filtered_covariance = associative_freeze(
+        initial_covariance, updated_covariance, accepted
+    )
+    increments = jnp.where(accepted, log_likelihood, 0.0)
     cumulative = jnp.cumsum(increments, axis=0)
+    status = jnp.where(
+        ~active_time_major,
+        KALMAN_SUCCESS,
+        jnp.where(
+            ~covariance_valid,
+            KALMAN_INNOVATION_COVARIANCE_FAILURE,
+            jnp.where(~finite, KALMAN_NONFINITE, KALMAN_SUCCESS),
+        ),
+    ).astype(jnp.int32)
 
     def restore(values: Array, trailing_shape: tuple[int, ...] = ()) -> Array:
         return jnp.swapaxes(values, 0, 1).reshape(
             case_shape + (num_steps,) + trailing_shape
         )
 
-    successful = sequential.successful
-
-    def preserve_failures(candidate: Array, original: Array) -> Array:
-        selector = successful.reshape(
-            case_shape + (1,) * (candidate.ndim - len(case_shape))
-        )
-        return jnp.where(selector, candidate, original)
-
-    candidate_filtered_mean = restore(filtered_mean, problem.model.state_shape)
-    candidate_filtered_covariance = restore(
+    result_filtered_mean = restore(
+        filtered_mean, problem.model.state_shape
+    )
+    result_filtered_covariance = restore(
         filtered_covariance, (state_size, state_size)
     )
-    candidate_predicted_mean = restore(predicted_mean, problem.model.state_shape)
-    candidate_predicted_covariance = restore(
-        predicted_covariance, (state_size, state_size)
-    )
-    candidate_increment = restore(increments)
-    candidate_cumulative = restore(cumulative)
-    final_mean = preserve_failures(
-        jnp.take(candidate_filtered_mean, -1, axis=len(case_shape)),
-        sequential.final_state.mean,
-    )
-    final_covariance = preserve_failures(
-        candidate_filtered_covariance[..., -1, :, :],
-        sequential.final_state.covariance,
-    )
-    final_log_likelihood = preserve_failures(
-        candidate_cumulative[..., -1], sequential.final_state.log_likelihood
-    )
     final_state = KalmanFilterState(
-        mean=final_mean,
-        covariance=final_covariance,
-        time=sequential.final_state.time,
-        log_likelihood=final_log_likelihood,
-        valid=sequential.final_state.valid,
-        status=sequential.final_state.status,
-        step_index=sequential.final_state.step_index,
-        problem_id=sequential.final_state.problem_id,
-        covariance_regularization=sequential.final_state.covariance_regularization,
+        mean=jnp.take(result_filtered_mean, -1, axis=len(case_shape)),
+        covariance=result_filtered_covariance[..., -1, :, :],
+        time=current_times.reshape(case_shape),
+        log_likelihood=restore(cumulative)[..., -1],
+        valid=alive_after[-1].reshape(case_shape),
+        status=status[-1].reshape(case_shape),
+        step_index=num_steps,
+        problem_id=problem.problem_id,
+        covariance_regularization=covariance_regularization,
     )
     result = KalmanFilterResult(
-        predicted_means=preserve_failures(
-            candidate_predicted_mean, sequential.predicted_means
+        predicted_means=restore(
+            predicted_mean, problem.model.state_shape
         ),
-        predicted_covariances=preserve_failures(
-            candidate_predicted_covariance, sequential.predicted_covariances
+        predicted_covariances=restore(
+            predicted_covariance, (state_size, state_size)
         ),
-        filtered_means=preserve_failures(
-            candidate_filtered_mean, sequential.filtered_means
+        filtered_means=result_filtered_mean,
+        filtered_covariances=result_filtered_covariance,
+        transition_matrices=restore(
+            transition_array, (state_size, state_size)
         ),
-        filtered_covariances=preserve_failures(
-            candidate_filtered_covariance, sequential.filtered_covariances
+        innovations=restore(
+            innovation, problem.model.observation_shape
         ),
-        transition_matrices=preserve_failures(
-            restore(transition_array, (state_size, state_size)),
-            sequential.transition_matrices,
+        innovation_covariances=restore(
+            innovation_covariance, (observation_size, observation_size)
         ),
-        innovations=preserve_failures(
-            restore(innovation, problem.model.observation_shape),
-            sequential.innovations,
+        normalized_innovation_squared=restore(
+            jnp.where(
+                active_time_major, normalized_innovation_squared, 0.0
+            )
         ),
-        innovation_covariances=preserve_failures(
-            restore(innovation_covariance, (observation_size, observation_size)),
-            sequential.innovation_covariances,
-        ),
-        normalized_innovation_squared=preserve_failures(
-            restore(normalized_innovation_squared),
-            sequential.normalized_innovation_squared,
-        ),
-        incremental_log_likelihood=preserve_failures(
-            candidate_increment, sequential.incremental_log_likelihood
-        ),
-        cumulative_log_likelihood=preserve_failures(
-            candidate_cumulative, sequential.cumulative_log_likelihood
-        ),
-        observed_counts=sequential.observed_counts,
-        step_valid=sequential.step_valid,
-        valid=sequential.valid,
-        status=sequential.status,
+        incremental_log_likelihood=restore(increments),
+        cumulative_log_likelihood=restore(cumulative),
+        observed_counts=restore(observed_counts),
+        step_valid=sequence.step_valid,
+        valid=restore(valid),
+        status=restore(status),
         final_state=final_state,
-        state_shape=sequential.state_shape,
-        observation_shape=sequential.observation_shape,
-        case_shape=sequential.case_shape,
-        case_ids=sequential.case_ids,
-        model_id=sequential.model_id,
-        problem_id=sequential.problem_id,
-        sequence_id=sequential.sequence_id,
-        covariance_regularization=sequential.covariance_regularization,
+        state_shape=problem.model.state_shape,
+        observation_shape=problem.model.observation_shape,
+        case_shape=case_shape,
+        case_ids=sequence.case_ids,
+        model_id=problem.model.model_id,
+        problem_id=problem.problem_id,
+        sequence_id=sequence.sequence_id,
+        covariance_regularization=covariance_regularization,
         execution_method="parallel",
     )
     if raise_on_failure and not bool(jnp.all(result.successful)):
@@ -1018,7 +1109,9 @@ def _parallel_sample_kalman_smoother_paths(
     predicted_covariance = result.predicted_covariances.reshape(
         (case_count, num_steps, state_size, state_size)
     )
-    smooth_mean = smoother.means.reshape((case_count, num_steps, state_size))
+    smooth_mean = smoother.means.reshape(
+        (case_count, num_steps, state_size)
+    )
     smooth_covariance = smoother.covariances.reshape(
         (case_count, num_steps, state_size, state_size)
     )
@@ -1026,55 +1119,117 @@ def _parallel_sample_kalman_smoother_paths(
         (case_count, max(num_steps - 1, 0), state_size, state_size)
     )
     active = result.step_valid.reshape((case_count, num_steps))
-    paths = np.zeros(
-        (sample_count, case_count, num_steps, state_size), dtype=np.float64
+    terminal = jnp.sum(active, axis=-1, dtype=jnp.int32) - 1
+    steps = jnp.arange(num_steps, dtype=jnp.uint32)
+    members = jnp.arange(sample_count, dtype=jnp.uint32)
+
+    def case_keys(case_id: str) -> Array:
+        return jax.vmap(
+            lambda member: jax.vmap(
+                lambda step: state_space_key(
+                    key,
+                    "kalman-smoother",
+                    case_id,
+                    step,
+                    member=member,
+                )
+            )(steps)
+        )(members)
+
+    keys = jnp.stack(
+        tuple(case_keys(case_id) for case_id in result.case_ids), axis=1
     )
-    for sample_index in range(sample_count):
-        for case_index in range(case_count):
-            terminal = int(np.sum(np.asarray(active[case_index]))) - 1
-            case_id = result.case_ids[case_index]
-            terminal_key = state_space_key(
-                key, "kalman-smoother", case_id, terminal, member=sample_index
-            )
-            terminal_value = _gaussian_draw(
-                terminal_key,
-                smooth_mean[case_index, terminal],
-                smooth_covariance[case_index, terminal],
-            )
-            transitions = jnp.zeros(
-                (num_steps, state_size, state_size), dtype=smooth_mean.dtype
-            )
-            offsets = jnp.broadcast_to(
-                terminal_value, (num_steps, state_size)
-            )
-            for index in range(terminal):
-                gain = gains[case_index, index]
-                conditional_covariance = filtered_covariance[
-                    case_index, index
-                ] - (
-                    gain
-                    @ predicted_covariance[case_index, index + 1]
-                    @ gain.T
+    terminal_mean = jax.vmap(lambda values, index: values[index])(
+        smooth_mean, terminal
+    )
+    terminal_covariance = jax.vmap(
+        lambda values, index: values[index]
+    )(smooth_covariance, terminal)
+    terminal_keys = jax.vmap(
+        lambda sample_keys: jax.vmap(
+            lambda case_key, index: case_key[index]
+        )(sample_keys, terminal)
+    )(keys)
+    terminal_values = jax.vmap(
+        lambda sample_keys: jax.vmap(_gaussian_draw)(
+            sample_keys, terminal_mean, terminal_covariance
+        )
+    )(terminal_keys)
+
+    conditional_covariance = filtered_covariance[:, :-1] - (
+        gains
+        @ predicted_covariance[:, 1:]
+        @ jnp.swapaxes(gains, -1, -2)
+    )
+    conditional_covariance = 0.5 * (
+        conditional_covariance
+        + jnp.swapaxes(conditional_covariance, -1, -2)
+    )
+    conditional_offset = filtered_mean[:, :-1] - jnp.einsum(
+        "ctij,ctj->cti", gains, predicted_mean[:, 1:]
+    )
+    gains = jnp.concatenate(
+        (
+            gains,
+            jnp.zeros(
+                (case_count, 1, state_size, state_size),
+                dtype=filtered_mean.dtype,
+            ),
+        ),
+        axis=1,
+    )
+    conditional_covariance = jnp.concatenate(
+        (
+            conditional_covariance,
+            jnp.zeros(
+                (case_count, 1, state_size, state_size),
+                dtype=filtered_mean.dtype,
+            ),
+        ),
+        axis=1,
+    )
+    conditional_offset = jnp.concatenate(
+        (
+            conditional_offset,
+            jnp.zeros(
+                (case_count, 1, state_size), dtype=filtered_mean.dtype
+            ),
+        ),
+        axis=1,
+    )
+    zero_mean = jnp.zeros((state_size,), dtype=filtered_mean.dtype)
+    noise = jax.vmap(
+        lambda sample_keys: jax.vmap(
+            lambda case_key, covariance: jax.vmap(
+                lambda draw_key, draw_covariance: _gaussian_draw(
+                    draw_key, zero_mean, draw_covariance
                 )
-                draw_key = state_space_key(
-                    key, "kalman-smoother", case_id, index, member=sample_index
-                )
-                noise = _gaussian_draw(
-                    draw_key,
-                    jnp.zeros((state_size,), dtype=smooth_mean.dtype),
-                    conditional_covariance,
-                )
-                transitions = transitions.at[index].set(gain)
-                offsets = offsets.at[index].set(
-                    filtered_mean[case_index, index]
-                    - gain @ predicted_mean[case_index, index + 1]
-                    + noise
-                )
-            path = associative_affine_values(
-                transitions[::-1], offsets[::-1]
-            )[::-1]
-            paths[sample_index, case_index] = np.asarray(path)
-    output = jnp.asarray(paths).reshape(
+            )(case_key, covariance)
+        )(sample_keys, conditional_covariance)
+    )(keys)
+    before_terminal = (
+        jnp.arange(num_steps)[None, :] < terminal[:, None]
+    )
+    transitions = jnp.where(
+        before_terminal[None, ..., None, None],
+        gains[None, ...],
+        0.0,
+    )
+    transitions = jnp.broadcast_to(
+        transitions,
+        (sample_count, case_count, num_steps, state_size, state_size),
+    )
+    offsets = jnp.where(
+        before_terminal[None, ..., None],
+        conditional_offset[None, ...] + noise,
+        terminal_values[:, :, None, :],
+    )
+    reverse_paths = associative_affine_values(
+        jnp.moveaxis(transitions[:, :, ::-1], 2, 0),
+        jnp.moveaxis(offsets[:, :, ::-1], 2, 0),
+    )
+    paths = jnp.moveaxis(reverse_paths[::-1], 0, 2)
+    output = paths.reshape(
         samples + result.case_shape + (num_steps,) + result.state_shape
     )
     if samples:

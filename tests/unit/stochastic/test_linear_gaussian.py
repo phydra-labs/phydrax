@@ -1,3 +1,4 @@
+import pytest
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -69,6 +70,15 @@ def test_exact_lti_nonnormal_semigroup_and_zero_duration():
     )
 
     zero = dynamics.parameters(3.0, 3.0)
+    derivatives = jax.jacfwd(
+        lambda end: dynamics.parameters(0.0, end)
+    )(0.0)
+    assert jnp.allclose(derivatives.transition, dynamics.drift_matrix)
+    assert jnp.allclose(derivatives.offset, dynamics.offset)
+    assert jnp.allclose(
+        derivatives.covariance,
+        dynamics.dispersion @ dynamics.dispersion.T,
+    )
     assert jnp.array_equal(zero.transition, jnp.eye(2))
     assert jnp.array_equal(zero.offset, jnp.zeros(2))
     assert jnp.array_equal(zero.covariance, jnp.zeros((2, 2)))
@@ -118,6 +128,10 @@ def test_singular_transition_sampling_log_density_and_provenance():
     assert kernel.parameterization_id == "rank-one"
     assert kernel.resolved_method == dynamics.resolved_method
 
+    with pytest.raises(TypeError, match="offset must be omitted"):
+        phx.stochastic.LinearGaussianTransitionKernel(
+            dynamics, offset=jnp.ones(2)
+        )
 
 def test_legacy_transition_constructor_uses_one_parameterization_object():
     kernel = phx.stochastic.LinearGaussianTransitionKernel(
