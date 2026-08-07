@@ -66,15 +66,26 @@ class Interior(_AbstractVarComponent):
 
 
 class Boundary(_AbstractVarComponent):
-    r"""Marker selecting the boundary of a domain factor.
+    r"""Marker selecting a full boundary or a tagged source-entity subset."""
 
-    For a geometry factor $\Omega\subset\mathbb{R}^d$, this corresponds to sampling
-    from $\partial\Omega$ (surface measure). For scalar factors (e.g. time intervals),
-    the "boundary" is the discrete set of endpoints (counting measure).
-    """
+    tags: tuple[str, ...] | None = eqx.field(static=True)
+    entity_ids: tuple[int, ...] | None = eqx.field(static=True)
 
-    def __init__(self):
-        """Create a boundary component marker."""
+    def __init__(
+        self,
+        *,
+        tags: Sequence[str] | None = None,
+        entity_ids: Sequence[int] | None = None,
+    ):
+        """Create a boundary selector, optionally restricted by tags or IDs."""
+        tags_ = None if tags is None else tuple(tags)
+        entity_ids_ = None if entity_ids is None else tuple(map(int, entity_ids))
+        if tags_ is not None and (not tags_ or any(not tag for tag in tags_)):
+            raise ValueError("Boundary.tags must contain non-empty names.")
+        if entity_ids_ is not None and not entity_ids_:
+            raise ValueError("Boundary.entity_ids must be non-empty.")
+        self.tags = tags_
+        self.entity_ids = entity_ids_
 
 
 class Fixed(_AbstractVarComponent):
@@ -267,12 +278,21 @@ def _sample_geometry(
             geom.sample_interior(num_points, sampler=sampler, key=key), dtype=float
         )
     if isinstance(component, Boundary):
+        if component.tags is not None or component.entity_ids is not None:
+            from ..geometry import sample_boundary_atlas
+
+            atlas = geom.boundary_atlas.select(
+                tags=component.tags,
+                entity_ids=component.entity_ids,
+            )
+            return sample_boundary_atlas(atlas, num_points, key=key).points
         return jnp.asarray(
             geom.sample_boundary(num_points, sampler=sampler, key=key), dtype=float
         )
     if isinstance(component, Fixed):
         raise ValueError(
-            "Fixed(x) is not supported for geometries in sampling; use a unary DomainFunction mask instead."
+            "Fixed(x) is not supported for geometries in sampling; "
+            "use a unary DomainFunction mask instead."
         )
     raise TypeError(f"Unsupported geometry component {type(component).__name__}.")
 

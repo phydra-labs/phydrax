@@ -1,56 +1,67 @@
 # Geometry (3D)
 
-## Mesh-based geometries
+Three-dimensional domain constructors are adapters over the common
+`phydrax.geometry` substrate. Analytic primitives, simplicial meshes, direct OCCT
+B-Reps, fixed-topology differentiable B-Reps, and reconstructed solids all lower to
+`CompiledGeometry` before entering labeled domain, integration, and constraint APIs.
 
-`Geometry3DFromCAD` represents an enclosed solid. Input surface meshes must be
-finite, nondegenerate, consistently oriented, and watertight after
-sanitization; open or zero-volume surfaces are rejected before distance fields,
-sampling, or boundary normals are constructed.
+A geometry domain exposes one certified negative-inside field through `adf`, region
+membership, physical volume and surface measure, outward normals, bounded sampling,
+and a representation-independent `boundary_atlas`. `field_certificate` records the
+zero-set, sign, distance, regularity, and parameter-differentiability guarantees.
 
-CAD geometry exposes four distinct scalar fields. `predicate_sdf` is used for
-inside/outside classification. `boundary_factor` (also available as `adf`) is the
-scale-covariant, compactly saturated field used by geometry operations and normal
-construction; it equals signed distance in a boundary collar but does not claim
-metric distance in the interior. `boundary_ansatz_factor` is a dimensional,
-unit-boundary-jet rescaling of the global R-equivalence profile used by derivative
-hard constraints. `make_enforcement_gate(...)` supplies the corresponding
-dimensionless gate for Dirichlet ansätze and preservation overlays.
+## Direct source composition
 
-### Boolean / CSG operations
+Construct transformations and CSG in `phx.geometry`, then adapt the compiled result:
 
-`Geometry3DFromCAD` supports boolean operations via operator overloading:
+```python
+import phydrax as phx
 
-- `A + B`: union ($\Omega = \Omega_A \cup \Omega_B$)
-- `A - B`: difference ($\Omega = \Omega_A \setminus \Omega_B$)
-- `A & B`: intersection ($\Omega = \Omega_A \cap \Omega_B$)
+left = phx.geometry.Sphere((-0.4, 0.0, 0.0), 1.0, feature_id="left")
+right = phx.geometry.Box(
+    center=(0.4, 0.0, 0.0),
+    size=(1.2, 1.2, 1.2),
+    feature_id="right",
+)
 
-!!! example
-    ```python
-    import phydrax as phx
+source = (left | right).rotated((0.0, 0.0, 1.0), 0.2)
+geometry = phx.domain.GeometryDomain(source.compile())
+```
 
-    # In real workflows you can load meshes from disk via Geometry3DFromCAD("path.stl").
-    # For a runnable example without external files, use primitives (they produce CAD-backed geometries).
-    A = phx.domain.Sphere(center=(0.0, 0.0, 0.0), radius=1.0)
-    B = phx.domain.Cube(center=(0.25, 0.0, 0.0), side=1.2)
+Sharp CSG uses `|`, `&`, and `-` on `GeometrySource` objects. Domain adapters
+intentionally remain thin and do not duplicate source construction operations.
 
-    #     U = A + B
-    #     D = A - B
-    #     I = A & B
-    ```
+## Mesh and CAD input
+
+`Geometry3DFromCAD` accepts canonical mesh inputs and OCCT-backed files. Surface
+meshes must be finite, nondegenerate, consistently oriented, watertight, and have
+nonzero signed volume. Mesh input lowers to `MeshRegion`; STEP, IGES, and BREP input
+lowers to `BRepSource`, preserving face patches, trims, topology identities, and the
+CAD import report.
+
+```python
+import build123d as bd
+
+model = phx.geometry.model_from_occt_shape(
+    bd.Box(1.0, 2.0, 3.0).wrapped,
+    linear_deflection=0.1,
+)
+solid = phx.domain.GeometryDomain(phx.geometry.BRepSource(model).compile())
+print(solid.geometry.field_certificate)
+print(solid.boundary_atlas.source_entity_ids)
+```
+
+Point clouds, DEMs, and LiDAR scenes use explicit reconstruction pipelines and expose
+an immutable `reconstruction_report` on the returned domain. The report records the
+algorithm, parameters, filtering, topology checks, approximation counts, warnings,
+and input digest.
 
 ::: phydrax.domain.Geometry3DFromCAD
     options:
         members:
-            - __init__
-            - boundary_ansatz_factor
-            - make_enforcement_gate
-            - __add__
-            - __sub__
-            - __and__
             - sample_interior
             - sample_boundary
-            - translate
-            - scale
+            - estimate_boundary_subset_measure
 
 ---
 

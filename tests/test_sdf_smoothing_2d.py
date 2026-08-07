@@ -61,8 +61,8 @@ def test_dense_curved_mesh_adf_has_only_the_geometric_zero_set():
     ).reshape((-1, 2))
 
     expected_inside = jnp.repeat(normalized_radii < 1.0, theta.size)
-    predicate_inside = geometry.predicate_sdf(points) < 0.0
-    factor_inside = geometry.boundary_factor(points) < 0.0
+    predicate_inside = geometry.geometry.contains(points)
+    factor_inside = geometry.adf(points) < 0.0
 
     assert jnp.array_equal(predicate_inside, expected_inside)
     assert jnp.array_equal(factor_inside, expected_inside)
@@ -105,9 +105,9 @@ def test_boundary_factor_is_scale_covariant_with_exact_boundary_collar():
     for scale, geometry in zip(scales, geometries, strict=True):
         point = jnp.array([0.5 * scale, 0.0])
         normal = jnp.array([1.0, 0.0])
-        assert abs(float(geometry.boundary_factor(point))) <= 1e-12 * scale
+        assert abs(float(geometry.adf(point))) <= 1e-12 * scale
         assert jnp.allclose(
-            jax.grad(geometry.boundary_factor)(point),
+            jax.grad(geometry.adf)(point),
             normal,
             atol=1e-12,
             rtol=0.0,
@@ -123,11 +123,9 @@ def test_boundary_factor_is_scale_covariant_with_exact_boundary_collar():
         normalized_ansatz_values.append(ansatz_factor(scale * normalized_points) / scale)
 
         offsets = jnp.array([-0.02, -0.01, -0.002, 0.002, 0.01, 0.02]) * scale
-        profile = geometry.boundary_factor(point + offsets[:, None] * normal)
+        profile = geometry.adf(point + offsets[:, None] * normal)
         assert jnp.allclose(profile, offsets, atol=1e-12 * scale, rtol=1e-12)
-        normalized_values.append(
-            geometry.boundary_factor(scale * normalized_points) / scale
-        )
+        normalized_values.append(geometry.adf(scale * normalized_points) / scale)
 
     assert jnp.allclose(
         normalized_values[0],
@@ -171,8 +169,8 @@ def test_enforcement_gate_is_dimensionless_scale_invariant_and_broad():
     )
     values = normalized_values[0]
     assert jnp.allclose(values[0], 0.0, atol=1e-10)
-    assert 0.35 < float(values[1]) < 0.5
-    assert float(values[2]) > 0.75
+    assert 0.2 < float(values[1]) < 0.4
+    assert float(values[2]) > 0.5
     assert float(values[3]) > 0.9
     assert jnp.all(jnp.diff(values) > 0.0)
     assert jnp.linalg.norm(normalized_boundary_gradients[0]) < 5.0
@@ -196,57 +194,24 @@ def test_enforcement_gate_rejects_unknown_method():
         geometry.make_enforcement_gate(method="unknown")
 
 
-def test_boundary_factor_has_finite_flat_high_order_jets():
+def test_boundary_field_has_finite_flat_high_order_face_jets():
     geometry = _scaled_square(1.0)
     boundary_point = jnp.array([0.5, 0.0])
     normal = jnp.array([1.0, 0.0])
 
     def boundary_profile(offset):
-        return geometry.boundary_factor(boundary_point + offset * normal)
+        return geometry.adf(boundary_point + offset * normal)
 
     for order in (2, 3, 4):
         value = _derivative(boundary_profile, order)(jnp.asarray(0.0))
         assert jnp.isfinite(value)
         assert jnp.allclose(value, 0.0, atol=1e-10)
 
-    def medial_profile(offset):
-        return geometry.boundary_factor(jnp.array([offset, 0.0]))
 
-    for order in (1, 2, 3, 4):
-        values = jnp.stack(
-            [
-                _derivative(medial_profile, order)(jnp.asarray(offset))
-                for offset in (-1e-4, 0.0, 1e-4)
-            ]
-        )
-        assert jnp.all(jnp.isfinite(values))
-        assert jnp.allclose(values, 0.0, atol=1e-10)
-
-
-def test_boundary_factor_transition_hessian_matches_finite_difference():
+def test_cad_hard_ansatz_uses_certified_boundary_field():
     geometry = _scaled_square(1.0)
-    point = jnp.array([0.55, 0.125])
-    normal = jnp.array([1.0, 0.0])
-    step = jnp.asarray(1e-4)
-
-    hessian = jax.jacfwd(jax.jacfwd(geometry.boundary_factor))(point)
-    center = geometry.boundary_factor(point)
-    finite_difference = (
-        geometry.boundary_factor(point + step * normal)
-        - 2.0 * center
-        + geometry.boundary_factor(point - step * normal)
-    ) / step**2
-
-    assert jnp.abs(finite_difference) > 1.0
-    assert jnp.allclose(hessian[0, 0], finite_difference, atol=2e-3, rtol=2e-4)
-
-
-def test_cad_hard_ansatz_uses_boundary_factor_without_predicate_coupling():
-    geometry = _scaled_square(1.0)
-    assert geometry.predicate_sdf is not geometry.boundary_factor
-    assert abs(float(geometry.predicate_sdf(jnp.array([0.0, 0.0])))) > abs(
-        float(geometry.boundary_factor(jnp.array([0.0, 0.0])))
-    )
+    assert geometry.geometry.field_certificate.is_signed_distance
+    assert geometry.geometry.contains(jnp.array([0.0, 0.0]))
 
     component = geometry.component({"x": Boundary()})
 

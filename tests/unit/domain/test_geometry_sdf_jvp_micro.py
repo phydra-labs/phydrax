@@ -9,7 +9,6 @@ import trimesh
 
 from phydrax.domain.geometry2d import Square
 from phydrax.domain.geometry3d import Cube, Geometry3DFromCAD
-from phydrax.domain.geometry3d._sdf import make_compact_boundary_factor
 
 
 def test_2d_sdf_jvp_vector_and_scalar_inputs():
@@ -49,14 +48,12 @@ def test_3d_sdf_jvp_vector_and_scalar_inputs():
     assert jnp.isfinite(tval_s)
 
 
-def test_compact_boundary_factor_exact_zero_has_finite_identity_jet():
-    factor = make_compact_boundary_factor(
-        lambda point: point[0],
-        scale=1.0,
-    )
+def test_compact_enforcement_gate_exact_zero_has_finite_linear_jet():
+    geometry = Square(center=(0.0, 0.0), side=1.0)
+    gate = geometry.make_enforcement_gate(method="compact")
 
     def profile(offset):
-        return factor(jnp.array([offset]))
+        return gate(jnp.array([0.5 + offset, 0.0]))
 
     derivatives = []
     derivative = profile
@@ -64,9 +61,10 @@ def test_compact_boundary_factor_exact_zero_has_finite_identity_jet():
         derivative = jax.grad(derivative)
         derivatives.append(derivative(jnp.asarray(0.0)))
 
-    assert factor(jnp.array([0.0])) == 0.0
+    assert profile(jnp.asarray(0.0)) == 0.0
     assert jnp.all(jnp.isfinite(jnp.stack(derivatives)))
-    assert jnp.allclose(jnp.stack(derivatives), jnp.array([1.0, 0.0, 0.0, 0.0]))
+    assert derivatives[0] < 0.0
+    assert jnp.allclose(jnp.stack(derivatives[1:]), 0.0)
 
 
 def test_3d_enforcement_gate_corner_has_finite_pseudoderivatives():
@@ -100,7 +98,7 @@ def test_3d_enforcement_gate_vanishes_on_sliver_facet():
         ]
     )
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
-    geom = Geometry3DFromCAD(mesh)
+    geom = Geometry3DFromCAD(mesh, recenter=False)
     gate = geom.make_enforcement_gate()
     facet_point = jnp.asarray(np.array([0.026, 0.957, 0.017]) @ vertices[[0, 1, 2]])
 

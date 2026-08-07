@@ -197,9 +197,28 @@ Coord-separable sampling is driven by `DomainComponent.sample_coord_separable(..
 
 ---
 
-## CAD measure and chart structures
+## Geometry boundary structures
 
-::: phydrax.domain.GeometryMeasurePartition
+Every compiled geometry with boundary-atlas capability exposes
+`phydrax.geometry.BoundaryAtlas`. Charts carry reference-to-physical maps,
+Jacobians, outward frames, trim domains, source entity identities, physical tags,
+and seam ownership. The same structure drives boundary sampling and fixed
+quadrature for analytic, simplicial, and B-Rep geometry.
+
+::: phydrax.geometry.BoundaryAtlas
+    options:
+        members:
+            - __init__
+            - num_charts
+            - reference_dimension
+            - map
+            - jacobian
+            - frame
+            - select
+
+---
+
+::: phydrax.geometry.BoundaryAtlasPartition
     options:
         members:
             - __init__
@@ -207,16 +226,11 @@ Coord-separable sampling is driven by `DomainComponent.sample_coord_separable(..
 
 ---
 
-::: phydrax.domain.CADChartAtlas
+::: phydrax.geometry.GeometryMeasurePartition
     options:
         members:
             - __init__
-            - num_charts
-            - reference_dim
-            - map
-            - jacobian
-
----
+            - sample
 
 ## Axis conventions (nodes + weights)
 

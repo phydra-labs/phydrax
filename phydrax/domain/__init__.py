@@ -44,7 +44,6 @@ from . import (
     graph,
 )
 from ._base import EnforcementGateMethod, GeometryTransitionKind, GeometryTransitionResult
-from ._chart import CADChartAtlas
 from ._components import (
     Boundary,
     ComponentSpec,
@@ -58,6 +57,7 @@ from ._components import (
 )
 from ._dataset import DatasetDomain
 from ._function import DomainFunction
+from ._geometry import GeometryDomain
 from ._grid import (
     AbstractAxisSpec,
     AxisDiscretization,
@@ -71,7 +71,6 @@ from ._grid import (
 )
 from ._hyperrectangle import HyperRectangle
 from ._irregular_trajectory_dataset import IrregularTrajectoryDatasetDomain
-from ._measure_partition import GeometryMeasurePartition
 from ._model_function import structured
 from ._probability import ProbabilityDomain, ReferenceDistribution
 from ._product_domain import ProductDomain
@@ -176,8 +175,7 @@ __all__ = [
     "GRAPH_ENTITY_OFFSET_KEY",
     "GRAPH_SAMPLE_INDEX_KEY",
     "HyperRectangle",
-    "GeometryMeasurePartition",
-    "CADChartAtlas",
+    "GeometryDomain",
     "ProductStructure",
     "PointsBatch",
     "CoordSeparableBatch",

@@ -149,9 +149,11 @@ class FunctionalSolver(StrictModule):
         - `interior_data_terms`: Enforced interior data sources used to build `EnforcedConstraintPipelines`.
         - `evolution_var`: Name of the time-like label used for initial staging (default `"t"`).
         - `include_identity_remainder`: Boundary blending option for enforced pipelines.
-        - `gate_method`: CAD enforcement-gate implementation. ``"auto"`` selects the
-          global R-equivalence gate; ``"compact"`` selects the compact fallback.
-        - `gate_saturation_fraction`: Relative extent of compact CAD gates.
+        - `gate_method`: Geometry enforcement-gate implementation. ``"auto"`` uses
+          a domain-specific exact gate when available and the compact certified-field
+          transform otherwise; ``"global_r_equivalence"`` selects the broad generic
+          transform explicitly.
+        - `gate_saturation_fraction`: Relative extent of compact geometry gates.
         - `gate_linear_fraction`: Fraction of the compact gate extent retaining a
           linear boundary profile.
         - `boundary_weight_num_reference`: Number of reference samples used for boundary blending weights.

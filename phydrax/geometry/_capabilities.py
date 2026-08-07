@@ -1,0 +1,49 @@
+#
+# Copyright © 2026 PHYDRA, Inc. All rights reserved.
+#
+
+from __future__ import annotations
+
+from enum import Enum
+from typing import Any, Protocol, runtime_checkable
+
+from jaxtyping import Array
+
+from ._atlas import BoundaryAtlas
+
+
+class GeometryCapability(str, Enum):
+    """Typed computational capabilities exposed by a compiled geometry."""
+
+    REGION_QUERY = "region_query"
+    SIGNED_DISTANCE = "signed_distance"
+    BOUNDARY_NORMAL = "boundary_normal"
+    MEASURE = "measure"
+    INTERIOR_SAMPLING = "interior_sampling"
+    BOUNDARY_SAMPLING = "boundary_sampling"
+    BOUNDARY_ATLAS = "boundary_atlas"
+    SEAM_DIAGNOSTICS = "seam_diagnostics"
+
+
+@runtime_checkable
+class BoundaryAtlasProvider(Protocol):
+    """Structural provider used by representation-independent integration."""
+
+    @property
+    def boundary_atlas(self) -> BoundaryAtlas:
+        """Return a boundary atlas for the provider's current state."""
+        ...
+
+
+@runtime_checkable
+class SeamDiagnosticsProvider(Protocol):
+    """Structural provider of differentiable fixed-topology seam diagnostics."""
+
+    def seam_residual(self, state: Any, /) -> Array: ...
+
+
+__all__ = [
+    "BoundaryAtlasProvider",
+    "GeometryCapability",
+    "SeamDiagnosticsProvider",
+]

@@ -5,6 +5,7 @@
 import jax
 import numpy as np
 
+import phydrax as phx
 from phydrax.domain.geometry3d import Geometry3DFromDEM
 
 
@@ -16,12 +17,11 @@ def test_geometry3d_from_dem_basic():
     X, Y = np.meshgrid(x, y)
     Z = np.sin(X) * np.cos(Y)
 
-    geom = Geometry3DFromDEM(Z, x=x, y=y, extrude_depth=0.25, alpha=None)
+    geom = Geometry3DFromDEM(Z, x=x, y=y, extrude_depth=0.25, alpha=0.0)
 
-    # Mesh exists and has triangles
-    assert geom.mesh is not None
-    assert geom.mesh_vertices.shape[1] == 3
-    assert geom.mesh_faces.shape[1] == 3
+    assert isinstance(geom, phx.domain.GeometryDomain)
+    assert geom.reconstruction_report.source_kind == "digital_elevation_model"
+    assert geom.reconstruction_report.watertight
 
     # Bounds are finite and consistent
     bounds = np.asarray(geom.bounds, dtype=float)
@@ -36,11 +36,11 @@ def test_geometry3d_from_dem_basic():
     # Sampling interior returns points with negative SDF
     interior = geom.sample_interior(32)
     assert interior.shape == (32, 3)
-    sd = jax.vmap(geom.adf_orig)(interior)
+    sd = jax.vmap(geom.adf)(interior)
     assert np.all(sd <= 1e-8)
 
     # Boundary sampling returns points with ~0 SDF
     boundary = geom.sample_boundary(24)
     assert boundary.shape == (24, 3)
-    sd_b = jax.vmap(geom.adf_orig)(boundary)
+    sd_b = jax.vmap(geom.adf)(boundary)
     assert np.allclose(sd_b, 0.0, atol=1e-6)

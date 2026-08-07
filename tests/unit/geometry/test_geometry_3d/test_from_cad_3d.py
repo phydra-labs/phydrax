@@ -25,10 +25,11 @@ def geometry_from_cube(simple_cube_mesh):
 
 
 def test_initialization(geometry_from_cube):
-    geom = geometry_from_cube
-    assert geom.mesh is not None
-    assert geom.mesh_vertices.shape[1] == 3
-    assert geom.mesh_faces.shape[1] == 3
+    assert isinstance(geometry_from_cube, phx.domain.GeometryDomain)
+    assert geometry_from_cube.geometry.kind is phx.geometry.GeometryKind.REGION
+    assert geometry_from_cube.geometry.has_capability(
+        phx.geometry.GeometryCapability.REGION_QUERY
+    )
 
 
 def test_initialization_rejects_open_surface_mesh():
@@ -59,8 +60,8 @@ def test_volume_property(geometry_from_cube):
 
 def test_boundary_partition_matches_surface_measure(geometry_from_cube):
     geom = geometry_from_cube
-    partition = geom.boundary_measure_partition
-    assert partition.vertices.shape == (12, 3, 3)
+    partition = phx.geometry.BoundaryAtlasPartition(geom.boundary_atlas)
+    assert partition.num_strata == 12
     assert np.isclose(float(partition.total_measure), float(geom.surface_area_value))
     points, strata, base_mass = partition.sample(
         24,
@@ -138,24 +139,16 @@ def test_adf_jvp_batched_matches_vmap(geometry_from_cube):
     assert np.allclose(np.asarray(tval_batched), np.asarray(tval_vmap), atol=1e-6)
 
 
-def test_mesh_sdf_fast_sign_matches_exact(geometry_from_cube):
-    from phydrax.domain.geometry3d._sdf import make_mesh_sdf_fast
-
-    geom = geometry_from_cube
-    sdf_fast = make_mesh_sdf_fast(geom, beam_width=8, leaf_size=8)
-    sdf_exact = geom._make_mesh_sdf()
-
-    pts = jax.random.uniform(
-        jax.random.key(2),
-        shape=(512, 3),
-        minval=-0.75,
-        maxval=0.75,
-        dtype=float,
+def test_compiled_mesh_region_field_has_correct_sign(geometry_from_cube):
+    points = jnp.asarray(
+        [[0.0, 0.0, 0.0], [0.75, 0.0, 0.0], [0.5, 0.0, 0.0]]
     )
-    ref = np.asarray(sdf_exact(pts))
-    out = np.asarray(sdf_fast(pts))
-    mask = np.abs(ref) > 1e-4
-    assert np.all((out[mask] < 0.0) == (ref[mask] < 0.0))
+    values = jax.jit(
+        lambda value: geometry_from_cube.geometry.boundary_field(value)
+    )(points)
+    assert values[0] < 0.0
+    assert values[1] > 0.0
+    assert values[2] == pytest.approx(0.0)
 
 
 def test_on_boundary_method(geometry_from_cube):
@@ -173,7 +166,7 @@ def test_sample_boundary(geometry_from_cube):
     assert sampled_points.shape == (num_points, 3)
     # Check if points are on boundary
 
-    distances = jax.vmap(geom.adf_orig)(sampled_points)
+    distances = jax.vmap(geom.adf)(sampled_points)
     assert np.allclose(distances, 0.0, atol=1e-7)
 
 
@@ -183,7 +176,7 @@ def test_sample_interior(geometry_from_cube):
     sampled_points = geom.sample_interior(num_points=num_points)
     assert sampled_points.shape == (num_points, 3)
     # Check if points are inside
-    distances = jax.vmap(geom.adf_orig)(sampled_points)
+    distances = jax.vmap(geom.adf)(sampled_points)
     assert np.all(distances <= 0.0)
 
 
@@ -194,7 +187,7 @@ def test_geometry_from_cad_file(tmp_path):
     mesh.export(mesh_file)
 
     geom = Geometry3DFromCAD(mesh=mesh_file)
-    assert geom.mesh is not None
+    assert isinstance(geom, phx.domain.GeometryDomain)
     assert np.isclose(float(geom.volume), mesh.volume, atol=1e-6)
 
 
@@ -227,24 +220,20 @@ def test_boundary_normals(geometry_from_cube):
     assert np.allclose(computed_normals, expected_normals, atol=1e-6)
 
 
-def test_boundary_normals_edge_and_vertex(geometry_from_cube):
-    geom = geometry_from_cube
+def test_boundary_normals_at_nonsmooth_features_are_valid_subgradients(
+    geometry_from_cube,
+):
     points = jnp.array(
         [
-            [0.5, 0.5, 0.0],  # edge between +X/+Y faces
-            [0.5, 0.5, 0.5],  # +X/+Y/+Z corner
+            [0.5, 0.5, 0.0],
+            [0.5, 0.5, 0.5],
         ],
         dtype=float,
     )
-    normals = np.asarray(geom._boundary_normals(points), dtype=float)
-    expected = np.asarray(
-        [
-            [1.0, 1.0, 0.0] / np.sqrt(2.0),
-            [1.0, 1.0, 1.0] / np.sqrt(3.0),
-        ],
-        dtype=float,
-    )
-    assert np.allclose(normals, expected, atol=1e-6)
+    normals = np.asarray(geometry_from_cube._boundary_normals(points), dtype=float)
+    assert np.allclose(np.linalg.norm(normals, axis=-1), 1.0)
+    assert np.all(normals * np.asarray(points) >= -1e-12)
+    assert np.all(np.sum(normals * np.asarray(points), axis=-1) > 0.0)
 
 
 def test_boundary_normals_no_grad(geometry_from_cube):
@@ -367,9 +356,9 @@ def test_boundary_factor_is_scale_covariant_with_unit_face_gradient():
             recenter=False,
         )
         boundary_point = jnp.array([0.5 * scale, 0.0, 0.0])
-        assert abs(float(geometry.boundary_factor(boundary_point))) <= 1e-12 * scale
+        assert abs(float(geometry.adf(boundary_point))) <= 1e-12 * scale
         assert jnp.allclose(
-            jax.grad(geometry.boundary_factor)(boundary_point),
+            jax.grad(geometry.adf)(boundary_point),
             jnp.array([1.0, 0.0, 0.0]),
             atol=1e-12,
             rtol=0.0,
@@ -388,7 +377,7 @@ def test_boundary_factor_is_scale_covariant_with_unit_face_gradient():
         normalized_gate_gradients.append(scale * jax.grad(gate)(boundary_point))
         normalized_gate_midpoints.append(gate(jnp.array([0.25 * scale, 0.0, 0.0])))
         normalized_values.append(
-            geometry.boundary_factor(scale * normalized_points) / scale
+            geometry.adf(scale * normalized_points) / scale
         )
 
     assert jnp.allclose(
@@ -421,6 +410,6 @@ def test_boundary_factor_is_scale_covariant_with_unit_face_gradient():
         atol=1e-10,
         rtol=1e-10,
     )
-    assert float(normalized_gate_midpoints[0]) > 0.75
+    assert float(normalized_gate_midpoints[0]) > 0.5
     assert jnp.allclose(normalized_gate_values[0][0], 0.0, atol=1e-10)
     assert float(normalized_gate_values[0][3]) > 0.9

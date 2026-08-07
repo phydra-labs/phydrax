@@ -1,49 +1,51 @@
 # Geometry (2D)
 
-## Mesh-based geometries
+Two-dimensional domain constructors are adapters over the common
+`phydrax.geometry` substrate. `phx.domain.Circle(...)`, `Square(...)`, and the
+other convenience constructors compile an analytic source and return a
+`GeometryDomain`; they do not maintain a second geometry implementation.
 
-CAD geometry exposes four distinct scalar fields. `predicate_sdf` is used for
-inside/outside classification. `boundary_factor` (also available as `adf`) is the
-scale-covariant, compactly saturated field used by geometry operations and normal
-construction; it equals signed distance in a boundary collar but does not claim
-metric distance in the interior. `boundary_ansatz_factor` is a dimensional,
-unit-boundary-jet rescaling of the global R-equivalence profile used by derivative
-hard constraints. `make_enforcement_gate(...)` supplies the corresponding
-dimensionless gate for Dirichlet ansätze and preservation overlays.
+A geometry domain exposes one certified negative-inside field through `adf`, exact
+or approximate membership through the compiled kernel, a representation-independent
+`boundary_atlas`, physical measure, boundary measure, normals, and bounded sampling.
+`field_certificate` states whether the field is an exact distance, an approximate
+distance, or a general level set.
 
-### Boolean / CSG operations
+## Direct source composition
 
-`Geometry2DFromCAD` supports boolean operations via operator overloading:
+Construct and compose geometry sources before adapting them to a labeled domain:
 
-- `A + B`: union ($\Omega = \Omega_A \cup \Omega_B$)
-- `A - B`: difference ($\Omega = \Omega_A \setminus \Omega_B$)
-- `A & B`: intersection ($\Omega = \Omega_A \cap \Omega_B$)
+```python
+import phydrax as phx
 
-!!! example
-    ```python
-    import phydrax as phx
+left = phx.geometry.Circle((-0.35, 0.0), 0.75, feature_id="left")
+right = phx.geometry.Square((0.35, 0.0), 1.0, feature_id="right")
 
-    # In real workflows you can load meshes from disk via Geometry2DFromCAD("path.stl").
-    # For a runnable example without external files, use primitives (they produce CAD-backed geometries).
-    A = phx.domain.Circle(center=(0.0, 0.0), radius=1.0)
-    B = phx.domain.Square(center=(0.25, 0.0), side=1.0)
+source = left | right                 # union
+# source = left & right               # intersection
+# source = left - right               # difference
+source = source.translated((0.0, 0.25))
 
-    #     U = A + B
-    #     D = A - B
-    #     I = A & B
-    ```
+geometry = phx.domain.GeometryDomain(source.compile())
+```
+
+Sharp CSG uses `|`, `&`, and `-` on `GeometrySource` objects. The resulting field is
+a nonsmooth level set at operation seams, and its `FieldCertificate` reports that
+loss of regularity. Domain adapters intentionally do not duplicate the CSG API.
+
+## Planar mesh input
+
+`Geometry2DFromCAD` canonicalizes a finite planar triangle mesh into
+`PlanarMeshRegion`. Triangles may contain holes or multiple connected components;
+the oriented boundary loops determine membership and boundary charts. Point-cloud
+reconstruction is a separate, reported approximation pipeline.
 
 ::: phydrax.domain.Geometry2DFromCAD
     options:
         members:
-            - __init__
-            - boundary_ansatz_factor
-            - make_enforcement_gate
-            - __add__
-            - __sub__
-            - __and__
             - sample_interior
             - sample_boundary
+            - estimate_boundary_subset_measure
 
 ---
 

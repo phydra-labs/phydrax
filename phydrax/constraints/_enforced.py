@@ -490,9 +490,10 @@ def enforce_neumann(
     $$
 
     which yields $\partial u^*/\partial n = g$ on $\partial\Omega$ under mild
-    regularity assumptions. Unlike an everywhere-normalized nearest-boundary field,
-    $\nu$ can vanish smoothly at medial sets. CAD geometries use the globally
-    conditioned R-equivalence profile for $\psi$ rather than the compact geometry ADF.
+    regularity assumptions. Signed-distance geometry uses its certified field
+    directly; a general level set is rescaled to have an outward unit boundary
+    jet. The extension follows the representation's documented piecewise
+    regularity away from the boundary.
     """
     if isinstance(component, DomainComponentUnion):
         raise TypeError(

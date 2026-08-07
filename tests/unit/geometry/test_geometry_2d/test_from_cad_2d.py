@@ -34,10 +34,11 @@ def geometry_from_square(simple_square_mesh):
 
 
 def test_initialization(geometry_from_square):
-    geom = geometry_from_square
-    assert geom.mesh is not None
-    assert geom.mesh_vertices.shape[1] == 3  # trimesh vertices are 3D
-    assert geom.mesh_faces.shape[1] == 3
+    assert isinstance(geometry_from_square, phx.domain.GeometryDomain)
+    assert geometry_from_square.geometry.kind is phx.geometry.GeometryKind.REGION
+    assert geometry_from_square.geometry.has_capability(
+        phx.geometry.GeometryCapability.BOUNDARY_ATLAS
+    )
 
 
 def test_area_property(geometry_from_square):
@@ -47,15 +48,14 @@ def test_area_property(geometry_from_square):
     assert np.isclose(computed_area, expected_area, atol=1e-6)
 
 
-def test_measure_partitions_match_geometry_measures(geometry_from_square):
+def test_boundary_atlas_partition_matches_boundary_measure(geometry_from_square):
     geom = geometry_from_square
-    interior = geom.interior_measure_partition
-    boundary = geom.boundary_measure_partition
-    assert interior.vertices.shape == (2, 3, 2)
-    assert boundary.vertices.shape == (4, 2, 2)
-    assert np.isclose(float(interior.total_measure), float(geom.area))
-    assert np.isclose(float(boundary.total_measure), float(geom.boundary_length_value))
-    points, strata, base_mass = boundary.sample(
+    partition = phx.geometry.BoundaryAtlasPartition(geom.boundary_atlas)
+    assert partition.num_strata == 4
+    assert np.isclose(
+        float(partition.total_measure), float(geom.boundary_length_value)
+    )
+    points, strata, base_mass = partition.sample(
         8,
         key=jax.random.key(31),
         minimum_per_stratum=1,
@@ -129,7 +129,7 @@ def test_sample_boundary(geometry_from_square):
     sampled_points = geom.sample_boundary(num_points=num_points)
     assert sampled_points.shape == (num_points, 2)
     # Check if points are on boundary
-    distances = jax.vmap(geom.adf_orig)(sampled_points)
+    distances = jax.vmap(geom.adf)(sampled_points)
     assert np.allclose(distances, 0.0, atol=1e-8)
 
 
@@ -139,7 +139,7 @@ def test_sample_interior(geometry_from_square):
     sampled_points = geom.sample_interior(num_points=num_points)
     assert sampled_points.shape == (num_points, 2)
     # Check if points are inside
-    distances = jax.vmap(geom.adf_orig)(sampled_points)
+    distances = jax.vmap(geom.adf)(sampled_points)
     assert np.all(distances <= 0.0)
 
 
@@ -154,7 +154,7 @@ def test_geometry_from_cad_file(tmp_path):
     mesh.export(mesh_file)
 
     geom = Geometry2DFromCAD(mesh=mesh_file)
-    assert geom.mesh is not None
+    assert isinstance(geom, phx.domain.GeometryDomain)
     assert np.isclose(float(geom.area), mesh.area, atol=1e-6)
 
 
