@@ -165,7 +165,19 @@ from ._realization import (
     realization_path_labels,
     StochasticRealization,
 )
-from ._rough import compose_rough_path_segments, GeometricRoughPath
+from ._rough import (
+    AbstractRoughControl,
+    compose_rough_path_segments,
+    GeometricRoughPath,
+)
+from ._signature import (
+    chen_multiply,
+    LogSignatureControl,
+    piecewise_linear_signature,
+    PrimitiveBasis,
+    tensor_exponential,
+    tensor_logarithm,
+)
 from ._solution import (
     SPDEFormulation,
     SPDENoiseRegularization,
@@ -238,6 +250,8 @@ __all__ = [
     "bsde_paths_from_differential_solution",
     "BSDEProblem",
     "BSDEQuadrature",
+    "AbstractRoughControl",
+    "chen_multiply",
     "compose_rough_path_segments",
     "carre_du_champ",
     "combined_generator_observable",
@@ -333,6 +347,11 @@ __all__ = [
     "GaussianFieldCoupling",
     "GaussianFieldDiagnostics",
     "GeometricRoughPath",
+    "LogSignatureControl",
+    "piecewise_linear_signature",
+    "PrimitiveBasis",
+    "tensor_exponential",
+    "tensor_logarithm",
     "gaussian_field_diagnostics",
     "RandomFieldModel",
     "RandomFieldRole",
