@@ -143,6 +143,7 @@ nav:
             - Curvature: "api/metrix/curvature.md"
             - Embedded geometry: "api/metrix/embedded.md"
             - Stochastic geometry: "api/metrix/stochastic.md"
+            - Array state geometry: "api/metrix/state_geometry.md"
         - Data utilities:
             - Overview: "api/data_utils/index.md"
             - CSV reader: "api/data_utils/csv.md"

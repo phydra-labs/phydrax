@@ -100,6 +100,68 @@ def _maximum_difference(left: Any, right: Any) -> float:
         )
     ]
     return float(jax.device_get(jnp.max(jnp.stack(differences))))
+def run_state_geometry_benchmarks(
+    dimensions: Sequence[int] = (2, 3, 8),
+    /,
+    *,
+    repeats: int = 10,
+) -> dict[str, Any]:
+    """Benchmark on-manifold SO(n) and SPD(n) retraction kernels."""
+    if repeats < 1:
+        raise ValueError("repeats must be at least one.")
+    records: list[dict[str, Any]] = []
+    for dimension in dimensions:
+        dimension_ = int(dimension)
+        if dimension_ < 2:
+            raise ValueError("state-geometry benchmark dimensions must be at least two.")
+        raw = jnp.arange(dimension_**2, dtype=float).reshape(
+            (dimension_, dimension_)
+        )
+        skew = 1e-2 * (raw - raw.T)
+        symmetric = 5e-3 * (raw + raw.T)
+        identity = jnp.eye(dimension_)
+        so = phx.metrix.SpecialOrthogonalStateGeometry(dimension_)
+        spd = phx.metrix.SymmetricPositiveDefiniteStateGeometry(dimension_)
+        so_output, so_timing = _benchmark(
+            lambda local: so.retract(identity, local),
+            skew,
+            repeats=repeats,
+        )
+        spd_output, spd_timing = _benchmark(
+            lambda local: spd.retract(2.0 * identity, local),
+            symmetric,
+            repeats=repeats,
+        )
+        records.append(
+            {
+                "dimension": dimension_,
+                "so_exponential": {
+                    **so_timing,
+                    "geometry_id": so.geometry_id,
+                    "orthogonality_error": float(
+                        jax.device_get(
+                            jnp.max(jnp.abs(so_output.T @ so_output - identity))
+                        )
+                    ),
+                    "determinant": float(jax.device_get(jnp.linalg.det(so_output))),
+                },
+                "spd_congruence_exponential": {
+                    **spd_timing,
+                    "geometry_id": spd.geometry_id,
+                    "minimum_eigenvalue": float(
+                        jax.device_get(jnp.min(jnp.linalg.eigvalsh(spd_output)))
+                    ),
+                },
+            }
+        )
+    return {
+        "jax_version": jax.__version__,
+        "backend": jax.default_backend(),
+        "repeats": repeats,
+        "records": records,
+    }
+
+
 
 
 def run_benchmarks(
@@ -148,7 +210,7 @@ def run_benchmarks(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Benchmark fused Metrix jets against repeated metric evaluation."
+        description="Benchmark Metrix metric jets or state-geometry retractions."
     )
     parser.add_argument(
         "--dimensions",
@@ -156,13 +218,19 @@ def _parser() -> argparse.ArgumentParser:
         nargs="+",
         default=(2, 3, 8, 16),
     )
+    parser.add_argument(
+        "--state-geometry",
+        action="store_true",
+        help="Benchmark SO(n) and SPD(n) retractions instead of metric jets.",
+    )
     parser.add_argument("--repeats", type=int, default=10)
     return parser
 
 
 def main() -> None:
     arguments = _parser().parse_args()
-    result = run_benchmarks(arguments.dimensions, repeats=arguments.repeats)
+    runner = run_state_geometry_benchmarks if arguments.state_geometry else run_benchmarks
+    result = runner(arguments.dimensions, repeats=arguments.repeats)
     print(json.dumps(result, indent=2, sort_keys=True))
 
 

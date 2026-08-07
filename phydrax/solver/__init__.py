@@ -108,6 +108,17 @@ from ._differential import (
     NoiseStructure,
     WienerTerm,
 )
+from ._geometric import (
+    AbstractGeometricSolver,
+    CommutatorFreeSolver,
+    CommutatorFreeTableau,
+    commutator_free_midpoint_tableau,
+    GeometricEuler,
+    GeometricLocalInterpolation,
+    RKMK,
+    SRKMK,
+    solver_state_geometry,
+)
 from ._diffrax_backend import solve_diffrax, solve_diffrax_ensemble
 from ._enforced_constraint_pipeline import (
     EnforcedConstraintPipeline,
@@ -230,6 +241,7 @@ from ._state_transfer import (
 
 
 __all__ = [
+    "AbstractGeometricSolver",
     "AbstractSpatialDiscretization",
     "AbstractBSDERegressionBasis",
     "assemble_stochastic_collocation",
@@ -247,6 +259,9 @@ __all__ = [
     "CoupledFBSDEProblem",
     "CoupledFBSDEResult",
     "BSDERegressionScheme",
+    "CommutatorFreeSolver",
+    "CommutatorFreeTableau",
+    "commutator_free_midpoint_tableau",
     "DeepBSDEResult",
     "DeepPicardDiagnostics",
     "DeepPicardInitialSource",
@@ -265,6 +280,8 @@ __all__ = [
     "DifferentialSolution",
     "DifferentialVectorField",
     "evaluate_stochastic_collocation",
+    "GeometricEuler",
+    "GeometricLocalInterpolation",
     "NoiseStructure",
     "finite_state_generator",
     "FiniteStateGenerator",
@@ -292,6 +309,9 @@ __all__ = [
     "materialize_stochastic_collocation",
     "least_squares_bsde_diagnostics",
     "LeastSquaresBSDEDiagnostics",
+    "RKMK",
+    "SRKMK",
+    "solver_state_geometry",
     "LeastSquaresBSDEResult",
     "ParticleVectorField",
     "RoughDifferentialProblem",

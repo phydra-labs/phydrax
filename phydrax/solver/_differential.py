@@ -15,6 +15,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._frozendict import frozendict
+from ..metrix import AbstractStateGeometry
 from .._strict import StrictModule
 from .._uncertainty import UncertaintySource, validate_uncertainty_source
 from ..stochastic import WienerRealization
@@ -99,6 +100,8 @@ class DifferentialProblem(StrictModule):
     noise_shape: tuple[int, ...] = eqx.field(static=True)
     noise_id: str | None = eqx.field(static=True)
     interpretation: DifferentialInterpretation = eqx.field(static=True)
+    state_geometry_id: str | None = eqx.field(static=True)
+    state_geometry: AbstractStateGeometry | None
 
     def __init__(
         self,
@@ -111,6 +114,7 @@ class DifferentialProblem(StrictModule):
         args: Any = None,
         wiener_terms: Sequence[WienerTerm] = (),
         interpretation: DifferentialInterpretation = "ito",
+        state_geometry: AbstractStateGeometry | None = None,
     ):
         if not callable(drift):
             raise TypeError("DifferentialProblem drift must be callable.")
@@ -132,6 +136,21 @@ class DifferentialProblem(StrictModule):
             raise ValueError("interpretation must be 'ito' or 'stratonovich'.")
 
         state = jnp.asarray(initial_state)
+        if state_geometry is not None:
+            if not isinstance(state_geometry, AbstractStateGeometry):
+                raise TypeError(
+                    "state_geometry must be an AbstractStateGeometry or None."
+                )
+            membership = jnp.asarray(state_geometry.contains(state), dtype=bool)
+            if membership.shape != ():
+                raise ValueError(
+                    "State geometry contains() must return a scalar boolean."
+                )
+            state = eqx.error_if(
+                state,
+                ~membership,
+                "DifferentialProblem initial_state is outside state_geometry.",
+            )
         terms = tuple(wiener_terms)
         if any(not isinstance(term, WienerTerm) for term in terms):
             raise TypeError("wiener_terms must contain only WienerTerm objects.")
@@ -162,6 +181,10 @@ class DifferentialProblem(StrictModule):
         self.noise_shape = (offset,) if terms else ()
         self.noise_id = _noise_identity(terms)
         self.interpretation = interpretation
+        self.state_geometry_id = (
+            None if state_geometry is None else state_geometry.geometry_id
+        )
+        self.state_geometry = state_geometry
 
     @property
     def stochastic(self) -> bool:
@@ -190,6 +213,9 @@ class DifferentialSolution(StrictModule):
     wiener_term_slices: frozendict[str, tuple[int, int]] = eqx.field(static=True)
     solver_name: str = eqx.field(static=True)
     interpretation: DifferentialInterpretation = eqx.field(static=True)
+    state_geometry_id: str | None = eqx.field(static=True)
+    solver_id: str = eqx.field(static=True)
+    resolved_method: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -208,6 +234,9 @@ class DifferentialSolution(StrictModule):
         | None = None,
         solver_name: str,
         interpretation: DifferentialInterpretation,
+        state_geometry_id: str | None = None,
+        solver_id: str | None = None,
+        resolved_method: str | None = None,
     ):
         samples = tuple(int(size) for size in sample_shape)
         if any(size <= 0 for size in samples):
@@ -233,8 +262,27 @@ class DifferentialSolution(StrictModule):
             )
         if not isinstance(solver_name, str) or not solver_name:
             raise ValueError("DifferentialSolution solver_name must be non-empty.")
+        resolved_solver_id = (
+            f"solver:{solver_name}" if solver_id is None else solver_id
+        )
+        resolved_solver_method = (
+            solver_name if resolved_method is None else resolved_method
+        )
+        if not isinstance(resolved_solver_id, str) or not resolved_solver_id:
+            raise ValueError("DifferentialSolution solver_id must be non-empty.")
+        if (
+            not isinstance(resolved_solver_method, str)
+            or not resolved_solver_method
+        ):
+            raise ValueError(
+                "DifferentialSolution resolved_method must be non-empty."
+            )
         if interpretation not in ("ito", "stratonovich"):
             raise ValueError("interpretation must be 'ito' or 'stratonovich'.")
+        if state_geometry_id is not None and (
+            not isinstance(state_geometry_id, str) or not state_geometry_id
+        ):
+            raise ValueError("state_geometry_id must be a non-empty string or None.")
         if realization is not None:
             if not isinstance(realization, WienerRealization):
                 raise TypeError("realization must be a WienerRealization or None.")
@@ -261,6 +309,9 @@ class DifferentialSolution(StrictModule):
         )
         self.solver_name = solver_name
         self.interpretation = interpretation
+        self.state_geometry_id = state_geometry_id
+        self.solver_id = resolved_solver_id
+        self.resolved_method = resolved_solver_method
 
     @property
     def num_times(self) -> int:

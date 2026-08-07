@@ -97,6 +97,8 @@ def test_semilinear_solver_propagates_linear_heat_mode_exactly():
     )
 
     assert solution.solver_name == "SemilinearExponentialEuler"
+    assert solution.solver_id == "solver:semilinear:exponential_euler"
+    assert solution.resolved_method.startswith("exponential_euler:")
     assert solution.stats["exact_stochastic_convolution"] is False
     assert jnp.array_equal(solution.states[0], initial)
     assert jnp.allclose(solution.states[-1], expected, rtol=1e-10, atol=1e-10)
