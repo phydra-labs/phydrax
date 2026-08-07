@@ -205,13 +205,17 @@ from ._regression_bsde import (
     solve_bsde_least_squares,
 )
 from ._rough import (
+    AbstractRoughSolver,
+    Davie,
     RoughDifferentialProblem,
-    RoughDifferentialScheme,
     RoughDifferentialSolution,
     RoughDrift,
+    RoughEuler,
     RoughVectorFields,
     solve_rough_differential,
 )
+from ._rough_lift import LiftedRoughVectorFields, lift_rough_vector_fields
+from ._rough_logode import LinearLogODE, LogODE
 from ._semilinear import (
     exact_modal_stochastic_convolution,
     SemilinearFallback,
@@ -314,8 +318,14 @@ __all__ = [
     "solver_state_geometry",
     "LeastSquaresBSDEResult",
     "ParticleVectorField",
+    "AbstractRoughSolver",
+    "Davie",
+    "LiftedRoughVectorFields",
+    "lift_rough_vector_fields",
+    "LinearLogODE",
+    "LogODE",
     "RoughDifferentialProblem",
-    "RoughDifferentialScheme",
+    "RoughEuler",
     "RoughDifferentialSolution",
     "RoughDrift",
     "RoughVectorFields",
