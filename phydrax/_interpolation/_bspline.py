@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from math import factorial
 from numbers import Integral
 
@@ -12,8 +13,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ._stencil import GatherStencil
-from ._types import BoundsMode
+from ._stencil import apply_gather_stencil, GatherStencil
+from ._types import BoundsMode, InterpolationResult
 
 
 def _safe_ratio(numerator: Array, denominator: Array, /) -> Array:
@@ -22,15 +23,15 @@ def _safe_ratio(numerator: Array, denominator: Array, /) -> Array:
     return jnp.where(nonzero, numerator / safe_denominator, jnp.zeros_like(numerator))
 
 
-def _basis_derivative(
+def _basis_jet(
     parameter: Array,
     knots: Array,
     span: Array,
     degree: int,
-    derivative_order: int,
+    maximum_order: int,
     /,
 ) -> Array:
-    """Evaluate one span-local B-spline basis derivative."""
+    """Evaluate one span-local B-spline basis jet."""
     table = jnp.zeros((degree + 1, degree + 1), dtype=knots.dtype)
     table = table.at[0, 0].set(1.0)
     left = jnp.zeros((degree + 1,), dtype=knots.dtype)
@@ -49,7 +50,7 @@ def _basis_derivative(
         table = table.at[column, column].set(saved)
 
     derivatives = jnp.zeros(
-        (derivative_order + 1, degree + 1),
+        (maximum_order + 1, degree + 1),
         dtype=knots.dtype,
     )
     derivatives = derivatives.at[0].set(table[:, degree])
@@ -59,7 +60,7 @@ def _basis_derivative(
         coefficients = coefficients.at[0, 0].set(1.0)
         previous = 0
         current = 1
-        for order in range(1, derivative_order + 1):
+        for order in range(1, maximum_order + 1):
             coefficients = coefficients.at[current].set(0.0)
             value = jnp.zeros((), dtype=knots.dtype)
             shifted_index = basis_index - order
@@ -98,10 +99,89 @@ def _basis_derivative(
             derivatives = derivatives.at[order, basis_index].set(value)
             previous, current = current, previous
 
-    for order in range(1, derivative_order + 1):
+    for order in range(1, maximum_order + 1):
         scale = factorial(degree) // factorial(degree - order)
         derivatives = derivatives.at[order].multiply(scale)
-    return derivatives[derivative_order]
+    return derivatives
+
+
+def _bspline_weights_raw(
+    knots: Array,
+    parameters: Array,
+    spans: Array,
+    degree: int,
+    derivative_order: int,
+) -> Array:
+    flat_parameters = parameters.reshape((-1,))
+    flat_spans = spans.reshape((-1,))
+    weights = jax.vmap(
+        lambda parameter, span: _basis_jet(
+            parameter,
+            knots,
+            span,
+            degree,
+            derivative_order,
+        )[derivative_order]
+    )(flat_parameters, flat_spans)
+    return weights.reshape(parameters.shape + (degree + 1,))
+
+
+@partial(jax.custom_jvp, nondiff_argnums=(3, 4))
+def _bspline_weights(
+    knots: Array,
+    parameters: Array,
+    spans: Array,
+    degree: int,
+    derivative_order: int,
+) -> Array:
+    return _bspline_weights_raw(
+        knots,
+        parameters,
+        spans,
+        degree,
+        derivative_order,
+    )
+
+
+@_bspline_weights.defjvp
+def _bspline_weights_jvp(
+    degree: int,
+    derivative_order: int,
+    primals: tuple[Array, Array, Array],
+    tangents: tuple[Array, Array, Array],
+) -> tuple[Array, Array]:
+    knots, parameters, spans = primals
+    knot_tangent, parameter_tangent, _span_tangent = tangents
+    weights = _bspline_weights_raw(
+        knots,
+        parameters,
+        spans,
+        degree,
+        derivative_order,
+    )
+    if derivative_order == degree:
+        derivative_weights = jnp.zeros_like(weights)
+    else:
+        derivative_weights = _bspline_weights(
+            knots,
+            parameters,
+            spans,
+            degree,
+            derivative_order + 1,
+        )
+    _, knot_component = jax.jvp(
+        lambda knot_values: _bspline_weights_raw(
+            knot_values,
+            parameters,
+            spans,
+            degree,
+            derivative_order,
+        ),
+        (knots,),
+        (knot_tangent,),
+    )
+    tangent = derivative_weights * parameter_tangent[..., None] + knot_component
+    return weights, tangent
 
 
 def bspline_stencil(
@@ -195,18 +275,17 @@ def bspline_stencil(
     support = ~outside if bounds == "fill" else jnp.ones(query_.shape, dtype=bool)
 
     spans = jnp.searchsorted(knots_, query_eval, side="right") - 1
-    spans = jnp.clip(spans, degree_, control_count - 1).astype(jnp.int32)
-    flat_parameters = query_eval.reshape((-1,))
+    spans = jax.lax.stop_gradient(
+        jnp.clip(spans, degree_, control_count - 1).astype(jnp.int32)
+    )
     flat_spans = spans.reshape((-1,))
-    weights = jax.vmap(
-        lambda parameter, span: _basis_derivative(
-            parameter,
-            knots_,
-            span,
-            degree_,
-            order,
-        )
-    )(flat_parameters, flat_spans)
+    weights = _bspline_weights(
+        knots_,
+        query_eval,
+        spans,
+        degree_,
+        order,
+    ).reshape((-1, degree_ + 1))
     offsets = jnp.arange(degree_ + 1, dtype=jnp.int32) - degree_
     indices = flat_spans[:, None] + offsets[None, :]
     route_shape = query_.shape + (degree_ + 1,)
@@ -219,4 +298,93 @@ def bspline_stencil(
     )
 
 
-__all__ = ["bspline_stencil"]
+def bspline_evaluate(
+    knots: ArrayLike,
+    coefficients: ArrayLike,
+    query: ArrayLike,
+    /,
+    *,
+    degree: int,
+    derivative_order: int = 0,
+    bounds: BoundsMode = "error",
+    case_shape: tuple[int, ...] = (),
+) -> InterpolationResult:
+    """Evaluate B-spline coefficients with an analytic query derivative rule."""
+    stencil = bspline_stencil(
+        knots,
+        query,
+        degree=degree,
+        derivative_order=derivative_order,
+        bounds=bounds,
+        case_shape=case_shape,
+    )
+    return apply_gather_stencil(coefficients, stencil)
+
+
+def bspline_batched_evaluate(
+    knots: ArrayLike,
+    coefficients: ArrayLike,
+    query: ArrayLike,
+    /,
+    *,
+    degree: int,
+    derivative_order: int = 0,
+    bounds: BoundsMode = "error",
+) -> InterpolationResult:
+    """Evaluate homogeneous knot rows aligned with the second case axis."""
+    knots_ = jnp.asarray(knots)
+    coefficients_ = jnp.asarray(coefficients)
+    query_ = jnp.asarray(query)
+    if knots_.ndim != 2 or knots_.shape[0] == 0:
+        raise ValueError(
+            "Batched B-spline knots must have shape (num_grids, knot_count)."
+        )
+    if coefficients_.ndim < 3:
+        raise ValueError(
+            "Batched B-spline coefficients must begin with "
+            "(output_count, num_grids, coefficient_count)."
+        )
+    if query_.ndim < 2:
+        raise ValueError(
+            "Batched B-spline queries must begin with (output_count, num_grids)."
+        )
+    output_count = int(coefficients_.shape[0])
+    num_grids = int(knots_.shape[0])
+    control_count = int(knots_.shape[1]) - int(degree) - 1
+    if (
+        output_count == 0
+        or int(coefficients_.shape[1]) != num_grids
+        or int(coefficients_.shape[2]) != control_count
+    ):
+        raise ValueError("Batched B-spline coefficient axes do not match the knot bank.")
+    if query_.shape[:2] != coefficients_.shape[:2]:
+        raise ValueError(
+            "Batched B-spline query case axes must match the coefficient axes."
+        )
+
+    grid_coefficients = jnp.moveaxis(coefficients_, 1, 0)
+    grid_queries = jnp.moveaxis(query_, 1, 0)
+
+    def evaluate_grid(
+        grid_knots: Array,
+        grid_coefficients_: Array,
+        grid_query: Array,
+    ) -> InterpolationResult:
+        return bspline_evaluate(
+            grid_knots,
+            grid_coefficients_,
+            grid_query,
+            degree=degree,
+            derivative_order=derivative_order,
+            bounds=bounds,
+            case_shape=(output_count,),
+        )
+
+    result = jax.vmap(evaluate_grid)(knots_, grid_coefficients, grid_queries)
+    return InterpolationResult(
+        jnp.moveaxis(result.values, 0, 1),
+        jnp.moveaxis(result.support, 0, 1),
+    )
+
+
+__all__ = ["bspline_batched_evaluate", "bspline_evaluate", "bspline_stencil"]

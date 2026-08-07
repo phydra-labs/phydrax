@@ -9,7 +9,11 @@ import numpy as np
 import pytest
 from scipy.interpolate import BSpline as SciPyBSpline
 
-from phydrax._interpolation import apply_gather_stencil, bspline_stencil
+from phydrax._interpolation import (
+    apply_gather_stencil,
+    bspline_evaluate,
+    bspline_stencil,
+)
 
 
 def _open_knots(degree: int, control_count: int) -> np.ndarray:
@@ -129,13 +133,11 @@ def test_bspline_explicit_derivatives_match_autodiff_at_endpoints():
     controls = jnp.asarray([0.1, -0.7, 0.4, 1.2, -0.2, 0.9, 1.4])
 
     def evaluate(query):
-        return apply_gather_stencil(
-            controls,
-            bspline_stencil(knots, query, degree=degree),
-        ).values
+        return bspline_evaluate(knots, controls, query, degree=degree).values
 
     first = jax.jacfwd(evaluate)
     second = jax.jacfwd(first)
+    third = jax.jacfwd(second)
     for query in jnp.asarray([0.0, 0.37, 1.0]):
         explicit_first = apply_gather_stencil(
             controls,
@@ -155,9 +157,65 @@ def test_bspline_explicit_derivatives_match_autodiff_at_endpoints():
                 derivative_order=2,
             ),
         ).values
+        explicit_third = apply_gather_stencil(
+            controls,
+            bspline_stencil(
+                knots,
+                query,
+                degree=degree,
+                derivative_order=3,
+            ),
+        ).values
         assert float(first(query)) == pytest.approx(float(explicit_first), abs=1e-10)
         assert float(second(query)) == pytest.approx(float(explicit_second), abs=1e-10)
+        assert float(third(query)) == pytest.approx(float(explicit_third), abs=1e-10)
         assert np.isfinite(np.asarray(jax.jit(evaluate)(query)))
+
+
+def test_bspline_custom_jvp_combines_query_and_coefficient_tangents():
+    degree = 3
+    knots = jnp.asarray(_open_knots(degree, 7))
+    coefficients = jnp.arange(14, dtype=float).reshape((7, 2)) / 9.0
+    coefficient_tangent = jnp.cos(coefficients)
+    query = jnp.asarray(0.43)
+    query_tangent = jnp.asarray(-0.7)
+
+    def evaluate(coefficients_, query_):
+        return bspline_evaluate(
+            knots,
+            coefficients_,
+            query_,
+            degree=degree,
+        ).values
+
+    values, tangent = jax.jvp(
+        evaluate,
+        (coefficients, query),
+        (coefficient_tangent, query_tangent),
+    )
+    expected_values = evaluate(coefficients, query)
+    expected_tangent = (
+        evaluate(coefficient_tangent, query)
+        + query_tangent
+        * bspline_evaluate(
+            knots,
+            coefficients,
+            query,
+            degree=degree,
+            derivative_order=1,
+        ).values
+    )
+    assert np.allclose(np.asarray(values), np.asarray(expected_values), atol=1e-12)
+    assert np.allclose(np.asarray(tangent), np.asarray(expected_tangent), atol=1e-12)
+
+    coefficient_gradient = jax.grad(
+        lambda candidate: jnp.sum(evaluate(candidate, query))
+    )(coefficients)
+    active_rows = np.flatnonzero(
+        np.any(np.abs(np.asarray(coefficient_gradient)) > 1e-12, axis=1)
+    )
+    assert active_rows.size == degree + 1
+    assert np.all(np.diff(active_rows) == 1)
 
 
 def test_bspline_case_shape_and_complex_payloads_are_preserved():
