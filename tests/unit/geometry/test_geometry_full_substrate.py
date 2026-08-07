@@ -611,7 +611,7 @@ def test_sketch_and_design_constraint_solvers_lower_to_geometry():
         if parameter_id.name == "center"
     )
     global_solution = system.search(
-        phx.geometry.DifferentialEvolutionSearch(
+        phx.optim.DifferentialEvolutionSearch(
             8,
             4,
             relative_tolerance=0.0,

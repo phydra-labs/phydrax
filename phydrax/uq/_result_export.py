@@ -35,6 +35,7 @@ from ._kalman import KalmanFilterResult, KalmanSmootherResult
 from ._laplace import LaplaceResult
 from ._laplax_backend import StructuredLaplaceResult
 from ._map import MAPResult
+from ._map_search import MAPSearchResult
 from ._mcmc import MCMCResult
 from ._particle import ParticleFilterResult
 from ._pathfinder import PathfinderResult
@@ -219,16 +220,12 @@ def to_arviz(result: MCMCResult | FlowNUTSResult | SGMCMCResult, /):
         if isinstance(result, FlowNUTSResult):
             sample_stats.update(
                 {
-                    "flow_acceptance_rate": np.asarray(
-                        result.global_acceptance_rate
-                    ),
+                    "flow_acceptance_rate": np.asarray(result.global_acceptance_rate),
                     "flow_accepted_count": np.asarray(result.global_accepted_count),
                     "flow_mean_log_acceptance_ratio": np.asarray(
                         result.global_mean_log_acceptance_ratio
                     ),
-                    "flow_nonfinite_count": np.asarray(
-                        result.global_nonfinite_count
-                    ),
+                    "flow_nonfinite_count": np.asarray(result.global_nonfinite_count),
                 }
             )
             posterior_attributes["phydrax_flow_nuts_config"] = json.dumps(
@@ -452,9 +449,7 @@ def _adapt_result(result, arrays, fields, trees):
             "duration_seconds": result.duration_seconds,
             "samples_per_second": result.samples_per_second,
             "updates_per_second": result.updates_per_second,
-            "gradient_evaluations_per_second": (
-                result.gradient_evaluations_per_second
-            ),
+            "gradient_evaluations_per_second": (result.gradient_evaluations_per_second),
             "sample_memory_bytes": result.sample_memory_bytes,
             "mean_update_gradient_norm": result.mean_update_gradient_norm,
             "max_update_gradient_norm": result.max_update_gradient_norm,
@@ -597,9 +592,7 @@ def _adapt_result(result, arrays, fields, trees):
             "max_rhat": result.thresholds.max_rhat,
             "min_bulk_ess": result.thresholds.min_bulk_ess,
             "min_tail_ess": result.thresholds.min_tail_ess,
-            "allow_nonfinite_updates": (
-                result.thresholds.allow_nonfinite_updates
-            ),
+            "allow_nonfinite_updates": (result.thresholds.allow_nonfinite_updates),
         }
         for name in fields:
             metadata.pop(name, None)
@@ -630,6 +623,50 @@ def _adapt_result(result, arrays, fields, trees):
         for name in fields:
             metadata.pop(name, None)
         return "mcmc_convergence_report", metadata, ()
+
+    if isinstance(result, MAPSearchResult):
+        _put_tree(trees, arrays, "position", result.position)
+        _put_tree(trees, arrays, "parameters", result.parameters)
+        _put_tree(
+            trees,
+            arrays,
+            "population_positions",
+            result.population_positions,
+        )
+        _put_tree(trees, arrays, "lower_bounds", result.lower_bounds)
+        _put_tree(trees, arrays, "upper_bounds", result.upper_bounds)
+        _put_field(fields, arrays, "objective", result.objective)
+        _put_field(fields, arrays, "log_density", result.log_density)
+        _put_field(
+            fields,
+            arrays,
+            "population_objectives",
+            result.population_objectives,
+        )
+        _put_field(
+            fields,
+            arrays,
+            "best_objective_history",
+            result.best_objective_history,
+        )
+        metadata = {
+            "population_converged": result.population_converged,
+            "termination_reason": result.termination_reason,
+            "generations": result.generations,
+            "objective_evaluations": result.objective_evaluations,
+            "invalid_evaluations": result.invalid_evaluations,
+            "design_signature": result.design_signature,
+            "search": {
+                "population_size": result.search.population_size,
+                "max_generations": result.search.max_generations,
+                "strategy": result.search.strategy,
+                "differential_weight": result.search.differential_weight,
+                "crossover_rate": result.search.crossover_rate,
+                "relative_tolerance": result.search.relative_tolerance,
+                "absolute_tolerance": result.search.absolute_tolerance,
+            },
+        }
+        return "map_search", metadata, ("problem", "search", "key")
 
     if isinstance(result, MAPResult):
         for name in ("position", "parameters", "gradient"):

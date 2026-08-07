@@ -178,7 +178,7 @@ sensitivity = phx.uq.sobol_indices(
 interactions involving that input. Validate the estimator on a reference problem such
 as Ishigami before using a new expensive forward workflow.
 
-## 7. Infer a physical parameter with NUTS and Laplace
+## 7. Infer a physical parameter with global/local MAP, NUTS, and Laplace
 
 Define a normalized observation likelihood and a prior explicitly. Do not pass
 `FunctionalSolver.loss()` as a posterior log density.
@@ -216,8 +216,23 @@ posterior_problem = phx.uq.PosteriorProblem(
     ),
 )
 
+map_search = phx.optim.DifferentialEvolutionSearch(
+    16,
+    20,
+    design=phx.sampling.SobolDesign(scrambled=True),
+)
+global_map = phx.uq.search_map(
+    posterior_problem,
+    map_search,
+    key=jr.key(50),
+    position_bounds=(
+        {"source": -6.0},
+        {"source": 6.0},
+    ),
+)
 map_result = phx.uq.find_map(
     posterior_problem,
+    global_map.position,
     gradient_tolerance=1e-7,
 )
 

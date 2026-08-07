@@ -108,7 +108,7 @@ from .design._schema import (
     ParameterSchema,
     ParameterSpec,
 )
-from .design._search import DesignSearchResult, DifferentialEvolutionSearch
+from .design._search import DesignSearchResult
 from .design._sketch import (
     Coincident,
     EqualLength,
@@ -200,7 +200,6 @@ __all__ = [
     "Cone",
     "DDGOperators",
     "DesignState",
-    "DifferentialEvolutionSearch",
     "DistanceSemantics",
     "Cylinder",
     "Difference",
