@@ -39,8 +39,8 @@ def _value_fingerprint(value: Any | None, /) -> str:
     if value is None:
         return "none"
     array = np.asarray(value)
-    if array.dtype.kind not in "biufc":
-        raise TypeError("Compiled PDE parameter values must be numeric arrays.")
+    if array.dtype.kind not in "biuf":
+        raise TypeError("Compiled PDE parameter values must be real numeric arrays.")
     if np.any(~np.isfinite(array)):
         raise ValueError("Compiled PDE parameter values must be finite.")
     digest = hashlib.sha256()
@@ -176,6 +176,10 @@ class BoundaryLift(StrictModule):
             raise ValueError("BoundaryLift field_name must be non-empty.")
         if not identifier:
             raise ValueError("BoundaryLift lift_id must be non-empty.")
+        if callable(value) and time_derivative is None:
+            raise ValueError(
+                "Callable BoundaryLift values require an explicit time_derivative."
+            )
         self.value = value
         self.time_derivative = time_derivative
         self.field_name = name
@@ -203,6 +207,8 @@ class _SemidiscreteEvaluator(StrictModule):
     parameter_defaults: tuple[Any | None, ...]
     rhs_expressions: tuple[PDEExpression, ...] = eqx.field(static=True)
     parameter_names: tuple[str, ...] = eqx.field(static=True)
+    parameter_components: tuple[int, ...] = eqx.field(static=True)
+    parameter_functional: tuple[bool, ...] = eqx.field(static=True)
     spatial_coordinate_axes: tuple[tuple[str, tuple[int, ...]], ...] = eqx.field(
         static=True
     )
@@ -228,20 +234,53 @@ class _SemidiscreteEvaluator(StrictModule):
         self.parameter_defaults = tuple(parameter_defaults)
         self.rhs_expressions = tuple(rhs_expressions)
         self.parameter_names = tuple(parameter.name for parameter in problem.parameters)
+        self.parameter_components = tuple(
+            parameter.components for parameter in problem.parameters
+        )
+        self.parameter_functional = tuple(
+            parameter.functional for parameter in problem.parameters
+        )
         self.spatial_coordinate_axes = tuple(spatial_coordinate_axes)
         self.time_coordinate = str(time_coordinate)
         self.region_axes = tuple(region_axes)
 
-    def _parameter(self, name: str, args: Any, /) -> Any:
+    def _parameter(self, name: str, args: Any, /) -> Array:
         if args is not None and not isinstance(args, Mapping):
             raise TypeError("Semidiscrete PDE args must be a parameter mapping or None.")
-        if args is not None and name in args:
-            return args[name]
         index = self.parameter_names.index(name)
-        value = self.parameter_defaults[index]
+        if args is not None and name in args:
+            value = args[name]
+        else:
+            value = self.parameter_defaults[index]
         if value is None:
             raise KeyError(f"No value supplied for PDE parameter {name!r}.")
-        return value
+        array = jnp.asarray(value)
+        if array.dtype.kind not in "biuf":
+            raise TypeError(f"PDE parameter {name!r} must be real-valued.")
+        components = self.parameter_components[index]
+        functional = self.parameter_functional[index]
+        if components == 1 and array.shape == (1,):
+            return array[0]
+        if components == 1:
+            allowed = ((), self.layout.spatial_shape) if functional else ((),)
+            if array.shape not in allowed:
+                raise ValueError(
+                    f"PDE parameter {name!r} must be scalar"
+                    + (" or spatially field-valued" if functional else "")
+                    + f"; got {array.shape}."
+                )
+        else:
+            allowed = (
+                ((components,), self.layout.spatial_shape + (components,))
+                if functional
+                else ((components,),)
+            )
+            if array.shape not in allowed:
+                raise ValueError(
+                    f"PDE parameter {name!r} must end in {components} components; "
+                    f"got {array.shape}."
+                )
+        return array
 
     def _axes(self, coordinate: str, /) -> tuple[int, ...]:
         for name, axes in self.spatial_coordinate_axes:
@@ -352,6 +391,236 @@ class _SemidiscreteEvaluator(StrictModule):
             periodic=False,
         )
 
+    def _components(self, expression: PDEExpression, /) -> int:
+        if expression.op == "field":
+            assert expression.symbol is not None
+            index = self.layout.field_names.index(expression.symbol)
+            return self.layout.component_counts[index]
+        if expression.op == "parameter":
+            assert expression.symbol is not None
+            return self.parameter_components[self.parameter_names.index(expression.symbol)]
+        if expression.op == "coordinate":
+            assert expression.symbol is not None
+            if expression.symbol == self.time_coordinate:
+                return 1
+            return len(self._axes(expression.symbol))
+        if expression.op in ("component", "dot", "divergence"):
+            return 1
+        if expression.op == "gradient":
+            assert expression.coordinate is not None
+            return len(self._axes(expression.coordinate))
+        if expression.op == "curl":
+            return 3
+        if not expression.args:
+            return 1
+        if expression.op == "multiply":
+            return max(self._components(argument) for argument in expression.args)
+        return self._components(expression.args[0])
+
+    def _unknown_parities(self, components: int, /) -> tuple[tuple[int, ...], ...]:
+        rank = len(self.discretization.state_shape)
+        return tuple((2,) * rank for _ in range(components))
+
+    def _toggle_parity(
+        self,
+        parity: tuple[int, ...],
+        axis: int,
+        /,
+        *,
+        gradient: bool,
+        order: int = 1,
+    ) -> tuple[int, ...]:
+        from ..solver._spatial import TensorGridDiscretization
+
+        if not isinstance(self.discretization, TensorGridDiscretization):
+            return parity
+        basis = self.discretization.basis[axis]
+        output = list(parity)
+        if basis in ("sine", "cosine"):
+            if output[axis] in (0, 1) and order % 2:
+                output[axis] = 1 - output[axis]
+        elif basis == "uniform" and gradient:
+            output[axis] = 1
+        elif basis == "uniform" and order % 2:
+            output[axis] = 2
+        return tuple(output)
+
+    def _parities(
+        self,
+        expression: PDEExpression,
+        /,
+    ) -> tuple[tuple[int, ...], ...] | None:
+        rank = len(self.discretization.state_shape)
+        components = self._components(expression)
+        if expression.op == "field":
+            return tuple((0,) * rank for _ in range(components))
+        if expression.op == "coordinate":
+            if expression.symbol == self.time_coordinate:
+                return None
+            return tuple((0,) * rank for _ in range(components))
+        if expression.op in ("constant", "parameter"):
+            return None
+        argument_parities = tuple(
+            self._parities(argument) for argument in expression.args
+        )
+        if expression.op == "component":
+            assert expression.axis is not None
+            source = argument_parities[0]
+            return None if source is None else (source[expression.axis],)
+        if expression.op == "derivative":
+            source = argument_parities[0]
+            if source is None:
+                return None
+            assert expression.coordinate is not None
+            axes = self._axes(expression.coordinate)
+            axis = axes[0] if expression.axis is None else axes[expression.axis]
+            return tuple(
+                self._toggle_parity(
+                    parity,
+                    axis,
+                    gradient=False,
+                    order=expression.order,
+                )
+                for parity in source
+            )
+        if expression.op == "gradient":
+            source = argument_parities[0]
+            if source is None:
+                return None
+            assert expression.coordinate is not None
+            return tuple(
+                self._toggle_parity(
+                    source[0],
+                    axis,
+                    gradient=True,
+                )
+                for axis in self._axes(expression.coordinate)
+            )
+        if expression.op == "laplacian":
+            return argument_parities[0]
+        if expression.op == "divergence":
+            source = argument_parities[0]
+            if source is None:
+                return None
+            assert expression.coordinate is not None
+            differentiated = tuple(
+                self._toggle_parity(parity, axis, gradient=False)
+                for parity, axis in zip(
+                    source,
+                    self._axes(expression.coordinate),
+                    strict=True,
+                )
+            )
+            if all(parity == differentiated[0] for parity in differentiated[1:]):
+                return (differentiated[0],)
+            return self._unknown_parities(1)
+        if expression.op == "curl":
+            return self._unknown_parities(3)
+        if expression.op == "integral":
+            source = argument_parities[0]
+            if source is None:
+                return None
+            return self._unknown_parities(components)
+        spatial = tuple(parity for parity in argument_parities if parity is not None)
+        if not spatial:
+            return None
+        if expression.op in ("add", "multiply", "divide", "dot"):
+            if len(spatial) == 1:
+                return spatial[0]
+            if all(parity == spatial[0] for parity in spatial[1:]):
+                return spatial[0]
+            return self._unknown_parities(components)
+        return spatial[0]
+
+    def _partial_with_parity(
+        self,
+        value: Array,
+        /,
+        *,
+        axis: int,
+        order: int,
+        parity: int,
+    ) -> Array:
+        from ..solver._spatial import (
+            _dual_basis_first_derivative,
+            TensorGridDiscretization,
+        )
+
+        if (
+            not isinstance(self.discretization, TensorGridDiscretization)
+            or self.discretization.basis[axis] not in ("sine", "cosine")
+            or parity != 1
+        ):
+            return self.discretization.partial_derivative(
+                value,
+                axis=axis,
+                order=order,
+            )
+        result = value
+        current = parity
+        for _ in range(int(order)):
+            if current == 1:
+                result = _dual_basis_first_derivative(
+                    result,
+                    self.discretization.axes[axis].nodes,
+                    axis=axis,
+                    basis=self.discretization.basis[axis],
+                )
+            else:
+                result = self.discretization.partial_derivative(
+                    result,
+                    axis=axis,
+                )
+            current = 1 - current
+        return result
+
+    def _differentiate_components(
+        self,
+        value: Array,
+        expression: PDEExpression,
+        /,
+        *,
+        axis: int,
+        order: int,
+    ) -> Array:
+        components = self._components(expression)
+        parities = self._parities(expression)
+        if components == 1:
+            parity = 2 if parities is None else parities[0][axis]
+            return self._partial_with_parity(
+                value,
+                axis=axis,
+                order=order,
+                parity=parity,
+            )
+        results = tuple(
+            self._partial_with_parity(
+                value[..., component],
+                axis=axis,
+                order=order,
+                parity=2 if parities is None else parities[component][axis],
+            )
+            for component in range(components)
+        )
+        return jnp.stack(results, axis=-1)
+
+    def _align_semantic_scalar(
+        self,
+        value: Any,
+        components: int,
+        other_components: int,
+        /,
+    ) -> Any:
+        array = jnp.asarray(value)
+        spatial_rank = len(self.discretization.state_shape)
+        if (
+            components == 1
+            and other_components > 1
+            and array.ndim == spatial_rank
+        ):
+            return array[..., None]
+        return value
+
     def _evaluate(
         self,
         node: PDEExpression,
@@ -381,11 +650,36 @@ class _SemidiscreteEvaluator(StrictModule):
             return result
         if node.op == "multiply":
             result = values[0]
-            for value in values[1:]:
-                result = result * value
+            result_components = self._components(node.args[0])
+            for argument, value in zip(node.args[1:], values[1:], strict=True):
+                value_components = self._components(argument)
+                left = self._align_semantic_scalar(
+                    result,
+                    result_components,
+                    value_components,
+                )
+                right = self._align_semantic_scalar(
+                    value,
+                    value_components,
+                    result_components,
+                )
+                result = left * right
+                result_components = max(result_components, value_components)
             return result
         if node.op == "divide":
-            return values[0] / values[1]
+            numerator_components = self._components(node.args[0])
+            denominator_components = self._components(node.args[1])
+            numerator = self._align_semantic_scalar(
+                values[0],
+                numerator_components,
+                denominator_components,
+            )
+            denominator = self._align_semantic_scalar(
+                values[1],
+                denominator_components,
+                numerator_components,
+            )
+            return numerator / denominator
         if node.op == "negate":
             return -values[0]
         if node.op == "power":
@@ -420,6 +714,8 @@ class _SemidiscreteEvaluator(StrictModule):
             axes = self._axes(node.coordinate)
             lift = self._expression_lift(node.args[0], time, args)
             operand = values[0] if lift is None else values[0] - lift
+            if node.op == "laplacian" and self.discretization.points is None:
+                return self.discretization.laplacian(operand)
             if node.op == "derivative":
                 if node.axis is None:
                     if len(axes) != 1:
@@ -429,8 +725,9 @@ class _SemidiscreteEvaluator(StrictModule):
                     axis = axes[0]
                 else:
                     axis = axes[node.axis]
-                result = self.discretization.partial_derivative(
+                result = self._differentiate_components(
                     operand,
+                    node.args[0],
                     axis=axis,
                     order=node.order,
                 )
@@ -453,7 +750,28 @@ class _SemidiscreteEvaluator(StrictModule):
                     )
                 return result
             if node.op == "divergence":
-                result = self.discretization.divergence(operand, axes=axes)
+                source_parities = self._parities(node.args[0])
+                result = jnp.zeros_like(operand[..., 0])
+                for component, axis in enumerate(axes):
+                    parity = (
+                        2
+                        if source_parities is None
+                        else source_parities[component][axis]
+                    )
+                    if parity == 1:
+                        derivative = self.discretization.divergence(
+                            operand[..., component, None],
+                            axes=(axis,),
+                            dual=True,
+                        )
+                    else:
+                        derivative = self._partial_with_parity(
+                            operand[..., component],
+                            axis=axis,
+                            order=1,
+                            parity=parity,
+                        )
+                    result = result + derivative
                 if lift is not None:
                     correction = jnp.zeros_like(lift[..., 0])
                     for component, axis in enumerate(axes):
@@ -465,9 +783,31 @@ class _SemidiscreteEvaluator(StrictModule):
                     result = result + correction
                 return result
             if node.op == "curl":
-                result = self.discretization.curl(operand, axes=axes)
+                source_parities = self._parities(node.args[0])
+
+                def curl_partial(component: int, axis: int) -> Array:
+                    parity = (
+                        2
+                        if source_parities is None
+                        else source_parities[component][axis]
+                    )
+                    return self._partial_with_parity(
+                        operand[..., component],
+                        axis=axis,
+                        order=1,
+                        parity=parity,
+                    )
+
+                first, second, third = axes
+                result = jnp.stack(
+                    (
+                        curl_partial(2, second) - curl_partial(1, third),
+                        curl_partial(0, third) - curl_partial(2, first),
+                        curl_partial(1, first) - curl_partial(0, second),
+                    ),
+                    axis=-1,
+                )
                 if lift is not None:
-                    first, second, third = axes
                     correction = jnp.stack(
                         (
                             self._lift_partial(lift[..., 2], axis=second, order=1)
@@ -481,17 +821,35 @@ class _SemidiscreteEvaluator(StrictModule):
                     )
                     result = result + correction
                 return result
-            result = self.discretization.laplacian(operand, axes=axes)
+            result = jnp.zeros_like(operand)
+            for axis in axes:
+                result = result + self._differentiate_components(
+                    operand,
+                    node.args[0],
+                    axis=axis,
+                    order=2,
+                )
             if lift is not None:
                 for axis in axes:
                     result = result + self._lift_partial(lift, axis=axis, order=2)
             return result
         if node.op == "integral":
             assert node.region is not None
-            return self.discretization.integral(
+            integrated_axes = self._region(node.region)
+            result = self.discretization.integral(
                 values[0],
-                axes=self._region(node.region),
+                axes=integrated_axes,
             )
+            spatial_rank = len(self.discretization.state_shape)
+            if len(integrated_axes) < spatial_rank:
+                trailing = result.shape[spatial_rank - len(integrated_axes) :]
+                remaining_shape = iter(result.shape[: spatial_rank - len(integrated_axes)])
+                spatial_shape = tuple(
+                    1 if axis in integrated_axes else next(remaining_shape)
+                    for axis in range(spatial_rank)
+                )
+                result = result.reshape(spatial_shape + trailing)
+            return result
         raise ValueError(f"Unsupported semidiscrete PDE operation {node.op!r}.")
 
     def _coerce_field_value(self, name: str, value: Any, /) -> Array:
@@ -682,6 +1040,40 @@ def _temporal_occurrences(
     )
 
 
+def _contains_temporal_derivative(
+    expression: PDEExpression,
+    time_coordinate: str,
+    /,
+) -> bool:
+    return (
+        expression.op == "derivative"
+        and expression.coordinate == time_coordinate
+    ) or any(
+        _contains_temporal_derivative(argument, time_coordinate)
+        for argument in expression.args
+    )
+
+
+def _requires_coordinate_frame(
+    expression: PDEExpression,
+    spatial_coordinates: set[str],
+    /,
+) -> bool:
+    if expression.op == "coordinate" and expression.symbol in spatial_coordinates:
+        return True
+    if expression.op in ("gradient", "divergence", "curl"):
+        return True
+    if (
+        expression.op == "derivative"
+        and expression.coordinate in spatial_coordinates
+    ):
+        return True
+    return any(
+        _requires_coordinate_frame(argument, spatial_coordinates)
+        for argument in expression.args
+    )
+
+
 def _evolution_rhs(
     problem: PDEProblemIR,
     time_coordinate: str,
@@ -736,14 +1128,25 @@ def _evolution_rhs(
         residual = PDEExpression.constant(0.0)
         for sign, term in remainder:
             residual = residual + (term if sign > 0.0 else -term)
-        equations[field_name] = -residual / coefficient
+        if coefficient == 1.0:
+            equations[field_name] = -residual
+        elif coefficient == -1.0:
+            equations[field_name] = residual
+        else:
+            equations[field_name] = -residual / coefficient
     missing = field_names - set(equations)
     if missing:
         raise ValueError(
             "Every PDE field requires exactly one temporal evolution equation; "
             f"missing {sorted(missing)}."
         )
-    return tuple(equations[field.name] for field in problem.fields)
+    rhs = tuple(equations[field.name] for field in problem.fields)
+    if any(
+        _contains_temporal_derivative(expression, time_coordinate)
+        for expression in rhs
+    ):
+        raise ValueError("Evolution right-hand sides cannot contain temporal derivatives.")
+    return rhs
 
 
 def _coordinate_axis_map(
@@ -855,13 +1258,14 @@ def _validate_boundary_conditions(
     /,
 ) -> None:
     from ..solver._spatial import TensorGridDiscretization
-    lifts = {lift.field_name for lift in boundary_lifts}
+    lifts = {lift.field_name: lift for lift in boundary_lifts}
     if not isinstance(discretization, TensorGridDiscretization):
         if any(condition.kind == "boundary" for condition in problem.conditions):
             raise ValueError(
                 "Manifold spectral discretizations do not expose a boundary basis contract."
             )
         return
+    regions = {region.name: region for region in problem.regions}
     axes_by_coordinate = dict(coordinate_axes)
     for condition in problem.conditions:
         if condition.kind != "boundary":
@@ -870,6 +1274,17 @@ def _validate_boundary_conditions(
             raise ValueError(
                 f"Boundary condition {condition.name!r} requires a compiled spatial "
                 "coordinate."
+            )
+        region_coordinates = tuple(
+            coordinate
+            for coordinate in regions[condition.region].coordinates
+            if coordinate in axes_by_coordinate
+        )
+        if region_coordinates != (condition.coordinate,):
+            raise ValueError(
+                f"Boundary condition {condition.name!r} normal coordinate "
+                f"{condition.coordinate!r} does not match region "
+                f"{condition.region!r} spatial coordinates {region_coordinates}."
             )
         form = _boundary_form(condition.expression)
         if form is None:
@@ -908,6 +1323,23 @@ def _validate_boundary_conditions(
                 f"Nonhomogeneous boundary condition {condition.name!r} requires an "
                 f"explicit BoundaryLift for field {field_name!r}."
             )
+        if (
+            kind == "dirichlet"
+            and condition.target.op == "constant"
+            and field_name in lifts
+            and not callable(lifts[field_name].value)
+        ):
+            target = float(condition.target.value)
+            lift_value = np.asarray(lifts[field_name].value)
+            if (
+                lift_value.size > 0
+                and np.all(lift_value == lift_value.reshape((-1,))[0])
+                and not np.allclose(lift_value, target)
+            ):
+                raise ValueError(
+                    f"BoundaryLift {lifts[field_name].lift_id!r} is constant but "
+                    f"does not match boundary target {target}."
+                )
 
 
 def _field_degree(expression: PDEExpression, /) -> int:
@@ -1049,6 +1481,7 @@ def _spectral_representation(
     from ..solver._spatial import SpectralSpatialDiscretization
     if (
         not isinstance(discretization, SpectralSpatialDiscretization)
+        or discretization.plan.num_modes != discretization.plan.num_points
         or coefficients is None
         or not layout.squeezed
     ):
@@ -1078,7 +1511,10 @@ def compile_semidiscrete_pde(
 ) -> CompiledSpatialDynamics:
     """Compile validated PDE IR into state-shaped method-of-lines dynamics."""
     from ..solver._semilinear_drift import SemilinearDrift
-    from ..solver._spatial import AbstractSpatialDiscretization
+    from ..solver._spatial import (
+        AbstractSpatialDiscretization,
+        SpectralSpatialDiscretization,
+    )
     if not isinstance(problem, PDEProblemIR):
         raise TypeError("problem must be a PDEProblemIR.")
     if not isinstance(discretization, AbstractSpatialDiscretization):
@@ -1095,11 +1531,28 @@ def compile_semidiscrete_pde(
             "Semidiscrete PDE compilation requires exactly one scalar time coordinate."
         )
     time_coordinate = time_coordinates[0].name
+    spatial_coordinates = tuple(
+        coordinate.name
+        for coordinate in problem.coordinates
+        if coordinate.kind == "space"
+    )
+    spatial_coordinate_set = set(spatial_coordinates)
     for field in problem.fields:
         if time_coordinate not in field.coordinates:
             raise ValueError(
                 f"Evolution field {field.name!r} must depend on time coordinate "
                 f"{time_coordinate!r}."
+            )
+        field_spatial_coordinates = tuple(
+            coordinate
+            for coordinate in field.coordinates
+            if coordinate in spatial_coordinate_set
+        )
+        if field_spatial_coordinates != spatial_coordinates:
+            raise ValueError(
+                "All evolution fields must use the same complete spatial coordinate "
+                f"layout {spatial_coordinates}; field {field.name!r} uses "
+                f"{field_spatial_coordinates}."
             )
 
     lifts = tuple(boundary_lifts)
@@ -1120,6 +1573,25 @@ def compile_semidiscrete_pde(
         lifts,
     )
     rhs_expressions = _evolution_rhs(problem, time_coordinate)
+    if isinstance(discretization, SpectralSpatialDiscretization):
+        if lifts:
+            raise ValueError(
+                "SpectralSpatialDiscretization cannot apply coordinate-space "
+                "BoundaryLift objects without a coordinate frame."
+            )
+        framed_expressions = rhs_expressions + tuple(
+            expression
+            for condition in problem.conditions
+            for expression in (condition.expression, condition.target)
+        )
+        if any(
+            _requires_coordinate_frame(expression, spatial_coordinate_set)
+            for expression in framed_expressions
+        ):
+            raise ValueError(
+                "SpectralSpatialDiscretization has no coordinate frame for "
+                "coordinate, derivative, gradient, divergence, or curl nodes."
+            )
     layout = SemidiscreteFieldLayout(problem.fields, discretization.state_shape)
 
     supplied = {} if parameter_values is None else dict(parameter_values)
@@ -1133,9 +1605,52 @@ def compile_semidiscrete_pde(
     defaults_by_name: dict[str, Any] = {}
     for parameter in problem.parameters:
         value = supplied.get(parameter.name, parameter.value)
-        defaults.append(value)
-        if value is not None:
-            defaults_by_name[parameter.name] = value
+        if value is None:
+            normalized = None
+        else:
+            normalized = jnp.asarray(value)
+            if normalized.dtype.kind not in "biuf":
+                raise TypeError(
+                    f"Default for PDE parameter {parameter.name!r} must be real-valued."
+                )
+            if parameter.components == 1 and normalized.shape == (1,):
+                normalized = normalized[0]
+            if parameter.components == 1:
+                allowed = (
+                    ((), layout.spatial_shape)
+                    if parameter.functional
+                    else ((),)
+                )
+            else:
+                allowed = (
+                    ((parameter.components,), layout.spatial_shape + (parameter.components,))
+                    if parameter.functional
+                    else ((parameter.components,),)
+                )
+            if normalized.shape not in allowed:
+                raise ValueError(
+                    f"Default for PDE parameter {parameter.name!r} has shape "
+                    f"{normalized.shape}; expected one of {allowed}."
+                )
+            _value_fingerprint(normalized)
+        defaults.append(normalized)
+        if normalized is not None:
+            defaults_by_name[parameter.name] = normalized
+    lift_bindings = tuple(
+        sorted((lift.field_name, lift.lift_id) for lift in lifts)
+    )
+    parameter_bindings = tuple(
+        (parameter.name, _value_fingerprint(value))
+        for parameter, value in zip(problem.parameters, defaults, strict=True)
+    )
+    binding_id = _stable_id(
+        "semidiscrete-bindings-v1",
+        problem.canonical_hash,
+        discretization.discretization_id,
+        layout.layout_id,
+        repr(lift_bindings),
+        repr(parameter_bindings),
+    )
 
     evaluator = _SemidiscreteEvaluator(
         problem,
@@ -1199,9 +1714,8 @@ def compile_semidiscrete_pde(
         )
         operator_id = _stable_id(
             "semidiscrete-linear-operator-v1",
-            problem.canonical_hash,
-            discretization.discretization_id,
-            layout.layout_id,
+            binding_id,
+            type(linear_operator).__name__,
             repr(coefficients),
         )
         semilinear = SemilinearDrift(
@@ -1217,12 +1731,8 @@ def compile_semidiscrete_pde(
 
     compilation_id = _stable_id(
         "semidiscrete-pde-compiler-v1",
-        problem.canonical_hash,
-        discretization.discretization_id,
-        layout.layout_id,
+        binding_id,
         resolved,
-        repr(tuple(lift.lift_id for lift in lifts)),
-        repr(tuple(_value_fingerprint(value) for value in defaults)),
     )
     return CompiledSpatialDynamics(
         drift,

@@ -139,6 +139,7 @@ class HighDimensionalBenchmarkRecord:
 class SemidiscretePDEBenchmarkRecord:
     grid_size: int
     compilation_id: str
+    operator_id: str
     resolved_method: str
     compiler_wall_ms: float
     compiled_jit_ms: float
@@ -404,6 +405,7 @@ def run_semidiscrete_pde_compiler_benchmark(
     return SemidiscretePDEBenchmarkRecord(
         grid_size=size,
         compilation_id=compiled.compilation_id,
+        operator_id=compiled.semilinear_drift.operator_id,
         resolved_method=compiled.resolved_method,
         compiler_wall_ms=float(compiler_wall_ms),
         compiled_jit_ms=float(compiled_jit_ms),

@@ -283,6 +283,7 @@ class AbstractSpatialDiscretization(StrictModule):
         /,
         *,
         axes: int | Sequence[int] | None = None,
+        dual: bool = False,
     ) -> Array:
         raise NotImplementedError
 
@@ -566,6 +567,7 @@ class TensorGridDiscretization(AbstractSpatialDiscretization):
         /,
         *,
         axes: int | Sequence[int] | None = None,
+        dual: bool = False,
     ) -> Array:
         array = self._validate_state(state)
         selected = _normalize_spatial_axes(axes, len(self.state_shape))
@@ -577,12 +579,12 @@ class TensorGridDiscretization(AbstractSpatialDiscretization):
         out = jnp.zeros_like(array[..., 0])
         for component_index, axis_index in enumerate(selected):
             component = array[..., component_index]
-            if self.basis[axis_index] == "uniform":
+            if dual and self.basis[axis_index] == "uniform":
                 spacing = self.axes[axis_index].nodes[1] - self.axes[axis_index].nodes[0]
                 derivative = (
                     component - jnp.roll(component, 1, axis=axis_index)
                 ) / spacing
-            elif self.basis[axis_index] in ("sine", "cosine"):
+            elif dual and self.basis[axis_index] in ("sine", "cosine"):
                 derivative = _dual_basis_first_derivative(
                     component,
                     self.axes[axis_index].nodes,
@@ -770,6 +772,7 @@ class SpectralSpatialDiscretization(AbstractSpatialDiscretization):
         /,
         *,
         axes: int | Sequence[int] | None = None,
+        dual: bool = False,
     ) -> Array:
         raise NotImplementedError(
             "SpectralSpatialDiscretization has no coordinate divergence frame."

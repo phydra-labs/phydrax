@@ -198,3 +198,14 @@ Nonhomogeneous Dirichlet or Neumann data require an explicit
 and `dynamics.physical_state(time, state, args)` reconstructs the physical
 field. This explicit split prevents a nonperiodic boundary from being silently
 treated as periodic.
+
+`TensorGridDiscretization` also exposes `partial_derivative`, `gradient`,
+`divergence`, `curl`, and `integral` while preserving trailing field/component
+axes. A direct vector field uses `divergence(vector)`. The gradient's
+finite-difference and sine/cosine dual representation is explicit:
+`divergence(gradient, dual=True)` gives the discrete Laplacian. PDE IR
+`divergence(gradient(...))` tracks this representation automatically.
+Functional parameters accept either component constants or arrays aligned with
+the full spatial shape. Compilation IDs and semilinear operator IDs include
+resolved parameter values and boundary-lift IDs, so cached artifacts cannot be
+reused across different bound dynamics.
