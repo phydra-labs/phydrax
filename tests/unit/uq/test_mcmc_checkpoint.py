@@ -140,3 +140,46 @@ def test_mcmc_checkpoint_rejects_incompatible_identity_and_corruption(tmp_path):
             checkpoint_path=None,
             resume_from=checkpoint,
         )
+
+
+def test_mcmc_accepts_distinct_initial_positions_for_each_chain():
+    problem = _problem()
+    initial_positions = jnp.asarray([[-1.5, -1.0], [1.5, 1.0]])
+
+    result = phx.uq.sample_nuts(
+        problem,
+        key=jr.key(921),
+        num_chains=2,
+        num_warmup=12,
+        num_samples=4,
+        initial_positions=initial_positions,
+        initial_step_size=0.2,
+        max_num_doublings=4,
+        chain_method="vectorized",
+    )
+
+    assert result.samples.shape == (2, 4, 2)
+
+
+def test_mcmc_rejects_ambiguous_or_misshaped_initial_positions():
+    problem = _problem()
+
+    with pytest.raises(ValueError, match="cannot both"):
+        phx.uq.sample_nuts(
+            problem,
+            key=jr.key(922),
+            num_chains=2,
+            num_warmup=8,
+            num_samples=4,
+            initial_position=jnp.zeros((2,)),
+            initial_positions=jnp.zeros((2, 2)),
+        )
+    with pytest.raises(ValueError, match="shape"):
+        phx.uq.sample_nuts(
+            problem,
+            key=jr.key(923),
+            num_chains=2,
+            num_warmup=8,
+            num_samples=4,
+            initial_positions=jnp.zeros((3, 2)),
+        )

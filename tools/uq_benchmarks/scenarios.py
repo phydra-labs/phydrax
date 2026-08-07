@@ -15,6 +15,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
+import optax
 
 import phydrax as phx
 
@@ -812,6 +813,278 @@ def multimodal_tempered_inference(
     )
 
 
+def flow_assisted_multimodal(
+    configuration: BenchmarkConfiguration,
+    seed: int,
+) -> ScenarioResult:
+    """Measure exact flow-assisted transport across represented posterior modes."""
+    started = time.perf_counter()
+    root_key = jr.key(seed)
+    dimension = 4
+    prior_scale = 4.0
+    positive_weight = 0.7
+    component_location = jnp.asarray([2.2, -1.8, 1.5, 2.0])
+    likelihood_covariance = jnp.asarray(
+        [
+            [0.20, 0.04, 0.00, 0.02],
+            [0.04, 0.16, 0.03, 0.00],
+            [0.00, 0.03, 0.18, -0.02],
+            [0.02, 0.00, -0.02, 0.22],
+        ]
+    )
+    likelihood_precision = jnp.linalg.inv(likelihood_covariance)
+    component_covariance = jnp.linalg.inv(
+        likelihood_precision + jnp.eye(dimension) / prior_scale**2
+    )
+    component_mean = component_covariance @ likelihood_precision @ component_location
+    exact_mean = (2.0 * positive_weight - 1.0) * component_mean
+    exact_covariance = component_covariance + 4.0 * positive_weight * (
+        1.0 - positive_weight
+    ) * jnp.outer(component_mean, component_mean)
+
+    def component_log_density(value, location):
+        difference = value - location
+        return -0.5 * difference @ likelihood_precision @ difference
+
+    def log_likelihood(value):
+        return jsp.special.logsumexp(
+            jnp.stack(
+                (
+                    jnp.log(1.0 - positive_weight)
+                    + component_log_density(value, -component_location),
+                    jnp.log(positive_weight)
+                    + component_log_density(value, component_location),
+                )
+            )
+        )
+
+    problem = phx.uq.PosteriorProblem(
+        phx.uq.ParameterSpace(
+            jnp.zeros((dimension,)),
+            priors=phx.uq.Normal(0.0, prior_scale),
+        ),
+        log_likelihood,
+    )
+    initial_signs = jnp.where(
+        jnp.arange(configuration.num_chains) % 2 == 0,
+        -1.0,
+        1.0,
+    )
+    initial_positions = initial_signs[:, None] * component_mean[None, :]
+    cold, compile_seconds, execute = _jit_timings(
+        log_likelihood,
+        component_mean,
+        repetitions=configuration.jit_warm_repetitions,
+    )
+    nuts, nuts_seconds = _timed_call(
+        lambda: phx.uq.sample_nuts(
+            problem,
+            key=jr.fold_in(root_key, 1),
+            num_chains=configuration.num_chains,
+            num_warmup=configuration.num_warmup,
+            num_samples=configuration.num_draws,
+            initial_positions=initial_positions,
+            initial_step_size=0.12,
+            target_acceptance_rate=0.9,
+            max_num_doublings=8,
+            chain_method="vectorized",
+        )
+    )
+    flow_config = phx.uq.FlowNUTSConfig(
+        num_adaptation_rounds=configuration.flow_adaptation_rounds,
+        num_local_adaptation_steps=configuration.flow_local_adaptation_steps,
+        num_global_adaptation_steps=configuration.flow_global_adaptation_steps,
+        num_stabilization_steps=20,
+        num_local_steps=configuration.flow_local_steps,
+        num_global_steps=configuration.flow_global_steps,
+        history_capacity_per_chain=configuration.flow_history_capacity,
+        history_thinning=1,
+        flow_layers=3,
+        num_knots=8,
+        nn_width=32,
+        nn_depth=2,
+        learning_rate=1e-3,
+        max_epochs=configuration.flow_epochs,
+        max_patience=configuration.flow_epochs,
+        batch_size=64,
+        validation_fraction=0.2,
+    )
+    flow, flow_seconds = _timed_call(
+        lambda: phx.uq.sample_flow_nuts(
+            problem,
+            key=jr.fold_in(root_key, 2),
+            num_chains=configuration.num_chains,
+            num_warmup=configuration.num_warmup,
+            num_samples=configuration.num_draws,
+            initial_positions=initial_positions,
+            initial_step_size=0.12,
+            target_acceptance_rate=0.9,
+            max_num_doublings=8,
+            config=flow_config,
+            chain_method="vectorized",
+        )
+    )
+    flat_flow = flow.samples.reshape((-1, dimension))
+    flat_nuts = nuts.samples.reshape((-1, dimension))
+    flow_positive = flat_flow @ component_mean > 0.0
+    nuts_positive = flat_nuts @ component_mean > 0.0
+    chain_modes = flow.samples @ component_mean > 0.0
+    nuts_chain_modes = nuts.samples @ component_mean > 0.0
+    flow_transitions = jnp.sum(
+        chain_modes[:, 1:] != chain_modes[:, :-1],
+        axis=1,
+    )
+    nuts_transitions = jnp.sum(
+        nuts_chain_modes[:, 1:] != nuts_chain_modes[:, :-1],
+        axis=1,
+    )
+    estimated_covariance = jnp.cov(flat_flow, rowvar=False)
+    proposal_ess_fraction = flow.adaptation_proposal_ess[-1] / (
+        configuration.num_chains * configuration.flow_global_adaptation_steps
+    )
+    max_rhat = 1.15 if configuration.profile == "smoke" else 1.05
+    min_ess = 20.0 if configuration.profile == "smoke" else 200.0
+    mode_mass_error = 0.15 if configuration.profile == "smoke" else 0.06
+    mean_rmse = 0.30 if configuration.profile == "smoke" else 0.12
+    covariance_error = 0.30 if configuration.profile == "smoke" else 0.15
+    minimum_global_acceptance = 0.03 if configuration.profile == "smoke" else 0.05
+    minimum_proposal_ess_fraction = 0.05 if configuration.profile == "smoke" else 0.10
+    sample_count = configuration.num_chains * configuration.num_draws
+    metrics = {
+        "flow_mode_mass_error": metric(
+            jnp.abs(jnp.mean(flow_positive) - positive_weight),
+            "accuracy",
+            maximum=mode_mass_error,
+        ),
+        "flow_posterior_mean_rmse": metric(
+            jnp.sqrt(jnp.mean((jnp.mean(flat_flow, axis=0) - exact_mean) ** 2)),
+            "accuracy",
+            maximum=mean_rmse,
+        ),
+        "flow_covariance_relative_frobenius_error": metric(
+            jnp.linalg.norm(estimated_covariance - exact_covariance)
+            / jnp.linalg.norm(exact_covariance),
+            "accuracy",
+            maximum=covariance_error,
+        ),
+        "ordinary_nuts_mode_mass_error": metric(
+            jnp.abs(jnp.mean(nuts_positive) - positive_weight),
+            "diagnostic",
+        ),
+        "minimum_flow_mode_transitions_per_chain": metric(
+            jnp.min(flow_transitions),
+            "convergence",
+            minimum=1.0,
+        ),
+        "minimum_nuts_mode_transitions_per_chain": metric(
+            jnp.min(nuts_transitions),
+            "diagnostic",
+        ),
+        "max_rhat": metric(
+            flow.diagnostics.max_rhat,
+            "convergence",
+            maximum=max_rhat,
+        ),
+        "min_bulk_ess": metric(
+            flow.diagnostics.min_bulk_ess,
+            "convergence",
+            minimum=min_ess,
+        ),
+        "divergence_count": metric(
+            flow.diagnostics.divergence_count,
+            "convergence",
+            maximum=0.0,
+        ),
+        "global_acceptance_rate": metric(
+            jnp.mean(flow.global_acceptance_rate),
+            "convergence",
+            minimum=minimum_global_acceptance,
+        ),
+        "proposal_ess_fraction": metric(
+            proposal_ess_fraction,
+            "diagnostic",
+            minimum=minimum_proposal_ess_fraction,
+        ),
+        "nuts_seconds": metric(nuts_seconds, "performance", unit="s"),
+        "flow_seconds": metric(flow_seconds, "performance", unit="s"),
+        "flow_adaptation_seconds": metric(
+            flow.adaptation_duration_seconds,
+            "performance",
+            unit="s",
+        ),
+        "flow_training_seconds": metric(
+            sum(flow.flow_training_duration_seconds),
+            "performance",
+            unit="s",
+        ),
+        "flow_production_seconds": metric(
+            flow.sampling_duration_seconds,
+            "performance",
+            unit="s",
+        ),
+        "flow_samples_per_second": metric(
+            sample_count / flow.sampling_duration_seconds,
+            "performance",
+            unit="sample/s",
+        ),
+        "flow_min_bulk_ess_per_second": metric(
+            flow.diagnostics.min_bulk_ess / flow_seconds,
+            "performance",
+            unit="1/s",
+        ),
+        "flow_parameter_memory_bytes": metric(
+            flow.flow_parameter_memory_bytes,
+            "performance",
+            unit="byte",
+        ),
+        "flow_history_memory_bytes": metric(
+            flow.history_memory_bytes,
+            "performance",
+            unit="byte",
+        ),
+        "production_global_target_evaluations": metric(
+            sample_count * configuration.flow_global_steps,
+            "performance",
+        ),
+        "production_local_integration_steps": metric(
+            jnp.sum(flow.num_integration_steps),
+            "performance",
+        ),
+        **_performance_metrics(
+            wall_seconds=time.perf_counter() - started,
+            cold_seconds=cold,
+            compile_seconds=compile_seconds,
+            execution_seconds=execute,
+            sample_memory_bytes=(
+                nuts.sample_memory_bytes
+                + flow.sample_memory_bytes
+                + flow.flow_parameter_memory_bytes
+                + flow.history_memory_bytes
+            ),
+        ),
+    }
+    return ScenarioResult(
+        name="flow_assisted_multimodal",
+        description=flow_assisted_multimodal.__doc__ or "",
+        seed=seed,
+        metrics=metrics,
+        metadata={
+            "profile": configuration.profile,
+            "dimension": dimension,
+            "positive_mode_weight": positive_weight,
+            "component_means": [
+                (-component_mean).tolist(),
+                component_mean.tolist(),
+            ],
+            "component_covariance": component_covariance.tolist(),
+            "exact_mean": exact_mean.tolist(),
+            "exact_covariance": exact_covariance.tolist(),
+            "initial_positions": initial_positions.tolist(),
+            "flow_config": flow_config.as_dict(),
+        },
+    )
+
+
 def _poisson_basis(x):
     return 0.5 * x * (1.0 - x)
 
@@ -1370,6 +1643,629 @@ def correlated_vector_discrepancy(
     )
 
 
+def _small_deep_ensemble_predictions(
+    train_inputs: jax.Array,
+    train_targets: jax.Array,
+    prediction_inputs: jax.Array,
+    /,
+    *,
+    key: jax.Array,
+    num_members: int,
+    num_steps: int,
+) -> jax.Array:
+    """Fit independent bootstrapped nonlinear regressors for a robust baseline."""
+    optimizer = optax.adam(1.0e-2)
+
+    def predict(parameters, inputs):
+        hidden = jnp.tanh(
+            inputs[:, None] * parameters["input_weight"][None, :]
+            + parameters["hidden_bias"][None, :]
+        )
+        return hidden @ parameters["output_weight"] + parameters["output_bias"]
+
+    def loss(parameters, inputs, targets):
+        residual = predict(parameters, inputs) - targets
+        return jnp.mean(residual**2)
+
+    @jax.jit
+    def train_step(parameters, optimizer_state, inputs, targets):
+        gradients = jax.grad(loss)(parameters, inputs, targets)
+        updates, next_optimizer_state = optimizer.update(
+            gradients,
+            optimizer_state,
+            parameters,
+        )
+        return (
+            optax.apply_updates(parameters, updates),
+            next_optimizer_state,
+        )
+
+    predictions = []
+    member_keys = jr.split(key, int(num_members))
+    for member_key in member_keys:
+        bootstrap_key, input_key, output_key = jr.split(member_key, 3)
+        bootstrap = jr.randint(
+            bootstrap_key,
+            train_inputs.shape,
+            0,
+            train_inputs.shape[0],
+        )
+        member_inputs = train_inputs[bootstrap]
+        member_targets = train_targets[bootstrap]
+        parameters = {
+            "input_weight": 0.25 * jr.normal(input_key, (8,)),
+            "hidden_bias": jnp.zeros((8,)),
+            "output_weight": 0.25 * jr.normal(output_key, (8,)),
+            "output_bias": jnp.asarray(0.0),
+        }
+        optimizer_state = optimizer.init(parameters)
+        for _ in range(int(num_steps)):
+            parameters, optimizer_state = train_step(
+                parameters,
+                optimizer_state,
+                member_inputs,
+                member_targets,
+            )
+        predictions.append(predict(parameters, prediction_inputs))
+    return jnp.stack(predictions)
+
+
+def stochastic_gradient_regression(
+    configuration: BenchmarkConfiguration,
+    seed: int,
+) -> ScenarioResult:
+    """Benchmark fixed-step SG-MCMC against exact Gaussian and ensemble references."""
+    started = time.perf_counter()
+    root_key = jr.key(seed)
+    observation_key = jr.fold_in(root_key, 1)
+    num_factors = 128
+    inputs = jnp.linspace(-1.5, 1.5, num_factors)
+    design = jnp.stack((jnp.ones_like(inputs), inputs), axis=1)
+    true_position = jnp.asarray([0.4, -0.7])
+    observation_scale = 0.6
+    observations = (
+        design @ true_position
+        + observation_scale * jr.normal(observation_key, (num_factors,))
+    )
+    prior_scale = 2.0
+    precision = (
+        jnp.eye(2) / prior_scale**2
+        + design.T @ design / observation_scale**2
+    )
+    analytic_covariance = jnp.linalg.inv(precision)
+    analytic_mean = analytic_covariance @ (
+        design.T @ observations / observation_scale**2
+    )
+    analytic_scale = jnp.sqrt(jnp.diag(analytic_covariance))
+
+    def position_from_vector(vector):
+        return {
+            "offset": vector[0],
+            "nested": {"positive_rate": vector[1]},
+        }
+
+    def vector_from_physical(parameters):
+        return jnp.stack(
+            (
+                parameters["offset"],
+                jnp.log(parameters["nested"]["positive_rate"]),
+            )
+        )
+
+    parameter_space = phx.uq.ParameterSpace(
+        position_from_vector(jnp.zeros((2,))),
+        priors={
+            "offset": phx.uq.Normal(0.0, prior_scale),
+            "nested": {
+                "positive_rate": phx.uq.LogNormal(0.0, prior_scale)
+            },
+        },
+        bijectors={
+            "offset": phx.uq.IdentityBijector(),
+            "nested": {"positive_rate": phx.uq.ExpBijector()},
+        },
+    )
+    source = phx.uq.ArrayMinibatchSource(
+        {"input": inputs, "target": observations},
+        batch_size=configuration.sgmcmc_batch_size,
+        seed=seed + 1,
+    )
+
+    def likelihood_factors(parameters, batch):
+        vector = vector_from_physical(parameters)
+        prediction = vector[0] + vector[1] * batch.data["input"]
+        return -0.5 * (
+            (batch.data["target"] - prediction) / observation_scale
+        ) ** 2
+
+    def full_log_likelihood(parameters):
+        vector = vector_from_physical(parameters)
+        return jnp.sum(
+            -0.5
+            * ((observations - design @ vector) / observation_scale) ** 2
+        )
+
+    problem = phx.uq.MinibatchPosteriorProblem(
+        parameter_space,
+        likelihood_factors,
+        num_factors=num_factors,
+        full_log_likelihood=full_log_likelihood,
+    )
+    exact_problem = phx.uq.PosteriorProblem(
+        parameter_space,
+        full_log_likelihood,
+    )
+    diagnostics = phx.uq.diagnose_minibatch_posterior(problem, source)
+    center = position_from_vector(analytic_mean)
+    control, control_seconds = _timed_call(
+        lambda: phx.uq.build_sgmcmc_control_variate(
+            problem,
+            source,
+            center,
+        )
+    )
+    first_batch = next(source.epoch(0))
+    cold, compile_seconds, execute = _jit_timings(
+        lambda position, batch: jax.value_and_grad(
+            problem.log_density_estimate
+        )(position, batch),
+        problem.initial_position,
+        first_batch,
+        repetitions=configuration.jit_warm_repetitions,
+    )
+
+    step_size = 5.0e-4
+    sgld, sgld_seconds = _timed_call(
+        lambda: phx.uq.sample_sgld(
+            problem,
+            source,
+            key=jr.fold_in(root_key, 2),
+            step_size=step_size,
+            num_chains=configuration.num_chains,
+            num_burnin=configuration.sgmcmc_burnin,
+            num_samples=configuration.sgmcmc_draws,
+            steps_per_sample=configuration.sgmcmc_steps_per_sample,
+            chain_method="vectorized",
+        )
+    )
+    refined, refined_seconds = _timed_call(
+        lambda: phx.uq.sample_sgld(
+            problem,
+            source,
+            key=jr.fold_in(root_key, 3),
+            step_size=step_size / 2.0,
+            num_chains=configuration.num_chains,
+            num_burnin=configuration.sgmcmc_burnin,
+            num_samples=configuration.sgmcmc_draws,
+            steps_per_sample=configuration.sgmcmc_steps_per_sample,
+            chain_method="vectorized",
+        )
+    )
+    controlled, controlled_seconds = _timed_call(
+        lambda: phx.uq.sample_sgld(
+            problem,
+            source,
+            key=jr.fold_in(root_key, 4),
+            step_size=step_size / 2.0,
+            control_variate=control,
+            num_chains=configuration.num_chains,
+            num_burnin=configuration.sgmcmc_burnin,
+            num_samples=configuration.sgmcmc_draws,
+            steps_per_sample=configuration.sgmcmc_steps_per_sample,
+            chain_method="vectorized",
+        )
+    )
+    sgnht, sgnht_seconds = _timed_call(
+        lambda: phx.uq.sample_sgnht(
+            problem,
+            source,
+            key=jr.fold_in(root_key, 5),
+            step_size=5.0e-3,
+            diffusion=0.1,
+            control_variate=control,
+            num_chains=configuration.num_chains,
+            num_burnin=configuration.sgmcmc_burnin,
+            num_samples=configuration.sgmcmc_draws,
+            steps_per_sample=configuration.sgmcmc_steps_per_sample,
+            chain_method="vectorized",
+        )
+    )
+    nuts, nuts_seconds = _timed_call(
+        lambda: phx.uq.sample_nuts(
+            exact_problem,
+            key=jr.fold_in(root_key, 6),
+            num_chains=configuration.num_chains,
+            num_warmup=configuration.num_warmup,
+            num_samples=configuration.num_draws,
+            initial_step_size=0.05,
+            target_acceptance_rate=0.9,
+            max_num_doublings=7,
+            chain_method="vectorized",
+        )
+    )
+    laplace, laplace_seconds = _timed_call(
+        lambda: phx.uq.fit_laplace(
+            exact_problem,
+            center,
+            stationarity_tolerance=1.0e-6,
+        )
+    )
+
+    prediction_inputs = jnp.linspace(-1.75, 1.75, 81)
+    prediction_design = jnp.stack(
+        (jnp.ones_like(prediction_inputs), prediction_inputs),
+        axis=1,
+    )
+    analytic_prediction_mean = prediction_design @ analytic_mean
+    analytic_prediction_variance = jnp.einsum(
+        "ni,ij,nj->n",
+        prediction_design,
+        analytic_covariance,
+        prediction_design,
+    )
+    ensemble_members = 4 if configuration.profile == "smoke" else 8
+    ensemble_steps = 300 if configuration.profile == "smoke" else 800
+    ensemble_predictions, ensemble_seconds = _timed_call(
+        lambda: _small_deep_ensemble_predictions(
+            inputs,
+            observations,
+            prediction_inputs,
+            key=jr.fold_in(root_key, 7),
+            num_members=ensemble_members,
+            num_steps=ensemble_steps,
+        )
+    )
+
+    def sample_matrix(result):
+        return jnp.stack(
+            (
+                result.unconstrained_samples["offset"].reshape(-1),
+                result.unconstrained_samples["nested"][
+                    "positive_rate"
+                ].reshape(-1),
+            ),
+            axis=1,
+        )
+
+    matrices = {
+        "sgld": sample_matrix(sgld),
+        "sgld_refined": sample_matrix(refined),
+        "sgld_control_variate": sample_matrix(controlled),
+        "sgnht": sample_matrix(sgnht),
+        "nuts": sample_matrix(nuts),
+    }
+    sample_means = {
+        name: jnp.mean(values, axis=0)
+        for name, values in matrices.items()
+    }
+    sample_covariances = {
+        name: jnp.cov(values, rowvar=False)
+        for name, values in matrices.items()
+    }
+
+    max_rhat, min_ess = _convergence_limits(configuration)
+    metrics: dict[str, Metric] = {
+        "full_density_reconstruction": metric(
+            int(
+                diagnostics.full_log_density_matches is True
+                and diagnostics.full_gradient_matches is True
+            ),
+            "diagnostic",
+            minimum=1.0,
+        ),
+        "source_epoch_factor_fraction": metric(
+            diagnostics.epoch_active_factor_count / num_factors,
+            "diagnostic",
+            minimum=1.0,
+            maximum=1.0,
+        ),
+        "control_variate_construction_seconds": metric(
+            control_seconds,
+            "performance",
+            unit="s",
+        ),
+        "control_variate_gradient_evaluations": metric(
+            control.construction_gradient_evaluations,
+            "performance",
+        ),
+        "sgld_seconds": metric(sgld_seconds, "performance", unit="s"),
+        "sgld_refined_seconds": metric(
+            refined_seconds,
+            "performance",
+            unit="s",
+        ),
+        "sgld_control_variate_seconds": metric(
+            controlled_seconds,
+            "performance",
+            unit="s",
+        ),
+        "sgnht_seconds": metric(sgnht_seconds, "performance", unit="s"),
+        "nuts_seconds": metric(nuts_seconds, "performance", unit="s"),
+        "laplace_seconds": metric(laplace_seconds, "performance", unit="s"),
+        "deep_ensemble_seconds": metric(
+            ensemble_seconds,
+            "performance",
+            unit="s",
+        ),
+        "sgld_samples_per_second": metric(
+            sgld.samples_per_second,
+            "performance",
+            unit="sample/s",
+        ),
+        "sgld_updates_per_second": metric(
+            sgld.updates_per_second,
+            "performance",
+            unit="update/s",
+        ),
+        "sgnht_samples_per_second": metric(
+            sgnht.samples_per_second,
+            "performance",
+            unit="sample/s",
+        ),
+        "sgld_gradient_evaluations_per_second": metric(
+            sgld.gradient_evaluations_per_second,
+            "performance",
+            unit="gradient/s",
+        ),
+        "sgld_sample_memory_bytes": metric(
+            sgld.sample_memory_bytes,
+            "performance",
+            unit="byte",
+        ),
+        "sgnht_sample_memory_bytes": metric(
+            sgnht.sample_memory_bytes,
+            "performance",
+            unit="byte",
+        ),
+        "batch_memory_fraction": metric(
+            sum(
+                int(jnp.asarray(leaf).nbytes)
+                for leaf in jax.tree_util.tree_leaves(first_batch.data)
+            )
+            / sum(
+                int(jnp.asarray(leaf).nbytes)
+                for leaf in jax.tree_util.tree_leaves(source.data)
+            ),
+            "performance",
+        ),
+    }
+
+    accuracy_gates = {
+        "sgld": (0.75, 0.75),
+        "sgld_refined": (0.65, 0.65),
+        "sgld_control_variate": (0.65, 0.65),
+        "sgnht": (0.65, 0.75),
+        "nuts": (0.55, 0.55),
+    }
+    chain_results = {
+        "sgld": sgld,
+        "sgld_refined": refined,
+        "sgld_control_variate": controlled,
+        "sgnht": sgnht,
+    }
+    covariance_norm = jnp.linalg.norm(analytic_covariance)
+    for name, values in matrices.items():
+        mean_error = jnp.sqrt(
+            jnp.mean(
+                ((sample_means[name] - analytic_mean) / analytic_scale) ** 2
+            )
+        )
+        covariance_error = (
+            jnp.linalg.norm(
+                sample_covariances[name] - analytic_covariance
+            )
+            / covariance_norm
+        )
+        prediction_mean = prediction_design @ sample_means[name]
+        prediction_variance = jnp.einsum(
+            "ni,ij,nj->n",
+            prediction_design,
+            sample_covariances[name],
+            prediction_design,
+        )
+        mean_gate, covariance_gate = accuracy_gates[name]
+        metrics[f"{name}_posterior_mean_standardized_rmse"] = metric(
+            mean_error,
+            "accuracy",
+            maximum=mean_gate,
+        )
+        metrics[f"{name}_covariance_relative_error"] = metric(
+            covariance_error,
+            "accuracy",
+            maximum=covariance_gate,
+        )
+        metrics[f"{name}_predictive_mean_rmse"] = metric(
+            jnp.sqrt(
+                jnp.mean(
+                    (prediction_mean - analytic_prediction_mean) ** 2
+                )
+            ),
+            "accuracy",
+            maximum=0.08,
+        )
+        metrics[f"{name}_predictive_variance_relative_rmse"] = metric(
+            jnp.sqrt(
+                jnp.mean(
+                    (
+                        prediction_variance
+                        - analytic_prediction_variance
+                    )
+                    ** 2
+                )
+            )
+            / jnp.mean(analytic_prediction_variance),
+            "accuracy",
+            maximum=0.8,
+        )
+        if name in chain_results:
+            result = chain_results[name]
+            metrics[f"{name}_max_rhat"] = metric(
+                result.diagnostics.max_rhat,
+                "convergence",
+                maximum=(
+                    1.12
+                    if name == "sgnht" and configuration.profile == "smoke"
+                    else (1.05 if name == "sgnht" else max_rhat)
+                ),
+            )
+            metrics[f"{name}_min_ess"] = metric(
+                jnp.minimum(
+                    result.diagnostics.min_bulk_ess,
+                    result.diagnostics.min_tail_ess,
+                ),
+                "convergence",
+                minimum=min_ess,
+            )
+            metrics[f"{name}_ess_per_second"] = metric(
+                jnp.minimum(
+                    result.diagnostics.min_bulk_ess,
+                    result.diagnostics.min_tail_ess,
+                )
+                / max(result.sampling_duration_seconds, 1.0e-12),
+                "performance",
+                unit="ESS/s",
+            )
+
+    ordinary_gradient = jax.grad(problem.log_density_estimate)
+    probe = position_from_vector(
+        analytic_mean + jnp.asarray([0.2, -0.2]) * analytic_scale
+    )
+    epoch_batches = tuple(source.epoch(0))
+
+    def gradient_vector(gradient):
+        return jnp.stack(
+            (
+                gradient["offset"],
+                gradient["nested"]["positive_rate"],
+            )
+        )
+
+    ordinary_gradients = jnp.stack(
+        [
+            gradient_vector(ordinary_gradient(probe, batch))
+            for batch in epoch_batches
+        ]
+    )
+    controlled_gradients = jnp.stack(
+        [
+            gradient_vector(
+                jax.tree_util.tree_map(
+                    lambda full, current, at_center: (
+                        full + current - at_center
+                    ),
+                    control.full_gradient,
+                    ordinary_gradient(probe, batch),
+                    ordinary_gradient(control.center, batch),
+                )
+            )
+            for batch in epoch_batches
+        ]
+    )
+    ordinary_variance = jnp.sum(jnp.var(ordinary_gradients, axis=0))
+    controlled_variance = jnp.sum(jnp.var(controlled_gradients, axis=0))
+    metrics["control_variate_gradient_variance_reduction"] = metric(
+        ordinary_variance
+        / jnp.maximum(controlled_variance, jnp.finfo(float).eps),
+        "diagnostic",
+        minimum=10.0,
+    )
+    metrics["step_halving_mean_discrepancy"] = metric(
+        jnp.linalg.norm(sample_means["sgld"] - sample_means["sgld_refined"])
+        / jnp.linalg.norm(analytic_scale),
+        "diagnostic",
+    )
+    metrics["step_halving_covariance_discrepancy"] = metric(
+        jnp.linalg.norm(
+            sample_covariances["sgld"]
+            - sample_covariances["sgld_refined"]
+        )
+        / covariance_norm,
+        "diagnostic",
+    )
+    metrics["laplace_mean_error"] = metric(
+        jnp.linalg.norm(
+            jnp.asarray(
+                [
+                    laplace.map_position["offset"],
+                    laplace.map_position["nested"]["positive_rate"],
+                ]
+            )
+            - analytic_mean
+        ),
+        "accuracy",
+        maximum=1.0e-8,
+    )
+    laplace_order = jnp.asarray([1, 0])
+    laplace_covariance = laplace.covariance[
+        jnp.ix_(laplace_order, laplace_order)
+    ]
+    metrics["laplace_covariance_relative_error"] = metric(
+        jnp.linalg.norm(laplace_covariance - analytic_covariance)
+        / covariance_norm,
+        "accuracy",
+        maximum=1.0e-8,
+    )
+    ensemble_mean = jnp.mean(ensemble_predictions, axis=0)
+    ensemble_variance = jnp.var(ensemble_predictions, axis=0)
+    metrics["deep_ensemble_predictive_mean_rmse"] = metric(
+        jnp.sqrt(
+            jnp.mean((ensemble_mean - analytic_prediction_mean) ** 2)
+        ),
+        "accuracy",
+        maximum=0.2,
+    )
+    metrics["deep_ensemble_predictive_variance_relative_rmse"] = metric(
+        jnp.sqrt(
+            jnp.mean(
+                (
+                    ensemble_variance
+                    - analytic_prediction_variance
+                )
+                ** 2
+            )
+        )
+        / jnp.mean(analytic_prediction_variance),
+        "accuracy",
+    )
+    metrics.update(
+        _performance_metrics(
+            wall_seconds=time.perf_counter() - started,
+            cold_seconds=cold,
+            compile_seconds=compile_seconds,
+            execution_seconds=execute,
+            sample_memory_bytes=sum(
+                result.sample_memory_bytes
+                for result in (sgld, refined, controlled, sgnht)
+            ),
+        )
+    )
+    return ScenarioResult(
+        name="stochastic_gradient_regression",
+        description=stochastic_gradient_regression.__doc__ or "",
+        seed=seed,
+        metrics=metrics,
+        metadata={
+            "profile": configuration.profile,
+            "num_factors": num_factors,
+            "batch_size": configuration.sgmcmc_batch_size,
+            "num_chains": configuration.num_chains,
+            "num_burnin": configuration.sgmcmc_burnin,
+            "num_draws": configuration.sgmcmc_draws,
+            "steps_per_sample": configuration.sgmcmc_steps_per_sample,
+            "sgld_step_size": step_size,
+            "sgnht_step_size": 5.0e-3,
+            "sgnht_diffusion": 0.1,
+            "approximation": "unadjusted_fixed_step",
+            "source_fingerprint": source.fingerprint,
+            "analytic_mean": analytic_mean.tolist(),
+            "analytic_covariance": analytic_covariance.tolist(),
+            "parameter_structure": "nested_with_positive_log_coordinate",
+            "deep_ensemble_members": ensemble_members,
+            "deep_ensemble_steps": ensemble_steps,
+        },
+    )
+
+
 SCENARIOS: dict[str, Scenario] = {
     "elliptic_coefficient_inverse": elliptic_coefficient_inverse,
     "nonlinear_transformed_ode": nonlinear_transformed_ode,
@@ -1377,6 +2273,8 @@ SCENARIOS: dict[str, Scenario] = {
     "multimodal_tempered_inference": multimodal_tempered_inference,
     "misspecified_pde_discrepancy": misspecified_pde_discrepancy,
     "correlated_vector_discrepancy": correlated_vector_discrepancy,
+    "flow_assisted_multimodal": flow_assisted_multimodal,
+    "stochastic_gradient_regression": stochastic_gradient_regression,
 }
 
 

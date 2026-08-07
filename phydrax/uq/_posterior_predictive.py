@@ -14,12 +14,13 @@ import jax.random as jr
 from jaxtyping import Array, PyTree
 
 from .._frozendict import frozendict
+from ._minibatch_posterior import MinibatchPosteriorProblem
 from ._posterior import PosteriorProblem
 from ._predictive import PredictiveField, SampleAxis, UncertaintySource
 
 
 def predict_from_position_samples(
-    problem: PosteriorProblem,
+    problem: PosteriorProblem | MinibatchPosteriorProblem,
     positions: PyTree[Array],
     /,
     *args: Any,
@@ -57,7 +58,7 @@ def predict_from_position_samples(
 
 
 def sample_observations_from_position_samples(
-    problem: PosteriorProblem,
+    problem: PosteriorProblem | MinibatchPosteriorProblem,
     key: Array,
     positions: PyTree[Array],
     /,
@@ -72,7 +73,7 @@ def sample_observations_from_position_samples(
 ) -> PredictiveField | frozendict[str, PredictiveField]:
     """Draw measurement noise while preserving posterior and observation axes."""
     if problem.sample_observation_fn is None:
-        raise ValueError("PosteriorProblem has no observation-sampling function.")
+        raise ValueError("Posterior problem has no observation-sampling function.")
     dimensions, sources = _sample_metadata(sample_dims, sample_sources)
     count = int(num_observation_samples)
     if count <= 0:

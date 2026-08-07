@@ -2,8 +2,9 @@
 
 This recipe covers independently initialized ensembles, proper scoring, split
 conformal calibration, uncertain-input propagation, explicit Bayesian physical
-parameters, MAP/NUTS/Laplace/Pathfinder inference, and scalable
-Gaussian-process model discrepancy.
+parameters, MAP/NUTS/flow-assisted NUTS/Laplace/Pathfinder inference,
+fixed-step SGLD/SGNHT for factorized data, and scalable Gaussian-process model
+discrepancy.
 
 For geometry-aware output functions, independent source/query discretizations, and
 whole-field calibration, use the dedicated
@@ -244,7 +245,122 @@ those modules and avoids accidentally selecting only the last coordinate factor.
 See the posterior-contract section of the UQ guide for the complete separable
 selection pattern and its nonlinear joint-posterior interpretation.
 
-## 8. Use Pathfinder locally and tempered SMC for demonstrated multimodality
+## 8. Scale a factorized likelihood with fixed-step SG-MCMC
+
+Keep the normalized per-observation likelihood from the exact reference problem,
+but expose each observation as one factor. The source owns deterministic epoch
+ordering and padded-tail masking:
+
+```python
+source = phx.uq.ArrayMinibatchSource(
+    {
+        "basis": sensor_basis,
+        "observation": observations,
+    },
+    batch_size=8,
+    seed=31,
+)
+
+
+def likelihood_factors(parameters, batch):
+    return observation_likelihood.log_prob(
+        parameters["source"] * batch.data["basis"],
+        batch.data["observation"],
+    )
+
+
+stochastic_problem = phx.uq.MinibatchPosteriorProblem(
+    parameter_space,
+    likelihood_factors,
+    num_factors=sensor_basis.size,
+    full_log_likelihood=posterior_problem.log_likelihood,
+    predict=lambda parameters, x: cx.Field(
+        parameters["source"] * 0.5 * x * (1.0 - x),
+        dims=("x",),
+    ),
+)
+inspection = phx.uq.diagnose_minibatch_posterior(
+    stochastic_problem,
+    source,
+)
+assert inspection.passed, inspection.as_dict()
+```
+
+Build a difference-estimator control variate at the exact MAP and run independent
+chains. `num_burnin` discards states; it does not tune the fixed step:
+
+```python
+control = phx.uq.build_sgmcmc_control_variate(
+    stochastic_problem,
+    source,
+    map_result.position,
+)
+sgld = phx.uq.sample_sgld(
+    stochastic_problem,
+    source,
+    key=jr.key(30),
+    step_size=1e-4,
+    num_chains=4,
+    num_burnin=1000,
+    num_samples=2000,
+    steps_per_sample=2,
+    control_variate=control,
+)
+sgld_refined = phx.uq.sample_sgld(
+    stochastic_problem,
+    source,
+    key=jr.key(31),
+    step_size=5e-5,
+    num_chains=4,
+    num_burnin=1000,
+    num_samples=2000,
+    steps_per_sample=2,
+    control_variate=control,
+)
+sgnht = phx.uq.sample_sgnht(
+    stochastic_problem,
+    source,
+    key=jr.key(32),
+    step_size=5e-4,
+    diffusion=0.01,
+    num_chains=4,
+    num_burnin=1000,
+    num_samples=2000,
+    steps_per_sample=2,
+    control_variate=control,
+)
+```
+
+Do not infer accuracy from rank diagnostics alone. Compare the base and halved-step
+posterior means and variances, then compare both with the NUTS and Laplace references
+already computed above:
+
+```python
+sgld_mean = jnp.mean(sgld.samples["source"])
+refined_mean = jnp.mean(sgld_refined.samples["source"])
+step_sensitivity = jnp.abs(sgld_mean - refined_mean)
+reference_error = jnp.abs(refined_mean - jnp.mean(nuts.samples["source"]))
+
+mixing = sgld_refined.mixing_report(
+    max_rhat=1.05,
+    min_bulk_ess=200,
+    min_tail_ess=200,
+)
+mixing.raise_for_failure()
+```
+
+Report `step_sensitivity`, reference moment/predictive discrepancies, stochastic
+gradient variance, throughput, memory, batch definition, and every fixed-step
+setting. SGLD and SGNHT are unadjusted approximations: there is no Metropolis
+correction or automatic step-size adaptation. Prefer exact NUTS or Laplace whenever
+full-data inference is feasible.
+
+For neural operators, use `OperatorBatchObservationLikelihood` with
+`OperatorMinibatchSource`; one complete physical case is one factor. Query points,
+channels, masks, geometry, and quadrature remain coupled within the case. The
+adapter intentionally does not subsample query anchors.
+
+## 9. Choose local, represented-mode, or discovery inference
 
 Pathfinder is a fast local approximation selected along an L-BFGS path:
 
@@ -257,12 +373,58 @@ pathfinder = phx.uq.fit_pathfinder(
 pathfinder_prediction = pathfinder.predict(posterior_query)
 ```
 
-Compare its moments and held-out scores against NUTS and dense Laplace. For a
-demonstrably multimodal low-dimensional posterior, use `sample_tempered_smc`
-instead. Its declared priors provide initial particles; inspect the adaptive
-temperature schedule, ESS, divergences, and surviving initial-particle count.
+Compare its moments and held-out scores against NUTS and dense Laplace. If a
+multimodal posterior's important modes are already represented, use exact
+flow-assisted NUTS and initialize chains across those modes:
 
-## 9. Represent omitted physics with a GP discrepancy
+```python
+multimodal_problem = phx.uq.PosteriorProblem(
+    phx.uq.ParameterSpace(
+        jnp.asarray(0.0),
+        priors=phx.uq.Normal(0.0, 4.0),
+    ),
+    lambda value: jnp.logaddexp(
+        jnp.log(0.3) - 0.5 * ((value + 2.0) / 0.35) ** 2,
+        jnp.log(0.7) - 0.5 * ((value - 2.0) / 0.35) ** 2,
+    ),
+)
+flow_config = phx.uq.FlowNUTSConfig(
+    num_adaptation_rounds=3,
+    num_local_adaptation_steps=80,
+    num_global_adaptation_steps=20,
+    num_local_steps=2,
+    num_global_steps=1,
+    history_capacity_per_chain=256,
+    max_epochs=60,
+)
+flow_nuts = phx.uq.sample_flow_nuts(
+    multimodal_problem,
+    key=jr.key(9),
+    num_chains=4,
+    num_warmup=500,
+    num_samples=1000,
+    initial_positions=jnp.asarray([-2.0, -1.8, 1.8, 2.0]),
+    target_acceptance_rate=0.9,
+    config=flow_config,
+    chain_method="vectorized",
+)
+assert flow_nuts.diagnostics.max_rhat < 1.05
+assert jnp.mean(flow_nuts.global_acceptance_rate) > 0.0
+```
+
+The flow is trained only during adaptation. Every global transition uses the exact
+asymmetric independence Metropolis--Hastings correction, and the frozen production
+kernel alternates configured local NUTS and global flow steps. Inspect global
+acceptance, proposal ESS, nonfinite counts, mode occupancy, and ordinary rank
+diagnostics. This transports between represented modes; it does not certify that no
+unrepresented mode exists.
+
+Use `sample_tempered_smc` instead when low-dimensional mode discovery or a
+log-evidence estimate is required. Its declared priors provide initial particles;
+inspect the adaptive temperature schedule, ESS, divergences, and surviving
+initial-particle count.
+
+## 10. Represent omitted physics with a GP discrepancy
 
 
 An ensemble cannot identify a physical mode that every member omits. Model that

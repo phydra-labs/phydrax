@@ -90,6 +90,11 @@ from ._fixed_lag import (
     FixedLagKalmanSmootherResult,
     FixedLagParticleSmootherResult,
 )
+from ._flow_mcmc import FlowNUTSConfig, FlowNUTSResult, sample_flow_nuts
+from ._gaussian_chain import (
+    combine_gaussian_filter_elements,
+    GaussianFilterElement,
+)
 from ._guided_particle import (
     AbstractParticleProposal,
     AuxiliaryResamplingPolicy,
@@ -114,6 +119,7 @@ from ._kalman import (
     KALMAN_NONFINITE,
     kalman_status_name,
     KALMAN_SUCCESS,
+    KalmanExecutionMethod,
     KalmanFilterResult,
     KalmanFilterState,
     KalmanFilterStep,
@@ -156,6 +162,17 @@ from ._metrics import (
     pinball_loss,
     student_t_crps,
 )
+from ._minibatch_diagnostics import (
+    diagnose_minibatch_posterior,
+    MinibatchPosteriorCapabilities,
+    MinibatchPosteriorDiagnostics,
+)
+from ._minibatch_posterior import (
+    ArrayMinibatchSource,
+    LikelihoodBatch,
+    MinibatchPosteriorProblem,
+    MinibatchSource,
+)
 from ._observation import LikelihoodObservationModel
 from ._operator import (
     operator_input_predictive,
@@ -166,7 +183,12 @@ from ._operator import (
     sample_operator_predictive,
 )
 from ._operator_conformal import OperatorFunctionalConformal
-from ._operator_likelihood import FixedOperatorObservationLikelihood
+from ._operator_likelihood import (
+    FixedOperatorObservationLikelihood,
+    OperatorBatchObservationLikelihood,
+    OperatorLikelihoodData,
+    OperatorMinibatchSource,
+)
 from ._operator_metrics import (
     operator_energy_score,
     operator_ensemble_crps,
@@ -221,6 +243,11 @@ from ._posterior import (
     ParameterSubspace,
     PosteriorProblem,
     SigmoidIntervalBijector,
+)
+from ._posterior_diagnostics import (
+    diagnose_posterior,
+    PosteriorCapabilities,
+    PosteriorDiagnostics,
 )
 from ._posterior_terms import (
     AbstractPosteriorTerm,
@@ -296,6 +323,19 @@ from ._result_export import (
     UQResultArchive,
 )
 from ._sensitivity import sobol_indices, SobolResult
+from ._sgmcmc import (
+    build_sgmcmc_control_variate,
+    sample_sgld,
+    sample_sgnht,
+    SGMCMCControlVariate,
+    SGMCMCResult,
+)
+from ._sgmcmc_diagnostics import (
+    SGMCMCDiagnostics,
+    SGMCMCMixingError,
+    SGMCMCMixingReport,
+    SGMCMCMixingThresholds,
+)
 from ._smc import sample_tempered_smc, TemperedSMCResult
 from ._state_space_inference import (
     EXACT_STATE_SPACE_DEGENERATE_LIKELIHOOD,
@@ -381,6 +421,8 @@ __all__ = [
     "guided_particle_filter_status_name",
     "LinearGaussianGuidedParticleProposal",
     "ParticleProposalSample",
+    "combine_gaussian_filter_elements",
+    "GaussianFilterElement",
     "fixed_lag_kalman_smoother",
     "fixed_lag_particle_smoother",
     "FixedLagKalmanSmootherResult",
@@ -395,6 +437,7 @@ __all__ = [
     "KalmanFilterStep",
     "kalman_filter_step",
     "kalman_innovation_diagnostics",
+    "KalmanExecutionMethod",
     "KalmanInnovationDiagnostics",
     "kalman_status_name",
     "KalmanSmootherResult",
@@ -527,6 +570,9 @@ __all__ = [
     "operator_interval_coverage",
     "operator_interval_width",
     "FixedOperatorObservationLikelihood",
+    "OperatorBatchObservationLikelihood",
+    "OperatorLikelihoodData",
+    "OperatorMinibatchSource",
     "operator_input_predictive",
     "operator_prediction_field",
     "OperatorPredictionInterval",
@@ -540,6 +586,16 @@ __all__ = [
     "ParameterSpace",
     "ParameterSubspace",
     "PosteriorProblem",
+    "diagnose_posterior",
+    "PosteriorCapabilities",
+    "PosteriorDiagnostics",
+    "ArrayMinibatchSource",
+    "LikelihoodBatch",
+    "MinibatchPosteriorProblem",
+    "MinibatchSource",
+    "diagnose_minibatch_posterior",
+    "MinibatchPosteriorCapabilities",
+    "MinibatchPosteriorDiagnostics",
     "GaussianPriorWhitening",
     "AbstractPosteriorTerm",
     "CompositePosteriorLikelihood",
@@ -550,6 +606,8 @@ __all__ = [
     "find_map",
     "MAPConvergenceError",
     "MAPResult",
+    "FlowNUTSConfig",
+    "FlowNUTSResult",
     "MCMCChainWarmup",
     "MCMCConvergenceError",
     "MCMCConvergenceReport",
@@ -558,6 +616,16 @@ __all__ = [
     "MCMCResult",
     "sample_hmc",
     "sample_nuts",
+    "sample_flow_nuts",
+    "build_sgmcmc_control_variate",
+    "sample_sgld",
+    "sample_sgnht",
+    "SGMCMCControlVariate",
+    "SGMCMCDiagnostics",
+    "SGMCMCMixingError",
+    "SGMCMCMixingReport",
+    "SGMCMCMixingThresholds",
+    "SGMCMCResult",
     "PathfinderResult",
     "fit_pathfinder",
     "TemperedSMCResult",

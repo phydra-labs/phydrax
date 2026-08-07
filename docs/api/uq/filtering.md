@@ -2,17 +2,24 @@
 
 All native filters consume one `phydrax.stochastic.StateSpaceProblem` and preserve its
 physical case axes, observation schedule, masks, case IDs, model ID, problem ID, and
-sequence ID. Batch functions call the same streaming step used by online execution.
-Algorithm-specific status arrays and validity masks distinguish inactive schedule
-entries from numerical or transition failures.
+sequence ID. Streaming APIs retain their one-step semantics. Batch Kalman execution
+additionally supports an associative temporal scan without changing masks, padding,
+failure freeze, result fields, or semantic random keys. Algorithm-specific status
+arrays and validity masks distinguish inactive schedule entries from numerical or
+transition failures.
 
 ## Exact linear-Gaussian filtering
 
-`kalman_filter` and `kalman_filter_step` use Joseph-form covariance updates and expose
-innovation covariances, normalized innovation squared values, incremental likelihoods,
-and failure status. `rts_smoother` computes the fixed-interval backward recursion;
-`sample_kalman_smoother_paths` draws coherent conditional paths rather than independent
-time marginals.
+`kalman_filter`, `rts_smoother`, and `sample_kalman_smoother_paths` accept
+`method="sequential"`, `"parallel"`, or `"auto"`. The parallel path composes
+covariance-form affine Gaussian elements with solves and
+`jax.lax.associative_scan`; `auto` selects it only for long chains with modest
+state and observation factors. Result objects and portable archives record the
+resolved execution method. `kalman_filter_step` remains the streaming primitive.
+Filtering uses Joseph-form covariance updates and exposes innovation covariances,
+normalized innovation squared values, incremental likelihoods, and failure status.
+Backward path samples are coherent conditionals, not independent time marginals,
+and retain case/step/member key prefix stability.
 
 ::: phydrax.uq.initialize_kalman_filter
 
@@ -111,10 +118,11 @@ regression over the retained forecast and analysis ensembles.
 
 `exact_state_space_log_likelihood` dispatches only to a mathematically exact
 finite-state forward recursion or linear-Gaussian Kalman innovation likelihood.
-`StateSpaceMarginalLikelihood` exposes that result to posterior inference without
-resampling latent paths. `state_space_identifiability` reports effective observation
-rank and prior-to-posterior contraction; it is a diagnostic, not an automatic
-regularizer.
+Its backend `method` and Kalman `temporal_method` are separate choices, so selecting
+parallel temporal execution cannot change model dispatch. `StateSpaceMarginalLikelihood`
+threads both choices into posterior inference without resampling latent paths.
+`state_space_identifiability` reports effective observation rank and
+prior-to-posterior contraction; it is a diagnostic, not an automatic regularizer.
 
 ::: phydrax.uq.exact_state_space_log_likelihood
 

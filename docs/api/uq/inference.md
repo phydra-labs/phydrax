@@ -41,6 +41,98 @@
             - validate
 
 
+### Stochastic likelihood contracts
+
+`MinibatchPosteriorProblem` requires one normalized likelihood contribution per
+statistical factor. `MinibatchSource` epochs must cover every factor exactly once;
+padded entries are excluded by `LikelihoodBatch.factor_mask`. The stochastic
+estimate scales the active-factor mean by the declared population size and adds the
+prior and bijector Jacobian exactly once.
+
+For operator data, a factor is one complete physical case. Query points, channels,
+geometry, masks, and quadrature remain inside that factor and are never interpreted
+as independent observations.
+
+::: phydrax.uq.LikelihoodBatch
+    options:
+        members:
+            - __init__
+            - capacity
+            - factor_count
+
+---
+
+::: phydrax.uq.MinibatchSource
+
+---
+
+::: phydrax.uq.ArrayMinibatchSource
+    options:
+        members:
+            - __init__
+            - num_factors
+            - batch_capacity
+            - batches_per_epoch
+            - fingerprint
+            - configuration
+            - epoch
+
+---
+
+::: phydrax.uq.MinibatchPosteriorProblem
+    options:
+        members:
+            - __init__
+            - log_likelihood_factors
+            - log_likelihood_estimate
+            - log_density_estimate
+            - full_log_likelihood
+            - full_log_density
+            - predict
+            - conditional_observation_variance
+            - sample_observation
+            - validate
+
+---
+
+::: phydrax.uq.diagnose_minibatch_posterior
+
+---
+
+::: phydrax.uq.MinibatchPosteriorCapabilities
+    options:
+        members:
+            - as_dict
+
+---
+
+::: phydrax.uq.MinibatchPosteriorDiagnostics
+    options:
+        members:
+            - passed
+            - as_dict
+
+
+### Posterior inspection
+
+::: phydrax.uq.diagnose_posterior
+
+---
+
+::: phydrax.uq.PosteriorCapabilities
+    options:
+        members:
+            - as_dict
+
+---
+
+::: phydrax.uq.PosteriorDiagnostics
+    options:
+        members:
+            - passed
+            - as_dict
+
+
 ### Normalized posterior terms
 
 ::: phydrax.uq.FixedObservationLikelihood
@@ -124,6 +216,89 @@
 ---
 
 ::: phydrax.uq.sample_hmc
+
+---
+
+### Fixed-step stochastic-gradient MCMC
+
+`sample_sgld` and `sample_sgnht` consume deterministic `MinibatchSource` epochs
+through a shared fixed-step runtime. They return approximate, unadjusted production
+draws: burn-in is discarded, but no Metropolis correction or automatic step-size
+adaptation is implied. Report step-size sensitivity and compare with NUTS or Laplace
+on a tractable reference before interpreting these draws quantitatively.
+
+::: phydrax.uq.sample_sgld
+
+---
+
+::: phydrax.uq.sample_sgnht
+
+---
+
+::: phydrax.uq.build_sgmcmc_control_variate
+
+---
+
+::: phydrax.uq.SGMCMCControlVariate
+
+---
+
+::: phydrax.uq.SGMCMCResult
+    options:
+        members:
+            - num_chains
+            - num_draws
+            - batch_fraction
+            - source_configuration
+            - predict
+            - predict_observations
+            - mixing_report
+
+---
+
+::: phydrax.uq.SGMCMCDiagnostics
+
+---
+
+::: phydrax.uq.SGMCMCMixingThresholds
+    options:
+        members:
+            - __init__
+
+---
+
+::: phydrax.uq.SGMCMCMixingReport
+    options:
+        members:
+            - raise_for_failure
+            - as_dict
+
+---
+
+::: phydrax.uq.SGMCMCMixingError
+
+
+
+### Flow-assisted NUTS
+
+::: phydrax.uq.sample_flow_nuts
+
+---
+
+::: phydrax.uq.FlowNUTSConfig
+    options:
+        members:
+            - __init__
+            - as_dict
+
+---
+
+::: phydrax.uq.FlowNUTSResult
+    options:
+        members:
+            - predict
+            - predict_observations
+            - convergence_report
 
 ---
 

@@ -24,7 +24,7 @@ def test_complete_uq_benchmark_matrix_passes_and_writes_machine_report(tmp_path)
     assert report.passed
     assert tuple(scenario.name for scenario in report.scenarios) == tuple(SCENARIOS)
     assert "schema_version" not in payload
-    assert payload["summary"]["scenario_count"] == 6
+    assert payload["summary"]["scenario_count"] == 8
     assert payload["summary"]["scenarios_failed"] == 0
     assert all(
         category["failed"] == 0

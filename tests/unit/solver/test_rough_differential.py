@@ -47,7 +47,7 @@ def test_davie_step_uses_second_level_factor_jvp_and_improves_smooth_path_error(
         _linear_problem(rate),
         one_step_path,
         save_times=jnp.asarray([0.3]),
-        scheme="davie",
+        solver=phx.solver.Davie(),
     )
     expected_one_step = 1.2 * (1.0 + rate * 0.3 + 0.5 * rate**2 * 0.3**2)
 
@@ -57,13 +57,13 @@ def test_davie_step_uses_second_level_factor_jvp_and_improves_smooth_path_error(
         _linear_problem(rate),
         smooth_path,
         save_times=jnp.asarray([1.0]),
-        scheme="euler",
+        solver=phx.solver.RoughEuler(),
     )
     davie = phx.solver.solve_rough_differential(
         _linear_problem(rate),
         smooth_path,
         save_times=jnp.asarray([1.0]),
-        scheme="davie",
+        solver=phx.solver.Davie(),
     )
     exact = 1.2 * jnp.exp(rate)
     euler_error = jnp.abs(euler.states[0, 0] - exact)
@@ -71,6 +71,12 @@ def test_davie_step_uses_second_level_factor_jvp_and_improves_smooth_path_error(
 
     assert jnp.allclose(one_step.states[0, 0], expected_one_step, atol=1e-12)
     assert davie_error < 0.08 * euler_error
+    assert euler.solver_name == "RoughEuler"
+    assert euler.solver_id == "rough-solver:rough-euler:v1"
+    assert davie.solver_name == "Davie"
+    assert davie.solver_id == "rough-solver:davie:v1"
+    assert euler.solver_id != davie.solver_id
+    assert euler.state_geometry_id == "state-geometry:euclidean"
 
 
 def test_fractional_gaussian_rough_dynamics_track_linear_geometric_solution():
@@ -104,7 +110,16 @@ def test_fractional_gaussian_rough_dynamics_track_linear_geometric_solution():
 
     assert relative_rmse < 2e-3
     assert jnp.all(solution.successful)
+    assert isinstance(solution.solver, phx.solver.Davie)
+    assert solution.control is rough_path
     assert trajectory.realizations == (realization,)
+    assert trajectory.metadata["solver_name"] == solution.solver_name
+    assert trajectory.metadata["solver_id"] == solution.solver_id
+    assert (
+        trajectory.metadata["state_geometry_id"]
+        == solution.state_geometry_id
+        == "state-geometry:euclidean"
+    )
 
 
 def test_step_two_fractional_solver_rejects_hurst_requiring_level_three():

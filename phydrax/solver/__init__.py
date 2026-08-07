@@ -122,6 +122,17 @@ from ._fbsde import (
     solve_coupled_fbsde_explicit,
 )
 from ._functional_solver import FunctionalSolver
+from ._geometric import (
+    AbstractGeometricSolver,
+    commutator_free_midpoint_tableau,
+    CommutatorFreeSolver,
+    CommutatorFreeTableau,
+    GeometricEuler,
+    GeometricLocalInterpolation,
+    RKMK,
+    solver_state_geometry,
+    SRKMK,
+)
 from ._integration import spatial_measure
 from ._jump import (
     finite_state_generator,
@@ -194,13 +205,17 @@ from ._regression_bsde import (
     solve_bsde_least_squares,
 )
 from ._rough import (
+    AbstractRoughSolver,
+    Davie,
     RoughDifferentialProblem,
-    RoughDifferentialScheme,
     RoughDifferentialSolution,
     RoughDrift,
+    RoughEuler,
     RoughVectorFields,
     solve_rough_differential,
 )
+from ._rough_lift import lift_rough_vector_fields, LiftedRoughVectorFields
+from ._rough_logode import LinearLogODE, LogODE
 from ._semilinear import (
     exact_modal_stochastic_convolution,
     SemilinearFallback,
@@ -230,6 +245,7 @@ from ._state_transfer import (
 
 
 __all__ = [
+    "AbstractGeometricSolver",
     "AbstractSpatialDiscretization",
     "AbstractBSDERegressionBasis",
     "assemble_stochastic_collocation",
@@ -247,6 +263,9 @@ __all__ = [
     "CoupledFBSDEProblem",
     "CoupledFBSDEResult",
     "BSDERegressionScheme",
+    "CommutatorFreeSolver",
+    "CommutatorFreeTableau",
+    "commutator_free_midpoint_tableau",
     "DeepBSDEResult",
     "DeepPicardDiagnostics",
     "DeepPicardInitialSource",
@@ -265,6 +284,8 @@ __all__ = [
     "DifferentialSolution",
     "DifferentialVectorField",
     "evaluate_stochastic_collocation",
+    "GeometricEuler",
+    "GeometricLocalInterpolation",
     "NoiseStructure",
     "finite_state_generator",
     "FiniteStateGenerator",
@@ -292,10 +313,19 @@ __all__ = [
     "materialize_stochastic_collocation",
     "least_squares_bsde_diagnostics",
     "LeastSquaresBSDEDiagnostics",
+    "RKMK",
+    "SRKMK",
+    "solver_state_geometry",
     "LeastSquaresBSDEResult",
     "ParticleVectorField",
+    "AbstractRoughSolver",
+    "Davie",
+    "LiftedRoughVectorFields",
+    "lift_rough_vector_fields",
+    "LinearLogODE",
+    "LogODE",
     "RoughDifferentialProblem",
-    "RoughDifferentialScheme",
+    "RoughEuler",
     "RoughDifferentialSolution",
     "RoughDrift",
     "RoughVectorFields",

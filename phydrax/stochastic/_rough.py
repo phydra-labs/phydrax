@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+from abc import abstractmethod
 from collections.abc import Sequence
 from itertools import pairwise
 
@@ -14,7 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from .._strict import StrictModule
+from .._strict import AbstractAttribute, StrictModule
 from ._fractional import FractionalGaussianRealization
 
 
@@ -25,15 +26,42 @@ def _digest_array(digest: hashlib._Hash, value: ArrayLike, /) -> None:
     digest.update(array.tobytes())
 
 
-def _rough_path_id(
+def _rough_control_id(
     times: Array, first: Array, second: Array, driver_id: str | None
 ) -> str:
-    digest = hashlib.sha256(b"phydrax-geometric-rough-path\0")
+    digest = hashlib.sha256(b"phydrax-geometric-rough-control\0")
     _digest_array(digest, times)
     _digest_array(digest, first)
     _digest_array(digest, second)
     digest.update(repr(driver_id).encode("utf-8"))
     return digest.hexdigest()
+
+
+class AbstractRoughControl(StrictModule):
+    """Finite-depth geometric control on one explicit integration partition."""
+
+    times: AbstractAttribute[Array]
+    realization: AbstractAttribute[FractionalGaussianRealization | None]
+    sample_shape: AbstractAttribute[tuple[int, ...]]
+    dimension: AbstractAttribute[int]
+    num_steps: AbstractAttribute[int]
+    depth: AbstractAttribute[int]
+    control_id: AbstractAttribute[str]
+
+    @property
+    @abstractmethod
+    def levels(self) -> tuple[Array, ...]:
+        """Per-interval tensor-signature levels, ordered from degree one."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def signature(self, start_index: int, end_index: int, /) -> tuple[Array, ...]:
+        """Aggregate a non-empty partition slice using Chen multiplication."""
+        raise NotImplementedError
+
+    @property
+    def terminal_signature(self) -> tuple[Array, ...]:
+        return self.signature(0, self.num_steps)
 
 
 def compose_rough_path_segments(
@@ -59,8 +87,8 @@ def compose_rough_path_segments(
     )
 
 
-class GeometricRoughPath(StrictModule):
-    """Step-2 geometric rough path on one explicit partition."""
+class GeometricRoughPath(AbstractRoughControl):
+    """Optimized depth-2 geometric rough control on one explicit partition."""
 
     times: Array
     first_level: Array
@@ -69,8 +97,9 @@ class GeometricRoughPath(StrictModule):
     sample_shape: tuple[int, ...] = eqx.field(static=True)
     dimension: int = eqx.field(static=True)
     num_steps: int = eqx.field(static=True)
+    depth: int = eqx.field(static=True)
     driver_id: str | None = eqx.field(static=True)
-    rough_path_id: str = eqx.field(static=True)
+    control_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -143,13 +172,13 @@ class GeometricRoughPath(StrictModule):
         self.sample_shape = samples
         self.dimension = dimension
         self.num_steps = step_count
+        self.depth = 2
         self.driver_id = resolved_driver_id
-        self.rough_path_id = _rough_path_id(
-            nodes,
-            first,
-            second,
-            resolved_driver_id,
-        )
+        self.control_id = _rough_control_id(nodes, first, second, resolved_driver_id)
+
+    @property
+    def levels(self) -> tuple[Array, Array]:
+        return self.first_level, self.second_level
 
     @classmethod
     def from_values(
@@ -176,11 +205,7 @@ class GeometricRoughPath(StrictModule):
         ):
             raise ValueError("values must align with sample_shape and times.")
         increments = jnp.diff(path_values, axis=len(samples))
-        second = 0.5 * jnp.einsum(
-            "...i,...j->...ij",
-            increments,
-            increments,
-        )
+        second = 0.5 * jnp.einsum("...i,...j->...ij", increments, increments)
         return cls(
             nodes,
             increments,
@@ -206,7 +231,7 @@ class GeometricRoughPath(StrictModule):
         )
 
     def signature(self, start_index: int, end_index: int, /) -> tuple[Array, Array]:
-        """Aggregate a partition slice into one step-2 signature."""
+        """Aggregate a partition slice into one depth-2 signature."""
         start = int(start_index)
         end = int(end_index)
         if start < 0 or end > self.num_steps or end <= start:
@@ -220,27 +245,16 @@ class GeometricRoughPath(StrictModule):
 
         def one_path(path_first, path_second):
             def combine(carry, item):
-                accumulated_first, accumulated_second = carry
-                segment_first, segment_second = item
-                return compose_rough_path_segments(
-                    accumulated_first,
-                    accumulated_second,
-                    segment_first,
-                    segment_second,
-                ), None
+                return compose_rough_path_segments(*carry, *item), None
 
             initial = (
                 jnp.zeros((self.dimension,), dtype=path_first.dtype),
-                jnp.zeros(
-                    (self.dimension, self.dimension),
-                    dtype=path_second.dtype,
-                ),
+                jnp.zeros((self.dimension, self.dimension), dtype=path_second.dtype),
             )
             return jax.lax.scan(combine, initial, (path_first, path_second))[0]
 
         aggregated_first, aggregated_second = jax.vmap(one_path)(
-            flat_first,
-            flat_second,
+            flat_first, flat_second
         )
         return (
             aggregated_first.reshape(self.sample_shape + (self.dimension,)),
@@ -275,12 +289,9 @@ class GeometricRoughPath(StrictModule):
             driver_id=self.driver_id,
         )
 
-    @property
-    def terminal_signature(self) -> tuple[Array, Array]:
-        return self.signature(0, self.num_steps)
-
 
 __all__ = [
+    "AbstractRoughControl",
     "GeometricRoughPath",
     "compose_rough_path_segments",
 ]

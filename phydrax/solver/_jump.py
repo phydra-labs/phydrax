@@ -1358,6 +1358,13 @@ def solve_jump_differential(
         raise TypeError("poisson_realization must be a PoissonClockRealization.")
     differential = problem.differential
     jumps = problem.jumps
+    if (
+        differential.state_geometry is not None
+        and not differential.state_geometry.trivial
+    ):
+        raise ValueError(
+            "Hybrid jump integration does not support nontrivial state_geometry."
+        )
     if poisson_realization.process_id != jumps.process_id:
         raise ValueError("Jump process and Poisson realization process_id values differ.")
     if poisson_realization.num_channels != jumps.num_channels:

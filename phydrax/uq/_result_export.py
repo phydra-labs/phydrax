@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +30,7 @@ from ._diagnostics import MCMCConvergenceReport
 from ._discrepancy_diagnostics import DiscrepancyIdentifiabilityReport
 from ._eki import EnsembleKalmanResult
 from ._ensemble_filter import EnsembleFilterResult, EnsembleSmootherResult
+from ._flow_mcmc import FlowNUTSResult
 from ._kalman import KalmanFilterResult, KalmanSmootherResult
 from ._laplace import LaplaceResult
 from ._laplax_backend import StructuredLaplaceResult
@@ -36,6 +38,8 @@ from ._map import MAPResult
 from ._mcmc import MCMCResult
 from ._particle import ParticleFilterResult
 from ._pathfinder import PathfinderResult
+from ._sgmcmc import SGMCMCResult
+from ._sgmcmc_diagnostics import SGMCMCMixingReport
 from ._smc import TemperedSMCResult
 
 
@@ -150,10 +154,16 @@ def read_result_archive(path: str | Path, /) -> UQResultArchive:
     )
 
 
-def to_arviz(result: MCMCResult, /):
-    """Convert chain-preserving MCMC draws and sampler statistics to ArviZ."""
-    if not isinstance(result, MCMCResult):
-        raise TypeError("to_arviz currently supports MCMCResult only.")
+def to_arviz(result: MCMCResult | FlowNUTSResult | SGMCMCResult, /):
+    """Convert chain-preserving posterior draws and honest sampler statistics."""
+    if isinstance(result, FlowNUTSResult):
+        chain_result = result.mcmc
+    elif isinstance(result, (MCMCResult, SGMCMCResult)):
+        chain_result = result
+    else:
+        raise TypeError(
+            "to_arviz supports MCMCResult, FlowNUTSResult, and SGMCMCResult only."
+        )
     try:
         import arviz as az
     except ImportError as error:  # pragma: no cover - dependency is declared
@@ -162,7 +172,7 @@ def to_arviz(result: MCMCResult, /):
     posterior: dict[str, np.ndarray] = {}
     dimensions: dict[str, list[str]] = {}
     coordinates: dict[str, np.ndarray] = {}
-    for path, leaf in jax.tree_util.tree_flatten_with_path(result.samples)[0]:
+    for path, leaf in jax.tree_util.tree_flatten_with_path(chain_result.samples)[0]:
         path_string = jax.tree_util.keystr(path) or "<root>"
         name = encode_parameter_name(path_string)
         value = np.asarray(leaf)
@@ -174,15 +184,59 @@ def to_arviz(result: MCMCResult, /):
             coordinates[dimension] = np.arange(size)
         dimensions[name] = parameter_dims
 
-    sample_stats = {
-        "lp": np.asarray(result.log_density),
-        "acceptance_rate": np.asarray(result.acceptance_rate),
-        "diverging": np.asarray(result.divergent),
-        "energy": np.asarray(result.energy),
-        "n_steps": np.asarray(result.num_integration_steps),
-        "tree_depth": np.asarray(result.num_trajectory_expansions),
-    }
-    inference_data = az.from_dict(
+    if isinstance(chain_result, SGMCMCResult):
+        sample_stats = {
+            "stochastic_gradient_norm": np.asarray(chain_result.gradient_norm),
+        }
+        if chain_result.log_density is not None:
+            sample_stats["lp"] = np.asarray(chain_result.log_density)
+        if chain_result.thermostat is not None:
+            sample_stats["thermostat"] = np.asarray(chain_result.thermostat)
+        if chain_result.momentum_norm is not None:
+            sample_stats["momentum_norm"] = np.asarray(chain_result.momentum_norm)
+        posterior_attributes = {
+            "phydrax_algorithm": chain_result.algorithm,
+            "phydrax_approximation": chain_result.approximation,
+            "phydrax_chain_method": chain_result.chain_method,
+            "phydrax_step_size": chain_result.step_size,
+            "phydrax_batch_fraction": chain_result.batch_fraction,
+            "phydrax_source_fingerprint": chain_result.source_fingerprint,
+            "phydrax_control_variate": chain_result.control_variate is not None,
+        }
+    else:
+        sample_stats = {
+            "lp": np.asarray(chain_result.log_density),
+            "acceptance_rate": np.asarray(chain_result.acceptance_rate),
+            "diverging": np.asarray(chain_result.divergent),
+            "energy": np.asarray(chain_result.energy),
+            "n_steps": np.asarray(chain_result.num_integration_steps),
+            "tree_depth": np.asarray(chain_result.num_trajectory_expansions),
+        }
+        posterior_attributes = {
+            "phydrax_algorithm": chain_result.algorithm,
+            "phydrax_chain_method": chain_result.chain_method,
+        }
+        if isinstance(result, FlowNUTSResult):
+            sample_stats.update(
+                {
+                    "flow_acceptance_rate": np.asarray(
+                        result.global_acceptance_rate
+                    ),
+                    "flow_accepted_count": np.asarray(result.global_accepted_count),
+                    "flow_mean_log_acceptance_ratio": np.asarray(
+                        result.global_mean_log_acceptance_ratio
+                    ),
+                    "flow_nonfinite_count": np.asarray(
+                        result.global_nonfinite_count
+                    ),
+                }
+            )
+            posterior_attributes["phydrax_flow_nuts_config"] = json.dumps(
+                result.config.as_dict(),
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+    return az.from_dict(
         {
             "posterior": posterior,
             "sample_stats": sample_stats,
@@ -190,14 +244,8 @@ def to_arviz(result: MCMCResult, /):
         sample_dims=("chain", "draw"),
         dims=dimensions,
         coords=coordinates,
-        attrs={
-            "posterior": {
-                "phydrax_algorithm": result.algorithm,
-                "phydrax_chain_method": result.chain_method,
-            }
-        },
+        attrs={"posterior": posterior_attributes},
     )
-    return inference_data
 
 
 def encode_parameter_name(path: str, /) -> str:
@@ -235,6 +283,7 @@ def _adapt_result(result, arrays, fields, trees):
         metadata = _put_kalman_filter_result(
             result.filter_result, arrays, fields, prefix="filter."
         )
+        metadata["smoother_execution_method"] = result.execution_method
         return "kalman_smoother", metadata, ()
 
     if isinstance(result, ParticleFilterResult):
@@ -316,6 +365,174 @@ def _adapt_result(result, arrays, fields, trees):
         }
         return "ensemble_kalman_inversion", metadata, ("problem",)
 
+    if isinstance(result, SGMCMCResult):
+        _put_tree(trees, arrays, "samples", result.samples)
+        _put_tree(
+            trees,
+            arrays,
+            "unconstrained_samples",
+            result.unconstrained_samples,
+        )
+        _put_tree(trees, arrays, "final_states", result.final_states)
+        _put_tree(trees, arrays, "burnin_states", result.burnin_states)
+        _put_tree(trees, arrays, "diagnostics.rhat", result.diagnostics.rhat)
+        _put_tree(
+            trees,
+            arrays,
+            "diagnostics.bulk_ess",
+            result.diagnostics.bulk_ess,
+        )
+        _put_tree(
+            trees,
+            arrays,
+            "diagnostics.tail_ess",
+            result.diagnostics.tail_ess,
+        )
+        _put_tree(trees, arrays, "diagnostics.mean", result.diagnostics.mean)
+        _put_tree(
+            trees,
+            arrays,
+            "diagnostics.standard_deviation",
+            result.diagnostics.standard_deviation,
+        )
+        _put_field(fields, arrays, "gradient_norm", result.gradient_norm)
+        _put_field(fields, arrays, "chain_keys", result.chain_keys)
+        _put_field(fields, arrays, "root_key", jr.key_data(result.root_key))
+        if result.log_density is not None:
+            _put_field(fields, arrays, "log_density", result.log_density)
+        if result.thermostat is not None:
+            _put_field(fields, arrays, "thermostat", result.thermostat)
+        if result.momentum_norm is not None:
+            _put_field(fields, arrays, "momentum_norm", result.momentum_norm)
+        control_metadata = None
+        if result.control_variate is not None:
+            _put_tree(
+                trees,
+                arrays,
+                "control_variate.center",
+                result.control_variate.center,
+            )
+            _put_tree(
+                trees,
+                arrays,
+                "control_variate.full_gradient",
+                result.control_variate.full_gradient,
+            )
+            control_metadata = {
+                "fingerprint": result.control_variate.fingerprint,
+                "construction_duration_seconds": (
+                    result.control_variate.construction_duration_seconds
+                ),
+                "construction_gradient_evaluations": (
+                    result.control_variate.construction_gradient_evaluations
+                ),
+            }
+        metadata = {
+            "algorithm": result.algorithm,
+            "approximation": result.approximation,
+            "chain_method": result.chain_method,
+            "num_chains": result.num_chains,
+            "num_draws": result.num_draws,
+            "num_burnin": result.num_burnin,
+            "steps_per_sample": result.steps_per_sample,
+            "num_updates": result.num_updates,
+            "num_gradient_evaluations": result.num_gradient_evaluations,
+            "step_size": result.step_size,
+            "diffusion": result.diffusion,
+            "initial_thermostat": result.initial_thermostat,
+            "source_num_factors": result.source_num_factors,
+            "batch_capacity": result.batch_capacity,
+            "batch_fraction": result.batch_fraction,
+            "source_fingerprint": result.source_fingerprint,
+            "source_configuration": result.source_configuration,
+            "control_variate": control_metadata,
+            "compilation_duration_seconds": result.compilation_duration_seconds,
+            "burnin_duration_seconds": result.burnin_duration_seconds,
+            "sampling_duration_seconds": result.sampling_duration_seconds,
+            "duration_seconds": result.duration_seconds,
+            "samples_per_second": result.samples_per_second,
+            "updates_per_second": result.updates_per_second,
+            "gradient_evaluations_per_second": (
+                result.gradient_evaluations_per_second
+            ),
+            "sample_memory_bytes": result.sample_memory_bytes,
+            "mean_update_gradient_norm": result.mean_update_gradient_norm,
+            "max_update_gradient_norm": result.max_update_gradient_norm,
+        }
+        return "sgmcmc", metadata, ("problem",)
+
+    if isinstance(result, FlowNUTSResult):
+        mcmc = result.mcmc
+        _put_tree(trees, arrays, "samples", result.samples)
+        _put_tree(trees, arrays, "unconstrained_samples", result.unconstrained_samples)
+        _put_tree(trees, arrays, "final_states", result.final_states)
+        _put_tree(
+            trees, arrays, "warmup_states", tuple(item.state for item in result.warmup)
+        )
+        _put_tree(trees, arrays, "diagnostics.rhat", result.diagnostics.rhat)
+        _put_tree(trees, arrays, "diagnostics.bulk_ess", result.diagnostics.bulk_ess)
+        _put_tree(trees, arrays, "diagnostics.tail_ess", result.diagnostics.tail_ess)
+        _put_tree(trees, arrays, "training_losses", result.training_losses)
+        _put_tree(trees, arrays, "validation_losses", result.validation_losses)
+        _put_array_leaves(trees, arrays, "flow_parameters", result.flow)
+        for name, value in (
+            ("log_density", result.log_density),
+            ("acceptance_rate", result.acceptance_rate),
+            ("divergent", result.divergent),
+            ("energy", result.energy),
+            ("num_integration_steps", result.num_integration_steps),
+            ("num_trajectory_expansions", result.num_trajectory_expansions),
+            ("chain_keys", result.chain_keys),
+            (
+                "adaptation_global_acceptance_rate",
+                result.adaptation_global_acceptance_rate,
+            ),
+            ("adaptation_proposal_ess", result.adaptation_proposal_ess),
+            ("adaptation_history_size", result.adaptation_history_size),
+            ("global_acceptance_rate", result.global_acceptance_rate),
+            ("global_accepted_count", result.global_accepted_count),
+            (
+                "global_mean_log_acceptance_ratio",
+                result.global_mean_log_acceptance_ratio,
+            ),
+            ("global_nonfinite_count", result.global_nonfinite_count),
+        ):
+            _put_field(fields, arrays, name, value)
+        _put_field(fields, arrays, "root_key", jr.key_data(result.root_key))
+        _put_field(
+            fields,
+            arrays,
+            "warmup.step_size",
+            jnp.stack([item.step_size for item in result.warmup]),
+        )
+        _put_field(
+            fields,
+            arrays,
+            "warmup.inverse_mass_matrix",
+            jnp.stack([item.inverse_mass_matrix for item in result.warmup]),
+        )
+        metadata = {
+            "algorithm": result.algorithm,
+            "chain_method": result.chain_method,
+            "num_chains": result.num_chains,
+            "num_draws": result.num_draws,
+            "num_unique_initial_positions": result.num_unique_initial_positions,
+            "duration_seconds": result.duration_seconds,
+            "nuts_adaptation_duration_seconds": (result.nuts_adaptation_duration_seconds),
+            "flow_adaptation_duration_seconds": (result.flow_adaptation_duration_seconds),
+            "flow_training_duration_seconds": list(result.flow_training_duration_seconds),
+            "stabilization_duration_seconds": (result.stabilization_duration_seconds),
+            "sampling_duration_seconds": result.sampling_duration_seconds,
+            "samples_per_second": result.samples_per_second,
+            "sample_memory_bytes": result.sample_memory_bytes,
+            "flow_parameter_memory_bytes": result.flow_parameter_memory_bytes,
+            "history_memory_bytes": result.history_memory_bytes,
+            "max_num_doublings": mcmc.max_num_doublings,
+            "config": result.config.as_dict(),
+            "warmup_duration_seconds": [item.duration_seconds for item in result.warmup],
+        }
+        return "flow_nuts", metadata, ("mcmc.problem", "flow.static")
+
     if isinstance(result, MCMCResult):
         _put_tree(trees, arrays, "samples", result.samples)
         _put_tree(trees, arrays, "unconstrained_samples", result.unconstrained_samples)
@@ -366,6 +583,27 @@ def _adapt_result(result, arrays, fields, trees):
             ],
         }
         return "mcmc", metadata, ("problem",)
+
+    if isinstance(result, SGMCMCMixingReport):
+        for name, value in (
+            ("max_rhat", result.max_rhat),
+            ("min_bulk_ess", result.min_bulk_ess),
+            ("min_tail_ess", result.min_tail_ess),
+            ("max_gradient_norm", result.max_gradient_norm),
+        ):
+            _put_field(fields, arrays, name, value)
+        metadata = result.as_dict()
+        metadata["thresholds"] = {
+            "max_rhat": result.thresholds.max_rhat,
+            "min_bulk_ess": result.thresholds.min_bulk_ess,
+            "min_tail_ess": result.thresholds.min_tail_ess,
+            "allow_nonfinite_updates": (
+                result.thresholds.allow_nonfinite_updates
+            ),
+        }
+        for name in fields:
+            metadata.pop(name, None)
+        return "sgmcmc_mixing_report", metadata, ()
 
     if isinstance(result, MCMCConvergenceReport):
         for name in (
@@ -562,6 +800,7 @@ def _put_kalman_filter_result(result, arrays, fields, *, prefix):
         "problem_id": result.problem_id,
         "sequence_id": result.sequence_id,
         "covariance_regularization": result.covariance_regularization,
+        "execution_method": result.execution_method,
         "final_step_index": result.final_state.step_index,
     }
 
