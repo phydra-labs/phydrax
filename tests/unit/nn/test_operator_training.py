@@ -2,11 +2,14 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import json
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
+import pytest
 
 import phydrax as phx
 
@@ -439,6 +442,19 @@ def test_checkpoint_restores_exact_optimizer_rng_and_policies(tmp_path):
     second_state_files = tuple(path.glob("state-*.eqx"))
     assert len(second_state_files) == 1
     assert second_state_files != first_state_files
+    manifest_path = path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["format"] == "phydrax-operator-training-checkpoint"
+    assert manifest["version"] == 2
+    manifest.pop("version")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="current canonical fields"):
+        phx.nn.load_operator_training_checkpoint(
+            path,
+            expected_model,
+            expected_state,
+            expected_schema=schema,
+        )
 
 
 class _IncrementOperator:

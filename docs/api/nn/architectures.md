@@ -393,6 +393,16 @@ weighted source anchors and query points, while `read_operator_case_batch`
 preserves case-axis names, masks, coordinates, and the selected physical
 measure.
 
+Every `OperatorCaseSource` also exposes a stable `content_fingerprint`.
+In-memory sources derive and cache it from input and target values, coordinates,
+quadrature, masks, axes, topology, output specifications, case IDs, and ordered
+provenance. Callback sources require the adapter to supply an immutable,
+versioned digest; a recommended digest covers adapter version, immutable
+dataset revision, and file or object checksums. Fingerprint lookup must not call
+either reader. `background_read_safe=True` is a separate, explicit declaration
+that one producer thread may invoke the readers; it is not part of logical
+dataset identity.
+
 For inference on query sets larger than device memory,
 `ArrayOperatorQuerySource` and the callback query-source interface expose
 fixed-capacity chunks. `decode_query_chunks` encodes an
@@ -1688,6 +1698,17 @@ mask-preserving collation, persisted training-only normalization, exact
 model/optimizer/RNG checkpoints, explicit parameter/compute/reduction dtypes,
 scheduled autoregressive rollouts, and prefetching sharded loaders.
 
+`OperatorEpochPlan` is the operator-facing view of PhydraX's shared finite-index
+data-plane engine. It maps each logical position directly to one case index with
+a versioned, stateless permutation, never allocates a dataset-sized shuffle
+array, and jumps directly to an exact `start_batch` resume suffix. The same
+ordering engine drives array-backed UQ minibatches; operator collation and UQ
+factor padding remain domain-owned. Loader prefetch is one bounded, ordered host
+producer followed by device placement and is enabled only for sources that
+declare background reads safe. Otherwise the same iterator runs synchronously.
+Short final operator batches remain short unless a consumer, such as SG-MCMC,
+explicitly pads them and carries a validity mask.
+
 `ExternalOperatorAdapter` requires a version-2
 `OperatorCheckpointManifest` with immutable source and checkpoint revisions,
 separate code and weight licenses, field schemas, preprocessing, normalization,
@@ -1720,6 +1741,9 @@ checkpoint before framework-specific tokenization or execution.
         members:
             - __init__
             - epoch
+            - epoch_plan
+            - fingerprint
+            - effective_prefetch
 
 ### Canonical operator data and task contracts
 
@@ -1761,6 +1785,14 @@ output pipeline. `OperatorFitResult.execution_model` and
 `last_execution_model` make the execution-space result explicit. Loss callables
 and all callable schedules require stable identities for exact-resume
 compatibility.
+
+Operator fit checkpoints use a versioned semantic fit schema rather than the
+concrete shape of the batch used to construct the fit. On resume, PhydraX
+validates manifest fields, format version, state checksum, loader content and
+ordering identity, and the saved logical cursor before reading a case. The
+single setup probe is the next unconsumed batch and is retained for training;
+prefix batches are neither reconstructed nor discarded. Changing prefetch
+depth remains resume-compatible because it cannot change logical batches.
 
 Optimizers with distinct training and evaluation iterates can supply
 `evaluation_parameters(optimizer_state, training_parameters)`. Validation,

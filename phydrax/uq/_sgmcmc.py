@@ -18,6 +18,7 @@ from blackjax.sgmcmc import diffusions
 from blackjax.sgmcmc.sgnht import init as init_sgnht, SGNHTState
 from jaxtyping import Array, PyTree
 
+from .._fingerprint import array_tree_fingerprint, array_tree_signature
 from .._frozendict import frozendict
 from .._strict import StrictModule
 from ._chain import (
@@ -30,12 +31,10 @@ from ._chain import (
     ChainMethod,
 )
 from ._checkpoint import (
-    array_tree_fingerprint,
     CheckpointCompatibilityError,
     CheckpointCorruptionError,
     pack_array_tree,
     read_checkpoint_archive,
-    tree_signature,
     unpack_array_tree,
     write_checkpoint_archive,
 )
@@ -98,9 +97,7 @@ class SGMCMCControlVariate(StrictModule):
         self.source_fingerprint = str(source_fingerprint)
         self.fingerprint = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         self.construction_duration_seconds = float(construction_duration_seconds)
-        self.construction_gradient_evaluations = int(
-            construction_gradient_evaluations
-        )
+        self.construction_gradient_evaluations = int(construction_gradient_evaluations)
 
 
 class SGMCMCResult(StrictModule):
@@ -203,9 +200,7 @@ class SGMCMCResult(StrictModule):
         self.gradient_norm = jnp.asarray(gradient_norm)
         self.log_density = None if log_density is None else jnp.asarray(log_density)
         self.thermostat = None if thermostat is None else jnp.asarray(thermostat)
-        self.momentum_norm = (
-            None if momentum_norm is None else jnp.asarray(momentum_norm)
-        )
+        self.momentum_norm = None if momentum_norm is None else jnp.asarray(momentum_norm)
         self.root_key = jnp.asarray(root_key)
         self.chain_keys = jnp.asarray(chain_keys)
         self.control_variate = control_variate
@@ -232,9 +227,7 @@ class SGMCMCResult(StrictModule):
         self.duration_seconds = total_duration
         self.samples_per_second = retained / max(total_duration, 1e-12)
         self.updates_per_second = update_count / max(total_duration, 1e-12)
-        self.gradient_evaluations_per_second = gradient_count / max(
-            total_duration, 1e-12
-        )
+        self.gradient_evaluations_per_second = gradient_count / max(total_duration, 1e-12)
         self.sample_memory_bytes = (
             _tree_nbytes(samples)
             + _tree_nbytes(unconstrained_samples)
@@ -510,9 +503,7 @@ def _sample_sgmcmc(
     checkpoint_id: str | None,
     resume_from: str | Path | None,
 ) -> SGMCMCResult:
-    source_configuration_json, initial_batches = _validate_problem_source(
-        problem, source
-    )
+    source_configuration_json, initial_batches = _validate_problem_source(problem, source)
     chains = int(num_chains)
     burnin = int(num_burnin)
     draws = int(num_samples)
@@ -553,8 +544,8 @@ def _sample_sgmcmc(
     if checkpoint_every is not None and destination is None:
         raise ValueError("checkpoint_every requires checkpoint_path or resume_from.")
     total_updates = burnin + draws * thinning
-    interval = min(100, total_updates) if checkpoint_every is None else int(
-        checkpoint_every
+    interval = (
+        min(100, total_updates) if checkpoint_every is None else int(checkpoint_every)
     )
     if interval <= 0:
         raise ValueError("checkpoint_every must be positive.")
@@ -602,7 +593,7 @@ def _sample_sgmcmc(
             "source_fingerprint": source.fingerprint,
             "source_configuration": json.loads(source_configuration_json),
             "problem_type": f"{type(problem).__module__}.{type(problem).__qualname__}",
-            "parameter_tree": tree_signature(problem.initial_position),
+            "parameter_tree": array_tree_signature(problem.initial_position),
             "problem_fingerprint": problem_fingerprint,
             "settings": settings,
         }
@@ -620,16 +611,13 @@ def _sample_sgmcmc(
 
     if resume_from is None:
         values = jax.vmap(
-            lambda current: problem.log_density_estimate(
-                current, initial_batches[0]
-            )
+            lambda current: problem.log_density_estimate(current, initial_batches[0])
         )(chain_positions)
-        gradients = jax.vmap(
-            lambda current: gradient_fn(current, initial_batches[0])
-        )(chain_positions)
+        gradients = jax.vmap(lambda current: gradient_fn(current, initial_batches[0]))(
+            chain_positions
+        )
         invalid_value_chains = tuple(
-            int(index)
-            for index in jnp.argwhere(~jnp.isfinite(values)).reshape(-1)
+            int(index) for index in jnp.argwhere(~jnp.isfinite(values)).reshape(-1)
         )
         invalid_gradient_locations = _invalid_chain_locations(gradients, chains)
         if invalid_value_chains or invalid_gradient_locations:
@@ -653,9 +641,7 @@ def _sample_sgmcmc(
         compilation_duration = 0.0
         burnin_duration = 0.0
         sampling_duration = 0.0
-        gradient_evaluations = 1 + chains * (
-            2 if control_variate is not None else 1
-        )
+        gradient_evaluations = 1 + chains * (2 if control_variate is not None else 1)
         if control_variate is not None:
             gradient_evaluations += control_variate.construction_gradient_evaluations
         gradient_norm_sum = 0.0
@@ -818,9 +804,7 @@ def _sample_sgmcmc(
         retained_gradient_norm, new_gradient_norms
     )
     if algorithm == "sgnht":
-        retained_thermostat = _combine_statistic(
-            retained_thermostat, new_thermostats
-        )
+        retained_thermostat = _combine_statistic(retained_thermostat, new_thermostats)
         retained_momentum_norm = _combine_statistic(
             retained_momentum_norm, new_momentum_norms
         )
@@ -952,9 +936,7 @@ def _compile_transition(
                 )(current_states, keys)
             ),
         )
-        compiled = vectorized_transition.lower(
-            states, chain_keys, batch
-        ).compile()
+        compiled = vectorized_transition.lower(states, chain_keys, batch).compile()
 
         def advance(current_states, keys, minibatch):
             return compiled(current_states, keys, minibatch)
@@ -1011,13 +993,9 @@ def _initialize_states(
     )
 
 
-
-
 def _transition_keys(chain_keys: Array, update: int, /) -> Array:
     return jax.vmap(
-        lambda chain_key: jr.fold_in(
-            jr.fold_in(chain_key, _TRANSITION_TAG), int(update)
-        )
+        lambda chain_key: jr.fold_in(jr.fold_in(chain_key, _TRANSITION_TAG), int(update))
     )(chain_keys)
 
 
@@ -1085,9 +1063,7 @@ def _invalid_chain_indices(tree: PyTree[Any], num_chains: int, /) -> tuple[int, 
         array = jnp.asarray(leaf)
         if array.ndim == 0 or int(array.shape[0]) != num_chains:
             return tuple(range(num_chains))
-        valid = valid & jnp.all(
-            jnp.isfinite(array).reshape((num_chains, -1)), axis=1
-        )
+        valid = valid & jnp.all(jnp.isfinite(array).reshape((num_chains, -1)), axis=1)
     return tuple(int(index) for index in jnp.argwhere(~valid).reshape(-1))
 
 
@@ -1101,9 +1077,7 @@ def _empty_sample_tree(position: PyTree[Any], chains: int, /):
 def _combine_sample_trees(stored, additions):
     if not additions:
         return stored
-    added = jax.tree_util.tree_map(
-        lambda *leaves: jnp.stack(leaves, axis=1), *additions
-    )
+    added = jax.tree_util.tree_map(lambda *leaves: jnp.stack(leaves, axis=1), *additions)
     return jax.tree_util.tree_map(
         lambda previous, current: jnp.concatenate((previous, current), axis=1),
         stored,
@@ -1127,7 +1101,9 @@ def _evaluate_full_log_density(problem, samples):
     )
     values = jax.vmap(problem.full_log_density)(flattened)
     if not bool(jnp.all(jnp.isfinite(values))):
-        raise FloatingPointError("Full log density is nonfinite at retained SG-MCMC draws.")
+        raise FloatingPointError(
+            "Full log density is nonfinite at retained SG-MCMC draws."
+        )
     return values.reshape((chains, draws))
 
 
@@ -1184,9 +1160,7 @@ def _problem_fingerprint(
     payload = {
         "problem_arrays": array_tree_fingerprint(problem)["sha256"],
         "initial_position": array_tree_fingerprint(problem.initial_position),
-        "initial_probe": array_tree_fingerprint(
-            {"value": probe, "gradient": gradient}
-        ),
+        "initial_probe": array_tree_fingerprint({"value": probe, "gradient": gradient}),
         "num_factors": problem.num_factors,
     }
     canonical = json.dumps(payload, separators=(",", ":"), sort_keys=True)
@@ -1228,9 +1202,7 @@ def _write_sgmcmc_checkpoint(
         "algorithm": algorithm,
         "completed_updates": int(completed_updates),
         "completed_draws": int(completed_draws),
-        "current_state_tree": pack_array_tree(
-            "current_state", current_states, arrays
-        ),
+        "current_state_tree": pack_array_tree("current_state", current_states, arrays),
         "burnin_state_tree": (
             None
             if burnin_states is None
@@ -1276,9 +1248,7 @@ def _read_sgmcmc_checkpoint(
         raise CheckpointCompatibilityError(
             "Checkpoint algorithm does not match the requested SG-MCMC method."
         )
-    completed_updates = _checkpoint_int(
-        state, "completed_updates", minimum=0
-    )
+    completed_updates = _checkpoint_int(state, "completed_updates", minimum=0)
     completed_draws = _checkpoint_int(state, "completed_draws", minimum=0)
     maximum_updates = num_burnin + num_samples * steps_per_sample
     if completed_updates > maximum_updates or completed_draws > num_samples:
@@ -1294,9 +1264,7 @@ def _read_sgmcmc_checkpoint(
     sample_spec = state.get("sample_tree")
     if not isinstance(current_spec, dict) or not isinstance(sample_spec, dict):
         raise CheckpointCorruptionError("Checkpoint state tree metadata is invalid.")
-    current_states = unpack_array_tree(
-        current_spec, arrays, state_template
-    )
+    current_states = unpack_array_tree(current_spec, arrays, state_template)
     sample_template = jax.tree_util.tree_map(
         lambda value: jnp.empty(
             (num_chains, completed_draws, *value.shape), dtype=value.dtype
@@ -1316,9 +1284,7 @@ def _read_sgmcmc_checkpoint(
             raise CheckpointCorruptionError(
                 "Checkpoint is missing completed burn-in states."
             )
-        burnin_states = unpack_array_tree(
-            burnin_spec, arrays, state_template
-        )
+        burnin_states = unpack_array_tree(burnin_spec, arrays, state_template)
     gradient_norm = _checkpoint_array(
         arrays,
         state.get("gradient_norm_array"),
@@ -1336,9 +1302,10 @@ def _read_sgmcmc_checkpoint(
             shape=(num_chains, completed_draws),
         )
     else:
-        if state.get("thermostat_array") is not None or state.get(
-            "momentum_norm_array"
-        ) is not None:
+        if (
+            state.get("thermostat_array") is not None
+            or state.get("momentum_norm_array") is not None
+        ):
             raise CheckpointCorruptionError(
                 "SGLD checkpoint contains thermostat statistics."
             )
@@ -1367,24 +1334,12 @@ def _read_sgmcmc_checkpoint(
         "sampling_duration_seconds": _checkpoint_float(
             state, "sampling_duration_seconds", minimum=0.0
         ),
-        "gradient_evaluations": _checkpoint_int(
-            state, "gradient_evaluations", minimum=0
-        ),
-        "gradient_norm_sum": _checkpoint_float(
-            state, "gradient_norm_sum", minimum=0.0
-        ),
-        "gradient_norm_count": _checkpoint_int(
-            state, "gradient_norm_count", minimum=0
-        ),
-        "gradient_norm_max": _checkpoint_float(
-            state, "gradient_norm_max", minimum=0.0
-        ),
-        "min_active_factors": _checkpoint_int(
-            state, "min_active_factors", minimum=1
-        ),
-        "max_active_factors": _checkpoint_int(
-            state, "max_active_factors", minimum=1
-        ),
+        "gradient_evaluations": _checkpoint_int(state, "gradient_evaluations", minimum=0),
+        "gradient_norm_sum": _checkpoint_float(state, "gradient_norm_sum", minimum=0.0),
+        "gradient_norm_count": _checkpoint_int(state, "gradient_norm_count", minimum=0),
+        "gradient_norm_max": _checkpoint_float(state, "gradient_norm_max", minimum=0.0),
+        "min_active_factors": _checkpoint_int(state, "min_active_factors", minimum=1),
+        "max_active_factors": _checkpoint_int(state, "max_active_factors", minimum=1),
         "nonfinite_update_count": _checkpoint_int(
             state, "nonfinite_update_count", minimum=0
         ),
@@ -1405,23 +1360,17 @@ def _checkpoint_array(arrays, name, *, shape):
 def _checkpoint_int(state, name, *, minimum):
     value = state.get(name)
     if not isinstance(value, int) or isinstance(value, bool) or value < minimum:
-        raise CheckpointCorruptionError(
-            f"Checkpoint field {name!r} is invalid."
-        )
+        raise CheckpointCorruptionError(f"Checkpoint field {name!r} is invalid.")
     return int(value)
 
 
 def _checkpoint_float(state, name, *, minimum):
     value = state.get(name)
     if not isinstance(value, (int, float)) or isinstance(value, bool):
-        raise CheckpointCorruptionError(
-            f"Checkpoint field {name!r} is invalid."
-        )
+        raise CheckpointCorruptionError(f"Checkpoint field {name!r} is invalid.")
     result = float(value)
     if not jnp.isfinite(result) or result < minimum:
-        raise CheckpointCorruptionError(
-            f"Checkpoint field {name!r} is invalid."
-        )
+        raise CheckpointCorruptionError(f"Checkpoint field {name!r} is invalid.")
     return result
 
 

@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+from phydrax._data_plane import IndexEpochPlan
 
 
 def _problem(data, *, num_factors=None, full_shift=0.0):
@@ -30,8 +31,9 @@ def _problem(data, *, num_factors=None, full_shift=0.0):
         ),
         predict=lambda parameter, scale: scale * parameter,
         observation_variance=lambda parameter: jnp.ones_like(parameter) * 0.25,
-        sample_observation=lambda key, parameter: parameter
-        + 0.5 * jax.random.normal(key),
+        sample_observation=lambda key, parameter: (
+            parameter + 0.5 * jax.random.normal(key)
+        ),
     )
 
 
@@ -48,6 +50,7 @@ def test_array_minibatch_source_is_deterministic_complete_and_padded():
 
     first = tuple(source.epoch(2))
     second = tuple(duplicate.epoch(2))
+    expected = tuple(IndexEpochPlan(7, 3, True, 11, 2, False).iter_batches())
 
     assert source.num_factors == 7
     assert source.batch_capacity == 3
@@ -59,6 +62,13 @@ def test_array_minibatch_source_is_deterministic_complete_and_padded():
         jnp.array_equal(left.data, right.data)
         and jnp.array_equal(left.factor_mask, right.factor_mask)
         for left, right in zip(first, second, strict=True)
+    )
+    assert all(
+        jnp.array_equal(
+            batch.data[batch.factor_mask],
+            data[jnp.asarray(indices)],
+        )
+        for batch, (_, indices) in zip(first, expected, strict=True)
     )
     assert source.fingerprint == duplicate.fingerprint
     assert not jnp.array_equal(_active_values(source, 2), _active_values(source, 3))
@@ -74,13 +84,23 @@ def test_array_minibatch_source_fingerprint_covers_data_and_configuration():
     changed_batch = phx.uq.ArrayMinibatchSource(jnp.arange(6), batch_size=3, seed=2)
     changed_seed = phx.uq.ArrayMinibatchSource(jnp.arange(6), batch_size=4, seed=3)
 
-    assert len({
-        baseline.fingerprint,
-        changed_data.fingerprint,
-        changed_batch.fingerprint,
-        changed_seed.fingerprint,
-    }) == 4
+    assert (
+        len(
+            {
+                baseline.fingerprint,
+                changed_data.fingerprint,
+                changed_batch.fingerprint,
+                changed_seed.fingerprint,
+            }
+        )
+        == 4
+    )
     assert baseline.configuration()["data"]["sha256"]
+    assert baseline.configuration()["ordering"] == "feistel32-v1"
+    assert (
+        baseline.fingerprint
+        == "5d8818b7363587c82a17a427ce6fe34590b45838611f64fdae8b2091f3e015ab"
+    )
 
 
 @pytest.mark.parametrize(
@@ -122,7 +142,9 @@ def test_minibatch_posterior_scales_only_active_likelihood_factors():
         + problem.parameter_space.log_abs_det_jacobian(position)
     )
 
-    assert jnp.allclose(problem.log_likelihood_estimate(physical, batch), expected_likelihood)
+    assert jnp.allclose(
+        problem.log_likelihood_estimate(physical, batch), expected_likelihood
+    )
     assert jnp.allclose(problem.log_density_estimate(position, batch), expected)
     assert problem.predict(position, 3.0) == 3.0 * physical
     assert problem.conditional_observation_variance(position) == 0.25

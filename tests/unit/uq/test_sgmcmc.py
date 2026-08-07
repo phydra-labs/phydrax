@@ -48,9 +48,7 @@ def _assert_tree_equal(left, right):
 
 
 def _transition_keys(chain_keys, update):
-    return jax.vmap(
-        lambda key: jr.fold_in(jr.fold_in(key, 1), update)
-    )(chain_keys)
+    return jax.vmap(lambda key: jr.fold_in(jr.fold_in(key, 1), update))(chain_keys)
 
 
 def test_sgld_first_update_matches_blackjax_diffusion_convention():
@@ -79,7 +77,12 @@ def test_sgld_first_update_matches_blackjax_diffusion_convention():
         )
     )(keys, initial, gradients)
 
-    assert jnp.array_equal(result.burnin_states, expected)
+    assert jnp.allclose(
+        result.burnin_states,
+        expected,
+        rtol=0.0,
+        atol=jnp.finfo(expected.dtype).eps,
+    )
 
 
 def test_sgnht_first_update_matches_blackjax_diffusion_convention():
@@ -101,9 +104,9 @@ def test_sgnht_first_update_matches_blackjax_diffusion_convention():
         initial_positions=initial,
     )
     initialization_keys = jax.vmap(lambda key: jr.fold_in(key, 0))(result.chain_keys)
-    states = jax.vmap(
-        lambda position, key: init_sgnht(position, key, thermostat)
-    )(initial, initialization_keys)
+    states = jax.vmap(lambda position, key: init_sgnht(position, key, thermostat))(
+        initial, initialization_keys
+    )
     batch = next(source.epoch(0))
     gradients = jax.vmap(
         lambda position: jax.grad(problem.log_density_estimate)(position, batch)

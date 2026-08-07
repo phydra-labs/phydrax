@@ -17,10 +17,10 @@ import jax.random as jr
 from blackjax.smc import adaptive_tempered, resampling
 from jaxtyping import Array, PyTree
 
+from .._fingerprint import array_tree_fingerprint
 from .._frozendict import frozendict
 from .._strict import StrictModule
 from ._checkpoint import (
-    array_tree_fingerprint,
     checkpoint_compatibility,
     CheckpointCorruptionError,
     pack_array_tree,
