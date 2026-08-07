@@ -14,14 +14,17 @@ For a conceptual overview (loss evaluation, enforced pipelines, training loop be
     - `objectives` may contain signed terms such as `IntegralFunctional`; their values
       are added directly and are not squared.
     - `partition_functions()` exposes the trainable/non-trainable state split used by `solve(...)`.
-    - `solve(...)` accepts standard and line-search Optax transformations, plus
-      Evosax distribution-based algorithms. Population-based Evosax algorithms
+    - `solve(...)` accepts standard and line-search Optax transformations,
+      Evosax distribution-based algorithms, and the structured
+      `phydrax.optim.kfac(...)` optimizer. Population-based Evosax algorithms
       require a separate finite search-space contract and are rejected.
     - `solve(..., evaluation_parameters=...)` keeps optimizer updates on raw training
       parameters while using the optimizer-prescribed view for diagnostics, selection,
       and returned functions.
     - `solve(..., train_constraint_sample_size=k)` trains on an unbiased subset of constraints per Optax step.
     - `solve(..., tensorboard_log_dir=...)` writes TensorBoard scalar logs.
+    - KFAC freezes each active constraint batch across its gradient, curvature update,
+      and line search; see [Optimization](../optim.md#structured-residual-optimization-kfac).
     - `save_onnx("u", ...)` exports one named ansatz function for deployment.
     - Discrete data constraints report data-fit diagnostics alongside their loss.
     - `gate_method="auto"` selects the global, dimensionless CAD R-equivalence

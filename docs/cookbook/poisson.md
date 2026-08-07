@@ -64,6 +64,27 @@ with \(g(x,y)=x^2+y^2\). The exact solution is \(u^\star(x,y)=x^2+y^2\).
     solver = solver.solve(num_iter=20, optim=optax.adam(1e-3), seed=0)
     ```
 
+### KFAC alternative
+
+The same soft PINN can use Phydrax's derivative-aware type-II GGN KFAC optimizer:
+
+```python
+solver = solver.solve(
+    num_iter=20,
+    optim=phx.optim.kfac(
+        damping=1e-3,
+        approximation="expand",
+        factor_update_period=1,
+    ),
+    seed=0,
+)
+```
+
+KFAC requires pointwise flat `phydrax.nn.MLP` fields and nonnegative quadratic
+`FunctionalConstraint` residuals. It reuses each sampled interior and boundary batch
+through factor estimation and Armijo line search. For configuration, support boundaries,
+and diagnostics, see [Optimization](../api/optim.md#structured-residual-optimization-kfac).
+
 ## Enforced Dirichlet boundary (ansatz + interior residual)
 
 Instead of penalizing boundary mismatch, enforce \(u=g\) by construction using

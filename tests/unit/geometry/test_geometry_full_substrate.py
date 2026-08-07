@@ -389,7 +389,7 @@ def test_rational_bspline_curve_matches_scipy_and_endpoint_derivative():
         1,
     )
     with pytest.raises(eqx.EquinoxRuntimeError, match="denominator"):
-        jax.block_until_ready(singular.evaluate(jnp.asarray(0.5)))
+        jax.block_until_ready(eqx.filter_jit(singular.evaluate)(jnp.asarray(0.5)))
 
 
 def test_occt_bspline_import_matches_native_surface_differential():

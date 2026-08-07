@@ -5,9 +5,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 import coordax as cx
+import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
@@ -26,6 +27,7 @@ from phydrax.domain import (
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
 from ..integration import from_samples, mean_over, over, reduce
+from ..integration._fixed import _component_reduction_weights
 from ._adaptive import AbstractCollocationPolicy
 from ._base import AbstractSamplingConstraint
 from ._data_metrics import supervised_data_metrics
@@ -83,6 +85,23 @@ class _BatchWeightedSquaredResidual(StrictModule, BatchEvaluator):
         raise TypeError("Adaptive batch weights require structured batch evaluation.")
 
 
+def _squared_frobenius_field(value: cx.Field, /) -> cx.Field:
+    data = jnp.asarray(value.data)
+    dims = value.dims
+    squared = jnp.real(jnp.conj(data) * data)
+    reduction_axes = [index for index, dim in enumerate(dims) if dim is None]
+    for axis in reversed(reduction_axes):
+        squared = jnp.sum(squared, axis=axis)
+        dims = dims[:axis] + dims[axis + 1 :]
+    return cx.Field(squared, dims=dims)
+
+
+class _QuadraticResidualData(NamedTuple):
+    residuals: tuple[cx.Field, ...]
+    coefficients: tuple[cx.Field, ...]
+    loss: Array
+
+
 class _SquaredFrobeniusResidual(StrictModule, BatchEvaluator):
     residual: DomainFunction
 
@@ -101,14 +120,7 @@ class _SquaredFrobeniusResidual(StrictModule, BatchEvaluator):
         if not isinstance(y, cx.Field):
             raise TypeError("Expected residual to return a coordax.Field.")
 
-        data = jnp.asarray(y.data)
-        dims = y.dims
-        squared = jnp.real(jnp.conj(data) * data)
-        reduction_axes = [i for i, dim in enumerate(dims) if dim is None]
-        for axis in reversed(reduction_axes):
-            squared = jnp.sum(squared, axis=axis)
-            dims = dims[:axis] + dims[axis + 1 :]
-        return cx.Field(squared, dims=dims)
+        return _squared_frobenius_field(y)
 
     def __call__(self, *args: Any, key=None, **kwargs: Any):
         y = jnp.asarray(self.residual.func(*args, key=key, **kwargs))
@@ -395,6 +407,113 @@ class FunctionalConstraint(AbstractSamplingConstraint):
                 raise TypeError("Pointwise weight must evaluate to a coordax.Field.")
             out = evaluated * out
         return out
+
+    def _quadratic_residual_data(
+        self,
+        functions: Mapping[str, DomainFunction],
+        /,
+        *,
+        key: Key[Array, ""] = DOC_KEY0,
+        batch: PointBatch | GridBatch | tuple[PointBatch, ...] | None = None,
+        batch_weight: cx.Field | None = None,
+        **kwargs: Any,
+    ) -> _QuadraticResidualData:
+        """Return residual values and their exact nonnegative reduction coefficients."""
+
+        residual_fn = self._residual_function(functions)
+        if batch is None:
+            sampling_key, evaluation_key = jr.split(key)
+            sampled_batch = self.sample(key=sampling_key)
+        else:
+            sampled_batch = batch
+            evaluation_key = key
+        if batch_weight is not None:
+            if not isinstance(sampled_batch, (PointBatch, GridBatch)):
+                raise TypeError(
+                    "Adaptive batch weights require a single structured point batch."
+                )
+            _validate_batch_weight(sampled_batch, batch_weight)
+
+        target = (
+            mean_over(self.component, axes=self.over)
+            if self.reduction == "mean"
+            else over(self.component, axes=self.over)
+        )
+        realization = from_samples(target, sampled_batch, key=evaluation_key)
+        reduction_weights = _component_reduction_weights(
+            target,
+            realization.batch,
+            key=evaluation_key,
+            kwargs=dict(kwargs),
+        )
+        if isinstance(realization.batch, tuple):
+            integration_batches = realization.batch
+            if not isinstance(reduction_weights, tuple):
+                raise RuntimeError("Component-sum reduction weights must be a tuple.")
+            term_weights = reduction_weights
+            term_keys = tuple(jr.split(evaluation_key, len(integration_batches)))
+        else:
+            integration_batches = (realization.batch,)
+            if isinstance(reduction_weights, tuple):
+                raise RuntimeError("Single-component reduction weights must be a Field.")
+            term_weights = (reduction_weights,)
+            term_keys = (evaluation_key,)
+
+        pointwise_weight = self.pointwise_weight
+        if (
+            pointwise_weight is not None
+            and pointwise_weight.domain.labels != residual_fn.domain.labels
+        ):
+            pointwise_weight = pointwise_weight.promote(residual_fn.domain)
+
+        residuals: list[cx.Field] = []
+        coefficients: list[cx.Field] = []
+        total = jnp.asarray(0.0, dtype=float)
+        global_weight = jnp.asarray(self.weight, dtype=float).reshape(())
+        for integration_batch, coefficient, term_key in zip(
+            integration_batches, term_weights, term_keys, strict=True
+        ):
+            points = integration_batch.points
+            residual = residual_fn(points, key=term_key, **kwargs)
+            if not isinstance(residual, cx.Field):
+                raise TypeError("Expected residual to return a coordax.Field.")
+            if pointwise_weight is not None:
+                evaluated_weight = pointwise_weight(points, key=term_key, **kwargs)
+                if not isinstance(evaluated_weight, cx.Field):
+                    raise TypeError("Pointwise weight must evaluate to a coordax.Field.")
+                if any(dim is None for dim in evaluated_weight.dims):
+                    raise ValueError(
+                        "KFAC pointwise weights may not contain unnamed event axes."
+                    )
+                coefficient = coefficient * evaluated_weight
+            if batch_weight is not None:
+                coefficient = coefficient * batch_weight
+            coefficient = global_weight * coefficient
+            coefficient_data = jnp.asarray(coefficient.data, dtype=float)
+            coefficient_data = jnp.where(
+                coefficient_data < 0.0,
+                jnp.where(coefficient_data >= -1e-12, 0.0, coefficient_data),
+                coefficient_data,
+            )
+            coefficient_data = jnp.asarray(
+                eqx.error_if(
+                    coefficient_data,
+                    jnp.any(~jnp.isfinite(coefficient_data))
+                    | jnp.any(coefficient_data < 0.0),
+                    "KFAC requires finite nonnegative residual reduction coefficients.",
+                )
+            )
+            coefficient = cx.Field(coefficient_data, dims=coefficient.dims)
+            squared = _squared_frobenius_field(residual)
+            weighted = coefficient * squared
+            total = total + jnp.sum(jnp.asarray(weighted.data, dtype=float))
+            residuals.append(residual)
+            coefficients.append(coefficient)
+        return _QuadraticResidualData(
+            tuple(residuals),
+            tuple(coefficients),
+            total,
+        )
 
     def loss(
         self,

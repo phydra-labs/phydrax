@@ -372,6 +372,33 @@ def _try_derivative_rule(
     return out
 
 
+def _try_laplacian_rule(
+    u: DomainFunction,
+    /,
+    *,
+    var: str,
+    mode: Literal["reverse", "forward"],
+    backend: Literal["ad", "jet", "fd", "basis"],
+    basis: Literal["poly", "fourier", "sine", "cosine"],
+    periodic: bool,
+) -> DomainFunction | None:
+    rule = get_derivative_rule(u)
+    if rule is None:
+        return None
+    out = rule.derive_laplacian(
+        var=var,
+        mode=mode,
+        backend=backend,
+        basis=basis,
+        periodic=bool(periodic),
+    )
+    if out is not None and not isinstance(out, DomainFunction):
+        raise TypeError(
+            "DerivativeRule.derive_laplacian must return a DomainFunction or None."
+        )
+    return out
+
+
 def _emit_latent_fallback_warning(u: DomainFunction, reason: str, /) -> None:
     msg = "Falling back to generic derivative path for LatentContractionModel: " + reason
     model_info = _latent_model_from_domain_function(u)
@@ -1908,6 +1935,17 @@ def laplacian(
         raise ValueError("backend must be 'ad', 'jet', 'fd', or 'basis'.")
     _ensure_ad_engine_backend(backend, ad_engine)
     mode_eff = _resolve_ad_mode(mode, ad_engine)
+
+    rule_laplacian = _try_laplacian_rule(
+        u,
+        var=var,
+        mode=mode_eff,
+        backend=backend,
+        basis=basis,
+        periodic=periodic,
+    )
+    if rule_laplacian is not None:
+        return rule_laplacian
 
     total = None
     for i in range(var_dim):

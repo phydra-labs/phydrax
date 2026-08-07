@@ -9,8 +9,8 @@ Top-level package namespace. Most functionality lives in subpackages:
 - `phydrax.operators`: differential/integral operators on `DomainFunction`s
 - `phydrax.constraints`: residual and data penalty terms
 - `phydrax.objectives`: raw signed scalar objectives and integral functionals
-- `phydrax.optim`: domain-neutral optimization configurations consumed by bounded
-  geometry and posterior workflows
+- `phydrax.optim`: Phydrax-owned structured residual and bounded-search
+  optimization, plus compatibility boundaries for workflow adapters
 - `phydrax.nn`: neural network components and structured models
 - `phydrax.sparse`: JAX-native sparse relations, routing, reductions, and linear actions
 - `phydrax.solver`: functional solvers and direct ODE/SDE, jump, hybrid, and

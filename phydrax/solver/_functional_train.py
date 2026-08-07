@@ -823,6 +823,8 @@ def solve(
         out_file = log_fp if log_fp is not None else None
         refresh_wall_time = 0.0
         optimizer_wall_time = 0.0
+        first_optimizer_step_wall_time = 0.0
+        steady_optimizer_step_wall_time = 0.0
 
         for epoch in range(int(num_iter)):
             if signal_guard.stop_requested:
@@ -881,7 +883,12 @@ def solve(
                 )
                 if profile_adaptive:
                     jax.block_until_ready((params, opt_state, loss_val))
-                    optimizer_wall_time += time.perf_counter() - optimizer_started
+                    optimizer_step_wall_time = time.perf_counter() - optimizer_started
+                    optimizer_wall_time += optimizer_step_wall_time
+                    if epoch == 0:
+                        first_optimizer_step_wall_time = optimizer_step_wall_time
+                    else:
+                        steady_optimizer_step_wall_time += optimizer_step_wall_time
                 collocation = _record_collocation_training_evaluations(
                     self,
                     collocation,
@@ -1126,6 +1133,12 @@ def solve(
                 "profile_enabled": jnp.asarray(profile_adaptive),
                 "refresh_wall_time_seconds": jnp.asarray(refresh_wall_time),
                 "optimizer_wall_time_seconds": jnp.asarray(optimizer_wall_time),
+                "optimizer_first_step_wall_time_seconds": jnp.asarray(
+                    first_optimizer_step_wall_time
+                ),
+                "optimizer_steady_step_wall_time_seconds": jnp.asarray(
+                    steady_optimizer_step_wall_time / max(completed - 1, 1)
+                ),
             }
         )
         return eqx.tree_at(lambda s: s.training_diagnostics, result, diagnostics)

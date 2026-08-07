@@ -285,3 +285,104 @@ def test_functional_constraint_sampling_mode_validation():
             sampling_mode="resample",
             fixed_batch=batch,
         )
+
+
+@pytest.mark.parametrize("reduction", ["mean", "integral"])
+def test_quadratic_residual_data_reconstructs_weighted_loss(reduction):
+    geom = Interval1d(0.0, 2.0)
+    component = geom.component()
+    structure = SampleLayout((("x",),))
+
+    @geom.Function("x")
+    def u(x):
+        return x[0] - 0.25
+
+    @geom.Function("x")
+    def pointwise_weight(x):
+        return 1.0 + x[0]
+
+    constraint = FunctionalConstraint.from_operator(
+        component=component,
+        operator=lambda field: field + 0.5,
+        constraint_vars="u",
+        sampling=phx.domain.PointSampling(31, layout=structure),
+        reduction=reduction,
+        weight=pointwise_weight,
+    )
+    batch = constraint.sample(key=jr.key(70))
+    data = constraint._quadratic_residual_data(
+        {"u": u},
+        key=jr.key(71),
+        batch=batch,
+    )
+    expected = constraint.loss({"u": u}, key=jr.key(71), batch=batch)
+
+    assert len(data.residuals) == 1
+    assert len(data.coefficients) == 1
+    assert all(dim is not None for dim in data.coefficients[0].dims)
+    assert jnp.all(data.coefficients[0].data >= 0.0)
+    assert jnp.allclose(data.loss, expected, rtol=1e-12, atol=1e-12)
+
+
+def test_quadratic_residual_data_reconstructs_component_sum_loss():
+    geom = Interval1d(0.0, 1.0)
+    left = geom.component(where={"x": lambda point: point[0] < 0.5})
+    right = geom.component(where={"x": lambda point: point[0] >= 0.5})
+    component = phx.domain.ComponentSum((left, right), assume_disjoint=True)
+    structure = SampleLayout((("x",),))
+
+    @geom.Function("x")
+    def u(x):
+        return 1.0 + x[0]
+
+    constraint = FunctionalConstraint.from_operator(
+        component=component,
+        operator=lambda field: field,
+        constraint_vars="u",
+        sampling=phx.domain.PointSampling(17, layout=structure),
+        reduction="mean",
+    )
+    batch = constraint.sample(key=jr.key(72))
+    data = constraint._quadratic_residual_data(
+        {"u": u},
+        key=jr.key(73),
+        batch=batch,
+    )
+    expected = constraint.loss({"u": u}, key=jr.key(73), batch=batch)
+
+    assert len(data.residuals) == 2
+    assert len(data.coefficients) == 2
+    assert jnp.allclose(data.loss, expected, rtol=1e-12, atol=1e-12)
+
+
+def test_quadratic_residual_data_includes_adaptive_batch_weights():
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
+    constraint = FunctionalConstraint.from_operator(
+        component=geom.component(),
+        operator=lambda field: field,
+        constraint_vars="u",
+        sampling=phx.domain.GridSampling({"x": (5, 4)}),
+        reduction="mean",
+    )
+    batch = constraint.sample(key=jr.key(74))
+    assert isinstance(batch, GridBatch)
+    axis = batch.coord_axes_by_label["x"][0]
+    size = batch.points["x"][0].data.shape[0]
+    batch_weight = cx.Field(jnp.linspace(0.5, 1.5, size), dims=(axis,))
+    functions = {"u": geom.Function()(2.0)}
+    data = constraint._quadratic_residual_data(
+        functions,
+        key=jr.key(75),
+        batch=batch,
+        batch_weight=batch_weight,
+    )
+    expected = constraint.loss(
+        functions,
+        key=jr.key(75),
+        batch=batch,
+        batch_weight=batch_weight,
+    )
+
+    assert jnp.allclose(data.loss, expected, rtol=1e-12, atol=1e-12)
