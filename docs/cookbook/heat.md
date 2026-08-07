@@ -209,3 +209,11 @@ Functional parameters accept either component constants or arrays aligned with
 the full spatial shape. Compilation IDs and semilinear operator IDs include
 resolved parameter values and boundary-lift IDs, so cached artifacts cannot be
 reused across different bound dynamics.
+
+Bounded PDE coordinates must match the materialized tensor-grid interval.
+Semidiscrete volume integrals accept interior spatial regions; boundary,
+interface, and component-specific boundary semantics are rejected rather than
+being approximated as whole-domain operations. On sine/cosine grids, nested
+calculus tracks primal and dual extension parity. Rewrite a differentiated
+nonlinear or boundary-incompatible composite into terms with explicit,
+compatible parity.

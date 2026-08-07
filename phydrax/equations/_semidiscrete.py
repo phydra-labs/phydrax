@@ -55,6 +55,7 @@ class SemidiscreteFieldLayout(StrictModule):
 
     field_names: tuple[str, ...] = eqx.field(static=True)
     component_counts: tuple[int, ...] = eqx.field(static=True)
+    scalar_fields: tuple[bool, ...] = eqx.field(static=True)
     component_offsets: tuple[int, ...] = eqx.field(static=True)
     spatial_shape: tuple[int, ...] = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
@@ -74,6 +75,10 @@ class SemidiscreteFieldLayout(StrictModule):
         if len(set(names)) != len(names):
             raise ValueError("Semidiscrete field names must be unique.")
         components = tuple(int(field.components) for field in field_values)
+        scalar_fields = tuple(
+            field.representation in ("scalar", "pseudoscalar")
+            for field in field_values
+        )
         shape = tuple(int(size) for size in spatial_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("spatial_shape must contain positive dimensions.")
@@ -82,17 +87,22 @@ class SemidiscreteFieldLayout(StrictModule):
         for count in components:
             offsets.append(offset)
             offset += count
-        squeezed = len(field_values) == 1 and components == (1,)
+        squeezed = (
+            len(field_values) == 1
+            and components == (1,)
+            and scalar_fields == (True,)
+        )
         state_shape = shape if squeezed else shape + (offset,)
         self.field_names = names
         self.component_counts = components
+        self.scalar_fields = scalar_fields
         self.component_offsets = tuple(offsets)
         self.spatial_shape = shape
         self.state_shape = state_shape
         self.squeezed = squeezed
         self.layout_id = _stable_id(
-            "semidiscrete-field-layout-v1",
-            repr(tuple(zip(names, components, strict=True))),
+            "semidiscrete-field-layout-v2",
+            repr(tuple(zip(names, components, scalar_fields, strict=True))),
             repr(shape),
         )
 
@@ -109,7 +119,9 @@ class SemidiscreteFieldLayout(StrictModule):
     def field_shape(self, name: str, /) -> tuple[int, ...]:
         index = self._field_index(name)
         count = self.component_counts[index]
-        return self.spatial_shape if count == 1 else self.spatial_shape + (count,)
+        if count == 1 and self.scalar_fields[index]:
+            return self.spatial_shape
+        return self.spatial_shape + (count,)
 
     def field(self, state: ArrayLike, name: str, /) -> Array:
         value = jnp.asarray(state)
@@ -122,7 +134,7 @@ class SemidiscreteFieldLayout(StrictModule):
             return value
         offset = self.component_offsets[index]
         count = self.component_counts[index]
-        if count == 1:
+        if count == 1 and self.scalar_fields[index]:
             return value[..., offset]
         return value[..., offset : offset + count]
 
@@ -136,10 +148,12 @@ class SemidiscreteFieldLayout(StrictModule):
                 f"{self.field_names}; got {tuple(fields)}."
             )
         values: list[Array] = []
-        for name, count in zip(
-            self.field_names,
-            self.component_counts,
-            strict=True,
+        for index, (name, count) in enumerate(
+            zip(
+                self.field_names,
+                self.component_counts,
+                strict=True,
+            )
         ):
             value = jnp.asarray(fields[name])
             expected = self.field_shape(name)
@@ -147,7 +161,11 @@ class SemidiscreteFieldLayout(StrictModule):
                 raise ValueError(
                     f"Field {name!r} must have shape {expected}; got {value.shape}."
                 )
-            values.append(value[..., None] if count == 1 else value)
+            values.append(
+                value[..., None]
+                if count == 1 and self.scalar_fields[index]
+                else value
+            )
         if self.squeezed:
             return values[0][..., 0]
         return jnp.concatenate(tuple(values), axis=-1)
@@ -349,12 +367,60 @@ class _SemidiscreteEvaluator(StrictModule):
         if expression.op == "field":
             assert expression.symbol is not None
             return self._lift(expression.symbol, time, args)
-        if expression.op == "component" and expression.args[0].op == "field":
+        if expression.op == "component":
             assert expression.axis is not None
-            assert expression.args[0].symbol is not None
-            lift = self._lift(expression.args[0].symbol, time, args)
-            return None if lift is None else lift[..., expression.axis]
-        return None
+            source = self._expression_lift(expression.args[0], time, args)
+            return None if source is None else source[..., expression.axis]
+        if expression.op not in (
+            "derivative",
+            "gradient",
+            "divergence",
+            "curl",
+            "laplacian",
+        ):
+            return None
+        source = self._expression_lift(expression.args[0], time, args)
+        if source is None:
+            return None
+        assert expression.coordinate is not None
+        axes = self._axes(expression.coordinate)
+        if expression.op == "derivative":
+            axis = axes[0] if expression.axis is None else axes[expression.axis]
+            return self._lift_partial(source, axis=axis, order=expression.order)
+        if expression.op == "gradient":
+            return jnp.stack(
+                tuple(
+                    self._lift_partial(source, axis=axis, order=1)
+                    for axis in axes
+                ),
+                axis=-1,
+            )
+        if expression.op == "divergence":
+            result = jnp.zeros_like(source[..., 0])
+            for component, axis in enumerate(axes):
+                result = result + self._lift_partial(
+                    source[..., component],
+                    axis=axis,
+                    order=1,
+                )
+            return result
+        if expression.op == "curl":
+            first, second, third = axes
+            return jnp.stack(
+                (
+                    self._lift_partial(source[..., 2], axis=second, order=1)
+                    - self._lift_partial(source[..., 1], axis=third, order=1),
+                    self._lift_partial(source[..., 0], axis=third, order=1)
+                    - self._lift_partial(source[..., 2], axis=first, order=1),
+                    self._lift_partial(source[..., 1], axis=first, order=1)
+                    - self._lift_partial(source[..., 0], axis=second, order=1),
+                ),
+                axis=-1,
+            )
+        result = jnp.zeros_like(source)
+        for axis in axes:
+            result = result + self._lift_partial(source, axis=axis, order=2)
+        return result
 
     def _lift_partial(
         self,
@@ -455,10 +521,14 @@ class _SemidiscreteEvaluator(StrictModule):
         if expression.op == "field":
             return tuple((0,) * rank for _ in range(components))
         if expression.op == "coordinate":
-            if expression.symbol == self.time_coordinate:
-                return None
-            return tuple((0,) * rank for _ in range(components))
-        if expression.op in ("constant", "parameter"):
+            return None
+        if expression.op == "constant":
+            return None
+        if expression.op == "parameter":
+            assert expression.symbol is not None
+            index = self.parameter_names.index(expression.symbol)
+            if self.parameter_functional[index]:
+                return tuple((0,) * rank for _ in range(components))
             return None
         argument_parities = tuple(
             self._parities(argument) for argument in expression.args
@@ -521,14 +591,28 @@ class _SemidiscreteEvaluator(StrictModule):
             if source is None:
                 return None
             return self._unknown_parities(components)
+        if expression.op == "negate":
+            return argument_parities[0]
         spatial = tuple(parity for parity in argument_parities if parity is not None)
         if not spatial:
             return None
-        if expression.op in ("add", "multiply", "divide", "dot"):
-            if len(spatial) == 1:
-                return spatial[0]
+        if expression.op == "add":
+            if len(spatial) != len(argument_parities):
+                return self._unknown_parities(components)
             if all(parity == spatial[0] for parity in spatial[1:]):
                 return spatial[0]
+            return self._unknown_parities(components)
+        if expression.op == "multiply":
+            if len(spatial) == 1:
+                return spatial[0]
+            return self._unknown_parities(components)
+        if expression.op == "divide":
+            if argument_parities[0] is not None and argument_parities[1] is None:
+                return argument_parities[0]
+            return self._unknown_parities(components)
+        if expression.op == "dot":
+            return self._unknown_parities(components)
+        if expression.op in ("power", "sin", "cos", "exp", "log", "sqrt"):
             return self._unknown_parities(components)
         return spatial[0]
 
@@ -546,6 +630,32 @@ class _SemidiscreteEvaluator(StrictModule):
             TensorGridDiscretization,
         )
 
+        if (
+            isinstance(self.discretization, TensorGridDiscretization)
+            and self.discretization.basis[axis] == "uniform"
+            and parity == 1
+        ):
+            spacing = (
+                self.discretization.axes[axis].nodes[1]
+                - self.discretization.axes[axis].nodes[0]
+            )
+            result = (value - jnp.roll(value, 1, axis=axis)) / spacing
+            if order > 1:
+                result = self.discretization.partial_derivative(
+                    result,
+                    axis=axis,
+                    order=order - 1,
+                )
+            return result
+        if (
+            isinstance(self.discretization, TensorGridDiscretization)
+            and self.discretization.basis[axis] in ("sine", "cosine")
+            and parity == 2
+        ):
+            raise ValueError(
+                "Cannot infer sine/cosine extension parity for this differentiated "
+                "composite expression; rewrite it into boundary-compatible terms."
+            )
         if (
             not isinstance(self.discretization, TensorGridDiscretization)
             or self.discretization.basis[axis] not in ("sine", "cosine")
@@ -609,14 +719,19 @@ class _SemidiscreteEvaluator(StrictModule):
         value: Any,
         components: int,
         other_components: int,
+        other_value: Any,
         /,
     ) -> Any:
         array = jnp.asarray(value)
+        other = jnp.asarray(other_value)
         spatial_rank = len(self.discretization.state_shape)
         if (
             components == 1
-            and other_components > 1
             and array.ndim == spatial_rank
+            and (
+                other_components > 1
+                or other.ndim == spatial_rank + 1
+            )
         ):
             return array[..., None]
         return value
@@ -657,11 +772,13 @@ class _SemidiscreteEvaluator(StrictModule):
                     result,
                     result_components,
                     value_components,
+                    value,
                 )
                 right = self._align_semantic_scalar(
                     value,
                     value_components,
                     result_components,
+                    result,
                 )
                 result = left * right
                 result_components = max(result_components, value_components)
@@ -673,11 +790,13 @@ class _SemidiscreteEvaluator(StrictModule):
                 values[0],
                 numerator_components,
                 denominator_components,
+                values[1],
             )
             denominator = self._align_semantic_scalar(
                 values[1],
                 denominator_components,
                 numerator_components,
+                values[0],
             )
             return numerator / denominator
         if node.op == "negate":
@@ -725,6 +844,18 @@ class _SemidiscreteEvaluator(StrictModule):
                     axis = axes[0]
                 else:
                     axis = axes[node.axis]
+                if node.args[0].op == "coordinate":
+                    assert node.args[0].symbol is not None
+                    source_axes = self._axes(node.args[0].symbol)
+                    source = jnp.asarray(values[0])
+                    result = jnp.zeros_like(source)
+                    if node.order == 1 and axis in source_axes:
+                        if len(source_axes) == 1:
+                            result = jnp.ones_like(source)
+                        else:
+                            component = source_axes.index(axis)
+                            result = result.at[..., component].set(1.0)
+                    return result
                 result = self._differentiate_components(
                     operand,
                     node.args[0],
@@ -739,7 +870,27 @@ class _SemidiscreteEvaluator(StrictModule):
                     )
                 return result
             if node.op == "gradient":
-                result = self.discretization.gradient(operand, axes=axes)
+                from ..solver._spatial import TensorGridDiscretization
+
+                components = []
+                for axis in axes:
+                    if (
+                        isinstance(self.discretization, TensorGridDiscretization)
+                        and self.discretization.basis[axis] == "uniform"
+                    ):
+                        component = self.discretization.gradient(
+                            operand,
+                            axes=(axis,),
+                        )[..., 0]
+                    else:
+                        component = self._differentiate_components(
+                            operand,
+                            node.args[0],
+                            axis=axis,
+                            order=1,
+                        )
+                    components.append(component)
+                result = jnp.stack(tuple(components), axis=-1)
                 if lift is not None:
                     result = result + jnp.stack(
                         tuple(
@@ -849,6 +1000,10 @@ class _SemidiscreteEvaluator(StrictModule):
                     for axis in range(spatial_rank)
                 )
                 result = result.reshape(spatial_shape + trailing)
+                result = jnp.broadcast_to(
+                    result,
+                    self.discretization.state_shape + trailing,
+                )
             return result
         raise ValueError(f"Unsupported semidiscrete PDE operation {node.op!r}.")
 
@@ -858,14 +1013,25 @@ class _SemidiscreteEvaluator(StrictModule):
         count = self.layout.component_counts[self.layout.field_names.index(name)]
         if result.shape == () or (count > 1 and result.shape == (count,)):
             return jnp.broadcast_to(result, expected)
-        if count == 1 and result.shape == expected + (1,):
+        if (
+            count == 1
+            and expected == self.layout.spatial_shape
+            and result.shape == expected + (1,)
+        ):
             return result[..., 0]
-        if tuple(result.shape) != expected:
-            raise ValueError(
-                f"Evolution RHS for field {name!r} must have shape {expected}; "
-                f"got {result.shape}."
+        compatible = (
+            result.ndim == len(expected)
+            and all(
+                actual in (1, target)
+                for actual, target in zip(result.shape, expected, strict=True)
             )
-        return result
+        )
+        if compatible:
+            return jnp.broadcast_to(result, expected)
+        raise ValueError(
+            f"Evolution RHS for field {name!r} must have shape {expected}; "
+            f"got {result.shape}."
+        )
 
     def physical_state(self, time: Array, state: ArrayLike, args: Any, /) -> Array:
         value = jnp.asarray(state)
@@ -1074,6 +1240,27 @@ def _requires_coordinate_frame(
     )
 
 
+def _integral_regions(expression: PDEExpression, /) -> tuple[str, ...]:
+    current = (
+        (expression.region,)
+        if expression.op == "integral" and expression.region is not None
+        else ()
+    )
+    return current + tuple(
+        region
+        for argument in expression.args
+        for region in _integral_regions(argument)
+    )
+
+
+def _expression_nodes(expression: PDEExpression, /) -> tuple[PDEExpression, ...]:
+    return (expression,) + tuple(
+        node
+        for argument in expression.args
+        for node in _expression_nodes(argument)
+    )
+
+
 def _evolution_rhs(
     problem: PDEProblemIR,
     time_coordinate: str,
@@ -1178,6 +1365,33 @@ def _coordinate_axis_map(
                         f"PDE coordinate {coordinate.name!r} periodic={coordinate.periodic} "
                         f"is incompatible with basis {discretization.basis[axis]!r}."
                     )
+                if coordinate.bounds is not None:
+                    nodes = np.asarray(discretization.axes[axis].nodes)
+                    spacing = float(nodes[1] - nodes[0])
+                    basis = discretization.basis[axis]
+                    if basis == "sine":
+                        actual_bounds = (
+                            float(nodes[0] - 0.5 * spacing),
+                            float(nodes[-1] + 0.5 * spacing),
+                        )
+                    elif basis in ("fourier", "uniform"):
+                        actual_bounds = (
+                            float(nodes[0]),
+                            float(nodes[-1] + spacing),
+                        )
+                    else:
+                        actual_bounds = (float(nodes[0]), float(nodes[-1]))
+                    if not np.allclose(
+                        actual_bounds,
+                        coordinate.bounds,
+                        rtol=1e-10,
+                        atol=1e-12,
+                    ):
+                        raise ValueError(
+                            f"PDE coordinate {coordinate.name!r} bounds "
+                            f"{coordinate.bounds} do not match discretization axis "
+                            f"bounds {actual_bounds}."
+                        )
             output.append((coordinate.name, axes))
             offset += coordinate.size
         return tuple(output)
@@ -1259,6 +1473,10 @@ def _validate_boundary_conditions(
 ) -> None:
     from ..solver._spatial import TensorGridDiscretization
     lifts = {lift.field_name: lift for lift in boundary_lifts}
+    if any(condition.kind == "interface" for condition in problem.conditions):
+        raise ValueError(
+            "Semidiscrete single-grid compilation does not support interface conditions."
+        )
     if not isinstance(discretization, TensorGridDiscretization):
         if any(condition.kind == "boundary" for condition in problem.conditions):
             raise ValueError(
@@ -1270,6 +1488,12 @@ def _validate_boundary_conditions(
     for condition in problem.conditions:
         if condition.kind != "boundary":
             continue
+        region = regions[condition.region]
+        if region.component is not None:
+            raise ValueError(
+                f"Boundary region {region.name!r} selects component "
+                f"{region.component!r}, but tensor bases enforce both boundary sides."
+            )
         if condition.coordinate is None or condition.coordinate not in axes_by_coordinate:
             raise ValueError(
                 f"Boundary condition {condition.name!r} requires a compiled spatial "
@@ -1573,6 +1797,18 @@ def compile_semidiscrete_pde(
         lifts,
     )
     rhs_expressions = _evolution_rhs(problem, time_coordinate)
+    regions_by_name = {region.name: region for region in problem.regions}
+    unsupported_integrals = tuple(
+        region
+        for expression in rhs_expressions
+        for region in _integral_regions(expression)
+        if regions_by_name[region].kind != "interior"
+    )
+    if unsupported_integrals:
+        raise ValueError(
+            "Semidiscrete volume quadrature only supports interior regions; "
+            f"got {unsupported_integrals}."
+        )
     if isinstance(discretization, SpectralSpatialDiscretization):
         if lifts:
             raise ValueError(
@@ -1663,6 +1899,42 @@ def compile_semidiscrete_pde(
         time_coordinate,
         _region_axis_map(problem, coordinate_axes),
     )
+    from ..solver._spatial import TensorGridDiscretization
+
+    for expression in rhs_expressions:
+        for node in _expression_nodes(expression):
+            if node.op not in (
+                "derivative",
+                "gradient",
+                "divergence",
+                "curl",
+                "laplacian",
+            ):
+                continue
+            assert node.coordinate is not None
+            axes = evaluator._axes(node.coordinate)
+            if node.op == "derivative" and node.axis is None and len(axes) != 1:
+                raise ValueError(
+                    "Derivatives of grouped coordinates require an explicit axis."
+                )
+            if not isinstance(discretization, TensorGridDiscretization) or not any(
+                discretization.basis[axis] in ("sine", "cosine")
+                for axis in axes
+            ):
+                continue
+            if node.op == "derivative" and node.args[0].op == "coordinate":
+                continue
+            parities = evaluator._parities(node.args[0])
+            if parities is None or any(
+                parity[axis] == 2
+                for parity in parities
+                for axis in axes
+            ):
+                raise ValueError(
+                    "Cannot infer sine/cosine extension parity for a "
+                    "differentiated composite expression; rewrite it into "
+                    "boundary-compatible terms."
+                )
 
     full_spatial_axes = tuple(range(len(discretization.state_shape)))
     full_spatial_coordinates = {
