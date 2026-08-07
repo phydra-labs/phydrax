@@ -15,23 +15,24 @@ where \(\Omega_{\text{data}}\) indexes a finite dataset of input functions/field
 (e.g. forcing terms, initial conditions, material parameters) and the remaining
 factors are geometric/scalar coordinates.
 
-`DatasetDomain` is a unary domain that stores an in-memory dataset (a PyTree of arrays
-with a shared leading dataset axis) and samples by random indexing. This integrates
-cleanly with:
+`DatasetDomain` is an atomic joint factor that stores an in-memory PyTree whose
+leaves share one leading dataset axis. It composes with physical factors through
+`@` and participates in the same explicit sampling plans:
 
-- `ProductDomain` composition via `@`,
-- structured sampling (`dense_structure=ProductStructure((("data",),))`),
-- `Domain.Model(...)` for building either flat pointwise models or structured
-  operator models over `(data, coords...)`.
+- `PointSampling(..., layout=SampleLayout(...))` for paired or independent
+  point blocks;
+- `GridSampling(..., dense=PointSampling(...))` when coordinate grids are paired
+  with empirical rows;
+- `Domain.Model(...)` for models with a declared `ModelBinding`.
 
-`Domain.Model(...)` defaults to each model's declared input mode. Dense models and
-separable vector models use flat concatenation; operator models such as `DeepONet`
-use structured tuple inputs. Override this with `input_mode="flat"` or
-`input_mode="structured"` when needed.
+Phydrax models expose their own input binding. A plain callable model must receive
+an explicit `phx.nn.ModelBinding`; evaluation does not inspect signatures or
+switch between flat, structured, pointwise, blockwise, or axis-batch execution
+implicitly.
 
 For row-indexed time series with different sequence lengths, use
-[`TrajectoryDatasetDomain`](trajectory_dataset.md). It is not a plain rectangular
-product: the dataset row and sampled time are coupled.
+[`TrajectoryDatasetDomain`](trajectory_dataset.md). It is not a rectangular
+product: its dataset row and sampled time remain one inseparable joint factor.
 
 ### Measure semantics
 
@@ -55,9 +56,14 @@ product: the dataset row and sampled time are coupled.
         members:
             - __init__
             - factors
+            - joint_factors
             - labels
             - factor
-            - equivalent
+            - same_support
+            - schema_compatible
+            - restrict
+            - drop
+            - relabel
             - boundary
 
 ---

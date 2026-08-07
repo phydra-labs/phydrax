@@ -8,9 +8,10 @@ from typing import Any
 
 from jaxtyping import Array, Key
 
+from phydrax.domain import DomainFunction
+
 from ._doc import DOC_KEY0
 from ._strict import AbstractAttribute, StrictModule
-from .domain._function import DomainFunction
 
 
 class AbstractObjectiveTerm(StrictModule):

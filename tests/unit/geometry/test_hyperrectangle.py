@@ -98,8 +98,10 @@ def test_hyperrectangle_coord_separable_sampling():
     geom = phx.domain.HyperRectangle(
         lower=jnp.array([0.0, 1.0]), upper=jnp.array([2.0, 3.0])
     )
-    batch = geom.component().sample_coord_separable(
-        {"x": (phx.domain.UniformAxisSpec(5), phx.domain.UniformAxisSpec(7))},
+    batch = geom.component().sample(
+        phx.domain.GridSampling(
+            {"x": (phx.domain.UniformAxisSpec(5), phx.domain.UniformAxisSpec(7))}
+        ),
         key=jr.key(0),
     )
 
@@ -142,8 +144,7 @@ def test_hyperrectangle_domain_model_gets_vector_points():
     u = geom.Model("x")(model)
 
     batch = geom.component().sample(
-        3,
-        structure=phx.domain.ProductStructure((("x",),)),
+        phx.domain.PointSampling(3, layout=phx.domain.SampleLayout((("x",),))),
         key=jr.key(0),
     )
     out = u(batch)

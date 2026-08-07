@@ -12,41 +12,40 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import (
+    BatchEvaluator,
+    ComponentSum,
+    DomainComponent,
+    DomainFunction,
+    GridBatch,
+    GridSampling,
+    PointBatch,
+    PointSampling,
+)
+
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
-from ..domain._components import DomainComponent, DomainComponentUnion
-from ..domain._function import batch_aware_callable, BatchAwareCallable, DomainFunction
-from ..domain._structure import (
-    CoordSeparableBatch,
-    PointsBatch,
-    ProductStructure,
-)
 from ..integration import from_samples, mean_over, over, reduce
 from ._adaptive import AbstractCollocationPolicy
 from ._base import AbstractSamplingConstraint
 from ._data_metrics import supervised_data_metrics
-from ._sampling_spec import (
-    CoordSamplingMap,
-    parse_sampling_num_points,
-    SamplingNumPoints,
-)
 
 
 def _validate_batch_weight(
-    batch: PointsBatch | CoordSeparableBatch,
+    batch: PointBatch | GridBatch,
     weight: cx.Field,
 ) -> None:
     if any(dim is None for dim in weight.dims):
         raise ValueError("Adaptive batch weights may use only named sampling axes.")
-    if isinstance(batch, PointsBatch):
+    if isinstance(batch, PointBatch):
         axes = batch.structure.axis_names
         if axes is None:
-            raise ValueError("PointsBatch.structure must be canonicalized.")
+            raise ValueError("PointBatch.structure must be canonicalized.")
         allowed = frozenset(axes)
     else:
         dense_axes = batch.dense_structure.axis_names
         if dense_axes is None:
-            raise ValueError("CoordSeparableBatch.dense_structure must be canonicalized.")
+            raise ValueError("GridBatch.dense_structure must be canonicalized.")
         allowed = frozenset(
             axis
             for axes_for_label in batch.coord_axes_by_label.values()
@@ -59,7 +58,7 @@ def _validate_batch_weight(
         )
 
 
-class _BatchWeightedSquaredResidual(StrictModule, BatchAwareCallable):
+class _BatchWeightedSquaredResidual(StrictModule, BatchEvaluator):
     residual: DomainFunction
     weight: cx.Field
 
@@ -67,12 +66,9 @@ class _BatchWeightedSquaredResidual(StrictModule, BatchAwareCallable):
         self.residual = residual
         self.weight = weight
 
-    def use_batch_call(self) -> bool:
-        return True
-
     def __call_batch__(
         self,
-        batch: PointsBatch | CoordSeparableBatch,
+        batch: PointBatch | GridBatch,
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
@@ -87,18 +83,15 @@ class _BatchWeightedSquaredResidual(StrictModule, BatchAwareCallable):
         raise TypeError("Adaptive batch weights require structured batch evaluation.")
 
 
-class _SquaredFrobeniusResidual(StrictModule, BatchAwareCallable):
+class _SquaredFrobeniusResidual(StrictModule, BatchEvaluator):
     residual: DomainFunction
 
     def __init__(self, residual: DomainFunction):
         self.residual = residual
 
-    def use_batch_call(self) -> bool:
-        return batch_aware_callable(self.residual.func) is not None
-
     def __call_batch__(
         self,
-        batch: PointsBatch | CoordSeparableBatch,
+        batch: PointBatch | GridBatch,
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
@@ -158,8 +151,7 @@ class FunctionalConstraint(AbstractSamplingConstraint):
 
     where $w$ is the scalar global `weight`.
 
-    Sampling is performed according to `structure` (paired blocks) or coord-separable
-    mapping specs encoded directly in `num_points`.
+    Sampling is defined by one typed `PointSampling` or `GridSampling` plan.
 
     Sampling policy is controlled by `sampling_mode`:
 
@@ -169,19 +161,15 @@ class FunctionalConstraint(AbstractSamplingConstraint):
     """
 
     constraint_vars: tuple[str, ...]
-    component: DomainComponent | DomainComponentUnion
-    structure: ProductStructure
-    coord_sampling: CoordSamplingMap | None
-    dense_structure: ProductStructure | None
-    num_points: Any
-    sampler: str
+    component: DomainComponent | ComponentSum
+    sampling: GridSampling | PointSampling | tuple[PointSampling, ...]
     weight: Array
     pointwise_weight: DomainFunction | None
     label: str | None
     over: str | tuple[str, ...] | None
     reduction: Literal["mean", "integral"]
     sampling_mode: Literal["resample", "fixed"]
-    fixed_batch: PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...] | None
+    fixed_batch: PointBatch | GridBatch | tuple[PointBatch, ...] | None
     residual: Callable[[Mapping[str, DomainFunction]], DomainFunction]
     data_constraint_var: str | None
     data_target: DomainFunction | None
@@ -191,21 +179,16 @@ class FunctionalConstraint(AbstractSamplingConstraint):
     def __init__(
         self,
         *,
-        component: DomainComponent | DomainComponentUnion,
+        component: DomainComponent | ComponentSum,
         residual: Callable[[Mapping[str, DomainFunction]], DomainFunction],
-        num_points: SamplingNumPoints,
-        structure: ProductStructure,
-        dense_structure: ProductStructure | None = None,
+        sampling: GridSampling | PointSampling | tuple[PointSampling, ...],
         constraint_vars: Sequence[str] | None = None,
-        sampler: str = "latin_hypercube",
         weight: DomainFunction | ArrayLike = 1.0,
         label: str | None = None,
         over: str | tuple[str, ...] | None = None,
         reduction: Literal["mean", "integral"] = "mean",
         sampling_mode: Literal["resample", "fixed"] = "resample",
-        fixed_batch: (
-            PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...] | None
-        ) = None,
+        fixed_batch: (PointBatch | GridBatch | tuple[PointBatch, ...] | None) = None,
         fixed_batch_key: Key[Array, ""] = DOC_KEY0,
         data_constraint_var: str | None = None,
         data_target: DomainFunction | None = None,
@@ -215,17 +198,12 @@ class FunctionalConstraint(AbstractSamplingConstraint):
         self.constraint_vars = () if constraint_vars is None else tuple(constraint_vars)
         self.component = component
         self.residual = residual
-        self.structure = structure
-        dense_num_points, coord_sampling, dense_structure_out = parse_sampling_num_points(
-            component,
-            num_points=num_points,
-            structure=structure,
-            dense_structure=dense_structure,
-        )
-        self.num_points = dense_num_points
-        self.coord_sampling = coord_sampling
-        self.dense_structure = dense_structure_out
-        self.sampler = str(sampler)
+        if isinstance(component, ComponentSum):
+            if isinstance(sampling, GridSampling):
+                raise TypeError("ComponentSum does not support GridSampling.")
+        elif isinstance(sampling, tuple):
+            raise TypeError("Per-term PointSampling tuples require a ComponentSum.")
+        self.sampling = sampling
         if isinstance(weight, DomainFunction):
             self.weight = jnp.asarray(1.0, dtype=float)
             self.pointwise_weight = weight
@@ -261,45 +239,33 @@ class FunctionalConstraint(AbstractSamplingConstraint):
         self,
         *,
         key: Key[Array, ""] = DOC_KEY0,
-    ) -> PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...]:
-        if self.coord_sampling is not None:
-            if isinstance(self.component, DomainComponentUnion):
-                raise ValueError(
-                    "coord-separable sampling is not supported for DomainComponentUnion."
-                )
-            return self.component.sample_coord_separable(
-                self.coord_sampling,
-                num_points=self.num_points,
-                dense_structure=self.dense_structure,
-                sampler=self.sampler,
-                key=key,
-            )
-        return self.component.sample(
-            self.num_points,
-            structure=self.structure,
-            sampler=self.sampler,
-            key=key,
-        )
+    ) -> PointBatch | GridBatch | tuple[PointBatch, ...]:
+        component = self.component
+        sampling = self.sampling
+        if isinstance(component, ComponentSum):
+            if isinstance(sampling, GridSampling):
+                raise RuntimeError("ComponentSum sampling invariant was violated.")
+            return component.sample(sampling, key=key)
+        if isinstance(sampling, tuple):
+            raise RuntimeError("DomainComponent sampling invariant was violated.")
+        if isinstance(sampling, PointSampling):
+            return component.sample(sampling, key=key)
+        return component.sample(sampling, key=key)
 
     @classmethod
     def from_operator(
         cls,
         *,
-        component: DomainComponent | DomainComponentUnion,
+        component: DomainComponent | ComponentSum,
         operator: Callable[..., DomainFunction],
         constraint_vars: str | Sequence[str],
-        num_points: SamplingNumPoints,
-        structure: ProductStructure,
-        dense_structure: ProductStructure | None = None,
-        sampler: str = "latin_hypercube",
+        sampling: GridSampling | PointSampling | tuple[PointSampling, ...],
         weight: DomainFunction | ArrayLike = 1.0,
         label: str | None = None,
         over: str | tuple[str, ...] | None = None,
         reduction: Literal["mean", "integral"] = "mean",
         sampling_mode: Literal["resample", "fixed"] = "resample",
-        fixed_batch: (
-            PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...] | None
-        ) = None,
+        fixed_batch: (PointBatch | GridBatch | tuple[PointBatch, ...] | None) = None,
         fixed_batch_key: Key[Array, ""] = DOC_KEY0,
         data_constraint_var: str | None = None,
         data_target: DomainFunction | None = None,
@@ -323,11 +289,8 @@ class FunctionalConstraint(AbstractSamplingConstraint):
         return cls(
             component=component,
             residual=residual,
-            num_points=num_points,
-            structure=structure,
-            dense_structure=dense_structure,
+            sampling=sampling,
             constraint_vars=vars_tuple,
-            sampler=sampler,
             weight=weight,
             label=label,
             over=over,
@@ -345,12 +308,12 @@ class FunctionalConstraint(AbstractSamplingConstraint):
         self,
         *,
         key: Key[Array, ""] = DOC_KEY0,
-    ) -> PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...]:
+    ) -> PointBatch | GridBatch | tuple[PointBatch, ...]:
         r"""Sample points from the configured component.
 
-        - Returns a `PointsBatch` for paired sampling.
-        - Returns a `CoordSeparableBatch` when `num_points` requested coord-separable sampling.
-        - Returns a tuple of `PointsBatch` when sampling from a `DomainComponentUnion`.
+        - Returns a `PointBatch` for paired sampling.
+        - Returns a `GridBatch` for `GridSampling`.
+        - Returns a tuple of `PointBatch` when sampling from a `ComponentSum`.
         - In `sampling_mode="fixed"`, this returns the same stored batch every call.
         """
         if self.sampling_mode == "fixed":
@@ -365,7 +328,7 @@ class FunctionalConstraint(AbstractSamplingConstraint):
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
-        batch: PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...] | None = None,
+        batch: PointBatch | GridBatch | tuple[PointBatch, ...] | None = None,
         **kwargs: Any,
     ) -> dict[str, Array]:
         """Evaluate supervised-data diagnostics for sampled data-fit constraints."""
@@ -416,7 +379,7 @@ class FunctionalConstraint(AbstractSamplingConstraint):
         functions: Mapping[str, DomainFunction],
         /,
         *,
-        batch: PointsBatch | CoordSeparableBatch,
+        batch: PointBatch | GridBatch,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.Field:
@@ -439,7 +402,7 @@ class FunctionalConstraint(AbstractSamplingConstraint):
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
-        batch: PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...] | None = None,
+        batch: PointBatch | GridBatch | tuple[PointBatch, ...] | None = None,
         batch_weight: cx.Field | None = None,
         **kwargs: Any,
     ) -> Array:
@@ -464,11 +427,11 @@ class FunctionalConstraint(AbstractSamplingConstraint):
         else:
             batch_ = batch
             evaluation_key = key
-        residual_callable: BatchAwareCallable
+        residual_callable: BatchEvaluator
         if batch_weight is None:
             residual_callable = _SquaredFrobeniusResidual(res)
         else:
-            if not isinstance(batch_, (PointsBatch, CoordSeparableBatch)):
+            if not isinstance(batch_, (PointBatch, GridBatch)):
                 raise TypeError(
                     "Adaptive batch weights require a single structured point batch."
                 )

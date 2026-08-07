@@ -44,7 +44,7 @@ def test_graph_target_aligns_repeated_cases_and_node_sets():
     batch = domain.points_from_indices(
         [1, 0, 1],
         component=phx.domain.BoundaryNodes([1]),
-        structure=phx.domain.ProductStructure((("graph",),)),
+        structure=phx.domain.SampleLayout((("graph",),)),
     )
     target = phx.constraints.GraphTarget(
         domain,
@@ -71,7 +71,7 @@ def test_graph_supervised_constraint_zero_for_matching_node_function():
         "u",
         component,
         _linear_node_targets(),
-        num_cases=8,
+        sampling=phx.domain.PointSampling(8, design="uniform"),
     )
 
     assert constraint.loss({"u": u}, key=jr.key(0)) < 1e-12
@@ -97,7 +97,7 @@ def test_graph_trajectory_signal_matches_nearest_observations():
         [0, 1],
         [0.5, 1.0],
         component=component,
-        structure=phx.domain.ProductStructure((("graph", "t"),)),
+        structure=phx.domain.SampleLayout((("graph", "t"),)),
         time_indices=jnp.array([1, 2], dtype=jnp.int32),
     )
 
@@ -124,7 +124,7 @@ def test_graph_trajectory_signal_linearly_interpolates_time():
         [0, 1],
         [0.25, 0.75],
         component=component,
-        structure=phx.domain.ProductStructure((("graph", "t"),)),
+        structure=phx.domain.SampleLayout((("graph", "t"),)),
     )
 
     assert jnp.allclose(signal(batch).data, jnp.array([1.5, 5.5]))
@@ -152,7 +152,7 @@ def test_graph_trajectory_supervised_constraint_zero_for_matching_function():
         "u",
         component,
         tuple(values),
-        num_points=4,
+        sampling=phx.domain.PointSampling(4),
     )
 
     assert constraint.loss({"u": u}, key=jr.key(1)) < 1e-12

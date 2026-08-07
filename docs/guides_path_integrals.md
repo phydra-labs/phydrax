@@ -21,8 +21,8 @@ t_k=t_0+k\Delta t,
 \Delta t=\frac{t_1-t_0}{N}.
 $$
 
-Paths use shape `(..., num_paths, num_nodes, state_dim)`. Time and state are internal
-path dimensions, not `ProductStructure` sampling axes. This avoids constructing a
+Paths use shape `(..., num_paths, num_nodes, state_dim)`. Time and state are
+internal path dimensions, not `SampleLayout` point-sampling axes. This avoids a
 Cartesian product over every time slice.
 
 ## Euclidean fixed-endpoint kernels

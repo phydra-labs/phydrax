@@ -6,14 +6,15 @@ import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
 from phydrax.constraints import enforce_dirichlet, FunctionalConstraint
 from phydrax.domain import (
     Boundary,
     FixedStart,
     Interval1d,
-    PointsBatch,
-    ProductStructure,
+    PointBatch,
+    SampleLayout,
     TimeInterval,
 )
 from phydrax.operators.differential import dt
@@ -25,7 +26,7 @@ from phydrax.solver import (
 
 
 def _paired_batch(domain, xs, ts):
-    structure = ProductStructure((("x", "t"),)).canonicalize(domain.labels)
+    structure = SampleLayout((("x", "t"),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
     axis = axis_names[0]
@@ -37,7 +38,7 @@ def _paired_batch(domain, xs, ts):
             "t": cx.Field(jnp.asarray(ts, dtype=float).reshape((-1,)), dims=(axis,)),
         }
     )
-    return PointsBatch(points=points, structure=structure)
+    return PointBatch(points=points, structure=structure)
 
 
 def test_mixed_constraints_transient():
@@ -90,14 +91,9 @@ def test_mixed_constraints_transient():
     out = jnp.asarray(u_enforced(batch).data).reshape((-1,))
     assert jnp.allclose(out, anchor_values, atol=1e-3)
 
-    constraint = FunctionalConstraint.from_operator(
-        component=domain.component(),
-        operator=lambda f: dt(f, var="t"),
-        constraint_vars="u",
-        num_points=16,
-        structure=ProductStructure((("x", "t"),)),
-        reduction="mean",
-    )
+    constraint = FunctionalConstraint.from_operator(component=domain.component(),
+    operator=lambda f: dt(f, var="t"),
+    constraint_vars="u", sampling=phx.domain.PointSampling(16, layout=SampleLayout((("x", "t"),))), reduction="mean",)
     loss_fn = eqx.filter_jit(lambda: constraint.loss({"u": u_enforced}))
     loss = loss_fn()
     assert jnp.isfinite(loss)

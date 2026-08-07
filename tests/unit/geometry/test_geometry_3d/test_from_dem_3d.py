@@ -6,7 +6,6 @@ import jax
 import numpy as np
 
 import phydrax as phx
-from phydrax.domain.geometry3d import Geometry3DFromDEM
 
 
 def test_geometry3d_from_dem_basic():
@@ -17,7 +16,11 @@ def test_geometry3d_from_dem_basic():
     X, Y = np.meshgrid(x, y)
     Z = np.sin(X) * np.cos(Y)
 
-    geom = Geometry3DFromDEM(Z, x=x, y=y, extrude_depth=0.25, alpha=0.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.reconstruct_dem_region(
+            Z, x=x, y=y, extrude_depth=0.25, alpha=0.0
+        ).compile()
+    )
 
     assert isinstance(geom, phx.domain.GeometryDomain)
     assert geom.reconstruction_report.source_kind == "digital_elevation_model"

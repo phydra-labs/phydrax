@@ -100,7 +100,7 @@ def test_graph_rollout_model_wraps_as_domain_function():
     batch = domain.sample_component(
         phx.domain.Nodes(),
         3,
-        structure=phx.domain.ProductStructure((("graph",),)),
+        structure=phx.domain.SampleLayout((("graph",),)),
     )
     stepper = phx.graph.EulerGraphStepper(ConstantNodeRate(1.0), dt=1.0)
     rollout_fn = domain.GraphRolloutModel(stepper, steps=2, feature="nodes")
@@ -115,7 +115,7 @@ def test_graph_rollout_model_wraps_as_domain_function():
 def test_graph_rollout_model_participates_in_functional_constraint():
     domain = phx.domain.GraphDomain(_graph())
     nodes = domain.component({"graph": phx.domain.Nodes()})
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
     stepper = phx.graph.EulerGraphStepper(ConstantNodeRate(1.0), dt=1.0)
 
     @domain.Function("graph")
@@ -129,13 +129,9 @@ def test_graph_rollout_model_participates_in_functional_constraint():
     def residual(pred):
         return pred - target
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=nodes,
-        operator=residual,
-        constraint_vars="pred",
-        num_points=3,
-        structure=structure,
-    )
+    constraint = phx.constraints.FunctionalConstraint.from_operator(component=nodes,
+    operator=residual,
+    constraint_vars="pred", sampling=phx.domain.PointSampling(3, layout=structure), )
     rollout_fn = domain.GraphRolloutModel(stepper, steps=2, input_fn=u)
 
     assert constraint.loss({"pred": rollout_fn}) < 1e-12
@@ -146,7 +142,7 @@ def test_graph_rollout_model_respects_node_subsets():
     subset = domain.component(
         {"graph": phx.domain.NodeSet(jnp.array([0, 2], dtype=jnp.int32))}
     )
-    batch = subset.sample(2, structure=phx.domain.ProductStructure((("graph",),)))
+    batch = subset.sample(phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),))))
     stepper = phx.graph.EulerGraphStepper(ConstantNodeRate(1.0), dt=1.0)
     rollout_fn = domain.GraphRolloutModel(stepper, steps=1)
 
@@ -171,7 +167,7 @@ def test_process_stepper_preserves_padding_entries():
     batch = domain.points_from_indices(
         [0, 1],
         component=phx.domain.Nodes(),
-        structure=phx.domain.ProductStructure((("graph",),)),
+        structure=phx.domain.SampleLayout((("graph",),)),
     )
 
     stepper = phx.graph.EulerGraphStepper(ConstantNodeRate(1.0), dt=1.0)
@@ -188,7 +184,7 @@ def test_graph_process_stepper_integrates_with_graph_trajectory_constraint():
     component = domain.component(
         {"graph": phx.domain.Nodes(), "t": phx.domain.FixedStart()}
     )
-    structure = phx.domain.ProductStructure((("graph", "t"),))
+    structure = phx.domain.SampleLayout((("graph", "t"),))
     stepper = phx.graph.EulerGraphStepper(ZeroNodeRate(), dt=0.5)
 
     @domain.Function("graph", "t")
@@ -198,12 +194,8 @@ def test_graph_process_stepper_integrates_with_graph_trajectory_constraint():
     def residual(f):
         return domain.GraphModel(stepper, input_fn=f) - f
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=component,
-        operator=residual,
-        constraint_vars="u",
-        num_points=2,
-        structure=structure,
-    )
+    constraint = phx.constraints.FunctionalConstraint.from_operator(component=component,
+    operator=residual,
+    constraint_vars="u", sampling=phx.domain.PointSampling(2, layout=structure), )
 
     assert constraint.loss({"u": u}, key=jr.key(0)) < 1e-12

@@ -21,7 +21,7 @@ def _line_graph() -> phx.graph.GraphIR:
 def _domain_and_node_batch():
     domain = phx.domain.GraphDomain(_line_graph())
     nodes = domain.component({"graph": phx.domain.Nodes()})
-    batch = nodes.sample(3, structure=phx.domain.ProductStructure((("graph",),)))
+    batch = nodes.sample(phx.domain.PointSampling(3, layout=phx.domain.SampleLayout((("graph",),))))
     return domain, nodes, batch
 
 
@@ -91,7 +91,7 @@ def test_graph_advection_diffusion_residual_adds_advective_flux():
 
 def test_graph_heat_residual_zero_for_constant_implicit_step():
     domain, nodes, _batch = _domain_and_node_batch()
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
 
     @domain.Function("graph")
     def u_current(node):
@@ -106,13 +106,9 @@ def test_graph_heat_residual_zero_for_constant_implicit_step():
     def residual(next_fn, current_fn):
         return phx.operators.graph_heat_residual(next_fn, current_fn, dt=0.25)
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=nodes,
-        operator=residual,
-        constraint_vars=("u_next", "u_current"),
-        num_points=3,
-        structure=structure,
-    )
+    constraint = phx.constraints.FunctionalConstraint.from_operator(component=nodes,
+    operator=residual,
+    constraint_vars=("u_next", "u_current"), sampling=phx.domain.PointSampling(3, layout=structure), )
 
     assert constraint.loss({"u_next": u_next, "u_current": u_current}) < 1e-12
 

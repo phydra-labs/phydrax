@@ -1,109 +1,115 @@
 # Sampling
 
-Structured sampling yields batches that preserve axis meaning (via named axes), so that
-operators and constraints can keep shape semantics without manual broadcasting.
+Sampling is an explicit plan-to-batch operation. Plans describe counts, layouts,
+axis discretizations, and designs; batches carry sampled values plus named-axis
+semantics for operators, models, constraints, and integration.
 
-For a conceptual overview (product structures, components, and coord-separable grids), see
+For the conceptual model, see
 [Guides → Domains and sampling](../../guides_domain.md).
 
-## Paired vs coord-separable sampling
+## Sampling plans
 
-Phydrax supports two complementary structured sampling modes:
+- `PointSampling` materializes a `PointBatch`. Its `SampleLayout` partitions
+  non-fixed labels into jointly sampled blocks.
+- `GridSampling` materializes a `GridBatch`. Its `axes` mapping requests
+  coordinate axes for selected labels; its optional dense `PointSampling` handles
+  remaining labels.
 
-- **Paired sampling** (`PointsBatch`): samples *points* in each block of a `ProductStructure`.
-  This is the default mode used by most pointwise PDE residual constraints.
-- **Coord-separable sampling** (`CoordSeparableBatch`): samples *1D coordinate axes* for selected
-  unary labels (geometry and/or scalar intervals) and evaluates on the implied Cartesian grid (with an interior mask).
-  This is the natural mode for FFT/basis/spectral operators and neural operators (FNO, DeepONet).
+`TrajectoryDatasetDomain` and other coupled factors validate layouts
+factor-wise. Their labels cannot be silently split across unrelated axes.
 
-`TrajectoryDatasetDomain` is paired-only: its dataset row and time label must stay
-on the same sampling axis.
+### Joint point designs
 
-Sampling and interpolation are adjacent but distinct. Sampling returns source
-sites, masks, axis identities, and measure metadata. Interpolation may later
-reconstruct stored values at query sites, but it neither changes the sampled
-measure nor supplies quadrature weights. A `CoordSeparableBatch` provides the
-canonical source-axis metadata used by structured consumers; each consumer
-still chooses its explicit boundary and support policy.
-
-## Joint block designs
-
-A paired block is also one joint reference design. For
-`ProductStructure((("x", "t"),))`, Phydrax generates one design spanning the
-combined reference dimensions of `"x"` and `"t"` and then maps its column slices
-through exact target-measure transports. Fixed labels consume no dimensions.
-
-Supported exact transports include scalar intervals, probability inverse CDFs,
-`Interval1d`, `HyperRectangle` interiors and boundaries, and finite
-`DatasetDomain` rows. IID and Latin-hypercube designs may use independent native
-factor samplers when an exact transport is unavailable: both preserve their design
-contract under factorwise composition. Sobol, Halton, and Hammersley multi-label
-blocks reject that case because factorwise sequences would not preserve the
-requested joint design.
-
-Component `where` and `where_all` predicates remain target-measure masks; paired
-sampling does not reinterpret them as rejection-conditioning predicates.
-
-Typed designs and string shorthands are equivalent:
+One layout block is one joint reference design. For
+`SampleLayout((("x", "t"),))`, Phydrax generates one design spanning the
+combined reference dimensions of `"x"` and `"t"` and maps its column slices
+through target-measure transports. Fixed labels consume no reference dimensions.
 
 ```python
 import jax.random as jr
 import phydrax as phx
 
 x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
-t = phx.domain.TimeInterval(0.0, 2.0, label="t")
+t = phx.domain.TimeInterval(0.0, 2.0)
 component = (x @ t).component()
 
-typed = phx.sampling.SobolDesign(scrambled=True)
-batch = component.sample(
+sampling = phx.domain.PointSampling(
     256,
-    structure=phx.domain.ProductStructure((("x", "t"),)),
-    sampler=typed,
+    layout=phx.domain.SampleLayout((("x", "t"),)),
+    design=phx.sampling.SobolDesign(scrambled=True),
+)
+batch = component.sample(sampling, key=jr.key(0))
+```
+
+IID and Latin-hypercube designs may compose independent native factor samplers
+when no exact joint transport exists. Sobol, Halton, and Hammersley blocks reject
+that case rather than silently replacing a multidimensional design with repeated
+one-dimensional sequences.
+
+### Axis-based grids
+
+`GridSampling.axes` maps each gridded label to integer counts, axis specs, tuples
+of axis specs, or a `GridSpec`. A dense point plan may cover labels that remain
+paired:
+
+```python
+geom = phx.domain.Interval1d(0.0, 1.0)
+batch = geom.component().sample(
+    phx.domain.GridSampling(
+        {"x": phx.domain.FourierAxisSpec(64)},
+    ),
     key=jr.key(0),
 )
 ```
 
-Use `phx.sampling.design_capabilities(typed)` to inspect randomized,
-count-dependent, prefix-stable, random-access, factorwise-composable, and
-JAX-native properties.
+`GridBatch` stores:
 
-Coord-separable sampling is driven by `DomainComponent.sample_coord_separable(...)`, which takes:
+- `coord_axes_by_label`: named axes for each coordinate component;
+- `coord_mask_by_label`: support masks on implied Cartesian grids;
+- `coord_geometry_weight_by_label`: optional cut-cell corrections;
+- `axis_discretization_by_axis`: nodes, quadrature weights, basis metadata, and
+  nested-axis state;
+- `dense_structure`: the canonical layout of any remaining point block.
 
-- `coord_separable`: a mapping from unary label (e.g. `"x"` or `"t"`) to either
-  counts (`int` / `Sequence[int]`) *or* basis-aware axis specs (`AbstractAxisSpec` implementations / `GridSpec`);
-- `dense_structure` + `num_points`: how to sample any remaining non-fixed, non-separable labels
-  (e.g. `"data"` for operator-learning datasets).
+Sampling describes sites and measures. Interpolation separately declares how
+stored values are reconstructed at new sites.
 
-!!! example
-    Coord-separable grid evaluation on an interval:
+## Core sampling API
 
-    ```python
-    import jax.random as jr
-    import phydrax as phx
-
-    geom = phx.domain.Interval1d(0.0, 1.0)
-    component = geom.component()
-
-    batch = component.sample_coord_separable(
-        {"x": phx.domain.FourierAxisSpec(64)},
-        key=jr.key(0),
-    )
-    ```
-
-!!! note
-    A `CoordSeparableBatch` stores:
-
-    - `coord_axes_by_label`: per-label axis names (for shape/dims inference),
-    - `coord_mask_by_label`: per-label interior masks on the Cartesian grid,
-    - `axis_discretization_by_axis`: optional per-axis metadata (nodes/weights/basis),
-      used by quadrature and basis backends.
-
-::: phydrax.domain.ProductStructure
+::: phydrax.domain.SampleLayout
     options:
         members:
             - __init__
             - canonicalize
             - axis_for
+
+---
+
+::: phydrax.domain.PointSampling
+    options:
+        members:
+            - __init__
+
+---
+
+::: phydrax.domain.GridSampling
+    options:
+        members:
+            - __init__
+
+---
+
+::: phydrax.domain.PointBatch
+    options:
+        members:
+            - __init__
+
+---
+
+::: phydrax.domain.GridBatch
+    options:
+        members:
+            - __init__
 
 ## Typed reference designs
 
@@ -119,22 +125,7 @@ Coord-separable sampling is driven by `DomainComponent.sample_coord_separable(..
 
 ::: phydrax.sampling.DesignCapabilities
 
----
-
-::: phydrax.domain.PointsBatch
-    options:
-        members:
-            - __init__
-
-
-::: phydrax.domain.CoordSeparableBatch
-    options:
-        members:
-            - __init__
-
----
-
-## Coord-separable grids
+## Axis specs and grids
 
 ::: phydrax.domain.AxisDiscretization
     options:

@@ -6,11 +6,12 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 
+import phydrax as phx
 from phydrax.constraints import RaggedTimeSeriesDataConstraint
 from phydrax.domain import (
     Interval1d,
     IrregularTrajectoryDatasetDomain,
-    ProductStructure,
+    SampleLayout,
     TimeInterval,
 )
 from phydrax.nn.models import LatentContractionModel
@@ -119,10 +120,9 @@ def test_latent_contraction_axis_batch_matches_product_grid_and_grad():
         factors={"x": AffineScalarLatent(), "t": AffineScalarLatent()},
         factor_inputs={"x": ("x",), "t": ("t",)},
     )
-    u = domain.Model("x", "t", input_mode="structured")(model)
+    u = domain.Model("x", "t")(model)
     batch = domain.component().sample(
-        (4, 5),
-        structure=ProductStructure((("x",), ("t",))),
+        phx.domain.PointSampling((4, 5), layout=SampleLayout((("x",), ("t",)))),
         key=jr.key(1),
     )
 
@@ -144,7 +144,7 @@ def test_latent_contraction_axis_batch_matches_product_grid_and_grad():
             factors={"x": AffineScalarLatent(scale), "t": AffineScalarLatent()},
             factor_inputs={"x": ("x",), "t": ("t",)},
         )
-        fn = domain.Model("x", "t", input_mode="structured")(scaled)
+        fn = domain.Model("x", "t")(scaled)
         return jnp.sum(fn(batch).data)
 
     grad = jax.grad(total)(jnp.asarray(0.25))
@@ -170,14 +170,15 @@ def test_irregular_ragged_constraint_uses_case_major_axis_batch():
         factors={"data": DataPlusOneLatent(), "t": OnePlusTimeLatent()},
         factor_inputs={"data": ("data",), "t": ("t",)},
     )
-    u = domain.Model("data", "t", input_mode="structured")(model)
+    u = domain.Model("data", "t")(model)
     constraint = RaggedTimeSeriesDataConstraint(
         "u",
         domain.component(),
         values,
-        num_points=(3, 4),
-        structure=ProductStructure((("data",), ("t",))),
-        sampling="case_time_uniform",
+        sampling=phx.domain.PointSampling(
+            (3, 4), layout=SampleLayout((("data",), ("t",))), design="uniform"
+        ),
+        selection="case_time_uniform",
         interpolation="linear",
     )
 

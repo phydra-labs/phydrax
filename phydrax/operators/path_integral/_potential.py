@@ -9,9 +9,10 @@ from typing import TypeAlias
 
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import DomainFunction
+
 from ..._callable import _ensure_special_kwonly_args
 from ..._doc import DOC_KEY0
-from ...domain._function import DomainFunction
 
 
 PotentialCallable: TypeAlias = Callable[[Array, Array], ArrayLike]

@@ -11,9 +11,7 @@ import phydrax as phx
 
 
 def _points_batch():
-    structure = phx.domain.ProductStructure((("case",), ("x",))).canonicalize(
-        ("case", "x")
-    )
+    structure = phx.domain.SampleLayout((("case",), ("x",))).canonicalize(("case", "x"))
     case_axis = structure.axis_for("case")
     sample_axis = structure.axis_for("x")
     coordinates = jnp.broadcast_to(
@@ -21,7 +19,7 @@ def _points_batch():
         (2, 4, 1),
     )
     values = jnp.arange(8.0).reshape((2, 4))
-    batch = phx.domain.PointsBatch(
+    batch = phx.domain.PointBatch(
         {
             "u": cx.Field(values, dims=(case_axis, sample_axis)),
             "x": cx.Field(coordinates, dims=(case_axis, sample_axis, None)),
@@ -65,8 +63,9 @@ def test_points_domain_model_dispatches_shared_query_geometry_end_to_end():
     data = phx.domain.DatasetDomain(jnp.ones((2, 4)), label="data")
     domain = data @ phx.domain.Interval1d(0.0, 1.0)
     sampled = domain.component().sample(
-        (2, 4),
-        structure=phx.domain.ProductStructure((("data",), ("x",))),
+        phx.domain.PointSampling(
+            (2, 4), layout=phx.domain.SampleLayout((("data",), ("x",)))
+        ),
         key=jr.key(2),
     )
     latent = 4
@@ -100,15 +99,20 @@ def test_points_domain_model_dispatches_shared_query_geometry_end_to_end():
 def test_coord_separable_domain_view_preserves_axes_and_restores_output():
     nx = 8
     data = phx.domain.DatasetDomain(jnp.ones((3, nx)), label="data")
-    geometry = phx.domain.Square(center=(0.0, 0.0), side=1.0)
+    geometry = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
+    )
     domain = data @ geometry
-    sampled = domain.component().sample_coord_separable(
-        {"x": (phx.domain.FourierAxisSpec(nx), phx.domain.FourierAxisSpec(nx))},
-        num_points=2,
-        dense_structure=phx.domain.ProductStructure((("data",),)),
+    sampled = domain.component().sample(
+        phx.domain.GridSampling(
+            {"x": (phx.domain.FourierAxisSpec(nx), phx.domain.FourierAxisSpec(nx))},
+            dense=phx.domain.PointSampling(
+                2, layout=phx.domain.SampleLayout((("data",),))
+            ),
+        ),
         key=jr.key(0),
     )
-    view = phx.nn.operator_domain_view_from_coord_separable(
+    view = phx.nn.operator_domain_view_from_grid(
         sampled,
         inputs={"source": "data"},
         queries={"query": ("x",)},
@@ -339,7 +343,7 @@ def test_graph_trajectory_domain_view_includes_time_in_query_geometry():
         [0, 1],
         [0.5, 1.0],
         component=component,
-        structure=phx.domain.ProductStructure((("graph", "t"),)),
+        structure=phx.domain.SampleLayout((("graph", "t"),)),
     )
     view = phx.nn.operator_domain_view_from_graph(
         sampled,

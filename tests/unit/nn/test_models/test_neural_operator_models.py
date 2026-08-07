@@ -7,12 +7,12 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
+import phydrax as phx
 from phydrax.domain import (
     DatasetDomain,
     FourierAxisSpec,
     Interval1d,
-    ProductStructure,
-    Square,
+    SampleLayout,
 )
 from phydrax.nn.models import DeepONet, FNO, MLP, SeparableMLP
 from phydrax.operators.differential import laplacian
@@ -48,10 +48,11 @@ def test_deeponet_domain_model_coord_separable_output_shape(scan):
     u = domain.Model("data", "x")(model)
 
     component = domain.component()
-    batch = component.sample_coord_separable(
-        {"x": FourierAxisSpec(8)},
-        num_points=2,
-        dense_structure=ProductStructure((("data",),)),
+    batch = component.sample(
+        phx.domain.GridSampling(
+            {"x": FourierAxisSpec(8)},
+            dense=phx.domain.PointSampling(2, layout=SampleLayout((("data",),))),
+        ),
         key=jr.key(0),
     )
     out = u(batch)
@@ -84,10 +85,11 @@ def test_fno_one_dimensional_domain_model_output_shape_and_basis_laplacian(scan)
     du = laplacian(u, var="x", backend="basis", basis="fourier", periodic=True)
 
     component = domain.component()
-    batch = component.sample_coord_separable(
-        {"x": FourierAxisSpec(n)},
-        num_points=2,
-        dense_structure=ProductStructure((("data",),)),
+    batch = component.sample(
+        phx.domain.GridSampling(
+            {"x": FourierAxisSpec(n)},
+            dense=phx.domain.PointSampling(2, layout=SampleLayout((("data",),))),
+        ),
         key=jr.key(0),
     )
     out = u(batch)
@@ -116,7 +118,9 @@ def test_fno_two_dimensional_domain_model_output_shape_and_basis_laplacian(scan)
     ny = 10
     data = jnp.ones((3, nx, ny), dtype=float)
     data_dom = DatasetDomain(data)
-    geom = Square(center=(0.0, 0.0), side=1.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
+    )
     domain = data_dom @ geom
 
     model = FNO(
@@ -132,10 +136,11 @@ def test_fno_two_dimensional_domain_model_output_shape_and_basis_laplacian(scan)
     du = laplacian(u, var="x", backend="basis", basis="fourier", periodic=True)
 
     component = domain.component()
-    batch = component.sample_coord_separable(
-        {"x": (FourierAxisSpec(nx), FourierAxisSpec(ny))},
-        num_points=2,
-        dense_structure=ProductStructure((("data",),)),
+    batch = component.sample(
+        phx.domain.GridSampling(
+            {"x": (FourierAxisSpec(nx), FourierAxisSpec(ny))},
+            dense=phx.domain.PointSampling(2, layout=SampleLayout((("data",),))),
+        ),
         key=jr.key(0),
     )
     out = u(batch)
@@ -160,10 +165,12 @@ def test_fno_two_dimensional_rejects_point_like_input(scan):
         )
 
 
-def test_domain_model_structured_kwarg_allows_plain_callable_tuple_input():
+def test_domain_model_explicit_binding_supports_plain_callable_blockwise_input():
     data = jnp.ones((3, 2), dtype=float)
     data_dom = DatasetDomain(data)
-    geom = Square(center=(0.0, 0.0), side=1.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
+    )
     domain = data_dom @ geom
 
     def plain_callable(inp, *, key=None, iter_=None):
@@ -176,19 +183,24 @@ def test_domain_model_structured_kwarg_allows_plain_callable_tuple_input():
 
     component = domain.component()
     nx, ny = 6, 5
-    batch = component.sample_coord_separable(
-        {"x": (FourierAxisSpec(nx), FourierAxisSpec(ny))},
-        num_points=2,
-        dense_structure=ProductStructure((("data",),)),
+    batch = component.sample(
+        phx.domain.GridSampling(
+            {"x": (FourierAxisSpec(nx), FourierAxisSpec(ny))},
+            dense=phx.domain.PointSampling(2, layout=SampleLayout((("data",),))),
+        ),
         key=jr.key(0),
     )
 
-    u_unmarked = domain.Model("data", "x")(plain_callable)
-    with pytest.raises(ValueError, match="does not support structured inputs"):
-        _ = u_unmarked(batch)
+    with pytest.raises(TypeError, match="Plain callable models require"):
+        domain.Model("data", "x")(plain_callable)
 
-    u_marked = domain.Model("data", "x", structured=True)(plain_callable)
-    out = u_marked(batch)
+    binding = phx.nn.ModelBinding.blockwise(
+        "structured",
+        pass_key=True,
+        pass_iter=True,
+    )
+    u = domain.Model("data", "x", binding=binding)(plain_callable)
+    out = u(batch)
 
     data_axis = batch.dense_structure.axis_for("data")
     x_axis0, x_axis1 = batch.coord_axes_by_label["x"]
@@ -213,9 +225,7 @@ def test_separable_mlp_domain_model_defaults_to_flat_point_packing():
     u = domain.Model("data", "x")(model)
 
     batch = domain.component().sample(
-        5,
-        structure=ProductStructure((("data", "x"),)),
-        key=jr.key(1),
+        phx.domain.PointSampling(5, layout=SampleLayout((("data", "x"),))), key=jr.key(1)
     )
     out = u(batch)
 
@@ -226,7 +236,9 @@ def test_separable_mlp_domain_model_defaults_to_flat_point_packing():
 
 
 def test_separable_mlp_domain_model_still_uses_structured_blockwise_grids():
-    geom = Square(center=(0.0, 0.0), side=1.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
+    )
     model = SeparableMLP(
         in_size=2,
         out_size=2,
@@ -237,8 +249,8 @@ def test_separable_mlp_domain_model_still_uses_structured_blockwise_grids():
     )
     u = geom.Model("x")(model)
 
-    batch = geom.component().sample_coord_separable(
-        {"x": (FourierAxisSpec(5), FourierAxisSpec(4))},
+    batch = geom.component().sample(
+        phx.domain.GridSampling({"x": (FourierAxisSpec(5), FourierAxisSpec(4))}),
         key=jr.key(3),
     )
     out = u(batch)
@@ -273,7 +285,9 @@ def test_separable_mlp_key_none_avoids_eval_time_random_split(scan):
 
 
 def test_domain_model_explicit_key_none_reaches_model_export_path():
-    geom = Square(center=(0.0, 0.0), side=1.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
+    )
     model = SeparableMLP(
         in_size=2,
         out_size="scalar",
@@ -293,18 +307,20 @@ def test_domain_model_explicit_key_none_reaches_model_export_path():
     assert "random_split" not in keyless_jaxpr
 
 
-def test_domain_model_input_mode_rejects_conflicting_structured_alias():
-    data = jnp.ones((3, 2), dtype=float)
-    domain = DatasetDomain(data) @ Interval1d(0.0, 1.0)
-
-    with pytest.raises(ValueError, match="either structured=True or input_mode"):
-        domain.Model("data", "x", structured=True, input_mode="flat")
-
-
-def test_domain_model_structured_input_mode_requires_structured_model():
+def test_domain_model_rejects_binding_override_for_phydrax_model():
     data = jnp.ones((3, 2), dtype=float)
     domain = DatasetDomain(data) @ Interval1d(0.0, 1.0)
     model = MLP(in_size=3, out_size=1, width_size=8, depth=2, key=jr.key(0))
 
-    with pytest.raises(ValueError, match="requires a model that supports structured"):
-        domain.Model("data", "x", input_mode="structured")(model)
+    override = phx.nn.ModelBinding.pointwise("structured")
+    with pytest.raises(ValueError, match="caller overrides"):
+        domain.Model("data", "x", binding=override)(model)
+
+
+def test_domain_model_axis_binding_requires_phydrax_model():
+    data = jnp.ones((3, 2), dtype=float)
+    domain = DatasetDomain(data) @ Interval1d(0.0, 1.0)
+    binding = phx.nn.ModelBinding.axis()
+
+    with pytest.raises(TypeError, match="Axis-batch model bindings require"):
+        domain.Model("data", "x", binding=binding)(lambda x: x)

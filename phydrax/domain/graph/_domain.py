@@ -2,18 +2,23 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from collections.abc import Mapping
 from typing import Any, Literal
 
 import coordax as cx
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
 from ..._frozendict import frozendict
 from ...graph import GraphIR
-from .._components import _AbstractVarComponent
-from .._domain import _AbstractUnaryDomain
-from .._structure import ProductStructure
+from .._coordinate import CoordinateSpec
+from .._domain import JointFactor
+from .._factor_component import FactorComponent
+from .._measure import BaseMeasure, ExactMass
+from .._selection import Selection
+from .._structure import SampleLayout
 from ._batch import GRAPH_ENTITY_INDEX_KEY, GRAPH_GRAPH_INDEX_KEY, GraphBatch
 from ._components import (
     graph_component_indices_for_graph,
@@ -38,7 +43,9 @@ def _to_axis_fields(tree: Any, axis: str, /) -> Any:
     def _leaf_to_field(value: Any) -> cx.Field:
         arr = jnp.asarray(value)
         if arr.ndim == 0:
-            raise ValueError("GraphDomain feature leaves must have a leading entity axis.")
+            raise ValueError(
+                "GraphDomain feature leaves must have a leading entity axis."
+            )
         return cx.Field(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
 
     return jax.tree_util.tree_map(_leaf_to_field, tree)
@@ -48,7 +55,7 @@ def _take_tree(tree: Any, indices: Array, /) -> Any:
     return jax.tree_util.tree_map(lambda leaf: jnp.asarray(leaf)[indices], tree)
 
 
-class GraphDomain(_AbstractUnaryDomain):
+class GraphDomain(JointFactor):
     """A unary Phydrax domain over a finite sparse graph.
 
     `GraphDomain` makes nodes, edges, or graph-level entries available as finite
@@ -94,9 +101,41 @@ class GraphDomain(_AbstractUnaryDomain):
         return self._label
 
     @property
-    def var_dim(self) -> int:
-        """Number of coordinate labels owned by this unary domain."""
-        return 1
+    def labels(self) -> tuple[str, ...]:
+        return (self.label,)
+
+    @property
+    def coordinate_specs(self) -> tuple[CoordinateSpec, ...]:
+        return (CoordinateSpec(None, kind="graph", differentiable=False, dtype=None),)
+
+    def bind_component(
+        self,
+        selections: Mapping[str, Selection],
+        /,
+    ) -> FactorComponent:
+        if tuple(selections) != self.labels:
+            raise ValueError(
+                f"Graph factor {self.labels} requires exactly one ordered selection."
+            )
+        selection = selections[self.label]
+        normalized = self.measure_mode == "probability"
+        kind = "probability" if normalized else "counting"
+        return FactorComponent(
+            factor=self,
+            selections=selections,
+            measure=BaseMeasure(
+                kind,
+                ExactMass(self.component_measure(selection)),
+                normalized=normalized,
+            ),
+        )
+
+    def _replace_labels(
+        self,
+        labels: tuple[str, ...],
+        /,
+    ) -> "GraphDomain":
+        return eqx.tree_at(lambda factor: factor._label, self, labels[0])
 
     @property
     def measure_mode(self) -> GraphMeasureMode:
@@ -127,18 +166,18 @@ class GraphDomain(_AbstractUnaryDomain):
 
     def _component_indices(
         self,
-        component: _AbstractVarComponent,
+        component: Selection,
         kind: GraphComponentKind,
         /,
     ) -> Array:
         return graph_component_indices_for_graph(self.graph, component, kind)
 
-    def component_size(self, component: _AbstractVarComponent, /) -> int:
+    def component_size(self, component: Selection, /) -> int:
         """Return the number of entities selected by a graph component."""
         kind = graph_component_kind(component)
         return int(self._component_indices(component, kind).shape[0])
 
-    def component_measure(self, component: _AbstractVarComponent, /) -> Array:
+    def component_measure(self, component: Selection, /) -> Array:
         """Return the total measure assigned to a graph component."""
         if self._measure_mode == "probability":
             return jnp.asarray(1.0, dtype=float)
@@ -179,10 +218,10 @@ class GraphDomain(_AbstractUnaryDomain):
 
     def sample_component(
         self,
-        component: _AbstractVarComponent,
+        component: Selection,
         num_points: int,
         *,
-        structure: ProductStructure,
+        structure: SampleLayout,
         label: str | None = None,
     ) -> GraphBatch:
         """Materialize all entities selected by `component`.
@@ -242,7 +281,8 @@ class GraphDomain(_AbstractUnaryDomain):
         The wrapped model receives the sampled batch topology and can return node,
         edge, or global outputs selected by `output`.
         """
-        from ...domain._function import DomainFunction
+        from phydrax.domain import DomainFunction
+
         from ...nn import GraphModel
 
         return DomainFunction(
@@ -282,7 +322,8 @@ class GraphDomain(_AbstractUnaryDomain):
         The stepper is applied for `steps` transitions on the sampled graph state,
         and the selected rollout feature is exposed as a graph-domain field.
         """
-        from ...domain._function import DomainFunction
+        from phydrax.domain import DomainFunction
+
         from ...nn import GraphRolloutModel
 
         return DomainFunction(
@@ -303,11 +344,9 @@ class GraphDomain(_AbstractUnaryDomain):
             ),
         )
 
-    def equivalent(self, other: object, /) -> bool:
+    def _same_factor_support(self, other: object, /) -> bool:
         """Return whether another domain has the same public graph-domain shape."""
         if not isinstance(other, GraphDomain):
-            return False
-        if self.label != other.label:
             return False
         if self.measure_mode != other.measure_mode:
             return False

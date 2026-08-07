@@ -14,23 +14,25 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, ArrayLike, Key
 
-from .._bvh import beam_select_leaf_items, build_point_bvh
-from .._callable import _ensure_special_kwonly_args
-from .._doc import DOC_KEY0
-from .._strict import StrictModule
-from ..domain._base import _AbstractGeometry, EnforcementGateMethod
-from ..domain._components import (
+from phydrax.domain import (
+    AbstractGeometry,
+    AbstractScalarDomain,
     Boundary,
+    CallbackDerivativeRule,
+    ComponentSum,
     DomainComponent,
-    DomainComponentUnion,
+    DomainFunction,
+    EnforcementGateMethod,
     Fixed,
     FixedEnd,
     FixedStart,
     Interior,
 )
-from ..domain._domain import RelabeledDomain
-from ..domain._function import DomainFunction
-from ..domain._scalar import _AbstractScalarDomain
+
+from .._bvh import beam_select_leaf_items, build_point_bvh
+from .._callable import _ensure_special_kwonly_args
+from .._doc import DOC_KEY0
+from .._strict import StrictModule
 from ..operators.differential._domain_ops import (
     cauchy_stress,
     directional_derivative,
@@ -41,7 +43,7 @@ from ..operators.differential._domain_ops import (
 from ..operators.differential._hooks import (
     blend_with_gate,
     nth_quotient_rule,
-    with_derivative_hook,
+    with_derivative_rule,
 )
 from ..operators.linalg import einsum
 
@@ -134,8 +136,8 @@ class _InitialPolynomialCallable(StrictModule):
 
 
 def _constant_weight(value: float, /) -> Callable[[Array], Array]:
-    def _w(x):
-        del x
+    def _w(x, *, key=None, **kwargs):
+        del x, key, kwargs
         return jnp.asarray(value, dtype=float)
 
     return _w
@@ -185,7 +187,7 @@ def _safe_norms(values: Array, /, *, keepdims: bool = False) -> Array:
 
 
 def _enforced_constraint_weight_fn(
-    geom: _AbstractGeometry,
+    geom: AbstractGeometry,
     where: Callable | None,
     /,
     *,
@@ -291,7 +293,14 @@ def _enforced_constraint_weight_fn(
         rho = jnp.abs(rho)
         return (rho + 1e-16) ** -2
 
-    def _weight_point(x: Array | tuple[Array, ...], /) -> Array:
+    def _weight_point(
+        x: Array | tuple[Array, ...],
+        /,
+        *,
+        key=None,
+        **kwargs,
+    ) -> Array:
+        del key, kwargs
         if isinstance(x, tuple):
             coords = tuple(jnp.asarray(c, dtype=float) for c in x)
             if not coords:
@@ -300,9 +309,9 @@ def _enforced_constraint_weight_fn(
                 raise ValueError(
                     "Coord-separable inputs for boundary weight must be 1D axes."
                 )
-            if len(coords) != int(geom.var_dim):
+            if len(coords) != int(geom.spatial_dim):
                 raise ValueError(
-                    f"Boundary weight expected {int(geom.var_dim)} coord axes, got {len(coords)}."
+                    f"Boundary weight expected {int(geom.spatial_dim)} coord axes, got {len(coords)}."
                 )
             if len(coords) == 1:
                 return jax.vmap(
@@ -319,15 +328,15 @@ def _enforced_constraint_weight_fn(
         if x_arr.ndim == 0:
             return _weight_from_point(jnp.asarray([x_arr], dtype=float))
         if x_arr.ndim == 1:
-            if int(x_arr.shape[0]) != int(geom.var_dim):
+            if int(x_arr.shape[0]) != int(geom.spatial_dim):
                 raise ValueError(
-                    f"Boundary weight expected point shape ({int(geom.var_dim)},), got {x_arr.shape}."
+                    f"Boundary weight expected point shape ({int(geom.spatial_dim)},), got {x_arr.shape}."
                 )
             return _weight_from_point(x_arr)
         if x_arr.ndim == 2:
-            if int(x_arr.shape[1]) != int(geom.var_dim):
+            if int(x_arr.shape[1]) != int(geom.spatial_dim):
                 raise ValueError(
-                    f"Boundary weight expected point batch shape (N,{int(geom.var_dim)}), got {x_arr.shape}."
+                    f"Boundary weight expected point batch shape (N,{int(geom.spatial_dim)}), got {x_arr.shape}."
                 )
             return jax.vmap(_weight_from_point)(x_arr)
         raise ValueError(
@@ -339,16 +348,11 @@ def _enforced_constraint_weight_fn(
 
 def _boundary_ansatz_factor(
     component: DomainComponent,
-    factor: _AbstractGeometry,
+    factor: AbstractGeometry,
     *,
     var: str,
 ) -> DomainFunction:
-    return DomainFunction(
-        domain=component.domain,
-        deps=(var,),
-        func=factor.boundary_ansatz_factor,
-        metadata={},
-    )
+    return component.domain.Function(var)(factor.boundary_ansatz_factor)
 
 
 def _boundary_ansatz_normal_extension(
@@ -411,19 +415,17 @@ def enforce_dirichlet(
     For scalar domains (e.g. time), an appropriate vanishing factor is constructed
     directly from $(t-t_0)$, $(t-t_1)$, etc.
     """
-    if isinstance(component, DomainComponentUnion):
+    if isinstance(component, ComponentSum):
         raise TypeError(
-            "enforce_dirichlet requires a DomainComponent, not a DomainComponentUnion."
+            "enforce_dirichlet requires a DomainComponent, not a ComponentSum."
         )
 
     if var not in component.domain.labels:
         raise KeyError(f"Label {var!r} not in domain {component.domain.labels}.")
 
     factor = component.domain.factor(var)
-    if isinstance(factor, RelabeledDomain):
-        factor = factor.base
 
-    comp = component.spec.component_for(var)
+    comp = component.spec.selection_for(var)
     if isinstance(comp, Interior):
         raise ValueError("enforce_dirichlet requires a non-interior component for var.")
 
@@ -433,7 +435,7 @@ def enforce_dirichlet(
     else:
         value_fn = DomainFunction(domain=u.domain, deps=(), func=value, metadata={})
 
-    if isinstance(factor, _AbstractGeometry):
+    if isinstance(factor, AbstractGeometry):
         if not isinstance(comp, Boundary):
             raise ValueError(
                 "enforce_dirichlet for geometry vars requires component Boundary()."
@@ -451,7 +453,7 @@ def enforce_dirichlet(
         )
         return blend_with_gate(value_fn, u, gate)
 
-    if isinstance(factor, _AbstractScalarDomain):
+    if isinstance(factor, AbstractScalarDomain):
         t = DomainFunction(domain=component.domain, deps=(var,), func=_IdentityCallable())
         if isinstance(comp, FixedStart):
             phi = t - factor.fixed("start")
@@ -466,7 +468,7 @@ def enforce_dirichlet(
 
         return blend_with_gate(value_fn, u, phi)
 
-    raise TypeError(f"Unsupported unary domain type {type(factor).__name__}.")
+    raise TypeError(f"Unsupported domain factor type {type(factor).__name__}.")
 
 
 def enforce_neumann(
@@ -495,21 +497,18 @@ def enforce_neumann(
     jet. The extension follows the representation's documented piecewise
     regularity away from the boundary.
     """
-    if isinstance(component, DomainComponentUnion):
-        raise TypeError(
-            "enforce_neumann requires a DomainComponent, not a DomainComponentUnion."
-        )
+    if isinstance(component, ComponentSum):
+        raise TypeError("enforce_neumann requires a DomainComponent, not a ComponentSum.")
 
     if var not in component.domain.labels:
         raise KeyError(f"Label {var!r} not in domain {component.domain.labels}.")
 
     factor = component.domain.factor(var)
-    if isinstance(factor, RelabeledDomain):
-        factor = factor.base
-    if not isinstance(factor, _AbstractGeometry):
+
+    if not isinstance(factor, AbstractGeometry):
         raise TypeError("enforce_neumann is only defined for geometry variables.")
 
-    comp = component.spec.component_for(var)
+    comp = component.spec.selection_for(var)
     if not isinstance(comp, Boundary):
         raise ValueError("enforce_neumann requires component Boundary() for var.")
     _reject_filtered_boundary(component, var=var, op_name="enforce_neumann")
@@ -582,21 +581,20 @@ def enforce_traction(
     $v_n=(v\cdot n)\,n$ and $v_t=v-v_n$), making $u^*$ enforce the target traction
     to first order.
     """
-    if isinstance(component, DomainComponentUnion):
+    if isinstance(component, ComponentSum):
         raise TypeError(
-            "enforce_traction requires a DomainComponent, not a DomainComponentUnion."
+            "enforce_traction requires a DomainComponent, not a ComponentSum."
         )
 
     if var not in component.domain.labels:
         raise KeyError(f"Label {var!r} not in domain {component.domain.labels}.")
 
     factor = component.domain.factor(var)
-    if isinstance(factor, RelabeledDomain):
-        factor = factor.base
-    if not isinstance(factor, _AbstractGeometry):
+
+    if not isinstance(factor, AbstractGeometry):
         raise TypeError("enforce_traction is only defined for geometry variables.")
 
-    comp = component.spec.component_for(var)
+    comp = component.spec.selection_for(var)
     if not isinstance(comp, Boundary):
         raise ValueError("enforce_traction requires component Boundary() for var.")
     _reject_filtered_boundary(component, var=var, op_name="enforce_traction")
@@ -669,21 +667,18 @@ def enforce_robin(
     mild regularity assumptions, without requiring a discontinuous unit-normal
     extension in the interior.
     """
-    if isinstance(component, DomainComponentUnion):
-        raise TypeError(
-            "enforce_robin requires a DomainComponent, not a DomainComponentUnion."
-        )
+    if isinstance(component, ComponentSum):
+        raise TypeError("enforce_robin requires a DomainComponent, not a ComponentSum.")
 
     if var not in component.domain.labels:
         raise KeyError(f"Label {var!r} not in domain {component.domain.labels}.")
 
     factor = component.domain.factor(var)
-    if isinstance(factor, RelabeledDomain):
-        factor = factor.base
-    if not isinstance(factor, _AbstractGeometry):
+
+    if not isinstance(factor, AbstractGeometry):
         raise TypeError("enforce_robin is only defined for geometry variables.")
 
-    comp = component.spec.component_for(var)
+    comp = component.spec.selection_for(var)
     if not isinstance(comp, Boundary):
         raise ValueError("enforce_robin requires component Boundary() for var.")
     _reject_filtered_boundary(component, var=var, op_name="enforce_robin")
@@ -757,9 +752,9 @@ def enforce_sommerfeld(
     which yields the Sommerfeld condition on $\partial\Omega$ because $\nu=n$
     there, under the same assumptions as `enforce_neumann`.
     """
-    if isinstance(component, DomainComponentUnion):
+    if isinstance(component, ComponentSum):
         raise TypeError(
-            "enforce_sommerfeld requires a DomainComponent, not a DomainComponentUnion."
+            "enforce_sommerfeld requires a DomainComponent, not a ComponentSum."
         )
 
     if var not in component.domain.labels:
@@ -768,12 +763,11 @@ def enforce_sommerfeld(
         raise KeyError(f"Label {time_var!r} not in domain {component.domain.labels}.")
 
     factor = component.domain.factor(var)
-    if isinstance(factor, RelabeledDomain):
-        factor = factor.base
-    if not isinstance(factor, _AbstractGeometry):
+
+    if not isinstance(factor, AbstractGeometry):
         raise TypeError("enforce_sommerfeld is only defined for geometry variables.")
 
-    comp = component.spec.component_for(var)
+    comp = component.spec.selection_for(var)
     if not isinstance(comp, Boundary):
         raise ValueError("enforce_sommerfeld requires component Boundary() for var.")
     _reject_filtered_boundary(component, var=var, op_name="enforce_sommerfeld")
@@ -832,22 +826,19 @@ def enforce_initial(
     that avoids unbounded polynomial growth away from the initial slice. Set
     `gate="poly"` to recover the original $(t-t_0)^{m+1}$ gate.
     """
-    if isinstance(component, DomainComponentUnion):
-        raise TypeError(
-            "enforce_initial requires a DomainComponent, not a DomainComponentUnion."
-        )
+    if isinstance(component, ComponentSum):
+        raise TypeError("enforce_initial requires a DomainComponent, not a ComponentSum.")
     if var not in component.domain.labels:
         raise KeyError(f"Label {var!r} not in domain {component.domain.labels}.")
     if not targets:
         raise ValueError("enforce_initial requires at least one derivative target.")
 
     factor = component.domain.factor(var)
-    if isinstance(factor, RelabeledDomain):
-        factor = factor.base
-    if not isinstance(factor, _AbstractScalarDomain):
+
+    if not isinstance(factor, AbstractScalarDomain):
         raise TypeError("enforce_initial requires a scalar evolution variable.")
 
-    comp = component.spec.component_for(var)
+    comp = component.spec.selection_for(var)
     if isinstance(comp, FixedStart):
         t0 = factor.fixed("start")
     elif isinstance(comp, FixedEnd):
@@ -1011,15 +1002,14 @@ def enforce_blend(
         raise KeyError(f"Label {var!r} not in domain {u.domain.labels}.")
 
     base_factor = u.domain.factor(var)
-    if isinstance(base_factor, RelabeledDomain):
-        base_factor = base_factor.base
-    if not isinstance(base_factor, _AbstractGeometry):
+
+    if not isinstance(base_factor, AbstractGeometry):
         raise TypeError("enforce_blend currently supports only geometry variables.")
     geom = base_factor
 
     resolved_pieces: list[tuple[DomainComponent, DomainFunction]] = []
     for component, u_piece in pieces:
-        if isinstance(component, DomainComponentUnion):
+        if isinstance(component, ComponentSum):
             raise TypeError("enforce_blend pieces must be DomainComponent (not a union).")
         if not isinstance(u_piece, DomainFunction):
             if callable(u_piece):
@@ -1036,16 +1026,15 @@ def enforce_blend(
                 f"Label {var!r} not in piece domain {component.domain.labels}."
             )
         factor = component.domain.factor(var)
-        if isinstance(factor, RelabeledDomain):
-            factor = factor.base
-        if not isinstance(factor, _AbstractGeometry):
+
+        if not isinstance(factor, AbstractGeometry):
             raise TypeError("enforce_blend pieces must use a geometry label for var.")
-        if not geom.equivalent(factor):
+        if not geom.same_support(factor):
             raise ValueError(
                 "enforce_blend requires all pieces to share an equivalent geometry."
             )
 
-        comp = component.spec.component_for(var)
+        comp = component.spec.selection_for(var)
         if not isinstance(comp, Boundary):
             raise ValueError("enforce_blend pieces require component Boundary() for var.")
         resolved_pieces.append((component, u_piece))
@@ -1069,7 +1058,7 @@ def enforce_blend(
             key=next(key_iter),
             on_empty="error",
         )
-        w = DomainFunction(domain=u.domain, deps=(var,), func=w_fn, metadata={})
+        w = u.domain.Function(var)(w_fn)
         numerator = numerator + w * u_piece
         denominator = denominator + w
 
@@ -1084,9 +1073,7 @@ def enforce_blend(
                 key=next(key_iter),
                 on_empty="zero",
             )
-            w_rem = DomainFunction(
-                domain=u.domain, deps=(var,), func=w_rem_fn, metadata={}
-            )
+            w_rem = u.domain.Function(var)(w_rem_fn)
             numerator = numerator + w_rem * u
             denominator = denominator + w_rem
 
@@ -1125,4 +1112,4 @@ def enforce_blend(
             derive=_derive,
         )
 
-    return with_derivative_hook(blended, _hook)
+    return with_derivative_rule(blended, CallbackDerivativeRule(_hook))

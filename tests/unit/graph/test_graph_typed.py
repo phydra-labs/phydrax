@@ -47,12 +47,12 @@ def _typed_graphs() -> tuple[phx.graph.GraphIR, phx.graph.GraphIR]:
 
 def test_graph_domain_samples_node_and_edge_type_components():
     domain = phx.domain.GraphDomain(_typed_graph(), measure="count")
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
 
     node_component = domain.component({"graph": phx.domain.NodeType(1)})
-    node_batch = node_component.sample(1, structure=structure)
+    node_batch = node_component.sample(phx.domain.PointSampling(1, layout=structure))
     edge_component = domain.component({"graph": phx.domain.EdgeType(0)})
-    edge_batch = edge_component.sample(2, structure=structure)
+    edge_batch = edge_component.sample(phx.domain.PointSampling(2, layout=structure))
 
     assert node_batch.component_kind == "nodes"
     assert jnp.allclose(node_batch["graph"]["features"].data[:, 0], jnp.array([2.0]))
@@ -62,7 +62,7 @@ def test_graph_domain_samples_node_and_edge_type_components():
     )
     assert edge_batch.component_kind == "edges"
     assert jnp.allclose(edge_batch["graph"]["features"].data[:, 0], jnp.array([0.5, 2.5]))
-    assert jnp.allclose(edge_component.measure(), 2.0)
+    assert jnp.allclose(edge_component.mass.value, 2.0)
 
 
 def test_graph_dataset_domain_resolves_node_types_per_case():
@@ -70,7 +70,7 @@ def test_graph_dataset_domain_resolves_node_types_per_case():
     batch = domain.points_from_indices(
         [0, 1],
         component=phx.domain.NodeType(1),
-        structure=phx.domain.ProductStructure((("graph",),)),
+        structure=phx.domain.SampleLayout((("graph",),)),
     )
 
     assert jnp.allclose(batch["graph"]["features"].data[:, 0], jnp.array([2.0, 10.0]))
@@ -82,7 +82,9 @@ def test_graph_dataset_domain_resolves_node_types_per_case():
         batch[phx.domain.graph.GRAPH_DATASET_INDEX_KEY].data,
         jnp.array([0, 1], dtype=jnp.int32),
     )
-    assert jnp.allclose(domain.component({"graph": phx.domain.NodeType(1)}).measure(), 2.0)
+    assert jnp.allclose(
+        domain.component({"graph": phx.domain.NodeType(1)}).mass.value, 2.0
+    )
 
 
 def test_typed_graph_helpers_return_indices_and_components():
@@ -135,8 +137,7 @@ def test_relational_graph_convolution_normalizes_per_receiver_relation():
 def test_relational_graph_convolution_wraps_as_graph_model_with_input_key():
     domain = phx.domain.GraphDomain(_typed_graph())
     batch = domain.component({"graph": phx.domain.Nodes()}).sample(
-        3,
-        structure=phx.domain.ProductStructure((("graph",),)),
+        phx.domain.PointSampling(3, layout=phx.domain.SampleLayout((("graph",),)))
     )
 
     @domain.Function("graph")

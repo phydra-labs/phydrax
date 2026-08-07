@@ -10,8 +10,7 @@ from typing import Any
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ...domain._domain import _AbstractDomain
-from ...domain._function import DomainFunction
+from phydrax.domain import Domain, DomainFunction
 
 
 def coerce_hbar(hbar: ArrayLike, /) -> Array:
@@ -43,13 +42,13 @@ def validate_vector_value(value: Any, /, *, role: str) -> Array:
 
 
 def _structurally_contains(
-    container: _AbstractDomain,
-    candidate: _AbstractDomain,
+    container: Domain,
+    candidate: Domain,
     /,
 ) -> bool:
     return all(
         label in container.labels
-        and container.factor(label).var_dim == candidate.factor(label).var_dim
+        and container.coordinate(label).compatible(candidate.coordinate(label))
         for label in candidate.labels
     )
 
@@ -57,7 +56,7 @@ def _structurally_contains(
 def join_function_arguments(
     *functions: DomainFunction,
 ) -> tuple[
-    _AbstractDomain,
+    Domain,
     tuple[str, ...],
     tuple[DomainFunction, ...],
     tuple[tuple[int, ...], ...],

@@ -12,24 +12,19 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
-from .._doc import DOC_KEY0
-from ..domain._components import (
+from phydrax.domain import (
+    ComponentSum,
     DomainComponent,
-    DomainComponentUnion,
+    DomainFunction,
+    GridBatch,
+    GridSampling,
+    PointBatch,
+    PointSampling,
 )
-from ..domain._function import DomainFunction
-from ..domain._structure import (
-    CoordSeparableBatch,
-    PointsBatch,
-    ProductStructure,
-)
+
+from .._doc import DOC_KEY0
 from ..integration import from_samples, over, reduce
 from ._base import AbstractSamplingConstraint
-from ._sampling_spec import (
-    CoordSamplingMap,
-    parse_sampling_num_points,
-    SamplingNumPoints,
-)
 
 
 class IntegralEqualityConstraint(AbstractSamplingConstraint):
@@ -52,12 +47,8 @@ class IntegralEqualityConstraint(AbstractSamplingConstraint):
     """
 
     constraint_vars: tuple[str, ...]
-    component: DomainComponent | DomainComponentUnion
-    structure: ProductStructure
-    coord_sampling: CoordSamplingMap | None
-    dense_structure: ProductStructure | None
-    num_points: Any
-    sampler: str
+    component: DomainComponent | ComponentSum
+    sampling: GridSampling | PointSampling | tuple[PointSampling, ...]
     weight: Array
     label: str | None
     over: str | tuple[str, ...] | None
@@ -68,14 +59,11 @@ class IntegralEqualityConstraint(AbstractSamplingConstraint):
     def __init__(
         self,
         *,
-        component: DomainComponent | DomainComponentUnion,
+        component: DomainComponent | ComponentSum,
         integrand: Callable[[Mapping[str, DomainFunction]], DomainFunction],
         equal_to: ArrayLike = 0.0,
-        num_points: SamplingNumPoints,
-        structure: ProductStructure,
-        dense_structure: ProductStructure | None = None,
+        sampling: GridSampling | PointSampling | tuple[PointSampling, ...],
         constraint_vars: Sequence[str] | None = None,
-        sampler: str = "latin_hypercube",
         weight: ArrayLike = 1.0,
         label: str | None = None,
         over: str | tuple[str, ...] | None = None,
@@ -85,17 +73,14 @@ class IntegralEqualityConstraint(AbstractSamplingConstraint):
         self.component = component
         self.integrand = integrand
         self.equal_to = jnp.asarray(equal_to, dtype=float)
-        self.structure = structure
-        dense_num_points, coord_sampling, dense_structure_out = parse_sampling_num_points(
-            component,
-            num_points=num_points,
-            structure=structure,
-            dense_structure=dense_structure,
-        )
-        self.num_points = dense_num_points
-        self.coord_sampling = coord_sampling
-        self.dense_structure = dense_structure_out
-        self.sampler = str(sampler)
+        if isinstance(component, ComponentSum):
+            if isinstance(sampling, GridSampling):
+                raise TypeError("ComponentSum does not support GridSampling.")
+        elif isinstance(sampling, tuple):
+            raise TypeError(
+                "Per-term PointSampling tuples require a ComponentSum."
+            )
+        self.sampling = sampling
         self.weight = jnp.asarray(weight, dtype=float)
         self.label = None if label is None else str(label)
         self.over = over
@@ -105,15 +90,12 @@ class IntegralEqualityConstraint(AbstractSamplingConstraint):
     def from_integrand(
         cls,
         *,
-        component: DomainComponent | DomainComponentUnion,
+        component: DomainComponent | ComponentSum,
         integrand: Callable[[Mapping[str, DomainFunction]], DomainFunction]
         | DomainFunction,
         equal_to: ArrayLike = 0.0,
-        num_points: SamplingNumPoints,
-        structure: ProductStructure,
-        dense_structure: ProductStructure | None = None,
+        sampling: GridSampling | PointSampling | tuple[PointSampling, ...],
         constraint_vars: Sequence[str] | None = None,
-        sampler: str = "latin_hypercube",
         weight: ArrayLike = 1.0,
         label: str | None = None,
         over: str | tuple[str, ...] | None = None,
@@ -132,11 +114,8 @@ class IntegralEqualityConstraint(AbstractSamplingConstraint):
             component=component,
             integrand=integrand_fn,
             equal_to=equal_to,
-            num_points=num_points,
-            structure=structure,
-            dense_structure=dense_structure,
+            sampling=sampling,
             constraint_vars=constraint_vars,
-            sampler=sampler,
             weight=weight,
             label=label,
             over=over,
@@ -146,14 +125,11 @@ class IntegralEqualityConstraint(AbstractSamplingConstraint):
     def from_operator(
         cls,
         *,
-        component: DomainComponent | DomainComponentUnion,
+        component: DomainComponent | ComponentSum,
         operator: Callable[..., DomainFunction],
         constraint_vars: str | Sequence[str],
         equal_to: ArrayLike = 0.0,
-        num_points: SamplingNumPoints,
-        structure: ProductStructure,
-        dense_structure: ProductStructure | None = None,
-        sampler: str = "latin_hypercube",
+        sampling: GridSampling | PointSampling | tuple[PointSampling, ...],
         weight: ArrayLike = 1.0,
         label: str | None = None,
         over: str | tuple[str, ...] | None = None,
@@ -172,11 +148,8 @@ class IntegralEqualityConstraint(AbstractSamplingConstraint):
             component=component,
             integrand=integrand,
             equal_to=equal_to,
-            num_points=num_points,
-            structure=structure,
-            dense_structure=dense_structure,
+            sampling=sampling,
             constraint_vars=vars_tuple,
-            sampler=sampler,
             weight=weight,
             label=label,
             over=over,
@@ -186,26 +159,19 @@ class IntegralEqualityConstraint(AbstractSamplingConstraint):
         self,
         *,
         key: Key[Array, ""] = DOC_KEY0,
-    ) -> PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...]:
+    ) -> PointBatch | GridBatch | tuple[PointBatch, ...]:
         """Sample points for estimating the integral."""
-        if self.coord_sampling is not None:
-            if isinstance(self.component, DomainComponentUnion):
-                raise ValueError(
-                    "coord-separable sampling is not supported for DomainComponentUnion."
-                )
-            return self.component.sample_coord_separable(
-                self.coord_sampling,
-                num_points=self.num_points,
-                dense_structure=self.dense_structure,
-                sampler=self.sampler,
-                key=key,
-            )
-        return self.component.sample(
-            self.num_points,
-            structure=self.structure,
-            sampler=self.sampler,
-            key=key,
-        )
+        component = self.component
+        sampling = self.sampling
+        if isinstance(component, ComponentSum):
+            if isinstance(sampling, GridSampling):
+                raise RuntimeError("ComponentSum sampling invariant was violated.")
+            return component.sample(sampling, key=key)
+        if isinstance(sampling, tuple):
+            raise RuntimeError("DomainComponent sampling invariant was violated.")
+        if isinstance(sampling, PointSampling):
+            return component.sample(sampling, key=key)
+        return component.sample(sampling, key=key)
 
     def loss(
         self,
@@ -213,7 +179,7 @@ class IntegralEqualityConstraint(AbstractSamplingConstraint):
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
-        batch: PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...] | None = None,
+        batch: PointBatch | GridBatch | tuple[PointBatch, ...] | None = None,
         **kwargs: Any,
     ) -> Array:
         r"""Evaluate the squared integral mismatch loss.

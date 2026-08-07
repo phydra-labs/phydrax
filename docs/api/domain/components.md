@@ -40,28 +40,34 @@ fixed-time slices, etc.) and wrap these into `DomainComponent` objects.
 
 ---
 
-::: phydrax.domain.ComponentSpec
+::: phydrax.domain.SelectionSpec
     options:
         members:
             - __init__
-            - component_for
+            - selection_for
 
-## Domain components
+## Bound components
 
-`DomainComponentUnion` is an additive collection of measure-disjoint
-components, not an arbitrary geometric set union. It requires at least one
-term, rejects duplicate terms, and requires every term to use the same
-compatible labeled domain. Measures and sample allocations add across terms;
-callers remain responsible for ensuring that separately filtered terms do not
-overlap.
+`Domain.component(...)` binds one selection per complete joint factor and records
+that factor's base measure. Unrestricted components carry an `ExactMass` when the
+factor can certify it. Predicate restrictions and unnormalized densities carry an
+`UnknownMass` until a numerical estimator supplies evidence.
+
+`ComponentSum` is an additive collection of measure-disjoint components, not a
+geometric Boolean union. Terms must share the same support; duplicates are
+rejected. Predicate-transformed terms require `assume_disjoint=True` because
+overlap cannot be proven structurally.
 
 ::: phydrax.domain.DomainComponent
     options:
         members:
             - __init__
-            - measure
+            - factor_component
+            - base_measure
+            - mass
+            - restrict
+            - with_density
             - sample
-            - sample_coord_separable
             - normals
             - normal
             - sdf
@@ -69,13 +75,23 @@ overlap.
 
 ---
 
-::: phydrax.domain.DomainComponentUnion
+::: phydrax.domain.ComponentSum
     options:
         members:
             - __init__
-            - measure
+            - base_measure
+            - mass
             - sample
 
+## Measure contracts
+
+::: phydrax.domain.BaseMeasure
+
+::: phydrax.domain.ExactMass
+
+::: phydrax.domain.EstimatedMass
+
+::: phydrax.domain.UnknownMass
 
 ## Metric volume
 

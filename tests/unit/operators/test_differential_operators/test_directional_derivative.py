@@ -6,13 +6,16 @@ import coordax as cx
 import jax.numpy as jnp
 import pytest
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.domain import DomainFunction, Square, TimeInterval
+from phydrax.domain import DomainFunction, TimeInterval
 from phydrax.operators.differential import directional_derivative
 
 
 def test_directional_derivative_scalar_point():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def f(x):
@@ -27,7 +30,9 @@ def test_directional_derivative_scalar_point():
 
 
 def test_directional_derivative_vector_point():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def f(x):
@@ -42,13 +47,15 @@ def test_directional_derivative_vector_point():
 
 
 def test_directional_derivative_direction_is_function():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def f(x):
         return x[0] ** 2 + x[1] ** 2
 
-    v = DomainFunction(domain=geom, deps=("x",), func=lambda x: x)
+    v = geom.Function("x")(lambda x: x)
     dd = directional_derivative(f, v)
 
     pts = frozendict({"x": cx.Field(jnp.array([2.0, 3.0]), dims=(None,))})
@@ -57,7 +64,9 @@ def test_directional_derivative_direction_is_function():
 
 
 def test_directional_derivative_spacetime_broadcasts_over_t(sample_batch):
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     dom = geom @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x", "t")
@@ -75,10 +84,12 @@ def test_directional_derivative_spacetime_broadcasts_over_t(sample_batch):
     assert jnp.allclose(out, 2.0 * x[..., 0:1])
 
 
-def test_directional_derivative_coord_separable(sample_coord_separable):
-    geom = Square(center=(0.0, 0.0), side=2.0)
+def test_directional_derivative_coord_separable(sample_grid):
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     component = geom.component()
-    batch = sample_coord_separable(component, {"x": (5, 4)}, dense_blocks=(), key=0)
+    batch = sample_grid(component, {"x": (5, 4)}, dense_blocks=(), key=0)
 
     @geom.Function("x")
     def f(x):
@@ -96,16 +107,18 @@ def test_directional_derivative_coord_separable(sample_coord_separable):
 
 
 def test_directional_derivative_preserves_metadata():
-    geom = Square(center=(0.0, 0.0), side=2.0)
-    u = DomainFunction(
-        domain=geom, deps=("x",), func=lambda x: x[0] ** 2, metadata={"scale": 7}
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
+    u = geom.Function("x")(lambda x: x[0] ** 2).with_metadata(**{"scale": 7})
     v = DomainFunction(domain=geom, deps=(), func=jnp.array([1.0, 0.0]))
     assert directional_derivative(u, v).metadata == u.metadata
 
 
 def test_directional_derivative_ad_engine_jvp_matches_default():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def f(x):
@@ -121,7 +134,9 @@ def test_directional_derivative_ad_engine_jvp_matches_default():
 
 
 def test_directional_derivative_ad_engine_requires_ad_backend():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def f(x):

@@ -7,14 +7,16 @@ import jax.random as jr
 import optax
 from evosax import algorithms as evo_algos
 
+import phydrax as phx
 from phydrax.constraints import PointSetConstraint
-from phydrax.domain import Square
 from phydrax.nn.models import MLP
 from phydrax.solver import FunctionalSolver
 
 
 def _make_regression_solver(seed: int, *, scan: bool = False) -> FunctionalSolver:
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def target(x):

@@ -5,13 +5,16 @@
 import coordax as cx
 import jax.numpy as jnp
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.domain import DomainFunction, Square, TimeInterval
+from phydrax.domain import TimeInterval
 from phydrax.operators.linalg import norm
 
 
 def test_norm_simple_vector_function():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -26,7 +29,9 @@ def test_norm_simple_vector_function():
 
 
 def test_norm_custom_order():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -41,7 +46,9 @@ def test_norm_custom_order():
 
 
 def test_norm_time_dependent_function():
-    dom = Square(center=(0.0, 0.0), side=2.0) @ TimeInterval(0.0, 2.0)
+    dom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    ) @ TimeInterval(0.0, 2.0)
 
     @dom.Function("x", "t")
     def u(x, t):
@@ -61,7 +68,9 @@ def test_norm_time_dependent_function():
 
 
 def test_norm_complex_function():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -76,12 +85,9 @@ def test_norm_complex_function():
 
 
 def test_norm_preserves_metadata():
-    geom = Square(center=(0.0, 0.0), side=2.0)
-    u = DomainFunction(
-        domain=geom,
-        deps=("x",),
-        func=lambda x: jnp.array([1.0, 2.0]),
-        metadata={"tag": 1},
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
+    u = geom.Function("x")(lambda x: jnp.array([1.0, 2.0])).with_metadata(**{"tag": 1})
     out = norm(u)
     assert out.metadata == u.metadata

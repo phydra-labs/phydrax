@@ -355,7 +355,7 @@ class WienerRealization(StrictModule):
                 key=path_key,
                 levy_area=dfx.BrownianIncrement,
             )
-            values = jax.vmap(path.evaluate)(flat_starts, flat_ends)
+            values = jnp.asarray(jax.vmap(path.evaluate)(flat_starts, flat_ends))
             return jnp.asarray(sign, dtype=resolved_dtype) * values
 
         values = jax.vmap(evaluate_path)(keys, signs)

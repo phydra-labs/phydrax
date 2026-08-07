@@ -372,7 +372,7 @@ def _(jax, jnp, jr, phx):
         ]
 
         # Residual objective only: derivatives are computed with JVP engine.
-        structure_xt = phx.domain.ProductStructure((("x",), ("t",)))
+        structure_xt = phx.domain.SampleLayout((("x",), ("t",)))
         residual = phx.constraints.ContinuousPointwiseInteriorConstraint(
             "u",
             domain,

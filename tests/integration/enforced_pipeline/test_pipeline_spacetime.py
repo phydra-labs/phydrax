@@ -12,8 +12,8 @@ from phydrax.domain import (
     Boundary,
     FixedStart,
     Interval1d,
-    PointsBatch,
-    ProductStructure,
+    PointBatch,
+    SampleLayout,
     TimeInterval,
 )
 from phydrax.solver import (
@@ -24,7 +24,7 @@ from phydrax.solver import (
 
 
 def _paired_batch(domain, xs, ts):
-    structure = ProductStructure((("x", "t"),)).canonicalize(domain.labels)
+    structure = SampleLayout((("x", "t"),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
     axis = axis_names[0]
@@ -36,7 +36,7 @@ def _paired_batch(domain, xs, ts):
             "t": cx.Field(jnp.asarray(ts, dtype=float).reshape((-1,)), dims=(axis,)),
         }
     )
-    return PointsBatch(points=points, structure=structure)
+    return PointBatch(points=points, structure=structure)
 
 
 def test_enforced_pipeline_boundary_initial_interior_spacetime():

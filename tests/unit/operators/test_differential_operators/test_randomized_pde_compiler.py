@@ -50,8 +50,7 @@ def _compile(problem, domain, plan, *, num_points=32):
         "governing",
         plan,
         component=domain.component(),
-        num_points=num_points,
-        structure=phx.domain.ProductStructure((("x",),)),
+        sampling=phx.domain.PointSampling(num_points, layout=phx.domain.SampleLayout((("x",),))),
         sampling_mode="fixed",
         fixed_batch_key=jr.key(19),
     )

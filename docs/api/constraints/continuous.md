@@ -103,8 +103,10 @@ constraint = phx.constraints.ContinuousKolmogorovConstraint(
     drift=drift,
     diffusion="sigma",
     evolution_var="t",
-    num_points=64,
-    structure=phx.domain.ProductStructure((("x", "t"),)),
+    sampling=phx.domain.PointSampling(
+        64,
+        layout=phx.domain.SampleLayout((("x", "t"),)),
+    ),
 )
 solver = phx.solver.FunctionalSolver(
     functions={"u": u, "sigma": sigma},

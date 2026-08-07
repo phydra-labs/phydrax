@@ -15,9 +15,9 @@ import jax.random as jr
 import optax
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import Domain, DomainFunction
+
 from .._strict import StrictModule
-from ..domain._domain import _AbstractDomain
-from ..domain._function import DomainFunction
 from ..objectives._deep_splitting import (
     deep_splitting_labels,
     DeepSplittingLabelBatch,
@@ -209,7 +209,7 @@ class DeepSplittingSolution(StrictModule):
             )
         ).reshape(self.problem.output_shape + self.problem.noise_shape)
 
-    def as_domain_function(self, domain: _AbstractDomain, /) -> DomainFunction:
+    def as_domain_function(self, domain: Domain, /) -> DomainFunction:
         """Expose the interpolated slice family through the standard field API."""
         required = (self.problem.time_label, self.problem.state_label)
         if any(label not in domain.labels for label in required):

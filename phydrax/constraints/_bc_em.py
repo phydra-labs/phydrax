@@ -5,13 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Literal
 
 import jax.numpy as jnp
 from jaxtyping import ArrayLike
 
-from ..domain._components import DomainComponent
-from ..domain._function import DomainFunction
+from phydrax.domain import DomainComponent, DomainFunction, SamplingPlan
+
 from ..operators.differential import tangential_component
 from ..operators.linalg import einsum
 from ._functional import FunctionalConstraint
@@ -77,9 +77,7 @@ def ContinuousPECBoundaryConstraint(
     /,
     *,
     var: str = "x",
-    num_points: int | tuple[Any, ...],
-    structure: Any,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -99,18 +97,12 @@ def ContinuousPECBoundaryConstraint(
     def operator(u: DomainFunction, /) -> DomainFunction:
         return tangential_component(u, component, var=var)
 
-    return FunctionalConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=field_var,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-        reduction=reduction,
-    )
+    return FunctionalConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=field_var, sampling=sampling, weight=weight,
+    label=label,
+    over=over,
+    reduction=reduction,)
 
 
 def ContinuousImpedanceBoundaryConstraint(
@@ -121,9 +113,7 @@ def ContinuousImpedanceBoundaryConstraint(
     *,
     admittance: DomainFunction | ArrayLike,
     var: str = "x",
-    num_points: int | tuple[Any, ...],
-    structure: Any,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -146,18 +136,12 @@ def ContinuousImpedanceBoundaryConstraint(
         lhs = _cross(n, H)
         return lhs - admittance * Et
 
-    return FunctionalConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=(h_var, e_var),
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-        reduction=reduction,
-    )
+    return FunctionalConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=(h_var, e_var), sampling=sampling, weight=weight,
+    label=label,
+    over=over,
+    reduction=reduction,)
 
 
 def ContinuousPMCBoundaryConstraint(
@@ -166,9 +150,7 @@ def ContinuousPMCBoundaryConstraint(
     /,
     *,
     var: str = "x",
-    num_points: int | tuple[Any, ...],
-    structure: Any,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -188,18 +170,12 @@ def ContinuousPMCBoundaryConstraint(
     def operator(u: DomainFunction, /) -> DomainFunction:
         return tangential_component(u, component, var=var)
 
-    return FunctionalConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=field_var,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-        reduction=reduction,
-    )
+    return FunctionalConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=field_var, sampling=sampling, weight=weight,
+    label=label,
+    over=over,
+    reduction=reduction,)
 
 
 def ContinuousElectricSurfaceChargeBoundaryConstraint(
@@ -210,9 +186,7 @@ def ContinuousElectricSurfaceChargeBoundaryConstraint(
     epsilon: DomainFunction | ArrayLike,
     surface_charge: DomainFunction | ArrayLike,
     var: str = "x",
-    num_points: int | tuple[Any, ...],
-    structure: Any,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -233,18 +207,12 @@ def ContinuousElectricSurfaceChargeBoundaryConstraint(
     def operator(u: DomainFunction, /) -> DomainFunction:
         return epsilon * _dot(u, n) - surface_charge
 
-    return FunctionalConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=field_var,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-        reduction=reduction,
-    )
+    return FunctionalConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=field_var, sampling=sampling, weight=weight,
+    label=label,
+    over=over,
+    reduction=reduction,)
 
 
 def ContinuousMagneticSurfaceCurrentBoundaryConstraint(
@@ -254,9 +222,7 @@ def ContinuousMagneticSurfaceCurrentBoundaryConstraint(
     *,
     surface_current: DomainFunction | ArrayLike,
     var: str = "x",
-    num_points: int | tuple[Any, ...],
-    structure: Any,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -277,18 +243,12 @@ def ContinuousMagneticSurfaceCurrentBoundaryConstraint(
     def operator(u: DomainFunction, /) -> DomainFunction:
         return _cross(n, u) - surface_current
 
-    return FunctionalConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=field_var,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-        reduction=reduction,
-    )
+    return FunctionalConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=field_var, sampling=sampling, weight=weight,
+    label=label,
+    over=over,
+    reduction=reduction,)
 
 
 # Electromagnetics Interface Constraints (Continuous)
@@ -301,9 +261,7 @@ def ContinuousInterfaceTangentialEContinuityConstraint(
     /,
     *,
     var: str = "x",
-    num_points: int | tuple[Any, ...],
-    structure: Any,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -317,18 +275,12 @@ def ContinuousInterfaceTangentialEContinuityConstraint(
     def operator(E1: DomainFunction, E2: DomainFunction, /) -> DomainFunction:
         return tangential_component(E2 - E1, component, var=var)
 
-    return FunctionalConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=(e1_var, e2_var),
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-        reduction=reduction,
-    )
+    return FunctionalConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=(e1_var, e2_var), sampling=sampling, weight=weight,
+    label=label,
+    over=over,
+    reduction=reduction,)
 
 
 def ContinuousInterfaceNormalDJumpConstraint(
@@ -341,9 +293,7 @@ def ContinuousInterfaceNormalDJumpConstraint(
     epsilon2: DomainFunction | ArrayLike,
     surface_charge: DomainFunction | ArrayLike | None = None,
     var: str = "x",
-    num_points: int | tuple[Any, ...],
-    structure: Any,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -367,18 +317,12 @@ def ContinuousInterfaceNormalDJumpConstraint(
         e2n = _dot(E2, n)
         return epsilon2 * e2n - epsilon1 * e1n - rho
 
-    return FunctionalConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=(e1_var, e2_var),
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-        reduction=reduction,
-    )
+    return FunctionalConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=(e1_var, e2_var), sampling=sampling, weight=weight,
+    label=label,
+    over=over,
+    reduction=reduction,)
 
 
 def ContinuousInterfaceTangentialHJumpConstraint(
@@ -389,9 +333,7 @@ def ContinuousInterfaceTangentialHJumpConstraint(
     *,
     surface_current: DomainFunction | ArrayLike | None = None,
     var: str = "x",
-    num_points: int | tuple[Any, ...],
-    structure: Any,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -413,18 +355,12 @@ def ContinuousInterfaceTangentialHJumpConstraint(
     def operator(H1: DomainFunction, H2: DomainFunction, /) -> DomainFunction:
         return _cross(n, H2 - H1) - ks
 
-    return FunctionalConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=(h1_var, h2_var),
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-        reduction=reduction,
-    )
+    return FunctionalConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=(h1_var, h2_var), sampling=sampling, weight=weight,
+    label=label,
+    over=over,
+    reduction=reduction,)
 
 
 def ContinuousInterfaceNormalBContinuityConstraint(
@@ -436,9 +372,7 @@ def ContinuousInterfaceNormalBContinuityConstraint(
     mu1: DomainFunction | ArrayLike,
     mu2: DomainFunction | ArrayLike,
     var: str = "x",
-    num_points: int | tuple[Any, ...],
-    structure: Any,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -461,18 +395,12 @@ def ContinuousInterfaceNormalBContinuityConstraint(
         h2n = _dot(H2, n)
         return mu2 * h2n - mu1 * h1n
 
-    return FunctionalConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=(h1_var, h2_var),
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-        reduction=reduction,
-    )
+    return FunctionalConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=(h1_var, h2_var), sampling=sampling, weight=weight,
+    label=label,
+    over=over,
+    reduction=reduction,)
 
 
 # Electromagnetics Boundary/Interface Constraints (Discrete)

@@ -5,7 +5,7 @@
 import functools as ft
 import math
 from abc import abstractmethod
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Literal, TypeAlias
 
 import equinox as eqx
@@ -15,7 +15,11 @@ from jaxtyping import Array, Bool, Float, Key
 
 from .._doc import DOC_KEY0
 from .._strict import AbstractAttribute, StrictModule
-from ._domain import _AbstractUnaryDomain
+from ._coordinate import CoordinateSpec
+from ._domain import JointFactor
+from ._factor_component import FactorComponent
+from ._measure import BaseMeasure, ExactMass, UnknownMass
+from ._selection import Boundary, Interior, Selection
 
 
 EnforcementGateMethod: TypeAlias = Literal[
@@ -128,9 +132,7 @@ def _make_compact_enforcement_gate(
         linear_fraction=linear_fraction,
     )
     plateau = (
-        saturation_fraction
-        * scale
-        * (linear_fraction + 0.5 * (1.0 - linear_fraction))
+        saturation_fraction * scale * (linear_fraction + 0.5 * (1.0 - linear_fraction))
     )
 
     def gate(points: Array) -> Array:
@@ -209,7 +211,7 @@ class GeometryTransitionResult(StrictModule):
         self.reflection_count = reflection_arr
 
 
-class _AbstractGeometry(_AbstractUnaryDomain):
+class AbstractGeometry(JointFactor):
     """Abstract spatial geometry.
 
     ``adf`` is the signed boundary-defining factor used by differentiable geometry
@@ -217,6 +219,8 @@ class _AbstractGeometry(_AbstractUnaryDomain):
     unit-boundary-jet field used by derivative hard constraints; CAD implementations
     may give it a smoother global interior profile than ``adf``.
     """
+
+    _label: AbstractAttribute[str]
 
     adf: AbstractAttribute[Callable[[Array], Array]]
 
@@ -236,11 +240,71 @@ class _AbstractGeometry(_AbstractUnaryDomain):
 
     @property
     def label(self) -> str:
-        return "x"
+        return self._label
 
     @property
-    def var_dim(self) -> int:
-        return int(self.spatial_dim)
+    def labels(self) -> tuple[str, ...]:
+        return (self.label,)
+
+    @property
+    def coordinate_specs(self) -> tuple[CoordinateSpec, ...]:
+        return (
+            CoordinateSpec(
+                (int(self.spatial_dim),),
+                kind="array",
+                differentiable=True,
+            ),
+        )
+
+    def bind_component(
+        self,
+        selections: Mapping[str, Selection],
+        /,
+    ) -> FactorComponent:
+        if tuple(selections) != self.labels:
+            raise ValueError(
+                f"Geometry factor {self.labels} requires exactly one ordered selection."
+            )
+        selection = selections[self.label]
+        if isinstance(selection, Interior):
+            measure = BaseMeasure(
+                "lebesgue" if self.spatial_dim == 1 else "hausdorff",
+                ExactMass(self.volume),
+            )
+        elif isinstance(selection, Boundary):
+            if selection.tags is None and selection.entity_ids is None:
+                kind = "counting" if self.spatial_dim == 1 else "hausdorff"
+                measure = BaseMeasure(kind, ExactMass(self.boundary_measure_value))
+            else:
+                from ._geometry import GeometryDomain
+
+                if not isinstance(self, GeometryDomain):
+                    raise ValueError(
+                        f"{type(self).__name__} does not expose boundary entities."
+                    )
+                self.boundary_atlas.select(
+                    tags=selection.tags,
+                    entity_ids=selection.entity_ids,
+                )
+                measure = BaseMeasure(
+                    "hausdorff",
+                    UnknownMass(
+                        "selected boundary-entity measure requires numerical estimation"
+                    ),
+                )
+        else:
+            raise TypeError(
+                f"Geometry factor {self.labels} does not support selection "
+                f"{type(selection).__name__}."
+            )
+        return FactorComponent(factor=self, selections=selections, measure=measure)
+
+    def _replace_labels(
+        self,
+        labels: tuple[str, ...],
+        /,
+    ) -> "AbstractGeometry":
+        return eqx.tree_at(lambda factor: factor._label, self, labels[0])
 
     @property
     def enforcement_characteristic_length(self) -> float:

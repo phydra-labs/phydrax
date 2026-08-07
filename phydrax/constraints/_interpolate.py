@@ -10,40 +10,42 @@ from typing import Any
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from phydrax.domain import (
+    AbstractGeometry,
+    AbstractScalarDomain,
+    Domain,
+    DomainFunction,
+)
+
 from .._frozendict import frozendict
 from .._interpolation import apply_gather_stencil, inverse_distance_stencil
 from .._strict import StrictModule
-from ..domain._base import _AbstractGeometry
-from ..domain._domain import _AbstractDomain, RelabeledDomain
-from ..domain._function import DomainFunction
-from ..domain._scalar import _AbstractScalarDomain
 
 
 def _unwrap_factor(factor: object, /) -> object:
-    if isinstance(factor, RelabeledDomain):
-        return factor.base
+    return factor
     return factor
 
 
-def _as_anchor_array(domain: _AbstractDomain, label: str, x: Array, /) -> Array:
+def _as_anchor_array(domain: Domain, label: str, x: Array, /) -> Array:
     factor = _unwrap_factor(domain.factor(label))
     arr = jnp.asarray(x, dtype=float)
 
-    if isinstance(factor, _AbstractGeometry):
+    if isinstance(factor, AbstractGeometry):
         if arr.ndim == 1:
             arr = arr.reshape((1, -1))
         if arr.ndim != 2:
             raise ValueError(
                 f"Geometry anchors for {label!r} must have shape (N,d), got {arr.shape}."
             )
-        d = int(factor.var_dim)
+        d = int(factor.spatial_dim)
         if arr.shape[1] != d:
             raise ValueError(
                 f"Geometry anchors for {label!r} must have d={d}, got {arr.shape[1]}."
             )
         return arr
 
-    if isinstance(factor, _AbstractScalarDomain):
+    if isinstance(factor, AbstractScalarDomain):
         if arr.ndim == 0:
             return arr.reshape((1,))
         if arr.ndim == 1:
@@ -55,12 +57,12 @@ def _as_anchor_array(domain: _AbstractDomain, label: str, x: Array, /) -> Array:
         )
 
     raise TypeError(
-        f"Unsupported unary domain factor {type(factor).__name__} for label {label!r}."
+        f"Unsupported single-label domain factor {type(factor).__name__} for label {label!r}."
     )
 
 
 def _split_stacked(
-    domain: _AbstractDomain,
+    domain: Domain,
     labels: tuple[str, ...],
     points: ArrayLike,
     /,
@@ -76,14 +78,14 @@ def _split_stacked(
     widths: list[int] = []
     for lbl in labels:
         factor = _unwrap_factor(domain.factor(lbl))
-        if isinstance(factor, _AbstractGeometry):
-            widths.append(int(factor.var_dim))
+        if isinstance(factor, AbstractGeometry):
+            widths.append(int(factor.spatial_dim))
             continue
-        if isinstance(factor, _AbstractScalarDomain):
+        if isinstance(factor, AbstractScalarDomain):
             widths.append(1)
             continue
         raise TypeError(
-            f"Unsupported unary domain factor {type(factor).__name__} for label {lbl!r}."
+            f"Unsupported single-label domain factor {type(factor).__name__} for label {lbl!r}."
         )
 
     total = int(sum(widths))
@@ -165,7 +167,7 @@ class _IDWInterpolant(StrictModule):
 
 
 def idw_interpolant(
-    domain: _AbstractDomain,
+    domain: Domain,
     /,
     *,
     anchors: Mapping[str, ArrayLike] | ArrayLike,

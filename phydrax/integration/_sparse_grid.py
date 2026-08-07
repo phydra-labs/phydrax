@@ -12,6 +12,19 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, Key
 
+from phydrax.domain import (
+    AbstractGeometry,
+    AbstractScalarDomain,
+    ComponentSum,
+    Fixed,
+    FixedEnd,
+    FixedStart,
+    Interior,
+    PointBatch,
+    ProbabilityDomain,
+    SampleLayout,
+)
+
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._numerics import (
@@ -22,18 +35,6 @@ from .._numerics import (
     SmolyakAxisRule,
 )
 from .._strict import StrictModule
-from ..domain._base import _AbstractGeometry
-from ..domain._components import (
-    DomainComponentUnion,
-    Fixed,
-    FixedEnd,
-    FixedStart,
-    Interior,
-)
-from ..domain._domain import RelabeledDomain
-from ..domain._probability import ProbabilityDomain
-from ..domain._scalar import _AbstractScalarDomain
-from ..domain._structure import PointsBatch, ProductStructure
 from ._batches import PointIntegrationBatch
 from ._estimates import (
     IntegrationEstimate,
@@ -41,6 +42,7 @@ from ._estimates import (
     SparseGridDiagnostics,
 )
 from ._fixed import integrate_fixed_component, integrate_fixed_density
+from ._lowering import _component_base_mass
 from ._plans import SparseGridPlan
 from ._status import IntegrationStatus
 from ._targets import ComponentTarget, DensityTarget
@@ -79,7 +81,7 @@ class SparseGridRealization(StrictModule):
 
 
 def _unwrap(factor: Any, /) -> Any:
-    return factor.base if isinstance(factor, RelabeledDomain) else factor
+    return factor
 
 
 def _smolyak_rule(
@@ -142,7 +144,7 @@ def _smolyak_rule(
 
 def _fixed_field(factor: Any, selector: Any, /) -> cx.Field:
     factor = _unwrap(factor)
-    if isinstance(factor, _AbstractScalarDomain):
+    if isinstance(factor, AbstractScalarDomain):
         if isinstance(selector, FixedStart):
             value = factor.fixed("start")
         elif isinstance(selector, FixedEnd):
@@ -152,9 +154,9 @@ def _fixed_field(factor: Any, selector: Any, /) -> cx.Field:
         else:
             raise TypeError("Expected a fixed scalar selector.")
         return cx.Field(jnp.asarray(value, dtype=float).reshape(()), dims=())
-    if isinstance(factor, _AbstractGeometry) and isinstance(selector, Fixed):
+    if isinstance(factor, AbstractGeometry) and isinstance(selector, Fixed):
         return cx.Field(
-            jnp.asarray(selector.value, dtype=float).reshape((factor.var_dim,)),
+            jnp.asarray(selector.value, dtype=float).reshape((factor.spatial_dim,)),
             dims=(None,),
         )
     raise TypeError("Unsupported fixed sparse-grid factor.")
@@ -167,12 +169,12 @@ def _materialize_level(
     /,
 ) -> PointIntegrationBatch:
     component = target.component
-    if isinstance(component, DomainComponentUnion):
+    if isinstance(component, ComponentSum):
         raise TypeError("Sparse-grid component unions must be integrated term by term.")
     fixed_labels = frozenset(
         label
         for label in component.domain.labels
-        if isinstance(component.spec.component_for(label), (FixedStart, FixedEnd, Fixed))
+        if isinstance(component.spec.selection_for(label), (FixedStart, FixedEnd, Fixed))
     )
     varying = tuple(
         label for label in component.domain.labels if label not in fixed_labels
@@ -187,7 +189,7 @@ def _materialize_level(
     unsupported = tuple(
         label
         for label in varying
-        if not isinstance(component.spec.component_for(label), Interior)
+        if not isinstance(component.spec.selection_for(label), Interior)
     )
     if unsupported:
         raise TypeError(
@@ -200,7 +202,7 @@ def _materialize_level(
             f"{len(varying)} non-fixed factors."
         )
     factors = tuple(_unwrap(component.domain.factor(label)) for label in varying)
-    if any(not isinstance(factor, _AbstractScalarDomain) for factor in factors):
+    if any(not isinstance(factor, AbstractScalarDomain) for factor in factors):
         raise TypeError("Sparse grids currently support scalar and probability factors.")
     canonical_nodes, canonical_weights = _smolyak_rule(
         plan.dimension,
@@ -243,7 +245,7 @@ def _materialize_level(
             mapped = 0.5 * (upper - lower) * coordinate + 0.5 * (upper + lower)
             scale = scale * 0.5 * (upper - lower)
         mapped_columns.append(jnp.asarray(mapped))
-    structure = ProductStructure((varying,)).canonicalize(
+    structure = SampleLayout((varying,)).canonicalize(
         component.domain.labels, fixed_labels=fixed_labels
     )
     axis_name = structure.axis_for(varying[0])
@@ -254,13 +256,13 @@ def _materialize_level(
     for label in component.domain.labels:
         if label in fixed_labels:
             points[label] = _fixed_field(
-                component.domain.factor(label), component.spec.component_for(label)
+                component.domain.factor(label), component.spec.selection_for(label)
             )
         else:
             points[label] = cx.Field(
                 mapped_columns[varying_index[label]], dims=(axis_name,)
             )
-    point_batch = PointsBatch(frozendict(points), structure)
+    point_batch = PointBatch(frozendict(points), structure)
     weights = cx.Field(
         scale * jnp.asarray(canonical_weights, dtype=float), dims=(axis_name,)
     )
@@ -268,7 +270,7 @@ def _materialize_level(
         point_batch,
         weights,
         axes=(axis_name,),
-        target_mass=component.measure(),
+        target_mass=_component_base_mass(component),
         provenance=(f"smolyak:level-{level}:rules-{'+'.join(plan.axis_rules)}"),
     )
 

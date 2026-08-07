@@ -75,7 +75,7 @@ def test_operator_valued_likelihood_constraint_scores_transformed_observation():
         domain.component(),
         targets,
         phx.uq.GaussianLikelihood(0.5),
-        num_cases=12,
+        sampling=phx.domain.PointSampling(12, design="uniform"),
         observation_operator=lambda u: 2.0 * u,
     )
     loss = constraint.loss({"u": field}, key=jr.key(2))

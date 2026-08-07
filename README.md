@@ -88,7 +88,9 @@ import jax.random as jr
 import optax
 import phydrax as phx
 
-geom = phx.domain.Square(center=(0.0, 0.0), side=2.0)  # [-1,1]^2, label "x"
+geom = phx.domain.GeometryDomain(
+    phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+)  # [-1,1]^2, label "x"
 
 # Exact solution / boundary target g(x,y) = x^2 + y^2
 @geom.Function("x")
@@ -107,16 +109,14 @@ model = phx.nn.MLP(
 )
 u = geom.Model("x")(model)
 
-structure = phx.domain.ProductStructure((("x",),))
+layout = phx.domain.SampleLayout((("x",),))
 
 # Interior PDE residual: Δu - 4 = 0
 pde = phx.constraints.ContinuousPointwiseInteriorConstraint(
     "u",
     geom,
     operator=lambda f: phx.operators.laplacian(f, var="x") - 4.0,
-    num_points=64,
-    structure=structure,
-    reduction="mean",
+    sampling=phx.domain.PointSampling(64, layout=layout),
 )
 
 # Soft Dirichlet boundary: u - g = 0 on ∂Ω
@@ -125,8 +125,7 @@ bc = phx.constraints.ContinuousDirichletBoundaryConstraint(
     "u",
     boundary,
     target=g,
-    num_points=32,
-    structure=structure,
+    sampling=phx.domain.PointSampling(32, layout=layout),
     weight=10.0,
     reduction="mean",
 )

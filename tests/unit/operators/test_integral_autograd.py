@@ -8,7 +8,7 @@ import jax.numpy as jnp
 
 import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.domain import Boundary, DomainFunction, Interval1d, Square, TimeInterval
+from phydrax.domain import Boundary, Interval1d, TimeInterval
 from phydrax.operators.integral import (
     integral,
     nonlocal_integral,
@@ -36,7 +36,9 @@ def _square_rule(order):
 
 
 def test_fixed_integral_grad_has_finite_parameter_shape():
-    geometry = Square(center=(0.0, 0.0), side=1.0)
+    geometry = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
+    )
     target = phx.integration.over(geometry.component())
     plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(16))
 
@@ -52,7 +54,9 @@ def test_fixed_integral_grad_has_finite_parameter_shape():
 
 
 def test_sampled_boundary_integral_grad_has_finite_parameter_shape(sample_batch):
-    geometry = Square(center=(0.0, 0.0), side=1.0)
+    geometry = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
+    )
     component = geometry.component({"x": Boundary()})
     points = sample_batch(component, blocks=(("x",),), num_points=2048, key=1)
     realization = phx.integration.from_samples(phx.integration.over(component), points)
@@ -69,7 +73,9 @@ def test_sampled_boundary_integral_grad_has_finite_parameter_shape(sample_batch)
 
 
 def test_spatial_integral_grad_has_finite_parameter_shape():
-    geometry = Square(center=(0.0, 0.0), side=1.0)
+    geometry = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
+    )
     quadrature = _square_rule(48)
 
     def loss(parameter):
@@ -90,11 +96,7 @@ def test_nonlocal_integral_grad_matches_analytic():
     quadrature = _interval_rule(4096)
 
     def loss(parameter):
-        function = DomainFunction(
-            domain=geometry,
-            deps=("x",),
-            func=lambda x: parameter * x[0],
-        )
+        function = geometry.Function("x")(lambda x: parameter * x[0])
         operator = nonlocal_integral(
             function,
             integrand=lambda delta, displacement: delta * delta,

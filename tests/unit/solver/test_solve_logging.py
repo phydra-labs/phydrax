@@ -13,7 +13,7 @@ from phydrax.constraints import (
     DiscreteTimeDataConstraint,
     SupervisedDatasetConstraint,
 )
-from phydrax.domain import DatasetDomain, HyperRectangle, TimeInterval
+from phydrax.domain import DatasetDomain, HyperRectangle, PointSampling, TimeInterval
 from phydrax.nn import MLP
 from phydrax.solver import FunctionalSolver
 
@@ -55,7 +55,7 @@ def _make_dataset_solver_with_eval(seed: int = 0) -> FunctionalSolver:
         "u",
         domain.component(),
         targets,
-        num_cases=8,
+        sampling=PointSampling(8, design="uniform"),
         indices=jnp.asarray([0, 1, 2, 3], dtype=jnp.int32),
         label="train_data",
     )
@@ -63,7 +63,7 @@ def _make_dataset_solver_with_eval(seed: int = 0) -> FunctionalSolver:
         "u",
         domain.component(),
         targets,
-        num_cases=8,
+        sampling=PointSampling(8, design="uniform"),
         indices=jnp.asarray([4, 5], dtype=jnp.int32),
         label="eval_data",
     )
@@ -89,7 +89,7 @@ def _make_dataset_solver_with_two_train_constraints(seed: int = 0) -> Functional
         "u",
         domain.component(),
         targets,
-        num_cases=4,
+        sampling=PointSampling(4, design="uniform"),
         indices=jnp.asarray([0, 1, 2, 3], dtype=jnp.int32),
         label="train_a",
     )
@@ -97,7 +97,7 @@ def _make_dataset_solver_with_two_train_constraints(seed: int = 0) -> Functional
         "u",
         domain.component(),
         targets,
-        num_cases=4,
+        sampling=PointSampling(4, design="uniform"),
         indices=jnp.asarray([4, 5, 6, 7], dtype=jnp.int32),
         label="train_b",
     )
@@ -235,13 +235,13 @@ def test_solver_loss_excludes_eval_constraints():
         "u",
         domain.component(),
         train_targets,
-        num_cases=8,
+        sampling=PointSampling(8, design="uniform"),
     )
     eval_data = SupervisedDatasetConstraint(
         "u",
         domain.component(),
         eval_targets,
-        num_cases=8,
+        sampling=PointSampling(8, design="uniform"),
     )
     solver = FunctionalSolver(
         functions={"u": u},

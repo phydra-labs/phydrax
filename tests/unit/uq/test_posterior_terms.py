@@ -132,7 +132,7 @@ def test_fixed_constraint_likelihood_preserves_operator_and_ignores_training_wei
         domain.component(),
         target,
         likelihood,
-        num_cases=3,
+        sampling=phx.domain.PointSampling(3, design="uniform"),
         observation_operator=lambda function: 2.0 * function,
         weight=1000.0,
         reduction="mean",

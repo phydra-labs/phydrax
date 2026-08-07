@@ -11,37 +11,32 @@ import coordax as cx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
-from .._doc import DOC_KEY0
-from .._strict import StrictModule
-from ..domain._components import DomainComponent, DomainComponentUnion, Interior
-from ..domain._domain import RelabeledDomain
-from ..domain._function import BatchAwareCallable, DomainFunction
-from ..domain.graph import (
+from phydrax.domain import (
+    BatchEvaluator,
+    ComponentSum,
+    DomainComponent,
+    DomainFunction,
+    Interior,
+)
+from phydrax.domain.graph import (
     cochain_field_spec,
     CochainCells,
     Edges,
     EdgeType,
     Globals,
+    graph_component_indices,
+    graph_component_kind,
     GRAPH_ENTITY_INDEX_KEY,
+    GRAPH_ENTITY_OFFSET_KEY,
     GRAPH_GRAPH_INDEX_KEY,
     GraphBatch,
-    GraphDatasetDomain,
-    GraphDomain,
+    has_cochain_field_spec,
     Nodes,
     NodeType,
 )
-from ..domain.graph._cochain import _COCHAIN_FIELD_SPEC_KEY
-from ..domain.graph._components import (
-    graph_component_indices,
-    graph_component_kind,
-)
-from ..domain.graph._dataset import GRAPH_ENTITY_OFFSET_KEY
 
-
-def _unwrap_factor(factor: object, /) -> object:
-    if isinstance(factor, RelabeledDomain):
-        return factor.base
-    return factor
+from .._doc import DOC_KEY0
+from .._strict import StrictModule
 
 
 def _graph_label_for_component(
@@ -53,16 +48,15 @@ def _graph_label_for_component(
         label = str(graph_label)
         if label not in component.domain.labels:
             raise KeyError(f"Label {label!r} not in domain {component.domain.labels}.")
-        factor = _unwrap_factor(component.domain.factor(label))
-        if not isinstance(factor, (GraphDomain, GraphDatasetDomain)):
+        if component.domain.coordinate(label).kind != "graph":
             raise TypeError(f"Label {label!r} is not a graph-domain label.")
         return label
 
-    labels: list[str] = []
-    for label in component.domain.labels:
-        factor = _unwrap_factor(component.domain.factor(label))
-        if isinstance(factor, (GraphDomain, GraphDatasetDomain)):
-            labels.append(label)
+    labels = tuple(
+        label
+        for label in component.domain.labels
+        if component.domain.coordinate(label).kind == "graph"
+    )
     if len(labels) != 1:
         raise ValueError(
             "Could not infer a unique graph-domain label; pass graph_label explicitly."
@@ -152,7 +146,7 @@ def _component_mask(
     graph_label: str,
     /,
 ) -> Array:
-    selector = component.spec.component_for(graph_label)
+    selector = component.spec.selection_for(graph_label)
     kind = graph_component_kind(selector)
     if kind != batch.component_kind:
         return jnp.zeros((_entity_indices(batch).shape[0],), dtype=bool)
@@ -195,7 +189,7 @@ def _broadcast_to_data(value: Array, data: Array, /) -> Array:
         return jnp.broadcast_to(value, data.shape)
 
 
-class _GraphValueEnforcement(StrictModule, BatchAwareCallable):
+class _GraphValueEnforcement(StrictModule, BatchEvaluator):
     u: DomainFunction
     target: DomainFunction
     component: DomainComponent
@@ -260,15 +254,15 @@ def enforce_graph_values(
     batch evaluation, values on that selected finite subset are replaced with
     `target`, while values outside the subset remain those of `u`.
     """
-    if isinstance(component, DomainComponentUnion):
+    if isinstance(component, ComponentSum):
         raise TypeError(
-            "enforce_graph_values requires a DomainComponent, not a DomainComponentUnion."
+            "enforce_graph_values requires a DomainComponent, not a ComponentSum."
         )
     if not isinstance(u, DomainFunction):
         raise TypeError("enforce_graph_values expects a DomainFunction.")
 
     label = _graph_label_for_component(component, graph_label)
-    selector = component.spec.component_for(label)
+    selector = component.spec.selection_for(label)
     graph_component_kind(selector)
     if isinstance(selector, CochainCells):
         field_spec = cochain_field_spec(u)
@@ -279,8 +273,10 @@ def enforce_graph_values(
             )
     target_fn = _coerce_target(target, u)
     if isinstance(selector, CochainCells):
-        target_metadata = target_fn.metadata.get(_COCHAIN_FIELD_SPEC_KEY)
-        if target_metadata is not None and cochain_field_spec(target_fn) != field_spec:
+        if (
+            has_cochain_field_spec(target_fn)
+            and cochain_field_spec(target_fn) != field_spec
+        ):
             raise ValueError(
                 "Cochain enforcement targets must have the same degree, side, "
                 "orientation, and sampling semantics as the base field."
@@ -307,7 +303,7 @@ def enforce_cochain_values(
 ) -> DomainFunction:
     """Exactly overwrite a declared cochain field on selected degree cells."""
     label = _graph_label_for_component(component, graph_label)
-    selector = component.spec.component_for(label)
+    selector = component.spec.selection_for(label)
     if not isinstance(selector, CochainCells):
         raise TypeError("enforce_cochain_values requires a CochainCells component.")
     return enforce_graph_values(

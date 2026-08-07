@@ -6,6 +6,37 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import PointSampling, SampleLayout
+
+from .._sampling import design_name
+
+
+def normalize_case_sampling(
+    sampling: PointSampling,
+    /,
+    *,
+    labels: tuple[str, ...],
+    owner: str,
+) -> PointSampling:
+    """Validate and canonicalize a uniform empirical-case sampling plan."""
+    if not isinstance(sampling, PointSampling):
+        raise TypeError(f"{owner} requires a PointSampling plan.")
+    if not isinstance(sampling.count, int):
+        raise TypeError(f"{owner} requires one integer case count.")
+    if sampling.count <= 0:
+        raise ValueError(f"{owner} sampling count must be positive.")
+    if design_name(sampling.design) != "uniform":
+        raise ValueError(f"{owner} supports only uniform sampling.")
+    layout = sampling.layout or SampleLayout((labels,))
+    return PointSampling(sampling.count, layout=layout, design=sampling.design)
+
+def case_sample_count(sampling: PointSampling, /) -> int:
+    """Return the scalar count guaranteed by normalized empirical sampling."""
+    count = sampling.count
+    if not isinstance(count, int):
+        raise RuntimeError("Normalized empirical sampling must have one integer count.")
+    return count
+
 
 def supervised_data_metrics(
     prediction: Array,

@@ -8,11 +8,12 @@ from __future__ import annotations
 
 from typing import Literal
 
-from ...domain._function import DomainFunction
-from ...domain.graph._cochain import (
-    _attach_cochain_field_spec,
+from phydrax.domain import DomainFunction
+from phydrax.domain.graph import (
     cochain_field_spec,
+    with_cochain_field_spec,
 )
+
 from ...graph import (
     CochainBoundaryKind,
     CochainCodifferential,
@@ -68,7 +69,7 @@ def _bind_graph_module(
         ),
         metadata=field.metadata,
     )
-    return _attach_cochain_field_spec(result, output_spec)
+    return with_cochain_field_spec(result, output_spec)
 
 
 def cochain_exterior_derivative(

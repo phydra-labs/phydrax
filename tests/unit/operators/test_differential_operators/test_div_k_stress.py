@@ -5,13 +5,16 @@
 import coordax as cx
 import jax.numpy as jnp
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.domain import DomainFunction, Square, TimeInterval
+from phydrax.domain import TimeInterval
 from phydrax.operators.differential import div_cauchy_stress
 
 
 def test_div_cauchy_stress_zero_for_linear_u():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -24,7 +27,9 @@ def test_div_cauchy_stress_zero_for_linear_u():
 
 
 def test_div_cauchy_stress_quadratic_u_constant():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -36,10 +41,12 @@ def test_div_cauchy_stress_quadratic_u_constant():
     assert jnp.allclose(out, jnp.array([5.0, 0.0]))
 
 
-def test_div_cauchy_stress_coord_separable(sample_coord_separable):
-    geom = Square(center=(0.0, 0.0), side=2.0)
+def test_div_cauchy_stress_coord_separable(sample_grid):
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     component = geom.component()
-    batch = sample_coord_separable(component, {"x": (6, 5)}, dense_blocks=(), key=0)
+    batch = sample_grid(component, {"x": (6, 5)}, dense_blocks=(), key=0)
 
     @geom.Function("x")
     def u(x):
@@ -52,7 +59,9 @@ def test_div_cauchy_stress_coord_separable(sample_coord_separable):
 
 
 def test_div_cauchy_stress_spacetime_broadcasts(sample_batch):
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     dom = geom @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x", "t")
@@ -68,11 +77,8 @@ def test_div_cauchy_stress_spacetime_broadcasts(sample_batch):
 
 
 def test_div_cauchy_stress_preserves_metadata():
-    geom = Square(center=(0.0, 0.0), side=2.0)
-    u = DomainFunction(
-        domain=geom,
-        deps=("x",),
-        func=lambda x: jnp.array([x[0], x[1]]),
-        metadata={"tag": 3},
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
+    u = geom.Function("x")(lambda x: jnp.array([x[0], x[1]])).with_metadata(**{"tag": 3})
     assert div_cauchy_stress(u, lambda_=1.0, mu=2.0).metadata == u.metadata

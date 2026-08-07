@@ -71,19 +71,19 @@ def test_query_graph_components_select_source_target_and_edges():
         weight_kind=None,
     )
     domain = phx.domain.GraphDomain(bundle.graph, measure="count")
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
     sources = domain.component({"graph": bundle.source_nodes_component()})
     targets = domain.component({"graph": bundle.target_nodes_component()})
     query_edges = domain.component({"graph": bundle.query_edges_component()})
 
-    source_batch = sources.sample(2, structure=structure)
-    target_batch = targets.sample(1, structure=structure)
-    edge_batch = query_edges.sample(2, structure=structure)
+    source_batch = sources.sample(phx.domain.PointSampling(2, layout=structure))
+    target_batch = targets.sample(phx.domain.PointSampling(1, layout=structure))
+    edge_batch = query_edges.sample(phx.domain.PointSampling(2, layout=structure))
 
     assert jnp.allclose(source_batch["graph"]["features"].data[:, 0], jnp.array([1.0, 3.0]))
     assert jnp.allclose(target_batch["graph"]["features"].data[:, 0], jnp.array([0.0]))
     assert jnp.allclose(edge_batch["graph"]["distance"].data[:, 0], jnp.array([0.5, 0.5]))
-    assert targets.measure() == 1.0
+    assert targets.mass.value == 1.0
 
 
 def test_graph_neural_operator_aggregates_query_sources_to_targets():
@@ -115,7 +115,7 @@ def test_graph_neural_operator_wraps_as_graph_model_on_query_targets():
     )
     domain = phx.domain.GraphDomain(bundle.graph)
     targets = domain.component({"graph": bundle.target_nodes_component()})
-    batch = targets.sample(1, structure=phx.domain.ProductStructure((("graph",),)))
+    batch = targets.sample(phx.domain.PointSampling(1, layout=phx.domain.SampleLayout((("graph",),))))
 
     @domain.Function("graph")
     def u(node):

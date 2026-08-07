@@ -2,15 +2,15 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from collections.abc import Callable, Mapping, Sequence
-from typing import Any, cast
+from collections.abc import Callable, Mapping
+from typing import Any, cast, overload
 
 import coordax as cx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, ArrayLike, Key
+from jaxtyping import Array, Key
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
@@ -19,15 +19,15 @@ from .._sampling import (
     DESIGN_ALGORITHM_VERSION,
     design_capabilities,
     design_name,
-    DesignLike,
     materialize_design,
-    resolve_design,
     SampleAddress,
 )
 from .._strict import StrictModule
-from ._base import _AbstractGeometry, EnforcementGateMethod
+from ..geometry import BoundaryAtlasProvider, sample_boundary_atlas
+from ._base import AbstractGeometry, EnforcementGateMethod
 from ._dataset import DatasetDomain
-from ._domain import _AbstractDomain, RelabeledDomain
+from ._domain import Domain
+from ._factor_component import FactorComponent
 from ._function import DomainFunction
 from ._grid import (
     AbstractAxisSpec,
@@ -37,110 +37,35 @@ from ._grid import (
     GridSpec,
     sdf_mask_from_adf,
 )
+from ._measure import (
+    BaseMeasure,
+    ExactMass,
+    Mass,
+    product_mass,
+    sum_mass,
+    UnknownMass,
+)
 from ._ragged_series_dataset import RaggedSeriesDatasetDomain
-from ._scalar import _AbstractScalarDomain
+from ._scalar import AbstractScalarDomain
+from ._selection import (
+    Boundary,
+    Fixed,
+    FixedEnd,
+    FixedStart,
+    Interior,
+    Selection,
+    SelectionSpec,
+)
 from ._structure import (
     _axis_name_for_coord,
-    CoordSeparableBatch,
+    GridBatch,
+    GridSampling,
     NumPoints,
+    PointBatch,
     Points,
-    PointsBatch,
-    ProductStructure,
+    PointSampling,
+    SampleLayout,
 )
-
-
-class _AbstractVarComponent(StrictModule):
-    pass
-
-
-class Interior(_AbstractVarComponent):
-    r"""Marker selecting the interior of a domain factor.
-
-    For a geometry factor $\Omega\subset\mathbb{R}^d$, this corresponds to sampling
-    from $\Omega$ (volume/area/length measure). For a scalar factor like a time
-    interval $[t_0,t_1]$, this corresponds to sampling from the interval interior.
-    """
-
-    def __init__(self):
-        """Create an interior component marker."""
-
-
-class Boundary(_AbstractVarComponent):
-    r"""Marker selecting a full boundary or a tagged source-entity subset."""
-
-    tags: tuple[str, ...] | None = eqx.field(static=True)
-    entity_ids: tuple[int, ...] | None = eqx.field(static=True)
-
-    def __init__(
-        self,
-        *,
-        tags: Sequence[str] | None = None,
-        entity_ids: Sequence[int] | None = None,
-    ):
-        """Create a boundary selector, optionally restricted by tags or IDs."""
-        tags_ = None if tags is None else tuple(tags)
-        entity_ids_ = None if entity_ids is None else tuple(map(int, entity_ids))
-        if tags_ is not None and (not tags_ or any(not tag for tag in tags_)):
-            raise ValueError("Boundary.tags must contain non-empty names.")
-        if entity_ids_ is not None and not entity_ids_:
-            raise ValueError("Boundary.entity_ids must be non-empty.")
-        self.tags = tags_
-        self.entity_ids = entity_ids_
-
-
-class Fixed(_AbstractVarComponent):
-    r"""Fix a scalar coordinate to a specific value.
-
-    Interpreted as a Dirac measure of unit mass at the fixed value. This is supported
-    for scalar domains (like `TimeInterval`) and is used for slices such as $t=t_0$.
-
-    Note: Fixing geometry coordinates is not supported by the sampler; use a `where`
-    mask or construct a lower-dimensional geometry instead.
-    """
-
-    value: Array
-
-    def __init__(self, value: ArrayLike):
-        """Create a fixed scalar component at the given value."""
-        self.value = jnp.asarray(value, dtype=float)
-
-
-class FixedStart(_AbstractVarComponent):
-    r"""Fix a scalar domain to its start endpoint (e.g. $t=t_0$)."""
-
-    def __init__(self):
-        """Create a fixed-start component marker."""
-
-
-class FixedEnd(_AbstractVarComponent):
-    r"""Fix a scalar domain to its end endpoint (e.g. $t=t_1$)."""
-
-    def __init__(self):
-        """Create a fixed-end component marker."""
-
-
-class ComponentSpec(StrictModule):
-    r"""Mapping from domain labels to component selectors.
-
-    A `ComponentSpec` assigns each label $\ell$ in a domain to one of:
-
-    - `Interior()` : use the interior $\Omega_\ell$;
-    - `Boundary()` : use the boundary $\partial\Omega_\ell$ (or endpoints for scalars);
-    - `FixedStart()` / `FixedEnd()` : fix a scalar domain to its endpoints;
-    - `Fixed(value)` : fix a scalar domain to an arbitrary value.
-
-    Any label not explicitly specified defaults to `Interior()`.
-    """
-
-    by_label: frozendict[str, _AbstractVarComponent]
-
-    def __init__(self, by_label: Mapping[str, _AbstractVarComponent] | None = None):
-        """Create a component specification from a `{label: component}` mapping."""
-        self.by_label = frozendict(by_label or {})
-
-    def component_for(self, label: str, /) -> _AbstractVarComponent:
-        """Return the component selector for `label` (defaults to `Interior()`)."""
-        return self.by_label.get(label, Interior())
 
 
 def _as_field(x: Array, *, dims: tuple[str | None, ...]) -> cx.Field:
@@ -148,15 +73,15 @@ def _as_field(x: Array, *, dims: tuple[str | None, ...]) -> cx.Field:
 
 
 class _NormalCallable(StrictModule):
-    geom: _AbstractGeometry
+    geom: AbstractGeometry
 
-    def __init__(self, geom: _AbstractGeometry):
+    def __init__(self, geom: AbstractGeometry):
         self.geom = geom
 
     def __call__(self, x: Array, /, *, key=None, **kwargs: Any) -> Array:
         del key, kwargs
         pts_in = jnp.asarray(x, dtype=float)
-        d = int(self.geom.var_dim)
+        d = int(self.geom.spatial_dim)
         if pts_in.ndim == 0:
             if d != 1:
                 raise ValueError("Expected a geometry point with shape (..., dim).")
@@ -183,14 +108,14 @@ class _NormalCallable(StrictModule):
 
 
 class _SdfCallable(StrictModule):
-    geom: _AbstractGeometry
+    geom: AbstractGeometry
 
-    def __init__(self, geom: _AbstractGeometry):
+    def __init__(self, geom: AbstractGeometry):
         self.geom = geom
 
     def __call__(self, x: Any, /, *, key=None, **kwargs: Any) -> Array:
         del key, kwargs
-        d = int(self.geom.var_dim)
+        d = int(self.geom.spatial_dim)
 
         if isinstance(x, tuple):
             coords = tuple(jnp.asarray(c, dtype=float).reshape((-1,)) for c in x)
@@ -224,7 +149,7 @@ class _EnforcementGateCallable(StrictModule):
 
     def __init__(
         self,
-        geom: _AbstractGeometry,
+        geom: AbstractGeometry,
         *,
         method: EnforcementGateMethod,
         saturation_fraction: float,
@@ -235,7 +160,7 @@ class _EnforcementGateCallable(StrictModule):
             saturation_fraction=saturation_fraction,
             linear_fraction=linear_fraction,
         )
-        self.dim = int(geom.var_dim)
+        self.dim = int(geom.spatial_dim)
 
     def __call__(self, x: Any, /, *, key=None, **kwargs: Any) -> Array:
         del key, kwargs
@@ -266,8 +191,8 @@ class _EnforcementGateCallable(StrictModule):
 
 
 def _sample_geometry(
-    geom: _AbstractGeometry,
-    component: _AbstractVarComponent,
+    geom: AbstractGeometry,
+    component: Selection,
     num_points: int,
     *,
     sampler: str,
@@ -279,8 +204,10 @@ def _sample_geometry(
         )
     if isinstance(component, Boundary):
         if component.tags is not None or component.entity_ids is not None:
-            from ..geometry import sample_boundary_atlas
-
+            if not isinstance(geom, BoundaryAtlasProvider):
+                raise ValueError(
+                    f"{type(geom).__name__} does not expose boundary entities."
+                )
             atlas = geom.boundary_atlas.select(
                 tags=component.tags,
                 entity_ids=component.entity_ids,
@@ -298,8 +225,8 @@ def _sample_geometry(
 
 
 def _sample_scalar(
-    dom: _AbstractScalarDomain,
-    component: _AbstractVarComponent,
+    dom: AbstractScalarDomain,
+    component: Selection,
     num_points: int,
     *,
     sampler: str,
@@ -353,26 +280,44 @@ class DomainComponent(StrictModule):
     losses.
     """
 
-    domain: _AbstractDomain
-    spec: ComponentSpec
+    domain: Domain
+    spec: SelectionSpec
+    factor_components: tuple[FactorComponent, ...]
     where: frozendict[str, Callable]
     where_all: DomainFunction | None
     weight_all: DomainFunction | None
+    density_normalized: bool = eqx.field(static=True)
 
     def __init__(
         self,
         *,
-        domain: _AbstractDomain,
-        spec: ComponentSpec | None = None,
+        domain: Domain,
+        spec: SelectionSpec | None = None,
         where: Mapping[str, Callable] | None = None,
         where_all: DomainFunction | None = None,
         weight_all: DomainFunction | None = None,
+        density_normalized: bool = False,
     ):
         self.domain = domain
-        self.spec = spec or ComponentSpec()
+        self.spec = spec or SelectionSpec()
+        unknown = tuple(
+            label for label in self.spec.by_label if label not in self.domain.labels
+        )
+        if unknown:
+            raise KeyError(
+                f"SelectionSpec contains labels {unknown} outside domain "
+                f"{self.domain.labels}."
+            )
+        self.factor_components = tuple(
+            factor.bind_component(
+                {label: self.spec.selection_for(label) for label in factor.labels}
+            )
+            for factor in self.domain.joint_factors
+        )
         self.where = frozendict(where or {})
         self.where_all = where_all
         self.weight_all = weight_all
+        self.density_normalized = bool(density_normalized)
 
         if self.where_all is not None and not isinstance(self.where_all, DomainFunction):
             self.where_all = DomainFunction(
@@ -391,92 +336,100 @@ class DomainComponent(StrictModule):
                 metadata={},
             )
 
-    def measure(self) -> Array:
-        r"""Return the total measure of this component.
+    def factor_component(self, label: str, /) -> FactorComponent:
+        """Return the bound joint-factor component that owns ``label``."""
+        for component in self.factor_components:
+            if label in component.factor.labels:
+                return component
+        raise KeyError(
+            f"Label {label!r} is outside component domain {self.domain.labels}."
+        )
 
-        This computes the product of the per-label component measures, e.g.
+    @property
+    def base_measure(self) -> BaseMeasure:
+        """Product measure before restriction or density transformations."""
+        return BaseMeasure(
+            "external",
+            product_mass(
+                tuple(component.measure.mass for component in self.factor_components)
+            ),
+        )
 
-        $$
-        \mu(\Omega_{\text{comp}})=\prod_{\ell\in\mathcal{L}} \mu_\ell\left(\Omega_\ell^{(\text{spec})}\right).
-        $$
+    @property
+    def mass(self) -> Mass:
+        """Typed component mass after explicit restrictions and density."""
+        if self.where or self.where_all is not None:
+            return UnknownMass("restricted component mass requires numerical estimation")
+        if self.weight_all is not None:
+            if self.density_normalized:
+                return ExactMass(1.0)
+            return UnknownMass(
+                "density-weighted component mass requires numerical estimation"
+            )
+        return self.base_measure.mass
 
-        For scalar boundaries $\{a,b\}$ this uses counting measure (mass $2$), and for
-        fixed slices uses unit mass.
-        """
-        from ._irregular_trajectory_dataset import irregular_trajectory_component_measure
-        from ._trajectory_dataset import trajectory_component_measure
-        from .graph._trajectory import graph_trajectory_component_measure
+    def restrict(
+        self,
+        *,
+        per_coordinate: Mapping[str, Callable] | None = None,
+        predicate: DomainFunction | Callable | None = None,
+    ) -> "DomainComponent":
+        """Return this component with an explicit predicate restriction."""
+        merged = dict(self.where)
+        for label, condition in (per_coordinate or {}).items():
+            if label not in self.domain.labels:
+                raise KeyError(f"Restriction label {label!r} is outside the domain.")
+            if label in merged:
+                raise ValueError(
+                    f"Coordinate {label!r} already has a restriction; compose it explicitly."
+                )
+            merged[label] = condition
+        if predicate is not None and self.where_all is not None:
+            raise ValueError(
+                "A global restriction already exists; compose predicates explicitly."
+            )
+        return DomainComponent(
+            domain=self.domain,
+            spec=self.spec,
+            where=merged,
+            where_all=self.where_all if predicate is None else predicate,
+            weight_all=self.weight_all,
+            density_normalized=self.density_normalized,
+        )
 
-        graph_custom = graph_trajectory_component_measure(self)
-        if graph_custom is not None:
-            return graph_custom
-
-        custom = trajectory_component_measure(self)
-        if custom is not None:
-            return custom
-
-        irregular_custom = irregular_trajectory_component_measure(self)
-        if irregular_custom is not None:
-            return irregular_custom
-
-        m = jnp.array(1.0, dtype=float)
-        for lbl in self.domain.labels:
-            comp = self.spec.component_for(lbl)
-            factor = self.domain.factor(lbl)
-            if isinstance(factor, RelabeledDomain):
-                factor = factor.base
-
-            if isinstance(factor, _AbstractGeometry):
-                if isinstance(comp, Interior):
-                    mi = factor.volume
-                elif isinstance(comp, Boundary):
-                    mi = factor.boundary_measure_value
-                elif isinstance(comp, Fixed):
-                    mi = jnp.array(1.0, dtype=float)
-                else:
-                    raise TypeError(
-                        f"Unsupported geometry component {type(comp).__name__}."
-                    )
-
-            elif isinstance(factor, _AbstractScalarDomain):
-                if isinstance(comp, Interior):
-                    mi = factor.measure
-                elif isinstance(comp, Boundary):
-                    mi = jnp.array(2.0, dtype=float)
-                elif isinstance(comp, (FixedStart, FixedEnd, Fixed)):
-                    mi = jnp.array(1.0, dtype=float)
-                else:
-                    raise TypeError(
-                        f"Unsupported scalar component {type(comp).__name__}."
-                    )
-
-            elif isinstance(factor, (DatasetDomain, RaggedSeriesDatasetDomain)):
-                if isinstance(comp, Interior):
-                    mi = factor.measure
-                else:
-                    raise TypeError(
-                        f"Unsupported dataset component {type(comp).__name__}."
-                    )
-
-            else:
-                from .graph._dataset import GraphDatasetDomain
-                from .graph._domain import GraphDomain
-
-                if isinstance(factor, (GraphDomain, GraphDatasetDomain)):
-                    mi = factor.component_measure(comp)
-                else:
-                    raise TypeError(
-                        f"Unsupported unary domain type {type(factor).__name__}."
-                    )
-
-            m = m * jnp.asarray(mi, dtype=float)
-        return m
+    def with_density(
+        self,
+        density: DomainFunction | Callable,
+        /,
+        *,
+        normalized: bool = False,
+    ) -> "DomainComponent":
+        """Return this component weighted by a declared non-negative density."""
+        density_fn = (
+            density
+            if isinstance(density, DomainFunction)
+            else DomainFunction(
+                domain=self.domain,
+                deps=self.domain.labels,
+                func=density,
+                metadata={},
+            )
+        )
+        combined = density_fn if self.weight_all is None else self.weight_all * density_fn
+        return DomainComponent(
+            domain=self.domain,
+            spec=self.spec,
+            where=self.where,
+            where_all=self.where_all,
+            weight_all=combined,
+            density_normalized=normalized if self.weight_all is None else False,
+        )
 
     def _sample_graph_batch(
         self,
         num_points: NumPoints,
         *,
-        structure: ProductStructure,
+        structure: SampleLayout,
         sampler: str,
         key: Key[Array, ""],
     ):
@@ -487,8 +440,7 @@ class DomainComponent(StrictModule):
         graph_labels: list[str] = []
         for lbl in self.domain.labels:
             factor = self.domain.factor(lbl)
-            if isinstance(factor, RelabeledDomain):
-                factor = factor.base
+
             if isinstance(factor, (GraphDomain, GraphDatasetDomain)):
                 graph_labels.append(lbl)
 
@@ -501,14 +453,13 @@ class DomainComponent(StrictModule):
 
         graph_label = graph_labels[0]
         graph_factor = self.domain.factor(graph_label)
-        if isinstance(graph_factor, RelabeledDomain):
-            graph_factor = graph_factor.base
+
         assert isinstance(graph_factor, (GraphDomain, GraphDatasetDomain))
 
         fixed_labels = frozenset(
             lbl
             for lbl in self.domain.labels
-            if isinstance(self.spec.component_for(lbl), (FixedStart, FixedEnd, Fixed))
+            if isinstance(self.spec.selection_for(lbl), (FixedStart, FixedEnd, Fixed))
         )
         structure_out = structure.canonicalize(
             self.domain.labels, fixed_labels=fixed_labels
@@ -521,7 +472,7 @@ class DomainComponent(StrictModule):
         for block in structure_out.blocks:
             if graph_label in block and len(block) != 1:
                 raise ValueError(
-                    "GraphDomain labels must be sampled in singleton ProductStructure "
+                    "GraphDomain labels must be sampled in singleton SampleLayout "
                     f"blocks; got {block!r}."
                 )
 
@@ -546,9 +497,9 @@ class DomainComponent(StrictModule):
         graph_n = num_points_by_block[label_to_block_index[graph_label]]
         if isinstance(graph_factor, GraphDatasetDomain):
             graph_batch = graph_factor.sample_component(
-                self.spec.component_for(graph_label),
+                self.spec.selection_for(graph_label),
                 graph_n,
-                structure=ProductStructure(((graph_label,),), axis_names=(graph_axis,)),
+                structure=SampleLayout(((graph_label,),), axis_names=(graph_axis,)),
                 label=graph_label,
                 sampler=sampler,
                 key=jr.fold_in(
@@ -558,9 +509,9 @@ class DomainComponent(StrictModule):
             )
         else:
             graph_batch = graph_factor.sample_component(
-                self.spec.component_for(graph_label),
+                self.spec.selection_for(graph_label),
                 graph_n,
-                structure=ProductStructure(((graph_label,),), axis_names=(graph_axis,)),
+                structure=SampleLayout(((graph_label,),), axis_names=(graph_axis,)),
                 label=graph_label,
             )
 
@@ -569,13 +520,11 @@ class DomainComponent(StrictModule):
         for lbl in self.domain.labels:
             if lbl == graph_label:
                 continue
-            comp = self.spec.component_for(lbl)
+            comp = self.spec.selection_for(lbl)
             factor = self.domain.factor(lbl)
-            if isinstance(factor, RelabeledDomain):
-                factor = factor.base
 
             if lbl in fixed_labels:
-                if isinstance(factor, _AbstractScalarDomain):
+                if isinstance(factor, AbstractScalarDomain):
                     if isinstance(comp, FixedStart):
                         val = factor.fixed("start")
                     elif isinstance(comp, FixedEnd):
@@ -588,13 +537,17 @@ class DomainComponent(StrictModule):
                     )
                     continue
 
-                if isinstance(factor, _AbstractGeometry):
+                if isinstance(factor, AbstractGeometry):
                     assert isinstance(comp, Fixed)
-                    val = jnp.asarray(comp.value, dtype=float).reshape((factor.var_dim,))
+                    val = jnp.asarray(comp.value, dtype=float).reshape(
+                        (factor.spatial_dim,)
+                    )
                     points[lbl] = _as_field(val, dims=(None,))
                     continue
 
-                raise TypeError(f"Unsupported unary domain type {type(factor).__name__}.")
+                raise TypeError(
+                    f"Unsupported domain factor type {type(factor).__name__}."
+                )
 
             axis = structure_out.axis_for(lbl)
             if axis is None:
@@ -603,14 +556,14 @@ class DomainComponent(StrictModule):
             n = num_points_by_block[bi]
             k = jr.fold_in(block_keys[bi], label_to_idx[lbl])
 
-            if isinstance(factor, _AbstractGeometry):
+            if isinstance(factor, AbstractGeometry):
                 arr = _sample_geometry(factor, comp, n, sampler=sampler, key=k)
                 if arr.ndim == 1:
                     arr = arr.reshape((-1, 1))
                 points[lbl] = _as_field(arr, dims=(axis, None))
                 continue
 
-            if isinstance(factor, _AbstractScalarDomain):
+            if isinstance(factor, AbstractScalarDomain):
                 arr = _sample_scalar(factor, comp, n, sampler=sampler, key=k).reshape(
                     (-1,)
                 )
@@ -631,7 +584,7 @@ class DomainComponent(StrictModule):
                 points[lbl] = jax.tree_util.tree_map(_to_field, samples)
                 continue
 
-            raise TypeError(f"Unsupported unary domain type {type(factor).__name__}.")
+            raise TypeError(f"Unsupported domain factor type {type(factor).__name__}.")
 
         return GraphBatch(
             points=frozendict(points),
@@ -641,14 +594,45 @@ class DomainComponent(StrictModule):
             component_kind=graph_batch.component_kind,
         )
 
+    @overload
     def sample(
         self,
-        num_points: NumPoints,
+        sampling: PointSampling,
+        /,
         *,
-        structure: ProductStructure,
-        sampler: DesignLike = "latin_hypercube",
         key: Key[Array, ""] = DOC_KEY0,
-    ) -> PointsBatch:
+    ) -> PointBatch: ...
+
+    @overload
+    def sample(
+        self,
+        sampling: GridSampling,
+        /,
+        *,
+        key: Key[Array, ""] = DOC_KEY0,
+    ) -> GridBatch: ...
+
+    def sample(
+        self,
+        sampling: PointSampling | GridSampling,
+        /,
+        *,
+        key: Key[Array, ""] = DOC_KEY0,
+    ) -> PointBatch | GridBatch:
+        """Materialize a typed sampling request."""
+        if isinstance(sampling, PointSampling):
+            return self._sample_points(sampling, key=key)
+        if isinstance(sampling, GridSampling):
+            return self._sample_grid(sampling, key=key)
+        raise TypeError("sampling must be a PointSampling or GridSampling.")
+
+    def _sample_points(
+        self,
+        sampling: PointSampling,
+        /,
+        *,
+        key: Key[Array, ""] = DOC_KEY0,
+    ) -> PointBatch:
         from ._irregular_trajectory_dataset import (
             IrregularTrajectoryDatasetDomain,
             sample_irregular_trajectory_component,
@@ -663,12 +647,37 @@ class DomainComponent(StrictModule):
             sample_graph_trajectory_component,
         )
 
-        design = resolve_design(sampler)
+        num_points = sampling.count
+        structure = sampling.layout
+        if structure is None:
+            coupled = isinstance(
+                self.domain,
+                (
+                    GraphTrajectoryDatasetDomain,
+                    IrregularTrajectoryDatasetDomain,
+                    TrajectoryDatasetDomain,
+                ),
+            )
+            if coupled:
+                active_labels = self.domain.labels
+            else:
+                active_labels = tuple(
+                    label
+                    for label in self.domain.labels
+                    if not isinstance(
+                        self.spec.selection_for(label),
+                        (FixedStart, FixedEnd, Fixed),
+                    )
+                )
+            structure = (
+                SampleLayout((active_labels,)) if active_labels else SampleLayout(())
+            )
+        design = sampling.design
         sampler_name = design_name(design)
 
         if isinstance(self.domain, GraphTrajectoryDatasetDomain):
             return cast(
-                PointsBatch,
+                PointBatch,
                 sample_graph_trajectory_component(
                     self,
                     num_points,
@@ -708,7 +717,7 @@ class DomainComponent(StrictModule):
         fixed_labels = frozenset(
             lbl
             for lbl in self.domain.labels
-            if isinstance(self.spec.component_for(lbl), (FixedStart, FixedEnd, Fixed))
+            if isinstance(self.spec.selection_for(lbl), (FixedStart, FixedEnd, Fixed))
         )
         structure = structure.canonicalize(self.domain.labels, fixed_labels=fixed_labels)
 
@@ -743,11 +752,10 @@ class DomainComponent(StrictModule):
             unsupported = []
             for label in block:
                 factor = self.domain.factor(label)
-                if isinstance(factor, RelabeledDomain):
-                    factor = factor.base
+
                 transport = reference_transport(
                     factor,
-                    self.spec.component_for(label),
+                    self.spec.selection_for(label),
                 )
                 if transport is None:
                     unsupported.append(label)
@@ -790,13 +798,11 @@ class DomainComponent(StrictModule):
 
         points: dict[str, Any] = {}
         for lbl in self.domain.labels:
-            comp = self.spec.component_for(lbl)
+            comp = self.spec.selection_for(lbl)
             factor = self.domain.factor(lbl)
-            if isinstance(factor, RelabeledDomain):
-                factor = factor.base
 
             if lbl in fixed_labels:
-                if isinstance(factor, _AbstractScalarDomain):
+                if isinstance(factor, AbstractScalarDomain):
                     if isinstance(comp, FixedStart):
                         val = factor.fixed("start")
                     elif isinstance(comp, FixedEnd):
@@ -809,13 +815,17 @@ class DomainComponent(StrictModule):
                     )
                     continue
 
-                if isinstance(factor, _AbstractGeometry):
+                if isinstance(factor, AbstractGeometry):
                     assert isinstance(comp, Fixed)
-                    val = jnp.asarray(comp.value, dtype=float).reshape((factor.var_dim,))
+                    val = jnp.asarray(comp.value, dtype=float).reshape(
+                        (factor.spatial_dim,)
+                    )
                     points[lbl] = _as_field(val, dims=(None,))
                     continue
 
-                raise TypeError(f"Unsupported unary domain type {type(factor).__name__}.")
+                raise TypeError(
+                    f"Unsupported domain factor type {type(factor).__name__}."
+                )
 
             axis = structure.axis_for(lbl)
             if axis is None:
@@ -825,13 +835,13 @@ class DomainComponent(StrictModule):
 
             if lbl in transported:
                 samples = transported[lbl]
-                if isinstance(factor, _AbstractGeometry):
+                if isinstance(factor, AbstractGeometry):
                     arr = jnp.asarray(samples, dtype=float)
                     if arr.ndim == 1:
                         arr = arr.reshape((-1, 1))
                     points[lbl] = _as_field(arr, dims=(axis, None))
                     continue
-                if isinstance(factor, _AbstractScalarDomain):
+                if isinstance(factor, AbstractScalarDomain):
                     arr = jnp.asarray(samples, dtype=float).reshape((-1,))
                     points[lbl] = _as_field(arr, dims=(axis,))
                     continue
@@ -850,7 +860,7 @@ class DomainComponent(StrictModule):
                     )
                     continue
 
-            if isinstance(factor, _AbstractGeometry):
+            if isinstance(factor, AbstractGeometry):
                 k = jr.fold_in(keys_for_blocks[bi], label_to_idx[lbl])
                 arr = _sample_geometry(factor, comp, n, sampler=sampler_name, key=k)
                 if arr.ndim == 1:
@@ -858,7 +868,7 @@ class DomainComponent(StrictModule):
                 points[lbl] = _as_field(arr, dims=(axis, None))
                 continue
 
-            if isinstance(factor, _AbstractScalarDomain):
+            if isinstance(factor, AbstractScalarDomain):
                 k = jr.fold_in(keys_for_blocks[bi], label_to_idx[lbl])
                 arr = _sample_scalar(
                     factor, comp, n, sampler=sampler_name, key=k
@@ -881,44 +891,34 @@ class DomainComponent(StrictModule):
                 points[lbl] = jax.tree_util.tree_map(_to_field, samples)
                 continue
 
-            raise TypeError(f"Unsupported unary domain type {type(factor).__name__}.")
+            raise TypeError(f"Unsupported domain factor type {type(factor).__name__}.")
 
-        return PointsBatch(points=frozendict(points), structure=structure)
+        return PointBatch(points=frozendict(points), structure=structure)
 
-    def sample_coord_separable(
+    def _sample_grid(
         self,
-        coord_separable: Mapping[
-            str,
-            int
-            | Sequence[int]
-            | AbstractAxisSpec
-            | Sequence[AbstractAxisSpec]
-            | GridSpec,
-        ],
+        sampling: GridSampling,
         /,
         *,
-        num_points: NumPoints = (),
-        dense_structure: ProductStructure | None = None,
-        sampler: str = "latin_hypercube",
         key: Key[Array, ""] = DOC_KEY0,
-    ) -> CoordSeparableBatch:
-        r"""Sample a coordinate-separable batch.
+    ) -> GridBatch:
+        r"""Materialize a coordinate grid with optional dense point blocks.
 
-        For selected unary labels, this samples each coordinate axis independently,
-        producing coordinate arrays (and an associated boolean mask) suitable for
-        grid-like evaluation. Any remaining (non-fixed, non-separable) labels are
-        sampled using `dense_structure`.
-
-        `coord_separable` values may be:
-        - counts (`int` or `Sequence[int]`), using the configured random `sampler`;
-        - axis specs (`AbstractAxisSpec`, `Sequence[AbstractAxisSpec]`, or `GridSpec`),
-          producing deterministic grid nodes and attaching per-axis discretization
-          metadata for quadrature/operators.
-
-        This is useful when an operator factorizes across coordinate axes, or when a
-        Cartesian grid is desired for quadrature-like reductions.
+        Coordinate requests may be counts, axis specifications, or `GridSpec`
+        values. Remaining non-fixed labels are sampled through `sampling.dense`.
         """
         from ._trajectory_dataset import TrajectoryDatasetDomain
+
+        coord_separable = sampling.axes
+        sampler = design_name(sampling.design)
+        unknown = tuple(
+            label for label in coord_separable if label not in self.domain.labels
+        )
+        if unknown:
+            raise KeyError(
+                f"GridSampling contains labels {unknown!r} outside domain "
+                f"{self.domain.labels!r}."
+            )
 
         if isinstance(self.domain, TrajectoryDatasetDomain):
             raise ValueError(
@@ -927,19 +927,16 @@ class DomainComponent(StrictModule):
             )
 
         coord_labels = tuple(lbl for lbl in self.domain.labels if lbl in coord_separable)
-        for lbl in coord_labels:
-            if lbl not in self.domain.labels:
-                raise KeyError(f"Label {lbl!r} not in domain {self.domain.labels}.")
 
         fixed_labels = frozenset(
             lbl
             for lbl in self.domain.labels
-            if isinstance(self.spec.component_for(lbl), (FixedStart, FixedEnd, Fixed))
+            if isinstance(self.spec.selection_for(lbl), (FixedStart, FixedEnd, Fixed))
         )
         coord_label_set = frozenset(coord_labels)
         if fixed_labels & coord_label_set:
             raise ValueError(
-                "coord_separable must not include fixed labels; got "
+                "GridSampling.axes must not include fixed labels; got "
                 f"{tuple(sorted(fixed_labels & coord_label_set))!r}."
             )
 
@@ -948,7 +945,22 @@ class DomainComponent(StrictModule):
             for lbl in self.domain.labels
             if (lbl not in fixed_labels) and (lbl not in coord_label_set)
         )
-        dense_structure_in = dense_structure or ProductStructure(blocks=())
+        dense_sampling = sampling.dense
+        if dense_sampling is None:
+            if dense_labels:
+                raise ValueError(
+                    "GridSampling.dense is required for non-grid labels "
+                    f"{dense_labels!r}."
+                )
+            num_points: NumPoints = ()
+            dense_structure_in = SampleLayout(())
+            dense_sampler = sampler
+        else:
+            num_points = dense_sampling.count
+            dense_structure_in = dense_sampling.layout or (
+                SampleLayout((dense_labels,)) if dense_labels else SampleLayout(())
+            )
+            dense_sampler = design_name(dense_sampling.design)
         dense_structure_out = dense_structure_in.canonicalize(
             dense_labels, fixed_labels=frozenset()
         )
@@ -959,14 +971,15 @@ class DomainComponent(StrictModule):
             else:
                 if len(dense_structure_out.blocks) != 1:
                     raise ValueError(
-                        "num_points=int is only valid when dense_structure has exactly one block."
+                        "PointSampling.count=int requires exactly one dense layout block."
                     )
                 num_points_by_block = (int(num_points),)
         else:
             num_points_by_block = tuple(int(n) for n in num_points)
             if len(num_points_by_block) != len(dense_structure_out.blocks):
                 raise ValueError(
-                    f"num_points must have length {len(dense_structure_out.blocks)} to match dense_structure blocks."
+                    f"PointSampling.count must have length {len(dense_structure_out.blocks)} "
+                    "to match dense layout blocks."
                 )
 
         label_to_block_index: dict[str, int] = {}
@@ -995,13 +1008,11 @@ class DomainComponent(StrictModule):
         }
 
         for lbl in self.domain.labels:
-            comp = self.spec.component_for(lbl)
+            comp = self.spec.selection_for(lbl)
             factor = self.domain.factor(lbl)
-            if isinstance(factor, RelabeledDomain):
-                factor = factor.base
 
             if lbl in fixed_labels:
-                if isinstance(factor, _AbstractScalarDomain):
+                if isinstance(factor, AbstractScalarDomain):
                     if isinstance(comp, FixedStart):
                         val = factor.fixed("start")
                     elif isinstance(comp, FixedEnd):
@@ -1014,18 +1025,22 @@ class DomainComponent(StrictModule):
                     )
                     continue
 
-                if isinstance(factor, _AbstractGeometry):
+                if isinstance(factor, AbstractGeometry):
                     assert isinstance(comp, Fixed)
-                    val = jnp.asarray(comp.value, dtype=float).reshape((factor.var_dim,))
+                    val = jnp.asarray(comp.value, dtype=float).reshape(
+                        (factor.spatial_dim,)
+                    )
                     points[lbl] = _as_field(val, dims=(None,))
                     continue
 
-                raise TypeError(f"Unsupported unary domain type {type(factor).__name__}.")
+                raise TypeError(
+                    f"Unsupported domain factor type {type(factor).__name__}."
+                )
 
             if lbl in coord_label_set:
-                if isinstance(factor, _AbstractGeometry):
-                    var_dim = int(factor.var_dim)
-                elif isinstance(factor, _AbstractScalarDomain):
+                if isinstance(factor, AbstractGeometry):
+                    var_dim = int(factor.spatial_dim)
+                elif isinstance(factor, AbstractScalarDomain):
                     var_dim = 1
                 else:
                     raise TypeError(
@@ -1073,7 +1088,7 @@ class DomainComponent(StrictModule):
 
                 geometry_weight_arr: Array | None = None
                 geometry_order = 0
-                if isinstance(factor, _AbstractGeometry):
+                if isinstance(factor, AbstractGeometry):
                     if axis_specs is not None:
                         if len(axis_specs) != var_dim:
                             raise ValueError(
@@ -1138,7 +1153,7 @@ class DomainComponent(StrictModule):
                             key=coord_key_by_label[lbl],
                         )
                 else:
-                    assert isinstance(factor, _AbstractScalarDomain)
+                    assert isinstance(factor, AbstractScalarDomain)
                     if axis_specs is not None:
                         if len(axis_specs) != 1:
                             raise ValueError(
@@ -1219,25 +1234,25 @@ class DomainComponent(StrictModule):
             bi = label_to_block_index[lbl]
             n = num_points_by_block[bi]
 
-            if isinstance(factor, _AbstractGeometry):
+            if isinstance(factor, AbstractGeometry):
                 k = jr.fold_in(dense_keys_for_blocks[bi], label_to_idx[lbl])
-                arr = _sample_geometry(factor, comp, n, sampler=sampler, key=k)
+                arr = _sample_geometry(factor, comp, n, sampler=dense_sampler, key=k)
                 if arr.ndim == 1:
                     arr = arr.reshape((-1, 1))
                 points[lbl] = _as_field(arr, dims=(axis, None))
                 continue
 
-            if isinstance(factor, _AbstractScalarDomain):
+            if isinstance(factor, AbstractScalarDomain):
                 k = jr.fold_in(dense_keys_for_blocks[bi], label_to_idx[lbl])
-                arr = _sample_scalar(factor, comp, n, sampler=sampler, key=k).reshape(
-                    (-1,)
-                )
+                arr = _sample_scalar(
+                    factor, comp, n, sampler=dense_sampler, key=k
+                ).reshape((-1,))
                 points[lbl] = _as_field(arr, dims=(axis,))
                 continue
 
             if isinstance(factor, (DatasetDomain, RaggedSeriesDatasetDomain)):
                 k = jr.fold_in(dense_keys_for_blocks[bi], label_to_idx[lbl])
-                samples = factor.sample(n, sampler=sampler, key=k)
+                samples = factor.sample(n, sampler=dense_sampler, key=k)
 
                 def _to_field(v):
                     arr = jnp.asarray(v)
@@ -1250,9 +1265,9 @@ class DomainComponent(StrictModule):
                 points[lbl] = jax.tree_util.tree_map(_to_field, samples)
                 continue
 
-            raise TypeError(f"Unsupported unary domain type {type(factor).__name__}.")
+            raise TypeError(f"Unsupported domain factor type {type(factor).__name__}.")
 
-        return CoordSeparableBatch(
+        return GridBatch(
             points=frozendict(points),
             dense_structure=dense_structure_out,
             coord_axes_by_label=frozendict(coord_axes_by_label),
@@ -1264,7 +1279,7 @@ class DomainComponent(StrictModule):
 
     def normals(
         self,
-        points: PointsBatch | Points,
+        points: PointBatch | Points,
         /,
         *,
         var: str,
@@ -1277,7 +1292,7 @@ class DomainComponent(StrictModule):
         The returned `coordax.Field` has the same named axes as the provided boundary
         points.
         """
-        if isinstance(points, PointsBatch):
+        if isinstance(points, PointBatch):
             points_map = points.points
         else:
             points_map = points
@@ -1285,16 +1300,15 @@ class DomainComponent(StrictModule):
         if var not in self.domain.labels:
             raise KeyError(f"Label {var!r} not in domain {self.domain.labels}.")
 
-        comp = self.spec.component_for(var)
+        comp = self.spec.selection_for(var)
         if not isinstance(comp, Boundary):
             raise ValueError(
                 "DomainComponent.normals is only defined for Boundary() components."
             )
 
         factor = self.domain.factor(var)
-        if isinstance(factor, RelabeledDomain):
-            factor = factor.base
-        if not isinstance(factor, _AbstractGeometry):
+
+        if not isinstance(factor, AbstractGeometry):
             raise TypeError(
                 f"normals(var=...) requires a geometry label, got {type(factor).__name__}."
             )
@@ -1329,16 +1343,15 @@ class DomainComponent(StrictModule):
         if var not in self.domain.labels:
             raise KeyError(f"Label {var!r} not in domain {self.domain.labels}.")
 
-        comp = self.spec.component_for(var)
+        comp = self.spec.selection_for(var)
         if not isinstance(comp, Boundary):
             raise ValueError(
                 "DomainComponent.normal is only defined for Boundary() components."
             )
 
         factor = self.domain.factor(var)
-        if isinstance(factor, RelabeledDomain):
-            factor = factor.base
-        if not isinstance(factor, _AbstractGeometry):
+
+        if not isinstance(factor, AbstractGeometry):
             raise TypeError(
                 f"normal(var=...) requires a geometry label, got {type(factor).__name__}."
             )
@@ -1364,9 +1377,8 @@ class DomainComponent(StrictModule):
             raise KeyError(f"Label {var!r} not in domain {self.domain.labels}.")
 
         factor = self.domain.factor(var)
-        if isinstance(factor, RelabeledDomain):
-            factor = factor.base
-        if not isinstance(factor, _AbstractGeometry):
+
+        if not isinstance(factor, AbstractGeometry):
             raise TypeError(
                 f"sdf(var=...) requires a geometry label, got {type(factor).__name__}."
             )
@@ -1391,7 +1403,7 @@ class DomainComponent(StrictModule):
         if var not in self.domain.labels:
             raise KeyError(f"Label {var!r} not in domain {self.domain.labels}.")
 
-        component = self.spec.component_for(var)
+        component = self.spec.selection_for(var)
         if not isinstance(component, Boundary):
             raise ValueError(
                 "DomainComponent.enforcement_gate is only defined for Boundary() "
@@ -1399,9 +1411,8 @@ class DomainComponent(StrictModule):
             )
 
         factor = self.domain.factor(var)
-        if isinstance(factor, RelabeledDomain):
-            factor = factor.base
-        if not isinstance(factor, _AbstractGeometry):
+
+        if not isinstance(factor, AbstractGeometry):
             raise TypeError(
                 "enforcement_gate(var=...) requires a geometry label, "
                 f"got {type(factor).__name__}."
@@ -1419,7 +1430,7 @@ class DomainComponent(StrictModule):
         )
 
 
-class DomainComponentUnion(StrictModule):
+class ComponentSum(StrictModule):
     r"""An additive collection of measure-disjoint domain components.
 
     This represents components that decompose naturally into disjoint terms, such
@@ -1432,89 +1443,111 @@ class DomainComponentUnion(StrictModule):
     """
 
     terms: tuple[DomainComponent, ...]
+    assume_disjoint: bool = eqx.field(static=True)
 
-    def __init__(self, terms: tuple[DomainComponent, ...]):
+    def __init__(
+        self,
+        terms: tuple[DomainComponent, ...],
+        /,
+        *,
+        assume_disjoint: bool = False,
+    ):
         """Create an additive collection from non-empty compatible terms."""
         resolved_terms = tuple(terms)
         if not resolved_terms:
-            raise ValueError("DomainComponentUnion.terms must be non-empty.")
+            raise ValueError("ComponentSum.terms must be non-empty.")
         if not all(isinstance(term, DomainComponent) for term in resolved_terms):
-            raise TypeError("DomainComponentUnion terms must be DomainComponent values.")
+            raise TypeError("ComponentSum terms must be DomainComponent values.")
 
         domain = resolved_terms[0].domain
         for index, term in enumerate(resolved_terms):
-            if term.domain.labels != domain.labels or not domain.equivalent(term.domain):
+            if not domain.same_support(term.domain):
                 raise ValueError(
-                    "DomainComponentUnion terms must share the same compatible "
-                    "labeled domain."
+                    "ComponentSum terms must share the same compatible labeled domain."
                 )
             for previous in resolved_terms[:index]:
                 if bool(eqx.tree_equal(term, previous)):
-                    raise ValueError(
-                        "DomainComponentUnion terms must not contain duplicates."
-                    )
+                    raise ValueError("ComponentSum terms must not contain duplicates.")
+        has_unresolved_overlap = any(
+            term.where or term.where_all is not None or term.weight_all is not None
+            for term in resolved_terms
+        )
+        if has_unresolved_overlap and not assume_disjoint:
+            raise ValueError(
+                "Predicate- or density-transformed ComponentSum terms require "
+                "assume_disjoint=True; overlap cannot be certified structurally."
+            )
         self.terms = resolved_terms
+        self.assume_disjoint = bool(assume_disjoint)
 
     @property
-    def domain(self) -> _AbstractDomain:
+    def domain(self) -> Domain:
         return self.terms[0].domain
 
     @property
     def labels(self) -> tuple[str, ...]:
         return self.domain.labels
 
-    def measure(self) -> Array:
-        r"""Return the sum of term measures $\sum_i \mu(\Omega_i)$."""
-        m = jnp.array(0.0, dtype=float)
-        for term in self.terms:
-            m = m + term.measure()
-        return m
+    @property
+    def mass(self) -> Mass:
+        """Return the typed additive mass of all disjoint terms."""
+        return sum_mass(tuple(term.mass for term in self.terms))
+
+    @property
+    def base_measure(self) -> BaseMeasure:
+        """Additive reference measure before term restrictions and densities."""
+        return BaseMeasure(
+            "external",
+            sum_mass(tuple(term.base_measure.mass for term in self.terms)),
+        )
 
     def sample(
         self,
-        num_points: int | tuple[Any, ...],
+        sampling: PointSampling | tuple[PointSampling, ...],
+        /,
         *,
-        structure: ProductStructure,
-        sampler: str = "latin_hypercube",
         key: Key[Array, ""] = DOC_KEY0,
         min_points_per_term: int = 1,
-    ) -> tuple[PointsBatch, ...]:
-        """Sample each union term and return a tuple of `PointsBatch` values."""
+    ) -> tuple[PointBatch, ...]:
+        """Sample every additive term with explicit per-term point requests."""
         num_terms = len(self.terms)
         if min_points_per_term < 1:
             raise ValueError("min_points_per_term must be >= 1.")
 
-        if isinstance(num_points, int):
-            total = int(num_points)
+        if isinstance(sampling, PointSampling):
+            if not isinstance(sampling.count, int):
+                raise ValueError(
+                    "ComponentSum requires an integer total count or one "
+                    "PointSampling per term."
+                )
+            total = sampling.count
             if total < num_terms * min_points_per_term:
                 raise ValueError(
-                    "num_points is too small to allocate at least "
+                    "PointSampling.count is too small to allocate at least "
                     f"{min_points_per_term} point(s) per term."
                 )
             counts = [min_points_per_term] * num_terms
-            remaining = total - num_terms * min_points_per_term
-            for i in range(remaining):
-                counts[i % num_terms] += 1
-            per_term = tuple(int(c) for c in counts)
-        else:
-            if len(num_points) != num_terms:
-                raise ValueError(
-                    f"num_points must have length {num_terms} (one entry per union term)."
+            for index in range(total - num_terms * min_points_per_term):
+                counts[index % num_terms] += 1
+            plans = tuple(
+                PointSampling(
+                    count,
+                    layout=sampling.layout,
+                    design=sampling.design,
                 )
-            per_term = tuple(num_points)
+                for count in counts
+            )
+        else:
+            plans = tuple(sampling)
+            if len(plans) != num_terms or not all(
+                isinstance(plan, PointSampling) for plan in plans
+            ):
+                raise ValueError(
+                    f"ComponentSum requires {num_terms} PointSampling requests."
+                )
 
         keys = jr.split(key, num_terms)
-        batches: list[PointsBatch] = []
-        for term, n, k in zip(self.terms, per_term, keys, strict=True):
-            batches.append(
-                term.sample(
-                    n,
-                    structure=structure,
-                    sampler=sampler,
-                    key=k,
-                )
-            )
-        return tuple(batches)
-
-
-VarComponent = _AbstractVarComponent
+        return tuple(
+            term.sample(plan, key=term_key)
+            for term, plan, term_key in zip(self.terms, plans, keys, strict=True)
+        )

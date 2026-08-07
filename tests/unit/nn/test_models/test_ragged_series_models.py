@@ -30,7 +30,7 @@ def _domain(series_tail: float = 99.0) -> phx.domain.RaggedSeriesDatasetDomain:
 def _batch(domain: phx.domain.RaggedSeriesDatasetDomain):
     return domain.points_from_indices(
         jnp.asarray([0, 1], dtype=jnp.int32),
-        structure=phx.domain.ProductStructure((("data",),)),
+        structure=phx.domain.SampleLayout((("data",),)),
     )
 
 

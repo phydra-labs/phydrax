@@ -10,7 +10,8 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
-from ...domain._function import DomainFunction
+from phydrax.domain import DomainFunction
+
 from ..differential._domain_ops import _factor_and_dim
 from ._ctx import _compile_ctx_integrand
 

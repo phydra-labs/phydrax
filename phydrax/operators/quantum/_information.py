@@ -13,8 +13,9 @@ import jax.scipy as jsp
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
+from phydrax.domain import DomainFunction
+
 from ..._strict import StrictModule
-from ...domain._function import DomainFunction
 from ._validation import (
     join_function_arguments,
     validate_matrix_value,

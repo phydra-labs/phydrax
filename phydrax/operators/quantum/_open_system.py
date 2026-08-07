@@ -10,8 +10,9 @@ from typing import Literal
 import jax.numpy as jnp
 from jaxtyping import ArrayLike
 
+from phydrax.domain import DomainFunction
+
 from ..._strict import StrictModule
-from ...domain._function import DomainFunction
 from ._dynamics import von_neumann_residual
 from ._validation import join_function_arguments, validate_matrix_value
 

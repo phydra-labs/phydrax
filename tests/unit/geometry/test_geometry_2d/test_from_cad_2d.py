@@ -11,8 +11,6 @@ from jax import numpy as jnp
 from numpy.typing import ArrayLike
 
 import phydrax as phx
-from phydrax.domain import Circle
-from phydrax.domain.geometry2d import Geometry2DFromCAD
 
 
 @pytest.fixture
@@ -29,8 +27,12 @@ def simple_square_mesh():
 
 @pytest.fixture
 def geometry_from_square(simple_square_mesh):
-    # Initialize Geometry2DFromCAD with the square mesh
-    return Geometry2DFromCAD(mesh=simple_square_mesh, recenter=False)
+    # Compile the mesh source and adapt it to the domain algebra.
+    return phx.domain.GeometryDomain(
+        phx.geometry.planar_region_from_source(
+            simple_square_mesh, recenter=False
+        ).compile()
+    )
 
 
 def test_initialization(geometry_from_square):
@@ -52,9 +54,7 @@ def test_boundary_atlas_partition_matches_boundary_measure(geometry_from_square)
     geom = geometry_from_square
     partition = phx.geometry.BoundaryAtlasPartition(geom.boundary_atlas)
     assert partition.num_strata == 4
-    assert np.isclose(
-        float(partition.total_measure), float(geom.boundary_length_value)
-    )
+    assert np.isclose(float(partition.total_measure), float(geom.boundary_length_value))
     points, strata, base_mass = partition.sample(
         8,
         key=jax.random.key(31),
@@ -66,7 +66,9 @@ def test_boundary_atlas_partition_matches_boundary_measure(geometry_from_square)
 
 
 def test_curved_boundary_normals_obey_divergence_theorem():
-    geom = Circle(center=(0.0, 0.0), radius=1.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Circle(center=(0.0, 0.0), radius=1.0).compile()
+    )
     component = geom.component({"x": phx.domain.Boundary()})
     realization = phx.integration.materialize(
         phx.integration.over(component),
@@ -153,7 +155,9 @@ def test_geometry_from_cad_file(tmp_path):
     mesh_file = tmp_path / "square.stl"
     mesh.export(mesh_file)
 
-    geom = Geometry2DFromCAD(mesh=mesh_file)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.planar_region_from_source(mesh_file).compile()
+    )
     assert isinstance(geom, phx.domain.GeometryDomain)
     assert np.isclose(float(geom.area), mesh.area, atol=1e-6)
 
@@ -184,7 +188,7 @@ def test_boundary_normals(geometry_from_square):
 
 
 def test_sample_interior_separable(geometry_from_square):
-    """Test the _sample_interior_separable method of Geometry2DFromCAD."""
+    """Test separable interior sampling through the geometry domain adapter."""
     import jax.random as jr
     import numpy as np
 

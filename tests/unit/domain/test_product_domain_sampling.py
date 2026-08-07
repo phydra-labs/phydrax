@@ -7,18 +7,19 @@ import numpy as np
 import pytest
 from scipy.stats.qmc import Sobol
 
+import phydrax as phx
 from phydrax.domain import (
     Boundary,
+    ComponentSum,
     DatasetDomain,
-    DomainComponentUnion,
     FixedStart,
+    GridBatch,
     HyperRectangle,
     Interior,
     Interval1d,
-    ProductStructure,
+    SampleLayout,
     TimeInterval,
 )
-from phydrax.domain._structure import CoordSeparableBatch
 from phydrax.sampling import SobolDesign
 
 
@@ -28,8 +29,10 @@ def test_product_domain_sampling_produces_labeled_points_batch():
     dom = geom @ time
 
     component = dom.component()
-    structure = ProductStructure((("x",), ("t",)))
-    batch = component.sample((3, 4), structure=structure, key=jr.key(0))
+    structure = SampleLayout((("x",), ("t",)))
+    batch = component.sample(
+        phx.domain.PointSampling((3, 4), layout=structure), key=jr.key(0)
+    )
 
     axis_x = batch.structure.axis_for("x")
     axis_t = batch.structure.axis_for("t")
@@ -48,13 +51,10 @@ def test_product_domain_sampling_produces_labeled_points_batch():
 
 def test_same_block_sobol_uses_one_joint_reference_design():
     domain = TimeInterval(0.0, 1.0).relabel("x") @ TimeInterval(0.0, 1.0)
-    structure = ProductStructure((("x", "t"),))
+    structure = SampleLayout((("x", "t"),))
 
     batch = domain.component().sample(
-        8,
-        structure=structure,
-        sampler=SobolDesign(),
-        key=jr.key(0),
+        phx.domain.PointSampling(8, layout=structure, design=SobolDesign()), key=jr.key(0)
     )
 
     actual = np.column_stack((batch["x"].data, batch["t"].data))
@@ -67,13 +67,10 @@ def test_same_block_sobol_uses_one_joint_reference_design():
 def test_joint_design_slices_multidimensional_reference_transports():
     box = HyperRectangle([1.0, 10.0], [3.0, 14.0], label="x")
     domain = box @ TimeInterval(-1.0, 1.0)
-    structure = ProductStructure((("x", "t"),))
+    structure = SampleLayout((("x", "t"),))
 
     batch = domain.component().sample(
-        8,
-        structure=structure,
-        sampler=SobolDesign(),
-        key=jr.key(0),
+        phx.domain.PointSampling(8, layout=structure, design=SobolDesign()), key=jr.key(0)
     )
 
     unit = Sobol(3, scramble=False).random(8)
@@ -95,13 +92,10 @@ def test_joint_design_preserves_finite_dataset_rows():
         label="data",
     )
     domain = dataset @ TimeInterval(0.0, 1.0)
-    structure = ProductStructure((("data", "t"),))
+    structure = SampleLayout((("data", "t"),))
 
     batch = domain.component().sample(
-        8,
-        structure=structure,
-        sampler=SobolDesign(),
-        key=jr.key(0),
+        phx.domain.PointSampling(8, layout=structure, design=SobolDesign()), key=jr.key(0)
     )
 
     unit = Sobol(2, scramble=False).random(8)
@@ -120,8 +114,8 @@ def test_fixed_start_excludes_time_axis_from_structure():
     dom = geom @ time
 
     component = dom.component({"t": FixedStart()})
-    structure = ProductStructure((("x",),))
-    batch = component.sample(5, structure=structure, key=jr.key(0))
+    structure = SampleLayout((("x",),))
+    batch = component.sample(phx.domain.PointSampling(5, layout=structure), key=jr.key(0))
 
     axis_x = batch.structure.axis_for("x")
     assert axis_x is not None
@@ -135,15 +129,15 @@ def test_coord_separable_sampling_for_geometry_label():
     dom = geom @ time
 
     component = dom.component()
-    dense_structure = ProductStructure((("t",),))
-    batch = component.sample_coord_separable(
-        {"x": 4},
-        num_points=3,
-        dense_structure=dense_structure,
+    dense_structure = SampleLayout((("t",),))
+    batch = component.sample(
+        phx.domain.GridSampling(
+            {"x": 4}, dense=phx.domain.PointSampling(3, layout=dense_structure)
+        ),
         key=jr.key(0),
     )
 
-    assert isinstance(batch, CoordSeparableBatch)
+    assert isinstance(batch, GridBatch)
     assert isinstance(batch["x"], tuple)
     assert len(batch["x"]) == 1
     assert batch.coord_axes_by_label["x"][0].startswith("__phydra_sep__x__")
@@ -158,12 +152,12 @@ def test_coord_separable_sampling_rejects_boundary_component():
     dom = geom @ time
 
     component = dom.component({"x": Boundary()})
-    dense_structure = ProductStructure((("t",),))
+    dense_structure = SampleLayout((("t",),))
     with pytest.raises(ValueError):
-        component.sample_coord_separable(
-            {"x": 4},
-            num_points=3,
-            dense_structure=dense_structure,
+        component.sample(
+            phx.domain.GridSampling(
+                {"x": 4}, dense=phx.domain.PointSampling(3, layout=dense_structure)
+            ),
             key=jr.key(0),
         )
 
@@ -172,10 +166,10 @@ def test_product_boundary_is_additive_component_collection():
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     boundary = domain.boundary()
 
-    assert isinstance(boundary, DomainComponentUnion)
+    assert isinstance(boundary, ComponentSum)
     assert len(boundary.terms) == 3
-    assert all(term.domain.equivalent(domain) for term in boundary.terms)
-    assert float(boundary.measure()) == pytest.approx(4.0)
+    assert all(term.domain.same_support(domain) for term in boundary.terms)
+    assert float(boundary.mass.value) == pytest.approx(4.0)
 
 
 def test_component_collection_rejects_invalid_terms():
@@ -184,8 +178,8 @@ def test_component_collection_rejects_invalid_terms():
     incompatible = Interval1d(0.0, 2.0).component({"x": Interior()})
 
     with pytest.raises(ValueError, match="non-empty"):
-        DomainComponentUnion(())
+        ComponentSum(())
     with pytest.raises(ValueError, match="duplicates"):
-        DomainComponentUnion((term, term))
+        ComponentSum((term, term))
     with pytest.raises(ValueError, match="compatible labeled domain"):
-        DomainComponentUnion((term, incompatible))
+        ComponentSum((term, incompatible))

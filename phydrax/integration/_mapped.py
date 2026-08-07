@@ -10,9 +10,10 @@ import coordax as cx
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 
+from phydrax.domain import DomainFunction
+
 from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0
-from ..domain._function import DomainFunction
 from ._batches import MappedIntegrationBatch
 from ._estimates import (
     IntegrationEstimate,

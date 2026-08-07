@@ -6,8 +6,9 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 
+import phydrax as phx
 from phydrax.constraints._discrete_interior import DiscreteInteriorDataConstraint
-from phydrax.domain import Interval1d, ProductStructure, TimeInterval
+from phydrax.domain import Interval1d, SampleLayout, TimeInterval
 
 
 def _xt_domain():
@@ -16,7 +17,7 @@ def _xt_domain():
 
 def test_sensor_tracks_hermite_interpolates_linear_time():
     domain = _xt_domain()
-    structure = ProductStructure((("x", "t"),))
+    structure = SampleLayout((("x", "t"),))
 
     @domain.Function("x", "t")
     def u(x, t):
@@ -28,8 +29,7 @@ def test_sensor_tracks_hermite_interpolates_linear_time():
         sensors=jnp.array([[0.0]], dtype=float),
         times=jnp.array([0.0, 1.0], dtype=float),
         sensor_values=jnp.array([[0.0, 2.0]], dtype=float),
-        num_points=16,
-        structure=structure,
+        sampling=phx.domain.PointSampling(16, layout=structure),
     )
     loss_fn = eqx.filter_jit(lambda k: constraint.loss({"u": u}, key=k))
     assert loss_fn(jr.key(0)) < 1e-6
@@ -37,7 +37,7 @@ def test_sensor_tracks_hermite_interpolates_linear_time():
 
 def test_sensor_tracks_single_time_constant():
     domain = _xt_domain()
-    structure = ProductStructure((("x", "t"),))
+    structure = SampleLayout((("x", "t"),))
 
     @domain.Function("x", "t")
     def u(x, t):
@@ -49,8 +49,7 @@ def test_sensor_tracks_single_time_constant():
         sensors=jnp.array([[0.0]], dtype=float),
         times=jnp.array([0.0], dtype=float),
         sensor_values=jnp.array([[3.0]], dtype=float),
-        num_points=16,
-        structure=structure,
+        sampling=phx.domain.PointSampling(16, layout=structure),
     )
     loss_fn = eqx.filter_jit(lambda k: constraint.loss({"u": u}, key=k))
     assert loss_fn(jr.key(0)) < 1e-6

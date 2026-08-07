@@ -10,38 +10,31 @@ from typing import Literal
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from phydrax.domain import (
+    ComponentSum,
+    DomainComponent,
+    DomainFunction,
+    Fixed,
+    FixedEnd,
+    FixedStart,
+    SamplingPlan,
+)
+
 from .._interpolation import (
     cubic_hermite_interpolate,
     inverse_distance_stencil,
     local_cubic_slopes,
 )
-from ..domain._components import (
-    DomainComponent,
-    DomainComponentUnion,
-    Fixed,
-    FixedEnd,
-    FixedStart,
-)
-from ..domain._function import DomainFunction
-from ..domain._structure import ProductStructure
 from ._functional import FunctionalConstraint
 from ._interpolate import idw_interpolant
 from ._pointset import PointSetConstraint
-from ._sampling_spec import SamplingNumPoints
-
-
-def _default_structure(
-    component: DomainComponent | DomainComponentUnion, /
-) -> ProductStructure:
-    labels = component.domain.labels
-    return ProductStructure((labels,)).canonicalize(component.domain.labels)
 
 
 def _non_fixed_labels(component: DomainComponent, /) -> tuple[str, ...]:
     fixed = {
         lbl
         for lbl in component.domain.labels
-        if isinstance(component.spec.component_for(lbl), (FixedStart, FixedEnd, Fixed))
+        if isinstance(component.spec.selection_for(lbl), (FixedStart, FixedEnd, Fixed))
     }
     return tuple(lbl for lbl in component.domain.labels if lbl not in fixed)
 
@@ -77,10 +70,7 @@ def DiscreteInteriorDataConstraint(
     sensors: Mapping[str, ArrayLike] | ArrayLike | None = None,
     times: ArrayLike | None = None,
     sensor_values: ArrayLike | None = None,
-    num_points: SamplingNumPoints | None = None,
-    structure: ProductStructure | None = None,
-    dense_structure: ProductStructure | None = None,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan | None = None,
     weight: DomainFunction | ArrayLike = 1.0,
     reduction: Literal["mean", "sum"] = "mean",
     idw_exponent: float = 2.0,
@@ -111,7 +101,7 @@ def DiscreteInteriorDataConstraint(
     - A `PointSetConstraint` (anchors), or a `FunctionalConstraint` (sensor tracks).
     """
     component = domain.component(where=where, where_all=where_all)
-    if isinstance(component, DomainComponentUnion):
+    if isinstance(component, ComponentSum):
         raise TypeError(
             "DiscreteInteriorDataConstraint requires a DomainComponent, not a union."
         )
@@ -119,9 +109,8 @@ def DiscreteInteriorDataConstraint(
     if sensors is not None or times is not None or sensor_values is not None:
         if sensors is None or times is None or sensor_values is None:
             raise ValueError("Provide sensors, times, and sensor_values together.")
-        if num_points is None:
-            raise ValueError("num_points is required for sensor-track constraints.")
-        structure = _default_structure(component) if structure is None else structure
+        if sampling is None:
+            raise ValueError("sampling is required for sensor-track constraints.")
         target = _sensor_track_target(
             component,
             sensors=sensors,
@@ -140,10 +129,7 @@ def DiscreteInteriorDataConstraint(
             component=component,
             operator=operator,
             constraint_vars=constraint_var,
-            num_points=num_points,
-            structure=structure,
-            dense_structure=dense_structure,
-            sampler=sampler,
+            sampling=sampling,
             weight=weight,
             label=label,
             reduction="mean" if reduction == "mean" else "integral",
@@ -202,7 +188,7 @@ def _sensor_track_target(
 
     sensor_map: dict[str, ArrayLike]
     if isinstance(sensors, Mapping):
-        sensor_map = {lbl: sensors[lbl] for lbl in labels}  # ty: ignore
+        sensor_map = {lbl: sensors[lbl] for lbl in labels}
     else:
         if "x" not in component.domain.labels:
             raise ValueError("sensors array requires a domain label 'x'.")

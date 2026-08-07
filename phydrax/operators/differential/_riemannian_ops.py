@@ -10,9 +10,9 @@ from typing import Any, Literal
 import jax.numpy as jnp
 import opt_einsum as oe
 
+from phydrax.domain import AbstractGeometry, DomainFunction
+
 from ..._strict import StrictModule
-from ...domain._base import _AbstractGeometry
-from ...domain._function import DomainFunction
 from ...metrix import LeviCivitaConnection, RiemannianMetric, TensorType
 from ._domain_ops import _factor_and_dim, _resolve_var, grad, hessian
 
@@ -24,8 +24,8 @@ def _geometry_contract(
     /,
 ) -> tuple[str, int]:
     var_ = _resolve_var(function, var)
-    factor, dimension = _factor_and_dim(function, var_)
-    if not isinstance(factor, _AbstractGeometry):
+    _, dimension = _factor_and_dim(function, var_)
+    if not isinstance(function.domain.factor(var_), AbstractGeometry):
         raise ValueError("Riemannian operators require a geometry variable.")
     if dimension != metric.chart.dimension:
         raise ValueError(

@@ -8,8 +8,9 @@ import jax.numpy as jnp
 from jaxtyping import ArrayLike
 from opt_einsum import contract
 
+from phydrax.domain import DomainFunction
+
 from ..._strict import StrictModule
-from ...domain._function import _drop_derivative_hook_metadata, DomainFunction
 
 
 class _PointwiseTransformCallable(StrictModule):
@@ -43,7 +44,7 @@ def _pointwise_transform(u: DomainFunction, operation: str, /) -> DomainFunction
         domain=u.domain,
         deps=u.deps,
         func=_PointwiseTransformCallable(u, operation),
-        metadata=_drop_derivative_hook_metadata(u.metadata),
+        metadata=u.metadata,
     )
 
 

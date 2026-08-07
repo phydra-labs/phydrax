@@ -9,7 +9,6 @@ import trimesh
 from jax import numpy as jnp
 
 import phydrax as phx
-from phydrax.domain.geometry3d import Geometry3DFromCAD
 
 
 @pytest.fixture
@@ -20,8 +19,10 @@ def simple_cube_mesh():
 
 @pytest.fixture
 def geometry_from_cube(simple_cube_mesh):
-    # Initialize Geometry3DFromCAD with the cube mesh
-    return Geometry3DFromCAD(mesh=simple_cube_mesh, recenter=False)
+    # Compile the mesh source and adapt it to the domain algebra.
+    return phx.domain.GeometryDomain(
+        phx.geometry.mesh_region_from_source(simple_cube_mesh, recenter=False).compile()
+    )
 
 
 def test_initialization(geometry_from_cube):
@@ -38,7 +39,9 @@ def test_initialization_rejects_open_surface_mesh():
     mesh.remove_unreferenced_vertices()
 
     with pytest.raises(ValueError, match="watertight"):
-        Geometry3DFromCAD(mesh=mesh, recenter=False)
+        phx.domain.GeometryDomain(
+            phx.geometry.mesh_region_from_source(mesh, recenter=False).compile()
+        )
 
 
 def test_initialization_rejects_nonfinite_vertices():
@@ -48,7 +51,9 @@ def test_initialization_rejects_nonfinite_vertices():
     invalid = trimesh.Trimesh(vertices=vertices, faces=mesh.faces, process=False)
 
     with pytest.raises(ValueError, match="finite"):
-        Geometry3DFromCAD(mesh=invalid, recenter=False)
+        phx.domain.GeometryDomain(
+            phx.geometry.mesh_region_from_source(invalid, recenter=False).compile()
+        )
 
 
 def test_volume_property(geometry_from_cube):
@@ -140,12 +145,10 @@ def test_adf_jvp_batched_matches_vmap(geometry_from_cube):
 
 
 def test_compiled_mesh_region_field_has_correct_sign(geometry_from_cube):
-    points = jnp.asarray(
-        [[0.0, 0.0, 0.0], [0.75, 0.0, 0.0], [0.5, 0.0, 0.0]]
+    points = jnp.asarray([[0.0, 0.0, 0.0], [0.75, 0.0, 0.0], [0.5, 0.0, 0.0]])
+    values = jax.jit(lambda value: geometry_from_cube.geometry.boundary_field(value))(
+        points
     )
-    values = jax.jit(
-        lambda value: geometry_from_cube.geometry.boundary_field(value)
-    )(points)
     assert values[0] < 0.0
     assert values[1] > 0.0
     assert values[2] == pytest.approx(0.0)
@@ -186,7 +189,9 @@ def test_geometry_from_cad_file(tmp_path):
     mesh_file = tmp_path / "sphere.stl"
     mesh.export(mesh_file)
 
-    geom = Geometry3DFromCAD(mesh=mesh_file)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.mesh_region_from_source(mesh_file).compile()
+    )
     assert isinstance(geom, phx.domain.GeometryDomain)
     assert np.isclose(float(geom.volume), mesh.volume, atol=1e-6)
 
@@ -265,7 +270,7 @@ def test_boundary_normals_jittable_batched(geometry_from_cube):
 
 
 def test_sample_interior_separable(geometry_from_cube):
-    """Test the _sample_interior_separable method of Geometry3DFromCAD."""
+    """Test separable interior sampling through the geometry domain adapter."""
     import jax.random as jr
     import numpy as np
 
@@ -351,9 +356,11 @@ def test_boundary_factor_is_scale_covariant_with_unit_face_gradient():
     normalized_gate_midpoints = []
 
     for scale in scales:
-        geometry = Geometry3DFromCAD(
-            trimesh.creation.box(extents=(scale, scale, scale)),
-            recenter=False,
+        geometry = phx.domain.GeometryDomain(
+            phx.geometry.mesh_region_from_source(
+                trimesh.creation.box(extents=(scale, scale, scale)),
+                recenter=False,
+            ).compile()
         )
         boundary_point = jnp.array([0.5 * scale, 0.0, 0.0])
         assert abs(float(geometry.adf(boundary_point))) <= 1e-12 * scale
@@ -376,9 +383,7 @@ def test_boundary_factor_is_scale_covariant_with_unit_face_gradient():
         normalized_gate_values.append(gate(scale * normalized_points))
         normalized_gate_gradients.append(scale * jax.grad(gate)(boundary_point))
         normalized_gate_midpoints.append(gate(jnp.array([0.25 * scale, 0.0, 0.0])))
-        normalized_values.append(
-            geometry.adf(scale * normalized_points) / scale
-        )
+        normalized_values.append(geometry.adf(scale * normalized_points) / scale)
 
     assert jnp.allclose(
         normalized_values[0],

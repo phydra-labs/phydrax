@@ -8,10 +8,9 @@ import meshio
 import numpy as np
 import pytest
 
+import phydrax as phx
 from phydrax.constraints import enforce_dirichlet
 from phydrax.domain import Boundary
-from phydrax.domain.geometry2d import Ellipse
-from phydrax.domain.geometry2d._from_cad import Geometry2DFromCAD
 
 
 def test_geometry2d_sdf_signs_and_boundary():
@@ -28,7 +27,9 @@ def test_geometry2d_sdf_signs_and_boundary():
     faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=int)
     m = meshio.Mesh(points=pts, cells=[("triangle", faces)])
 
-    geom = Geometry2DFromCAD(m, recenter=False)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.planar_region_from_source(m, recenter=False).compile()
+    )
 
     inside = jnp.array([[0.0, 0.0]], dtype=float)
     outside = jnp.array([[2.0, 0.0]], dtype=float)
@@ -49,7 +50,9 @@ def test_geometry2d_sdf_signs_and_boundary():
 
 
 def test_dense_curved_mesh_adf_has_only_the_geometric_zero_set():
-    geometry = Ellipse(center=(0.0, 0.0), x_radius=1.25, y_radius=0.7)
+    geometry = phx.domain.GeometryDomain(
+        phx.geometry.Ellipse((0.0, 0.0), (1.25, 0.7)).compile()
+    )
     theta = jnp.linspace(0.0, 2.0 * jnp.pi, 96, endpoint=False)
     normalized_radii = jnp.asarray([0.75, 1.1, 1.3, 1.5])
     points = jnp.stack(
@@ -68,7 +71,7 @@ def test_dense_curved_mesh_adf_has_only_the_geometric_zero_set():
     assert jnp.array_equal(factor_inside, expected_inside)
 
 
-def _scaled_square(scale: float) -> Geometry2DFromCAD:
+def _scaled_square(scale: float) -> phx.domain.GeometryDomain:
     half = 0.5 * scale
     points = np.array(
         [
@@ -80,9 +83,11 @@ def _scaled_square(scale: float) -> Geometry2DFromCAD:
         dtype=float,
     )
     faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=int)
-    return Geometry2DFromCAD(
-        meshio.Mesh(points=points, cells=[("triangle", faces)]),
-        recenter=False,
+    return phx.domain.GeometryDomain(
+        phx.geometry.planar_region_from_source(
+            meshio.Mesh(points=points, cells=[("triangle", faces)]),
+            recenter=False,
+        ).compile()
     )
 
 

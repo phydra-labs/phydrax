@@ -14,26 +14,22 @@ import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import ArrayLike
 
-from ..._callable import _KeyIterAdapter
-from ..._frozendict import frozendict
-from ...domain._base import _AbstractGeometry
-from ...domain._domain import RelabeledDomain
-from ...domain._function import (
-    _BinaryCallable,
-    _SwapAxesCallable,
-    _UnaryCallable,
+from phydrax.domain import (
+    BinaryFieldEvaluator,
+    ConcatenatedModelEvaluator,
+    CoordinateSpec,
     DomainFunction,
+    SwapAxesFieldEvaluator,
+    UnaryFieldEvaluator,
 )
-from ...domain._model_function import _ConcatenatedModelCallable
-from ...domain._scalar import _AbstractScalarDomain
+
 from ...nn._utils import _get_size
 from ._array_ops import (
     _basis_nth_derivative,
     _fd_nth_derivative,
 )
 from ._hooks import (
-    DERIVATIVE_HOOK_KEY,
-    get_derivative_hook,
+    get_derivative_rule,
     nth_product_rule,
     nth_quotient_rule,
 )
@@ -45,7 +41,7 @@ _ADEngine = Literal["auto", "reverse", "forward", "jvp"]
 
 
 def _unwrap_factor(factor: object, /) -> object:
-    return factor.base if isinstance(factor, RelabeledDomain) else factor
+    return factor
 
 
 def _resolve_var(u: DomainFunction, var: str | None, /) -> str:
@@ -54,11 +50,11 @@ def _resolve_var(u: DomainFunction, var: str | None, /) -> str:
             raise ValueError(f"Unknown var {var!r}; expected one of {u.domain.labels}.")
         return var
 
-    differentiable: list[str] = []
-    for lbl in u.domain.labels:
-        factor = _unwrap_factor(u.domain.factor(lbl))
-        if isinstance(factor, (_AbstractGeometry, _AbstractScalarDomain)):
-            differentiable.append(lbl)
+    differentiable = tuple(
+        label
+        for label in u.domain.labels
+        if u.domain.coordinate(label).differentiable
+    )
 
     if len(differentiable) != 1:
         raise ValueError(
@@ -69,15 +65,28 @@ def _resolve_var(u: DomainFunction, var: str | None, /) -> str:
 
 
 def _factor_and_dim(
-    u: DomainFunction, var: str, /
-) -> tuple[_AbstractGeometry | _AbstractScalarDomain, int]:
-    factor = _unwrap_factor(u.domain.factor(var))
-    if isinstance(factor, _AbstractGeometry):
-        return factor, int(factor.var_dim)
-    if isinstance(factor, _AbstractScalarDomain):
-        return factor, 1
+    u: DomainFunction,
+    var: str,
+    /,
+) -> tuple[CoordinateSpec, int]:
+    coordinate = u.domain.coordinate(var)
+    if not coordinate.differentiable:
+        raise TypeError(
+            f"Differential operators are not defined for non-differentiable "
+            f"coordinate {var!r}."
+        )
+    if coordinate.kind == "scalar":
+        return coordinate, 1
+    if coordinate.kind == "array" and coordinate.event_shape is not None:
+        if len(coordinate.event_shape) != 1:
+            raise TypeError(
+                f"Differential operators require a rank-one coordinate event, "
+                f"got {coordinate.event_shape} for {var!r}."
+            )
+        return coordinate, int(coordinate.event_shape[0])
     raise TypeError(
-        f"Differential operators are not defined for var={var!r} with domain factor {type(factor).__name__}."
+        f"Differential operators do not support coordinate kind "
+        f"{coordinate.kind!r} for var={var!r}."
     )
 
 
@@ -121,8 +130,8 @@ def _ensure_ad_engine_backend(
 
 def _latent_model_from_domain_function(
     u: DomainFunction, /
-) -> tuple[Any, _ConcatenatedModelCallable] | None:
-    if not isinstance(u.func, _ConcatenatedModelCallable):
+) -> tuple[Any, ConcatenatedModelEvaluator] | None:
+    if not isinstance(u.func, ConcatenatedModelEvaluator):
         return None
     raw_model = u.func.raw_model
     from ...nn.models.wrappers._separable_wrappers import LatentContractionModel
@@ -132,11 +141,6 @@ def _latent_model_from_domain_function(
     return None
 
 
-def _unwrap_adapter(func: Callable, /) -> Callable:
-    inner = func
-    while isinstance(inner, _KeyIterAdapter):
-        inner = inner.func
-    return inner
 
 
 def _const_scalar(fn: DomainFunction, /) -> float | None:
@@ -169,8 +173,8 @@ def _try_structured_first_partial(
             backend="ad",
         )
 
-    inner = _unwrap_adapter(u.func)
-    if isinstance(inner, _BinaryCallable):
+    inner = u.func
+    if isinstance(inner, BinaryFieldEvaluator):
         left = inner.b if inner.reverse else inner.a
         right = inner.a if inner.reverse else inner.b
         d_left = partial(left, var=var, axis=axis, mode=mode)
@@ -207,7 +211,7 @@ def _try_structured_first_partial(
                 return (left**right) * jnp.log(base) * d_right
         return None
 
-    if isinstance(inner, _UnaryCallable):
+    if isinstance(inner, UnaryFieldEvaluator):
         operand = DomainFunction(
             domain=u.domain, deps=u.deps, func=inner.func, metadata=u.metadata
         )
@@ -216,7 +220,7 @@ def _try_structured_first_partial(
             return -d_operand
         return None
 
-    if isinstance(inner, _SwapAxesCallable):
+    if isinstance(inner, SwapAxesFieldEvaluator):
         operand = DomainFunction(
             domain=u.domain, deps=u.deps, func=inner.func, metadata=u.metadata
         )
@@ -224,7 +228,7 @@ def _try_structured_first_partial(
         return DomainFunction(
             domain=d_operand.domain,
             deps=d_operand.deps,
-            func=_SwapAxesCallable(d_operand.func, inner.axis1, inner.axis2),
+            func=SwapAxesFieldEvaluator(d_operand.func, inner.axis1, inner.axis2),
             metadata=d_operand.metadata,
         )
 
@@ -249,7 +253,7 @@ def _try_structured_partial_n(
     return out
 
 
-def _try_derivative_hook(
+def _try_derivative_rule(
     u: DomainFunction,
     /,
     *,
@@ -261,10 +265,10 @@ def _try_derivative_hook(
     basis: Literal["poly", "fourier", "sine", "cosine"],
     periodic: bool,
 ) -> DomainFunction | None:
-    hook = get_derivative_hook(u)
-    if hook is None:
+    rule = get_derivative_rule(u)
+    if rule is None:
         return None
-    out = hook(
+    out = rule.derive(
         var=var,
         axis=axis,
         order=int(order),
@@ -273,19 +277,11 @@ def _try_derivative_hook(
         basis=basis,
         periodic=bool(periodic),
     )
-    if out is None:
-        return None
-    if not isinstance(out, DomainFunction):
-        raise TypeError("Derivative hook must return a DomainFunction or None.")
+    if out is not None and not isinstance(out, DomainFunction):
+        raise TypeError("DerivativeRule.derive must return a DomainFunction or None.")
     return out
 
 
-def _strip_derivative_hook_metadata(metadata: Any, /) -> Any:
-    if not isinstance(metadata, Mapping):
-        return metadata
-    if DERIVATIVE_HOOK_KEY not in metadata:
-        return metadata
-    return frozendict({k: v for k, v in metadata.items() if k != DERIVATIVE_HOOK_KEY})
 
 
 def _emit_latent_fallback_warning(u: DomainFunction, reason: str, /) -> None:
@@ -295,7 +291,7 @@ def _emit_latent_fallback_warning(u: DomainFunction, reason: str, /) -> None:
         model, _ = model_info
         model._auto_fallback(msg)
         return
-    if isinstance(u.func, _ConcatenatedModelCallable):
+    if isinstance(u.func, ConcatenatedModelEvaluator):
         u.func.emit_auto_fallback_warning(msg)
 
 
@@ -327,7 +323,6 @@ def _partial_eval_cache_key(
     backend: Literal["ad", "jet", "fd", "basis"],
     basis: Literal["poly", "fourier", "sine", "cosine"],
     periodic: bool,
-    force_generic: bool,
     args: Sequence[Any],
     key: Any,
     kwargs: Mapping[str, Any],
@@ -341,7 +336,6 @@ def _partial_eval_cache_key(
         str(backend),
         str(basis),
         bool(periodic),
-        bool(force_generic),
         tuple(_runtime_signature(a) for a in args),
         _runtime_signature(key),
         tuple(sorted((str(k), _runtime_signature(v)) for k, v in kwargs.items())),
@@ -649,7 +643,7 @@ def grad(
     """
     var = _resolve_var(u, var)
     factor, var_dim = _factor_and_dim(u, var)
-    out_metadata = _strip_derivative_hook_metadata(u.metadata)
+    out_metadata = u.metadata
 
     _ensure_ad_engine_backend(backend, ad_engine)
     mode_eff = _resolve_ad_mode(mode, ad_engine)
@@ -659,7 +653,7 @@ def grad(
 
         def _zero(*args, key=None, **kwargs):
             y = jnp.asarray(u.func(*args, key=key, **kwargs))
-            if isinstance(factor, _AbstractScalarDomain):
+            if factor.kind == "scalar":
                 return jnp.zeros_like(y)
             return jnp.zeros(y.shape + (var_dim,), dtype=y.dtype)
 
@@ -667,8 +661,8 @@ def grad(
             domain=u.domain, deps=u.deps, func=_zero, metadata=out_metadata
         )
 
-    if backend == "ad" and ad_engine != "jvp" and get_derivative_hook(u) is not None:
-        if isinstance(factor, _AbstractScalarDomain):
+    if backend == "ad" and ad_engine != "jvp" and get_derivative_rule(u) is not None:
+        if factor.kind == "scalar":
             return partial_n(
                 u,
                 var=var,
@@ -741,7 +735,7 @@ def grad(
                     )
                 terms.append(di)
             if var_dim == 1:
-                if isinstance(factor, _AbstractScalarDomain):
+                if factor.kind == "scalar":
                     return terms[0]
                 return terms[0][..., None]
             return jnp.stack(terms, axis=-1)
@@ -768,7 +762,7 @@ def grad(
                 jvp_i = jax.jvp(f_i, (coords[i],), (jnp.ones_like(coords[i]),))[1]
                 jvps.append(jvp_i)
             if var_dim == 1:
-                if isinstance(factor, _AbstractScalarDomain):
+                if factor.kind == "scalar":
                     return jvps[0]
                 return jvps[0][..., None]
             return jnp.stack(jvps, axis=-1)
@@ -778,7 +772,7 @@ def grad(
             if int(var_dim) == 1:
                 v = jnp.ones_like(x)
                 out = jax.jvp(f, (x,), (v,))[1]
-                if isinstance(factor, _AbstractScalarDomain):
+                if factor.kind == "scalar":
                     return out
                 return out[..., None]
             cols = []
@@ -833,7 +827,9 @@ def hessian(
     ```python
     import phydrax as phx
 
-    geom = phx.domain.Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -844,14 +840,14 @@ def hessian(
     """
     var = _resolve_var(u, var)
     factor, var_dim = _factor_and_dim(u, var)
-    out_metadata = _strip_derivative_hook_metadata(u.metadata)
+    out_metadata = u.metadata
     _resolve_ad_mode("reverse", ad_engine)
 
     if var not in u.deps:
 
         def _zero(*args, key=None, **kwargs):
             y = jnp.asarray(u.func(*args, key=key, **kwargs))
-            if isinstance(factor, _AbstractScalarDomain):
+            if factor.kind == "scalar":
                 return jnp.zeros_like(y)
             return jnp.zeros(y.shape + (var_dim, var_dim), dtype=y.dtype)
 
@@ -860,7 +856,7 @@ def hessian(
         )
 
     if ad_engine == "jvp":
-        if isinstance(factor, _AbstractScalarDomain):
+        if factor.kind == "scalar":
             return partial_n(
                 u,
                 var=var,
@@ -917,10 +913,10 @@ def hessian(
         )
 
     if (
-        get_derivative_hook(u) is not None
+        get_derivative_rule(u) is not None
         or _latent_model_from_domain_function(u) is not None
     ):
-        if isinstance(factor, _AbstractScalarDomain):
+        if factor.kind == "scalar":
             return partial_n(
                 u,
                 var=var,
@@ -1094,7 +1090,7 @@ def directional_derivative(
     - A `DomainFunction` representing $D_v u$.
     """
     factor, _ = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "directional_derivative(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -1165,7 +1161,7 @@ def div(
     """
     var = _resolve_var(u, var)
     factor, var_dim = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "div(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -1233,7 +1229,7 @@ def curl(
     """
     var = _resolve_var(u, var)
     factor, var_dim = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "curl(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -1299,7 +1295,7 @@ def div_tensor(
     """
     var = _resolve_var(T, var)
     factor, var_dim = _factor_and_dim(T, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "div_tensor(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -1358,7 +1354,7 @@ def cauchy_strain(
     """
     var = _resolve_var(u, var)
     factor, _ = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "cauchy_strain(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -1460,7 +1456,7 @@ def _trace_last2(T: DomainFunction, /, *, keepdims: bool = False) -> DomainFunct
         domain=T.domain,
         deps=T.deps,
         func=_tr,
-        metadata=_strip_derivative_hook_metadata(T.metadata),
+        metadata=T.metadata,
     )
 
 
@@ -1500,7 +1496,7 @@ def cauchy_stress(
     """
     var = _resolve_var(u, var)
     factor, var_dim = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "cauchy_stress(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -1610,7 +1606,7 @@ def viscous_stress(
     """
     var = _resolve_var(u, var)
     factor, var_dim = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "viscous_stress(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -1804,13 +1800,13 @@ def laplacian(
     """
     var = _resolve_var(u, var)
     factor, var_dim = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "laplacian(var=...) requires a geometry variable, not a scalar variable."
         )
 
     if var not in u.deps:
-        out_metadata = _strip_derivative_hook_metadata(u.metadata)
+        out_metadata = u.metadata
 
         def _zero(*args, key=None, **kwargs):
             y = jnp.asarray(u.func(*args, key=key, **kwargs))
@@ -1898,7 +1894,7 @@ def laplacian(
                 out = out + d2
             return out
 
-        out_metadata = _strip_derivative_hook_metadata(u.metadata)
+        out_metadata = u.metadata
         return DomainFunction(
             domain=u.domain,
             deps=u.deps,
@@ -1943,7 +1939,7 @@ def bilaplacian(
     """
     var = _resolve_var(u, var)
     factor, var_dim = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "bilaplacian(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -1958,7 +1954,7 @@ def bilaplacian(
             domain=u.domain,
             deps=u.deps,
             func=_zero,
-            metadata=_strip_derivative_hook_metadata(u.metadata),
+            metadata=u.metadata,
         )
     _ensure_ad_engine_backend(backend, ad_engine)
     mode_eff = _resolve_ad_mode(mode, ad_engine)
@@ -2085,7 +2081,7 @@ def bilaplacian(
         domain=u.domain,
         deps=u.deps,
         func=_bilap,
-        metadata=_strip_derivative_hook_metadata(u.metadata),
+        metadata=u.metadata,
     )
 
 
@@ -2118,16 +2114,14 @@ def partial(
 
     use_jvp = ad_engine == "jvp"
     if not use_jvp:
-        hooked = _try_derivative_hook(
-            u,
-            var=var,
-            axis=axis,
-            order=1,
-            mode=mode_eff,
-            backend="ad",
-            basis="poly",
-            periodic=False,
-        )
+        hooked = _try_derivative_rule(u,
+        var=var,
+        axis=axis,
+        order=1,
+        mode=mode_eff,
+        backend="ad",
+        basis="poly",
+        periodic=False,)
         if hooked is not None:
             return hooked
 
@@ -2137,7 +2131,7 @@ def partial(
         if structured is not None:
             return structured
 
-    out_metadata = _strip_derivative_hook_metadata(u.metadata)
+    out_metadata = u.metadata
 
     idx = u.deps.index(var) if var in u.deps else None
 
@@ -2306,7 +2300,7 @@ def partial_n(
         )
 
     _, var_dim = _factor_and_dim(u, var)
-    out_metadata = _strip_derivative_hook_metadata(u.metadata)
+    out_metadata = u.metadata
 
     if var not in u.deps:
 
@@ -2333,16 +2327,14 @@ def partial_n(
             raise ValueError(f"axis must be in [0,{int(var_dim)}), got {axis_i}.")
 
     if backend == "ad" or backend == "jet":
-        hooked = _try_derivative_hook(
-            u,
-            var=var,
-            axis=axis,
-            order=order_i,
-            mode=mode_eff,
-            backend=backend,
-            basis=basis,
-            periodic=periodic,
-        )
+        hooked = _try_derivative_rule(u,
+        var=var,
+        axis=axis,
+        order=order_i,
+        mode=mode_eff,
+        backend=backend,
+        basis=basis,
+        periodic=periodic,)
         if hooked is not None:
             return hooked
         structured = _try_structured_partial_n(
@@ -2354,8 +2346,7 @@ def partial_n(
     idx = u.deps.index(var)
 
     def _nth(*args, key=None, **kwargs):
-        runtime_kwargs = dict(kwargs)
-        force_generic = bool(runtime_kwargs.pop("force_generic", False))
+        runtime_kwargs = kwargs
         cache = get_partial_eval_cache()
         cache_key: tuple[Any, ...] | None = None
         if cache is not None:
@@ -2368,7 +2359,6 @@ def partial_n(
                 backend=backend,
                 basis=basis,
                 periodic=periodic,
-                force_generic=force_generic,
                 args=args,
                 key=key,
                 kwargs=runtime_kwargs,
@@ -2384,25 +2374,19 @@ def partial_n(
         x0 = args[idx]
 
         if backend == "ad" or backend == "jet":
-            if force_generic:
-                _emit_latent_fallback_warning(
-                    u,
-                    "optimized latent derivative path disabled by force_generic=True.",
-                )
-            else:
-                fast_out, fast_reason = _latent_try_partial_n_eval(
-                    u,
-                    var=var,
-                    axis_i=axis_i,
-                    order_i=order_i,
-                    args=args,
-                    key=key,
-                    kwargs=runtime_kwargs,
-                )
-                if fast_out is not None:
-                    return _return(fast_out)
-                if fast_reason is not None:
-                    _emit_latent_fallback_warning(u, fast_reason)
+            fast_out, fast_reason = _latent_try_partial_n_eval(
+                u,
+                var=var,
+                axis_i=axis_i,
+                order_i=order_i,
+                args=args,
+                key=key,
+                kwargs=runtime_kwargs,
+            )
+            if fast_out is not None:
+                return _return(fast_out)
+            if fast_reason is not None:
+                _emit_latent_fallback_warning(u, fast_reason)
 
         if backend == "fd" or backend == "basis":
             if not isinstance(x0, tuple):
@@ -2652,7 +2636,7 @@ def div_k_grad(
     """
     var = _resolve_var(u, var)
     factor, var_dim = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "div_k_grad(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -2735,7 +2719,7 @@ def div_k_grad(
         domain=joined,
         deps=deps,
         func=_op,
-        metadata=_strip_derivative_hook_metadata(u.metadata),
+        metadata=u.metadata,
     )
 
 
@@ -2776,7 +2760,7 @@ def div_diag_k_grad(
     """
     var = _resolve_var(u, var)
     factor, var_dim = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "div_diag_k_grad(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -2898,7 +2882,7 @@ def div_diag_k_grad(
             domain=joined,
             deps=deps,
             func=_op,
-            metadata=_strip_derivative_hook_metadata(u.metadata),
+            metadata=u.metadata,
         )
 
     if backend != "jet":
@@ -3010,7 +2994,7 @@ def div_diag_k_grad(
         domain=joined,
         deps=deps,
         func=_op,
-        metadata=_strip_derivative_hook_metadata(u.metadata),
+        metadata=u.metadata,
     )
 
 
@@ -3056,7 +3040,7 @@ def div_K_grad(
     """
     var = _resolve_var(u, var)
     factor, var_dim = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "div_K_grad(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -3108,7 +3092,7 @@ def div_K_grad(
         domain=joined,
         deps=deps,
         func=_flux,
-        metadata=_strip_derivative_hook_metadata(u.metadata),
+        metadata=u.metadata,
     )
     return div(
         flux,
@@ -3150,7 +3134,7 @@ def deformation_gradient(
     """
     var = _resolve_var(u, var)
     factor, var_dim = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "deformation_gradient(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -3187,7 +3171,7 @@ def green_lagrange_strain(
     """
     var = _resolve_var(u, var)
     factor, var_dim = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "green_lagrange_strain(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -3233,7 +3217,7 @@ def svk_pk2_stress(
     """
     var = _resolve_var(u, var)
     factor, var_dim = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "svk_pk2_stress(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -3280,7 +3264,7 @@ def pk1_from_pk2(
     """
     var = _resolve_var(u, var)
     factor, _ = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "pk1_from_pk2(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -3307,7 +3291,7 @@ def pk1_from_pk2(
         domain=joined,
         deps=deps,
         func=_op,
-        metadata=_strip_derivative_hook_metadata(u.metadata),
+        metadata=u.metadata,
     )
 
 
@@ -3340,7 +3324,7 @@ def cauchy_from_pk2(
     """
     var = _resolve_var(u, var)
     factor, _ = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "cauchy_from_pk2(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -3368,7 +3352,7 @@ def cauchy_from_pk2(
         domain=joined,
         deps=deps,
         func=_op,
-        metadata=_strip_derivative_hook_metadata(u.metadata),
+        metadata=u.metadata,
     )
 
 
@@ -3405,7 +3389,7 @@ def neo_hookean_pk1(
     """
     var = _resolve_var(u, var)
     factor, _ = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "neo_hookean_pk1(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -3444,7 +3428,7 @@ def neo_hookean_pk1(
         domain=joined,
         deps=deps,
         func=_op,
-        metadata=_strip_derivative_hook_metadata(u.metadata),
+        metadata=u.metadata,
     )
 
 
@@ -3480,7 +3464,7 @@ def neo_hookean_cauchy(
     """
     var = _resolve_var(u, var)
     factor, var_dim = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "neo_hookean_cauchy(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -3522,7 +3506,7 @@ def neo_hookean_cauchy(
         domain=joined,
         deps=deps,
         func=_op,
-        metadata=_strip_derivative_hook_metadata(u.metadata),
+        metadata=u.metadata,
     )
 
 
@@ -3551,7 +3535,7 @@ def deviatoric_stress(
     """
     var = _resolve_var(sigma, var)
     factor, var_dim = _factor_and_dim(sigma, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "deviatoric_stress(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -3586,7 +3570,7 @@ def hydrostatic_pressure(
     """
     var = _resolve_var(sigma, var)
     factor, var_dim = _factor_and_dim(sigma, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "hydrostatic_pressure(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -3620,7 +3604,7 @@ def hydrostatic_stress(
     """
     var = _resolve_var(sigma, var)
     factor, var_dim = _factor_and_dim(sigma, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "hydrostatic_stress(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -3657,7 +3641,7 @@ def von_mises_stress(
     """
     var = _resolve_var(sigma, var)
     factor, var_dim = _factor_and_dim(sigma, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "von_mises_stress(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -3682,7 +3666,7 @@ def von_mises_stress(
         domain=sigma.domain,
         deps=sigma.deps,
         func=_op,
-        metadata=_strip_derivative_hook_metadata(sigma.metadata),
+        metadata=sigma.metadata,
     )
 
 
@@ -3829,7 +3813,7 @@ def linear_elastic_cauchy_stress_2d(
     """
     var = _resolve_var(u, var)
     factor, var_dim = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "linear_elastic_cauchy_stress_2d(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -3898,7 +3882,7 @@ def linear_elastic_cauchy_stress_2d(
         domain=joined,
         deps=deps,
         func=_op,
-        metadata=_strip_derivative_hook_metadata(u.metadata),
+        metadata=u.metadata,
     )
 
 
@@ -3935,7 +3919,7 @@ def linear_elastic_orthotropic_stress_2d(
     """
     var = _resolve_var(u, var)
     factor, var_dim = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if factor.kind == "scalar":
         raise ValueError(
             "linear_elastic_orthotropic_stress_2d(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -4035,5 +4019,5 @@ def linear_elastic_orthotropic_stress_2d(
         domain=joined,
         deps=deps,
         func=_op,
-        metadata=_strip_derivative_hook_metadata(u.metadata),
+        metadata=u.metadata,
     )

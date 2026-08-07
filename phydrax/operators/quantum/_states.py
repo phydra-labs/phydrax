@@ -9,8 +9,9 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 
+from phydrax.domain import DomainFunction
+
 from ..._strict import StrictModule
-from ...domain._function import DomainFunction
 from ._validation import (
     join_function_arguments,
     validate_matrix_value,

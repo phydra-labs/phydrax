@@ -5,13 +5,16 @@
 import coordax as cx
 import jax.numpy as jnp
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.domain import Cube, DomainFunction, Square, TimeInterval
+from phydrax.domain import TimeInterval
 from phydrax.operators.linalg import det
 
 
 def test_det_simple_matrix_function():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -26,7 +29,9 @@ def test_det_simple_matrix_function():
 
 
 def test_det_time_dependent_matrix_function():
-    dom = Square(center=(0.0, 0.0), side=2.0) @ TimeInterval(0.0, 1.0)
+    dom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    ) @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x", "t")
     def u(x, t):
@@ -46,7 +51,9 @@ def test_det_time_dependent_matrix_function():
 
 
 def test_det_complex_function():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -61,7 +68,9 @@ def test_det_complex_function():
 
 
 def test_det_non_diagonal_matrix():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -76,7 +85,9 @@ def test_det_non_diagonal_matrix():
 
 
 def test_det_3x3_matrix():
-    geom = Cube(center=(0.0, 0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -92,9 +103,9 @@ def test_det_3x3_matrix():
 
 
 def test_det_preserves_metadata():
-    geom = Square(center=(0.0, 0.0), side=2.0)
-    u = DomainFunction(
-        domain=geom, deps=("x",), func=lambda x: jnp.eye(2), metadata={"tag": "keep"}
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
+    u = geom.Function("x")(lambda x: jnp.eye(2)).with_metadata(**{"tag": "keep"})
     out = det(u)
     assert out.metadata == u.metadata

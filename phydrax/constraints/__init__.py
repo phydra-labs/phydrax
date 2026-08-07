@@ -30,7 +30,7 @@ $L = \\sum_i w_i \\, \\ell_i$.
     def u(x):
         return x[0] ** 2
 
-    structure = phx.domain.ProductStructure((("x",),))
+    structure = phx.domain.SampleLayout((("x",),))
     constraint = phx.constraints.ContinuousPointwiseInteriorConstraint(
         "u",
         geom,

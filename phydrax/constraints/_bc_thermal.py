@@ -5,13 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Literal
 
 import jax.numpy as jnp
 from jaxtyping import ArrayLike
 
-from ..domain._components import DomainComponent
-from ..domain._function import DomainFunction
+from phydrax.domain import DomainComponent, DomainFunction, SamplingPlan
+
 from ..operators.differential import directional_derivative
 from ._functional import FunctionalConstraint
 from ._interpolate import idw_interpolant
@@ -55,9 +55,7 @@ def ContinuousHeatFluxBoundaryConstraint(
     flux: DomainFunction | ArrayLike | None = None,
     var: str = "x",
     mode: Literal["reverse", "forward"] = "reverse",
-    num_points: int | tuple[Any, ...],
-    structure: Any,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -93,20 +91,14 @@ def ContinuousHeatFluxBoundaryConstraint(
 
     def operator(u: DomainFunction, /) -> DomainFunction:
         dd = directional_derivative(u, n, var=var, mode=mode)
-        return -k * dd - target
+        return -(dd * k) - target
 
-    return FunctionalConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=temperature_var,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-        reduction=reduction,
-    )
+    return FunctionalConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=temperature_var, sampling=sampling, weight=weight,
+    label=label,
+    over=over,
+    reduction=reduction,)
 
 
 def ContinuousConvectionBoundaryConstraint(
@@ -119,9 +111,7 @@ def ContinuousConvectionBoundaryConstraint(
     ambient_temp: DomainFunction | ArrayLike | None = None,
     var: str = "x",
     mode: Literal["reverse", "forward"] = "reverse",
-    num_points: int | tuple[Any, ...],
-    structure: Any,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -158,20 +148,14 @@ def ContinuousConvectionBoundaryConstraint(
 
     def operator(u: DomainFunction, /) -> DomainFunction:
         dd = directional_derivative(u, n, var=var, mode=mode)
-        return -k * dd - h * (u - ambient)
+        return -(dd * k) - (u - ambient) * h
 
-    return FunctionalConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=temperature_var,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-        reduction=reduction,
-    )
+    return FunctionalConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=temperature_var, sampling=sampling, weight=weight,
+    label=label,
+    over=over,
+    reduction=reduction,)
 
 
 # Heat Transfer Boundary Constraints (Discrete)
@@ -238,7 +222,7 @@ def DiscreteHeatFluxBoundaryConstraint(
     def residual(functions: Mapping[str, DomainFunction], /) -> DomainFunction:
         u = functions[temperature_var]
         dudn = directional_derivative(u, n, var=var, mode=mode)
-        return -k * dudn - target
+        return -(dudn * k) - target
 
     return PointSetConstraint.from_points(
         component=component,
@@ -276,7 +260,7 @@ def DiscreteConvectionBoundaryConstraint(
     def residual(functions: Mapping[str, DomainFunction], /) -> DomainFunction:
         u = functions[temperature_var]
         dudn = directional_derivative(u, n, var=var, mode=mode)
-        return -k * dudn - h * (u - ambient)
+        return -(dudn * k) - (u - ambient) * h
 
     return PointSetConstraint.from_points(
         component=component,

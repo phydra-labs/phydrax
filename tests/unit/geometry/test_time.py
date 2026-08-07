@@ -6,8 +6,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
-from phydrax.domain._scalar import ScalarInterval
-from phydrax.domain._time import TimeInterval
+from phydrax.domain import ScalarInterval, TimeInterval
 
 
 @pytest.fixture

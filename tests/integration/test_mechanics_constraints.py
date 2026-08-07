@@ -27,8 +27,7 @@ def test_euler_lagrange_residual_runs_through_functional_solver():
         "q",
         time,
         lambda q: phx.operators.euler_lagrange(q, lagrangian),
-        num_points=32,
-        structure=phx.domain.ProductStructure((("t",),)),
+        sampling=phx.domain.PointSampling(32, layout=phx.domain.SampleLayout((("t",),))),
     )
     solver = phx.solver.FunctionalSolver(
         functions={"q": trajectory},
@@ -57,15 +56,11 @@ def test_hamiltonian_residual_runs_through_multifield_constraint():
     def p(t):
         return jnp.asarray([-jnp.sin(t)])
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=time.component(),
-        operator=lambda q, p: phx.operators.canonical_hamiltonian_residual(
-            q, p, hamiltonian
-        ),
-        constraint_vars=("q", "p"),
-        num_points=32,
-        structure=phx.domain.ProductStructure((("t",),)),
-    )
+    constraint = phx.constraints.FunctionalConstraint.from_operator(component=time.component(),
+    operator=lambda q, p: phx.operators.canonical_hamiltonian_residual(
+        q, p, hamiltonian
+    ),
+    constraint_vars=("q", "p"), sampling=phx.domain.PointSampling(32, layout=phx.domain.SampleLayout((("t",),))), )
     solver = phx.solver.FunctionalSolver(
         functions={"q": q, "p": p},
         constraints=[constraint],

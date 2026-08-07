@@ -6,13 +6,15 @@ import coordax as cx
 import jax.numpy as jnp
 import pytest
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.domain import DomainFunction, Square
 from phydrax.operators.differential import div_K_grad, div_k_grad
 
 
 def test_div_k_grad_scalar_point():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -30,7 +32,9 @@ def test_div_k_grad_scalar_point():
 
 
 def test_div_k_grad_vector_point():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -47,10 +51,12 @@ def test_div_k_grad_vector_point():
     assert jnp.allclose(out, expected)
 
 
-def test_div_k_grad_coord_separable(sample_coord_separable):
-    geom = Square(center=(0.0, 0.0), side=2.0)
+def test_div_k_grad_coord_separable(sample_grid):
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     component = geom.component()
-    batch = sample_coord_separable(component, {"x": (6, 5)}, dense_blocks=(), key=0)
+    batch = sample_grid(component, {"x": (6, 5)}, dense_blocks=(), key=0)
 
     @geom.Function("x")
     def u(x):
@@ -71,7 +77,9 @@ def test_div_k_grad_coord_separable(sample_coord_separable):
 
 
 def test_div_K_grad_scalar_point():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -88,7 +96,9 @@ def test_div_K_grad_scalar_point():
 
 
 def test_div_K_grad_vector_point():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -105,10 +115,12 @@ def test_div_K_grad_vector_point():
     assert jnp.allclose(out, expected)
 
 
-def test_div_K_grad_coord_separable(sample_coord_separable):
-    geom = Square(center=(0.0, 0.0), side=2.0)
+def test_div_K_grad_coord_separable(sample_grid):
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     component = geom.component()
-    batch = sample_coord_separable(component, {"x": (5, 4)}, dense_blocks=(), key=0)
+    batch = sample_grid(component, {"x": (5, 4)}, dense_blocks=(), key=0)
 
     @geom.Function("x")
     def u(x):
@@ -131,15 +143,17 @@ def test_div_K_grad_coord_separable(sample_coord_separable):
 
 
 def test_div_k_grad_preserves_metadata():
-    geom = Square(center=(0.0, 0.0), side=2.0)
-    u = DomainFunction(
-        domain=geom, deps=("x",), func=lambda x: x[0] ** 2, metadata={"scale": 1}
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
+    u = geom.Function("x")(lambda x: x[0] ** 2).with_metadata(**{"scale": 1})
     assert div_k_grad(u, 1.0).metadata == u.metadata
 
 
 def test_div_k_grad_ad_engine_jvp_matches_default_point():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -156,7 +170,9 @@ def test_div_k_grad_ad_engine_jvp_matches_default_point():
 
 
 def test_div_k_grad_ad_engine_requires_ad_backend():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -167,7 +183,9 @@ def test_div_k_grad_ad_engine_requires_ad_backend():
 
 
 def test_div_K_grad_ad_engine_jvp_matches_default_point():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):

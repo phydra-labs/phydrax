@@ -5,7 +5,7 @@
 import jax.numpy as jnp
 
 import phydrax as phx
-from phydrax.domain import DomainFunction, Interval1d, Square, TimeInterval
+from phydrax.domain import DomainFunction, Interval1d, TimeInterval
 from phydrax.operators.functional import (
     spatial_inner_product,
     spatial_l2_norm,
@@ -57,7 +57,9 @@ def test_spatial_inner_product_constant(sample_batch):
 
 
 def test_spatial_l2_norm_constant_matches_closed_form(sample_batch):
-    geom = Square(center=(0.0, 0.0), side=2.0)  # area=4
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )  # area=4
     component = geom.component()
     batch = sample_batch(component, blocks=(("x",),), num_points=2048, key=3)
 

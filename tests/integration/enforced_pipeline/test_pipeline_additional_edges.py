@@ -7,6 +7,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import pytest
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
 from phydrax.constraints import (
     enforce_dirichlet,
@@ -19,9 +20,8 @@ from phydrax.domain import (
     Boundary,
     FixedStart,
     Interval1d,
-    PointsBatch,
-    ProductStructure,
-    Square,
+    PointBatch,
+    SampleLayout,
     TimeInterval,
 )
 from phydrax.integration import from_samples, mean_over
@@ -41,18 +41,18 @@ from phydrax.solver import (
 
 
 def _line_batch(domain, xs):
-    structure = ProductStructure((("x",),)).canonicalize(domain.labels)
+    structure = SampleLayout((("x",),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
     axis = axis_names[0]
     points = frozendict(
         {"x": cx.Field(jnp.asarray(xs, dtype=float).reshape((-1, 1)), dims=(axis, None))}
     )
-    return PointsBatch(points=points, structure=structure)
+    return PointBatch(points=points, structure=structure)
 
 
 def _paired_batch(domain, xs, ts):
-    structure = ProductStructure((("x", "t"),)).canonicalize(domain.labels)
+    structure = SampleLayout((("x", "t"),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
     axis = axis_names[0]
@@ -64,7 +64,7 @@ def _paired_batch(domain, xs, ts):
             "t": cx.Field(jnp.asarray(ts, dtype=float).reshape((-1,)), dims=(axis,)),
         }
     )
-    return PointsBatch(points=points, structure=structure)
+    return PointBatch(points=points, structure=structure)
 
 
 def test_error_missing_anchor_label():
@@ -214,7 +214,9 @@ def test_identity_remainder_toggle_changes_output():
 
 
 def test_enforce_traction_enforces_zero_boundary():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     component = geom.component({"x": Boundary()})
 
     @geom.Function("x")
@@ -241,7 +243,7 @@ def test_enforce_traction_enforces_zero_boundary():
     )
     u_enforced = pipelines.apply({"u": u})["u"]
 
-    structure = ProductStructure((("x",),)).canonicalize(geom.labels)
+    structure = SampleLayout((("x",),)).canonicalize(geom.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
     axis = axis_names[0]
@@ -252,14 +254,16 @@ def test_enforce_traction_enforces_zero_boundary():
             )
         }
     )
-    pts = PointsBatch(points=points, structure=structure)
+    pts = PointBatch(points=points, structure=structure)
     eval_jit = eqx.filter_jit(lambda f, b: f(b).data)
     out = eval_jit(u_enforced, pts)
     assert jnp.allclose(out, 0.0, atol=1e-6)
 
 
 def test_enforce_neumann_enforces_zero_normal_derivative():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     component = geom.component({"x": Boundary()})
 
     @geom.Function("x")
@@ -282,7 +286,7 @@ def test_enforce_neumann_enforces_zero_normal_derivative():
     n = component.normal(var="x")
     du_dn = directional_derivative(u_enforced, n, var="x", mode="forward")
 
-    structure = ProductStructure((("x",),)).canonicalize(geom.labels)
+    structure = SampleLayout((("x",),)).canonicalize(geom.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
     axis = axis_names[0]
@@ -293,14 +297,16 @@ def test_enforce_neumann_enforces_zero_normal_derivative():
             )
         }
     )
-    pts = PointsBatch(points=points, structure=structure)
+    pts = PointBatch(points=points, structure=structure)
     eval_jit = eqx.filter_jit(lambda f, b: f(b).data)
     out = eval_jit(du_dn, pts)
     assert jnp.allclose(out, 0.0, atol=1e-3)
 
 
 def test_enforce_robin_enforces_boundary_relation():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     component = geom.component({"x": Boundary()})
 
     @geom.Function("x")
@@ -332,7 +338,7 @@ def test_enforce_robin_enforces_boundary_relation():
     du_dn = directional_derivative(u_enforced, n, var="x", mode="forward")
     residual = 2.0 * u_enforced + du_dn
 
-    structure = ProductStructure((("x",),)).canonicalize(geom.labels)
+    structure = SampleLayout((("x",),)).canonicalize(geom.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
     axis = axis_names[0]
@@ -343,7 +349,7 @@ def test_enforce_robin_enforces_boundary_relation():
             )
         }
     )
-    pts = PointsBatch(points=points, structure=structure)
+    pts = PointBatch(points=points, structure=structure)
     eval_jit = eqx.filter_jit(lambda f, b: f(b).data)
     out = eval_jit(residual, pts)
     assert jnp.allclose(out, 0.0, atol=1e-3)
@@ -504,7 +510,7 @@ def test_pipeline_points_vs_coord_separable():
     eval_jit = eqx.filter_jit(lambda f, b: f(b).data)
 
     component = geom.component()
-    sep = component.sample_coord_separable({"x": 6}, num_points=())
+    sep = component.sample(phx.domain.GridSampling({"x": 6}))
     x_axis = sep.points["x"][0].data
     dense = _line_batch(geom, xs=x_axis)
 
@@ -540,7 +546,7 @@ def test_gated_pipeline_points_vs_coord_separable():
     eval_jit = eqx.filter_jit(lambda f, b: f(b).data)
 
     component = geom.component()
-    sep = component.sample_coord_separable({"x": 6}, num_points=())
+    sep = component.sample(phx.domain.GridSampling({"x": 6}))
     x_axis = sep.points["x"][0].data
     dense = _line_batch(geom, xs=x_axis)
 
@@ -567,7 +573,9 @@ def test_operator_stack_with_pipeline():
 
     component = geom.component()
     batch = component.sample(
-        256, structure=ProductStructure((("x",),)), sampler="latin_hypercube"
+        phx.domain.PointSampling(
+            256, layout=SampleLayout((("x",),)), design="latin_hypercube"
+        )
     )
     du = partial_x(u_enforced)
 
@@ -719,7 +727,9 @@ def test_where_all_weight_all_mean():
 
 
 def test_enforce_traction_cancels_nonzero_affine_boundary_traction():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     component = geom.component({"x": Boundary()})
 
     @geom.Function("x")
@@ -742,11 +752,11 @@ def test_enforce_traction_cancels_nonzero_affine_boundary_traction():
     )
     traction = einsum("...ij,...j->...i", stress, component.normal(var="x"))
 
-    structure = ProductStructure((("x",),)).canonicalize(geom.labels)
+    structure = SampleLayout((("x",),)).canonicalize(geom.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
     axis = axis_names[0]
-    points = PointsBatch(
+    points = PointBatch(
         points=frozendict(
             {
                 "x": cx.Field(
@@ -771,7 +781,9 @@ def test_enforce_traction_cancels_nonzero_affine_boundary_traction():
 
 
 def test_enforce_neumann_cad_ansatz_is_bounded_in_the_interior():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     component = geom.component({"x": Boundary()})
 
     @geom.Function("x")
@@ -786,10 +798,10 @@ def test_enforce_neumann_cad_ansatz_is_bounded_in_the_interior():
         mode="forward",
     )
     coordinates = jnp.linspace(-0.95, 0.95, 101)
-    structure = ProductStructure((("x",),)).canonicalize(geom.labels)
+    structure = SampleLayout((("x",),)).canonicalize(geom.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
-    points = PointsBatch(
+    points = PointBatch(
         points=frozendict(
             {
                 "x": cx.Field(
@@ -807,7 +819,7 @@ def test_enforce_neumann_cad_ansatz_is_bounded_in_the_interior():
 
     normal = component.normal(var="x")
     du_dn = directional_derivative(u_enforced, normal, var="x", mode="forward")
-    boundary_points = PointsBatch(
+    boundary_points = PointBatch(
         points=frozendict(
             {
                 "x": cx.Field(

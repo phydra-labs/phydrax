@@ -15,8 +15,9 @@ import jax.random as jr
 import optax
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import DomainFunction
+
 from .._strict import StrictModule
-from ..domain._function import DomainFunction
 from ..objectives._feynman_kac import FeynmanKacRegressionObjective
 from ..stochastic._bsde import (
     _pointwise_autodiff_control,

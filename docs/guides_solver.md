@@ -383,8 +383,8 @@ Choose the population representation first:
 
 | Representation | Policies | Budget unit | Appropriate support |
 | --- | --- | --- | --- |
-| Paired `PointsBatch` | `PeriodicCollocation`, `R3`, `RARD` | retained points and residual candidate evaluations | General pointwise PINNs |
-| Coordinate-separable tensor | `PeriodicSeparableCollocation`, `HierarchicalAxisCollocation` | axis nodes **and** implied logical evaluations | Separable models and nested axis-aligned structure |
+| `PointBatch` | `PeriodicCollocation`, `R3`, `RARD` | retained points and residual candidate evaluations | General pointwise PINNs |
+| `GridBatch` | `PeriodicSeparableCollocation`, `HierarchicalAxisCollocation` | axis nodes **and** implied logical evaluations | Separable models and nested axis-aligned structure |
 
 `RARD` is retained for oscillatory or distributed residual structure when the
 candidate and training budgets are large enough to resolve the residual field.
@@ -392,8 +392,8 @@ Its inactive slots receive zero loss weight and are activated incrementally from
 the residual-weighted candidate distribution. Use an independent monitor: the
 method is not a low-budget default.
 
-For a coordinate-separable fixed-capacity hierarchy, use
-`NestedDyadicAxisSpec(..., initial_level=...)` on every adaptive axis and attach
+For a fixed-capacity axis hierarchy, use `NestedDyadicAxisSpec(...)` with
+`initial_level=...` on every adaptive axis and attach
 `HierarchicalAxisCollocation(...)`. Inactive nodes remain in the static JAX shape but
 receive zero active weight; refreshes activate nested nodes without recompilation.
 
@@ -501,7 +501,7 @@ train_data = phx.constraints.SupervisedDatasetConstraint(
     "u",
     domain.component(),
     targets,
-    num_cases=32,
+    sampling=phx.domain.PointSampling(32, design="uniform"),
     indices=train_idx,
     label="train_data",
 )
@@ -509,7 +509,7 @@ val_data = phx.constraints.SupervisedDatasetConstraint(
     "u",
     domain.component(),
     targets,
-    num_cases=32,
+    sampling=phx.domain.PointSampling(32, design="uniform"),
     indices=val_idx,
     label="val_data",
 )
@@ -539,15 +539,14 @@ model = phx.nn.MLP(
 )
 u = geom.Model("x")(model)
 
-structure = phx.domain.ProductStructure((("x",),))
+layout = phx.domain.SampleLayout((("x",),))
 
 # A toy interior objective that encourages u(x) ≈ 0 in Ω (replace with a PDE operator in real use).
 constraint = phx.constraints.ContinuousPointwiseInteriorConstraint(
     "u",
     geom,
     operator=lambda f: f,
-    num_points=128,
-    structure=structure,
+    sampling=phx.domain.PointSampling(128, layout=layout),
     reduction="mean",
 )
 

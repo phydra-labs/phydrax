@@ -5,7 +5,7 @@ import jax.scipy as jsp
 import pytest
 
 import phydrax as phx
-from phydrax.domain._function import BatchAwareCallable
+from phydrax.domain import BatchEvaluator
 
 
 class _EndpointSensitiveNormal(phx.uq.AbstractDistribution):
@@ -35,7 +35,7 @@ class _EndpointSensitiveNormal(phx.uq.AbstractDistribution):
         return jnp.isfinite(jnp.asarray(value))
 
 
-class _KeyConsumingBatchIntegrand(BatchAwareCallable):
+class _KeyConsumingBatchIntegrand(BatchEvaluator):
     def __call_batch__(self, batch, /, *, key, **kwargs):
         del kwargs
         reference = batch["z"]
@@ -45,7 +45,7 @@ class _KeyConsumingBatchIntegrand(BatchAwareCallable):
         )
 
 
-class _AlternatingBatchIntegrand(BatchAwareCallable):
+class _AlternatingBatchIntegrand(BatchEvaluator):
     def __call_batch__(self, batch, /, *, key, **kwargs):
         del key, kwargs
         reference = batch["x"]
@@ -195,7 +195,7 @@ def test_control_variate_coefficients_fit_on_disjoint_iid_pilot():
 
 
 def test_explicit_stratification_preserves_physical_measure():
-    square = phx.domain.geometry2d.Square(center=(0.0, 0.0), side=2.0)
+    square = phx.domain.GeometryDomain(phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile())
     vertices = jnp.asarray(
         [
             [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0]],
@@ -258,7 +258,7 @@ def test_antithetic_zero_density_reports_invalid_normalization_mass():
 
 
 def test_stratified_zero_density_reports_invalid_normalization_mass():
-    square = phx.domain.geometry2d.Square(center=(0.0, 0.0), side=2.0)
+    square = phx.domain.GeometryDomain(phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile())
     vertices = jnp.asarray(
         [
             [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0]],

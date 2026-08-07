@@ -6,12 +6,13 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
+import phydrax as phx
 from phydrax.constraints import (
     FunctionalConstraint,
     TrajectoryCaseDataConstraint,
     TrajectorySignal,
 )
-from phydrax.domain import ProductStructure, TrajectoryDatasetDomain
+from phydrax.domain import SampleLayout, TrajectoryDatasetDomain
 from phydrax.operators.differential import partial_n, partial_t
 
 
@@ -23,7 +24,7 @@ def _make_problem():
     slopes = jnp.asarray([1.0, 2.0, 3.0, 4.0])
     offsets = jnp.asarray([0.0, 10.0, 20.0, 30.0])
     values = inputs[:, 0, None, None] + times[None, :, None] * slopes + offsets
-    structure = ProductStructure((("data", "t"),))
+    structure = SampleLayout((("data", "t"),))
     return domain, values, slopes, structure
 
 
@@ -84,7 +85,7 @@ def test_trajectory_signal_cubic_hermite_supports_second_time_derivative():
     signal = TrajectorySignal(domain, values, interpolation="cubic_hermite")
     d2_signal = partial_n(signal, var="t", order=2)
 
-    batch = domain.component().sample(12, structure=structure, key=jr.key(6))
+    batch = domain.component().sample(phx.domain.PointSampling(12, layout=structure), key=jr.key(6))
     pred = jnp.asarray(d2_signal(batch, key=jr.key(7)).data)
     assert jnp.allclose(pred, jnp.zeros_like(pred), atol=1e-10)
 
@@ -104,7 +105,7 @@ def test_trajectory_case_data_constraint_supervises_case_only_vector_target():
         "theta",
         domain.component(),
         targets,
-        num_cases=12,
+        sampling=phx.domain.PointSampling(12, design="uniform"),
         label="case_target",
     )
 
@@ -128,7 +129,7 @@ def test_trajectory_case_data_constraint_can_evaluate_at_case_end():
         "theta",
         domain.component(),
         targets,
-        num_cases=12,
+        sampling=phx.domain.PointSampling(12, design="uniform"),
         case_time="end",
     )
 
@@ -145,7 +146,7 @@ def test_trajectory_case_data_constraint_samples_only_case_subset():
         "theta",
         domain.component(),
         targets,
-        num_cases=16,
+        sampling=phx.domain.PointSampling(16, design="uniform"),
         case_indices=allowed,
     )
 
@@ -158,7 +159,7 @@ def test_physics_residual_can_use_fixed_trajectory_signal():
     inputs = jnp.asarray([[0.0], [1.0], [2.0]])
     lengths = jnp.asarray([2, 4, 3])
     domain = TrajectoryDatasetDomain(inputs, lengths, dt=0.25)
-    structure = ProductStructure((("data", "t"),))
+    structure = SampleLayout((("data", "t"),))
     times = domain.start + domain.dt * jnp.arange(domain.max_length)
     values = inputs[:, 0, None] + 2.0 * times[None, :]
     signal = TrajectorySignal(domain, values, interpolation="linear")
@@ -167,14 +168,9 @@ def test_physics_residual_can_use_fixed_trajectory_signal():
     def u(data, t):
         return data[0] + 2.0 * t
 
-    constraint = FunctionalConstraint.from_operator(
-        component=domain.component(),
-        operator=lambda u_fn, s_fn: partial_t(u_fn, var="t") - partial_t(s_fn, var="t"),
-        constraint_vars=("u", "s"),
-        num_points=16,
-        structure=structure,
-        reduction="mean",
-    )
+    constraint = FunctionalConstraint.from_operator(component=domain.component(),
+    operator=lambda u_fn, s_fn: partial_t(u_fn, var="t") - partial_t(s_fn, var="t"),
+    constraint_vars=("u", "s"), sampling=phx.domain.PointSampling(16, layout=structure), reduction="mean",)
 
     loss = constraint.loss({"u": u, "s": signal}, key=jr.key(5))
     assert jnp.allclose(loss, 0.0, atol=1e-12)

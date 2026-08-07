@@ -7,7 +7,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 
-from phydrax.domain import Interval1d, ProductStructure, TimeInterval
+import phydrax as phx
+from phydrax.domain import Interval1d, SampleLayout, TimeInterval
 from phydrax.operators.differential import grad, hessian
 
 
@@ -17,8 +18,8 @@ def test_parameter_broadcasts_over_product_domain():
     assert lam.deps == ()
 
     component = dom.component()
-    structure = ProductStructure((("x",), ("t",)))
-    batch = component.sample((3, 4), structure=structure, key=jr.key(0))
+    structure = SampleLayout((("x",), ("t",)))
+    batch = component.sample(phx.domain.PointSampling((3, 4), layout=structure), key=jr.key(0))
     out = jnp.asarray(lam(batch).data)
     assert out.shape == (3, 4)
     assert jnp.allclose(out, 2.5)
@@ -44,8 +45,8 @@ def test_parameter_transform_applies_and_trains_raw():
     assert jnp.allclose(leaves[0], -1.0)
 
     component = dom.component()
-    structure = ProductStructure((("x",),))
-    batch = component.sample(5, structure=structure, key=jr.key(0))
+    structure = SampleLayout((("x",),))
+    batch = component.sample(phx.domain.PointSampling(5, layout=structure), key=jr.key(0))
     out = jnp.asarray(lam(batch).data)
     assert jnp.all(out > 0.0)
 
@@ -55,8 +56,8 @@ def test_parameter_grad_and_hessian_are_zero():
     lam = dom.Parameter(2.5)
 
     component = dom.component()
-    structure = ProductStructure((("x",),))
-    batch = component.sample(7, structure=structure, key=jr.key(0))
+    structure = SampleLayout((("x",),))
+    batch = component.sample(phx.domain.PointSampling(7, layout=structure), key=jr.key(0))
 
     g = jnp.asarray(grad(lam, var="x")(batch).data)
     H = jnp.asarray(hessian(lam, var="x")(batch).data)

@@ -50,7 +50,7 @@ def _score_function(model, dimension):
         label="x",
     )
     domain = space @ phx.domain.TimeInterval(0.0, 1.0)
-    return phx.domain.DomainFunction(domain=domain, deps=("x", "t"), func=model)
+    return domain.Function("x", "t")(model)
 
 
 def test_exact_and_implicit_score_matching_agree_for_diagonal_linear_score():

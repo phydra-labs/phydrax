@@ -6,8 +6,9 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
+import phydrax as phx
 from phydrax.constraints import ContinuousInitialConstraint
-from phydrax.domain import FixedStart, Interval1d, ProductStructure, TimeInterval
+from phydrax.domain import FixedStart, Interval1d, SampleLayout, TimeInterval
 
 
 def test_continuous_initial_constraint_zero_when_satisfied():
@@ -16,15 +17,14 @@ def test_continuous_initial_constraint_zero_when_satisfied():
     dom = geom @ time
 
     component = dom.component({"t": FixedStart()})
-    structure = ProductStructure((("x",),))
+    structure = SampleLayout((("x",),))
 
     u = dom.Function()(1.0)
     c = ContinuousInitialConstraint(
         "u",
         component,
         func=1.0,
-        num_points=8,
-        structure=structure,
+        sampling=phx.domain.PointSampling(8, layout=structure),
     )
     loss = c.loss({"u": u}, key=jr.key(0))
     assert jnp.allclose(loss, 0.0)
@@ -36,7 +36,7 @@ def test_continuous_initial_constraint_requires_fixed_start():
     dom = geom @ time
 
     component = dom.component()
-    structure = ProductStructure((("x", "t"),))
+    structure = SampleLayout((("x", "t"),))
     u = dom.Function()(0.0)
 
     with pytest.raises(ValueError):
@@ -44,6 +44,5 @@ def test_continuous_initial_constraint_requires_fixed_start():
             "u",
             component,
             func=0.0,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         )

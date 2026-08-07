@@ -14,9 +14,10 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import DomainFunction
+
 from .._objective import AbstractSamplingObjectiveTerm
 from .._strict import StrictModule
-from ..domain._function import DomainFunction
 from ..stochastic._bsde import (
     _pointwise_autodiff_control,
     _pointwise_values,

@@ -57,8 +57,7 @@ def test_named_batched_evaluation_jit_and_dependency_order_are_preserved():
         ),
     )
     batch = domain.component().sample(
-        9,
-        structure=phx.domain.ProductStructure((("x", "y"),)),
+        phx.domain.PointSampling(9, layout=phx.domain.SampleLayout((("x", "y"),))),
         key=jr.key(2),
     )
     evaluated = eqx.filter_jit(approximation)(batch)
@@ -139,7 +138,10 @@ def test_interpolant_is_fixed_state_and_does_not_retain_source_callable():
 
     source = CountingCallable()
     interval = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
-    function = interval.Function("x")(source)
+    function = interval.Function(
+        "x",
+        binding=phx.domain.FunctionBinding(pass_key=True),
+    )(source)
     approximation = phx.operators.interpolate_smolyak(
         function,
         phx.operators.SmolyakInterpolationPlan(1, 3),
@@ -177,7 +179,10 @@ def test_interpolation_preserves_unused_domain_factors():
 
 def test_stochastic_fitting_is_reproducible_for_the_same_key():
     interval = phx.domain.ScalarInterval(-1.0, 1.0, label="x")
-    function = interval.Function("x")(lambda x, *, key: x**2 + 0.1 * jr.normal(key))
+    function = interval.Function(
+        "x",
+        binding=phx.domain.FunctionBinding(pass_key=True),
+    )(lambda x, *, key: x**2 + 0.1 * jr.normal(key))
     plan = phx.operators.SmolyakInterpolationPlan(1, 4)
     first = phx.operators.interpolate_smolyak(function, plan, key=jr.key(7))
     second = phx.operators.interpolate_smolyak(function, plan, key=jr.key(7))

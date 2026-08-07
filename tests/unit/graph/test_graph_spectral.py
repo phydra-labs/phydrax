@@ -94,7 +94,7 @@ def test_graph_spectral_filter_wraps_as_domain_graph_model():
     graph = _two_node_graph()
     domain = phx.domain.GraphDomain(graph)
     component = domain.component({"graph": phx.domain.Nodes()})
-    batch = component.sample(2, structure=phx.domain.ProductStructure((("graph",),)))
+    batch = component.sample(phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),))))
 
     @domain.Function("graph")
     def u(node):
@@ -123,7 +123,7 @@ def test_graph_spectral_filter_preserves_padding_entries():
     batch = domain.points_from_indices(
         [0, 1],
         component=phx.domain.Nodes(),
-        structure=phx.domain.ProductStructure((("graph",),)),
+        structure=phx.domain.SampleLayout((("graph",),)),
     )
 
     out = phx.graph.GraphPolynomialFilter(

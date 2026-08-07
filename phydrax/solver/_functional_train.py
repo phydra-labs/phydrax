@@ -775,8 +775,11 @@ def solve(
             params_ = eqx.apply_updates(params_, updates)
             return params_, opt_state, loss_val, terms
 
-        if jit and not is_linesearch:
-            solve_step_constraints = eqx.filter_jit(solve_step_constraints)
+        solve_step = (
+            eqx.filter_jit(solve_step_constraints)
+            if jit and not is_linesearch
+            else solve_step_constraints
+        )
         selection_loss_fn = (
             eqx.filter_jit(_loss_wrt_params)
             if jit and evaluation_parameters is not None
@@ -846,7 +849,7 @@ def solve(
                     key=jr.fold_in(subkey, 211),
                 )
                 pre_update_params = params
-                params, opt_state, loss_val, terms = solve_step_constraints(
+                params, opt_state, loss_val, terms = solve_step(
                     params,
                     non_trainable,
                     opt_state,

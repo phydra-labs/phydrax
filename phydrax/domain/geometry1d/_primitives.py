@@ -34,16 +34,26 @@ class Interval1d(_AbstractGeometry1D):
 
     start: Array
     end: Array
+    _label: str
     adf: Callable[[Array], Array]
 
-    def __init__(self, start: ArrayLike, end: ArrayLike):
+    def __init__(
+        self,
+        start: ArrayLike,
+        end: ArrayLike,
+        *,
+        label: str = "x",
+    ):
         start_arr = jnp.asarray(start, dtype=float).reshape(())
         end_arr = jnp.asarray(end, dtype=float).reshape(())
         if bool(start_arr >= end_arr):
             raise ValueError("`start` must be less than `end`.")
+        if not isinstance(label, str) or not label:
+            raise ValueError("Interval1d label must be a non-empty string.")
 
         self.start = start_arr
         self.end = end_arr
+        self._label = label
 
     @property
     def adf(self) -> Callable[[Array], Array]:
@@ -83,7 +93,7 @@ class Interval1d(_AbstractGeometry1D):
     def bounds(self) -> Float[Array, "2 1"]:
         return jnp.array([[self.start], [self.end]], dtype=float)
 
-    def equivalent(self, other: object, /) -> bool:
+    def _same_factor_support(self, other: object, /) -> bool:
         if not isinstance(other, Interval1d):
             return False
         start_eq = np.isclose(

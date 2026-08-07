@@ -27,8 +27,7 @@ def test_infidelity_residual_runs_through_functional_solver():
         component=time.component(),
         operator=lambda state: 1.0 - phx.operators.state_fidelity(state, target),
         constraint_vars="psi",
-        num_points=32,
-        structure=phx.domain.ProductStructure((("t",),)),
+        sampling=phx.domain.PointSampling(32, layout=phx.domain.SampleLayout((("t",),))),
         reduction="mean",
         label="target infidelity",
     )

@@ -10,7 +10,7 @@ from jaxtyping import PyTree
 from ..._frozendict import frozendict
 from ..._strict import StrictModule
 from ...graph import GraphIR
-from .._structure import _validate_reserved_axes, Points, ProductStructure
+from .._structure import _validate_reserved_axes, Points, SampleLayout
 from ._components import GraphComponentKind
 
 
@@ -18,10 +18,10 @@ GRAPH_ENTITY_INDEX_KEY = "__phydrax_graph_entity_index__"
 GRAPH_GRAPH_INDEX_KEY = "__phydrax_graph_index__"
 
 
-class GraphBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
+class GraphBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):  # ty: ignore[invalid-method-override]
     """A sampled graph-domain batch with topology and named graph axes.
 
-    `GraphBatch` mirrors `PointsBatch` for finite graph supports while carrying the
+    `GraphBatch` mirrors `PointBatch` for finite graph supports while carrying the
     `GraphIR` topology required by graph operators and message-passing models. The
     selected graph entity axis is still represented as a normal Phydrax sampling
     axis in `structure`, so ordinary `DomainFunction` evaluation, broadcasting,
@@ -31,7 +31,7 @@ class GraphBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
     """
 
     points: Points
-    structure: ProductStructure
+    structure: SampleLayout
     graph: GraphIR
     graph_label: str
     component_kind: GraphComponentKind
@@ -40,14 +40,14 @@ class GraphBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
         self,
         *,
         points: Points | Mapping[str, PyTree[cx.Field]],
-        structure: ProductStructure,
+        structure: SampleLayout,
         graph: GraphIR,
         graph_label: str,
         component_kind: GraphComponentKind,
     ):
         if structure.axis_names is None:
             raise ValueError(
-                "GraphBatch requires a canonicalized ProductStructure (axis_names set)."
+                "GraphBatch requires a canonicalized SampleLayout (axis_names set)."
             )
         _validate_reserved_axes(
             frozendict(points), allowed_axes=frozenset(structure.axis_names)

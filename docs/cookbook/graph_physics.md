@@ -25,7 +25,7 @@ continuous coordinates are not the only natural indexing structure.
     )
 
     domain = phx.domain.GraphDomain(graph, measure="count")
-    structure = phx.domain.ProductStructure((("graph",),))
+    layout = phx.domain.SampleLayout((("graph",),))
     n_nodes = graph.num_nodes
     n_edges = graph.num_edges
     n_boundary_nodes = 2
@@ -42,9 +42,11 @@ continuous coordinates are not the only natural indexing structure.
     def edge_weight(edge):
         return edge[0]
 
-    node_batch = nodes.sample(3, structure=structure)
-    edge_batch = edges.sample(2, structure=structure)
-    boundary_batch = boundary_nodes.sample(n_boundary_nodes, structure=structure)
+    node_batch = nodes.sample(phx.domain.PointSampling(3, layout=layout))
+    edge_batch = edges.sample(phx.domain.PointSampling(2, layout=layout))
+    boundary_batch = boundary_nodes.sample(
+        phx.domain.PointSampling(n_boundary_nodes, layout=layout)
+    )
 
     grad_u = phx.operators.graph_gradient(u)
     weighted_grad_u = phx.operators.graph_gradient(u, weight=edge_weight)
@@ -59,24 +61,21 @@ continuous coordinates are not the only natural indexing structure.
         component=nodes,
         operator=phx.operators.graph_incidence_laplacian,
         constraint_vars="u",
-        num_points=n_nodes,
-        structure=structure,
+        sampling=phx.domain.PointSampling(n_nodes, layout=layout),
     )
 
     constant_gradient = phx.constraints.FunctionalConstraint.from_operator(
         component=edges,
         operator=phx.operators.graph_gradient,
         constraint_vars="u",
-        num_points=n_edges,
-        structure=structure,
+        sampling=phx.domain.PointSampling(n_edges, layout=layout),
     )
 
     boundary_diffusion = phx.constraints.FunctionalConstraint.from_operator(
         component=boundary_nodes,
         operator=phx.operators.graph_incidence_laplacian,
         constraint_vars="u",
-        num_points=n_boundary_nodes,
-        structure=structure,
+        sampling=phx.domain.PointSampling(n_boundary_nodes, layout=layout),
     )
 
     @domain.Function("graph")
@@ -121,7 +120,7 @@ and constraints see the enforced values.
         n_edge=jnp.array([2], dtype=jnp.int32),
     )
     domain = phx.domain.GraphDomain(graph)
-    structure = phx.domain.ProductStructure((("graph",),))
+    layout = phx.domain.SampleLayout((("graph",),))
     nodes = domain.component({"graph": phx.domain.Nodes()})
     boundary = domain.component({"graph": phx.domain.BoundaryNodes([0, 2])})
     boundary_count = 2
@@ -131,15 +130,16 @@ and constraints see the enforced values.
         return node[0]
 
     hard_u = phx.constraints.enforce_graph_values(u, boundary, target=5.0)
-    batch = nodes.sample(graph.num_nodes, structure=structure)
+    batch = nodes.sample(
+        phx.domain.PointSampling(graph.num_nodes, layout=layout)
+    )
     assert jnp.allclose(hard_u(batch).data, jnp.array([5.0, 1.0, 5.0]))
 
     bc = phx.constraints.FunctionalConstraint.from_operator(
         component=boundary,
         operator=lambda f: f - 5.0,
         constraint_vars="u",
-        num_points=boundary_count,
-        structure=structure,
+        sampling=phx.domain.PointSampling(boundary_count, layout=layout),
     )
     assert bc.loss({"u": hard_u}) < 1e-12
 
@@ -176,7 +176,7 @@ They return normal `DomainFunction`s and are meant to be used with
         n_edge=jnp.array([2], dtype=jnp.int32),
     )
     domain = phx.domain.GraphDomain(graph)
-    structure = phx.domain.ProductStructure((("graph",),))
+    layout = phx.domain.SampleLayout((("graph",),))
     node_count = graph.num_nodes
     nodes = domain.component({"graph": phx.domain.Nodes()})
 
@@ -189,8 +189,7 @@ They return normal `DomainFunction`s and are meant to be used with
         component=nodes,
         operator=phx.operators.graph_poisson_residual,
         constraint_vars="u",
-        num_points=node_count,
-        structure=structure,
+        sampling=phx.domain.PointSampling(node_count, layout=layout),
     )
     assert constraint.loss({"u": constant_u}) < 1e-12
     ```
@@ -215,7 +214,7 @@ constraint path.
         n_edge=jnp.array([2], dtype=jnp.int32),
     )
     domain = phx.domain.GraphDomain(graph)
-    structure = phx.domain.ProductStructure((("graph",),))
+    layout = phx.domain.SampleLayout((("graph",),))
     nodes = domain.component({"graph": phx.domain.Nodes()})
 
     @domain.Function("graph")
@@ -230,8 +229,7 @@ constraint path.
         component=nodes,
         operator=residual,
         constraint_vars="u",
-        num_points=graph.num_nodes,
-        structure=structure,
+        sampling=phx.domain.PointSampling(graph.num_nodes, layout=layout),
     )
 
     assert constraint.loss({"u": u}) < 1e-12
@@ -260,8 +258,10 @@ the result can be exposed as a `DomainFunction` with `GraphDomain.GraphModel`.
     target_nodes = domain.component({"graph": phx.domain.NodeSet([2])})
     target_count = 1
     target_batch = target_nodes.sample(
-        target_count,
-        structure=phx.domain.ProductStructure((("graph",),)),
+        phx.domain.PointSampling(
+            target_count,
+            layout=phx.domain.SampleLayout((("graph",),)),
+        )
     )
 
     @domain.Function("graph")
@@ -306,8 +306,10 @@ relative coordinates, distances, and optional mollified kernel weights.
     target_count = 1
     target_cells = domain.component({"graph": bundle.target_nodes_component()})
     target_batch = target_cells.sample(
-        target_count,
-        structure=phx.domain.ProductStructure((("graph",),)),
+        phx.domain.PointSampling(
+            target_count,
+            layout=phx.domain.SampleLayout((("graph",),)),
+        )
     )
 
     @domain.Function("graph")
@@ -373,8 +375,10 @@ nodes can be sampled by `GraphDomain` for losses and downstream operators.
     target_nodes = target_domain.component({"graph": query.target_nodes_component()})
     target_count = 1
     target_batch = target_nodes.sample(
-        target_count,
-        structure=phx.domain.ProductStructure((("graph",),)),
+        phx.domain.PointSampling(
+            target_count,
+            layout=phx.domain.SampleLayout((("graph",),)),
+        )
     )
 
     @target_domain.Function("graph")
@@ -451,8 +455,10 @@ which is useful for cell-centered finite-volume workflows.
     edge_nodes = edge_domain.component({"graph": edge_graph.original_edges_component()})
     edge_count = edge_graph.graph.num_nodes
     edge_batch = edge_nodes.sample(
-        edge_count,
-        structure=phx.domain.ProductStructure((("graph",),)),
+        phx.domain.PointSampling(
+            edge_count,
+            layout=phx.domain.SampleLayout((("graph",),)),
+        )
     )
 
     @edge_domain.Function("graph")
@@ -505,8 +511,10 @@ edge distances, and cell areas.
     face_cells = dual_domain.component({"graph": dual.face_nodes_component()})
     face_count = dual.graph.num_nodes
     face_batch = face_cells.sample(
-        face_count,
-        structure=phx.domain.ProductStructure((("graph",),)),
+        phx.domain.PointSampling(
+            face_count,
+            layout=phx.domain.SampleLayout((("graph",),)),
+        )
     )
     face_values = jnp.array([1.0, 3.0])
 
@@ -564,7 +572,7 @@ Equinox/JAX arrays in the surrounding graph model remain optimizer parameters.
     )
     side_input_domain = phx.domain.GraphDomain(side_input_graph)
     side_input_nodes = side_input_domain.component({"graph": phx.domain.Nodes()})
-    side_input_structure = phx.domain.ProductStructure((("graph",),))
+    side_input_layout = phx.domain.SampleLayout((("graph",),))
 
     @side_input_domain.Function("graph")
     def side_input_u(node):
@@ -595,8 +603,10 @@ Equinox/JAX arrays in the surrounding graph model remain optimizer parameters.
         component=side_input_nodes,
         operator=side_input_residual,
         constraint_vars="u",
-        num_points=side_input_graph.num_nodes,
-        structure=side_input_structure,
+        sampling=phx.domain.PointSampling(
+            side_input_graph.num_nodes,
+            layout=side_input_layout,
+        ),
     )
     assert side_input_constraint.loss({"u": side_input_u}) < 1e-12
     ```
@@ -633,8 +643,10 @@ This is useful for force-like, flux-like, and geometry-aware simulator terms.
     nodes = domain.component({"graph": phx.domain.Nodes()})
     node_count = graph.num_nodes
     batch = nodes.sample(
-        node_count,
-        structure=phx.domain.ProductStructure((("graph",),)),
+        phx.domain.PointSampling(
+            node_count,
+            layout=phx.domain.SampleLayout((("graph",),)),
+        )
     )
 
     @domain.Function("graph")
@@ -677,7 +689,12 @@ spectral neural operator while remaining local, sparse, and batchable.
     )
     domain = phx.domain.GraphDomain(graph)
     nodes = domain.component({"graph": phx.domain.Nodes()})
-    batch = nodes.sample(2, structure=phx.domain.ProductStructure((("graph",),)))
+    batch = nodes.sample(
+        phx.domain.PointSampling(
+            2,
+            layout=phx.domain.SampleLayout((("graph",),)),
+        )
+    )
 
     @domain.Function("graph")
     def u(node):
@@ -722,10 +739,10 @@ operators can use edge types for typed message passing.
         n_edge=jnp.array([3], dtype=jnp.int32),
     )
     domain = phx.domain.GraphDomain(graph, measure="count")
-    structure = phx.domain.ProductStructure((("graph",),))
+    layout = phx.domain.SampleLayout((("graph",),))
 
     typed_nodes = domain.component({"graph": phx.domain.NodeType(1)})
-    typed_batch = typed_nodes.sample(1, structure=structure)
+    typed_batch = typed_nodes.sample(phx.domain.PointSampling(1, layout=layout))
     typed_payload = typed_batch.points.get("graph")
     assert jnp.allclose(jnp.ravel(typed_payload.get("features").data), jnp.array([2.0]))
 
@@ -756,8 +773,10 @@ components, graph models, and constraints remain unchanged.
     domain = phx.domain.GraphDomain(bundle.graph)
     original_nodes = domain.component({"graph": bundle.original_nodes_component()})
     batch = original_nodes.sample(
-        3,
-        structure=phx.domain.ProductStructure((("graph",),)),
+        phx.domain.PointSampling(
+            3,
+            layout=phx.domain.SampleLayout((("graph",),)),
+        )
     )
 
     @domain.Function("graph")
@@ -823,7 +842,7 @@ other cell degree.
     )
     complex_ir = phx.graph.triangle_mesh_to_cochain_complex(vertices, faces)
     domain = phx.domain.GraphDomain(complex_ir.graph)
-    structure = phx.domain.ProductStructure((("graph",),))
+    layout = phx.domain.SampleLayout((("graph",),))
 
     zero_form = phx.graph.CochainFieldSpec(
         0,
@@ -905,8 +924,10 @@ other cell degree.
         program=program,
         field_map=field_map,
         output="constitutive",
-        num_points=complex_ir.cell_entities(one_form.degree).size,
-        structure=structure,
+        sampling=phx.domain.PointSampling(
+            complex_ir.cell_entities(one_form.degree).size,
+            layout=layout,
+        ),
         reduction="metric_mean",
         sampling_mode="fixed",
     )
@@ -915,8 +936,7 @@ other cell degree.
         program=program,
         field_map=field_map,
         output="mass",
-        num_points=1,
-        structure=structure,
+        sampling=phx.domain.PointSampling(1, layout=layout),
         reduction="metric_sum",
         sampling_mode="fixed",
     )
@@ -1046,13 +1066,13 @@ batched topology.
     case_count = 2
     domain = phx.domain.GraphDatasetDomain((graph0, graph1))
     domain = domain.with_layout(domain.layout_for_batch_size(case_count, multiple=2))
-    structure = phx.domain.ProductStructure((("graph",),))
+    layout = phx.domain.SampleLayout((("graph",),))
 
     boundary = domain.component({"graph": phx.domain.BoundaryNodes([1])})
     batch = domain.points_from_indices(
         [0, 1],
         component=phx.domain.BoundaryNodes([1]),
-        structure=structure,
+        structure=layout,
     )
 
     @domain.Function("graph")
@@ -1067,8 +1087,7 @@ batched topology.
         component=boundary,
         operator=phx.operators.graph_incidence_laplacian,
         constraint_vars="u",
-        num_points=case_count,
-        structure=structure,
+        sampling=phx.domain.PointSampling(case_count, layout=layout),
     )
     assert constraint.loss({"u": u}) < 1e-12
     ```
@@ -1118,7 +1137,7 @@ cases.
     batch = domain.points_from_indices(
         [1, 0, 1],
         component=phx.domain.BoundaryNodes([1]),
-        structure=phx.domain.ProductStructure((("graph",),)),
+        structure=phx.domain.SampleLayout((("graph",),)),
     )
     assert jnp.allclose(target_fn(batch).data, jnp.array([18.0, 12.0, 18.0]))
 
@@ -1126,7 +1145,10 @@ cases.
         "u",
         nodes,
         targets,
-        num_cases=8,
+        sampling=phx.domain.PointSampling(
+            8,
+            layout=phx.domain.SampleLayout((("graph",),)),
+        ),
     )
     assert constraint.loss({"u": u}, key=jr.key(0)) < 1e-12
 
@@ -1154,7 +1176,7 @@ cases.
         [0, 1],
         [0.25, 0.75],
         component=component,
-        structure=phx.domain.ProductStructure((("graph", "t"),)),
+        structure=phx.domain.SampleLayout((("graph", "t"),)),
     )
     assert jnp.allclose(signal(trajectory_batch).data, jnp.array([1.5, 5.5]))
     ```
@@ -1183,8 +1205,10 @@ and return graph subset metadata for boundary/interface constraints.
     boundary_count = int(bundle.boundary_nodes.shape[0])
     boundary = domain.component({"graph": bundle.boundary_nodes_component()})
     batch = boundary.sample(
-        boundary_count,
-        structure=phx.domain.ProductStructure((("graph",),)),
+        phx.domain.PointSampling(
+            boundary_count,
+            layout=phx.domain.SampleLayout((("graph",),)),
+        )
     )
 
     @domain.Function("graph")
@@ -1219,7 +1243,7 @@ preserving mesh metadata in the graph payload.
     bundle = phx.graph.mesh_to_cotangent_graph(vertices, faces)
     domain = phx.domain.GraphDomain(bundle.graph)
     nodes = domain.component({"graph": phx.domain.Nodes()})
-    structure = phx.domain.ProductStructure((("graph",),))
+    layout = phx.domain.SampleLayout((("graph",),))
 
     @domain.Function("graph")
     def u(node):
@@ -1242,8 +1266,10 @@ preserving mesh metadata in the graph payload.
         component=nodes,
         operator=residual,
         constraint_vars="u",
-        num_points=bundle.graph.num_nodes,
-        structure=structure,
+        sampling=phx.domain.PointSampling(
+            bundle.graph.num_nodes,
+            layout=layout,
+        ),
     )
 
     assert constraint.loss({"u": u}) < 1e-12
@@ -1285,7 +1311,7 @@ constraints.
 
     domain = phx.domain.GraphDomain(graph)
     graph_nodes = domain.component({"graph": phx.domain.Nodes()})
-    structure = phx.domain.ProductStructure((("graph",),))
+    layout = phx.domain.SampleLayout((("graph",),))
 
     @domain.Function("graph")
     def u(node):
@@ -1303,8 +1329,7 @@ constraints.
         component=graph_nodes,
         operator=residual,
         constraint_vars="rollout",
-        num_points=graph.num_nodes,
-        structure=structure,
+        sampling=phx.domain.PointSampling(graph.num_nodes, layout=layout),
     )
 
     assert constraint.loss({"rollout": rollout_model}) < 1e-12
@@ -1344,7 +1369,7 @@ arguments.
         jnp.array([3, 5], dtype=jnp.int32),
         dt=0.5,
     )
-    structure = phx.domain.ProductStructure((("graph", "t"),))
+    layout = phx.domain.SampleLayout((("graph", "t"),))
     case_count = 2
 
     edges_at_start = domain.component(
@@ -1360,8 +1385,7 @@ arguments.
         component=edges_at_start,
         operator=phx.operators.graph_gradient,
         constraint_vars="u",
-        num_points=case_count,
-        structure=structure,
+        sampling=phx.domain.PointSampling(case_count, layout=layout),
     )
 
     assert constraint.loss({"u": u}) < 1e-12

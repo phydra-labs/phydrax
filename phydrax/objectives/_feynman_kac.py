@@ -13,8 +13,9 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import DomainFunction
+
 from .._objective import AbstractSamplingObjectiveTerm
-from ..domain._function import DomainFunction
 from ..stochastic._bsde import _pointwise_autodiff_control, _pointwise_values, BSDEProblem
 from ..stochastic._feynman_kac import FeynmanKacLabelBatch, FeynmanKacSamplingPlan
 

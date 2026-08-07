@@ -35,13 +35,6 @@ from ._operators import (
     gradient,
     laplace_beltrami,
 )
-from ._stochastic import (
-    brownian_generator,
-    coordinate_stratonovich_to_ito_drift,
-    coordinate_to_covariant_drift,
-    covariant_fokker_planck_operator,
-    covariant_kolmogorov_generator,
-)
 from ._state_geometry import (
     AbstractStateGeometry,
     EmbeddedStateGeometry,
@@ -50,6 +43,13 @@ from ._state_geometry import (
     PointwiseStateGeometry,
     SpecialOrthogonalStateGeometry,
     SymmetricPositiveDefiniteStateGeometry,
+)
+from ._stochastic import (
+    brownian_generator,
+    coordinate_stratonovich_to_ito_drift,
+    coordinate_to_covariant_drift,
+    covariant_fokker_planck_operator,
+    covariant_kolmogorov_generator,
 )
 from ._tensor import (
     contract_indices,

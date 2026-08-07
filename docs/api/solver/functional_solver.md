@@ -40,13 +40,12 @@ geom = phx.domain.Interval1d(0.0, 1.0)
 model = phx.nn.MLP(in_size=1, out_size="scalar", width_size=16, depth=2, key=jr.key(0))
 u = geom.Model("x")(model)
 
-structure = phx.domain.ProductStructure((("x",),))
+layout = phx.domain.SampleLayout((("x",),))
 constraint = phx.constraints.ContinuousPointwiseInteriorConstraint(
     "u",
     geom,
     operator=lambda f: f,
-    num_points=128,
-    structure=structure,
+    sampling=phx.domain.PointSampling(128, layout=layout),
     reduction="mean",
 )
 

@@ -12,10 +12,9 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+from phydrax.domain import ConcatenatedModelEvaluator, Domain, DomainFunction
+
 from .._doc import DOC_KEY0
-from ..domain._domain import _AbstractDomain
-from ..domain._function import DomainFunction
-from ..domain._model_function import _ConcatenatedModelCallable
 from ..nn.models.core._base import _AbstractOperatorModel
 from ..nn.models.core._loss import ModelWithLoss
 from ..nn.models.core._operator import OperatorBatch
@@ -32,7 +31,7 @@ OperatorLoss = Literal["l2", "h1", "spectral"]
 
 
 def _operator_callable(function: DomainFunction, /) -> Callable:
-    if not isinstance(function.func, _ConcatenatedModelCallable):
+    if not isinstance(function.func, ConcatenatedModelEvaluator):
         raise TypeError(
             "Operator constraints require a DomainFunction created with Domain.Model(...)."
         )
@@ -257,7 +256,7 @@ class DifferentialPhysicsInformedOperatorConstraint(AbstractConstraint):
     """PINO residual loss composed from native PhydraX function operators."""
 
     batches: tuple[OperatorBatch, ...]
-    domain: _AbstractDomain
+    domain: Domain
     coordinate_label: str
     residual_operator: Callable[[DomainFunction], DomainFunction]
     constraint_vars: tuple[str, ...]
@@ -269,7 +268,7 @@ class DifferentialPhysicsInformedOperatorConstraint(AbstractConstraint):
         self,
         function: str,
         batches: OperatorBatch | Sequence[OperatorBatch],
-        domain: _AbstractDomain,
+        domain: Domain,
         coordinate_label: str,
         residual_operator: Callable[[DomainFunction], DomainFunction],
         /,

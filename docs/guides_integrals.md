@@ -256,7 +256,7 @@ substituted for that joint net.
 Integration remains responsible for target masses, masks, importance or Jacobian
 weights, replicate diagnostics, and uncertainty estimates. Sharing the reference
 transport does not turn weighted integration realizations into ordinary
-`PointsBatch` objects.
+`PointBatch` objects.
 
 ## Importance sampling and weighted samples
 

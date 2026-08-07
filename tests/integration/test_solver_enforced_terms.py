@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
 from phydrax.constraints import (
     ContinuousInitialConstraint,
@@ -20,16 +21,16 @@ from phydrax.domain import (
     Boundary,
     FixedStart,
     FourierAxisSpec,
+    GridBatch,
     Interval1d,
-    PointsBatch,
-    ProductStructure,
+    PointBatch,
+    SampleLayout,
     TimeInterval,
 )
-from phydrax.domain._structure import CoordSeparableBatch
 from phydrax.nn.models import LatentContractionModel
 from phydrax.nn.models.core._base import _AbstractBaseModel
 from phydrax.operators.differential import dt, dt_n, laplacian
-from phydrax.operators.differential._hooks import get_derivative_hook
+from phydrax.operators.differential._hooks import get_derivative_rule
 from phydrax.solver import (
     EnforcedInteriorData,
     FunctionalSolver,
@@ -38,7 +39,7 @@ from phydrax.solver import (
 
 
 def _paired_batch(domain, xs, ts):
-    structure = ProductStructure((("x", "t"),)).canonicalize(domain.labels)
+    structure = SampleLayout((("x", "t"),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
     axis = axis_names[0]
@@ -50,7 +51,7 @@ def _paired_batch(domain, xs, ts):
             "t": cx.Field(jnp.asarray(ts, dtype=float).reshape((-1,)), dims=(axis,)),
         }
     )
-    return PointsBatch(points=points, structure=structure)
+    return PointBatch(points=points, structure=structure)
 
 
 def test_functional_solver_builds_enforced_pipeline_terms():
@@ -124,18 +125,17 @@ def test_initial_constraint_coord_separable_spatial():
         return 0.0
 
     initial_component = domain.component({"t": FixedStart()})
-    structure = ProductStructure((("x",),))
+    structure = SampleLayout((("x",),))
 
     constraint = ContinuousInitialConstraint(
         "u",
         initial_component,
         func=0.0,
-        num_points={"x": 5},
-        structure=structure,
+        sampling=phx.domain.GridSampling({"x": 5}),
     )
 
     batch = constraint.sample(key=jr.key(0))
-    assert isinstance(batch, CoordSeparableBatch)
+    assert isinstance(batch, GridBatch)
     assert isinstance(batch.points["x"], tuple)
     assert len(batch.points["x"]) == 1
 
@@ -428,8 +428,7 @@ def test_wave_like_loss_with_coord_separable_enforced_terms_runs():
         "u",
         domain,
         operator=lambda f: dt_n(f, var="t", order=2) - laplacian(f, var="x"),
-        num_points={"x": 16, "t": 8},
-        structure=ProductStructure((("x",), ("t",))),
+        sampling=phx.domain.GridSampling({"x": 16, "t": 8}),
         reduction="mean",
     )
 
@@ -494,13 +493,14 @@ def test_enforced_pipeline_stacked_overlays_keep_derivative_hooks_and_fast_path(
         boundary_weight_num_reference=128,
     )
     u = solver.ansatz_functions()["u"]
-    assert get_derivative_hook(u) is not None
+    assert get_derivative_rule(u) is not None
 
     du_dt = dt_n(u, var="t", order=1, backend="ad")
-    batch = domain.component().sample_coord_separable(
-        {"x": FourierAxisSpec(10)},
-        num_points=6,
-        dense_structure=ProductStructure((("t",),)),
+    batch = domain.component().sample(
+        phx.domain.GridSampling(
+            {"x": FourierAxisSpec(10)},
+            dense=phx.domain.PointSampling(6, layout=SampleLayout((("t",),))),
+        ),
         key=jr.key(13),
     )
 

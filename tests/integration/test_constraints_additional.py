@@ -8,6 +8,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 
+import phydrax as phx
 from phydrax.constraints import (
     ContinuousInitialConstraint,
     ContinuousODEConstraint,
@@ -20,10 +21,10 @@ from phydrax.constraints._continuous_interior import ContinuousPointwiseInterior
 from phydrax.constraints._discrete_interior import DiscreteInteriorDataConstraint
 from phydrax.constraints._functional_initial import DiscreteInitialConstraint
 from phydrax.domain import (
-    DomainComponentUnion,
+    ComponentSum,
     FixedStart,
     Interval1d,
-    ProductStructure,
+    SampleLayout,
     TimeInterval,
 )
 from phydrax.operators.differential import div_diag_k_grad, dt, laplacian
@@ -39,19 +40,15 @@ def test_continuous_initial_coord_separable_spatial():
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
     component = domain.component({"t": FixedStart()})
-    structure = ProductStructure((("x",),))
+    structure = SampleLayout((("x",),))
 
     @domain.Function("x", "t")
     def u(x, t):
         return 0.0
 
-    constraint = ContinuousInitialConstraint(
-        "u",
-        component,
-        func=0.0,
-        num_points={"x": 4},
-        structure=structure,
-    )
+    constraint = ContinuousInitialConstraint("u",
+    component,
+    func=0.0, sampling=phx.domain.GridSampling({"x": 4}), )
     assert _jit_loss(constraint, {"u": u}) < 1e-6
 
 
@@ -60,7 +57,7 @@ def test_integral_constraint_coord_separable_constant():
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
     component = domain.component()
-    structure = ProductStructure((("x", "t"),))
+    structure = SampleLayout((("x", "t"),))
 
     @domain.Function("x", "t")
     def u(x, t):
@@ -70,8 +67,10 @@ def test_integral_constraint_coord_separable_constant():
         component=component,
         operator=lambda f: f,
         constraint_vars="u",
-        num_points=(6, {"x": 5}),
-        structure=structure,
+        sampling=phx.domain.GridSampling(
+            {"x": 5},
+            dense=phx.domain.PointSampling(6),
+        ),
         equal_to=1.0,
     )
     assert _jit_loss(constraint, {"u": u}) < 1e-6
@@ -82,7 +81,7 @@ def test_integral_constraint_over_axis_constant():
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
     component = domain.component()
-    structure = ProductStructure((("x",), ("t",)))
+    structure = SampleLayout((("x",), ("t",)))
     num_x = 8
     num_t = 6
 
@@ -91,15 +90,10 @@ def test_integral_constraint_over_axis_constant():
         return 1.0
 
     expected = 1.0
-    constraint = IntegralEqualityConstraint.from_operator(
-        component=component,
-        operator=lambda f: f,
-        constraint_vars="u",
-        num_points=(num_x, num_t),
-        structure=structure,
-        over="x",
-        equal_to=expected,
-    )
+    constraint = IntegralEqualityConstraint.from_operator(component=component,
+    operator=lambda f: f,
+    constraint_vars="u", sampling=phx.domain.PointSampling((num_x, num_t), layout=structure), over="x",
+    equal_to=expected,)
     assert _jit_loss(constraint, {"u": u}) < 1e-6
 
 
@@ -107,26 +101,22 @@ def test_functional_constraint_union_zero_loss():
     geom = Interval1d(0.0, 1.0)
     c1 = geom.component(where={"x": lambda p: p[0] < 0.5})
     c2 = geom.component(where={"x": lambda p: p[0] >= 0.5})
-    union = DomainComponentUnion((c1, c2))
-    structure = ProductStructure((("x",),))
+    union = ComponentSum((c1, c2), assume_disjoint=True)
+    structure = SampleLayout((("x",),))
 
     @geom.Function("x")
     def u(x):
         return 0.0
 
-    constraint = FunctionalConstraint.from_operator(
-        component=union,
-        operator=lambda f: f,
-        constraint_vars="u",
-        num_points=8,
-        structure=structure,
-    )
+    constraint = FunctionalConstraint.from_operator(component=union,
+    operator=lambda f: f,
+    constraint_vars="u", sampling=phx.domain.PointSampling(8, layout=structure), )
     assert _jit_loss(constraint, {"u": u}) < 1e-6
 
 
 def test_where_all_masks_interior_constraint():
     geom = Interval1d(0.0, 1.0)
-    structure = ProductStructure((("x",),))
+    structure = SampleLayout((("x",),))
 
     @geom.Function("x")
     def u(x):
@@ -140,8 +130,7 @@ def test_where_all_masks_interior_constraint():
         "u",
         geom,
         operator=lambda f: f,
-        num_points=16,
-        structure=structure,
+        sampling=phx.domain.PointSampling(16, layout=structure),
         where_all=mask,
     )
     assert _jit_loss(constraint, {"u": u}) < 1e-6
@@ -151,7 +140,7 @@ def test_discrete_interior_sensor_track_custom_weights_zero():
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
-    structure = ProductStructure((("x", "t"),))
+    structure = SampleLayout((("x", "t"),))
 
     @domain.Function("x", "t")
     def u(x, t):
@@ -167,8 +156,7 @@ def test_discrete_interior_sensor_track_custom_weights_zero():
         sensors=sensors,
         times=times,
         sensor_values=sensor_values,
-        num_points=12,
-        structure=structure,
+        sampling=phx.domain.PointSampling(12, layout=structure),
         idw_exponent=3.0,
         eps_snap=1e-6,
         lengthscales={"x": 0.3},
@@ -219,7 +207,7 @@ def test_discrete_initial_constraint_forward_mode():
 
 def test_ode_constraints_relabel_nonuniform_times():
     time = TimeInterval(0.0, 1.0).relabel("tau")
-    structure = ProductStructure((("tau",),))
+    structure = SampleLayout((("tau",),))
 
     @time.Function("tau")
     def u(tau):
@@ -236,8 +224,7 @@ def test_ode_constraints_relabel_nonuniform_times():
         "u",
         cast(TimeInterval, time),
         operator,
-        num_points=32,
-        structure=structure,
+        sampling=phx.domain.PointSampling(32, layout=structure),
     )
     assert _jit_loss(continuous, {"u": u}) < 1e-6
 
@@ -255,41 +242,31 @@ def test_integral_constraint_union_zero_loss():
     geom = Interval1d(0.0, 1.0)
     left = geom.component(where={"x": lambda p: p[0] < 0.5})
     right = geom.component(where={"x": lambda p: p[0] >= 0.5})
-    union = DomainComponentUnion((left, right))
-    structure = ProductStructure((("x",),))
+    union = ComponentSum((left, right), assume_disjoint=True)
+    structure = SampleLayout((("x",),))
 
     @geom.Function("x")
     def u(x):
         return 0.0
 
-    constraint = IntegralEqualityConstraint.from_operator(
-        component=union,
-        operator=lambda f: f,
-        constraint_vars="u",
-        num_points=8,
-        structure=structure,
-        equal_to=0.0,
-    )
+    constraint = IntegralEqualityConstraint.from_operator(component=union,
+    operator=lambda f: f,
+    constraint_vars="u", sampling=phx.domain.PointSampling(8, layout=structure), equal_to=0.0,)
     assert _jit_loss(constraint, {"u": u}) < 1e-6
 
 
 def test_integral_constraint_where_zero_mask():
     geom = Interval1d(0.0, 1.0)
     component = geom.component(where={"x": lambda p: p * 0.0})
-    structure = ProductStructure((("x",),))
+    structure = SampleLayout((("x",),))
 
     @geom.Function("x")
     def u(x):
         return 1.0
 
-    constraint = IntegralEqualityConstraint.from_operator(
-        component=component,
-        operator=lambda f: f,
-        constraint_vars="u",
-        num_points=16,
-        structure=structure,
-        equal_to=0.0,
-    )
+    constraint = IntegralEqualityConstraint.from_operator(component=component,
+    operator=lambda f: f,
+    constraint_vars="u", sampling=phx.domain.PointSampling(16, layout=structure), equal_to=0.0,)
     assert _jit_loss(constraint, {"u": u}) < 1e-6
 
 
@@ -298,7 +275,7 @@ def test_discrete_interior_sensor_track_coord_separable_multilabel():
     y_dom = Interval1d(0.0, 1.0).relabel("y")
     time = TimeInterval(0.0, 1.0)
     domain = x_dom @ y_dom @ time
-    structure = ProductStructure((("x", "y", "t"),))
+    structure = SampleLayout((("x", "y", "t"),))
 
     @domain.Function("x", "y", "t")
     def u(x, y, t):
@@ -317,33 +294,34 @@ def test_discrete_interior_sensor_track_coord_separable_multilabel():
         sensors=sensors,
         times=times,
         sensor_values=sensor_values,
-        num_points=(12, {"x": 4}),
-        structure=structure,
+        sampling=phx.domain.GridSampling(
+            {"x": 4},
+            dense=phx.domain.PointSampling(
+                12,
+                layout=SampleLayout((("y", "t"),)),
+            ),
+        ),
     )
     assert _jit_loss(constraint, {"u": u}) < 1e-6
 
 
 def test_coord_separable_laplacian_jet_zero():
     geom = Interval1d(0.0, 1.0)
-    structure = ProductStructure((("x",),))
+    structure = SampleLayout((("x",),))
 
     @geom.Function("x")
     def u(x):
         return 1.0
 
-    constraint = ContinuousPointwiseInteriorConstraint(
-        "u",
-        geom,
-        operator=lambda f: laplacian(f, var="x", backend="jet"),
-        num_points={"x": 8},
-        structure=structure,
-    )
+    constraint = ContinuousPointwiseInteriorConstraint("u",
+    geom,
+    operator=lambda f: laplacian(f, var="x", backend="jet"), sampling=phx.domain.GridSampling({"x": 8}), )
     assert _jit_loss(constraint, {"u": u}) < 1e-6
 
 
 def test_coord_separable_div_diag_k_grad_jet_zero():
     geom = Interval1d(0.0, 1.0)
-    structure = ProductStructure((("x",),))
+    structure = SampleLayout((("x",),))
 
     @geom.Function("x")
     def u(x):
@@ -353,11 +331,7 @@ def test_coord_separable_div_diag_k_grad_jet_zero():
     def k_vec(x):
         return jnp.array([1.0], dtype=float)
 
-    constraint = ContinuousPointwiseInteriorConstraint(
-        "u",
-        geom,
-        operator=lambda f: div_diag_k_grad(f, k_vec, var="x", backend="jet"),
-        num_points={"x": 8},
-        structure=structure,
-    )
+    constraint = ContinuousPointwiseInteriorConstraint("u",
+    geom,
+    operator=lambda f: div_diag_k_grad(f, k_vec, var="x", backend="jet"), sampling=phx.domain.GridSampling({"x": 8}), )
     assert _jit_loss(constraint, {"u": u}) < 1e-6

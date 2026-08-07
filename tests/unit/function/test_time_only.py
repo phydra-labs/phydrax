@@ -5,7 +5,8 @@
 import jax.numpy as jnp
 import jax.random as jr
 
-from phydrax.domain import Interval1d, ProductStructure, TimeInterval
+import phydrax as phx
+from phydrax.domain import Interval1d, SampleLayout, TimeInterval
 
 
 def test_time_only_function_broadcasts_over_space_and_time_axes():
@@ -18,8 +19,8 @@ def test_time_only_function_broadcasts_over_space_and_time_axes():
         return 3.0 * t
 
     component = dom.component()
-    structure = ProductStructure((("x",), ("t",)))
-    batch = component.sample((7, 9), structure=structure, key=jr.key(0))
+    structure = SampleLayout((("x",), ("t",)))
+    batch = component.sample(phx.domain.PointSampling((7, 9), layout=structure), key=jr.key(0))
 
     out = f(batch)
 

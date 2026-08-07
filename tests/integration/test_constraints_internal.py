@@ -6,6 +6,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 
+import phydrax as phx
 from phydrax.constraints._continuous_interior import (
     ContinuousInitialFunctionConstraint,
     ContinuousPointwiseInteriorConstraint,
@@ -16,7 +17,7 @@ from phydrax.domain import (
     Boundary,
     FixedStart,
     Interval1d,
-    ProductStructure,
+    SampleLayout,
     TimeInterval,
 )
 
@@ -28,7 +29,7 @@ def _jit_loss(constraint, functions):
 
 def test_continuous_pointwise_interior_constraint_zero():
     geom = Interval1d(0.0, 1.0)
-    structure = ProductStructure((("x",),))
+    structure = SampleLayout((("x",),))
 
     @geom.Function("x")
     def u(x):
@@ -38,8 +39,7 @@ def test_continuous_pointwise_interior_constraint_zero():
         "u",
         geom,
         operator=lambda f: f,
-        num_points=8,
-        structure=structure,
+        sampling=phx.domain.PointSampling(8, layout=structure),
     )
     assert _jit_loss(constraint, {"u": u}) < 1e-6
 
@@ -48,7 +48,7 @@ def test_continuous_initial_function_constraint_zero():
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
-    structure = ProductStructure((("x",),))
+    structure = SampleLayout((("x",),))
 
     @domain.Function("x", "t")
     def u(x, t):
@@ -59,8 +59,7 @@ def test_continuous_initial_function_constraint_zero():
         domain,
         func=0.0,
         time_derivative_order=1,
-        num_points=8,
-        structure=structure,
+        sampling=phx.domain.PointSampling(8, layout=structure),
     )
     assert _jit_loss(constraint, {"u": u}) < 1e-6
 
@@ -70,8 +69,7 @@ def test_continuous_initial_function_constraint_zero():
         func=2.0,
         time_derivative_order=2,
         time_derivative_backend="jet",
-        num_points=8,
-        structure=structure,
+        sampling=phx.domain.PointSampling(8, layout=structure),
     )
     assert _jit_loss(constraint2, {"u": u}) < 1e-6
 
@@ -128,8 +126,7 @@ def test_discrete_interior_data_constraint_points_zero():
         geom,
         points=points,
         values=values,
-        num_points=8,
-        structure=ProductStructure((("x",),)),
+        sampling=phx.domain.PointSampling(8, layout=SampleLayout((("x",),))),
     )
     assert _jit_loss(constraint, {"u": u}) < 1e-6
 
@@ -138,7 +135,7 @@ def test_discrete_interior_data_constraint_sensor_tracks_zero():
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
-    structure = ProductStructure((("x", "t"),))
+    structure = SampleLayout((("x", "t"),))
 
     @domain.Function("x", "t")
     def u(x, t):
@@ -154,7 +151,6 @@ def test_discrete_interior_data_constraint_sensor_tracks_zero():
         sensors=sensors,
         times=times,
         sensor_values=sensor_values,
-        num_points=16,
-        structure=structure,
+        sampling=phx.domain.PointSampling(16, layout=structure),
     )
     assert _jit_loss(constraint, {"u": u}) < 1e-6

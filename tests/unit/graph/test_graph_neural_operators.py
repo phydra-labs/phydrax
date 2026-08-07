@@ -85,7 +85,7 @@ def test_graph_neural_operator_preserves_padding_entries():
     batch = domain.points_from_indices(
         [0, 1],
         component=phx.domain.Nodes(),
-        structure=phx.domain.ProductStructure((("graph",),)),
+        structure=phx.domain.SampleLayout((("graph",),)),
     )
 
     out = phx.graph.GraphDiffusion()(batch.graph)
@@ -99,7 +99,7 @@ def test_graph_neural_operator_preserves_padding_entries():
 def test_graph_kernel_integral_wraps_as_domain_graph_model():
     domain = phx.domain.GraphDomain(_line_graph())
     component = domain.component({"graph": phx.domain.Nodes()})
-    batch = component.sample(3, structure=phx.domain.ProductStructure((("graph",),)))
+    batch = component.sample(phx.domain.PointSampling(3, layout=phx.domain.SampleLayout((("graph",),))))
 
     @domain.Function("graph")
     def u(node):
@@ -120,7 +120,7 @@ def test_graph_diffusion_constraint_zero_for_constant_graph_time_field():
     component = domain.component(
         {"graph": phx.domain.Nodes(), "t": phx.domain.FixedStart()}
     )
-    structure = phx.domain.ProductStructure((("graph", "t"),))
+    structure = phx.domain.SampleLayout((("graph", "t"),))
 
     @domain.Function("graph", "t")
     def u(node, t):
@@ -130,12 +130,8 @@ def test_graph_diffusion_constraint_zero_for_constant_graph_time_field():
     def residual(f):
         return domain.GraphModel(phx.graph.GraphDiffusion(), input_fn=f)
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=component,
-        operator=residual,
-        constraint_vars="u",
-        num_points=2,
-        structure=structure,
-    )
+    constraint = phx.constraints.FunctionalConstraint.from_operator(component=component,
+    operator=residual,
+    constraint_vars="u", sampling=phx.domain.PointSampling(2, layout=structure), )
 
     assert constraint.loss({"u": u}, key=jr.key(0)) < 1e-12

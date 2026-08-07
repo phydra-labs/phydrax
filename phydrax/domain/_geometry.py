@@ -25,22 +25,25 @@ from ..geometry import (
     SamplingResult,
 )
 from ..geometry._sampling import require_complete
-from ._base import _AbstractGeometry, _make_compact_boundary_factor
+from ._base import _make_compact_boundary_factor, AbstractGeometry
 
 
-class GeometryDomain(_AbstractGeometry):
+class GeometryDomain(AbstractGeometry):
     """Domain adapter around one JAX-safe compiled geometry."""
 
     geometry: CompiledGeometry
+    _label: str
     adf: Callable[[Array], Array]
 
-    def __init__(self, geometry: CompiledGeometry):
+    def __init__(self, geometry: CompiledGeometry, *, label: str = "x"):
         if not isinstance(geometry, CompiledGeometry):
             raise TypeError("GeometryDomain requires a CompiledGeometry.")
         if geometry.kind is not GeometryKind.REGION:
             raise ValueError("GeometryDomain currently adapts region kernels only.")
+        if not isinstance(label, str) or not label:
+            raise ValueError("GeometryDomain label must be a non-empty string.")
         self.geometry = geometry
-
+        self._label = label
     @property
     def compiled(self) -> CompiledGeometry:
         return self.geometry
@@ -155,7 +158,7 @@ class GeometryDomain(_AbstractGeometry):
             linear_fraction=0.5,
         )
 
-    def equivalent(self, other: object, /) -> bool:
+    def _same_factor_support(self, other: object, /) -> bool:
         return isinstance(other, GeometryDomain) and self.geometry.equivalent(
             other.geometry
         )

@@ -11,7 +11,7 @@ import phydrax as phx
 
 
 def test_geometry_sampling_preserves_interior_and_boundary_measures():
-    geometry = phx.domain.Square(center=(0.0, 0.0), side=2.0)
+    geometry = phx.domain.GeometryDomain(phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile())
 
     interior = phx.nn.function_samples_from_geometry(
         geometry,

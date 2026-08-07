@@ -766,7 +766,7 @@ constraint = phx.constraints.SupervisedLikelihoodConstraint(
     dataset.component(),
     observed_flux,
     phx.uq.GaussianLikelihood(0.05),
-    num_cases=64,
+    sampling=phx.domain.PointSampling(64, design="uniform"),
     observation_operator=lambda u: phx.operators.grad(u, var="data"),
 )
 ```
@@ -900,6 +900,7 @@ sensor_x = jnp.linspace(0.05, 0.95, 24)
 basis = 0.5 * sensor_x * (1.0 - sensor_x)
 observed = 4.0 * basis
 noise_scale = 0.02
+observation_likelihood = phx.uq.GaussianLikelihood(noise_scale)
 
 space = phx.uq.ParameterSpace(
     {"source": jnp.asarray(3.8)},
@@ -907,8 +908,9 @@ space = phx.uq.ParameterSpace(
 )
 posterior = phx.uq.PosteriorProblem(
     space,
-    lambda p: -0.5
-    * jnp.sum(((observed - p["source"] * basis) / noise_scale) ** 2),
+    lambda p: jnp.sum(
+        observation_likelihood.log_prob(p["source"] * basis, observed)
+    ),
     predict=lambda p, x: cx.Field(
         p["source"] * 0.5 * x * (1.0 - x),
         dims=("x",),
@@ -1043,8 +1045,8 @@ padded final batch, and excludes padding through `factor_mask`:
 ```python
 minibatch_source = phx.uq.ArrayMinibatchSource(
     {
-        "basis": sensor_basis,
-        "observation": observations,
+        "basis": basis,
+        "observation": observed,
     },
     batch_size=8,
     seed=17,
@@ -1060,10 +1062,10 @@ def likelihood_factors(parameters, batch):
 
 
 minibatch_posterior = phx.uq.MinibatchPosteriorProblem(
-    parameter_space,
+    space,
     likelihood_factors,
-    num_factors=sensor_basis.size,
-    full_log_likelihood=posterior_problem.log_likelihood,
+    num_factors=basis.size,
+    full_log_likelihood=posterior.log_likelihood,
     predict=lambda parameters, x: cx.Field(
         parameters["source"] * 0.5 * x * (1.0 - x),
         dims=("x",),
@@ -1090,7 +1092,7 @@ noise:
 control = phx.uq.build_sgmcmc_control_variate(
     minibatch_posterior,
     minibatch_source,
-    map_result.position,
+    mode.position,
 )
 
 sgld = phx.uq.sample_sgld(

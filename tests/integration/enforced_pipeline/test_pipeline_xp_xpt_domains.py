@@ -6,14 +6,15 @@ import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
 from phydrax.constraints import enforce_dirichlet
 from phydrax.domain import (
     Boundary,
     FixedStart,
     Interval1d,
-    PointsBatch,
-    ProductStructure,
+    PointBatch,
+    SampleLayout,
     TimeInterval,
 )
 from phydrax.operators.differential import partial_x
@@ -25,7 +26,7 @@ from phydrax.solver import (
 
 
 def _paired_batch_xp(domain, xs, ps):
-    structure = ProductStructure((("x", "p"),)).canonicalize(domain.labels)
+    structure = SampleLayout((("x", "p"),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
     axis = axis_names[0]
@@ -39,11 +40,11 @@ def _paired_batch_xp(domain, xs, ps):
             ),
         }
     )
-    return PointsBatch(points=points, structure=structure)
+    return PointBatch(points=points, structure=structure)
 
 
 def _paired_batch_xpt(domain, xs, ps, ts):
-    structure = ProductStructure((("x", "p", "t"),)).canonicalize(domain.labels)
+    structure = SampleLayout((("x", "p", "t"),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
     axis = axis_names[0]
@@ -58,7 +59,7 @@ def _paired_batch_xpt(domain, xs, ps, ts):
             "t": cx.Field(jnp.asarray(ts, dtype=float).reshape((-1,)), dims=(axis,)),
         }
     )
-    return PointsBatch(points=points, structure=structure)
+    return PointBatch(points=points, structure=structure)
 
 
 def test_xp_steady_state_explicit_anchors():
@@ -126,7 +127,7 @@ def test_xp_coord_separable_partials():
         return x[0] ** 2 + 3.0 * p[0]
 
     component = domain.component()
-    sep = component.sample_coord_separable({"x": 6, "p": 5}, num_points=())
+    sep = component.sample(phx.domain.GridSampling({"x": 6, "p": 5}))
 
     du_dx = partial_x(u, var="x")
     du_dp = partial_x(u, var="p")
@@ -242,11 +243,11 @@ def test_xpt_coord_separable_partials():
         return x[0] ** 2 + 3.0 * p[0] + t
 
     component = domain.component()
-    structure = ProductStructure((("t",),))
-    sep = component.sample_coord_separable(
-        {"x": 5, "p": 4},
-        num_points=6,
-        dense_structure=structure,
+    structure = SampleLayout((("t",),))
+    sep = component.sample(
+        phx.domain.GridSampling(
+            {"x": 5, "p": 4}, dense=phx.domain.PointSampling(6, layout=structure)
+        )
     )
 
     du_dx = partial_x(u, var="x")

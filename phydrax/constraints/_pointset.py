@@ -11,52 +11,59 @@ import coordax as cx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import (
+    AbstractGeometry,
+    AbstractScalarDomain,
+    Domain,
+    DomainComponent,
+    DomainFunction,
+    Fixed,
+    FixedEnd,
+    FixedStart,
+    PointBatch,
+    Points,
+    SampleLayout,
+)
+
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
-from ..domain._base import _AbstractGeometry
-from ..domain._components import DomainComponent, Fixed, FixedEnd, FixedStart
-from ..domain._domain import _AbstractDomain, RelabeledDomain
-from ..domain._function import DomainFunction
-from ..domain._scalar import _AbstractScalarDomain
-from ..domain._structure import Points, PointsBatch, ProductStructure
 from ._base import AbstractConstraint
 from ._data_metrics import supervised_data_metrics
 from ._functional import _SquaredFrobeniusResidual
 
 
 def _unwrap_factor(factor: object, /) -> object:
-    if isinstance(factor, RelabeledDomain):
-        return factor.base
+    return factor
     return factor
 
 
 def _fixed_labels(component: DomainComponent, /) -> frozenset[str]:
     fixed: set[str] = set()
     for lbl in component.domain.labels:
-        if isinstance(component.spec.component_for(lbl), (FixedStart, FixedEnd, Fixed)):
+        if isinstance(component.spec.selection_for(lbl), (FixedStart, FixedEnd, Fixed)):
             fixed.add(lbl)
     return frozenset(fixed)
 
 
-def _as_point_array(domain: _AbstractDomain, label: str, x: Array, /) -> Array:
+def _as_point_array(domain: Domain, label: str, x: Array, /) -> Array:
     factor = _unwrap_factor(domain.factor(label))
     arr = jnp.asarray(x, dtype=float)
 
-    if isinstance(factor, _AbstractGeometry):
+    if isinstance(factor, AbstractGeometry):
         if arr.ndim == 1:
             arr = arr.reshape((1, -1))
         if arr.ndim != 2:
             raise ValueError(
                 f"Geometry points for {label!r} must have shape (N,d), got {arr.shape}."
             )
-        d = int(factor.var_dim)
+        d = int(factor.spatial_dim)
         if arr.shape[1] != d:
             raise ValueError(
                 f"Geometry points for {label!r} must have d={d}, got {arr.shape[1]}."
             )
         return arr
 
-    if isinstance(factor, _AbstractScalarDomain):
+    if isinstance(factor, AbstractScalarDomain):
         if arr.ndim == 0:
             return arr.reshape((1,))
         if arr.ndim == 1:
@@ -68,12 +75,12 @@ def _as_point_array(domain: _AbstractDomain, label: str, x: Array, /) -> Array:
         )
 
     raise TypeError(
-        f"Unsupported unary domain factor {type(factor).__name__} for label {label!r}."
+        f"Unsupported single-label domain factor {type(factor).__name__} for label {label!r}."
     )
 
 
 def _split_stacked_points(
-    domain: _AbstractDomain,
+    domain: Domain,
     labels: tuple[str, ...],
     points: ArrayLike,
     /,
@@ -87,14 +94,14 @@ def _split_stacked_points(
     widths: list[int] = []
     for lbl in labels:
         factor = _unwrap_factor(domain.factor(lbl))
-        if isinstance(factor, _AbstractGeometry):
-            widths.append(int(factor.var_dim))
+        if isinstance(factor, AbstractGeometry):
+            widths.append(int(factor.spatial_dim))
             continue
-        if isinstance(factor, _AbstractScalarDomain):
+        if isinstance(factor, AbstractScalarDomain):
             widths.append(1)
             continue
         raise TypeError(
-            f"Unsupported unary domain factor {type(factor).__name__} for label {lbl!r}."
+            f"Unsupported single-label domain factor {type(factor).__name__} for label {lbl!r}."
         )
 
     total = int(sum(widths))
@@ -118,23 +125,23 @@ def points_batch_from_points(
     component: DomainComponent,
     points: Mapping[str, ArrayLike] | ArrayLike,
     /,
-) -> PointsBatch:
+) -> PointBatch:
     domain = component.domain
     fixed_labels = _fixed_labels(component)
     non_fixed_labels = tuple(lbl for lbl in domain.labels if lbl not in fixed_labels)
 
     if non_fixed_labels:
-        structure = ProductStructure((non_fixed_labels,)).canonicalize(
+        structure = SampleLayout((non_fixed_labels,)).canonicalize(
             domain.labels, fixed_labels=fixed_labels
         )
         axis_names = structure.axis_names
         if axis_names is None:
             raise ValueError(
-                "points_batch_from_points requires a canonicalized ProductStructure."
+                "points_batch_from_points requires a canonicalized SampleLayout."
             )
         axis = axis_names[0]
     else:
-        structure = ProductStructure(()).canonicalize(
+        structure = SampleLayout(()).canonicalize(
             domain.labels, fixed_labels=fixed_labels
         )
         axis = None
@@ -146,11 +153,11 @@ def points_batch_from_points(
 
     mapped: dict[str, Any] = {}
     for lbl in domain.labels:
-        comp = component.spec.component_for(lbl)
+        comp = component.spec.selection_for(lbl)
         factor = _unwrap_factor(domain.factor(lbl))
 
         if lbl in fixed_labels:
-            if isinstance(factor, _AbstractScalarDomain):
+            if isinstance(factor, AbstractScalarDomain):
                 if isinstance(comp, FixedStart):
                     val = factor.fixed("start")
                 elif isinstance(comp, FixedEnd):
@@ -161,14 +168,16 @@ def points_batch_from_points(
                 mapped[lbl] = cx.Field(jnp.asarray(val, dtype=float).reshape(()), dims=())
                 continue
 
-            if isinstance(factor, _AbstractGeometry):
+            if isinstance(factor, AbstractGeometry):
                 assert isinstance(comp, Fixed)
-                val = jnp.asarray(comp.value, dtype=float).reshape((int(factor.var_dim),))
+                val = jnp.asarray(comp.value, dtype=float).reshape(
+                    (int(factor.spatial_dim),)
+                )
                 mapped[lbl] = cx.Field(val, dims=(None,))
                 continue
 
             raise TypeError(
-                f"Unsupported unary domain factor {type(factor).__name__} for label {lbl!r}."
+                f"Unsupported single-label domain factor {type(factor).__name__} for label {lbl!r}."
             )
 
         if lbl not in raw:
@@ -181,23 +190,23 @@ def points_batch_from_points(
             )
 
         arr = _as_point_array(domain, lbl, raw[lbl])
-        if isinstance(factor, _AbstractGeometry):
+        if isinstance(factor, AbstractGeometry):
             mapped[lbl] = cx.Field(arr, dims=(axis, None))
-        elif isinstance(factor, _AbstractScalarDomain):
+        elif isinstance(factor, AbstractScalarDomain):
             mapped[lbl] = cx.Field(arr.reshape((-1,)), dims=(axis,))
         else:
             raise TypeError(
-                f"Unsupported unary domain factor {type(factor).__name__} for label {lbl!r}."
+                f"Unsupported single-label domain factor {type(factor).__name__} for label {lbl!r}."
             )
 
     pts: Points = frozendict(mapped)
-    return PointsBatch(points=pts, structure=structure)
+    return PointBatch(points=pts, structure=structure)
 
 
 class PointSetConstraint(AbstractConstraint):
     r"""A constraint evaluated on an explicit finite set of points.
 
-    Given a fixed collection of points $\{z_i\}_{i=1}^N$ (encoded as a `PointsBatch`)
+    Given a fixed collection of points $\{z_i\}_{i=1}^N$ (encoded as a `PointBatch`)
     and a residual `DomainFunction` $r(z)$, the pointwise squared residual is
 
     $$
@@ -225,7 +234,7 @@ class PointSetConstraint(AbstractConstraint):
     """
 
     constraint_vars: tuple[str, ...]
-    points: PointsBatch
+    points: PointBatch
     weight: Array
     pointwise_weight: DomainFunction | None
     label: str | None
@@ -239,7 +248,7 @@ class PointSetConstraint(AbstractConstraint):
     def __init__(
         self,
         *,
-        points: PointsBatch,
+        points: PointBatch,
         residual: Callable[[Mapping[str, DomainFunction]], DomainFunction],
         constraint_vars: Sequence[str] | None = None,
         weight: DomainFunction | ArrayLike = 1.0,
@@ -308,7 +317,7 @@ class PointSetConstraint(AbstractConstraint):
     def from_operator(
         cls,
         *,
-        points: PointsBatch,
+        points: PointBatch,
         operator: Callable[..., DomainFunction],
         constraint_vars: str | Sequence[str],
         weight: DomainFunction | ArrayLike = 1.0,
@@ -346,7 +355,7 @@ class PointSetConstraint(AbstractConstraint):
         self,
         *,
         key: Key[Array, ""] = DOC_KEY0,
-    ) -> PointsBatch:
+    ) -> PointBatch:
         del key
         return self.points
 

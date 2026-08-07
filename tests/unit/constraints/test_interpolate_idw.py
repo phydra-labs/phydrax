@@ -7,7 +7,7 @@ import jax.numpy as jnp
 
 from phydrax._frozendict import frozendict
 from phydrax.constraints._interpolate import idw_interpolant
-from phydrax.domain import Interval1d, PointsBatch, ProductStructure
+from phydrax.domain import Interval1d, PointBatch, SampleLayout
 
 
 def test_idw_interpolant_snaps_at_anchors_and_interpolates_midpoint():
@@ -16,12 +16,12 @@ def test_idw_interpolant_snaps_at_anchors_and_interpolates_midpoint():
     values = jnp.array([0.0, 1.0], dtype=float)
     interp = idw_interpolant(geom, anchors=anchors, values=values, eps_snap=1e-12)
 
-    structure = ProductStructure((("x",),)).canonicalize(geom.labels)
+    structure = SampleLayout((("x",),)).canonicalize(geom.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
     axis = axis_names[0]
     query = jnp.array([[0.0], [0.5], [1.0]], dtype=float)
-    batch = PointsBatch(
+    batch = PointBatch(
         points=frozendict({"x": cx.Field(query, dims=(axis, None))}), structure=structure
     )
 

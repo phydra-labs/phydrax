@@ -5,13 +5,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Literal
 
 import jax.numpy as jnp
 from jaxtyping import ArrayLike
 
-from ..domain._components import DomainComponent, DomainComponentUnion
-from ..domain._function import DomainFunction
+from phydrax.domain import ComponentSum, DomainComponent, DomainFunction, SamplingPlan
+
 from ..operators.differential import cauchy_stress
 from ..operators.linalg import einsum
 from ._functional import FunctionalConstraint
@@ -20,9 +20,9 @@ from ._pointset import PointSetConstraint
 
 
 def _normal(
-    component: DomainComponent | DomainComponentUnion, *, var: str
+    component: DomainComponent | ComponentSum, *, var: str
 ) -> DomainFunction:
-    if isinstance(component, DomainComponentUnion):
+    if isinstance(component, ComponentSum):
         raise TypeError("Boundary normal requires a single DomainComponent, not a union.")
     return component.normal(var=var)
 
@@ -69,9 +69,7 @@ def ContinuousTractionBoundaryConstraint(
     traction: DomainFunction | ArrayLike | None = None,
     var: str = "x",
     mode: Literal["reverse", "forward"] = "reverse",
-    num_points: int | tuple[Any, ...],
-    structure: Any,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -110,18 +108,12 @@ def ContinuousTractionBoundaryConstraint(
         tr = einsum("...ij,...j->...i", sigma, n)
         return tr - target
 
-    return FunctionalConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=displacement_var,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-        reduction=reduction,
-    )
+    return FunctionalConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=displacement_var, sampling=sampling, weight=weight,
+    label=label,
+    over=over,
+    reduction=reduction,)
 
 
 def ContinuousNormalDisplacementBoundaryConstraint(
@@ -131,9 +123,7 @@ def ContinuousNormalDisplacementBoundaryConstraint(
     *,
     normal_displacement: DomainFunction | ArrayLike | None = None,
     var: str = "x",
-    num_points: int | tuple[Any, ...],
-    structure: Any,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -150,18 +140,12 @@ def ContinuousNormalDisplacementBoundaryConstraint(
         un = _dot(u, n)
         return un - target
 
-    return FunctionalConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=displacement_var,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-        reduction=reduction,
-    )
+    return FunctionalConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=displacement_var, sampling=sampling, weight=weight,
+    label=label,
+    over=over,
+    reduction=reduction,)
 
 
 def ContinuousElasticFoundationBoundaryConstraint(
@@ -175,9 +159,7 @@ def ContinuousElasticFoundationBoundaryConstraint(
     foundation_displacement: DomainFunction | ArrayLike | None = None,
     var: str = "x",
     mode: Literal["reverse", "forward"] = "reverse",
-    num_points: int | tuple[Any, ...],
-    structure: Any,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -202,18 +184,12 @@ def ContinuousElasticFoundationBoundaryConstraint(
         tr = einsum("...ij,...j->...i", sigma, n)
         return tr + stiffness * (u - u0)
 
-    return FunctionalConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=displacement_var,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-        reduction=reduction,
-    )
+    return FunctionalConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=displacement_var, sampling=sampling, weight=weight,
+    label=label,
+    over=over,
+    reduction=reduction,)
 
 
 def ContinuousElasticSymmetryBoundaryConstraint(
@@ -225,9 +201,7 @@ def ContinuousElasticSymmetryBoundaryConstraint(
     mu: DomainFunction | ArrayLike,
     var: str = "x",
     mode: Literal["reverse", "forward"] = "reverse",
-    num_points: int | tuple[Any, ...],
-    structure: Any,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -248,18 +222,12 @@ def ContinuousElasticSymmetryBoundaryConstraint(
         tr_t = tr - _outer_scalar_vec(_dot(tr, n), n)
         return un_vec + tr_t
 
-    return FunctionalConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=displacement_var,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-        reduction=reduction,
-    )
+    return FunctionalConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=displacement_var, sampling=sampling, weight=weight,
+    label=label,
+    over=over,
+    reduction=reduction,)
 
 
 # Solid Mechanics Boundary Constraints (Discrete)

@@ -13,6 +13,21 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+from phydrax.domain import (
+    AbstractGeometry,
+    AbstractScalarDomain,
+    ComponentSum,
+    DomainFunction,
+    Fixed,
+    FixedEnd,
+    FixedStart,
+    Interior,
+    PointBatch,
+    ProbabilityDomain,
+    reference_transport,
+    SampleLayout,
+)
+
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._sampling import (
@@ -23,20 +38,6 @@ from .._sampling import (
     SampleAddress,
 )
 from .._strict import StrictModule
-from ..domain._base import _AbstractGeometry
-from ..domain._components import (
-    DomainComponentUnion,
-    Fixed,
-    FixedEnd,
-    FixedStart,
-    Interior,
-)
-from ..domain._domain import RelabeledDomain
-from ..domain._function import DomainFunction
-from ..domain._probability import ProbabilityDomain
-from ..domain._reference import reference_transport
-from ..domain._scalar import _AbstractScalarDomain
-from ..domain._structure import PointsBatch, ProductStructure
 from ._batches import PointIntegrationBatch
 from ._estimates import (
     IntegrationEstimate,
@@ -44,7 +45,7 @@ from ._estimates import (
     ProductIntegrationDiagnostics,
 )
 from ._fixed import integrate_fixed_component, integrate_fixed_density
-from ._lowering import axes_for_over, component_factor_fields, label_measure, sum_over
+from ._lowering import _block_measure, axes_for_over, component_factor_fields, sum_over
 from ._plans import (
     AntitheticDesign,
     FixedQuadraturePlan,
@@ -72,12 +73,12 @@ class ProductIntegrationRealization(StrictModule):
 
 
 def _unwrap(factor: Any, /) -> Any:
-    return factor.base if isinstance(factor, RelabeledDomain) else factor
+    return factor
 
 
 def _fixed_field(factor: Any, selector: Any, /) -> cx.Field:
     factor = _unwrap(factor)
-    if isinstance(factor, _AbstractScalarDomain):
+    if isinstance(factor, AbstractScalarDomain):
         if isinstance(selector, FixedStart):
             value = factor.fixed("start")
         elif isinstance(selector, FixedEnd):
@@ -87,9 +88,9 @@ def _fixed_field(factor: Any, selector: Any, /) -> cx.Field:
         else:
             raise TypeError("Expected a fixed scalar selector.")
         return cx.Field(jnp.asarray(value, dtype=float).reshape(()), dims=())
-    if isinstance(factor, _AbstractGeometry) and isinstance(selector, Fixed):
+    if isinstance(factor, AbstractGeometry) and isinstance(selector, Fixed):
         return cx.Field(
-            jnp.asarray(selector.value, dtype=float).reshape((factor.var_dim,)),
+            jnp.asarray(selector.value, dtype=float).reshape((factor.spatial_dim,)),
             dims=(None,),
         )
     raise TypeError("Unsupported fixed product-plan factor.")
@@ -113,14 +114,14 @@ def _groups(
         if overlap:
             raise ValueError(f"Product-plan labels occur more than once: {overlap!r}.")
         for label in labels:
-            if not isinstance(component.spec.component_for(label), Interior):
+            if not isinstance(component.spec.selection_for(label), Interior):
                 raise ValueError(f"Product-plan label {label!r} must select Interior().")
         seen.update(labels)
         groups.append((labels, factor_plan))
     nonfixed = {
         label
         for label in component.domain.labels
-        if isinstance(component.spec.component_for(label), Interior)
+        if isinstance(component.spec.selection_for(label), Interior)
     }
     if seen != nonfixed:
         missing = tuple(sorted(nonfixed - seen))
@@ -136,7 +137,7 @@ def _map_canonical(factor: Any, node: Array, /) -> tuple[Array, Array]:
     if isinstance(factor, ProbabilityDomain):
         unit = 0.5 * (node + 1.0)
         return factor.distribution.icdf(unit), jnp.asarray(0.5)
-    if isinstance(factor, _AbstractScalarDomain):
+    if isinstance(factor, AbstractScalarDomain):
         lower = factor.fixed("start")
         upper = factor.fixed("end")
         return (
@@ -171,7 +172,7 @@ def materialize_product(
     if not isinstance(base, ComponentTarget):
         raise TypeError("Product plans require a component target.")
     component = base.component
-    if isinstance(component, DomainComponentUnion):
+    if isinstance(component, ComponentSum):
         raise TypeError("Product-plan component unions must be integrated term by term.")
     groups = _groups(component, plan)
     stochastic_groups = tuple(
@@ -208,7 +209,7 @@ def materialize_product(
     fixed_labels = frozenset(
         label
         for label in component.domain.labels
-        if isinstance(component.spec.component_for(label), (FixedStart, FixedEnd, Fixed))
+        if isinstance(component.spec.selection_for(label), (FixedStart, FixedEnd, Fixed))
     )
     blocks: list[tuple[str, ...]] = []
     for labels, factor_plan in groups:
@@ -216,7 +217,7 @@ def materialize_product(
             blocks.extend((label,) for label in labels)
         else:
             blocks.append(labels)
-    structure = ProductStructure(tuple(blocks)).canonicalize(
+    structure = SampleLayout(tuple(blocks)).canonicalize(
         component.domain.labels, fixed_labels=fixed_labels
     )
     reduction_axes = axes_for_over(structure, base.axes)
@@ -233,7 +234,7 @@ def materialize_product(
         weights_by_axis: dict[str, cx.Field] = {}
         for label in fixed_labels:
             points[label] = _fixed_field(
-                component.domain.factor(label), component.spec.component_for(label)
+                component.domain.factor(label), component.spec.selection_for(label)
             )
         for group_index, (labels, factor_plan) in enumerate(groups):
             factors = tuple(_unwrap(component.domain.factor(label)) for label in labels)
@@ -292,7 +293,7 @@ def materialize_product(
             design = factor_plan.design
             count = factor_plan.num_samples
             transports = tuple(
-                reference_transport(factor, component.spec.component_for(label))
+                reference_transport(factor, component.spec.selection_for(label))
                 for label, factor in zip(labels, factors, strict=True)
             )
             unsupported_labels = tuple(
@@ -368,9 +369,7 @@ def materialize_product(
 
                 points[label] = jax.tree_util.tree_map(_sample_field, mapped)
                 offset = next_offset
-            group_mass = jnp.asarray(1.0)
-            for label in labels:
-                group_mass = group_mass * label_measure(component, label)
+            group_mass = _block_measure(component, labels)
             weights_by_axis[axis] = cx.Field(
                 jnp.full((count,), group_mass / float(count)), dims=(axis,)
             )
@@ -385,9 +384,8 @@ def materialize_product(
             if axis not in reduction_axes:
                 continue
             total_weight = total_weight * weights_by_axis[axis]
-            for label in block:
-                target_mass = target_mass * label_measure(component, label)
-        point_batch = PointsBatch(
+            target_mass = target_mass * _block_measure(component, block)
+        point_batch = PointBatch(
             frozendict({label: points[label] for label in component.domain.labels}),
             structure,
         )
@@ -431,7 +429,7 @@ def _reduce_stochastic_product(
     if not isinstance(base, ComponentTarget):
         raise TypeError("Product integration requires a component-backed target.")
     component = base.component
-    if isinstance(component, DomainComponentUnion):
+    if isinstance(component, ComponentSum):
         raise TypeError("Product component unions are unsupported.")
     function = _as_function(integrand, component)
     values = function(batch.points, key=key, **kwargs)

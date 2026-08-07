@@ -10,33 +10,39 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from OCP.BRep import BRep_Tool
-from OCP.BRepAdaptor import BRepAdaptor_Curve2d, BRepAdaptor_Surface
-from OCP.BRepMesh import BRepMesh_IncrementalMesh
-from OCP.BRepTools import BRepTools, BRepTools_WireExplorer
-from OCP.Geom import Geom_RectangularTrimmedSurface
+from OCP.BRep import BRep_Tool  # ty: ignore[unresolved-import]
+from OCP.BRepAdaptor import (
+    BRepAdaptor_Curve2d,  # ty: ignore[unresolved-import]
+    BRepAdaptor_Surface,  # ty: ignore[unresolved-import]
+)
+from OCP.BRepMesh import BRepMesh_IncrementalMesh  # ty: ignore[unresolved-import]
+from OCP.BRepTools import (
+    BRepTools,  # ty: ignore[unresolved-import]
+    BRepTools_WireExplorer,  # ty: ignore[unresolved-import]
+)
+from OCP.Geom import Geom_RectangularTrimmedSurface  # ty: ignore[unresolved-import]
 from OCP.GeomAbs import (
-    GeomAbs_BSplineSurface,
-    GeomAbs_Cone,
-    GeomAbs_Cylinder,
-    GeomAbs_Plane,
-    GeomAbs_Sphere,
-    GeomAbs_Torus,
+    GeomAbs_BSplineSurface,  # ty: ignore[unresolved-import]
+    GeomAbs_Cone,  # ty: ignore[unresolved-import]
+    GeomAbs_Cylinder,  # ty: ignore[unresolved-import]
+    GeomAbs_Plane,  # ty: ignore[unresolved-import]
+    GeomAbs_Sphere,  # ty: ignore[unresolved-import]
+    GeomAbs_Torus,  # ty: ignore[unresolved-import]
 )
-from OCP.GeomConvert import GeomConvert
-from OCP.IFSelect import IFSelect_RetDone
-from OCP.IGESControl import IGESControl_Reader
-from OCP.STEPControl import STEPControl_Reader
+from OCP.GeomConvert import GeomConvert  # ty: ignore[unresolved-import]
+from OCP.IFSelect import IFSelect_RetDone  # ty: ignore[unresolved-import]
+from OCP.IGESControl import IGESControl_Reader  # ty: ignore[unresolved-import]
+from OCP.STEPControl import STEPControl_Reader  # ty: ignore[unresolved-import]
 from OCP.TopAbs import (
-    TopAbs_EDGE,
-    TopAbs_FACE,
-    TopAbs_REVERSED,
-    TopAbs_VERTEX,
-    TopAbs_WIRE,
+    TopAbs_EDGE,  # ty: ignore[unresolved-import]
+    TopAbs_FACE,  # ty: ignore[unresolved-import]
+    TopAbs_REVERSED,  # ty: ignore[unresolved-import]
+    TopAbs_VERTEX,  # ty: ignore[unresolved-import]
+    TopAbs_WIRE,  # ty: ignore[unresolved-import]
 )
-from OCP.TopExp import TopExp_Explorer
-from OCP.TopLoc import TopLoc_Location
-from OCP.TopoDS import TopoDS, TopoDS_Shape
+from OCP.TopExp import TopExp_Explorer  # ty: ignore[unresolved-import]
+from OCP.TopLoc import TopLoc_Location  # ty: ignore[unresolved-import]
+from OCP.TopoDS import TopoDS, TopoDS_Shape  # ty: ignore[unresolved-import]
 
 from .._atlas import TrimDomain
 from ._model import BRepImportReport, BRepModel, BRepTopology
@@ -388,7 +394,7 @@ def read_occt_shape(path: str | Path) -> tuple[Any, str, str]:
         shape = reader.OneShape()
         source_format = "iges"
     elif suffix in {".brep", ".brp"}:
-        from OCP.BRep import BRep_Builder
+        from OCP.BRep import BRep_Builder  # ty: ignore[unresolved-import]
 
         shape = TopoDS_Shape()
         if not BRepTools.Read_s(shape, str(source), BRep_Builder()):

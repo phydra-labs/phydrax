@@ -1,18 +1,9 @@
-# Geometry (3D)
+# Three-dimensional geometry domains
 
-Three-dimensional domain constructors are adapters over the common
-`phydrax.geometry` substrate. Analytic primitives, simplicial meshes, direct OCCT
-B-Reps, fixed-topology differentiable B-Reps, and reconstructed solids all lower to
-`CompiledGeometry` before entering labeled domain, integration, and constraint APIs.
-
-A geometry domain exposes one certified negative-inside field through `adf`, region
-membership, physical volume and surface measure, outward normals, bounded sampling,
-and a representation-independent `boundary_atlas`. `field_certificate` records the
-zero-set, sign, distance, regularity, and parameter-differentiability guarantees.
-
-## Direct source composition
-
-Construct transformations and CSG in `phx.geometry`, then adapt the compiled result:
+Three-dimensional analytic primitives, simplicial meshes, OCCT B-Reps,
+fixed-topology differentiable B-Reps, and reconstructed solids all lower to
+`CompiledGeometry`. `phydrax.domain.GeometryDomain` is the thin labeled adapter
+used by fields, components, integration, constraints, and sampling.
 
 ```python
 import phydrax as phx
@@ -23,21 +14,23 @@ right = phx.geometry.Box(
     size=(1.2, 1.2, 1.2),
     feature_id="right",
 )
-
 source = (left | right).rotated((0.0, 0.0, 1.0), 0.2)
-geometry = phx.domain.GeometryDomain(source.compile())
+domain = phx.domain.GeometryDomain(source.compile())
 ```
 
-Sharp CSG uses `|`, `&`, and `-` on `GeometrySource` objects. Domain adapters
-intentionally remain thin and do not duplicate source construction operations.
+`GeometryDomain` exposes the compiled region field, capabilities, field
+certificate, volume, boundary measure, boundary atlas, normals, and bounded
+sampling without depending on its source representation.
 
 ## Mesh and CAD input
 
-`Geometry3DFromCAD` accepts canonical mesh inputs and OCCT-backed files. Surface
-meshes must be finite, nondegenerate, consistently oriented, watertight, and have
-nonzero signed volume. Mesh input lowers to `MeshRegion`; STEP, IGES, and BREP input
-lowers to `BRepSource`, preserving face patches, trims, topology identities, and the
-CAD import report.
+`mesh_region_from_source(...)` validates and canonicalizes build123d, meshio,
+PyVista, trimesh, or file-backed triangular meshes. Surface meshes must be
+finite, nondegenerate, consistently oriented, watertight, and enclose nonzero
+volume.
+
+STEP, IGES, and BREP input lowers to `BRepSource`, preserving face patches,
+trims, topology identities, and import provenance:
 
 ```python
 import build123d as bd
@@ -51,58 +44,71 @@ print(solid.geometry.field_certificate)
 print(solid.boundary_atlas.source_entity_ids)
 ```
 
-Point clouds, DEMs, and LiDAR scenes use explicit reconstruction pipelines and expose
-an immutable `reconstruction_report` on the returned domain. The report records the
-algorithm, parameters, filtering, topology checks, approximation counts, warnings,
-and input digest.
+Point clouds, DEMs, and LiDAR scenes use explicit reconstruction functions.
+Each returns a `ReconstructedGeometrySource`; its report records algorithms,
+parameters, filtering, topology checks, approximation counts, warnings, and the
+input digest.
 
-::: phydrax.domain.Geometry3DFromCAD
-    options:
-        members:
-            - sample_interior
-            - sample_boundary
-            - estimate_boundary_subset_measure
+## Domain adapter
 
----
+::: phydrax.domain.GeometryDomain
 
-::: phydrax.domain.Geometry3DFromPointCloud
+## Analytic sources
+
+::: phydrax.geometry.Sphere
 
 ---
 
-::: phydrax.domain.Geometry3DFromDEM
+::: phydrax.geometry.Ellipsoid
 
 ---
 
-::: phydrax.domain.Geometry3DFromLidarScene
-
-## Primitives
-
-::: phydrax.domain.Sphere
+::: phydrax.geometry.Box
 
 ---
 
-::: phydrax.domain.Ellipsoid
+::: phydrax.geometry.Cube
 
 ---
 
-::: phydrax.domain.Cuboid
+::: phydrax.geometry.Cylinder
 
 ---
 
-::: phydrax.domain.Cube
+::: phydrax.geometry.Cone
 
 ---
 
-::: phydrax.domain.Cylinder
+::: phydrax.geometry.Torus
 
 ---
 
-::: phydrax.domain.Cone
+::: phydrax.geometry.Wedge
+
+## Simplicial, CAD, and reconstruction sources
+
+::: phydrax.geometry.MeshRegion
 
 ---
 
-::: phydrax.domain.Torus
+::: phydrax.geometry.mesh_region_from_source
 
 ---
 
-::: phydrax.domain.Wedge
+::: phydrax.geometry.BRepSource
+
+---
+
+::: phydrax.geometry.FixedTopologyBRepSource
+
+---
+
+::: phydrax.geometry.reconstruct_surface_region
+
+---
+
+::: phydrax.geometry.reconstruct_dem_region
+
+---
+
+::: phydrax.geometry.reconstruct_lidar_region

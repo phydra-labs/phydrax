@@ -6,7 +6,7 @@ import coordax as cx
 import jax.numpy as jnp
 
 from phydrax._frozendict import frozendict
-from phydrax.domain import DomainFunction, TimeInterval
+from phydrax.domain import TimeInterval
 from phydrax.operators.differential import partial_z
 
 
@@ -47,9 +47,9 @@ def test_partial_z_spacetime_ignores_t(box3d):
     assert jnp.allclose(out, 8.0)
 
 
-def test_partial_z_coord_separable(sample_coord_separable, box3d):
+def test_partial_z_coord_separable(sample_grid, box3d):
     component = box3d.component()
-    batch = sample_coord_separable(component, {"x": (4, 5, 6)}, dense_blocks=(), key=0)
+    batch = sample_grid(component, {"x": (4, 5, 6)}, dense_blocks=(), key=0)
 
     @box3d.Function("x")
     def f(x):
@@ -65,7 +65,5 @@ def test_partial_z_coord_separable(sample_coord_separable, box3d):
 
 
 def test_partial_z_preserves_metadata(box3d):
-    u = DomainFunction(
-        domain=box3d, deps=("x",), func=lambda x: x[2] ** 2, metadata={"tag": 1}
-    )
+    u = box3d.Function("x")(lambda x: x[2] ** 2).with_metadata(**{"tag": 1})
     assert partial_z(u).metadata == u.metadata

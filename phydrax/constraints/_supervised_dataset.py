@@ -11,14 +11,20 @@ import coordax as cx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import (
+    DatasetDomain,
+    DomainComponent,
+    DomainFunction,
+    PointBatch,
+    PointSampling,
+)
+
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
-from ..domain._components import DomainComponent
-from ..domain._dataset import DatasetDomain
-from ..domain._function import DomainFunction
-from ..domain._structure import PointsBatch, ProductStructure
 from ._base import AbstractSamplingConstraint
 from ._data_metrics import (
+    case_sample_count,
+    normalize_case_sampling,
     reduce_supervised_loss,
     sample_case_indices,
     supervised_data_metrics,
@@ -31,14 +37,14 @@ from ._data_metrics import (
 class SupervisedDatasetBatch(StrictModule):
     """A sampled mini-batch of row-aligned supervised dataset data."""
 
-    points: PointsBatch
+    points: PointBatch
     target: Array
     indices: Array
 
     def __init__(
         self,
         *,
-        points: PointsBatch,
+        points: PointBatch,
         target: ArrayLike,
         indices: ArrayLike,
     ):
@@ -64,10 +70,7 @@ class SupervisedDatasetConstraint(AbstractSamplingConstraint):
 
     constraint_vars: tuple[str, ...]
     component: DomainComponent
-    structure: ProductStructure
-    dense_structure: ProductStructure | None
-    num_points: int
-    sampler: str
+    sampling: PointSampling
     over: str | tuple[str, ...] | None
     reduction: Literal["mean", "sum"]
     values: Array
@@ -84,9 +87,7 @@ class SupervisedDatasetConstraint(AbstractSamplingConstraint):
         values: ArrayLike,
         /,
         *,
-        num_cases: int,
-        structure: ProductStructure | None = None,
-        sampler: str = "uniform",
+        sampling: PointSampling,
         weight: DomainFunction | ArrayLike = 1.0,
         reduction: Literal["mean", "sum"] = "mean",
         indices: ArrayLike | None = None,
@@ -97,32 +98,24 @@ class SupervisedDatasetConstraint(AbstractSamplingConstraint):
             raise TypeError(
                 "SupervisedDatasetConstraint requires a DatasetDomain component."
             )
-        n = int(num_cases)
-        if n <= 0:
-            raise ValueError("num_cases must be positive.")
-        reduction_str = str(reduction)
-        if reduction_str not in ("mean", "sum"):
+        sampling_ = normalize_case_sampling(
+            sampling,
+            labels=component.domain.labels,
+            owner="SupervisedDatasetConstraint",
+        )
+        reduction_value = str(reduction)
+        if reduction_value not in ("mean", "sum"):
             raise ValueError("reduction must be either 'mean' or 'sum'.")
-        reduction_value: Literal["mean", "sum"]
-        if reduction_str == "mean":
-            reduction_value = "mean"
-        else:
-            reduction_value = "sum"
-        sampler_str = str(sampler)
-        if sampler_str != "uniform":
-            raise ValueError(
-                "SupervisedDatasetConstraint supports only uniform sampling."
-            )
+        reduction_: Literal["mean", "sum"] = (
+            "mean" if reduction_value == "mean" else "sum"
+        )
 
         domain = component.domain
         self.constraint_vars = (str(constraint_var),)
         self.component = component
-        self.structure = structure or ProductStructure((domain.labels,))
-        self.dense_structure = None
-        self.num_points = n
-        self.sampler = sampler_str
+        self.sampling = sampling_
         self.over = None
-        self.reduction = reduction_value
+        self.reduction = reduction_
         self.values = _validate_targets(domain, values)
         if isinstance(weight, DomainFunction):
             self.weight = jnp.asarray(1.0, dtype=float)
@@ -153,11 +146,13 @@ class SupervisedDatasetConstraint(AbstractSamplingConstraint):
         domain = self.domain
         indices = sample_case_indices(
             size=domain.size,
-            num_samples=int(self.num_points),
+            num_samples=case_sample_count(self.sampling),
             key=key,
             indices=self.indices,
         )
-        points = domain.points_from_indices(indices, structure=self.structure)
+        layout = self.sampling.layout
+        assert layout is not None
+        points = domain.points_from_indices(indices, structure=layout)
         return SupervisedDatasetBatch(
             points=points,
             target=self.values[indices],

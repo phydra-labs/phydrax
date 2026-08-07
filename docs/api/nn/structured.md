@@ -10,14 +10,12 @@ Models that exploit product-domain structure via low-rank factorization.
     - `LatentExecutionPolicy` controls grouped-vs-flat planning preferences and fallback behavior.
       Supported topology modes are `grouped`, `flat`, `best_effort_flat`, and `strict_flat`.
     - `SeparableMLP`, `SeparableModifiedMLP`, `SeparableKAN`, and
-      `SeparableFeynmaNN` are drop-in pointwise replacements for dense vector
-      models in `Domain.Model(...)`: by default their dependencies are flattened
-      into one vector, then each scalar coordinate is sent to its own internal model.
-      Use `input_mode="structured"` or `structured=True` when you intentionally want
-      tuple/coord-separable input packing.
-    - `LatentContractionModel` supports layout hints `auto`, `dense_points`,
-      `coord_separable`, `hybrid`, and `full_tensor`.
-    - Any automatic fallback can be configured to warn, error, or stay silent.
+      `SeparableFeynmaNN` declare a blockwise flat `ModelBinding`; callers bind
+      them with `Domain.Model(...)` without execution-mode flags.
+    - `LatentContractionModel` declares an axis binding when explicit
+      `factor_inputs` are present and a structured blockwise binding otherwise.
+      `LatentExecutionPolicy` governs grouped, flat, and fallback planning; the
+      model contract does not change at call time.
     - For `LatentContractionModel`, `partial_n` / `dt_n` / `laplacian` can use an
       exact latent-factor derivative contraction path under `backend="jet"`; if that
       path is unavailable, execution falls back according to

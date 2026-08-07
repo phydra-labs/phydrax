@@ -13,11 +13,11 @@ Unlike `DatasetDomain(...) @ TimeInterval(...)`, this domain samples `data` and 
 as a coupled pair. `FixedEnd()` means the end time for the sampled dataset row, not a
 single global end time.
 
-Use a paired structure containing both labels, even for `FixedStart()`, `FixedEnd()`,
-or `Fixed(value)` time components, because the sampled time may still depend on the
-dataset row.
+Use a `SampleLayout` block containing both labels, even for `FixedStart()`,
+`FixedEnd()`, or `Fixed(value)` time components. The time coordinate remains
+conditional on the sampled dataset row.
 
-Coord-separable trajectory sampling is intentionally unsupported. Use paired
+Axis-based trajectory grids are intentionally unsupported. Use joint point
 mini-batches for physics residuals and ragged data constraints.
 
 For exact branch-conditional data, pair this domain with
@@ -50,8 +50,11 @@ lengths = jnp.asarray([2, 4, 3])
 
 domain = phx.domain.TrajectoryDatasetDomain(inputs, lengths, dt=0.5)
 component = domain.component()
-structure = phx.domain.ProductStructure((("data", "t"),))
-batch = component.sample(8, structure=structure, key=jr.key(0))
+sampling = phx.domain.PointSampling(
+    8,
+    layout=phx.domain.SampleLayout((("data", "t"),)),
+)
+batch = component.sample(sampling, key=jr.key(0))
 ```
 
 ## Uniform Time Grids
@@ -71,7 +74,7 @@ batch = component.sample(8, structure=structure, key=jr.key(0))
             - durations
             - end_times
             - factor
-            - equivalent
+            - same_support
             - input_rows
             - observation_times
             - points_from_case_time
@@ -99,8 +102,11 @@ lengths = jnp.asarray([3, 4])
 
 domain = phx.domain.IrregularTrajectoryDatasetDomain(inputs, times, lengths)
 component = domain.component()
-structure = phx.domain.ProductStructure((("data", "t"),))
-batch = component.sample(8, structure=structure, key=jr.key(0))
+sampling = phx.domain.PointSampling(
+    8,
+    layout=phx.domain.SampleLayout((("data", "t"),)),
+)
+batch = component.sample(sampling, key=jr.key(0))
 ```
 
 ::: phydrax.domain.IrregularTrajectoryDatasetDomain
@@ -120,7 +126,7 @@ batch = component.sample(8, structure=structure, key=jr.key(0))
             - durations
             - node_widths
             - factor
-            - equivalent
+            - same_support
             - input_rows
             - observation_times
             - lower_time_indices

@@ -9,7 +9,8 @@ from typing import Any
 import coordax as cx
 import jax.numpy as jnp
 
-from ...domain._function import DomainFunction
+from phydrax.domain import DomainFunction
+
 from ..integral._batch_ops import integral, mean
 
 

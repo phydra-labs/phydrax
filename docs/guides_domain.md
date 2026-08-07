@@ -1,7 +1,8 @@
 # Domains and sampling
 
-This guide explains Phydrax's *labeled domains* and the two sampling modes used throughout the
-library: **paired point sampling** and **coord-separable grid sampling**.
+This guide explains Phydrax's *labeled domains* and the two explicit sampling
+plans used throughout the library: paired `PointSampling` and axis-based
+`GridSampling`.
 
 ## Labeled product domains
 
@@ -23,6 +24,47 @@ domain = geom @ time                        # labels ("x", "t")
 ```
 
 For non-time scalar axes, use `ScalarInterval(start, end, label="...")`.
+
+## Geometry sources and domain adapters
+
+Geometry construction is representation-aware and lives under `phx.geometry`.
+Analytic, simplicial, B-Rep, CSG, and reconstructed sources all compile to the
+same JAX-safe `CompiledGeometry` contract. `GeometryDomain` then adds the labeled
+domain algebra used by fields, components, sampling, and integration:
+
+```python
+source = phx.geometry.Square(center=(0.0, 0.0), side=2.0)
+geometry = source.compile()
+space = phx.domain.GeometryDomain(geometry, label="x")
+```
+
+Apply geometry Boolean or transform operations to sources before compilation.
+Apply `@`, `relabel`, `restrict`, and `component` to domain objects. Keeping these
+roles separate prevents host-side CAD topology from leaking into JAX execution.
+
+
+## Migration from the pre-refactor API
+
+The geometry and domain cutover is intentionally direct; legacy aliases are not
+retained. The canonical replacements are:
+
+| Previous API | Canonical API |
+| --- | --- |
+| `phx.domain.Square(...)` and other 2D/3D constructors | `phx.domain.GeometryDomain(phx.geometry.Square(...).compile())` |
+| `Geometry2DFromCAD(...)` / `Geometry3DFromCAD(...)` | `planar_region_from_source(...)`, `mesh_region_from_source(...)`, or `BRep(...)`, then `GeometryDomain(source.compile())` |
+| Point-cloud, DEM, or LiDAR geometry constructors | `phx.geometry.reconstruct_planar_region(...)`, `reconstruct_surface_region(...)`, `reconstruct_dem_region(...)`, or `reconstruct_lidar_region(...)` |
+| `ProductStructure(...)` | `SampleLayout(...)` |
+| `component.sample(n, structure=layout, sampler=design)` | `component.sample(PointSampling(n, layout=layout, design=design))` |
+| `component.sample_coord_separable(...)` | `component.sample(GridSampling({...}))` |
+| `PointsBatch` / `CoordSeparableBatch` | `PointBatch` / `GridBatch` |
+| `operator_domain_view_from_coord_separable(...)` | `operator_domain_view_from_grid(...)` |
+| Constraint `num_points=...`, `structure=...` | `sampling=PointSampling(..., layout=...)` |
+| `Domain.Model(..., structured=True)` | `Domain.Model(..., binding=phx.nn.ModelBinding.axis())` |
+
+`PointSampling` owns paired-site count and design. `GridSampling` owns named
+axis specifications and an optional point plan for remaining labels. A
+`SampleLayout` describes batch axes only; it never chooses points.
+
 
 ## Vector domains with HyperRectangle
 
@@ -89,7 +131,7 @@ constraint = phx.constraints.SupervisedDatasetConstraint(
     "u",
     dataset_domain.component(),
     targets,
-    num_cases=32,
+    sampling=phx.domain.PointSampling(32, design="uniform"),
 )
 ```
 
@@ -110,8 +152,8 @@ domain creates a rectangular product and does not know that each dataset row has
 its own valid time grid. Trajectory dataset domains keep the `data` and `t` labels
 paired, so sampling and fixed-end slices are row-aware.
 
-Because the row and time are coupled, use `ProductStructure((("data", "t"),))`
-for trajectory sampling, including fixed-time components.
+Because the row and time are coupled, use `SampleLayout((("data", "t"),))`
+for trajectory point sampling, including fixed-time components.
 The same paired batches support hard branch-conditional data enforcement through
 `enforce_ragged_time_series`; choose `cubic_hermite` interpolation when second time
 derivatives are part of the physics residual.
@@ -132,8 +174,11 @@ lengths = jnp.asarray([2, 4, 3])
 trajectory_domain = phx.domain.TrajectoryDatasetDomain(inputs, lengths, dt=0.5)
 
 component = trajectory_domain.component()
-structure = phx.domain.ProductStructure((("data", "t"),))
-batch = component.sample(8, structure=structure, key=jr.key(0))
+layout = phx.domain.SampleLayout((("data", "t"),))
+batch = component.sample(
+    phx.domain.PointSampling(8, layout=layout),
+    key=jr.key(0),
+)
 
 @trajectory_domain.Function("data", "t")
 def u(data, t):
@@ -158,7 +203,7 @@ case_target = phx.constraints.TrajectoryCaseDataConstraint(
     "theta",
     trajectory_domain.component(),
     targets,
-    num_cases=32,
+    sampling=phx.domain.PointSampling(32, design="uniform"),
 )
 ```
 
@@ -170,6 +215,14 @@ declares which labels it depends on, and operators/constraints use those labels 
 def u(x, t):
     return x[0] * (1.0 + t)
 ```
+`Domain.Function(...)` wraps ordinary callables in a `PointwiseEvaluator`; a
+callable may receive the keyword-only randomness key declared by its
+`FunctionBinding`. Grid-native or graph-native execution uses an explicit
+`BatchEvaluator`. `Domain.Model(...)` likewise requires the model's declared
+`ModelBinding` (or an explicit binding for a plain callable). Evaluation never
+switches protocol because of hidden call-time flags.
+
+
 
 ## Components: interior, boundary, and fixed slices
 
@@ -188,11 +241,11 @@ Components are created with `domain.component(...)`:
 component = domain.component({"t": phx.domain.FixedStart()})  # initial-time slice
 ```
 
-A product domain's `boundary()` method returns a `DomainComponentUnion`: one
-additive term for each codimension-one face. This collection models a
-measure-disjoint decomposition, so all terms share the same domain and exact
+A product domain's `boundary()` method returns a `ComponentSum`: one additive
+term for each codimension-one face. This collection models a measure-disjoint
+decomposition, so all terms share the same compatible labeled domain and exact
 duplicates are rejected. It is not a geometric Boolean union; overlapping
-filtered terms would be counted once per term.
+filtered terms contribute once per term.
 
 ### Filtering with `where` and `where_all`
 
@@ -201,20 +254,21 @@ Sampling can be restricted by predicates:
 - `where={label: predicate}` applies a per-label predicate, e.g. `where={"x": lambda x: x[0] < 0.5}`.
 - `where_all=predicate` applies a predicate to the *full point tuple* (useful for coupled filters).
 
-These filters behave like indicator functions: points that fail the predicate are discarded (for
-point sampling) or masked out (for coord-separable sampling).
+These filters behave like indicator functions: points that fail the predicate are
+excluded from point samples or represented by a mask in grid samples.
 
-## Paired point sampling (`PointsBatch`)
+## Paired point sampling (`PointBatch`)
 
-Most pointwise PDE residual constraints use **paired sampling**, driven by a `ProductStructure`.
+Most pointwise PDE residual constraints use a `PointSampling` plan with a
+`SampleLayout`.
 
-A `ProductStructure` partitions the sampled labels into blocks. Each block is sampled jointly,
-and each block corresponds to one named sampling axis in the resulting `PointsBatch`.
+A `SampleLayout` partitions sampled labels into jointly sampled blocks. Each block
+corresponds to one named axis in the resulting `PointBatch`.
 
 Examples:
 
-- `ProductStructure((("x", "t"),))` samples paired space-time points.
-- `ProductStructure((("x",), ("t",)))` samples space and time independently (Cartesian product).
+- `SampleLayout((("x", "t"),))` samples paired space-time points.
+- `SampleLayout((("x",), ("t",)))` samples space and time independently as a Cartesian product.
 
 Within one block, Phydrax materializes one reference-space design whose dimension is
 the sum of the active factors' reference dimensions, then slices its columns through
@@ -230,35 +284,35 @@ reference transports is rejected instead of silently weakening its design. Split
 labels into separate blocks when separate designs are intended.
 
 ```python
-import equinox as eqx
 import jax.random as jr
 import phydrax as phx
 
 # Continuing from: domain = geom @ time
-structure = phx.domain.ProductStructure((("x", "t"),))
+layout = phx.domain.SampleLayout((("x", "t"),))
 batch = domain.component().sample(
-    128,
-    structure=structure,
-    key=eqx.internal.doc_repr(jr.key(0), "jr.key(0)"),
+    phx.domain.PointSampling(128, layout=layout),
+    key=jr.key(0),
 )
 ```
 
 ### Deterministic and scrambled low-discrepancy samplers
 
-`sampler="halton"` and `sampler="sobol"` select the standard unscrambled
+`design="halton"` and `design="sobol"` select the standard unscrambled
 low-discrepancy sequences. Their points are independent of the supplied random
 key or host seed. Use `"halton_scrambled"` or `"sobol_scrambled"` when randomized
 scrambling is required; a fixed key or seed reproduces the same scrambled
-sequence, while different keys or seeds produce different points. Host samplers
-and JAX callback samplers follow the same naming and reproducibility contract.
+sequence, while different keys or seeds produce different points. Host and JAX
+sampling backends follow the same naming and reproducibility contract.
 
 The equivalent typed forms live under `phx.sampling`:
 
 ```python
 batch = domain.component().sample(
-    128,
-    structure=structure,
-    sampler=phx.sampling.SobolDesign(scrambled=True),
+    phx.domain.PointSampling(
+        128,
+        layout=layout,
+        design=phx.sampling.SobolDesign(scrambled=True),
+    ),
     key=jr.key(0),
 )
 ```
@@ -272,29 +326,30 @@ together.
 Per-label `where` and global `where_all` component predicates remain indicator masks
 on the target measure. They do not condition the reference design by rejection.
 
-## Coord-separable grid sampling (`CoordSeparableBatch`)
+## Axis-based grid sampling (`GridBatch`)
 
-For spectral/basis operators and neural operators, it is often preferable to sample *1D axes*
-and evaluate on the implied Cartesian grid. This is **coord-separable sampling**.
+For spectral/basis operators and neural operators, sample one-dimensional axes
+and evaluate on their implied Cartesian grid with `GridSampling`.
 
-You choose which unary labels are coord-separable by passing a per-label spec, e.g.
-`{"x": FourierAxisSpec(64)}` for a 1D periodic grid or `{"x": (64, 64)}` for a 2D grid.
+Pass a per-label axis request, such as
+`{"x": FourierAxisSpec(64)}` for a one-dimensional periodic grid or
+`{"x": (64, 64)}` for a two-dimensional grid:
 
 ```python
-import equinox as eqx
 import jax.random as jr
 import phydrax as phx
 
 geom = phx.domain.Interval1d(0.0, 1.0)
-batch = geom.component().sample_coord_separable(
-    {"x": phx.domain.FourierAxisSpec(64)},
-    key=eqx.internal.doc_repr(jr.key(0), "jr.key(0)"),
+batch = geom.component().sample(
+    phx.domain.GridSampling({"x": phx.domain.FourierAxisSpec(64)}),
+    key=jr.key(0),
 )
 ```
 
-When a label is coord-separable, the value passed into a `DomainFunction` for that label
-is a **tuple of 1D coordinate arrays** (for scalar labels this tuple has length 1),
-rather than a point cloud.
+`GridBatch` retains the coordinate axes, support masks, discretizations, and any
+dense residual point block. Domain functions receive the canonical broadcast
+implied by those axes; models that need a different contract must declare an
+explicit `BatchEvaluator` or model binding.
 
 ## Axis specs and quadrature metadata
 
@@ -310,7 +365,7 @@ manual bookkeeping.
 
 ## Sampling metadata and reconstruction
 
-Coord-separable sampling describes where values live. Deterministic
+Grid sampling describes where values live. Deterministic
 interpolation describes how stored values are reconstructed elsewhere. Phydrax
 keeps these responsibilities separate: `AxisDiscretization` carries canonical
 nodes and basis metadata, while trajectory, rectilinear, inverse-distance, and
@@ -339,7 +394,9 @@ separately in `coord_geometry_weight_by_label`; integrals multiply both. Request
 deterministic subcell estimate with `GridSpec(..., cut_cell_order=k)`:
 
 ```python
-cad = phx.domain.Circle(center=(0.0, 0.0), radius=1.0)
+cad = phx.domain.GeometryDomain(
+    phx.geometry.Circle(center=(0.0, 0.0), radius=1.0).compile()
+)
 grid = phx.domain.GridSpec(
     (
         phx.domain.UniformAxisSpec(25),
@@ -347,7 +404,7 @@ grid = phx.domain.GridSpec(
     ),
     cut_cell_order=3,
 )
-batch = cad.component().sample_coord_separable({"x": grid})
+batch = cad.component().sample(phx.domain.GridSampling({"x": grid}))
 ```
 
 Each tensor node represents its bounding Voronoi subcell. Phydrax probes each
@@ -356,8 +413,8 @@ declared geometry, and normalizes the represented mass to the geometry measure.
 This improves constant/low-order integration over a binary nodal mask. It does
 not recover a disconnected feature that has no interior tensor node. Use a
 paired-point representation or a geometry-conforming mesh for such features.
-`CoordSeparableBatch` rejects negative, non-finite, misaligned, and unknown-label
-geometry weights.
+`GridBatch` rejects negative, non-finite, misaligned, and unknown-label geometry
+weights.
 
 ### Geometry boundary atlases and measure partitions
 
@@ -410,8 +467,8 @@ phase = x @ p                                  # labels ("x", "p")
 def f(x, p):
     return x[0] ** 2 + p[0] ** 2
 
-structure = phx.domain.ProductStructure((("x", "p"),))  # paired (x,p) samples
-batch = phase.component().sample(256, structure=structure)
+layout = phx.domain.SampleLayout((("x", "p"),))  # paired (x,p) samples
+batch = phase.component().sample(phx.domain.PointSampling(256, layout=layout))
 val = f(batch)  # evaluated on phase-space points
 ```
 
@@ -432,8 +489,10 @@ phase_time = x @ p @ t                         # labels ("x", "p", "t")
 def f(x, p, t):
     return (x[0] ** 2 + p[0] ** 2) * (1.0 + t)
 
-structure = phx.domain.ProductStructure((("x", "p", "t"),))
-batch = phase_time.component().sample(512, structure=structure)
+layout = phx.domain.SampleLayout((("x", "p", "t"),))
+batch = phase_time.component().sample(
+    phx.domain.PointSampling(512, layout=layout)
+)
 val = f(batch)
 ```
 
@@ -444,7 +503,12 @@ For multi-dimensional momentum, relabel a 2D/3D geometry:
 ```python
 import phydrax as phx
 
-x = phx.domain.Square(center=(0.0, 0.0), side=2.0)            # "x" in R^2
-p = phx.domain.Square(center=(0.0, 0.0), side=6.0).relabel("p")  # "p" in R^2
+x = phx.domain.GeometryDomain(
+    phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+)
+p = phx.domain.GeometryDomain(
+    phx.geometry.Square(center=(0.0, 0.0), side=6.0).compile(),
+    label="p",
+)
 phase = x @ p
 ```

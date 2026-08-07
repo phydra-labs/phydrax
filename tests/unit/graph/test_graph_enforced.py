@@ -42,10 +42,10 @@ def _graphs() -> tuple[phx.graph.GraphIR, phx.graph.GraphIR]:
 def test_enforce_graph_values_overwrites_boundary_nodes_and_satisfies_constraint():
     graph = _line_graph()
     domain = phx.domain.GraphDomain(graph)
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
     nodes = domain.component({"graph": phx.domain.Nodes()})
     boundary = domain.component({"graph": phx.domain.BoundaryNodes([0, 2])})
-    node_batch = nodes.sample(graph.num_nodes, structure=structure)
+    node_batch = nodes.sample(phx.domain.PointSampling(graph.num_nodes, layout=structure))
 
     @domain.Function("graph")
     def u(node):
@@ -58,8 +58,7 @@ def test_enforce_graph_values_overwrites_boundary_nodes_and_satisfies_constraint
         component=boundary,
         operator=lambda f: f - 5.0,
         constraint_vars="u",
-        num_points=2,
-        structure=structure,
+        sampling=phx.domain.PointSampling(2, layout=structure),
     )
     assert constraint.loss({"u": hard_u}) < 1e-12
 
@@ -74,8 +73,9 @@ def test_enforce_graph_values_is_seen_by_graph_gradient_full_node_view():
     )
     domain = phx.domain.GraphDomain(graph)
     edge_batch = domain.component({"graph": phx.domain.Edges()}).sample(
-        graph.num_edges,
-        structure=phx.domain.ProductStructure((("graph",),)),
+        phx.domain.PointSampling(
+            graph.num_edges, layout=phx.domain.SampleLayout((("graph",),))
+        )
     )
     left = domain.component({"graph": phx.domain.BoundaryNodes([0])})
 
@@ -100,14 +100,12 @@ def test_enforce_graph_values_supports_edge_and_global_components():
         n_edge=jnp.array([2], dtype=jnp.int32),
     )
     domain = phx.domain.GraphDomain(graph)
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
     edge_batch = domain.component({"graph": phx.domain.Edges()}).sample(
-        graph.num_edges,
-        structure=structure,
+        phx.domain.PointSampling(graph.num_edges, layout=structure)
     )
     global_batch = domain.component({"graph": phx.domain.Globals()}).sample(
-        graph.num_graphs,
-        structure=structure,
+        phx.domain.PointSampling(graph.num_graphs, layout=structure)
     )
 
     @domain.Function("graph")
@@ -138,7 +136,7 @@ def test_enforce_graph_values_uses_local_indices_for_graph_dataset_batches():
     full_nodes = domain.points_from_indices(
         [0, 1],
         component=phx.domain.Nodes(),
-        structure=phx.domain.ProductStructure((("graph",),)),
+        structure=phx.domain.SampleLayout((("graph",),)),
     )
     boundary = domain.component({"graph": phx.domain.BoundaryNodes([1])})
 
@@ -157,12 +155,14 @@ def test_enforce_graph_values_supports_time_dependent_graph_trajectory_targets()
         jnp.array([3, 5], dtype=jnp.int32),
         dt=0.5,
     )
-    component = domain.component({"graph": phx.domain.Nodes(), "t": phx.domain.Interior()})
+    component = domain.component(
+        {"graph": phx.domain.Nodes(), "t": phx.domain.Interior()}
+    )
     batch = domain.points_from_case_time(
         [0, 1],
         [0.5, 1.0],
         component=component,
-        structure=phx.domain.ProductStructure((("graph", "t"),)),
+        structure=phx.domain.SampleLayout((("graph", "t"),)),
     )
     boundary = domain.component(
         {"graph": phx.domain.BoundaryNodes([1]), "t": phx.domain.Interior()}
@@ -186,11 +186,10 @@ def test_enforce_graph_values_supports_time_dependent_graph_trajectory_targets()
 def test_graph_value_enforcement_integrates_with_functional_solver_terms():
     graph = _line_graph()
     domain = phx.domain.GraphDomain(graph)
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
     boundary = domain.component({"graph": phx.domain.BoundaryNodes([0, 2])})
     node_batch = domain.component({"graph": phx.domain.Nodes()}).sample(
-        graph.num_nodes,
-        structure=structure,
+        phx.domain.PointSampling(graph.num_nodes, layout=structure)
     )
 
     @domain.Function("graph")
@@ -240,7 +239,7 @@ class _TrainableCellValues(eqx.Module):
 def test_enforce_cochain_values_preserves_signed_semantics_and_rejects_mismatch():
     complex_ir = _cochain_complex_with_interior_vertex()
     domain = phx.domain.GraphDomain(complex_ir.graph)
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
     edge_spec = phx.graph.CochainFieldSpec(
         1,
         cell_orientation="signed",
@@ -263,12 +262,9 @@ def test_enforce_cochain_values_preserves_signed_semantics_and_rejects_mismatch(
     edge_form = phx.domain.as_cochain_field(raw, edge_spec)
     target = phx.domain.as_cochain_field(target_raw, edge_spec)
     vertex_form = phx.domain.as_cochain_field(raw, vertex_spec)
-    boundary = domain.component(
-        {"graph": phx.domain.CochainCells(1, region="boundary")}
-    )
+    boundary = domain.component({"graph": phx.domain.CochainCells(1, region="boundary")})
     all_edges = domain.component({"graph": phx.domain.CochainCells(1)}).sample(
-        complex_ir.cell_counts[1],
-        structure=structure,
+        phx.domain.PointSampling(complex_ir.cell_counts[1], layout=structure)
     )
     hard = phx.constraints.enforce_cochain_values(
         edge_form,
@@ -294,7 +290,7 @@ def test_enforce_cochain_values_preserves_signed_semantics_and_rejects_mismatch(
 def test_hard_cochain_boundary_remains_exact_during_solver_optimization():
     complex_ir = _cochain_complex_with_interior_vertex()
     domain = phx.domain.GraphDomain(complex_ir.graph)
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
     zero_spec = phx.graph.CochainFieldSpec(
         0,
         cell_orientation="invariant",
@@ -305,9 +301,7 @@ def test_hard_cochain_boundary_remains_exact_during_solver_optimization():
         output_key="candidate",
     )
     field = phx.domain.as_cochain_field(candidate, zero_spec)
-    boundary = domain.component(
-        {"graph": phx.domain.CochainCells(0, region="boundary")}
-    )
+    boundary = domain.component({"graph": phx.domain.CochainCells(0, region="boundary")})
     field = phx.constraints.enforce_cochain_values(field, boundary, target=0.0)
 
     exact_vertices = jnp.asarray([0.0, 0.0, 0.0, 0.0, 1.0])
@@ -329,19 +323,18 @@ def test_hard_cochain_boundary_remains_exact_during_solver_optimization():
         return forcing_values[index]
 
     forcing = phx.domain.as_cochain_field(forcing_raw, zero_spec)
-    interior = domain.component(
-        {"graph": phx.domain.CochainCells(0, region="interior")}
-    )
+    interior = domain.component({"graph": phx.domain.CochainCells(0, region="interior")})
     constraint = phx.constraints.CochainResidualConstraint(
         component=interior,
-        residual=lambda functions: phx.operators.cochain_hodge_laplacian(
-            functions["u"],
-            boundary_policy="absolute",
-        )
-        - forcing,
+        residual=lambda functions: (
+            phx.operators.cochain_hodge_laplacian(
+                functions["u"],
+                boundary_policy="absolute",
+            )
+            - forcing
+        ),
         constraint_vars=("u",),
-        num_points=1,
-        structure=structure,
+        sampling=phx.domain.PointSampling(1, layout=structure),
         reduction="metric_sum",
         sampling_mode="fixed",
     )
@@ -359,8 +352,7 @@ def test_hard_cochain_boundary_remains_exact_during_solver_optimization():
     )
     final_loss = trained.loss()
     vertices = domain.component({"graph": phx.domain.CochainCells(0)}).sample(
-        complex_ir.cell_counts[0],
-        structure=structure,
+        phx.domain.PointSampling(complex_ir.cell_counts[0], layout=structure)
     )
     prediction = trained["u"](vertices).data
     boundary_mask = vertices["graph"]["boundary"].data

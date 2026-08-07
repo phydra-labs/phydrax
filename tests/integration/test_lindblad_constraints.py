@@ -42,8 +42,7 @@ def test_lindblad_residual_runs_through_functional_solver():
             (collapse,),
         ),
         constraint_vars="rho",
-        num_points=32,
-        structure=phx.domain.ProductStructure((("t",),)),
+        sampling=phx.domain.PointSampling(32, layout=phx.domain.SampleLayout((("t",),))),
         reduction="mean",
     )
     exact = phx.solver.FunctionalSolver(

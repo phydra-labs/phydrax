@@ -40,12 +40,13 @@ Two design choices make this interoperable:
 
 ## Key choice points (what makes workflows differ)
 
-### Sampling: point batches vs coord-separable grids
+### Sampling: point batches vs axis-based grids
 
-Phydrax supports two complementary evaluation regimes:
+PhydraX exposes two typed plans and matching batch schemas:
 
-- `PointsBatch` (paired sampling): typical PINN-style collocation constraints. See [Guides → Domains and sampling](guides_domain.md).
-- `CoordSeparableBatch` (axis/grid sampling): spectral/basis operators and neural operators (FNO/DeepONet). See [Guides → Differential operators](guides_differential.md).
+- `PointSampling` → `PointBatch` for paired collocation and scattered data;
+- `GridSampling` → `GridBatch` for basis/spectral operators and neural operators
+  with explicit coordinate axes.
 
 Sampling owns sites and measure metadata; interpolation owns deterministic
 reconstruction of stored values at query sites. Low-level source-to-target
@@ -132,7 +133,9 @@ with the analytic choice \(g(x,y)=x^2+y^2\) (so the exact solution is \(u^\star(
     import optax
     import phydrax as phx
 
-    geom = phx.domain.Square(center=(0.0, 0.0), side=2.0)  # [-1,1]^2, label "x"
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )  # [-1,1]^2, label "x"
 
     # Exact solution / boundary target g(x,y) = x^2 + y^2
     @geom.Function("x")
@@ -149,15 +152,14 @@ with the analytic choice \(g(x,y)=x^2+y^2\) (so the exact solution is \(u^\star(
     )
     u = geom.Model("x")(model)
 
-    structure = phx.domain.ProductStructure((("x",),))
+    layout = phx.domain.SampleLayout((("x",),))
 
     # Interior PDE residual: Δu - 4 = 0
     pde = phx.constraints.ContinuousPointwiseInteriorConstraint(
         "u",
         geom,
         operator=lambda f: phx.operators.laplacian(f, var="x") - 4.0,
-        num_points=64,
-        structure=structure,
+        sampling=phx.domain.PointSampling(64, layout=layout),
         reduction="mean",
     )
 
@@ -167,8 +169,7 @@ with the analytic choice \(g(x,y)=x^2+y^2\) (so the exact solution is \(u^\star(
         "u",
         boundary,
         target=g,
-        num_points=32,
-        structure=structure,
+        sampling=phx.domain.PointSampling(32, layout=layout),
         weight=10.0,
         reduction="mean",
     )
@@ -189,7 +190,9 @@ just extra terms, while enforcement is a map \(u\mapsto \tilde u\).
     import optax
     import phydrax as phx
 
-    geom = phx.domain.Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def g(x):
@@ -198,13 +201,12 @@ just extra terms, while enforcement is a map \(u\mapsto \tilde u\).
     model = phx.nn.MLP(in_size=2, out_size="scalar", width_size=16, depth=2, key=jr.key(0))
     u = geom.Model("x")(model)
 
-    structure = phx.domain.ProductStructure((("x",),))
+    layout = phx.domain.SampleLayout((("x",),))
     pde = phx.constraints.ContinuousPointwiseInteriorConstraint(
         "u",
         geom,
         operator=lambda f: phx.operators.laplacian(f, var="x") - 4.0,
-        num_points=64,
-        structure=structure,
+        sampling=phx.domain.PointSampling(64, layout=layout),
     )
 
     boundary = geom.component({"x": phx.domain.Boundary()})

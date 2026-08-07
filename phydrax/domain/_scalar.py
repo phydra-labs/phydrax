@@ -3,7 +3,7 @@
 #
 
 import abc
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 
 import equinox as eqx
 import jax
@@ -13,13 +13,53 @@ from jaxtyping import Array, Bool, Key
 
 from .._doc import DOC_KEY0
 from .._sampling import get_sampler_host, seed_from_key
-from ._domain import _AbstractUnaryDomain
+from ._coordinate import CoordinateSpec
+from ._domain import JointFactor
+from ._factor_component import FactorComponent
+from ._measure import BaseMeasure, ExactMass
+from ._selection import Boundary, Fixed, FixedEnd, FixedStart, Interior, Selection
 
 
-class _AbstractScalarDomain(_AbstractUnaryDomain):
+class AbstractScalarDomain(JointFactor):
     @property
-    def var_dim(self) -> int:
-        return 1
+    @abc.abstractmethod
+    def label(self) -> str:
+        raise NotImplementedError
+
+    @property
+    def labels(self) -> tuple[str, ...]:
+        return (self.label,)
+
+    @property
+    def coordinate_specs(self) -> tuple[CoordinateSpec, ...]:
+        return (CoordinateSpec((), kind="scalar", differentiable=True),)
+
+    def bind_component(
+        self,
+        selections: Mapping[str, Selection],
+        /,
+    ) -> FactorComponent:
+        if tuple(selections) != self.labels:
+            raise ValueError(
+                f"Scalar factor {self.labels} requires exactly one ordered selection."
+            )
+        selection = selections[self.label]
+        return FactorComponent(
+            factor=self,
+            selections=selections,
+            measure=self._component_base_measure(selection),
+        )
+
+    @abc.abstractmethod
+    def _component_base_measure(self, selection: Selection, /) -> BaseMeasure:
+        raise NotImplementedError
+
+    def _replace_labels(
+        self,
+        labels: tuple[str, ...],
+        /,
+    ) -> "AbstractScalarDomain":
+        return eqx.tree_at(lambda factor: factor._label, self, labels[0])
 
     @property
     @abc.abstractmethod
@@ -41,7 +81,7 @@ class _AbstractScalarDomain(_AbstractUnaryDomain):
         raise NotImplementedError
 
 
-class ScalarInterval(_AbstractScalarDomain):
+class ScalarInterval(AbstractScalarDomain):
     r"""A closed finite 1D scalar interval domain.
 
     Represents the domain
@@ -95,6 +135,25 @@ class ScalarInterval(_AbstractScalarDomain):
         r"""Return the measure $|\Omega_{\ell}|$ (equal to `extent`)."""
         return self.extent
 
+    def _component_base_measure(self, selection: Selection, /) -> BaseMeasure:
+        if isinstance(selection, Interior):
+            return BaseMeasure("lebesgue", ExactMass(self.measure))
+        if isinstance(selection, Boundary):
+            if selection.tags is not None or selection.entity_ids is not None:
+                raise ValueError("Scalar boundaries do not support tags or entity IDs.")
+            return BaseMeasure("counting", ExactMass(2.0))
+        if isinstance(selection, (FixedStart, FixedEnd)):
+            return BaseMeasure("dirac", ExactMass(1.0), normalized=True)
+        if isinstance(selection, Fixed):
+            if selection.value.ndim != 0:
+                raise ValueError("A scalar Fixed selection requires a scalar value.")
+            if not bool(jnp.asarray(self._contains(selection.value))):
+                raise ValueError(
+                    f"Fixed value {selection.value} lies outside factor {self.labels}."
+                )
+            return BaseMeasure("dirac", ExactMass(1.0), normalized=True)
+        raise TypeError(f"Unsupported scalar selection {type(selection).__name__}.")
+
     def fixed(self, which: str, /) -> Array:
         if which == "start":
             return self.start
@@ -102,7 +161,7 @@ class ScalarInterval(_AbstractScalarDomain):
             return self.end
         raise ValueError("fixed(which) must be 'start' or 'end'.")
 
-    def equivalent(self, other: object, /) -> bool:
+    def _same_factor_support(self, other: object, /) -> bool:
         if not isinstance(other, ScalarInterval):
             return False
         start_eq = np.isclose(

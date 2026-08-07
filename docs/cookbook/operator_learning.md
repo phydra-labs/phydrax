@@ -52,7 +52,7 @@ For this runnable example, we choose a simple analytic “operator” that maps 
     deeponet = phx.nn.DeepONet(branch=branch, trunk=trunk, coord_dim=1, latent_size=latent)
 
     # u_hat(data, x): predicted field on the x-axis for each dataset sample
-    u_hat = domain.Model("data", "x", structured=True)(deeponet)
+    u_hat = domain.Model("data", "x")(deeponet)
 
     # Supervised target u_true(data, x): analytic mapping from coefficients to a function of x
     @domain.Function("data", "x")
@@ -64,15 +64,20 @@ For this runnable example, we choose a simple analytic “operator” that maps 
     def residual(u_f):
         return u_f - u_true
 
-    # Build a grid-aligned supervised loss by sampling data densely and x as a coord-separable axis.
+    # Sample empirical rows in one point block and x on an explicit axis.
     nx = 32
     constraint = phx.constraints.FunctionalConstraint.from_operator(
         component=domain.component(),
         operator=residual,
         constraint_vars="u",
-        num_points=(8, {"x": phx.domain.UniformAxisSpec(nx)}),  # dense data + coord-separable x
-        structure=phx.domain.ProductStructure((("data", "x"),)),
-        dense_structure=phx.domain.ProductStructure((("data",),)),
+        sampling=phx.domain.GridSampling(
+            {"x": phx.domain.UniformAxisSpec(nx)},
+            dense=phx.domain.PointSampling(
+                8,
+                layout=phx.domain.SampleLayout((("data",),)),
+                design="uniform",
+            ),
+        ),
         reduction="mean",
     )
 

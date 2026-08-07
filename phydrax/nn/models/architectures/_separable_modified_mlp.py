@@ -11,7 +11,8 @@ from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
 from ..._utils import _get_size
-from ..core._base import _AbstractStructuredInputModel, DomainInputMode
+from ..core._base import _AbstractStructuredInputModel
+from ..core._binding import ModelBinding
 from ..core._keys import EvalKey
 from ..wrappers._separable_wrappers import Separable
 from ._modified_mlp import ModifiedMLP
@@ -28,8 +29,7 @@ class SeparableModifiedMLP(_AbstractStructuredInputModel):
     in_size: int | Literal["scalar"]
     out_size: int | Literal["scalar"]
     model: _AbstractStructuredInputModel
-    _domain_input_mode: ClassVar[DomainInputMode] = "flat"
-    _supports_blockwise_input: ClassVar[bool] = True
+    _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise("flat")
 
     def __init__(
         self,

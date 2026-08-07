@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import optax
 
+import phydrax as phx
 from phydrax.constraints import (
     FunctionalConstraint,
     HierarchicalAxisCollocation,
@@ -13,19 +14,18 @@ from phydrax.constraints import (
     SeparableCollocationPopulation,
 )
 from phydrax.domain import (
-    Circle,
-    CoordSeparableBatch,
+    GridBatch,
     GridSpec,
     HyperRectangle,
     NestedDyadicAxisSpec,
-    ProductStructure,
-    Square,
 )
 from phydrax.solver import FunctionalSolver
 
 
 def _square_constraint(policy, *, counts=(12, 10)):
-    domain = Square(center=(0.0, 0.0), side=2.0)
+    domain = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @domain.Function("x")
     def shifted_x(x):
@@ -36,9 +36,7 @@ def _square_constraint(policy, *, counts=(12, 10)):
         component=domain.component(),
         operator=lambda _u: shifted_x,
         constraint_vars="u",
-        num_points={"x": counts},
-        structure=ProductStructure((('x',),)),
-        sampler="uniform",
+        sampling=phx.domain.GridSampling({"x": counts}, design="uniform"),
         collocation_policy=policy,
     )
     functions = {"u": domain.Function()(0.0)}
@@ -53,13 +51,12 @@ def _axis(population, index):
 
 def test_separable_population_tracks_logical_and_active_counts():
     policy = PeriodicSeparableCollocation(refresh_every=2)
-    domain = Circle((0.0, 0.0), 1.0)
+    domain = phx.domain.GeometryDomain(phx.geometry.Circle((0.0, 0.0), 1.0).compile())
     constraint = FunctionalConstraint.from_operator(
         component=domain.component(),
         operator=lambda _u: domain.Function()(1.0),
         constraint_vars="u",
-        num_points={"x": (16, 14)},
-        structure=ProductStructure((('x',),)),
+        sampling=phx.domain.GridSampling({"x": (16, 14)}),
         collocation_policy=policy,
     )
     population = policy.initialize(constraint, key=jr.key(0))
@@ -85,14 +82,6 @@ def test_periodic_separable_refresh_preserves_shape_and_changes_axes():
     assert not jnp.allclose(_axis(refreshed, 0), _axis(initial, 0))
     assert int(refreshed.refresh_count) == 1
     assert int(refreshed.last_refresh) == 1
-
-
-
-
-
-
-
-
 
 
 def test_nested_dyadic_axis_materializes_fixed_capacity_metadata():
@@ -135,8 +124,7 @@ def test_hierarchical_axes_activate_nested_nodes_without_shape_changes():
         component=domain.component(),
         operator=lambda _u: shifted_x,
         constraint_vars="u",
-        num_points={"x": GridSpec((spec, spec))},
-        structure=ProductStructure((("x",),)),
+        sampling=phx.domain.GridSampling({"x": GridSpec((spec, spec))}),
         collocation_policy=policy,
         reduction="integral",
     )
@@ -159,10 +147,6 @@ def test_hierarchical_axes_activate_nested_nodes_without_shape_changes():
         assert jnp.allclose(jnp.sum(discretization.quad_weights), 2.0)
 
 
-
-
-
-
 def test_solver_trains_with_separable_population():
     policy = PeriodicSeparableCollocation(refresh_every=1)
     domain, constraint, functions = _square_constraint(policy, counts=(6, 5))
@@ -176,8 +160,6 @@ def test_solver_trains_with_separable_population():
     )
     population = trained.collocation[0]
     assert isinstance(population, SeparableCollocationPopulation)
-    assert isinstance(population.batch, CoordSeparableBatch)
+    assert isinstance(population.batch, GridBatch)
     assert int(population.refresh_count) == 2
     assert trained.functions["u"].domain == domain
-
-

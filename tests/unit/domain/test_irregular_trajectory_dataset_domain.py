@@ -6,13 +6,12 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
+import phydrax as phx
 from phydrax.domain import (
     Fixed,
     FixedEnd,
     IrregularTrajectoryDatasetDomain,
-    ProductStructure,
-)
-from phydrax.domain._trajectory_dataset import (
+    SampleLayout,
     TRAJECTORY_CASE_INDEX_KEY,
     TRAJECTORY_TIME_INDEX_KEY,
 )
@@ -39,9 +38,7 @@ def _make_domain(*, sampling="observation_uniform"):
 def test_irregular_trajectory_observation_uniform_samples_stored_times():
     domain = _make_domain(sampling="observation_uniform")
     batch = domain.component().sample(
-        16,
-        structure=ProductStructure((("data", "t"),)),
-        key=jr.key(0),
+        phx.domain.PointSampling(16, layout=SampleLayout((("data", "t"),))), key=jr.key(0)
     )
 
     case_indices = jnp.asarray(batch[TRAJECTORY_CASE_INDEX_KEY].data, dtype=jnp.int32)
@@ -55,9 +52,7 @@ def test_irregular_trajectory_observation_uniform_samples_stored_times():
 def test_irregular_trajectory_fixed_end_is_row_specific():
     domain = _make_domain()
     batch = domain.component({"t": FixedEnd()}).sample(
-        12,
-        structure=ProductStructure((("data", "t"),)),
-        key=jr.key(1),
+        phx.domain.PointSampling(12, layout=SampleLayout((("data", "t"),))), key=jr.key(1)
     )
 
     case_indices = jnp.asarray(batch[TRAJECTORY_CASE_INDEX_KEY].data, dtype=jnp.int32)
@@ -67,9 +62,7 @@ def test_irregular_trajectory_fixed_end_is_row_specific():
 def test_irregular_trajectory_fixed_time_samples_only_valid_cases():
     domain = _make_domain()
     batch = domain.component({"t": Fixed(0.6)}).sample(
-        10,
-        structure=ProductStructure((("data", "t"),)),
-        key=jr.key(2),
+        phx.domain.PointSampling(10, layout=SampleLayout((("data", "t"),))), key=jr.key(2)
     )
 
     case_indices = jnp.asarray(batch[TRAJECTORY_CASE_INDEX_KEY].data, dtype=jnp.int32)

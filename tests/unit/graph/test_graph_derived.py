@@ -64,7 +64,7 @@ def test_line_graph_integrates_with_graph_domain_model():
     bundle = phx.graph.line_graph(_path_graph())
     domain = phx.domain.GraphDomain(bundle.graph)
     component = domain.component({"graph": bundle.original_edges_component()})
-    batch = component.sample(2, structure=phx.domain.ProductStructure((("graph",),)))
+    batch = component.sample(phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),))))
 
     @domain.Function("graph")
     def u(edge_node):
@@ -96,7 +96,7 @@ def test_mesh_dual_graph_boundary_component_samples_faces():
     bundle = phx.graph.mesh_to_dual_graph(vertices, faces)
     domain = phx.domain.GraphDomain(bundle.graph, measure="count")
     boundary = domain.component({"graph": bundle.boundary_faces_component()})
-    batch = boundary.sample(2, structure=phx.domain.ProductStructure((("graph",),)))
+    batch = boundary.sample(phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),))))
 
     assert jnp.allclose(batch["graph"]["face_index"].data, jnp.array([0, 1], dtype=jnp.int32))
-    assert boundary.measure() == 2.0
+    assert boundary.mass.value == 2.0

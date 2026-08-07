@@ -7,7 +7,7 @@ import jax.numpy as jnp
 
 import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.domain import DomainFunction, Interval1d, Square, TimeInterval
+from phydrax.domain import DomainFunction, Interval1d, TimeInterval
 from phydrax.operators.differential import fractional_laplacian
 from phydrax.operators.integral import (
     integral,
@@ -158,7 +158,9 @@ def test_nonlocal_integral_context_parameter_receives_full_context():
 
 
 def test_local_integral_constant_field_equals_ball_volume():
-    domain = Square(center=(0.0, 0.0), side=2.0)
+    domain = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     function = DomainFunction(domain=domain, deps=(), func=jnp.array(2.5))
     radius = 0.4
     operator = local_integral(
@@ -187,7 +189,9 @@ def test_local_integral_zero_and_linear_symmetry():
     values = zero_operator(frozendict({"x": cx.Field(points, dims=("n", None))})).data
     assert jnp.max(jnp.abs(values)) < 1e-12
 
-    square = Square(center=(0.0, 0.0), side=2.0)
+    square = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @square.Function("x")
     def linear(x):

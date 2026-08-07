@@ -6,7 +6,6 @@ import jax
 import numpy as np
 
 import phydrax as phx
-from phydrax.domain.geometry3d import Geometry3DFromLidarScene
 
 
 def _fibonacci_sphere(n: int) -> np.ndarray:
@@ -25,10 +24,12 @@ def test_geometry3d_from_lidar_scene_basic():
     obj2 = _fibonacci_sphere(400) * 0.5 + np.array([2.0, 0.0, 0.0])
     pts = np.vstack([obj1, obj2])
 
-    geom = Geometry3DFromLidarScene(
-        pts,
-        roi=(-1.2, 1.2, -1.2, 1.2, -1.2, 1.2),
-        voxel_size=0.05,
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.reconstruct_lidar_region(
+            pts,
+            roi=(-1.2, 1.2, -1.2, 1.2, -1.2, 1.2),
+            voxel_size=0.05,
+        ).compile()
     )
 
     assert isinstance(geom, phx.domain.GeometryDomain)

@@ -9,14 +9,15 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
-from ..._doc import DOC_KEY0
-from ..._strict import StrictModule
-from ...domain._function import BatchAwareCallable, DomainFunction
-from ...domain.graph._batch import (
+from phydrax.domain import BatchEvaluator, DomainFunction
+from phydrax.domain.graph import (
     GRAPH_ENTITY_INDEX_KEY,
     GRAPH_GRAPH_INDEX_KEY,
     GraphBatch,
 )
+
+from ..._doc import DOC_KEY0
+from ..._strict import StrictModule
 from ...graph import segment_max, segment_mean, segment_min, segment_sum
 
 
@@ -344,7 +345,7 @@ def _optional_edge_weight_data(
     return _broadcast_over_leading_axis(jnp.asarray(weight_data), target)
 
 
-class _GraphDegreeCallable(StrictModule, BatchAwareCallable):
+class _GraphDegreeCallable(StrictModule, BatchEvaluator):
     mode: Literal["in", "out", "total"]
 
     def __init__(self, mode: Literal["in", "out", "total"]):
@@ -377,7 +378,7 @@ class _GraphDegreeCallable(StrictModule, BatchAwareCallable):
         return cx.Field(deg, dims=(_graph_axis(batch),))
 
 
-class _NeighborAggregateCallable(StrictModule, BatchAwareCallable):
+class _NeighborAggregateCallable(StrictModule, BatchEvaluator):
     u: DomainFunction
     reduce: GraphReduce
     flow: Literal["source_to_target", "target_to_source"]
@@ -422,7 +423,7 @@ class _NeighborAggregateCallable(StrictModule, BatchAwareCallable):
         return _restore_graph_axis(aggregated, axis_pos, y.dims)
 
 
-class _GraphLaplacianCallable(StrictModule, BatchAwareCallable):
+class _GraphLaplacianCallable(StrictModule, BatchEvaluator):
     u: DomainFunction
     normalize: bool
 
@@ -465,7 +466,7 @@ class _GraphLaplacianCallable(StrictModule, BatchAwareCallable):
         return _restore_graph_axis(out, axis_pos, y.dims)
 
 
-class _GraphGradientCallable(StrictModule, BatchAwareCallable):
+class _GraphGradientCallable(StrictModule, BatchEvaluator):
     u: DomainFunction
     weight: DomainFunction | ArrayLike | None
     flow: GraphFlow
@@ -516,7 +517,7 @@ class _GraphGradientCallable(StrictModule, BatchAwareCallable):
         return _restore_graph_axis(edge_data, axis_pos, field.dims)
 
 
-class _GraphDivergenceCallable(StrictModule, BatchAwareCallable):
+class _GraphDivergenceCallable(StrictModule, BatchEvaluator):
     flux: DomainFunction
     sign: GraphDivergenceSign
 

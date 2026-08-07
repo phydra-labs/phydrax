@@ -6,6 +6,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 
+import phydrax as phx
 from phydrax.constraints import (
     AveragePressureBoundaryConstraint,
     CFDBoundaryFlowRateConstraint,
@@ -22,7 +23,7 @@ from phydrax.constraints import (
     MagneticFluxZeroConstraint,
     SolidTotalReactionBoundaryConstraint,
 )
-from phydrax.domain import Cube, Interval1d, ProductStructure, TimeInterval
+from phydrax.domain import Interval1d, SampleLayout, TimeInterval
 from phydrax.operators.differential import div, dt
 
 
@@ -45,13 +46,12 @@ def test_continuous_ode_constraint_zero():
     def operator(f):
         return dt(f, var="t") - target
 
-    structure = ProductStructure((("t",),))
+    structure = SampleLayout((("t",),))
     constraint = ContinuousODEConstraint(
         "u",
         time,
         operator,
-        num_points=64,
-        structure=structure,
+        sampling=phx.domain.PointSampling(64, layout=structure),
     )
     loss = _jit_loss(constraint, {"u": u})
     assert loss < 1e-6
@@ -114,7 +114,7 @@ def test_discrete_time_data_constraint_zero():
 
 def test_integral_constraints_1d_zero_loss():
     geom = Interval1d(0.0, 1.0)
-    structure = ProductStructure((("x",),))
+    structure = SampleLayout((("x",),))
 
     @geom.Function("x")
     def u(x):
@@ -143,51 +143,44 @@ def test_integral_constraints_1d_zero_loss():
             "u",
             geom,
             lambda f: f,
-            num_points=32,
-            structure=structure,
+            sampling=phx.domain.PointSampling(32, layout=structure),
             equal_to=1.0,
         ),
         ContinuousIntegralBoundaryConstraint(
             "u",
             geom,
             lambda f, n: f,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
             equal_to=2.0,
         ),
         ContinuousIntegralInteriorConstraint(
             "v",
             geom,
             lambda f: div(f, var="x"),
-            num_points=32,
-            structure=structure,
+            sampling=phx.domain.PointSampling(32, layout=structure),
         ),
         EMBoundaryChargeConstraint(
             "D",
             geom,
             total_free_charge=0.0,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
         MagneticFluxZeroConstraint(
             "B",
             geom,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
         CFDBoundaryFlowRateConstraint(
             "v",
             geom,
             flow_rate=0.0,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
         CFDKineticEnergyFluxBoundaryConstraint(
             "v",
             geom,
             target_total_power=0.0,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
         SolidTotalReactionBoundaryConstraint(
             "v",
@@ -195,15 +188,13 @@ def test_integral_constraints_1d_zero_loss():
             lambda_=1.0,
             mu=1.0,
             target_reaction=jnp.array([0.0]),
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
         AveragePressureBoundaryConstraint(
             "p",
             geom,
             mean_pressure=0.0,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
     ]
 
@@ -215,7 +206,7 @@ def test_boundary_integral_resolves_relabeled_geometry_in_product_domain():
     space = Interval1d(0.0, 1.0).relabel("space")
     time = TimeInterval(0.0, 1.0)
     domain = space @ time
-    structure = ProductStructure((("space",), ("t",)))
+    structure = SampleLayout((("space",), ("t",)))
 
     @domain.Function("space", "t")
     def u(space_coordinate, time_coordinate):
@@ -226,8 +217,7 @@ def test_boundary_integral_resolves_relabeled_geometry_in_product_domain():
         "u",
         domain,
         lambda value, normal: value,
-        num_points=(8, 8),
-        structure=structure,
+        sampling=phx.domain.PointSampling((8, 8), layout=structure),
         equal_to=2.0,
     )
 
@@ -238,7 +228,7 @@ def test_integral_initial_constraint_zero():
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
-    structure = ProductStructure((("x",),))
+    structure = SampleLayout((("x",),))
 
     @domain.Function("x", "t")
     def u(x, t):
@@ -248,8 +238,7 @@ def test_integral_initial_constraint_zero():
         "u",
         domain,
         lambda f: f,
-        num_points=32,
-        structure=structure,
+        sampling=phx.domain.PointSampling(32, layout=structure),
         equal_to=1.0,
     )
     loss = _jit_loss(constraint, {"u": u})
@@ -257,8 +246,10 @@ def test_integral_initial_constraint_zero():
 
 
 def test_poynting_flux_constraint_zero():
-    geom = Cube(center=(0.0, 0.0, 0.0), side=2.0)
-    structure = ProductStructure((("x",),))
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile()
+    )
+    structure = SampleLayout((("x",),))
 
     @geom.Function("x")
     def E(x):
@@ -273,8 +264,7 @@ def test_poynting_flux_constraint_zero():
         "H",
         geom,
         target_total_power=0.0,
-        num_points=6,
-        structure=structure,
+        sampling=phx.domain.PointSampling(6, layout=structure),
     )
     loss = _jit_loss(constraint, {"E": E, "H": H})
     assert loss < 1e-6

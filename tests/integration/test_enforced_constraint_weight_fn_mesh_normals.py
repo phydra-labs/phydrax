@@ -8,12 +8,16 @@ import jax.random as jr
 import numpy as np
 import trimesh
 
+import phydrax as phx
 from phydrax.constraints._enforced import _enforced_constraint_weight_fn
-from phydrax.domain.geometry3d import Geometry3DFromCAD
 
 
 def test_enforced_constraint_weight_fn_mesh_normals_jittable():
-    geom = Geometry3DFromCAD(mesh=trimesh.creation.box(extents=(1.0, 1.0, 1.0)))
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.mesh_region_from_source(
+            trimesh.creation.box(extents=(1.0, 1.0, 1.0))
+        ).compile()
+    )
 
     def where(point):
         return point[0] > 0.0

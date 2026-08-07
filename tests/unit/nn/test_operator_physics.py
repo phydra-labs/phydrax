@@ -536,7 +536,7 @@ def test_operator_context_supports_multiple_coordinates_queries_and_outputs():
         query_name="points",
         field_name="radius_squared",
     )
-    domain = phx.domain.Square(center=(0.0, 0.0), side=2.0)
+    domain = phx.domain.GeometryDomain(phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile())
     function = context.domain_function(domain, "x")
     laplacian = phx.operators.laplacian(function, var="x")
     point = jnp.asarray([0.2, -0.3])

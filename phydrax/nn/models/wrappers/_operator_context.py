@@ -10,9 +10,9 @@ from typing import Any, Literal
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from phydrax.domain import Domain, DomainFunction
+
 from ...._doc import DOC_KEY0
-from ....domain._domain import _AbstractDomain
-from ....domain._function import DomainFunction
 from ..._utils import _get_size
 from ..core._base import _AbstractBaseModel, _AbstractOperatorModel
 from ..core._keys import EvalKey
@@ -169,7 +169,7 @@ class OperatorContextModel(_AbstractBaseModel):
 
     def domain_function(
         self,
-        domain: _AbstractDomain,
+        domain: Domain,
         coordinate_labels: str | Sequence[str],
         /,
         *,

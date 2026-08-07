@@ -3,65 +3,132 @@
 #
 
 import abc
-import inspect
 from collections.abc import Callable, Mapping
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
-import jax
 import jax.numpy as jnp
 
 from .._strict import StrictModule
+from ._coordinate import CoordinateSpec
 
 
 if TYPE_CHECKING:
-    pass
+    from ..nn.models.core._binding import ModelBinding
+    from ._evaluation import FunctionBinding
 
 
+class Domain(StrictModule):
+    """Semantic domain composed from one or more independent joint factors."""
+    __strict_abstract__ = True
 
-class _AbstractDomain(StrictModule):
+
     @property
     @abc.abstractmethod
     def labels(self) -> tuple[str, ...]:
         raise NotImplementedError
 
+    @property
     @abc.abstractmethod
-    def factor(self, label: str, /) -> "_AbstractUnaryDomain":
+    def joint_factors(self) -> tuple["JointFactor", ...]:
+        """Atomic factors whose coordinate supports cannot be split implicitly."""
         raise NotImplementedError
 
     @abc.abstractmethod
-    def equivalent(self, other: object, /) -> bool:
+    def same_support(self, other: object, /) -> bool:
+        """Return whether ``other`` denotes the same labeled measure support."""
         raise NotImplementedError
 
-    def join(self, other: "_AbstractDomain", /) -> "_AbstractDomain":
+    @abc.abstractmethod
+    def relabel(
+        self,
+        labels: str | Mapping[str, str],
+        /,
+    ) -> "Domain":
+        """Return the same support with changed public coordinate bindings."""
+        raise NotImplementedError
+
+    def coordinate(self, label: str, /) -> CoordinateSpec:
+        """Return the static coordinate schema bound to ``label``."""
+        factor = self.factor(label)
+        return factor.coordinate_specs[factor.labels.index(label)]
+
+    def factor(self, label: str, /) -> "JointFactor":
+        """Return the complete joint factor owning ``label``."""
+        for factor in self.joint_factors:
+            if label in factor.labels:
+                return factor
+        raise KeyError(f"Label {label!r} not in domain {self.labels}.")
+
+    def schema_compatible(self, other: object, /) -> bool:
+        """Return whether two domains expose the same evaluation schema."""
+        if not isinstance(other, Domain) or self.labels != other.labels:
+            return False
+        return all(
+            self.coordinate(label).compatible(other.coordinate(label))
+            for label in self.labels
+        )
+    def is_subdomain_of(self, other: "Domain", /) -> bool:
+        """Return whether every complete factor is preserved by ``other``."""
+        if not isinstance(other, Domain):
+            return False
+        for factor in self.joint_factors:
+            matches = tuple(
+                candidate
+                for candidate in other.joint_factors
+                if candidate.labels == factor.labels
+            )
+            if len(matches) != 1 or not factor.same_support(matches[0]):
+                return False
+        return True
+
+
+    def join(self, other: "Domain", /) -> "Domain":
         from ._product_domain import ProductDomain
 
         if self is other:
             return self
         return ProductDomain(self, other)
 
-    def __matmul__(self, other: "_AbstractDomain", /) -> "_AbstractDomain":
+    def __matmul__(self, other: "Domain", /) -> "Domain":
         return self.join(other)
 
-    def restrict(self, labels: tuple[str, ...], /) -> "_AbstractDomain":
-        if set(labels) == set(self.labels):
+    def restrict(self, labels: tuple[str, ...], /) -> "Domain":
+        requested = tuple(labels)
+        if not requested:
+            raise ValueError("A restricted domain must retain at least one label.")
+        if len(set(requested)) != len(requested):
+            raise ValueError(f"Restriction labels must be unique, got {requested}.")
+        unknown = tuple(label for label in requested if label not in self.labels)
+        if unknown:
+            raise KeyError(f"Labels {unknown} not in domain {self.labels}.")
+        selected: list[JointFactor] = []
+        requested_set = set(requested)
+        for factor in self.joint_factors:
+            overlap = requested_set.intersection(factor.labels)
+            if overlap and overlap != set(factor.labels):
+                raise ValueError(
+                    "Cannot implicitly restrict part of coupled factor "
+                    f"{factor.labels}; requested {requested}."
+                )
+            if overlap:
+                selected.append(factor)
+        if tuple(label for factor in selected for label in factor.labels) == self.labels:
             return self
-        if len(labels) == 1:
-            return self.factor(labels[0])
+        if len(selected) == 1:
+            return selected[0]
         from ._product_domain import ProductDomain
 
-        factors = tuple(self.factor(lbl) for lbl in labels)
-        return ProductDomain(*factors)
+        return ProductDomain(*selected)
 
-    def drop(self, labels: str | tuple[str, ...], /) -> "_AbstractDomain":
-        if isinstance(labels, str):
-            drop_set = {labels}
-        else:
-            drop_set = set(labels)
-        kept = tuple(lbl for lbl in self.labels if lbl not in drop_set)
+    def drop(self, labels: str | tuple[str, ...], /) -> "Domain":
+        dropped = (labels,) if isinstance(labels, str) else tuple(labels)
+        unknown = tuple(label for label in dropped if label not in self.labels)
+        if unknown:
+            raise KeyError(f"Labels {unknown} not in domain {self.labels}.")
+        kept = tuple(label for label in self.labels if label not in set(dropped))
         if not kept:
             raise ValueError("Cannot drop all labels from a domain.")
         return self.restrict(kept)
-
     def component(
         self,
         spec: Any = None,
@@ -70,9 +137,10 @@ class _AbstractDomain(StrictModule):
         where_all: Any = None,
         weight_all: Any = None,
     ):
-        from ._components import ComponentSpec, DomainComponent
+        from ._components import DomainComponent
+        from ._selection import SelectionSpec
 
-        spec_ = spec if isinstance(spec, ComponentSpec) else ComponentSpec(spec)
+        spec_ = spec if isinstance(spec, SelectionSpec) else SelectionSpec(spec)
         return DomainComponent(
             domain=self,
             spec=spec_,
@@ -81,123 +149,58 @@ class _AbstractDomain(StrictModule):
             weight_all=weight_all,
         )
 
-    def Function(self, *deps: str):
-        from ._function import batch_aware_callable, DomainFunction
+    def Function(
+        self,
+        *deps: str,
+        binding: "FunctionBinding | None" = None,
+    ):
+        """Bind a pointwise callable or explicit batch evaluator to this domain."""
+        from ._evaluation import (
+            BatchEvaluator,
+            FunctionBinding,
+            PointwiseEvaluator,
+        )
+        from ._function import DomainFunction
 
-        if deps:
-            for dep in deps:
-                if dep not in self.labels:
-                    raise ValueError(
-                        f"Unknown dependency label {dep!r}; expected subset of {self.labels}."
-                    )
-
-        def decorator(func):
-            if not callable(func):
-                return DomainFunction(domain=self, deps=deps, func=func)
-            if batch_aware_callable(func) is not None:
-                return DomainFunction(domain=self, deps=deps, func=func)
-
-            sig = inspect.signature(func)
-            params = sig.parameters
-            has_var_kwargs = any(
-                p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
-            )
-            has_key = "key" in params
-            has_iter = "iter_" in params
-            accepted_kw_names = {
-                name
-                for name, p in params.items()
-                if p.kind
-                in (
-                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                    inspect.Parameter.KEYWORD_ONLY,
+        if binding is not None and not isinstance(binding, FunctionBinding):
+            raise TypeError("binding must be a FunctionBinding or None.")
+        for dep in deps:
+            if dep not in self.labels:
+                raise ValueError(
+                    f"Unknown dependency label {dep!r}; expected subset of {self.labels}."
                 )
-            }
 
-            if has_key and params["key"].kind != inspect.Parameter.KEYWORD_ONLY:
-                raise TypeError("`key` must be a keyword-only argument for `func`.")
-            if has_iter and params["iter_"].kind != inspect.Parameter.KEYWORD_ONLY:
-                raise TypeError("`iter_` must be a keyword-only argument for `func`.")
-
-            def _wrap_coord_separable(*args, key=None, iter_=None, **kwargs):
-                out_kwargs = kwargs
-                if key is not None and (has_key or has_var_kwargs):
-                    out_kwargs = dict(out_kwargs)
-                    out_kwargs["key"] = key
-                if iter_ is not None and (has_iter or has_var_kwargs):
-                    if out_kwargs is kwargs:
-                        out_kwargs = dict(out_kwargs)
-                    out_kwargs["iter_"] = iter_
-
-                if not has_var_kwargs and out_kwargs:
-                    # Differential runtime knobs may be threaded through
-                    # composite residual expressions. Drop those for plain
-                    # user functions that do not declare **kwargs.
-                    out_kwargs = {
-                        k: v
-                        for k, v in out_kwargs.items()
-                        if ((k in accepted_kw_names) or (k != "force_generic"))
-                    }
-
-                coord_indices = [
-                    i for i, arg in enumerate(args) if isinstance(arg, tuple)
-                ]
-                if not coord_indices:
-                    return func(*args, **out_kwargs)
-
-                coord_values = tuple(
-                    jnp.asarray(coord).reshape((-1,))
-                    for i in coord_indices
-                    for coord in args[i]
-                )
-                if not coord_values:
-                    return func(*args, **out_kwargs)
-
-                def call_point(*values):
-                    new_args = list(args)
-                    offset = 0
-                    for i in coord_indices:
-                        count = len(args[i])
-                        new_args[i] = jnp.stack(values[offset : offset + count])
-                        offset += count
-                    return func(*new_args, **out_kwargs)
-
-                mapped = call_point
-                for position in reversed(range(len(coord_values))):
-                    in_axes = tuple(
-                        0 if index == position else None
-                        for index in range(len(coord_values))
+        def decorator(function):
+            if not callable(function):
+                if binding is not None:
+                    raise TypeError("Constant domain functions do not accept a binding.")
+                return DomainFunction(domain=self, deps=deps, func=function)
+            if isinstance(function, BatchEvaluator):
+                if binding is not None:
+                    raise TypeError(
+                        "BatchEvaluator implementations declare their own call contract."
                     )
-                    mapped = jax.vmap(mapped, in_axes=in_axes, out_axes=0)
-                return mapped(*coord_values)
-
-            return DomainFunction(domain=self, deps=deps, func=_wrap_coord_separable)
+                evaluator = function
+            else:
+                evaluator = PointwiseEvaluator(function, binding=binding)
+            return DomainFunction(domain=self, deps=deps, func=evaluator)
 
         return decorator
 
     def Model(
         self,
         *deps: str,
-        structured: bool = False,
-        input_mode: Literal["flat", "structured"] | None = None,
+        binding: "ModelBinding | None" = None,
     ):
-        """Wrap a neural model as a `DomainFunction`.
-
-        By default each model chooses its own domain input mode. Dense and separable
-        pointwise models use flat concatenation, while operator models may request
-        structured tuple inputs. `structured=True` is a compatibility alias for
-        `input_mode="structured"`.
-        """
+        """Bind a model with an explicit domain input contract."""
+        from ..nn.models.core._base import _AbstractBaseModel
+        from ..nn.models.core._binding import ModelBinding
+        from ..nn.models.core._loss import ModelWithLoss
         from ._function import DomainFunction
-        from ._model_function import _ConcatenatedModelCallable, StructuredCallable
+        from ._model_function import ConcatenatedModelEvaluator
 
-        if structured and input_mode is not None:
-            raise ValueError("Use either structured=True or input_mode=..., not both.")
-        mode: Literal["flat", "structured"] | None = input_mode
-        if structured:
-            mode = "structured"
-        if mode is not None and mode not in ("flat", "structured"):
-            raise ValueError("input_mode must be either 'flat' or 'structured'.")
+        if binding is not None and not isinstance(binding, ModelBinding):
+            raise TypeError("binding must be a ModelBinding or None.")
 
         deps_ = self.labels if not deps else deps
         for dep in deps_:
@@ -207,12 +210,30 @@ class _AbstractDomain(StrictModule):
                 )
 
         def decorator(model):
-            if structured:
-                model = StructuredCallable(model)
+            if isinstance(model, (_AbstractBaseModel, ModelWithLoss)):
+                declared_binding = model.input_binding()
+                if binding is not None and binding != declared_binding:
+                    raise ValueError(
+                        "Phydrax models declare their ModelBinding; caller overrides "
+                        "must match that declaration."
+                    )
+                resolved_binding = declared_binding
+            else:
+                if binding is None:
+                    raise TypeError(
+                        "Plain callable models require binding=phx.nn.ModelBinding(...)."
+                    )
+                resolved_binding = binding
+
             return DomainFunction(
                 domain=self,
                 deps=deps_,
-                func=_ConcatenatedModelCallable(model, input_mode=mode),
+                func=ConcatenatedModelEvaluator(
+                    model,
+                    domain_labels=self.labels,
+                    deps=tuple(deps_),
+                    binding=resolved_binding,
+                ),
             )
 
         return decorator
@@ -224,7 +245,11 @@ class _AbstractDomain(StrictModule):
         transform: Callable[[Any], Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
     ):
-        from ._function import _TrainableConstCallable, _UnaryCallable, DomainFunction
+        from ._function import (
+            _TrainableConstCallable,
+            DomainFunction,
+            UnaryFieldEvaluator,
+        )
 
         if init is None:
             raise TypeError("Domain.Parameter requires init to be array-like, not None.")
@@ -247,52 +272,74 @@ class _AbstractDomain(StrictModule):
         return DomainFunction(
             domain=self,
             deps=(),
-            func=_UnaryCallable(_TrainableConstCallable(raw), transform),
+            func=UnaryFieldEvaluator(_TrainableConstCallable(raw), transform),
             metadata=metadata,
         )
 
 
-class _AbstractUnaryDomain(_AbstractDomain):
+class JointFactor(Domain):
+    """Atomic support that may own one or several intrinsically coupled coordinates."""
+    __strict_abstract__ = True
+
+
+    @property
+    def joint_factors(self) -> tuple["JointFactor", ...]:
+        return (self,)
+
     @property
     @abc.abstractmethod
-    def label(self) -> str:
+    def coordinate_specs(self) -> tuple[CoordinateSpec, ...]:
         raise NotImplementedError
-
-    @property
-    def labels(self) -> tuple[str, ...]:
-        return (self.label,)
-
-    @property
     @abc.abstractmethod
-    def var_dim(self) -> int:
+    def bind_component(
+        self,
+        selections: Mapping[str, Any],
+        /,
+    ) -> Any:
+        """Validate factor selections and bind their base measure."""
         raise NotImplementedError
 
-    def factor(self, label: str, /) -> "_AbstractUnaryDomain":
-        if label != self.label:
-            raise KeyError(f"Label {label!r} not in domain {self.labels}.")
-        return self
 
-    def relabel(self, label: str, /) -> "RelabeledDomain":
-        return RelabeledDomain(self, label)
+    @abc.abstractmethod
+    def _same_factor_support(self, other: object, /) -> bool:
+        raise NotImplementedError
 
+    @abc.abstractmethod
+    def _replace_labels(
+        self,
+        labels: tuple[str, ...],
+        /,
+    ) -> "JointFactor":
+        raise NotImplementedError
 
-class RelabeledDomain(_AbstractUnaryDomain):
-    base: _AbstractUnaryDomain
-    _label: str
+    def same_support(self, other: object, /) -> bool:
+        return (
+            isinstance(other, JointFactor)
+            and self.labels == other.labels
+            and self._same_factor_support(other)
+        )
 
-    def __init__(self, base: _AbstractUnaryDomain, label: str):
-        self.base = base
-        self._label = label
-
-    @property
-    def label(self) -> str:
-        return self._label
-
-    @property
-    def var_dim(self) -> int:
-        return self.base.var_dim
-
-    def equivalent(self, other: object, /) -> bool:
-        if isinstance(other, RelabeledDomain):
-            return self.base.equivalent(other.base)
-        return self.base.equivalent(other)
+    def relabel(
+        self,
+        labels: str | Mapping[str, str],
+        /,
+    ) -> "JointFactor":
+        if isinstance(labels, str):
+            if len(self.labels) != 1:
+                raise ValueError(
+                    "Relabeling a coupled factor requires a complete label mapping."
+                )
+            replacement = (labels,)
+        else:
+            unknown = tuple(label for label in labels if label not in self.labels)
+            if unknown:
+                raise KeyError(
+                    f"Relabel mapping contains unknown labels {unknown}; "
+                    f"expected a subset of {self.labels}."
+                )
+            replacement = tuple(labels.get(label, label) for label in self.labels)
+        if len(set(replacement)) != len(replacement):
+            raise ValueError(f"Relabeling produced duplicate labels {replacement}.")
+        if replacement == self.labels:
+            return self
+        return self._replace_labels(replacement)

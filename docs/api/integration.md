@@ -1,8 +1,34 @@
 # Integration
 
-Measure-aware deterministic, adaptive, and stochastic integration. See
-[Integrals and measures](../guides_integrals.md) for target semantics, normalization,
-method selection, and uncertainty contracts.
+Integration separates the mathematical measure from its numerical realization:
+
+- a target declares support, measure, and normalization;
+- a plan declares deterministic or stochastic discretization;
+- `IntegrationEstimate` returns value, status, diagnostics, provenance, and only
+  method-valid error evidence.
+
+```python
+import phydrax as phx
+
+x = phx.domain.ScalarInterval(-1.0, 2.0, label="x")
+square = x.Function("x")(lambda value: value**2)
+
+estimate = phx.integration.integrate(
+    square,
+    phx.integration.over(x.component()),
+    phx.integration.FixedQuadraturePlan(
+        phx.integration.GaussLegendreRule(24)
+    ),
+)
+```
+
+Randomized plans require `key=`; deterministic plans reject it. Use
+`materialize(...)` followed by repeated `reduce(...)` calls when multiple
+integrands must share exactly the same nodes or random design.
+
+See [Integrals and measures](../guides_integrals.md) for target semantics,
+normalization, method selection, uncertainty contracts, external weighted
+measures, and composed space/time/stochastic reductions.
 
 ## Workflow
 

@@ -6,42 +6,34 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import comb
-from typing import Any, Literal, TypeAlias
+from typing import Any
 
 import jax.numpy as jnp
 
+from phydrax.domain import (
+    CallbackDerivativeRule,
+    DerivativeBackend,
+    DerivativeBasis,
+    DerivativeMode,
+    DerivativeRule,
+    DomainFunction,
+)
+
 from ..._strict import StrictModule
-from ...domain._function import DomainFunction
 
 
-DERIVATIVE_HOOK_KEY = "_optimized_derivative_hook"
+def get_derivative_rule(u: DomainFunction, /) -> DerivativeRule | None:
+    """Return the explicit derivative strategy attached to ``u``."""
+    return u.derivative_rule
 
 
-DerivativeHook: TypeAlias = Callable[
-    ...,
-    DomainFunction | None,
-]
-
-DerivativeMode: TypeAlias = Literal["reverse", "forward"]
-DerivativeBackend: TypeAlias = Literal["ad", "jet", "fd", "basis"]
-DerivativeBasis: TypeAlias = Literal["poly", "fourier", "sine", "cosine"]
-
-
-def get_derivative_hook(u: DomainFunction, /) -> DerivativeHook | None:
-    hook = u.metadata.get(DERIVATIVE_HOOK_KEY)
-    if hook is None:
-        return None
-    if not callable(hook):
-        return None
-    return hook
-
-
-def with_derivative_hook(
+def with_derivative_rule(
     u: DomainFunction,
-    hook: DerivativeHook,
+    rule: DerivativeRule,
     /,
 ) -> DomainFunction:
-    return u.with_metadata(**{DERIVATIVE_HOOK_KEY: hook})
+    """Return ``u`` with an explicit derivative strategy."""
+    return u.with_derivative_rule(rule)
 
 
 class _BlendWithGateCallable(StrictModule):
@@ -229,7 +221,7 @@ def blend_with_gate(
             derive=_derive,
         )
 
-    return with_derivative_hook(blended, _hook)
+    return with_derivative_rule(blended, CallbackDerivativeRule(_hook))
 
 
 def nth_product_rule(

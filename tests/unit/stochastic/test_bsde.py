@@ -134,11 +134,7 @@ def test_bsde_objective_integrates_domain_functions_and_fixed_paths():
     paths = _brownian_paths(num_paths=32)
     problem = _problem(paths)
     domain = phx.domain.Interval1d(-5.0, 5.0) @ phx.domain.TimeInterval(0.0, 1.0)
-    value = phx.domain.DomainFunction(
-        domain=domain,
-        deps=("t", "x"),
-        func=lambda time, state: jnp.asarray([state[0]]),
-    )
+    value = domain.Function("t", "x")(lambda time, state: jnp.asarray([state[0]]))
     objective = phx.objectives.BSDEObjective(
         problem,
         value_name="value",

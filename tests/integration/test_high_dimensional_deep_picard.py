@@ -51,11 +51,7 @@ def test_dimension_100_quadratic_hjb_deep_picard_smoke():
         jnp.full((dimension,), 4.0),
         label="x",
     ) @ phx.domain.TimeInterval(0.0, 1.0)
-    value = phx.domain.DomainFunction(
-        domain=domain,
-        deps=("t", "x"),
-        func=_LinearHJBValue(jnp.asarray(0.0)),
-    )
+    value = domain.Function("t", "x")(_LinearHJBValue(jnp.asarray(0.0)))
     solver = phx.solver.FunctionalSolver(
         functions={"value": value},
         constraints=(),
@@ -87,7 +83,7 @@ def test_dimension_100_quadratic_hjb_deep_picard_smoke():
         keep_best=False,
     )
 
-    coefficient = float(result.solver["value"].func.func.time_coefficient)
+    coefficient = float(result.solver["value"].func.function.time_coefficient)
     expected = 0.5 / dimension
     assert abs(coefficient - expected) < 5e-4
     assert result.diagnostics.target_rmse[-1] < 5e-4

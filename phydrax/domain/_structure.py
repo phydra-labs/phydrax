@@ -3,17 +3,19 @@
 #
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, TypeAlias
 
 import coordax as cx
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import PyTree
 
 from .._frozendict import frozendict
+from .._sampling import DesignLike, resolve_design, UnitDesign
 from .._strict import StrictModule
-from ._grid import AxisDiscretization
+from ._grid import AbstractAxisSpec, AxisDiscretization, GridSpec
 
 
 _AXIS_PREFIX = "__phydra_blk__"
@@ -52,7 +54,7 @@ def _validate_reserved_axes(points: Points, *, allowed_axes: frozenset[str]) -> 
             if dim.startswith(_AXIS_PREFIX):
                 if dim not in allowed_axes:
                     raise ValueError(
-                        "Found reserved sampling-axis dim not declared in ProductStructure: "
+                        "Found reserved sampling-axis dim not declared in SampleLayout: "
                         f"{dim!r}. Allowed: {tuple(sorted(allowed_axes))!r}."
                     )
 
@@ -68,12 +70,12 @@ def _validate_reserved_sep_axes(points: Points, *, allowed_axes: frozenset[str])
             if dim.startswith(_SEP_AXIS_PREFIX):
                 if dim not in allowed_axes:
                     raise ValueError(
-                        "Found reserved coord-separable dim not declared in CoordSeparableBatch: "
+                        "Found reserved grid axis not declared in GridBatch: "
                         f"{dim!r}. Allowed: {tuple(sorted(allowed_axes))!r}."
                     )
 
 
-class ProductStructure(StrictModule):
+class SampleLayout(StrictModule):
     r"""Describes how a product domain is sampled into named axes.
 
     Phydrax uses *labeled* product domains, e.g. $\Omega = \Omega_x \times \Omega_t$
@@ -81,16 +83,16 @@ class ProductStructure(StrictModule):
     we often want to control which variables are sampled *jointly* and which are
     sampled in separate blocks.
 
-    A `ProductStructure` defines a partition of the (non-fixed) labels into blocks
+    A `SampleLayout` defines a partition of the (non-fixed) labels into blocks
     `(B_1, \dots, B_k)`. For each block $B_j$ we sample $n_j$ joint points in
     $\prod_{\ell\in B_j}\Omega_\ell$. Each block corresponds to one named sampling
     axis (e.g. `__phydra_blk__x__t`), and values evaluated on the resulting
-    `PointsBatch` are `coordax.Field`s carrying those axis names.
+    `PointBatch` are `coordax.Field`s carrying those axis names.
 
     For example:
 
-    - `ProductStructure((("x", "t"),))` samples paired space-time points.
-    - `ProductStructure((("x",), ("t",)))` samples space and time independently,
+    - `SampleLayout((("x", "t"),))` samples paired space-time points.
+    - `SampleLayout((("x",), ("t",)))` samples space and time independently,
       producing a Cartesian product grid in evaluation.
     """
 
@@ -122,7 +124,7 @@ class ProductStructure(StrictModule):
         domain_labels: tuple[str, ...],
         *,
         fixed_labels: frozenset[str] = frozenset(),
-    ) -> "ProductStructure":
+    ) -> "SampleLayout":
         r"""Return a structure with blocks ordered canonically for a domain.
 
         Canonicalization enforces:
@@ -131,7 +133,7 @@ class ProductStructure(StrictModule):
         - Each block is sorted in the order it appears in `domain_labels`.
         - `axis_names` is set (generated if missing).
 
-        This is required before constructing a `PointsBatch`, since named axes are
+        This is required before constructing a `PointBatch`, since named axes are
         derived from the canonical blocks.
         """
         for label in domain_labels:
@@ -145,7 +147,7 @@ class ProductStructure(StrictModule):
             if block_set & fixed_labels:
                 fixed = sorted(block_set & fixed_labels)
                 raise ValueError(
-                    f"ProductStructure includes fixed labels {fixed}; fixed labels must not appear in blocks."
+                    f"SampleLayout includes fixed labels {fixed}; fixed labels must not appear in blocks."
                 )
             if len(block_set) != len(block):
                 raise ValueError(f"Duplicate labels in block {block}.")
@@ -157,7 +159,7 @@ class ProductStructure(StrictModule):
                 canon = tuple(sorted(block_set, key=lambda s: domain_pos[s]))
             except KeyError as e:
                 raise ValueError(
-                    f"Unknown label {e.args[0]!r} in ProductStructure; expected subset of {domain_labels}."
+                    f"Unknown label {e.args[0]!r} in SampleLayout; expected subset of {domain_labels}."
                 ) from None
             canon_blocks.append(canon)
 
@@ -166,7 +168,7 @@ class ProductStructure(StrictModule):
         ]
         if remaining:
             raise ValueError(
-                "ProductStructure does not cover all non-fixed labels; missing "
+                "SampleLayout does not cover all non-fixed labels; missing "
                 f"{tuple(remaining)!r}."
             )
 
@@ -174,25 +176,95 @@ class ProductStructure(StrictModule):
             axis_names = tuple(_axis_name_for_block(b) for b in canon_blocks)
         else:
             axis_names = self.axis_names
-        return ProductStructure(tuple(canon_blocks), axis_names=axis_names)
+        return SampleLayout(tuple(canon_blocks), axis_names=axis_names)
 
     def axis_for(self, label: str) -> str | None:
         """Return the sampling axis name corresponding to `label` (or `None` if fixed)."""
         if self.axis_names is None:
             raise ValueError(
-                "ProductStructure.axis_for requires axis_names to be set (call canonicalize first)."
+                "SampleLayout.axis_for requires axis_names to be set (call canonicalize first)."
             )
         for block, name in zip(self.blocks, self.axis_names, strict=True):
             if label in block:
                 return name
         return None
 
+AxisSampling: TypeAlias = (
+    int
+    | tuple[int, ...]
+    | AbstractAxisSpec
+    | tuple[AbstractAxisSpec, ...]
+    | GridSpec
+)
 
-class PointsBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
+
+class PointSampling(StrictModule):
+    """Declarative point-sampling request for one component."""
+
+    count: NumPoints = eqx.field(static=True)
+    layout: SampleLayout | None
+    design: UnitDesign
+
+    def __init__(
+        self,
+        count: NumPoints,
+        /,
+        *,
+        layout: SampleLayout | None = None,
+        design: DesignLike = "latin_hypercube",
+    ):
+        counts = (int(count),) if isinstance(count, int) else tuple(int(n) for n in count)
+        if any(n < 0 for n in counts):
+            raise ValueError("PointSampling counts must be non-negative.")
+        if layout is not None and not isinstance(layout, SampleLayout):
+            raise TypeError("PointSampling.layout must be a SampleLayout or None.")
+        self.count = counts[0] if isinstance(count, int) else counts
+        self.layout = layout
+        self.design = resolve_design(design)
+
+
+class GridSampling(StrictModule):
+    """Coordinate-grid request with optional dense sampling for other labels."""
+
+    axes: frozendict[str, AxisSampling]
+    dense: PointSampling | None
+    design: UnitDesign
+
+    def __init__(
+        self,
+        axes: Mapping[str, int | Sequence[int] | AbstractAxisSpec | Sequence[AbstractAxisSpec] | GridSpec],
+        /,
+        *,
+        dense: PointSampling | None = None,
+        design: DesignLike = "latin_hypercube",
+    ):
+        normalized: dict[str, AxisSampling] = {}
+        for label, request in axes.items():
+            _validate_label(label)
+            if isinstance(request, (int, AbstractAxisSpec, GridSpec)):
+                normalized[label] = request
+            else:
+                values = tuple(request)
+                if not values:
+                    raise ValueError(f"GridSampling axis request for {label!r} must be non-empty.")
+                normalized[label] = values
+        if not normalized:
+            raise ValueError("GridSampling.axes must be non-empty.")
+        if dense is not None and not isinstance(dense, PointSampling):
+            raise TypeError("GridSampling.dense must be a PointSampling or None.")
+        self.axes = frozendict(normalized)
+        self.dense = dense
+        self.design = resolve_design(design)
+
+SamplingPlan: TypeAlias = PointSampling | GridSampling
+
+
+
+class PointBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):  # ty: ignore[invalid-method-override]
     r"""A labeled batch of sampled points with explicit axis semantics.
 
-    A `PointsBatch` is a mapping `{label: coordax.Field}` paired with a canonicalized
-    `ProductStructure`. Each label's point array is stored as a `coordax.Field`
+    A `PointBatch` is a mapping `{label: coordax.Field}` paired with a canonicalized
+    `SampleLayout`. Each label's point array is stored as a `coordax.Field`
     whose named axes correspond to the sampling block(s) that include that label.
 
     If a label is in a block with axis name `a`, then its sampled points carry a named
@@ -200,20 +272,20 @@ class PointsBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
     """
 
     points: Points
-    structure: ProductStructure
+    structure: SampleLayout
     metadata: frozendict[str, Any]
 
     def __init__(
         self,
         points: Points,
-        structure: ProductStructure,
+        structure: SampleLayout,
         *,
         metadata: Mapping[str, Any] | None = None,
     ):
-        """Construct a `PointsBatch` from sampled points and a canonical structure."""
+        """Construct a `PointBatch` from sampled points and a canonical layout."""
         if structure.axis_names is None:
             raise ValueError(
-                "PointsBatch requires a canonicalized ProductStructure (axis_names set)."
+                "PointBatch requires a canonicalized SampleLayout (axis_names set)."
             )
         _validate_reserved_axes(points, allowed_axes=frozenset(structure.axis_names))
         self.points = points
@@ -230,26 +302,26 @@ class PointsBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
         return len(self.points)
 
 
-class CoordSeparableBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
+class GridBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):  # ty: ignore[invalid-method-override]
     r"""A batch that separates coordinate axes for selected geometry labels.
 
     For some geometries it is efficient to sample each coordinate axis independently,
     e.g. draw $(x_1,\dots,x_{n_1})$ and $(y_1,\dots,y_{n_2})$ separately and evaluate
     on the implied grid.
 
-    A `CoordSeparableBatch` stores:
+    A `GridBatch` stores:
     - `coord_axes_by_label`: which named axes correspond to each coordinate component,
       e.g. `("x0", "x1")` for a 2D geometry label.
     - `coord_mask_by_label`: a mask `coordax.Field` that can be used to exclude
       coordinate combinations outside an irregular geometry (e.g. AABB grid masking).
     - `coord_geometry_weight_by_label`: optional non-negative numerical geometry
       corrections over the same logical axes as each coordinate mask.
-    - `dense_structure`: a normal `ProductStructure` for any remaining (non-separable)
+    - `dense_structure`: a normal `SampleLayout` for any remaining (non-separable)
       labels sampled in paired blocks.
     """
 
     points: Points
-    dense_structure: ProductStructure
+    dense_structure: SampleLayout
     coord_axes_by_label: frozendict[str, tuple[str, ...]]
     coord_mask_by_label: frozendict[str, cx.Field]
     coord_geometry_weight_by_label: frozendict[str, cx.Field]
@@ -260,7 +332,7 @@ class CoordSeparableBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
         self,
         points: Points,
         *,
-        dense_structure: ProductStructure,
+        dense_structure: SampleLayout,
         coord_axes_by_label: frozendict[str, tuple[str, ...]]
         | Mapping[str, tuple[str, ...]],
         coord_mask_by_label: frozendict[str, cx.Field] | Mapping[str, cx.Field],
@@ -277,7 +349,7 @@ class CoordSeparableBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
         """Construct a coordinate-separable batch of points."""
         if dense_structure.axis_names is None:
             raise ValueError(
-                "CoordSeparableBatch requires a canonicalized dense_structure (axis_names set)."
+                "GridBatch requires a canonicalized dense_structure (axis_names set)."
             )
 
         axes_by_label = frozendict(coord_axes_by_label)
@@ -304,48 +376,48 @@ class CoordSeparableBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
             x = points[lbl]
             if not isinstance(x, tuple):
                 raise TypeError(
-                    f"CoordSeparableBatch expects points[{lbl!r}] to be a tuple of coordax.Field axes."
+                    f"GridBatch expects points[{lbl!r}] to be a tuple of coordax.Field axes."
                 )
             if len(x) != len(axes):
                 raise ValueError(
-                    f"CoordSeparableBatch points[{lbl!r}] has {len(x)} axis arrays "
+                    f"GridBatch points[{lbl!r}] has {len(x)} axis arrays "
                     f"but coord_axes_by_label declares {len(axes)}."
                 )
             for field, ax_name in zip(x, axes, strict=True):
                 if not isinstance(field, cx.Field):
                     raise TypeError(
-                        f"CoordSeparableBatch expects points[{lbl!r}] entries to be coordax.Field."
+                        f"GridBatch expects points[{lbl!r}] entries to be coordax.Field."
                     )
                 if field.dims != (ax_name,):
                     raise ValueError(
-                        f"CoordSeparableBatch expects points[{lbl!r}] axis to have dims "
+                        f"GridBatch expects points[{lbl!r}] axis to have dims "
                         f"({ax_name!r},), got {field.dims}."
                     )
 
             mask = mask_by_label[lbl]
             if not isinstance(mask, cx.Field):
                 raise TypeError(
-                    f"CoordSeparableBatch mask for {lbl!r} must be a coordax.Field."
+                    f"GridBatch mask for {lbl!r} must be a coordax.Field."
                 )
             if mask.dims != axes:
                 raise ValueError(
-                    f"CoordSeparableBatch mask for {lbl!r} must have dims {axes}, got {mask.dims}."
+                    f"GridBatch mask for {lbl!r} must have dims {axes}, got {mask.dims}."
                 )
             geometry_weight = geometry_weight_by_label.get(lbl)
             if geometry_weight is not None:
                 if not isinstance(geometry_weight, cx.Field):
                     raise TypeError(
-                        f"CoordSeparableBatch geometry weight for {lbl!r} "
+                        f"GridBatch geometry weight for {lbl!r} "
                         "must be a coordax.Field."
                     )
                 if geometry_weight.dims != axes:
                     raise ValueError(
-                        f"CoordSeparableBatch geometry weight for {lbl!r} must "
+                        f"GridBatch geometry weight for {lbl!r} must "
                         f"have dims {axes}, got {geometry_weight.dims}."
                     )
                 if geometry_weight.data.shape != mask.data.shape:
                     raise ValueError(
-                        f"CoordSeparableBatch geometry weight for {lbl!r} must "
+                        f"GridBatch geometry weight for {lbl!r} must "
                         f"have shape {mask.data.shape}, got {geometry_weight.data.shape}."
                     )
                 weight_data = jnp.asarray(geometry_weight.data, dtype=float)
@@ -404,10 +476,14 @@ class CoordSeparableBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):
 
 
 __all__ = [
-    "Points",
+    "AxisSampling",
+    "GridBatch",
+    "GridSampling",
     "NumPoints",
-    "ProductStructure",
-    "PointsBatch",
-    "CoordSeparableBatch",
+    "PointBatch",
+    "SamplingPlan",
+    "PointSampling",
+    "Points",
+    "SampleLayout",
     "_axis_name_for_coord",
 ]

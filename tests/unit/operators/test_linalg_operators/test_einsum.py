@@ -7,13 +7,15 @@ import jax.numpy as jnp
 import opt_einsum as oe
 import pytest
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.domain import DomainFunction, Square
 from phydrax.operators.linalg import einsum
 
 
 def test_einsum_simple_dot_product():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -32,7 +34,9 @@ def test_einsum_simple_dot_product():
 
 
 def test_einsum_outer_product():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -52,7 +56,9 @@ def test_einsum_outer_product():
 
 
 def test_einsum_matrix_vector_product():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def A(x):
@@ -72,25 +78,19 @@ def test_einsum_matrix_vector_product():
 
 
 def test_einsum_metadata_only_preserved_when_all_match():
-    geom = Square(center=(0.0, 0.0), side=2.0)
-    u = DomainFunction(
-        domain=geom,
-        deps=("x",),
-        func=lambda x: jnp.array([x[0], x[1]]),
-        metadata={"m": 1},
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
-    v = DomainFunction(
-        domain=geom,
-        deps=("x",),
-        func=lambda x: jnp.array([x[1], x[0]]),
-        metadata={"m": 2},
-    )
+    u = geom.Function("x")(lambda x: jnp.array([x[0], x[1]])).with_metadata(**{"m": 1})
+    v = geom.Function("x")(lambda x: jnp.array([x[1], x[0]])).with_metadata(**{"m": 2})
     out = einsum("i,i->", u, v)
     assert out.metadata == {}
 
 
 def test_einsum_constant_matrix_and_domain_vector():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def v(x):

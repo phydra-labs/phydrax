@@ -10,11 +10,10 @@ import coordax as cx
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 
+from phydrax.domain import DomainFunction, PointBatch, ProbabilityDomain, SampleLayout
+
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
-from ..domain._function import DomainFunction
-from ..domain._probability import ProbabilityDomain
-from ..domain._structure import PointsBatch, ProductStructure
 from ._batches import PointIntegrationBatch
 from ._estimates import (
     FixedQuadratureDiagnostics,
@@ -44,13 +43,13 @@ def materialize_fixed_probability(
                 "domain; use GaussLegendreRule or stochastic integration."
             )
     samples = target.probability.distribution.icdf(unit)
-    structure = ProductStructure(((target.probability.label,),)).canonicalize(
+    structure = SampleLayout(((target.probability.label,),)).canonicalize(
         (target.probability.label,)
     )
     axis = structure.axis_for(target.probability.label)
     if axis is None:
         raise RuntimeError("Probability quadrature structure has no axis.")
-    points = PointsBatch(
+    points = PointBatch(
         frozendict(
             {target.probability.label: cx.Field(jnp.asarray(samples), dims=(axis,))}
         ),

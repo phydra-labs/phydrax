@@ -5,13 +5,16 @@
 import coordax as cx
 import jax.numpy as jnp
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.domain import DomainFunction, Square, TimeInterval
+from phydrax.domain import TimeInterval
 from phydrax.operators.differential import grad
 
 
 def test_grad_scalar_function_point():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def f(x):
@@ -24,7 +27,9 @@ def test_grad_scalar_function_point():
 
 
 def test_grad_vector_function_point():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def f(x):
@@ -38,7 +43,9 @@ def test_grad_vector_function_point():
 
 
 def test_grad_spacetime_var_x_ignores_t(sample_batch):
-    dom = Square(center=(0.0, 0.0), side=2.0) @ TimeInterval(0.0, 1.0)
+    dom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    ) @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x", "t")
     def f(x, t):
@@ -54,10 +61,12 @@ def test_grad_spacetime_var_x_ignores_t(sample_batch):
     assert jnp.allclose(out, expected[:, None, :])
 
 
-def test_grad_coord_separable_matches_expected(sample_coord_separable):
-    geom = Square(center=(0.0, 0.0), side=2.0)
+def test_grad_coord_separable_matches_expected(sample_grid):
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     component = geom.component()
-    batch = sample_coord_separable(component, {"x": (6, 5)}, dense_blocks=(), key=0)
+    batch = sample_grid(component, {"x": (6, 5)}, dense_blocks=(), key=0)
 
     @geom.Function("x")
     def f(x):
@@ -74,9 +83,9 @@ def test_grad_coord_separable_matches_expected(sample_coord_separable):
 
 
 def test_grad_preserves_metadata():
-    geom = Square(center=(0.0, 0.0), side=2.0)
-    u = DomainFunction(
-        domain=geom, deps=("x",), func=lambda x: x[0] ** 2, metadata={"scale": 3}
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
+    u = geom.Function("x")(lambda x: x[0] ** 2).with_metadata(**{"scale": 3})
     g = grad(u)
     assert g.metadata == u.metadata

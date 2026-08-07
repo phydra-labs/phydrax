@@ -121,6 +121,7 @@ from .architectures._wavelet import (
     WaveletNeuralOperator,
     WaveletSpectralConvND,
 )
+from .core._binding import ModelBinding
 from .core._encoded_operator import AbstractEncodedOperatorModel
 from .core._loss import add_model_loss, ModelWithLoss
 from .core._operator import (
@@ -178,8 +179,8 @@ from .core._operator_distribution import (
     GaussianOperatorDistribution,
 )
 from .core._operator_domain import (
-    operator_domain_view_from_coord_separable,
     operator_domain_view_from_graph,
+    operator_domain_view_from_grid,
     operator_domain_view_from_points,
     operator_domain_view_from_ragged_series,
     operator_domain_view_from_simplicial,
@@ -398,6 +399,7 @@ __all__ = [
     "MLP",
     "NativeGraphOperator",
     "ModifiedMLP",
+    "ModelBinding",
     "ModelWithLoss",
     "ConcatenatedModel",
     "MagnitudeDirectionModel",
@@ -422,7 +424,7 @@ __all__ = [
     "OperatorTask",
     "OperatorTrainingRegime",
     "OperatorTrainingRequirement",
-    "operator_domain_view_from_coord_separable",
+    "operator_domain_view_from_grid",
     "operator_domain_view_from_graph",
     "operator_domain_view_from_points",
     "operator_domain_view_from_ragged_series",

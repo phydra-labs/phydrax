@@ -10,10 +10,17 @@ from typing import Literal
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import (
+    ComponentSum,
+    DomainComponent,
+    DomainFunction,
+    GridBatch,
+    PointBatch,
+    PointSampling,
+    SamplingPlan,
+)
+
 from .._doc import DOC_KEY0
-from ..domain._components import DomainComponent, DomainComponentUnion
-from ..domain._function import DomainFunction
-from ..domain._structure import CoordSeparableBatch, PointsBatch, ProductStructure
 from ..metrix import RiemannianMetric
 from ..operators.differential import (
     dt,
@@ -24,7 +31,6 @@ from ..operators.differential import (
 )
 from ._adaptive import AbstractCollocationPolicy
 from ._functional import FunctionalConstraint
-from ._sampling_spec import SamplingNumPoints
 
 
 CoefficientField = DomainFunction | str
@@ -113,7 +119,7 @@ def _dot_fields(left: DomainFunction, right: DomainFunction, /) -> DomainFunctio
 
 def ContinuousKolmogorovConstraint(
     constraint_var: str,
-    component: DomainComponent | DomainComponentUnion,
+    component: DomainComponent | ComponentSum,
     /,
     *,
     drift: CoefficientField,
@@ -123,17 +129,14 @@ def ContinuousKolmogorovConstraint(
     metric: RiemannianMetric | None = None,
     interpretation: StochasticInterpretation = "ito",
     state_var: str = "x",
-    num_points: SamplingNumPoints,
-    structure: ProductStructure,
-    dense_structure: ProductStructure | None = None,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan | tuple[PointSampling, ...],
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
     reduction: Literal["mean", "integral"] = "mean",
     sampling_mode: Literal["resample", "fixed"] = "resample",
     fixed_batch: (
-        PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...] | None
+        PointBatch | GridBatch | tuple[PointBatch, ...] | None
     ) = None,
     fixed_batch_key: Key[Array, ""] = DOC_KEY0,
     collocation_policy: AbstractCollocationPolicy | None = None,
@@ -180,10 +183,7 @@ def ContinuousKolmogorovConstraint(
         component=component,
         residual=residual,
         constraint_vars=_constraint_vars(constraint_var, drift, diffusion, covariance),
-        num_points=num_points,
-        structure=structure,
-        dense_structure=dense_structure,
-        sampler=sampler,
+        sampling=sampling,
         weight=weight,
         label=label,
         over=over,
@@ -197,7 +197,7 @@ def ContinuousKolmogorovConstraint(
 
 def ContinuousFokkerPlanckConstraint(
     constraint_var: str,
-    component: DomainComponent | DomainComponentUnion,
+    component: DomainComponent | ComponentSum,
     /,
     *,
     drift: CoefficientField,
@@ -207,17 +207,14 @@ def ContinuousFokkerPlanckConstraint(
     metric: RiemannianMetric | None = None,
     interpretation: StochasticInterpretation = "ito",
     state_var: str = "x",
-    num_points: SamplingNumPoints,
-    structure: ProductStructure,
-    dense_structure: ProductStructure | None = None,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan | tuple[PointSampling, ...],
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
     reduction: Literal["mean", "integral"] = "mean",
     sampling_mode: Literal["resample", "fixed"] = "resample",
     fixed_batch: (
-        PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...] | None
+        PointBatch | GridBatch | tuple[PointBatch, ...] | None
     ) = None,
     fixed_batch_key: Key[Array, ""] = DOC_KEY0,
     collocation_policy: AbstractCollocationPolicy | None = None,
@@ -263,10 +260,7 @@ def ContinuousFokkerPlanckConstraint(
         component=component,
         residual=residual,
         constraint_vars=_constraint_vars(constraint_var, drift, diffusion, covariance),
-        num_points=num_points,
-        structure=structure,
-        dense_structure=dense_structure,
-        sampler=sampler,
+        sampling=sampling,
         weight=weight,
         label=label,
         over=over,
@@ -290,17 +284,14 @@ def ContinuousProbabilityFluxBoundaryConstraint(
     metric: RiemannianMetric | None = None,
     interpretation: StochasticInterpretation = "ito",
     state_var: str = "x",
-    num_points: SamplingNumPoints,
-    structure: ProductStructure,
-    dense_structure: ProductStructure | None = None,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
     reduction: Literal["mean", "integral"] = "mean",
     sampling_mode: Literal["resample", "fixed"] = "resample",
     fixed_batch: (
-        PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...] | None
+        PointBatch | GridBatch | tuple[PointBatch, ...] | None
     ) = None,
     fixed_batch_key: Key[Array, ""] = DOC_KEY0,
     collocation_policy: AbstractCollocationPolicy | None = None,
@@ -347,10 +338,7 @@ def ContinuousProbabilityFluxBoundaryConstraint(
         component=component,
         residual=residual,
         constraint_vars=_constraint_vars(constraint_var, drift, diffusion, covariance),
-        num_points=num_points,
-        structure=structure,
-        dense_structure=dense_structure,
-        sampler=sampler,
+        sampling=sampling,
         weight=weight,
         label=label,
         over=over,

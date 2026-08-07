@@ -5,32 +5,24 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any
 
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from .._callable import _ensure_special_kwonly_args
-from ..domain._base import _AbstractGeometry
-from ..domain._components import (
+from phydrax.domain import (
+    AbstractGeometry,
     Boundary,
+    ComponentSum,
     DomainComponent,
-    DomainComponentUnion,
+    DomainFunction,
     FixedStart,
+    SamplingPlan,
 )
-from ..domain._domain import RelabeledDomain
-from ..domain._function import DomainFunction
-from ..domain._structure import NumPoints, ProductStructure
+
+from .._callable import _ensure_special_kwonly_args
 from ..operators.differential import cauchy_stress
 from ..operators.linalg import einsum
 from ._functional_integral import IntegralEqualityConstraint
-
-
-def _default_structure(
-    component: DomainComponent | DomainComponentUnion, /
-) -> ProductStructure:
-    labels = component.domain.labels
-    return ProductStructure((labels,)).canonicalize(component.domain.labels)
 
 
 def _as_domain_function(
@@ -55,9 +47,9 @@ def _as_array_target(
 
 
 def _normal(
-    component: DomainComponent | DomainComponentUnion, *, var: str
+    component: DomainComponent | ComponentSum, *, var: str
 ) -> DomainFunction:
-    if isinstance(component, DomainComponentUnion):
+    if isinstance(component, ComponentSum):
         raise TypeError("Boundary normals require a single DomainComponent, not a union.")
     return component.normal(var=var)
 
@@ -74,9 +66,8 @@ def _boundary_component(
         geometry_labels: list[str] = []
         for label in domain.labels:
             factor = domain.factor(label)
-            if isinstance(factor, RelabeledDomain):
-                factor = factor.base
-            if isinstance(factor, _AbstractGeometry):
+
+            if isinstance(factor, AbstractGeometry):
                 geometry_labels.append(label)
         if len(geometry_labels) != 1:
             raise ValueError(
@@ -90,9 +81,8 @@ def _boundary_component(
         resolved_var = var
 
     factor = domain.factor(resolved_var)
-    if isinstance(factor, RelabeledDomain):
-        factor = factor.base
-    if not isinstance(factor, _AbstractGeometry):
+
+    if not isinstance(factor, AbstractGeometry):
         raise TypeError(
             f"Boundary integration requires a geometry label, got "
             f"{type(factor).__name__} for {resolved_var!r}."
@@ -145,9 +135,7 @@ def ContinuousIntegralInteriorConstraint(
     operator: Callable[..., DomainFunction] | DomainFunction,
     /,
     *,
-    num_points: NumPoints | tuple[Any, ...],
-    structure: ProductStructure | None = None,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -167,21 +155,14 @@ def ContinuousIntegralInteriorConstraint(
     `constraint_vars`.
     """
     component = domain.component(where=where, where_all=where_all)
-    structure = _default_structure(component) if structure is None else structure
     op = _ensure_operator(operator)
 
-    return IntegralEqualityConstraint.from_operator(
-        component=component,
-        operator=op,
-        constraint_vars=constraint_vars,
-        equal_to=0.0 if equal_to is None else equal_to,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-    )
+    return IntegralEqualityConstraint.from_operator(component=component,
+    operator=op,
+    constraint_vars=constraint_vars,
+    equal_to=0.0 if equal_to is None else equal_to, sampling=sampling, weight=weight,
+    label=label,
+    over=over,)
 
 
 def ContinuousIntegralBoundaryConstraint(
@@ -191,9 +172,7 @@ def ContinuousIntegralBoundaryConstraint(
     /,
     *,
     var: str | None = None,
-    num_points: NumPoints | tuple[Any, ...],
-    structure: ProductStructure | None = None,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -218,24 +197,17 @@ def ContinuousIntegralBoundaryConstraint(
         where=where,
         where_all=where_all,
     )
-    structure = _default_structure(component) if structure is None else structure
     op = _ensure_operator(operator)
 
     def operator_with_normals(*funcs: DomainFunction) -> DomainFunction:
         return op(*funcs, _normal(component, var=resolved_var))
 
-    return IntegralEqualityConstraint.from_operator(
-        component=component,
-        operator=operator_with_normals,
-        constraint_vars=constraint_vars,
-        equal_to=0.0 if equal_to is None else equal_to,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-    )
+    return IntegralEqualityConstraint.from_operator(component=component,
+    operator=operator_with_normals,
+    constraint_vars=constraint_vars,
+    equal_to=0.0 if equal_to is None else equal_to, sampling=sampling, weight=weight,
+    label=label,
+    over=over,)
 
 
 def ContinuousIntegralInitialConstraint(
@@ -245,9 +217,7 @@ def ContinuousIntegralInitialConstraint(
     /,
     *,
     evolution_var: str = "t",
-    num_points: NumPoints | tuple[Any, ...],
-    structure: ProductStructure | None = None,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -265,21 +235,14 @@ def ContinuousIntegralInitialConstraint(
     component = domain.component(
         {evolution_var: FixedStart()}, where=where, where_all=where_all
     )
-    structure = _default_structure(component) if structure is None else structure
     op = _ensure_operator(operator)
 
-    return IntegralEqualityConstraint.from_operator(
-        component=component,
-        operator=op,
-        constraint_vars=constraint_vars,
-        equal_to=0.0 if equal_to is None else equal_to,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-    )
+    return IntegralEqualityConstraint.from_operator(component=component,
+    operator=op,
+    constraint_vars=constraint_vars,
+    equal_to=0.0 if equal_to is None else equal_to, sampling=sampling, weight=weight,
+    label=label,
+    over=over,)
 
 
 def EMBoundaryChargeConstraint(
@@ -289,9 +252,7 @@ def EMBoundaryChargeConstraint(
     *,
     total_free_charge: ArrayLike,
     var: str | None = None,
-    num_points: NumPoints | tuple[Any, ...],
-    structure: ProductStructure | None = None,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -318,24 +279,17 @@ def EMBoundaryChargeConstraint(
         where=where,
         where_all=where_all,
     )
-    structure = _default_structure(component) if structure is None else structure
     n = _normal(component, var=resolved_var)
 
     def operator(u: DomainFunction, /) -> DomainFunction:
         return _dot(u, n)
 
-    return IntegralEqualityConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=field_var,
-        equal_to=q,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-    )
+    return IntegralEqualityConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=field_var,
+    equal_to=q, sampling=sampling, weight=weight,
+    label=label,
+    over=over,)
 
 
 def MagneticFluxZeroConstraint(
@@ -344,9 +298,7 @@ def MagneticFluxZeroConstraint(
     /,
     *,
     var: str | None = None,
-    num_points: NumPoints | tuple[Any, ...],
-    structure: ProductStructure | None = None,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -367,24 +319,17 @@ def MagneticFluxZeroConstraint(
         where=where,
         where_all=where_all,
     )
-    structure = _default_structure(component) if structure is None else structure
     n = _normal(component, var=resolved_var)
 
     def operator(u: DomainFunction, /) -> DomainFunction:
         return _dot(u, n)
 
-    return IntegralEqualityConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=field_var,
-        equal_to=0.0,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-    )
+    return IntegralEqualityConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=field_var,
+    equal_to=0.0, sampling=sampling, weight=weight,
+    label=label,
+    over=over,)
 
 
 def CFDBoundaryFlowRateConstraint(
@@ -394,9 +339,7 @@ def CFDBoundaryFlowRateConstraint(
     *,
     flow_rate: ArrayLike,
     var: str | None = None,
-    num_points: NumPoints | tuple[Any, ...],
-    structure: ProductStructure | None = None,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -423,24 +366,17 @@ def CFDBoundaryFlowRateConstraint(
         where=where,
         where_all=where_all,
     )
-    structure = _default_structure(component) if structure is None else structure
     n = _normal(component, var=resolved_var)
 
     def operator(u: DomainFunction, /) -> DomainFunction:
         return _dot(u, n)
 
-    return IntegralEqualityConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=velocity_var,
-        equal_to=target,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-    )
+    return IntegralEqualityConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=velocity_var,
+    equal_to=target, sampling=sampling, weight=weight,
+    label=label,
+    over=over,)
 
 
 def CFDKineticEnergyFluxBoundaryConstraint(
@@ -450,9 +386,7 @@ def CFDKineticEnergyFluxBoundaryConstraint(
     *,
     target_total_power: ArrayLike,
     var: str | None = None,
-    num_points: NumPoints | tuple[Any, ...],
-    structure: ProductStructure | None = None,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -477,24 +411,17 @@ def CFDKineticEnergyFluxBoundaryConstraint(
         where=where,
         where_all=where_all,
     )
-    structure = _default_structure(component) if structure is None else structure
     n = _normal(component, var=resolved_var)
 
     def operator(u: DomainFunction, /) -> DomainFunction:
         return 0.5 * _dot(u, u) * _dot(u, n)
 
-    return IntegralEqualityConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=velocity_var,
-        equal_to=target,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-    )
+    return IntegralEqualityConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=velocity_var,
+    equal_to=target, sampling=sampling, weight=weight,
+    label=label,
+    over=over,)
 
 
 def SolidTotalReactionBoundaryConstraint(
@@ -506,9 +433,7 @@ def SolidTotalReactionBoundaryConstraint(
     mu: ArrayLike,
     target_reaction: ArrayLike,
     var: str | None = None,
-    num_points: NumPoints | tuple[Any, ...],
-    structure: ProductStructure | None = None,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -534,7 +459,6 @@ def SolidTotalReactionBoundaryConstraint(
         where=where,
         where_all=where_all,
     )
-    structure = _default_structure(component) if structure is None else structure
     lambda_fn = _as_domain_function(lambda_, domain, name="lambda_")
     mu_fn = _as_domain_function(mu, domain, name="mu")
     n = _normal(component, var=resolved_var)
@@ -548,18 +472,12 @@ def SolidTotalReactionBoundaryConstraint(
         )
         return _matvec(sigma, n)
 
-    return IntegralEqualityConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=displacement_var,
-        equal_to=target,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-    )
+    return IntegralEqualityConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=displacement_var,
+    equal_to=target, sampling=sampling, weight=weight,
+    label=label,
+    over=over,)
 
 
 def AveragePressureBoundaryConstraint(
@@ -569,9 +487,7 @@ def AveragePressureBoundaryConstraint(
     *,
     var: str | None = None,
     mean_pressure: ArrayLike,
-    num_points: NumPoints | tuple[Any, ...],
-    structure: ProductStructure | None = None,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -602,20 +518,13 @@ def AveragePressureBoundaryConstraint(
         where=where,
         where_all=where_all,
     )
-    structure = _default_structure(component) if structure is None else structure
 
-    return IntegralEqualityConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=pressure_var,
-        equal_to=target,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-    )
+    return IntegralEqualityConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=pressure_var,
+    equal_to=target, sampling=sampling, weight=weight,
+    label=label,
+    over=over,)
 
 
 def EMPoyntingFluxBoundaryConstraint(
@@ -626,9 +535,7 @@ def EMPoyntingFluxBoundaryConstraint(
     *,
     var: str | None = None,
     target_total_power: ArrayLike,
-    num_points: NumPoints | tuple[Any, ...],
-    structure: ProductStructure | None = None,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -653,22 +560,15 @@ def EMPoyntingFluxBoundaryConstraint(
         where=where,
         where_all=where_all,
     )
-    structure = _default_structure(component) if structure is None else structure
     n = _normal(component, var=resolved_var)
 
     def operator(E: DomainFunction, H: DomainFunction, /) -> DomainFunction:
         s = _cross(E, H)
         return _dot(s, n)
 
-    return IntegralEqualityConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=(e_var, h_var),
-        equal_to=target,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-    )
+    return IntegralEqualityConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=(e_var, h_var),
+    equal_to=target, sampling=sampling, weight=weight,
+    label=label,
+    over=over,)
