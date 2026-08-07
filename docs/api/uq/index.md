@@ -1,9 +1,10 @@
 # Uncertainty quantification
 
-`phydrax.uq` provides explicit exact and factorized posterior problems, MAP
-optimization, BlackJAX NUTS/HMC, fixed-step SGLD/SGNHT with control variates,
-flow-assisted NUTS, Pathfinder, adaptive tempered SMC, dense and structured Laplace
-approximations, exact/sparse/correlated-output Gaussian-process model discrepancy,
+`phydrax.uq` provides explicit exact and factorized posterior problems, bounded
+global and gradient-based local MAP optimization, BlackJAX NUTS/HMC, fixed-step
+SGLD/SGNHT with control variates, flow-assisted NUTS, Pathfinder, adaptive tempered
+SMC, dense and structured Laplace approximations, exact, sparse, and
+correlated-output Gaussian-process model discrepancy,
 predictive fields, coherent stochastic models, likelihoods and proper scores,
 matrix-free first-order covariance propagation, normalized errors-in-variables
 inference, conformal calibration, uncertain-input propagation, and global sensitivity.

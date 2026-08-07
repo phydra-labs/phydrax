@@ -217,6 +217,20 @@ likelihood exactly rather than defining a second stochastic objective.
 
 ## MAP estimation
 
+`search_map` performs bounded stochastic global initialization in unconstrained
+posterior-position coordinates. It evaluates the complete
+`PosteriorProblem.negative_log_density`, preserves the population and exact
+accounting, and never interprets that population as posterior samples. Local
+stationarity remains a separate `find_map` phase.
+
+::: phydrax.uq.search_map
+
+---
+
+::: phydrax.uq.MAPSearchResult
+
+---
+
 ::: phydrax.uq.find_map
 
 ---

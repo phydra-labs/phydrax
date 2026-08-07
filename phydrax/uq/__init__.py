@@ -153,6 +153,7 @@ from ._linearized import (
     propagate_linearized_map,
 )
 from ._map import find_map, MAPConvergenceError, MAPResult
+from ._map_search import MAPSearchResult, search_map
 from ._martingale import (
     jump_compensator_diagnostics,
     JumpCompensatorDiagnostics,
@@ -640,6 +641,8 @@ __all__ = [
     "find_map",
     "MAPConvergenceError",
     "MAPResult",
+    "MAPSearchResult",
+    "search_map",
     "FlowNUTSConfig",
     "FlowNUTSResult",
     "MCMCChainWarmup",
