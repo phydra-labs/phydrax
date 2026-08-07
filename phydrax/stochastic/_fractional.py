@@ -21,6 +21,13 @@ from .._strict import StrictModule
 
 
 FractionalGaussianInterpolation: TypeAlias = Literal["grid", "linear"]
+FractionalGaussianSamplingMethod: TypeAlias = Literal[
+    "dense", "davies-harte", "auto"
+]
+_ResolvedFractionalGaussianSamplingMethod: TypeAlias = Literal[
+    "dense", "davies-harte"
+]
+_AUTO_DAVIES_HARTE_MIN_INCREMENTS = 256
 
 
 def _digest_array(digest: hashlib._Hash, value: ArrayLike, /) -> None:
@@ -52,6 +59,206 @@ def _samples(value: Sequence[int], /) -> tuple[int, ...]:
     if any(size <= 0 for size in shape):
         raise ValueError("sample_shape dimensions must be positive.")
     return shape
+
+
+class _DenseFractionalGaussianSampler(StrictModule):
+    covariance_factor: Array
+    num_times: int = eqx.field(static=True)
+
+    def __init__(self, covariance_factor: Array, num_times: int, /):
+        self.covariance_factor = covariance_factor
+        self.num_times = int(num_times)
+
+    def sample_paths(
+        self,
+        keys: Array,
+        /,
+        *,
+        dimension: int,
+        dtype,
+    ) -> Array:
+        normals = jax.vmap(
+            lambda key: jr.normal(
+                key,
+                (self.num_times, dimension),
+                dtype=dtype,
+            )
+        )(keys)
+        return jnp.einsum(
+            "ij,pjd->pid",
+            self.covariance_factor,
+            normals,
+        )
+
+
+class _DaviesHarteFractionalGaussianSampler(StrictModule):
+    spectrum_factor: Array
+    num_times: int = eqx.field(static=True)
+    num_increments: int = eqx.field(static=True)
+    embedding_size: int = eqx.field(static=True)
+
+    def __init__(self, spectrum_factor: Array, num_times: int, /):
+        self.spectrum_factor = spectrum_factor
+        self.num_times = int(num_times)
+        self.num_increments = self.num_times - 1
+        self.embedding_size = 2 * self.num_increments
+
+    def sample_paths(
+        self,
+        keys: Array,
+        /,
+        *,
+        dimension: int,
+        dtype,
+    ) -> Array:
+        normals = jax.vmap(
+            lambda key: jr.normal(
+                key,
+                (self.embedding_size, dimension),
+                dtype=dtype,
+            )
+        )(keys)
+        frequencies = jnp.fft.fft(normals, axis=1)
+        embedded = jnp.fft.ifft(
+            frequencies * self.spectrum_factor[None, :, None],
+            axis=1,
+        ).real
+        increments = embedded[:, : self.num_increments, :]
+        anchored = jnp.zeros((keys.shape[0], 1, dimension), dtype=dtype)
+        return jnp.concatenate(
+            (anchored, jnp.cumsum(increments, axis=1)),
+            axis=1,
+        )
+
+
+_FractionalGaussianSampler: TypeAlias = (
+    _DenseFractionalGaussianSampler | _DaviesHarteFractionalGaussianSampler
+)
+
+
+def _dense_sampler(
+    process: FractionalGaussianProcess,
+    nodes: Array,
+    /,
+) -> _DenseFractionalGaussianSampler:
+    covariance = np.asarray(
+        jax.device_get(process.time_covariance(nodes[:, None], nodes[None, :]))
+    )
+    eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+    tolerance = (
+        1000.0
+        * np.finfo(covariance.dtype).eps
+        * max(
+            1.0,
+            float(np.linalg.norm(covariance, ord=2)),
+        )
+    )
+    if np.any(eigenvalues < -tolerance):
+        raise ValueError("fractional Gaussian grid covariance is not semidefinite.")
+    eigenvalues = np.maximum(eigenvalues, 0.0)
+    factor = jnp.asarray(eigenvectors * np.sqrt(eigenvalues)[None, :])
+    return _DenseFractionalGaussianSampler(factor, int(nodes.size))
+
+
+def _uniform_step(nodes: np.ndarray, /) -> float | None:
+    increments = np.diff(nodes)
+    step = float((nodes[-1] - nodes[0]) / (nodes.size - 1))
+    dtype = np.dtype(nodes.dtype)
+    tolerance = (
+        64.0
+        * np.finfo(dtype).eps
+        * max(
+            abs(step),
+            float(np.max(np.abs(nodes))),
+            float(np.finfo(dtype).tiny),
+        )
+    )
+    if np.any(np.abs(increments - step) > tolerance):
+        return None
+    return step
+
+
+def _davies_harte_sampler(
+    process: FractionalGaussianProcess,
+    nodes: Array,
+    nodes_host: np.ndarray,
+    step: float,
+    /,
+) -> tuple[_DaviesHarteFractionalGaussianSampler | None, str | None]:
+    num_times = int(nodes.size)
+    num_increments = num_times - 1
+    lags = np.arange(num_increments + 1, dtype=np.float64)
+    power = 2.0 * process.hurst
+    autocovariance = 0.5 * (
+        np.abs(lags - 1.0) ** power
+        - 2.0 * lags**power
+        + (lags + 1.0) ** power
+    )
+    autocovariance *= np.float64(step) ** power
+    if np.any(~np.isfinite(autocovariance)):
+        return None, "Davies-Harte embedding spectrum must be finite."
+    embedding = np.concatenate(
+        (autocovariance, autocovariance[-2:0:-1]),
+        axis=0,
+    )
+    spectrum = np.fft.fft(embedding).real
+    dtype = np.dtype(nodes_host.dtype)
+    scale = max(
+        float(np.max(np.abs(spectrum))),
+        float(np.max(np.abs(embedding))),
+        float(np.finfo(dtype).tiny),
+    )
+    tolerance = 64.0 * np.finfo(dtype).eps * scale
+    if np.any(~np.isfinite(spectrum)):
+        return None, "Davies-Harte embedding spectrum must be finite."
+    if np.any(spectrum < -tolerance):
+        return None, (
+            "Davies-Harte embedding spectrum is not positive semidefinite "
+            "at the grid dtype and scale."
+        )
+    spectrum = np.maximum(spectrum, 0.0)
+    factor = jnp.asarray(np.sqrt(spectrum), dtype=nodes.dtype)
+    return _DaviesHarteFractionalGaussianSampler(factor, num_times), None
+
+
+def _sampling_strategy(
+    process: FractionalGaussianProcess,
+    nodes: Array,
+    nodes_host: np.ndarray,
+    method: FractionalGaussianSamplingMethod,
+    /,
+) -> tuple[
+    _FractionalGaussianSampler,
+    _ResolvedFractionalGaussianSamplingMethod,
+    str,
+]:
+    if method not in ("dense", "davies-harte", "auto"):
+        raise ValueError("method must be 'dense', 'davies-harte', or 'auto'.")
+    if method == "dense":
+        return _dense_sampler(process, nodes), "dense", "explicit:dense"
+
+    step = _uniform_step(nodes_host)
+    if method == "davies-harte":
+        if step is None:
+            raise ValueError(
+                "Davies-Harte sampling requires an increasing uniform grid."
+            )
+        sampler, error = _davies_harte_sampler(process, nodes, nodes_host, step)
+        if sampler is None:
+            assert error is not None
+            raise ValueError(error)
+        return sampler, "davies-harte", "explicit:davies-harte"
+
+    num_increments = int(nodes.size) - 1
+    if num_increments < _AUTO_DAVIES_HARTE_MIN_INCREMENTS:
+        return _dense_sampler(process, nodes), "dense", "auto:dense-small-grid"
+    if step is None:
+        return _dense_sampler(process, nodes), "dense", "auto:dense-nonuniform-grid"
+    sampler, error = _davies_harte_sampler(process, nodes, nodes_host, step)
+    if sampler is None:
+        assert error is not None
+        return _dense_sampler(process, nodes), "dense", "auto:dense-invalid-embedding"
+    return sampler, "davies-harte", "auto:davies-harte"
 
 
 class FractionalGaussianProcess(StrictModule):
@@ -162,19 +369,23 @@ class FractionalGaussianProcess(StrictModule):
 class FractionalGaussianRealization(StrictModule):
     """Exact finite-grid realization of a fractional Gaussian process.
 
-    Values on ``grid`` are sampled from the exact covariance matrix. Queries either
-    require grid nodes or use one declared global linear interpolant; repeated and
-    overlapping interval queries therefore share the same path and add exactly.
+    ``dense`` samples the declared finite-grid covariance directly.
+    ``davies-harte`` samples the same law through a circulant embedding on a
+    uniform grid. Queries either require grid nodes or use one declared global
+    linear interpolant; repeated and overlapping interval queries therefore
+    share the same path and add exactly.
     """
 
     process: FractionalGaussianProcess
     root_key: Array
     path_indices: Array
     grid: Array
-    covariance_factor: Array
+    _sampler: _FractionalGaussianSampler
     sample_shape: tuple[int, ...] = eqx.field(static=True)
     support: tuple[float, float] = eqx.field(static=True)
     label: str | None = eqx.field(static=True)
+    sampling_method: _ResolvedFractionalGaussianSamplingMethod = eqx.field(static=True)
+    sampling_provenance: str = eqx.field(static=True)
     realization_id: str = eqx.field(static=True)
     coupling_id: str = eqx.field(static=True)
 
@@ -186,6 +397,7 @@ class FractionalGaussianRealization(StrictModule):
         /,
         *,
         sample_shape: Sequence[int] = (),
+        method: FractionalGaussianSamplingMethod = "dense",
         label: str | None = None,
         coupling_id: str | None = None,
         _path_indices: Array | None = None,
@@ -215,45 +427,59 @@ class FractionalGaussianRealization(StrictModule):
             indices = jnp.asarray(_path_indices, dtype=jnp.uint32)
             if tuple(indices.shape) != samples:
                 raise ValueError("path indices must match sample_shape.")
-        covariance = np.asarray(
-            jax.device_get(process.time_covariance(nodes[:, None], nodes[None, :]))
+        sampler, sampling_method, sampling_provenance = _sampling_strategy(
+            process,
+            nodes,
+            nodes_host,
+            method,
         )
-        eigenvalues, eigenvectors = np.linalg.eigh(covariance)
-        tolerance = (
-            1000.0
-            * np.finfo(covariance.dtype).eps
-            * max(
-                1.0,
-                float(np.linalg.norm(covariance, ord=2)),
-            )
-        )
-        if np.any(eigenvalues < -tolerance):
-            raise ValueError("fractional Gaussian grid covariance is not semidefinite.")
-        eigenvalues = np.maximum(eigenvalues, 0.0)
-        factor = jnp.asarray(eigenvectors * np.sqrt(eigenvalues)[None, :])
         support = (float(nodes_host[0]), float(nodes_host[-1]))
-        resolved_coupling = coupling_id or _digest(
-            b"phydrax-fractional-gaussian-coupling\0",
-            jr.key_data(key),
-            process.process_id,
-            nodes,
-        )
-        identifier = _digest(
-            b"phydrax-fractional-gaussian-realization\0",
-            jr.key_data(key),
-            process.process_id,
-            nodes,
-            samples,
-            indices,
-        )
+        if coupling_id is not None:
+            resolved_coupling = coupling_id
+        elif sampling_method == "dense":
+            resolved_coupling = _digest(
+                b"phydrax-fractional-gaussian-coupling\0",
+                jr.key_data(key),
+                process.process_id,
+                nodes,
+            )
+        else:
+            resolved_coupling = _digest(
+                b"phydrax-fractional-gaussian-coupling\0",
+                jr.key_data(key),
+                process.process_id,
+                nodes,
+                sampling_method,
+            )
+        if sampling_method == "dense":
+            identifier = _digest(
+                b"phydrax-fractional-gaussian-realization\0",
+                jr.key_data(key),
+                process.process_id,
+                nodes,
+                samples,
+                indices,
+            )
+        else:
+            identifier = _digest(
+                b"phydrax-fractional-gaussian-realization\0",
+                jr.key_data(key),
+                process.process_id,
+                nodes,
+                samples,
+                indices,
+                sampling_method,
+            )
         self.process = process
         self.root_key = key
         self.path_indices = indices
         self.grid = nodes
-        self.covariance_factor = factor
+        self._sampler = sampler
         self.sample_shape = samples
         self.support = support
         self.label = label
+        self.sampling_method = sampling_method
+        self.sampling_provenance = sampling_provenance
         self.realization_id = identifier
         self.coupling_id = resolved_coupling
 
@@ -272,21 +498,11 @@ class FractionalGaussianRealization(StrictModule):
         """Path values with shape ``sample_shape + (num_times, dimension)``."""
         keys = self.path_keys.reshape((-1,) + tuple(self.root_key.shape))
         num_times = int(self.grid.size)
-        normals = jax.vmap(
-            lambda key: jr.normal(
-                key,
-                (num_times, self.process.dimension),
-                dtype=self.grid.dtype,
-            )
-        )(keys)
-        centered = (
-            jnp.einsum(
-                "ij,pjd->pid",
-                self.covariance_factor,
-                normals,
-            )
-            * self.process.scale
-        )
+        centered = self._sampler.sample_paths(
+            keys,
+            dimension=self.process.dimension,
+            dtype=self.grid.dtype,
+        ) * self.process.scale
         means = self.process.mean(self.grid)
         return (centered + means).reshape(
             self.sample_shape + (num_times, self.process.dimension)
@@ -379,6 +595,8 @@ class FractionalGaussianRealization(StrictModule):
             metadata={
                 "process_id": self.process.process_id,
                 "hurst": self.process.hurst,
+                "sampling_method": self.sampling_method,
+                "sampling_provenance": self.sampling_provenance,
                 "uncertainty_source": "process",
             },
         )
@@ -386,6 +604,7 @@ class FractionalGaussianRealization(StrictModule):
 
 __all__ = [
     "FractionalGaussianInterpolation",
+    "FractionalGaussianSamplingMethod",
     "FractionalGaussianProcess",
     "FractionalGaussianRealization",
 ]

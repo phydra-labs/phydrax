@@ -48,6 +48,7 @@ from ._feynman_kac import (
 )
 from ._fractional import (
     FractionalGaussianInterpolation,
+    FractionalGaussianSamplingMethod,
     FractionalGaussianProcess,
     FractionalGaussianRealization,
 )
@@ -254,6 +255,7 @@ __all__ = [
     "CompetingPathEvents",
     "CrossingDirection",
     "FractionalGaussianInterpolation",
+    "FractionalGaussianSamplingMethod",
     "FractionalGaussianProcess",
     "FeynmanKacControlTargetMode",
     "FeynmanKacLabelBatch",
