@@ -173,6 +173,11 @@ from ._solution import (
     SPDESolutionSpec,
     validate_spde_formulation,
 )
+from ._linear_gaussian import (
+    LinearGaussianDynamics,
+    LinearGaussianParameterization,
+    LinearGaussianParameters,
+)
 from ._solver_transition import (
     DifferentialTransitionKernel,
     FiniteStateTransitionKernel,
@@ -322,6 +327,9 @@ __all__ = [
     "stopped_martingale_increments",
     "StoppingIndices",
     "jump_status_name",
+    "LinearGaussianDynamics",
+    "LinearGaussianParameterization",
+    "LinearGaussianParameters",
     "LinearGaussianObservationModel",
     "LinearGaussianTransitionKernel",
     "MarginalTransitionKernel",

@@ -55,6 +55,15 @@ renumber an existing random stream.
 `MarginalTransitionKernel` wraps a finite-interval marginal law. Use a pathwise adapter
 when a transition must preserve one driver realization, event stream, or cocycle across
 the interval.
+`LinearGaussianDynamics` represents constant affine Itô dynamics
+`dX = (A X + b) dt + L dW`. Its interval parameterization uses a matrix
+exponential for the transition, an augmented exponential for the affine offset,
+and the Van Loan construction for the covariance. Zero-duration and singular
+dispersion intervals remain exact; no jitter is inserted. Pass the dynamics
+object directly to `LinearGaussianTransitionKernel`. The legacy transition,
+covariance, and offset constructor remains supported through the same
+`LinearGaussianParameterization` contract.
+
 
 ::: phydrax.stochastic.AbstractTransitionKernel
 
@@ -69,6 +78,14 @@ the interval.
 ---
 
 ::: phydrax.stochastic.MarginalTransitionKernel
+
+---
+
+::: phydrax.stochastic.LinearGaussianDynamics
+
+---
+
+::: phydrax.stochastic.LinearGaussianParameterization
 
 ---
 
