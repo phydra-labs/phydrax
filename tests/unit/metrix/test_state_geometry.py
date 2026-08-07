@@ -119,6 +119,27 @@ def test_so_pullback_inverts_noncommuting_retraction_jvp(method):
     assert jnp.allclose(tangent, finite_difference, atol=2e-10)
     assert jnp.allclose(recovered, direction, atol=2e-9)
 
+def test_so_exponential_pullback_preserves_tiny_float32_velocity():
+    geometry = SpecialOrthogonalStateGeometry(3)
+    base = jnp.eye(3, dtype=jnp.float32)
+    local = jnp.asarray(
+        [[0.0, -0.3, 0.1], [0.3, 0.0, -0.2], [-0.1, 0.2, 0.0]],
+        dtype=jnp.float32,
+    )
+    direction = jnp.asarray(
+        [[0.0, 1e-7, -2e-7], [-1e-7, 0.0, 1.5e-7], [2e-7, -1.5e-7, 0.0]],
+        dtype=jnp.float32,
+    )
+    _, tangent = jax.jvp(
+        lambda value: geometry.retract(base, value),
+        (local,),
+        (direction,),
+    )
+    recovered = geometry.pullback(base, local, tangent)
+
+    assert jnp.linalg.norm(recovered) > 0.0
+    assert jnp.allclose(recovered, direction, rtol=5e-4, atol=1e-11)
+
 
 def test_so_exponential_pullback_does_not_materialize_full_jacobian(monkeypatch):
     geometry = SpecialOrthogonalStateGeometry(5)
@@ -137,9 +158,18 @@ def test_so_exponential_pullback_does_not_materialize_full_jacobian(monkeypatch)
 
     monkeypatch.setattr(jax, "jacfwd", reject_full_jacobian)
     recovered = geometry.pullback(jnp.eye(5), local, tangent)
+    _, reconstructed = jax.jvp(
+        lambda value: geometry.retract(jnp.eye(5), value),
+        (local,),
+        (recovered,),
+    )
 
     assert bool(geometry.contains(point))
     assert jnp.allclose(recovered, direction, atol=2e-8)
+    assert (
+        jnp.linalg.norm(reconstructed - tangent) / jnp.linalg.norm(tangent)
+        < 2e-8
+    )
 
 
 def test_so_exponential_inverse_rejects_rotations_outside_local_neighborhood():

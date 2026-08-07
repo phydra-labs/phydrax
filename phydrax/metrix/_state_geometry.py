@@ -860,13 +860,47 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
             )
 
         tolerance = 1e-10 if matrix.dtype == jnp.dtype(jnp.float64) else 1e-5
-        velocity, _ = jsparse.gmres(
-            differential,
+        restart = 8
+        krylov_cycles = max(
+            4,
+            2 * (self.dimension * self.dimension + restart - 1) // restart,
+        )
+        right_hand_side_norm = jnp.linalg.norm(
             body_velocity,
+            axis=(-2, -1),
+            keepdims=True,
+        )
+        scale = jnp.maximum(
+            right_hand_side_norm,
+            jnp.finfo(matrix.dtype).tiny,
+        )
+        normalized_body_velocity = body_velocity / scale
+        normalized_velocity, _ = jsparse.gmres(
+            differential,
+            normalized_body_velocity,
+            x0=normalized_body_velocity,
             tol=tolerance,
-            atol=tolerance,
-            restart=8,
-            maxiter=4,
+            atol=0.0,
+            restart=restart,
+            maxiter=krylov_cycles,
+        )
+        velocity = scale * normalized_velocity
+        residual = differential(velocity) - body_velocity
+        residual_norm = jnp.linalg.norm(
+            residual,
+            axis=(-2, -1),
+            keepdims=True,
+        )
+        relative_residual = residual_norm / scale
+        failed = jnp.where(
+            right_hand_side_norm == 0.0,
+            residual_norm != 0.0,
+            relative_residual > 2.0 * tolerance,
+        )
+        velocity = eqx.error_if(
+            velocity,
+            failed,
+            "SO exponential pullback matrix-free solve did not converge.",
         )
         return _skew(velocity)
 

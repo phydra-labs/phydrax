@@ -75,9 +75,12 @@ SO(n) supports exponential and Cayley retractions. The exponential
 `inverse_retract` uses a degree-63 Cayley/atanh series and accepts only a Cayley
 spectral radius strictly below 0.5; it explicitly rejects points outside that
 numerically justified local neighborhood. The Cayley pullback uses its analytic
-inverse differential; the exponential pullback uses a differentiable
-matrix-free solve of the exponential JVP with fixed \(O(n^2)\) workspace.
-Neither solver pullback depends on the logarithm cutoff. SPD(n) uses a symmetric
+inverse differential; the exponential pullback normalizes each right-hand side
+and uses a differentiable matrix-free solve of the exponential JVP with zero
+absolute tolerance, dimension-scaled Krylov cycles, and fixed \(O(n^2)\)
+workspace. It recomputes the relative differential residual and rejects a
+nonconverged solve. Neither solver pullback depends on the logarithm cutoff.
+SPD(n) uses a symmetric
 congruence/exponential retraction. Dense
 interpolation and root-finding events evaluate through the same retraction, so
 queried states remain on the declared state space.

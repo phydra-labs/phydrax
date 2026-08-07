@@ -25,8 +25,9 @@ records both a stable retraction ID and the resolved method.
   coordinates and either an exponential or Cayley retraction. Its degree-63
   principal logarithm accepts Cayley spectral radius below 0.5. Cayley uses an
   analytic pullback; exponential uses a differentiable matrix-free solve of its
-  JVP with fixed \(O(n^2)\) workspace. Neither depends on the logarithm. SO(n)
-  also supplies the shared trivialization required by commutator-free tableaux.
+  JVP with normalized right-hand sides, a checked relative residual, and fixed
+  \(O(n^2)\) workspace. Neither depends on the logarithm. SO(n) also supplies
+  the shared trivialization required by commutator-free tableaux.
 - `SymmetricPositiveDefiniteStateGeometry` represents SPD(n), using symmetric
   tangent coordinates and a congruence/exponential retraction. It has exact
   local pullbacks but no shared group trivialization, so use RKMK rather than
