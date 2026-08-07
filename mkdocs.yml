@@ -190,6 +190,7 @@ nav:
         - Solver:
             - Overview: "api/solver/index.md"
             - Differential equations: "api/solver/differential.md"
+            - Delay and functional differential equations: "api/solver/delay.md"
             - Functional solver: "api/solver/functional_solver.md"
             - Enforced constraint pipelines: "api/solver/enforced_constraints.md"
         - Uncertainty quantification:

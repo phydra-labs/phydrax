@@ -10,6 +10,10 @@ For a conceptual overview (loss evaluation, enforced pipelines, training loop be
 - [Differential equation integration](differential.md) defines reproducible ODE/SDE,
   finite-activity jump and hybrid trajectories, finite-rank semidiscrete SPDEs,
   and process ensembles.
+- [Delay and functional differential equations](delay.md) defines causal method-of-steps,
+  stochastic/geometric/rough/jump histories, functional/distributed/state-dependent/
+  neutral delays, bounded and infinite memory, convolution, Caputo integration, and
+  global collocation for future arguments.
 - [Functional solver](functional_solver.md) assembles constraints, objectives, and
   model losses for optimization.
 
@@ -20,6 +24,12 @@ For a conceptual overview (loss evaluation, enforced pipelines, training loop be
     - Use enforced constraint pipelines to enforce conditions by construction (no penalty term).
     - Use `DifferentialProblem` plus `solve_diffrax` for numerical ODE/SDE trajectories.
     - Use `solve_diffrax_ensemble` with a global `WienerRealization` for coupled process draws.
+    - Use `DelayDifferentialProblem` plus `solve_diffrax_delay` for causal delay IVPs.
+    - Use `solve_rough_delay` for geometric rough paths with delayed state.
+    - Use `solve_jump_delay` for prescribed finite-activity events in a delay equation.
+    - Use `solve_convolution_volterra` or `solve_caputo_fractional` for causal integral
+      and power-law memory equations.
+    - Use `solve_functional_differential` for advanced or mixed future/past equations.
     - Use `solve_next_reaction` or `solve_direct_ssa` with a
       `PoissonClockRealization` for pure jump paths.
     - Use `solve_jump_differential` with explicit Poisson and optional Wiener

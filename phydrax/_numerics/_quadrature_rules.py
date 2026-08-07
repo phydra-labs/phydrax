@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-from functools import lru_cache
 from typing import NamedTuple
 
 import jax.numpy as jnp
@@ -298,7 +297,6 @@ def _symmetric_weights(values: np.ndarray) -> np.ndarray:
     return np.concatenate((values[:0:-1], values))
 
 
-@lru_cache(maxsize=None)
 def gauss_legendre_data(order: int) -> QuadratureRuleData:
     """Return the order-``n`` Gauss--Legendre rule on ``[-1, 1]``."""
     order_ = int(order)
@@ -310,7 +308,6 @@ def gauss_legendre_data(order: int) -> QuadratureRuleData:
     )
 
 
-@lru_cache(maxsize=None)
 def gauss_kronrod_data(order: int) -> QuadratureRuleData:
     """Return a published embedded Gauss--Kronrod rule on ``[-1, 1]``."""
     order_ = int(order)
@@ -335,7 +332,6 @@ def gauss_kronrod_data(order: int) -> QuadratureRuleData:
     )
 
 
-@lru_cache(maxsize=None)
 def clenshaw_curtis_data(order: int) -> QuadratureRuleData:
     """Return an endpoint-including Clenshaw--Curtis rule on ``[-1, 1]``."""
     order_ = int(order)
@@ -369,7 +365,6 @@ def clenshaw_curtis_data(order: int) -> QuadratureRuleData:
     return QuadratureRuleData(jnp.asarray(nodes), jnp.asarray(weights), None, order_ - 1)
 
 
-@lru_cache(maxsize=None)
 def tanh_sinh_data(order: int) -> QuadratureRuleData:
     """Return a finite double-exponential trapezoidal rule on ``[-1, 1]``."""
     order_ = int(order)
