@@ -127,6 +127,78 @@ def test_joint_time_channel_integrates_drift_and_time_dependent_fields():
     assert solution.successful
 
 
+def test_logode_local_retraction_preserves_special_orthogonal_state():
+    times = jnp.linspace(0.0, 1.0, 5)
+    angle = 0.7
+    control = phx.stochastic.LogSignatureControl.from_values(
+        times,
+        (angle * times)[:, None],
+        depth=2,
+        coarse_indices=(0, 2, 4),
+    )
+    generator = jnp.asarray([[0.0, -1.0], [1.0, 0.0]])
+    geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
+    problem = phx.solver.RoughDifferentialProblem(
+        lambda time, state, args: jnp.stack((state @ generator,), axis=-1),
+        jnp.eye(2),
+        driver_dimension=1,
+        geometry=geometry,
+    )
+    solution = phx.solver.solve_rough_differential(
+        problem, control, solver=phx.solver.LogODE()
+    )
+    expected = jax.scipy.linalg.expm(angle * generator)
+
+    assert solution.successful
+    assert geometry.contains(solution.states)
+    assert jnp.allclose(solution.states[-1], expected, atol=2e-9)
+    assert jnp.allclose(
+        jnp.swapaxes(solution.states, -1, -2) @ solution.states,
+        jnp.eye(2),
+        atol=2e-9,
+    )
+
+
+def test_logode_local_retraction_preserves_spd_state_and_refines():
+    times = jnp.linspace(0.0, 1.0, 9)
+    total_increment = 0.7
+    values = (total_increment * times)[:, None]
+    coarse_control = phx.stochastic.LogSignatureControl.from_values(
+        times, values, depth=2, coarse_indices=(0, 8)
+    )
+    fine_control = phx.stochastic.LogSignatureControl.from_values(
+        times, values, depth=2, coarse_indices=tuple(range(9))
+    )
+    generator = jnp.asarray([[0.2, 0.1], [0.1, -0.1]])
+    initial = jnp.asarray([[2.0, 0.3], [0.3, 1.0]])
+    geometry = phx.metrix.SymmetricPositiveDefiniteStateGeometry(2)
+    problem = phx.solver.RoughDifferentialProblem(
+        lambda time, state, args: jnp.stack(
+            (generator @ state + state @ generator.T,), axis=-1
+        ),
+        initial,
+        driver_dimension=1,
+        geometry=geometry,
+    )
+    coarse = phx.solver.solve_rough_differential(
+        problem, coarse_control, solver=phx.solver.LogODE()
+    )
+    fine = phx.solver.solve_rough_differential(
+        problem, fine_control, solver=phx.solver.LogODE()
+    )
+    flow = jax.scipy.linalg.expm(total_increment * generator)
+    expected = flow @ initial @ flow.T
+
+    assert coarse.successful
+    assert fine.successful
+    assert geometry.contains(coarse.states)
+    assert geometry.contains(fine.states)
+    assert jnp.all(jnp.linalg.eigvalsh(fine.states) > 0.0)
+    assert jnp.linalg.norm(fine.states[-1] - expected) < jnp.linalg.norm(
+        coarse.states[-1] - expected
+    )
+
+
 def test_depth_three_accepts_hurst_point_three_while_depth_two_rejects():
     process = phx.stochastic.FractionalGaussianProcess(0.3, 0.2)
     realization = phx.stochastic.FractionalGaussianRealization(

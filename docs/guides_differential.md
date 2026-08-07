@@ -351,6 +351,9 @@ drift operator first to `LinearLogODE`. The general solver integrates in
 state-shaped local coordinates: each interval binds
 `problem.geometry.local_retraction(state)`, pulls vector fields back through
 that retraction, and retracts the terminal local coordinate.
+This keeps `SpecialOrthogonalStateGeometry` states orthogonal with positive
+determinant and `SymmetricPositiveDefiniteStateGeometry` states symmetric
+positive definite at every saved control knot.
 
 For a fractional Gaussian realization with Hurst index \(H\), a depth-\(N\)
 log-ODE control requires
