@@ -174,6 +174,14 @@ from .integral import (  # noqa: F401
     time_convolution,
 )
 from .interpolation import (  # noqa: F401
+    BSplineBoundaryConstraint,
+    BSplineBoundaryMode,
+    BSplineFitDiagnostics,
+    BSplineFitMode,
+    BSplineInterpolant,
+    BSplineInterpolationPlan,
+    fit_bspline,
+    interpolate_bspline,
     interpolate_smolyak,
     SmolyakInterpolant,
     SmolyakInterpolationPlan,
@@ -347,6 +355,14 @@ __all__ = [
     "caputo_time_fractional_dw",
     # integral exports
     # interpolation exports
+    "BSplineBoundaryConstraint",
+    "BSplineBoundaryMode",
+    "BSplineFitDiagnostics",
+    "BSplineFitMode",
+    "BSplineInterpolant",
+    "BSplineInterpolationPlan",
+    "fit_bspline",
+    "interpolate_bspline",
     "SmolyakInterpolant",
     "SmolyakInterpolationPlan",
     "SmolyakInterpolationRule",

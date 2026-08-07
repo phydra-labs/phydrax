@@ -39,6 +39,22 @@ weights form a partition of unity, while every positive-order derivative weight
 sums to zero. Repeated knots and arbitrary trailing real or complex payload
 dimensions remain supported.
 
+`BSplineGrid(knots, degree)` is the canonical fixed-grid object shared by spline
+edge models, projection, and fitting. It validates finite, nondecreasing knots
+and legal multiplicities; exposes the coefficient count, active interval,
+positive-span breakpoints, Greville abscissae, and interior continuity orders;
+and generates Gauss--Legendre rules over the actual positive spans. Repeated
+knots therefore do not create zero-width quadrature cells. Use
+`BSplineGrid.open_uniform(degree, num_intervals, interval=(lower, upper))` only
+when an open-uniform grid is intended.
+
+The dynamic evaluator supplies an analytic piecewise-polynomial JVP with respect
+to query coordinates. JVP, VJP, Jacobian, and higher query derivatives reuse the
+same span-local basis jet; coefficient derivatives remain ordinary sparse
+linear-map derivatives. Exact endpoints retain their selected one-sided
+derivatives, while `clip` and `fill` queries strictly outside the active interval
+have zero coordinate derivative.
+
 This local map preserves the useful fixed-reconstruction-map idea from
 [Splinex](https://github.com/cornelius-braun/splinex) without adding Splinex as a
 dependency or adopting its dense basis matrices, implicit control padding, or
@@ -53,6 +69,89 @@ owns those semantics.
 Interpolation weights reproduce constants when they form a partition of unity.
 That statement does not imply conservation against a physical measure.
 Quadrature and conservative transfer remain separate measure-aware operations.
+
+## B-spline fitting and smoothing
+
+`fit_bspline(nodes, values, ...)` distinguishes observation samples from
+B-spline control coefficients. It returns an immutable `BSplineInterpolant`
+whose coefficient axis is leading and whose arbitrary trailing scalar, vector,
+matrix, tensor, real, or complex payload shape is preserved.
+
+The default plan performs exact cubic interpolation. Nodes may be unsorted;
+Phydrax stably orders nodes and values together. Exact interpolation requires
+distinct nodes and a square full-rank collocation system:
+
+```python
+import jax.numpy as jnp
+import phydrax as phx
+
+nodes = jnp.linspace(-1.0, 1.0, 9)
+values = jnp.stack((nodes**3 - 2.0 * nodes, nodes**2), axis=-1)
+curve = phx.operators.fit_bspline(nodes, values)
+
+value = curve(jnp.asarray(0.2))
+first = curve.derivative(jnp.asarray(0.2), 1)
+```
+
+Regression uses a deliberately smaller coefficient space:
+
+```python
+least_squares = phx.operators.fit_bspline(
+    nodes,
+    values,
+    plan=phx.operators.BSplineInterpolationPlan(
+        degree=3,
+        num_intervals=4,
+        mode="least_squares",
+    ),
+)
+```
+
+Nonnegative `sample_weights` scale observation residuals. Zero-weight
+observations are retained in fit diagnostics but do not affect the solution.
+Duplicate nodes are legal for least-squares and smoothing fits, but not for
+exact interpolation. Underdetermined and rank-deficient systems fail with an
+explicit error rather than silently selecting a minimum-norm interpolant.
+
+`mode="smooth"` minimizes weighted data error plus an exact span-quadrature
+Sobolev derivative energy. The smoothing value is the coefficient on that
+physical-coordinate energy, so changing a grid's physical interval changes
+derivative scaling correctly:
+
+```python
+smoothed = phx.operators.fit_bspline(
+    nodes,
+    values,
+    plan=phx.operators.BSplineInterpolationPlan(
+        degree=3,
+        num_intervals=6,
+        mode="smooth",
+        smoothing=1e-3,
+        regularization_order=2,
+    ),
+)
+```
+
+`boundary="open"` adds no fitting equations. `"natural"` imposes zero second
+derivative at both endpoints. `"periodic"` equates endpoint derivatives from
+order zero through `degree - 1`. Exact value or derivative jets use
+`BSplineBoundaryConstraint("lower", order, value)`,
+`BSplineBoundaryConstraint("upper", order, value)`, or a physical coordinate.
+Constraints are solved as exact equations during regression and smoothing; they
+are never represented by arbitrary penalty weights.
+
+Every fit reports matrix rank, a condition estimate, weighted residual norm,
+constraint residual norm, and unscaled regularization energy through
+`interpolant.diagnostics`. An explicit `BSplineGrid` fixes the coefficient
+space and physical active interval. Without one, the fitter constructs an
+open-uniform grid over the minimum and maximum observation coordinates.
+
+`interpolate_bspline(function, nodes, ...)` snapshots a one-dependency
+`DomainFunction` through one named `PointBatch` and returns another
+`DomainFunction` with the original domain, dependency, and metadata. The fitted
+state is excluded from solver parameter partitions. Array evaluation and
+automatic first or higher coordinate derivatives remain compatible with JAX
+transforms.
 
 ## Fourier reconstruction
 
@@ -249,6 +348,30 @@ ideas described by [SmolyAX](https://github.com/JoWestermann/smolyax) and its
 without adding SmolyAX as a dependency.
 
 ## API
+
+::: phydrax.operators.BSplineInterpolationPlan
+
+---
+
+::: phydrax.operators.BSplineBoundaryConstraint
+
+---
+
+::: phydrax.operators.BSplineFitDiagnostics
+
+---
+
+::: phydrax.operators.BSplineInterpolant
+
+---
+
+::: phydrax.operators.fit_bspline
+
+---
+
+::: phydrax.operators.interpolate_bspline
+
+---
 
 ::: phydrax.operators.SmolyakInterpolationPlan
 

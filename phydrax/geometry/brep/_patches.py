@@ -262,6 +262,8 @@ class BSplineSurfacePatch(AbstractSurfacePatch):
 
     def evaluate(self, parameters: Array, /) -> Array:
         parameters_ = jnp.asarray(parameters, dtype=self.control_points.dtype)
+        if parameters_.ndim == 1:
+            return self._evaluate_one(parameters_)
         leading = parameters_.shape[:-1]
         values = jax.vmap(self._evaluate_one)(parameters_.reshape((-1, 2)))
         return values.reshape((*leading, 3))
@@ -310,6 +312,8 @@ class BSplineCurve(StrictModule):
 
     def evaluate(self, parameters: Array, /) -> Array:
         parameters_ = jnp.asarray(parameters, dtype=self.control_points.dtype)
+        if parameters_.ndim == 0:
+            return self._evaluate_one(parameters_)
         return jax.vmap(self._evaluate_one)(parameters_.reshape((-1,))).reshape(
             (*parameters_.shape, self.control_points.shape[1])
         )

@@ -5,7 +5,17 @@
 """Native deterministic reconstruction primitives."""
 
 from ._barycentric import barycentric_basis, barycentric_interpolate
-from ._bspline import bspline_stencil
+from ._bspline import bspline_batched_evaluate, bspline_evaluate, bspline_stencil
+from ._bspline_grid import BSplineGrid, TrainableBSplineGrid
+from ._bspline_grid_bank import BSplineGridBank
+from ._bspline_projection import (
+    bspline_cross_gram,
+    bspline_mass_matrix,
+    bspline_projection_matrix,
+    BSplineGridTransfer,
+    project_bspline_coefficients,
+    ProjectionMethod,
+)
 from ._fourier import (
     FOURIER_CAPABILITIES,
     fourier_interpolate,
@@ -57,6 +67,11 @@ __all__ = [
     "FOURIER_CAPABILITIES",
     "FourierEvaluationMethod",
     "RECTILINEAR_CAPABILITIES",
+    "BSplineGrid",
+    "BSplineGridBank",
+    "BSplineGridTransfer",
+    "TrainableBSplineGrid",
+    "ProjectionMethod",
     "BoundsMode",
     "AxisBound",
     "GatherStencil",
@@ -68,6 +83,11 @@ __all__ = [
     "RectilinearBoundaryMode",
     "apply_gather_stencil",
     "barycentric_basis",
+    "bspline_evaluate",
+    "bspline_batched_evaluate",
+    "bspline_cross_gram",
+    "bspline_mass_matrix",
+    "bspline_projection_matrix",
     "bspline_stencil",
     "cubic_hermite_interpolate",
     "cubic_hermite_segment",
@@ -81,6 +101,7 @@ __all__ = [
     "local_cubic_slope",
     "local_cubic_slopes",
     "nearest_interpolate",
+    "project_bspline_coefficients",
     "nearest_stencil",
     "nearest_stencil_from_indices",
     "rectilinear_stencil",

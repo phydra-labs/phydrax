@@ -15,6 +15,7 @@ import jax.numpy as jnp
 
 from phydrax._interpolation import (
     apply_gather_stencil,
+    bspline_evaluate,
     bspline_stencil,
     cubic_hermite_interpolate,
     fourier_interpolate,
@@ -314,6 +315,82 @@ def run_benchmarks(*, repeats: int = 10) -> dict[str, Any]:
     records["bspline_dense_apply_p3_c257"]["relative_error"] = float(
         jnp.linalg.norm(local_reference - dense_reference)
         / jnp.linalg.norm(dense_reference)
+    )
+
+    def representative_curve(query):
+        return bspline_evaluate(
+            representative_knots,
+            representative_values,
+            query,
+            degree=3,
+        ).values
+
+    records["bspline_query_jvp_p3_c257"] = _benchmark(
+        lambda query: jax.jvp(
+            representative_curve,
+            (query,),
+            (jnp.ones_like(query),),
+        )[1],
+        bspline_query,
+        repeats=repeats,
+    )
+    records["bspline_explicit_d1_p3_c257"] = _benchmark(
+        lambda query: (
+            bspline_evaluate(
+                representative_knots,
+                representative_values,
+                query,
+                degree=3,
+                derivative_order=1,
+            ).values
+        ),
+        bspline_query,
+        repeats=repeats,
+    )
+    jvp_reference = jax.jvp(
+        representative_curve,
+        (bspline_query,),
+        (jnp.ones_like(bspline_query),),
+    )[1]
+    explicit_reference = bspline_evaluate(
+        representative_knots,
+        representative_values,
+        bspline_query,
+        degree=3,
+        derivative_order=1,
+    ).values
+    records["bspline_query_jvp_p3_c257"]["relative_error"] = float(
+        jnp.linalg.norm(jvp_reference - explicit_reference)
+        / jnp.linalg.norm(explicit_reference)
+    )
+    records["bspline_coefficient_gradient_p3_c257"] = _benchmark(
+        jax.grad(
+            lambda values: jnp.sum(
+                bspline_evaluate(
+                    representative_knots,
+                    values,
+                    bspline_query,
+                    degree=3,
+                ).values
+                ** 2
+            )
+        ),
+        representative_values,
+        repeats=repeats,
+    )
+
+    scalar_curve = lambda query: (
+        bspline_evaluate(
+            representative_knots,
+            representative_values[:, 0],
+            query,
+            degree=3,
+        ).values
+    )
+    records["bspline_query_hessian_p3_c257"] = _benchmark(
+        jax.vmap(jax.grad(jax.grad(scalar_curve))),
+        bspline_query,
+        repeats=repeats,
     )
 
     case_query = jnp.broadcast_to(
