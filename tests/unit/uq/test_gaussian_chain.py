@@ -1,3 +1,4 @@
+import pytest
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -175,6 +176,19 @@ def test_parallel_filter_freezes_failed_cases_exactly():
     assert not jnp.any(parallel.successful)
     assert jnp.array_equal(parallel.filtered_means, sequential.filtered_means)
     assert jnp.array_equal(parallel.status, sequential.status)
+
+
+@pytest.mark.parametrize("method", ("sequential", "parallel", "auto"))
+@pytest.mark.parametrize("regularization", (-1.0, jnp.nan))
+def test_filter_methods_share_regularization_validation(method, regularization):
+    with pytest.raises(
+        ValueError, match="must be finite and nonnegative"
+    ):
+        phx.uq.kalman_filter(
+            _problem(),
+            method=method,
+            covariance_regularization=regularization,
+        )
 
 
 def test_parallel_smoother_and_coherent_samples_are_equivalent_and_prefix_stable():

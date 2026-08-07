@@ -819,16 +819,21 @@ def kalman_filter(
     method: KalmanExecutionMethod = "auto",
 ) -> KalmanFilterResult:
     """Run an exact linear-Gaussian filter with explicit temporal execution."""
+    regularization = float(covariance_regularization)
+    if not np.isfinite(regularization) or regularization < 0.0:
+        raise ValueError(
+            "covariance_regularization must be finite and nonnegative."
+        )
     resolved = _resolve_execution_method(problem, method)
     if resolved == "sequential":
         return _sequential_kalman_filter(
             problem,
-            covariance_regularization=covariance_regularization,
+            covariance_regularization=regularization,
             raise_on_failure=raise_on_failure,
         )
     return _parallel_kalman_filter(
         problem,
-        covariance_regularization=float(covariance_regularization),
+        covariance_regularization=regularization,
         raise_on_failure=raise_on_failure,
     )
 
