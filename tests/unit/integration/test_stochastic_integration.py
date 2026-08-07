@@ -202,7 +202,7 @@ def test_explicit_stratification_preserves_physical_measure():
             [[-1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]],
         ]
     )
-    partition = phx.domain.GeometryMeasurePartition(
+    partition = phx.geometry.GeometryMeasurePartition(
         vertices, jnp.asarray([2.0, 2.0]), kind="triangle"
     )
     plan = phx.integration.StratifiedMonteCarloPlan(
@@ -265,7 +265,7 @@ def test_stratified_zero_density_reports_invalid_normalization_mass():
             [[-1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]],
         ]
     )
-    partition = phx.domain.GeometryMeasurePartition(
+    partition = phx.geometry.GeometryMeasurePartition(
         vertices,
         jnp.asarray([2.0, 2.0]),
         kind="triangle",

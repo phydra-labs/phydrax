@@ -30,6 +30,9 @@ functionals such as signed energies, and $r_k$ are model-level losses.
 Most workflows are composing a few primitives:
 
 - **Domain**: a labeled product space $\Omega=\Omega_x\times\Omega_t\times\cdots$.
+- **Geometry**: analytic, simplicial, B-Rep, CSG, and reconstructed sources compile
+  to one JAX kernel/state contract with explicit capabilities, field certificates,
+  boundary atlases, topology identities, and design parameters.
 - **Component**: a subset like interior/boundary/initial slice where a term lives.
 - **Metrix**: differentiable coordinate and Riemannian geometry—charts, tensor
   transformations, metrics, connections, curvature, embedded charts, and
@@ -63,6 +66,10 @@ If you are new to the library, the general recipe is:
 2. Define functions on that domain.
 3. Add constraints, raw objectives, and operators to construct a functional $\mathcal J$.
 4. Train or evaluate with a solver.
+
+Geometry construction lives in `phx.geometry`; `phx.domain.GeometryDomain` is the
+thin labeled-domain adapter used by sampling, integration, and constraints. See the
+[geometry substrate API](docs/api/geometry.md).
 
 ## Example
 

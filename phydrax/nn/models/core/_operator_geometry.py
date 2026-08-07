@@ -503,25 +503,31 @@ def _mesh_vertex_weights(vertices: Array, faces: Array, coord_dim: int, /) -> Ar
 
 
 def function_samples_from_mesh(
-    geometry: Any,
+    mesh: Any,
     /,
     *,
     values: Any | None = None,
     topology_kind: MeshTopologyKind = "graph",
 ) -> FunctionSamples:
-    """Use a PhydraX CAD/point-cloud geometry's native triangular mesh."""
-    from ....domain.geometry2d._from_cad import Geometry2DFromCAD
-    from ....domain.geometry3d._mesh import Geometry3DFromCAD
+    """Use an explicit canonical simplicial mesh as operator sample sites."""
 
-    if not isinstance(geometry, (Geometry2DFromCAD, Geometry3DFromCAD)):
+    from ....geometry.brep import BRepModel
+    from ....geometry.simplicial import MeshRegion, TriangleMesh
+
+    if isinstance(mesh, TriangleMesh):
+        vertices, faces = mesh.vertices, mesh.faces
+    elif isinstance(mesh, MeshRegion):
+        vertices, faces = mesh.vertices, mesh.faces
+    elif isinstance(mesh, BRepModel):
+        vertices, faces = mesh.mesh_vertices, mesh.mesh_faces
+    else:
         raise TypeError(
-            "function_samples_from_mesh requires a PhydraX Geometry2DFromCAD "
-            "or Geometry3DFromCAD object."
+            "function_samples_from_mesh requires TriangleMesh, MeshRegion, or BRepModel."
         )
-    vertices = jnp.asarray(geometry.mesh_vertices, dtype=float)
-    faces = jnp.asarray(geometry.mesh_faces, dtype=jnp.int32)
-    coord_dim = int(geometry.spatial_dim)
-    coordinates = vertices[:, :coord_dim]
+    vertices = jnp.asarray(vertices, dtype=float)
+    faces = jnp.asarray(faces, dtype=jnp.int32)
+    coord_dim = int(vertices.shape[1])
+    coordinates = vertices
     weights = _mesh_vertex_weights(vertices, faces, coord_dim)
     if topology_kind == "graph":
         from ....graph._geometry import mesh_to_graph

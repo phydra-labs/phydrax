@@ -121,6 +121,7 @@ nav:
     - API:
         - Overview: "api/phydrax.md"
         - Integration: "api/integration.md"
+        - Geometry substrate: "api/geometry.md"
         - Domains:
             - Overview: "api/domain/index.md"
             - Time: "api/domain/time.md"

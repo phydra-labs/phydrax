@@ -5,6 +5,7 @@
 import jax
 import numpy as np
 
+import phydrax as phx
 from phydrax.domain.geometry3d import Geometry3DFromLidarScene
 
 
@@ -28,13 +29,11 @@ def test_geometry3d_from_lidar_scene_basic():
         pts,
         roi=(-1.2, 1.2, -1.2, 1.2, -1.2, 1.2),
         voxel_size=0.05,
-        close_depth=0.2,
     )
 
-    # Mesh exists and has triangles
-    assert geom.mesh is not None
-    assert geom.mesh_vertices.shape[1] == 3
-    assert geom.mesh_faces.shape[1] == 3
+    assert isinstance(geom, phx.domain.GeometryDomain)
+    assert geom.reconstruction_report.source_kind == "lidar_point_cloud"
+    assert geom.reconstruction_report.retained_points < pts.shape[0]
 
     # Bounds are finite
     bounds = np.asarray(geom.bounds, dtype=float)
@@ -48,11 +47,11 @@ def test_geometry3d_from_lidar_scene_basic():
     # Interior sampling returns negative SDF
     interior = geom.sample_interior(24)
     assert interior.shape == (24, 3)
-    sd = jax.vmap(geom.adf_orig)(interior)
+    sd = jax.vmap(geom.adf)(interior)
     assert np.all(sd <= 1e-8)
 
     # Boundary sampling returns ~0 SDF
     boundary = geom.sample_boundary(12)
     assert boundary.shape == (12, 3)
-    sd_b = jax.vmap(geom.adf_orig)(boundary)
+    sd_b = jax.vmap(geom.adf)(boundary)
     assert np.allclose(sd_b, 0.0, atol=1e-6)

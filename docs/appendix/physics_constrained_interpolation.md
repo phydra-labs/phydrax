@@ -75,20 +75,21 @@ The remaining sections specify concrete constructions and the invariance proofs.
 Let $\Omega\subset\mathbb R^d$ be a geometry factor with boundary
 $\partial\Omega$. Phydrax keeps three zero-set-preserving fields distinct:
 
-- a signed distance-like geometry field $\phi$, used by geometry operations and
-  public normal construction;
+- a certified negative-inside boundary field $\phi$ supplied by the compiled
+  geometry;
 - a dimensionless enforcement gate $\beta$, with $\beta=0$ on
   $\partial\Omega$ and $\beta=\mathcal O(1)$ in the interior, for value ansätze
   and constraint-preserving overlays; and
 - a dimensional boundary ansatz factor $\psi$, with $\psi=0$ and
   $\partial_n\psi=1$ on $\partial\Omega$, for derivative hard constraints.
 
-The outward unit normal is denoted by $n$. Derivative ansätze use the canonical
-off-boundary extension $\nu=\nabla\psi$. At every regular boundary point,
-$\nu=n$; in the interior, $\nu$ is not normalized and may vanish smoothly at a
-medial set. For CAD geometries, all three fields share the same boundary zero set
-up to floating-point tolerance; mesh edges and vertices use the established
-outward pseudonormal because a unique classical normal does not exist.
+The outward unit normal is denoted by $n$ and comes from the compiled normal
+provider. Derivative ansätze use the canonical off-boundary extension
+$\nu=\nabla\psi$. At every regular boundary point, $\nu=n$; elsewhere it
+inherits the boundary field's certified regularity. Analytic, simplicial, and
+B-Rep representations preserve the same boundary zero set as their compiled
+field. Mesh edges and vertices use the selected outward pseudonormal because a
+unique classical normal does not exist.
 
 ### A.2.1. Dirichlet (value) constraints
 
@@ -147,200 +148,145 @@ $$
 under the nondegeneracy assumption $b\neq0$ on $\partial\Omega$. The proof is
 the same as Proposition A.2 because $D_\nu u=\partial_nu$ on the boundary.
 
-### A.2.4. Scale-normalized boundary fields
+### A.2.4. Certified boundary fields and scale-normalized gates
 
-Hard constraints need a reliable zero set, while PDE optimization also needs
-well-conditioned derivatives. Phydrax therefore keeps five mesh-geometry roles
-distinct:
+Hard constraints need a reliable zero set and an explicit derivative contract.
+Every compiled geometry therefore exposes three distinct objects:
 
-- `predicate_sdf`: a signed distance-like field used for inside/outside classification;
-- `boundary_factor` (also exposed as `adf`): the compact dimensional geometry
-  field $\phi$ used by geometry operations and public normal construction;
-- `make_enforcement_gate(...)`: the dimensionless field $\beta$ used by
-  Dirichlet ansätze and preservation overlays;
-- `boundary_ansatz_factor`: the dimensional unit-jet field $\psi$ used by
-  derivative hard constraints, with $\nu=\nabla\psi$ as their canonical
-  off-boundary normal extension; and
-- the boundary-normal provider: the outward analytic or mesh pseudonormal field.
+- the negative-inside boundary field $\phi$ and its `FieldCertificate`;
+- the outward normal provider $n$; and
+- region membership, which remains a separate kernel query.
 
-Let $D>0$ be the geometry diameter and $c$ the center of its axis-aligned bounds.
-All mesh-distance calculations use normalized coordinates
+The certificate records zero-set accuracy, sign reliability, distance semantics,
+regularity, validity region, safe-step information, and parameter
+differentiability. Analytic signed distances, mesh distances, B-Rep
+approximations, smooth blends, and general level sets therefore do not make the
+same numerical claim.
 
-$$
-y=\frac{x-c}{D}.
-$$
-
-This makes BVH geometry, regularizers, soft-min sharpness, collar widths, and
-saturation thresholds independent of the physical coordinate scale. Returned values
-are multiplied by $D$, so uniform scaling by $s>0$ satisfies
+The domain adapter exposes $\phi$ as `adf`. Define a unit-jet source $\chi$.
+If $\phi$ has signed-distance semantics, set $\chi=\phi$. Its regular boundary
+jet already satisfies
 
 $$
-\phi_{s\Omega}(s x)=s\,\phi_\Omega(x).
-$$
-
-#### A.2.4.1. Boundary-preserving smooth extension
-
-The mesh construction computes a closest-point signed distance $d_{\mathrm{exact}}$
-and a soft candidate-triangle extension $d_{\mathrm{soft}}$. It does not blend them at
-the boundary. For a normalized collar radius $r_0$, the blend is
-
-$$
-q
-=
-d_{\mathrm{exact}}
-+B\!\left(\lvert d_{\mathrm{exact}}\rvert\right)
-\left(d_{\mathrm{soft}}-d_{\mathrm{exact}}\right),
-$$
-
-where $B=0$ on $[0,r_0/2]$, $B=1$ on $[r_0,\infty)$, and the transition is the
-order-five generalized smoothstep
-
-$$
-B(u)=462u^6-1980u^7+3465u^8-3080u^9+1386u^{10}-252u^{11},
+\chi|_{\partial\Omega}=0,
 \qquad
-u=\frac{2\lvert d_{\mathrm{exact}}\rvert-r_0}{r_0}
+\partial_n\chi|_{\partial\Omega}=1.
 $$
 
-clipped to $[0,1]$. Thus $q=d_{\mathrm{exact}}$ throughout an open boundary collar,
-rather than merely agreeing at one point. In the closest-point custom derivative,
-queries within a scale-normalized numerical collar use the mesh pseudonormal directly.
-This removes the machine-epsilon transition that would otherwise create unbounded
-higher derivatives at the zero set.
-
-For planar CAD geometry, the triangulation is extruded only to reuse the 3D mesh
-kernel; queries are evaluated on the sidewall away from the end caps. The final
-boundary-factor scale is the planar diameter, not the artificial extrusion height.
-
-#### A.2.4.2. Compact smooth saturation
-
-The closest-point map is nonsmooth at medial sets. The dimensional
-boundary-defining factor does not need to carry that nonsmoothness into a PDE
-residual. Let
+For a certified level set, use
 
 $$
-\delta=0.05D,\qquad r=\frac{|q|}{\delta},
+\chi(x)
+=
+\frac{\phi(x)}{\|\nabla\phi(x)\|},
 $$
 
-and define
+with a finite denominator fallback away from regular points. On a regular
+boundary point, the term produced by differentiating the denominator is
+multiplied by $\phi=0$, so
 
 $$
-G(u)
-=u-66u^7+\frac{495}{2}u^8-385u^9+308u^{10}-126u^{11}+21u^{12}.
+\chi|_{\partial\Omega}=0,
+\qquad
+\nabla\chi|_{\partial\Omega}
+=
+\frac{\nabla\phi}{\|\nabla\phi\|}
+=n,
+\qquad
+\partial_n\chi|_{\partial\Omega}=1.
 $$
 
-The final factor is
+The final `boundary_ansatz_factor` is $\psi=q(\chi)$, where $q$ is the compact
+transform below with its default fractions. Because $q$ is exactly the identity
+in an open zero-set collar, $\psi$ retains the same boundary value and unit
+normal derivative while its interior amplitude is bounded. At a sharp edge,
+corner, CSG seam, or medial set, the field certificate is only piecewise smooth
+and a unique classical normal need not exist. Simplicial and B-Rep kernels use
+the selected outward face pseudonormal at such points.
+
+#### A.2.4.1. Compact dimensionless gate
+
+Dirichlet ansätze need only a dimensionless zero-set-preserving multiplier. Let
+$L>0$ be the shortest span of the geometry bounds,
+$\delta=sL$ for `saturation_fraction` $s$, and
+$a$ be `linear_fraction`. With
 
 $$
-\phi(q)=
+r=\frac{|\phi|}{\delta},
+\qquad
+t=\frac{r-a}{1-a},
+$$
+
+define
+
+$$
+G(t)
+=
+t-66t^7+\frac{495}{2}t^8-385t^9
++308t^{10}-126t^{11}+21t^{12}.
+$$
+
+The compact dimensional profile is
+
+$$
+q(\phi)=
 \begin{cases}
-q, & r\le \tfrac12,\\[2mm]
-\operatorname{sign}(q)\,\delta
-\left[\tfrac12+\tfrac12G(2r-1)\right],
-& \tfrac12<r<1,\\[2mm]
-\operatorname{sign}(q)\,\tfrac34\delta, & r\ge 1.
+\phi,
+&r\le a,\\[1mm]
+\operatorname{sign}(\phi)\,\delta
+\left[a+(1-a)G(t)\right],
+&a<r<1,\\[1mm]
+\operatorname{sign}(\phi)\,\delta
+\left[a+\tfrac12(1-a)\right],
+&r\ge1.
 \end{cases}
 $$
 
-The polynomial agrees with the identity through sixth order at the inner join and is
-flat through sixth order at the outer join. Consequently:
+The default general-geometry gate is
 
 $$
-\phi=0,\qquad \nabla\phi=n,\qquad \|\nabla\phi\|=1
-\quad\text{on a regular boundary face},
+\beta
+=
+-\frac{q(\phi)}
+{\delta\left[a+\tfrac12(1-a)\right]}.
 $$
 
-the whole inner collar is exactly linear, and all derivatives vanish once the plateau
-is reached. Medial-axis candidate changes beyond the saturation threshold therefore
-cannot enter any derivative of the enforced ansatz. The sign remains negative inside
-and positive outside.
+It is zero on the boundary, positive in the interior, scale invariant under
+uniform scaling, exactly linear in an open boundary collar, and constant past
+the saturation radius. The transition polynomial agrees with the identity
+through sixth order at its inner join and is flat through sixth order at its
+outer join. `gate_method="auto"` uses this transform when no domain-specific
+exact builder exists; `gate_method="compact"` selects it explicitly.
 
-`adf_orig` exposes the unsquashed smooth distance-like source for diagnostics and
-classification. `adf_blur(...)` remains an explicit utility, but a blur is not applied
-to the final boundary factor: averaging across the zero set would move the boundary
-and destroy the hard-constraint guarantee.
+#### A.2.4.2. Broad generic gate
 
-#### A.2.4.3. Dimensionless optimization gate
-
-The compact saturation used by the geometry ADF is not a good universal
-multiplier for a PINN ansatz: it can attenuate the network over most of the
-domain while concentrating large second and higher derivatives in a thin
-transition. Dirichlet ansätze and pipeline preservation overlays therefore use
-the global gate $\beta$, while derivative hard constraints use its dimensional
-unit-jet counterpart $\psi$.
-
-Let $L$ be the shortest positive span of the geometry's axis-aligned bounds.
-For the CAD default, let $d_i(x)$ be distances to the triangles in the
-BVH-selected candidate beam. Away from the boundary collar, Phydrax uses the
-order-12 negative-power R-equivalence field
+`gate_method="global_r_equivalence"` explicitly selects the nonsaturating generic
+profile. With
 
 $$
-r(x)=\left(\sum_i d_i(x)^{-12}\right)^{-1/12}.
+z=1.15\frac{-\phi}{L/2},
 $$
 
-This field is bounded by the nearest candidate distance but combines competing
-patches smoothly instead of selecting one. In the collar
-$\operatorname{dist}(x,\partial\Omega)\le L/8$, the source is the exact mesh
-distance; a $C^6$ transition couples it to $r$ by distance $L/4$. Thus the gate
-has the exact mesh zero set and local boundary behavior without extending a
-nearest-facet field to the medial axis.
-
-For an interior signed source $q\le0$, define
+the interior branch is
 
 $$
-z=1.15\frac{-q}{L/2},
-\qquad
 \beta=z(2-z).
 $$
 
-The dimensionless calibration compensates for the amplitude reduction inherent
-in a negative-power aggregate. The resulting gate is zero on the boundary,
-order one across the interior, scale invariant
-$\beta_{r\Omega}(rx)=\beta_\Omega(x)$, and has no manufactured compact-to-flat
-transition. `method="auto"` and `method="global_r_equivalence"` select this CAD
-gate. `method="compact"` retains the $C^6$ compact transform from A.2.4.2;
-`saturation_fraction` and `linear_fraction` configure only that fallback.
+An odd bounded exterior branch is used for $z<0$. This profile can be broader
+than the compact transform but inherits every nonsmoothness of the source field;
+the name is retained as the public method selector, not as a claim that a
+separate mesh R-equivalence field is constructed.
 
-For the signed source convention $q<0$ inside and $\partial_n q=1$ at a regular
-boundary point,
+For an interval $[a,b]$, Phydrax uses the exact analytic gate
+$4(x-a)(b-x)/(b-a)^2$. An axis-aligned hyperrectangle uses the product of its
+per-axis gates. These exact profiles are dimensionless, smooth, equal to one at
+the box center, and ignore compact-profile controls.
 
-$$
-\partial_n\beta=-\frac{4.6}{L}.
-$$
-
-Derivative hard constraints therefore use
-
-$$
-\psi=-\frac{L}{4.6}\,\beta,
-\qquad
-\psi|_{\partial\Omega}=0,
-\qquad
-\partial_n\psi|_{\partial\Omega}=1,
-\qquad
-\nu=\nabla\psi.
-$$
-
-This constant boundary-jet normalization stays finite throughout the interior.
-The unnormalized extension $\nu$ may vanish at an interior maximum, which is
-smooth and harmless because $\nu=n$ on the boundary. This intentionally avoids
-both a discontinuous everywhere-unit normal extension and the pointwise quotient
-$\beta/\partial_n\beta$, which is singular where the broad gate reaches an
-interior maximum.
-
-For an interval $[a,b]$, Phydrax uses the analytic gate
-$4(x-a)(b-x)/(b-a)^2$. For an axis-aligned hyperrectangle it uses the product
-of these per-axis gates. These exact analytic profiles are dimensionless, smooth,
-equal to one at the box center, and unaffected by mesh-specific `method`,
-`saturation_fraction`, or `linear_fraction` controls. At a genuine sharp CAD edge
-or corner, no globally smooth defining function can also retain a unique nonzero
-normal; those features keep the documented finite pseudoderivative convention.
-
-For mesh-only input, the R-equivalence aggregate is evaluated over a finite
-BVH candidate beam. It is therefore not invariant under retessellation: changing
-facet density can shift interior amplitudes even when the represented surface
-is nearly unchanged. Boundary zeros, sign, and uniform-scale covariance remain
-the enforced contracts. Candidate routing is discrete as well; the negative
-power suppresses omitted distant facets, but Phydrax does not claim a global
-smoothness guarantee across every possible beam-selection change.
+All gate and ansatz constructions operate on the compiled geometry contract.
+They do not inspect whether the source was analytic, simplicial, reconstructed,
+or B-Rep. Representation-specific approximation and differentiability limits
+remain visible through `FieldCertificate`.
 
 ## A.3. Piecewise boundary constraints and blending
 

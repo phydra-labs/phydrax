@@ -189,7 +189,7 @@ uncertainty.
 `GeometryMeasurePartition` over boundary segments or interior simplices.
 
 ```python
-partition = phx.domain.GeometryMeasurePartition(
+partition = phx.geometry.GeometryMeasurePartition(
     (
         ((-1.0,), (0.5,)),
         ((0.5,), (2.0,)),

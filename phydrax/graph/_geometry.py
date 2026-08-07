@@ -141,19 +141,19 @@ def _triangle_adjacency(
     return np.unique(directed.astype(np.int32), axis=0)
 
 
-def _validate_mesh_arrays(mesh_vertices: Any, mesh_faces: Any, /) -> tuple[np.ndarray, np.ndarray]:
+def _validate_mesh_arrays(
+    mesh_vertices: Any, mesh_faces: Any, /
+) -> tuple[np.ndarray, np.ndarray]:
     vertices_np = np.asarray(mesh_vertices, dtype=float)
     faces_np = np.asarray(mesh_faces, dtype=np.int32)
 
     if vertices_np.ndim != 2 or vertices_np.shape[1] != 3:
         raise ValueError(
-            "mesh_vertices must have shape (n_vertex, 3); "
-            f"got {vertices_np.shape!r}."
+            f"mesh_vertices must have shape (n_vertex, 3); got {vertices_np.shape!r}."
         )
     if faces_np.ndim != 2 or faces_np.shape[1] != 3:
         raise ValueError(
-            "mesh_faces must have shape (n_face, 3); "
-            f"got {faces_np.shape!r}."
+            f"mesh_faces must have shape (n_face, 3); got {faces_np.shape!r}."
         )
 
     n_vertex = int(vertices_np.shape[0])
@@ -164,7 +164,9 @@ def _validate_mesh_arrays(mesh_vertices: Any, mesh_faces: Any, /) -> tuple[np.nd
     return vertices_np, faces_np
 
 
-def _face_geometry(vertices: np.ndarray, faces: np.ndarray, /) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _face_geometry(
+    vertices: np.ndarray, faces: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     tri = vertices[faces]
     cross = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
     norm = np.linalg.norm(cross, axis=-1)
@@ -173,7 +175,9 @@ def _face_geometry(vertices: np.ndarray, faces: np.ndarray, /) -> tuple[np.ndarr
     return area, normal, tri.mean(axis=1)
 
 
-def _vertex_geometry(vertices: np.ndarray, faces: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
+def _vertex_geometry(
+    vertices: np.ndarray, faces: np.ndarray, /
+) -> tuple[np.ndarray, np.ndarray]:
     area, face_normals, _centroids = _face_geometry(vertices, faces)
     vertex_area = np.zeros((vertices.shape[0],), dtype=float)
     vertex_normal = np.zeros_like(vertices, dtype=float)
@@ -202,7 +206,9 @@ def _canonical_edge_counts(faces: np.ndarray, /) -> dict[tuple[int, int], int]:
     }
 
 
-def _edge_face_counts(pairs: np.ndarray, edge_counts: dict[tuple[int, int], int], /) -> np.ndarray:
+def _edge_face_counts(
+    pairs: np.ndarray, edge_counts: dict[tuple[int, int], int], /
+) -> np.ndarray:
     out = np.zeros((pairs.shape[0],), dtype=np.int32)
     for i, (sender, receiver) in enumerate(pairs):
         key = tuple(sorted((int(sender), int(receiver))))
@@ -372,7 +378,10 @@ def mesh_to_geometry_graph(
         validate=validate,
     )
     pairs = np.stack(
-        [np.asarray(graph.senders, dtype=np.int32), np.asarray(graph.receivers, dtype=np.int32)],
+        [
+            np.asarray(graph.senders, dtype=np.int32),
+            np.asarray(graph.receivers, dtype=np.int32),
+        ],
         axis=1,
     )
     boundary_nodes, interior_nodes, boundary_edges, interface_edges, _face_counts = (
@@ -446,7 +455,9 @@ def point_cloud_to_graph(
     """Construct a sparse graph from point-cloud radius and/or kNN neighborhoods."""
     points_np = np.asarray(points, dtype=float)
     if points_np.ndim != 2:
-        raise ValueError(f"points must have shape (n_point, dim); got {points_np.shape!r}.")
+        raise ValueError(
+            f"points must have shape (n_point, dim); got {points_np.shape!r}."
+        )
     if int(points_np.shape[0]) == 0:
         raise ValueError("points must contain at least one point.")
     pairs = _point_cloud_edges(
@@ -502,13 +513,17 @@ def _periodic_box(periodic_box: Any | None, dim: int, /) -> np.ndarray | None:
     if box.ndim == 0:
         box = np.full((dim,), float(box), dtype=float)
     if box.shape != (dim,):
-        raise ValueError(f"periodic_box must be scalar or shape ({dim},); got {box.shape!r}.")
+        raise ValueError(
+            f"periodic_box must be scalar or shape ({dim},); got {box.shape!r}."
+        )
     if np.any(box <= 0):
         raise ValueError("periodic_box entries must be positive.")
     return box
 
 
-def _minimum_image(relative: np.ndarray, periodic_box: np.ndarray | None, /) -> np.ndarray:
+def _minimum_image(
+    relative: np.ndarray, periodic_box: np.ndarray | None, /
+) -> np.ndarray:
     if periodic_box is None:
         return relative
     return relative - periodic_box * np.round(relative / periodic_box)
@@ -521,7 +536,11 @@ def _validate_query_points(
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, bool]:
     source = _validate_points("source_points", source_points)
-    target = source if target_points is None else _validate_points("target_points", target_points)
+    target = (
+        source
+        if target_points is None
+        else _validate_points("target_points", target_points)
+    )
     if int(source.shape[1]) != int(target.shape[1]):
         raise ValueError("source_points and target_points must have the same dimension.")
     box = _periodic_box(periodic_box, int(source.shape[1]))
@@ -585,7 +604,9 @@ def _knn_query_pairs(
                 break
         source_parts.extend(chosen)
         target_parts.extend([target_index] * len(chosen))
-    return np.asarray(source_parts, dtype=np.int32), np.asarray(target_parts, dtype=np.int32)
+    return np.asarray(source_parts, dtype=np.int32), np.asarray(
+        target_parts, dtype=np.int32
+    )
 
 
 def _validate_query_indices(
@@ -611,8 +632,12 @@ def _combine_query_features(
 ) -> jnp.ndarray | None:
     if source_features is None and target_features is None:
         return None
-    source = None if source_features is None else jnp.asarray(source_features, dtype=float)
-    target = None if target_features is None else jnp.asarray(target_features, dtype=float)
+    source = (
+        None if source_features is None else jnp.asarray(source_features, dtype=float)
+    )
+    target = (
+        None if target_features is None else jnp.asarray(target_features, dtype=float)
+    )
     if source is not None and source.ndim == 0:
         raise ValueError("source_features must have a leading point axis.")
     if target is not None and target.ndim == 0:
@@ -688,8 +713,12 @@ def query_graph_from_edges(
         target_points,
         periodic_box,
     )
-    source_idx = _validate_query_indices("source_indices", source_indices, int(source.shape[0]))
-    target_idx = _validate_query_indices("target_indices", target_indices, int(target.shape[0]))
+    source_idx = _validate_query_indices(
+        "source_indices", source_indices, int(source.shape[0])
+    )
+    target_idx = _validate_query_indices(
+        "target_indices", target_indices, int(target.shape[0])
+    )
     if int(source_idx.shape[0]) != int(target_idx.shape[0]):
         raise ValueError("source_indices and target_indices must have the same length.")
 
@@ -744,7 +773,9 @@ def query_graph_from_edges(
         nodes["features"] = features
 
     edges: dict[str, Any] = {
-        "type": jnp.full((int(source_idx.shape[0]),), int(query_edge_type), dtype=jnp.int32),
+        "type": jnp.full(
+            (int(source_idx.shape[0]),), int(query_edge_type), dtype=jnp.int32
+        ),
         "source_index": jnp.asarray(source_idx, dtype=jnp.int32),
         "target_index": jnp.asarray(target_idx, dtype=jnp.int32),
         "relative": jnp.asarray(relative, dtype=float),
@@ -755,7 +786,9 @@ def query_graph_from_edges(
         if int(source_idx.shape[0]) == 0:
             edges["kernel_weight"] = jnp.zeros((0, 1), dtype=float)
         else:
-            radius = float(np.max(distance)) if weight_radius is None else float(weight_radius)
+            radius = (
+                float(np.max(distance)) if weight_radius is None else float(weight_radius)
+            )
             if radius <= 0:
                 radius = 1.0
             edges["kernel_weight"] = mollified_kernel_weight(
@@ -933,58 +966,10 @@ def knn_graph(
     )
 
 
-def geometry3d_to_graph(
-    geometry: Any,
-    *,
-    node_features: NodeFeatureMode = "positions",
-    edge_features: EdgeFeatureMode = "relative",
-    add_reverse_edges: bool = True,
-    add_self_edges: bool = False,
-    globals: Any = None,
-    validate: bool = True,
-) -> GraphIR:
-    """Convert a Phydrax 3D geometry object into `GraphIR`."""
-    return mesh_to_graph(
-        geometry.mesh_vertices,
-        geometry.mesh_faces,
-        node_features=node_features,
-        edge_features=edge_features,
-        add_reverse_edges=add_reverse_edges,
-        add_self_edges=add_self_edges,
-        globals=globals,
-        validate=validate,
-    )
-
-
-def geometry3d_to_geometry_graph(
-    geometry: Any,
-    *,
-    node_features: NodeFeatureMode = "geometry",
-    edge_features: EdgeFeatureMode = "geometry",
-    add_reverse_edges: bool = True,
-    add_self_edges: bool = False,
-    globals: Any = None,
-    validate: bool = True,
-) -> GeometryGraph:
-    """Convert a Phydrax 3D geometry object into a geometry-feature graph bundle."""
-    return mesh_to_geometry_graph(
-        geometry.mesh_vertices,
-        geometry.mesh_faces,
-        node_features=node_features,
-        edge_features=edge_features,
-        add_reverse_edges=add_reverse_edges,
-        add_self_edges=add_self_edges,
-        globals=globals,
-        validate=validate,
-    )
-
-
 __all__ = [
     "GeometryGraph",
     "MollifierKind",
     "QueryGraph",
-    "geometry3d_to_geometry_graph",
-    "geometry3d_to_graph",
     "knn_graph",
     "knn_query_graph",
     "mesh_to_geometry_graph",

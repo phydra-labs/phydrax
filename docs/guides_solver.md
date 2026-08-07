@@ -169,15 +169,21 @@ Pipelines are applied before any soft constraints are evaluated, so all residual
 post-processed (enforced) fields.
 
 Geometry Dirichlet ansätze and pipeline preservation overlays use a dimensionless
-gate that is broad by default. CAD Neumann, Robin, Sommerfeld, and traction ansätze
-use a dimensional rescaling of the same global R-equivalence profile whose outward
-normal derivative is one. Their interior residuals use the factor gradient as a
-smooth normal extension; it equals the outward unit normal at regular boundary
-points but can vanish at medial sets. Public normal calculations continue to use the
-geometry ADF and normal provider. Select `gate_method="compact"` to use the compact
-Dirichlet and overlay fallback; only then do `gate_saturation_fraction` and
-`gate_linear_fraction` tune its transition. Exact analytic geometry gates ignore
-these mesh-specific controls.
+gate derived from the certified boundary field. `gate_method="auto"` selects an
+exact domain-specific profile for intervals and hyperrectangles and the compact
+field transform for general compiled geometry. Select
+`gate_method="global_r_equivalence"` explicitly for the broad generic transform;
+`gate_method="compact"` makes the default fallback explicit.
+`gate_saturation_fraction` and `gate_linear_fraction` configure only the compact
+transform.
+
+Neumann, Robin, Sommerfeld, and traction ansätze use a compact dimensional
+factor whose outward boundary derivative is one. Certified level sets are first
+locally normalized by their gradient magnitude; signed-distance fields already
+have the required local jet. A high-order compact saturation is exactly linear
+near the boundary and bounds the interior amplitude. The factor gradient is the
+outward unit normal at regular boundary points and inherits the field
+certificate's piecewise regularity elsewhere.
 
 Boundary constraints whose operators contain spatial derivatives must declare
 that order on `SingleFieldEnforcedConstraint` or

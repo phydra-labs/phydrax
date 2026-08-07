@@ -61,8 +61,6 @@ from ._generators import (
     sparse_matrix_to_graphs_tuple,
 )
 from ._geometry import (
-    geometry3d_to_geometry_graph,
-    geometry3d_to_graph,
     GeometryGraph,
     knn_graph,
     knn_query_graph,
@@ -406,7 +404,6 @@ __all__ = [
     "sparse_matrix_to_graphs_tuple",
     "GeometryGraph",
     "QueryGraph",
-    "geometry3d_to_geometry_graph",
     "knn_graph",
     "knn_query_graph",
     "mesh_to_graph",
@@ -422,5 +419,4 @@ __all__ = [
     "query_graph_from_edges",
     "radius_graph",
     "radius_query_graph",
-    "geometry3d_to_graph",
 ]

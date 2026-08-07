@@ -2,7 +2,6 @@ import jax.numpy as jnp
 
 import phydrax as phx
 from phydrax.graph import (
-    geometry3d_to_graph,
     mesh_to_geometry_graph,
     mesh_to_graph,
     point_cloud_to_graph,
@@ -30,9 +29,9 @@ def test_mesh_to_graph_bidirected_triangle():
     assert graph.edges.shape == (6, 3)
 
 
-def test_geometry3d_to_graph_distance_edges():
+def test_mesh_to_graph_distance_edges():
     geom = _DummyGeometry()
-    graph = geometry3d_to_graph(geom, edge_features="distance")
+    graph = mesh_to_graph(geom.mesh_vertices, geom.mesh_faces, edge_features="distance")
     assert graph.num_nodes == 3
     assert graph.num_edges == 6
     assert graph.edges.shape == (6, 1)
@@ -59,7 +58,9 @@ def test_mesh_to_graph_geometry_features():
     assert graph.nodes["normal"].shape == (3, 3)
     assert graph.nodes["area"].shape == (3, 1)
     assert jnp.allclose(graph.nodes["area"][:, 0], jnp.full((3,), 1.0 / 6.0))
-    assert jnp.allclose(graph.nodes["normal"], jnp.tile(jnp.array([[0.0, 0.0, 1.0]]), (3, 1)))
+    assert jnp.allclose(
+        graph.nodes["normal"], jnp.tile(jnp.array([[0.0, 0.0, 1.0]]), (3, 1))
+    )
     assert jnp.all(graph.nodes["is_boundary"])
     assert graph.edges["distance"].shape == (6, 1)
     assert jnp.all(graph.edges["is_boundary"])

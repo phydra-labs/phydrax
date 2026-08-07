@@ -15,6 +15,7 @@ from jaxtyping import Array, Key
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._sampling import design_capabilities, design_name, materialize_design
+from ..geometry import BoundaryAtlasPartition
 from ..domain._base import _AbstractGeometry
 from ..domain._components import (
     Boundary,
@@ -26,12 +27,11 @@ from ..domain._components import (
     Interior,
 )
 from ..domain._domain import RelabeledDomain
+from ..domain._geometry import GeometryDomain
 from ..domain._function import DomainFunction
 from ..domain._probability import _open_unit_interval, ProbabilityDomain
 from ..domain._scalar import _AbstractScalarDomain
 from ..domain._structure import PointsBatch, ProductStructure
-from ..domain.geometry2d._from_cad import Geometry2DFromCAD
-from ..domain.geometry3d._mesh import Geometry3DFromCAD
 from ._batches import PointIntegrationBatch, WeightedSampleBatch
 from ._estimates import (
     AntitheticDiagnostics,
@@ -354,18 +354,18 @@ def _stratified_partition(
         if isinstance(selector, (FixedStart, FixedEnd, Fixed)):
             continue
         factor = _unwrap(component.domain.factor(label))
-        if isinstance(factor, Geometry2DFromCAD):
-            partition = (
-                factor.boundary_measure_partition
-                if isinstance(selector, Boundary)
-                else factor.interior_measure_partition
-            )
-            candidates.append((label, partition))
-        elif isinstance(factor, Geometry3DFromCAD) and isinstance(selector, Boundary):
-            candidates.append((label, factor.boundary_measure_partition))
+        if isinstance(factor, GeometryDomain) and isinstance(selector, Boundary):
+            atlas = factor.boundary_atlas
+            if selector.tags is not None or selector.entity_ids is not None:
+                atlas = atlas.select(
+                    tags=selector.tags,
+                    entity_ids=selector.entity_ids,
+                )
+            candidates.append((label, BoundaryAtlasPartition(atlas)))
     if len(candidates) != 1:
         raise ValueError(
-            "Stratified Monte Carlo requires one explicit GeometryMeasurePartition."
+            "Automatic stratification requires exactly one boundary-atlas geometry; "
+            "provide StratifiedDesign(partition=...) for other targets."
         )
     return candidates[0]
 

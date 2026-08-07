@@ -35,6 +35,7 @@ from ..domain._structure import (
     PointsBatch,
     ProductStructure,
 )
+from ..geometry import BoundaryAtlasProvider
 from ._batches import PointIntegrationBatch, SeparableIntegrationBatch
 from ._plans import FixedQuadraturePlan
 from ._rules import interval_rule_data, IntervalRule
@@ -510,14 +511,12 @@ def _materialize_scalar_boundaries(
     )
 
 
-def _materialize_cad_boundary(
+def _materialize_boundary_atlas(
     component: DomainComponent,
     target: ComponentTarget,
     rule: IntervalRule,
     /,
 ) -> PointIntegrationBatch:
-    from ..domain.geometry2d._from_cad import Geometry2DFromCAD
-    from ..domain.geometry3d._mesh import Geometry3DFromCAD
     from ._rules import ReferenceIntervalRule, ReferenceQuadrilateralRule
 
     varying = tuple(
@@ -529,7 +528,7 @@ def _materialize_cad_boundary(
     )
     if len(varying) != 1:
         raise ValueError(
-            "CAD boundary quadrature supports one varying geometry factor; "
+            "Boundary-atlas quadrature supports one varying geometry factor; "
             "use ProductIntegrationPlan for mixed factors."
         )
     label = varying[0]
@@ -538,15 +537,22 @@ def _materialize_cad_boundary(
     if isinstance(factor, RelabeledDomain):
         factor = factor.base
     if not isinstance(selector, Boundary) or not isinstance(
-        factor, (Geometry2DFromCAD, Geometry3DFromCAD)
+        factor, BoundaryAtlasProvider
     ):
-        raise ValueError("Fixed boundary quadrature requires a CAD geometry boundary.")
-    atlas = factor.boundary_chart_atlas
-    reference_rule = (
-        ReferenceIntervalRule(rule)
-        if atlas.reference_dim == 1
-        else ReferenceQuadrilateralRule(rule)
-    )
+        raise ValueError(
+            "Fixed boundary quadrature requires a geometry with a boundary atlas."
+        )
+    atlas = factor.boundary_atlas
+    if selector.tags is not None or selector.entity_ids is not None:
+        atlas = atlas.select(tags=selector.tags, entity_ids=selector.entity_ids)
+    if atlas.reference_dim == 1:
+        reference_rule = ReferenceIntervalRule(rule)
+    elif atlas.reference_dim == 2:
+        reference_rule = ReferenceQuadrilateralRule(rule)
+    else:
+        raise ValueError(
+            "Boundary-atlas quadrature supports reference dimensions one and two."
+        )
     reference_data = reference_rule.materialize()
     count = int(reference_data.points.shape[0])
     charts = atlas.num_charts
@@ -560,14 +566,21 @@ def _materialize_cad_boundary(
     )
     physical = atlas.map(chart_indices, reference)
     jacobian = atlas.jacobian(chart_indices, reference)
-    weights = jacobian * reference_data.weights[None, :]
+    active = atlas.reference_mask(chart_indices, reference) & atlas.seam_owner[
+        chart_indices
+    ]
+    weights = jnp.where(
+        active,
+        jacobian * reference_data.weights[None, :],
+        0.0,
+    )
     fixed_labels = frozenset(other for other in component.domain.labels if other != label)
     structure = ProductStructure(((label,),)).canonicalize(
         component.domain.labels, fixed_labels=fixed_labels
     )
     axis = structure.axis_for(label)
     if axis is None:
-        raise RuntimeError("CAD boundary structure has no integration axis.")
+        raise RuntimeError("Boundary-atlas structure has no integration axis.")
     points: dict[str, cx.Field] = {
         label: cx.Field(physical.reshape((-1, factor.var_dim)), dims=(axis, None))
     }
@@ -597,7 +610,7 @@ def _materialize_cad_boundary(
         cx.Field(weights.reshape((-1,)), dims=(axis,)),
         axes=axes,
         target_mass=component.measure(),
-        provenance=f"cad-boundary:{type(rule).__name__}",
+        provenance=f"boundary-atlas:{type(rule).__name__}",
     )
 
 
@@ -631,7 +644,7 @@ def materialize_fixed_component(
         )
         if all(isinstance(factor, _AbstractScalarDomain) for factor in unwrapped):
             return _materialize_scalar_boundaries(component, target, rule)
-        return _materialize_cad_boundary(component, target, rule)
+        return _materialize_boundary_atlas(component, target, rule)
     factors = tuple(component.domain.factor(label) for label in component.domain.labels)
     unwrapped_factors = tuple(
         factor.base if isinstance(factor, RelabeledDomain) else factor

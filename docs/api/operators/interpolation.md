@@ -63,6 +63,17 @@ exactly, so shared coordinates should be explicitly broadcast when values have
 case axes. The public neural adapter specializes this to channel-last fields:
 
 ```python
+import jax.numpy as jnp
+import phydrax as phx
+
+values = jnp.ones((8, 8, 1))
+coordinates = jnp.asarray([[0.0, 0.0], [0.25, -0.5]])
+sensor_coordinates = coordinates
+x_nodes = jnp.linspace(-1.0, 1.0, 8, endpoint=False)
+y_nodes = jnp.linspace(-1.0, 1.0, 8, endpoint=False)
+x_period = 2.0
+y_period = 2.0
+
 sampled = phx.nn.sample_fourier_grid(
     values,       # batch_shape + source_shape + (channels,)
     coordinates,  # batch_shape + query_shape + (spatial_ndim,)

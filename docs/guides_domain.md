@@ -359,22 +359,24 @@ paired-point representation or a geometry-conforming mesh for such features.
 `CoordSeparableBatch` rejects negative, non-finite, misaligned, and unknown-label
 geometry weights.
 
-### CAD measure partitions and boundary charts
+### Geometry boundary atlases and measure partitions
 
-Mesh-backed 2D CAD geometries expose:
+Every analytic, simplicial, or B-Rep geometry with boundary-atlas capability
+exposes the same `boundary_atlas`. One-dimensional reference charts describe
+planar boundary curves; two-dimensional charts describe solid surfaces. Each
+chart carries its physical Jacobian, outward frame, optional trim domain, stable
+source entity identity, physical tags, and seam ownership.
 
-- `interior_measure_partition`: triangle areas;
-- `boundary_measure_partition`: boundary-edge lengths;
-- `boundary_chart_atlas`: one unit-interval chart per boundary edge.
+`phx.geometry.BoundaryAtlasPartition(cad.boundary_atlas)` computes a
+physical-measure stratum for each chart and supports fixed-size stratified
+sampling. `phx.geometry.GeometryMeasurePartition` is the lower-level explicit
+partition for segment or triangle arrays. Interior volume cells are never
+invented from a boundary-only surface mesh.
 
-Mesh-backed 3D CAD geometries expose a surface-triangle
-`boundary_measure_partition` and `boundary_chart_atlas`. A 3D interior
-volume-cell partition is intentionally not synthesized from a surface mesh.
-
-Fixed boundary integration lowers every CAD chart through the unified integration
-API. Reference nodes are mapped to physical edges or Duffy-mapped triangles and
+Fixed boundary integration lowers every chart through the unified integration
+API. Reference nodes are mapped to physical edges or surface patches and
 multiplied by the chart Jacobian and trim mask. Adjacent charts share only
-measure-zero seams, so chart reduction does not double-count physical surface
+measure-zero seams, so chart reduction does not double-count physical boundary
 measure:
 
 ```py

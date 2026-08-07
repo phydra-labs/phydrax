@@ -84,7 +84,7 @@ def test_triangle_invalid_vertices():
 
 
 def test_polygon_preserves_absolute_coordinates():
-    # A non-centered polygon; ensure mesh bounds match input bounds
+    # A non-centered polygon; ensure analytic bounds match input bounds.
     vertices = [
         (1.0, 0.0),
         (1.0, 1.0),
@@ -99,11 +99,10 @@ def test_polygon_preserves_absolute_coordinates():
     poly = Polygon(vertices=vertices)
     import numpy as np
 
-    pts = np.asarray(poly.mesh.points)[:, :2]
+    bounds = np.asarray(poly.bounds)
     in_min = np.min(np.asarray(vertices), axis=0)
     in_max = np.max(np.asarray(vertices), axis=0)
-    out_min = np.min(pts, axis=0)
-    out_max = np.max(pts, axis=0)
+    out_min, out_max = bounds
     assert np.allclose(out_min, in_min, atol=1e-6)
     assert np.allclose(out_max, in_max, atol=1e-6)
 

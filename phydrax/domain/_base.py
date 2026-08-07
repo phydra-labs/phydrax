@@ -55,6 +55,65 @@ def _validate_enforcement_gate_fractions(
     return saturation, linear
 
 
+def _make_compact_boundary_factor(
+    distance: Callable[[Array], Array],
+    *,
+    scale: float,
+    saturation_fraction: float,
+    linear_fraction: float,
+) -> Callable[[Array], Array]:
+    delta_value = float(scale) * saturation_fraction
+    transition_width = 1.0 - linear_fraction
+    plateau_shape = linear_fraction + 0.5 * transition_width
+
+    def compact(points: Array) -> Array:
+        signed = jnp.asarray(distance(points))
+        delta = jnp.asarray(delta_value, dtype=signed.dtype)
+        coordinate = jnp.abs(signed) / delta
+        transition_raw = jnp.clip(
+            (coordinate - linear_fraction) / transition_width,
+            0.0,
+            1.0,
+        )
+        transition_coordinate = jnp.where(
+            coordinate > linear_fraction,
+            transition_raw,
+            jnp.asarray(1.0, dtype=signed.dtype),
+        )
+        transition = (
+            transition_coordinate
+            - 66.0 * transition_coordinate**7
+            + 247.5 * transition_coordinate**8
+            - 385.0 * transition_coordinate**9
+            + 308.0 * transition_coordinate**10
+            - 126.0 * transition_coordinate**11
+            + 21.0 * transition_coordinate**12
+        )
+        magnitude = linear_fraction + transition_width * transition
+        transition_denominator = jnp.where(
+            coordinate > linear_fraction,
+            coordinate,
+            jnp.asarray(1.0, dtype=signed.dtype),
+        )
+        plateau_denominator = jnp.where(
+            coordinate >= 1.0,
+            coordinate,
+            jnp.asarray(1.0, dtype=signed.dtype),
+        )
+        ratio = jnp.where(
+            coordinate <= linear_fraction,
+            jnp.asarray(1.0, dtype=signed.dtype),
+            jnp.where(
+                coordinate < 1.0,
+                magnitude / transition_denominator,
+                plateau_shape / plateau_denominator,
+            ),
+        )
+        return signed * ratio
+
+    return jax.jit(compact)
+
+
 def _make_compact_enforcement_gate(
     distance: Callable[[Array], Array],
     *,
@@ -62,16 +121,16 @@ def _make_compact_enforcement_gate(
     saturation_fraction: float,
     linear_fraction: float,
 ) -> Callable[[Array], Array]:
-    from .geometry3d._sdf import make_compact_boundary_factor
-
-    compact = make_compact_boundary_factor(
+    compact = _make_compact_boundary_factor(
         distance,
         scale=scale,
         saturation_fraction=saturation_fraction,
         linear_fraction=linear_fraction,
     )
     plateau = (
-        saturation_fraction * scale * (linear_fraction + 0.5 * (1.0 - linear_fraction))
+        saturation_fraction
+        * scale
+        * (linear_fraction + 0.5 * (1.0 - linear_fraction))
     )
 
     def gate(points: Array) -> Array:
@@ -197,10 +256,11 @@ class _AbstractGeometry(_AbstractUnaryDomain):
 
     @property
     def boundary_ansatz_factor(self) -> Callable[[Array], Array]:
-        r"""Dimensional vanishing factor with outward unit boundary derivative.
+        """Dimensional vanishing factor with outward unit boundary derivative.
 
-        The default is ``adf``. CAD geometries override it with a globally smooth
-        R-equivalence profile while retaining the same boundary zero and first jet.
+        The base default is ``adf``. Compiled geometry domains normalize general
+        level sets to a unit regular boundary jet and apply a compact saturation
+        that is exactly linear near the zero set.
         """
         return self.adf
 
@@ -211,15 +271,16 @@ class _AbstractGeometry(_AbstractUnaryDomain):
         saturation_fraction: float = 0.5,
         linear_fraction: float = 0.5,
     ) -> Callable[[Array], Array]:
-        r"""Build a dimensionless, optimization-conditioned Dirichlet gate.
+        """Build a dimensionless, optimization-conditioned Dirichlet gate.
 
         The gate is zero on the boundary, positive inside, and order one away from
         it. It is deliberately separate from ``adf`` and
-        ``boundary_ansatz_factor``: boundary-normal APIs use ``adf``, while derivative
-        hard constraints use the dimensional unit-jet ansatz factor and its gradient.
-        ``method="auto"`` selects an exact analytic gate when available and the global
-        R-equivalence gate for CAD meshes. Analytic builders retain their fixed exact
-        profiles; ``method`` and the profile fractions control CAD or generic fallbacks.
+        ``boundary_ansatz_factor``: boundary-normal APIs use the compiled normal
+        provider, while derivative hard constraints use the dimensional unit-jet
+        factor and its gradient. ``method="auto"`` selects a domain-specific exact
+        builder when available and otherwise uses the compact field transform.
+        ``method="global_r_equivalence"`` explicitly selects the broad generic
+        transform.
         """
         saturation, linear = _validate_enforcement_gate_fractions(
             saturation_fraction, linear_fraction
