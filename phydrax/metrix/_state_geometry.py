@@ -815,21 +815,13 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
             return 2.0 * _skew(cayley)
         return _principal_local_so_logarithm(relative)
 
-    def pullback(
+    def _one_pullback(
         self,
-        state: ArrayLike,
-        local_tangent: ArrayLike,
-        tangent: ArrayLike,
+        matrix: Array,
+        local: Array,
+        tangent: Array,
         /,
     ) -> Array:
-        matrix = _matrix_shape(state, self.dimension, "SO(n) state")
-        local = _skew(
-            _matrix_shape(
-                local_tangent,
-                self.dimension,
-                "SO(n) local tangent",
-            )
-        )
         point = self.retract(matrix, local)
         vector = self.project_tangent(point, tangent)
         body_velocity = self.to_local(point, vector)
@@ -865,11 +857,7 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
             4,
             2 * (self.dimension * self.dimension + restart - 1) // restart,
         )
-        right_hand_side_norm = jnp.linalg.norm(
-            body_velocity,
-            axis=(-2, -1),
-            keepdims=True,
-        )
+        right_hand_side_norm = jnp.linalg.norm(body_velocity)
         scale = jnp.maximum(
             right_hand_side_norm,
             jnp.finfo(matrix.dtype).tiny,
@@ -886,11 +874,7 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
         )
         velocity = scale * normalized_velocity
         residual = differential(velocity) - body_velocity
-        residual_norm = jnp.linalg.norm(
-            residual,
-            axis=(-2, -1),
-            keepdims=True,
-        )
+        residual_norm = jnp.linalg.norm(residual)
         relative_residual = residual_norm / scale
         failed = jnp.where(
             right_hand_side_norm == 0.0,
@@ -903,6 +887,35 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
             "SO exponential pullback matrix-free solve did not converge.",
         )
         return _skew(velocity)
+
+    def pullback(
+        self,
+        state: ArrayLike,
+        local_tangent: ArrayLike,
+        tangent: ArrayLike,
+        /,
+    ) -> Array:
+        matrix = _matrix_shape(state, self.dimension, "SO(n) state")
+        local = _skew(
+            _matrix_shape(
+                local_tangent,
+                self.dimension,
+                "SO(n) local tangent",
+            )
+        )
+        vector = _matrix_shape(tangent, self.dimension, "SO(n) tangent")
+        _same_shape(local, matrix, "SO(n) local tangent")
+        _same_shape(vector, matrix, "SO(n) tangent")
+        if matrix.ndim == 2:
+            return self._one_pullback(matrix, local, vector)
+        leading = matrix.shape[:-2]
+        flat_shape = (-1, self.dimension, self.dimension)
+        velocities = jax.vmap(self._one_pullback)(
+            matrix.reshape(flat_shape),
+            local.reshape(flat_shape),
+            vector.reshape(flat_shape),
+        )
+        return velocities.reshape(leading + (self.dimension, self.dimension))
 
 
 class SymmetricPositiveDefiniteStateGeometry(AbstractStateGeometry):

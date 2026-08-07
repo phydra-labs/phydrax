@@ -24,9 +24,10 @@ records both a stable retraction ID and the resolved method.
 - `SpecialOrthogonalStateGeometry` represents SO(n), using skew tangent
   coordinates and either an exponential or Cayley retraction. Its degree-63
   principal logarithm accepts Cayley spectral radius below 0.5. Cayley uses an
-  analytic pullback; exponential uses a differentiable matrix-free solve of its
-  JVP with normalized right-hand sides, a checked relative residual, and fixed
-  \(O(n^2)\) workspace. Neither depends on the logarithm. SO(n) also supplies
+  analytic pullback; exponential solves each leading batch element
+  independently with a differentiable matrix-free JVP solve, normalized
+  right-hand sides, a checked relative residual, and fixed \(O(n^2)\) workspace
+  per state. Neither depends on the logarithm. SO(n) also supplies
   the shared trivialization required by commutator-free tableaux.
 - `SymmetricPositiveDefiniteStateGeometry` represents SPD(n), using symmetric
   tangent coordinates and a congruence/exponential retraction. It has exact

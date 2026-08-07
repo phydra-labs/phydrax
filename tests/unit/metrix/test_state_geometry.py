@@ -140,6 +140,39 @@ def test_so_exponential_pullback_preserves_tiny_float32_velocity():
     assert jnp.linalg.norm(recovered) > 0.0
     assert jnp.allclose(recovered, direction, rtol=5e-4, atol=1e-11)
 
+def test_so_exponential_pullback_solves_heterogeneous_batches_independently():
+    geometry = SpecialOrthogonalStateGeometry(3)
+    bases = jnp.broadcast_to(jnp.eye(3), (3, 3, 3))
+    locals = jnp.array(
+        [
+            [[0.0, -0.1, 0.2], [0.1, 0.0, -0.05], [-0.2, 0.05, 0.0]],
+            [[0.0, 0.7, -0.1], [-0.7, 0.0, 0.3], [0.1, -0.3, 0.0]],
+            [[0.0, -0.2, -0.6], [0.2, 0.0, 0.4], [0.6, -0.4, 0.0]],
+        ]
+    )
+    direction_shapes = jnp.array(
+        [
+            [[0.0, 0.3, -0.2], [-0.3, 0.0, 0.1], [0.2, -0.1, 0.0]],
+            [[0.0, -0.1, 0.4], [0.1, 0.0, -0.2], [-0.4, 0.2, 0.0]],
+            [[0.0, 0.2, 0.1], [-0.2, 0.0, 0.5], [-0.1, -0.5, 0.0]],
+        ]
+    )
+    scales = jnp.array([1e-8, 0.2, 1e-4])[:, None, None]
+    directions = scales * direction_shapes
+    _, tangents = jax.jvp(
+        lambda values: geometry.retract(bases, values),
+        (locals,),
+        (directions,),
+    )
+    recovered = jax.jit(geometry.pullback)(bases, locals, tangents)
+    relative_errors = jnp.linalg.norm(
+        recovered - directions,
+        axis=(-2, -1),
+    ) / jnp.linalg.norm(directions, axis=(-2, -1))
+
+    assert jnp.all(jnp.linalg.norm(recovered, axis=(-2, -1)) > 0.0)
+    assert jnp.all(relative_errors < 3e-9)
+
 
 def test_so_exponential_pullback_does_not_materialize_full_jacobian(monkeypatch):
     geometry = SpecialOrthogonalStateGeometry(5)
