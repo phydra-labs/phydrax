@@ -780,6 +780,54 @@ width. `GaussianScaleCalibrator.fit` estimates one positive multiplier by the
 closed-form held-out Gaussian-NLL optimum. It calibrates scale under a Gaussian
 likelihood; it does not provide a finite-sample coverage guarantee.
 
+## Uncertain predictors and normalized measurement error
+
+When both a measured predictor \(x_i\) and response \(y_i\) are uncertain, an
+observation-only residual model is generally wrong. For a smooth prediction
+\(f(\theta, x_i)\), `LinearizedGaussianMeasurementLikelihood` uses the local
+input Jacobian \(J_i\) and normalized effective covariance
+
+\[
+\Sigma_i(\theta)
+= \Sigma_{y,i}(\theta)
++ J_i(\theta)\Sigma_{x,i}(\theta)J_i(\theta)^\mathsf{T}.
+\]
+
+```python
+measured_x = jnp.linspace(0.1, 1.0, 24)[:, None]
+measured_y = 1.8 * measured_x[:, 0]
+
+measurement_term = phx.uq.LinearizedGaussianMeasurementLikelihood(
+    lambda parameters, x: parameters["slope"] * x[0],
+    measured_x,
+    measured_y,
+    input_covariance=jnp.asarray([[0.03**2]]),
+    observation_covariance=jnp.asarray([[0.02**2]]),
+)
+measurement_space = phx.uq.ParameterSpace(
+    {"slope": jnp.asarray(1.5)},
+    priors={"slope": phx.uq.Normal(0.0, 3.0)},
+)
+measurement_posterior = phx.uq.PosteriorProblem.from_terms(
+    measurement_space,
+    (measurement_term,),
+)
+```
+
+The quadratic residual and `log(det(Sigma_i))` terms are both mandatory. The
+normalization changes with \(\theta\) whenever the model sensitivity or a
+covariance callback changes; dropping it defines a different objective.
+Covariances may be shared or explicitly `per_case`, and may be fixed arrays or
+functions of physical parameters. No covariance shape is inferred from array
+rank.
+
+This likelihood is intentionally local and Gaussian. Use it for small or
+moderate output events with differentiable predictors. Compare against an
+explicit latent-input model when nonlinear input effects are material. Use
+`log_prob_cases(...)` with an `ArrayMinibatchSource` containing measured inputs,
+targets, and original case indices to reuse this exact term under SG-MCMC.
+
+
 ## Posterior contract
 
 Bayesian inference starts from one explicit `PosteriorProblem`. It owns:
@@ -1188,6 +1236,24 @@ approximate_prediction = laplace.predict(
 )
 ```
 
+For cheap local prediction moments, propagate the Laplace covariance without
+drawing:
+
+```python
+linearized_prediction = laplace.linearized_predict(
+    jnp.linspace(0.0, 1.0, 65)
+)
+linearized_variance = linearized_prediction.exact_variance()
+```
+
+`linearized_predict` differentiates the complete prediction path from
+unconstrained parameters, so parameter bijectors are included automatically.
+Dense Laplace supports exact first-order diagonals. Structured Laplace retains
+its covariance-vector product and can materialize only a caller-bounded small
+output covariance or estimate its diagonal with keyed Hutchinson probes.
+Continue to use `predict(...)` when nonlinear posterior-predictive shape,
+mean shifts, skewness, or tails matter.
+
 For larger subspaces, the same entry point dispatches to a Phydrax adapter around
 Laplax:
 
@@ -1480,6 +1546,49 @@ All calibrators use the exact finite-sample rank
 $k=\lceil(n+1)(1-\alpha)\rceil$. If $k>n$, Phydrax rejects the requested interval
 instead of silently clamping the rank. Coverage requires exchangeable calibration
 and test cases. Pointwise and simultaneous coverage are separate contracts.
+
+## Local covariance propagation
+
+`propagate_linearized` is the matrix-free first-order path for a smooth
+scientific map. It evaluates the nominal output once, keeps JVP and Hermitian
+VJP actions, and applies \(J C_x J^\mathrm{H}\) without constructing a
+Jacobian.
+
+```python
+center = {
+    "diffusivity": jnp.asarray(0.2),
+    "source": jnp.asarray([0.9, 1.0, 1.1]),
+}
+covariance = phx.uq.DiagonalCovariance(
+    {
+        "diffusivity": jnp.asarray(0.01),
+        "source": jnp.full((3,), 0.02),
+    }
+)
+local = phx.uq.propagate_linearized(
+    lambda value: forward(value["diffusivity"], value["source"]),
+    center,
+    covariance,
+)
+output_variance = local.exact_variance()
+```
+
+| Situation | First method | Escalation |
+| --- | --- | --- |
+| Smooth map, small perturbations, cheap moments | `propagate_linearized` | QMC or Monte Carlo validation |
+| Dense small input covariance | `DenseCovariance` | Factorize if repeatedly reused |
+| Low-rank prior or empirical modes | `FactorCovariance` | Increase retained rank |
+| Matrix-free covariance or PDE inverse action | `CovarianceOperator` | Keyed Hutchinson diagonal |
+| Small output diagnostic | Guarded `materialize_covariance` | Keep covariance-vector products for large fields |
+| Strong nonlinearity, discontinuity, threshold, or multimodality | Joint QMC or posterior draws | Explicit latent/reference model |
+
+`exact_variance()` means exact under the first-order approximation, not exact
+for the nonlinear model. `estimate_variance(...)` additionally carries
+Hutchinson Monte Carlo error. Preserve `coordax.Field` dimensions and uncertainty
+source labels in downstream summaries. Complex maps must be genuinely
+complex-linear and request `complex_linear=True`; otherwise represent real and
+imaginary parts explicitly.
+
 
 ## Uncertain inputs and joint QMC
 

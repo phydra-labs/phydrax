@@ -16,6 +16,8 @@ from jaxtyping import Array, PyTree
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ._covariance import DenseCovariance
+from ._linearized import LinearizedPropagationResult, propagate_linearized
 from ._posterior import PosteriorProblem
 
 
@@ -87,13 +89,15 @@ class LaplaceResult(StrictModule):
 
     def physical_covariance(self) -> Array:
         """Return delta-method covariance after parameter bijectors."""
-
-        def constrain_flat(flat_position):
-            physical = self.problem.parameter_space.constrain(self.unravel(flat_position))
-            return ravel_pytree(physical)[0]
-
-        jacobian = jax.jacrev(constrain_flat)(self.flat_map_position)
-        return jacobian @ self.covariance @ jacobian.T
+        propagation = propagate_linearized(
+            self.problem.parameter_space.constrain,
+            self.map_position,
+            DenseCovariance(self.covariance),
+            source="epistemic",
+        )
+        return propagation.materialize_covariance(
+            max_dimension=propagation.output_dimension
+        ).matrix
 
     def physical_correlation(self) -> Array:
         """Return delta-method physical-parameter correlations."""
@@ -135,6 +139,20 @@ class LaplaceResult(StrictModule):
         """Draw transformed physical-parameter samples."""
         unconstrained = self.sample_unconstrained(key, num_samples=num_samples)
         return self.problem.parameter_space.constrain(unconstrained)
+    def linearized_predict(
+        self,
+        /,
+        *args: Any,
+        **kwargs: Any,
+    ) -> LinearizedPropagationResult:
+        """Propagate dense Laplace covariance through one local prediction map."""
+        return propagate_linearized(
+            lambda position: self.problem.predict(position, *args, **kwargs),
+            self.map_position,
+            DenseCovariance(self.covariance),
+            source="epistemic",
+        )
+
 
     def predict(
         self,

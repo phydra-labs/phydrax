@@ -120,10 +120,35 @@ def test_stochastic_gradient_benchmark_controls_are_profiled_and_registered():
     smoke = runner.get_configuration("smoke")
     standard = runner.get_configuration("standard")
 
-    assert tuple(runner.SCENARIOS)[-1] == "stochastic_gradient_regression"
+    assert tuple(runner.SCENARIOS)[-2:] == (
+        "stochastic_gradient_regression",
+        "linearized_uncertainty_propagation",
+    )
     assert smoke.sgmcmc_burnin > 0
     assert smoke.sgmcmc_draws > 0
     assert smoke.sgmcmc_batch_size > 0
     assert smoke.sgmcmc_steps_per_sample > 0
     assert standard.sgmcmc_burnin >= smoke.sgmcmc_burnin
     assert standard.sgmcmc_draws >= smoke.sgmcmc_draws
+    assert smoke.linearized_input_dimension > 0
+    assert smoke.linearized_output_dimension > smoke.linearized_input_dimension
+    assert 0 < smoke.linearized_factor_rank <= smoke.linearized_input_dimension
+    assert smoke.linearized_hutchinson_probes > 1
+    assert smoke.linearized_qmc_samples > 0
+    assert (
+        standard.linearized_input_dimension
+        >= smoke.linearized_input_dimension
+    )
+    assert (
+        standard.linearized_output_dimension
+        >= smoke.linearized_output_dimension
+    )
+    assert (
+        standard.linearized_factor_rank
+        >= smoke.linearized_factor_rank
+    )
+    assert (
+        standard.linearized_hutchinson_probes
+        >= smoke.linearized_hutchinson_probes
+    )
+    assert standard.linearized_qmc_samples >= smoke.linearized_qmc_samples

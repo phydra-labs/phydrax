@@ -14,7 +14,12 @@ from jaxtyping import Array, Key
 
 from ..._doc import DOC_KEY0
 from ..models.core._base import _AbstractOperatorModel
-from ..models.core._operator import FunctionSamples, OperatorBatch, OperatorPrediction
+from ..models.core._operator import (
+    FunctionSamples,
+    OperatorBatch,
+    OperatorOutputSpec,
+    OperatorPrediction,
+)
 from ._physics import operator_hilbert_inner_product
 from ._trained_operator import TrainedOperator
 
@@ -146,6 +151,7 @@ class OperatorLinearization:
     base_input: Array
     base_output: Array
     output_query: FunctionSamples
+    output_spec: OperatorOutputSpec
 
     @property
     def source_samples(self) -> FunctionSamples:
@@ -288,6 +294,7 @@ def linearize_operator(
         output_query=prediction.query_geometry(
             prediction.field(resolved_field).query_name
         ),
+        output_spec=prediction.field(resolved_field).spec,
     )
 
 

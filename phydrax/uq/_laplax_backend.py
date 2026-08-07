@@ -18,6 +18,8 @@ from laplax.enums import CurvApprox
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ._covariance import CovarianceOperator
+from ._linearized import LinearizedPropagationResult, propagate_linearized
 from ._posterior import AbstractBijector, IdentityBijector, PosteriorProblem
 from ._posterior_predictive import (
     predict_from_position_samples,
@@ -95,15 +97,13 @@ class StructuredLaplaceResult(StrictModule):
         self, vector: PyTree[Array], /
     ) -> PyTree[Array]:
         """Apply delta-method covariance in transformed physical coordinates."""
-        constrain = self.problem.parameter_space.constrain
-        _, pullback = jax.vjp(constrain, self.map_position)
-        unconstrained_vector = pullback(vector)[0]
-        covariance_vector = self.covariance_mv(unconstrained_vector)
-        return jax.jvp(
-            constrain,
-            (self.map_position,),
-            (covariance_vector,),
-        )[1]
+        propagation = propagate_linearized(
+            self.problem.parameter_space.constrain,
+            self.map_position,
+            CovarianceOperator(self.covariance_mv),
+            source="epistemic",
+        )
+        return propagation.covariance_vector_product(vector)
 
     def sample_unconstrained(
         self,
@@ -140,6 +140,20 @@ class StructuredLaplaceResult(StrictModule):
         """Draw transformed physical parameters."""
         positions = self.sample_unconstrained(key, num_samples=num_samples)
         return self.problem.parameter_space.constrain(positions)
+    def linearized_predict(
+        self,
+        /,
+        *args: Any,
+        **kwargs: Any,
+    ) -> LinearizedPropagationResult:
+        """Propagate structured Laplace covariance through a local prediction map."""
+        return propagate_linearized(
+            lambda position: self.problem.predict(position, *args, **kwargs),
+            self.map_position,
+            CovarianceOperator(self.covariance_mv),
+            source="epistemic",
+        )
+
 
     def predict(
         self,

@@ -59,6 +59,23 @@ invalid whole-function draw or raises immediately according to `valid_policy`.
 
 ::: phydrax.uq.sample_operator_predictive
 
+## Linearized source covariance
+
+`propagate_operator_linearized` consumes the physical source-to-field
+`OperatorLinearization` returned by `phydrax.nn.linearize_operator`. The result
+retains case axes, output query dimensions, masks, and output-channel metadata.
+It exposes \(J C_x J^\mathrm{H}\) through the common matrix-free propagation
+result rather than flattening an operator field into an anonymous tensor API.
+
+Use `geometry="discrete"` when covariance is defined on the finite nodal values.
+Pointwise variance and guarded dense materialization are then meaningful. Use
+`geometry="hilbert"` only when source and output geometries both declare
+physical quadrature. Its pullback is the quadrature-aware operator adjoint;
+only covariance-vector products are exposed because a continuous
+function-space covariance has no canonical nodal diagonal.
+
+::: phydrax.uq.propagate_operator_linearized
+
 ## Geometry-aware operator uncertainty
 
 `OperatorPredictiveField` is architecture-independent: predictions from `GINO`,

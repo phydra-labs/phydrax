@@ -29,6 +29,11 @@ class BenchmarkConfiguration:
     calibration_cases: int
     gp_repeats: int
     jit_warm_repetitions: int
+    linearized_input_dimension: int
+    linearized_output_dimension: int
+    linearized_factor_rank: int
+    linearized_hutchinson_probes: int
+    linearized_qmc_samples: int
     flow_adaptation_rounds: int
     flow_local_adaptation_steps: int
     flow_global_adaptation_steps: int
@@ -57,6 +62,11 @@ PROFILES: dict[ProfileName, BenchmarkConfiguration] = {
         calibration_cases=256,
         gp_repeats=5,
         jit_warm_repetitions=3,
+        linearized_input_dimension=16,
+        linearized_output_dimension=1_024,
+        linearized_factor_rank=4,
+        linearized_hutchinson_probes=256,
+        linearized_qmc_samples=4_096,
         flow_adaptation_rounds=2,
         flow_local_adaptation_steps=40,
         flow_global_adaptation_steps=12,
@@ -80,6 +90,11 @@ PROFILES: dict[ProfileName, BenchmarkConfiguration] = {
         sgmcmc_steps_per_sample=2,
         gp_repeats=12,
         jit_warm_repetitions=10,
+        linearized_input_dimension=32,
+        linearized_output_dimension=4_096,
+        linearized_factor_rank=8,
+        linearized_hutchinson_probes=1_024,
+        linearized_qmc_samples=32_768,
         flow_adaptation_rounds=4,
         flow_local_adaptation_steps=80,
         flow_global_adaptation_steps=20,

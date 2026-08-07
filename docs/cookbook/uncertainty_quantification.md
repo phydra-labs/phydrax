@@ -132,6 +132,36 @@ input_prediction = phx.uq.propagate(
 The resulting source is `"input"`, distinct from ensemble epistemic variation. Keep
 these axes separate when both are present.
 
+### 5a. Use a local covariance when full draws are unnecessary
+
+```python
+local_center = {
+    "coefficient": jnp.asarray(0.4),
+    "forcing": jnp.asarray([0.8, 1.0, 1.2]),
+}
+local_covariance = phx.uq.FactorCovariance(
+    {
+        "coefficient": jnp.asarray([0.05, 0.00]),
+        "forcing": jnp.asarray(
+            [[0.02, 0.02, 0.02], [0.01, -0.01, 0.00]]
+        ),
+    }
+)
+local_prediction = phx.uq.propagate_linearized(
+    lambda value: solve_forward(value["coefficient"], value["forcing"]),
+    local_center,
+    local_covariance,
+)
+local_variance = local_prediction.exact_variance(batch_size=1)
+```
+
+The leading axis of every factor leaf is the shared covariance rank. This path
+uses JVP/VJP actions and never materializes a Jacobian. Validate it against the
+joint-QMC workflow above at several shrinking covariance scales before relying
+on a nonlinear model.
+
+
+
 ## 6. Rank global effects
 
 ```python
@@ -221,6 +251,8 @@ structured_laplace = phx.uq.fit_laplace(
     curvature="diagonal",
 )
 ```
+laplace_linearized = dense_laplace.linearized_predict(posterior_query)
+laplace_local_variance = laplace_linearized.exact_variance()
 
 The MCMC result preserves distinct chain and draw dimensions and includes split
 rank-normalized $\hat R$, bulk/tail ESS, acceptance, divergence, energy, depth, and
@@ -244,6 +276,39 @@ path to `ParameterSubspace.from_subtree_paths(...)`; this includes all arrays in
 those modules and avoids accidentally selecting only the last coordinate factor.
 See the posterior-contract section of the UQ guide for the complete separable
 selection pattern and its nonlinear joint-posterior interpretation.
+
+
+### 7a. Infer with uncertain predictors and responses
+
+```python
+measured_inputs = jnp.linspace(0.2, 1.4, 20)[:, None]
+measured_targets = 1.7 * measured_inputs[:, 0]
+
+measurement_term = phx.uq.LinearizedGaussianMeasurementLikelihood(
+    lambda parameters, value: parameters["slope"] * value[0],
+    measured_inputs,
+    measured_targets,
+    input_covariance=jnp.asarray([[0.04**2]]),
+    observation_covariance=jnp.asarray([[0.02**2]]),
+)
+measurement_space = phx.uq.ParameterSpace(
+    {"slope": jnp.asarray(1.5)},
+    priors={"slope": phx.uq.Normal(0.0, 3.0)},
+)
+measurement_problem = phx.uq.PosteriorProblem.from_terms(
+    measurement_space,
+    (measurement_term,),
+)
+measurement_map = phx.uq.find_map(measurement_problem)
+```
+
+The likelihood includes the parameter-dependent log determinant of the
+effective covariance. For a stochastic-gradient run, put `inputs`, `targets`,
+and `case_indices` in one `ArrayMinibatchSource` and call
+`measurement_term.log_prob_cases(...)` from the factor function. Compare the
+result against an explicit latent-input model when the predictor uncertainty is
+not small enough for a local linearization.
+
 
 ## 8. Scale a factorized likelihood with fixed-step SG-MCMC
 
