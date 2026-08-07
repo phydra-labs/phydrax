@@ -91,6 +91,10 @@ from ._fixed_lag import (
     FixedLagParticleSmootherResult,
 )
 from ._flow_mcmc import FlowNUTSConfig, FlowNUTSResult, sample_flow_nuts
+from ._gaussian_chain import (
+    combine_gaussian_filter_elements,
+    GaussianFilterElement,
+)
 from ._guided_particle import (
     AbstractParticleProposal,
     AuxiliaryResamplingPolicy,
@@ -115,6 +119,7 @@ from ._kalman import (
     KALMAN_NONFINITE,
     kalman_status_name,
     KALMAN_SUCCESS,
+    KalmanExecutionMethod,
     KalmanFilterResult,
     KalmanFilterState,
     KalmanFilterStep,
@@ -416,6 +421,8 @@ __all__ = [
     "guided_particle_filter_status_name",
     "LinearGaussianGuidedParticleProposal",
     "ParticleProposalSample",
+    "combine_gaussian_filter_elements",
+    "GaussianFilterElement",
     "fixed_lag_kalman_smoother",
     "fixed_lag_particle_smoother",
     "FixedLagKalmanSmootherResult",
@@ -430,6 +437,7 @@ __all__ = [
     "KalmanFilterStep",
     "kalman_filter_step",
     "kalman_innovation_diagnostics",
+    "KalmanExecutionMethod",
     "KalmanInnovationDiagnostics",
     "kalman_status_name",
     "KalmanSmootherResult",

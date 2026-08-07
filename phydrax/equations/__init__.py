@@ -41,6 +41,14 @@ from ._randomized_compile import (
     RandomizedDifferentialPlan,
     RandomizedNodeCoupling,
 )
+from ._semidiscrete import (
+    BoundaryLift,
+    compile_semidiscrete_pde,
+    CompiledSpatialDynamics,
+    ResolvedSemidiscreteMethod,
+    SemidiscreteCompilationMethod,
+    SemidiscreteFieldLayout,
+)
 from ._serialize import (
     pde_ir_from_dict,
     pde_ir_from_json,
@@ -62,11 +70,16 @@ from ._validate import infer_expression_type, PDEValueType, validate_pde_ir
 
 __all__ = [
     "analyze_randomized_compilation",
+    "BoundaryLift",
     "CompiledPDECondition",
     "CompiledPDEEquation",
     "CompiledPDEProblem",
+    "CompiledSpatialDynamics",
     "CompiledRandomizedPDEObjective",
     "DifferentialBackend",
+    "ResolvedSemidiscreteMethod",
+    "SemidiscreteCompilationMethod",
+    "SemidiscreteFieldLayout",
     "IntegralCompiler",
     "PDECondition",
     "PDEConditionKind",
@@ -92,6 +105,7 @@ __all__ = [
     "compile_pde_randomized_objective",
     "compile_randomized_pde_objective",
     "compile_pde_problem",
+    "compile_semidiscrete_pde",
     "infer_expression_type",
     "make_pde_operator",
     "pad_pde_tokens",

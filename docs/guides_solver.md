@@ -30,6 +30,65 @@ saved times. `DifferentialSolution.evaluate(query_times)` accepts arbitrarily sh
 shared query arrays and returns `sample_shape + query_shape + state_shape`; dense data
 is not retained by default.
 
+### Array state geometry
+
+`DifferentialProblem(state_geometry=...)` keeps the usual vector-field signature
+`(time, state, args) -> state-shaped array`, while declaring that the array lies
+on a constrained state space. Metrix supplies Euclidean, embedded, pointwise,
+special-orthogonal, and symmetric-positive-definite geometries. A nontrivial
+geometry validates the initial state and requires a geometric solver:
+
+```python
+import jax.numpy as jnp
+import phydrax as phx
+
+geometry = phx.metrix.SpecialOrthogonalStateGeometry(3)
+omega = jnp.array(
+    [[0.0, -0.4, 0.2], [0.4, 0.0, -0.1], [-0.2, 0.1, 0.0]]
+)
+problem = phx.solver.DifferentialProblem(
+    lambda t, rotation, args: rotation @ omega,
+    jnp.eye(3),
+    t0=0.0,
+    t1=2.0,
+    state_geometry=geometry,
+)
+solution = phx.solver.solve_diffrax(
+    problem,
+    save_times=jnp.linspace(0.0, 2.0, 21),
+    solver=phx.solver.RKMK(geometry),
+    dt0=0.05,
+    dense=True,
+)
+```
+
+`GeometricEuler` and `RKMK` integrate deterministic dynamics. RKMK requires an
+exact local pullback; an `EmbeddedStateGeometry` must therefore supply explicit
+inverse-retraction and pullback callables. `CommutatorFreeSolver` executes an
+explicit `CommutatorFreeTableau` only when the geometry declares a shared
+trivialization (the built-in Euclidean and SO(n) geometries). SPD(n) uses RKMK
+rather than the commutator-free solver. `SRKMK` is the explicit Stratonovich
+solver for nontrivial geometry. Generic Itô geometry is intentionally rejected
+rather than approximated by projection.
+
+SO(n) supports exponential and Cayley retractions. The exponential
+`inverse_retract` uses a degree-63 Cayley/atanh series and accepts only a Cayley
+spectral radius strictly below 0.5; it explicitly rejects points outside that
+numerically justified local neighborhood. The Cayley pullback uses its analytic
+inverse differential; the exponential pullback solves every leading batch
+element independently, normalizes its right-hand side, and applies a
+differentiable matrix-free solve of the exponential JVP with zero absolute
+tolerance, dimension-scaled Krylov cycles, and fixed \(O(n^2)\) workspace per
+state. It recomputes each relative differential residual and rejects a
+nonconverged solve. Neither solver pullback depends on the logarithm cutoff.
+SPD(n) uses a symmetric
+congruence/exponential retraction. Dense
+interpolation and root-finding events evaluate through the same retraction, so
+queried states remain on the declared state space.
+`DifferentialSolution.state_geometry_id`, `solver_id`, and `resolved_method`
+record geometry and numerical-method provenance.
+
+
 `DifferentialSolution.to_predictive()` converts an ensemble to a
 `PredictiveField` whose leading sample axis is labeled `process`. This label means
 intrinsic stochastic forcing. Time-step or spatial-discretization error is

@@ -730,14 +730,125 @@ def run_multilevel_monte_carlo_benchmark(
     )
 
 
+@dataclass(frozen=True)
+class RoughLogODEConvergenceBenchmarkResult:
+    interval_counts: tuple[int, ...]
+    terminal_errors: tuple[float, ...]
+    general_linear_relative_error: float
+    depth_three_hurst_successful: bool
+    accepted_logode_steps: int
+
+    @property
+    def passed(self) -> bool:
+        return (
+            self.terminal_errors[-1] < self.terminal_errors[0]
+            and self.general_linear_relative_error < 2e-6
+            and self.depth_three_hurst_successful
+            and self.accepted_logode_steps > 0
+        )
+
+
+def run_rough_logode_convergence_benchmark(
+    key: Key[Array, ""],
+    /,
+    *,
+    fine_steps: int = 32,
+) -> RoughLogODEConvergenceBenchmarkResult:
+    """Instrument depth-3 log-ODE refinement for one H=0.3 rough driver."""
+    steps = int(fine_steps)
+    if steps < 16 or steps % 8:
+        raise ValueError("fine_steps must be a multiple of eight and at least 16.")
+    realization = phx.stochastic.FractionalGaussianRealization(
+        phx.stochastic.FractionalGaussianProcess(
+            0.3,
+            0.25,
+            dimension=2,
+            process_id="rough-logode-convergence-driver",
+        ),
+        key,
+        jnp.linspace(0.0, 1.0, steps + 1),
+    )
+    left = jnp.asarray([[0.0, 1.0], [0.0, 0.0]])
+    right = jnp.asarray([[0.0, 0.0], [1.0, 0.0]])
+
+    def vector_fields(time, state, args):
+        del time, args
+        return jnp.stack((left @ state, right @ state), axis=-1)
+
+    problem = phx.solver.RoughDifferentialProblem(
+        vector_fields,
+        jnp.asarray([1.0, -0.25]),
+        driver_dimension=2,
+        problem_id="noncommuting-linear-logode-convergence",
+    )
+    matrix_policy = phx.solver.MatrixFunctionPolicy("arnoldi", num_matvecs=2)
+    linear_solver = phx.solver.LinearLogODE(
+        (left, right),
+        matrix_function_policy=matrix_policy,
+    )
+    reference_control = phx.stochastic.LogSignatureControl.from_fractional_gaussian(
+        realization,
+        depth=3,
+    )
+    reference = phx.solver.solve_rough_differential(
+        problem,
+        reference_control,
+        save_times=jnp.asarray([1.0]),
+        solver=linear_solver,
+    ).states[-1]
+    interval_counts = (2, 4, 8)
+    errors: list[float] = []
+    coarse_control = None
+    coarse_linear = None
+    for count in interval_counts:
+        stride = steps // count
+        indices = tuple(range(0, steps + 1, stride))
+        control = phx.stochastic.LogSignatureControl.from_fractional_gaussian(
+            realization,
+            depth=3,
+            coarse_indices=indices,
+        )
+        solution = phx.solver.solve_rough_differential(
+            problem,
+            control,
+            save_times=jnp.asarray([1.0]),
+            solver=linear_solver,
+        )
+        errors.append(float(jnp.linalg.norm(solution.states[-1] - reference)))
+        if count == interval_counts[0]:
+            coarse_control = control
+            coarse_linear = solution
+    if coarse_control is None or coarse_linear is None:
+        raise RuntimeError("The rough log-ODE benchmark did not construct a coarse level.")
+    general = phx.solver.solve_rough_differential(
+        problem,
+        coarse_control,
+        save_times=jnp.asarray([1.0]),
+        solver=phx.solver.LogODE(),
+    )
+    disagreement = float(
+        jnp.linalg.norm(general.states[-1] - coarse_linear.states[-1])
+        / jnp.maximum(jnp.linalg.norm(coarse_linear.states[-1]), 1e-14)
+    )
+    return RoughLogODEConvergenceBenchmarkResult(
+        interval_counts,
+        tuple(errors),
+        disagreement,
+        bool(general.successful),
+        int(jnp.sum(general.statistics["num_accepted_steps"])),
+    )
+
+
 __all__ = [
     "CommutativeNoiseBenchmarkResult",
     "MultilevelMonteCarloBenchmarkResult",
     "MultiplicativeReactionDiffusionBenchmarkResult",
     "StochasticAdvectionDiffusionBenchmarkResult",
+    "RoughLogODEConvergenceBenchmarkResult",
     "StochasticHeatConvergenceBenchmarkResult",
     "run_commutative_noise_benchmark",
     "run_multilevel_monte_carlo_benchmark",
+    "run_rough_logode_convergence_benchmark",
     "run_multiplicative_reaction_diffusion_benchmark",
     "run_stochastic_advection_diffusion_benchmark",
     "run_stochastic_heat_convergence_benchmark",

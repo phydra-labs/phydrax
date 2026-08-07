@@ -20,7 +20,10 @@ from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from ..domain._grid import AxisDiscretization, broadcasted_grid, GridSpec
-from ..operators.differential._array_ops import _basis_nth_derivative
+from ..operators.differential._array_ops import (
+    _basis_nth_derivative,
+    _fd_nth_derivative,
+)
 
 
 _TensorBasis = Literal["uniform", "fourier", "sine", "cosine"]
@@ -169,6 +172,56 @@ def _smallest_tensor_indices(
     return tuple(selected)
 
 
+
+def _dual_basis_first_derivative(
+    state: Array,
+    nodes: Array,
+    /,
+    *,
+    axis: int,
+    basis: Literal["sine", "cosine"],
+) -> Array:
+    """Differentiate the parity-dual values produced by a primal gradient."""
+    coordinates = jnp.asarray(nodes, dtype=float).reshape((-1,))
+    count = int(coordinates.size)
+    if count < 2:
+        return jnp.zeros_like(state)
+    spacing = coordinates[1] - coordinates[0]
+    values = jnp.moveaxis(state, axis, 0)
+    if basis == "sine":
+        extended = jnp.concatenate((values, values[::-1]), axis=0)
+        extended_size = 2 * count
+    else:
+        extended = jnp.concatenate((values, -values[-2:0:-1]), axis=0)
+        extended_size = 2 * (count - 1)
+    frequencies = 2.0 * jnp.pi * jnp.fft.fftfreq(extended_size, d=spacing)
+    frequency_shape = (extended_size,) + (1,) * (extended.ndim - 1)
+    coefficients = jnp.fft.fft(extended, axis=0)
+    derivative = jnp.fft.ifft(
+        1j * frequencies.reshape(frequency_shape) * coefficients,
+        axis=0,
+    )[:count]
+    if not jnp.iscomplexobj(state):
+        derivative = jnp.real(derivative)
+    return jnp.moveaxis(derivative, 0, axis)
+
+def _normalize_spatial_axes(
+    axes: int | Sequence[int] | None,
+    rank: int,
+    /,
+) -> tuple[int, ...]:
+    if axes is None:
+        return tuple(range(rank))
+    values = (int(axes),) if isinstance(axes, int) else tuple(int(axis) for axis in axes)
+    if not values:
+        raise ValueError("At least one spatial axis is required.")
+    if len(set(values)) != len(values) or any(
+        axis < 0 or axis >= rank for axis in values
+    ):
+        raise ValueError(f"Spatial axes must be unique and lie in [0, {rank}).")
+    return values
+
+
 class AbstractSpatialDiscretization(StrictModule):
     """Matrix-free spatial state contract for method-of-lines problems.
 
@@ -203,7 +256,79 @@ class AbstractSpatialDiscretization(StrictModule):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def laplacian(self, state: ArrayLike, /) -> Array:
+    def partial_derivative(
+        self,
+        state: ArrayLike,
+        /,
+        *,
+        axis: int,
+        order: int = 1,
+    ) -> Array:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def gradient(
+        self,
+        state: ArrayLike,
+        /,
+        *,
+        axes: int | Sequence[int] | None = None,
+    ) -> Array:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def divergence(
+        self,
+        state: ArrayLike,
+        /,
+        *,
+        axes: int | Sequence[int] | None = None,
+        dual: bool = False,
+    ) -> Array:
+        raise NotImplementedError
+
+    def curl(
+        self,
+        state: ArrayLike,
+        /,
+        *,
+        axes: Sequence[int] | None = None,
+    ) -> Array:
+        selected = _normalize_spatial_axes(axes, len(self.state_shape))
+        value = jnp.asarray(state)
+        if len(selected) != 3 or value.ndim <= len(self.state_shape) or value.shape[-1] != 3:
+            raise ValueError("Curl requires three spatial axes and three components.")
+        first, second, third = selected
+        return jnp.stack(
+            (
+                self.partial_derivative(value[..., 2], axis=second)
+                - self.partial_derivative(value[..., 1], axis=third),
+                self.partial_derivative(value[..., 0], axis=third)
+                - self.partial_derivative(value[..., 2], axis=first),
+                self.partial_derivative(value[..., 1], axis=first)
+                - self.partial_derivative(value[..., 0], axis=second),
+            ),
+            axis=-1,
+        )
+
+    @abc.abstractmethod
+    def laplacian(
+        self,
+        state: ArrayLike,
+        /,
+        *,
+        axes: int | Sequence[int] | None = None,
+    ) -> Array:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def integral(
+        self,
+        state: ArrayLike,
+        /,
+        *,
+        axes: int | Sequence[int] | None = None,
+    ) -> Array:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -302,7 +427,7 @@ class TensorGridDiscretization(AbstractSpatialDiscretization):
             tensor_weights = tensor_weights * jnp.asarray(axis.quad_weights).reshape(
                 tuple(reshape)
             )
-        identifier_parts: list[Any] = ["tensor-grid-v1"]
+        identifier_parts: list[Any] = ["tensor-grid-v2"]
         for axis in axes_value:
             identifier_parts.extend(
                 (
@@ -373,12 +498,117 @@ class TensorGridDiscretization(AbstractSpatialDiscretization):
             )
         return array
 
-    def laplacian(self, state: ArrayLike, /) -> Array:
+    def partial_derivative(
+        self,
+        state: ArrayLike,
+        /,
+        *,
+        axis: int,
+        order: int = 1,
+    ) -> Array:
         array = self._validate_state(state)
+        axis_index = int(axis)
+        derivative_order = int(order)
+        if axis_index < 0 or axis_index >= len(self.state_shape):
+            raise ValueError(
+                f"axis must lie in [0, {len(self.state_shape)}); got {axis_index}."
+            )
+        if derivative_order <= 0:
+            raise ValueError("order must be positive.")
+        axis_data = self.axes[axis_index]
+        basis = self.basis[axis_index]
+        if basis == "uniform":
+            spacing = axis_data.nodes[1] - axis_data.nodes[0]
+            if derivative_order == 2:
+                return (
+                    jnp.roll(array, -1, axis=axis_index)
+                    - 2.0 * array
+                    + jnp.roll(array, 1, axis=axis_index)
+                ) / spacing**2
+            return _fd_nth_derivative(
+                array,
+                dx=spacing,
+                axis=axis_index,
+                order=derivative_order,
+                periodic=True,
+            )
+        return _basis_nth_derivative(
+            array,
+            axis_data.nodes,
+            axis=axis_index,
+            order=derivative_order,
+            basis=basis,
+        )
+
+    def gradient(
+        self,
+        state: ArrayLike,
+        /,
+        *,
+        axes: int | Sequence[int] | None = None,
+    ) -> Array:
+        array = self._validate_state(state)
+        selected = _normalize_spatial_axes(axes, len(self.state_shape))
+        components = []
+        for axis_index in selected:
+            if self.basis[axis_index] == "uniform":
+                spacing = self.axes[axis_index].nodes[1] - self.axes[axis_index].nodes[0]
+                component = (
+                    jnp.roll(array, -1, axis=axis_index) - array
+                ) / spacing
+            else:
+                component = self.partial_derivative(array, axis=axis_index)
+            components.append(component)
+        return jnp.stack(tuple(components), axis=-1)
+
+    def divergence(
+        self,
+        state: ArrayLike,
+        /,
+        *,
+        axes: int | Sequence[int] | None = None,
+        dual: bool = False,
+    ) -> Array:
+        array = self._validate_state(state)
+        selected = _normalize_spatial_axes(axes, len(self.state_shape))
+        if array.ndim <= len(self.state_shape) or int(array.shape[-1]) != len(selected):
+            raise ValueError(
+                "Divergence requires a trailing component axis matching the "
+                f"{len(selected)} selected spatial axes; got {array.shape}."
+            )
+        out = jnp.zeros_like(array[..., 0])
+        for component_index, axis_index in enumerate(selected):
+            component = array[..., component_index]
+            if dual and self.basis[axis_index] == "uniform":
+                spacing = self.axes[axis_index].nodes[1] - self.axes[axis_index].nodes[0]
+                derivative = (
+                    component - jnp.roll(component, 1, axis=axis_index)
+                ) / spacing
+            elif dual and self.basis[axis_index] in ("sine", "cosine"):
+                derivative = _dual_basis_first_derivative(
+                    component,
+                    self.axes[axis_index].nodes,
+                    axis=axis_index,
+                    basis=self.basis[axis_index],
+                )
+            else:
+                derivative = self.partial_derivative(component, axis=axis_index)
+            out = out + derivative
+        return out
+
+    def laplacian(
+        self,
+        state: ArrayLike,
+        /,
+        *,
+        axes: int | Sequence[int] | None = None,
+    ) -> Array:
+        array = self._validate_state(state)
+        selected = _normalize_spatial_axes(axes, len(self.state_shape))
         out = jnp.zeros_like(array)
-        for axis_index, (axis, basis) in enumerate(
-            zip(self.axes, self.basis, strict=True)
-        ):
+        for axis_index in selected:
+            axis = self.axes[axis_index]
+            basis = self.basis[axis_index]
             if basis == "uniform":
                 spacing = axis.nodes[1] - axis.nodes[0]
                 second = (
@@ -387,14 +617,23 @@ class TensorGridDiscretization(AbstractSpatialDiscretization):
                     + jnp.roll(array, 1, axis=axis_index)
                 ) / spacing**2
             else:
-                second = _basis_nth_derivative(
-                    array,
-                    axis.nodes,
-                    axis=axis_index,
-                    order=2,
-                    basis=basis,
-                )
+                second = self.partial_derivative(array, axis=axis_index, order=2)
             out = out + second
+        return out
+
+    def integral(
+        self,
+        state: ArrayLike,
+        /,
+        *,
+        axes: int | Sequence[int] | None = None,
+    ) -> Array:
+        out = self._validate_state(state)
+        selected = _normalize_spatial_axes(axes, len(self.state_shape))
+        for axis_index in sorted(selected, reverse=True):
+            weights = self.axes[axis_index].quad_weights
+            assert weights is not None
+            out = jnp.tensordot(weights, out, axes=((0,), (axis_index,)))
         return out
 
     def flatten(self, state: ArrayLike, /) -> Array:
@@ -504,7 +743,68 @@ class SpectralSpatialDiscretization(AbstractSpatialDiscretization):
             )
         return array
 
-    def laplacian(self, state: ArrayLike, /) -> Array:
+    def partial_derivative(
+        self,
+        state: ArrayLike,
+        /,
+        *,
+        axis: int,
+        order: int = 1,
+    ) -> Array:
+        raise NotImplementedError(
+            "SpectralSpatialDiscretization has no coordinate derivative frame."
+        )
+
+    def gradient(
+        self,
+        state: ArrayLike,
+        /,
+        *,
+        axes: int | Sequence[int] | None = None,
+    ) -> Array:
+        raise NotImplementedError(
+            "SpectralSpatialDiscretization has no coordinate gradient frame."
+        )
+
+    def divergence(
+        self,
+        state: ArrayLike,
+        /,
+        *,
+        axes: int | Sequence[int] | None = None,
+        dual: bool = False,
+    ) -> Array:
+        raise NotImplementedError(
+            "SpectralSpatialDiscretization has no coordinate divergence frame."
+        )
+
+    def integral(
+        self,
+        state: ArrayLike,
+        /,
+        *,
+        axes: int | Sequence[int] | None = None,
+    ) -> Array:
+        selected = _normalize_spatial_axes(axes, 1)
+        if selected != (0,):
+            raise ValueError("Spectral spatial integrals expose one point axis.")
+        array = self._validate_state(state)
+        return jnp.tensordot(
+            self.quadrature_weights,
+            array,
+            axes=((0,), (0,)),
+        )
+
+    def laplacian(
+        self,
+        state: ArrayLike,
+        /,
+        *,
+        axes: int | Sequence[int] | None = None,
+    ) -> Array:
+        selected = _normalize_spatial_axes(axes, 1)
+        if selected != (0,):
+            raise ValueError("Spectral spatial Laplacians expose one point axis.")
         array = self._validate_state(state)
         coefficients = oe.contract("mp,p...->m...", self.plan.analysis, array)
         scale = self.plan.eigenvalues.reshape(

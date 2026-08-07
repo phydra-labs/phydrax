@@ -1,6 +1,7 @@
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
+import pytest
 
 import phydrax as phx
 
@@ -23,6 +24,38 @@ def _counting_process(*, rate, process_id):
         num_channels=1,
         process_id=process_id,
     )
+
+
+def test_hybrid_jump_rejects_nontrivial_state_geometry():
+    geometry = phx.metrix.SpecialOrthogonalStateGeometry(2)
+    differential = phx.solver.DifferentialProblem(
+        lambda time, state, args: jnp.zeros_like(state),
+        jnp.eye(2),
+        t0=0.0,
+        t1=1.0,
+        state_geometry=geometry,
+    )
+    process = phx.stochastic.JumpProcess(
+        lambda time, state, args: jnp.asarray([0.0]),
+        lambda state, channel, mark, args: state,
+        state_shape=(2, 2),
+        num_channels=1,
+        process_id="hybrid-geometry-rejection",
+    )
+    realization = phx.stochastic.PoissonClockRealization(
+        jr.key(101),
+        1,
+        support=(0.0, 1.0),
+        max_events_per_channel=1,
+        sample_shape=(1,),
+        process_id=process.process_id,
+    )
+    with pytest.raises(ValueError, match="nontrivial state_geometry"):
+        phx.solver.solve_jump_differential(
+            phx.solver.JumpDifferentialProblem(differential, process),
+            realization,
+            save_times=jnp.asarray([0.0, 1.0]),
+        )
 
 
 def test_hybrid_ode_jump_solution_replays_and_is_independent_of_save_partition():
