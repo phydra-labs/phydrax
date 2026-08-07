@@ -163,7 +163,7 @@ measure targets, boundary-point conditions, and B-Rep seam compatibility.
 
 ## Bounded global design search
 
-`DifferentialEvolutionSearch` is intended for low-dimensional geometry design
+`phydrax.optim.DifferentialEvolutionSearch` is intended for low-dimensional geometry
 problems whose residual objective is nonsmooth, multimodal, or poorly served by a
 single local initialization. It searches the squared residual from
 `DesignConstraintSystem` over an explicit finite box. Differential evolution is a
@@ -199,7 +199,7 @@ system = phx.geometry.DesignConstraintSystem(
     geometry,
     (phx.geometry.ParameterTarget(radius, 1.5),),
 )
-search = phx.geometry.DifferentialEvolutionSearch(
+search = phx.optim.DifferentialEvolutionSearch(
     32,
     100,
     design=phx.sampling.SobolDesign(scrambled=True),
@@ -278,10 +278,6 @@ a primitive constructor.
 ---
 
 ::: phydrax.geometry.DesignConstraintSystem
-
----
-
-::: phydrax.geometry.DifferentialEvolutionSearch
 
 ---
 

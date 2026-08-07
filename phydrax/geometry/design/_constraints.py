@@ -24,7 +24,8 @@ from ._schema import DesignState, ParameterId, ParameterSchema
 
 
 if TYPE_CHECKING:
-    from ._search import DesignSearchResult, DifferentialEvolutionSearch
+    from ...optim import DifferentialEvolutionSearch
+    from ._search import DesignSearchResult
 
 
 class AbstractDesignConstraint(StrictModule):
