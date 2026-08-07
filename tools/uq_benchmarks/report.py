@@ -284,7 +284,15 @@ def collect_environment() -> dict[str, Any]:
         "devices": devices,
         "package_versions": {
             name: package_version(name)
-            for name in ("phydrax", "jax", "equinox", "blackjax", "laplax")
+            for name in (
+                "phydrax",
+                "jax",
+                "equinox",
+                "blackjax",
+                "flowjax",
+                "optax",
+                "laplax",
+            )
         },
     }
 

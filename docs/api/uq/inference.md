@@ -41,6 +41,26 @@
             - validate
 
 
+### Posterior inspection
+
+::: phydrax.uq.diagnose_posterior
+
+---
+
+::: phydrax.uq.PosteriorCapabilities
+    options:
+        members:
+            - as_dict
+
+---
+
+::: phydrax.uq.PosteriorDiagnostics
+    options:
+        members:
+            - passed
+            - as_dict
+
+
 ### Normalized posterior terms
 
 ::: phydrax.uq.FixedObservationLikelihood
@@ -124,6 +144,30 @@
 ---
 
 ::: phydrax.uq.sample_hmc
+
+---
+
+
+### Flow-assisted NUTS
+
+::: phydrax.uq.sample_flow_nuts
+
+---
+
+::: phydrax.uq.FlowNUTSConfig
+    options:
+        members:
+            - __init__
+            - as_dict
+
+---
+
+::: phydrax.uq.FlowNUTSResult
+    options:
+        members:
+            - predict
+            - predict_observations
+            - convergence_report
 
 ---
 

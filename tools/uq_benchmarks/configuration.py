@@ -25,6 +25,13 @@ class BenchmarkConfiguration:
     calibration_cases: int
     gp_repeats: int
     jit_warm_repetitions: int
+    flow_adaptation_rounds: int
+    flow_local_adaptation_steps: int
+    flow_global_adaptation_steps: int
+    flow_epochs: int
+    flow_history_capacity: int
+    flow_local_steps: int
+    flow_global_steps: int
 
     def as_dict(self) -> dict[str, int | str]:
         return asdict(self)
@@ -42,6 +49,13 @@ PROFILES: dict[ProfileName, BenchmarkConfiguration] = {
         calibration_cases=256,
         gp_repeats=5,
         jit_warm_repetitions=3,
+        flow_adaptation_rounds=2,
+        flow_local_adaptation_steps=40,
+        flow_global_adaptation_steps=12,
+        flow_epochs=40,
+        flow_history_capacity=80,
+        flow_local_steps=2,
+        flow_global_steps=3,
     ),
     "standard": BenchmarkConfiguration(
         profile="standard",
@@ -54,6 +68,13 @@ PROFILES: dict[ProfileName, BenchmarkConfiguration] = {
         calibration_cases=2_048,
         gp_repeats=12,
         jit_warm_repetitions=10,
+        flow_adaptation_rounds=4,
+        flow_local_adaptation_steps=80,
+        flow_global_adaptation_steps=20,
+        flow_epochs=80,
+        flow_history_capacity=256,
+        flow_local_steps=3,
+        flow_global_steps=2,
     ),
 }
 

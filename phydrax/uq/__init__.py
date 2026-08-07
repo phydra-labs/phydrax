@@ -90,6 +90,7 @@ from ._fixed_lag import (
     FixedLagKalmanSmootherResult,
     FixedLagParticleSmootherResult,
 )
+from ._flow_mcmc import FlowNUTSConfig, FlowNUTSResult, sample_flow_nuts
 from ._guided_particle import (
     AbstractParticleProposal,
     AuxiliaryResamplingPolicy,
@@ -221,6 +222,11 @@ from ._posterior import (
     ParameterSubspace,
     PosteriorProblem,
     SigmoidIntervalBijector,
+)
+from ._posterior_diagnostics import (
+    diagnose_posterior,
+    PosteriorCapabilities,
+    PosteriorDiagnostics,
 )
 from ._posterior_terms import (
     AbstractPosteriorTerm,
@@ -540,6 +546,9 @@ __all__ = [
     "ParameterSpace",
     "ParameterSubspace",
     "PosteriorProblem",
+    "diagnose_posterior",
+    "PosteriorCapabilities",
+    "PosteriorDiagnostics",
     "GaussianPriorWhitening",
     "AbstractPosteriorTerm",
     "CompositePosteriorLikelihood",
@@ -550,6 +559,8 @@ __all__ = [
     "find_map",
     "MAPConvergenceError",
     "MAPResult",
+    "FlowNUTSConfig",
+    "FlowNUTSResult",
     "MCMCChainWarmup",
     "MCMCConvergenceError",
     "MCMCConvergenceReport",
@@ -558,6 +569,7 @@ __all__ = [
     "MCMCResult",
     "sample_hmc",
     "sample_nuts",
+    "sample_flow_nuts",
     "PathfinderResult",
     "fit_pathfinder",
     "TemperedSMCResult",

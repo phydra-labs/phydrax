@@ -244,6 +244,7 @@ def sample_nuts(
     num_warmup: int = 1000,
     num_samples: int = 1000,
     initial_position: PyTree[Any] | None = None,
+    initial_positions: PyTree[Any] | None = None,
     target_acceptance_rate: float = 0.8,
     initial_step_size: float = 1.0,
     is_mass_matrix_diagonal: bool = True,
@@ -265,6 +266,7 @@ def sample_nuts(
         num_warmup=num_warmup,
         num_samples=num_samples,
         initial_position=initial_position,
+        initial_positions=initial_positions,
         target_acceptance_rate=target_acceptance_rate,
         initial_step_size=initial_step_size,
         is_mass_matrix_diagonal=is_mass_matrix_diagonal,
@@ -287,6 +289,7 @@ def sample_hmc(
     num_warmup: int = 1000,
     num_samples: int = 1000,
     initial_position: PyTree[Any] | None = None,
+    initial_positions: PyTree[Any] | None = None,
     target_acceptance_rate: float = 0.8,
     initial_step_size: float = 1.0,
     is_mass_matrix_diagonal: bool = True,
@@ -307,6 +310,7 @@ def sample_hmc(
         num_warmup=num_warmup,
         num_samples=num_samples,
         initial_position=initial_position,
+        initial_positions=initial_positions,
         target_acceptance_rate=target_acceptance_rate,
         initial_step_size=initial_step_size,
         is_mass_matrix_diagonal=is_mass_matrix_diagonal,
@@ -329,6 +333,7 @@ def _sample_mcmc(
     num_warmup: int,
     num_samples: int,
     initial_position: PyTree[Any] | None,
+    initial_positions: PyTree[Any] | None,
     target_acceptance_rate: float,
     initial_step_size: float,
     is_mass_matrix_diagonal: bool,
@@ -359,8 +364,17 @@ def _sample_mcmc(
     method: ChainMethod = chain_method
     if method not in ("sequential", "vectorized"):
         raise ValueError("chain_method must be 'sequential' or 'vectorized'.")
-    if resume_from is not None and initial_position is not None:
-        raise ValueError("initial_position cannot be supplied when resuming MCMC.")
+    if initial_position is not None and initial_positions is not None:
+        raise ValueError(
+            "initial_position and initial_positions cannot both be supplied."
+        )
+    if resume_from is not None and (
+        initial_position is not None or initial_positions is not None
+    ):
+        raise ValueError(
+            "initial_position and initial_positions cannot be supplied when "
+            "resuming MCMC."
+        )
 
     destination = (
         Path(checkpoint_path)
@@ -375,10 +389,45 @@ def _sample_mcmc(
     if destination is not None and (checkpoint_id is None or not str(checkpoint_id)):
         raise ValueError("checkpoint_id is required for MCMC checkpointing.")
 
-    position = problem.initial_position if initial_position is None else initial_position
-    problem.parameter_space.constrain(position)
-    value, gradient = jax.value_and_grad(problem.log_density)(position)
-    if not bool(jnp.isfinite(value)) or any(
+    if initial_positions is None:
+        position = (
+            problem.initial_position if initial_position is None else initial_position
+        )
+        problem.parameter_space.constrain(position)
+        value, gradient = jax.value_and_grad(problem.log_density)(position)
+        chain_positions = jax.tree_util.tree_map(
+            lambda leaf: jnp.broadcast_to(leaf, (chains, *leaf.shape)),
+            position,
+        )
+        values = value
+    else:
+        position = problem.initial_position
+        if jax.tree_util.tree_structure(
+            initial_positions
+        ) != jax.tree_util.tree_structure(problem.initial_position):
+            raise ValueError(
+                "initial_positions must have the ParameterSpace initial PyTree structure."
+            )
+        reference_leaves = jax.tree_util.tree_leaves(problem.initial_position)
+        position_leaves = jax.tree_util.tree_leaves(initial_positions)
+        for position_leaf, reference_leaf in zip(
+            position_leaves,
+            reference_leaves,
+            strict=True,
+        ):
+            if not eqx.is_inexact_array(position_leaf):
+                raise TypeError("Every initial_positions leaf must be an inexact array.")
+            expected_shape = (chains, *reference_leaf.shape)
+            if position_leaf.shape != expected_shape:
+                raise ValueError(
+                    "Every initial_positions leaf must have shape "
+                    f"{expected_shape}; received {position_leaf.shape}."
+                )
+        chain_positions = jax.tree_util.tree_map(jnp.asarray, initial_positions)
+        values, gradient = jax.vmap(jax.value_and_grad(problem.log_density))(
+            chain_positions
+        )
+    if not bool(jnp.all(jnp.isfinite(values))) or any(
         bool(jnp.any(~jnp.isfinite(jnp.asarray(leaf))))
         for leaf in jax.tree_util.tree_leaves(gradient)
     ):
@@ -424,7 +473,7 @@ def _sample_mcmc(
         ) = _adapt_mcmc(
             algorithm_factory,
             logdensity_fn,
-            position,
+            chain_positions,
             warmup_keys=warmup_keys,
             warmup_steps=warmup_steps,
             target_acceptance_rate=target,
@@ -616,7 +665,7 @@ def _sample_mcmc(
 def _adapt_mcmc(
     algorithm_factory,
     logdensity_fn,
-    position,
+    positions,
     *,
     warmup_keys,
     warmup_steps,
@@ -638,15 +687,15 @@ def _adapt_mcmc(
     if chain_method == "vectorized":
         started = time.perf_counter()
 
-        def adapt_chain(warmup_key):
+        def adapt_chain(warmup_key, chain_position):
             result, _ = adaptation_run(
                 warmup_key,
-                position,
+                chain_position,
                 num_steps=warmup_steps,
             )
             return result
 
-        results = jax.jit(jax.vmap(adapt_chain))(warmup_keys)
+        results = jax.jit(jax.vmap(adapt_chain))(warmup_keys, positions)
         jax.block_until_ready(results.state.position)
         duration = time.perf_counter() - started
         durations = jnp.full((warmup_keys.shape[0],), duration)
@@ -659,15 +708,16 @@ def _adapt_mcmc(
             duration,
         )
 
+    chain_positions = _unstack_tree(positions, int(warmup_keys.shape[0]))
     states = []
     step_sizes = []
     mass_matrices = []
     durations = []
-    for warmup_key in warmup_keys:
+    for warmup_key, chain_position in zip(warmup_keys, chain_positions, strict=True):
         started = time.perf_counter()
         result, _ = adaptation_run(
             warmup_key,
-            position,
+            chain_position,
             num_steps=warmup_steps,
         )
         jax.block_until_ready(result.state.position)

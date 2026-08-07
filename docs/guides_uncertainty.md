@@ -878,6 +878,27 @@ Use `FixedObservationLikelihood`, `FixedResidualLikelihood`, and
 posterior terms. `PosteriorProblem.from_terms(...)` combines them without routing
 through `FunctionalSolver.loss()`.
 
+Inspect the posterior contract before starting an expensive inference run:
+
+```python
+inspection = phx.uq.diagnose_posterior(
+    posterior,
+    key=jr.key(9),
+    num_prior_samples=16,
+)
+if not inspection.passed:
+    raise ValueError(inspection.as_dict())
+```
+
+The report evaluates the initial target and gradient, reports exact nonfinite
+gradient locations, checks unconstrained-to-physical round trips, compares eager,
+repeated, JIT, and VMAP evaluation, and optionally probes declared-prior samples.
+`inspection.capabilities` records only static semantic capabilities: factorized
+prior sampling, latent prediction, observation variance/sampling, and a normalized
+Gauss--Newton residual. It does not probe prediction callbacks with invented,
+domain-specific query arguments.
+
+
 ## MAP estimation
 
 `find_map` compiles the complete JAX-native strong-Wolfe L-BFGS transition and
@@ -942,6 +963,11 @@ warmup parameters, final chain states, energies, integration depths, determinist
 keys, adaptation and sampling runtimes, throughput, and sample-memory size. A
 repeated root key reproduces samples and diagnostics.
 
+Pass `initial_positions` with one leading chain axis when chains must begin at
+different represented modes; `initial_position` retains the replicated-start
+convenience. The two arguments are mutually exclusive.
+
+
 Long MCMC runs can checkpoint after a fixed number of completed draws per chain:
 pass `checkpoint_path`, `checkpoint_every`, and a stable caller-owned
 `checkpoint_id`. Resume with `resume_from` and the same sampling configuration.
@@ -955,6 +981,67 @@ adaptive collocation, minibatch likelihoods, active dropout, or other random sam
 inside `log_density`. NUTS is the default for low-dimensional physical parameters,
 noise scales, and explicitly selected small subspaces. Sampling every neural-network
 weight is deliberately not the default.
+
+## Flow-assisted NUTS
+
+`sample_flow_nuts` combines independently adapted NUTS chains with a shared
+FlowJAX normalizing flow. It is intended for posteriors with nonlinear global
+geometry or multiple modes that are already represented by the initial chains.
+It is not a mode-discovery algorithm and does not estimate evidence.
+
+```python
+flow_config = phx.uq.FlowNUTSConfig(
+    num_adaptation_rounds=4,
+    num_local_adaptation_steps=100,
+    num_global_adaptation_steps=20,
+    num_local_steps=3,
+    num_global_steps=1,
+    history_capacity_per_chain=1000,
+    flow_layers=6,
+    max_epochs=100,
+)
+flow_draws = phx.uq.sample_flow_nuts(
+    posterior,
+    key=jr.key(11),
+    num_chains=4,
+    num_warmup=1000,
+    num_samples=1000,
+    initial_positions={
+        "source": jnp.asarray([-3.0, -1.0, 1.0, 3.0]),
+    },
+    target_acceptance_rate=0.9,
+    config=flow_config,
+    chain_method="vectorized",
+)
+```
+
+All kernels act in flattened unconstrained coordinates. During adaptation, local
+NUTS transitions populate a fixed-capacity, chain-stratified reservoir; the flow is
+refit from pooled reservoir samples and tested with exact independence
+Metropolis--Hastings proposals. For current state `x`, proposal `y`, target `π`, and
+normalized flow density `q`, acceptance is
+`min(1, π(y) q(x) / (π(x) q(y)))`. Both proposal-density terms are mandatory.
+Nonfinite states or densities are rejected and counted.
+
+After the last adaptation round, Phydrax freezes both the flow and tuned NUTS
+parameters, runs an optional local-only stabilization phase, then returns draws from
+one fixed composite kernel. No returned draw trains the flow. `FlowNUTSResult`
+preserves the ordinary MCMC prediction and convergence interfaces and adds
+training/validation losses, adaptation proposal ESS, local/global acceptance,
+nonfinite global proposal counts, phase timings, bounded-memory accounting, and the
+frozen flow.
+
+Automatic chain initialization requires declared factorized priors. A custom joint
+log prior requires explicit `initial_positions`. Checkpointing commits complete
+adaptation rounds, stabilization chunks, and production chunks; resume reconstructs
+the dynamic FlowJAX arrays against a locally rebuilt static template and rejects
+configuration, package-version, shape, dtype, or flow-fingerprint mismatches.
+
+This implementation is native Phydrax orchestration, not a wrapper around
+[`flowMC`](https://github.com/kazewong/flowMC). The flow-assisted sampling rationale
+follows that work, while Phydrax retains its own posterior, exact-kernel,
+checkpoint, diagnostics, and result contracts.
+
 
 ## Dense and structured Laplace approximation
 
@@ -1112,10 +1199,13 @@ portable = phx.uq.read_result_archive(result_path)
 Both are ZIP containers with JSON metadata, individual NumPy array members,
 SHA-256 checksums, atomic replacement, and no pickle or Python object
 arrays. Portable archives export representable result arrays and explicitly list
-excluded live callables. `phx.uq.to_arviz(posterior_draws)` converts MCMC chains to
-ArviZ `posterior` and `sample_stats` groups while retaining separate `chain` and
-`draw` dimensions. Generic observed-data and pointwise-log-likelihood groups are
-omitted because `PosteriorProblem` does not promise that metadata.
+excluded live callables. `FlowNUTSResult` archives include frozen flow parameters,
+loss histories, local and global sampler statistics, deterministic keys, and phase
+timings. `phx.uq.to_arviz(posterior_draws)` accepts ordinary or flow-assisted MCMC,
+retains separate `chain` and `draw` dimensions, and adds flow acceptance, accepted
+proposal counts, log acceptance ratios, and nonfinite counts when present. Generic
+observed-data and pointwise-log-likelihood groups are omitted because
+`PosteriorProblem` does not promise that metadata.
 
 ## Gaussian-process model discrepancy
 
@@ -1215,19 +1305,22 @@ correlation, returning every exact failure rather than a generic warning.
 Phydrax currently recommends:
 
 1. NUTS for low-dimensional, effectively unimodal physical inverse problems.
-2. Exact dense Laplace as the small-problem Gaussian reference.
-3. Whitened GGN, diagonal, or low-rank Laplax for selected larger subspaces.
-4. EKI for derivative-free physical or reduced-coordinate inverse problems,
+2. Flow-assisted NUTS for represented multimodality or nonlinear global geometry at
+   moderate dimension; initialize chains across known modes and inspect exact global
+   acceptance and ordinary rank diagnostics.
+3. Exact dense Laplace as the small-problem Gaussian reference.
+4. Whitened GGN, diagonal, or low-rank Laplax for selected larger subspaces.
+5. EKI for derivative-free physical or reduced-coordinate inverse problems,
    benchmarked against NUTS or Laplace where feasible.
-5. Pathfinder for rapid local diagnostics, always benchmarked against NUTS.
-6. Tempered SMC only for demonstrated low-dimensional multimodal posteriors.
-7. Deep ensembles for independently trained neural-model epistemic variation.
-8. Exact GP discrepancy for moderate scalar data, explicit coregionalization for
+6. Pathfinder for rapid local diagnostics, always benchmarked against NUTS.
+7. Tempered SMC for low-dimensional mode discovery and evidence estimation.
+8. Deep ensembles for independently trained neural-model epistemic variation.
+9. Exact GP discrepancy for moderate scalar data, explicit coregionalization for
    correlated outputs, and FITC only when dense scaling fails.
 
-Mean-field VI, SWAG, SGMCMC, normalizing-flow posteriors, non-Gaussian/sparse
-variational GPs, and full-network HMC remain unsupported. None is silently
-approximated by the methods above.
+Mean-field VI, standalone variational normalizing-flow posteriors, SWAG, SGMCMC,
+non-Gaussian/sparse variational GPs, and full-network HMC remain unsupported. None
+is silently approximated by the methods above.
 
 ## Conformal calibration
 
