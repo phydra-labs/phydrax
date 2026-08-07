@@ -235,6 +235,7 @@ def _adapt_result(result, arrays, fields, trees):
         metadata = _put_kalman_filter_result(
             result.filter_result, arrays, fields, prefix="filter."
         )
+        metadata["smoother_execution_method"] = result.execution_method
         return "kalman_smoother", metadata, ()
 
     if isinstance(result, ParticleFilterResult):
@@ -562,6 +563,7 @@ def _put_kalman_filter_result(result, arrays, fields, *, prefix):
         "problem_id": result.problem_id,
         "sequence_id": result.sequence_id,
         "covariance_regularization": result.covariance_regularization,
+        "execution_method": result.execution_method,
         "final_step_index": result.final_state.step_index,
     }
 

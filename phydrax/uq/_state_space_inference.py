@@ -24,7 +24,7 @@ from ..stochastic._state_space import (
     LinearGaussianTransitionKernel,
     StateSpaceProblem,
 )
-from ._kalman import kalman_filter
+from ._kalman import kalman_filter, KalmanExecutionMethod
 from ._posterior_terms import AbstractPosteriorTerm
 
 
@@ -68,6 +68,7 @@ class ExactStateSpaceLikelihood(StrictModule):
     backend: Any
     problem: StateSpaceProblem
     method: str = eqx.field(static=True)
+    temporal_method: str = eqx.field(static=True)
 
     @property
     def successful(self) -> Array:
@@ -86,6 +87,7 @@ class StateSpaceMarginalLikelihood(AbstractPosteriorTerm):
     problem_fn: Callable[[PyTree[Any]], StateSpaceProblem] = eqx.field(static=True)
     method: ExactStateSpaceMethod = eqx.field(static=True)
     covariance_regularization: float = eqx.field(static=True)
+    temporal_method: KalmanExecutionMethod = eqx.field(static=True)
 
     def __init__(
         self,
@@ -94,11 +96,16 @@ class StateSpaceMarginalLikelihood(AbstractPosteriorTerm):
         *,
         method: ExactStateSpaceMethod = "auto",
         covariance_regularization: float = 0.0,
+        temporal_method: KalmanExecutionMethod = "auto",
         label: str = "state_space",
     ):
         if not callable(problem):
             raise TypeError("problem must be callable.")
         _validate_method(method)
+        if temporal_method not in ("sequential", "parallel", "auto"):
+            raise ValueError(
+                "temporal_method must be 'sequential', 'parallel', or 'auto'."
+            )
         regularization = float(covariance_regularization)
         if not np.isfinite(regularization) or regularization < 0.0:
             raise ValueError("covariance_regularization must be finite and nonnegative.")
@@ -107,6 +114,7 @@ class StateSpaceMarginalLikelihood(AbstractPosteriorTerm):
         self.problem_fn = problem
         self.method = method
         self.covariance_regularization = regularization
+        self.temporal_method = temporal_method
         self.label = label
 
     def evaluate(self, parameters: PyTree[Any], /) -> ExactStateSpaceLikelihood:
@@ -118,6 +126,7 @@ class StateSpaceMarginalLikelihood(AbstractPosteriorTerm):
             problem,
             method=self.method,
             covariance_regularization=self.covariance_regularization,
+            temporal_method=self.temporal_method,
         )
 
     def per_case_log_prob(self, parameters: PyTree[Any], /) -> Array:
@@ -333,26 +342,37 @@ def exact_state_space_log_likelihood(
     *,
     method: ExactStateSpaceMethod = "auto",
     covariance_regularization: float = 0.0,
+    temporal_method: KalmanExecutionMethod = "auto",
 ) -> ExactStateSpaceLikelihood:
     """Evaluate an exact Kalman or finite-state marginal likelihood."""
     if not isinstance(problem, StateSpaceProblem):
         raise TypeError("problem must be a StateSpaceProblem.")
+    if temporal_method not in ("sequential", "parallel", "auto"):
+        raise ValueError(
+            "temporal_method must be 'sequential', 'parallel', or 'auto'."
+        )
     resolved = _resolved_method(problem, method)
     if resolved == "kalman":
         backend = kalman_filter(
             problem,
             covariance_regularization=covariance_regularization,
             raise_on_failure=False,
+            method=temporal_method,
         )
         per_case = jnp.where(
             backend.successful,
             backend.final_state.log_likelihood,
             -jnp.inf,
         )
+        resolved_temporal = backend.execution_method
     else:
         if float(covariance_regularization) != 0.0:
             raise ValueError(
                 "covariance_regularization applies only to the Kalman backend."
+            )
+        if temporal_method == "parallel":
+            raise ValueError(
+                "temporal_method='parallel' applies only to the Kalman backend."
             )
         backend = _finite_state_filter(problem)
         per_case = jnp.where(
@@ -360,6 +380,7 @@ def exact_state_space_log_likelihood(
             backend.cumulative_log_likelihood[..., -1],
             -jnp.inf,
         )
+        resolved_temporal = "sequential"
     return ExactStateSpaceLikelihood(
         per_case_log_likelihood=per_case,
         total_log_likelihood=jnp.sum(per_case).reshape(()),
@@ -371,6 +392,7 @@ def exact_state_space_log_likelihood(
         backend=backend,
         problem=problem,
         method=resolved,
+        temporal_method=resolved_temporal,
     )
 
 

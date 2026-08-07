@@ -90,6 +90,10 @@ from ._fixed_lag import (
     FixedLagKalmanSmootherResult,
     FixedLagParticleSmootherResult,
 )
+from ._gaussian_chain import (
+    combine_gaussian_filter_elements,
+    GaussianFilterElement,
+)
 from ._guided_particle import (
     AbstractParticleProposal,
     AuxiliaryResamplingPolicy,
@@ -113,6 +117,7 @@ from ._kalman import (
     kalman_innovation_diagnostics,
     KALMAN_NONFINITE,
     kalman_status_name,
+    KalmanExecutionMethod,
     KALMAN_SUCCESS,
     KalmanFilterResult,
     KalmanFilterState,
@@ -381,6 +386,8 @@ __all__ = [
     "guided_particle_filter_status_name",
     "LinearGaussianGuidedParticleProposal",
     "ParticleProposalSample",
+    "combine_gaussian_filter_elements",
+    "GaussianFilterElement",
     "fixed_lag_kalman_smoother",
     "fixed_lag_particle_smoother",
     "FixedLagKalmanSmootherResult",
@@ -395,6 +402,7 @@ __all__ = [
     "KalmanFilterStep",
     "kalman_filter_step",
     "kalman_innovation_diagnostics",
+    "KalmanExecutionMethod",
     "KalmanInnovationDiagnostics",
     "kalman_status_name",
     "KalmanSmootherResult",
