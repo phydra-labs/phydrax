@@ -125,3 +125,76 @@ For discrete measurements, add a data-fit constraint alongside the PDE terms. Ph
     ```
 
 See [API → Constraints → Discrete](../api/constraints/discrete.md).
+
+## Compile the PDE IR to method-of-lines dynamics
+
+For an array solver, the same equation can be represented once as PDE IR and
+compiled against an existing spatial discretization. A sine basis encodes the
+homogeneous Dirichlet boundary condition; the compiler therefore rejects a
+periodic coordinate or a Neumann boundary condition paired with this basis.
+
+!!! example
+    ```python
+    import jax
+    import jax.numpy as jnp
+    import phydrax as phx
+
+    x = phx.equations.PDECoordinate(
+        "x", "space", bounds=(0.0, 1.0), periodic=False
+    )
+    t = phx.equations.PDECoordinate("t", "time", bounds=(0.0, 1.0))
+    field = phx.equations.PDEField("u", coordinates=("x", "t"))
+    diffusivity = phx.equations.PDEParameter("alpha", value=0.1)
+    u = phx.equations.PDEExpression.field("u")
+
+    boundary_region = phx.equations.PDERegion(
+        "x-boundary", "boundary", ("x",)
+    )
+    problem = phx.equations.PDEProblemIR(
+        coordinates=(x, t),
+        fields=(field,),
+        parameters=(diffusivity,),
+        equations=(
+            phx.equations.PDEEquation(
+                "heat",
+                u.derivative("t"),
+                phx.equations.PDEExpression.parameter("alpha")
+                * u.laplacian("x"),
+            ),
+        ),
+        conditions=(
+            phx.equations.PDECondition(
+                "homogeneous-dirichlet",
+                "boundary",
+                u,
+                region="x-boundary",
+                coordinate="x",
+            ),
+        ),
+        regions=(boundary_region,),
+    )
+
+    axis = phx.domain.SineAxisSpec(64).materialize(0.0, 1.0)
+    space = phx.solver.TensorGridDiscretization((axis,))
+    dynamics = phx.equations.compile_semidiscrete_pde(problem, space)
+
+    initial = jnp.sin(jnp.pi * axis.nodes)
+    drift = jax.jit(
+        lambda state, alpha: dynamics(0.0, state, {"alpha": alpha})
+    )(initial, jnp.asarray(0.1))
+
+    assert drift.shape == initial.shape
+    assert dynamics.semilinear_drift is not None
+    print(dynamics.compilation_id, dynamics.resolved_method)
+    ```
+
+`dynamics` has the solver-compatible signature `(time, state, args) -> state`.
+Scalar single-field problems retain the spatial state shape; multiple or vector
+fields use a static trailing-component packing described by
+`dynamics.layout`. Runtime parameter mappings remain differentiable.
+
+Nonhomogeneous Dirichlet or Neumann data require an explicit
+`phx.equations.BoundaryLift`. The evolved state is then the homogeneous residual
+and `dynamics.physical_state(time, state, args)` reconstructs the physical
+field. This explicit split prevents a nonperiodic boundary from being silently
+treated as periodic.

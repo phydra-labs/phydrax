@@ -135,6 +135,29 @@ class HighDimensionalBenchmarkRecord:
         return self.absolute_error <= 5.0 * self.reported_standard_error + 1e-10
 
 
+@dataclass(frozen=True)
+class SemidiscretePDEBenchmarkRecord:
+    grid_size: int
+    compilation_id: str
+    resolved_method: str
+    compiler_wall_ms: float
+    compiled_jit_ms: float
+    compiled_mean_wall_ms: float
+    handwritten_jit_ms: float
+    handwritten_mean_wall_ms: float
+    maximum_drift_error: float
+    parameter_gradient_error: float
+    finite: bool
+
+    @property
+    def passed(self) -> bool:
+        return (
+            self.finite
+            and self.maximum_drift_error <= 1e-10
+            and self.parameter_gradient_error <= 1e-9
+        )
+
+
 class _LinearHJBValue(eqx.Module):
     time_coefficient: Array
 
@@ -294,6 +317,103 @@ def _measure_thunk(
         _block(value)
     wall_ms = 1e3 * (time.perf_counter() - started) / float(repeats)
     return value, max(first_ms - wall_ms, 0.0), wall_ms, first_ms
+
+
+def run_semidiscrete_pde_compiler_benchmark(
+    grid_size: int = 128,
+    /,
+    *,
+    repeats: int = 5,
+) -> SemidiscretePDEBenchmarkRecord:
+    """Compare compiled and handwritten periodic reaction-diffusion drifts."""
+    size = int(grid_size)
+    repeat_count = int(repeats)
+    if size < 4 or repeat_count <= 0:
+        raise ValueError("grid_size must be at least four and repeats must be positive.")
+
+    x = phx.equations.PDECoordinate(
+        "x",
+        "space",
+        bounds=(0.0, 1.0),
+        periodic=True,
+    )
+    t = phx.equations.PDECoordinate("t", "time", bounds=(0.0, 1.0))
+    field = phx.equations.PDEField("u", coordinates=("x", "t"))
+    parameter = phx.equations.PDEParameter("kappa", value=0.05)
+    u = phx.equations.PDEExpression.field("u")
+    problem = phx.equations.PDEProblemIR(
+        coordinates=(x, t),
+        fields=(field,),
+        parameters=(parameter,),
+        equations=(
+            phx.equations.PDEEquation(
+                "reaction-diffusion",
+                u.derivative("t"),
+                phx.equations.PDEExpression.parameter("kappa")
+                * u.laplacian("x")
+                + u * (1.0 - u),
+            ),
+        ),
+    )
+    axis = phx.domain.FourierAxisSpec(size).materialize(0.0, 1.0)
+    spatial = phx.solver.TensorGridDiscretization((axis,))
+    started = time.perf_counter()
+    compiled = phx.equations.compile_semidiscrete_pde(problem, spatial)
+    compiler_wall_ms = 1e3 * (time.perf_counter() - started)
+
+    state = 0.2 + 0.1 * jnp.sin(2.0 * jnp.pi * axis.nodes)
+    coefficient = jnp.asarray(0.07)
+
+    def compiled_drift(arguments):
+        value, diffusivity = arguments
+        return compiled(0.0, value, {"kappa": diffusivity})
+
+    def handwritten_drift(arguments):
+        value, diffusivity = arguments
+        return diffusivity * spatial.laplacian(value) + value * (1.0 - value)
+
+    benchmark_arguments = (state, coefficient)
+    compiled_value, compiled_jit_ms, compiled_wall_ms = _measure(
+        compiled_drift,
+        benchmark_arguments,
+        repeats=repeat_count,
+    )
+    handwritten_value, handwritten_jit_ms, handwritten_wall_ms = _measure(
+        handwritten_drift,
+        benchmark_arguments,
+        repeats=repeat_count,
+    )
+    compiled_gradient = jax.grad(
+        lambda diffusivity: jnp.sum(
+            compiled_drift((state, diffusivity)) ** 2
+        )
+    )(coefficient)
+    handwritten_gradient = jax.grad(
+        lambda diffusivity: jnp.sum(
+            handwritten_drift((state, diffusivity)) ** 2
+        )
+    )(coefficient)
+    maximum_error = jnp.max(jnp.abs(compiled_value - handwritten_value))
+    gradient_error = jnp.abs(compiled_gradient - handwritten_gradient)
+    finite = bool(
+        jnp.all(jnp.isfinite(compiled_value))
+        & jnp.isfinite(compiled_gradient)
+        & jnp.isfinite(maximum_error)
+        & jnp.isfinite(gradient_error)
+    )
+    return SemidiscretePDEBenchmarkRecord(
+        grid_size=size,
+        compilation_id=compiled.compilation_id,
+        resolved_method=compiled.resolved_method,
+        compiler_wall_ms=float(compiler_wall_ms),
+        compiled_jit_ms=float(compiled_jit_ms),
+        compiled_mean_wall_ms=float(compiled_wall_ms),
+        handwritten_jit_ms=float(handwritten_jit_ms),
+        handwritten_mean_wall_ms=float(handwritten_wall_ms),
+        maximum_drift_error=float(maximum_error),
+        parameter_gradient_error=float(gradient_error),
+        finite=finite,
+    )
 
 
 def _quadratic_heat_problem(dimension: int, /) -> phx.stochastic.BSDEProblem:
