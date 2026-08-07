@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from math import isfinite
 from typing import Any, ClassVar, Literal
 
 import diffrax as dfx
@@ -40,11 +41,19 @@ class GeometricLocalInterpolation(dfx.AbstractLocalInterpolation):
 
 
 class AbstractGeometricSolver(dfx.AbstractSolver):
-    """Diffrax solver capability contract for one explicit state geometry."""
+    """Diffrax solver contract for explicit retraction stages.
+
+    ``stage_abscissae`` statically enumerates every time coefficient used by
+    ``step``. ``causal_stage_extent`` is a finite positive static bound on those
+    coefficients; delay backends use it to certify fixed steps before tracing
+    the numerical loop.
+    """
 
     geometry: AbstractStateGeometry
     solver_id: str = eqx.field(static=True)
     resolved_method: str = eqx.field(static=True)
+    stage_abscissae: tuple[float, ...] = eqx.field(static=True)
+    causal_stage_extent: float = eqx.field(static=True)
 
 
 class GeometricEuler(AbstractGeometricSolver):
@@ -61,6 +70,8 @@ class GeometricEuler(AbstractGeometricSolver):
         self.geometry = geometry
         self.solver_id = f"solver:geometric-euler:{geometry.geometry_id}"
         self.resolved_method = f"euler:{geometry.retraction_method}"
+        self.stage_abscissae = (0.0,)
+        self.causal_stage_extent = 1.0
 
     def order(self, terms):
         del terms
@@ -119,6 +130,10 @@ class RKMK(AbstractGeometricSolver):
         self.method = method
         self.solver_id = f"solver:rkmk:{method}:{geometry.geometry_id}"
         self.resolved_method = f"{method}:{geometry.retraction_method}"
+        self.stage_abscissae = (
+            (0.0, 0.5) if method == "midpoint" else (0.0, 0.5, 0.5, 1.0)
+        )
+        self.causal_stage_extent = max(self.stage_abscissae)
 
     def order(self, terms):
         del terms
@@ -131,12 +146,12 @@ class RKMK(AbstractGeometricSolver):
     def _tableau(self):
         if self.method == "midpoint":
             return (
-                (0.0, 0.5),
+                self.stage_abscissae,
                 ((), (0.5,)),
                 (0.0, 1.0),
             )
         return (
-            (0.0, 0.5, 0.5, 1.0),
+            self.stage_abscissae,
             ((), (0.5,), (0.0, 0.5), (0.0, 0.0, 1.0)),
             (1.0 / 6.0, 1.0 / 3.0, 1.0 / 3.0, 1.0 / 6.0),
         )
@@ -192,11 +207,14 @@ class CommutatorFreeTableau(StrictModule):
         nodes = tuple(float(value) for value in abscissae)
         stages = tuple(tuple(float(value) for value in row) for row in stage_coefficients)
         compositions = tuple(
-            tuple(float(value) for value in row)
-            for row in composition_coefficients
+            tuple(float(value) for value in row) for row in composition_coefficients
         )
         if not nodes or len(stages) != len(nodes):
             raise ValueError("A commutator-free tableau needs one row per stage.")
+        if any(not isfinite(node) or node < 0.0 for node in nodes):
+            raise ValueError(
+                "Commutator-free stage abscissae must be finite and nonnegative."
+            )
         if any(len(row) != index for index, row in enumerate(stages)):
             raise ValueError("Stage coefficient rows must be strictly lower triangular.")
         if not compositions or any(len(row) != len(nodes) for row in compositions):
@@ -257,9 +275,9 @@ class CommutatorFreeSolver(AbstractGeometricSolver):
         self.solver_id = (
             f"solver:commutator-free:{resolved.tableau_id}:{geometry.geometry_id}"
         )
-        self.resolved_method = (
-            f"{resolved.tableau_id}:{geometry.retraction_method}"
-        )
+        self.resolved_method = f"{resolved.tableau_id}:{geometry.retraction_method}"
+        self.stage_abscissae = resolved.abscissae
+        self.causal_stage_extent = max(resolved.abscissae) or 1.0
 
     def order(self, terms):
         del terms
@@ -324,6 +342,8 @@ class SRKMK(AbstractGeometricSolver, dfx.AbstractStratonovichSolver):
         self.geometry = geometry
         self.solver_id = f"solver:srkmk:{geometry.geometry_id}"
         self.resolved_method = f"stratonovich-heun:{geometry.retraction_method}"
+        self.stage_abscissae = (0.0, 1.0)
+        self.causal_stage_extent = 1.0
 
     def order(self, terms):
         del terms
@@ -360,9 +380,7 @@ class SRKMK(AbstractGeometricSolver, dfx.AbstractStratonovichSolver):
             diffusion_local,
             self.geometry.project_tangent(predictor, corrected_ambient),
         )
-        local_increment = drift_local + 0.5 * (
-            diffusion_local + corrected_local
-        )
+        local_increment = drift_local + 0.5 * (diffusion_local + corrected_local)
         y1 = retraction.evaluate(local_increment)
         dense_info = dict(
             y0=y0,

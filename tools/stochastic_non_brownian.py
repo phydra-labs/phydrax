@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import diffrax as dfx
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 
@@ -240,17 +241,21 @@ def run_memory_particle_reference_benchmark(
 
     delay = 0.4
     delay_times = jnp.linspace(0.0, 0.8, 81)
-    delay_problem = phx.solver.StochasticDelayProblem(
+    delay_problem = phx.solver.DelayDifferentialProblem(
         lambda time, state, delayed, args: delayed[0],
         lambda time, args: jnp.asarray([1.0]),
-        jnp.asarray([delay]),
+        (phx.solver.ConstantDelay("lag", delay),),
         t0=0.0,
         t1=0.8,
         problem_id="piecewise-polynomial-delay-reference",
     )
-    delay_solution = phx.solver.solve_stochastic_delay(
+    delay_solution = phx.solver.solve_diffrax_delay(
         delay_problem,
-        times=delay_times,
+        save_times=delay_times,
+        solver=dfx.Euler(),
+        stepsize_controller=dfx.ConstantStepSize(),
+        dt0=0.01,
+        max_steps=96,
     )
     exact_delay = 1.0 + delay_times + 0.5 * jnp.maximum(delay_times - delay, 0.0) ** 2
     delay_error = float(jnp.max(jnp.abs(delay_solution.states[:, 0] - exact_delay)))
