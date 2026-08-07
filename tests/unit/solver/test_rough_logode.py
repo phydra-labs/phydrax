@@ -127,6 +127,85 @@ def test_joint_time_channel_integrates_drift_and_time_dependent_fields():
     assert solution.successful
 
 
+def test_joint_time_logode_batches_sample_paths():
+    times = jnp.asarray([0.0, 0.5, 1.0])
+    values = jnp.stack((times, -times), axis=0)[..., None]
+    control = phx.stochastic.LogSignatureControl.from_values(
+        times,
+        values,
+        depth=3,
+        coarse_indices=(0, 1, 2),
+        sample_shape=(2,),
+        joint_time=True,
+    )
+    problem = phx.solver.RoughDifferentialProblem(
+        lambda time, state, args: jnp.ones(state.shape + (1,)),
+        jnp.asarray([0.0]),
+        driver_dimension=1,
+        drift=lambda time, state, args: jnp.ones_like(state),
+    )
+    solution = phx.solver.solve_rough_differential(
+        problem,
+        control,
+        save_times=jnp.asarray([1.0]),
+        solver=phx.solver.LogODE(),
+    )
+
+    assert solution.states.shape == (2, 1, 1)
+    assert solution.statuses.shape == (2, 2)
+    assert jnp.all(solution.successful)
+    assert jnp.allclose(solution.states[:, 0, 0], jnp.asarray([2.0, 0.0]))
+
+
+def test_linear_logode_rejects_time_dependent_problem():
+    times = jnp.asarray([0.0, 1.0])
+    control = phx.stochastic.LogSignatureControl.from_values(
+        times,
+        jnp.asarray([[0.0], [0.5]]),
+        depth=2,
+        joint_time=True,
+    )
+    problem = phx.solver.RoughDifferentialProblem(
+        lambda time, state, args: (time * state)[..., None],
+        jnp.asarray([1.0]),
+        driver_dimension=1,
+        drift=lambda time, state, args: 0.2 * state,
+        time_dependent=True,
+    )
+
+    with pytest.raises(ValueError, match="autonomous explicit operators"):
+        phx.solver.solve_rough_differential(
+            problem,
+            control,
+            solver=phx.solver.LinearLogODE(
+                (jnp.asarray([[0.2]]), jnp.asarray([[0.5]]))
+            ),
+        )
+
+
+def test_logode_exposes_failed_inner_diffrax_status():
+    control = phx.stochastic.LogSignatureControl.from_values(
+        jnp.asarray([0.0, 1.0]),
+        jnp.asarray([[0.0], [1.0]]),
+        depth=2,
+    )
+    problem = phx.solver.RoughDifferentialProblem(
+        lambda time, state, args: state[..., None],
+        jnp.asarray([1.0]),
+        driver_dimension=1,
+    )
+    solution = phx.solver.solve_rough_differential(
+        problem,
+        control,
+        solver=phx.solver.LogODE(dt0=0.01, max_steps=1),
+    )
+
+    assert solution.statuses.shape == (1,)
+    assert int(solution.statuses[0]) != 0
+    assert not bool(solution.successful)
+    assert int(solution.statistics["num_steps"][0]) == 1
+
+
 def test_logode_local_retraction_preserves_special_orthogonal_state():
     times = jnp.linspace(0.0, 1.0, 5)
     angle = 0.7

@@ -26,6 +26,16 @@ def test_tensor_exponential_and_chen_product_match_piecewise_linear_signature():
     assert jnp.allclose(composed[1][1, 0], 0.0)
 
 
+def test_piecewise_linear_signature_promotes_integer_increments():
+    increments = jnp.asarray([[1, 0], [0, 1]], dtype=jnp.int32)
+    signature = phx.stochastic.piecewise_linear_signature(increments, 3)
+
+    assert all(jnp.issubdtype(level.dtype, jnp.inexact) for level in signature)
+    assert jnp.allclose(signature[0], jnp.asarray([1.0, 1.0]))
+    assert jnp.allclose(signature[1][0, 1], 1.0)
+    assert jnp.allclose(signature[2][0, 0, 1], 0.5)
+
+
 def test_lyndon_basis_tensor_log_conversion_recovers_bch_coefficients():
     signature = phx.stochastic.piecewise_linear_signature(
         jnp.asarray([[1.0, 0.0], [0.0, 1.0]]), 3
@@ -88,4 +98,34 @@ def test_log_signature_control_aggregates_fine_knots_and_records_provenance():
     assert all(
         jnp.allclose(actual, expected)
         for actual, expected in zip(control.levels, repeated.levels)
+    )
+
+
+def test_depth_four_log_signature_control_promotes_integer_values():
+    times = jnp.asarray([0, 1, 2], dtype=jnp.int32)
+    values = jnp.asarray([[0, 0], [1, 0], [1, 1]], dtype=jnp.int32)
+    control = phx.stochastic.LogSignatureControl.from_values(
+        times,
+        values,
+        depth=4,
+        coarse_indices=(0, 2),
+        source_id="integer-depth-four",
+    )
+    expected = phx.stochastic.piecewise_linear_signature(
+        jnp.diff(values, axis=0), 4
+    )
+    tensor_log = phx.stochastic.tensor_logarithm(control.terminal_signature)
+    reconstructed = control.primitive_basis.primitive_to_tensor(
+        control.primitive_basis.tensor_to_primitive(tensor_log)
+    )
+
+    assert control.depth == 4
+    assert all(jnp.issubdtype(level.dtype, jnp.inexact) for level in control.levels)
+    assert all(
+        jnp.allclose(actual, target)
+        for actual, target in zip(control.terminal_signature, expected)
+    )
+    assert all(
+        jnp.allclose(actual, target)
+        for actual, target in zip(reconstructed, tensor_log)
     )

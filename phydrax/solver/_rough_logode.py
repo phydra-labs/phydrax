@@ -407,6 +407,10 @@ class LinearLogODE(AbstractRoughSolver):
         /,
     ) -> tuple[Array, Array, Mapping[str, Array]]:
         log_control = _validate_log_control(problem, control)
+        if problem.time_dependent:
+            raise ValueError(
+                "LinearLogODE only supports autonomous explicit operators."
+            )
         if not problem.geometry.trivial:
             raise ValueError("LinearLogODE requires a trivial Euclidean state geometry.")
         if len(self.operators) != log_control.dimension:

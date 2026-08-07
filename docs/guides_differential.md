@@ -346,8 +346,9 @@ commutators and applies the resulting exponential with
 
 Drift and time-dependent fields require `joint_time=True` when constructing
 the log-signature control. Time is prepended as channel zero, giving augmented
-fields \((1,V_0)\) and \((0,V_i)\). For a linear joint-time system, pass the
-drift operator first to `LinearLogODE`. The general solver integrates in
+fields \((1,V_0)\) and \((0,V_i)\). For an autonomous linear joint-time
+system, pass the drift operator first to `LinearLogODE`; time-dependent
+operators require the general `LogODE`. The general solver integrates in
 state-shaped local coordinates: each interval binds
 `problem.geometry.local_retraction(state)`, pulls vector fields back through
 that retraction, and retracts the terminal local coordinate.

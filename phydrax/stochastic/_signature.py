@@ -30,6 +30,13 @@ def _validate_depth(depth: int, /) -> int:
     return resolved
 
 
+def _inexact_array(value: ArrayLike, /) -> Array:
+    array = jnp.asarray(value)
+    if not jnp.issubdtype(array.dtype, jnp.inexact):
+        array = array.astype(jnp.result_type(array, jnp.asarray(0.0)))
+    return array
+
+
 def _signature_shape(signature: Sequence[ArrayLike], /) -> tuple[tuple[Array, ...], int]:
     levels = tuple(jnp.asarray(level) for level in signature)
     if not levels:
@@ -58,7 +65,7 @@ def _tensor_product(left: Array, right: Array, left_degree: int, right_degree: i
 
 def tensor_exponential(increment: ArrayLike, depth: int, /) -> tuple[Array, ...]:
     """Return the truncated tensor exponential of one or batched increments."""
-    value = jnp.asarray(increment)
+    value = _inexact_array(increment)
     resolved_depth = _validate_depth(depth)
     if value.ndim < 1 or int(value.shape[-1]) <= 0:
         raise ValueError("increment must end in a non-empty driver axis.")
@@ -126,7 +133,7 @@ def tensor_logarithm(signature: Sequence[ArrayLike], /) -> tuple[Array, ...]:
 
 def piecewise_linear_signature(increments: ArrayLike, depth: int, /) -> tuple[Array, ...]:
     """Aggregate straight-segment tensor exponentials along the penultimate axis."""
-    values = jnp.asarray(increments)
+    values = _inexact_array(increments)
     resolved_depth = _validate_depth(depth)
     if values.ndim < 2 or int(values.shape[-2]) <= 0 or int(values.shape[-1]) <= 0:
         raise ValueError(
@@ -413,7 +420,7 @@ class LogSignatureControl(AbstractRoughControl):
         resolved_depth = _validate_depth(depth)
         nodes = jnp.asarray(times, dtype=float)
         samples = tuple(int(size) for size in sample_shape)
-        path_values = jnp.asarray(values)
+        path_values = _inexact_array(values)
         if nodes.ndim != 1 or int(nodes.size) < 2:
             raise ValueError("times must contain at least two fine knots.")
         if bool(jnp.any(~jnp.isfinite(nodes))) or bool(jnp.any(jnp.diff(nodes) <= 0.0)):
