@@ -2,8 +2,8 @@
 
 This recipe covers independently initialized ensembles, proper scoring, split
 conformal calibration, uncertain-input propagation, explicit Bayesian physical
-parameters, MAP/NUTS/Laplace/Pathfinder inference, and scalable
-Gaussian-process model discrepancy.
+parameters, MAP/NUTS/flow-assisted NUTS/Laplace/Pathfinder inference, and
+scalable Gaussian-process model discrepancy.
 
 For geometry-aware output functions, independent source/query discretizations, and
 whole-field calibration, use the dedicated
@@ -244,7 +244,7 @@ those modules and avoids accidentally selecting only the last coordinate factor.
 See the posterior-contract section of the UQ guide for the complete separable
 selection pattern and its nonlinear joint-posterior interpretation.
 
-## 8. Use Pathfinder locally and tempered SMC for demonstrated multimodality
+## 8. Choose local, represented-mode, or discovery inference
 
 Pathfinder is a fast local approximation selected along an L-BFGS path:
 
@@ -257,10 +257,56 @@ pathfinder = phx.uq.fit_pathfinder(
 pathfinder_prediction = pathfinder.predict(posterior_query)
 ```
 
-Compare its moments and held-out scores against NUTS and dense Laplace. For a
-demonstrably multimodal low-dimensional posterior, use `sample_tempered_smc`
-instead. Its declared priors provide initial particles; inspect the adaptive
-temperature schedule, ESS, divergences, and surviving initial-particle count.
+Compare its moments and held-out scores against NUTS and dense Laplace. If a
+multimodal posterior's important modes are already represented, use exact
+flow-assisted NUTS and initialize chains across those modes:
+
+```python
+multimodal_problem = phx.uq.PosteriorProblem(
+    phx.uq.ParameterSpace(
+        jnp.asarray(0.0),
+        priors=phx.uq.Normal(0.0, 4.0),
+    ),
+    lambda value: jnp.logaddexp(
+        jnp.log(0.3) - 0.5 * ((value + 2.0) / 0.35) ** 2,
+        jnp.log(0.7) - 0.5 * ((value - 2.0) / 0.35) ** 2,
+    ),
+)
+flow_config = phx.uq.FlowNUTSConfig(
+    num_adaptation_rounds=3,
+    num_local_adaptation_steps=80,
+    num_global_adaptation_steps=20,
+    num_local_steps=2,
+    num_global_steps=1,
+    history_capacity_per_chain=256,
+    max_epochs=60,
+)
+flow_nuts = phx.uq.sample_flow_nuts(
+    multimodal_problem,
+    key=jr.key(9),
+    num_chains=4,
+    num_warmup=500,
+    num_samples=1000,
+    initial_positions=jnp.asarray([-2.0, -1.8, 1.8, 2.0]),
+    target_acceptance_rate=0.9,
+    config=flow_config,
+    chain_method="vectorized",
+)
+assert flow_nuts.diagnostics.max_rhat < 1.05
+assert jnp.mean(flow_nuts.global_acceptance_rate) > 0.0
+```
+
+The flow is trained only during adaptation. Every global transition uses the exact
+asymmetric independence Metropolis--Hastings correction, and the frozen production
+kernel alternates configured local NUTS and global flow steps. Inspect global
+acceptance, proposal ESS, nonfinite counts, mode occupancy, and ordinary rank
+diagnostics. This transports between represented modes; it does not certify that no
+unrepresented mode exists.
+
+Use `sample_tempered_smc` instead when low-dimensional mode discovery or a
+log-evidence estimate is required. Its declared priors provide initial particles;
+inspect the adaptive temperature schedule, ESS, divergences, and surviving
+initial-particle count.
 
 ## 9. Represent omitted physics with a GP discrepancy
 

@@ -812,6 +812,278 @@ def multimodal_tempered_inference(
     )
 
 
+def flow_assisted_multimodal(
+    configuration: BenchmarkConfiguration,
+    seed: int,
+) -> ScenarioResult:
+    """Measure exact flow-assisted transport across represented posterior modes."""
+    started = time.perf_counter()
+    root_key = jr.key(seed)
+    dimension = 4
+    prior_scale = 4.0
+    positive_weight = 0.7
+    component_location = jnp.asarray([2.2, -1.8, 1.5, 2.0])
+    likelihood_covariance = jnp.asarray(
+        [
+            [0.20, 0.04, 0.00, 0.02],
+            [0.04, 0.16, 0.03, 0.00],
+            [0.00, 0.03, 0.18, -0.02],
+            [0.02, 0.00, -0.02, 0.22],
+        ]
+    )
+    likelihood_precision = jnp.linalg.inv(likelihood_covariance)
+    component_covariance = jnp.linalg.inv(
+        likelihood_precision + jnp.eye(dimension) / prior_scale**2
+    )
+    component_mean = component_covariance @ likelihood_precision @ component_location
+    exact_mean = (2.0 * positive_weight - 1.0) * component_mean
+    exact_covariance = component_covariance + 4.0 * positive_weight * (
+        1.0 - positive_weight
+    ) * jnp.outer(component_mean, component_mean)
+
+    def component_log_density(value, location):
+        difference = value - location
+        return -0.5 * difference @ likelihood_precision @ difference
+
+    def log_likelihood(value):
+        return jsp.special.logsumexp(
+            jnp.stack(
+                (
+                    jnp.log(1.0 - positive_weight)
+                    + component_log_density(value, -component_location),
+                    jnp.log(positive_weight)
+                    + component_log_density(value, component_location),
+                )
+            )
+        )
+
+    problem = phx.uq.PosteriorProblem(
+        phx.uq.ParameterSpace(
+            jnp.zeros((dimension,)),
+            priors=phx.uq.Normal(0.0, prior_scale),
+        ),
+        log_likelihood,
+    )
+    initial_signs = jnp.where(
+        jnp.arange(configuration.num_chains) % 2 == 0,
+        -1.0,
+        1.0,
+    )
+    initial_positions = initial_signs[:, None] * component_mean[None, :]
+    cold, compile_seconds, execute = _jit_timings(
+        log_likelihood,
+        component_mean,
+        repetitions=configuration.jit_warm_repetitions,
+    )
+    nuts, nuts_seconds = _timed_call(
+        lambda: phx.uq.sample_nuts(
+            problem,
+            key=jr.fold_in(root_key, 1),
+            num_chains=configuration.num_chains,
+            num_warmup=configuration.num_warmup,
+            num_samples=configuration.num_draws,
+            initial_positions=initial_positions,
+            initial_step_size=0.12,
+            target_acceptance_rate=0.9,
+            max_num_doublings=8,
+            chain_method="vectorized",
+        )
+    )
+    flow_config = phx.uq.FlowNUTSConfig(
+        num_adaptation_rounds=configuration.flow_adaptation_rounds,
+        num_local_adaptation_steps=configuration.flow_local_adaptation_steps,
+        num_global_adaptation_steps=configuration.flow_global_adaptation_steps,
+        num_stabilization_steps=20,
+        num_local_steps=configuration.flow_local_steps,
+        num_global_steps=configuration.flow_global_steps,
+        history_capacity_per_chain=configuration.flow_history_capacity,
+        history_thinning=1,
+        flow_layers=3,
+        num_knots=8,
+        nn_width=32,
+        nn_depth=2,
+        learning_rate=1e-3,
+        max_epochs=configuration.flow_epochs,
+        max_patience=configuration.flow_epochs,
+        batch_size=64,
+        validation_fraction=0.2,
+    )
+    flow, flow_seconds = _timed_call(
+        lambda: phx.uq.sample_flow_nuts(
+            problem,
+            key=jr.fold_in(root_key, 2),
+            num_chains=configuration.num_chains,
+            num_warmup=configuration.num_warmup,
+            num_samples=configuration.num_draws,
+            initial_positions=initial_positions,
+            initial_step_size=0.12,
+            target_acceptance_rate=0.9,
+            max_num_doublings=8,
+            config=flow_config,
+            chain_method="vectorized",
+        )
+    )
+    flat_flow = flow.samples.reshape((-1, dimension))
+    flat_nuts = nuts.samples.reshape((-1, dimension))
+    flow_positive = flat_flow @ component_mean > 0.0
+    nuts_positive = flat_nuts @ component_mean > 0.0
+    chain_modes = flow.samples @ component_mean > 0.0
+    nuts_chain_modes = nuts.samples @ component_mean > 0.0
+    flow_transitions = jnp.sum(
+        chain_modes[:, 1:] != chain_modes[:, :-1],
+        axis=1,
+    )
+    nuts_transitions = jnp.sum(
+        nuts_chain_modes[:, 1:] != nuts_chain_modes[:, :-1],
+        axis=1,
+    )
+    estimated_covariance = jnp.cov(flat_flow, rowvar=False)
+    proposal_ess_fraction = flow.adaptation_proposal_ess[-1] / (
+        configuration.num_chains * configuration.flow_global_adaptation_steps
+    )
+    max_rhat = 1.15 if configuration.profile == "smoke" else 1.05
+    min_ess = 20.0 if configuration.profile == "smoke" else 200.0
+    mode_mass_error = 0.15 if configuration.profile == "smoke" else 0.06
+    mean_rmse = 0.30 if configuration.profile == "smoke" else 0.12
+    covariance_error = 0.30 if configuration.profile == "smoke" else 0.15
+    minimum_global_acceptance = 0.03 if configuration.profile == "smoke" else 0.05
+    minimum_proposal_ess_fraction = 0.05 if configuration.profile == "smoke" else 0.10
+    sample_count = configuration.num_chains * configuration.num_draws
+    metrics = {
+        "flow_mode_mass_error": metric(
+            jnp.abs(jnp.mean(flow_positive) - positive_weight),
+            "accuracy",
+            maximum=mode_mass_error,
+        ),
+        "flow_posterior_mean_rmse": metric(
+            jnp.sqrt(jnp.mean((jnp.mean(flat_flow, axis=0) - exact_mean) ** 2)),
+            "accuracy",
+            maximum=mean_rmse,
+        ),
+        "flow_covariance_relative_frobenius_error": metric(
+            jnp.linalg.norm(estimated_covariance - exact_covariance)
+            / jnp.linalg.norm(exact_covariance),
+            "accuracy",
+            maximum=covariance_error,
+        ),
+        "ordinary_nuts_mode_mass_error": metric(
+            jnp.abs(jnp.mean(nuts_positive) - positive_weight),
+            "diagnostic",
+        ),
+        "minimum_flow_mode_transitions_per_chain": metric(
+            jnp.min(flow_transitions),
+            "convergence",
+            minimum=1.0,
+        ),
+        "minimum_nuts_mode_transitions_per_chain": metric(
+            jnp.min(nuts_transitions),
+            "diagnostic",
+        ),
+        "max_rhat": metric(
+            flow.diagnostics.max_rhat,
+            "convergence",
+            maximum=max_rhat,
+        ),
+        "min_bulk_ess": metric(
+            flow.diagnostics.min_bulk_ess,
+            "convergence",
+            minimum=min_ess,
+        ),
+        "divergence_count": metric(
+            flow.diagnostics.divergence_count,
+            "convergence",
+            maximum=0.0,
+        ),
+        "global_acceptance_rate": metric(
+            jnp.mean(flow.global_acceptance_rate),
+            "convergence",
+            minimum=minimum_global_acceptance,
+        ),
+        "proposal_ess_fraction": metric(
+            proposal_ess_fraction,
+            "diagnostic",
+            minimum=minimum_proposal_ess_fraction,
+        ),
+        "nuts_seconds": metric(nuts_seconds, "performance", unit="s"),
+        "flow_seconds": metric(flow_seconds, "performance", unit="s"),
+        "flow_adaptation_seconds": metric(
+            flow.adaptation_duration_seconds,
+            "performance",
+            unit="s",
+        ),
+        "flow_training_seconds": metric(
+            sum(flow.flow_training_duration_seconds),
+            "performance",
+            unit="s",
+        ),
+        "flow_production_seconds": metric(
+            flow.sampling_duration_seconds,
+            "performance",
+            unit="s",
+        ),
+        "flow_samples_per_second": metric(
+            sample_count / flow.sampling_duration_seconds,
+            "performance",
+            unit="sample/s",
+        ),
+        "flow_min_bulk_ess_per_second": metric(
+            flow.diagnostics.min_bulk_ess / flow_seconds,
+            "performance",
+            unit="1/s",
+        ),
+        "flow_parameter_memory_bytes": metric(
+            flow.flow_parameter_memory_bytes,
+            "performance",
+            unit="byte",
+        ),
+        "flow_history_memory_bytes": metric(
+            flow.history_memory_bytes,
+            "performance",
+            unit="byte",
+        ),
+        "production_global_target_evaluations": metric(
+            sample_count * configuration.flow_global_steps,
+            "performance",
+        ),
+        "production_local_integration_steps": metric(
+            jnp.sum(flow.num_integration_steps),
+            "performance",
+        ),
+        **_performance_metrics(
+            wall_seconds=time.perf_counter() - started,
+            cold_seconds=cold,
+            compile_seconds=compile_seconds,
+            execution_seconds=execute,
+            sample_memory_bytes=(
+                nuts.sample_memory_bytes
+                + flow.sample_memory_bytes
+                + flow.flow_parameter_memory_bytes
+                + flow.history_memory_bytes
+            ),
+        ),
+    }
+    return ScenarioResult(
+        name="flow_assisted_multimodal",
+        description=flow_assisted_multimodal.__doc__ or "",
+        seed=seed,
+        metrics=metrics,
+        metadata={
+            "profile": configuration.profile,
+            "dimension": dimension,
+            "positive_mode_weight": positive_weight,
+            "component_means": [
+                (-component_mean).tolist(),
+                component_mean.tolist(),
+            ],
+            "component_covariance": component_covariance.tolist(),
+            "exact_mean": exact_mean.tolist(),
+            "exact_covariance": exact_covariance.tolist(),
+            "initial_positions": initial_positions.tolist(),
+            "flow_config": flow_config.as_dict(),
+        },
+    )
+
+
 def _poisson_basis(x):
     return 0.5 * x * (1.0 - x)
 
@@ -1377,6 +1649,7 @@ SCENARIOS: dict[str, Scenario] = {
     "multimodal_tempered_inference": multimodal_tempered_inference,
     "misspecified_pde_discrepancy": misspecified_pde_discrepancy,
     "correlated_vector_discrepancy": correlated_vector_discrepancy,
+    "flow_assisted_multimodal": flow_assisted_multimodal,
 }
 
 
