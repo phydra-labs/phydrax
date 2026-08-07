@@ -205,20 +205,6 @@ def _canonical_hash(value: Any, /) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _source_provenance_fingerprint(source: OperatorCaseSource, /) -> str:
-    records = []
-    for index in range(source.size):
-        provenance = source.case_metadata(index).provenance
-        records.append(
-            {"case_id": f"case:{index}"}
-            if provenance is None
-            else {
-                "case_id": provenance.case_id,
-                "identities": dict(provenance.identities),
-                "order": dict(provenance.order),
-            }
-        )
-    return _canonical_hash(records)
 
 
 def _raw_loader(
@@ -804,9 +790,8 @@ def fit_operator(
         )
         return eqx.apply_updates(current_parameters, updates), next_state
 
-    if jit:
-        gradient_fn = eqx.filter_jit(gradient_fn)
-        update_fn = eqx.filter_jit(update_fn)
+    run_gradient_fn = eqx.filter_jit(gradient_fn) if jit else gradient_fn
+    run_update_fn = eqx.filter_jit(update_fn) if jit else update_fn
 
     def prepared_epoch(loader: OperatorBatchLoader, epoch: int):
         for raw in loader.epoch(epoch):
@@ -907,11 +892,11 @@ def fit_operator(
             if raw_validation_loader is None
             else raw_validation_loader.configuration()
         ),
-        "train_provenance": _source_provenance_fingerprint(raw_train_loader.source),
-        "validation_provenance": (
+        "train_source_fingerprint": raw_train_loader.source_fingerprint(),
+        "validation_source_fingerprint": (
             None
             if raw_validation_loader is None
-            else _source_provenance_fingerprint(raw_validation_loader.source)
+            else raw_validation_loader.source_fingerprint()
         ),
         "sharding": (
             None
@@ -1136,7 +1121,7 @@ def fit_operator(
                     if control.stop_requested or signal_guard.stop_requested:
                         break
                     key = control.key_for(control.progress.microstep, site=0)
-                    total, components, gradient = gradient_fn(
+                    total, components, gradient = run_gradient_fn(
                         parameters,
                         training_batch.batch,
                         training_batch.targets,
@@ -1200,7 +1185,7 @@ def fit_operator(
                         gradient_accumulator,
                         1.0 / accumulated_cases,
                     )
-                    parameters, optimizer_state = update_fn(
+                    parameters, optimizer_state = run_update_fn(
                         parameters,
                         optimizer_state,
                         averaged_gradient,

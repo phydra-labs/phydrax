@@ -20,6 +20,14 @@ from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
 from .._strict import StrictModule
+from ._chain import (
+    _split_chain_keys,
+    _stack_trees,
+    _tree_nbytes,
+    _unstack_tree,
+    _validate_chain_method,
+    ChainMethod,
+)
 from ._checkpoint import (
     array_tree_fingerprint,
     checkpoint_compatibility,
@@ -42,15 +50,7 @@ from ._flow_proposal import (
     _update_replay,
     _validate_flow,
 )
-from ._mcmc import (
-    _adapt_mcmc,
-    _stack_trees,
-    _tree_nbytes,
-    _unstack_tree,
-    ChainMethod,
-    MCMCChainWarmup,
-    MCMCResult,
-)
+from ._mcmc import _adapt_mcmc, MCMCChainWarmup, MCMCResult
 from ._posterior import PosteriorProblem
 
 
@@ -451,9 +451,7 @@ def sample_flow_nuts(
     doublings = int(max_num_doublings)
     if doublings <= 0:
         raise ValueError("max_num_doublings must be positive.")
-    method: ChainMethod = chain_method
-    if method not in ("sequential", "vectorized"):
-        raise ValueError("chain_method must be 'sequential' or 'vectorized'.")
+    method = _validate_chain_method(chain_method)
     if resume_from is not None and initial_positions is not None:
         raise ValueError("initial_positions cannot be supplied when resuming flow NUTS.")
 
@@ -470,8 +468,7 @@ def sample_flow_nuts(
     if destination is not None and (checkpoint_id is None or not str(checkpoint_id)):
         raise ValueError("checkpoint_id is required for flow-NUTS checkpointing.")
 
-    root_key = jnp.asarray(key)
-    chain_keys = jr.split(root_key, chains)
+    root_key, chain_keys = _split_chain_keys(key, chains)
     flat_reference, unravel = ravel_pytree(problem.initial_position)
     if flat_reference.size == 0:
         raise ValueError("Flow NUTS requires at least one scalar parameter.")

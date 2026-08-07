@@ -261,6 +261,42 @@ absent unless a user derives a different stochastic observation model explicitly
             - log_prob
             - standardized_residual
 
+## Operator minibatch likelihoods
+
+`OperatorBatchObservationLikelihood` evaluates a normalized observation model on a
+dynamically supplied `OperatorBatch`. It combines the batch query mask with the
+finite-observation mask, reduces all query and channel elements within each physical
+case, and returns exactly one factor per case.
+
+`OperatorMinibatchSource` adapts deterministic `OperatorBatchLoader` epochs to
+`LikelihoodBatch`. The loader must be shuffled, retain its final padded batch, and
+keep a fixed batch capacity. Case subsampling is supported; query-anchor subsampling,
+nonuniform factor weights, and stochastic geometry mutation within a case are not.
+
+::: phydrax.uq.OperatorLikelihoodData
+
+---
+
+::: phydrax.uq.OperatorBatchObservationLikelihood
+    options:
+        members:
+            - __init__
+            - per_case_log_prob
+            - __call__
+
+---
+
+::: phydrax.uq.OperatorMinibatchSource
+    options:
+        members:
+            - __init__
+            - num_factors
+            - batch_capacity
+            - batches_per_epoch
+            - fingerprint
+            - configuration
+            - epoch
+
 ## Whole-function conformal calibration
 
 `OperatorFunctionalConformal` treats one complete output field or trajectory as one

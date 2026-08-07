@@ -114,3 +114,16 @@ def test_runner_records_scenario_exceptions_without_losing_the_report(monkeypatc
     assert report.scenarios[0].error_type == "RuntimeError"
     assert report.scenarios[0].failures == ("scenario_error",)
     assert "failure for smoke" in report.scenarios[0].error_message
+
+
+def test_stochastic_gradient_benchmark_controls_are_profiled_and_registered():
+    smoke = runner.get_configuration("smoke")
+    standard = runner.get_configuration("standard")
+
+    assert tuple(runner.SCENARIOS)[-1] == "stochastic_gradient_regression"
+    assert smoke.sgmcmc_burnin > 0
+    assert smoke.sgmcmc_draws > 0
+    assert smoke.sgmcmc_batch_size > 0
+    assert smoke.sgmcmc_steps_per_sample > 0
+    assert standard.sgmcmc_burnin >= smoke.sgmcmc_burnin
+    assert standard.sgmcmc_draws >= smoke.sgmcmc_draws
