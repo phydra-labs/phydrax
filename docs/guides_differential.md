@@ -327,8 +327,10 @@ solution = phx.solver.solve_rough_differential(
 Solver selection is object-based. `RoughEuler()` consumes level one,
 `Davie()` consumes levels one and two, and `LogODE()` integrates the primitive
 logarithmic vector field on every control interval with Diffrax. The result
-retains the solver object, interval `statuses`, and Diffrax step
-`statistics`. The classical Euler and Davie solvers retain their direct
+retains the solver object, stable `solver_name` and resolved-configuration
+`solver_id`, canonical `state_geometry_id`, interval `statuses`, and Diffrax
+step `statistics`. These identifiers also propagate into stochastic-trajectory
+metadata. The classical Euler and Davie solvers retain their direct
 fixed-partition updates.
 
 The standard primitive bracket uses the Davie word convention:

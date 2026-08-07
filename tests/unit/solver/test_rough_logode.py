@@ -1,3 +1,4 @@
+import diffrax as dfx
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -33,6 +34,45 @@ def test_recursive_lift_uses_davie_bracket_orientation_and_explicit_fields():
     assert basis.words == ((0,), (1,), (0, 1))
     assert jnp.allclose(lifted[..., 2], expected_bracket)
     assert jnp.allclose(explicit, lifted)
+
+
+def test_rough_solver_ids_are_stable_and_resolve_numerical_configuration():
+    default = phx.solver.LogODE()
+    repeated = phx.solver.LogODE()
+    loose = phx.solver.LogODE(
+        stepsize_controller=dfx.PIDController(rtol=1e-4, atol=1e-6)
+    )
+    stepped = phx.solver.LogODE(dt0=0.05)
+    limited = phx.solver.LogODE(max_steps=32)
+    inner_euler = phx.solver.LogODE(
+        ode_solver=dfx.Euler(),
+        stepsize_controller=dfx.ConstantStepSize(),
+        dt0=0.1,
+    )
+    linear_default = phx.solver.LinearLogODE((jnp.eye(2),))
+    linear_repeated = phx.solver.LinearLogODE((2.0 * jnp.eye(2),))
+    linear_short = phx.solver.LinearLogODE(
+        (jnp.eye(2),),
+        matrix_function_policy=phx.solver.MatrixFunctionPolicy(
+            "arnoldi", num_matvecs=4
+        ),
+    )
+
+    assert default.solver_id == repeated.solver_id
+    assert default.solver_id != loose.solver_id
+    assert default.solver_id != stepped.solver_id
+    assert default.solver_id != limited.solver_id
+    assert default.solver_id != inner_euler.solver_id
+    assert linear_default.solver_id == linear_repeated.solver_id
+    assert linear_default.solver_id != linear_short.solver_id
+    assert len(
+        {
+            phx.solver.RoughEuler().solver_id,
+            phx.solver.Davie().solver_id,
+            default.solver_id,
+            linear_default.solver_id,
+        }
+    ) == 4
 
 
 def test_general_and_linear_logode_agree_for_noncommuting_linear_system():
@@ -96,7 +136,13 @@ def test_general_and_linear_logode_agree_for_noncommuting_linear_system():
     assert jnp.allclose(general.states, explicit.states, rtol=2e-8, atol=2e-9)
     assert jnp.all(general.statuses == 0)
     assert jnp.all(linear.statuses == 0)
-    assert general.metadata["geometry_id"] == "state-geometry:euclidean"
+    assert general.state_geometry_id == "state-geometry:euclidean"
+    assert general.metadata["state_geometry_id"] == general.state_geometry_id
+    assert general.solver_name == "LogODE"
+    assert explicit.solver_name == "LogODE"
+    assert general.solver_id != explicit.solver_id
+    assert linear.solver_name == "LinearLogODE"
+    assert linear.solver_id == linear.solver.solver_id
     assert int(general.statistics["num_accepted_steps"][0]) > 0
 
 
