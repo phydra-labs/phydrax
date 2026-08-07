@@ -2,8 +2,9 @@
 
 `phydrax.metrix` is Phydrax's differentiable geometry layer. It represents local
 coordinates, tensor transformation laws, positive-definite metric fields,
-Levi-Civita calculus, curvature, embedded charts, and metric-aware stochastic
-operators as ordinary JAX programs.
+Levi-Civita calculus, curvature, embedded charts, metric-aware stochastic
+operators, and retraction geometry for array-valued states as ordinary JAX
+programs.
 
 Metrix is intentionally below the domain and solver layers:
 
@@ -16,6 +17,10 @@ A chart describes an ordered local coordinate representation, not a physical
 region. Bounds, boundaries, periodicity, sampling, and measures remain domain
 concerns. This separation lets one metric serve direct array calculations,
 `DomainFunction` residuals, PINNs, operator models, and stochastic generators.
+
+Array state geometry likewise describes membership, tangent projection, and
+retraction for a solver state. It does not introduce another domain or metric
+hierarchy.
 
 ## Conventions
 
@@ -76,3 +81,4 @@ point coordinates or replace domain admissibility rules.
 - [Curvature](curvature.md)
 - [Embedded geometry](embedded.md)
 - [Stochastic geometry](stochastic.md)
+- [Array state geometry](state_geometry.md)

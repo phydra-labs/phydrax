@@ -84,6 +84,37 @@ solution = phx.solver.solve_diffrax(
 
 ::: phydrax.solver.solve_diffrax
 
+## Geometric ODE and Stratonovich solve
+
+Set `DifferentialProblem.state_geometry` when the state is constrained to an
+array manifold. Construction validates initial membership. Nontrivial geometry
+rejects ordinary solvers; deterministic solves use `GeometricEuler`, `RKMK`, or
+`CommutatorFreeSolver`, while stochastic solves require explicit Stratonovich
+semantics and `SRKMK`. All geometric methods are fixed-step and require `dt0`.
+
+The solver's geometry ID must equal the problem's. The resolved ID is retained
+as `DifferentialSolution.state_geometry_id`. Geometric local interpolation is
+also used by dense queries and Diffrax root-finding events.
+
+::: phydrax.solver.GeometricEuler
+
+---
+
+::: phydrax.solver.RKMK
+
+---
+
+::: phydrax.solver.CommutatorFreeTableau
+
+---
+
+::: phydrax.solver.CommutatorFreeSolver
+
+---
+
+::: phydrax.solver.SRKMK
+
+
 ## Dense vector interpolation
 
 Pass `dense=True` to retain Diffrax's local interpolants and enable

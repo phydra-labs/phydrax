@@ -30,6 +30,51 @@ saved times. `DifferentialSolution.evaluate(query_times)` accepts arbitrarily sh
 shared query arrays and returns `sample_shape + query_shape + state_shape`; dense data
 is not retained by default.
 
+### Array state geometry
+
+`DifferentialProblem(state_geometry=...)` keeps the usual vector-field signature
+`(time, state, args) -> state-shaped array`, while declaring that the array lies
+on a constrained state space. Metrix supplies Euclidean, embedded, pointwise,
+special-orthogonal, and symmetric-positive-definite geometries. A nontrivial
+geometry validates the initial state and requires a geometric solver:
+
+```python
+import jax.numpy as jnp
+import phydrax as phx
+
+geometry = phx.metrix.SpecialOrthogonalStateGeometry(3)
+omega = jnp.array(
+    [[0.0, -0.4, 0.2], [0.4, 0.0, -0.1], [-0.2, 0.1, 0.0]]
+)
+problem = phx.solver.DifferentialProblem(
+    lambda t, rotation, args: rotation @ omega,
+    jnp.eye(3),
+    t0=0.0,
+    t1=2.0,
+    state_geometry=geometry,
+)
+solution = phx.solver.solve_diffrax(
+    problem,
+    save_times=jnp.linspace(0.0, 2.0, 21),
+    solver=phx.solver.RKMK(geometry),
+    dt0=0.05,
+    dense=True,
+)
+```
+
+`GeometricEuler` and `RKMK` integrate deterministic dynamics.
+`CommutatorFreeSolver` executes an explicit `CommutatorFreeTableau`; each
+composition is a retraction rather than an ambient addition. `SRKMK` is the
+explicit Stratonovich solver for nontrivial geometry. Generic Itô geometry is
+intentionally rejected rather than approximated by projection.
+
+SO(n) supports exponential and Cayley retractions. SPD(n) uses a symmetric
+congruence/exponential retraction. Dense interpolation and root-finding events
+evaluate through the same retraction, so queried states remain on the declared
+state space. `DifferentialSolution.state_geometry_id` records the resolved
+geometry alongside solver and stochastic provenance.
+
+
 `DifferentialSolution.to_predictive()` converts an ensemble to a
 `PredictiveField` whose leading sample axis is labeled `process`. This label means
 intrinsic stochastic forcing. Time-step or spatial-discretization error is
