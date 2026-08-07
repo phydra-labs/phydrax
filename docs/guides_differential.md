@@ -282,6 +282,86 @@ use ambient normals. See
 [API → Metrix → Connections and intrinsic operators](api/metrix/connections.md)
 and [API → Operators → Differential](api/operators/differential.md).
 
+## Rough differential equations and log-ODE integration
+
+Phydrax represents a finite-depth geometric driver with
+`phydrax.stochastic.AbstractRoughControl`. `GeometricRoughPath` remains the
+compact depth-2 representation. For arbitrary static depth, construct a
+`LogSignatureControl` from fine piecewise-linear samples:
+
+```python
+control = phx.stochastic.LogSignatureControl.from_values(
+    fine_times,
+    path_values,
+    depth=3,
+    coarse_indices=(0, 8, 16, 24, 32),
+    source_id="sample-17",
+)
+```
+
+Each coarse interval is aggregated exactly from the fine straight segments by
+the tensor exponential and Chen multiplication. The truncated tensor logarithm
+is then converted to standard-bracketed Lyndon coordinates. `fine_times`
+records the source knots, `times` records the integration knots, and
+`control_id` is a stable digest of the resolved control and its provenance.
+The public `tensor_exponential`, `chen_multiply`, `tensor_logarithm`, and
+`PrimitiveBasis` operations expose the same algebra for diagnostics.
+
+Define dynamics with the state-shaped convention
+`(time, state, args) -> state.shape + (driver_dimension,)`:
+
+```python
+problem = phx.solver.RoughDifferentialProblem(
+    vector_fields,
+    initial_state,
+    driver_dimension=2,
+    geometry=phx.metrix.EuclideanStateGeometry(),
+)
+solution = phx.solver.solve_rough_differential(
+    problem,
+    control,
+    solver=phx.solver.LogODE(),
+)
+```
+
+Solver selection is object-based. `RoughEuler()` consumes level one,
+`Davie()` consumes levels one and two, and `LogODE()` integrates the primitive
+logarithmic vector field on every control interval with Diffrax. The result
+retains the solver object, interval `statuses`, and Diffrax step
+`statistics`. The classical Euler and Davie solvers retain their direct
+fixed-partition updates.
+
+The standard primitive bracket uses the Davie word convention:
+
+$$
+[V_u,V_v] = D V_v\,V_u - D V_u\,V_v.
+$$
+
+`LogODE` obtains these brackets recursively by JVP. Pass `explicit_fields=` to
+`LogODE` when all primitive fields are already available. For a declared
+linear system, use `LinearLogODE((A_1, ..., A_d))`; it constructs operator
+commutators and applies the resulting exponential with
+`matrix_exponential_action`. Linearity is never inferred from
+`vector_fields`.
+
+Drift and time-dependent fields require `joint_time=True` when constructing
+the log-signature control. Time is prepended as channel zero, giving augmented
+fields \((1,V_0)\) and \((0,V_i)\). For a linear joint-time system, pass the
+drift operator first to `LinearLogODE`. The general solver integrates in
+state-shaped local coordinates: each interval binds
+`problem.geometry.local_retraction(state)`, pulls vector fields back through
+that retraction, and retracts the terminal local coordinate.
+
+For a fractional Gaussian realization with Hurst index \(H\), a depth-\(N\)
+log-ODE control requires
+
+$$
+H > \frac{1}{N+1}.
+$$
+
+Thus \(H=0.3\) requires depth at least three. `Davie()` still requires
+\(H>1/3\), and `RoughEuler()` is the Young regime \(H>1/2\).
+
 ## Fractional operators
 
 Phydrax includes a small set of fractional derivative operators, primarily for experimentation.
