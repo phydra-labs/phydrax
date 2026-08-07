@@ -608,28 +608,30 @@ Save times must be nodes of the lifted partition.
 
 ::: phydrax.solver.solve_rough_differential
 
-### Volterra and delay equations
+### Volterra equations
 
 The Volterra solver applies explicit left-point deterministic and stochastic
 convolutions. Kernels may be scalar or state-shaped; stochastic coefficients retain a
-separate declared noise shape. The delay solver supports one or more positive constant
-delays, evaluates a user history before the initial time, and linearly interpolates
-only already-computed states. Both consume one global Wiener realization and return a
-`MemoryEquationSolution`.
+separate declared noise shape and consume a global `WienerRealization`.
+
+Translation-invariant convolution kernels and Caputo power-law memory have dedicated
+contracts on the [delay and functional equations](delay.md) page.
+
+Delay equations now use the unified declared-memory API documented in
+[Delay and functional differential equations](delay.md). The old fixed-grid delay
+problem and solver are not separate public contracts.
+
+Run the reproducible delay benchmark with:
+
+```console
+uv run python tools/delay_benchmarks.py --repeats 10
+```
 
 ::: phydrax.solver.StochasticVolterraProblem
 
 ---
 
 ::: phydrax.solver.solve_stochastic_volterra
-
----
-
-::: phydrax.solver.StochasticDelayProblem
-
----
-
-::: phydrax.solver.solve_stochastic_delay
 
 ---
 

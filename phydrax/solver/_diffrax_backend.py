@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from math import prod
-from typing import Any
+from typing import Any, Protocol
 
 import diffrax as dfx
 import equinox as eqx
@@ -16,6 +16,26 @@ from jaxtyping import Array, ArrayLike
 from ..stochastic import WienerRealization
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._geometric import AbstractGeometricSolver, RKMK, SRKMK
+
+
+class _StochasticProblemContract(Protocol):
+    @property
+    def t0(self) -> Array: ...
+
+    @property
+    def t1(self) -> Array: ...
+
+    @property
+    def noise_shape(self) -> tuple[int, ...]: ...
+
+    @property
+    def noise_id(self) -> str | None: ...
+
+    @property
+    def interpretation(self) -> str: ...
+
+    @property
+    def additive_noise(self) -> bool: ...
 
 
 class _VectorizedDenseInterpolation(eqx.Module):
@@ -86,7 +106,12 @@ class _VectorizedDenseInterpolation(eqx.Module):
         return values.reshape(self.sample_shape + query.shape + values.shape[2:])
 
 
-def _save_times(problem: DifferentialProblem, values: ArrayLike, /) -> Array:
+def _save_times(
+    t0: ArrayLike,
+    t1: ArrayLike,
+    values: ArrayLike,
+    /,
+) -> Array:
     times = jnp.asarray(values, dtype=float)
     if times.ndim != 1 or int(times.shape[0]) <= 0:
         raise ValueError("save_times must be a non-empty rank-1 array.")
@@ -103,7 +128,7 @@ def _save_times(problem: DifferentialProblem, values: ArrayLike, /) -> Array:
         )
     return eqx.error_if(
         times,
-        (times[0] < problem.t0) | (times[-1] > problem.t1),
+        (times[0] < t0) | (times[-1] > t1),
         "save_times must lie within the problem time interval.",
     )
 
@@ -116,6 +141,25 @@ def _levy_area(kind: str, /) -> type:
     if kind == "space_time_time":
         return dfx.SpaceTimeTimeLevyArea
     raise AssertionError(f"Unhandled Levy-area kind {kind!r}.")
+
+
+def _realized_wiener_path(
+    realization: WienerRealization,
+    path_key: Array,
+    path_sign: Array,
+    dtype: jnp.dtype,
+    /,
+) -> tuple[dfx.VirtualBrownianTree, Array]:
+    """Construct one ordinary or delayed Diffrax path from global provenance."""
+    brownian = dfx.VirtualBrownianTree(
+        t0=realization.support[0],
+        t1=realization.support[1],
+        tol=realization.tolerance,
+        shape=jax.ShapeDtypeStruct(realization.noise_shape, dtype),
+        key=path_key,
+        levy_area=_levy_area(realization.levy_area),
+    )
+    return brownian, jnp.asarray(path_sign, dtype=dtype)
 
 
 def _vector_field(function):
@@ -144,7 +188,7 @@ def _combined_diffusion(problem: DifferentialProblem, path_sign: Array, /):
 
 
 def _validated_stochastic_solver(
-    problem: DifferentialProblem,
+    problem: _StochasticProblemContract,
     solver: Any,
     realization: WienerRealization,
     /,
@@ -175,7 +219,7 @@ def _validated_stochastic_solver(
 
 
 def _validated_realization_interval(
-    problem: DifferentialProblem,
+    problem: _StochasticProblemContract,
     realization: WienerRealization,
     /,
 ) -> tuple[Array, Array]:
@@ -232,20 +276,16 @@ def _validated_state_geometry_solver(
                 "only; generic Itô geometry is not implemented."
             )
         if not isinstance(solver, SRKMK):
-            raise ValueError(
-                "A stochastic nontrivial state_geometry requires SRKMK."
-            )
+            raise ValueError("A stochastic nontrivial state_geometry requires SRKMK.")
     if not problem.stochastic and isinstance(solver, SRKMK):
         raise ValueError("SRKMK requires a stochastic DifferentialProblem.")
+
+
 def _solver_provenance(solver: Any, /) -> tuple[str, str]:
     if isinstance(solver, AbstractGeometricSolver):
         return solver.solver_id, solver.resolved_method
     name = type(solver).__name__
     return f"solver:diffrax:{name}", name
-
-
-
-
 
 
 def _resolved_solver(problem: DifferentialProblem, solver: Any | None, /) -> Any:
@@ -281,9 +321,7 @@ def _resolved_controller(
         and controller is not None
         and not isinstance(controller, dfx.ConstantStepSize)
     ):
-        raise ValueError(
-            "Geometric solvers require diffrax.ConstantStepSize."
-        )
+        raise ValueError("Geometric solvers require diffrax.ConstantStepSize.")
     if controller is not None:
         return controller
     if problem.stochastic or isinstance(solver, AbstractGeometricSolver):
@@ -323,21 +361,16 @@ def _native_solution(
                 "fixed integration step.",
             )
         real_dtype = jnp.asarray(problem.initial_state).real.dtype
-        brownian = dfx.VirtualBrownianTree(
-            t0=realization.support[0],
-            t1=realization.support[1],
-            tol=realization.tolerance,
-            shape=jax.ShapeDtypeStruct(realization.noise_shape, real_dtype),
-            key=path_key,
-            levy_area=_levy_area(realization.levy_area),
+        brownian, signed_path = _realized_wiener_path(
+            realization,
+            path_key,
+            path_sign,
+            real_dtype,
         )
         terms = dfx.MultiTerm(
             drift_term,
             dfx.ControlTerm(
-                _combined_diffusion(
-                    problem,
-                    jnp.asarray(path_sign, dtype=real_dtype),
-                ),
+                _combined_diffusion(problem, signed_path),
                 brownian,
             ),
         )
@@ -431,7 +464,7 @@ def solve_diffrax(
     elif realization is not None:
         raise ValueError("Deterministic problems do not accept a WienerRealization.")
 
-    times = _save_times(problem, save_times)
+    times = _save_times(problem.t0, problem.t1, save_times)
     selected_solver = _resolved_solver(problem, solver)
     _validated_state_geometry_solver(problem, selected_solver)
     if isinstance(selected_solver, AbstractGeometricSolver) and dt0 is None:
@@ -512,7 +545,7 @@ def solve_diffrax_ensemble(
         )
     if not isinstance(dense, bool):
         raise TypeError("dense must be a bool.")
-    times = _save_times(problem, save_times)
+    times = _save_times(problem.t0, problem.t1, save_times)
     selected_solver = _resolved_solver(problem, solver)
     _validated_state_geometry_solver(problem, selected_solver)
     _validated_stochastic_solver(problem, selected_solver, realization)
