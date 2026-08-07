@@ -93,6 +93,54 @@ def test_special_orthogonal_retractions_preserve_group(method):
     assert bool(geometry.contains(midpoint))
     assert jnp.allclose(geometry.interpolate(base, point, 1.0), point, atol=2e-10)
 
+@pytest.mark.parametrize("method", ["exponential", "cayley"])
+def test_so_pullback_inverts_noncommuting_retraction_jvp(method):
+    geometry = SpecialOrthogonalStateGeometry(3, retraction=method)
+    base = jnp.eye(3)
+    local = jnp.array(
+        [[0.0, -0.4, 0.2], [0.4, 0.0, -0.3], [-0.2, 0.3, 0.0]]
+    )
+    direction = jnp.array(
+        [[0.0, 0.15, -0.1], [-0.15, 0.0, 0.25], [0.1, -0.25, 0.0]]
+    )
+    _, tangent = jax.jvp(
+        lambda value: geometry.retract(base, value),
+        (local,),
+        (direction,),
+    )
+    step = 1e-5
+    finite_difference = (
+        geometry.retract(base, local + step * direction)
+        - geometry.retract(base, local - step * direction)
+    ) / (2.0 * step)
+    recovered = jax.jit(geometry.pullback)(base, local, tangent)
+
+    assert jnp.linalg.norm(local @ direction - direction @ local) > 0.01
+    assert jnp.allclose(tangent, finite_difference, atol=2e-10)
+    assert jnp.allclose(recovered, direction, atol=2e-9)
+
+
+def test_so_exponential_pullback_does_not_materialize_full_jacobian(monkeypatch):
+    geometry = SpecialOrthogonalStateGeometry(5)
+    local = jnp.diag(jnp.ones(4), 1) - jnp.diag(jnp.ones(4), -1)
+    direction = 0.1 * (
+        jnp.diag(jnp.ones(3), 2) - jnp.diag(jnp.ones(3), -2)
+    )
+    point, tangent = jax.jvp(
+        lambda value: geometry.retract(jnp.eye(5), value),
+        (local,),
+        (direction,),
+    )
+
+    def reject_full_jacobian(*args, **kwargs):
+        raise AssertionError("SO pullback must remain matrix-free")
+
+    monkeypatch.setattr(jax, "jacfwd", reject_full_jacobian)
+    recovered = geometry.pullback(jnp.eye(5), local, tangent)
+
+    assert bool(geometry.contains(point))
+    assert jnp.allclose(recovered, direction, atol=2e-8)
+
 
 def test_so_exponential_inverse_rejects_rotations_outside_local_neighborhood():
     geometry = SpecialOrthogonalStateGeometry(2)

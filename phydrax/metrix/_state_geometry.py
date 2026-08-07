@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
+import jax.scipy.sparse.linalg as jsparse
 from jaxtyping import Array, ArrayLike
 
 from .._strict import AbstractAttribute, StrictModule
@@ -814,44 +815,6 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
             return 2.0 * _skew(cayley)
         return _principal_local_so_logarithm(relative)
 
-    def _skew_basis(self, dtype, /) -> Array:
-        matrices = []
-        for row in range(self.dimension):
-            for column in range(row + 1, self.dimension):
-                matrix = jnp.zeros(
-                    (self.dimension, self.dimension),
-                    dtype=dtype,
-                )
-                matrix = matrix.at[row, column].set(1.0)
-                matrix = matrix.at[column, row].set(-1.0)
-                matrices.append(matrix)
-        return jnp.stack(matrices)
-
-    def _one_pullback(
-        self,
-        state: Array,
-        local_tangent: Array,
-        tangent: Array,
-        /,
-    ) -> Array:
-        basis = self._skew_basis(state.dtype)
-        coordinates = 0.5 * jnp.sum(
-            basis * local_tangent,
-            axis=(-2, -1),
-        )
-
-        def evaluate(values):
-            local = jnp.tensordot(values, basis, axes=1)
-            return self.retract(state, local).reshape((-1,))
-
-        jacobian = jax.jacfwd(evaluate)(coordinates)
-        right_hand_side = tangent.reshape((-1,))
-        local_velocity = jnp.linalg.solve(
-            _transpose(jacobian) @ jacobian,
-            _transpose(jacobian) @ right_hand_side,
-        )
-        return _skew(jnp.tensordot(local_velocity, basis, axes=1))
-
     def pullback(
         self,
         state: ArrayLike,
@@ -869,16 +832,43 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
         )
         point = self.retract(matrix, local)
         vector = self.project_tangent(point, tangent)
-        if matrix.ndim == 2:
-            return self._one_pullback(matrix, local, vector)
-        leading = matrix.shape[:-2]
-        shape = (-1, self.dimension, self.dimension)
-        velocities = jax.vmap(self._one_pullback)(
-            matrix.reshape(shape),
-            local.reshape(shape),
-            vector.reshape(shape),
+        body_velocity = self.to_local(point, vector)
+        if self.retraction_method == "cayley":
+            identity = jnp.eye(self.dimension, dtype=matrix.dtype)
+            right_factor = self._increment(local) + identity
+            relative_velocity = _transpose(matrix) @ vector
+            left_factor = (
+                2.0
+                * (identity - 0.5 * local)
+                @ relative_velocity
+            )
+            velocity = jnp.linalg.solve(
+                _transpose(right_factor),
+                _transpose(left_factor),
+            )
+            return _skew(_transpose(velocity))
+
+        def differential(local_velocity):
+            _, ambient_velocity = jax.jvp(
+                lambda value: self.retract(matrix, value),
+                (local,),
+                (_skew(local_velocity),),
+            )
+            return (
+                self.to_local(point, ambient_velocity)
+                + _symmetric(local_velocity)
+            )
+
+        tolerance = 1e-10 if matrix.dtype == jnp.dtype(jnp.float64) else 1e-5
+        velocity, _ = jsparse.gmres(
+            differential,
+            body_velocity,
+            tol=tolerance,
+            atol=tolerance,
+            restart=8,
+            maxiter=4,
         )
-        return velocities.reshape(leading + (self.dimension, self.dimension))
+        return _skew(velocity)
 
 
 class SymmetricPositiveDefiniteStateGeometry(AbstractStateGeometry):
