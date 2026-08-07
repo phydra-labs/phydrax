@@ -15,6 +15,7 @@ import jax.numpy as jnp
 
 from phydrax._interpolation import (
     apply_gather_stencil,
+    bspline_stencil,
     cubic_hermite_interpolate,
     fourier_interpolate,
     fourier_resample,
@@ -30,6 +31,28 @@ def _block(tree: Any) -> Any:
 
 def _output_bytes(tree: Any) -> int:
     return sum(int(leaf.size * leaf.dtype.itemsize) for leaf in jax.tree.leaves(tree))
+
+
+def _stencil_bytes(stencil: Any, /) -> int:
+    arrays = (
+        stencil.indices,
+        stencil.weights,
+        stencil.valid,
+        stencil.support,
+    )
+    return sum(int(array.size * array.dtype.itemsize) for array in arrays)
+
+
+def _open_uniform_knots(control_count: int, degree: int, /) -> jax.Array:
+    interior_count = control_count - degree - 1
+    interior = jnp.linspace(0.0, 1.0, interior_count + 2)[1:-1]
+    return jnp.concatenate(
+        (
+            jnp.zeros((degree + 1,)),
+            interior,
+            jnp.ones((degree + 1,)),
+        )
+    )
 
 
 def _benchmark(
@@ -215,6 +238,106 @@ def run_benchmarks(*, repeats: int = 10) -> dict[str, Any]:
             repeats=repeats,
         ),
     }
+    bspline_query = jnp.linspace(0.0, 1.0, 8192)
+    for degree in (1, 3, 5):
+        for control_count in (32, 257, 4096):
+            knots = _open_uniform_knots(control_count, degree)
+            values = jnp.linspace(
+                -1.0,
+                1.0,
+                control_count * 8,
+            ).reshape((control_count, 8))
+            key = f"bspline_dynamic_p{degree}_c{control_count}"
+            records[key] = _benchmark(
+                lambda query, knots=knots, values=values, degree=degree: (
+                    apply_gather_stencil(
+                        values,
+                        bspline_stencil(
+                            knots,
+                            query,
+                            degree=degree,
+                        ),
+                    ).values
+                ),
+                bspline_query,
+                repeats=repeats,
+            )
+            plan = bspline_stencil(knots, bspline_query, degree=degree)
+            records[key]["plan_bytes"] = _stencil_bytes(plan)
+            records[key]["dense_plan_bytes"] = int(
+                bspline_query.size * control_count * bspline_query.dtype.itemsize
+            )
+
+    representative_knots = _open_uniform_knots(257, 3)
+    representative_values = jnp.linspace(-1.0, 1.0, 257 * 8).reshape((257, 8))
+    representative_stencil = bspline_stencil(
+        representative_knots,
+        bspline_query,
+        degree=3,
+    )
+    records["bspline_precomputed_p3_c257"] = _benchmark(
+        lambda values: (
+            apply_gather_stencil(
+                values,
+                representative_stencil,
+            ).values
+        ),
+        representative_values,
+        repeats=repeats,
+    )
+    records["bspline_precomputed_p3_c257"]["plan_bytes"] = _stencil_bytes(
+        representative_stencil
+    )
+
+    rows = jnp.arange(bspline_query.size, dtype=jnp.int32)[:, None]
+    dense_basis = (
+        jnp.zeros((bspline_query.size, 257))
+        .at[
+            rows,
+            representative_stencil.indices,
+        ]
+        .add(representative_stencil.weights)
+    )
+    records["bspline_dense_apply_p3_c257"] = _benchmark(
+        lambda values: dense_basis @ values,
+        representative_values,
+        repeats=repeats,
+    )
+    records["bspline_dense_apply_p3_c257"]["plan_bytes"] = int(
+        dense_basis.size * dense_basis.dtype.itemsize
+    )
+    local_reference = apply_gather_stencil(
+        representative_values,
+        representative_stencil,
+    ).values
+    dense_reference = dense_basis @ representative_values
+    records["bspline_dense_apply_p3_c257"]["relative_error"] = float(
+        jnp.linalg.norm(local_reference - dense_reference)
+        / jnp.linalg.norm(dense_reference)
+    )
+
+    case_query = jnp.broadcast_to(
+        jnp.linspace(0.0, 1.0, 2048),
+        (4, 2048),
+    )
+    case_values = jnp.broadcast_to(
+        representative_values,
+        (4, *representative_values.shape),
+    )
+    case_stencil = bspline_stencil(
+        representative_knots,
+        case_query,
+        degree=3,
+        case_shape=(4,),
+    )
+    records["bspline_precomputed_cases_p3_c257"] = _benchmark(
+        lambda values: apply_gather_stencil(values, case_stencil).values,
+        case_values,
+        repeats=repeats,
+    )
+    records["bspline_precomputed_cases_p3_c257"]["plan_bytes"] = _stencil_bytes(
+        case_stencil
+    )
     direct_reference = fourier_interpolate(
         point_values,
         point_query,

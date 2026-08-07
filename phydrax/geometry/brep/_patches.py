@@ -12,37 +12,18 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ..._interpolation import bspline_stencil
 from ..._strict import StrictModule
 
 
-def _basis_functions(parameter: Array, knots: Array, degree: int) -> Array:
-    parameter_ = jnp.asarray(parameter, dtype=knots.dtype)
-    basis = ((parameter_ >= knots[:-1]) & (parameter_ < knots[1:])).astype(knots.dtype)
-    for order in range(1, degree + 1):
-        output_count = basis.shape[0] - 1
-        left_denominator = knots[order : order + output_count] - knots[:output_count]
-        right_denominator = (
-            knots[order + 1 : order + 1 + output_count] - knots[1 : 1 + output_count]
-        )
-        left = jnp.where(
-            left_denominator != 0.0,
-            (parameter_ - knots[:output_count]) / left_denominator * basis[:output_count],
-            0.0,
-        )
-        right = jnp.where(
-            right_denominator != 0.0,
-            (knots[order + 1 : order + 1 + output_count] - parameter_)
-            / right_denominator
-            * basis[1 : output_count + 1],
-            0.0,
-        )
-        basis = left + right
-    basis_count = knots.shape[0] - degree - 1
-    endpoint = jnp.isclose(parameter_, knots[-1])
-    return jnp.where(
-        endpoint,
-        jax.nn.one_hot(basis_count - 1, basis_count, dtype=knots.dtype),
-        basis,
+def _rational_denominator(coefficients: Array, /) -> Array:
+    denominator = jnp.sum(coefficients)
+    scale = jnp.sum(jnp.abs(coefficients))
+    tolerance = jnp.finfo(coefficients.dtype).eps * scale
+    return eqx.error_if(
+        denominator,
+        ~jnp.isfinite(denominator) | (jnp.abs(denominator) <= tolerance),
+        "Rational B-spline weights produced a zero or non-finite denominator.",
     )
 
 
@@ -232,6 +213,10 @@ class BSplineSurfacePatch(AbstractSurfacePatch):
             raise ValueError("weights must match the control-point grid.")
         if int(u_degree) < 1 or int(v_degree) < 1:
             raise ValueError("B-spline degrees must be positive.")
+        if control_points_.shape[0] <= int(u_degree) or control_points_.shape[1] <= int(
+            v_degree
+        ):
+            raise ValueError("Each B-spline control-point axis must exceed its degree.")
         if u_knots_.shape[0] != control_points_.shape[0] + int(u_degree) + 1:
             raise ValueError(
                 "u_knots length is inconsistent with control points and degree."
@@ -248,13 +233,31 @@ class BSplineSurfacePatch(AbstractSurfacePatch):
         self.v_degree = int(v_degree)
 
     def _evaluate_one(self, parameters: Array) -> Array:
-        u_basis = _basis_functions(parameters[0], self.u_knots, self.u_degree)
-        v_basis = _basis_functions(parameters[1], self.v_knots, self.v_degree)
-        coefficients = u_basis[:, None] * v_basis[None, :] * self.weights
-        denominator = jnp.sum(coefficients)
+        u_stencil = bspline_stencil(
+            self.u_knots,
+            parameters[0],
+            degree=self.u_degree,
+            bounds="clip",
+        )
+        v_stencil = bspline_stencil(
+            self.v_knots,
+            parameters[1],
+            degree=self.v_degree,
+            bounds="clip",
+        )
+        u_indices = u_stencil.indices
+        v_indices = v_stencil.indices
+        local_weights = self.weights[u_indices[:, None], v_indices[None, :]]
+        coefficients = (
+            u_stencil.weights[:, None] * v_stencil.weights[None, :] * local_weights
+        )
+        denominator = _rational_denominator(coefficients)
+        local_controls = self.control_points[
+            u_indices[:, None],
+            v_indices[None, :],
+        ]
         return (
-            jnp.sum(coefficients[..., None] * self.control_points, axis=(0, 1))
-            / denominator
+            jnp.sum(coefficients[..., None] * local_controls, axis=(0, 1)) / denominator
         )
 
     def evaluate(self, parameters: Array, /) -> Array:
@@ -278,6 +281,10 @@ class BSplineCurve(StrictModule):
         knots_ = jnp.asarray(knots, dtype=float).reshape((-1,))
         if control_points_.ndim != 2 or control_points_.shape[0] != weights_.shape[0]:
             raise ValueError("Curve control points and weights are inconsistent.")
+        if int(degree) < 1:
+            raise ValueError("B-spline curve degree must be positive.")
+        if control_points_.shape[0] <= int(degree):
+            raise ValueError("B-spline curve control-point count must exceed its degree.")
         if knots_.shape[0] != control_points_.shape[0] + int(degree) + 1:
             raise ValueError("Curve knot vector length is inconsistent.")
         self.control_points = control_points_
@@ -286,10 +293,19 @@ class BSplineCurve(StrictModule):
         self.degree = int(degree)
 
     def _evaluate_one(self, parameter: Array) -> Array:
-        basis = _basis_functions(parameter, self.knots, self.degree)
-        coefficient = basis * self.weights
-        return jnp.sum(coefficient[:, None] * self.control_points, axis=0) / jnp.sum(
-            coefficient
+        stencil = bspline_stencil(
+            self.knots,
+            parameter,
+            degree=self.degree,
+        )
+        coefficient = stencil.weights * self.weights[stencil.indices]
+        denominator = _rational_denominator(coefficient)
+        return (
+            jnp.sum(
+                coefficient[:, None] * self.control_points[stencil.indices],
+                axis=0,
+            )
+            / denominator
         )
 
     def evaluate(self, parameters: Array, /) -> Array:

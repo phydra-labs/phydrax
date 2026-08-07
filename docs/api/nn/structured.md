@@ -55,6 +55,9 @@ Models that exploit product-domain structure via low-rank factorization.
             - __init__
             - __call__
 
+`edge_basis` is forwarded to every coordinate KAN, so fixed spline grids and
+per-layer basis schedules retain the same scan compatibility as `KAN`.
+
 ---
 
 ::: phydrax.nn.SeparableFeynmaNN

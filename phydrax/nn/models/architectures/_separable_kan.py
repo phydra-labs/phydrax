@@ -15,6 +15,7 @@ from ..core._binding import ModelBinding
 from ..core._keys import EvalKey
 from ..wrappers._separable_wrappers import Separable
 from ._kan import KAN
+from ._kan_basis import AbstractEdgeBasis
 
 
 class SeparableKAN(_AbstractStructuredInputModel):
@@ -52,7 +53,7 @@ class SeparableKAN(_AbstractStructuredInputModel):
         width_size: int | None = 20,
         depth: int | None = 6,
         hidden_sizes: Sequence[int] | None = None,
-        degree: int | Sequence[int] = 5,
+        edge_basis: AbstractEdgeBasis | Sequence[AbstractEdgeBasis] | None = None,
         use_tanh: bool = False,
         scale_mode: Literal["edge", "input", "none"] = "edge",
         init: Literal["default", "identity"] = "default",
@@ -60,10 +61,8 @@ class SeparableKAN(_AbstractStructuredInputModel):
         final_activation: Callable | None = None,
         skip_connection: bool = True,
         use_bias: bool = True,
-        poly: str = "chebyshev",
-        poly_params: dict | None = None,
         scan: bool = False,
-        key: Key[Array, ""] = DOC_KEY0,
+        key: Key = DOC_KEY0,
     ):
         r"""Create a separable KAN.
 
@@ -92,7 +91,7 @@ class SeparableKAN(_AbstractStructuredInputModel):
                 width_size=width_size,
                 depth=depth,
                 hidden_sizes=hidden_sizes,
-                degree=degree,
+                edge_basis=edge_basis,
                 use_tanh=use_tanh,
                 scale_mode=scale_mode,
                 init=init,
@@ -100,8 +99,6 @@ class SeparableKAN(_AbstractStructuredInputModel):
                 final_activation=final_activation,
                 skip_connection=skip_connection,
                 use_bias=use_bias,
-                poly=poly,
-                poly_params=poly_params,
                 scan=scan,
                 key=subkey,
             )

@@ -72,6 +72,12 @@ from .architectures._in_context import (
     OperatorPromptState,
 )
 from .architectures._kan import KAN
+from .architectures._kan_basis import (
+    AbstractEdgeBasis,
+    BSplineEdgeBasis,
+    BSplineGrid,
+    OrthogonalPolynomialEdgeBasis,
+)
 from .architectures._koopman import KoopmanTemporalOperator
 from .architectures._laplace import LaplaceTemporalOperator
 from .architectures._local_operator import (
@@ -394,7 +400,11 @@ __all__ = [
     "OperatorTransformerProcessor",
     "RegionalPointLatentGeometry",
     "TensorGridLatentGeometry",
+    "AbstractEdgeBasis",
+    "BSplineEdgeBasis",
+    "BSplineGrid",
     "KAN",
+    "OrthogonalPolynomialEdgeBasis",
     "Linear",
     "MLP",
     "NativeGraphOperator",
