@@ -317,6 +317,12 @@ def test_davies_harte_resolution_prefix_ids_and_scale_validation():
     assert explicit.realization_id != dense.realization_id
     assert explicit.coupling_id != dense.coupling_id
     assert jnp.array_equal(explicit.values, wider.values[:3])
+    assert explicit.covariance_factor is None
+    assert automatic.covariance_factor is None
+    assert dense.covariance_factor is not None
+    assert dense.covariance_factor.shape == (257, 257)
+    with pytest.raises(AttributeError):
+        dense.covariance_factor = jnp.eye(257)
     assert tiny.sampling_method == "davies-harte"
     assert jnp.all(jnp.isfinite(tiny.values))
 
@@ -424,3 +430,59 @@ def test_davies_harte_rejects_invalid_inputs_and_auto_records_fallbacks():
         trajectory.metadata["sampling_provenance"]
         == "auto:dense-invalid-embedding"
     )
+
+
+def test_davies_harte_requires_exact_anchor_and_translation_invariant_spacing():
+    process = phx.stochastic.FractionalGaussianProcess(0.7, 1.0)
+    near_anchor_grid = jnp.linspace(1e-12, 1.0 + 1e-12, 3)
+    explicit_dense = phx.stochastic.FractionalGaussianRealization(
+        process,
+        jr.key(69),
+        near_anchor_grid,
+        method="dense",
+    )
+    with pytest.raises(ValueError, match="exactly after dtype materialization"):
+        phx.stochastic.FractionalGaussianRealization(
+            process,
+            jr.key(69),
+            near_anchor_grid,
+            method="davies-harte",
+        )
+    automatic_anchor = phx.stochastic.FractionalGaussianRealization(
+        process,
+        jr.key(69),
+        near_anchor_grid,
+        method="auto",
+    )
+
+    translated_process = phx.stochastic.FractionalGaussianProcess(
+        0.7,
+        1.0,
+        reference_time=1e16,
+    )
+    translated_nonuniform_grid = jnp.asarray(
+        [1e16, 1e16 + 100.0, 1e16 + 300.0]
+    )
+    with pytest.raises(ValueError, match="uniform grid"):
+        phx.stochastic.FractionalGaussianRealization(
+            translated_process,
+            jr.key(70),
+            translated_nonuniform_grid,
+            method="davies-harte",
+        )
+    automatic_spacing = phx.stochastic.FractionalGaussianRealization(
+        translated_process,
+        jr.key(70),
+        translated_nonuniform_grid,
+        method="auto",
+    )
+
+    assert explicit_dense.sampling_method == automatic_anchor.sampling_method == "dense"
+    assert explicit_dense.realization_id == automatic_anchor.realization_id
+    assert explicit_dense.coupling_id == automatic_anchor.coupling_id
+    assert (
+        automatic_anchor.sampling_provenance
+        == "auto:dense-reference-time-mismatch"
+    )
+    assert automatic_spacing.sampling_method == "dense"
+    assert automatic_spacing.sampling_provenance == "auto:dense-nonuniform-grid"

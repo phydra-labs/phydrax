@@ -148,13 +148,15 @@ Gaussian closure are therefore distinguishable approximations.
 
 `FractionalGaussianRealization` samples the exact finite-grid law of a declared
 fractional Gaussian process. The default `method="dense"` retains the covariance
-eigendecomposition and its seeded path identity. `method="davies-harte"` uses an
-exact, FFT-based circulant embedding for increasing uniform grids and rejects a
-nonuniform grid or a numerically invalid embedding. `method="auto"` keeps dense
-sampling for nonuniform grids and grids below 256 increments, selects Davies–Harte
-for qualifying larger grids, and records any dense fallback in
-`sampling_provenance`. The resolved `sampling_method` and provenance are also
-included in stochastic-trajectory metadata.
+eigendecomposition and its seeded path identity. Its read-only `covariance_factor`
+exposes that dense factor. `method="davies-harte"` uses an exact, FFT-based
+circulant embedding when the materialized grid begins exactly at `reference_time`
+and has increasing uniform spacings; its `covariance_factor` is `None`. An explicit
+request rejects an anchor mismatch, nonuniform grid, or numerically invalid
+embedding. `method="auto"` keeps dense sampling for those grid mismatches and grids
+below 256 increments, selects Davies–Harte for qualifying larger grids, and records
+any dense fallback in `sampling_provenance`. The resolved `sampling_method` and
+provenance are also included in stochastic-trajectory metadata.
 
 Both methods support exact node queries or one declared global linear interpolant,
 so overlapping increments remain additive. Sample batches are prefix-stable within

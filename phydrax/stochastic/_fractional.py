@@ -165,11 +165,12 @@ def _uniform_step(nodes: np.ndarray, /) -> float | None:
     step = float((nodes[-1] - nodes[0]) / (nodes.size - 1))
     dtype = np.dtype(nodes.dtype)
     tolerance = (
-        64.0
+        8.0
+        * (nodes.size - 1)
         * np.finfo(dtype).eps
         * max(
             abs(step),
-            float(np.max(np.abs(nodes))),
+            float(np.max(np.abs(increments))),
             float(np.finfo(dtype).tiny),
         )
     )
@@ -237,8 +238,18 @@ def _sampling_strategy(
     if method == "dense":
         return _dense_sampler(process, nodes), "dense", "explicit:dense"
 
+    materialized_reference = np.asarray(
+        process.reference_time,
+        dtype=nodes_host.dtype,
+    )
+    exact_reference = bool(nodes_host[0] == materialized_reference)
     step = _uniform_step(nodes_host)
     if method == "davies-harte":
+        if not exact_reference:
+            raise ValueError(
+                "Davies-Harte sampling requires grid[0] to equal reference_time "
+                "exactly after dtype materialization."
+            )
         if step is None:
             raise ValueError(
                 "Davies-Harte sampling requires an increasing uniform grid."
@@ -249,11 +260,17 @@ def _sampling_strategy(
             raise ValueError(error)
         return sampler, "davies-harte", "explicit:davies-harte"
 
+    if not exact_reference:
+        return (
+            _dense_sampler(process, nodes),
+            "dense",
+            "auto:dense-reference-time-mismatch",
+        )
+    if step is None:
+        return _dense_sampler(process, nodes), "dense", "auto:dense-nonuniform-grid"
     num_increments = int(nodes.size) - 1
     if num_increments < _AUTO_DAVIES_HARTE_MIN_INCREMENTS:
         return _dense_sampler(process, nodes), "dense", "auto:dense-small-grid"
-    if step is None:
-        return _dense_sampler(process, nodes), "dense", "auto:dense-nonuniform-grid"
     sampler, error = _davies_harte_sampler(process, nodes, nodes_host, step)
     if sampler is None:
         assert error is not None
@@ -482,6 +499,13 @@ class FractionalGaussianRealization(StrictModule):
         self.sampling_provenance = sampling_provenance
         self.realization_id = identifier
         self.coupling_id = resolved_coupling
+
+    @property
+    def covariance_factor(self) -> Array | None:
+        """Dense covariance factor, or ``None`` for Davies–Harte sampling."""
+        if isinstance(self._sampler, _DenseFractionalGaussianSampler):
+            return self._sampler.covariance_factor
+        return None
 
     @property
     def num_paths(self) -> int:
