@@ -321,6 +321,89 @@ The first operator-UQ implementation requires real physical outputs. Represent a
 complex field as named real/imaginary channels or as a real observable before
 constructing `OperatorPredictiveField`.
 
+## 5a. Scale selected-weight inference over physical cases
+
+When the number of physical cases makes full-data transitions prohibitive, adapt an
+`OperatorBatchLoader` rather than flattening query points. The source emits one
+likelihood factor per complete case:
+
+```python
+posterior_dataset = phx.nn.operator_dataset_from_arrays(
+    {"state": source_values[6:]},
+    {"output": posterior_target},
+    source_axes={"state": (axis,)},
+    query_axes=(axis,),
+)
+loader = phx.nn.OperatorBatchLoader(
+    posterior_dataset,
+    batch_size=2,
+    shuffle=True,
+    seed=41,
+    drop_last=False,
+    prefetch=1,
+)
+operator_source = phx.uq.OperatorMinibatchSource(
+    loader,
+    field_name="output",
+)
+
+
+def dynamic_scaled_prediction(parameters, batch):
+    base = members[0].predict(batch)
+    field = base.field("output")
+    return phx.nn.OperatorPrediction.from_field(
+        "output",
+        parameters["scale"] * field.values,
+        field.query_name,
+        base.query_geometry(field.query_name),
+        spec=field.spec,
+        case_axes=base.case_axes,
+        case_shape=base.case_shape,
+    )
+
+
+dynamic_likelihood = phx.uq.OperatorBatchObservationLikelihood(
+    dynamic_scaled_prediction,
+    phx.uq.GaussianLikelihood(0.05),
+)
+target_field = posterior_dataset.targets.field("output")
+full_data = phx.uq.OperatorLikelihoodData(
+    posterior_dataset.batch,
+    target_field.values,
+    output_spec=target_field.spec,
+    field_name="output",
+    query_name=target_field.query_name,
+)
+operator_problem = phx.uq.MinibatchPosteriorProblem(
+    parameter_space,
+    dynamic_likelihood,
+    num_factors=operator_source.num_factors,
+    full_log_likelihood=lambda parameters: jnp.sum(
+        dynamic_likelihood.per_case_log_prob(parameters, full_data)
+    ),
+)
+assert phx.uq.diagnose_minibatch_posterior(
+    operator_problem,
+    operator_source,
+).passed
+
+operator_sgld = phx.uq.sample_sgld(
+    operator_problem,
+    operator_source,
+    key=jr.key(42),
+    step_size=1e-5,
+    num_chains=4,
+    num_burnin=1000,
+    num_samples=2000,
+)
+```
+
+Use an explicit `ParameterSubspace` when sampling selected model weights; the
+reconstructed model remains frozen outside that subspace. Run a halved-step chain
+and compare it with the full-data Laplace or NUTS result above. SG-MCMC does not
+justify query-anchor subsampling: the query geometry, masks, channels, and all
+observed points stay coupled inside each physical-case factor.
+
 ## 6. Run the reproducible benchmark
 
 The UQ benchmark trains a four-member FNO ensemble on periodic Burgers and a

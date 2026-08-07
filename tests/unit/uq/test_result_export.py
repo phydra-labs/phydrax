@@ -207,3 +207,85 @@ def test_result_archive_reader_rejects_truncated_archives(tmp_path):
 
     with pytest.raises(phx.uq.CheckpointCorruptionError, match="Cannot read"):
         phx.uq.read_result_archive(destination)
+
+
+def _sgmcmc_result():
+    data = jnp.linspace(-1.0, 1.0, 7)
+    source = phx.uq.ArrayMinibatchSource(data, batch_size=3, seed=12)
+    problem = phx.uq.MinibatchPosteriorProblem(
+        phx.uq.ParameterSpace(
+            jnp.asarray(0.0),
+            priors=phx.uq.Normal(0.0, 2.0),
+        ),
+        lambda parameter, batch: -0.5 * (batch.data - parameter) ** 2,
+        num_factors=source.num_factors,
+        full_log_likelihood=lambda parameter: jnp.sum(
+            -0.5 * (data - parameter) ** 2
+        ),
+    )
+    control = phx.uq.build_sgmcmc_control_variate(
+        problem,
+        source,
+        jnp.asarray(0.0),
+    )
+    return phx.uq.sample_sgnht(
+        problem,
+        source,
+        key=jr.key(950),
+        step_size=1.0e-4,
+        diffusion=0.01,
+        num_chains=2,
+        num_burnin=2,
+        num_samples=4,
+        control_variate=control,
+    )
+
+
+def test_sgmcmc_result_and_mixing_report_have_portable_archives(tmp_path):
+    result = _sgmcmc_result()
+    report = result.mixing_report(
+        max_rhat=2.0,
+        min_bulk_ess=1.0,
+        min_tail_ess=1.0,
+    )
+
+    result_archive = _assert_archive_matches_adapter(
+        result,
+        tmp_path / "sgmcmc.phxuq",
+    )
+    report_archive = _assert_archive_matches_adapter(
+        report,
+        tmp_path / "sgmcmc-report.phxuq",
+    )
+
+    assert result_archive.kind == "sgmcmc"
+    assert result_archive.metadata["approximation"] == "unadjusted_fixed_step"
+    assert result_archive.metadata["control_variate"]["fingerprint"]
+    assert "thermostat" in result_archive.fields
+    assert "momentum_norm" in result_archive.fields
+    assert "control_variate.center" in result_archive.trees
+    assert report_archive.kind == "sgmcmc_mixing_report"
+    assert report_archive.metadata["approximation"] == "unadjusted_fixed_step"
+
+
+def test_sgmcmc_arviz_export_preserves_approximation_and_thermostat_semantics():
+    result = _sgmcmc_result()
+    inference_data = phx.uq.to_arviz(result)
+    posterior = inference_data["posterior"].dataset
+    sample_stats = inference_data["sample_stats"].dataset
+
+    assert posterior.sizes["chain"] == 2
+    assert posterior.sizes["draw"] == 4
+    assert posterior.attrs["phydrax_algorithm"] == "sgnht"
+    assert posterior.attrs["phydrax_approximation"] == "unadjusted_fixed_step"
+    assert posterior.attrs["phydrax_control_variate"]
+    assert set(sample_stats.data_vars) == {
+        "stochastic_gradient_norm",
+        "lp",
+        "thermostat",
+        "momentum_norm",
+    }
+    assert all(
+        sample_stats[name].dims == ("chain", "draw")
+        for name in sample_stats.data_vars
+    )

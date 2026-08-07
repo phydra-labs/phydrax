@@ -671,6 +671,7 @@ or quantiles are defined.
 | Cheap stochastic diagnostic | MC dropout with coherent full-function keys | Deep ensemble | Dropout spread is not calibrated automatically |
 | Random forcing, coefficients, geometry, or initial state | Preserve named input sample axes | Joint input/epistemic predictive design | Output query geometry must align across draws |
 | Small physical or calibration parameter posterior | NUTS/HMC or dense Laplace | Pathfinder or tempered SMC when justified | Likelihood must be normalized and deterministic |
+| Large factorized dataset or operator-case posterior | Fixed-step SGLD with a control variate | SGNHT after reference validation | Unadjusted draws require step-halving and exact-reference checks |
 | Selected neural-operator weights | Exact last-projection Laplace reference | Diagonal/Lanczos/LOBPCG Laplace | Full-weight inference is usually too large |
 | Distribution-free whole-field bands | `OperatorFunctionalConformal` | Score stratification or recalibration | Exchangeability does not survive arbitrary shifts |
 | Learned stochastic transition law | `GaussianFunctionOperator` with `uncertainty_source="process"` | Fixed-query `ConditionalFlowFunctionOperator` for demonstrated non-Gaussian residuals | A learned density is not a drift/diffusion identification |
@@ -878,6 +879,27 @@ Use `FixedObservationLikelihood`, `FixedResidualLikelihood`, and
 posterior terms. `PosteriorProblem.from_terms(...)` combines them without routing
 through `FunctionalSolver.loss()`.
 
+Inspect the posterior contract before starting an expensive inference run:
+
+```python
+inspection = phx.uq.diagnose_posterior(
+    posterior,
+    key=jr.key(9),
+    num_prior_samples=16,
+)
+if not inspection.passed:
+    raise ValueError(inspection.as_dict())
+```
+
+The report evaluates the initial target and gradient, reports exact nonfinite
+gradient locations, checks unconstrained-to-physical round trips, compares eager,
+repeated, JIT, and VMAP evaluation, and optionally probes declared-prior samples.
+`inspection.capabilities` records only static semantic capabilities: factorized
+prior sampling, latent prediction, observation variance/sampling, and a normalized
+Gauss--Newton residual. It does not probe prediction callbacks with invented,
+domain-specific query arguments.
+
+
 ## MAP estimation
 
 `find_map` compiles the complete JAX-native strong-Wolfe L-BFGS transition and
@@ -942,6 +964,11 @@ warmup parameters, final chain states, energies, integration depths, determinist
 keys, adaptation and sampling runtimes, throughput, and sample-memory size. A
 repeated root key reproduces samples and diagnostics.
 
+Pass `initial_positions` with one leading chain axis when chains must begin at
+different represented modes; `initial_position` retains the replicated-start
+convenience. The two arguments are mutually exclusive.
+
+
 Long MCMC runs can checkpoint after a fixed number of completed draws per chain:
 pass `checkpoint_path`, `checkpoint_every`, and a stable caller-owned
 `checkpoint_id`. Resume with `resume_from` and the same sampling configuration.
@@ -955,6 +982,186 @@ adaptive collocation, minibatch likelihoods, active dropout, or other random sam
 inside `log_density`. NUTS is the default for low-dimensional physical parameters,
 noise scales, and explicitly selected small subspaces. Sampling every neural-network
 weight is deliberately not the default.
+
+## Fixed-step stochastic-gradient MCMC
+
+Use stochastic-gradient MCMC only when the likelihood is a sum over many
+statistical factors and full-density transitions are the measured bottleneck.
+`MinibatchPosteriorProblem` makes that algebra explicit. A factor must be one
+independent likelihood contribution; it is not an arbitrary slice of a residual
+array. `ArrayMinibatchSource` emits deterministic shuffled epochs, retains the
+padded final batch, and excludes padding through `factor_mask`:
+
+```python
+minibatch_source = phx.uq.ArrayMinibatchSource(
+    {
+        "basis": sensor_basis,
+        "observation": observations,
+    },
+    batch_size=8,
+    seed=17,
+)
+
+
+def likelihood_factors(parameters, batch):
+    prediction = parameters["source"] * batch.data["basis"]
+    return observation_likelihood.log_prob(
+        prediction,
+        batch.data["observation"],
+    )
+
+
+minibatch_posterior = phx.uq.MinibatchPosteriorProblem(
+    parameter_space,
+    likelihood_factors,
+    num_factors=sensor_basis.size,
+    full_log_likelihood=posterior_problem.log_likelihood,
+    predict=lambda parameters, x: cx.Field(
+        parameters["source"] * 0.5 * x * (1.0 - x),
+        dims=("x",),
+    ),
+)
+minibatch_inspection = phx.uq.diagnose_minibatch_posterior(
+    minibatch_posterior,
+    minibatch_source,
+)
+if not minibatch_inspection.passed:
+    raise ValueError(minibatch_inspection.as_dict())
+```
+
+The inspection sums one complete epoch and compares both its value and gradient
+with `full_log_likelihood` when supplied. This catches incorrect population
+scaling, duplicated priors, missing factors, and source/problem mismatches before
+sampling.
+
+`sample_sgld` implements fixed-step overdamped Langevin updates.
+`sample_sgnht` adds momentum and a scalar thermostat to absorb stochastic-gradient
+noise:
+
+```python
+control = phx.uq.build_sgmcmc_control_variate(
+    minibatch_posterior,
+    minibatch_source,
+    map_result.position,
+)
+
+sgld = phx.uq.sample_sgld(
+    minibatch_posterior,
+    minibatch_source,
+    key=jr.key(20),
+    step_size=1e-4,
+    num_chains=4,
+    num_burnin=1000,
+    num_samples=2000,
+    steps_per_sample=2,
+    control_variate=control,
+    chain_method="vectorized",
+)
+sgnht = phx.uq.sample_sgnht(
+    minibatch_posterior,
+    minibatch_source,
+    key=jr.key(21),
+    step_size=5e-4,
+    diffusion=0.01,
+    num_chains=4,
+    num_burnin=1000,
+    num_samples=2000,
+    steps_per_sample=2,
+    control_variate=control,
+    chain_method="vectorized",
+)
+
+mixing = sgld.mixing_report(
+    max_rhat=1.05,
+    min_bulk_ess=200,
+    min_tail_ess=200,
+)
+mixing.raise_for_failure()
+```
+
+Both samplers preserve separate chain/draw axes, nested PyTrees, constrained
+physical samples, source configuration and fingerprint, deterministic keys,
+gradient/update throughput, memory, gradient-norm traces, and nonfinite-update
+locations. SGNHT additionally retains thermostat and momentum-norm traces.
+Checkpointing resumes the indexed source/transition schedule exactly and rejects
+changed problem, source, control-variate, PyTree, or sampler identities.
+
+These are unadjusted fixed-step approximations. Burn-in discards early states; it
+is not adaptation. Rank diagnostics measure between-chain mixing and do not detect
+stationary discretization bias. For every scientific use:
+
+1. rerun at half the step size and compare posterior and predictive moments;
+2. inspect stochastic-gradient variance, with and without a control variate;
+3. compare against NUTS or dense Laplace on a tractable reduced/reference problem;
+4. report the batch definition, population size, step size, burn-in, thinning,
+   update count, and approximation label.
+
+Prefer NUTS or Laplace when full-data inference is feasible. Current SG-MCMC
+sources support uniform factor subsampling only: no decreasing-step schedule,
+automatic step-size adaptation, query-anchor subsampling, likelihood-dependent
+sampling, multi-host source execution, SGHMC, pSGLD/RMSProp geometry, or online
+gradient-noise covariance estimation is implied.
+
+## Flow-assisted NUTS
+
+`sample_flow_nuts` combines independently adapted NUTS chains with a shared
+FlowJAX normalizing flow. It is intended for posteriors with nonlinear global
+geometry or multiple modes that are already represented by the initial chains.
+It is not a mode-discovery algorithm and does not estimate evidence.
+
+```python
+flow_config = phx.uq.FlowNUTSConfig(
+    num_adaptation_rounds=4,
+    num_local_adaptation_steps=100,
+    num_global_adaptation_steps=20,
+    num_local_steps=3,
+    num_global_steps=1,
+    history_capacity_per_chain=1000,
+    flow_layers=6,
+    max_epochs=100,
+)
+flow_draws = phx.uq.sample_flow_nuts(
+    posterior,
+    key=jr.key(11),
+    num_chains=4,
+    num_warmup=1000,
+    num_samples=1000,
+    initial_positions={
+        "source": jnp.asarray([-3.0, -1.0, 1.0, 3.0]),
+    },
+    target_acceptance_rate=0.9,
+    config=flow_config,
+    chain_method="vectorized",
+)
+```
+
+All kernels act in flattened unconstrained coordinates. During adaptation, local
+NUTS transitions populate a fixed-capacity, chain-stratified reservoir; the flow is
+refit from pooled reservoir samples and tested with exact independence
+Metropolis--Hastings proposals. For current state `x`, proposal `y`, target `π`, and
+normalized flow density `q`, acceptance is
+`min(1, π(y) q(x) / (π(x) q(y)))`. Both proposal-density terms are mandatory.
+Nonfinite states or densities are rejected and counted.
+
+After the last adaptation round, Phydrax freezes both the flow and tuned NUTS
+parameters, runs an optional local-only stabilization phase, then returns draws from
+one fixed composite kernel. No returned draw trains the flow. `FlowNUTSResult`
+preserves the ordinary MCMC prediction and convergence interfaces and adds
+training/validation losses, adaptation proposal ESS, local/global acceptance,
+nonfinite global proposal counts, phase timings, bounded-memory accounting, and the
+frozen flow.
+
+Automatic chain initialization requires declared factorized priors. A custom joint
+log prior requires explicit `initial_positions`. Checkpointing commits complete
+adaptation rounds, stabilization chunks, and production chunks; resume reconstructs
+the dynamic FlowJAX arrays against a locally rebuilt static template and rejects
+configuration, package-version, shape, dtype, or flow-fingerprint mismatches.
+
+This implementation is native Phydrax orchestration, not a wrapper around
+[`flowMC`](https://github.com/kazewong/flowMC). The flow-assisted sampling rationale
+follows that work, while Phydrax retains its own posterior, exact-kernel,
+checkpoint, diagnostics, and result contracts.
+
 
 ## Dense and structured Laplace approximation
 
@@ -1112,10 +1319,16 @@ portable = phx.uq.read_result_archive(result_path)
 Both are ZIP containers with JSON metadata, individual NumPy array members,
 SHA-256 checksums, atomic replacement, and no pickle or Python object
 arrays. Portable archives export representable result arrays and explicitly list
-excluded live callables. `phx.uq.to_arviz(posterior_draws)` converts MCMC chains to
-ArviZ `posterior` and `sample_stats` groups while retaining separate `chain` and
-`draw` dimensions. Generic observed-data and pointwise-log-likelihood groups are
-omitted because `PosteriorProblem` does not promise that metadata.
+excluded live callables. `FlowNUTSResult` archives include frozen flow parameters,
+loss histories, local and global sampler statistics, deterministic keys, and phase
+timings. `SGMCMCResult` archives include algorithm and approximation identities,
+source configuration and fingerprint, control-variate metadata, gradient/update
+accounting, thermostat or momentum traces when present, and deterministic replay
+keys. `phx.uq.to_arviz(posterior_draws)` accepts ordinary, flow-assisted, or
+stochastic-gradient MCMC and retains separate `chain` and `draw` dimensions.
+Method-specific sample statistics are added when present. Generic observed-data and
+pointwise-log-likelihood groups are omitted because neither posterior contract
+promises that metadata.
 
 ## Gaussian-process model discrepancy
 
@@ -1215,19 +1428,26 @@ correlation, returning every exact failure rather than a generic warning.
 Phydrax currently recommends:
 
 1. NUTS for low-dimensional, effectively unimodal physical inverse problems.
-2. Exact dense Laplace as the small-problem Gaussian reference.
-3. Whitened GGN, diagonal, or low-rank Laplax for selected larger subspaces.
-4. EKI for derivative-free physical or reduced-coordinate inverse problems,
+2. Flow-assisted NUTS for represented multimodality or nonlinear global geometry at
+   moderate dimension; initialize chains across known modes and inspect exact global
+   acceptance and ordinary rank diagnostics.
+3. Exact dense Laplace as the small-problem Gaussian reference.
+4. Whitened GGN, diagonal, or low-rank Laplax for selected larger subspaces.
+5. EKI for derivative-free physical or reduced-coordinate inverse problems,
    benchmarked against NUTS or Laplace where feasible.
-5. Pathfinder for rapid local diagnostics, always benchmarked against NUTS.
-6. Tempered SMC only for demonstrated low-dimensional multimodal posteriors.
-7. Deep ensembles for independently trained neural-model epistemic variation.
-8. Exact GP discrepancy for moderate scalar data, explicit coregionalization for
-   correlated outputs, and FITC only when dense scaling fails.
+6. Pathfinder for rapid local diagnostics, always benchmarked against NUTS.
+7. Tempered SMC for low-dimensional mode discovery and evidence estimation.
+8. Fixed-step SGLD, optionally with an exact-center control variate, for large
+   uniformly factorized likelihoods after step-halving and exact-reference checks.
+   Use SGNHT only when its momentum/thermostat dynamics improve measured mixing.
+9. Deep ensembles for independently trained neural-model epistemic variation.
+10. Exact GP discrepancy for moderate scalar data, explicit coregionalization for
+    correlated outputs, and FITC only when dense scaling fails.
 
-Mean-field VI, SWAG, SGMCMC, normalizing-flow posteriors, non-Gaussian/sparse
-variational GPs, and full-network HMC remain unsupported. None is silently
-approximated by the methods above.
+Mean-field VI, standalone variational normalizing-flow posteriors, SWAG, SGHMC,
+pSGLD/RMSProp geometry, decreasing-step stochastic approximation,
+non-Gaussian/sparse variational GPs, and full-network HMC remain unsupported. None
+is silently approximated by the methods above.
 
 ## Conformal calibration
 
