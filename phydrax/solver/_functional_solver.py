@@ -11,6 +11,7 @@ from typing import Any
 import jax.numpy as jnp
 import jax.random as jr
 import optax
+from evosax.algorithms.distribution_based.base import DistributionBasedAlgorithm
 from jaxtyping import Array, Key
 
 from phydrax.domain import DomainFunction, EnforcementGateMethod
@@ -307,7 +308,7 @@ class FunctionalSolver(StrictModule):
         num_iter: int,
         optim: optax.GradientTransformation
         | optax.GradientTransformationExtraArgs
-        | Any
+        | DistributionBasedAlgorithm
         | None = None,
         evaluation_parameters: EvaluationParametersFn | None = None,
         seed: int = 0,
@@ -327,9 +328,11 @@ class FunctionalSolver(StrictModule):
         The optimization updates trainable inexact-array leaves of `self.functions`.
         Domains and fixed observed-data state are kept non-trainable.
 
-        - If `optim` is an Optax `GradientTransformation`, a standard gradient step is used.
-        - If `optim` is an Optax `GradientTransformationExtraArgs`, a line-search style update is used.
-        - Otherwise, `optim` is treated as an evosax algorithm instance.
+        - Standard and extra-argument Optax transformations are accepted.
+        - Evosax distribution-based algorithms are accepted.
+        - Evosax population-based algorithms require an explicit search-space contract
+          and are therefore rejected; bounded geometry design uses
+          `DesignConstraintSystem.search(...)`.
         - `evaluation_parameters`, when provided, maps optimizer state and raw training
           parameters to the parameter view used for diagnostics, model selection, and
           the returned solver. This supports optimizers such as Optax schedule-free

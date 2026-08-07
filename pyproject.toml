@@ -30,7 +30,7 @@ dependencies = [
     "coordax==0.2.3",
     "diffrax>=0.7.2,<0.8",
     "equinox==0.13.2",
-    "evosax>=0.2.0",
+    "evosax>=0.2.0,<0.3",
     "flowjax>=19.1.1,<20",
     "jax>=0.8.2,<0.10",
     "jax2onnx>=0.14.0",

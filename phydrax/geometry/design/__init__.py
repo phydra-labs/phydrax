@@ -26,6 +26,12 @@ _CONSTRAINT_EXPORTS = frozenset(
         "ParameterTarget",
     }
 )
+_SEARCH_EXPORTS = frozenset(
+    {
+        "DesignSearchResult",
+        "DifferentialEvolutionSearch",
+    }
+)
 _SKETCH_EXPORTS = frozenset(
     {
         "AbstractSketchConstraint",
@@ -55,6 +61,8 @@ def __getattr__(name: str):
 
     if name in _CONSTRAINT_EXPORTS:
         from . import _constraints as module
+    elif name in _SEARCH_EXPORTS:
+        from . import _search as module
     elif name in _SKETCH_EXPORTS:
         from . import _sketch as module
     else:
@@ -73,8 +81,10 @@ __all__ = [
     "Coincident",
     "ConstraintSolveResult",
     "DesignConstraintSystem",
+    "DesignSearchResult",
     "DesignState",
     "EqualLength",
+    "DifferentialEvolutionSearch",
     "ExteriorClearance",
     "FixedPoint",
     "Horizontal",
