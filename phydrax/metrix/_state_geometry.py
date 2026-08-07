@@ -593,6 +593,50 @@ def _matrix_map(function: Callable[[Array], Array], value: Array, /) -> Array:
 def _matrix_exponential(value: Array, /) -> Array:
     return _matrix_map(jsp.linalg.expm, value)
 
+def _symmetric_matrix_logarithm_primal(value: Array, /) -> Array:
+    eigenvalues, eigenvectors = jnp.linalg.eigh(_symmetric(value))
+    safe = jnp.maximum(eigenvalues, jnp.finfo(value.dtype).tiny)
+    return _symmetric(
+        (eigenvectors * jnp.expand_dims(jnp.log(safe), axis=-2))
+        @ _transpose(eigenvectors)
+    )
+
+
+@jax.custom_jvp
+def _symmetric_matrix_logarithm(value: Array, /) -> Array:
+    return _symmetric_matrix_logarithm_primal(value)
+
+
+@_symmetric_matrix_logarithm.defjvp
+def _symmetric_matrix_logarithm_jvp(primals, tangents):
+    (value,) = primals
+    (tangent,) = tangents
+    symmetric_value = _symmetric(value)
+    eigenvalues, eigenvectors = jnp.linalg.eigh(symmetric_value)
+    safe = jnp.maximum(eigenvalues, jnp.finfo(value.dtype).tiny)
+    left = jnp.expand_dims(safe, axis=-1)
+    right = jnp.expand_dims(safe, axis=-2)
+    difference = left - right
+    scale = jnp.maximum(jnp.maximum(jnp.abs(left), jnp.abs(right)), 1.0)
+    close = jnp.abs(difference) <= jnp.sqrt(jnp.finfo(value.dtype).eps) * scale
+    safe_difference = jnp.where(close, 1.0, difference)
+    divided_difference = (
+        jnp.expand_dims(jnp.log(safe), axis=-1)
+        - jnp.expand_dims(jnp.log(safe), axis=-2)
+    ) / safe_difference
+    coefficient = jnp.where(
+        close,
+        2.0 / (left + right),
+        divided_difference,
+    )
+    transformed = _transpose(eigenvectors) @ _symmetric(tangent) @ eigenvectors
+    derivative = eigenvectors @ (coefficient * transformed) @ _transpose(
+        eigenvectors
+    )
+    return _symmetric_matrix_logarithm_primal(value), _symmetric(derivative)
+
+
+
 
 class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
     """Left-trivialized state geometry for one or batches of SO(n) matrices."""
@@ -885,15 +929,7 @@ class SymmetricPositiveDefiniteStateGeometry(AbstractStateGeometry):
         _same_shape(target, matrix, "SPD(n) retraction point")
         factor = self._congruence_factor(matrix)
         relative = _symmetric(self._inverse_congruence(factor, target))
-        eigenvalues, eigenvectors = jnp.linalg.eigh(relative)
-        logarithm = (
-            eigenvectors
-            * jnp.expand_dims(
-                jnp.log(jnp.maximum(eigenvalues, jnp.finfo(relative.dtype).tiny)),
-                axis=-2,
-            )
-        ) @ _transpose(eigenvectors)
-        return _symmetric(logarithm)
+        return _symmetric_matrix_logarithm(relative)
 
     def pullback(
         self,

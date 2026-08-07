@@ -115,6 +115,27 @@ def test_spd_retraction_gradient_is_finite_at_repeated_eigenvalues():
     assert jnp.all(jnp.isfinite(gradient))
 
 
+def test_spd_inverse_retraction_gradients_are_finite_at_relative_identity():
+    geometry = SymmetricPositiveDefiniteStateGeometry(2)
+    identity = jnp.eye(2)
+    direction = jnp.array([[0.1, -0.02], [-0.02, 0.05]])
+    base_gradient = jax.grad(
+        lambda base: jnp.sum(geometry.inverse_retract(base, identity))
+    )(identity)
+    point_gradient = jax.grad(
+        lambda point: jnp.sum(geometry.inverse_retract(identity, point))
+    )(identity)
+    _, point_jvp = jax.jvp(
+        lambda point: geometry.inverse_retract(identity, point),
+        (identity,),
+        (direction,),
+    )
+    assert jnp.all(jnp.isfinite(base_gradient))
+    assert jnp.all(jnp.isfinite(point_gradient))
+    assert jnp.all(jnp.isfinite(point_jvp))
+    assert jnp.allclose(point_jvp, direction)
+
+
 def test_embedded_and_pointwise_adapters_preserve_explicit_contracts():
     sphere = EmbeddedStateGeometry(
         membership=lambda state: jnp.isclose(jnp.linalg.norm(state), 1.0),
