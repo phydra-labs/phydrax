@@ -146,12 +146,21 @@ ordinary integration API without claiming IID uncertainty for dependent trajecto
 small-jump closure uses a reserved, coupled `WienerRealization`; truncation and
 Gaussian closure are therefore distinguishable approximations.
 
-`FractionalGaussianRealization` samples the exact finite-grid covariance of a declared
-fractional Gaussian process. It supports exact node queries or one declared global
-linear interpolant, so overlapping increments remain additive. A
-`GeometricRoughPath` lifts such a path to levels one and two and composes intervals by
-Chen's identity. The native rough solver is step two and consequently requires a
-fractional Hurst exponent greater than one third.
+`FractionalGaussianRealization` samples the exact finite-grid law of a declared
+fractional Gaussian process. The default `method="dense"` retains the covariance
+eigendecomposition and its seeded path identity. `method="davies-harte"` uses an
+exact, FFT-based circulant embedding for increasing uniform grids and rejects a
+nonuniform grid or a numerically invalid embedding. `method="auto"` keeps dense
+sampling for nonuniform grids and grids below 256 increments, selects Davies–Harte
+for qualifying larger grids, and records any dense fallback in
+`sampling_provenance`. The resolved `sampling_method` and provenance are also
+included in stochastic-trajectory metadata.
+
+Both methods support exact node queries or one declared global linear interpolant,
+so overlapping increments remain additive. Sample batches are prefix-stable within
+each resolved method. A `GeometricRoughPath` lifts either realization to levels one
+and two and composes intervals by Chen's identity. The native rough solver is step
+two and consequently requires a fractional Hurst exponent greater than one third.
 
 ::: phydrax.stochastic.SymmetricStableLevyProcess
 
