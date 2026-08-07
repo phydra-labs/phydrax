@@ -21,12 +21,8 @@ from .._strict import StrictModule
 
 
 FractionalGaussianInterpolation: TypeAlias = Literal["grid", "linear"]
-FractionalGaussianSamplingMethod: TypeAlias = Literal[
-    "dense", "davies-harte", "auto"
-]
-_ResolvedFractionalGaussianSamplingMethod: TypeAlias = Literal[
-    "dense", "davies-harte"
-]
+FractionalGaussianSamplingMethod: TypeAlias = Literal["dense", "davies-harte", "auto"]
+_ResolvedFractionalGaussianSamplingMethod: TypeAlias = Literal["dense", "davies-harte"]
 _AUTO_DAVIES_HARTE_MIN_INCREMENTS = 256
 
 
@@ -77,18 +73,16 @@ class _DenseFractionalGaussianSampler(StrictModule):
         dimension: int,
         dtype,
     ) -> Array:
-        normals = jax.vmap(
-            lambda key: jr.normal(
-                key,
-                (self.num_times, dimension),
-                dtype=dtype,
+        return jax.vmap(
+            lambda key: (
+                self.covariance_factor
+                @ jr.normal(
+                    key,
+                    (self.num_times, dimension),
+                    dtype=dtype,
+                )
             )
         )(keys)
-        return jnp.einsum(
-            "ij,pjd->pid",
-            self.covariance_factor,
-            normals,
-        )
 
 
 class _DaviesHarteFractionalGaussianSampler(StrictModule):
@@ -191,9 +185,7 @@ def _davies_harte_sampler(
     lags = np.arange(num_increments + 1, dtype=np.float64)
     power = 2.0 * process.hurst
     autocovariance = 0.5 * (
-        np.abs(lags - 1.0) ** power
-        - 2.0 * lags**power
-        + (lags + 1.0) ** power
+        np.abs(lags - 1.0) ** power - 2.0 * lags**power + (lags + 1.0) ** power
     )
     autocovariance *= np.float64(step) ** power
     if np.any(~np.isfinite(autocovariance)):
@@ -251,9 +243,7 @@ def _sampling_strategy(
                 "exactly after dtype materialization."
             )
         if step is None:
-            raise ValueError(
-                "Davies-Harte sampling requires an increasing uniform grid."
-            )
+            raise ValueError("Davies-Harte sampling requires an increasing uniform grid.")
         sampler, error = _davies_harte_sampler(process, nodes, nodes_host, step)
         if sampler is None:
             assert error is not None
@@ -522,11 +512,14 @@ class FractionalGaussianRealization(StrictModule):
         """Path values with shape ``sample_shape + (num_times, dimension)``."""
         keys = self.path_keys.reshape((-1,) + tuple(self.root_key.shape))
         num_times = int(self.grid.size)
-        centered = self._sampler.sample_paths(
-            keys,
-            dimension=self.process.dimension,
-            dtype=self.grid.dtype,
-        ) * self.process.scale
+        centered = (
+            self._sampler.sample_paths(
+                keys,
+                dimension=self.process.dimension,
+                dtype=self.grid.dtype,
+            )
+            * self.process.scale
+        )
         means = self.process.mean(self.grid)
         return (centered + means).reshape(
             self.sample_shape + (num_times, self.process.dimension)

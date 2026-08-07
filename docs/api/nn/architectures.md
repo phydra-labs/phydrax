@@ -129,12 +129,12 @@ import jax.numpy as jnp
 
 refined, refinement = phx.nn.refine_kan_edges(
     model,
-    {(1, 3, 2): jnp.asarray([0.1, 0.8, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0])},
+    {(0, 3, 1): jnp.asarray([0.1, 0.8, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0])},
     budget=1,
 )
 coarsened, coarsening = phx.nn.coarsen_kan_edges(
     refined,
-    {(1, 3, 2): 1e-6},
+    {(0, 3, 1): 1e-6},
     budget=1,
 )
 ```
@@ -168,6 +168,8 @@ basis = phx.nn.RationalBSplineEdgeBasis(
 model = phx.nn.KAN(
     in_size=2,
     out_size="scalar",
+    width_size=32,
+    depth=1,
     edge_basis=basis,
 )
 ```

@@ -40,6 +40,23 @@ def _batch_weight(
     return weight
 
 
+def _component_weight(
+    component: DomainComponent,
+    batch: PointIntegrationBatch | SeparableIntegrationBatch,
+    /,
+    *,
+    key: Key[Array, ""],
+    kwargs: dict[str, Any],
+) -> cx.Field:
+    mask, modifier = component_factor_fields(
+        component,
+        batch.points,
+        key=key,
+        kwargs=kwargs,
+    )
+    return _batch_weight(batch) * mask * modifier
+
+
 def _num_evaluations(
     batch: PointIntegrationBatch | SeparableIntegrationBatch,
     /,
@@ -53,6 +70,67 @@ def _num_evaluations(
     for axis in batch.axes:
         size *= int(batch.weights_by_axis[axis].named_shape[axis])
     return size
+
+
+def _component_reduction_weights(
+    target: ComponentTarget,
+    batch: PointIntegrationBatch
+    | SeparableIntegrationBatch
+    | tuple[PointIntegrationBatch | SeparableIntegrationBatch, ...],
+    /,
+    *,
+    key: Key[Array, ""] = DOC_KEY0,
+    kwargs: dict[str, Any] | None = None,
+) -> cx.Field | tuple[cx.Field, ...]:
+    """Return the exact linear coefficient fields used by a component reduction."""
+
+    callback_kwargs = {} if kwargs is None else kwargs
+    if isinstance(target.component, ComponentSum):
+        if not isinstance(batch, tuple) or len(batch) != len(target.component.terms):
+            raise ValueError(
+                "Union targets require one aligned integration batch per term."
+            )
+        keys = jr.split(key, len(target.component.terms))
+        batches = tuple(_require_fixed_batch(term_batch) for term_batch in batch)
+        weights = tuple(
+            _component_weight(
+                component,
+                term_batch,
+                key=term_key,
+                kwargs=callback_kwargs,
+            )
+            for component, term_batch, term_key in zip(
+                target.component.terms, batches, keys, strict=True
+            )
+        )
+        if not target.normalized:
+            return weights
+        denominators: list[cx.Field] = []
+        for weight, term_batch in zip(weights, batches, strict=True):
+            denominator = weight
+            for axis in term_batch.axes:
+                denominator = sum_over(denominator, axis)
+            denominators.append(denominator)
+        total = denominators[0]
+        for denominator in denominators[1:]:
+            total = total + denominator
+        return tuple(weight / total for weight in weights)
+
+    if isinstance(batch, tuple):
+        raise TypeError("A single component target requires one integration batch.")
+    batch_ = _require_fixed_batch(batch)
+    weight = _component_weight(
+        target.component,
+        batch_,
+        key=key,
+        kwargs=callback_kwargs,
+    )
+    if not target.normalized:
+        return weight
+    denominator = weight
+    for axis in batch_.axes:
+        denominator = sum_over(denominator, axis)
+    return weight / denominator
 
 
 def _as_domain_function(value: Any, component: DomainComponent, /) -> DomainFunction:
@@ -84,14 +162,13 @@ def _component_moments(
     values = function(points, key=key, **kwargs)
     if not isinstance(values, cx.Field):
         raise TypeError("An integration DomainFunction must evaluate to coordax.Field.")
-    mask, modifier = component_factor_fields(
+    finite_inputs = jnp.all(jnp.isfinite(jnp.asarray(values.data)))
+    base_weight = _component_weight(
         component,
-        points,
+        batch,
         key=key,
         kwargs=kwargs,
     )
-    base_weight = _batch_weight(batch) * mask * modifier
-    finite_inputs = jnp.all(jnp.isfinite(jnp.asarray(values.data)))
     weight = base_weight
     if log_density is not None:
         log_density_function = _as_domain_function(log_density, component)

@@ -795,7 +795,7 @@ def _fit_allen_cahn_trial(
         flow,
         train,
         loss_terms=loss,
-        learning_rate=2e-3,
+        learning_rate=1e-3,
         epochs=max(1, int(steps)),
         steps=int(steps),
         batch_size=int(batch_size),

@@ -24,6 +24,7 @@ from .._training import EvaluationParametersFn
 from ..constraints._base import AbstractConstraint
 from ..constraints._functional import FunctionalConstraint
 from ..operators.differential._runtime import derivative_runtime_context
+from ..optim._kfac._config import KFAC
 from ._enforced_constraint_pipeline import (
     EnforcedConstraintPipelines,
     EnforcedInteriorData,
@@ -309,6 +310,7 @@ class FunctionalSolver(StrictModule):
         optim: optax.GradientTransformation
         | optax.GradientTransformationExtraArgs
         | DistributionBasedAlgorithm
+        | KFAC
         | None = None,
         evaluation_parameters: EvaluationParametersFn | None = None,
         seed: int = 0,
@@ -329,6 +331,8 @@ class FunctionalSolver(StrictModule):
         Domains and fixed observed-data state are kept non-trainable.
 
         - Standard and extra-argument Optax transformations are accepted.
+        - `phydrax.optim.kfac(...)` configurations are accepted and receive frozen
+          sampled residual terms from this solver.
         - Evosax distribution-based algorithms are accepted.
         - Evosax population-based algorithms require an explicit search-space contract
           and are therefore rejected; bounded geometry design uses
@@ -363,6 +367,27 @@ class FunctionalSolver(StrictModule):
 
         if optim is None:
             optim = optax.rprop(1e-3)
+
+        if isinstance(optim, KFAC):
+            from ._kfac_solver import solve_kfac
+
+            return solve_kfac(
+                self,
+                num_iter=num_iter,
+                optim=optim,
+                evaluation_parameters=evaluation_parameters,
+                seed=seed,
+                jit=jit,
+                keep_best=keep_best,
+                log_every=log_every,
+                log_constraints=log_constraints,
+                log_path=log_path,
+                tensorboard_log_dir=tensorboard_log_dir,
+                tensorboard_every=tensorboard_every,
+                tensorboard_flush_every=tensorboard_flush_every,
+                profile_adaptive=profile_adaptive,
+                train_constraint_sample_size=train_constraint_sample_size,
+            )
 
         return _solve(
             self,

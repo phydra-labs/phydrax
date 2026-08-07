@@ -74,22 +74,6 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
             kwargs=dict(kwargs),
         )
 
-    def _structured_input(self, args: tuple[Any, ...], /) -> Any:
-        def _as_array_or_tuple(value: Any):
-            if isinstance(value, tuple):
-                return tuple(jnp.asarray(item) for item in value)
-            return jnp.asarray(value)
-
-        if len(args) == 1:
-            return _as_array_or_tuple(args[0])
-        packed: list[Any] = []
-        for value in args:
-            if isinstance(value, tuple):
-                packed.extend(jnp.asarray(item) for item in value)
-            else:
-                packed.append(jnp.asarray(value))
-        return tuple(packed)
-
     def _call_blockwise(
         self,
         *args: Any,
@@ -98,7 +82,7 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
         **kwargs: Any,
     ) -> Any:
         return self._call_model(
-            self._structured_input(args),
+            self.binding.pack_point(args),
             key=key,
             iter_=iter_,
             **kwargs,
@@ -215,59 +199,5 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
                     )
                 return mapped(*coordinate_values)
 
-        if self.binding.input_mode == "structured":
-            return self._call_model(
-                self._structured_input(args),
-                key=key,
-                iter_=iter_,
-                **kwargs,
-            )
-
-        arrays: list[Any] = []
-        for value in args:
-            if isinstance(value, tuple):
-                raise ValueError(
-                    "Flat ModelBinding cannot pack tuple inputs; use a structured "
-                    "or blockwise binding, or materialize the grid explicitly."
-                )
-            arrays.append(jnp.asarray(value))
-
-        if len(arrays) == 1:
-            x_in = arrays[0]
-            return self._call_model(x_in, key=key, iter_=iter_, **kwargs)
-
-        leading_shape: tuple[int, ...] | None = None
-        for arr in arrays:
-            if arr.ndim < 2:
-                continue
-            candidate = tuple(int(i) for i in arr.shape[:-1])
-            if leading_shape is None:
-                leading_shape = candidate
-                continue
-            if candidate != leading_shape:
-                raise ValueError(
-                    "Flat model packing requires batched inputs to share leading "
-                    f"shape; got {candidate} and {leading_shape}."
-                )
-
-        if leading_shape is None:
-            parts = [arr.reshape((-1,)) for arr in arrays]
-            x_in = jnp.concatenate(parts, axis=0)
-            return self._call_model(x_in, key=key, iter_=iter_, **kwargs)
-
-        parts = []
-        for arr in arrays:
-            if arr.ndim == 0:
-                part = jnp.broadcast_to(arr, leading_shape + (1,))
-            elif tuple(int(i) for i in arr.shape) == leading_shape:
-                part = arr.reshape(leading_shape + (1,))
-            elif tuple(int(i) for i in arr.shape[:-1]) == leading_shape:
-                part = arr.reshape(leading_shape + (int(arr.shape[-1]),))
-            else:
-                raise ValueError(
-                    "Flat model packing could not align input with shape "
-                    f"{arr.shape} to leading batch shape {leading_shape}."
-                )
-            parts.append(part)
-        x_in = jnp.concatenate(parts, axis=-1)
+        x_in = self.binding.pack_point(args)
         return self._call_model(x_in, key=key, iter_=iter_, **kwargs)

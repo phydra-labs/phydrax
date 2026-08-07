@@ -37,6 +37,19 @@ class DerivativeRule(abc.ABC):
         """Return the requested derivative, or ``None`` to use generic lowering."""
         raise NotImplementedError
 
+    def derive_laplacian(
+        self,
+        *,
+        var: str,
+        mode: DerivativeMode,
+        backend: DerivativeBackend,
+        basis: DerivativeBasis,
+        periodic: bool,
+    ) -> DomainFunction | None:
+        """Return a contracted Laplacian, or ``None`` to expand into partials."""
+        del var, mode, backend, basis, periodic
+        return None
+
 
 DerivativeCallback: TypeAlias = Callable[..., "DomainFunction | None"]
 
