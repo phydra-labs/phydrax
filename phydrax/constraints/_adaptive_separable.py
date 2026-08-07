@@ -13,25 +13,24 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 from jaxtyping import Array, Key
 
+from phydrax.domain import DomainComponent, GridBatch
+
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from ..domain._components import DomainComponent
-from ..domain._structure import CoordSeparableBatch
 from ._adaptive import AbstractCollocationPolicy
 
 
 if TYPE_CHECKING:
-    from ..domain._function import DomainFunction
+    from phydrax.domain import DomainFunction
+
     from ._functional import FunctionalConstraint
-
-
 
 
 class SeparableCollocationPopulation(StrictModule):
     """Persistent state for one fixed-shape coordinate-separable population."""
 
-    batch: CoordSeparableBatch
+    batch: GridBatch
     axis_age_by_axis: frozendict[str, cx.Field]
     axis_active_by_axis: frozendict[str, cx.Field]
     refresh_count: Array
@@ -41,7 +40,7 @@ class SeparableCollocationPopulation(StrictModule):
 
     def __init__(
         self,
-        batch: CoordSeparableBatch,
+        batch: GridBatch,
         *,
         axis_age_by_axis: Mapping[str, cx.Field] | None = None,
         axis_active_by_axis: Mapping[str, cx.Field] | None = None,
@@ -158,7 +157,7 @@ class SeparableCollocationPolicy(AbstractCollocationPolicy):
         key: Key[Array, ""] = DOC_KEY0,
     ) -> SeparableCollocationPopulation:
         batch = constraint._sample_once(key=key)
-        if not isinstance(batch, CoordSeparableBatch):
+        if not isinstance(batch, GridBatch):
             raise TypeError(
                 "Separable adaptive collocation requires coord-separable sampling."
             )
@@ -169,7 +168,7 @@ class SeparableCollocationPolicy(AbstractCollocationPolicy):
         self,
         population: SeparableCollocationPopulation,
         /,
-    ) -> tuple[CoordSeparableBatch, cx.Field]:
+    ) -> tuple[GridBatch, cx.Field]:
         return population.batch, population.loss_weight()
 
     def data_metrics(
@@ -198,8 +197,8 @@ class SeparableCollocationPolicy(AbstractCollocationPolicy):
     ) -> SeparableCollocationPopulation:
         del functions
         sampled = constraint._sample_once(key=key)
-        if not isinstance(sampled, CoordSeparableBatch):
-            raise TypeError("Periodic separable refresh requires CoordSeparableBatch.")
+        if not isinstance(sampled, GridBatch):
+            raise TypeError("Periodic grid refresh requires GridBatch.")
         batch = _replace_coordinate_blocks(population.batch, sampled)
         return SeparableCollocationPopulation(
             batch,
@@ -248,7 +247,7 @@ class HierarchicalAxisPolicy(AbstractCollocationPolicy):
         key: Key[Array, ""] = DOC_KEY0,
     ) -> SeparableCollocationPopulation:
         batch = constraint._sample_once(key=key)
-        if not isinstance(batch, CoordSeparableBatch):
+        if not isinstance(batch, GridBatch):
             raise TypeError(
                 "Hierarchical axis refinement requires coord-separable sampling."
             )
@@ -269,7 +268,7 @@ class HierarchicalAxisPolicy(AbstractCollocationPolicy):
         self,
         population: SeparableCollocationPopulation,
         /,
-    ) -> tuple[CoordSeparableBatch, cx.Field]:
+    ) -> tuple[GridBatch, cx.Field]:
         return population.batch, population.loss_weight()
 
     def data_metrics(
@@ -319,19 +318,12 @@ class HierarchicalAxisPolicy(AbstractCollocationPolicy):
                 add_n = min(
                     max(
                         1,
-                        int(
-                            round(
-                                field.data.shape[0]
-                                * float(self.refinement_fraction)
-                            )
-                        ),
+                        int(round(field.data.shape[0] * float(self.refinement_fraction))),
                     ),
                     inactive_count,
                 )
                 score = jnp.asarray(marginals[axis].data, dtype=float)
-                ranked = jnp.argsort(
-                    jnp.where(old_active, -jnp.inf, score)
-                )[::-1]
+                ranked = jnp.argsort(jnp.where(old_active, -jnp.inf, score))[::-1]
                 new_active = old_active.at[ranked[:add_n]].set(True)
             discretizations[axis] = discretization.with_active(new_active)
             active_by_axis[axis] = cx.Field(
@@ -344,7 +336,7 @@ class HierarchicalAxisPolicy(AbstractCollocationPolicy):
             )
             retained_age = jnp.where(old_active, old_age + 1, 0)
             ages[axis] = cx.Field(retained_age, dims=(axis,))
-        batch = CoordSeparableBatch(
+        batch = GridBatch(
             points=population.batch.points,
             dense_structure=population.batch.dense_structure,
             coord_axes_by_label=population.batch.coord_axes_by_label,
@@ -374,18 +366,16 @@ def PeriodicSeparableCollocation(**kwargs: Any) -> SeparableCollocationPolicy:
     return SeparableCollocationPolicy(**kwargs)
 
 
-
-
-
-
 def _single_component(constraint: FunctionalConstraint) -> DomainComponent:
     component = constraint.component
     if not isinstance(component, DomainComponent):
-        raise TypeError("Separable adaptive collocation does not support component unions.")
+        raise TypeError(
+            "Separable adaptive collocation does not support component unions."
+        )
     return component
 
 
-def _axis_fields(batch: CoordSeparableBatch) -> dict[str, cx.Field]:
+def _axis_fields(batch: GridBatch) -> dict[str, cx.Field]:
     fields: dict[str, cx.Field] = {}
     for label, axes in batch.coord_axes_by_label.items():
         values = batch.points[label]
@@ -400,7 +390,7 @@ def _axis_fields(batch: CoordSeparableBatch) -> dict[str, cx.Field]:
     return fields
 
 
-def _axis_active_fields(batch: CoordSeparableBatch) -> dict[str, cx.Field]:
+def _axis_active_fields(batch: GridBatch) -> dict[str, cx.Field]:
     active: dict[str, cx.Field] = {}
     for axis, field in _axis_fields(batch).items():
         discretization = batch.axis_discretization_by_axis.get(axis)
@@ -422,16 +412,13 @@ def _axis_active_weight(active_by_axis: Mapping[str, cx.Field]) -> cx.Field:
     return weight
 
 
-
-
-def _axis_sizes(batch: CoordSeparableBatch) -> dict[str, int]:
+def _axis_sizes(batch: GridBatch) -> dict[str, int]:
     sizes = {
-        axis: int(field.data.shape[0])
-        for axis, field in _axis_fields(batch).items()
+        axis: int(field.data.shape[0]) for axis, field in _axis_fields(batch).items()
     }
     dense_axes = batch.dense_structure.axis_names
     if dense_axes is None:
-        raise ValueError("CoordSeparableBatch dense structure must be canonicalized.")
+        raise ValueError("GridBatch dense structure must be canonicalized.")
     for block, axis in zip(
         batch.dense_structure.blocks,
         dense_axes,
@@ -449,7 +436,7 @@ def _axis_sizes(batch: CoordSeparableBatch) -> dict[str, int]:
 
 
 def _logical_counts(
-    batch: CoordSeparableBatch,
+    batch: GridBatch,
     active_by_axis: Mapping[str, cx.Field],
 ) -> tuple[int, int]:
     sizes = _axis_sizes(batch)
@@ -466,7 +453,7 @@ def _logical_counts(
     return logical, active
 
 
-def _logical_mask_field(batch: CoordSeparableBatch) -> cx.Field:
+def _logical_mask_field(batch: GridBatch) -> cx.Field:
     result = cx.Field(jnp.asarray(1.0, dtype=float), dims=())
     for mask in batch.coord_mask_by_label.values():
         result = result * cx.Field(jnp.asarray(mask.data, dtype=float), dims=mask.dims)
@@ -476,7 +463,7 @@ def _logical_mask_field(batch: CoordSeparableBatch) -> cx.Field:
 def _axis_residual_marginals(
     constraint: FunctionalConstraint,
     functions: Mapping[str, DomainFunction],
-    batch: CoordSeparableBatch,
+    batch: GridBatch,
     /,
     *,
     key: Key[Array, ""],
@@ -512,10 +499,6 @@ def _axis_residual_marginals(
     return frozendict(marginals)
 
 
-
-
-
-
 def _replace_coordinate_blocks(old, sampled):
     if old.coord_axes_by_label != sampled.coord_axes_by_label:
         raise ValueError("Periodic refresh changed coordinate-separable axis metadata.")
@@ -530,7 +513,7 @@ def _replace_coordinate_blocks(old, sampled):
         ):
             raise ValueError("Periodic refresh must preserve coordinate axis shapes.")
         points[label] = new_values
-    return CoordSeparableBatch(
+    return GridBatch(
         points=frozendict(points),
         dense_structure=old.dense_structure,
         coord_axes_by_label=old.coord_axes_by_label,
@@ -541,12 +524,6 @@ def _replace_coordinate_blocks(old, sampled):
     )
 
 
-
-
-
-
-
-
 def _sum_or_max_named(field, axis, *, maximum):
     position = field.dims.index(axis)
     if maximum:
@@ -555,10 +532,6 @@ def _sum_or_max_named(field, axis, *, maximum):
         data = jnp.sum(field.data, axis=position)
     dims = field.dims[:position] + field.dims[position + 1 :]
     return cx.Field(data, dims=dims)
-
-
-
-
 
 
 __all__ = [

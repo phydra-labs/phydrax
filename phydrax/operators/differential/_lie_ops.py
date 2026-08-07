@@ -8,8 +8,9 @@ from typing import Literal
 
 import jax.numpy as jnp
 
+from phydrax.domain import DomainFunction
+
 from ..._strict import StrictModule
-from ...domain._function import _drop_derivative_hook_metadata, DomainFunction
 from ._domain_ops import directional_derivative
 
 
@@ -47,7 +48,7 @@ def _validated_vector_field(
         domain=field.domain,
         deps=field.deps,
         func=_VectorFieldCallable(field, dimension, role),
-        metadata=_drop_derivative_hook_metadata(field.metadata),
+        metadata=field.metadata,
     )
 
 
@@ -74,8 +75,8 @@ def lie_bracket(
     if var not in x.domain.labels or var not in y.domain.labels:
         raise ValueError(f"Both vector fields must be defined over variable {var!r}.")
 
-    x_dimension = int(x.domain.factor(var).var_dim)
-    y_dimension = int(y.domain.factor(var).var_dim)
+    x_dimension = x.domain.coordinate(var).event_size
+    y_dimension = y.domain.coordinate(var).event_size
     if x_dimension != y_dimension:
         raise ValueError(
             "lie_bracket vector-field dimensions must match; "

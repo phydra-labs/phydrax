@@ -13,6 +13,18 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import (
+    DomainComponent,
+    DomainFunction,
+    IrregularTrajectoryDatasetDomain,
+    PointBatch,
+    PointSampling,
+    SampleLayout,
+    TRAJECTORY_CASE_INDEX_KEY,
+    TRAJECTORY_TIME_INDEX_KEY,
+    TrajectoryDatasetDomain,
+)
+
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._interpolation import (
@@ -20,16 +32,8 @@ from .._interpolation import (
     linear_stencil_from_indices,
     nearest_stencil_from_indices,
 )
+from .._sampling import design_name
 from .._strict import StrictModule
-from ..domain._components import DomainComponent
-from ..domain._function import DomainFunction
-from ..domain._irregular_trajectory_dataset import IrregularTrajectoryDatasetDomain
-from ..domain._structure import PointsBatch, ProductStructure
-from ..domain._trajectory_dataset import (
-    TRAJECTORY_CASE_INDEX_KEY,
-    TRAJECTORY_TIME_INDEX_KEY,
-    TrajectoryDatasetDomain,
-)
 from ._base import AbstractSamplingConstraint
 from ._data_metrics import (
     reduce_supervised_loss,
@@ -46,13 +50,12 @@ RaggedTimeSeriesSampling = Literal[
     "case_time_uniform",
 ]
 RaggedTimeSeriesInterpolation = Literal["nearest", "linear"]
-RaggedNumPoints = int | tuple[int, int]
 
 
 class RaggedTimeSeriesBatch(StrictModule):
     """A sampled mini-batch from a ragged trajectory dataset."""
 
-    points: PointsBatch
+    points: PointBatch
     target: Array
     case_indices: Array
     time_indices: Array
@@ -61,7 +64,7 @@ class RaggedTimeSeriesBatch(StrictModule):
     def __init__(
         self,
         *,
-        points: PointsBatch,
+        points: PointBatch,
         target: ArrayLike,
         case_indices: ArrayLike,
         time_indices: ArrayLike,
@@ -165,35 +168,46 @@ def _gather_linear_irregular(
     return apply_gather_stencil(source, stencil).values, lower
 
 
-def _validate_num_points(num_points: RaggedNumPoints, /) -> RaggedNumPoints:
-    if isinstance(num_points, int):
-        n = int(num_points)
-        if n <= 0:
-            raise ValueError("num_points must be positive.")
-        return n
-    if len(num_points) != 2:
-        raise ValueError(
-            "RaggedTimeSeriesDataConstraint tuple num_points must be "
-            "(num_cases, num_times)."
-        )
-    n_cases = int(num_points[0])
-    n_times = int(num_points[1])
-    if n_cases <= 0 or n_times <= 0:
-        raise ValueError("tuple num_points entries must be positive.")
-    return (n_cases, n_times)
+def _normalize_sampling(
+    sampling: PointSampling,
+    domain: TrajectoryDatasetDomain | IrregularTrajectoryDatasetDomain,
+    /,
+) -> PointSampling:
+    if not isinstance(sampling, PointSampling):
+        raise TypeError("RaggedTimeSeriesDataConstraint requires a PointSampling plan.")
+    count = sampling.count
+    if isinstance(count, int):
+        if count <= 0:
+            raise ValueError("PointSampling.count must be positive.")
+        default_layout = SampleLayout((domain.labels,))
+    else:
+        if len(count) != 2:
+            raise ValueError(
+                "RaggedTimeSeriesDataConstraint requires count=(num_cases, num_times)."
+            )
+        if count[0] <= 0 or count[1] <= 0:
+            raise ValueError("PointSampling count entries must be positive.")
+        default_layout = SampleLayout(((domain.data_label,), (domain.time_label,)))
+    if design_name(sampling.design) != "uniform":
+        raise ValueError("RaggedTimeSeriesDataConstraint supports only uniform sampling.")
+    return PointSampling(
+        count,
+        layout=sampling.layout or default_layout,
+        design=sampling.design,
+    )
 
 
 def _case_time_grid_structure(
     domain: TrajectoryDatasetDomain | IrregularTrajectoryDatasetDomain,
-    structure: ProductStructure,
+    structure: SampleLayout,
     /,
-) -> tuple[ProductStructure, str, str]:
+) -> tuple[SampleLayout, str, str]:
     structure_ = structure.canonicalize(domain.labels)
     data_axis = structure_.axis_for(domain.data_label)
     time_axis = structure_.axis_for(domain.time_label)
     if data_axis is None or time_axis is None or data_axis == time_axis:
         raise ValueError(
-            "case-major ragged trajectory batches require ProductStructure "
+            "case-major ragged trajectory batches require SampleLayout "
             "with separate singleton data and time blocks."
         )
     for block in structure_.blocks:
@@ -211,8 +225,8 @@ def _grid_points_from_case_time(
     time_indices: Array,
     /,
     *,
-    structure: ProductStructure,
-) -> PointsBatch:
+    structure: SampleLayout,
+) -> PointBatch:
     structure_, data_axis, time_axis = _case_time_grid_structure(domain, structure)
     case_idx = jnp.asarray(case_indices, dtype=jnp.int32).reshape((-1,))
     time_arr = jnp.asarray(times, dtype=float)
@@ -244,7 +258,7 @@ def _grid_points_from_case_time(
         "trajectory_data_axis": data_axis,
         "trajectory_time_axis": time_axis,
     }
-    return PointsBatch(
+    return PointBatch(
         points=frozendict(points),
         structure=structure_,
         metadata=metadata,
@@ -337,10 +351,7 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
 
     constraint_vars: tuple[str, ...]
     component: DomainComponent
-    structure: ProductStructure
-    dense_structure: ProductStructure | None
-    num_points: RaggedNumPoints
-    sampler: str
+    sampling: PointSampling
     over: str | tuple[str, ...] | None
     reduction: Literal["mean", "sum"]
     values: Array
@@ -351,7 +362,7 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
     observation_time_indices: Array
     observation_count: int
     label: str | None
-    sampling: RaggedTimeSeriesSampling
+    selection: RaggedTimeSeriesSampling
     interpolation: RaggedTimeSeriesInterpolation
     data_accuracy_eps: Array
 
@@ -362,9 +373,8 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
         values: ArrayLike,
         /,
         *,
-        num_points: RaggedNumPoints,
-        structure: ProductStructure | None = None,
-        sampling: RaggedTimeSeriesSampling = "observation_uniform",
+        sampling: PointSampling,
+        selection: RaggedTimeSeriesSampling = "observation_uniform",
         interpolation: RaggedTimeSeriesInterpolation = "nearest",
         weight: DomainFunction | ArrayLike = 1.0,
         reduction: Literal["mean", "sum"] = "mean",
@@ -379,11 +389,9 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
             component: Component from a trajectory dataset domain.
             values: Padded target array with one leading row per case and a time
                 axis at position 1.
-            num_points: Number of sampled observations, or `(cases, times)` for a
-                case-time grid batch.
-            structure: Product structure for sampled `(data, t)` points.
-            sampling: Observation-level, case-level, or continuous case-time
-                sampling mode.
+            sampling: Uniform point plan. A scalar count requests paired
+                observations; `(num_cases, num_times)` requests a case-time grid.
+            selection: Observation-level, case-level, or continuous case-time mode.
             interpolation: Target lookup mode for continuous time sampling.
             weight: Scalar or pointwise multiplier applied to this loss term.
             reduction: `"mean"` or `"sum"` over sampled observations.
@@ -397,16 +405,16 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
             raise TypeError(
                 "RaggedTimeSeriesDataConstraint requires a trajectory dataset domain component."
             )
-        n = _validate_num_points(num_points)
+        sampling_ = _normalize_sampling(sampling, component.domain)
 
-        sampling_str = str(sampling)
+        sampling_str = str(selection)
         if sampling_str not in (
             "observation_uniform",
             "case_uniform",
             "case_time_uniform",
         ):
             raise ValueError(
-                "sampling must be 'observation_uniform', 'case_uniform', "
+                "selection must be 'observation_uniform', 'case_uniform', "
                 "or 'case_time_uniform'."
             )
         sampling_value: RaggedTimeSeriesSampling
@@ -438,15 +446,7 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
         domain = component.domain
         self.constraint_vars = (str(constraint_var),)
         self.component = component
-        if structure is None and isinstance(n, tuple):
-            self.structure = ProductStructure(
-                ((domain.data_label,), (domain.time_label,))
-            )
-        else:
-            self.structure = structure or ProductStructure((domain.labels,))
-        self.dense_structure = None
-        self.num_points = n
-        self.sampler = sampling_value
+        self.sampling = sampling_
         self.over = None
         self.reduction = reduction_value
         self.values = _validate_values(domain, values)
@@ -466,7 +466,7 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
         self.observation_time_indices = obs_times
         self.observation_count = int(obs_cases.shape[0])
         self.label = None if label is None else str(label)
-        self.sampling = sampling_value
+        self.selection = sampling_value
         self.interpolation = interpolation_value
         self.data_accuracy_eps = jnp.asarray(float(data_accuracy_eps), dtype=float)
 
@@ -481,6 +481,12 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
             )
         return domain
 
+    @property
+    def _layout(self) -> SampleLayout:
+        layout = self.sampling.layout
+        assert layout is not None
+        return layout
+
     def sample(
         self,
         *,
@@ -488,13 +494,14 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
     ) -> Any:
         """Draw a ragged trajectory mini-batch and aligned target values."""
         domain = self.domain
-        if isinstance(self.num_points, tuple):
+        count = self.sampling.count
+        if isinstance(count, tuple):
             return self._sample_case_time_grid(domain, key=key)
 
-        n = int(self.num_points)
+        n = count
         key_case, key_time = jr.split(key)
 
-        if self.sampling == "observation_uniform":
+        if self.selection == "observation_uniform":
             flat_cases = self.observation_case_indices
             flat_times = self.observation_time_indices
             obs_idx = jr.randint(
@@ -516,7 +523,7 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
                 indices=self.case_indices,
             )
             lengths = domain.lengths[case_indices]
-            if self.sampling == "case_time_uniform":
+            if self.selection == "case_time_uniform":
                 if isinstance(domain, IrregularTrajectoryDatasetDomain):
                     start_times = domain.start_times[case_indices]
                     end_times = domain.end_times[case_indices]
@@ -552,7 +559,7 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
         points = domain.points_from_case_time(
             case_indices,
             times,
-            structure=self.structure,
+            structure=self._layout,
             time_indices=time_indices,
         )
         return RaggedTimeSeriesBatch(
@@ -570,9 +577,10 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
         *,
         key: Key[Array, ""] = DOC_KEY0,
     ) -> RaggedTimeSeriesBatch:
-        if not isinstance(self.num_points, tuple):
-            raise TypeError("case-time grid sampling requires tuple num_points.")
-        n_cases, n_times = self.num_points
+        count = self.sampling.count
+        if not isinstance(count, tuple):
+            raise TypeError("case-time grid sampling requires a tuple point count.")
+        n_cases, n_times = count
         key_case, key_time = jr.split(key)
         case_indices = _sample_case_indices(
             size=domain.size,
@@ -583,7 +591,7 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
         lengths = domain.lengths[case_indices]
         case_grid = jnp.broadcast_to(case_indices[:, None], (n_cases, n_times))
 
-        if self.sampling == "case_time_uniform":
+        if self.selection == "case_time_uniform":
             if isinstance(domain, IrregularTrajectoryDatasetDomain):
                 start_times = domain.start_times[case_indices]
                 end_times = domain.end_times[case_indices]
@@ -639,7 +647,7 @@ class RaggedTimeSeriesDataConstraint(AbstractSamplingConstraint):
             case_indices,
             times,
             time_indices,
-            structure=self.structure,
+            structure=self._layout,
         )
         return RaggedTimeSeriesBatch(
             points=points,

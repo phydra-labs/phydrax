@@ -5,13 +5,15 @@
 import coordax as cx
 import jax.numpy as jnp
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.domain import DomainFunction, Square
 from phydrax.operators.differential import partial_x
 
 
 def test_partial_x_point():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def f(x):
@@ -23,10 +25,12 @@ def test_partial_x_point():
     assert jnp.allclose(out, 4.0)
 
 
-def test_partial_x_coord_separable(sample_coord_separable):
-    geom = Square(center=(0.0, 0.0), side=2.0)
+def test_partial_x_coord_separable(sample_grid):
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     component = geom.component()
-    batch = sample_coord_separable(component, {"x": (6, 5)}, dense_blocks=(), key=0)
+    batch = sample_grid(component, {"x": (6, 5)}, dense_blocks=(), key=0)
 
     @geom.Function("x")
     def f(x):
@@ -42,9 +46,9 @@ def test_partial_x_coord_separable(sample_coord_separable):
 
 
 def test_partial_x_preserves_metadata():
-    geom = Square(center=(0.0, 0.0), side=2.0)
-    u = DomainFunction(
-        domain=geom, deps=("x",), func=lambda x: x[0] ** 2, metadata={"tag": 1}
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
+    u = geom.Function("x")(lambda x: x[0] ** 2).with_metadata(**{"tag": 1})
     out = partial_x(u)
     assert out.metadata == u.metadata

@@ -104,7 +104,7 @@ def test_mesh_cotangent_laplacian_integrates_with_graph_model_keys():
     bundle = phx.graph.mesh_to_cotangent_graph(vertices, faces)
     domain = phx.domain.GraphDomain(bundle.graph)
     nodes = domain.component({"graph": phx.domain.Nodes()})
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
 
     @domain.Function("graph")
     def u(node):
@@ -121,12 +121,8 @@ def test_mesh_cotangent_laplacian_integrates_with_graph_model_keys():
             output_key="lap_u",
         )
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=nodes,
-        operator=residual,
-        constraint_vars="u",
-        num_points=bundle.graph.num_nodes,
-        structure=structure,
-    )
+    constraint = phx.constraints.FunctionalConstraint.from_operator(component=nodes,
+    operator=residual,
+    constraint_vars="u", sampling=phx.domain.PointSampling(bundle.graph.num_nodes, layout=structure), )
 
     assert constraint.loss({"u": u}, key=jr.key(0)) < 1e-12

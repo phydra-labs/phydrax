@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import coordax as cx
 import equinox as eqx
@@ -16,17 +16,18 @@ from jaxtyping import Array, ArrayLike, Key, PyTree
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
-from ._components import (
-    Boundary,
-    Fixed,
-    FixedEnd,
-    FixedStart,
-    Interior,
-)
+from ._coordinate import CoordinateSpec
 from ._dataset import DatasetDomain
-from ._domain import _AbstractDomain, _AbstractUnaryDomain
+from ._domain import JointFactor
+from ._factor_component import FactorComponent
+from ._measure import BaseMeasure, ExactMass
 from ._scalar import ScalarInterval
-from ._structure import _validate_label, NumPoints, PointsBatch, ProductStructure
+from ._selection import Boundary, Fixed, FixedEnd, FixedStart, Interior, Selection
+from ._structure import _validate_label, NumPoints, PointBatch, SampleLayout
+
+
+if TYPE_CHECKING:
+    from ._irregular_trajectory_dataset import IrregularTrajectoryDatasetDomain
 
 
 TrajectoryMeasure = Literal[
@@ -38,6 +39,45 @@ TrajectorySampling = Literal["case_time_uniform", "observation_uniform"]
 
 TRAJECTORY_CASE_INDEX_KEY = "__phydrax_trajectory_case_index"
 TRAJECTORY_TIME_INDEX_KEY = "__phydrax_trajectory_time_index"
+
+
+def _bind_trajectory_component(
+    factor: TrajectoryDatasetDomain | IrregularTrajectoryDatasetDomain,
+    selections: Mapping[str, Selection],
+    /,
+) -> FactorComponent:
+    if tuple(selections) != factor.labels:
+        raise ValueError(
+            f"Trajectory factor {factor.labels} requires all selections in factor order."
+        )
+    if not isinstance(selections[factor.data_label], Interior):
+        raise TypeError("Trajectory data coordinates support only Interior selection.")
+    time_selection = selections[factor.time_label]
+    if isinstance(time_selection, Boundary) and (
+        time_selection.tags is not None or time_selection.entity_ids is not None
+    ):
+        raise ValueError("Trajectory time boundaries do not support tags or entity IDs.")
+    if not isinstance(
+        time_selection,
+        (Interior, Boundary, FixedStart, FixedEnd, Fixed),
+    ):
+        raise TypeError(
+            f"Unsupported trajectory time selection {type(time_selection).__name__}."
+        )
+
+    if factor.measure_mode == "case_time_probability":
+        measure = BaseMeasure("probability", ExactMass(1.0), normalized=True)
+    else:
+        if isinstance(time_selection, Interior):
+            value = jnp.mean(factor.durations)
+        elif isinstance(time_selection, Boundary):
+            value = jnp.asarray(2.0, dtype=float)
+        else:
+            value = jnp.asarray(1.0, dtype=float)
+        if factor.measure_mode == "time_integral_sum":
+            value = value * float(factor.size)
+        measure = BaseMeasure("trajectory", ExactMass(value))
+    return FactorComponent(factor=factor, selections=selections, measure=measure)
 
 
 def _tree_leading_axis_size(tree: PyTree[ArrayLike], /) -> int:
@@ -101,9 +141,9 @@ def _as_sample_count(num_points: NumPoints, /) -> int:
 
 def _single_axis_for_trajectory(
     domain: "TrajectoryDatasetDomain",
-    structure: ProductStructure,
+    structure: SampleLayout,
     /,
-) -> tuple[ProductStructure, str]:
+) -> tuple[SampleLayout, str]:
     structure = structure.canonicalize(domain.labels, fixed_labels=frozenset())
     if len(structure.blocks) != 1:
         raise ValueError(
@@ -118,11 +158,11 @@ def _single_axis_for_trajectory(
         )
     axis_names = structure.axis_names
     if axis_names is None:
-        raise ValueError("Trajectory ProductStructure must be canonicalized.")
+        raise ValueError("Trajectory SampleLayout must be canonicalized.")
     return structure, axis_names[0]
 
 
-class TrajectoryDatasetDomain(_AbstractDomain):
+class TrajectoryDatasetDomain(JointFactor):
     """A coupled finite-function and time domain for ragged trajectory data.
 
     Each dataset row represents one input/function/parameterization. The same row also
@@ -253,6 +293,39 @@ class TrajectoryDatasetDomain(_AbstractDomain):
         return (self._data_label, self._time_label)
 
     @property
+    def coordinate_specs(self) -> tuple[CoordinateSpec, ...]:
+        return (
+            CoordinateSpec(None, kind="pytree", differentiable=False, dtype=None),
+            CoordinateSpec((), kind="scalar", differentiable=True),
+        )
+
+    def bind_component(
+        self,
+        selections: Mapping[str, Selection],
+        /,
+    ) -> FactorComponent:
+        return _bind_trajectory_component(self, selections)
+
+    def _replace_labels(
+        self,
+        labels: tuple[str, ...],
+        /,
+    ) -> "TrajectoryDatasetDomain":
+        updated = eqx.tree_at(
+            lambda factor: (factor._data_label, factor._time_label),
+            self,
+            labels,
+        )
+        return eqx.tree_at(
+            lambda factor: (factor._data_factor, factor._time_factor),
+            updated,
+            (
+                updated._data_factor.relabel(labels[0]),
+                updated._time_factor.relabel(labels[1]),
+            ),
+        )
+
+    @property
     def data_label(self) -> str:
         """Label used for sampled input rows."""
         return self._data_label
@@ -307,19 +380,9 @@ class TrajectoryDatasetDomain(_AbstractDomain):
         """Per-case final valid time."""
         return self.start + self.durations
 
-    def factor(self, label: str, /) -> _AbstractUnaryDomain:
-        """Return the unary data or time factor for `label`."""
-        if label == self._data_label:
-            return self._data_factor
-        if label == self._time_label:
-            return self._time_factor
-        raise KeyError(f"Label {label!r} not in domain {self.labels}.")
-
-    def equivalent(self, other: object, /) -> bool:
+    def _same_factor_support(self, other: object, /) -> bool:
         """Return whether another domain has the same public trajectory shape."""
         if not isinstance(other, TrajectoryDatasetDomain):
-            return False
-        if self.labels != other.labels:
             return False
         if self.measure_mode != other.measure_mode:
             return False
@@ -370,11 +433,11 @@ class TrajectoryDatasetDomain(_AbstractDomain):
         times: ArrayLike,
         /,
         *,
-        structure: ProductStructure | None = None,
+        structure: SampleLayout | None = None,
         time_indices: ArrayLike | None = None,
-    ) -> PointsBatch:
-        """Materialize paired case-time samples as a `PointsBatch`."""
-        structure_in = structure or ProductStructure((self.labels,))
+    ) -> PointBatch:
+        """Materialize paired case-time samples as a `PointBatch`."""
+        structure_in = structure or SampleLayout((self.labels,))
         structure_, axis = _single_axis_for_trajectory(self, structure_in)
         case_idx = jnp.asarray(case_indices, dtype=jnp.int32).reshape((-1,))
         time_arr = jnp.asarray(times, dtype=float).reshape((-1,))
@@ -405,7 +468,7 @@ class TrajectoryDatasetDomain(_AbstractDomain):
             TRAJECTORY_CASE_INDEX_KEY: cx.Field(case_idx, dims=(axis,)),
             TRAJECTORY_TIME_INDEX_KEY: cx.Field(time_idx, dims=(axis,)),
         }
-        return PointsBatch(points=frozendict(points), structure=structure_)
+        return PointBatch(points=frozendict(points), structure=structure_)
 
 
 def _flat_observation_indices(domain: TrajectoryDatasetDomain, /) -> tuple[Array, Array]:
@@ -443,7 +506,7 @@ def _component_times(
     key: Key[Array, ""],
     /,
 ) -> tuple[Array, Array]:
-    comp = component.spec.component_for(domain.time_label)
+    comp = component.spec.selection_for(domain.time_label)
     lengths = domain.lengths[case_indices]
     durations = (lengths.astype(float) - 1.0) * domain.dt
 
@@ -493,16 +556,16 @@ def sample_trajectory_component(
     component,
     num_points: NumPoints,
     *,
-    structure: ProductStructure,
+    structure: SampleLayout,
     sampler: str = "latin_hypercube",
     key: Key[Array, ""] = DOC_KEY0,
-) -> PointsBatch:
+) -> PointBatch:
     del sampler
     domain = component.domain
     if not isinstance(domain, TrajectoryDatasetDomain):
         raise TypeError("sample_trajectory_component requires a TrajectoryDatasetDomain.")
 
-    data_comp = component.spec.component_for(domain.data_label)
+    data_comp = component.spec.selection_for(domain.data_label)
     if not isinstance(data_comp, Interior):
         raise TypeError(
             "TrajectoryDatasetDomain supports only Interior() for the data label."
@@ -519,7 +582,7 @@ def sample_trajectory_component(
         )
 
     case_key, time_key = jr.split(key)
-    time_comp = component.spec.component_for(domain.time_label)
+    time_comp = component.spec.selection_for(domain.time_label)
     if isinstance(time_comp, Fixed):
         fixed_value = jnp.asarray(time_comp.value, dtype=float).reshape(())
         valid = (domain.start <= fixed_value) & (fixed_value <= domain.end_times)
@@ -556,7 +619,7 @@ def sample_trajectory_component(
 
 
 def trajectory_default_quadrature_total_weight(
-    component, batch: PointsBatch, /
+    component, batch: PointBatch, /
 ) -> cx.Field | None:
     domain = component.domain
     if not isinstance(domain, TrajectoryDatasetDomain):
@@ -573,7 +636,7 @@ def trajectory_default_quadrature_total_weight(
     if n == 0:
         return cx.Field(jnp.zeros((0,), dtype=float), dims=(axis,))
 
-    time_comp = component.spec.component_for(domain.time_label)
+    time_comp = component.spec.selection_for(domain.time_label)
     point_mass = isinstance(time_comp, (FixedStart, FixedEnd, Fixed))
     boundary = isinstance(time_comp, Boundary)
     durations = domain.durations[case_idx]
@@ -593,32 +656,8 @@ def trajectory_default_quadrature_total_weight(
     return cx.Field(per_sample / float(n), dims=(axis,))
 
 
-def trajectory_component_measure(component, /) -> Array | None:
-    domain = component.domain
-    if not isinstance(domain, TrajectoryDatasetDomain):
-        return None
-
-    time_comp = component.spec.component_for(domain.time_label)
-    point_mass = isinstance(time_comp, (FixedStart, FixedEnd, Fixed))
-    boundary = isinstance(time_comp, Boundary)
-
-    if domain.measure_mode == "case_time_probability":
-        return jnp.asarray(1.0, dtype=float)
-
-    if point_mass:
-        measure = jnp.asarray(1.0, dtype=float)
-    elif boundary:
-        measure = jnp.asarray(2.0, dtype=float)
-    else:
-        measure = jnp.mean(domain.durations)
-
-    if domain.measure_mode == "time_integral_sum":
-        measure = measure * float(domain.size)
-    return jnp.asarray(measure, dtype=float)
-
-
 def trajectory_quadrature_weights_by_axis(
-    component, batch: PointsBatch, /
+    component, batch: PointBatch, /
 ) -> Mapping[str, cx.Field] | None:
     domain = component.domain
     if not isinstance(domain, TrajectoryDatasetDomain):
@@ -637,7 +676,6 @@ __all__ = [
     "TrajectoryMeasure",
     "TrajectorySampling",
     "sample_trajectory_component",
-    "trajectory_component_measure",
     "trajectory_default_quadrature_total_weight",
     "trajectory_quadrature_weights_by_axis",
 ]

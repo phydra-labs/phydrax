@@ -5,6 +5,7 @@
 import jax.numpy as jnp
 import jax.random as jr
 
+import phydrax as phx
 from phydrax.constraints import (
     AdaptationBudget,
     collocation_policy_support,
@@ -18,12 +19,12 @@ from phydrax.constraints import (
     RefreshGuard,
     RefreshSchedule,
 )
-from phydrax.domain import Interval1d, ProductStructure
+from phydrax.domain import Interval1d, SampleLayout
 
 
 def _controlled_interval(*, anchors=0.0, budget=None, guard=None):
     domain = Interval1d(0.0, 1.0)
-    structure = ProductStructure((("x",),))
+    structure = SampleLayout((("x",),))
     policy = controlled_collocation(
         R3(
             refresh_every=1,
@@ -40,9 +41,7 @@ def _controlled_interval(*, anchors=0.0, budget=None, guard=None):
         component=domain.component(),
         operator=lambda field: field,
         constraint_vars="u",
-        num_points=16,
-        structure=structure,
-        sampler="uniform",
+        sampling=phx.domain.PointSampling(16, layout=structure, design="uniform"),
         collocation_policy=policy,
     )
     return domain, constraint, policy

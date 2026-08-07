@@ -8,6 +8,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 
+import phydrax as phx
 from phydrax.constraints import (
     ContinuousConvectionBoundaryConstraint,
     ContinuousDirichletBoundaryConstraint,
@@ -50,11 +51,9 @@ from phydrax.constraints import (
 )
 from phydrax.domain import (
     Boundary,
-    Cube,
     FixedStart,
     Interval1d,
-    ProductStructure,
-    Square,
+    SampleLayout,
     TimeInterval,
 )
 
@@ -69,7 +68,7 @@ def _assert_zero_loss(constraint, functions, *, atol=1e-5):
 def test_functional_boundary_and_initial_constraints():
     geom = Interval1d(0.0, 1.0)
     component = geom.component({"x": Boundary()})
-    structure = ProductStructure((("x",),))
+    structure = SampleLayout((("x",),))
 
     @geom.Function("x")
     def u(x):
@@ -81,15 +80,13 @@ def test_functional_boundary_and_initial_constraints():
             "u",
             component,
             target=0.0,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
         ContinuousNeumannBoundaryConstraint(
             "u",
             component,
             target=0.0,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
         ContinuousRobinBoundaryConstraint(
             "u",
@@ -97,8 +94,7 @@ def test_functional_boundary_and_initial_constraints():
             dirichlet_coeff=1.0,
             neumann_coeff=0.0,
             target=0.0,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
     ]
 
@@ -107,7 +103,7 @@ def test_functional_boundary_and_initial_constraints():
 
     domain = geom @ TimeInterval(0.0, 1.0)
     initial_component = domain.component({"t": FixedStart()})
-    init_structure = ProductStructure((("x",),))
+    init_structure = SampleLayout((("x",),))
 
     @domain.Function("x", "t")
     def u_xt(x, t):
@@ -117,16 +113,17 @@ def test_functional_boundary_and_initial_constraints():
         "u",
         initial_component,
         func=0.0,
-        num_points=8,
-        structure=init_structure,
+        sampling=phx.domain.PointSampling(8, layout=init_structure),
     )
     _assert_zero_loss(init_constraint, {"u": u_xt})
 
 
 def test_cfd_constraints_continuous_and_discrete():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     component = geom.component({"x": Boundary()})
-    structure = ProductStructure((("x",),))
+    structure = SampleLayout((("x",),))
 
     @geom.Function("x")
     def u(x):
@@ -144,56 +141,48 @@ def test_cfd_constraints_continuous_and_discrete():
         ContinuousNeumannBoundaryConstraint(
             "u",
             component,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
         ContinuousDirichletBoundaryConstraint(
             "p",
             component,
             target=0.0,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
         ContinuousDirichletBoundaryConstraint(
             "u",
             component,
             target=inflow_velocity,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
         ContinuousNeumannBoundaryConstraint(
             "p",
             component,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
         ContinuousSymmetryVelocityBoundaryConstraint(
             "u",
             component,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
         ContinuousDirichletBoundaryConstraint(
             "u",
             component,
             target=wall_velocity,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
         ContinuousNoPenetrationBoundaryConstraint(
             "u",
             component,
             wall_velocity=wall_velocity,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
         ContinuousSlipWallBoundaryConstraint(
             "u",
             "p",
             component,
             viscosity=1.0,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
     ]
 
@@ -219,9 +208,11 @@ def test_cfd_constraints_continuous_and_discrete():
 
 
 def test_solid_constraints_continuous_and_discrete():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     component = geom.component({"x": Boundary()})
-    structure = ProductStructure((("x",),))
+    structure = SampleLayout((("x",),))
 
     @geom.Function("x")
     def u(x):
@@ -235,8 +226,7 @@ def test_solid_constraints_continuous_and_discrete():
             "u",
             component,
             target=zeros_vec,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
         ContinuousTractionBoundaryConstraint(
             "u",
@@ -244,15 +234,13 @@ def test_solid_constraints_continuous_and_discrete():
             lambda_=1.0,
             mu=1.0,
             traction=zeros_vec,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
         ContinuousNormalDisplacementBoundaryConstraint(
             "u",
             component,
             normal_displacement=0.0,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
         ContinuousElasticFoundationBoundaryConstraint(
             "u",
@@ -261,16 +249,14 @@ def test_solid_constraints_continuous_and_discrete():
             mu=1.0,
             stiffness=1.0,
             foundation_displacement=zeros_vec,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
         ContinuousElasticSymmetryBoundaryConstraint(
             "u",
             component,
             lambda_=1.0,
             mu=1.0,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
     ]
     for constraint in continuous:
@@ -307,7 +293,7 @@ def test_solid_constraints_continuous_and_discrete():
 def test_thermal_constraints_continuous_and_discrete():
     geom = Interval1d(0.0, 1.0)
     component = geom.component({"x": Boundary()})
-    structure = ProductStructure((("x",),))
+    structure = SampleLayout((("x",),))
 
     @geom.Function("x")
     def temp(x):
@@ -321,8 +307,7 @@ def test_thermal_constraints_continuous_and_discrete():
             component,
             k=1.0,
             flux=0.0,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
         ContinuousConvectionBoundaryConstraint(
             "T",
@@ -330,8 +315,7 @@ def test_thermal_constraints_continuous_and_discrete():
             h=1.0,
             k=1.0,
             ambient_temp=0.0,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
     ]
     for constraint in continuous:
@@ -370,7 +354,7 @@ def test_thermal_constraints_continuous_and_discrete():
 def test_thermal_constraints_use_physical_outward_flux_sign():
     geom = Interval1d(0.0, 1.0)
     component = geom.component({"x": Boundary()})
-    structure = ProductStructure((("x",),))
+    structure = SampleLayout((("x",),))
     conductivity = 2.0
     convection = 4.0
 
@@ -393,8 +377,7 @@ def test_thermal_constraints_use_physical_outward_flux_sign():
             component,
             k=conductivity,
             flux=outward_flux,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
         ContinuousConvectionBoundaryConstraint(
             "T",
@@ -402,8 +385,7 @@ def test_thermal_constraints_use_physical_outward_flux_sign():
             h=convection,
             k=conductivity,
             ambient_temp=ambient_temperature,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
         DiscreteHeatFluxBoundaryConstraint(
             "T",
@@ -427,9 +409,11 @@ def test_thermal_constraints_use_physical_outward_flux_sign():
 
 
 def test_em_constraints_continuous_and_discrete():
-    geom = Cube(center=(0.0, 0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile()
+    )
     component = geom.component({"x": Boundary()})
-    structure = ProductStructure((("x",),))
+    structure = SampleLayout((("x",),))
 
     @geom.Function("x")
     def e(x):
@@ -461,44 +445,38 @@ def test_em_constraints_continuous_and_discrete():
         ContinuousPECBoundaryConstraint(
             "E",
             component,
-            num_points=6,
-            structure=structure,
+            sampling=phx.domain.PointSampling(6, layout=structure),
         ),
         ContinuousImpedanceBoundaryConstraint(
             "H",
             "E",
             component,
             admittance=1.0,
-            num_points=6,
-            structure=structure,
+            sampling=phx.domain.PointSampling(6, layout=structure),
         ),
         ContinuousPMCBoundaryConstraint(
             "H",
             component,
-            num_points=6,
-            structure=structure,
+            sampling=phx.domain.PointSampling(6, layout=structure),
         ),
         ContinuousElectricSurfaceChargeBoundaryConstraint(
             "E",
             component,
             epsilon=1.0,
             surface_charge=0.0,
-            num_points=6,
-            structure=structure,
+            sampling=phx.domain.PointSampling(6, layout=structure),
         ),
         ContinuousMagneticSurfaceCurrentBoundaryConstraint(
             "H",
             component,
             surface_current=0.0,
-            num_points=6,
-            structure=structure,
+            sampling=phx.domain.PointSampling(6, layout=structure),
         ),
         ContinuousInterfaceTangentialEContinuityConstraint(
             "E1",
             "E2",
             component,
-            num_points=6,
-            structure=structure,
+            sampling=phx.domain.PointSampling(6, layout=structure),
         ),
         ContinuousInterfaceNormalDJumpConstraint(
             "E1",
@@ -507,16 +485,14 @@ def test_em_constraints_continuous_and_discrete():
             epsilon1=1.0,
             epsilon2=1.0,
             surface_charge=0.0,
-            num_points=6,
-            structure=structure,
+            sampling=phx.domain.PointSampling(6, layout=structure),
         ),
         ContinuousInterfaceTangentialHJumpConstraint(
             "H1",
             "H2",
             component,
             surface_current=0.0,
-            num_points=6,
-            structure=structure,
+            sampling=phx.domain.PointSampling(6, layout=structure),
         ),
         ContinuousInterfaceNormalBContinuityConstraint(
             "H1",
@@ -524,8 +500,7 @@ def test_em_constraints_continuous_and_discrete():
             component,
             mu1=1.0,
             mu2=1.0,
-            num_points=6,
-            structure=structure,
+            sampling=phx.domain.PointSampling(6, layout=structure),
         ),
     ]
     for constraint in continuous:

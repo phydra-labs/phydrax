@@ -12,10 +12,10 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from phydrax.domain import ComponentSum, DomainComponent, ProbabilityDomain
+
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from ..domain._components import DomainComponent, DomainComponentUnion
-from ..domain._probability import ProbabilityDomain
 from ._rules import ReferenceRule
 
 
@@ -82,21 +82,21 @@ def _sample_identifiers(
 class ComponentTarget(StrictModule):
     """A physical/counting-measure domain component integration target."""
 
-    component: DomainComponent | DomainComponentUnion
+    component: DomainComponent | ComponentSum
     axes: str | tuple[str, ...] | None = eqx.field(static=True)
     normalized: bool = eqx.field(static=True)
 
     def __init__(
         self,
-        component: DomainComponent | DomainComponentUnion,
+        component: DomainComponent | ComponentSum,
         /,
         *,
         axes: str | tuple[str, ...] | None = None,
         normalized: bool = False,
     ):
-        if not isinstance(component, (DomainComponent, DomainComponentUnion)):
+        if not isinstance(component, (DomainComponent, ComponentSum)):
             raise TypeError(
-                "component must be a DomainComponent or DomainComponentUnion."
+                "component must be a DomainComponent or ComponentSum."
             )
         self.component = component
         self.axes = axes
@@ -422,7 +422,7 @@ IntegrationTarget: TypeAlias = (
 
 
 def over(
-    component: DomainComponent | DomainComponentUnion,
+    component: DomainComponent | ComponentSum,
     /,
     *,
     axes: str | tuple[str, ...] | None = None,
@@ -432,7 +432,7 @@ def over(
 
 
 def mean_over(
-    component: DomainComponent | DomainComponentUnion,
+    component: DomainComponent | ComponentSum,
     /,
     *,
     axes: str | tuple[str, ...] | None = None,

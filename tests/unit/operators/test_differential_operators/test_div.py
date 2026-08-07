@@ -6,13 +6,16 @@ import coordax as cx
 import jax.numpy as jnp
 import pytest
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.domain import DomainFunction, Interval1d, Square, TimeInterval
+from phydrax.domain import Interval1d, TimeInterval
 from phydrax.operators.differential import div, div_tensor
 
 
 def test_div_vector_field_point():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -25,7 +28,9 @@ def test_div_vector_field_point():
 
 
 def test_div_spacetime_var_x_ignores_t(sample_batch):
-    dom = Square(center=(0.0, 0.0), side=2.0) @ TimeInterval(0.0, 1.0)
+    dom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    ) @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x")
     def u(x):
@@ -39,10 +44,12 @@ def test_div_spacetime_var_x_ignores_t(sample_batch):
     assert jnp.allclose(out, 2.0)
 
 
-def test_div_coord_separable_constant(sample_coord_separable):
-    geom = Square(center=(0.0, 0.0), side=2.0)
+def test_div_coord_separable_constant(sample_grid):
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     component = geom.component()
-    batch = sample_coord_separable(component, {"x": (7, 6)}, dense_blocks=(), key=1)
+    batch = sample_grid(component, {"x": (7, 6)}, dense_blocks=(), key=1)
 
     @geom.Function("x")
     def u(x):
@@ -55,13 +62,10 @@ def test_div_coord_separable_constant(sample_coord_separable):
 
 
 def test_div_preserves_metadata():
-    geom = Square(center=(0.0, 0.0), side=2.0)
-    u = DomainFunction(
-        domain=geom,
-        deps=("x",),
-        func=lambda x: jnp.array([x[0], x[1]]),
-        metadata={"tag": 1},
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
+    u = geom.Function("x")(lambda x: jnp.array([x[0], x[1]])).with_metadata(**{"tag": 1})
     out = div(u)
     assert out.metadata == u.metadata
 
@@ -81,7 +85,9 @@ def test_nested_divergence_drops_stale_optimized_derivative_hooks():
 
 
 def test_div_ad_engine_jvp_matches_default():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -94,7 +100,9 @@ def test_div_ad_engine_jvp_matches_default():
 
 
 def test_div_ad_engine_requires_ad_backend():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):

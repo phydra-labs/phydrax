@@ -368,9 +368,9 @@ def function_samples_from_geometry(
     key: Key[Array, ""] = DOC_KEY0,
 ) -> FunctionSamples:
     """Sample a PhydraX geometry into measure-aware operator points."""
-    from ....domain._base import _AbstractGeometry
+    from phydrax.domain import AbstractGeometry
 
-    if not isinstance(geometry, _AbstractGeometry):
+    if not isinstance(geometry, AbstractGeometry):
         raise TypeError(
             "function_samples_from_geometry requires a PhydraX spatial geometry."
         )

@@ -104,7 +104,11 @@ class _StrictMeta(abc.ABCMeta):
         if is_defining_strict_itself:
             return cls
 
-        has_abstract_name = name.startswith("Abstract") or name.startswith("_Abstract")
+        has_abstract_name = (
+            name.startswith("Abstract")
+            or name.startswith("_Abstract")
+            or namespace.get("__strict_abstract__", False) is True
+        )
         # Treat classes with abstract-style names as abstract, even if they have
         # no explicitly-declared abstract elements. This mirrors common patterns
         # in libraries that use naming conventions for abstract bases.
@@ -116,7 +120,8 @@ class _StrictMeta(abc.ABCMeta):
                 abs_attrs = list(cls._strict_abstract_attributes_)
                 raise TypeError(
                     f"Abstract class '{cls.__module__}.{name}' must have a name "
-                    "starting with 'Abstract' or '_Abstract'. Abstract elements:"
+                    "starting with 'Abstract' or '_Abstract', or declare "
+                    "__strict_abstract__ = True. Abstract elements:"
                     f" methods={abs_methods}, attributes={abs_attrs}"
                 )
         else:  # Concrete class

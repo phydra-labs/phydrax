@@ -9,15 +9,16 @@ from typing import Any, Literal
 
 from jaxtyping import ArrayLike
 
-from ..domain._components import (
+from phydrax.domain import (
+    ComponentSum,
     DomainComponent,
-    DomainComponentUnion,
+    DomainFunction,
     Fixed,
     FixedEnd,
     FixedStart,
+    SamplingPlan,
 )
-from ..domain._function import DomainFunction
-from ..domain._structure import NumPoints, ProductStructure
+
 from ..operators.differential._domain_ops import directional_derivative, dt
 from ._adaptive import AbstractCollocationPolicy
 from ._functional import FunctionalConstraint
@@ -25,7 +26,7 @@ from ._interpolate import idw_interpolant
 from ._pointset import PointSetConstraint
 
 
-def _value_deps(component: DomainComponent | DomainComponentUnion, /) -> tuple[str, ...]:
+def _value_deps(component: DomainComponent | ComponentSum, /) -> tuple[str, ...]:
     if isinstance(component, DomainComponent):
         return _non_fixed_labels(component)
     return component.domain.labels
@@ -33,7 +34,7 @@ def _value_deps(component: DomainComponent | DomainComponentUnion, /) -> tuple[s
 
 def _coerce_value(
     value: Any,
-    component: DomainComponent | DomainComponentUnion,
+    component: DomainComponent | ComponentSum,
     /,
 ) -> DomainFunction | ArrayLike:
     if isinstance(value, DomainFunction):
@@ -49,20 +50,18 @@ def _non_fixed_labels(component: DomainComponent, /) -> tuple[str, ...]:
     fixed = {
         lbl
         for lbl in component.domain.labels
-        if isinstance(component.spec.component_for(lbl), (FixedStart, FixedEnd, Fixed))
+        if isinstance(component.spec.selection_for(lbl), (FixedStart, FixedEnd, Fixed))
     }
     return tuple(lbl for lbl in component.domain.labels if lbl not in fixed)
 
 
 def ContinuousDirichletBoundaryConstraint(
     constraint_var: str,
-    component: DomainComponent | DomainComponentUnion,
+    component: DomainComponent | ComponentSum,
     /,
     *,
     target: DomainFunction | ArrayLike | None = None,
-    num_points: NumPoints | tuple[Any, ...],
-    structure: ProductStructure,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -100,9 +99,7 @@ def ContinuousDirichletBoundaryConstraint(
         component=component,
         operator=operator,
         constraint_vars=constraint_var,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
+        sampling=sampling,
         weight=weight,
         label=label,
         over=over,
@@ -119,9 +116,7 @@ def ContinuousNeumannBoundaryConstraint(
     var: str = "x",
     target: DomainFunction | ArrayLike | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
-    num_points: NumPoints | tuple[Any, ...],
-    structure: ProductStructure,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -163,9 +158,7 @@ def ContinuousNeumannBoundaryConstraint(
         component=component,
         operator=operator,
         constraint_vars=constraint_var,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
+        sampling=sampling,
         weight=weight,
         label=label,
         over=over,
@@ -184,9 +177,7 @@ def ContinuousRobinBoundaryConstraint(
     neumann_coeff: DomainFunction | ArrayLike | None = None,
     target: DomainFunction | ArrayLike | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
-    num_points: NumPoints | tuple[Any, ...],
-    structure: ProductStructure,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -231,9 +222,7 @@ def ContinuousRobinBoundaryConstraint(
         component=component,
         operator=operator,
         constraint_vars=constraint_var,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
+        sampling=sampling,
         weight=weight,
         label=label,
         over=over,
@@ -252,9 +241,7 @@ def AbsorbingBoundaryConstraint(
     wavespeed: DomainFunction | ArrayLike | None = None,
     target: DomainFunction | ArrayLike | None = None,
     mode: Literal["reverse", "forward"] = "reverse",
-    num_points: NumPoints | tuple[Any, ...],
-    structure: ProductStructure,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -280,7 +267,7 @@ def AbsorbingBoundaryConstraint(
     - `target`: Target value as a `DomainFunction`, callable, or array-like. Defaults to `0.0`.
     - `mode`: Differentiation mode (`"reverse"` or `"forward"`).
     - `num_points`: Number of boundary points to sample (paired or structured; see `structure`).
-    - `structure`: A `ProductStructure` describing how variables are sampled/blocked.
+    - `structure`: A `SampleLayout` describing how variables are sampled/blocked.
     - `sampler`: Sampling scheme (e.g. `"latin_hypercube"`).
     - `weight`: Scalar multiplier applied to this term.
     - `over`: Optional subset of labels to reduce/integrate over.
@@ -301,9 +288,7 @@ def AbsorbingBoundaryConstraint(
         component=component,
         operator=operator,
         constraint_vars=constraint_var,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
+        sampling=sampling,
         weight=weight,
         label=label,
         over=over,
@@ -314,7 +299,7 @@ def AbsorbingBoundaryConstraint(
 
 def DiscreteDirichletBoundaryConstraint(
     constraint_var: str,
-    component: DomainComponent | DomainComponentUnion,
+    component: DomainComponent | ComponentSum,
     /,
     *,
     points: Mapping[str, ArrayLike] | ArrayLike,
@@ -343,7 +328,7 @@ def DiscreteDirichletBoundaryConstraint(
     - `weight`: Scalar multiplier applied to this term.
     - `reduction`: `"mean"` or `"sum"`.
     """
-    if isinstance(component, DomainComponentUnion):
+    if isinstance(component, ComponentSum):
         raise TypeError(
             "DiscreteDirichletBoundaryConstraint requires a DomainComponent, not a union."
         )
@@ -374,7 +359,7 @@ def DiscreteDirichletBoundaryConstraint(
 
 def DiscreteNeumannBoundaryConstraint(
     constraint_var: str,
-    component: DomainComponent | DomainComponentUnion,
+    component: DomainComponent | ComponentSum,
     /,
     *,
     points: Mapping[str, ArrayLike] | ArrayLike,
@@ -408,7 +393,7 @@ def DiscreteNeumannBoundaryConstraint(
     - `weight`: Scalar multiplier applied to this term.
     - `reduction`: `"mean"` or `"sum"`.
     """
-    if isinstance(component, DomainComponentUnion):
+    if isinstance(component, ComponentSum):
         raise TypeError(
             "DiscreteNeumannBoundaryConstraint requires a DomainComponent, not a union."
         )

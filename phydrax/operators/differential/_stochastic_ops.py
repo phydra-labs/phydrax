@@ -10,14 +10,12 @@ import jax
 import jax.numpy as jnp
 import opt_einsum as oe
 
+from phydrax.domain import AbstractGeometry, AbstractScalarDomain, DomainFunction
+
 from ..._strict import StrictModule
-from ...domain._base import _AbstractGeometry
-from ...domain._function import DomainFunction
-from ...domain._scalar import _AbstractScalarDomain
 from ...metrix import LeviCivitaConnection, RiemannianMetric
 from ._domain_ops import (
     _factor_and_dim,
-    _strip_derivative_hook_metadata,
     div,
     div_tensor,
     grad,
@@ -82,9 +80,9 @@ def _batch_ndim(field: DomainFunction, args: list[Any], /) -> int:
             ranks.extend(jnp.asarray(item).ndim for item in value)
             continue
         rank = jnp.asarray(value).ndim
-        if isinstance(factor, _AbstractGeometry):
+        if isinstance(factor, AbstractGeometry):
             rank = max(0, rank - 1)
-        elif not isinstance(factor, _AbstractScalarDomain):
+        elif not isinstance(factor, AbstractScalarDomain):
             continue
         ranks.append(rank)
     return max(ranks, default=0)
@@ -322,7 +320,7 @@ def diffusion_covariance(diffusion: DomainFunction, /) -> DomainFunction:
         domain=sigma.domain,
         deps=sigma.deps,
         func=_DiffusionCovarianceCallable(sigma),
-        metadata=_strip_derivative_hook_metadata(sigma.metadata),
+        metadata=sigma.metadata,
     )
 
 
@@ -355,7 +353,7 @@ def stratonovich_to_ito_drift(
             sigma_promoted.deps.index(var),
             int(state_dim),
         ),
-        metadata=_strip_derivative_hook_metadata(sigma_promoted.metadata),
+        metadata=sigma_promoted.metadata,
     )
     return drift_promoted + correction
 
@@ -389,7 +387,7 @@ def _coordinate_to_covariant_drift(
             coordinate_position=deps.index(var),
             state_dim=int(state_dim),
         ),
-        metadata=_strip_derivative_hook_metadata(drift_promoted.metadata),
+        metadata=drift_promoted.metadata,
     )
 
 
@@ -468,7 +466,7 @@ def kolmogorov_generator(
             "factor_hvp contraction is currently Euclidean; use dense for a metric."
         )
     factor, state_dim = _factor_and_dim(observable_field, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if isinstance(factor, AbstractScalarDomain):
         raise ValueError("var must name a geometry state variable.")
     if metric is not None and metric.chart.dimension != state_dim:
         raise ValueError(
@@ -521,7 +519,7 @@ def kolmogorov_generator(
                     ),
                     state_dim=int(state_dim),
                 ),
-                metadata=_strip_derivative_hook_metadata(observable_factor.metadata),
+                metadata=observable_factor.metadata,
             )
     fields = [observable_field, drift_ito]
     if covariance_ito is not None:
@@ -564,7 +562,7 @@ def kolmogorov_generator(
             ),
             state_dim=int(state_dim),
         ),
-        metadata=_strip_derivative_hook_metadata(observable_promoted.metadata),
+        metadata=observable_promoted.metadata,
     )
 
 
@@ -589,7 +587,7 @@ def _density_product(
             state_dim=int(state_dim),
             tensor=bool(tensor),
         ),
-        metadata=_strip_derivative_hook_metadata(density_promoted.metadata),
+        metadata=density_promoted.metadata,
     )
 
 
@@ -620,7 +618,7 @@ def probability_current(
     )
     interpretation_value = _require_interpretation(interpretation)
     factor, state_dim = _factor_and_dim(density_field, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if isinstance(factor, AbstractScalarDomain):
         raise ValueError("var must name a geometry state variable.")
     if metric is not None and metric.chart.dimension != state_dim:
         raise ValueError(

@@ -16,19 +16,31 @@ import jax.random as jr
 import jax.tree_util as jtu
 from jaxtyping import Array, Key
 
+from phydrax.domain import PointBatch, PointSampling
+
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._sampling import DesignLike, resolve_design, UnitDesign
 from .._strict import StrictModule
-from ..domain._structure import PointsBatch
 
 
 if TYPE_CHECKING:
-    from ..domain._function import DomainFunction
+    from phydrax.domain import DomainFunction
+
     from ._functional import FunctionalConstraint
 
 
+def _point_sampling(constraint: FunctionalConstraint, /) -> PointSampling:
+    sampling = constraint.sampling
+    if not isinstance(sampling, PointSampling):
+        raise TypeError("Adaptive collocation requires one PointSampling plan.")
+    if not isinstance(sampling.count, int):
+        raise TypeError("Adaptive collocation requires one integer point count.")
+    return sampling
+
+
 CollocationAlgorithm = Literal["periodic", "r3", "rar_d"]
+
 
 class AbstractCollocationPolicy(StrictModule):
     """Lifecycle shared by solver-managed adaptive collocation policies."""
@@ -54,7 +66,6 @@ class AbstractCollocationPolicy(StrictModule):
     def data_metrics(self, population: Any, /) -> dict[str, Array]:
         """Return scalar diagnostics for solver logging."""
         raise NotImplementedError
-
 
     @abstractmethod
     def refresh(
@@ -84,15 +95,10 @@ class AbstractCollocationPolicy(StrictModule):
         raise NotImplementedError
 
 
-
-
-
-
-
 class CollocationPopulation(StrictModule):
     """Persistent fixed-shape state for one sampled functional constraint."""
 
-    batch: PointsBatch
+    batch: PointBatch
     active: cx.Field | None
     age: cx.Field
     refresh_count: Array
@@ -100,7 +106,7 @@ class CollocationPopulation(StrictModule):
 
     def __init__(
         self,
-        batch: PointsBatch,
+        batch: PointBatch,
         *,
         active: cx.Field | None = None,
         age: cx.Field | None = None,
@@ -220,8 +226,8 @@ class CollocationPolicy(AbstractCollocationPolicy):
         key: Key[Array, ""] = DOC_KEY0,
     ) -> CollocationPopulation:
         batch = constraint._sample_once(key=key)
-        if not isinstance(batch, PointsBatch):
-            raise TypeError("Adaptive collocation currently requires a PointsBatch.")
+        if not isinstance(batch, PointBatch):
+            raise TypeError("Adaptive collocation currently requires a PointBatch.")
         axis, n = _single_axis_and_size(batch)
         active = None
         if self.algorithm == "rar_d":
@@ -236,7 +242,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
         self,
         population: CollocationPopulation,
         /,
-    ) -> tuple[PointsBatch, cx.Field | None]:
+    ) -> tuple[PointBatch, cx.Field | None]:
         return population.batch, population.loss_weight()
 
     def data_metrics(
@@ -274,8 +280,8 @@ class CollocationPolicy(AbstractCollocationPolicy):
         step = jnp.asarray(iter_, dtype=jnp.int32)
         if self.algorithm == "periodic":
             batch = constraint._sample_once(key=key)
-            if not isinstance(batch, PointsBatch):
-                raise TypeError("Adaptive collocation currently requires a PointsBatch.")
+            if not isinstance(batch, PointBatch):
+                raise TypeError("Adaptive collocation currently requires a PointBatch.")
             out = _replace_all(population, batch)
         elif self.algorithm == "r3":
             out = self._refresh_r3(constraint, functions, population, key=key)
@@ -293,7 +299,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
         self,
         constraint: FunctionalConstraint,
         functions: Mapping[str, DomainFunction],
-        batch: PointsBatch,
+        batch: PointBatch,
         /,
         *,
         key: Key[Array, ""],
@@ -311,6 +317,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
         return cx.Field(jnp.maximum(data, 0.0), dims=score.dims)
 
     def _refresh_r3(self, constraint, functions, population, *, key):
+        sampling = _point_sampling(constraint)
         axis, n = _single_axis_and_size(population.batch)
         scores = self._scores(
             constraint,
@@ -329,13 +336,15 @@ class CollocationPolicy(AbstractCollocationPolicy):
         keep_idx = eligible[:keep_n]
         new_n = n - keep_n
         replacement = constraint.component.sample(
-            new_n,
-            structure=constraint.structure,
-            sampler=self.sampler,
+            PointSampling(
+                new_n,
+                layout=sampling.layout,
+                design=self.sampler,
+            ),
             key=jr.fold_in(key, 2),
         )
-        if not isinstance(replacement, PointsBatch):
-            raise TypeError("R3 requires a PointsBatch replacement population.")
+        if not isinstance(replacement, PointBatch):
+            raise TypeError("R3 requires a PointBatch replacement population.")
         batch = _concat_batches(
             _take_batch(population.batch, keep_idx),
             replacement,
@@ -352,6 +361,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
         return CollocationPopulation(batch, age=age)
 
     def _refresh_rar_d(self, constraint, functions, population, *, key):
+        sampling = _point_sampling(constraint)
         if population.active is None:
             raise ValueError("RAR-D population requires an active mask.")
         axis, n = _single_axis_and_size(population.batch)
@@ -364,13 +374,15 @@ class CollocationPolicy(AbstractCollocationPolicy):
             return population
         candidate_n = n * self.candidate_multiplier
         candidate = constraint.component.sample(
-            candidate_n,
-            structure=constraint.structure,
-            sampler=self.sampler,
+            PointSampling(
+                candidate_n,
+                layout=sampling.layout,
+                design=self.sampler,
+            ),
             key=jr.fold_in(key, 1),
         )
-        if not isinstance(candidate, PointsBatch):
-            raise TypeError("RAR-D requires PointsBatch candidates.")
+        if not isinstance(candidate, PointBatch):
+            raise TypeError("RAR-D requires PointBatch candidates.")
         scores = self._scores(
             constraint,
             functions,
@@ -380,8 +392,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
         score_data = jnp.asarray(scores.data, dtype=float)
         powered = jnp.power(score_data + self.epsilon, self.exponent)
         density = (
-            powered / jnp.maximum(jnp.mean(powered), self.epsilon)
-            + self.uniform_floor
+            powered / jnp.maximum(jnp.mean(powered), self.epsilon) + self.uniform_floor
         )
         probabilities = density / jnp.sum(density)
         idx = jr.choice(
@@ -396,9 +407,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
         batch = _set_batch_rows(population.batch, target_idx, additions)
         active = population.active.data.at[target_idx].set(1.0)
         age = cx.Field(
-            population.age.data.at[target_idx].set(
-                jnp.asarray(0, dtype=jnp.int32)
-            ),
+            population.age.data.at[target_idx].set(jnp.asarray(0, dtype=jnp.int32)),
             dims=(axis,),
         )
         return CollocationPopulation(
@@ -412,20 +421,12 @@ def PeriodicCollocation(**kwargs: Any) -> CollocationPolicy:
     return CollocationPolicy("periodic", **kwargs)
 
 
-
-
 def R3(**kwargs: Any) -> CollocationPolicy:
     return CollocationPolicy("r3", **kwargs)
 
 
-
-
-
-
 def RARD(**kwargs: Any) -> CollocationPolicy:
     return CollocationPolicy("rar_d", **kwargs)
-
-
 
 
 def with_collocation_policy(
@@ -437,10 +438,12 @@ def with_collocation_policy(
     return eqx.tree_at(lambda c: c.collocation_policy, constraint, policy)
 
 
-def _single_axis_and_size(batch: PointsBatch) -> tuple[str, int]:
+def _single_axis_and_size(batch: PointBatch) -> tuple[str, int]:
     axes = batch.structure.axis_names
     if axes is None or len(axes) != 1:
-        raise ValueError("Adaptive collocation currently requires exactly one sampling axis.")
+        raise ValueError(
+            "Adaptive collocation currently requires exactly one sampling axis."
+        )
     axis = axes[0]
     size: int | None = None
     for leaf in jtu.tree_leaves(batch.points, is_leaf=lambda x: isinstance(x, cx.Field)):
@@ -462,17 +465,17 @@ def _validate_axis_field(field: cx.Field, *, axis: str, size: int, name: str) ->
         raise ValueError(f"{name} must have shape ({size},), got {field.data.shape}.")
 
 
-def _map_batch_fields(batch: PointsBatch, fn) -> PointsBatch:
+def _map_batch_fields(batch: PointBatch, fn) -> PointBatch:
     points = jtu.tree_map(fn, batch.points, is_leaf=lambda x: isinstance(x, cx.Field))
     metadata = jtu.tree_map(
         fn,
         batch.metadata,
         is_leaf=lambda x: isinstance(x, cx.Field),
     )
-    return PointsBatch(frozendict(points), batch.structure, metadata=frozendict(metadata))
+    return PointBatch(frozendict(points), batch.structure, metadata=frozendict(metadata))
 
 
-def _take_batch(batch: PointsBatch, indices: Array) -> PointsBatch:
+def _take_batch(batch: PointBatch, indices: Array) -> PointBatch:
     axis, _ = _single_axis_and_size(batch)
 
     def take(field):
@@ -484,7 +487,7 @@ def _take_batch(batch: PointsBatch, indices: Array) -> PointsBatch:
     return _map_batch_fields(batch, take)
 
 
-def _concat_batches(left: PointsBatch, right: PointsBatch) -> PointsBatch:
+def _concat_batches(left: PointBatch, right: PointBatch) -> PointBatch:
     if left.structure != right.structure:
         raise ValueError("Cannot concatenate batches with different structures.")
     axis, _ = _single_axis_and_size(right)
@@ -513,14 +516,14 @@ def _concat_batches(left: PointsBatch, right: PointsBatch) -> PointsBatch:
         right.metadata,
         is_leaf=lambda x: isinstance(x, cx.Field),
     )
-    return PointsBatch(
+    return PointBatch(
         frozendict(points),
         left.structure,
         metadata=frozendict(metadata),
     )
 
 
-def _set_batch_rows(target: PointsBatch, indices: Array, source: PointsBatch) -> PointsBatch:
+def _set_batch_rows(target: PointBatch, indices: Array, source: PointBatch) -> PointBatch:
     axis, _ = _single_axis_and_size(target)
 
     def set_rows(a, b):
@@ -541,14 +544,16 @@ def _set_batch_rows(target: PointsBatch, indices: Array, source: PointsBatch) ->
         is_leaf=lambda x: isinstance(x, cx.Field),
     )
     if target.metadata.keys() != source.metadata.keys():
-        raise ValueError("Cannot replace rows from a batch with different metadata fields.")
+        raise ValueError(
+            "Cannot replace rows from a batch with different metadata fields."
+        )
     metadata = jtu.tree_map(
         set_rows,
         target.metadata,
         source.metadata,
         is_leaf=lambda x: isinstance(x, cx.Field),
     )
-    return PointsBatch(
+    return PointBatch(
         frozendict(points),
         target.structure,
         metadata=frozendict(metadata),
@@ -557,21 +562,9 @@ def _set_batch_rows(target: PointsBatch, indices: Array, source: PointsBatch) ->
 
 def _replace_all(
     population: CollocationPopulation,
-    batch: PointsBatch,
+    batch: PointBatch,
 ) -> CollocationPopulation:
     return CollocationPopulation(batch)
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 __all__ = [

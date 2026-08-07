@@ -194,13 +194,13 @@ The `basis` keyword (used when `backend="basis"`) selects a 1D method along each
 !!! note
     FFT-based bases (`fourier`/`sine`/`cosine`) assume a uniformly-spaced coordinate axis.
 
-## Coord-separable sampling and grid evaluation
+## Grid sampling and axis-aware evaluation
 
-When you sample a `CoordSeparableBatch`, selected labels provide a **tuple of 1D coordinate axes**
-instead of a point cloud. For a 2D geometry label `"x"`, the model/operator receives
-\((x_{\text{axis}}, y_{\text{axis}})\); for a scalar label (e.g. `"t"`), the tuple has one axis.
-
-This is the preferred mode for spectral operators and neural operators (FNO/DeepONet).
+`GridSampling` materializes a `GridBatch`. Selected labels provide tuples of
+one-dimensional coordinate axes instead of point clouds. A two-dimensional
+geometry label `"x"` contributes `(x_axis, y_axis)`; a scalar label such as
+`"t"` contributes one axis. This is the preferred mode for spectral operators
+and axis-native neural operators.
 
 !!! example
     Laplacian on a periodic 1D grid using the basis backend:
@@ -218,7 +218,12 @@ This is the preferred mode for spectral operators and neural operators (FNO/Deep
 
     lap_u = phx.operators.laplacian(u, var="x", backend="basis", basis="fourier")
 
-    batch = geom.component().sample_coord_separable({"x": phx.domain.FourierAxisSpec(64)}, key=jr.key(0))
+    batch = geom.component().sample(
+        phx.domain.GridSampling(
+            {"x": phx.domain.FourierAxisSpec(64)}
+        ),
+        key=jr.key(0),
+    )
     out = lap_u(batch)
     ```
 
@@ -227,8 +232,7 @@ This is the preferred mode for spectral operators and neural operators (FNO/Deep
 Here **surface** means one smooth boundary component of an embedded geometry.
 This is distinct from the additive face collection returned by a product domain's
 `boundary()` method and from signed simplicial/cochain boundary maps. Normal-based
-surface operators require a single `DomainComponent`, not a
-`DomainComponentUnion`.
+surface operators require a single `DomainComponent`, not a `ComponentSum`.
 
 Let \(\Gamma=\partial\Omega_x\) be embedded in \(\mathbb{R}^d\), with outward
 unit normal \(n\) and tangent projector

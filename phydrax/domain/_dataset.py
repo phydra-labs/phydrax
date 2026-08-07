@@ -4,9 +4,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Literal
 
 import coordax as cx
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -14,15 +16,19 @@ from jaxtyping import Array, ArrayLike, Key, PyTree
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
-from ._domain import _AbstractUnaryDomain
-from ._structure import PointsBatch, ProductStructure
+from ._coordinate import CoordinateSpec
+from ._domain import JointFactor
+from ._factor_component import FactorComponent
+from ._measure import BaseMeasure, ExactMass
+from ._selection import Interior, Selection
+from ._structure import PointBatch, SampleLayout
 
 
 DATASET_INDEX_KEY = "__phydrax_dataset_index__"
 
 
-class DatasetDomain(_AbstractUnaryDomain):
-    """A unary domain over a finite in-memory dataset.
+class DatasetDomain(JointFactor):
+    """A single-label domain over a finite in-memory dataset.
 
     A `DatasetDomain` stores a PyTree of arrays where every leaf has a leading dataset
     axis of the same length `N`. Sampling draws a batch of indices uniformly and
@@ -78,8 +84,38 @@ class DatasetDomain(_AbstractUnaryDomain):
         return self._label
 
     @property
-    def var_dim(self) -> int:
-        return 1
+    def labels(self) -> tuple[str, ...]:
+        return (self.label,)
+
+    @property
+    def coordinate_specs(self) -> tuple[CoordinateSpec, ...]:
+        return (CoordinateSpec(None, kind="pytree", differentiable=False, dtype=None),)
+
+    def bind_component(
+        self,
+        selections: Mapping[str, Selection],
+        /,
+    ) -> FactorComponent:
+        if tuple(selections) != self.labels:
+            raise ValueError(
+                f"Dataset factor {self.labels} requires exactly one ordered selection."
+            )
+        if not isinstance(selections[self.label], Interior):
+            raise TypeError("Dataset factors support only Interior selection.")
+        normalized = self._measure_mode == "probability"
+        kind = "probability" if normalized else "counting"
+        return FactorComponent(
+            factor=self,
+            selections=selections,
+            measure=BaseMeasure(kind, ExactMass(self.measure), normalized=normalized),
+        )
+
+    def _replace_labels(
+        self,
+        labels: tuple[str, ...],
+        /,
+    ) -> "DatasetDomain":
+        return eqx.tree_at(lambda factor: factor._label, self, labels[0])
 
     @property
     def size(self) -> int:
@@ -132,9 +168,9 @@ class DatasetDomain(_AbstractUnaryDomain):
         indices: ArrayLike,
         /,
         *,
-        structure: ProductStructure | None = None,
-    ) -> PointsBatch:
-        structure_in = structure or ProductStructure(((self.label,),))
+        structure: SampleLayout | None = None,
+    ) -> PointBatch:
+        structure_in = structure or SampleLayout(((self.label,),))
         structure_out = structure_in.canonicalize(self.labels)
         axis = structure_out.axis_for(self.label)
         if axis is None:
@@ -157,12 +193,12 @@ class DatasetDomain(_AbstractUnaryDomain):
             self.label: jax.tree_util.tree_map(_to_field, rows),
             DATASET_INDEX_KEY: cx.Field(idx, dims=(axis,)),
         }
-        return PointsBatch(points=frozendict(points), structure=structure_out)
+        return PointBatch(points=frozendict(points), structure=structure_out)
 
-    def equivalent(self, other: object, /) -> bool:
+    def _same_factor_support(self, other: object, /) -> bool:
         if not isinstance(other, DatasetDomain):
             return False
-        if self.label != other.label:
+        if self.coordinate_specs != other.coordinate_specs:
             return False
         if int(self._size) != int(other._size):
             return False

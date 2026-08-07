@@ -16,9 +16,9 @@ class NonTrainableState:
 
 def is_non_trainable_leaf(node: Any, /) -> bool:
     """Return whether a PyTree node should be kept wholly non-trainable."""
-    from .domain._domain import _AbstractDomain
+    from phydrax.domain import Domain
 
-    return isinstance(node, (NonTrainableState, _AbstractDomain))
+    return isinstance(node, (NonTrainableState, Domain))
 
 
 def is_trainable_leaf(node: Any, /) -> bool:

@@ -42,11 +42,7 @@ def test_dimension_100_ornstein_uhlenbeck_score_improves_over_zero_field():
         label="x",
     )
     domain = space @ phx.domain.TimeInterval(0.0, 1.0)
-    score = phx.domain.DomainFunction(
-        domain=domain,
-        deps=("x", "t"),
-        func=_LinearTimeScore(jnp.asarray(0.0)),
-    )
+    score = domain.Function("x", "t")(_LinearTimeScore(jnp.asarray(0.0)))
     objective = ScoreMatchingObjective(
         "score",
         samples,

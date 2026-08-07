@@ -194,7 +194,7 @@ Explicit choices are `"leja"`, `"clenshaw-curtis"`, and
 bidirectional reference transform. Built-in `Uniform`, `Normal`, and
 `LogNormal` distributions provide one; `EmpiricalDistribution` does not.
 
-Fitting evaluates the source through one coupled `PointsBatch`, coalescing all
+Fitting evaluates the source through one coupled `PointBatch`, coalescing all
 structurally identical nested nodes first. The resulting
 `SmolyakInterpolant` groups tensor terms by exact node-count signature and
 vectorizes terms within each group. Scalar, vector, matrix, tensor, real, and
@@ -202,7 +202,7 @@ complex array outputs are retained without flattening.
 
 The fit is eager and snapshots the source values. Repeated evaluations do not
 retain or call the source function. Use `equinox.filter_jit` for complete
-`DomainFunction`/`PointsBatch` calls or ordinary `jax.jit` around an array-only
+`DomainFunction`/`PointBatch` calls or ordinary `jax.jit` around an array-only
 query wrapper. Automatic first and higher derivatives use the interpolating
 polynomial, including at interpolation nodes.
 

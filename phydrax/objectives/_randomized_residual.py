@@ -14,9 +14,10 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import DomainFunction
+
 from .._objective import AbstractSamplingObjectiveTerm
 from .._strict import StrictModule
-from ..domain._function import DomainFunction
 from ..operators.differential._dimension_estimators import DimensionOperatorSamples
 from ..operators.differential._stochastic_estimators import StochasticOperatorSamples
 

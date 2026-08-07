@@ -13,8 +13,9 @@ import jax.random as jr
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import DomainFunction
+
 from ..._doc import DOC_KEY0
-from ...domain._function import DomainFunction
 from ._discretization import PathDiscretization
 from ._potential import _as_point_time_callable, PotentialLike
 

@@ -6,17 +6,16 @@ import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
 from phydrax.constraints import enforce_dirichlet, FunctionalConstraint
 from phydrax.domain import (
     Boundary,
     FixedStart,
-    PointsBatch,
-    ProductStructure,
+    PointBatch,
+    SampleLayout,
     TimeInterval,
 )
-from phydrax.domain.geometry2d import Square
-from phydrax.domain.geometry3d import Cube
 from phydrax.operators.differential import grad
 from phydrax.solver import (
     EnforcedConstraintPipelines,
@@ -26,7 +25,7 @@ from phydrax.solver import (
 
 
 def _paired_batch(domain, xs, ts):
-    structure = ProductStructure((("x", "t"),)).canonicalize(domain.labels)
+    structure = SampleLayout((("x", "t"),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
     axis = axis_names[0]
@@ -36,7 +35,7 @@ def _paired_batch(domain, xs, ts):
             "t": cx.Field(jnp.asarray(ts, dtype=float).reshape((-1,)), dims=(axis,)),
         }
     )
-    return PointsBatch(points=points, structure=structure)
+    return PointBatch(points=points, structure=structure)
 
 
 def _eval(domain, u_enforced, xs, ts):
@@ -45,7 +44,9 @@ def _eval(domain, u_enforced, xs, ts):
 
 
 def test_mixed_constraints_2d_transient():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
 
@@ -132,8 +133,7 @@ def test_mixed_constraints_2d_transient():
         component=domain.component({"x": Boundary()}),
         operator=lambda f: grad(f, var="x"),
         constraint_vars="u",
-        num_points=16,
-        structure=ProductStructure((("x", "t"),)),
+        sampling=phx.domain.PointSampling(16, layout=SampleLayout((("x", "t"),))),
         reduction="mean",
     )
     loss = eqx.filter_jit(lambda: soft.loss({"u": u_enforced}))()
@@ -141,7 +141,9 @@ def test_mixed_constraints_2d_transient():
 
 
 def test_mixed_constraints_3d_transient():
-    geom = Cube(center=(0.0, 0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile()
+    )
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
 
@@ -228,8 +230,7 @@ def test_mixed_constraints_3d_transient():
         component=domain.component({"x": Boundary()}),
         operator=lambda f: grad(f, var="x"),
         constraint_vars="u",
-        num_points=16,
-        structure=ProductStructure((("x", "t"),)),
+        sampling=phx.domain.PointSampling(16, layout=SampleLayout((("x", "t"),))),
         reduction="mean",
     )
     loss = eqx.filter_jit(lambda: soft.loss({"u": u_enforced}))()

@@ -6,10 +6,11 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
+import phydrax as phx
 from phydrax.domain import (
-    ProductStructure,
     RAGGED_SERIES_INDEX_KEY,
     RaggedSeriesDatasetDomain,
+    SampleLayout,
 )
 
 
@@ -37,7 +38,7 @@ def test_ragged_series_dataset_points_from_indices_carries_payload_and_mask():
     indices = jnp.asarray([1, 0], dtype=jnp.int32)
     batch = domain.points_from_indices(
         indices,
-        structure=ProductStructure((("data",),)),
+        structure=SampleLayout((("data",),)),
     )
     axis = batch.structure.axis_for("data")
 
@@ -87,11 +88,7 @@ def test_ragged_series_dataset_packed_storage_matches_valid_rows():
 
 def test_ragged_series_dataset_samples_from_component():
     domain = _domain()
-    batch = domain.component().sample(
-        5,
-        structure=ProductStructure((("data",),)),
-        key=jr.key(0),
-    )
+    batch = domain.component().sample(phx.domain.PointSampling(5, layout=SampleLayout((("data",),))), key=jr.key(0))
     axis = batch.structure.axis_for("data")
 
     assert axis is not None
@@ -105,7 +102,7 @@ def test_ragged_series_dataset_points_uniform_samples_fixed_width_valid_views():
         jnp.asarray([0, 1, 2], dtype=jnp.int32),
         num_series_points=3,
         sampling="points_uniform",
-        structure=ProductStructure((("data",),)),
+        structure=SampleLayout((("data",),)),
         key=jr.key(11),
     )
 
@@ -136,21 +133,21 @@ def test_ragged_series_dataset_window_prefix_and_suffix_sampling():
         indices,
         num_series_points=2,
         sampling="window_uniform",
-        structure=ProductStructure((("data",),)),
+        structure=SampleLayout((("data",),)),
         key=jr.key(12),
     )
     prefix = domain.sampled_points_from_indices(
         indices,
         num_series_points=2,
         sampling="prefix",
-        structure=ProductStructure((("data",),)),
+        structure=SampleLayout((("data",),)),
         key=jr.key(12),
     )
     suffix = domain.sampled_points_from_indices(
         indices,
         num_series_points=2,
         sampling="suffix",
-        structure=ProductStructure((("data",),)),
+        structure=SampleLayout((("data",),)),
         key=jr.key(12),
     )
 
@@ -176,12 +173,12 @@ def test_ragged_series_sampled_views_do_not_allocate_global_max_length():
         jnp.asarray([0, 1], dtype=jnp.int32),
         num_series_points=7,
         sampling="window_uniform",
-        structure=ProductStructure((("data",),)),
+        structure=SampleLayout((("data",),)),
         key=jr.key(13),
     )
     full = domain.points_from_indices(
         jnp.asarray([0, 1], dtype=jnp.int32),
-        structure=ProductStructure((("data",),)),
+        structure=SampleLayout((("data",),)),
     )
 
     assert sampled["data"]["series"].data.shape == (2, 7, 3)
@@ -198,7 +195,7 @@ def test_ragged_series_dataset_from_sequences_builds_equivalent_domain():
     domain = RaggedSeriesDatasetDomain.from_sequences(seq, static=static, dt=0.25)
     batch = domain.points_from_indices(
         jnp.asarray([0, 1], dtype=jnp.int32),
-        structure=ProductStructure((("data",),)),
+        structure=SampleLayout((("data",),)),
     )
 
     assert jnp.allclose(domain.lengths, jnp.asarray([2, 1], dtype=jnp.int32))
@@ -225,9 +222,9 @@ def test_ragged_series_dataset_equivalence_includes_lengths_and_grid():
         dt=0.25,
     )
 
-    assert domain.equivalent(same)
-    assert not domain.equivalent(different_lengths)
-    assert not domain.equivalent(different_dt)
+    assert domain.same_support(same)
+    assert not domain.same_support(different_lengths)
+    assert not domain.same_support(different_dt)
 
 
 def test_ragged_series_dataset_validates_shapes_and_lengths():

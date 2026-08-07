@@ -10,15 +10,16 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 
-from ...._doc import DOC_KEY0
-from ...._strict import StrictModule
-from ....domain._function import BatchAwareCallable, DomainFunction
-from ....domain.graph._batch import (
+from phydrax.domain import BatchEvaluator, DomainFunction
+from phydrax.domain.graph import (
     GRAPH_ENTITY_INDEX_KEY,
     GRAPH_GRAPH_INDEX_KEY,
     GraphBatch,
+    GraphComponentKind,
 )
-from ....domain.graph._components import GraphComponentKind
+
+from ...._doc import DOC_KEY0
+from ...._strict import StrictModule
 from ....graph import GraphIR, rollout_features, segment_sum
 
 
@@ -318,7 +319,7 @@ def _install_graph_input(
     )
 
 
-class GraphModel(StrictModule, BatchAwareCallable):
+class GraphModel(StrictModule, BatchEvaluator):
     """Batch-aware wrapper for `GraphIR -> GraphIR` graph models.
 
     The wrapper optionally evaluates `input_fn` on a full-node `GraphBatch` and
@@ -461,7 +462,7 @@ class GraphModel(StrictModule, BatchAwareCallable):
         return cx.Field(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
 
 
-class GraphRolloutModel(StrictModule, BatchAwareCallable):
+class GraphRolloutModel(StrictModule, BatchEvaluator):
     """Batch-aware wrapper for autoregressive `GraphIR -> GraphIR` rollouts.
 
     The wrapper mirrors `GraphModel` input handling, then repeatedly applies a

@@ -12,8 +12,9 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import DomainFunction
+
 from .._objective import AbstractSamplingObjectiveTerm
-from ..domain._function import DomainFunction
 from ..stochastic._bsde import (
     bsde_objective_loss,
     BSDEControlMode,

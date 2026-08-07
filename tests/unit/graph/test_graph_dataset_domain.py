@@ -43,7 +43,7 @@ def test_graph_dataset_domain_materializes_batched_node_entities():
     batch = domain.points_from_indices(
         jnp.array([0, 1], dtype=jnp.int32),
         component=phx.domain.Nodes(),
-        structure=phx.domain.ProductStructure((("graph",),)),
+        structure=phx.domain.SampleLayout((("graph",),)),
     )
 
     assert isinstance(batch, phx.domain.GraphBatch)
@@ -59,7 +59,7 @@ def test_graph_dataset_domain_materializes_batched_node_entities():
         jnp.array([0, 0, 1, 1, 1], dtype=jnp.int32),
     )
     assert jnp.allclose(
-        domain.component({"graph": phx.domain.Nodes()}).measure(),
+        domain.component({"graph": phx.domain.Nodes()}).mass.value,
         5.0,
     )
 
@@ -69,7 +69,7 @@ def test_graph_dataset_domain_applies_local_node_sets_per_graph():
     batch = domain.points_from_indices(
         [0, 1],
         component=phx.domain.BoundaryNodes([1]),
-        structure=phx.domain.ProductStructure((("graph",),)),
+        structure=phx.domain.SampleLayout((("graph",),)),
     )
 
     assert jnp.allclose(batch["graph"].data[:, 0], jnp.array([1.0, 4.0]))
@@ -78,7 +78,7 @@ def test_graph_dataset_domain_applies_local_node_sets_per_graph():
         jnp.array([1, 3], dtype=jnp.int32),
     )
     assert jnp.allclose(
-        domain.component({"graph": phx.domain.BoundaryNodes([1])}).measure(),
+        domain.component({"graph": phx.domain.BoundaryNodes([1])}).mass.value,
         2.0,
     )
 
@@ -88,7 +88,7 @@ def test_graph_dataset_domain_graph_gradient_on_local_edge_set():
     batch = domain.points_from_indices(
         [0, 1],
         component=phx.domain.EdgeSet([0]),
-        structure=phx.domain.ProductStructure((("graph",),)),
+        structure=phx.domain.SampleLayout((("graph",),)),
     )
 
     @domain.Function("graph")
@@ -102,20 +102,16 @@ def test_graph_dataset_domain_graph_gradient_on_local_edge_set():
 def test_graph_dataset_domain_samples_through_functional_constraint():
     domain = phx.domain.GraphDatasetDomain(_graphs())
     component = domain.component({"graph": phx.domain.EdgeSet([0])})
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
 
     @domain.Function("graph")
     def u(node):
         del node
         return 2.0
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=component,
-        operator=phx.operators.graph_gradient,
-        constraint_vars="u",
-        num_points=2,
-        structure=structure,
-    )
+    constraint = phx.constraints.FunctionalConstraint.from_operator(component=component,
+    operator=phx.operators.graph_gradient,
+    constraint_vars="u", sampling=phx.domain.PointSampling(2, layout=structure), )
 
     assert constraint.loss({"u": u}, key=jr.key(0)) < 1e-12
 
@@ -125,7 +121,7 @@ def test_graph_dataset_domain_graph_model_restricts_to_node_set():
     batch = domain.points_from_indices(
         [0, 1],
         component=phx.domain.BoundaryNodes([1]),
-        structure=phx.domain.ProductStructure((("graph",),)),
+        structure=phx.domain.SampleLayout((("graph",),)),
     )
     model = phx.graph.GraphMapFeatures(embed_node_fn=lambda nodes: nodes + 1.0)
     u = domain.GraphModel(model)
@@ -138,7 +134,7 @@ def test_graph_dataset_domain_graph_model_accepts_edge_input_fn():
     batch = domain.points_from_indices(
         [0, 1],
         component=phx.domain.BoundaryNodes([1]),
-        structure=phx.domain.ProductStructure((("graph",),)),
+        structure=phx.domain.SampleLayout((("graph",),)),
     )
 
     @domain.Function("graph")
@@ -165,7 +161,7 @@ def test_graph_dataset_domain_layout_packs_graph_but_exposes_real_entities():
     batch = domain.points_from_indices(
         [0, 1],
         component=phx.domain.Nodes(),
-        structure=phx.domain.ProductStructure((("graph",),)),
+        structure=phx.domain.SampleLayout((("graph",),)),
     )
 
     assert domain.layout is not None
@@ -187,7 +183,7 @@ def test_graph_dataset_domain_layout_preserves_graph_operator_results():
     batch = domain.points_from_indices(
         [0, 1],
         component=phx.domain.EdgeSet([0]),
-        structure=phx.domain.ProductStructure((("graph",),)),
+        structure=phx.domain.SampleLayout((("graph",),)),
     )
 
     @domain.Function("graph")
@@ -204,7 +200,7 @@ def test_graph_dataset_domain_layout_preserves_graph_model_results():
     batch = domain.points_from_indices(
         [0, 1],
         component=phx.domain.BoundaryNodes([1]),
-        structure=phx.domain.ProductStructure((("graph",),)),
+        structure=phx.domain.SampleLayout((("graph",),)),
     )
 
     class AddValidNodeMask:
@@ -226,7 +222,7 @@ def test_graph_dataset_domain_layout_rejects_oversized_sample():
         domain.points_from_indices(
             [0, 1],
             component=phx.domain.Nodes(),
-            structure=phx.domain.ProductStructure((("graph",),)),
+            structure=phx.domain.SampleLayout((("graph",),)),
         )
     except ValueError as exc:
         assert "max_nodes" in str(exc)

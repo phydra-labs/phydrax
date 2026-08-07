@@ -16,8 +16,7 @@ def _constant_residual_constraint(value):
         component=time.component(),
         operator=lambda _field: residual,
         constraint_vars="u",
-        num_points=16,
-        structure=phx.domain.ProductStructure((("t",),)),
+        sampling=phx.domain.PointSampling(16, layout=phx.domain.SampleLayout((("t",),))),
         reduction="mean",
     )
     return time, constraint

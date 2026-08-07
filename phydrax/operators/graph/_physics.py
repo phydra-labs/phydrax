@@ -7,7 +7,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from ...domain._function import DomainFunction
+from phydrax.domain import DomainFunction
+
 from ._ops import graph_divergence, graph_incidence_laplacian
 
 

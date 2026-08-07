@@ -9,23 +9,23 @@ from typing import Any, Literal
 
 from jaxtyping import ArrayLike
 
-from ..domain._components import (
+from phydrax.domain import (
+    ComponentSum,
     DomainComponent,
-    DomainComponentUnion,
+    DomainFunction,
     Fixed,
     FixedEnd,
     FixedStart,
+    SamplingPlan,
 )
-from ..domain._function import DomainFunction
-from ..domain._structure import ProductStructure
+
 from ..operators.differential._domain_ops import dt_n
 from ._functional import FunctionalConstraint
 from ._interpolate import idw_interpolant
 from ._pointset import PointSetConstraint
-from ._sampling_spec import SamplingNumPoints
 
 
-def _value_deps(component: DomainComponent | DomainComponentUnion, /) -> tuple[str, ...]:
+def _value_deps(component: DomainComponent | ComponentSum, /) -> tuple[str, ...]:
     if isinstance(component, DomainComponent):
         return _non_fixed_labels(component)
     return component.domain.labels
@@ -33,7 +33,7 @@ def _value_deps(component: DomainComponent | DomainComponentUnion, /) -> tuple[s
 
 def _coerce_value(
     value: Any,
-    component: DomainComponent | DomainComponentUnion,
+    component: DomainComponent | ComponentSum,
     /,
 ) -> DomainFunction | ArrayLike:
     if isinstance(value, DomainFunction):
@@ -49,14 +49,14 @@ def _non_fixed_labels(component: DomainComponent, /) -> tuple[str, ...]:
     fixed = {
         lbl
         for lbl in component.domain.labels
-        if isinstance(component.spec.component_for(lbl), (FixedStart, FixedEnd, Fixed))
+        if isinstance(component.spec.selection_for(lbl), (FixedStart, FixedEnd, Fixed))
     }
     return tuple(lbl for lbl in component.domain.labels if lbl not in fixed)
 
 
 def ContinuousInitialConstraint(
     constraint_var: str,
-    component: DomainComponent | DomainComponentUnion,
+    component: DomainComponent | ComponentSum,
     /,
     *,
     evolution_var: str = "t",
@@ -64,10 +64,7 @@ def ContinuousInitialConstraint(
     time_derivative_order: int = 0,
     mode: Literal["reverse", "forward"] = "reverse",
     time_derivative_backend: Literal["ad", "jet"] = "ad",
-    num_points: SamplingNumPoints,
-    structure: ProductStructure,
-    dense_structure: ProductStructure | None = None,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -92,18 +89,13 @@ def ContinuousInitialConstraint(
     - `time_derivative_order`: Derivative order $n$ for $\partial^n/\partial t^n$.
     - `mode`: Differentiation mode (`"reverse"` or `"forward"`).
     - `time_derivative_backend`: Backend for time derivatives (`"ad"` or `"jet"`).
-    - `num_points`: Sampling spec. Accepts dense counts (`int` / `tuple[int, ...]`),
-      coord-separable mappings (e.g. `{"x": 64}`), or mixed forms
-      `(dense_num_points, coord_map)`.
-    - `structure`: A `ProductStructure` describing how variables are sampled/blocked.
-    - `dense_structure`: Optional dense structure used when sampling produces dense batches.
-    - `sampler`: Sampling scheme (e.g. `"latin_hypercube"`).
+    - `sampling`: Typed point or coordinate-grid sampling plan.
     - `weight`: Scalar multiplier applied to this term.
     - `label`: Optional label for logging.
     - `over`: Optional subset of labels to reduce/integrate over.
     - `reduction`: `"mean"` or `"integral"`.
     """
-    if isinstance(component, DomainComponentUnion):
+    if isinstance(component, ComponentSum):
         raise TypeError(
             "ContinuousInitialConstraint requires a DomainComponent, not a union."
         )
@@ -111,7 +103,7 @@ def ContinuousInitialConstraint(
         raise KeyError(
             f"Label {evolution_var!r} not in domain {component.domain.labels}."
         )
-    if not isinstance(component.spec.component_for(evolution_var), FixedStart):
+    if not isinstance(component.spec.selection_for(evolution_var), FixedStart):
         raise ValueError(
             "ContinuousInitialConstraint requires a component with "
             f"{evolution_var!r}: FixedStart()."
@@ -139,10 +131,7 @@ def ContinuousInitialConstraint(
         component=component,
         operator=operator,
         constraint_vars=constraint_var,
-        num_points=num_points,
-        structure=structure,
-        dense_structure=dense_structure,
-        sampler=sampler,
+        sampling=sampling,
         weight=weight,
         label=label,
         over=over,
@@ -152,7 +141,7 @@ def ContinuousInitialConstraint(
 
 def DiscreteInitialConstraint(
     constraint_var: str,
-    component: DomainComponent | DomainComponentUnion,
+    component: DomainComponent | ComponentSum,
     /,
     *,
     evolution_var: str = "t",
@@ -195,7 +184,7 @@ def DiscreteInitialConstraint(
     - `weight`: Scalar multiplier applied to this term.
     - `reduction`: `"mean"` or `"sum"`.
     """
-    if isinstance(component, DomainComponentUnion):
+    if isinstance(component, ComponentSum):
         raise TypeError(
             "DiscreteInitialConstraint requires a DomainComponent, not a union."
         )
@@ -203,7 +192,7 @@ def DiscreteInitialConstraint(
         raise KeyError(
             f"Label {evolution_var!r} not in domain {component.domain.labels}."
         )
-    if not isinstance(component.spec.component_for(evolution_var), FixedStart):
+    if not isinstance(component.spec.selection_for(evolution_var), FixedStart):
         raise ValueError(
             "DiscreteInitialConstraint requires a component with "
             f"{evolution_var!r}: FixedStart()."

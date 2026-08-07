@@ -14,17 +14,15 @@ import jax.numpy as jnp
 from jaxtyping import Array, Key
 from opt_einsum import contract
 
+from phydrax.domain import GridBatch, PointBatch
+
 from ...._doc import DOC_KEY0
 from ...._frozendict import frozendict
 from ...._strict import StrictModule
-from ....domain._structure import CoordSeparableBatch, PointsBatch
 from ..._utils import _get_size, _identity
 from .._utils import _contract_str, _stack_separable
-from ..core._base import (
-    _AbstractBaseModel,
-    _AbstractStructuredInputModel,
-    DomainInputMode,
-)
+from ..core._base import _AbstractBaseModel, _AbstractStructuredInputModel
+from ..core._binding import ModelBinding
 from ..core._keys import EvalKey, split_eval_key
 from ..core._scan_utils import (
     pack_scan_modules,
@@ -119,9 +117,7 @@ class LatentContractionModel(_AbstractStructuredInputModel):
 
     _factor_sizes: tuple[int, ...]
     _total_in_size: int
-    _supports_blockwise_input: ClassVar[bool] = True
-    _supports_axis_batch_input: bool  # ty: ignore[invalid-attribute-override]
-    _warn_on_auto_fallback: bool  # ty: ignore[invalid-attribute-override]
+    _input_binding: ModelBinding  # ty: ignore[invalid-attribute-override]
     _scan_enabled_aligned: bool
     _scan_static_aligned: object | None
     _scan_factor_size_uniform: bool
@@ -188,8 +184,13 @@ class LatentContractionModel(_AbstractStructuredInputModel):
         self.execution_policy = (
             LatentExecutionPolicy() if execution_policy is None else execution_policy
         )
-        self._warn_on_auto_fallback = self.execution_policy.fallback == "warn"
-        self._supports_axis_batch_input = self.factor_inputs is not None
+        if self.factor_inputs is not None:
+            self._input_binding = ModelBinding.axis("structured")
+        else:
+            self._input_binding = ModelBinding.blockwise(
+                "structured",
+                warn_on_fallback=self.execution_policy.fallback == "warn",
+            )
         self.scan = bool(scan)
         self._scan_enabled_aligned = False
         self._scan_static_aligned = None
@@ -251,7 +252,7 @@ class LatentContractionModel(_AbstractStructuredInputModel):
                 f"requested layout={self.execution_policy.layout!r}. Falling back to auto."
             )
         if isinstance(x, Mapping):
-            factor_inputs = [x[name] for name in self.factor_names]  # ty: ignore
+            factor_inputs = [x[name] for name in self.factor_names]
             return self._call_factorwise(factor_inputs, key=key)
         if isinstance(x, tuple):
             if len(self.factor_models) == 1:
@@ -287,7 +288,7 @@ class LatentContractionModel(_AbstractStructuredInputModel):
 
     def __call_axis_batch__(
         self,
-        batch: PointsBatch | CoordSeparableBatch,
+        batch: PointBatch | GridBatch,
         deps: tuple[str, ...],
         /,
         *,
@@ -300,10 +301,10 @@ class LatentContractionModel(_AbstractStructuredInputModel):
             raise ValueError(
                 "LatentContractionModel axis-batch execution requires factor_inputs."
             )
-        if not isinstance(batch, (PointsBatch, CoordSeparableBatch)):
+        if not isinstance(batch, (PointBatch, GridBatch)):
             raise TypeError(
-                "LatentContractionModel axis-batch execution requires a PointsBatch "
-                "or CoordSeparableBatch."
+                "LatentContractionModel axis-batch execution requires a PointBatch "
+                "or GridBatch."
             )
 
         covered: set[str] = set()
@@ -342,7 +343,7 @@ class LatentContractionModel(_AbstractStructuredInputModel):
 
     def _axis_factor_values(
         self,
-        batch: PointsBatch | CoordSeparableBatch,
+        batch: PointBatch | GridBatch,
         labels: tuple[str, ...],
         /,
     ) -> tuple[Array | tuple[Array, ...], tuple[str, ...]]:
@@ -809,8 +810,7 @@ class Separable(_AbstractStructuredInputModel):
 
     in_size: int | Literal["scalar"]
     out_size: int | Literal["scalar"]
-    _domain_input_mode: ClassVar[DomainInputMode] = "flat"
-    _supports_blockwise_input: ClassVar[bool] = True
+    _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise("flat")
 
     latent_size: int
     models: tuple[_AbstractBaseModel, ...]

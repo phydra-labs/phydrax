@@ -96,7 +96,10 @@ class OperatorDomainLayout(StrictModule, NonTrainableState):
         """Restore one channel-last operator array to its domain field layout."""
         array = jnp.asarray(values)
         leading_rank = len(self.leading_shape)
-        if array.ndim < leading_rank or tuple(array.shape[:leading_rank]) != self.leading_shape:
+        if (
+            array.ndim < leading_rank
+            or tuple(array.shape[:leading_rank]) != self.leading_shape
+        ):
             raise ValueError(
                 f"Operator output must start with shape {self.leading_shape}; "
                 f"got {array.shape}."
@@ -142,9 +145,13 @@ class OperatorDomainView(StrictModule, NonTrainableState):
             )
         for name, layout in frozen.items():
             if not isinstance(layout, OperatorDomainLayout):
-                raise TypeError("Operator domain layouts must be OperatorDomainLayout values.")
+                raise TypeError(
+                    "Operator domain layouts must be OperatorDomainLayout values."
+                )
             if layout.query_name != name:
-                raise ValueError("Operator domain layout names must match their mapping keys.")
+                raise ValueError(
+                    "Operator domain layout names must match their mapping keys."
+                )
             expected = batch.case_shape + batch.query(name).sample_shape
             if layout.leading_shape != expected:
                 raise ValueError(
@@ -179,10 +186,7 @@ class OperatorDomainView(StrictModule, NonTrainableState):
     ) -> frozendict[str, cx.Field]:
         """Restore every named prediction field without dropping query identity."""
         return frozendict(
-            {
-                name: self.restore_field(prediction, name)
-                for name in prediction.fields
-            }
+            {name: self.restore_field(prediction, name) for name in prediction.fields}
         )
 
     def compatibility(self, model: Any, /, **kwargs: Any):
@@ -231,18 +235,18 @@ def _point_geometry(
     sample_axes = tuple(dim for dim in named if dim not in case_axes)
     if len(sample_axes) != 1:
         raise ValueError(
-            "PointsBatch operator coordinates require exactly one named sample axis."
+            "PointBatch operator coordinates require exactly one named sample axis."
         )
     sample_axis = sample_axes[0]
     unnamed_positions = tuple(index for index, dim in enumerate(dims) if dim is None)
     if len(unnamed_positions) > 1:
         raise ValueError("Point coordinates may have only one coordinate-channel axis.")
-    named_positions = {
-        dim: index for index, dim in enumerate(dims) if dim is not None
-    }
-    permutation = tuple(
-        named_positions[axis] for axis in case_axes if axis in named_positions
-    ) + (named_positions[sample_axis],) + unnamed_positions
+    named_positions = {dim: index for index, dim in enumerate(dims) if dim is not None}
+    permutation = (
+        tuple(named_positions[axis] for axis in case_axes if axis in named_positions)
+        + (named_positions[sample_axis],)
+        + unnamed_positions
+    )
     array = jnp.asarray(field.data, dtype=float)
     if permutation != tuple(range(array.ndim)):
         array = jnp.transpose(array, permutation)
@@ -252,9 +256,7 @@ def _point_geometry(
         if axis in named_positions
     )
     target_cases = (
-        present_cases
-        if case_shape is None
-        else tuple(int(size) for size in case_shape)
+        present_cases if case_shape is None else tuple(int(size) for size in case_shape)
     )
     expanded_cases = tuple(
         int(field.data.shape[named_positions[axis]]) if axis in named_positions else 1
@@ -264,9 +266,7 @@ def _point_geometry(
     coordinate_dimension = 1 if not unnamed_positions else int(array.shape[-1])
     if coordinate_dimension <= 0:
         raise ValueError("Point coordinates require a positive coordinate dimension.")
-    coordinates = array.reshape(
-        expanded_cases + (sample_size, coordinate_dimension)
-    )
+    coordinates = array.reshape(expanded_cases + (sample_size, coordinate_dimension))
     coordinates = jnp.broadcast_to(
         coordinates,
         target_cases + (sample_size, coordinate_dimension),
@@ -285,12 +285,12 @@ def operator_domain_view_from_points(
     masks: Mapping[str, Any] | None = None,
     case_axes: Sequence[str] = (),
 ) -> OperatorDomainView:
-    """Adapt a ``PointsBatch`` while retaining reversible named domain axes."""
+    """Adapt a ``PointBatch`` while retaining reversible named domain axes."""
 
-    from ....domain._structure import PointsBatch
+    from phydrax.domain import PointBatch
 
-    if not isinstance(batch, PointsBatch):
-        raise TypeError("operator_domain_view_from_points requires a PointsBatch.")
+    if not isinstance(batch, PointBatch):
+        raise TypeError("operator_domain_view_from_points requires a PointBatch.")
     cases = tuple(str(axis) for axis in case_axes)
     if len(set(cases)) != len(cases):
         raise ValueError("case_axes must be unique.")
@@ -341,7 +341,9 @@ def operator_domain_view_from_points(
                 case_shape=case_shape,
             )
             if source_cases != case_shape:
-                raise ValueError("Source and query point geometries must share case axes.")
+                raise ValueError(
+                    "Source and query point geometries must share case axes."
+                )
             geometry = FunctionSamples(
                 values=None,
                 coordinates=coordinates,
@@ -419,7 +421,7 @@ def _coord_query(batch: Any, labels: Sequence[str], /) -> FunctionSamples:
     )
 
 
-def operator_domain_view_from_coord_separable(
+def operator_domain_view_from_grid(
     batch: Any,
     /,
     *,
@@ -427,15 +429,13 @@ def operator_domain_view_from_coord_separable(
     queries: Mapping[str, Sequence[str]],
     input_queries: Mapping[str, str] | None = None,
 ) -> OperatorDomainView:
-    """Adapt a ``CoordSeparableBatch`` without collapsing tensor-product axes."""
-    from ....domain._structure import CoordSeparableBatch
+    """Adapt a ``GridBatch`` without collapsing tensor-product axes."""
+    from phydrax.domain import GridBatch
 
-    if not isinstance(batch, CoordSeparableBatch):
-        raise TypeError(
-            "operator_domain_view_from_coord_separable requires a CoordSeparableBatch."
-        )
+    if not isinstance(batch, GridBatch):
+        raise TypeError("operator_domain_view_from_grid requires a GridBatch.")
     if not inputs or not queries:
-        raise ValueError("Coord-separable operator views require inputs and queries.")
+        raise ValueError("Grid operator views require inputs and queries.")
     case_axes = tuple(batch.dense_structure.axis_names or ())
     query_samples = {
         str(name): _coord_query(batch, tuple(str(label) for label in labels))
@@ -464,9 +464,7 @@ def operator_domain_view_from_coord_separable(
             sample_rank = len(candidate.sample_shape)
             value_sample_shape = tuple(
                 int(size)
-                for size in values.shape[
-                    len(case_shape) : len(case_shape) + sample_rank
-                ]
+                for size in values.shape[len(case_shape) : len(case_shape) + sample_rank]
             )
             if value_sample_shape == candidate.sample_shape:
                 query_name = candidate_name
@@ -503,7 +501,9 @@ def _field_leaves(value: Any, /) -> tuple[cx.Field, ...]:
         )
     )
     if not leaves or any(not isinstance(leaf, cx.Field) for leaf in leaves):
-        raise TypeError("Operator domain payloads must be PyTrees of coordax.Field leaves.")
+        raise TypeError(
+            "Operator domain payloads must be PyTrees of coordax.Field leaves."
+        )
     return leaves
 
 
@@ -522,9 +522,7 @@ def _payload_feature_array(
     for field in _field_leaves(value):
         array = jnp.asarray(field.data)
         if array.ndim < rank:
-            raise ValueError(
-                f"{name} leaves require at least {rank} leading dimensions."
-            )
+            raise ValueError(f"{name} leaves require at least {rank} leading dimensions.")
         current = tuple(int(size) for size in array.shape[:rank])
         if leading_shape is None:
             leading_shape = current
@@ -581,22 +579,23 @@ def _case_value_array(
         named_positions = {
             dim: index for index, dim in enumerate(dims) if dim is not None
         }
-        unnamed_positions = tuple(
-            index for index, dim in enumerate(dims) if dim is None
+        unnamed_positions = tuple(index for index, dim in enumerate(dims) if dim is None)
+        permutation = (
+            tuple(named_positions[axis] for axis in case_axes if axis in named_positions)
+            + unnamed_positions
         )
-        permutation = tuple(
-            named_positions[axis] for axis in case_axes if axis in named_positions
-        ) + unnamed_positions
         array = jnp.asarray(field.data)
         if permutation != tuple(range(array.ndim)):
             array = jnp.transpose(array, permutation)
         present_shape = {
             axis: int(field.data.shape[named_positions[axis]]) for axis in named
         }
-        trailing_shape = tuple(int(array.shape[index]) for index in range(len(named), array.ndim))
-        expanded_shape = tuple(
-            present_shape.get(axis, 1) for axis in case_axes
-        ) + trailing_shape
+        trailing_shape = tuple(
+            int(array.shape[index]) for index in range(len(named), array.ndim)
+        )
+        expanded_shape = (
+            tuple(present_shape.get(axis, 1) for axis in case_axes) + trailing_shape
+        )
         array = array.reshape(expanded_shape)
         array = jnp.broadcast_to(array, case_shape + trailing_shape)
         parts.append(array.reshape(case_shape + (-1,)))
@@ -630,10 +629,10 @@ def operator_domain_view_from_ragged_series(
 ) -> OperatorDomainView:
     """Adapt padded or subsampled ragged series with exact masks and weights."""
 
-    from ....domain._structure import PointsBatch
+    from phydrax.domain import PointBatch
 
-    if not isinstance(batch, PointsBatch):
-        raise TypeError("Ragged-series operator views require a PointsBatch.")
+    if not isinstance(batch, PointBatch):
+        raise TypeError("Ragged-series operator views require a PointBatch.")
     label_name = str(label)
     if label_name not in batch.points:
         raise KeyError(f"Unknown ragged-series label {label_name!r}.")
@@ -727,11 +726,10 @@ def operator_domain_view_from_trajectory(
 ) -> OperatorDomainView:
     """Group paired trajectory observations into reversible ragged operator cases."""
 
-    from ....domain._structure import PointsBatch
-    from ....domain._trajectory_dataset import TRAJECTORY_CASE_INDEX_KEY
+    from phydrax.domain import PointBatch, TRAJECTORY_CASE_INDEX_KEY
 
-    if not isinstance(batch, PointsBatch):
-        raise TypeError("Trajectory operator views require a PointsBatch.")
+    if not isinstance(batch, PointBatch):
+        raise TypeError("Trajectory operator views require a PointBatch.")
     if not inputs:
         raise ValueError("Trajectory operator views require at least one input.")
     time_label = str(query_label)
@@ -741,7 +739,7 @@ def operator_domain_view_from_trajectory(
     if axis is None:
         raise ValueError("Trajectory queries require one paired observation axis.")
     if TRAJECTORY_CASE_INDEX_KEY not in batch.points:
-        raise TypeError("PointsBatch does not carry trajectory case indices.")
+        raise TypeError("PointBatch does not carry trajectory case indices.")
 
     case_ids = np.asarray(
         jax.device_get(_field(batch.points, TRAJECTORY_CASE_INDEX_KEY).data),
@@ -764,8 +762,8 @@ def operator_domain_view_from_trajectory(
         count = int(selected_positions.size)
         first_positions[case_index] = selected_positions[0]
         positions[case_index, :count] = selected_positions
-        restore_slots[selected_positions] = (
-            case_index * width + np.arange(count, dtype=np.int32)
+        restore_slots[selected_positions] = case_index * width + np.arange(
+            count, dtype=np.int32
         )
 
     safe_positions = jnp.maximum(jnp.asarray(positions, dtype=jnp.int32), 0)
@@ -857,7 +855,7 @@ def operator_domain_view_from_graph(
 ) -> OperatorDomainView:
     """Adapt a graph entity batch to padded per-graph operator cases."""
 
-    from ....domain.graph._batch import (
+    from phydrax.domain.graph import (
         GRAPH_ENTITY_INDEX_KEY,
         GRAPH_GRAPH_INDEX_KEY,
         GraphBatch,
@@ -913,7 +911,9 @@ def operator_domain_view_from_graph(
         dtype=np.int64,
     )
     if entity_indices.ndim != 1 or graph_ids.shape != entity_indices.shape:
-        raise ValueError("Graph entity and graph indices must be aligned rank-one arrays.")
+        raise ValueError(
+            "Graph entity and graph indices must be aligned rank-one arrays."
+        )
     if entity_indices.size == 0:
         raise ValueError("Graph operator views require at least one selected entity.")
     if np.any(graph_ids < 0) or np.any(graph_ids >= graph_count):
@@ -925,7 +925,9 @@ def operator_domain_view_from_graph(
     )
     local_entities = entity_indices - offsets[graph_ids]
     if np.any(local_entities < 0) or np.any(local_entities >= counts[graph_ids]):
-        raise ValueError("GraphBatch entity indices do not belong to their declared graphs.")
+        raise ValueError(
+            "GraphBatch entity indices do not belong to their declared graphs."
+        )
     selected_counts = np.bincount(graph_ids, minlength=graph_count)
     width = int(selected_counts.max(initial=0))
     positions = np.full((graph_count, width), -1, dtype=np.int64)
@@ -948,8 +950,8 @@ def operator_domain_view_from_graph(
             local_entities[selected_positions],
             -1,
         )
-        restore_slots[selected_positions] = (
-            graph_index * width + np.arange(count, dtype=np.int32)
+        restore_slots[selected_positions] = graph_index * width + np.arange(
+            count, dtype=np.int32
         )
 
     payload = _graph_payload_array(batch.points[batch.graph_label], graph_axis)
@@ -966,9 +968,7 @@ def operator_domain_view_from_graph(
             raise KeyError(f"Unknown GraphBatch query label {label_name!r}.")
         query_values = _graph_payload_array(batch.points[label_name], graph_axis)
         grouped_query = query_values[safe_positions]
-        coordinate_parts.append(
-            jnp.where(occupied[..., None], grouped_query, 0)
-        )
+        coordinate_parts.append(jnp.where(occupied[..., None], grouped_query, 0))
     grouped_coordinates = jnp.concatenate(tuple(coordinate_parts), axis=-1)
     grouped_mask = occupied & jnp.asarray(
         np.where(positions >= 0, active[np.maximum(positions, 0)], False)
@@ -986,9 +986,7 @@ def operator_domain_view_from_graph(
     )
     topology = broadcast_operator_topology(base_topology, case_shape)
     base_payload = grouped_payload if graph_count > 1 else grouped_payload[0]
-    base_coordinates = (
-        grouped_coordinates if graph_count > 1 else grouped_coordinates[0]
-    )
+    base_coordinates = grouped_coordinates if graph_count > 1 else grouped_coordinates[0]
     base_mask = grouped_mask if graph_count > 1 else grouped_mask[0]
     coordinate_dimension = int(base_coordinates.shape[-1])
     coordinates = jnp.broadcast_to(
@@ -1040,9 +1038,7 @@ def operator_domain_view_from_graph(
                     grouped_values,
                     0,
                 )
-                base_values = (
-                    grouped_values if graph_count > 1 else grouped_values[0]
-                )
+                base_values = grouped_values if graph_count > 1 else grouped_values[0]
                 value_dimension = int(base_values.shape[-1])
                 values = jnp.broadcast_to(
                     base_values,
@@ -1071,11 +1067,9 @@ def operator_domain_view_from_graph(
         case_shape=case_shape,
     )
     case_count = prod(other_shape) if other_shape else 1
-    restore_indices = (
-        jnp.arange(case_count, dtype=jnp.int32).reshape(other_shape + (1,))
-        * (graph_count * width)
-        + jnp.asarray(restore_slots, dtype=jnp.int32)
-    )
+    restore_indices = jnp.arange(case_count, dtype=jnp.int32).reshape(
+        other_shape + (1,)
+    ) * (graph_count * width) + jnp.asarray(restore_slots, dtype=jnp.int32)
     current_axes = other_axes + (graph_axis,)
     permutation = tuple(current_axes.index(axis) for axis in original_axes)
     if permutation != tuple(range(len(permutation))):
@@ -1118,7 +1112,7 @@ __all__ = [
     "OperatorDomainKind",
     "OperatorDomainLayout",
     "OperatorDomainView",
-    "operator_domain_view_from_coord_separable",
+    "operator_domain_view_from_grid",
     "operator_domain_view_from_graph",
     "operator_domain_view_from_points",
     "operator_domain_view_from_ragged_series",

@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import pytest
 
 from phydrax._frozendict import frozendict
-from phydrax.domain import DomainFunction, TimeInterval
+from phydrax.domain import TimeInterval
 from phydrax.operators.differential import curl
 
 
@@ -49,9 +49,9 @@ def test_curl_spacetime_depends_on_t(sample_batch, box3d):
     assert jnp.allclose(out_b, expected)
 
 
-def test_curl_coord_separable(sample_coord_separable, box3d):
+def test_curl_coord_separable(sample_grid, box3d):
     component = box3d.component()
-    batch = sample_coord_separable(component, {"x": (3, 4, 2)}, dense_blocks=(), key=0)
+    batch = sample_grid(component, {"x": (3, 4, 2)}, dense_blocks=(), key=0)
 
     @box3d.Function("x")
     def u(x):
@@ -67,11 +67,8 @@ def test_curl_coord_separable(sample_coord_separable, box3d):
 
 
 def test_curl_preserves_metadata(box3d):
-    u = DomainFunction(
-        domain=box3d,
-        deps=("x",),
-        func=lambda x: jnp.array([x[1], -x[0], 0.0]),
-        metadata={"k": 1},
+    u = box3d.Function("x")(lambda x: jnp.array([x[1], -x[0], 0.0])).with_metadata(
+        **{"k": 1}
     )
     assert curl(u, var="x").metadata == u.metadata
 

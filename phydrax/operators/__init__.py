@@ -21,7 +21,9 @@ structure across dense and coord-separable batches.
     ```python
     import phydrax as phx
 
-    geom = phx.domain.Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):

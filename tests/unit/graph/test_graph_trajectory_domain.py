@@ -51,7 +51,7 @@ def test_graph_trajectory_points_from_case_time_repeats_time_over_nodes():
         [0, 1],
         [0.5, 1.0],
         component=component,
-        structure=phx.domain.ProductStructure((("graph", "t"),)),
+        structure=phx.domain.SampleLayout((("graph", "t"),)),
         time_indices=jnp.array([1, 2], dtype=jnp.int32),
     )
 
@@ -72,7 +72,7 @@ def test_graph_trajectory_domain_function_evaluates_graph_and_time():
         [0, 1],
         [0.5, 1.0],
         component=component,
-        structure=phx.domain.ProductStructure((("graph", "t"),)),
+        structure=phx.domain.SampleLayout((("graph", "t"),)),
     )
 
     @domain.Function("graph", "t")
@@ -89,7 +89,7 @@ def test_graph_trajectory_gradient_remaps_time_from_edges_to_nodes():
         [0, 1],
         [0.5, 1.0],
         component=component,
-        structure=phx.domain.ProductStructure((("graph", "t"),)),
+        structure=phx.domain.SampleLayout((("graph", "t"),)),
     )
 
     @domain.Function("graph", "t")
@@ -105,20 +105,16 @@ def test_graph_trajectory_constraint_samples_fixed_start_edges():
     component = domain.component(
         {"graph": phx.domain.EdgeSet([0]), "t": phx.domain.FixedStart()}
     )
-    structure = phx.domain.ProductStructure((("graph", "t"),))
+    structure = phx.domain.SampleLayout((("graph", "t"),))
 
     @domain.Function("graph", "t")
     def u(node, t):
         del node, t
         return 2.0
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=component,
-        operator=phx.operators.graph_gradient,
-        constraint_vars="u",
-        num_points=2,
-        structure=structure,
-    )
+    constraint = phx.constraints.FunctionalConstraint.from_operator(component=component,
+    operator=phx.operators.graph_gradient,
+    constraint_vars="u", sampling=phx.domain.PointSampling(2, layout=structure), )
 
     assert constraint.loss({"u": u}, key=jr.key(0)) < 1e-12
 
@@ -132,7 +128,7 @@ def test_graph_trajectory_graph_model_input_fn_uses_time_on_full_node_view():
         [0, 1],
         [0.5, 1.0],
         component=component,
-        structure=phx.domain.ProductStructure((("graph", "t"),)),
+        structure=phx.domain.SampleLayout((("graph", "t"),)),
     )
 
     @domain.Function("graph", "t")
@@ -154,7 +150,7 @@ def test_graph_trajectory_graph_model_edge_input_fn_uses_time_on_full_edge_view(
         [0, 1],
         [0.5, 1.0],
         component=component,
-        structure=phx.domain.ProductStructure((("graph", "t"),)),
+        structure=phx.domain.SampleLayout((("graph", "t"),)),
     )
 
     @domain.Function("graph", "t")
@@ -182,7 +178,7 @@ def test_graph_trajectory_layout_packs_topology_but_exposes_real_time_rows():
         [0, 1],
         [0.5, 1.0],
         component=component,
-        structure=phx.domain.ProductStructure((("graph", "t"),)),
+        structure=phx.domain.SampleLayout((("graph", "t"),)),
     )
 
     assert batch.graph.node_mask is not None

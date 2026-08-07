@@ -7,22 +7,18 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from phydrax.domain import Domain, DomainFunction
+
 from .._strict import StrictModule
-from ..domain._domain import _AbstractDomain
-from ..domain._function import _drop_derivative_hook_metadata, DomainFunction
 
 
-def _domains_compatible(a: _AbstractDomain, b: _AbstractDomain, /) -> bool:
-    if a.labels != b.labels:
-        return False
-    return all(
-        a.factor(label).var_dim == b.factor(label).var_dim for label in a.labels
-    )
+def _domains_compatible(a: Domain, b: Domain, /) -> bool:
+    return a.schema_compatible(b)
 
 
 def _join_target_domains(
     substitutions: Mapping[str, DomainFunction], /
-) -> _AbstractDomain:
+) -> Domain:
     iterator = iter(substitutions.values())
     try:
         first = next(iterator)
@@ -82,7 +78,7 @@ def pullback(
     substitutions: Mapping[str, DomainFunction],
     /,
     *,
-    domain: _AbstractDomain | None = None,
+    domain: Domain | None = None,
 ) -> DomainFunction:
     r"""Compose a domain function with labeled substitution fields.
 
@@ -134,9 +130,8 @@ def pullback(
                         f"pullback substitution {label!r} uses target label "
                         f"{replacement_label!r}, which is absent from domain {target.labels!r}."
                     )
-                if (
-                    target.factor(replacement_label).var_dim
-                    != replacement.domain.factor(replacement_label).var_dim
+                if not target.coordinate(replacement_label).compatible(
+                    replacement.domain.coordinate(replacement_label)
                 ):
                     raise ValueError(
                         f"pullback substitution {label!r} has an incompatible factor "
@@ -189,7 +184,7 @@ def pullback(
             replacement_positions=tuple(replacement_positions),
             passthrough_positions=tuple(passthrough_positions),
         ),
-        metadata=_drop_derivative_hook_metadata(f.metadata),
+        metadata=f.metadata,
     )
 
 

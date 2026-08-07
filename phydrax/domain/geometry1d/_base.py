@@ -7,10 +7,10 @@ from typing import Literal
 
 from jaxtyping import Array
 
-from .._base import _AbstractGeometry
+from .._base import AbstractGeometry
 
 
-class _AbstractGeometry1D(_AbstractGeometry):
+class _AbstractGeometry1D(AbstractGeometry):
     """Abstract 1D geometry."""
 
     @property

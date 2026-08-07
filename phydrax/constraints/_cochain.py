@@ -13,25 +13,20 @@ import coordax as cx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import BatchEvaluator, DomainComponent, DomainFunction, PointSampling
+from phydrax.domain.graph import (
+    cochain_field_spec,
+    CochainCells,
+    GRAPH_ENTITY_INDEX_KEY,
+    GRAPH_GRAPH_INDEX_KEY,
+    graph_trajectory_default_quadrature_total_weight,
+    GraphBatch,
+    with_cochain_field_spec,
+)
+
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from ..domain._components import DomainComponent
-from ..domain._function import BatchAwareCallable, DomainFunction
-from ..domain._structure import ProductStructure
-from ..domain.graph._batch import (
-    GRAPH_ENTITY_INDEX_KEY,
-    GRAPH_GRAPH_INDEX_KEY,
-    GraphBatch,
-)
-from ..domain.graph._cochain import (
-    _attach_cochain_field_spec,
-    cochain_field_spec,
-)
-from ..domain.graph._components import CochainCells
-from ..domain.graph._trajectory import (
-    graph_trajectory_default_quadrature_total_weight,
-)
 from ..graph import cochain_metric_reduce, CochainMetricReduction, CochainResidualProgram
 from ..nn.models.wrappers._graph import _full_node_batch
 from ._base import AbstractSamplingConstraint
@@ -42,7 +37,7 @@ def _component_degree(component: DomainComponent, /) -> int:
         selector.degree
         for label in component.domain.labels
         if isinstance(
-            selector := component.spec.component_for(label),
+            selector := component.spec.selection_for(label),
             CochainCells,
         )
     )
@@ -99,7 +94,7 @@ def _trajectory_segment_weights(
     return values * float(values.shape[0])
 
 
-class _ProgramDomainOutput(StrictModule, BatchAwareCallable):
+class _ProgramDomainOutput(StrictModule, BatchEvaluator):
     program: CochainResidualProgram
     fields: frozendict[str, DomainFunction]
     output_name: str
@@ -199,7 +194,7 @@ def cochain_residual_field(
         func=_ProgramDomainOutput(program, normalized, output_name),
         metadata={},
     )
-    return _attach_cochain_field_spec(result, program.output_specs[output_name])
+    return with_cochain_field_spec(result, program.output_specs[output_name])
 
 
 class CochainResidualConstraint(AbstractSamplingConstraint):
@@ -215,10 +210,7 @@ class CochainResidualConstraint(AbstractSamplingConstraint):
 
     constraint_vars: tuple[str, ...]
     component: DomainComponent
-    structure: ProductStructure
-    dense_structure: None
-    num_points: Any
-    sampler: str
+    sampling: PointSampling
     weight: Array
     label: str | None
     over: None
@@ -233,10 +225,8 @@ class CochainResidualConstraint(AbstractSamplingConstraint):
         *,
         component: DomainComponent,
         residual: Callable[[Mapping[str, DomainFunction]], DomainFunction],
-        num_points: Any,
-        structure: ProductStructure,
+        sampling: PointSampling,
         constraint_vars: Sequence[str] | None = None,
-        sampler: str = "latin_hypercube",
         weight: ArrayLike = 1.0,
         label: str | None = None,
         reduction: CochainMetricReduction = "graph_mean",
@@ -263,10 +253,9 @@ class CochainResidualConstraint(AbstractSamplingConstraint):
 
         self.constraint_vars = () if constraint_vars is None else tuple(constraint_vars)
         self.component = component
-        self.structure = structure
-        self.dense_structure = None
-        self.num_points = num_points
-        self.sampler = str(sampler)
+        if not isinstance(sampling, PointSampling):
+            raise TypeError("CochainResidualConstraint requires PointSampling.")
+        self.sampling = sampling
         self.weight = jnp.asarray(weight, dtype=float)
         self.label = None if label is None else str(label)
         self.over = None
@@ -287,9 +276,7 @@ class CochainResidualConstraint(AbstractSamplingConstraint):
         component: DomainComponent,
         operator: Callable[..., DomainFunction],
         constraint_vars: str | Sequence[str],
-        num_points: Any,
-        structure: ProductStructure,
-        sampler: str = "latin_hypercube",
+        sampling: PointSampling,
         weight: ArrayLike = 1.0,
         label: str | None = None,
         reduction: CochainMetricReduction = "graph_mean",
@@ -309,10 +296,8 @@ class CochainResidualConstraint(AbstractSamplingConstraint):
         return cls(
             component=component,
             residual=residual,
-            num_points=num_points,
-            structure=structure,
+            sampling=sampling,
             constraint_vars=names,
-            sampler=sampler,
             weight=weight,
             label=label,
             reduction=reduction,
@@ -329,9 +314,7 @@ class CochainResidualConstraint(AbstractSamplingConstraint):
         program: CochainResidualProgram,
         field_map: Mapping[str, str],
         output: str,
-        num_points: Any,
-        structure: ProductStructure,
-        sampler: str = "latin_hypercube",
+        sampling: PointSampling,
         weight: ArrayLike = 1.0,
         label: str | None = None,
         reduction: CochainMetricReduction = "graph_mean",
@@ -362,10 +345,8 @@ class CochainResidualConstraint(AbstractSamplingConstraint):
         return cls(
             component=component,
             residual=residual,
-            num_points=num_points,
-            structure=structure,
+            sampling=sampling,
             constraint_vars=constraint_names,
-            sampler=sampler,
             weight=weight,
             label=label,
             reduction=reduction,
@@ -376,12 +357,7 @@ class CochainResidualConstraint(AbstractSamplingConstraint):
 
 
     def _sample_once(self, *, key: Key[Array, ""] = DOC_KEY0) -> GraphBatch:
-        batch = self.component.sample(
-            self.num_points,
-            structure=self.structure,
-            sampler=self.sampler,
-            key=key,
-        )
+        batch = self.component.sample(self.sampling, key=key)
         if not isinstance(batch, GraphBatch):
             raise TypeError("CochainResidualConstraint sampling must return a GraphBatch.")
         return batch

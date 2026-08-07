@@ -6,12 +6,12 @@ For composition/ordering (multi-field dependencies, applying several enforced co
 see [Enforced constraint pipelines](../solver/enforced_constraints.md).
 
 !!! warning
-    Compatibility with coord-separable grids:
+    Compatibility with axis-based grids:
 
     - `enforce_neumann`, `enforce_robin`, `enforce_traction`, and `enforce_sommerfeld` rely on geometry
       boundary normals \(n(x)\) (via \(\partial/\partial n\)) and therefore do **not**
-      support coord-separable (tuple-of-axes) evaluation. Phydrax raises a `ValueError`
-      if you try to evaluate these ansätze on a `CoordSeparableBatch`.
+      support axis-based grid evaluation. PhydraX raises a `ValueError` if you
+      try to evaluate these ansätze on a `GridBatch`.
     - `enforce_dirichlet`, `enforce_initial`, `enforce_blend`,
       `enforce_graph_values`, and `enforce_cochain_values` do not require
       boundary normals and can be used in spectral/FNO-style or graph-batch

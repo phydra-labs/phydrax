@@ -18,8 +18,9 @@ import numpy as np
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
+from phydrax.domain import AxisDiscretization, broadcasted_grid, GridSpec
+
 from .._strict import StrictModule
-from ..domain._grid import AxisDiscretization, broadcasted_grid, GridSpec
 from ..operators.differential._array_ops import (
     _basis_nth_derivative,
     _fd_nth_derivative,
@@ -579,17 +580,18 @@ class TensorGridDiscretization(AbstractSpatialDiscretization):
         out = jnp.zeros_like(array[..., 0])
         for component_index, axis_index in enumerate(selected):
             component = array[..., component_index]
-            if dual and self.basis[axis_index] == "uniform":
+            basis = self.basis[axis_index]
+            if dual and basis == "uniform":
                 spacing = self.axes[axis_index].nodes[1] - self.axes[axis_index].nodes[0]
                 derivative = (
                     component - jnp.roll(component, 1, axis=axis_index)
                 ) / spacing
-            elif dual and self.basis[axis_index] in ("sine", "cosine"):
+            elif dual and basis in ("sine", "cosine"):
                 derivative = _dual_basis_first_derivative(
                     component,
                     self.axes[axis_index].nodes,
                     axis=axis_index,
-                    basis=self.basis[axis_index],
+                    basis=basis,
                 )
             else:
                 derivative = self.partial_derivative(component, axis=axis_index)

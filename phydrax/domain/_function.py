@@ -4,137 +4,28 @@
 
 import operator
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from math import comb
-from typing import Any, Literal
+from typing import Any
 
 import coordax as cx
 import jax
+import jax.core as jax_core
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike, Key, PyTree
+from jaxtyping import Array, ArrayLike, Key
 
-from .._callable import _ensure_special_kwonly_args, _KeyIterAdapter
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._strict import StrictModule
 from .._trainable import is_non_trainable_leaf, is_trainable_leaf, NonTrainableState
-from ._domain import _AbstractDomain
-from ._structure import CoordSeparableBatch, Points, PointsBatch
-
-
-class BatchAwareCallable:
-    """Marker for callables that need the structured batch object during evaluation."""
-
-    def use_batch_call(self) -> bool:
-        return True
-
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        del args, kwargs
-        raise TypeError(
-            "This callable requires structured batch evaluation via __call_batch__."
-        )
-
-    def __call_batch__(
-        self,
-        batch: PointsBatch | CoordSeparableBatch | Any,
-        /,
-        *,
-        key: Key[Array, ""] = DOC_KEY0,
-        **kwargs: Any,
-    ) -> cx.Field:
-        raise NotImplementedError
-
-
-def batch_aware_callable(func: Callable, /) -> BatchAwareCallable | None:
-    """Return the batch-aware callable inside Phydrax's keyword adapter, if present."""
-    inner = func
-    while isinstance(inner, _KeyIterAdapter):
-        inner = inner.func
-    if isinstance(inner, BatchAwareCallable) and inner.use_batch_call():
-        return inner
-    return None
-
-
-def _first_field_leaf(tree: PyTree[Any]) -> cx.Field:
-    leaves = jax.tree_util.tree_leaves(tree, is_leaf=lambda x: isinstance(x, cx.Field))
-    for leaf in leaves:
-        if isinstance(leaf, cx.Field):
-            return leaf
-    raise ValueError("Expected at least one coordax.Field leaf.")
-
-
-def _unwrap_fields_to_data(tree: PyTree[Any]) -> PyTree[Any]:
-    return jax.tree_util.tree_map(
-        lambda x: x.data if isinstance(x, cx.Field) else x,
-        tree,
-        is_leaf=lambda x: isinstance(x, cx.Field),
-    )
-
-
-def _axis_size(points: Mapping[str, PyTree[Any]], axis: str, /) -> int:
-    leaves = jax.tree_util.tree_leaves(points, is_leaf=lambda x: isinstance(x, cx.Field))
-    for leaf in leaves:
-        if not isinstance(leaf, cx.Field):
-            continue
-        if axis in leaf.named_shape:
-            return int(leaf.named_shape[axis])
-    raise ValueError(f"Cannot infer size for axis {axis!r} from points.")
-
-
-def _reorder_named_axes(field: cx.Field, axis_order: tuple[str, ...]) -> cx.Field:
-    dims = field.dims
-    if not dims:
-        return field
-    named_dims = [d for d in dims if d is not None]
-    if not named_dims:
-        return field
-    desired = [d for d in axis_order if d in named_dims]
-    remaining = [d for d in named_dims if d not in axis_order]
-    target_named = desired + remaining
-
-    index_by_dim = {d: i for i, d in enumerate(dims) if d is not None}
-    perm = [index_by_dim[d] for d in target_named]
-    perm.extend([i for i, d in enumerate(dims) if d is None])
-    if perm == list(range(len(dims))):
-        return field
-    data = jnp.transpose(jnp.asarray(field.data), perm)
-    new_dims = tuple(dims[i] for i in perm)
-    return cx.Field(data, dims=new_dims)
-
-
-def _singleton_axis_for_label(structure: Any, label: str, /) -> str | None:
-    axis_names = structure.axis_names
-    if axis_names is None:
-        return None
-    for block, axis in zip(structure.blocks, axis_names, strict=True):
-        if label in block:
-            if len(block) != 1:
-                return None
-            return axis
-    return None
-
-
-def _dedupe_axes(axis_names: Sequence[str], /) -> tuple[str, ...]:
-    out: list[str] = []
-    seen: set[str] = set()
-    for axis in axis_names:
-        if axis in seen:
-            continue
-        seen.add(axis)
-        out.append(axis)
-    return tuple(out)
-
-
-def _as_blockwise_arg(value: Any, /) -> Array | tuple[Array, ...] | None:
-    if isinstance(value, cx.Field):
-        return jnp.asarray(value.data)
-    if isinstance(value, tuple):
-        out: list[Array] = []
-        for item in value:
-            if not isinstance(item, cx.Field):
-                return None
-            out.append(jnp.asarray(item.data))
-        return tuple(out)
-    return None
+from ._derivative import (
+    DerivativeBackend,
+    DerivativeBasis,
+    DerivativeMode,
+    DerivativeRule,
+)
+from ._domain import Domain
+from ._evaluation import BatchEvaluator, evaluate_domain_function
 
 
 def _rank1_leading_broadcast_op(
@@ -193,7 +84,7 @@ class _TrainableConstCallable(StrictModule):
         return self.value
 
 
-class _UnaryCallable(StrictModule):
+class UnaryFieldEvaluator(StrictModule):
     func: Callable
     op: Callable[[Any], Any]
 
@@ -205,7 +96,7 @@ class _UnaryCallable(StrictModule):
         return self.op(self.func(*args, key=key, **kwargs))
 
 
-class _SwapAxesCallable(StrictModule):
+class SwapAxesFieldEvaluator(StrictModule):
     func: Callable
     axis1: int
     axis2: int
@@ -219,7 +110,7 @@ class _SwapAxesCallable(StrictModule):
         return jnp.swapaxes(self.func(*args, key=key, **kwargs), self.axis1, self.axis2)
 
 
-class _BinaryCallable(StrictModule, BatchAwareCallable):
+class BinaryFieldEvaluator(StrictModule, BatchEvaluator):
     a: "DomainFunction"
     b: "DomainFunction"
     op: Callable[[Any, Any], Any]
@@ -244,14 +135,10 @@ class _BinaryCallable(StrictModule, BatchAwareCallable):
         self.b_pos = tuple(int(i) for i in b_pos)
         self.reverse = bool(reverse)
 
-    def use_batch_call(self) -> bool:
-        return (batch_aware_callable(self.a.func) is not None) or (
-            batch_aware_callable(self.b.func) is not None
-        )
 
     def __call_batch__(
         self,
-        batch: PointsBatch | CoordSeparableBatch,
+        batch: Any,
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
@@ -276,46 +163,32 @@ class _BinaryCallable(StrictModule, BatchAwareCallable):
             left = self.a.func(*a_args, key=key, **kwargs)
             right = self.b.func(*b_args, key=key, **kwargs)
 
-        try:
-            return self.op(left, right)
-        except (TypeError, ValueError):
-            if self.op in (
-                operator.add,
-                operator.sub,
-                operator.mul,
-                operator.truediv,
-            ):
-                return _rank1_leading_broadcast_op(self.op, left, right)
-            raise
+        if self.op in (
+            operator.add,
+            operator.sub,
+            operator.mul,
+            operator.truediv,
+        ):
+            return _rank1_leading_broadcast_op(self.op, left, right)
+        return self.op(left, right)
 
 
-_DERIVATIVE_HOOK_KEY = "_optimized_derivative_hook"
+@dataclass(frozen=True, slots=True, eq=False)
+class _TransposeDerivativeRule(DerivativeRule):
+    source: DerivativeRule
 
-
-def _drop_derivative_hook_metadata(
-    metadata: frozendict[str, Any],
-    /,
-) -> frozendict[str, Any]:
-    if _DERIVATIVE_HOOK_KEY not in metadata:
-        return metadata
-    return frozendict({k: v for k, v in metadata.items() if k != _DERIVATIVE_HOOK_KEY})
-
-
-def _transpose_lifted_hook(
-    hook: Callable[..., "DomainFunction | None"],
-    /,
-) -> Callable[..., "DomainFunction | None"]:
-    def _lifted(
+    def derive(
+        self,
         *,
         var: str,
         axis: int | None,
         order: int,
-        mode: Literal["reverse", "forward"],
-        backend: Literal["ad", "jet", "fd", "basis"],
-        basis: Literal["poly", "fourier", "sine", "cosine"],
+        mode: DerivativeMode,
+        backend: DerivativeBackend,
+        basis: DerivativeBasis,
         periodic: bool,
     ) -> "DomainFunction | None":
-        out = hook(
+        out = self.source.derive(
             var=var,
             axis=axis,
             order=order,
@@ -324,24 +197,7 @@ def _transpose_lifted_hook(
             basis=basis,
             periodic=periodic,
         )
-        if out is None:
-            return None
-        return out.T
-
-    return _lifted
-
-
-def _transpose_hook_metadata(
-    metadata: frozendict[str, Any],
-    /,
-) -> frozendict[str, Any]:
-    hook = metadata.get(_DERIVATIVE_HOOK_KEY)
-    clean = _drop_derivative_hook_metadata(metadata)
-    if not callable(hook):
-        return clean
-    merged = dict(clean)
-    merged[_DERIVATIVE_HOOK_KEY] = _transpose_lifted_hook(hook)
-    return frozendict(merged)
+        return None if out is None else out.T
 
 
 def _has_trainable_arrays(function: "DomainFunction", /) -> bool:
@@ -351,35 +207,77 @@ def _has_trainable_arrays(function: "DomainFunction", /) -> bool:
     )
     return any(is_trainable_leaf(leaf) for leaf in leaves)
 
+def _domain_has_tracer(domain: Domain, /) -> bool:
+    return any(
+        isinstance(leaf, jax_core.Tracer)
+        for leaf in jax.tree_util.tree_leaves(domain)
+    )
 
-def _compose_binary_derivative_hook(
-    op: Callable[[Any, Any], Any],
-    /,
-    *,
-    left: "DomainFunction",
-    right: "DomainFunction",
-) -> Callable[..., "DomainFunction | None"] | None:
-    if op not in (
-        operator.add,
-        operator.sub,
-        operator.mul,
-        operator.matmul,
-        operator.truediv,
-    ):
-        return None
-    operands_are_trainable = _has_trainable_arrays(left) or _has_trainable_arrays(right)
 
-    def _hook(
+def _staged_subdomain(source: Domain, target: Domain, /) -> bool:
+    for factor in source.joint_factors:
+        matches = tuple(
+            candidate
+            for candidate in target.joint_factors
+            if candidate.labels == factor.labels
+        )
+        if len(matches) != 1 or not factor.schema_compatible(matches[0]):
+            return False
+    return True
+
+
+def _join_field_domains(left: Domain, right: Domain, /) -> Domain:
+    if left is right:
+        return left
+    if not (_domain_has_tracer(left) or _domain_has_tracer(right)):
+        return left.join(right)
+
+    from ._product_domain import ProductDomain
+
+    factors = list(left.joint_factors)
+    for candidate in right.joint_factors:
+        overlaps = tuple(
+            factor
+            for factor in factors
+            if set(candidate.labels).intersection(factor.labels)
+        )
+        if not overlaps:
+            factors.append(candidate)
+            continue
+        if (
+            len(overlaps) != 1
+            or overlaps[0].labels != candidate.labels
+            or not overlaps[0].schema_compatible(candidate)
+        ):
+            raise ValueError(
+                "Label collision between traced joint domain factors "
+                f"{overlaps[0].labels if overlaps else ()} and {candidate.labels}."
+            )
+
+    if len(factors) == 1:
+        return factors[0]
+    return ProductDomain(*factors)
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class _BinaryDerivativeRule(DerivativeRule):
+    op: Callable[[Any, Any], Any]
+    left: "DomainFunction"
+    right: "DomainFunction"
+    operands_are_trainable: bool
+
+    def derive(
+        self,
         *,
         var: str,
         axis: int | None,
         order: int,
-        mode: Literal["reverse", "forward"],
-        backend: Literal["ad", "jet", "fd", "basis"],
-        basis: Literal["poly", "fourier", "sine", "cosine"],
+        mode: DerivativeMode,
+        backend: DerivativeBackend,
+        basis: DerivativeBasis,
         periodic: bool,
     ) -> "DomainFunction | None":
-        if operands_are_trainable:
+        if self.operands_are_trainable:
             return None
         if backend not in ("ad", "jet"):
             return None
@@ -403,29 +301,66 @@ def _compose_binary_derivative_hook(
                 periodic=periodic,
             )
 
-        if op is operator.add:
-            return _derive(left, n) + _derive(right, n)
-
-        if op is operator.sub:
-            return _derive(left, n) - _derive(right, n)
-
-        if op is operator.mul:
-            return nth_product_rule(left, right, var=var, order=n, derive=_derive)
-
-        if op is operator.truediv:
-            return nth_quotient_rule(left, right, var=var, order=n, derive=_derive)
-
-        if op is operator.matmul:
+        if self.op is operator.add:
+            return _derive(self.left, n) + _derive(self.right, n)
+        if self.op is operator.sub:
+            return _derive(self.left, n) - _derive(self.right, n)
+        if self.op is operator.mul:
+            return nth_product_rule(
+                self.left,
+                self.right,
+                var=var,
+                order=n,
+                derive=_derive,
+            )
+        if self.op is operator.truediv:
+            return nth_quotient_rule(
+                self.left,
+                self.right,
+                var=var,
+                order=n,
+                derive=_derive,
+            )
+        if self.op is operator.matmul:
             if n == 0:
-                return left @ right
-            out = DomainFunction(domain=left.domain, deps=(), func=0.0, metadata={})
+                return self.left @ self.right
+            out = DomainFunction(
+                domain=self.left.domain,
+                deps=(),
+                func=0.0,
+                metadata={},
+            )
             for k in range(n + 1):
-                out = out + float(comb(n, k)) * (_derive(left, k) @ _derive(right, n - k))
+                out = out + float(comb(n, k)) * (
+                    _derive(self.left, k) @ _derive(self.right, n - k)
+                )
             return out
-
         return None
 
-    return _hook
+
+def _compose_binary_derivative_rule(
+    op: Callable[[Any, Any], Any],
+    /,
+    *,
+    left: "DomainFunction",
+    right: "DomainFunction",
+) -> DerivativeRule | None:
+    if op not in (
+        operator.add,
+        operator.sub,
+        operator.mul,
+        operator.matmul,
+        operator.truediv,
+    ):
+        return None
+    return _BinaryDerivativeRule(
+        op=op,
+        left=left,
+        right=right,
+        operands_are_trainable=(
+            _has_trainable_arrays(left) or _has_trainable_arrays(right)
+        ),
+    )
 
 
 class DomainFunction(StrictModule):
@@ -465,34 +400,48 @@ class DomainFunction(StrictModule):
       sampling structure (paired blocks and/or coord-separable axes).
     """
 
-    domain: _AbstractDomain
+    domain: Domain
     deps: tuple[str, ...]
     func: Callable
     metadata: frozendict[str, Any]
+    derivative_rule: DerivativeRule | None
 
     def __init__(
         self,
         *,
-        domain: _AbstractDomain,
+        domain: Domain,
         deps: Sequence[str],
-        func: Callable | ArrayLike | None,
+        func: Callable | ArrayLike,
         metadata: Mapping[str, Any] | None = None,
+        derivative_rule: DerivativeRule | None = None,
     ):
+        if not isinstance(domain, Domain):
+            raise TypeError("DomainFunction.domain must be a Domain.")
+        deps_ = tuple(deps)
+        if len(set(deps_)) != len(deps_):
+            raise ValueError(f"DomainFunction dependencies must be unique, got {deps_!r}.")
+        unknown = tuple(label for label in deps_ if label not in domain.labels)
+        if unknown:
+            raise ValueError(
+                f"Unknown dependencies {unknown!r}; expected a subset of {domain.labels!r}."
+            )
         self.domain = domain
-        self.deps = tuple(deps)
+        if derivative_rule is not None and not isinstance(derivative_rule, DerivativeRule):
+            raise TypeError(
+                "DomainFunction.derivative_rule must be a DerivativeRule or None."
+            )
+        self.deps = deps_
 
-        if callable(func):
-            self.func = _ensure_special_kwonly_args(func)
-        else:
-            self.func = _ConstCallable(func)
+        self.func = func if callable(func) else _ConstCallable(func)
 
         self.metadata = frozendict({} if metadata is None else metadata)
+        self.derivative_rule = derivative_rule
 
     def depends_on(self, var: str, /) -> bool:
         """Return whether this function depends on the labeled variable `var`."""
         return var in self.deps
 
-    def promote(self, new_domain: _AbstractDomain, /) -> "DomainFunction":
+    def promote(self, new_domain: Domain, /) -> "DomainFunction":
         r"""View this function as defined on a larger domain.
 
         If $\Omega\subseteq\Omega'$, then promotion constructs $u':\Omega'\to\mathbb{R}^m$
@@ -502,16 +451,27 @@ class DomainFunction(StrictModule):
         u'(z) = u(z|_{\Omega}).
         $$
 
-        In practice this means that all labels of the current domain must appear in
-        `new_domain.labels`, and the underlying callable is reused unchanged.
+        Promotion is valid only when every complete joint factor of the current
+        domain occurs with the same support in ``new_domain``. Matching labels
+        alone is insufficient.
         """
-        for lbl in self.domain.labels:
-            if lbl not in new_domain.labels:
-                raise ValueError(
-                    f"Cannot promote from domain {self.domain.labels} to {new_domain.labels}."
-                )
+        if self.domain is new_domain:
+            return self
+        if _domain_has_tracer(self.domain) or _domain_has_tracer(new_domain):
+            compatible = _staged_subdomain(self.domain, new_domain)
+        else:
+            compatible = self.domain.is_subdomain_of(new_domain)
+        if not compatible:
+            raise ValueError(
+                f"Cannot promote domain {self.domain.labels} into "
+                f"{new_domain.labels}: factor supports are incompatible."
+            )
         return DomainFunction(
-            domain=new_domain, deps=self.deps, func=self.func, metadata=self.metadata
+            domain=new_domain,
+            deps=self.deps,
+            func=self.func,
+            metadata=self.metadata,
+            derivative_rule=self.derivative_rule,
         )
 
     def with_metadata(self, **metadata: Any) -> "DomainFunction":
@@ -519,7 +479,25 @@ class DomainFunction(StrictModule):
         merged = dict(self.metadata)
         merged.update(metadata)
         return DomainFunction(
-            domain=self.domain, deps=self.deps, func=self.func, metadata=merged
+            domain=self.domain,
+            deps=self.deps,
+            func=self.func,
+            metadata=merged,
+            derivative_rule=self.derivative_rule,
+        )
+
+    def with_derivative_rule(
+        self,
+        rule: DerivativeRule | None,
+        /,
+    ) -> "DomainFunction":
+        """Return a copy using an explicit derivative strategy."""
+        return DomainFunction(
+            domain=self.domain,
+            deps=self.deps,
+            func=self.func,
+            metadata=self.metadata,
+            derivative_rule=rule,
         )
 
     def _binary_op(
@@ -537,11 +515,7 @@ class DomainFunction(StrictModule):
                 domain=self.domain, deps=(), func=other, metadata={}
             )
 
-        if self.domain.labels == other_fn.domain.labels:
-            # Assume different domains carry different labels to avoid label collisions.
-            joined = self.domain
-        else:
-            joined = self.domain.join(other_fn.domain)
+        joined = _join_field_domains(self.domain, other_fn.domain)
         a = self.promote(joined)
         b = other_fn.promote(joined)
 
@@ -550,36 +524,31 @@ class DomainFunction(StrictModule):
         a_pos = tuple(idx[lbl] for lbl in a.deps)
         b_pos = tuple(idx[lbl] for lbl in b.deps)
 
-        a_user_meta = _drop_derivative_hook_metadata(a.metadata)
-        b_user_meta = _drop_derivative_hook_metadata(b.metadata)
-
-        meta: frozendict[str, Any]
-        can_attach_hook = True
-        if not b_user_meta:
-            meta = a_user_meta
-        elif not a_user_meta:
-            meta = b_user_meta
-        elif a_user_meta == b_user_meta:
-            meta = a_user_meta
+        if not b.metadata:
+            meta = a.metadata
+        elif not a.metadata:
+            meta = b.metadata
+        elif a.metadata == b.metadata:
+            meta = a.metadata
         else:
             meta = frozendict({})
-            can_attach_hook = False
 
         left = b if reverse else a
         right = a if reverse else b
-        hook = _compose_binary_derivative_hook(op, left=left, right=right)
-        if hook is not None and can_attach_hook and len(meta) == 0:
-            merged_meta = dict(meta)
-            merged_meta[_DERIVATIVE_HOOK_KEY] = hook
-            meta = frozendict(merged_meta)
+        derivative_rule = _compose_binary_derivative_rule(
+            op,
+            left=left,
+            right=right,
+        )
 
         return DomainFunction(
             domain=joined,
             deps=deps,
-            func=_BinaryCallable(
+            func=BinaryFieldEvaluator(
                 a=a, b=b, op=op, a_pos=a_pos, b_pos=b_pos, reverse=reverse
             ),
             metadata=meta,
+            derivative_rule=derivative_rule,
         )
 
     def __add__(self, other: "DomainFunction | ArrayLike | None") -> "DomainFunction":
@@ -627,8 +596,8 @@ class DomainFunction(StrictModule):
         return DomainFunction(
             domain=self.domain,
             deps=self.deps,
-            func=_UnaryCallable(self.func, operator.abs),
-            metadata=_drop_derivative_hook_metadata(self.metadata),
+            func=UnaryFieldEvaluator(self.func, operator.abs),
+            metadata=self.metadata,
         )
 
     @property
@@ -640,391 +609,27 @@ class DomainFunction(StrictModule):
         return DomainFunction(
             domain=self.domain,
             deps=self.deps,
-            func=_SwapAxesCallable(self.func, -2, -1),
-            metadata=_transpose_hook_metadata(self.metadata),
+            func=SwapAxesFieldEvaluator(self.func, -2, -1),
+            metadata=self.metadata,
+            derivative_rule=(
+                None
+                if self.derivative_rule is None
+                else _TransposeDerivativeRule(self.derivative_rule)
+            ),
         )
 
     def __call__(
         self,
-        points: PointsBatch | CoordSeparableBatch | Points | Any,
+        points: Any,
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.Field:
-        from ._model_function import _ConcatenatedModelCallable
-        from .graph._batch import GraphBatch
-
-        blockwise_eval = kwargs.pop("_blockwise_eval", False)
-        blockwise_mode = "vmap"
-        if isinstance(blockwise_eval, str):
-            mode = blockwise_eval.strip().lower()
-            if mode not in ("vmap", "direct"):
-                raise ValueError(
-                    "_blockwise_eval string mode must be 'vmap' or 'direct'."
-                )
-            force_blockwise = True
-            blockwise_mode = mode
-        else:
-            force_blockwise = bool(blockwise_eval)
-
-        def _emit_blockwise_fallback(reason: str, /) -> None:
-            if isinstance(self.func, _ConcatenatedModelCallable):
-                self.func.emit_auto_fallback_warning(
-                    "Falling back to pointwise/axis-vmapped evaluation for DomainFunction model call: "
-                    + reason
-                )
-
-        def _try_blockwise_eval(
-            *,
-            points_map: Mapping[str, PyTree[Any]],
-            structure: Any | None,
-            dense_structure: Any | None,
-            coord_axes_by_label: Mapping[str, tuple[str, ...]] | None,
-        ) -> tuple[cx.Field | None, str | None]:
-            if not isinstance(self.func, _ConcatenatedModelCallable):
-                return None, None
-            if not self.func.supports_blockwise_input:
-                return None, None
-            if not self.deps:
-                return None, "blockwise model execution requires non-empty dependencies."
-
-            args: list[Any] = []
-            axis_order: list[str] = []
-
-            if dense_structure is None:
-                if structure is None:
-                    return None, "blockwise model execution requires a structured batch."
-                if structure.axis_names is None:
-                    return (
-                        None,
-                        "ProductStructure must be canonicalized for blockwise execution.",
-                    )
-                for dep in self.deps:
-                    axis = _singleton_axis_for_label(structure, dep)
-                    if axis is None:
-                        return (
-                            None,
-                            f"dependency {dep!r} is not sampled in a singleton block.",
-                        )
-                    arg = _as_blockwise_arg(points_map[dep])
-                    if arg is None:
-                        return (
-                            None,
-                            f"dependency {dep!r} has unsupported sample type for blockwise evaluation.",
-                        )
-                    if isinstance(arg, tuple):
-                        return (
-                            None,
-                            f"dependency {dep!r} is coord-separable but batch is not CoordSeparableBatch.",
-                        )
-                    args.append(arg)
-                    axis_order.append(axis)
-            else:
-                if dense_structure.axis_names is None:
-                    return (
-                        None,
-                        "CoordSeparableBatch dense_structure must be canonicalized.",
-                    )
-                for dep in self.deps:
-                    dep_axes = (
-                        coord_axes_by_label.get(dep)
-                        if coord_axes_by_label is not None
-                        else None
-                    )
-                    arg = _as_blockwise_arg(points_map[dep])
-                    if arg is None:
-                        return (
-                            None,
-                            f"dependency {dep!r} has unsupported sample type for blockwise evaluation.",
-                        )
-                    if dep_axes is not None:
-                        if not isinstance(arg, tuple):
-                            return (
-                                None,
-                                f"dependency {dep!r} expected coord-separable tuple inputs.",
-                            )
-                        args.append(arg)
-                        axis_order.extend(dep_axes)
-                        continue
-
-                    axis = _singleton_axis_for_label(dense_structure, dep)
-                    if axis is None:
-                        return (
-                            None,
-                            f"dependency {dep!r} is not sampled in a singleton dense block.",
-                        )
-                    if isinstance(arg, tuple):
-                        return (
-                            None,
-                            f"dependency {dep!r} unexpectedly produced tuple inputs in dense structure.",
-                        )
-                    args.append(arg)
-                    axis_order.append(axis)
-
-            axis_order = list(_dedupe_axes(axis_order))
-            call_kwargs = kwargs
-            if any(isinstance(arg, tuple) for arg in args):
-                call_kwargs = dict(kwargs)
-                call_kwargs["_phydrax_model_input_mode"] = "structured"
-            y = jnp.asarray(self.func(*args, key=key, **call_kwargs))
-            if y.ndim < len(axis_order):
-                return (
-                    None,
-                    "model output rank is smaller than inferred blockwise axis rank.",
-                )
-            out_dims = tuple(axis_order) + (None,) * (y.ndim - len(axis_order))
-            return cx.Field(y, dims=out_dims), None
-
-        if isinstance(points, (PointsBatch, GraphBatch)):
-            points_map = points.points
-            structure = points.structure
-            dense_structure = None
-            coord_axes_by_label = None
-        else:
-            structure = None
-            if isinstance(points, CoordSeparableBatch):
-                points_map = points.points
-                dense_structure = points.dense_structure
-                coord_axes_by_label = points.coord_axes_by_label
-            else:
-                points_map = points
-                dense_structure = None
-                coord_axes_by_label = None
-
-        if (
-            isinstance(self.func, _ConcatenatedModelCallable)
-            and self.func.supports_axis_batch_input
-            and isinstance(points, (PointsBatch, CoordSeparableBatch, GraphBatch))
-        ):
-            out = self.func.__call_axis_batch__(
-                points, self.deps, key=key, **kwargs
-            )
-            if not isinstance(out, cx.Field):
-                raise TypeError(
-                    "Axis-batch model execution must return a coordax.Field."
-                )
-            return out
-
-        batch_func = batch_aware_callable(self.func)
-        if batch_func is not None:
-            if not isinstance(points, (PointsBatch, CoordSeparableBatch, GraphBatch)):
-                raise TypeError(
-                    "Batch-aware DomainFunction evaluation requires a PointsBatch "
-                    "CoordSeparableBatch, or GraphBatch input."
-                )
-            out = batch_func.__call_batch__(points, key=key, **kwargs)
-            if not isinstance(out, cx.Field):
-                raise TypeError("Batch-aware DomainFunction must return a coordax.Field.")
-            return out
-
-        for lbl in self.domain.labels:
-            if lbl not in points_map:
-                raise KeyError(
-                    f"Missing label {lbl!r} in points; expected at least {self.domain.labels}."
-                )
-
-        if dense_structure is not None:
-            if dense_structure.axis_names is None:
-                raise ValueError(
-                    "CoordSeparableBatch.dense_structure must be canonicalized (axis_names set)."
-                )
-
-            out, fallback_reason = _try_blockwise_eval(
-                points_map=points_map,
-                structure=structure,
-                dense_structure=dense_structure,
-                coord_axes_by_label=coord_axes_by_label,
-            )
-            if out is None:
-                if fallback_reason is not None:
-                    _emit_blockwise_fallback(fallback_reason)
-                mapped_axes: list[str] = []
-                mapped_blocks: list[tuple[str, ...]] = []
-                for block, axis in zip(
-                    dense_structure.blocks, dense_structure.axis_names, strict=True
-                ):
-                    if any(lbl in self.deps for lbl in block):
-                        mapped_blocks.append(block)
-                        mapped_axes.append(axis)
-
-                if not self.deps:
-                    val = self.func(key=key, **kwargs)
-                    y = jnp.asarray(val)
-                else:
-                    dep_values = tuple(
-                        _unwrap_fields_to_data(points_map[d]) for d in self.deps
-                    )
-
-                    def _call(*args):
-                        return self.func(*args, key=key, **kwargs)
-
-                    mapped = _call
-                    for block in reversed(mapped_blocks):
-                        in_axes = tuple(0 if dep in block else None for dep in self.deps)
-                        mapped = jax.vmap(mapped, in_axes=in_axes, out_axes=0)
-
-                    y = jnp.asarray(mapped(*dep_values))
-
-                if not mapped_axes and not (
-                    coord_axes_by_label
-                    and any(dep in coord_axes_by_label for dep in self.deps)
-                ):
-                    out = cx.Field(y, dims=(None,) * y.ndim)
-                else:
-                    axis_order: list[str] = []
-                    axis_order.extend(mapped_axes)
-                    if coord_axes_by_label is not None:
-                        for dep in self.deps:
-                            axes = coord_axes_by_label.get(dep)
-                            if axes is not None:
-                                axis_order.extend(axes)
-
-                    used_axes: list[str] = []
-                    shape_i = 0
-                    started = False
-                    for axis in axis_order:
-                        if shape_i >= y.ndim:
-                            break
-                        n = _axis_size(points_map, axis)
-                        if y.shape[shape_i] == n:
-                            used_axes.append(axis)
-                            shape_i += 1
-                            started = True
-                            continue
-                        if started:
-                            break
-                    out_dims = tuple(used_axes) + (None,) * (y.ndim - shape_i)
-                    out = cx.Field(y, dims=out_dims)
-
-            if not isinstance(out, cx.Field):
-                raise TypeError("DomainFunction must return a coordax.Field.")
-
-            for lbl in self.domain.labels:
-                axes: tuple[str, ...] | None = None
-                if coord_axes_by_label is not None:
-                    axes = coord_axes_by_label.get(lbl)
-                if axes is not None:
-                    for axis in axes:
-                        if axis in out.named_dims:
-                            continue
-                        n = _axis_size(points_map, axis)
-                        one = cx.Field(jnp.ones((n,), dtype=float), dims=(axis,))
-                        out = out * one
-                    continue
-
-                axis = dense_structure.axis_for(lbl)
-                if axis is None or axis in out.named_dims:
-                    continue
-                n = _axis_size(points_map, axis)
-                one = cx.Field(jnp.ones((n,), dtype=float), dims=(axis,))
-                out = out * one
-
-            out = _reorder_named_axes(out, dense_structure.axis_names)
-            return out
-
-        out, fallback_reason = _try_blockwise_eval(
-            points_map=points_map,
-            structure=structure,
-            dense_structure=dense_structure,
-            coord_axes_by_label=coord_axes_by_label,
+        return evaluate_domain_function(
+            self.func,
+            deps=self.deps,
+            domain_labels=self.domain.labels,
+            points=points,
+            key=key,
+            kwargs=kwargs,
         )
-        if out is None:
-            if fallback_reason is not None:
-                _emit_blockwise_fallback(fallback_reason)
-            if force_blockwise:
-                if structure is None:
-                    raise ValueError(
-                        "_blockwise_eval requires a structured PointsBatch input."
-                    )
-                if structure.axis_names is None:
-                    raise ValueError(
-                        "PointsBatch.structure must be canonicalized (axis_names set)."
-                    )
-                mapped_axes: list[str] = []
-                mapped_blocks: list[tuple[str, ...]] = []
-                for block, axis in zip(
-                    structure.blocks, structure.axis_names, strict=True
-                ):
-                    if any(lbl in self.deps for lbl in block):
-                        mapped_blocks.append(block)
-                        mapped_axes.append(axis)
-
-                if not self.deps:
-                    val = self.func(key=key, **kwargs)
-                    y = jnp.asarray(val)
-                else:
-                    dep_values = tuple(
-                        _unwrap_fields_to_data(points_map[d]) for d in self.deps
-                    )
-                    if blockwise_mode == "direct":
-                        y = jnp.asarray(self.func(*dep_values, key=key, **kwargs))
-                    elif mapped_blocks:
-
-                        def _call(*args):
-                            return self.func(*args, key=key, **kwargs)
-
-                        mapped = _call
-                        for block in reversed(mapped_blocks):
-                            in_axes = tuple(
-                                0 if dep in block else None for dep in self.deps
-                            )
-                            mapped = jax.vmap(mapped, in_axes=in_axes, out_axes=0)
-                        y = jnp.asarray(mapped(*dep_values))
-                    else:
-                        y = jnp.asarray(self.func(*dep_values, key=key, **kwargs))
-
-                if not mapped_axes:
-                    out = cx.Field(y, dims=(None,) * y.ndim)
-                else:
-                    used_axes: list[str] = []
-                    shape_i = 0
-                    started = False
-                    for axis in mapped_axes:
-                        if shape_i >= y.ndim:
-                            break
-                        n = _axis_size(points_map, axis)
-                        if y.shape[shape_i] == n:
-                            used_axes.append(axis)
-                            shape_i += 1
-                            started = True
-                            continue
-                        if started:
-                            break
-                    out_dims = tuple(used_axes) + (None,) * (y.ndim - shape_i)
-                    out = cx.Field(y, dims=out_dims)
-            else:
-                if not self.deps:
-                    val = self.func(key=key, **kwargs)
-                    out = cx.Field(jnp.asarray(val), dims=(None,) * jnp.asarray(val).ndim)
-                else:
-                    dep_values = tuple(points_map[d] for d in self.deps)
-                    out = cx.cmap(self.func, out_axes="leading")(
-                        *dep_values, key=key, **kwargs
-                    )
-        if not isinstance(out, cx.Field):
-            raise TypeError("DomainFunction must return a coordax.Field.")
-
-        if structure is None:
-            return out
-
-        if structure.axis_names is None:
-            raise ValueError(
-                "PointsBatch.structure must be canonicalized (axis_names set)."
-            )
-
-        for lbl in self.domain.labels:
-            axis = structure.axis_for(lbl)
-            if axis is None or axis in out.named_dims:
-                continue
-
-            field = _first_field_leaf(points_map[lbl])
-            if axis not in field.named_shape:
-                raise ValueError(
-                    f"Cannot infer size for sampling axis {axis!r} from points[{lbl!r}]."
-                )
-            n = int(field.named_shape[axis])
-            one = cx.Field(jnp.ones((n,), dtype=float), dims=(axis,))
-            out = out * one
-
-        out = _reorder_named_axes(out, structure.axis_names)
-        return out

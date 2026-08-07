@@ -7,12 +7,11 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
 from phydrax.domain import (
-    DomainFunction,
     Interval1d,
-    ProductStructure,
-    Square,
+    SampleLayout,
     TimeInterval,
 )
 from phydrax.operators.differential import dt_n, partial_t
@@ -46,7 +45,9 @@ def test_partial_t_time_only_vector():
 
 
 def test_partial_t_spacetime_broadcasts_over_space(sample_batch):
-    dom = Square(center=(0.0, 0.0), side=2.0) @ TimeInterval(0.0, 1.0)
+    dom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    ) @ TimeInterval(0.0, 1.0)
 
     @dom.Function("t")
     def u(t):
@@ -63,9 +64,7 @@ def test_partial_t_spacetime_broadcasts_over_space(sample_batch):
 
 def test_partial_t_preserves_metadata():
     dom = TimeInterval(0.0, 1.0)
-    u = DomainFunction(
-        domain=dom, deps=("t",), func=lambda t: t**2, metadata={"scale": 3}
-    )
+    u = dom.Function("t")(lambda t: t**2).with_metadata(**{"scale": 3})
     assert partial_t(u).metadata == u.metadata
 
 
@@ -83,8 +82,7 @@ def test_partial_t_product_skips_space_only_factor():
     u = fx * gt
     component = dom.component()
     batch = component.sample(
-        num_points=(5, 7),
-        structure=ProductStructure((("x",), ("t",))),
+        phx.domain.PointSampling((5, 7), layout=SampleLayout((("x",), ("t",)))),
         key=jr.key(0),
     )
     x_vals = jnp.asarray(batch.points["x"].data[:, 0])
@@ -108,8 +106,7 @@ def test_dt_n_quotient_with_time_independent_denominator():
     u = gt / fx
     component = dom.component()
     batch = component.sample(
-        num_points=(6, 8),
-        structure=ProductStructure((("x",), ("t",))),
+        phx.domain.PointSampling((6, 8), layout=SampleLayout((("x",), ("t",)))),
         key=jr.key(1),
     )
     x_vals = jnp.asarray(batch.points["x"].data[:, 0])
@@ -133,8 +130,7 @@ def test_partial_t_quotient_with_time_independent_numerator():
     u = fx / gt
     component = dom.component()
     batch = component.sample(
-        num_points=(4, 9),
-        structure=ProductStructure((("x",), ("t",))),
+        phx.domain.PointSampling((4, 9), layout=SampleLayout((("x",), ("t",)))),
         key=jr.key(2),
     )
     x_vals = jnp.asarray(batch.points["x"].data[:, 0])

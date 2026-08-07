@@ -187,8 +187,8 @@ def test_loss_wrapper_preserves_domain_model_metadata():
 
     u = domain.Model("x")(model)
 
-    assert u.func.input_mode == "flat"
-    assert u.func.supports_blockwise_input
+    assert u.func.binding.input_mode == "flat"
+    assert u.func.binding.batch_mode == "blockwise"
 
 
 def test_solver_logs_model_losses_to_text_and_tensorboard(tmp_path):

@@ -11,9 +11,10 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import DomainFunction
+
 from .._doc import DOC_KEY0
 from .._objective import AbstractSamplingObjectiveTerm
-from ..domain._function import DomainFunction
 from ..integration import (
     IntegrationRealization,
     IntegrationStatus,

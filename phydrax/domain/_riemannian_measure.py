@@ -10,10 +10,10 @@ import jax.numpy as jnp
 
 from .._strict import StrictModule
 from ..metrix import RiemannianMetric
-from ._base import _AbstractGeometry
-from ._components import DomainComponent, Interior
-from ._domain import RelabeledDomain
+from ._base import AbstractGeometry
+from ._components import DomainComponent
 from ._function import DomainFunction
+from ._selection import Interior
 
 
 class _MetricVolumeDensityCallable(StrictModule):
@@ -49,8 +49,7 @@ def with_riemannian_measure(
         geometry_labels = []
         for label in component.domain.labels:
             factor = component.domain.factor(label)
-            factor = factor.base if isinstance(factor, RelabeledDomain) else factor
-            if isinstance(factor, _AbstractGeometry):
+            if isinstance(factor, AbstractGeometry):
                 geometry_labels.append(label)
         if len(geometry_labels) != 1:
             raise ValueError(
@@ -65,15 +64,14 @@ def with_riemannian_measure(
             f"Unknown metric variable {var_!r}; expected one of {component.domain.labels}."
         )
     factor = component.domain.factor(var_)
-    factor = factor.base if isinstance(factor, RelabeledDomain) else factor
-    if not isinstance(factor, _AbstractGeometry):
+    if not isinstance(factor, AbstractGeometry):
         raise ValueError("Riemannian measure requires a geometry domain factor.")
-    if int(factor.var_dim) != metric.chart.dimension:
+    if int(factor.spatial_dim) != metric.chart.dimension:
         raise ValueError(
             f"Metric chart dimension {metric.chart.dimension} does not match "
-            f"domain variable {var_!r} dimension {factor.var_dim}."
+            f"domain variable {var_!r} dimension {factor.spatial_dim}."
         )
-    if not isinstance(component.spec.component_for(var_), Interior):
+    if not isinstance(component.spec.selection_for(var_), Interior):
         raise ValueError(
             "Riemannian measure currently supports interior geometry components only."
         )
@@ -83,15 +81,4 @@ def with_riemannian_measure(
         func=_MetricVolumeDensityCallable(metric),
         metadata={},
     )
-    weight = (
-        metric_weight
-        if component.weight_all is None
-        else component.weight_all * metric_weight
-    )
-    return DomainComponent(
-        domain=component.domain,
-        spec=component.spec,
-        where=component.where,
-        where_all=component.where_all,
-        weight_all=weight,
-    )
+    return component.with_density(metric_weight)

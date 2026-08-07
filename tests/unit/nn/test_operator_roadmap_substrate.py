@@ -15,7 +15,7 @@ import pytest
 import phydrax as phx
 from phydrax._frozendict import frozendict
 from phydrax.constraints import FunctionalConstraint
-from phydrax.domain import Interval1d, LegendreAxisSpec, ProductStructure
+from phydrax.domain import Interval1d, LegendreAxisSpec, SampleLayout
 from phydrax.equations import (
     compile_pde_functional_constraint,
     compile_pde_problem,
@@ -620,8 +620,7 @@ def test_pde_ir_round_trip_canonical_hash_tokens_and_constraint_execution():
         residual,
         problem,
         component=geometry.component(),
-        num_points=4,
-        structure=ProductStructure((("x",),)),
+        sampling=phx.domain.PointSampling(4, layout=SampleLayout((("x",),))),
         field_names=("u",),
         sampling_mode="fixed",
     )
@@ -905,8 +904,7 @@ def test_pde_compiler_rejects_invalid_backend_before_expression_dispatch():
             constant,
             problem,
             component=None,
-            num_points=1,
-            structure=None,
+            sampling=phx.domain.PointSampling(1, layout=None),
             differential_backend="definitely_invalid",
         ),
     )

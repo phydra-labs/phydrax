@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import Literal
 
 import coordax as cx
+import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -14,10 +15,13 @@ from jaxtyping import Array, ArrayLike, Key
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
 from ...graph import batch_graphs, GraphIR, LayoutPlan
-from .._components import Boundary, Fixed, FixedEnd, FixedStart, Interior
-from .._domain import _AbstractDomain, _AbstractUnaryDomain
+from .._coordinate import CoordinateSpec
+from .._domain import JointFactor
+from .._factor_component import FactorComponent
+from .._measure import BaseMeasure, ExactMass
 from .._scalar import ScalarInterval
-from .._structure import _validate_label, NumPoints, ProductStructure
+from .._selection import Boundary, Fixed, FixedEnd, FixedStart, Interior, Selection
+from .._structure import _validate_label, NumPoints, SampleLayout
 from ._batch import GRAPH_ENTITY_INDEX_KEY, GRAPH_GRAPH_INDEX_KEY, GraphBatch
 from ._components import graph_component_kind
 from ._dataset import (
@@ -81,14 +85,14 @@ def _as_sample_count(num_points: NumPoints, /) -> int:
 
 def _single_axis_for_graph_trajectory(
     domain: "GraphTrajectoryDatasetDomain",
-    structure: ProductStructure,
+    structure: SampleLayout,
     /,
-) -> tuple[ProductStructure, str]:
+) -> tuple[SampleLayout, str]:
     structure = structure.canonicalize(domain.labels, fixed_labels=frozenset())
     if len(structure.blocks) != 1:
         raise ValueError(
             "GraphTrajectoryDatasetDomain sampling requires graph and time in one "
-            "paired ProductStructure block."
+            "paired SampleLayout block."
         )
     block = frozenset(structure.blocks[0])
     if block != frozenset(domain.labels):
@@ -98,7 +102,7 @@ def _single_axis_for_graph_trajectory(
         )
     axis_names = structure.axis_names
     if axis_names is None:
-        raise ValueError("Graph trajectory ProductStructure must be canonicalized.")
+        raise ValueError("Graph trajectory SampleLayout must be canonicalized.")
     return structure, axis_names[0]
 
 
@@ -125,7 +129,7 @@ def _component_times(
     key: Key[Array, ""],
     /,
 ) -> tuple[Array, Array]:
-    comp = component.spec.component_for(domain.time_label)
+    comp = component.spec.selection_for(domain.time_label)
     lengths = domain.lengths[case_indices]
     durations = (lengths.astype(float) - 1.0) * domain.dt
 
@@ -139,7 +143,9 @@ def _component_times(
                 dtype=jnp.int32,
             )
             time_idx = domain.flat_time_indices[obs_idx]
-            return domain.observation_times(domain.flat_case_indices[obs_idx], time_idx), time_idx
+            return domain.observation_times(
+                domain.flat_case_indices[obs_idx], time_idx
+            ), time_idx
         u = jr.uniform(key, shape=(n,))
         times = domain.start + u * durations
         time_idx = jnp.rint((times - domain.start) / domain.dt).astype(jnp.int32)
@@ -170,7 +176,7 @@ def _component_times(
     raise TypeError(f"Unsupported graph trajectory time component {type(comp).__name__}.")
 
 
-class GraphTrajectoryDatasetDomain(_AbstractDomain):
+class GraphTrajectoryDatasetDomain(JointFactor):
     """A coupled graph-family and time domain for graph trajectories.
 
     Each graph case owns a valid trajectory length on a shared uniform time grid.
@@ -285,7 +291,9 @@ class GraphTrajectoryDatasetDomain(_AbstractDomain):
             layout=layout,
             validate=False,
         )
-        self._time_factor = ScalarInterval(float(start_arr), float(end), label=str(time_label))
+        self._time_factor = ScalarInterval(
+            float(start_arr), float(end), label=str(time_label)
+        )
         self._max_length = max_length
         self._total_observations = int(jnp.sum(lengths_arr))
         self._flat_case_indices = jnp.concatenate(flat_case_parts, axis=0)
@@ -295,6 +303,71 @@ class GraphTrajectoryDatasetDomain(_AbstractDomain):
     def labels(self) -> tuple[str, str]:
         """Graph and time labels owned by the domain."""
         return (self._graph_label, self._time_label)
+
+    @property
+    def coordinate_specs(self) -> tuple[CoordinateSpec, ...]:
+        return (
+            CoordinateSpec(None, kind="graph", differentiable=False, dtype=None),
+            CoordinateSpec((), kind="scalar", differentiable=True),
+        )
+
+    def bind_component(
+        self,
+        selections: Mapping[str, Selection],
+        /,
+    ) -> FactorComponent:
+        if tuple(selections) != self.labels:
+            raise ValueError(
+                f"Graph-trajectory factor {self.labels} requires all selections in order."
+            )
+        graph_measure = self._graph_factor.component_measure(selections[self.graph_label])
+        time_selection = selections[self.time_label]
+        if isinstance(time_selection, Boundary) and (
+            time_selection.tags is not None or time_selection.entity_ids is not None
+        ):
+            raise ValueError(
+                "Graph-trajectory time boundaries do not support tags or entity IDs."
+            )
+        if not isinstance(
+            time_selection,
+            (Interior, Boundary, FixedStart, FixedEnd, Fixed),
+        ):
+            raise TypeError(
+                f"Unsupported graph-trajectory time selection "
+                f"{type(time_selection).__name__}."
+            )
+        if self.measure_mode == "case_time_probability":
+            measure = BaseMeasure("probability", ExactMass(1.0), normalized=True)
+        else:
+            if isinstance(time_selection, Interior):
+                time_measure = jnp.mean(self.durations)
+            elif isinstance(time_selection, Boundary):
+                time_measure = jnp.asarray(2.0, dtype=float)
+            else:
+                time_measure = jnp.asarray(1.0, dtype=float)
+            if self.measure_mode == "time_integral_sum":
+                time_measure = time_measure * float(self.size)
+            measure = BaseMeasure("trajectory", ExactMass(graph_measure * time_measure))
+        return FactorComponent(factor=self, selections=selections, measure=measure)
+
+    def _replace_labels(
+        self,
+        labels: tuple[str, ...],
+        /,
+    ) -> "GraphTrajectoryDatasetDomain":
+        updated = eqx.tree_at(
+            lambda factor: (factor._graph_label, factor._time_label),
+            self,
+            labels,
+        )
+        return eqx.tree_at(
+            lambda factor: (factor._graph_factor, factor._time_factor),
+            updated,
+            (
+                updated._graph_factor.relabel(labels[0]),
+                updated._time_factor.relabel(labels[1]),
+            ),
+        )
 
     @property
     def graph_label(self) -> str:
@@ -356,14 +429,6 @@ class GraphTrajectoryDatasetDomain(_AbstractDomain):
         """Per-case final valid time."""
         return self.start + self.durations
 
-    def factor(self, label: str, /) -> _AbstractUnaryDomain:
-        """Return the unary graph or time factor for `label`."""
-        if label == self._graph_label:
-            return self._graph_factor
-        if label == self._time_label:
-            return self._time_factor
-        raise KeyError(f"Label {label!r} not in domain {self.labels}.")
-
     def layout_for_batch_size(
         self,
         num_cases: int,
@@ -389,7 +454,9 @@ class GraphTrajectoryDatasetDomain(_AbstractDomain):
             validate=False,
         )
 
-    def observation_times(self, case_indices: ArrayLike, time_indices: ArrayLike, /) -> Array:
+    def observation_times(
+        self, case_indices: ArrayLike, time_indices: ArrayLike, /
+    ) -> Array:
         """Convert local time indices to physical times."""
         del case_indices
         return self.start + self.dt * jnp.asarray(time_indices, dtype=float)
@@ -401,7 +468,7 @@ class GraphTrajectoryDatasetDomain(_AbstractDomain):
         /,
         *,
         component,
-        structure: ProductStructure | None = None,
+        structure: SampleLayout | None = None,
         time_indices: ArrayLike | None = None,
     ) -> GraphBatch:
         """Materialize graph-time samples by explicit case and time arrays.
@@ -410,7 +477,7 @@ class GraphTrajectoryDatasetDomain(_AbstractDomain):
         graph component is expanded to all matching entities for each sampled
         graph-time pair.
         """
-        structure_in = structure or ProductStructure((self.labels,))
+        structure_in = structure or SampleLayout((self.labels,))
         structure_out, axis = _single_axis_for_graph_trajectory(self, structure_in)
         case_idx = jnp.asarray(case_indices, dtype=jnp.int32).reshape((-1,))
         time_arr = jnp.asarray(times, dtype=float).reshape((-1,))
@@ -420,19 +487,25 @@ class GraphTrajectoryDatasetDomain(_AbstractDomain):
             raise ValueError("Graph trajectory graph batches must be non-empty.")
         case_np = np.asarray(case_idx)
         if np.any(case_np < 0) or np.any(case_np >= self.size):
-            raise ValueError(f"Graph trajectory case indices must be in [0, {self.size}).")
+            raise ValueError(
+                f"Graph trajectory case indices must be in [0, {self.size})."
+            )
         if time_indices is None:
             time_idx = jnp.rint((time_arr - self.start) / self.dt).astype(jnp.int32)
         else:
             time_idx = jnp.asarray(time_indices, dtype=jnp.int32).reshape((-1,))
             if int(time_idx.shape[0]) != int(case_idx.shape[0]):
-                raise ValueError("time_indices must have the same length as case_indices.")
+                raise ValueError(
+                    "time_indices must have the same length as case_indices."
+                )
 
-        graph_component = component.spec.component_for(self.graph_label)
+        graph_component = component.spec.selection_for(self.graph_label)
         kind = graph_component_kind(graph_component)
         selected_graphs = tuple(self.graphs[int(i)] for i in case_np.tolist())
         real_batched = batch_graphs(selected_graphs, validate=True)
-        batched = self._layout.pack(real_batched) if self._layout is not None else real_batched
+        batched = (
+            self._layout.pack(real_batched) if self._layout is not None else real_batched
+        )
         offsets = _offsets_for_kind(selected_graphs, kind)
 
         entity_parts: list[Array] = []
@@ -448,11 +521,15 @@ class GraphTrajectoryDatasetDomain(_AbstractDomain):
             global_indices = local + jnp.asarray(offset, dtype=jnp.int32)
             n_entities = int(local.shape[0])
             entity_parts.append(global_indices)
-            dataset_parts.append(jnp.full((n_entities,), int(case_index), dtype=jnp.int32))
+            dataset_parts.append(
+                jnp.full((n_entities,), int(case_index), dtype=jnp.int32)
+            )
             sample_parts.append(jnp.full((n_entities,), int(pos), dtype=jnp.int32))
             offset_parts.append(jnp.full((n_entities,), int(offset), dtype=jnp.int32))
             time_parts.append(jnp.full((n_entities,), time_arr[pos], dtype=float))
-            time_index_parts.append(jnp.full((n_entities,), time_idx[pos], dtype=jnp.int32))
+            time_index_parts.append(
+                jnp.full((n_entities,), time_idx[pos], dtype=jnp.int32)
+            )
 
         entity_indices = jnp.concatenate(entity_parts, axis=0)
         dataset_indices = jnp.concatenate(dataset_parts, axis=0)
@@ -500,7 +577,8 @@ class GraphTrajectoryDatasetDomain(_AbstractDomain):
         The model sees the sampled batched graph topology and may also consume the
         sampled time label through its input functions.
         """
-        from ...domain._function import DomainFunction
+        from phydrax.domain import DomainFunction
+
         from ...nn import GraphModel
 
         return DomainFunction(
@@ -540,7 +618,8 @@ class GraphTrajectoryDatasetDomain(_AbstractDomain):
         Use this for graph sequence models whose state is advanced by repeatedly
         applying a one-step graph stepper.
         """
-        from ...domain._function import DomainFunction
+        from phydrax.domain import DomainFunction
+
         from ...nn import GraphRolloutModel
 
         return DomainFunction(
@@ -561,11 +640,9 @@ class GraphTrajectoryDatasetDomain(_AbstractDomain):
             ),
         )
 
-    def equivalent(self, other: object, /) -> bool:
+    def _same_factor_support(self, other: object, /) -> bool:
         """Return whether another domain has the same public graph-time shape."""
         if not isinstance(other, GraphTrajectoryDatasetDomain):
-            return False
-        if self.labels != other.labels:
             return False
         if self.measure_mode != other.measure_mode:
             return False
@@ -579,14 +656,14 @@ class GraphTrajectoryDatasetDomain(_AbstractDomain):
             return False
         if bool(jnp.any(self.start != other.start)):
             return False
-        return self._graph_factor.equivalent(other._graph_factor)
+        return self._graph_factor.same_support(other._graph_factor)
 
 
 def sample_graph_trajectory_component(
     component,
     num_points: NumPoints,
     *,
-    structure: ProductStructure,
+    structure: SampleLayout,
     sampler: str = "latin_hypercube",
     key: Key[Array, ""] = DOC_KEY0,
 ) -> GraphBatch:
@@ -603,7 +680,7 @@ def sample_graph_trajectory_component(
         raise ValueError("GraphTrajectoryDatasetDomain requires at least one sample.")
 
     case_key, time_key = jr.split(key)
-    time_comp = component.spec.component_for(domain.time_label)
+    time_comp = component.spec.selection_for(domain.time_label)
     if isinstance(time_comp, Fixed):
         fixed_value = jnp.asarray(time_comp.value, dtype=float).reshape(())
         valid = (domain.start <= fixed_value) & (fixed_value <= domain.end_times)
@@ -641,30 +718,6 @@ def sample_graph_trajectory_component(
     )
 
 
-def graph_trajectory_component_measure(component, /) -> Array | None:
-    domain = component.domain
-    if not isinstance(domain, GraphTrajectoryDatasetDomain):
-        return None
-
-    graph_comp = component.spec.component_for(domain.graph_label)
-    graph_measure = domain._graph_factor.component_measure(graph_comp)
-    time_comp = component.spec.component_for(domain.time_label)
-    point_mass = isinstance(time_comp, (FixedStart, FixedEnd, Fixed))
-    boundary = isinstance(time_comp, Boundary)
-
-    if domain.measure_mode == "case_time_probability":
-        return jnp.asarray(1.0, dtype=float)
-    if point_mass:
-        time_measure = jnp.asarray(1.0, dtype=float)
-    elif boundary:
-        time_measure = jnp.asarray(2.0, dtype=float)
-    else:
-        time_measure = jnp.mean(domain.durations)
-    if domain.measure_mode == "time_integral_sum":
-        time_measure = time_measure * float(domain.size)
-    return jnp.asarray(graph_measure, dtype=float) * jnp.asarray(time_measure, dtype=float)
-
-
 def graph_trajectory_default_quadrature_total_weight(
     component, batch: GraphBatch, /
 ) -> cx.Field | None:
@@ -680,7 +733,7 @@ def graph_trajectory_default_quadrature_total_weight(
     if n == 0:
         return cx.Field(jnp.zeros((0,), dtype=float), dims=(axis,))
 
-    time_comp = component.spec.component_for(domain.time_label)
+    time_comp = component.spec.selection_for(domain.time_label)
     point_mass = isinstance(time_comp, (FixedStart, FixedEnd, Fixed))
     boundary = isinstance(time_comp, Boundary)
     durations = domain.durations[case_idx]
@@ -716,7 +769,6 @@ __all__ = [
     "GraphTrajectoryDatasetDomain",
     "GraphTrajectoryMeasure",
     "GraphTrajectorySampling",
-    "graph_trajectory_component_measure",
     "graph_trajectory_default_quadrature_total_weight",
     "graph_trajectory_quadrature_weights_by_axis",
     "sample_graph_trajectory_component",

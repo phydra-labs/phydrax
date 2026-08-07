@@ -5,8 +5,9 @@
 import jax.numpy as jnp
 import jax.random as jr
 
+import phydrax as phx
 from phydrax.constraints import RaggedTimeSeriesDataConstraint
-from phydrax.domain import ProductStructure, TrajectoryDatasetDomain
+from phydrax.domain import SampleLayout, TrajectoryDatasetDomain
 
 
 def _make_domain_and_values():
@@ -29,9 +30,8 @@ def test_ragged_time_series_data_constraint_matches_exact_observations():
         "u",
         domain.component(),
         values,
-        num_points=12,
-        structure=ProductStructure((("data", "t"),)),
-        sampling="observation_uniform",
+        sampling=phx.domain.PointSampling(12, layout=SampleLayout((("data", "t"),)), design="uniform"),
+        selection="observation_uniform",
         label="trajectory_data",
     )
 
@@ -54,9 +54,8 @@ def test_ragged_time_series_data_constraint_linear_interpolation():
         "u",
         domain.component(),
         values,
-        num_points=16,
-        structure=ProductStructure((("data", "t"),)),
-        sampling="case_time_uniform",
+        sampling=phx.domain.PointSampling(16, layout=SampleLayout((("data", "t"),)), design="uniform"),
+        selection="case_time_uniform",
         interpolation="linear",
     )
 
@@ -77,8 +76,8 @@ def test_ragged_time_series_data_constraint_vector_targets():
         "u",
         domain.component(),
         values,
-        num_points=12,
-        sampling="observation_uniform",
+        sampling=phx.domain.PointSampling(12, design="uniform"),
+        selection="observation_uniform",
     )
 
     loss = constraint.loss({"u": exact}, key=jr.key(2))
@@ -94,8 +93,8 @@ def test_ragged_time_series_data_constraint_samples_only_case_subset():
         "u",
         domain.component(),
         values,
-        num_points=24,
-        sampling="observation_uniform",
+        sampling=phx.domain.PointSampling(24, design="uniform"),
+        selection="observation_uniform",
         case_indices=allowed,
     )
 
@@ -110,8 +109,8 @@ def test_ragged_time_series_case_uniform_samples_only_case_subset():
         "u",
         domain.component(),
         values,
-        num_points=10,
-        sampling="case_uniform",
+        sampling=phx.domain.PointSampling(10, design="uniform"),
+        selection="case_uniform",
         case_indices=allowed,
     )
 
@@ -131,8 +130,8 @@ def test_ragged_time_series_data_constraint_penalizes_wrong_function():
         "u",
         domain.component(),
         values,
-        num_points=12,
-        sampling="observation_uniform",
+        sampling=phx.domain.PointSampling(12, design="uniform"),
+        selection="observation_uniform",
     )
 
     loss = constraint.loss({"u": wrong}, key=jr.key(3))

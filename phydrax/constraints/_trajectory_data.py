@@ -13,6 +13,19 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import (
+    BatchEvaluator,
+    CallbackDerivativeRule,
+    DomainComponent,
+    DomainFunction,
+    GridBatch,
+    IrregularTrajectoryDatasetDomain,
+    PointBatch,
+    PointSampling,
+    TRAJECTORY_CASE_INDEX_KEY,
+    TrajectoryDatasetDomain,
+)
+
 from .._doc import DOC_KEY0
 from .._interpolation import (
     apply_gather_stencil,
@@ -21,17 +34,11 @@ from .._interpolation import (
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..domain._components import DomainComponent
-from ..domain._function import BatchAwareCallable, DomainFunction
-from ..domain._irregular_trajectory_dataset import IrregularTrajectoryDatasetDomain
-from ..domain._structure import CoordSeparableBatch, PointsBatch, ProductStructure
-from ..domain._trajectory_dataset import (
-    TRAJECTORY_CASE_INDEX_KEY,
-    TrajectoryDatasetDomain,
-)
-from ..operators.differential._hooks import with_derivative_hook
+from ..operators.differential._hooks import with_derivative_rule
 from ._base import AbstractSamplingConstraint
 from ._data_metrics import (
+    case_sample_count,
+    normalize_case_sampling,
     reduce_supervised_loss,
     sample_case_indices as _sample_case_indices_uniform,
     supervised_data_metrics,
@@ -49,7 +56,7 @@ TrajectoryCaseTime = Literal["start", "end"] | float
 class TrajectoryCaseDataBatch(StrictModule):
     """A sampled mini-batch of case-level trajectory-domain data."""
 
-    points: PointsBatch
+    points: PointBatch
     target: Array
     case_indices: Array
     times: Array
@@ -57,7 +64,7 @@ class TrajectoryCaseDataBatch(StrictModule):
     def __init__(
         self,
         *,
-        points: PointsBatch,
+        points: PointBatch,
         target: ArrayLike,
         case_indices: ArrayLike,
         times: ArrayLike,
@@ -147,10 +154,7 @@ class TrajectoryCaseDataConstraint(AbstractSamplingConstraint):
 
     constraint_vars: tuple[str, ...]
     component: DomainComponent
-    structure: ProductStructure
-    dense_structure: ProductStructure | None
-    num_points: int
-    sampler: str
+    sampling: PointSampling
     over: str | tuple[str, ...] | None
     reduction: Literal["mean", "sum"]
     values: Array
@@ -168,8 +172,7 @@ class TrajectoryCaseDataConstraint(AbstractSamplingConstraint):
         values: ArrayLike,
         /,
         *,
-        num_cases: int,
-        structure: ProductStructure | None = None,
+        sampling: PointSampling,
         case_time: TrajectoryCaseTime = "start",
         weight: DomainFunction | ArrayLike = 1.0,
         reduction: Literal["mean", "sum"] = "mean",
@@ -183,8 +186,7 @@ class TrajectoryCaseDataConstraint(AbstractSamplingConstraint):
             constraint_var: Name of the predicted function to supervise.
             component: Component from a `TrajectoryDatasetDomain`.
             values: Case targets with leading size equal to `domain.size`.
-            num_cases: Number of cases sampled per loss evaluation.
-            structure: Product structure used to represent sampled cases.
+            sampling: Uniform empirical-case sampling plan.
             case_time: Representative time used if the predicted function depends
                 on the trajectory time label.
             weight: Scalar or pointwise multiplier applied to this loss term.
@@ -197,9 +199,11 @@ class TrajectoryCaseDataConstraint(AbstractSamplingConstraint):
             raise TypeError(
                 "TrajectoryCaseDataConstraint requires a TrajectoryDatasetDomain component."
             )
-        n = int(num_cases)
-        if n <= 0:
-            raise ValueError("num_cases must be positive.")
+        sampling_ = normalize_case_sampling(
+            sampling,
+            labels=component.domain.labels,
+            owner="TrajectoryCaseDataConstraint",
+        )
         reduction_str = str(reduction)
         if reduction_str not in ("mean", "sum"):
             raise ValueError("reduction must be either 'mean' or 'sum'.")
@@ -228,10 +232,7 @@ class TrajectoryCaseDataConstraint(AbstractSamplingConstraint):
 
         self.constraint_vars = (str(constraint_var),)
         self.component = component
-        self.structure = structure or ProductStructure((domain.labels,))
-        self.dense_structure = None
-        self.num_points = n
-        self.sampler = "case_uniform"
+        self.sampling = sampling_
         self.over = None
         self.reduction = reduction_value
         self.values = _validate_case_values(domain, values)
@@ -264,16 +265,18 @@ class TrajectoryCaseDataConstraint(AbstractSamplingConstraint):
         domain = self.domain
         case_indices = _sample_case_indices(
             domain,
-            int(self.num_points),
+            case_sample_count(self.sampling),
             key,
             self.case_time,
             indices=self.case_indices,
         )
         times, time_indices = _time_selection(domain, case_indices, self.case_time)
+        layout = self.sampling.layout
+        assert layout is not None
         points = domain.points_from_case_time(
             case_indices,
             times,
-            structure=self.structure,
+            structure=layout,
             time_indices=time_indices,
         )
         return TrajectoryCaseDataBatch(
@@ -349,7 +352,7 @@ class TrajectoryCaseDataConstraint(AbstractSamplingConstraint):
         return self.weight * jnp.asarray(reduced, dtype=float).reshape(())
 
 
-class _NearestTrajectorySignal(StrictModule, BatchAwareCallable, NonTrainableState):
+class _NearestTrajectorySignal(StrictModule, BatchEvaluator, NonTrainableState):
     domain: TrajectoryDatasetDomain
     values: Array
 
@@ -359,19 +362,19 @@ class _NearestTrajectorySignal(StrictModule, BatchAwareCallable, NonTrainableSta
 
     def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
         del args, key, kwargs
-        raise TypeError("TrajectorySignal requires PointsBatch evaluation.")
+        raise TypeError("TrajectorySignal requires PointBatch evaluation.")
 
     def __call_batch__(
         self,
-        batch: PointsBatch | CoordSeparableBatch,
+        batch: PointBatch | GridBatch,
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.Field:
         del key, kwargs
-        if not isinstance(batch, PointsBatch):
-            raise TypeError("TrajectorySignal requires PointsBatch evaluation.")
+        if not isinstance(batch, PointBatch):
+            raise TypeError("TrajectorySignal requires PointBatch evaluation.")
         if TRAJECTORY_CASE_INDEX_KEY not in batch:
             raise ValueError(
                 "TrajectorySignal requires trajectory batches with internal case indices."
@@ -399,9 +402,7 @@ class _NearestTrajectorySignal(StrictModule, BatchAwareCallable, NonTrainableSta
         return cx.Field(out, dims=dims)
 
 
-class _IrregularNearestTrajectorySignal(
-    StrictModule, BatchAwareCallable, NonTrainableState
-):
+class _IrregularNearestTrajectorySignal(StrictModule, BatchEvaluator, NonTrainableState):
     domain: IrregularTrajectoryDatasetDomain
     values: Array
 
@@ -411,19 +412,19 @@ class _IrregularNearestTrajectorySignal(
 
     def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
         del args, key, kwargs
-        raise TypeError("TrajectorySignal requires PointsBatch evaluation.")
+        raise TypeError("TrajectorySignal requires PointBatch evaluation.")
 
     def __call_batch__(
         self,
-        batch: PointsBatch | CoordSeparableBatch,
+        batch: PointBatch | GridBatch,
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.Field:
         del key, kwargs
-        if not isinstance(batch, PointsBatch):
-            raise TypeError("TrajectorySignal requires PointsBatch evaluation.")
+        if not isinstance(batch, PointBatch):
+            raise TypeError("TrajectorySignal requires PointBatch evaluation.")
         if TRAJECTORY_CASE_INDEX_KEY not in batch:
             raise ValueError(
                 "TrajectorySignal requires trajectory batches with internal case indices."
@@ -449,7 +450,7 @@ class _IrregularNearestTrajectorySignal(
         return cx.Field(out, dims=dims)
 
 
-class _InterpolatedTrajectorySignal(StrictModule, BatchAwareCallable, NonTrainableState):
+class _InterpolatedTrajectorySignal(StrictModule, BatchEvaluator, NonTrainableState):
     table: _RaggedTimeSeriesTable
     order: int
 
@@ -459,19 +460,19 @@ class _InterpolatedTrajectorySignal(StrictModule, BatchAwareCallable, NonTrainab
 
     def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
         del args, key, kwargs
-        raise TypeError("TrajectorySignal requires PointsBatch evaluation.")
+        raise TypeError("TrajectorySignal requires PointBatch evaluation.")
 
     def __call_batch__(
         self,
-        batch: PointsBatch | CoordSeparableBatch,
+        batch: PointBatch | GridBatch,
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.Field:
         del key, kwargs
-        if not isinstance(batch, PointsBatch):
-            raise TypeError("TrajectorySignal requires PointsBatch evaluation.")
+        if not isinstance(batch, PointBatch):
+            raise TypeError("TrajectorySignal requires PointBatch evaluation.")
         time_field = batch[self.table.domain.time_label]
         if not isinstance(time_field, cx.Field):
             raise TypeError("Trajectory time values must be stored as a Field.")
@@ -496,7 +497,7 @@ class _IrregularTrajectorySignalTable(StrictModule, NonTrainableState):
 
     def evaluate(
         self,
-        batch: PointsBatch,
+        batch: PointBatch,
         /,
         *,
         max_order: int,
@@ -562,7 +563,7 @@ class _IrregularTrajectorySignalTable(StrictModule, NonTrainableState):
 
 
 class _IrregularInterpolatedTrajectorySignal(
-    StrictModule, BatchAwareCallable, NonTrainableState
+    StrictModule, BatchEvaluator, NonTrainableState
 ):
     table: _IrregularTrajectorySignalTable
     order: int
@@ -573,19 +574,19 @@ class _IrregularInterpolatedTrajectorySignal(
 
     def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
         del args, key, kwargs
-        raise TypeError("TrajectorySignal requires PointsBatch evaluation.")
+        raise TypeError("TrajectorySignal requires PointBatch evaluation.")
 
     def __call_batch__(
         self,
-        batch: PointsBatch | CoordSeparableBatch,
+        batch: PointBatch | GridBatch,
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.Field:
         del key, kwargs
-        if not isinstance(batch, PointsBatch):
-            raise TypeError("TrajectorySignal requires PointsBatch evaluation.")
+        if not isinstance(batch, PointBatch):
+            raise TypeError("TrajectorySignal requires PointBatch evaluation.")
         time_field = batch[self.table.domain.time_label]
         if not isinstance(time_field, cx.Field):
             raise TypeError("Trajectory time values must be stored as a Field.")
@@ -630,13 +631,13 @@ def _irregular_trajectory_signal(
             if var != domain.time_label or axis is not None:
                 return None
             if int(order) == 0:
-                return with_derivative_hook(base, _nearest_hook)
+                return with_derivative_rule(base, CallbackDerivativeRule(_nearest_hook))
             raise ValueError(
                 "TrajectorySignal with interpolation='nearest' is not differentiable; "
                 "use interpolation='linear' for time derivatives."
             )
 
-        return with_derivative_hook(base, _nearest_hook)
+        return with_derivative_rule(base, CallbackDerivativeRule(_nearest_hook))
 
     table = _IrregularTrajectorySignalTable(domain=domain, values=values)
     base = DomainFunction(
@@ -671,18 +672,18 @@ def _irregular_trajectory_signal(
                     "time derivatives only up to order 1."
                 )
             if n == 0:
-                return with_derivative_hook(base, _make_hook(0))
+                return with_derivative_rule(base, CallbackDerivativeRule(_make_hook(0)))
             out = DomainFunction(
                 domain=domain,
                 deps=domain.labels,
                 func=_IrregularInterpolatedTrajectorySignal(table=table, order=n),
                 metadata={},
             )
-            return with_derivative_hook(out, _make_hook(n))
+            return with_derivative_rule(out, CallbackDerivativeRule(_make_hook(n)))
 
         return _hook
 
-    return with_derivative_hook(base, _make_hook(0))
+    return with_derivative_rule(base, CallbackDerivativeRule(_make_hook(0)))
 
 
 def TrajectorySignal(
@@ -750,13 +751,13 @@ def TrajectorySignal(
             if var != domain.time_label or axis is not None:
                 return None
             if int(order) == 0:
-                return with_derivative_hook(base, _nearest_hook)
+                return with_derivative_rule(base, CallbackDerivativeRule(_nearest_hook))
             raise ValueError(
                 "TrajectorySignal with interpolation='nearest' is not differentiable; "
                 "use interpolation='linear' or 'cubic_hermite' for time derivatives."
             )
 
-        return with_derivative_hook(base, _nearest_hook)
+        return with_derivative_rule(base, CallbackDerivativeRule(_nearest_hook))
 
     interpolation_value: Literal["linear", "cubic_hermite"]
     if interpolation_str == "linear":
@@ -803,18 +804,18 @@ def TrajectorySignal(
                     f"signal time derivatives only up to order {limit}."
                 )
             if n == 0:
-                return with_derivative_hook(base, _make_hook(0))
+                return with_derivative_rule(base, CallbackDerivativeRule(_make_hook(0)))
             out = DomainFunction(
                 domain=domain,
                 deps=domain.labels,
                 func=_InterpolatedTrajectorySignal(table=table, order=n),
                 metadata={},
             )
-            return with_derivative_hook(out, _make_hook(n))
+            return with_derivative_rule(out, CallbackDerivativeRule(_make_hook(n)))
 
         return _hook
 
-    return with_derivative_hook(base, _make_hook(0))
+    return with_derivative_rule(base, CallbackDerivativeRule(_make_hook(0)))
 
 
 __all__ = [

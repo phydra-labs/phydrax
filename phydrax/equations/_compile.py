@@ -10,12 +10,14 @@ from typing import Any, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
 
+from phydrax.domain import SamplingPlan
+
 from ._ir import PDECondition, PDEEquation, PDEExpression, PDEProblemIR
 from ._validate import infer_expression_type, validate_pde_ir
 
 
 if TYPE_CHECKING:
-    from ..domain._function import DomainFunction
+    from phydrax.domain import DomainFunction
 
 
 
@@ -68,7 +70,7 @@ class CompiledPDEProblem:
 
 
 def _map_value(value: Any, function: Callable[[Any], Any], /) -> Any:
-    from ..domain._function import DomainFunction
+    from phydrax.domain import DomainFunction
 
     if not isinstance(value, DomainFunction):
         return function(value)
@@ -85,7 +87,7 @@ def _map_value(value: Any, function: Callable[[Any], Any], /) -> Any:
 
 
 def _require_domain_function(value: Any, operation: str, /) -> DomainFunction:
-    from ..domain._function import DomainFunction
+    from phydrax.domain import DomainFunction
 
     if not isinstance(value, DomainFunction):
         raise TypeError(f"PDE {operation} compilation requires a DomainFunction operand.")
@@ -276,15 +278,12 @@ def compile_pde_functional_constraint(
     /,
     *,
     component: Any,
-    num_points: Any,
-    structure: Any,
+    sampling: SamplingPlan,
     field_names: tuple[str, ...] | None = None,
     parameters: Mapping[str, Any] | None = None,
     coordinates: Mapping[str, DomainFunction] | None = None,
     differential_backend: DifferentialBackend = "ad",
     integral_compiler: IntegralCompiler | None = None,
-    dense_structure: Any = None,
-    sampler: str = "latin_hypercube",
     weight: Any = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -312,10 +311,7 @@ def compile_pde_functional_constraint(
         component=component,
         operator=operator,
         constraint_vars=names,
-        num_points=num_points,
-        structure=structure,
-        dense_structure=dense_structure,
-        sampler=sampler,
+        sampling=sampling,
         weight=weight,
         label=label,
         over=over,

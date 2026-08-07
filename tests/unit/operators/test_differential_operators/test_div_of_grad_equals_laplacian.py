@@ -5,13 +5,16 @@
 import coordax as cx
 import jax.numpy as jnp
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.domain import Square, TimeInterval
+from phydrax.domain import TimeInterval
 from phydrax.operators.differential import div, grad, laplacian
 
 
 def test_div_grad_equals_laplacian_scalar_point():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def f(x):
@@ -24,7 +27,9 @@ def test_div_grad_equals_laplacian_scalar_point():
 
 
 def test_div_grad_equals_laplacian_vector_point():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def f(x):
@@ -37,7 +42,9 @@ def test_div_grad_equals_laplacian_vector_point():
 
 
 def test_div_grad_equals_laplacian_spacetime(sample_batch):
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     dom = geom @ TimeInterval(0.0, 1.0)
 
     @dom.Function("x", "t")

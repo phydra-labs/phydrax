@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from math import prod
-from typing import Any, Literal
+from typing import Any, cast, Literal
 
 import coordax as cx
 import equinox as eqx
@@ -531,11 +531,11 @@ def first_passage_diagnostics(
         raise ValueError("evaluation_times must be finite and strictly increasing.")
     if bool(jnp.any(times > terminal)):
         raise ValueError("evaluation_times must not exceed horizon.")
-    reference = (
-        jnp.asarray(reference_cdf(times), dtype=float)
-        if callable(reference_cdf)
-        else jnp.asarray(reference_cdf, dtype=float)
-    )
+    if callable(reference_cdf):
+        reference_fn = cast(Callable[[Array], Array], reference_cdf)
+        reference = jnp.asarray(reference_fn(times), dtype=float)
+    else:
+        reference = jnp.asarray(reference_cdf, dtype=float)
     if reference.shape != times.shape or bool(
         jnp.any(~jnp.isfinite(reference) | (reference < 0.0) | (reference > 1.0))
     ):
@@ -954,7 +954,7 @@ def process_conformal_diagnostics(
     count = _case_count(target, case_axis)
     calibrator.split.require_case_count(count, partition="test")
     interval = calibrator.interval(center, scale)
-    target_values = target.data if isinstance(target, cx.Field) else jnp.asarray(target)
+    target_values = jnp.asarray(target.data if isinstance(target, cx.Field) else target)
     lower_values = jnp.asarray(interval.lower.data)
     upper_values = jnp.asarray(interval.upper.data)
     if (

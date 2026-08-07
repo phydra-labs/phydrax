@@ -12,26 +12,29 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+from phydrax.domain import (
+    AbstractGeometry,
+    AbstractScalarDomain,
+    Boundary,
+    ComponentSum,
+    DomainComponent,
+    DomainFunction,
+    Fixed,
+    FixedEnd,
+    FixedStart,
+    GeometryDomain,
+    Interior,
+    open_unit_interval,
+    PointBatch,
+    PointSampling,
+    ProbabilityDomain,
+    SampleLayout,
+)
+
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._sampling import design_capabilities, design_name, materialize_design
 from ..geometry import BoundaryAtlasPartition
-from ..domain._base import _AbstractGeometry
-from ..domain._components import (
-    Boundary,
-    DomainComponent,
-    DomainComponentUnion,
-    Fixed,
-    FixedEnd,
-    FixedStart,
-    Interior,
-)
-from ..domain._domain import RelabeledDomain
-from ..domain._geometry import GeometryDomain
-from ..domain._function import DomainFunction
-from ..domain._probability import _open_unit_interval, ProbabilityDomain
-from ..domain._scalar import _AbstractScalarDomain
-from ..domain._structure import PointsBatch, ProductStructure
 from ._batches import PointIntegrationBatch, WeightedSampleBatch
 from ._estimates import (
     AntitheticDiagnostics,
@@ -42,6 +45,7 @@ from ._estimates import (
     StratifiedDiagnostics,
 )
 from ._lowering import (
+    _component_base_mass,
     axes_for_over,
     component_factor_fields,
     materialize_sampled_component,
@@ -63,7 +67,7 @@ from ._targets import ComponentTarget, DensityTarget, ProbabilityTarget
 
 
 def _unwrap(factor: Any, /) -> Any:
-    return factor.base if isinstance(factor, RelabeledDomain) else factor
+    return factor
 
 
 def _component_base(target: ComponentTarget | DensityTarget, /) -> ComponentTarget:
@@ -77,7 +81,7 @@ def _component_base(target: ComponentTarget | DensityTarget, /) -> ComponentTarg
 def _target_domain(target: Any, /) -> Any:
     base = target.base if isinstance(target, DensityTarget) else target
     if isinstance(base, ComponentTarget):
-        if isinstance(base.component, DomainComponentUnion):
+        if isinstance(base.component, ComponentSum):
             raise TypeError(
                 "Monte Carlo component unions must be integrated term by term."
             )
@@ -93,17 +97,17 @@ def _as_domain_function(value: Any, domain: Any, /) -> DomainFunction:
     return DomainFunction(domain=domain, deps=(), func=value)
 
 
-def _default_structure(component: DomainComponent, /) -> ProductStructure:
+def _default_structure(component: DomainComponent, /) -> SampleLayout:
     varying = tuple(
         label
         for label in component.domain.labels
         if not isinstance(
-            component.spec.component_for(label), (FixedStart, FixedEnd, Fixed)
+            component.spec.selection_for(label), (FixedStart, FixedEnd, Fixed)
         )
     )
     if not varying:
         raise ValueError("Monte Carlo sampling requires at least one non-fixed label.")
-    return ProductStructure((varying,))
+    return SampleLayout((varying,))
 
 
 def _design_sampler(design: Any, /) -> str:
@@ -119,13 +123,11 @@ def _materialize_probability(
 ) -> PointIntegrationBatch:
     probability = target.probability
     values = probability.sample(num_samples, sampler=sampler, key=key)
-    structure = ProductStructure(((probability.label,),)).canonicalize(
-        (probability.label,)
-    )
+    structure = SampleLayout(((probability.label,),)).canonicalize((probability.label,))
     axis = structure.axis_for(probability.label)
     if axis is None:
         raise RuntimeError("Probability sample structure has no axis.")
-    points = PointsBatch(
+    points = PointBatch(
         frozendict(
             {
                 probability.label: cx.Field(
@@ -159,13 +161,11 @@ def _materialize_direct_once(
     if not isinstance(target, (ComponentTarget, DensityTarget)):
         raise TypeError("Component sampling requires a component-backed target.")
     component_target = _component_base(target)
-    if isinstance(component_target.component, DomainComponentUnion):
-        raise TypeError("Materialize component-union Monte Carlo terms separately.")
+    if isinstance(component_target.component, ComponentSum):
+        raise TypeError("Materialize ComponentSum Monte Carlo terms separately.")
     structure = _default_structure(component_target.component)
     points = component_target.component.sample(
-        plan.num_samples,
-        structure=structure,
-        sampler=sampler,
+        PointSampling(plan.num_samples, layout=structure, design=sampler),
         key=key,
     )
     batch = materialize_sampled_component(component_target, points)
@@ -183,7 +183,7 @@ def _materialize_direct_once(
 
 def _fixed_point(factor: Any, selector: Any, /) -> cx.Field:
     factor = _unwrap(factor)
-    if isinstance(factor, _AbstractScalarDomain):
+    if isinstance(factor, AbstractScalarDomain):
         if isinstance(selector, FixedStart):
             value = factor.fixed("start")
         elif isinstance(selector, FixedEnd):
@@ -193,9 +193,9 @@ def _fixed_point(factor: Any, selector: Any, /) -> cx.Field:
         else:
             raise TypeError("Expected a fixed scalar selector.")
         return cx.Field(jnp.asarray(value, dtype=float).reshape(()), dims=())
-    if isinstance(factor, _AbstractGeometry) and isinstance(selector, Fixed):
+    if isinstance(factor, AbstractGeometry) and isinstance(selector, Fixed):
         return cx.Field(
-            jnp.asarray(selector.value, dtype=float).reshape((factor.var_dim,)),
+            jnp.asarray(selector.value, dtype=float).reshape((factor.spatial_dim,)),
             dims=(None,),
         )
     raise TypeError("Unsupported fixed factor in sample design.")
@@ -220,11 +220,11 @@ def _materialize_antithetic(
         if not isinstance(target, (ComponentTarget, DensityTarget)):
             raise TypeError("Antithetic sampling requires a supported target.")
         component = _component_base(target).component
-        if isinstance(component, DomainComponentUnion):
+        if isinstance(component, ComponentSum):
             raise TypeError("Antithetic component unions are not supported.")
         labels = component.domain.labels
         factors = tuple(_unwrap(component.domain.factor(label)) for label in labels)
-        selectors = tuple(component.spec.component_for(label) for label in labels)
+        selectors = tuple(component.spec.selection_for(label) for label in labels)
         fixed_labels = frozenset(
             label
             for label, selector in zip(labels, selectors, strict=True)
@@ -245,7 +245,7 @@ def _materialize_antithetic(
     varying_factors = tuple(
         factor for label, factor in zip(labels, factors, strict=True) if label in varying
     )
-    if any(not isinstance(factor, _AbstractScalarDomain) for factor in varying_factors):
+    if any(not isinstance(factor, AbstractScalarDomain) for factor in varying_factors):
         raise TypeError(
             "The default antithetic map supports scalar and probability domains only; "
             "supply external paired samples for general geometry."
@@ -266,9 +266,7 @@ def _materialize_antithetic(
         if reflected.shape != unit.shape:
             raise ValueError("Antithetic involution must preserve the design shape.")
     paired = jnp.concatenate((unit, reflected), axis=0)
-    structure = ProductStructure((varying,)).canonicalize(
-        labels, fixed_labels=fixed_labels
-    )
+    structure = SampleLayout((varying,)).canonicalize(labels, fixed_labels=fixed_labels)
     axis = structure.axis_for(varying[0])
     if axis is None:
         raise RuntimeError("Antithetic sample structure has no axis.")
@@ -285,13 +283,13 @@ def _materialize_antithetic(
             continue
         coordinate = paired[:, varying_index[label]]
         if isinstance(factor, ProbabilityDomain):
-            values = factor.distribution.icdf(_open_unit_interval(coordinate))
+            values = factor.distribution.icdf(open_unit_interval(coordinate))
         else:
             values = factor.fixed("start") + coordinate * (
                 factor.fixed("end") - factor.fixed("start")
             )
         points[label] = cx.Field(jnp.asarray(values), dims=(axis,))
-    batch_points = PointsBatch(frozendict(points), structure)
+    batch_points = PointBatch(frozendict(points), structure)
     weights = cx.Field(
         jnp.full((plan.num_samples,), 1.0 / float(plan.num_samples)), dims=(axis,)
     )
@@ -300,7 +298,7 @@ def _materialize_antithetic(
     else:
         if not isinstance(target, (ComponentTarget, DensityTarget)):
             raise TypeError("Antithetic sampling requires a supported target.")
-        mass = _component_base(target).component.measure()
+        mass = _component_base_mass(_component_base(target).component)
     return PointIntegrationBatch(
         batch_points,
         weights,
@@ -342,7 +340,7 @@ def _stratified_partition(
             label
             for label in component.domain.labels
             if not isinstance(
-                component.spec.component_for(label), (FixedStart, FixedEnd, Fixed)
+                component.spec.selection_for(label), (FixedStart, FixedEnd, Fixed)
             )
         )
         if len(nonfixed) != 1:
@@ -350,7 +348,7 @@ def _stratified_partition(
         return nonfixed[0], design.partition
     candidates: list[tuple[str, Any]] = []
     for label in component.domain.labels:
-        selector = component.spec.component_for(label)
+        selector = component.spec.selection_for(label)
         if isinstance(selector, (FixedStart, FixedEnd, Fixed)):
             continue
         factor = _unwrap(component.domain.factor(label))
@@ -380,7 +378,7 @@ def materialize_stratified(
     """Materialize a physical-measure stratified component batch."""
     component_target = _component_base(target)
     component = component_target.component
-    if isinstance(component, DomainComponentUnion):
+    if isinstance(component, ComponentSum):
         raise TypeError("Stratified component unions must be integrated term by term.")
     label, partition = _stratified_partition(component, plan.design)
     target_mass = partition.measures / partition.total_measure
@@ -402,9 +400,9 @@ def materialize_stratified(
     fixed_labels = frozenset(
         other
         for other in component.domain.labels
-        if isinstance(component.spec.component_for(other), (FixedStart, FixedEnd, Fixed))
+        if isinstance(component.spec.selection_for(other), (FixedStart, FixedEnd, Fixed))
     )
-    structure = ProductStructure(((label,),)).canonicalize(
+    structure = SampleLayout(((label,),)).canonicalize(
         component.domain.labels, fixed_labels=fixed_labels
     )
     axis = structure.axis_for(label)
@@ -412,7 +410,7 @@ def materialize_stratified(
         raise RuntimeError("Stratified sample structure has no axis.")
     values: dict[str, cx.Field] = {}
     for other in component.domain.labels:
-        selector = component.spec.component_for(other)
+        selector = component.spec.selection_for(other)
         factor = component.domain.factor(other)
         if other == label:
             raw = jnp.asarray(points_array)
@@ -420,7 +418,7 @@ def materialize_stratified(
             values[other] = cx.Field(raw, dims=dims)
         else:
             values[other] = _fixed_point(factor, selector)
-    point_batch = PointsBatch(frozendict(values), structure)
+    point_batch = PointBatch(frozendict(values), structure)
     weights = cx.Field(jnp.asarray(represented) * partition.total_measure, dims=(axis,))
     return PointIntegrationBatch(
         point_batch,
@@ -467,7 +465,7 @@ def _sample_values(
     values, output_dims = _expand_and_flatten(value_field, batch)
     base = target.base if isinstance(target, DensityTarget) else target
     if isinstance(base, ComponentTarget):
-        if isinstance(base.component, DomainComponentUnion):
+        if isinstance(base.component, ComponentSum):
             raise TypeError("Component unions must be sampled term by term.")
         mask, modifier = component_factor_fields(
             base.component, batch.points, key=key, kwargs=kwargs
@@ -1020,7 +1018,7 @@ def integrate_monte_carlo(
 
 def _proposal_covers_probability(probability: Any, proposal: Any, /) -> Array:
     distribution = probability.distribution
-    quantiles = _open_unit_interval(jnp.linspace(0.0, 1.0, 257))
+    quantiles = open_unit_interval(jnp.linspace(0.0, 1.0, 257))
     probes = distribution.icdf(quantiles)
     covered = jnp.all(proposal.contains(probes))
     target_support = distribution.support
@@ -1052,13 +1050,11 @@ def materialize_importance(
     samples = jnp.asarray(
         plan.proposal.sample(key, sample_shape=(plan.num_samples,)), dtype=float
     ).reshape((plan.num_samples,))
-    structure = ProductStructure(((probability.label,),)).canonicalize(
-        (probability.label,)
-    )
+    structure = SampleLayout(((probability.label,),)).canonicalize((probability.label,))
     axis = structure.axis_for(probability.label)
     if axis is None:
         raise RuntimeError("Importance sample structure has no axis.")
-    points = PointsBatch(
+    points = PointBatch(
         frozendict({probability.label: cx.Field(samples, dims=(axis,))}), structure
     )
     log_weights = probability.distribution.log_prob(samples) - plan.proposal.log_prob(

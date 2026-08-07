@@ -248,8 +248,10 @@ constraint = phx.constraints.FunctionalConstraint.from_operator(
     component=time.component(),
     operator=lambda state: phx.operators.schrodinger_residual(state, H),
     constraint_vars="psi",
-    num_points=16,
-    structure=phx.domain.ProductStructure((("t",),)),
+    sampling=phx.domain.PointSampling(
+        16,
+        layout=phx.domain.SampleLayout((("t",),)),
+    ),
     reduction="mean",
 )
 solver = phx.solver.FunctionalSolver(

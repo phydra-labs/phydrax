@@ -176,11 +176,11 @@ def test_adaptive_ratio_rechecks_the_propagated_error_tolerance():
     assert not estimate.successful
 
 
-def test_adaptive_component_union_applies_aggregate_throw_policy():
+def test_adaptive_component_sum_applies_aggregate_throw_policy():
     x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     t = phx.domain.ScalarInterval(0.0, 1.0, label="t")
     domain = phx.domain.ProductDomain(x, t)
-    union = phx.domain.DomainComponentUnion(
+    union = phx.domain.ComponentSum(
         (
             domain.component({"t": phx.domain.FixedStart()}),
             domain.component({"t": phx.domain.FixedEnd()}),
@@ -211,6 +211,6 @@ def test_adaptive_component_union_applies_aggregate_throw_policy():
         max_intervals=1,
         throw=True,
     )
-    with pytest.raises(eqx.EquinoxRuntimeError, match="component-union"):
+    with pytest.raises(eqx.EquinoxRuntimeError, match="component-sum"):
         throwing_estimate = phx.integration.integrate(function, target, throwing_plan)
         jax.block_until_ready(throwing_estimate.value.data)

@@ -10,8 +10,9 @@ from typing import Literal
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from phydrax.domain import DomainFunction
+
 from ..._strict import StrictModule
-from ...domain._function import DomainFunction
 from ..differential import dt
 from ._algebra import quantum_bracket
 from ._validation import (

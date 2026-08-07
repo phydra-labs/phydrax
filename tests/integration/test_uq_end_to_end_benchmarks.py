@@ -55,7 +55,7 @@ def test_inverse_poisson_likelihood_and_posterior_benchmark():
         sensor_domain.component(),
         observations,
         likelihood,
-        num_cases=96,
+        sampling=phx.domain.PointSampling(96, design="uniform"),
     )
     solver = phx.solver.FunctionalSolver(functions={"u": state}, constraints=[constraint])
     initial_nll = solver.loss(key=jr.key(11))

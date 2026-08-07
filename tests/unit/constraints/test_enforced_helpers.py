@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
 from phydrax.constraints import (
     enforce_blend,
@@ -23,32 +24,32 @@ from phydrax.domain import (
     FixedStart,
     FourierAxisSpec,
     Interval1d,
-    PointsBatch,
-    ProductStructure,
+    PointBatch,
+    SampleLayout,
     TimeInterval,
 )
 from phydrax.operators.differential import dt
 from phydrax.operators.differential._domain_ops import directional_derivative
 
 
-def _points_on_interval(geom: Interval1d, xs: jnp.ndarray) -> PointsBatch:
-    structure = ProductStructure((("x",),)).canonicalize(geom.labels)
+def _points_on_interval(geom: Interval1d, xs: jnp.ndarray) -> PointBatch:
+    structure = SampleLayout((("x",),)).canonicalize(geom.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
     axis = axis_names[0]
     pts = xs.reshape((-1, 1))
     points = frozendict({"x": cx.Field(pts, dims=(axis, None))})
-    return PointsBatch(points=points, structure=structure)
+    return PointBatch(points=points, structure=structure)
 
 
-def _points_on_time(time: TimeInterval, ts: jnp.ndarray) -> PointsBatch:
-    structure = ProductStructure((("t",),)).canonicalize(time.labels)
+def _points_on_time(time: TimeInterval, ts: jnp.ndarray) -> PointBatch:
+    structure = SampleLayout((("t",),)).canonicalize(time.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
     axis = axis_names[0]
     pts = jnp.asarray(ts, dtype=float).reshape((-1,))
     points = frozendict({"t": cx.Field(pts, dims=(axis,))})
-    return PointsBatch(points=points, structure=structure)
+    return PointBatch(points=points, structure=structure)
 
 
 def test_enforce_dirichlet_enforces_values_on_boundary():
@@ -138,7 +139,7 @@ def test_enforce_neumann_rejects_coord_separable_evaluation():
 
     u_enforced = enforce_neumann(u, boundary, target=0.0)
     interior = geom.component()
-    batch = interior.sample_coord_separable({"x": FourierAxisSpec(8)})
+    batch = interior.sample(phx.domain.GridSampling({"x": FourierAxisSpec(8)}))
     with pytest.raises(
         ValueError, match="enforce_neumann does not support coord-separable"
     ):
@@ -161,7 +162,7 @@ def test_enforce_robin_rejects_coord_separable_evaluation():
         target=0.0,
     )
     interior = geom.component()
-    batch = interior.sample_coord_separable({"x": FourierAxisSpec(8)})
+    batch = interior.sample(phx.domain.GridSampling({"x": FourierAxisSpec(8)}))
     with pytest.raises(
         ValueError, match="enforce_robin does not support coord-separable"
     ):
@@ -184,7 +185,7 @@ def test_enforce_traction_rejects_coord_separable_evaluation():
         mu=1.0,
     )
     interior = geom.component()
-    batch = interior.sample_coord_separable({"x": FourierAxisSpec(8)})
+    batch = interior.sample(phx.domain.GridSampling({"x": FourierAxisSpec(8)}))
     with pytest.raises(
         ValueError, match="enforce_traction does not support coord-separable"
     ):
@@ -211,10 +212,11 @@ def test_enforce_sommerfeld_rejects_coord_separable_evaluation():
         target=0.0,
     )
     interior = domain.component()
-    batch = interior.sample_coord_separable(
-        {"x": FourierAxisSpec(8)},
-        num_points=2,
-        dense_structure=ProductStructure((("t",),)),
+    batch = interior.sample(
+        phx.domain.GridSampling(
+            {"x": FourierAxisSpec(8)},
+            dense=phx.domain.PointSampling(2, layout=SampleLayout((("t",),))),
+        )
     )
     with pytest.raises(
         ValueError, match="enforce_sommerfeld does not support coord-separable"
@@ -278,10 +280,11 @@ def test_enforce_blend_coord_separable_spacetime_runs():
         num_reference=256,
     )
 
-    batch = domain.component().sample_coord_separable(
-        {"x": FourierAxisSpec(8)},
-        num_points=4,
-        dense_structure=ProductStructure((("t",),)),
+    batch = domain.component().sample(
+        phx.domain.GridSampling(
+            {"x": FourierAxisSpec(8)},
+            dense=phx.domain.PointSampling(4, layout=SampleLayout((("t",),))),
+        )
     )
     out = jnp.asarray(blended(batch).data)
     assert jnp.all(jnp.isfinite(out))
@@ -353,7 +356,7 @@ def test_enforce_dirichlet_scalar_var_supports_coord_separable_sampling():
         return 1.0 + t
 
     u_enforced = enforce_dirichlet(u, component, var="t", target=3.0)
-    batch = time.component().sample_coord_separable({"t": FourierAxisSpec(8)})
+    batch = time.component().sample(phx.domain.GridSampling({"t": FourierAxisSpec(8)}))
     out = jnp.asarray(u_enforced(batch).data).reshape((-1,))
     assert jnp.allclose(out[0], 3.0, atol=1e-10)
     assert jnp.all(jnp.isfinite(out))
@@ -365,7 +368,7 @@ def test_enforce_initial_supports_coord_separable_sampling():
 
     u = time.Function()(1.0)
     u_enforced = enforce_initial(u, component, targets={0: 2.0}, gate_eps=1e-2)
-    batch = time.component().sample_coord_separable({"t": FourierAxisSpec(8)})
+    batch = time.component().sample(phx.domain.GridSampling({"t": FourierAxisSpec(8)}))
     out = jnp.asarray(u_enforced(batch).data).reshape((-1,))
     assert jnp.allclose(out[0], 2.0, atol=1e-10)
     assert jnp.all(jnp.isfinite(out))

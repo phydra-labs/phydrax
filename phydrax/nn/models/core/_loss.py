@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import dataclasses
-import inspect
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -17,7 +16,8 @@ from ...._callable import _ensure_special_kwonly_args
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
-from ._base import _AbstractBaseModel, DomainInputMode, EvalKey
+from ._base import _AbstractBaseModel, EvalKey
+from ._binding import ModelBinding
 
 
 class ModelLossTerm(StrictModule, NonTrainableState):
@@ -61,9 +61,7 @@ class ModelWithLoss(StrictModule):
     loss_identity: int
     in_size: Any
     out_size: Any
-    _call_has_var_kwargs: bool
-    _call_has_key: bool
-    _call_has_iter: bool
+    binding: ModelBinding
 
     def __init__(
         self,
@@ -73,8 +71,10 @@ class ModelWithLoss(StrictModule):
         loss_terms: Sequence[ModelLossTerm] = (),
         loss_identity: int | None = None,
     ):
-        if not callable(model):
-            raise TypeError("ModelWithLoss requires a callable model.")
+        if not isinstance(model, _AbstractBaseModel):
+            raise TypeError(
+                "ModelWithLoss requires a Phydrax model with an explicit input binding."
+            )
         terms = tuple(loss_terms)
         bad = tuple(t for t in terms if not isinstance(t, ModelLossTerm))
         if bad:
@@ -85,19 +85,9 @@ class ModelWithLoss(StrictModule):
         self.model = model
         self.loss_terms = terms
         self.loss_identity = int(id(terms) if loss_identity is None else loss_identity)
-        self.in_size = getattr(model, "in_size", None)
-        self.out_size = getattr(model, "out_size", None)
-        sig = inspect.signature(model)
-        params = sig.parameters
-        self._call_has_var_kwargs = any(
-            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
-        )
-        self._call_has_key = "key" in params
-        self._call_has_iter = "iter_" in params
-        if self._call_has_key and params["key"].kind != inspect.Parameter.KEYWORD_ONLY:
-            raise TypeError("`key` must be a keyword-only argument for model calls.")
-        if self._call_has_iter and params["iter_"].kind != inspect.Parameter.KEYWORD_ONLY:
-            raise TypeError("`iter_` must be a keyword-only argument for model calls.")
+        self.in_size = model.in_size
+        self.out_size = model.out_size
+        self.binding = model.input_binding()
 
     def __call__(
         self,
@@ -108,15 +98,13 @@ class ModelWithLoss(StrictModule):
         iter_: Array | None = None,
         **kwargs: Any,
     ) -> Array:
-        out_kwargs = kwargs
-        if self._call_has_key or self._call_has_var_kwargs:
-            out_kwargs = dict(out_kwargs)
-            out_kwargs["key"] = key
-        if iter_ is not None and (self._call_has_iter or self._call_has_var_kwargs):
-            if out_kwargs is kwargs:
-                out_kwargs = dict(out_kwargs)
-            out_kwargs["iter_"] = iter_
-        return self.model(x, **out_kwargs)
+        return self.binding.call(
+            self.model,
+            x,
+            key=key,
+            iter_=iter_,
+            kwargs=dict(kwargs),
+        )
 
     def add_model_loss(
         self,
@@ -129,14 +117,8 @@ class ModelWithLoss(StrictModule):
         term = ModelLossTerm(penalty, weight=weight, label=label)
         return ModelWithLoss(self.model, loss_terms=self.loss_terms + (term,))
 
-    def supports_structured_input(self) -> bool:
-        return _supports_structured_input(self.model)
-
-    def supports_blockwise_input(self) -> bool:
-        return _supports_blockwise_input(self.model)
-
-    def supports_axis_batch_input(self) -> bool:
-        return _supports_axis_batch_input(self.model)
+    def input_binding(self) -> ModelBinding:
+        return self.binding
 
     def __call_axis_batch__(
         self,
@@ -154,14 +136,6 @@ class ModelWithLoss(StrictModule):
             )
         raise TypeError("Wrapped model does not support axis-batch execution.")
 
-    def warn_on_auto_fallback(self) -> bool:
-        method = getattr(self.model, "warn_on_auto_fallback", None)
-        if callable(method):
-            return bool(method())
-        return bool(getattr(self.model, "_warn_on_auto_fallback", False))
-
-    def domain_input_mode(self) -> DomainInputMode:
-        return _domain_input_mode(self.model)
 
 
 def add_model_loss(
@@ -183,57 +157,6 @@ def add_model_loss(
     return ModelWithLoss(model, loss_terms=(term,))
 
 
-def _supports_structured_input(model: Any, /) -> bool:
-    method = getattr(model, "supports_structured_input", None)
-    if callable(method):
-        return bool(method())
-    return bool(getattr(model, "_supports_structured_input", False))
-
-
-def _supports_blockwise_input(model: Any, /) -> bool:
-    method = getattr(model, "supports_blockwise_input", None)
-    if callable(method):
-        return bool(method())
-    return bool(getattr(model, "_supports_blockwise_input", False))
-
-
-def _supports_axis_batch_input(model: Any, /) -> bool:
-    if isinstance(model, ModelWithLoss):
-        return model.supports_axis_batch_input()
-    if isinstance(model, _AbstractBaseModel):
-        return model.supports_axis_batch_input()
-    return False
-
-
-def _domain_input_mode(model: Any, /) -> DomainInputMode:
-    method = getattr(model, "domain_input_mode", None)
-    if callable(method):
-        mode = method()
-    else:
-        mode = getattr(model, "_domain_input_mode", "flat")
-    if mode not in ("flat", "structured"):
-        raise ValueError("Model domain input mode must be either 'flat' or 'structured'.")
-    return mode
-
-
-def model_domain_metadata(
-    model: Any,
-    /,
-) -> tuple[DomainInputMode, bool, bool, bool, bool] | None:
-    """Return domain-call metadata for Phydrax model-like objects."""
-    if isinstance(model, (_AbstractBaseModel, ModelWithLoss)):
-        return (
-            _domain_input_mode(model),
-            _supports_structured_input(model),
-            _supports_blockwise_input(model),
-            _supports_axis_batch_input(model),
-            bool(
-                model.warn_on_auto_fallback()
-                if callable(getattr(model, "warn_on_auto_fallback", None))
-                else getattr(model, "_warn_on_auto_fallback", False)
-            ),
-        )
-    return None
 
 
 def model_loss_labels(model: Any, /) -> tuple[str, ...]:
@@ -366,7 +289,6 @@ __all__ = [
     "ModelLossTerm",
     "ModelWithLoss",
     "add_model_loss",
-    "model_domain_metadata",
     "model_loss_labels",
     "model_loss_values",
 ]

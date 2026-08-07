@@ -2,10 +2,11 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 import coordax as cx
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -15,9 +16,12 @@ from jaxtyping import Array, ArrayLike, Key
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
 from ...graph import batch_graphs, GraphIR, LayoutPlan
-from .._components import _AbstractVarComponent
-from .._domain import _AbstractUnaryDomain
-from .._structure import ProductStructure
+from .._coordinate import CoordinateSpec
+from .._domain import JointFactor
+from .._factor_component import FactorComponent
+from .._measure import BaseMeasure, ExactMass
+from .._selection import Selection
+from .._structure import SampleLayout
 from ._batch import GRAPH_ENTITY_INDEX_KEY, GRAPH_GRAPH_INDEX_KEY, GraphBatch
 from ._components import (
     graph_component_indices_for_graph,
@@ -36,7 +40,9 @@ def _to_axis_fields(tree: Any, axis: str, /) -> Any:
     def _leaf_to_field(value: Any) -> cx.Field:
         arr = jnp.asarray(value)
         if arr.ndim == 0:
-            raise ValueError("GraphDatasetDomain feature leaves must have an entity axis.")
+            raise ValueError(
+                "GraphDatasetDomain feature leaves must have an entity axis."
+            )
         return cx.Field(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
 
     return jax.tree_util.tree_map(_leaf_to_field, tree)
@@ -91,14 +97,16 @@ def _size_for_kind(graph: GraphIR, kind: GraphComponentKind, /) -> int:
 
 def _component_indices_for_graph(
     graph: GraphIR,
-    component: _AbstractVarComponent,
+    component: Selection,
     kind: GraphComponentKind,
     /,
 ) -> Array:
     return graph_component_indices_for_graph(graph, component, kind)
 
 
-def _offsets_for_kind(graphs: Sequence[GraphIR], kind: GraphComponentKind, /) -> list[int]:
+def _offsets_for_kind(
+    graphs: Sequence[GraphIR], kind: GraphComponentKind, /
+) -> list[int]:
     offsets: list[int] = []
     running = 0
     for graph in graphs:
@@ -116,7 +124,7 @@ def _feature_tree_size(tree: Any, /) -> int | None:
     return int(jnp.asarray(leaves[0]).shape[0])
 
 
-class GraphDatasetDomain(_AbstractUnaryDomain):
+class GraphDatasetDomain(JointFactor):
     """A finite dataset domain whose samples are sparse graph instances.
 
     Sampling a graph component draws graph cases, batches their full topology into
@@ -154,11 +162,15 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
         if len(graphs) == 0:
             raise ValueError("GraphDatasetDomain requires at least one graph.")
         if measure not in ("probability", "count"):
-            raise ValueError("GraphDatasetDomain measure must be 'probability' or 'count'.")
+            raise ValueError(
+                "GraphDatasetDomain measure must be 'probability' or 'count'."
+            )
         graphs_tuple = tuple(graphs)
         for graph in graphs_tuple:
             if not isinstance(graph, GraphIR):
-                raise TypeError("GraphDatasetDomain expects phydrax.graph.GraphIR values.")
+                raise TypeError(
+                    "GraphDatasetDomain expects phydrax.graph.GraphIR values."
+                )
             if validate:
                 graph.validate()
         self.graphs = graphs_tuple
@@ -172,9 +184,41 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
         return self._label
 
     @property
-    def var_dim(self) -> int:
-        """Number of coordinate labels owned by this unary domain."""
-        return 1
+    def labels(self) -> tuple[str, ...]:
+        return (self.label,)
+
+    @property
+    def coordinate_specs(self) -> tuple[CoordinateSpec, ...]:
+        return (CoordinateSpec(None, kind="graph", differentiable=False, dtype=None),)
+
+    def bind_component(
+        self,
+        selections: Mapping[str, Selection],
+        /,
+    ) -> FactorComponent:
+        if tuple(selections) != self.labels:
+            raise ValueError(
+                f"Graph-dataset factor {self.labels} requires one ordered selection."
+            )
+        selection = selections[self.label]
+        normalized = self.measure_mode == "probability"
+        kind = "probability" if normalized else "counting"
+        return FactorComponent(
+            factor=self,
+            selections=selections,
+            measure=BaseMeasure(
+                kind,
+                ExactMass(self.component_measure(selection)),
+                normalized=normalized,
+            ),
+        )
+
+    def _replace_labels(
+        self,
+        labels: tuple[str, ...],
+        /,
+    ) -> "GraphDatasetDomain":
+        return eqx.tree_at(lambda factor: factor._label, self, labels[0])
 
     @property
     def size(self) -> int:
@@ -255,7 +299,7 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
             dtype=jnp.int32,
         )
 
-    def component_size(self, component: _AbstractVarComponent, /) -> int:
+    def component_size(self, component: Selection, /) -> int:
         """Return the total selected entity count across all graph cases."""
         kind = graph_component_kind(component)
         total = 0
@@ -263,7 +307,7 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
             total += int(_component_indices_for_graph(graph, component, kind).shape[0])
         return total
 
-    def component_measure(self, component: _AbstractVarComponent, /) -> Array:
+    def component_measure(self, component: Selection, /) -> Array:
         """Return the total measure assigned to a graph component."""
         if self._measure_mode == "probability":
             return jnp.asarray(1.0, dtype=float)
@@ -271,10 +315,10 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
 
     def sample_component(
         self,
-        component: _AbstractVarComponent,
+        component: Selection,
         num_points: int,
         *,
-        structure: ProductStructure,
+        structure: SampleLayout,
         label: str | None = None,
         sampler: str = "uniform",
         key: Key[Array, ""] = DOC_KEY0,
@@ -293,8 +337,8 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
         indices: ArrayLike,
         /,
         *,
-        component: _AbstractVarComponent,
-        structure: ProductStructure | None = None,
+        component: Selection,
+        structure: SampleLayout | None = None,
         label: str | None = None,
     ) -> GraphBatch:
         """Materialize selected graph cases by explicit dataset index.
@@ -304,7 +348,7 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
         source case for graph-data constraints and diagnostics.
         """
         label_out = self.label if label is None else str(label)
-        structure_in = structure or ProductStructure(((label_out,),))
+        structure_in = structure or SampleLayout(((label_out,),))
         structure_out = structure_in.canonicalize((label_out,))
         axis = structure_out.axis_for(label_out)
         if axis is None:
@@ -323,7 +367,9 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
 
         kind = graph_component_kind(component)
         real_batched = batch_graphs(selected_graphs, validate=True)
-        batched = self._layout.pack(real_batched) if self._layout is not None else real_batched
+        batched = (
+            self._layout.pack(real_batched) if self._layout is not None else real_batched
+        )
         offsets = _offsets_for_kind(selected_graphs, kind)
         entity_parts: list[Array] = []
         dataset_parts: list[Array] = []
@@ -343,9 +389,7 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
                     dtype=jnp.int32,
                 )
             )
-            sample_parts.append(
-                jnp.full((n_local,), int(sample_index), dtype=jnp.int32)
-            )
+            sample_parts.append(jnp.full((n_local,), int(sample_index), dtype=jnp.int32))
             offset_parts.append(jnp.full((n_local,), int(offset), dtype=jnp.int32))
         entity_indices = jnp.concatenate(entity_parts, axis=0)
         dataset_indices = jnp.concatenate(dataset_parts, axis=0)
@@ -389,7 +433,8 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
         The model is evaluated on each sampled batched topology and returns the
         node, edge, or global output selected by `output`.
         """
-        from ...domain._function import DomainFunction
+        from phydrax.domain import DomainFunction
+
         from ...nn import GraphModel
 
         return DomainFunction(
@@ -429,7 +474,8 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
         Use this when a graph model predicts a sequence by repeatedly applying a
         one-step graph state transition on sampled graph cases.
         """
-        from ...domain._function import DomainFunction
+        from phydrax.domain import DomainFunction
+
         from ...nn import GraphRolloutModel
 
         return DomainFunction(
@@ -450,11 +496,9 @@ class GraphDatasetDomain(_AbstractUnaryDomain):
             ),
         )
 
-    def equivalent(self, other: object, /) -> bool:
+    def _same_factor_support(self, other: object, /) -> bool:
         """Return whether another domain has the same public graph-family shape."""
         if not isinstance(other, GraphDatasetDomain):
-            return False
-        if self.label != other.label:
             return False
         if self.measure_mode != other.measure_mode:
             return False

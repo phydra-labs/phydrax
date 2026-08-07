@@ -6,15 +6,15 @@ import coordax as cx
 import jax
 import jax.numpy as jnp
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
 from phydrax.constraints import enforce_dirichlet, enforce_neumann
 from phydrax.domain import (
     Boundary,
     FixedStart,
     Interval1d,
-    PointsBatch,
-    ProductStructure,
-    Square,
+    PointBatch,
+    SampleLayout,
     TimeInterval,
 )
 from phydrax.solver import (
@@ -25,14 +25,14 @@ from phydrax.solver import (
 
 
 def _line_batch(domain, xs):
-    structure = ProductStructure((("x",),)).canonicalize(domain.labels)
+    structure = SampleLayout((("x",),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
     axis = axis_names[0]
     points = frozendict(
         {"x": cx.Field(jnp.asarray(xs, dtype=float).reshape((-1, 1)), dims=(axis, None))}
     )
-    return PointsBatch(points=points, structure=structure)
+    return PointBatch(points=points, structure=structure)
 
 
 def test_boundary_subset_blend_matches_pieces():
@@ -129,7 +129,9 @@ def test_initial_overlay_boundary_gate_is_dimensionless_and_scale_invariant():
 
 
 def test_initial_overlay_gate_preserves_declared_normal_derivative():
-    domain = Square(center=(0.0, 0.0), side=2.0) @ TimeInterval(0.0, 1.0)
+    domain = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    ) @ TimeInterval(0.0, 1.0)
     boundary = domain.component({"x": Boundary()})
     initial = domain.component({"t": FixedStart()})
 
@@ -182,7 +184,9 @@ def test_initial_overlay_gate_preserves_declared_normal_derivative():
 
 
 def test_functional_solver_configures_cad_preservation_gate_extent():
-    domain = Square(center=(0.0, 0.0), side=2.0) @ TimeInterval(0.0, 1.0)
+    domain = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    ) @ TimeInterval(0.0, 1.0)
     boundary = domain.component({"x": Boundary()})
     initial = domain.component({"t": FixedStart()})
 

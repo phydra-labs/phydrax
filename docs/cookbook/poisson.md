@@ -15,7 +15,7 @@ with \(g(x,y)=x^2+y^2\). The exact solution is \(u^\star(x,y)=x^2+y^2\).
 
 ## Domain and components
 
-- Domain: `Square(center=(0,0), side=2)` (label `"x"` with \(d=2\)).
+- Domain: `GeometryDomain(Square(...).compile())` (label `"x"` with \(d=2\)).
 - Interior component: `geom.component()` (default).
 - Boundary component: `geom.component({"x": Boundary()})`.
 
@@ -27,7 +27,9 @@ with \(g(x,y)=x^2+y^2\). The exact solution is \(u^\star(x,y)=x^2+y^2\).
     import optax
     import phydrax as phx
 
-    geom = phx.domain.Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def g(x):
@@ -38,14 +40,13 @@ with \(g(x,y)=x^2+y^2\). The exact solution is \(u^\star(x,y)=x^2+y^2\).
     )
     u = geom.Model("x")(model)
 
-    structure = phx.domain.ProductStructure((("x",),))
+    layout = phx.domain.SampleLayout((("x",),))
 
     pde = phx.constraints.ContinuousPointwiseInteriorConstraint(
         "u",
         geom,
         operator=lambda f: phx.operators.laplacian(f, var="x") - 4.0,
-        num_points=64,
-        structure=structure,
+        sampling=phx.domain.PointSampling(64, layout=layout),
         reduction="mean",
     )
 
@@ -54,8 +55,7 @@ with \(g(x,y)=x^2+y^2\). The exact solution is \(u^\star(x,y)=x^2+y^2\).
         "u",
         boundary,
         target=g,
-        num_points=32,
-        structure=structure,
+        sampling=phx.domain.PointSampling(32, layout=layout),
         weight=10.0,
         reduction="mean",
     )
@@ -75,7 +75,9 @@ Instead of penalizing boundary mismatch, enforce \(u=g\) by construction using
     import optax
     import phydrax as phx
 
-    geom = phx.domain.Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def g(x):
@@ -86,13 +88,12 @@ Instead of penalizing boundary mismatch, enforce \(u=g\) by construction using
     )
     u = geom.Model("x")(model)
 
-    structure = phx.domain.ProductStructure((("x",),))
+    layout = phx.domain.SampleLayout((("x",),))
     pde = phx.constraints.ContinuousPointwiseInteriorConstraint(
         "u",
         geom,
         operator=lambda f: phx.operators.laplacian(f, var="x") - 4.0,
-        num_points=64,
-        structure=structure,
+        sampling=phx.domain.PointSampling(64, layout=layout),
     )
 
     boundary = geom.component({"x": phx.domain.Boundary()})
@@ -112,11 +113,12 @@ Instead of penalizing boundary mismatch, enforce \(u=g\) by construction using
     solver = solver.solve(num_iter=20, optim=optax.adam(1e-3), seed=0)
     ```
 
-## Grid evaluation (coord-separable batches)
+## Grid evaluation
 
-When you want axis-aware evaluation (e.g. spectral/basis derivatives, operator learning), sample coordinate axes and
-evaluate on the implied Cartesian grid. For a 2D geometry label `"x"`, coord-separable sampling provides a tuple
-\((x_{\text{axis}},y_{\text{axis}})\).
+For axis-aware evaluation—such as spectral/basis derivatives or operator
+learning—`GridSampling` materializes coordinate axes and the implied Cartesian
+grid. A two-dimensional geometry label `"x"` contributes an `(x_axis, y_axis)`
+tuple plus its interior mask.
 
 !!! example
     ```python
@@ -125,7 +127,9 @@ evaluate on the implied Cartesian grid. For a 2D geometry label `"x"`, coord-sep
 
     # Basis/FD backends require the field to support structured inputs (a tuple of 1D axes).
     # Use a structured model like SeparableMLP/FNO/DeepONet for grid-native evaluation.
-    geom = phx.domain.Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     model = phx.nn.SeparableMLP(
         in_size=2,
         out_size="scalar",
@@ -134,9 +138,12 @@ evaluate on the implied Cartesian grid. For a 2D geometry label `"x"`, coord-sep
         depth=2,
         key=jr.key(0),
     )
-    u = geom.Model("x", input_mode="structured")(model)
+    u = geom.Model("x")(model)
 
-    batch = geom.component().sample_coord_separable({"x": (32, 32)}, key=jr.key(1))
+    batch = geom.component().sample(
+        phx.domain.GridSampling({"x": (32, 32)}),
+        key=jr.key(1),
+    )
 
     # Evaluate a basis-aware Laplacian on the grid.
     du = phx.operators.laplacian(u, var="x", backend="basis", basis="poly")

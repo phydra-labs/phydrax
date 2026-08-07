@@ -1,76 +1,104 @@
-# Geometry (2D)
+# Two-dimensional geometry domains
 
-Two-dimensional domain constructors are adapters over the common
-`phydrax.geometry` substrate. `phx.domain.Circle(...)`, `Square(...)`, and the
-other convenience constructors compile an analytic source and return a
-`GeometryDomain`; they do not maintain a second geometry implementation.
-
-A geometry domain exposes one certified negative-inside field through `adf`, exact
-or approximate membership through the compiled kernel, a representation-independent
-`boundary_atlas`, physical measure, boundary measure, normals, and bounded sampling.
-`field_certificate` states whether the field is an exact distance, an approximate
-distance, or a general level set.
-
-## Direct source composition
-
-Construct and compose geometry sources before adapting them to a labeled domain:
+Two-dimensional construction lives in `phydrax.geometry`. Sources are
+representation-aware host objects; `compile()` lowers them to a common JAX-safe
+`CompiledGeometry`; `phydrax.domain.GeometryDomain` adds a coordinate label and
+the domain/component/sampling algebra.
 
 ```python
 import phydrax as phx
 
-left = phx.geometry.Circle((-0.35, 0.0), 0.75, feature_id="left")
-right = phx.geometry.Square((0.35, 0.0), 1.0, feature_id="right")
-
-source = left | right                 # union
-# source = left & right               # intersection
-# source = left - right               # difference
-source = source.translated((0.0, 0.25))
-
-geometry = phx.domain.GeometryDomain(source.compile())
+source = phx.geometry.Circle(
+    center=(0.0, 0.0),
+    radius=1.0,
+    feature_id="disk",
+)
+domain = phx.domain.GeometryDomain(source.compile(), label="x")
 ```
 
-Sharp CSG uses `|`, `&`, and `-` on `GeometrySource` objects. The resulting field is
-a nonsmooth level set at operation seams, and its `FieldCertificate` reports that
-loss of regularity. Domain adapters intentionally do not duplicate the CSG API.
+Compose CSG and transforms before compilation:
 
-## Planar mesh input
+```python
+left = phx.geometry.Circle((-0.35, 0.0), 0.75, feature_id="left")
+right = phx.geometry.Square((0.35, 0.0), 1.0, feature_id="right")
+source = (left | right).translated((0.0, 0.25))
+domain = phx.domain.GeometryDomain(source.compile())
+```
 
-`Geometry2DFromCAD` canonicalizes a finite planar triangle mesh into
-`PlanarMeshRegion`. Triangles may contain holes or multiple connected components;
-the oriented boundary loops determine membership and boundary charts. Point-cloud
-reconstruction is a separate, reported approximation pipeline.
+Sharp `|`, `&`, and `-` operations preserve set membership and record their
+nonsmooth seam regularity in the compiled field certificate. Domain adapters do
+not duplicate source construction operations.
 
-::: phydrax.domain.Geometry2DFromCAD
-    options:
-        members:
-            - sample_interior
-            - sample_boundary
-            - estimate_boundary_subset_measure
+## Planar mesh and reconstruction input
+
+`planar_region_from_source(...)` canonicalizes a triangular mesh as a
+`PlanarMeshRegion`. `reconstruct_planar_region(...)` is a separate approximate
+pipeline returning a `ReconstructedGeometrySource` with an immutable
+`ReconstructionReport`.
+
+```python
+import meshio
+
+mesh = meshio.Mesh(
+    points=[
+        [-1.0, -1.0, 0.0],
+        [1.0, -1.0, 0.0],
+        [1.0, 1.0, 0.0],
+        [-1.0, 1.0, 0.0],
+    ],
+    cells=[("triangle", [[0, 1, 2], [0, 2, 3]])],
+)
+points = [
+    [-1.0, -1.0],
+    [1.0, -1.0],
+    [1.0, 1.0],
+    [-1.0, 1.0],
+    [0.0, 0.0],
+]
+mesh_source = phx.geometry.planar_region_from_source(mesh)
+mesh_domain = phx.domain.GeometryDomain(mesh_source.compile())
+
+reconstructed = phx.geometry.reconstruct_planar_region(points)
+point_domain = phx.domain.GeometryDomain(reconstructed.compile())
+print(point_domain.reconstruction_report)
+```
+
+## Domain adapter
+
+::: phydrax.domain.GeometryDomain
+
+## Analytic sources
+
+::: phydrax.geometry.Circle
 
 ---
 
-::: phydrax.domain.Geometry2DFromPointCloud
-
-## Primitives
-
-::: phydrax.domain.Circle
+::: phydrax.geometry.Ellipse
 
 ---
 
-::: phydrax.domain.Ellipse
+::: phydrax.geometry.Rectangle
 
 ---
 
-::: phydrax.domain.Rectangle
+::: phydrax.geometry.Square
 
 ---
 
-::: phydrax.domain.Square
+::: phydrax.geometry.Polygon
 
 ---
 
-::: phydrax.domain.Polygon
+::: phydrax.geometry.Triangle
+
+## Simplicial and reconstruction sources
+
+::: phydrax.geometry.PlanarMeshRegion
 
 ---
 
-::: phydrax.domain.Triangle
+::: phydrax.geometry.planar_region_from_source
+
+---
+
+::: phydrax.geometry.reconstruct_planar_region

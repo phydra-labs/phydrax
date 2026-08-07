@@ -9,8 +9,9 @@ from typing import Literal
 import jax.numpy as jnp
 from jaxtyping import ArrayLike
 
+from phydrax.domain import DomainFunction
+
 from ..._strict import StrictModule
-from ...domain._function import DomainFunction
 from ..linalg import adjoint
 from ._validation import (
     coerce_hbar,

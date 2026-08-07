@@ -67,7 +67,11 @@ constraint = phx.constraints.RaggedSeriesSupervisedConstraint(
     "u",
     domain.component(),
     targets,
-    num_cases=64,
+    sampling=phx.domain.PointSampling(
+        64,
+        layout=phx.domain.SampleLayout((("data",),)),
+        design="uniform",
+    ),
     series_sampling="window_uniform",
     num_series_points=256,
 )
@@ -95,7 +99,11 @@ constraints = phx.constraints.RaggedSeriesSupervisedConstraint.bucketed(
     "u",
     domain.component(),
     targets,
-    num_cases=64,
+    sampling=phx.domain.PointSampling(
+        64,
+        layout=phx.domain.SampleLayout((("data",),)),
+        design="uniform",
+    ),
     num_buckets=8,
 )
 ```
@@ -129,4 +137,4 @@ containing every bucket.
             - points_from_indices
             - sampled_input_rows
             - sampled_points_from_indices
-            - equivalent
+            - same_support

@@ -13,17 +13,21 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, ArrayLike, Key
 
-from .._doc import DOC_KEY0
-from .._strict import StrictModule
-from ..domain._components import DomainComponent
-from ..domain._function import DomainFunction
-from ..domain._ragged_series_dataset import (
+from phydrax.domain import (
+    DomainComponent,
+    DomainFunction,
+    PointBatch,
+    PointSampling,
     RaggedSeriesDatasetDomain,
     RaggedSeriesSampling,
 )
-from ..domain._structure import PointsBatch, ProductStructure
+
+from .._doc import DOC_KEY0
+from .._strict import StrictModule
 from ._base import AbstractSamplingConstraint
 from ._data_metrics import (
+    case_sample_count,
+    normalize_case_sampling,
     reduce_supervised_loss,
     sample_case_indices,
     supervised_data_metrics,
@@ -36,14 +40,14 @@ from ._data_metrics import (
 class RaggedSeriesSupervisedBatch(StrictModule):
     """A sampled mini-batch of row-aligned ragged-series supervised data."""
 
-    points: PointsBatch
+    points: PointBatch
     target: Array
     indices: Array
 
     def __init__(
         self,
         *,
-        points: PointsBatch,
+        points: PointBatch,
         target: ArrayLike,
         indices: ArrayLike,
     ):
@@ -70,10 +74,7 @@ class RaggedSeriesSupervisedConstraint(AbstractSamplingConstraint):
 
     constraint_vars: tuple[str, ...]
     component: DomainComponent
-    structure: ProductStructure
-    dense_structure: ProductStructure | None
-    num_points: int
-    sampler: str
+    sampling: PointSampling
     over: str | tuple[str, ...] | None
     reduction: Literal["mean", "sum"]
     series_sampling: RaggedSeriesSampling
@@ -92,9 +93,7 @@ class RaggedSeriesSupervisedConstraint(AbstractSamplingConstraint):
         values: ArrayLike,
         /,
         *,
-        num_cases: int,
-        structure: ProductStructure | None = None,
-        sampler: str = "uniform",
+        sampling: PointSampling,
         weight: DomainFunction | ArrayLike = 1.0,
         reduction: Literal["mean", "sum"] = "mean",
         series_sampling: RaggedSeriesSampling = "full",
@@ -109,9 +108,7 @@ class RaggedSeriesSupervisedConstraint(AbstractSamplingConstraint):
             constraint_var: Name of the predicted function to supervise.
             component: Component from a `RaggedSeriesDatasetDomain`.
             values: Targets with leading size equal to `domain.size`.
-            num_cases: Number of cases sampled per loss evaluation.
-            structure: Optional product structure for the sampled case axis.
-            sampler: Case sampler. Only `"uniform"` is currently supported.
+            sampling: Uniform empirical-case sampling plan.
             weight: Scalar or pointwise multiplier applied to this loss term.
             reduction: `"mean"` for case-average loss or `"sum"` for a summed
                 squared-error loss.
@@ -129,9 +126,11 @@ class RaggedSeriesSupervisedConstraint(AbstractSamplingConstraint):
                 "RaggedSeriesSupervisedConstraint requires a "
                 "RaggedSeriesDatasetDomain component."
             )
-        n = int(num_cases)
-        if n <= 0:
-            raise ValueError("num_cases must be positive.")
+        sampling_ = normalize_case_sampling(
+            sampling,
+            labels=component.domain.labels,
+            owner="RaggedSeriesSupervisedConstraint",
+        )
         reduction_str = str(reduction)
         if reduction_str not in ("mean", "sum"):
             raise ValueError("reduction must be either 'mean' or 'sum'.")
@@ -140,11 +139,6 @@ class RaggedSeriesSupervisedConstraint(AbstractSamplingConstraint):
             reduction_value = "mean"
         else:
             reduction_value = "sum"
-        sampler_str = str(sampler)
-        if sampler_str != "uniform":
-            raise ValueError(
-                "RaggedSeriesSupervisedConstraint supports only uniform sampling."
-            )
         series_sampling_str = str(series_sampling)
         if series_sampling_str not in (
             "full",
@@ -182,10 +176,7 @@ class RaggedSeriesSupervisedConstraint(AbstractSamplingConstraint):
         domain = component.domain
         self.constraint_vars = (str(constraint_var),)
         self.component = component
-        self.structure = structure or ProductStructure((domain.labels,))
-        self.dense_structure = None
-        self.num_points = n
-        self.sampler = sampler_str
+        self.sampling = sampling_
         self.over = None
         self.reduction = reduction_value
         self.series_sampling = series_sampling_value
@@ -213,11 +204,9 @@ class RaggedSeriesSupervisedConstraint(AbstractSamplingConstraint):
         values: ArrayLike,
         /,
         *,
-        num_cases: int,
+        sampling: PointSampling,
         num_buckets: int = 8,
         length_bucket_edges: ArrayLike | None = None,
-        structure: ProductStructure | None = None,
-        sampler: str = "uniform",
         weight: DomainFunction | ArrayLike = 1.0,
         reduction: Literal["mean", "sum"] = "mean",
         indices: ArrayLike | None = None,
@@ -229,19 +218,22 @@ class RaggedSeriesSupervisedConstraint(AbstractSamplingConstraint):
         Each returned constraint samples only from one length bucket and uses
         `series_sampling="prefix"` with `num_series_points` equal to that bucket's
         maximum valid length. This covers full sequences within the bucket while
-        avoiding global max-length materialization during training. The requested
-        `num_cases` is split across buckets by bucket population, and each bucket
-        loss is weighted by its population fraction, matching the case-average
-        objective of one full padded constraint.
+        avoiding global max-length materialization during training. The plan's
+        sampling count is split across buckets by bucket population, and each
+        bucket loss is weighted by its population fraction to match the
+        case-average objective of one full padded constraint.
         """
         if not isinstance(component.domain, RaggedSeriesDatasetDomain):
             raise TypeError(
                 "RaggedSeriesSupervisedConstraint.bucketed requires a "
                 "RaggedSeriesDatasetDomain component."
             )
-        n = int(num_cases)
-        if n <= 0:
-            raise ValueError("num_cases must be positive.")
+        sampling_ = normalize_case_sampling(
+            sampling,
+            labels=component.domain.labels,
+            owner="RaggedSeriesSupervisedConstraint.bucketed",
+        )
+        n = case_sample_count(sampling_)
         reduction_str = str(reduction)
         if reduction_str not in ("mean", "sum"):
             raise ValueError("reduction must be either 'mean' or 'sum'.")
@@ -302,9 +294,11 @@ class RaggedSeriesSupervisedConstraint(AbstractSamplingConstraint):
                     constraint_var,
                     component,
                     values,
-                    num_cases=int(bucket_num_cases),
-                    structure=structure,
-                    sampler=sampler,
+                    sampling=PointSampling(
+                        int(bucket_num_cases),
+                        layout=sampling_.layout,
+                        design=sampling_.design,
+                    ),
                     weight=bucket_weight,
                     reduction=reduction,
                     series_sampling="prefix",
@@ -339,12 +333,14 @@ class RaggedSeriesSupervisedConstraint(AbstractSamplingConstraint):
             key_cases, key_series = jr.split(key, 2)
         indices = sample_case_indices(
             size=domain.size,
-            num_samples=int(self.num_points),
+            num_samples=case_sample_count(self.sampling),
             key=key_cases,
             indices=self.indices,
         )
+        layout = self.sampling.layout
+        assert layout is not None
         if self.series_sampling == "full":
-            points = domain.points_from_indices(indices, structure=self.structure)
+            points = domain.points_from_indices(indices, structure=layout)
         else:
             if self.num_series_points is None:
                 raise ValueError("num_series_points is required for sampled series.")
@@ -352,7 +348,7 @@ class RaggedSeriesSupervisedConstraint(AbstractSamplingConstraint):
                 indices,
                 num_series_points=self.num_series_points,
                 sampling=self.series_sampling,
-                structure=self.structure,
+                structure=layout,
                 key=key_series,
             )
         return RaggedSeriesSupervisedBatch(

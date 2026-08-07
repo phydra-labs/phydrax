@@ -14,9 +14,10 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from phydrax.domain import ProbabilityDomain
+
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from ..domain._probability import ProbabilityDomain
 from ..integration._sparse_grid import _smolyak_rule
 from ..operators.interpolation._plans import SmolyakInterpolationRule
 from ..operators.interpolation._smolyak import (

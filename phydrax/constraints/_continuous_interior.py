@@ -9,15 +9,22 @@ from typing import Any, Literal
 
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import (
+    ComponentSum,
+    DomainFunction,
+    Fixed,
+    FixedEnd,
+    FixedStart,
+    GridBatch,
+    PointBatch,
+    SamplingPlan,
+)
+
 from .._doc import DOC_KEY0
-from ..domain._components import DomainComponentUnion, Fixed, FixedEnd, FixedStart
-from ..domain._function import DomainFunction
-from ..domain._structure import CoordSeparableBatch, PointsBatch, ProductStructure
 from ..operators.differential._domain_ops import dt_n
 from ..stochastic import SPDESolutionSpec, validate_spde_formulation
 from ._adaptive import AbstractCollocationPolicy
 from ._functional import FunctionalConstraint
-from ._sampling_spec import SamplingNumPoints
 
 
 def ContinuousPointwiseInteriorConstraint(
@@ -25,17 +32,14 @@ def ContinuousPointwiseInteriorConstraint(
     domain,
     operator,
     *,
-    num_points: SamplingNumPoints,
-    structure: ProductStructure,
-    dense_structure: ProductStructure | None = None,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
     reduction: Literal["mean", "integral"] = "mean",
     sampling_mode: Literal["resample", "fixed"] = "resample",
     fixed_batch: (
-        PointsBatch | CoordSeparableBatch | tuple[PointsBatch, ...] | None
+        PointBatch | GridBatch | tuple[PointBatch, ...] | None
     ) = None,
     fixed_batch_key: Key[Array, ""] = DOC_KEY0,
     where: Mapping[str, Any] | None = None,
@@ -73,12 +77,7 @@ def ContinuousPointwiseInteriorConstraint(
     - `domain`: A `phydrax.domain` object to sample from.
     - `operator`: Callable mapping one or more `DomainFunction` objects to a residual
       `DomainFunction`.
-    - `num_points`: Sampling spec. Accepts dense counts (`int` / `tuple[int, ...]`),
-      coord-separable mappings (e.g. `{"x": 64}`), or mixed forms
-      `(dense_num_points, coord_map)`.
-    - `structure`: A `ProductStructure` describing how variables are sampled/blocked.
-    - `dense_structure`: Optional dense structure used when sampling produces dense batches.
-    - `sampler`: Sampling scheme (e.g. `"latin_hypercube"`).
+    - `sampling`: Typed point or coordinate-grid sampling plan.
     - `weight`: Scalar multiplier $w$ applied to this term.
     - `over`: Optional subset of labels to reduce/integrate over.
     - `reduction`: Reduction mode: `"mean"` (measure-normalized) or `"integral"` (unnormalized).
@@ -94,7 +93,7 @@ def ContinuousPointwiseInteriorConstraint(
     if solution_spec is not None:
         validate_spde_formulation(solution_spec, "pointwise_strong")
     component = domain.component(where=where, where_all=where_all)
-    if isinstance(component, DomainComponentUnion):
+    if isinstance(component, ComponentSum):
         raise TypeError(
             "ContinuousPointwiseInteriorConstraint requires a DomainComponent, not a union."
         )
@@ -102,10 +101,7 @@ def ContinuousPointwiseInteriorConstraint(
         component=component,
         operator=operator,
         constraint_vars=constraint_vars,
-        num_points=num_points,
-        structure=structure,
-        dense_structure=dense_structure,
-        sampler=sampler,
+        sampling=sampling,
         weight=weight,
         label=label,
         over=over,
@@ -127,10 +123,7 @@ def ContinuousInitialFunctionConstraint(
     time_derivative_order: int = 0,
     mode: Literal["reverse", "forward"] = "reverse",
     time_derivative_backend: Literal["ad", "jet"] = "ad",
-    num_points: SamplingNumPoints,
-    structure: ProductStructure,
-    dense_structure: ProductStructure | None = None,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -163,12 +156,7 @@ def ContinuousInitialFunctionConstraint(
     - `time_derivative_order`: Derivative order $n$ for $\partial^n/\partial t^n$.
     - `mode`: Differentiation mode (`"reverse"` or `"forward"`).
     - `time_derivative_backend`: Backend for time derivatives (`"ad"` or `"jet"`).
-    - `num_points`: Sampling spec. Accepts dense counts (`int` / `tuple[int, ...]`),
-      coord-separable mappings (e.g. `{"x": 64}`), or mixed forms
-      `(dense_num_points, coord_map)`.
-    - `structure`: A `ProductStructure` describing how variables are sampled/blocked.
-    - `dense_structure`: Optional dense structure used when sampling produces dense batches.
-    - `sampler`: Sampling scheme (e.g. `"latin_hypercube"`).
+    - `sampling`: Typed point or coordinate-grid sampling plan.
     - `weight`: Scalar multiplier applied to this term.
     - `over`: Optional subset of labels to reduce/integrate over.
     - `reduction`: `"mean"` or `"integral"`.
@@ -178,7 +166,7 @@ def ContinuousInitialFunctionConstraint(
     component = domain.component(
         {evolution_var: FixedStart()}, where=where, where_all=where_all
     )
-    if isinstance(component, DomainComponentUnion):
+    if isinstance(component, ComponentSum):
         raise TypeError(
             "ContinuousInitialFunctionConstraint requires a DomainComponent, not a union."
         )
@@ -186,7 +174,7 @@ def ContinuousInitialFunctionConstraint(
         raise KeyError(
             f"Label {evolution_var!r} not in domain {component.domain.labels}."
         )
-    if not isinstance(component.spec.component_for(evolution_var), FixedStart):
+    if not isinstance(component.spec.selection_for(evolution_var), FixedStart):
         raise ValueError(
             "ContinuousInitialFunctionConstraint requires a component with "
             f"{evolution_var!r}: FixedStart()."
@@ -199,7 +187,7 @@ def ContinuousInitialFunctionConstraint(
     fixed_labels = {
         lbl
         for lbl in component.domain.labels
-        if isinstance(component.spec.component_for(lbl), (FixedStart, FixedEnd, Fixed))
+        if isinstance(component.spec.selection_for(lbl), (FixedStart, FixedEnd, Fixed))
     }
     deps = tuple(lbl for lbl in component.domain.labels if lbl not in fixed_labels)
     if func is None:
@@ -207,7 +195,7 @@ def ContinuousInitialFunctionConstraint(
     elif isinstance(func, DomainFunction):
         value = func
     elif callable(func):
-        value = DomainFunction(domain=component.domain, deps=deps, func=func, metadata={})
+        value = component.domain.Function(*deps)(func)
     else:
         value = func
 
@@ -231,10 +219,7 @@ def ContinuousInitialFunctionConstraint(
         component=component,
         operator=operator,
         constraint_vars=constraint_vars,
-        num_points=num_points,
-        structure=structure,
-        dense_structure=dense_structure,
-        sampler=sampler,
+        sampling=sampling,
         weight=weight,
         label=label,
         over=over,

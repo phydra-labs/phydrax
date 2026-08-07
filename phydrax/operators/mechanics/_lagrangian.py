@@ -8,7 +8,8 @@ from typing import Literal
 
 from jaxtyping import ArrayLike
 
-from ...domain._function import DomainFunction
+from phydrax.domain import DomainFunction
+
 from .._composition import pullback
 from ..differential._domain_ops import dt, grad
 
@@ -84,15 +85,17 @@ def euler_lagrange(
             f"Trajectory must depend on time_var {time_var!r}; got deps={trajectory.deps!r}."
         )
 
-    configuration_factor = _require_factor(
-        lagrangian, configuration_var, role="Configuration"
-    )
-    velocity_factor = _require_factor(lagrangian, velocity_var, role="Velocity")
-    if configuration_factor.var_dim != velocity_factor.var_dim:
+    _require_factor(lagrangian, configuration_var, role="Configuration")
+    _require_factor(lagrangian, velocity_var, role="Velocity")
+    configuration_dimension = lagrangian.domain.coordinate(
+        configuration_var
+    ).event_size
+    velocity_dimension = lagrangian.domain.coordinate(velocity_var).event_size
+    if configuration_dimension != velocity_dimension:
         raise ValueError(
             "Euler–Lagrange canonical dimensions must match; "
-            f"{configuration_var!r} has dimension {configuration_factor.var_dim} and "
-            f"{velocity_var!r} has dimension {velocity_factor.var_dim}."
+            f"{configuration_var!r} has dimension {configuration_dimension} and "
+            f"{velocity_var!r} has dimension {velocity_dimension}."
         )
 
     velocity = dt(

@@ -47,16 +47,15 @@ Let \(x\in[0,1]\), \(t\in[0,T]\). In Phydrax:
     model = phx.nn.MLP(in_size=2, out_size="scalar", width_size=16, depth=2, key=jr.key(0))
     u = domain.Model("x", "t")(model)
 
-    structure_xt = phx.domain.ProductStructure((("x", "t"),))
-    structure_x = phx.domain.ProductStructure((("x",),))
+    layout_xt = phx.domain.SampleLayout((("x", "t"),))
+    layout_x = phx.domain.SampleLayout((("x",),))
 
     # PDE residual: u_t - alpha * u_xx = 0
     pde = phx.constraints.ContinuousPointwiseInteriorConstraint(
         "u",
         domain,
         operator=lambda f: phx.operators.dt(f, var="t") - alpha * phx.operators.laplacian(f, var="x"),
-        num_points=128,
-        structure=structure_xt,
+        sampling=phx.domain.PointSampling(128, layout=layout_xt),
         reduction="mean",
     )
 
@@ -66,8 +65,7 @@ Let \(x\in[0,1]\), \(t\in[0,T]\). In Phydrax:
         "u",
         boundary,
         target=0.0,
-        num_points=64,
-        structure=structure_xt,
+        sampling=phx.domain.PointSampling(64, layout=layout_xt),
         weight=10.0,
         reduction="mean",
     )
@@ -79,8 +77,7 @@ Let \(x\in[0,1]\), \(t\in[0,T]\). In Phydrax:
         func=u0,
         evolution_var="t",
         time_derivative_order=0,
-        num_points=32,
-        structure=structure_x,
+        sampling=phx.domain.PointSampling(32, layout=layout_x),
         weight=10.0,
         reduction="mean",
     )
@@ -118,8 +115,7 @@ For discrete measurements, add a data-fit constraint alongside the PDE terms. Ph
         sensors=sensors,
         times=times,
         sensor_values=sensor_values,
-        num_points=256,
-        structure=structure_xt,
+        sampling=phx.domain.PointSampling(256, layout=layout_xt),
         weight=1.0,
     )
     ```

@@ -16,6 +16,14 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, Key
 
+from phydrax.domain import (
+    AbstractScalarDomain,
+    DomainFunction,
+    PointBatch,
+    ProbabilityDomain,
+    SampleLayout,
+)
+
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
 from ..._interpolation import barycentric_basis
@@ -27,11 +35,6 @@ from ..._numerics import (
 )
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...domain._domain import RelabeledDomain
-from ...domain._function import _drop_derivative_hook_metadata, DomainFunction
-from ...domain._probability import ProbabilityDomain
-from ...domain._scalar import _AbstractScalarDomain
-from ...domain._structure import PointsBatch, ProductStructure
 from ._plans import SmolyakInterpolationPlan, SmolyakInterpolationRule
 
 
@@ -95,11 +98,11 @@ class SmolyakInterpolationBlock(StrictModule, NonTrainableState):
 
 
 def _unwrap(factor: Any, /) -> Any:
-    return factor.base if isinstance(factor, RelabeledDomain) else factor
+    return factor
 
 
 def _resolve_axis_rules(
-    factors: tuple[_AbstractScalarDomain, ...],
+    factors: tuple[AbstractScalarDomain, ...],
     requested: tuple[SmolyakInterpolationRule, ...],
     /,
 ) -> tuple[SmolyakAxisRule, ...]:
@@ -141,7 +144,7 @@ def _resolve_axis_rules(
     return tuple(resolved)
 
 
-def _from_reference(factor: _AbstractScalarDomain, rule: SmolyakAxisRule, value: Any, /):
+def _from_reference(factor: AbstractScalarDomain, rule: SmolyakAxisRule, value: Any, /):
     reference = jnp.asarray(value, dtype=float)
     if isinstance(factor, ProbabilityDomain):
         return factor.from_reference(reference)
@@ -152,7 +155,7 @@ def _from_reference(factor: _AbstractScalarDomain, rule: SmolyakAxisRule, value:
     return 0.5 * (upper - lower) * reference + 0.5 * (upper + lower)
 
 
-def _to_reference(factor: _AbstractScalarDomain, rule: SmolyakAxisRule, value: Any, /):
+def _to_reference(factor: AbstractScalarDomain, rule: SmolyakAxisRule, value: Any, /):
     physical = jnp.asarray(value, dtype=float)
     if isinstance(factor, ProbabilityDomain):
         return factor.to_reference(physical)
@@ -273,7 +276,7 @@ class SmolyakInterpolant(StrictModule, NonTrainableState):
     """Immutable, differentiable Smolyak interpolant in physical coordinates."""
 
     blocks: tuple[SmolyakInterpolationBlock, ...]
-    factors: tuple[_AbstractScalarDomain, ...]
+    factors: tuple[AbstractScalarDomain, ...]
     axis_labels: tuple[str, ...] = eqx.field(static=True)
     axis_rules: tuple[SmolyakAxisRule, ...] = eqx.field(static=True)
     anisotropy: tuple[float, ...] = eqx.field(static=True)
@@ -288,7 +291,7 @@ class SmolyakInterpolant(StrictModule, NonTrainableState):
         self,
         *,
         blocks: tuple[SmolyakInterpolationBlock, ...],
-        factors: tuple[_AbstractScalarDomain, ...],
+        factors: tuple[AbstractScalarDomain, ...],
         axis_labels: tuple[str, ...],
         axis_rules: tuple[SmolyakAxisRule, ...],
         anisotropy: tuple[float, ...],
@@ -374,7 +377,7 @@ def interpolate_smolyak(
         )
     raw_factors = tuple(function.domain.factor(label) for label in dependencies)
     factors = tuple(_unwrap(factor) for factor in raw_factors)
-    if any(not isinstance(factor, _AbstractScalarDomain) for factor in factors):
+    if any(not isinstance(factor, AbstractScalarDomain) for factor in factors):
         raise TypeError("Smolyak interpolation requires scalar dependency factors.")
     scalar_factors = tuple(factors)
     rules = _resolve_axis_rules(scalar_factors, plan.axis_rules)
@@ -393,11 +396,11 @@ def interpolate_smolyak(
         for axis, (factor, rule) in enumerate(zip(scalar_factors, rules, strict=True))
     )
     dependency_domain = _dependency_domain(function)
-    structure = ProductStructure((dependencies,)).canonicalize(dependency_domain.labels)
+    structure = SampleLayout((dependencies,)).canonicalize(dependency_domain.labels)
     sample_axis = structure.axis_for(dependencies[0])
     if sample_axis is None:
         raise RuntimeError("Smolyak interpolation structure has no sample axis.")
-    points = PointsBatch(
+    points = PointBatch(
         frozendict(
             {
                 label: cx.Field(column, dims=(sample_axis,))
@@ -434,7 +437,7 @@ def interpolate_smolyak(
         num_evaluations=num_evaluations,
         maximum_active_dimension=max(len(topology.axes) for topology in topologies),
     )
-    metadata: Mapping[str, Any] = _drop_derivative_hook_metadata(function.metadata)
+    metadata: Mapping[str, Any] = function.metadata
     return DomainFunction(
         domain=function.domain,
         deps=dependencies,

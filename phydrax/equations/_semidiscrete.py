@@ -1695,7 +1695,10 @@ def _validate_boundary_conditions(
             and field_name in lifts
             and not callable(lifts[field_name].value)
         ):
-            target = float(condition.target.value)
+            target_value = condition.target.value
+            if target_value is None:
+                raise RuntimeError("Constant boundary target has no scalar value.")
+            target = float(target_value)
             lift_value = np.asarray(lifts[field_name].value)
             if (
                 lift_value.size > 0
@@ -1760,9 +1763,10 @@ def _static_scalar(
     if expression.op == "constant":
         return expression.value
     if expression.op == "parameter":
-        if expression.symbol not in defaults:
+        symbol = expression.symbol
+        if symbol is None or symbol not in defaults:
             return None
-        value = np.asarray(defaults[expression.symbol])
+        value = np.asarray(defaults[symbol])
         return float(value) if value.shape == () and np.isfinite(value) else None
     values = tuple(_static_scalar(argument, defaults) for argument in expression.args)
     if any(value is None for value in values):

@@ -8,7 +8,7 @@ import phydrax as phx
 
 def _spacetime():
     domain = phx.domain.Interval1d(-2.0, 2.0) @ phx.domain.TimeInterval(0.0, 1.0)
-    return domain, phx.domain.ProductStructure((("x", "t"),))
+    return domain, phx.domain.SampleLayout((("x", "t"),))
 
 
 def test_manufactured_brownian_backward_constraint_is_zero_and_perturbation_is_not():
@@ -25,8 +25,7 @@ def test_manufactured_brownian_backward_constraint_is_zero_and_perturbation_is_n
         drift=drift,
         evolution_var="t",
         diffusion=exact_diffusion,
-        num_points=32,
-        structure=structure,
+        sampling=phx.domain.PointSampling(32, layout=structure),
         sampling_mode="fixed",
         fixed_batch_key=jr.key(0),
     )
@@ -36,8 +35,7 @@ def test_manufactured_brownian_backward_constraint_is_zero_and_perturbation_is_n
         drift=drift,
         evolution_var="t",
         diffusion=wrong_diffusion,
-        num_points=32,
-        structure=structure,
+        sampling=phx.domain.PointSampling(32, layout=structure),
         sampling_mode="fixed",
         fixed_batch_key=jr.key(0),
     )
@@ -48,7 +46,7 @@ def test_manufactured_brownian_backward_constraint_is_zero_and_perturbation_is_n
 
 def test_stationary_ornstein_uhlenbeck_fokker_planck_constraint_is_zero():
     domain = phx.domain.Interval1d(-3.0, 3.0)
-    structure = phx.domain.ProductStructure((("x",),))
+    structure = phx.domain.SampleLayout((("x",),))
     theta, sigma = 0.8, 0.6
     density = domain.Function("x")(lambda x: jnp.exp(-theta * x[0] ** 2 / sigma**2))
     drift = domain.Function("x")(lambda x: jnp.asarray([-theta * x[0]]))
@@ -59,8 +57,7 @@ def test_stationary_ornstein_uhlenbeck_fokker_planck_constraint_is_zero():
         drift=drift,
         evolution_var=None,
         diffusion=diffusion,
-        num_points=48,
-        structure=structure,
+        sampling=phx.domain.PointSampling(48, layout=structure),
         sampling_mode="fixed",
         fixed_batch_key=jr.key(2),
     )
@@ -77,8 +74,7 @@ def test_fokker_planck_stationary_and_evolution_modes_use_opposite_time_contract
         domain.component(),
         drift=drift,
         evolution_var=None,
-        num_points=16,
-        structure=structure,
+        sampling=phx.domain.PointSampling(16, layout=structure),
         sampling_mode="fixed",
         fixed_batch_key=jr.key(4),
     )
@@ -87,8 +83,7 @@ def test_fokker_planck_stationary_and_evolution_modes_use_opposite_time_contract
         domain.component(),
         drift=drift,
         evolution_var="t",
-        num_points=16,
-        structure=structure,
+        sampling=phx.domain.PointSampling(16, layout=structure),
         sampling_mode="fixed",
         fixed_batch_key=jr.key(4),
     )
@@ -110,8 +105,7 @@ def test_named_diffusion_field_is_jointly_optimized_by_functional_solver():
         drift=drift,
         evolution_var="t",
         diffusion="sigma",
-        num_points=24,
-        structure=structure,
+        sampling=phx.domain.PointSampling(24, layout=structure),
         sampling_mode="fixed",
         fixed_batch_key=jr.key(6),
     )
@@ -148,8 +142,7 @@ def test_stochastic_constraints_preserve_fixed_and_resampled_collocation_semanti
             drift=drift,
             evolution_var="t",
             diffusion=diffusion,
-            num_points=12,
-            structure=structure,
+            sampling=phx.domain.PointSampling(12, layout=structure),
             sampling_mode=mode,
             fixed_batch_key=jr.key(9),
         )
@@ -167,7 +160,7 @@ def test_stochastic_constraints_preserve_fixed_and_resampled_collocation_semanti
 
 def test_fokker_planck_constraint_composes_with_explicit_density_normalization():
     domain = phx.domain.Interval1d(-1.0, 1.0)
-    structure = phx.domain.ProductStructure((("x",),))
+    structure = phx.domain.SampleLayout((("x",),))
     density = domain.Function("x")(lambda x: jnp.asarray(0.5))
     drift = domain.Function("x")(lambda x: jnp.asarray([0.0]))
     dynamics = phx.constraints.ContinuousFokkerPlanckConstraint(
@@ -175,16 +168,14 @@ def test_fokker_planck_constraint_composes_with_explicit_density_normalization()
         domain.component(),
         drift=drift,
         evolution_var=None,
-        num_points={"x": phx.domain.LegendreAxisSpec(12)},
-        structure=structure,
+        sampling=phx.domain.GridSampling({"x": phx.domain.LegendreAxisSpec(12)}),
         sampling_mode="fixed",
     )
     normalization = phx.constraints.ContinuousIntegralInteriorConstraint(
         "p",
         domain,
         lambda p: p,
-        num_points={"x": phx.domain.LegendreAxisSpec(12)},
-        structure=structure,
+        sampling=phx.domain.GridSampling({"x": phx.domain.LegendreAxisSpec(12)}),
         equal_to=1.0,
     )
     solver = phx.solver.FunctionalSolver(
@@ -198,7 +189,7 @@ def test_fokker_planck_constraint_composes_with_explicit_density_normalization()
 def test_probability_flux_boundary_constraint_enforces_reflecting_current():
     domain = phx.domain.Interval1d(-2.0, 2.0)
     component = domain.component({"x": phx.domain.Boundary()})
-    structure = phx.domain.ProductStructure((("x",),))
+    structure = phx.domain.SampleLayout((("x",),))
     theta, sigma = 0.8, 0.6
     density = domain.Function("x")(lambda x: jnp.exp(-theta * x[0] ** 2 / sigma**2))
     drift = domain.Function("x")(lambda x: jnp.asarray([-theta * x[0]]))
@@ -208,8 +199,7 @@ def test_probability_flux_boundary_constraint_enforces_reflecting_current():
         component,
         drift=drift,
         diffusion=diffusion,
-        num_points=16,
-        structure=structure,
+        sampling=phx.domain.PointSampling(16, layout=structure),
         sampling_mode="fixed",
         fixed_batch_key=jr.key(14),
     )
@@ -219,7 +209,7 @@ def test_probability_flux_boundary_constraint_enforces_reflecting_current():
 
 def test_pointwise_spde_residual_rejects_rough_or_non_strong_solution_concepts():
     domain = phx.domain.Interval1d(0.0, 1.0)
-    structure = phx.domain.ProductStructure((("x",),))
+    structure = phx.domain.SampleLayout((("x",),))
     rough = phx.stochastic.SPDESolutionSpec(
         "mild",
         noise_regularization="space_time_white",
@@ -231,8 +221,7 @@ def test_pointwise_spde_residual_rejects_rough_or_non_strong_solution_concepts()
             "u",
             domain,
             lambda u: u,
-            num_points=8,
-            structure=structure,
+            sampling=phx.domain.PointSampling(8, layout=structure),
             solution_spec=rough,
         )
 
@@ -245,8 +234,7 @@ def test_pointwise_spde_residual_rejects_rough_or_non_strong_solution_concepts()
         "u",
         domain,
         lambda u: u,
-        num_points=8,
-        structure=structure,
+        sampling=phx.domain.PointSampling(8, layout=structure),
         solution_spec=regularized,
     )
     assert isinstance(constraint, phx.constraints.FunctionalConstraint)

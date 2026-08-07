@@ -5,8 +5,14 @@
 import jax.numpy as jnp
 import jax.random as jr
 
-from phydrax.domain import DatasetDomain, FourierAxisSpec, Interval1d, ProductStructure
-from phydrax.domain._dataset import DATASET_INDEX_KEY
+import phydrax as phx
+from phydrax.domain import (
+    DATASET_INDEX_KEY,
+    DatasetDomain,
+    FourierAxisSpec,
+    Interval1d,
+    SampleLayout,
+)
 from phydrax.integration import from_samples, over
 from phydrax.operators.integral import integral
 
@@ -15,9 +21,9 @@ def test_dataset_domain_samples_points_batch():
     data = jnp.arange(10.0, dtype=float).reshape((10, 1))
     dom = DatasetDomain(data)
     component = dom.component()
-    structure = ProductStructure((("data",),))
+    structure = SampleLayout((("data",),))
 
-    batch = component.sample(4, structure=structure, key=jr.key(0))
+    batch = component.sample(phx.domain.PointSampling(4, layout=structure), key=jr.key(0))
     axis = batch.structure.axis_for("data")
     assert axis is not None
 
@@ -29,7 +35,7 @@ def test_dataset_domain_samples_points_batch():
 def test_dataset_domain_points_from_indices_carries_internal_indices():
     data = jnp.arange(10.0, dtype=float).reshape((5, 2))
     dom = DatasetDomain(data)
-    structure = ProductStructure((("data",),))
+    structure = SampleLayout((("data",),))
     indices = jnp.asarray([3, 1, 3], dtype=jnp.int32)
 
     batch = dom.points_from_indices(indices, structure=structure)
@@ -44,9 +50,9 @@ def test_dataset_domain_integral_probability_measure_is_average():
     data = jnp.zeros((5, 2), dtype=float)
     dom = DatasetDomain(data, measure="probability")
     component = dom.component()
-    structure = ProductStructure((("data",),))
+    structure = SampleLayout((("data",),))
 
-    batch = component.sample(3, structure=structure, key=jr.key(0))
+    batch = component.sample(phx.domain.PointSampling(3, layout=structure), key=jr.key(0))
     u = dom.Function()(1.0)
     realization = from_samples(over(component), batch)
     out = integral(u, realization)
@@ -57,9 +63,9 @@ def test_dataset_domain_integral_count_measure_is_sum():
     data = jnp.zeros((5, 2), dtype=float)
     dom = DatasetDomain(data, measure="count")
     component = dom.component()
-    structure = ProductStructure((("data",),))
+    structure = SampleLayout((("data",),))
 
-    batch = component.sample(3, structure=structure, key=jr.key(0))
+    batch = component.sample(phx.domain.PointSampling(3, layout=structure), key=jr.key(0))
     u = dom.Function()(1.0)
     realization = from_samples(over(component), batch)
     out = integral(u, realization)
@@ -73,11 +79,12 @@ def test_dataset_domain_with_coord_separable_geometry_sampling():
     domain = data_dom @ geom
 
     component = domain.component()
-    dense_structure = ProductStructure((("data",),))
-    batch = component.sample_coord_separable(
-        {"x": FourierAxisSpec(8)},
-        num_points=3,
-        dense_structure=dense_structure,
+    dense_structure = SampleLayout((("data",),))
+    batch = component.sample(
+        phx.domain.GridSampling(
+            {"x": FourierAxisSpec(8)},
+            dense=phx.domain.PointSampling(3, layout=dense_structure),
+        ),
         key=jr.key(0),
     )
 

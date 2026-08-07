@@ -8,7 +8,7 @@ import pytest
 
 import phydrax as phx
 from phydrax.constraints import RaggedSeriesSupervisedConstraint
-from phydrax.domain import ProductStructure, RaggedSeriesDatasetDomain
+from phydrax.domain import RaggedSeriesDatasetDomain, SampleLayout
 
 
 def _domain_and_targets():
@@ -53,8 +53,7 @@ def test_ragged_series_supervised_constraint_matches_exact_vector_targets():
         "u",
         domain.component(),
         targets,
-        num_cases=16,
-        structure=ProductStructure((("data",),)),
+        sampling=phx.domain.PointSampling(16, layout=SampleLayout((("data",),)), design="uniform"),
     )
 
     loss = constraint.loss({"u": u}, key=jr.key(0))
@@ -71,7 +70,7 @@ def test_ragged_series_supervised_constraint_samples_index_subset():
         "u",
         domain.component(),
         targets,
-        num_cases=20,
+        sampling=phx.domain.PointSampling(20, design="uniform"),
         indices=allowed,
     )
 
@@ -86,7 +85,7 @@ def test_ragged_series_supervised_constraint_samples_fixed_width_series_points()
         "u",
         domain.component(),
         targets,
-        num_cases=6,
+        sampling=phx.domain.PointSampling(6, design="uniform"),
         series_sampling="window_uniform",
         num_series_points=2,
     )
@@ -112,7 +111,7 @@ def test_ragged_series_supervised_constraint_loss_uses_sampled_series_payload():
         "u",
         domain.component(),
         targets,
-        num_cases=8,
+        sampling=phx.domain.PointSampling(8, design="uniform"),
         series_sampling="prefix",
         num_series_points=2,
     )
@@ -127,17 +126,16 @@ def test_ragged_series_supervised_constraint_bucketed_covers_cases_once():
         "u",
         domain.component(),
         targets,
-        num_cases=4,
+        sampling=phx.domain.PointSampling(4, layout=SampleLayout((("data",),)), design="uniform"),
         num_buckets=2,
-        structure=ProductStructure((("data",),)),
         label="train",
     )
 
     assert len(constraints) == 2
     assert tuple(c.series_sampling for c in constraints) == ("prefix", "prefix")
     assert tuple(c.num_series_points for c in constraints) == (2, 3)
-    assert tuple(c.num_points for c in constraints) == (3, 1)
-    assert sum(c.num_points for c in constraints) == 4
+    assert tuple(c.sampling.count for c in constraints) == (3, 1)
+    assert sum(c.sampling.count for c in constraints) == 4
     assert tuple(c.label for c in constraints) == ("train_bucket_1", "train_bucket_2")
     assert jnp.allclose(
         jnp.stack([c.weight for c in constraints]),
@@ -151,7 +149,7 @@ def test_ragged_series_supervised_constraint_bucketed_covers_cases_once():
         batch = constraint.sample(key=jr.key(9))
         width = int(constraint.num_series_points)
         assert batch.points["data"]["series"].data.shape == (
-            constraint.num_points,
+            constraint.sampling.count,
             width,
             2,
         )
@@ -165,14 +163,14 @@ def test_ragged_series_supervised_constraint_bucketed_accepts_length_edges():
         "u",
         domain.component(),
         targets,
-        num_cases=3,
+        sampling=phx.domain.PointSampling(3, design="uniform"),
         length_bucket_edges=jnp.asarray([1, 2, 3]),
         indices=jnp.asarray([0, 2], dtype=jnp.int32),
     )
 
     assert len(constraints) == 2
     assert tuple(c.num_series_points for c in constraints) == (1, 2)
-    assert tuple(c.num_points for c in constraints) == (2, 1)
+    assert tuple(c.sampling.count for c in constraints) == (2, 1)
     assert jnp.array_equal(constraints[0].indices, jnp.asarray([2], dtype=jnp.int32))
     assert jnp.array_equal(constraints[1].indices, jnp.asarray([0], dtype=jnp.int32))
 
@@ -183,12 +181,12 @@ def test_ragged_series_supervised_constraint_bucketed_scales_sum_reduction():
         "u",
         domain.component(),
         targets,
-        num_cases=4,
+        sampling=phx.domain.PointSampling(4, design="uniform"),
         num_buckets=2,
         reduction="sum",
     )
 
-    assert tuple(c.num_points for c in constraints) == (3, 1)
+    assert tuple(c.sampling.count for c in constraints) == (3, 1)
     assert jnp.allclose(
         jnp.stack([c.weight for c in constraints]),
         jnp.asarray([8.0 / 9.0, 4.0 / 3.0]),
@@ -203,7 +201,7 @@ def test_ragged_series_supervised_constraint_bucketed_requires_case_per_bucket()
             "u",
             domain.component(),
             targets,
-            num_cases=1,
+            sampling=phx.domain.PointSampling(1, design="uniform"),
             length_bucket_edges=jnp.asarray([1, 2, 3]),
         )
 
@@ -218,7 +216,7 @@ def test_ragged_series_supervised_constraint_bucketed_avoids_global_padding_widt
         "u",
         domain.component(),
         targets,
-        num_cases=2,
+        sampling=phx.domain.PointSampling(2, design="uniform"),
         num_buckets=2,
     )
 
@@ -238,7 +236,7 @@ def test_ragged_series_supervised_constraint_requires_points_for_sampled_modes()
             "u",
             domain.component(),
             targets,
-            num_cases=4,
+            sampling=phx.domain.PointSampling(4, design="uniform"),
             series_sampling="points_uniform",
         )
 
@@ -252,7 +250,7 @@ def test_ragged_series_supervised_constraint_validates_domain_and_targets():
             "u",
             data_domain.component(),
             targets,
-            num_cases=4,
+            sampling=phx.domain.PointSampling(4, design="uniform"),
         )
 
     with pytest.raises(ValueError, match="leading axis"):
@@ -260,5 +258,5 @@ def test_ragged_series_supervised_constraint_validates_domain_and_targets():
             "u",
             domain.component(),
             jnp.zeros((4, 2)),
-            num_cases=4,
+            sampling=phx.domain.PointSampling(4, design="uniform"),
         )

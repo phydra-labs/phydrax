@@ -49,7 +49,9 @@ metric = phx.metrix.diagonal_metric(
     chart=chart,
 )
 
-domain = phx.domain.Square(center=(2.0, 0.0), side=1.0)
+domain = phx.domain.GeometryDomain(
+    phx.geometry.Square(center=(2.0, 0.0), side=1.0).compile()
+)
 
 
 @domain.Function("x")

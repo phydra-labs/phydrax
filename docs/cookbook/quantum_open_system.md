@@ -66,8 +66,10 @@ constraint = phx.constraints.FunctionalConstraint.from_operator(
         (L,),
     ),
     constraint_vars="rho",
-    num_points=32,
-    structure=phx.domain.ProductStructure((("t",),)),
+    sampling=phx.domain.PointSampling(
+        32,
+        layout=phx.domain.SampleLayout((("t",),)),
+    ),
     reduction="mean",
     label="lindblad",
 )

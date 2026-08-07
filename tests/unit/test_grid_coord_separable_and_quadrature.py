@@ -4,11 +4,12 @@
 
 import jax.numpy as jnp
 
+import phydrax as phx
 from phydrax.domain import (
     FourierAxisSpec,
     Interval1d,
     LegendreAxisSpec,
-    ProductStructure,
+    SampleLayout,
     TimeInterval,
 )
 from phydrax.integration import from_samples, over
@@ -19,7 +20,7 @@ def test_coord_separable_fourier_axis_spec_interval_discretization_attached():
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
 
-    batch = component.sample_coord_separable({"x": FourierAxisSpec(8)})
+    batch = component.sample(phx.domain.GridSampling({"x": FourierAxisSpec(8)}))
     (axis,) = batch.coord_axes_by_label["x"]
 
     x_field = batch.points["x"][0]
@@ -42,7 +43,7 @@ def test_coord_separable_legendre_axis_spec_integral_matches_closed_form():
     def u(x):
         return x[0] ** 2
 
-    batch = component.sample_coord_separable({"x": LegendreAxisSpec(6)})
+    batch = component.sample(phx.domain.GridSampling({"x": LegendreAxisSpec(6)}))
     realization = from_samples(over(component), batch)
     out = integral(u, realization)
     expected = (2.0**3 - (-1.0) ** 3) / 3.0
@@ -52,7 +53,7 @@ def test_coord_separable_legendre_axis_spec_integral_matches_closed_form():
 def test_sdf_domain_function_evaluates_on_coord_separable_batch():
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
-    batch = component.sample_coord_separable({"x": FourierAxisSpec(8)})
+    batch = component.sample(phx.domain.GridSampling({"x": FourierAxisSpec(8)}))
     (axis,) = batch.coord_axes_by_label["x"]
 
     phi = component.sdf(var="x")
@@ -74,10 +75,11 @@ def test_coord_separable_scalar_time_axis_integral_constant():
         del x, t
         return 1.0
 
-    batch = component.sample_coord_separable(
-        {"t": LegendreAxisSpec(8)},
-        num_points=5,
-        dense_structure=ProductStructure((("x",),)),
+    batch = component.sample(
+        phx.domain.GridSampling(
+            {"t": LegendreAxisSpec(8)},
+            dense=phx.domain.PointSampling(5, layout=SampleLayout((("x",),))),
+        )
     )
     realization = from_samples(over(component), batch)
     out = integral(u, realization)

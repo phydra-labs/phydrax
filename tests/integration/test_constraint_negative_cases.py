@@ -5,65 +5,68 @@
 import jax.random as jr
 import pytest
 
+import phydrax as phx
 from phydrax.constraints import ContinuousInitialConstraint, FunctionalConstraint
 from phydrax.domain import (
     Boundary,
-    CoordSeparableBatch,
-    DomainComponentUnion,
+    ComponentSum,
+    GridBatch,
     Interior,
     Interval1d,
-    ProductStructure,
+    SampleLayout,
     TimeInterval,
 )
 
 
-def test_coord_separable_rejects_component_union():
+def test_grid_sampling_rejects_component_sum():
     geom = Interval1d(0.0, 1.0)
     c1 = geom.component({"x": Interior()})
     c2 = geom.component({"x": Boundary()})
-    union = DomainComponentUnion((c1, c2))
+    union = ComponentSum((c1, c2))
 
-    with pytest.raises(ValueError, match="coord-separable sampling is not supported"):
+    with pytest.raises(TypeError, match="does not support GridSampling"):
         FunctionalConstraint.from_operator(
             component=union,
             operator=lambda u: u,
             constraint_vars="u",
-            num_points={"x": 4},
-            structure=ProductStructure((("x",),)),
+            sampling=phx.domain.GridSampling({"x": 4}),
         )
 
 
-def test_coord_separable_requires_dense_structure_for_other_labels():
+def test_grid_sampling_requires_dense_plan_for_other_labels():
     geom = Interval1d(0.0, 1.0)
     time = TimeInterval(0.0, 1.0)
     domain = geom @ time
-    component = domain.component()
-
-    with pytest.raises(ValueError, match="dense_structure"):
-        FunctionalConstraint.from_operator(
-            component=component,
-            operator=lambda u: u,
-            constraint_vars="u",
-            num_points={"x": 4},
-            structure=ProductStructure((("x",),)),
-        )
-
-
-def test_coord_separable_accepts_scalar_labels():
-    geom = Interval1d(0.0, 1.0)
-    time = TimeInterval(0.0, 1.0)
-    domain = geom @ time
-    component = domain.component()
-
     constraint = FunctionalConstraint.from_operator(
-        component=component,
+        component=domain.component(),
         operator=lambda u: u,
         constraint_vars="u",
-        num_points=(5, {"t": 4}),
-        structure=ProductStructure((("x",), ("t",))),
+        sampling=phx.domain.GridSampling({"x": 4}),
     )
+
+    with pytest.raises(ValueError, match="GridSampling.dense is required"):
+        constraint.sample(key=jr.key(0))
+
+
+def test_grid_sampling_accepts_scalar_labels():
+    geom = Interval1d(0.0, 1.0)
+    time = TimeInterval(0.0, 1.0)
+    domain = geom @ time
+    constraint = FunctionalConstraint.from_operator(
+        component=domain.component(),
+        operator=lambda u: u,
+        constraint_vars="u",
+        sampling=phx.domain.GridSampling(
+            {"t": 4},
+            dense=phx.domain.PointSampling(
+                5,
+                layout=SampleLayout((("x",),)),
+            ),
+        ),
+    )
+
     batch = constraint.sample(key=jr.key(0))
-    assert isinstance(batch, CoordSeparableBatch)
+    assert isinstance(batch, GridBatch)
     assert "t" in batch.coord_axes_by_label
     assert len(batch.points["t"]) == 1
 
@@ -79,8 +82,10 @@ def test_continuous_initial_requires_fixed_start():
             "u",
             component,
             func=0.0,
-            num_points=4,
-            structure=ProductStructure((("x",),)),
+            sampling=phx.domain.PointSampling(
+                4,
+                layout=SampleLayout((("x",),)),
+            ),
         )
 
 

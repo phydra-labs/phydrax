@@ -5,8 +5,8 @@
 import coordax as cx
 import jax.numpy as jnp
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.domain import Square
 from phydrax.operators.differential import (
     deviatoric_stress,
     hydrostatic_pressure,
@@ -21,7 +21,9 @@ from phydrax.operators.differential import (
 
 
 def test_deviatoric_and_hydrostatic():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     # sigma = p I
     p = 3.0
@@ -57,7 +59,9 @@ def test_deviatoric_and_hydrostatic():
 
 
 def test_viscous_stress_symmetry():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     mu = 2.0
     a, b = 0.1, -0.2
 
@@ -73,7 +77,9 @@ def test_viscous_stress_symmetry():
 
 
 def test_maxwell_stress_E_only():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     eps = 2.0
 
     @geom.Function("x")
@@ -89,7 +95,9 @@ def test_maxwell_stress_E_only():
 
 
 def test_linear_isotropic_plane_stress_simple():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     E, nu = 10.0, 0.25
     a, b = 0.1, -0.2
 
@@ -105,7 +113,9 @@ def test_linear_isotropic_plane_stress_simple():
 
 
 def test_orthotropic_reduces_isotropic():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     # Choose E1=E2=E, nu12=nu, G12=E/(2(1+nu)) -> isotropic equivalence in plane stress
     E, nu = 10.0, 0.3
     G = E / (2 * (1 + nu))
@@ -128,7 +138,9 @@ def test_orthotropic_reduces_isotropic():
 
 
 def test_finite_strain_shapes_zero_disp():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     # At zero displacement, F=I, E=0 => SVK S=0; Neo-Hookean Cauchy σ=0
     @geom.Function("x")

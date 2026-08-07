@@ -12,18 +12,16 @@ from jaxtyping import Array
 
 from ...._doc import DOC_KEY0
 from ...._strict import AbstractAttribute, StrictModule
+from ._binding import ModelBinding
 from ._keys import EvalKey
 from ._operator import OperatorBatch, OperatorOutputSpec, OperatorPrediction
 from ._operator_domain import (
-    operator_domain_view_from_coord_separable,
     operator_domain_view_from_graph,
+    operator_domain_view_from_grid,
     operator_domain_view_from_points,
     operator_domain_view_from_ragged_series,
     operator_domain_view_from_trajectory,
 )
-
-
-DomainInputMode: TypeAlias = Literal["flat", "structured"]
 
 
 class _AbstractBaseModel(StrictModule):
@@ -42,29 +40,11 @@ class _AbstractBaseModel(StrictModule):
     ) -> Array:
         raise NotImplementedError
 
-    _supports_structured_input: ClassVar[bool] = False
-    _supports_blockwise_input: ClassVar[bool] = False
-    _supports_axis_batch_input: ClassVar[bool] = False
-    _warn_on_auto_fallback: ClassVar[bool] = False
-    _domain_input_mode: ClassVar[DomainInputMode] = "flat"
+    _input_binding: ClassVar[ModelBinding] = ModelBinding.pointwise()
 
-    @classmethod
-    def supports_structured_input(cls) -> bool:
-        return cls._supports_structured_input
-
-    @classmethod
-    def supports_blockwise_input(cls) -> bool:
-        return cls._supports_blockwise_input
-
-    def warn_on_auto_fallback(self) -> bool:
-        return bool(self._warn_on_auto_fallback)
-
-    def supports_axis_batch_input(self) -> bool:
-        return bool(self._supports_axis_batch_input)
-
-    @classmethod
-    def domain_input_mode(cls) -> DomainInputMode:
-        return cls._domain_input_mode
+    def input_binding(self) -> ModelBinding:
+        """Return the model's domain input packing and batch execution contract."""
+        return self._input_binding
 
     def __loss__(
         self,
@@ -92,8 +72,7 @@ class _AbstractBaseModel(StrictModule):
 class _AbstractStructuredInputModel(_AbstractBaseModel):
     """Abstract base for models whose concrete structured-input schema is model-specific."""
 
-    _supports_structured_input: ClassVar[bool] = True
-    _domain_input_mode: ClassVar[DomainInputMode] = "structured"
+    _input_binding: ClassVar[ModelBinding] = ModelBinding.pointwise("structured")
 
     @abstractmethod
     def __call__(
@@ -115,15 +94,15 @@ OperatorPredictionBuilder: TypeAlias = Callable[
 class _AbstractOperatorModel(_AbstractStructuredInputModel):
     """Abstract model that consumes full operator source/query metadata."""
 
-    _supports_axis_batch_input: ClassVar[bool] = True
+    _input_binding: ClassVar[ModelBinding] = ModelBinding.axis()
     _operator_prediction_builder: ClassVar[OperatorPredictionBuilder | None] = None
+
     @property
     def operator_contract(self):
         """Return the configured runtime contract derived from this model instance."""
         from ._operator_architecture_status import operator_instance_contract
 
         return operator_instance_contract(self)
-
 
     @abstractmethod
     def __call_operator_batch__(
@@ -149,7 +128,6 @@ class _AbstractOperatorModel(_AbstractStructuredInputModel):
             spec = OperatorOutputSpec(channels)
         return {"output": spec}
 
-
     def predict_prevalidated(
         self,
         batch: OperatorBatch,
@@ -172,7 +150,6 @@ class _AbstractOperatorModel(_AbstractStructuredInputModel):
             case_shape=batch.case_shape,
         )
 
-
     def predict(
         self,
         batch: OperatorBatch,
@@ -194,12 +171,11 @@ class _AbstractOperatorModel(_AbstractStructuredInputModel):
         iter_: Any | None = None,
         **kwargs: Any,
     ) -> cx.Field:
-        from ....domain._structure import CoordSeparableBatch, PointsBatch
-        from ....domain._trajectory_dataset import TRAJECTORY_CASE_INDEX_KEY
-        from ....domain.graph._batch import GraphBatch
+        from phydrax.domain import GridBatch, PointBatch, TRAJECTORY_CASE_INDEX_KEY
+        from phydrax.domain.graph import GraphBatch
 
         del iter_, kwargs
-        if isinstance(batch, PointsBatch):
+        if isinstance(batch, PointBatch):
             if not deps:
                 raise ValueError("Neural-operator point batches require dependencies.")
             first_payload = batch.points[deps[0]]
@@ -228,9 +204,7 @@ class _AbstractOperatorModel(_AbstractStructuredInputModel):
                     "Automatic point-domain operator dispatch requires one Field "
                     "for the final query dependency."
                 )
-            named_query_axes = tuple(
-                dim for dim in query_value.dims if dim is not None
-            )
+            named_query_axes = tuple(dim for dim in query_value.dims if dim is not None)
             structure_axes = tuple(batch.structure.axis_names or ())
             sample_axes = tuple(
                 axis for axis in structure_axes if axis in named_query_axes
@@ -286,7 +260,7 @@ class _AbstractOperatorModel(_AbstractStructuredInputModel):
             view.require_compatible(self)
             values = jnp.asarray(self.__call_operator_batch__(view.batch, key=key))
             return view.layouts["query"].restore(values)
-        if not isinstance(batch, CoordSeparableBatch):
+        if not isinstance(batch, GridBatch):
             raise TypeError(
                 "Neural-operator axis-batch execution requires a supported "
                 "structured domain batch."
@@ -294,10 +268,8 @@ class _AbstractOperatorModel(_AbstractStructuredInputModel):
         coordinate_labels = tuple(
             dep for dep in deps if isinstance(batch.points[dep], tuple)
         )
-        inputs = {
-            dep: dep for dep in deps if not isinstance(batch.points[dep], tuple)
-        }
-        view = operator_domain_view_from_coord_separable(
+        inputs = {dep: dep for dep in deps if not isinstance(batch.points[dep], tuple)}
+        view = operator_domain_view_from_grid(
             batch,
             inputs=inputs,
             queries={"query": coordinate_labels},

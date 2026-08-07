@@ -11,14 +11,14 @@ import coordax as cx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import DatasetDomain, DomainComponent, DomainFunction, PointSampling
+
 from .._doc import DOC_KEY0
-from ..domain._components import DomainComponent
-from ..domain._dataset import DatasetDomain
-from ..domain._function import DomainFunction
-from ..domain._structure import ProductStructure
 from ..uq._likelihoods import AbstractLikelihood
 from ._base import AbstractSamplingConstraint
 from ._data_metrics import (
+    case_sample_count,
+    normalize_case_sampling,
     sample_case_indices,
     validate_case_indices,
     validate_supervised_targets,
@@ -33,10 +33,7 @@ class SupervisedLikelihoodConstraint(AbstractSamplingConstraint):
     location_var: str
     scale_var: str | None
     component: DomainComponent
-    structure: ProductStructure
-    dense_structure: ProductStructure | None
-    num_points: int
-    sampler: str
+    sampling: PointSampling
     over: None
     reduction: Literal["mean", "sum"]
     values: Array
@@ -54,11 +51,9 @@ class SupervisedLikelihoodConstraint(AbstractSamplingConstraint):
         likelihood: AbstractLikelihood,
         /,
         *,
-        num_cases: int,
+        sampling: PointSampling,
         scale_var: str | None = None,
         observation_operator: Callable[[DomainFunction], DomainFunction] | None = None,
-        structure: ProductStructure | None = None,
-        sampler: str = "uniform",
         weight: ArrayLike = 1.0,
         reduction: Literal["mean", "sum"] = "mean",
         indices: ArrayLike | None = None,
@@ -70,16 +65,17 @@ class SupervisedLikelihoodConstraint(AbstractSamplingConstraint):
             )
         if not isinstance(likelihood, AbstractLikelihood):
             raise TypeError("likelihood must implement AbstractLikelihood.")
-        count = int(num_cases)
-        if count <= 0:
-            raise ValueError("num_cases must be positive.")
+        sampling_ = normalize_case_sampling(
+            sampling,
+            labels=component.domain.labels,
+            owner="SupervisedLikelihoodConstraint",
+        )
         reduction_value = str(reduction)
         if reduction_value not in ("mean", "sum"):
             raise ValueError("reduction must be either 'mean' or 'sum'.")
-        if str(sampler) != "uniform":
-            raise ValueError(
-                "SupervisedLikelihoodConstraint supports only uniform sampling."
-            )
+        reduction_: Literal["mean", "sum"] = (
+            "mean" if reduction_value == "mean" else "sum"
+        )
         location_name = str(location_var)
         scale_name = None if scale_var is None else str(scale_var)
         variables = (
@@ -90,12 +86,9 @@ class SupervisedLikelihoodConstraint(AbstractSamplingConstraint):
         self.location_var = location_name
         self.scale_var = scale_name
         self.component = component
-        self.structure = structure or ProductStructure((domain.labels,))
-        self.dense_structure = None
-        self.num_points = count
-        self.sampler = "uniform"
+        self.sampling = sampling_
         self.over = None
-        self.reduction = reduction_value
+        self.reduction = reduction_
         self.values = validate_supervised_targets(
             values,
             leading_size=domain.size,
@@ -117,15 +110,18 @@ class SupervisedLikelihoodConstraint(AbstractSamplingConstraint):
             raise TypeError("Likelihood constraint domain is not a DatasetDomain.")
         return domain
 
+
     def sample(self, *, key: Key[Array, ""] = DOC_KEY0) -> Any:
         indices = sample_case_indices(
             size=self.domain.size,
-            num_samples=self.num_points,
+            num_samples=case_sample_count(self.sampling),
             key=key,
             indices=self.indices,
         )
+        layout = self.sampling.layout
+        assert layout is not None
         return SupervisedDatasetBatch(
-            points=self.domain.points_from_indices(indices, structure=self.structure),
+            points=self.domain.points_from_indices(indices, structure=layout),
             target=self.values[indices],
             indices=indices,
         )
@@ -137,8 +133,10 @@ class SupervisedLikelihoodConstraint(AbstractSamplingConstraint):
             if self.indices is None
             else self.indices
         )
+        layout = self.sampling.layout
+        assert layout is not None
         return SupervisedDatasetBatch(
-            points=self.domain.points_from_indices(indices, structure=self.structure),
+            points=self.domain.points_from_indices(indices, structure=layout),
             target=self.values[indices],
             indices=indices,
         )

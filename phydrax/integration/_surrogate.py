@@ -14,9 +14,9 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import DomainFunction, ProbabilityDomain
+
 from .._strict import StrictModule
-from ..domain._function import DomainFunction
-from ..domain._probability import ProbabilityDomain
 from ..stochastic._hierarchy import StochasticHierarchy, StochasticLevelSpec
 from ._api import integrate
 from ._multilevel import MultilevelSampleBatch

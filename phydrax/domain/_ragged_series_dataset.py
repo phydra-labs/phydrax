@@ -4,10 +4,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 import coordax as cx
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -16,8 +17,12 @@ from jaxtyping import Array, ArrayLike, Key, PyTree
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
-from ._domain import _AbstractUnaryDomain
-from ._structure import _validate_label, PointsBatch, ProductStructure
+from ._coordinate import CoordinateSpec
+from ._domain import JointFactor
+from ._factor_component import FactorComponent
+from ._measure import BaseMeasure, ExactMass
+from ._selection import Interior, Selection
+from ._structure import _validate_label, PointBatch, SampleLayout
 
 
 RAGGED_SERIES_INDEX_KEY = "__phydrax_ragged_series_index__"
@@ -64,8 +69,7 @@ def _validate_series(series: PyTree[ArrayLike], /) -> tuple[PyTree[Array], int, 
     first = jnp.asarray(leaves[0])
     if first.ndim < 2:
         raise ValueError(
-            "Ragged series leaves must have shape (N, Lmax, ...); "
-            f"got {first.shape}."
+            f"Ragged series leaves must have shape (N, Lmax, ...); got {first.shape}."
         )
     n = int(first.shape[0])
     max_length = int(first.shape[1])
@@ -78,8 +82,7 @@ def _validate_series(series: PyTree[ArrayLike], /) -> tuple[PyTree[Array], int, 
         arr = jnp.asarray(leaf)
         if arr.ndim < 2:
             raise ValueError(
-                "Ragged series leaves must have shape (N, Lmax, ...); "
-                f"got {arr.shape}."
+                f"Ragged series leaves must have shape (N, Lmax, ...); got {arr.shape}."
             )
         if int(arr.shape[0]) != n:
             raise ValueError(
@@ -159,7 +162,7 @@ def _mask_series_tree(series: PyTree[Array], mask: Array, /) -> PyTree[Array]:
     return jax.tree_util.tree_map(_mask_leaf, series)
 
 
-class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
+class RaggedSeriesDatasetDomain(JointFactor):
     """A finite dataset domain for conditional variable-length input series.
 
     Each case owns optional static data, one or more aligned padded series leaves,
@@ -283,7 +286,9 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
         lengths: list[int] = []
         for record, leaves in zip(series, leaf_rows, strict=True):
             if jax.tree_util.tree_structure(record) != treedef:
-                raise ValueError("All series records must share the same PyTree structure.")
+                raise ValueError(
+                    "All series records must share the same PyTree structure."
+                )
             if not leaves:
                 raise ValueError("Series records must contain at least one leaf.")
             first = jnp.asarray(leaves[0])
@@ -337,9 +342,38 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
         return self._label
 
     @property
-    def var_dim(self) -> int:
-        """Number of coordinate labels owned by this unary domain."""
-        return 1
+    def labels(self) -> tuple[str, ...]:
+        return (self.label,)
+
+    @property
+    def coordinate_specs(self) -> tuple[CoordinateSpec, ...]:
+        return (CoordinateSpec(None, kind="pytree", differentiable=False, dtype=None),)
+
+    def bind_component(
+        self,
+        selections: Mapping[str, Selection],
+        /,
+    ) -> FactorComponent:
+        if tuple(selections) != self.labels:
+            raise ValueError(
+                f"Ragged-series factor {self.labels} requires one ordered selection."
+            )
+        if not isinstance(selections[self.label], Interior):
+            raise TypeError("Ragged-series factors support only Interior selection.")
+        normalized = self.measure_mode == "probability"
+        kind = "probability" if normalized else "counting"
+        return FactorComponent(
+            factor=self,
+            selections=selections,
+            measure=BaseMeasure(kind, ExactMass(self.measure), normalized=normalized),
+        )
+
+    def _replace_labels(
+        self,
+        labels: tuple[str, ...],
+        /,
+    ) -> "RaggedSeriesDatasetDomain":
+        return eqx.tree_at(lambda factor: factor._label, self, labels[0])
 
     @property
     def size(self) -> int:
@@ -526,10 +560,10 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
         indices: ArrayLike,
         /,
         *,
-        structure: ProductStructure | None = None,
-    ) -> PointsBatch:
-        """Materialize full padded rows as a Phydrax `PointsBatch`."""
-        structure_in = structure or ProductStructure(((self.label,),))
+        structure: SampleLayout | None = None,
+    ) -> PointBatch:
+        """Materialize full padded rows as a Phydrax `PointBatch`."""
+        structure_in = structure or SampleLayout(((self.label,),))
         structure_out = structure_in.canonicalize(self.labels)
         axis = structure_out.axis_for(self.label)
         if axis is None:
@@ -553,7 +587,7 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
             self.label: jax.tree_util.tree_map(_to_field, rows),
             RAGGED_SERIES_INDEX_KEY: cx.Field(idx, dims=(axis,)),
         }
-        return PointsBatch(points=frozendict(points), structure=structure_out)
+        return PointBatch(points=frozendict(points), structure=structure_out)
 
     def sampled_points_from_indices(
         self,
@@ -562,11 +596,11 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
         *,
         num_series_points: int,
         sampling: RaggedSeriesSampling = "points_uniform",
-        structure: ProductStructure | None = None,
+        structure: SampleLayout | None = None,
         key: Key[Array, ""] = DOC_KEY0,
-    ) -> PointsBatch:
-        """Materialize fixed-width sampled series rows as a `PointsBatch`."""
-        structure_in = structure or ProductStructure(((self.label,),))
+    ) -> PointBatch:
+        """Materialize fixed-width sampled series rows as a `PointBatch`."""
+        structure_in = structure or SampleLayout(((self.label,),))
         structure_out = structure_in.canonicalize(self.labels)
         axis = structure_out.axis_for(self.label)
         if axis is None:
@@ -594,13 +628,11 @@ class RaggedSeriesDatasetDomain(_AbstractUnaryDomain):
             self.label: jax.tree_util.tree_map(_to_field, rows),
             RAGGED_SERIES_INDEX_KEY: cx.Field(idx, dims=(axis,)),
         }
-        return PointsBatch(points=frozendict(points), structure=structure_out)
+        return PointBatch(points=frozendict(points), structure=structure_out)
 
-    def equivalent(self, other: object, /) -> bool:
+    def _same_factor_support(self, other: object, /) -> bool:
         """Return whether another domain has the same public dataset shape."""
         if not isinstance(other, RaggedSeriesDatasetDomain):
-            return False
-        if self.label != other.label:
             return False
         if self.measure_mode != other.measure_mode:
             return False

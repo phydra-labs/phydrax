@@ -5,8 +5,9 @@
 import jax.numpy as jnp
 import jax.random as jr
 
+import phydrax as phx
 from phydrax.constraints import RaggedTimeSeriesDataConstraint, TrajectorySignal
-from phydrax.domain import IrregularTrajectoryDatasetDomain, ProductStructure
+from phydrax.domain import IrregularTrajectoryDatasetDomain, SampleLayout
 from phydrax.operators.differential import partial_t
 
 
@@ -43,9 +44,10 @@ def test_irregular_ragged_time_series_matches_exact_observations():
         "u",
         domain.component(),
         values,
-        num_points=16,
-        structure=ProductStructure((("data", "t"),)),
-        sampling="observation_uniform",
+        sampling=phx.domain.PointSampling(
+            16, layout=SampleLayout((("data", "t"),)), design="uniform"
+        ),
+        selection="observation_uniform",
         label="irregular_trajectory_data",
     )
 
@@ -67,9 +69,10 @@ def test_irregular_ragged_time_series_linear_interpolation():
         "u",
         domain.component(),
         values,
-        num_points=20,
-        structure=ProductStructure((("data", "t"),)),
-        sampling="case_time_uniform",
+        sampling=phx.domain.PointSampling(
+            20, layout=SampleLayout((("data", "t"),)), design="uniform"
+        ),
+        selection="case_time_uniform",
         interpolation="linear",
     )
 
@@ -81,9 +84,7 @@ def test_irregular_trajectory_signal_linear_value_and_time_derivative():
     domain, values = _make_domain_and_values(sampling="case_time_uniform")
     signal = TrajectorySignal(domain, values, interpolation="linear")
     batch = domain.component().sample(
-        20,
-        structure=ProductStructure((("data", "t"),)),
-        key=jr.key(2),
+        phx.domain.PointSampling(20, layout=SampleLayout((("data", "t"),))), key=jr.key(2)
     )
 
     out = signal(batch)

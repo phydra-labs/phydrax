@@ -29,7 +29,9 @@ operator. Everything is still “minimize functionals over domains”.
     import optax
     import phydrax as phx
 
-    geom = phx.domain.Square(center=(0.0, 0.0), side=2.0)  # Ω=[-1,1]^2
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )  # Ω=[-1,1]^2
 
     # Known forcing and boundary value (toy choices)
     @geom.Function("x")
@@ -54,7 +56,7 @@ operator. Everything is still “minimize functionals over domains”.
     u = geom.Model("x")(u_model)
     k = geom.Model("x")(k_model)
 
-    structure = phx.domain.ProductStructure((("x",),))
+    layout = phx.domain.SampleLayout((("x",),))
 
     def pde_operator(u_f, k_f):
         grad_u = phx.operators.grad(u_f, var="x")      # ∇u (vector)
@@ -65,8 +67,7 @@ operator. Everything is still “minimize functionals over domains”.
         ("u", "k"),
         geom,
         operator=pde_operator,
-        num_points=128,
-        structure=structure,
+        sampling=phx.domain.PointSampling(128, layout=layout),
         reduction="mean",
     )
 
@@ -75,8 +76,7 @@ operator. Everything is still “minimize functionals over domains”.
         "u",
         boundary,
         target=g,
-        num_points=64,
-        structure=structure,
+        sampling=phx.domain.PointSampling(64, layout=layout),
         weight=10.0,
     )
 

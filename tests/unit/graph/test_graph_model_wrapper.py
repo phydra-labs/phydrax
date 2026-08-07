@@ -42,12 +42,12 @@ def _mapping_graph() -> phx.graph.GraphIR:
 
 def _batch(domain):
     component = domain.component({"graph": phx.domain.Nodes()})
-    return component.sample(3, structure=phx.domain.ProductStructure((("graph",),)))
+    return component.sample(phx.domain.PointSampling(3, layout=phx.domain.SampleLayout((("graph",),))))
 
 
 def _boundary_batch(domain):
     component = domain.component({"graph": phx.domain.BoundaryNodes([0, 2])})
-    return component.sample(2, structure=phx.domain.ProductStructure((("graph",),)))
+    return component.sample(phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),))))
 
 
 def test_graph_model_wrapper_returns_node_field():

@@ -15,11 +15,11 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+from phydrax.domain import GridBatch, GridSampling, PointBatch, PointSampling
+
 from .._doc import DOC_KEY0
-from .._sampling import design_name, DesignLike, resolve_design, UnitDesign
+from .._sampling import DesignLike, resolve_design, UnitDesign
 from .._strict import StrictModule
-from ..domain._components import DomainComponentUnion
-from ..domain._structure import CoordSeparableBatch, PointsBatch
 from ._adaptive import (
     _set_batch_rows,
     _single_axis_and_size,
@@ -31,7 +31,8 @@ from ._adaptive_separable import HierarchicalAxisPolicy, SeparableCollocationPol
 
 
 if TYPE_CHECKING:
-    from ..domain._function import DomainFunction
+    from phydrax.domain import DomainFunction
+
     from ._functional import FunctionalConstraint
 
 
@@ -246,7 +247,7 @@ class ControlledCollocationPopulation(StrictModule):
     current: Any
     rollback: Any
     anchor_reference: Any | None
-    monitor_batch: PointsBatch | CoordSeparableBatch
+    monitor_batch: PointBatch | GridBatch
     monitor_point_count: int
     last_control_step: Array
     proposal_pending: Array
@@ -267,7 +268,7 @@ class ControlledCollocationPopulation(StrictModule):
         self,
         current: Any,
         rollback: Any,
-        monitor_batch: PointsBatch | CoordSeparableBatch,
+        monitor_batch: PointBatch | GridBatch,
         monitor_point_count: int,
         *,
         anchor_reference: Any | None = None,
@@ -663,24 +664,32 @@ def _sample_monitor_batch(
     *,
     sampler: DesignLike,
     key: Key[Array, ""],
-) -> PointsBatch | CoordSeparableBatch:
-    if constraint.coord_sampling is not None:
-        if isinstance(constraint.component, DomainComponentUnion):
-            raise ValueError("Adaptive monitors do not support DomainComponentUnion.")
-        batch = constraint.component.sample_coord_separable(
-            constraint.coord_sampling,
-            num_points=constraint.num_points,
-            dense_structure=constraint.dense_structure,
-            sampler=design_name(sampler),
-            key=key,
+) -> PointBatch | GridBatch:
+    sampling = constraint.sampling
+    if isinstance(sampling, GridSampling):
+        dense = (
+            None
+            if sampling.dense is None
+            else PointSampling(
+                sampling.dense.count,
+                layout=sampling.dense.layout,
+                design=sampler,
+            )
+        )
+        monitor_sampling = GridSampling(
+            sampling.axes,
+            dense=dense,
+            design=sampler,
+        )
+    elif isinstance(sampling, PointSampling):
+        monitor_sampling = PointSampling(
+            sampling.count,
+            layout=sampling.layout,
+            design=sampler,
         )
     else:
-        batch = constraint.component.sample(
-            constraint.num_points,
-            structure=constraint.structure,
-            sampler=sampler,
-            key=key,
-        )
+        raise TypeError("Adaptive monitors require one sampling plan.")
+    batch = constraint.component.sample(monitor_sampling, key=key)
     if isinstance(batch, tuple):
         raise TypeError("Adaptive monitors require one structured batch.")
     return batch
@@ -689,7 +698,7 @@ def _sample_monitor_batch(
 def _monitor_statistics(
     constraint: FunctionalConstraint,
     functions: Mapping[str, DomainFunction],
-    batch: PointsBatch | CoordSeparableBatch,
+    batch: PointBatch | GridBatch,
     /,
     *,
     key: Key[Array, ""],
@@ -830,7 +839,7 @@ def _inject_collocation_anchors(
     )
 
 
-def _take_first_rows(batch: PointsBatch, count: int, /) -> PointsBatch:
+def _take_first_rows(batch: PointBatch, count: int, /) -> PointBatch:
     axis, _ = _single_axis_and_size(batch)
 
     def take(value: Any) -> Any:
@@ -851,7 +860,7 @@ def _take_first_rows(batch: PointsBatch, count: int, /) -> PointsBatch:
         batch.metadata,
         is_leaf=lambda value: isinstance(value, cx.Field),
     )
-    return PointsBatch(points, batch.structure, metadata=metadata)
+    return PointBatch(points, batch.structure, metadata=metadata)
 
 
 def _replace_controlled(

@@ -11,8 +11,9 @@ from typing import Any
 
 import jax
 
+from phydrax.domain import DomainFunction
+
 from .._callable import _ensure_special_kwonly_args
-from ..domain._function import DomainFunction
 
 
 @dataclass(frozen=True)

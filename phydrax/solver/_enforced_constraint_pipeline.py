@@ -13,6 +13,22 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import (
+    AbstractGeometry,
+    AbstractScalarDomain,
+    Boundary,
+    CallbackDerivativeRule,
+    Domain,
+    DomainComponent,
+    DomainFunction,
+    EnforcementGateMethod,
+    Fixed,
+    FixedEnd,
+    FixedStart,
+    PointSampling,
+    SampleLayout,
+)
+
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._interpolation import (
@@ -22,39 +38,26 @@ from .._interpolation import (
 )
 from .._strict import StrictModule
 from ..constraints._enforced import _enforced_constraint_weight_fn, enforce_initial
-from ..domain._base import _AbstractGeometry, EnforcementGateMethod
-from ..domain._components import (
-    Boundary,
-    DomainComponent,
-    Fixed,
-    FixedEnd,
-    FixedStart,
-)
-from ..domain._domain import _AbstractDomain, RelabeledDomain
-from ..domain._function import DomainFunction
-from ..domain._scalar import _AbstractScalarDomain
-from ..domain._structure import ProductStructure
 from ..operators.differential._domain_ops import partial_n
 from ..operators.differential._hooks import (
     blend_with_gate,
     nth_quotient_rule,
-    with_derivative_hook,
+    with_derivative_rule,
 )
 
 
 def _unwrap_factor(factor: object, /) -> object:
-    if isinstance(factor, RelabeledDomain):
-        return factor.base
+    return factor
     return factor
 
 
 def _geometry_boundary_labels(component: DomainComponent, /) -> tuple[str, ...]:
     out: list[str] = []
     for lbl in component.domain.labels:
-        if not isinstance(component.spec.component_for(lbl), Boundary):
+        if not isinstance(component.spec.selection_for(lbl), Boundary):
             continue
         factor = _unwrap_factor(component.domain.factor(lbl))
-        if isinstance(factor, _AbstractGeometry):
+        if isinstance(factor, AbstractGeometry):
             out.append(lbl)
     return tuple(out)
 
@@ -62,7 +65,7 @@ def _geometry_boundary_labels(component: DomainComponent, /) -> tuple[str, ...]:
 def _initial_label(component: DomainComponent, evolution_var: str, /) -> str | None:
     if evolution_var not in component.domain.labels:
         return None
-    comp = component.spec.component_for(evolution_var)
+    comp = component.spec.selection_for(evolution_var)
     if isinstance(comp, (FixedStart, FixedEnd, Fixed, Boundary)):
         return evolution_var
     return None
@@ -512,25 +515,25 @@ def _normalize_anchor_values(y: Array, /) -> Array:
     raise ValueError(f"Anchor values must be scalar or rank-2, got shape {y.shape}.")
 
 
-def _as_anchor_array(domain: _AbstractDomain, label: str, x: Array, /) -> Array:
+def _as_anchor_array(domain: Domain, label: str, x: Array, /) -> Array:
     factor = _unwrap_factor(domain.factor(label))
     arr = jnp.asarray(x, dtype=float)
 
-    if isinstance(factor, _AbstractGeometry):
+    if isinstance(factor, AbstractGeometry):
         if arr.ndim == 1:
             arr = arr.reshape((1, -1))
         if arr.ndim != 2:
             raise ValueError(
                 f"Geometry anchor {label!r} must have shape (N,d), got {arr.shape}."
             )
-        d = int(factor.var_dim)
+        d = int(factor.spatial_dim)
         if arr.shape[1] != d:
             raise ValueError(
                 f"Geometry anchor {label!r} must have d={d}, got {arr.shape[1]}."
             )
         return arr
 
-    if isinstance(factor, _AbstractScalarDomain):
+    if isinstance(factor, AbstractScalarDomain):
         if arr.ndim == 0:
             return arr.reshape((1,))
         if arr.ndim == 1:
@@ -549,7 +552,7 @@ def _as_anchor_array(domain: _AbstractDomain, label: str, x: Array, /) -> Array:
 def _build_anchor_set(
     sources: Sequence[EnforcedInteriorData],
     *,
-    domain: _AbstractDomain,
+    domain: Domain,
 ) -> _UnifiedAnchorSet:
     if not sources:
         raise ValueError("Must provide at least one EnforcedInteriorData source.")
@@ -646,9 +649,9 @@ def _build_anchor_set(
         lengthscales = {}
         for lbl in labels:
             factor = _unwrap_factor(domain.factor(lbl))
-            if isinstance(factor, _AbstractGeometry):
-                anchors_cat[lbl] = jnp.zeros((0, int(factor.var_dim)), dtype=float)
-            elif isinstance(factor, _AbstractScalarDomain):
+            if isinstance(factor, AbstractGeometry):
+                anchors_cat[lbl] = jnp.zeros((0, int(factor.spatial_dim)), dtype=float)
+            elif isinstance(factor, AbstractScalarDomain):
                 anchors_cat[lbl] = jnp.zeros((0,), dtype=float)
             else:
                 raise TypeError(
@@ -830,17 +833,15 @@ def _initial_overlay_boundary_compatible(
             lbl
             for lbl in component.domain.labels
             if not isinstance(
-                component.spec.component_for(lbl), (FixedStart, FixedEnd, Fixed)
+                component.spec.selection_for(lbl), (FixedStart, FixedEnd, Fixed)
             )
         )
         if not non_fixed_labels:
             vals = jnp.asarray(diff.func(key=jr.fold_in(key, i)), dtype=float)
         else:
-            structure = ProductStructure((non_fixed_labels,))
+            structure = SampleLayout((non_fixed_labels,))
             batch = component.sample(
-                n_probe,
-                structure=structure,
-                sampler="uniform",
+                PointSampling(n_probe, layout=structure, design="uniform"),
                 key=jr.fold_in(key, i),
             )
             vals = jnp.asarray(diff(batch, key=jr.fold_in(key, i + 10_000)).data)
@@ -946,7 +947,7 @@ class _BoundaryBlendOverlay(StrictModule):
             )
 
         base_factor = _unwrap_factor(u_base.domain.factor(self.var))
-        if not isinstance(base_factor, _AbstractGeometry):
+        if not isinstance(base_factor, AbstractGeometry):
             raise TypeError("_BoundaryBlendOverlay requires a geometry label.")
         geom = base_factor
 
@@ -956,13 +957,13 @@ class _BoundaryBlendOverlay(StrictModule):
                     f"Label {self.var!r} not in piece domain {c.component.domain.labels}."
                 )
             factor = _unwrap_factor(c.component.domain.factor(self.var))
-            if not isinstance(factor, _AbstractGeometry):
+            if not isinstance(factor, AbstractGeometry):
                 raise TypeError("Boundary pieces must use a geometry label for var.")
-            if not geom.equivalent(factor):
+            if not geom.same_support(factor):
                 raise ValueError(
                     "Boundary blend requires all pieces to share an equivalent geometry."
                 )
-            comp = c.component.spec.component_for(self.var)
+            comp = c.component.spec.selection_for(self.var)
             if not isinstance(comp, Boundary):
                 raise ValueError(
                     "Boundary blend pieces require component Boundary() for var."
@@ -1097,7 +1098,7 @@ class _BoundaryBlendOverlay(StrictModule):
                 derive=_derive,
             )
 
-        return with_derivative_hook(blended, _hook)
+        return with_derivative_rule(blended, CallbackDerivativeRule(_hook))
 
 
 class _InitialEnforcedOverlay(StrictModule):
@@ -1172,7 +1173,7 @@ class _InteriorDataOverlay(StrictModule):
 
     def __init__(
         self,
-        domain: _AbstractDomain,
+        domain: Domain,
         anchor_set: _UnifiedAnchorSet,
         /,
         *,
@@ -1193,14 +1194,14 @@ class _InteriorDataOverlay(StrictModule):
         t0: Array | None = None
         if self.evolution_var in domain.labels:
             factor = _unwrap_factor(domain.factor(self.evolution_var))
-            if isinstance(factor, _AbstractScalarDomain):
+            if isinstance(factor, AbstractScalarDomain):
                 t0 = jnp.asarray(factor.fixed("start"), dtype=float).reshape(())
         self.t0 = t0
 
         gates: dict[str, Callable[[Array], Array]] = {}
         for label in self.gate_exponents:
             factor = _unwrap_factor(domain.factor(label))
-            if not isinstance(factor, _AbstractGeometry):
+            if not isinstance(factor, AbstractGeometry):
                 raise TypeError(
                     "Boundary gating exponents must refer to geometry labels."
                 )
@@ -1720,7 +1721,7 @@ class _InteriorDataOverlay(StrictModule):
                 periodic=periodic,
             )
 
-        return with_derivative_hook(ansatz, _hook)
+        return with_derivative_rule(ansatz, CallbackDerivativeRule(_hook))
 
 
 class EnforcedConstraintPipeline(StrictModule):
@@ -1870,14 +1871,14 @@ class EnforcedConstraintPipeline(StrictModule):
                     "Initial enforced targets require a scalar FixedStart/FixedEnd/Fixed component."
                 )
 
-            comp = base_component.spec.component_for(var)
+            comp = base_component.spec.selection_for(var)
             if not isinstance(comp, (FixedStart, FixedEnd, Fixed)):
                 raise ValueError(
                     "Initial enforced targets require FixedStart/FixedEnd/Fixed for the evolution var."
                 )
 
             factor = _unwrap_factor(base_component.domain.factor(var))
-            if not isinstance(factor, _AbstractScalarDomain):
+            if not isinstance(factor, AbstractScalarDomain):
                 raise TypeError(
                     "Initial enforced targets require a scalar evolution variable."
                 )
@@ -1945,9 +1946,9 @@ class EnforcedConstraintPipeline(StrictModule):
             gate_factors_raw = tuple(
                 _unwrap_factor(u_base.domain.factor(lbl)) for lbl in gate_labels
             )
-            gate_factors_list: list[_AbstractGeometry] = []
+            gate_factors_list: list[AbstractGeometry] = []
             for lbl, factor in zip(gate_labels, gate_factors_raw, strict=True):
-                if not isinstance(factor, _AbstractGeometry):
+                if not isinstance(factor, AbstractGeometry):
                     raise TypeError(
                         f"Boundary gate label {lbl!r} must refer to a geometry factor."
                     )

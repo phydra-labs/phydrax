@@ -12,6 +12,19 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import BatchEvaluator, DomainComponent, DomainFunction, PointSampling
+from phydrax.domain.graph import (
+    graph_component_kind,
+    GRAPH_DATASET_INDEX_KEY,
+    GRAPH_ENTITY_INDEX_KEY,
+    GRAPH_ENTITY_OFFSET_KEY,
+    GRAPH_TRAJECTORY_TIME_INDEX_KEY,
+    GraphBatch,
+    GraphComponentKind,
+    GraphDatasetDomain,
+    GraphTrajectoryDatasetDomain,
+)
+
 from .._doc import DOC_KEY0
 from .._interpolation import (
     apply_gather_stencil,
@@ -20,20 +33,6 @@ from .._interpolation import (
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..domain._components import DomainComponent
-from ..domain._function import BatchAwareCallable, DomainFunction
-from ..domain._structure import ProductStructure
-from ..domain.graph._batch import GRAPH_ENTITY_INDEX_KEY, GraphBatch
-from ..domain.graph._components import graph_component_kind, GraphComponentKind
-from ..domain.graph._dataset import (
-    GRAPH_DATASET_INDEX_KEY,
-    GRAPH_ENTITY_OFFSET_KEY,
-    GraphDatasetDomain,
-)
-from ..domain.graph._trajectory import (
-    GRAPH_TRAJECTORY_TIME_INDEX_KEY,
-    GraphTrajectoryDatasetDomain,
-)
 from ._functional import FunctionalConstraint
 
 
@@ -45,7 +44,7 @@ def _component_kind_for_constraint(
     graph_label: str,
     /,
 ) -> GraphComponentKind:
-    return graph_component_kind(component.spec.component_for(graph_label))
+    return graph_component_kind(component.spec.selection_for(graph_label))
 
 
 def _size_for_kind(graph, kind: GraphComponentKind, /) -> int:
@@ -194,7 +193,7 @@ def _field_from_target(batch: GraphBatch, value: Array, /) -> cx.Field:
     return cx.Field(value, dims=(axis,) + (None,) * max(value.ndim - 1, 0))
 
 
-class _GraphTargetCallable(StrictModule, BatchAwareCallable, NonTrainableState):
+class _GraphTargetCallable(StrictModule, BatchEvaluator, NonTrainableState):
     values: Array
     offsets: Array
     kind: GraphComponentKind
@@ -229,7 +228,7 @@ class _GraphTargetCallable(StrictModule, BatchAwareCallable, NonTrainableState):
         return _field_from_target(batch, self.values[flat_idx])
 
 
-class _GraphTrajectorySignalCallable(StrictModule, BatchAwareCallable, NonTrainableState):
+class _GraphTrajectorySignalCallable(StrictModule, BatchEvaluator, NonTrainableState):
     domain: GraphTrajectoryDatasetDomain
     values: Array
     offsets: Array
@@ -411,9 +410,7 @@ def GraphSupervisedConstraint(
     values: ArrayLike | Sequence[ArrayLike],
     /,
     *,
-    num_cases: int,
-    structure: ProductStructure | None = None,
-    sampler: str = "uniform",
+    sampling: PointSampling,
     weight: DomainFunction | ArrayLike = 1.0,
     reduction: Literal["mean", "integral"] = "mean",
     label: str | None = None,
@@ -441,9 +438,7 @@ def GraphSupervisedConstraint(
         component=component,
         operator=operator,
         constraint_vars=str(constraint_var),
-        num_points=int(num_cases),
-        structure=structure or ProductStructure(((domain.label,),)),
-        sampler=sampler,
+        sampling=sampling,
         weight=weight,
         reduction=reduction,
         label=label,
@@ -459,9 +454,7 @@ def GraphTrajectorySupervisedConstraint(
     values: ArrayLike | Sequence[ArrayLike],
     /,
     *,
-    num_points: int,
-    structure: ProductStructure | None = None,
-    sampler: str = "latin_hypercube",
+    sampling: PointSampling,
     interpolation: GraphTargetInterpolation = "nearest",
     weight: DomainFunction | ArrayLike = 1.0,
     reduction: Literal["mean", "integral"] = "mean",
@@ -495,9 +488,7 @@ def GraphTrajectorySupervisedConstraint(
         component=component,
         operator=operator,
         constraint_vars=str(constraint_var),
-        num_points=int(num_points),
-        structure=structure or ProductStructure((domain.labels,)),
-        sampler=sampler,
+        sampling=sampling,
         weight=weight,
         reduction=reduction,
         label=label,

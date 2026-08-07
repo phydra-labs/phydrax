@@ -90,7 +90,7 @@ def test_mesh_graph_net_wraps_as_domain_graph_model():
     graph = _feature_graph()
     domain = phx.domain.GraphDomain(graph)
     component = domain.component({"graph": phx.domain.Nodes()})
-    batch = component.sample(4, structure=phx.domain.ProductStructure((("graph",),)))
+    batch = component.sample(phx.domain.PointSampling(4, layout=phx.domain.SampleLayout((("graph",),))))
     model = phx.graph.MeshGraphNet(
         node_in_size=2,
         edge_in_size=3,

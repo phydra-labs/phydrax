@@ -48,9 +48,7 @@ class AxisDiscretization(StrictModule):
         *,
         nodes: Array,
         quad_weights: Array | None,
-        basis: Literal[
-            "uniform", "fourier", "sine", "cosine", "legendre", "nested"
-        ],
+        basis: Literal["uniform", "fourier", "sine", "cosine", "legendre", "nested"],
         periodic: bool,
         active: Array | None = None,
         level: Array | None = None,
@@ -71,6 +69,7 @@ class AxisDiscretization(StrictModule):
         self.nodes = nodes_
         self.basis = basis
         self.periodic = bool(periodic)
+
         def normalize_metadata(name, value, dtype):
             if value is None:
                 return None
@@ -108,7 +107,6 @@ class AxisDiscretization(StrictModule):
         )
 
 
-
 class AbstractAxisSpec(StrictModule):
     r"""Abstract base class for 1D grid/basis axis specifications.
 
@@ -133,7 +131,7 @@ class AbstractAxisSpec(StrictModule):
 class GridSpec(StrictModule):
     """A per-label grid spec: one axis spec per coordinate component.
 
-    For a geometry variable with `var_dim=d`, use `GridSpec(axes=(spec0, ..., spec{d-1}))`
+    For a geometry variable with `spatial_dim=d`, use `GridSpec(axes=(spec0, ..., spec{d-1}))`
     to specify a different `AxisSpec` per coordinate axis.
     """
 
@@ -269,8 +267,10 @@ def _trapezoid_weights_from_active(nodes: Array, active: Array) -> Array:
             active_weights = active_weights.at[1:-1].set(
                 0.5 * (active_nodes[2:] - active_nodes[:-2])
             )
-    return jnp.zeros_like(nodes_).at[jnp.where(active_, size=active_nodes.size)[0]].set(
-        active_weights
+    return (
+        jnp.zeros_like(nodes_)
+        .at[jnp.where(active_, size=active_nodes.size)[0]]
+        .set(active_weights)
     )
 
 
@@ -473,8 +473,12 @@ def cut_cell_geometry_weight_from_adf(
         permutation = jnp.argsort(values)
         sorted_values = values[permutation]
         midpoints = 0.5 * (sorted_values[:-1] + sorted_values[1:])
-        left_sorted = jnp.concatenate((bounds_[0, axis_index : axis_index + 1], midpoints))
-        right_sorted = jnp.concatenate((midpoints, bounds_[1, axis_index : axis_index + 1]))
+        left_sorted = jnp.concatenate(
+            (bounds_[0, axis_index : axis_index + 1], midpoints)
+        )
+        right_sorted = jnp.concatenate(
+            (midpoints, bounds_[1, axis_index : axis_index + 1])
+        )
         left = jnp.zeros_like(values).at[permutation].set(left_sorted)
         right = jnp.zeros_like(values).at[permutation].set(right_sorted)
         widths = jnp.maximum(right - left, 0.0)

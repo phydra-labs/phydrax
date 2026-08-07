@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from hashlib import sha256
 from math import prod
-from typing import Any, Literal, TypeAlias
+from typing import Any, cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -15,9 +15,10 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import DomainFunction
+
 from .._objective import AbstractSamplingObjectiveTerm
 from .._strict import StrictModule
-from ..domain._function import DomainFunction
 from ..operators.differential._stochastic_estimators import (
     stochastic_divergence_samples,
     StochasticTracePolicy,
@@ -248,7 +249,7 @@ class ScoreMatchingObjective(AbstractSamplingObjectiveTerm):
             if not callable(samples):
                 raise TypeError("Resampled score matching requires a sample provider.")
             fixed = None
-            provider = samples
+            provider = cast(ScoreSampleProvider, samples)
         else:
             if callable(samples):
                 raise TypeError("Fixed score matching requires materialized samples.")

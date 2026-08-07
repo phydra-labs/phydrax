@@ -71,7 +71,9 @@ The existing Phydrax stochastic operators accept an optional `metric=`:
 import jax.numpy as jnp
 import phydrax as phx
 
-domain = phx.domain.Square(center=(2.0, 0.0), side=1.0)
+domain = phx.domain.GeometryDomain(
+    phx.geometry.Square(center=(2.0, 0.0), side=1.0).compile()
+)
 chart = phx.metrix.CoordinateChart("polar", ("r", "theta"))
 metric = phx.metrix.diagonal_metric(
     lambda q: jnp.array([1.0, q[0] ** 2]),

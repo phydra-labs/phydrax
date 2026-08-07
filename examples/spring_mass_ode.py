@@ -182,7 +182,7 @@ def _(eqx, jax, jnp, phx):
 
         # Train on normalized time s in [0, 1], while preserving physical ODE scaling.
         time_domain = phx.domain.TimeInterval(0.0, 1.0)
-        structure_t = phx.domain.ProductStructure((("t",),))
+        structure_t = phx.domain.SampleLayout((("t",),))
         x_model = phx.nn.SeparableMLP(
             in_size="scalar",
             out_size=3,

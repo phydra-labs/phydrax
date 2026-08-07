@@ -124,8 +124,7 @@ def test_domain_potential_and_kernel_function_compose_with_sampled_fields():
         time_var="t",
     )
     batch = endpoint_domain.component().sample(
-        num_points=6,
-        structure=phx.domain.ProductStructure((("q0", "q1"),)),
+        phx.domain.PointSampling(6, layout=phx.domain.SampleLayout((("q0", "q1"),))),
         key=jr.key(2),
     )
     values = kernel(batch, key=jr.key(3))
@@ -145,11 +144,7 @@ def test_kernel_function_preserves_trainable_domain_potential_gradients():
     slicing = phx.operators.PathDiscretization(0.0, 0.5, num_steps=8)
 
     def value(stiffness):
-        potential = phx.domain.DomainFunction(
-            domain=potential_domain,
-            deps=("q", "t"),
-            func=_TrainableHarmonic(stiffness),
-        )
+        potential = potential_domain.Function("q", "t")(_TrainableHarmonic(stiffness))
         kernel = phx.operators.euclidean_kernel_function(
             endpoint_domain,
             potential,
@@ -189,8 +184,9 @@ def test_kernel_function_runs_through_operator_constraint_solver():
             var="q1",
         ),
         constraint_vars="kernel",
-        num_points=4,
-        structure=phx.domain.ProductStructure((("q0", "q1"),)),
+        sampling=phx.domain.PointSampling(
+            4, layout=phx.domain.SampleLayout((("q0", "q1"),))
+        ),
         reduction="mean",
     )
     solver = phx.solver.FunctionalSolver(

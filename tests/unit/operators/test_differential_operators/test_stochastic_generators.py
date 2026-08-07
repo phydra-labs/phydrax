@@ -12,7 +12,13 @@ def _interval_function(function):
 
 
 def _square_function(function):
-    domain = phx.domain.Square(center=(0.0, 0.0), side=4.0)
+    domain = phx.domain.GeometryDomain(
+        phx.geometry.Square(
+            center=(0.0, 0.0),
+            side=4.0,
+            feature_id="stochastic-generator-square",
+        ).compile()
+    )
     return domain.Function("x")(function)
 
 

@@ -13,25 +13,27 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
-from .._doc import DOC_KEY0
-from .._frozendict import frozendict
-from .._numerics import clenshaw_curtis_data, tanh_sinh_data
-from .._strict import StrictModule
-from ..domain._base import _AbstractGeometry
-from ..domain._components import (
+from phydrax.domain import (
+    AbstractGeometry,
+    AbstractScalarDomain,
     Boundary,
+    ComponentSum,
     DomainComponent,
-    DomainComponentUnion,
+    DomainFunction,
     Fixed,
     FixedEnd,
     FixedStart,
     Interior,
+    Interval1d,
+    PointBatch,
+    SampleLayout,
+    ScalarInterval,
 )
-from ..domain._domain import RelabeledDomain
-from ..domain._function import DomainFunction
-from ..domain._scalar import _AbstractScalarDomain, ScalarInterval
-from ..domain._structure import PointsBatch, ProductStructure
-from ..domain.geometry1d._primitives import Interval1d
+
+from .._doc import DOC_KEY0
+from .._frozendict import frozendict
+from .._numerics import clenshaw_curtis_data, tanh_sinh_data
+from .._strict import StrictModule
 from ._estimates import (
     AdaptivePartition,
     AdaptiveQuadratureDiagnostics,
@@ -51,12 +53,12 @@ from ._targets import ComponentTarget, DensityTarget
 
 
 def _unwrap(factor: Any, /) -> Any:
-    return factor.base if isinstance(factor, RelabeledDomain) else factor
+    return factor
 
 
 def _fixed_field(factor: Any, selector: Any, /) -> cx.Field:
     factor = _unwrap(factor)
-    if isinstance(factor, _AbstractScalarDomain):
+    if isinstance(factor, AbstractScalarDomain):
         if isinstance(selector, FixedStart):
             value = factor.fixed("start")
         elif isinstance(selector, FixedEnd):
@@ -66,9 +68,9 @@ def _fixed_field(factor: Any, selector: Any, /) -> cx.Field:
         else:
             raise TypeError("Non-integrated scalar factors must be fixed.")
         return cx.Field(jnp.asarray(value, dtype=float).reshape(()), dims=())
-    if isinstance(factor, _AbstractGeometry) and isinstance(selector, Fixed):
+    if isinstance(factor, AbstractGeometry) and isinstance(selector, Fixed):
         return cx.Field(
-            jnp.asarray(selector.value, dtype=float).reshape((factor.var_dim,)),
+            jnp.asarray(selector.value, dtype=float).reshape((factor.spatial_dim,)),
             dims=(None,),
         )
     raise TypeError("Non-integrated adaptive factors must be fixed scalars or geometry.")
@@ -81,7 +83,7 @@ def _resolve_interval(
 ) -> tuple[
     str,
     ScalarInterval | Interval1d,
-    ProductStructure,
+    SampleLayout,
     frozendict[str, cx.Field],
 ]:
     labels = component.domain.labels
@@ -89,7 +91,7 @@ def _resolve_interval(
         free = tuple(
             label
             for label in labels
-            if isinstance(component.spec.component_for(label), Interior)
+            if isinstance(component.spec.selection_for(label), Interior)
         )
         if len(free) != 1:
             raise ValueError(
@@ -101,7 +103,7 @@ def _resolve_interval(
         variable_ = str(variable)
         if variable_ not in labels:
             raise ValueError(f"Unknown integration variable {variable_!r}.")
-    if not isinstance(component.spec.component_for(variable_), Interior):
+    if not isinstance(component.spec.selection_for(variable_), Interior):
         raise ValueError("The adaptive integration variable must select Interior().")
     factor = _unwrap(component.domain.factor(variable_))
     if not isinstance(factor, (ScalarInterval, Interval1d)):
@@ -111,12 +113,12 @@ def _resolve_interval(
     for label in labels:
         if label == variable_:
             continue
-        selector = component.spec.component_for(label)
+        selector = component.spec.selection_for(label)
         if isinstance(selector, (Interior, Boundary)):
             raise ValueError("Every non-integrated adaptive label must be fixed.")
         fixed[label] = _fixed_field(component.domain.factor(label), selector)
         fixed_labels.add(label)
-    structure = ProductStructure(((variable_,),)).canonicalize(
+    structure = SampleLayout(((variable_,),)).canonicalize(
         labels, fixed_labels=frozenset(fixed_labels)
     )
     return variable_, factor, structure, frozendict(fixed)
@@ -128,7 +130,7 @@ class DomainAdaptiveIntegrand(StrictModule):
     integrand: DomainFunction
     component: DomainComponent
     fixed_points: frozendict[str, cx.Field]
-    structure: ProductStructure
+    structure: SampleLayout
     log_density: DomainFunction | None
     key: Key[Array, ""]
     kwargs: frozendict[str, Any]
@@ -144,7 +146,7 @@ class DomainAdaptiveIntegrand(StrictModule):
             variable = cx.Field(coordinate_.reshape((1,)), dims=(self.axis,))
         point_values = dict(self.fixed_points.items())
         point_values[self.variable] = variable
-        points = PointsBatch(
+        points = PointBatch(
             frozendict(
                 {label: point_values[label] for label in self.component.domain.labels}
             ),
@@ -658,7 +660,7 @@ def integrate_adaptive(
         log_density = None
         normalized = target.normalized
         normalize_base = False
-    if isinstance(component_target.component, DomainComponentUnion):
+    if isinstance(component_target.component, ComponentSum):
         keys = jr.split(key, len(component_target.component.terms))
         estimates = tuple(
             _run_adaptive_raw(
@@ -697,7 +699,7 @@ def integrate_adaptive(
             value_data = eqx.error_if(
                 value.data,
                 status != int(IntegrationStatus.CONVERGED),
-                "Adaptive component-union integration failed.",
+                "Adaptive component-sum integration failed.",
             )
             value = cx.Field(value_data, dims=value.dims)
         diagnostics = AdaptiveQuadratureDiagnostics(
@@ -715,7 +717,7 @@ def integrate_adaptive(
             error_kind="embedded-rule",
             diagnostics=diagnostics,
             provenance=IntegrationProvenance(
-                "adaptive", "component-union", type(plan.rule).__name__
+                "adaptive", "component-sum", type(plan.rule).__name__
             ),
         )
         if not normalized and not normalize_base:

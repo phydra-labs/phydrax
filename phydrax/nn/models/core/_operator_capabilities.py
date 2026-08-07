@@ -319,6 +319,13 @@ def _coordinate_dimension(samples: FunctionSamples, /) -> int | None:
     return None
 
 
+def _contains_tracer(value: object, /) -> bool:
+    return any(
+        isinstance(leaf, jax_core.Tracer)
+        for leaf in jax.tree_util.tree_leaves(value)
+    )
+
+
 def _same_geometry(left: FunctionSamples, right: FunctionSamples, /) -> bool:
     if left.sample_shape != right.sample_shape or len(left.axes) != len(right.axes):
         return False
@@ -328,9 +335,19 @@ def _same_geometry(left: FunctionSamples, right: FunctionSamples, /) -> bool:
         return (
             left.topology.graph_fingerprint == right.topology.graph_fingerprint
             and left.topology.entity == right.topology.entity
-            and np.array_equal(
-                np.asarray(left.topology.sample_entities),
-                np.asarray(right.topology.sample_entities),
+            and (
+                left.topology.sample_entities.shape
+                == right.topology.sample_entities.shape
+                if _contains_tracer(
+                    (
+                        left.topology.sample_entities,
+                        right.topology.sample_entities,
+                    )
+                )
+                else np.array_equal(
+                    np.asarray(left.topology.sample_entities),
+                    np.asarray(right.topology.sample_entities),
+                )
             )
         )
     if left.axes:
@@ -338,11 +355,17 @@ def _same_geometry(left: FunctionSamples, right: FunctionSamples, /) -> bool:
             first.name == second.name
             and first.basis == second.basis
             and first.periodic == second.periodic
-            and np.array_equal(np.asarray(first.nodes), np.asarray(second.nodes))
+            and (
+                first.nodes.shape == second.nodes.shape
+                if _contains_tracer((first.nodes, second.nodes))
+                else np.array_equal(np.asarray(first.nodes), np.asarray(second.nodes))
+            )
             for first, second in zip(left.axes, right.axes, strict=True)
         )
     if left.coordinates is None or right.coordinates is None:
         return left.coordinates is right.coordinates
+    if _contains_tracer((left.coordinates, right.coordinates)):
+        return left.coordinates.shape == right.coordinates.shape
     return np.array_equal(np.asarray(left.coordinates), np.asarray(right.coordinates))
 
 
@@ -404,10 +427,14 @@ def _mapped_node_payload(samples: FunctionSamples, key: str, /) -> np.ndarray | 
 
 
 def _all_valid(samples: FunctionSamples, /) -> bool:
-    return samples.mask is None or bool(np.all(np.asarray(samples.mask)))
+    if samples.mask is None or _contains_tracer(samples.mask):
+        return True
+    return bool(np.all(np.asarray(samples.mask)))
 
 
 def _uniform_axis(nodes: object, /) -> bool:
+    if _contains_tracer(nodes):
+        return True
     array = np.asarray(nodes)
     if array.size < 2:
         return False

@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import optax
 
+import phydrax as phx
 from phydrax.constraints import (
     controlled_collocation,
     ControlledCollocationPopulation,
@@ -14,14 +15,14 @@ from phydrax.constraints import (
     R3,
     RefreshGuard,
 )
-from phydrax.domain import Interval1d, ProductStructure
+from phydrax.domain import Interval1d, SampleLayout
 from phydrax.nn import MLP
 from phydrax.solver import FunctionalSolver
 
 
 def _trainable_interval_solver(policy):
     domain = Interval1d(0.0, 1.0)
-    structure = ProductStructure((("x",),))
+    structure = SampleLayout((("x",),))
     model = MLP(
         in_size=1,
         out_size="scalar",
@@ -34,18 +35,14 @@ def _trainable_interval_solver(policy):
         component=domain.component(),
         operator=lambda field: field - 1.0,
         constraint_vars="u",
-        num_points=16,
-        structure=structure,
-        sampler="uniform",
+        sampling=phx.domain.PointSampling(16, layout=structure, design="uniform"),
         collocation_policy=policy,
     )
     return FunctionalSolver(functions={"u": u}, constraints=(constraint,))
 
 
 def test_solver_initializes_and_uses_adaptive_population():
-    solver = _trainable_interval_solver(
-        R3(refresh_every=1, sampler="uniform")
-    )
+    solver = _trainable_interval_solver(R3(refresh_every=1, sampler="uniform"))
     assert len(solver.collocation) == 1
     assert solver.collocation[0] is not None
     loss = solver.loss(key=jr.key(1), iter_=1)
@@ -74,10 +71,6 @@ def test_solver_returns_updated_collocation_state_after_training():
         initial.batch.points["x"].data,
         updated.batch.points["x"].data,
     )
-
-
-
-
 
 
 def test_solver_logs_adaptive_population_diagnostics(capsys):
@@ -125,9 +118,7 @@ def test_solver_records_controlled_collocation_evaluation_budgets():
 
 
 def test_solver_profiles_device_synchronized_adaptive_refresh_boundary():
-    solver = _trainable_interval_solver(
-        R3(refresh_every=1, sampler="uniform")
-    )
+    solver = _trainable_interval_solver(R3(refresh_every=1, sampler="uniform"))
     trained = solver.solve(
         num_iter=2,
         optim=optax.adam(1e-3),

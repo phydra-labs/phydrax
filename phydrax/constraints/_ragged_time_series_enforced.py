@@ -13,6 +13,18 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import (
+    BatchEvaluator,
+    CallbackDerivativeRule,
+    DomainFunction,
+    GridBatch,
+    IrregularTrajectoryDatasetDomain,
+    PointBatch,
+    TRAJECTORY_CASE_INDEX_KEY,
+    TRAJECTORY_TIME_INDEX_KEY,
+    TrajectoryDatasetDomain,
+)
+
 from .._doc import DOC_KEY0
 from .._interpolation import (
     cubic_hermite_segment,
@@ -21,22 +33,14 @@ from .._interpolation import (
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..domain._function import BatchAwareCallable, DomainFunction
-from ..domain._irregular_trajectory_dataset import IrregularTrajectoryDatasetDomain
-from ..domain._structure import CoordSeparableBatch, PointsBatch
-from ..domain._trajectory_dataset import (
-    TRAJECTORY_CASE_INDEX_KEY,
-    TRAJECTORY_TIME_INDEX_KEY,
-    TrajectoryDatasetDomain,
-)
-from ..operators.differential._hooks import with_derivative_hook
+from ..operators.differential._hooks import with_derivative_rule
 
 
 RaggedTimeSeriesHardInterpolation = Literal["linear", "cubic_hermite"]
 RaggedTimeSeriesHardGate = Literal["sin2", "sin4"]
 
 
-def _field_array(batch: PointsBatch, key: str, /) -> Array:
+def _field_array(batch: PointBatch, key: str, /) -> Array:
     if key not in batch:
         raise ValueError(
             "Ragged time-series evaluation requires trajectory batches "
@@ -153,7 +157,7 @@ class _RaggedTimeSeriesTable(StrictModule, NonTrainableState):
 
     def _geometry(
         self,
-        batch: PointsBatch,
+        batch: PointBatch,
         /,
     ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array]:
         case_idx = _field_array(batch, TRAJECTORY_CASE_INDEX_KEY).astype(jnp.int32)
@@ -324,7 +328,7 @@ class _RaggedTimeSeriesTable(StrictModule, NonTrainableState):
 
     def evaluate(
         self,
-        batch: PointsBatch,
+        batch: PointBatch,
         /,
         *,
         max_order: int,
@@ -381,7 +385,7 @@ class _RaggedTimeSeriesTable(StrictModule, NonTrainableState):
         return targets, gates
 
 
-class _RaggedTimeSeriesHardAnsatz(StrictModule, BatchAwareCallable):
+class _RaggedTimeSeriesHardAnsatz(StrictModule, BatchEvaluator):
     u_free: DomainFunction
     table: _RaggedTimeSeriesTable
     components: tuple[int, ...] | None
@@ -400,20 +404,20 @@ class _RaggedTimeSeriesHardAnsatz(StrictModule, BatchAwareCallable):
     def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
         del args, key, kwargs
         raise TypeError(
-            "Ragged time-series hard enforcement requires PointsBatch evaluation."
+            "Ragged time-series hard enforcement requires PointBatch evaluation."
         )
 
     def __call_batch__(
         self,
-        batch: PointsBatch | CoordSeparableBatch,
+        batch: PointBatch | GridBatch,
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.Field:
-        if not isinstance(batch, PointsBatch):
+        if not isinstance(batch, PointBatch):
             raise TypeError(
-                "Ragged time-series hard enforcement requires PointsBatch evaluation."
+                "Ragged time-series hard enforcement requires PointBatch evaluation."
             )
         free = self.u_free(batch, key=key, **kwargs)
         targets, gates = self.table.evaluate(batch, max_order=0)
@@ -425,7 +429,7 @@ class _RaggedTimeSeriesHardAnsatz(StrictModule, BatchAwareCallable):
         return cx.Field(out, dims=free.dims)
 
 
-class _RaggedTimeSeriesHardAnsatzDerivative(StrictModule, BatchAwareCallable):
+class _RaggedTimeSeriesHardAnsatzDerivative(StrictModule, BatchEvaluator):
     order: int
     u_free_derivatives: tuple[DomainFunction, ...]
     table: _RaggedTimeSeriesTable
@@ -447,20 +451,20 @@ class _RaggedTimeSeriesHardAnsatzDerivative(StrictModule, BatchAwareCallable):
     def __call__(self, *args: Any, key=None, **kwargs: Any) -> Array:
         del args, key, kwargs
         raise TypeError(
-            "Ragged time-series hard derivative requires PointsBatch evaluation."
+            "Ragged time-series hard derivative requires PointBatch evaluation."
         )
 
     def __call_batch__(
         self,
-        batch: PointsBatch | CoordSeparableBatch,
+        batch: PointBatch | GridBatch,
         /,
         *,
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.Field:
-        if not isinstance(batch, PointsBatch):
+        if not isinstance(batch, PointBatch):
             raise TypeError(
-                "Ragged time-series hard derivative requires PointsBatch evaluation."
+                "Ragged time-series hard derivative requires PointBatch evaluation."
             )
         targets, gates = self.table.evaluate(batch, max_order=self.order)
         free_fields = tuple(
@@ -493,7 +497,7 @@ def enforce_ragged_time_series(
 ) -> DomainFunction:
     """Return a hard ansatz that exactly matches row-wise ragged time-series data.
 
-    The returned `DomainFunction` is evaluated on trajectory `PointsBatch` objects
+    The returned `DomainFunction` is evaluated on trajectory `PointBatch` objects
     that carry the internal row/time indices emitted by `TrajectoryDatasetDomain`.
     `interpolation="linear"` supports first-order time derivatives. Use
     `interpolation="cubic_hermite"` for second-order time derivatives, preferably
@@ -508,7 +512,7 @@ def enforce_ragged_time_series(
         raise ValueError(
             f"time_var must match the trajectory time label {domain.time_label!r}."
         )
-    if not u_free.domain.equivalent(domain):
+    if not u_free.domain.same_support(domain):
         raise ValueError("u_free must be defined on the provided trajectory domain.")
 
     components_ = _validate_components(components)
@@ -572,7 +576,7 @@ def enforce_ragged_time_series(
         if n < 0:
             raise ValueError("order must be non-negative.")
         if n == 0:
-            return with_derivative_hook(base, _make_hook(0))
+            return with_derivative_rule(base, CallbackDerivativeRule(_make_hook(0)))
         limit = table.max_derivative_order()
         if n > limit:
             raise ValueError(
@@ -606,9 +610,9 @@ def enforce_ragged_time_series(
             ),
             metadata={},
         )
-        return with_derivative_hook(out, _make_hook(n))
+        return with_derivative_rule(out, CallbackDerivativeRule(_make_hook(n)))
 
-    return with_derivative_hook(base, _make_hook(0))
+    return with_derivative_rule(base, CallbackDerivativeRule(_make_hook(0)))
 
 
 __all__ = [

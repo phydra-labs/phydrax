@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from .._components import _AbstractVarComponent, Interior
+from .._components import Interior, Selection
 
 
 GraphComponentKind = Literal["nodes", "edges", "globals"]
@@ -25,7 +25,7 @@ def _entity_indices(indices: ArrayLike, /) -> Array:
     return idx.astype(jnp.int32)
 
 
-class _AbstractGraphSubset(_AbstractVarComponent):
+class _AbstractGraphSubset(Selection):
     """Base marker for explicit graph node/edge subsets."""
 
     indices: Array
@@ -55,7 +55,7 @@ def _type_ids(type_ids: ArrayLike, /) -> Array:
     return arr.astype(jnp.int32)
 
 
-class _AbstractGraphTypeSubset(_AbstractVarComponent):
+class _AbstractGraphTypeSubset(Selection):
     """Base marker for graph subsets selected by entity type ids."""
 
     type_ids: Array
@@ -82,28 +82,28 @@ class _AbstractEdgeTypeSubset(_AbstractGraphTypeSubset):
     """Base marker for edge subsets selected by edge type."""
 
 
-class Nodes(_AbstractVarComponent):
+class Nodes(Selection):
     """Marker selecting all valid nodes of each sampled graph."""
 
     def __init__(self):
         """Create a node component marker."""
 
 
-class Edges(_AbstractVarComponent):
+class Edges(Selection):
     """Marker selecting all valid edges of each sampled graph."""
 
     def __init__(self):
         """Create an edge component marker."""
 
 
-class Globals(_AbstractVarComponent):
+class Globals(Selection):
     """Marker selecting graph-level entries of each sampled graph."""
 
     def __init__(self):
         """Create a graph-global component marker."""
 
 
-class CochainCells(_AbstractVarComponent):
+class CochainCells(Selection):
     """Select cells of one cochain degree and geometric boundary region."""
 
     degree: int
@@ -173,7 +173,7 @@ class InterfaceEdges(_AbstractEdgeSubset):
     """Marker selecting explicit local edges treated as an interface set."""
 
 
-def graph_component_kind(component: _AbstractVarComponent, /) -> GraphComponentKind:
+def graph_component_kind(component: Selection, /) -> GraphComponentKind:
     """Return the graph entity kind selected by a component marker."""
     if isinstance(component, Interior):
         return "nodes"
@@ -193,7 +193,7 @@ def graph_component_kind(component: _AbstractVarComponent, /) -> GraphComponentK
     )
 
 
-def graph_component_indices(component: _AbstractVarComponent, /) -> Array | None:
+def graph_component_indices(component: Selection, /) -> Array | None:
     """Return explicit entity indices for graph subset components, if any."""
     if isinstance(component, _AbstractGraphSubset):
         return component.indices
@@ -271,7 +271,7 @@ def _validate_explicit_indices(idx: Array, *, size: int, kind: GraphComponentKin
 
 def graph_component_indices_for_graph(
     graph: Any,
-    component: _AbstractVarComponent,
+    component: Selection,
     kind: GraphComponentKind,
     /,
 ) -> Array:

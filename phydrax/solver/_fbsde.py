@@ -14,8 +14,9 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import DomainFunction
+
 from .._strict import StrictModule
-from ..domain._function import DomainFunction
 from ..stochastic._bsde import (
     _predictor_value,
     BSDEEvaluation,

@@ -4,8 +4,10 @@
 
 import jax.numpy as jnp
 
+import phydrax as phx
+
 # Enforced pipeline integration tests.
-from phydrax.domain import Interval1d, ProductStructure
+from phydrax.domain import Interval1d, SampleLayout
 from phydrax.operators.differential import partial_x
 
 
@@ -17,10 +19,8 @@ def test_coord_separable_matches_dense_partial_x():
     def u(x):
         return x[0] ** 2
 
-    sep = component.sample_coord_separable(
-        {"x": 8}, num_points=(), sampler="latin_hypercube"
-    )
-    dense = component.sample(8, structure=ProductStructure((("x",),)))
+    sep = component.sample(phx.domain.GridSampling({"x": 8}, design="latin_hypercube"))
+    dense = component.sample(phx.domain.PointSampling(8, layout=SampleLayout((("x",),))))
 
     du = partial_x(u, var="x")
     sep_val = jnp.asarray(du(sep).data).reshape((-1,))

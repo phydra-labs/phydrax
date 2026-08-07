@@ -8,10 +8,10 @@ from typing import Any
 
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import Domain, DomainFunction
+
 from ..._doc import DOC_KEY0
 from ..._strict import StrictModule
-from ...domain._domain import _AbstractDomain
-from ...domain._function import DomainFunction
 from ._discretization import PathDiscretization
 from ._euclidean import euclidean_kernel
 from ._potential import PotentialLike
@@ -72,7 +72,7 @@ class _EuclideanKernelCallable(StrictModule):
 
 
 def euclidean_kernel_function(
-    domain: _AbstractDomain,
+    domain: Domain,
     potential: PotentialLike | None,
     /,
     *,

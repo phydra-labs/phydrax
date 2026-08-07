@@ -66,37 +66,25 @@ surface measure for boundaries, counting measure for fixed slices, etc.).
 - a `DomainFunction` used as a pointwise weight inside the reduction
   (i.e. $\rho(z)$ becomes $w(z)\rho(z)$ before mean/integral reduction).
 
-### Sampling structure and `over=...`
+### Sampling plans and `over=...`
 
-Sampling is controlled by a `ProductStructure` (paired point sampling) and the `num_points`
-specification:
+Every sampled constraint receives one explicit plan:
 
-- dense sampling: `num_points=...`
-- coord-separable sampling: `num_points={"label": axis_spec_or_count, ...}`
-- mixed sampling: `num_points=(dense_num_points, {"label": axis_spec_or_count, ...})`
+- `PointSampling(count, layout=SampleLayout(...), design=...)` produces a
+  `PointBatch`;
+- `GridSampling(axes, dense=...)` produces a `GridBatch`; `dense` is a
+  `PointSampling` plan for labels not placed on coordinate axes.
 
-The `over` argument selects which axes to reduce over:
+The `over` argument selects sampled axes to reduce:
 
-- `over=None`: reduce over all sampled axes implied by the batch,
-- `over="x"`: reduce over the axis for label `"x"` (when it is a singleton block in paired sampling),
-- `over=("x", "t")`: reduce over a paired block.
+- `over=None`: reduce every sampled axis;
+- `over="x"`: reduce the block or coordinate axes owned by `"x"`;
+- `over=("x", "t")`: reduce both named factors.
 
-For coord-separable batches, `over="x"` reduces over the coord-separable axes for that label.
-
-### Sampling policy: `resample` vs `fixed`
-
-Sampled constraints support two policies:
-
-- `sampling_mode="resample"` (default): draw a fresh batch on each `loss(...)` call.
-- `sampling_mode="fixed"`: build one batch once and reuse it for all calls.
-
-`sampling_mode="fixed"` is useful for reproducible diagnostics and lower per-iteration
-overhead when batch construction is expensive (for example, large coord-separable grids).
-
-You can either:
-
-- provide `fixed_batch=...` explicitly, or
-- provide `fixed_batch_key=...` and let the constraint sample one fixed batch at construction.
+`sampling_mode="resample"` draws from the plan on every loss call.
+`sampling_mode="fixed"` reuses a caller-supplied `fixed_batch`, or materializes
+one from `fixed_batch_key` during construction. Fixed sampling is useful for
+reproducible diagnostics or expensive axis grids.
 
 ### Filtering: `where` and `where_all`
 
@@ -120,13 +108,12 @@ geom = phx.domain.Interval1d(0.0, 1.0)
 def u(x):
     return x[0] ** 2
 
-structure = phx.domain.ProductStructure((("x",),))
+layout = phx.domain.SampleLayout((("x",),))
 constraint = phx.constraints.ContinuousPointwiseInteriorConstraint(
     "u",
     geom,
     operator=lambda f: phx.operators.laplacian(f, var="x"),
-    num_points=128,
-    structure=structure,
+    sampling=phx.domain.PointSampling(128, layout=layout),
     reduction="mean",
 )
 ```
@@ -161,8 +148,12 @@ constraint = phx.constraints.RaggedTimeSeriesDataConstraint(
     "u",
     domain.component(),
     values,
-    num_points=16,
-    sampling="observation_uniform",
+    sampling=phx.domain.PointSampling(
+        16,
+        layout=phx.domain.SampleLayout((("data", "t"),)),
+        design="uniform",
+    ),
+    selection="observation_uniform",
 )
 
 loss = constraint.loss({"u": exact})
@@ -191,8 +182,10 @@ physics = phx.constraints.FunctionalConstraint.from_operator(
     operator=lambda u, s: phx.operators.partial_t(u, var="t")
     - phx.operators.partial_t(s, var="t"),
     constraint_vars=("u", "forcing"),
-    num_points=128,
-    structure=phx.domain.ProductStructure((("data", "t"),)),
+    sampling=phx.domain.PointSampling(
+        128,
+        layout=phx.domain.SampleLayout((("data", "t"),)),
+    ),
 )
 ```
 
@@ -206,7 +199,7 @@ case_data = phx.constraints.TrajectoryCaseDataConstraint(
     "theta",
     domain.component(),
     targets,
-    num_cases=32,
+    sampling=phx.domain.PointSampling(32, design="uniform"),
 )
 ```
 
@@ -227,7 +220,7 @@ data = phx.constraints.SupervisedDatasetConstraint(
     "u",
     dataset_domain.component(),
     dataset_targets,
-    num_cases=32,
+    sampling=phx.domain.PointSampling(32, design="uniform"),
 )
 ```
 
@@ -258,8 +251,10 @@ physics = phx.constraints.FunctionalConstraint.from_operator(
     component=domain.component(),
     operator=lambda u_fn: phx.operators.partial_t(u_fn, var="t") - rhs,
     constraint_vars="u",
-    num_points=128,
-    structure=phx.domain.ProductStructure((("data", "t"),)),
+    sampling=phx.domain.PointSampling(
+        128,
+        layout=phx.domain.SampleLayout((("data", "t"),)),
+    ),
 )
 ```
 

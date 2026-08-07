@@ -10,11 +10,16 @@ from typing import Any, Literal
 import jax.numpy as jnp
 from jaxtyping import ArrayLike
 
+from phydrax.domain import (
+    DomainFunction,
+    FixedStart,
+    PointSampling,
+    SampleLayout,
+    SamplingPlan,
+    TimeInterval,
+)
+
 from .._interpolation import cubic_hermite_interpolate, local_cubic_slopes
-from ..domain._components import FixedStart
-from ..domain._function import DomainFunction
-from ..domain._structure import NumPoints, ProductStructure
-from ..domain._time import TimeInterval
 from ..operators.differential._domain_ops import dt_n as _dt_n
 from ._adaptive import AbstractCollocationPolicy
 from ._functional import FunctionalConstraint
@@ -50,9 +55,7 @@ def ContinuousODEConstraint(
     operator: Callable[[DomainFunction], DomainFunction],
     /,
     *,
-    num_points: NumPoints | tuple[Any, ...],
-    structure: ProductStructure | None = None,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -70,29 +73,17 @@ def ContinuousODEConstraint(
 
     (or the unnormalized integral when `reduction="integral"`).
     """
-    if structure is None:
-        structure = ProductStructure(((domain.label,),))
-    if len(structure.blocks) == 0:
-        raise ValueError(
-            "ContinuousODEConstraint requires a non-empty sampling structure."
-        )
 
     def op(u: DomainFunction, /) -> DomainFunction:
         return _coerce_operator_output(operator(u), u)
 
-    return FunctionalConstraint.from_operator(
-        component=domain.component(),
-        operator=op,
-        constraint_vars=constraint_var,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-        reduction=reduction,
-        collocation_policy=collocation_policy,
-    )
+    return FunctionalConstraint.from_operator(component=domain.component(),
+    operator=op,
+    constraint_vars=constraint_var, sampling=sampling, weight=weight,
+    label=label,
+    over=over,
+    reduction=reduction,
+    collocation_policy=collocation_policy,)
 
 
 def DiscreteODEConstraint(
@@ -138,8 +129,6 @@ def InitialODEConstraint(
     time_derivative_backend: Literal["ad", "jet"] = "ad",
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
-    structure: ProductStructure | None = None,
-    sampler: str = "latin_hypercube",
     reduction: Literal["mean", "integral"] = "mean",
 ) -> FunctionalConstraint:
     r"""Initial-condition constraint on the slice $t=t_0$.
@@ -153,7 +142,6 @@ def InitialODEConstraint(
     where `n = time_derivative_order` and `g` is given by `func` (defaults to $0$).
     """
     component = domain.component({domain.label: FixedStart()})
-    structure = ProductStructure(()) if structure is None else structure
     order = int(time_derivative_order)
     target = _as_domain_function(func, domain, deps=(domain.label,))
 
@@ -168,18 +156,12 @@ def InitialODEConstraint(
             - target
         )
 
-    num_points = () if len(structure.blocks) == 0 else 1
-    return FunctionalConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=constraint_var,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        reduction=reduction,
-    )
+    sampling = PointSampling((), layout=SampleLayout(()))
+    return FunctionalConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=constraint_var, sampling=sampling, weight=weight,
+    label=label,
+    reduction=reduction,)
 
 
 def DiscreteTimeDataConstraint(
@@ -208,7 +190,8 @@ def DiscreteTimeDataConstraint(
 
     slopes = local_cubic_slopes(t, y)
 
-    def target_fn(t_eval):
+    def target_fn(t_eval, *, key=None, **kwargs):
+        del key, kwargs
         return cubic_hermite_interpolate(
             t,
             y,

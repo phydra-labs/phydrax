@@ -11,16 +11,16 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+from phydrax.domain import ComponentSum, DomainComponent, DomainFunction
+
 from .._doc import DOC_KEY0
-from ..domain._components import DomainComponent, DomainComponentUnion
-from ..domain._function import DomainFunction
 from ._batches import PointIntegrationBatch, SeparableIntegrationBatch
 from ._estimates import (
     FixedQuadratureDiagnostics,
     IntegrationEstimate,
     IntegrationProvenance,
 )
-from ._lowering import component_factor_fields, sum_over
+from ._lowering import _component_base_mass, component_factor_fields, sum_over
 from ._status import IntegrationStatus
 from ._targets import ComponentTarget, DensityTarget
 
@@ -203,7 +203,7 @@ def integrate_fixed_component(
 ) -> IntegrationEstimate:
     """Reduce a component target over a typed fixed or sampled batch."""
     callback_kwargs = {} if kwargs is None else kwargs
-    if isinstance(target.component, DomainComponentUnion):
+    if isinstance(target.component, ComponentSum):
         if not isinstance(batch, tuple) or len(batch) != len(target.component.terms):
             raise ValueError(
                 "Union targets require one aligned integration batch per term."
@@ -239,8 +239,8 @@ def integrate_fixed_component(
             denominator,
             normalized=target.normalized,
             num_evaluations=evaluations,
-            target_mass=target.component.measure(),
-            provenance="component-union",
+            target_mass=_component_base_mass(target.component),
+            provenance="component-sum",
         )
     if isinstance(batch, tuple):
         raise TypeError("A single component target requires one integration batch.")
@@ -277,7 +277,7 @@ def integrate_fixed_density(
     if not isinstance(target.base, ComponentTarget):
         raise TypeError("Fixed density integration requires a ComponentTarget base.")
     callback_kwargs = {} if kwargs is None else kwargs
-    if isinstance(target.base.component, DomainComponentUnion):
+    if isinstance(target.base.component, ComponentSum):
         if not isinstance(batch, tuple) or len(batch) != len(target.base.component.terms):
             raise ValueError(
                 "Density union targets require one aligned integration batch per term."
@@ -327,8 +327,8 @@ def integrate_fixed_density(
             denominator,
             normalized=target.normalized,
             num_evaluations=evaluations,
-            target_mass=target.base.component.measure(),
-            provenance="density:component-union",
+            target_mass=_component_base_mass(target.base.component),
+            provenance="density:component-sum",
             base_normalization_mass=base_normalization_mass,
             finite_inputs=finite_inputs,
         )

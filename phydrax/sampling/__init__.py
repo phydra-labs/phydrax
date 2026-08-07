@@ -5,12 +5,12 @@
 """Typed reference-space designs shared by domain sampling and integration."""
 
 from .._sampling import (
-    DESIGN_ALGORITHM_VERSION,
     AntitheticDesign,
-    DesignCapabilities,
-    design_signature,
+    DESIGN_ALGORITHM_VERSION,
     design_capabilities,
     design_name,
+    design_signature,
+    DesignCapabilities,
     HaltonDesign,
     HammersleyDesign,
     IIDDesign,

@@ -13,11 +13,11 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from .._sampling import ReferenceTransport
-from ._components import _AbstractVarComponent, Boundary, Interior
+from ._components import Boundary, Interior, Selection
 from ._dataset import DatasetDomain
 from ._hyperrectangle import HyperRectangle
-from ._probability import _open_unit_interval, ProbabilityDomain
-from ._scalar import _AbstractScalarDomain
+from ._probability import open_unit_interval, ProbabilityDomain
+from ._scalar import AbstractScalarDomain
 from .geometry1d._primitives import Interval1d
 
 
@@ -31,15 +31,15 @@ class _ExactReferenceTransport:
 
 
 def _scalar_transport(
-    factor: _AbstractScalarDomain,
-    component: _AbstractVarComponent,
+    factor: AbstractScalarDomain,
+    component: Selection,
 ) -> ReferenceTransport | None:
     if isinstance(component, Interior):
         if isinstance(factor, ProbabilityDomain):
             return _ExactReferenceTransport(
                 1,
                 lambda unit: jnp.asarray(
-                    factor.distribution.icdf(_open_unit_interval(unit[:, 0])),
+                    factor.distribution.icdf(open_unit_interval(unit[:, 0])),
                     dtype=float,
                 ),
             )
@@ -61,7 +61,7 @@ def _scalar_transport(
 
 def _interval_geometry_transport(
     factor: Interval1d,
-    component: _AbstractVarComponent,
+    component: Selection,
 ) -> ReferenceTransport | None:
     if isinstance(component, Interior):
         return _ExactReferenceTransport(
@@ -115,7 +115,7 @@ def _box_boundary(factor: HyperRectangle, unit: Array, /) -> Array:
 
 def _box_transport(
     factor: HyperRectangle,
-    component: _AbstractVarComponent,
+    component: Selection,
 ) -> ReferenceTransport | None:
     dimension = int(factor.spatial_dim)
     if isinstance(component, Interior):
@@ -133,7 +133,7 @@ def _box_transport(
 
 def _dataset_transport(
     factor: DatasetDomain,
-    component: _AbstractVarComponent,
+    component: Selection,
 ) -> ReferenceTransport | None:
     if not isinstance(component, Interior):
         return None
@@ -148,13 +148,13 @@ def _dataset_transport(
 
 def reference_transport(
     factor: Any,
-    component: _AbstractVarComponent,
+    component: Selection,
     /,
 ) -> ReferenceTransport | None:
     """Return an exact target-measure transport for one domain factor."""
     if isinstance(factor, ProbabilityDomain):
         return _scalar_transport(factor, component)
-    if isinstance(factor, _AbstractScalarDomain):
+    if isinstance(factor, AbstractScalarDomain):
         return _scalar_transport(factor, component)
     if isinstance(factor, Interval1d):
         return _interval_geometry_transport(factor, component)

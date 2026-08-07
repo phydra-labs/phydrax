@@ -147,11 +147,7 @@ def test_control_targets_can_train_against_value_autodiff():
         control_weight=1.0,
     )
     domain = phx.domain.Interval1d(-2.0, 2.0) @ phx.domain.TimeInterval(0.0, 1.0)
-    value = phx.domain.DomainFunction(
-        domain=domain,
-        deps=("t", "x"),
-        func=lambda time, state: jnp.asarray([state[0]]),
-    )
+    value = domain.Function("t", "x")(lambda time, state: jnp.asarray([state[0]]))
 
     assert jnp.allclose(objective.loss({"value": value}, batch=labels), 0.0)
 

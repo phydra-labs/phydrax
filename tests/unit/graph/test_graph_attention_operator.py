@@ -97,7 +97,7 @@ def test_graph_attention_operator_wraps_as_graph_model():
     )
     domain = phx.domain.GraphDomain(bundle.graph)
     targets = domain.component({"graph": bundle.target_nodes_component()})
-    batch = targets.sample(1, structure=phx.domain.ProductStructure((("graph",),)))
+    batch = targets.sample(phx.domain.PointSampling(1, layout=phx.domain.SampleLayout((("graph",),))))
 
     @domain.Function("graph")
     def u(point):

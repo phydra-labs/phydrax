@@ -74,9 +74,9 @@ def test_from_samples_attaches_target_measure_without_resampling():
     domain = _interval()
     component = domain.component()
     points = component.sample(
-        4096,
-        structure=phx.domain.ProductStructure((("x",),)),
-        sampler="uniform",
+        phx.domain.PointSampling(
+            4096, layout=phx.domain.SampleLayout((("x",),)), design="uniform"
+        ),
         key=jr.key(4),
     )
     realization = phx.integration.from_samples(
@@ -247,13 +247,15 @@ def test_zero_density_reports_invalid_normalization_mass():
     )
 
 
-@pytest.mark.parametrize("use_union", [False, True])
-def test_fixed_density_rejects_zero_normalized_component_mass(use_union):
+@pytest.mark.parametrize("use_sum", [False, True])
+def test_fixed_density_rejects_zero_normalized_component_mass(use_sum):
     domain = _interval()
     left_empty = domain.component(where_all=lambda x: x < 0.0)
-    if use_union:
+    if use_sum:
         right_empty = domain.component(where_all=lambda x: x > 1.0)
-        component = phx.domain.DomainComponentUnion((left_empty, right_empty))
+        component = phx.domain.ComponentSum(
+            (left_empty, right_empty), assume_disjoint=True
+        )
     else:
         component = left_empty
     target = phx.integration.density(
@@ -455,16 +457,19 @@ def test_probability_component_uses_probability_measure():
 
 
 def test_partial_axis_integration_does_not_apply_unreduced_geometry_weights():
-    geometry = phx.domain.geometry2d.Circle(center=(0.0, 0.0), radius=1.0)
+    geometry = phx.domain.GeometryDomain(
+        phx.geometry.Circle(center=(0.0, 0.0), radius=1.0).compile()
+    )
     time = phx.domain.TimeInterval(0.0, 3.0)
     domain = geometry @ time
     component = domain.component()
     axis = phx.domain.LegendreAxisSpec(5)
     grid = phx.domain.GridSpec((axis, axis), cut_cell_order=2)
-    points = component.sample_coord_separable(
-        {"x": grid},
-        num_points=5,
-        dense_structure=phx.domain.ProductStructure((("t",),)),
+    points = component.sample(
+        phx.domain.GridSampling(
+            {"x": grid},
+            dense=phx.domain.PointSampling(5, layout=phx.domain.SampleLayout((("t",),))),
+        ),
         key=jr.key(14),
     )
     realization = phx.integration.from_samples(

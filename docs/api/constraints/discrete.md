@@ -66,7 +66,7 @@ constraint = phx.constraints.SupervisedDatasetConstraint(
     "u",
     domain.component(),
     targets,
-    num_cases=16,
+    sampling=phx.domain.PointSampling(16, design="uniform"),
 )
 
 loss = constraint.loss({"u": exact})
@@ -125,7 +125,11 @@ constraint = phx.constraints.RaggedSeriesSupervisedConstraint(
     "u",
     domain.component(),
     targets,
-    num_cases=16,
+    sampling=phx.domain.PointSampling(
+        16,
+        layout=phx.domain.SampleLayout((("data",),)),
+        design="uniform",
+    ),
 )
 ```
 
@@ -139,15 +143,19 @@ constraint = phx.constraints.RaggedSeriesSupervisedConstraint(
     "u",
     domain.component(),
     targets,
-    num_cases=64,
+    sampling=phx.domain.PointSampling(
+        64,
+        layout=phx.domain.SampleLayout((("data",),)),
+        design="uniform",
+    ),
     series_sampling="points_uniform",
     num_series_points=256,
 )
 ```
 
 The default `series_sampling="full"` preserves the full-row behavior. Sampled
-modes return `(num_cases, num_series_points, ...)` series payloads and keep the
-same per-case targets. Use `window_uniform` when local order matters, and
+modes return `(sampling.num_points, num_series_points, ...)` series payloads and
+keep the same per-case targets. Use `window_uniform` when local order matters,
 `points_uniform` for permutation-invariant pooling/statistical encoders.
 
 For full-sequence training on long, uneven records, prefer length buckets over
@@ -160,7 +168,11 @@ constraints = phx.constraints.RaggedSeriesSupervisedConstraint.bucketed(
     "u",
     domain.component(),
     targets,
-    num_cases=64,
+    sampling=phx.domain.PointSampling(
+        64,
+        layout=phx.domain.SampleLayout((("data",),)),
+        design="uniform",
+    ),
     num_buckets=8,
 )
 solver = phx.solver.FunctionalSolver(functions={"u": u}, constraints=constraints)
@@ -174,8 +186,8 @@ solver = solver.solve(
 The helper returns multiple ordinary constraints. Each bucket uses a fixed-width
 prefix view whose width is the bucket maximum length, so it still covers the
 complete series for every case in that bucket. Bucketing is only an efficiency
-device: `num_cases` is distributed across buckets by bucket population, and
-bucket losses are scaled so the combined estimator matches one full padded
+device: the sampling count is distributed across buckets by bucket population,
+and bucket losses are scaled so the combined estimator matches one full padded
 constraint with the same reduction. Use `train_constraint_sample_size=1` when
 there are many bucket shapes; this compiles one bucket-shaped step at a time
 instead of one large graph containing every bucket.
@@ -252,7 +264,11 @@ constraint = phx.constraints.RaggedTimeSeriesDataConstraint(
     "u",
     domain.component(),
     values,
-    num_points=16,
+    sampling=phx.domain.PointSampling(
+        16,
+        layout=phx.domain.SampleLayout((("data", "t"),)),
+        design="uniform",
+    ),
 )
 loss = constraint.loss({"u": exact})
 metrics = constraint.data_metrics({"u": exact})
@@ -306,7 +322,7 @@ case_data = phx.constraints.TrajectoryCaseDataConstraint(
     "theta",
     domain.component(),
     targets,
-    num_cases=32,
+    sampling=phx.domain.PointSampling(32, design="uniform"),
 )
 
 physics = phx.constraints.FunctionalConstraint.from_operator(
@@ -314,8 +330,10 @@ physics = phx.constraints.FunctionalConstraint.from_operator(
     operator=lambda u, s: phx.operators.partial_t(u, var="t")
     - phx.operators.partial_t(s, var="t"),
     constraint_vars=("u", "forcing"),
-    num_points=128,
-    structure=phx.domain.ProductStructure((("data", "t"),)),
+    sampling=phx.domain.PointSampling(
+        128,
+        layout=phx.domain.SampleLayout((("data", "t"),)),
+    ),
 )
 ```
 

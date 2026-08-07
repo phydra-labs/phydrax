@@ -15,9 +15,10 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+from phydrax.domain import DomainFunction
+
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from ..domain._function import DomainFunction
 from ._jump import JumpEventBatch
 from ._realization import is_stochastic_realization, StochasticRealization
 from ._wiener import WienerRealization

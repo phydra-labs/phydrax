@@ -12,10 +12,7 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 
 from ..._strict import StrictModule
-from .._domain import RelabeledDomain
 from .._function import DomainFunction
-from ._dataset import GraphDatasetDomain
-from ._domain import GraphDomain
 
 
 if TYPE_CHECKING:
@@ -45,17 +42,15 @@ class _CochainDegreeMask(StrictModule):
 
 
 def _graph_label(field: DomainFunction, /) -> str:
-    labels: list[str] = []
-    for label in field.domain.labels:
-        factor = field.domain.factor(label)
-        if isinstance(factor, RelabeledDomain):
-            factor = factor.base
-        if isinstance(factor, (GraphDomain, GraphDatasetDomain)):
-            labels.append(label)
+    labels = tuple(
+        label
+        for label in field.domain.labels
+        if field.domain.coordinate(label).kind == "graph"
+    )
     if len(labels) != 1:
         raise ValueError(
             "Cochain fields require exactly one graph-domain label; "
-            f"found {tuple(labels)!r}."
+            f"found {labels!r}."
         )
     return labels[0]
 
@@ -69,12 +64,20 @@ def _spec_tuple(spec: CochainFieldSpec, /) -> tuple[int, str, str, str]:
     )
 
 
-def _attach_cochain_field_spec(
+def with_cochain_field_spec(
     field: DomainFunction,
     spec: CochainFieldSpec,
     /,
 ) -> DomainFunction:
     return field.with_metadata(**{_COCHAIN_FIELD_SPEC_KEY: _spec_tuple(spec)})
+
+def has_cochain_field_spec(field: DomainFunction, /) -> bool:
+    """Return whether a domain field declares cochain semantics."""
+    if not isinstance(field, DomainFunction):
+        raise TypeError("has_cochain_field_spec expects a DomainFunction.")
+    encoded = field.metadata.get(_COCHAIN_FIELD_SPEC_KEY)
+    return isinstance(encoded, tuple) and len(encoded) == 4
+
 
 
 def cochain_field_spec(field: DomainFunction, /) -> CochainFieldSpec:
@@ -133,14 +136,14 @@ def as_cochain_field(
             sampling=sampling,
         )
 
-    mask = DomainFunction(
-        domain=field.domain,
-        deps=(graph_label,),
-        func=_CochainDegreeMask(resolved.degree),
-        metadata={},
-    )
+    mask = field.domain.Function(graph_label)(_CochainDegreeMask(resolved.degree))
     masked = field * mask
-    return _attach_cochain_field_spec(masked, resolved)
+    return with_cochain_field_spec(masked, resolved)
 
 
-__all__ = ["as_cochain_field", "cochain_field_spec"]
+__all__ = [
+    "as_cochain_field",
+    "cochain_field_spec",
+    "has_cochain_field_spec",
+    "with_cochain_field_spec",
+]

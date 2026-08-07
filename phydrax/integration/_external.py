@@ -11,10 +11,10 @@ import coordax as cx
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 
+from phydrax.domain import DomainFunction, PointBatch
+
 from .._doc import DOC_KEY0
 from .._numerics import LogWeightedAccumulator, weighted_diagnostics
-from ..domain._function import DomainFunction
-from ..domain._structure import PointsBatch
 from ._batches import (
     PointIntegrationBatch,
     SeparableIntegrationBatch,
@@ -80,14 +80,12 @@ def _evaluate_external(
     key: Key[Array, ""],
     kwargs: dict[str, Any],
 ) -> Any:
-    if isinstance(samples, PointsBatch):
+    if isinstance(samples, PointBatch):
         if isinstance(integrand, DomainFunction):
             return integrand(samples, key=key, **kwargs)
         if isinstance(integrand, cx.Field) or not callable(integrand):
             return integrand
-        raise TypeError(
-            "External PointsBatch callables must be DomainFunction instances."
-        )
+        raise TypeError("External PointBatch callables must be DomainFunction instances.")
     return integrand(samples, **kwargs) if callable(integrand) else integrand
 
 

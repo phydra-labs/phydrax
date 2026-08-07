@@ -19,10 +19,14 @@ from .._strict import StrictModule
 
 
 if TYPE_CHECKING:
-    from ..constraints._sampling_spec import SamplingNumPoints
-    from ..domain._components import DomainComponent
-    from ..domain._function import DomainFunction
-    from ..domain._structure import CoordSeparableBatch, PointsBatch, ProductStructure
+    from phydrax.domain import (
+        DomainComponent,
+        DomainFunction,
+        GridBatch,
+        PointBatch,
+        SamplingPlan,
+    )
+
     from ..objectives._randomized_residual import (
         RandomizedResidualLossMode,
         RandomizedResidualObjective,
@@ -316,7 +320,7 @@ def _promoted_fields(
     problem: PDEProblemIR,
     /,
 ) -> tuple[Any, dict[str, DomainFunction]]:
-    from ..domain._function import DomainFunction
+    from phydrax.domain import DomainFunction
 
     names = tuple(field.name for field in problem.fields)
     missing = tuple(name for name in names if name not in functions)
@@ -335,7 +339,7 @@ def _promoted_fields(
 
 
 def _coordinate_functions(domain: Any, problem: PDEProblemIR, /) -> dict[str, DomainFunction]:
-    from ..domain._function import DomainFunction
+    from phydrax.domain import DomainFunction
 
     coordinates: dict[str, DomainFunction] = {}
     for coordinate in problem.coordinates:
@@ -360,7 +364,7 @@ def _evaluate_domain_value(
     key: Key[Array, ""],
     /,
 ) -> Array:
-    from ..domain._function import DomainFunction
+    from phydrax.domain import DomainFunction
 
     if not isinstance(value, DomainFunction):
         return jnp.asarray(value)
@@ -411,7 +415,8 @@ class _RandomizedPointCallable(StrictModule):
         key: Key[Array, ""],
         /,
     ) -> Array:
-        from ..domain._function import DomainFunction
+        from phydrax.domain import DomainFunction
+
         from ..operators.differential._dimension_estimators import (
             coordinate_divergence_samples,
             coordinate_second_derivative_samples,
@@ -567,13 +572,13 @@ class _RandomizedPDEEvaluator(StrictModule):
         key: Key[Array, ""],
         /,
     ) -> RandomizedResidualSamples:
-        from ..domain._function import DomainFunction
-        from ..domain._structure import CoordSeparableBatch, PointsBatch
+        from phydrax.domain import DomainFunction, GridBatch, PointBatch
+
         from ..objectives._randomized_residual import RandomizedResidualSamples
 
         if isinstance(collocation, tuple):
-            raise TypeError("Randomized PDE objectives do not support component-union batches.")
-        if not isinstance(collocation, (PointsBatch, CoordSeparableBatch)):
+            raise TypeError("Randomized PDE objectives do not support ComponentSum batches.")
+        if not isinstance(collocation, (PointBatch, GridBatch)):
             raise TypeError("Randomized PDE collocation must be a structured point batch.")
         domain, fields = _promoted_fields(functions, self.problem)
         node_indices = tuple(
@@ -611,7 +616,7 @@ class _RandomizedPDEEvaluator(StrictModule):
         event_shape = tuple(int(size) for size in values.shape[1 + len(sample_shape) :])
         mask = jnp.ones(sample_shape, dtype=bool)
         weights = jnp.ones(sample_shape, dtype=float)
-        if isinstance(collocation, CoordSeparableBatch):
+        if isinstance(collocation, GridBatch):
             named_dims = tuple(evaluated.dims[index] for index in named_positions)
             mask_field = cx.Field(mask, dims=named_dims)
             weight_field = cx.Field(weights, dims=named_dims)
@@ -633,27 +638,10 @@ class _RandomizedPDEEvaluator(StrictModule):
 
 class _RandomizedCollocationSampler(StrictModule):
     component: DomainComponent
-    structure: ProductStructure
-    dense_structure: ProductStructure | None
-    coord_sampling: Mapping[str, Any] | None
-    num_points: Any = eqx.field(static=True)
-    sampler: str = eqx.field(static=True)
+    sampling: SamplingPlan
 
     def __call__(self, key: Key[Array, ""], /):
-        if self.coord_sampling is not None:
-            return self.component.sample_coord_separable(
-                self.coord_sampling,
-                num_points=self.num_points,
-                dense_structure=self.dense_structure,
-                sampler=self.sampler,
-                key=key,
-            )
-        return self.component.sample(
-            self.num_points,
-            structure=self.structure,
-            sampler=self.sampler,
-            key=key,
-        )
+        return self.component.sample(self.sampling, key=key)
 
 
 def compile_pde_randomized_objective(
@@ -663,24 +651,21 @@ def compile_pde_randomized_objective(
     /,
     *,
     component: DomainComponent,
-    num_points: SamplingNumPoints,
-    structure: ProductStructure,
+    sampling: SamplingPlan,
     parameters: Mapping[str, Any] | None = None,
-    dense_structure: ProductStructure | None = None,
-    sampler: str = "latin_hypercube",
     weight: Any = 1.0,
     label: str | None = None,
     sampling_mode: Literal["resample", "fixed"] = "resample",
-    fixed_batch: PointsBatch | CoordSeparableBatch | None = None,
+    fixed_batch: PointBatch | GridBatch | None = None,
     fixed_batch_key: Key[Array, ""] = jr.key(0),
 ) -> CompiledRandomizedPDEObjective:
     """Compile one scalar IR equation to an estimator-aware sampled objective."""
-    from ..constraints._sampling_spec import parse_sampling_num_points
-    from ..domain._components import DomainComponent, DomainComponentUnion
+    from phydrax.domain import ComponentSum, DomainComponent
+
     from ..objectives._randomized_residual import RandomizedResidualObjective
 
-    if isinstance(component, DomainComponentUnion):
-        raise TypeError("Randomized PDE objectives do not support DomainComponentUnion.")
+    if isinstance(component, ComponentSum):
+        raise TypeError("Randomized PDE objectives do not support ComponentSum.")
     if not isinstance(component, DomainComponent):
         raise TypeError("component must be a DomainComponent.")
     report = analyze_randomized_compilation(problem, equation, plan)
@@ -688,19 +673,9 @@ def compile_pde_randomized_objective(
     if not report.supported:
         details = "; ".join(report.rejection_reasons)
         raise ValueError(f"Randomized PDE compilation rejected: {details}")
-    dense_num_points, coord_sampling, resolved_dense_structure = parse_sampling_num_points(
-        component,
-        num_points=num_points,
-        structure=structure,
-        dense_structure=dense_structure,
-    )
     collocation_sampler = _RandomizedCollocationSampler(
         component=component,
-        structure=structure,
-        dense_structure=resolved_dense_structure,
-        coord_sampling=coord_sampling,
-        num_points=dense_num_points,
-        sampler=str(sampler),
+        sampling=sampling,
     )
     mode = str(sampling_mode).lower()
     if mode not in ("resample", "fixed"):

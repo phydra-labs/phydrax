@@ -5,13 +5,15 @@
 import coordax as cx
 import jax.numpy as jnp
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.domain import Square
 from phydrax.operators.differential import directional_derivative, div, grad, laplacian
 
 
 def test_grad_complex_scalar_point():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -24,7 +26,9 @@ def test_grad_complex_scalar_point():
 
 
 def test_directional_derivative_complex_scalar_point():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -39,7 +43,9 @@ def test_directional_derivative_complex_scalar_point():
 
 
 def test_div_complex_vector_field_point():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):
@@ -52,7 +58,9 @@ def test_div_complex_vector_field_point():
 
 
 def test_laplacian_complex_scalar_point():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):

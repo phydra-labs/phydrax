@@ -26,7 +26,7 @@ $u|_{\\partial \\Omega} = g$ or $u|_{t=0} = u_0$ without penalty terms.
     def u(x):
         return 1.0
 
-    structure = phx.domain.ProductStructure((("x",),))
+    structure = phx.domain.SampleLayout((("x",),))
     constraint = phx.constraints.ContinuousPointwiseInteriorConstraint(
         "u",
         geom,

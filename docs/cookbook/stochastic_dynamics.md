@@ -62,8 +62,10 @@ backward = phx.constraints.ContinuousKolmogorovConstraint(
     drift=drift,
     diffusion=diffusion,
     evolution_var="t",
-    num_points=64,
-    structure=phx.domain.ProductStructure((("x", "t"),)),
+    sampling=phx.domain.PointSampling(
+        64,
+        layout=phx.domain.SampleLayout((("x", "t"),)),
+    ),
     sampling_mode="fixed",
     fixed_batch_key=jr.key(0),
 )
@@ -125,8 +127,10 @@ stationary = phx.constraints.ContinuousFokkerPlanckConstraint(
     drift=drift,
     diffusion=diffusion,
     evolution_var=None,
-    num_points=64,
-    structure=phx.domain.ProductStructure((("x",),)),
+    sampling=phx.domain.PointSampling(
+        64,
+        layout=phx.domain.SampleLayout((("x",),)),
+    ),
 )
 ```
 
@@ -162,8 +166,10 @@ fokker_planck = phx.constraints.ContinuousFokkerPlanckConstraint(
     drift=drift,
     diffusion=diffusion,
     evolution_var="t",
-    num_points=128,
-    structure=phx.domain.ProductStructure((("x", "t"),)),
+    sampling=phx.domain.PointSampling(
+        128,
+        layout=phx.domain.SampleLayout((("x", "t"),)),
+    ),
 )
 
 # Partial integration retains the time quadrature weight. On [0, 1] with
@@ -173,8 +179,10 @@ normalization = phx.constraints.ContinuousIntegralInteriorConstraint(
     "p",
     domain,
     lambda p: p,
-    num_points=(num_x, num_t),
-    structure=phx.domain.ProductStructure((("x",), ("t",))),
+    sampling=phx.domain.PointSampling(
+        (num_x, num_t),
+        layout=phx.domain.SampleLayout((("x",), ("t",))),
+    ),
     over="x",
     equal_to=jnp.full((num_t,), 1.0 / num_t),
 )
@@ -186,8 +194,10 @@ initial = phx.constraints.ContinuousInitialFunctionConstraint(
     func=lambda x: jnp.exp(-x[0] ** 2) / normalizer,
     evolution_var="t",
     time_derivative_order=0,
-    num_points=64,
-    structure=phx.domain.ProductStructure((("x",),)),
+    sampling=phx.domain.PointSampling(
+        64,
+        layout=phx.domain.SampleLayout((("x",),)),
+    ),
 )
 
 density_solver = phx.solver.FunctionalSolver(

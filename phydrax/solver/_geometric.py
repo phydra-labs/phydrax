@@ -19,8 +19,8 @@ from ..metrix import AbstractStateGeometry
 class GeometricLocalInterpolation(dfx.AbstractLocalInterpolation):
     """One-step interpolation that evaluates through a state retraction."""
 
-    t0: Array
-    t1: Array
+    t0: Array  # ty: ignore[invalid-attribute-override]
+    t1: Array  # ty: ignore[invalid-attribute-override]
     y0: Array
     y1: Array
     local_increment: Array

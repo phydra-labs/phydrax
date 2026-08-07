@@ -8,10 +8,9 @@ import numpy as np
 import pytest
 import trimesh
 
+import phydrax as phx
 from phydrax.domain import (
     DatasetDomain,
-    Geometry2DFromCAD,
-    Geometry3DFromCAD,
     Interval1d,
     ProductDomain,
     TimeInterval,
@@ -30,16 +29,16 @@ def test_time_interval_equivalence():
     a = TimeInterval(0.0, 1.0)
     b = TimeInterval(0.0, 1.0)
     c = TimeInterval(0.0, 2.0)
-    assert a.equivalent(b)
-    assert not a.equivalent(c)
+    assert a.same_support(b)
+    assert not a.same_support(c)
 
 
 def test_interval1d_equivalence():
     a = Interval1d(0.0, 1.0)
     b = Interval1d(0.0, 1.0)
     c = Interval1d(0.0, 2.0)
-    assert a.equivalent(b)
-    assert not a.equivalent(c)
+    assert a.same_support(b)
+    assert not a.same_support(c)
 
 
 def test_dataset_domain_equivalence():
@@ -50,17 +49,17 @@ def test_dataset_domain_equivalence():
     }
     dom1 = DatasetDomain(data1, label="data", measure="probability")
     dom2 = DatasetDomain(data2, label="data", measure="probability")
-    assert dom1.equivalent(dom2)
+    assert dom1.same_support(dom2)
 
     dom3 = DatasetDomain(data2, label="data", measure="count")
-    assert not dom1.equivalent(dom3)
+    assert not dom1.same_support(dom3)
 
     dom4 = DatasetDomain(data2, label="other", measure="probability")
-    assert not dom1.equivalent(dom4)
+    assert not dom1.same_support(dom4)
 
     data3 = {"a": jnp.zeros((4, 3), dtype=float)}
     dom5 = DatasetDomain(data3, label="data", measure="probability")
-    assert not dom1.equivalent(dom5)
+    assert not dom1.same_support(dom5)
 
 
 def test_geometry2d_equivalence_strong():
@@ -79,15 +78,21 @@ def test_geometry2d_equivalence_strong():
     points2, faces2 = _permute_mesh(points, faces, perm)
     mesh2 = meshio.Mesh(points=points2, cells=[("triangle", faces2)])
 
-    geom1 = Geometry2DFromCAD(mesh1, recenter=False)
-    geom2 = Geometry2DFromCAD(mesh2, recenter=False)
-    assert geom1.equivalent(geom2)
+    geom1 = phx.domain.GeometryDomain(
+        phx.geometry.planar_region_from_source(mesh1, recenter=False).compile()
+    )
+    geom2 = phx.domain.GeometryDomain(
+        phx.geometry.planar_region_from_source(mesh2, recenter=False).compile()
+    )
+    assert geom1.same_support(geom2)
 
     points3 = points.copy()
     points3[0, 0] += 1e-3
     mesh3 = meshio.Mesh(points=points3, cells=[("triangle", faces)])
-    geom3 = Geometry2DFromCAD(mesh3, recenter=False)
-    assert not geom1.equivalent(geom3)
+    geom3 = phx.domain.GeometryDomain(
+        phx.geometry.planar_region_from_source(mesh3, recenter=False).compile()
+    )
+    assert not geom1.same_support(geom3)
 
 
 def test_geometry3d_equivalence_strong():
@@ -115,15 +120,21 @@ def test_geometry3d_equivalence_strong():
     points2, faces2 = _permute_mesh(points, faces, perm)
     mesh2 = trimesh.Trimesh(vertices=points2, faces=faces2, process=False)
 
-    geom1 = Geometry3DFromCAD(mesh1, recenter=False)
-    geom2 = Geometry3DFromCAD(mesh2, recenter=False)
-    assert geom1.equivalent(geom2)
+    geom1 = phx.domain.GeometryDomain(
+        phx.geometry.mesh_region_from_source(mesh1, recenter=False).compile()
+    )
+    geom2 = phx.domain.GeometryDomain(
+        phx.geometry.mesh_region_from_source(mesh2, recenter=False).compile()
+    )
+    assert geom1.same_support(geom2)
 
     points3 = points.copy()
     points3[1, 2] += 1e-3
     mesh3 = trimesh.Trimesh(vertices=points3, faces=faces, process=False)
-    geom3 = Geometry3DFromCAD(mesh3, recenter=False)
-    assert not geom1.equivalent(geom3)
+    geom3 = phx.domain.GeometryDomain(
+        phx.geometry.mesh_region_from_source(mesh3, recenter=False).compile()
+    )
+    assert not geom1.same_support(geom3)
 
 
 def test_product_domain_label_collision_equivalent():

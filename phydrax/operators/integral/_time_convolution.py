@@ -11,20 +11,19 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from phydrax.domain import AbstractScalarDomain, DomainFunction
+
 from ..._doc import DOC_KEY0
-from ...domain._domain import RelabeledDomain
-from ...domain._function import DomainFunction
 from ..._sampling import get_sampler
-from ...domain._scalar import _AbstractScalarDomain
 
 
 def _unwrap_factor(factor: object, /) -> object:
-    return factor.base if isinstance(factor, RelabeledDomain) else factor
+    return factor
 
 
 def _time_start(u: DomainFunction, time_var: str) -> Array:
     factor = _unwrap_factor(u.domain.factor(time_var))
-    if isinstance(factor, _AbstractScalarDomain):
+    if isinstance(factor, AbstractScalarDomain):
         return jnp.asarray(factor.fixed("start"), dtype=float)
     return jnp.array(0.0, dtype=float)
 

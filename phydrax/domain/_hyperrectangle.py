@@ -12,12 +12,12 @@ from jaxtyping import Array, ArrayLike, Bool, Float, Key
 
 from .._doc import DOC_KEY0
 from .._sampling import get_sampler_host, seed_from_key
-from ._base import _AbstractGeometry, EnforcementGateMethod, GeometryTransitionKind
+from ._base import AbstractGeometry, EnforcementGateMethod, GeometryTransitionKind
 from ._grid import broadcasted_grid
 from ._structure import _validate_label
 
 
-class HyperRectangle(_AbstractGeometry):
+class HyperRectangle(AbstractGeometry):
     r"""Axis-aligned hyperrectangle in R^d.
 
     Represents the set
@@ -118,10 +118,10 @@ class HyperRectangle(_AbstractGeometry):
         face_measures = self.volume / widths
         return 2.0 * jnp.sum(face_measures)
 
-    def equivalent(self, other: object, /) -> bool:
+    def _same_factor_support(self, other: object, /) -> bool:
         if not isinstance(other, HyperRectangle):
             return False
-        if self.label != other.label:
+        if self.spatial_dim != other.spatial_dim:
             return False
         return bool(
             np.allclose(np.asarray(self.lower), np.asarray(other.lower))

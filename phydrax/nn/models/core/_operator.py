@@ -12,9 +12,10 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from phydrax.domain import AxisDiscretization
+
 from ...._frozendict import frozendict
 from ...._strict import StrictModule
-from ....domain._grid import AxisDiscretization
 from ._operator_topology import (
     broadcast_operator_topology,
     operator_topology_fingerprint,

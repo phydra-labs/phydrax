@@ -8,16 +8,16 @@ import jax
 import jax.numpy as jnp
 import jax.scipy.special as jsp
 
+from phydrax.domain import AbstractScalarDomain, DomainFunction
+
 from ..._doc import DOC_KEY0
 from ..._sampling import get_sampler
-from ...domain._function import DomainFunction
-from ...domain._scalar import _AbstractScalarDomain
 from ._domain_ops import _unwrap_factor
 
 
 def _time_start(u: DomainFunction, time_var: str) -> jax.Array:
     factor = _unwrap_factor(u.domain.factor(time_var))
-    if isinstance(factor, _AbstractScalarDomain):
+    if isinstance(factor, AbstractScalarDomain):
         return jnp.asarray(factor.fixed("start"), dtype=float)
     raise TypeError(f"time_var {time_var!r} is not a scalar domain label.")
 

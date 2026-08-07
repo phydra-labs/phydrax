@@ -30,14 +30,14 @@ def _weighted_line_graph() -> phx.graph.GraphIR:
 
 def _node_batch(domain):
     component = domain.component({"graph": phx.domain.Nodes()})
-    structure = phx.domain.ProductStructure((("graph",),))
-    return component, component.sample(3, structure=structure)
+    structure = phx.domain.SampleLayout((("graph",),))
+    return component, component.sample(phx.domain.PointSampling(3, layout=structure))
 
 
 def _edge_batch(domain):
     component = domain.component({"graph": phx.domain.Edges()})
-    structure = phx.domain.ProductStructure((("graph",),))
-    return component, component.sample(2, structure=structure)
+    structure = phx.domain.SampleLayout((("graph",),))
+    return component, component.sample(phx.domain.PointSampling(2, layout=structure))
 
 
 def test_graph_degree_operator():
@@ -54,7 +54,7 @@ def test_graph_degree_operator():
 def test_graph_degree_operator_restricts_to_node_set():
     domain = phx.domain.GraphDomain(_line_graph())
     component = domain.component({"graph": phx.domain.BoundaryNodes([0, 2])})
-    batch = component.sample(2, structure=phx.domain.ProductStructure((("graph",),)))
+    batch = component.sample(phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),))))
 
     deg_in = phx.operators.graph_degree(domain, mode="in")
     deg_out = phx.operators.graph_degree(domain, mode="out")
@@ -102,7 +102,7 @@ def test_graph_gradient_operator_on_edges():
 def test_graph_gradient_operator_restricts_to_edge_set():
     domain = phx.domain.GraphDomain(_line_graph())
     component = domain.component({"graph": phx.domain.InterfaceEdges([1])})
-    batch = component.sample(1, structure=phx.domain.ProductStructure((("graph",),)))
+    batch = component.sample(phx.domain.PointSampling(1, layout=phx.domain.SampleLayout((("graph",),))))
 
     @domain.Function("graph")
     def u(node):
@@ -143,7 +143,7 @@ def test_graph_divergence_operator_on_nodes():
 def test_graph_divergence_operator_restricts_to_node_set():
     domain = phx.domain.GraphDomain(_weighted_line_graph())
     component = domain.component({"graph": phx.domain.BoundaryNodes([0, 2])})
-    batch = component.sample(2, structure=phx.domain.ProductStructure((("graph",),)))
+    batch = component.sample(phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),))))
 
     @domain.Function("graph")
     def flux(edge):
@@ -172,20 +172,16 @@ def test_graph_incidence_laplacian_is_divergence_of_gradient():
 def test_graph_incidence_laplacian_constraint_on_boundary_nodes():
     domain = phx.domain.GraphDomain(_line_graph())
     component = domain.component({"graph": phx.domain.BoundaryNodes([0, 2])})
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
 
     @domain.Function("graph")
     def u(node):
         del node
         return 2.0
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=component,
-        operator=phx.operators.graph_incidence_laplacian,
-        constraint_vars="u",
-        num_points=2,
-        structure=structure,
-    )
+    constraint = phx.constraints.FunctionalConstraint.from_operator(component=component,
+    operator=phx.operators.graph_incidence_laplacian,
+    constraint_vars="u", sampling=phx.domain.PointSampling(2, layout=structure), )
 
     assert constraint.loss({"u": u}) < 1e-12
 
@@ -193,20 +189,16 @@ def test_graph_incidence_laplacian_constraint_on_boundary_nodes():
 def test_graph_laplacian_constraint_zero_for_constant_field():
     domain = phx.domain.GraphDomain(_line_graph())
     component = domain.component({"graph": phx.domain.Nodes()})
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
 
     @domain.Function("graph")
     def u(node):
         del node
         return 2.0
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=component,
-        operator=phx.operators.graph_laplacian,
-        constraint_vars="u",
-        num_points=3,
-        structure=structure,
-    )
+    constraint = phx.constraints.FunctionalConstraint.from_operator(component=component,
+    operator=phx.operators.graph_laplacian,
+    constraint_vars="u", sampling=phx.domain.PointSampling(3, layout=structure), )
 
     assert constraint.loss({"u": u}) < 1e-12
 
@@ -214,19 +206,15 @@ def test_graph_laplacian_constraint_zero_for_constant_field():
 def test_graph_gradient_constraint_zero_for_constant_field_on_edges():
     domain = phx.domain.GraphDomain(_line_graph())
     component = domain.component({"graph": phx.domain.Edges()})
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
 
     @domain.Function("graph")
     def u(node):
         del node
         return 2.0
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=component,
-        operator=phx.operators.graph_gradient,
-        constraint_vars="u",
-        num_points=2,
-        structure=structure,
-    )
+    constraint = phx.constraints.FunctionalConstraint.from_operator(component=component,
+    operator=phx.operators.graph_gradient,
+    constraint_vars="u", sampling=phx.domain.PointSampling(2, layout=structure), )
 
     assert constraint.loss({"u": u}) < 1e-12

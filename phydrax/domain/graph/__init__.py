@@ -9,7 +9,12 @@ from ._batch import (
     GRAPH_GRAPH_INDEX_KEY,
     GraphBatch,
 )
-from ._cochain import as_cochain_field, cochain_field_spec
+from ._cochain import (
+    as_cochain_field,
+    cochain_field_spec,
+    has_cochain_field_spec,
+    with_cochain_field_spec,
+)
 from ._components import (
     BoundaryEdges,
     BoundaryNodes,
@@ -19,6 +24,10 @@ from ._components import (
     EdgeSet,
     EdgeType,
     Globals,
+    graph_component_indices,
+    graph_component_indices_for_graph,
+    graph_component_kind,
+    GraphComponentKind,
     InterfaceEdges,
     InteriorNodes,
     Nodes,
@@ -34,6 +43,7 @@ from ._dataset import (
 )
 from ._domain import GraphDomain
 from ._trajectory import (
+    graph_trajectory_default_quadrature_total_weight,
     GRAPH_TRAJECTORY_TIME_INDEX_KEY,
     GraphTrajectoryDatasetDomain,
     GraphTrajectoryMeasure,
@@ -48,8 +58,14 @@ __all__ = [
     "GRAPH_GRAPH_INDEX_KEY",
     "GRAPH_SAMPLE_INDEX_KEY",
     "GRAPH_TRAJECTORY_TIME_INDEX_KEY",
+    "GraphComponentKind",
+    "graph_component_indices",
+    "graph_component_indices_for_graph",
+    "graph_component_kind",
     "as_cochain_field",
     "cochain_field_spec",
+    "has_cochain_field_spec",
+    "with_cochain_field_spec",
     "CochainCellRegion",
     "CochainCells",
     "BoundaryEdges",
@@ -65,6 +81,7 @@ __all__ = [
     "GraphTrajectoryDatasetDomain",
     "GraphTrajectoryMeasure",
     "GraphTrajectorySampling",
+    "graph_trajectory_default_quadrature_total_weight",
     "InteriorNodes",
     "InterfaceEdges",
     "NodeSet",

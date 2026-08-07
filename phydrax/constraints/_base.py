@@ -8,17 +8,18 @@ from typing import Any, Literal
 
 from jaxtyping import Array, Key
 
+from phydrax.domain import (
+    ComponentSum,
+    DomainComponent,
+    DomainFunction,
+    GridBatch,
+    PointBatch,
+)
+from phydrax.domain.graph import GraphBatch
+
 from .._doc import DOC_KEY0
 from .._objective import AbstractObjectiveTerm
 from .._strict import AbstractAttribute
-from ..domain._components import DomainComponent, DomainComponentUnion
-from ..domain._function import DomainFunction
-from ..domain._structure import (
-    CoordSeparableBatch,
-    PointsBatch,
-    ProductStructure,
-)
-from ..domain.graph._batch import GraphBatch
 
 
 class AbstractConstraint(AbstractObjectiveTerm):
@@ -57,11 +58,7 @@ class AbstractSamplingConstraint(AbstractConstraint):
     point batches in order to estimate integrals/means of a residual over the domain.
     """
 
-    component: AbstractAttribute[DomainComponent | DomainComponentUnion]
-    structure: AbstractAttribute[ProductStructure]
-    dense_structure: AbstractAttribute[ProductStructure | None]
-    num_points: AbstractAttribute[Any]
-    sampler: AbstractAttribute[str]
+    component: AbstractAttribute[DomainComponent | ComponentSum]
     over: AbstractAttribute[str | tuple[str, ...] | None]
     reduction: AbstractAttribute[Literal["mean", "integral"]]
 
@@ -70,5 +67,5 @@ class AbstractSamplingConstraint(AbstractConstraint):
         self,
         *,
         key: Key[Array, ""] = DOC_KEY0,
-    ) -> PointsBatch | CoordSeparableBatch | GraphBatch | tuple[PointsBatch, ...]:
+    ) -> PointBatch | GridBatch | GraphBatch | tuple[PointBatch, ...]:
         raise NotImplementedError

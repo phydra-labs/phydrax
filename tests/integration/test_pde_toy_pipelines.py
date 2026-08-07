@@ -5,6 +5,7 @@
 import jax.numpy as jnp
 import jax.random as jr
 
+import phydrax as phx
 from phydrax.constraints import enforce_dirichlet
 from phydrax.constraints._continuous_interior import (
     ContinuousInitialFunctionConstraint,
@@ -15,7 +16,7 @@ from phydrax.domain import (
     FixedStart,
     FourierAxisSpec,
     Interval1d,
-    ProductStructure,
+    SampleLayout,
     TimeInterval,
 )
 from phydrax.operators.differential import bilaplacian, dt, laplacian
@@ -52,13 +53,12 @@ def test_pde_toy_steady_pipeline_zero_loss():
     values = jnp.array([1.0, 1.0], dtype=float)
     interior = EnforcedInteriorData("u", points=anchors, values=values)
 
-    structure = ProductStructure((("x",),))
+    structure = SampleLayout((("x",),))
     pde_constraint = ContinuousPointwiseInteriorConstraint(
         "u",
         geom,
         operator=lambda f: laplacian(f, var="x"),
-        num_points=64,
-        structure=structure,
+        sampling=phx.domain.PointSampling(64, layout=structure),
     )
 
     solver = FunctionalSolver(
@@ -83,13 +83,12 @@ def test_pde_toy_steady_pipeline_zero_loss_jet_backend():
     # EnforcedInteriorData) because the enforced pipeline traces through the MLS/BVH weight
     # computation, which uses primitives not supported by jax.experimental.jet
     # (e.g. lax.cond, softplus/logaddexp custom_jvp, and clip/min/max rules).
-    structure = ProductStructure((("x",),))
+    structure = SampleLayout((("x",),))
     pde_constraint = ContinuousPointwiseInteriorConstraint(
         "u",
         geom,
         operator=lambda f: laplacian(f, var="x", backend="jet"),
-        num_points=64,
-        structure=structure,
+        sampling=phx.domain.PointSampling(64, layout=structure),
     )
 
     solver = FunctionalSolver(
@@ -129,20 +128,16 @@ def test_pde_toy_steady_pipeline_zero_loss_basis_backend_coord_separable():
     values = jnp.array([1.0, 1.0], dtype=float)
     interior = EnforcedInteriorData("u", points=anchors, values=values)
 
-    structure = ProductStructure((("x",),))
-    pde_constraint = ContinuousPointwiseInteriorConstraint(
-        "u",
-        geom,
-        operator=lambda f: laplacian(
-            f,
-            var="x",
-            backend="basis",
-            basis="fourier",
-            periodic=True,
-        ),
-        num_points={"x": FourierAxisSpec(64)},
-        structure=structure,
-    )
+    structure = SampleLayout((("x",),))
+    pde_constraint = ContinuousPointwiseInteriorConstraint("u",
+    geom,
+    operator=lambda f: laplacian(
+        f,
+        var="x",
+        backend="basis",
+        basis="fourier",
+        periodic=True,
+    ), sampling=phx.domain.GridSampling({"x": FourierAxisSpec(64)}), )
 
     solver = FunctionalSolver(
         functions={"u": u},
@@ -165,13 +160,12 @@ def test_pde_toy_steady_pipeline_zero_loss_bilaplacian_jet_backend():
     # Jet cannot be mixed with enforced boundary constraints (Boundary() enforced constraints /
     # EnforcedInteriorData) because the enforced pipeline traces through the MLS/BVH weight
     # computation, which uses primitives not supported by jax.experimental.jet.
-    structure = ProductStructure((("x",),))
+    structure = SampleLayout((("x",),))
     pde_constraint = ContinuousPointwiseInteriorConstraint(
         "u",
         geom,
         operator=lambda f: bilaplacian(f, var="x", backend="jet"),
-        num_points=64,
-        structure=structure,
+        sampling=phx.domain.PointSampling(64, layout=structure),
     )
 
     solver = FunctionalSolver(
@@ -240,20 +234,18 @@ def test_pde_toy_transient_pipeline_zero_loss():
     values = jnp.array([1.0, 1.0], dtype=float)
     interior = EnforcedInteriorData("u", points=anchors, values=values)
 
-    structure = ProductStructure((("x", "t"),))
+    structure = SampleLayout((("x", "t"),))
     pde_time = ContinuousPointwiseInteriorConstraint(
         "u",
         domain,
         operator=lambda f: dt(f, var="t"),
-        num_points=64,
-        structure=structure,
+        sampling=phx.domain.PointSampling(64, layout=structure),
     )
     pde_space = ContinuousPointwiseInteriorConstraint(
         "u",
         domain,
         operator=lambda f: laplacian(f, var="x"),
-        num_points=64,
-        structure=structure,
+        sampling=phx.domain.PointSampling(64, layout=structure),
     )
 
     solver = FunctionalSolver(
@@ -279,20 +271,18 @@ def test_pde_toy_transient_pipeline_zero_loss_jet_backend():
     # Jet cannot be mixed with enforced boundary constraints (Boundary() enforced constraints /
     # EnforcedInteriorData) because the enforced pipeline traces through the MLS/BVH weight
     # computation, which uses primitives not supported by jax.experimental.jet.
-    structure = ProductStructure((("x", "t"),))
+    structure = SampleLayout((("x", "t"),))
     pde_time = ContinuousPointwiseInteriorConstraint(
         "u",
         domain,
         operator=lambda f: dt(f, var="t"),
-        num_points=64,
-        structure=structure,
+        sampling=phx.domain.PointSampling(64, layout=structure),
     )
     pde_space = ContinuousPointwiseInteriorConstraint(
         "u",
         domain,
         operator=lambda f: laplacian(f, var="x", backend="jet"),
-        num_points=64,
-        structure=structure,
+        sampling=phx.domain.PointSampling(64, layout=structure),
     )
 
     solver = FunctionalSolver(
@@ -346,8 +336,7 @@ def test_pde_toy_transient_enforced_initial_targets_dt2_zero_jet_backend():
         func=0.0,
         time_derivative_order=2,
         time_derivative_backend="jet",
-        num_points=64,
-        structure=ProductStructure((("x",),)),
+        sampling=phx.domain.PointSampling(64, layout=SampleLayout((("x",),))),
     )
 
     solver = FunctionalSolver(

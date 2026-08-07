@@ -8,7 +8,7 @@ from phydrax._frozendict import frozendict
 
 
 def _polar_problem():
-    domain = phx.domain.Square(center=(2.0, 0.0), side=2.0)
+    domain = phx.domain.GeometryDomain(phx.geometry.Square(center=(2.0, 0.0), side=2.0).compile())
     chart = phx.metrix.CoordinateChart("polar", ("r", "theta"))
     metric = phx.metrix.diagonal_metric(
         lambda q: jnp.array([1.0, q[0] ** 2]),
@@ -79,7 +79,7 @@ def test_laplace_beltrami_matches_unit_sphere_eigenfunction():
         3,
     )
     metric = embedded.induced_metric()
-    domain = phx.domain.Square(center=(1.5, 0.0), side=2.0)
+    domain = phx.domain.GeometryDomain(phx.geometry.Square(center=(1.5, 0.0), side=2.0).compile())
     scalar = domain.Function("x")(lambda q: jnp.sin(q[0]) * jnp.cos(q[1]))
     points = _points([[0.6, -0.7], [1.1, 0.4], [2.2, 0.8]])
 
@@ -147,8 +147,7 @@ def test_metric_aware_fokker_planck_constraint_threads_metric_to_residual():
         evolution_var=None,
         covariance=covariance,
         metric=metric,
-        num_points=20,
-        structure=phx.domain.ProductStructure((("x",),)),
+        sampling=phx.domain.PointSampling(20, layout=phx.domain.SampleLayout((("x",),))),
         sampling_mode="fixed",
         fixed_batch_key=jr.key(5),
     )
@@ -167,8 +166,7 @@ def test_riemannian_residual_runs_through_functional_solver():
         "u",
         domain,
         operator=lambda u: phx.operators.laplace_beltrami(u, metric, var="x") - 4.0,
-        num_points=24,
-        structure=phx.domain.ProductStructure((("x",),)),
+        sampling=phx.domain.PointSampling(24, layout=phx.domain.SampleLayout((("x",),))),
         sampling_mode="fixed",
         fixed_batch_key=jr.key(3),
     )

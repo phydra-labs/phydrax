@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, cast
 
 import equinox as eqx
 import jax
@@ -202,7 +202,7 @@ def find_map(
 
     started = time.perf_counter()
     compilation_started = time.perf_counter()
-    compiled_initial_evaluation = _compiled_initial_evaluation.lower(
+    compiled_initial_evaluation = cast(Any, _compiled_initial_evaluation).lower(
         position,
         problem,
     ).compile()
@@ -223,7 +223,7 @@ def find_map(
     compiled_step = None
     if not converged:
         compilation_started = time.perf_counter()
-        compiled_step = _compiled_lbfgs_step.lower(
+        compiled_step = cast(Any, _compiled_lbfgs_step).lower(
             position,
             optimizer_state,
             objective,

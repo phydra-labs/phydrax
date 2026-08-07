@@ -12,11 +12,11 @@ import jax.random as jr
 import jax.tree_util as jtu
 from jaxtyping import Array, Key
 
+from phydrax.domain import ComponentSum, DomainFunction
+
 from .._doc import DOC_KEY0
 from .._sampling import AntitheticDesign, design_capabilities
 from .._strict import StrictModule
-from ..domain._components import DomainComponentUnion
-from ..domain._function import DomainFunction
 from ._adaptive import integrate_adaptive
 from ._estimates import IntegrationEstimate
 from ._external import (
@@ -199,7 +199,7 @@ def from_samples(
     base = _base_target(target)
     if not isinstance(base, ComponentTarget):
         raise TypeError("from_samples requires a component-based target.")
-    if isinstance(base.component, DomainComponentUnion):
+    if isinstance(base.component, ComponentSum):
         if not isinstance(points, tuple) or len(points) != len(base.component.terms):
             raise ValueError("Component unions require one aligned point batch per term.")
         batches = tuple(

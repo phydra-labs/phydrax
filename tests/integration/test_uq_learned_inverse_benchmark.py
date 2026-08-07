@@ -99,7 +99,7 @@ def _make_inverse_solver(
     observation_key=None,
 ):
     geometry = phx.domain.Interval1d(0.0, 1.0)
-    structure = phx.domain.ProductStructure((("x",),))
+    structure = phx.domain.SampleLayout((("x",),))
 
     def model_factory(model_key):
         return phx.nn.MLP(
@@ -132,8 +132,7 @@ def _make_inverse_solver(
         "state",
         geometry,
         operator=poisson_residual,
-        num_points=16,
-        structure=structure,
+        sampling=phx.domain.PointSampling(16, layout=structure),
         sampling_mode="fixed",
         fixed_batch_key=jr.key(90),
         weight=2.0,
@@ -142,8 +141,7 @@ def _make_inverse_solver(
         "state",
         geometry,
         operator=constant_source_residual,
-        num_points=16,
-        structure=structure,
+        sampling=phx.domain.PointSampling(16, layout=structure),
         sampling_mode="fixed",
         fixed_batch_key=jr.key(92),
     )

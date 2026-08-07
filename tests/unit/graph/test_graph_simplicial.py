@@ -40,14 +40,14 @@ def test_triangle_mesh_to_simplicial_graph_builds_signed_cell_complex():
 def test_simplicial_bundle_components_select_cells_and_incidences():
     bundle = _single_triangle()
     domain = phx.domain.GraphDomain(bundle.graph, measure="count")
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
     vertices = domain.component({"graph": bundle.vertex_cells_component()})
     edges = domain.component({"graph": bundle.edge_cells_component()})
     incidence = domain.component({"graph": bundle.edge_to_face_component()})
 
-    vertex_batch = vertices.sample(3, structure=structure)
-    edge_batch = edges.sample(3, structure=structure)
-    incidence_batch = incidence.sample(3, structure=structure)
+    vertex_batch = vertices.sample(phx.domain.PointSampling(3, layout=structure))
+    edge_batch = edges.sample(phx.domain.PointSampling(3, layout=structure))
+    incidence_batch = incidence.sample(phx.domain.PointSampling(3, layout=structure))
 
     assert jnp.allclose(vertex_batch["graph"]["features"].data[:, 0], jnp.array([1.0, 2.0, 3.0]))
     assert jnp.allclose(edge_batch["graph"]["features"].data[:, 0], jnp.zeros((3,)))
@@ -55,7 +55,7 @@ def test_simplicial_bundle_components_select_cells_and_incidences():
         incidence_batch["graph"]["incidence_sign"].data,
         jnp.array([1.0, 1.0, -1.0]),
     )
-    assert vertices.measure() == 3.0
+    assert vertices.mass.value == 3.0
 
 
 def test_simplicial_hodge_laplacian_zero_for_constant_zero_form():
@@ -99,7 +99,7 @@ def test_simplicial_hodge_laplacian_integrates_with_graph_model_and_constraints(
     bundle = _single_triangle()
     domain = phx.domain.GraphDomain(bundle.graph)
     vertices = domain.component({"graph": bundle.vertex_cells_component()})
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
     table = jnp.array([0.0, 1.0, 0.0])
 
     @domain.Function("graph")
@@ -115,14 +115,10 @@ def test_simplicial_hodge_laplacian_integrates_with_graph_model_and_constraints(
         )
 
     model = residual(u)
-    batch = vertices.sample(3, structure=structure)
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=vertices,
-        operator=lambda f: residual(f) - model,
-        constraint_vars="u",
-        num_points=3,
-        structure=structure,
-    )
+    batch = vertices.sample(phx.domain.PointSampling(3, layout=structure))
+    constraint = phx.constraints.FunctionalConstraint.from_operator(component=vertices,
+    operator=lambda f: residual(f) - model,
+    constraint_vars="u", sampling=phx.domain.PointSampling(3, layout=structure), )
 
     assert jnp.allclose(model(batch).data, jnp.array([-1.0, 2.0, -1.0]))
     assert constraint.loss({"u": u}, key=jr.key(0)) < 1e-12

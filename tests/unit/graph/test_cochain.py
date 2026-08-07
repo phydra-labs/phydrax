@@ -264,19 +264,18 @@ def _centered_square_complex():
 def test_cochain_cells_select_degree_boundary_and_padded_dataset_offsets():
     small = _square_complex()
     large = _centered_square_complex()
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
 
     fixed_domain = phx.domain.GraphDomain(large.graph)
     edges = fixed_domain.component({"graph": phx.domain.CochainCells(1)}).sample(
-        large.cell_counts[1],
-        structure=structure,
+        phx.domain.PointSampling(large.cell_counts[1], layout=structure)
     )
     boundary_vertices = fixed_domain.component(
         {"graph": phx.domain.CochainCells(0, region="boundary")}
-    ).sample(4, structure=structure)
+    ).sample(phx.domain.PointSampling(4, layout=structure))
     interior_vertices = fixed_domain.component(
         {"graph": phx.domain.CochainCells(0, region="interior")}
-    ).sample(1, structure=structure)
+    ).sample(phx.domain.PointSampling(1, layout=structure))
 
     assert jnp.all(edges["graph"]["cell_dim"].data == 1)
     assert jnp.all(boundary_vertices["graph"]["boundary"].data)
@@ -321,7 +320,7 @@ def test_cochain_cells_select_degree_boundary_and_padded_dataset_offsets():
         [0, 1],
         [0.5, 0.5],
         component=trajectory_component,
-        structure=phx.domain.ProductStructure((("graph", "t"),)),
+        structure=phx.domain.SampleLayout((("graph", "t"),)),
     )
 
     assert trajectory_batch.graph.node_mask is not None
@@ -339,10 +338,9 @@ def test_cochain_cells_select_degree_boundary_and_padded_dataset_offsets():
 def test_cochain_field_masks_other_degrees_and_preserves_compatible_metadata():
     complex_ir = _square_complex()
     domain = phx.domain.GraphDomain(complex_ir.graph)
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
     all_cells = domain.component({"graph": phx.domain.Nodes()}).sample(
-        complex_ir.num_cells,
-        structure=structure,
+        phx.domain.PointSampling(complex_ir.num_cells, layout=structure)
     )
     zero_spec = phx.graph.CochainFieldSpec(
         0,
@@ -374,18 +372,15 @@ def test_cochain_field_masks_other_degrees_and_preserves_compatible_metadata():
 def test_domain_cochain_dec_is_exact_and_matches_sparse_graph_operators():
     complex_ir = _square_complex()
     domain = phx.domain.GraphDomain(complex_ir.graph)
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
     all_cells = domain.component({"graph": phx.domain.Nodes()}).sample(
-        complex_ir.num_cells,
-        structure=structure,
+        phx.domain.PointSampling(complex_ir.num_cells, layout=structure)
     )
     edge_batch = domain.component({"graph": phx.domain.CochainCells(1)}).sample(
-        complex_ir.cell_counts[1],
-        structure=structure,
+        phx.domain.PointSampling(complex_ir.cell_counts[1], layout=structure)
     )
     face_batch = domain.component({"graph": phx.domain.CochainCells(2)}).sample(
-        complex_ir.cell_counts[2],
-        structure=structure,
+        phx.domain.PointSampling(complex_ir.cell_counts[2], layout=structure)
     )
     zero_spec = phx.graph.CochainFieldSpec(
         0,
@@ -414,8 +409,7 @@ def test_domain_cochain_dec_is_exact_and_matches_sparse_graph_operators():
     )
     edge_indices = edge_batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data
     vertex_batch = domain.component({"graph": phx.domain.CochainCells(0)}).sample(
-        complex_ir.cell_counts[0],
-        structure=structure,
+        phx.domain.PointSampling(complex_ir.cell_counts[0], layout=structure)
     )
     vertex_indices = vertex_batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data
 
@@ -441,7 +435,7 @@ def test_domain_cochain_laplacian_is_equivariant_to_cell_reorientation():
         cell_orientation="signed",
         sampling="cell_integral",
     )
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
 
     def laplacian_values(bundle, coefficients):
         domain = phx.domain.GraphDomain(bundle.graph)
@@ -453,8 +447,7 @@ def test_domain_cochain_laplacian_is_equivariant_to_cell_reorientation():
 
         one_form = phx.domain.as_cochain_field(raw, one_spec)
         batch = domain.component({"graph": phx.domain.CochainCells(1)}).sample(
-            bundle.cell_counts[1],
-            structure=structure,
+            phx.domain.PointSampling(bundle.cell_counts[1], layout=structure)
         )
         return phx.operators.cochain_hodge_laplacian(one_form)(batch).data
 
@@ -539,7 +532,7 @@ def test_cochain_residual_constraint_composes_graph_and_time_measures(
             "t": phx.domain.Interior(),
         }
     )
-    structure = phx.domain.ProductStructure((("graph", "t"),))
+    structure = phx.domain.SampleLayout((("graph", "t"),))
     zero_spec = phx.graph.CochainFieldSpec(
         0,
         cell_orientation="invariant",
@@ -561,8 +554,7 @@ def test_cochain_residual_constraint_composes_graph_and_time_measures(
         component=component,
         residual=lambda functions: functions["u"],
         constraint_vars=("u",),
-        num_points=2,
-        structure=structure,
+        sampling=phx.domain.PointSampling(2, layout=structure),
         reduction="graph_mean",
     )
 

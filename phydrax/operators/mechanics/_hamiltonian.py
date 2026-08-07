@@ -8,8 +8,9 @@ from typing import Any, Literal
 
 import jax.numpy as jnp
 
+from phydrax.domain import DomainFunction
+
 from ..._strict import StrictModule
-from ...domain._function import DomainFunction
 from .._composition import pullback
 from ..differential._domain_ops import dt, grad
 from ..linalg._ops import einsum
@@ -63,10 +64,7 @@ def _compatible_domain(a: DomainFunction, b: DomainFunction, /):
     if a.domain.labels != b.domain.labels:
         return a.domain.join(b.domain)
     for label in a.domain.labels:
-        if (
-            a.domain.factor(label).var_dim
-            != b.domain.factor(label).var_dim
-        ):
+        if not a.domain.coordinate(label).compatible(b.domain.coordinate(label)):
             raise ValueError(
                 f"Incompatible domain factors for shared label {label!r}."
             )
@@ -114,15 +112,17 @@ def _canonical_gradients(
     mode: Literal["reverse", "forward"],
     ad_engine: _ADEngine,
 ) -> tuple[DomainFunction, DomainFunction]:
-    configuration_factor = _require_factor(
-        function, configuration_var, role="Configuration"
-    )
-    momentum_factor = _require_factor(function, momentum_var, role="Momentum")
-    if configuration_factor.var_dim != momentum_factor.var_dim:
+    _require_factor(function, configuration_var, role="Configuration")
+    _require_factor(function, momentum_var, role="Momentum")
+    configuration_dimension = function.domain.coordinate(
+        configuration_var
+    ).event_size
+    momentum_dimension = function.domain.coordinate(momentum_var).event_size
+    if configuration_dimension != momentum_dimension:
         raise ValueError(
             "Canonical phase-space dimensions must match; "
-            f"{configuration_var!r} has dimension {configuration_factor.var_dim} and "
-            f"{momentum_var!r} has dimension {momentum_factor.var_dim}."
+            f"{configuration_var!r} has dimension {configuration_dimension} and "
+            f"{momentum_var!r} has dimension {momentum_dimension}."
         )
     d_configuration = grad(
         function,
@@ -285,16 +285,19 @@ def hamilton_jacobi_residual(
     r"""Hamilton–Jacobi residual $\partial_tS+H(x,\nabla_xS,t)$."""
     if time_var not in action.deps:
         raise ValueError(f"Action must depend on time_var {time_var!r}.")
-    action_position_factor = _require_factor(action, position_var, role="Position")
-    hamiltonian_position_factor = _require_factor(
-        hamiltonian, position_var, role="Hamiltonian position"
-    )
-    hamiltonian_momentum_factor = _require_factor(
-        hamiltonian, momentum_var, role="Hamiltonian momentum"
-    )
-    if action_position_factor.var_dim != hamiltonian_position_factor.var_dim:
+    _require_factor(action, position_var, role="Position")
+    _require_factor(hamiltonian, position_var, role="Hamiltonian position")
+    _require_factor(hamiltonian, momentum_var, role="Hamiltonian momentum")
+    action_position_dimension = action.domain.coordinate(position_var).event_size
+    hamiltonian_position_dimension = hamiltonian.domain.coordinate(
+        position_var
+    ).event_size
+    hamiltonian_momentum_dimension = hamiltonian.domain.coordinate(
+        momentum_var
+    ).event_size
+    if action_position_dimension != hamiltonian_position_dimension:
         raise ValueError("Action and Hamiltonian position dimensions are incompatible.")
-    if hamiltonian_position_factor.var_dim != hamiltonian_momentum_factor.var_dim:
+    if hamiltonian_position_dimension != hamiltonian_momentum_dimension:
         raise ValueError("Hamiltonian position and momentum dimensions must match.")
 
     momentum = grad(

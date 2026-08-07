@@ -11,8 +11,9 @@ from typing import Any
 import jax.numpy as jnp
 from jaxtyping import Array, Key
 
+from phydrax.domain import ConcatenatedModelEvaluator
+
 from .._doc import DOC_KEY0
-from ..domain._model_function import _ConcatenatedModelCallable
 from ..nn.models.core._base import _AbstractBaseModel
 from ..nn.models.core._loss import (
     _has_custom_model_loss,
@@ -61,7 +62,7 @@ def _iter_model_roots(value: Any, /, *, seen_nodes: set[int]):
         return
     seen_nodes.add(node_id)
 
-    if isinstance(value, _ConcatenatedModelCallable):
+    if isinstance(value, ConcatenatedModelEvaluator):
         yield value.raw_model
         return
 

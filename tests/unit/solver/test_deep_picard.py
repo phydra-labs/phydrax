@@ -71,15 +71,11 @@ def _domain():
 
 
 def _function(model):
-    return phx.domain.DomainFunction(
-        domain=_domain(),
-        deps=("t", "x"),
-        func=model,
-    )
+    return _domain().Function("t", "x")(model)
 
 
 def _coefficient(function):
-    return float(function.func.func.coefficient)
+    return float(function.func.function.coefficient)
 
 
 def test_semilinear_deep_picard_trains_global_time_field_and_removes_temporary_state():
@@ -196,11 +192,7 @@ def test_deep_picard_martingale_targets_train_explicit_control():
         antithetic=True,
         refresh_mode="fixed",
     )
-    exact_value = phx.domain.DomainFunction(
-        domain=_domain(),
-        deps=("t", "x"),
-        func=lambda time, state: jnp.asarray([state[0]]),
-    )
+    exact_value = _domain().Function("t", "x")(lambda time, state: jnp.asarray([state[0]]))
     solver = phx.solver.FunctionalSolver(
         functions={
             "value": exact_value,

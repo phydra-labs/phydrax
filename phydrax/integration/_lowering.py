@@ -11,30 +11,30 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Key, PyTree
 
+from phydrax.domain import (
+    AbstractAxisSpec,
+    AbstractGeometry,
+    AbstractScalarDomain,
+    AxisDiscretization,
+    Boundary,
+    ComponentSum,
+    DomainComponent,
+    Fixed,
+    FixedEnd,
+    FixedStart,
+    GridBatch,
+    GridSampling,
+    Interior,
+    PointBatch,
+    ProbabilityDomain,
+    require_exact_mass,
+    SampleLayout,
+)
+
 from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._numerics import QuadratureRuleData
-from ..domain._base import _AbstractGeometry
-from ..domain._components import (
-    Boundary,
-    DomainComponent,
-    DomainComponentUnion,
-    Fixed,
-    FixedEnd,
-    FixedStart,
-    Interior,
-)
-from ..domain._dataset import DatasetDomain
-from ..domain._domain import RelabeledDomain
-from ..domain._grid import AbstractAxisSpec, AxisDiscretization
-from ..domain._probability import ProbabilityDomain
-from ..domain._scalar import _AbstractScalarDomain
-from ..domain._structure import (
-    CoordSeparableBatch,
-    PointsBatch,
-    ProductStructure,
-)
 from ..geometry import BoundaryAtlasProvider
 from ._batches import PointIntegrationBatch, SeparableIntegrationBatch
 from ._plans import FixedQuadraturePlan
@@ -61,13 +61,13 @@ def sum_over(field: cx.Field, axis: str, /) -> cx.Field:
 
 
 def axes_for_over(
-    structure: ProductStructure,
+    structure: SampleLayout,
     over: str | tuple[str, ...] | None,
     /,
 ) -> tuple[str, ...]:
     axis_names = structure.axis_names
     if axis_names is None:
-        raise ValueError("ProductStructure must be canonicalized before integration.")
+        raise ValueError("SampleLayout must be canonicalized before integration.")
     if over is None:
         return tuple(axis_names)
     requested = (over,) if isinstance(over, str) else tuple(over)
@@ -98,47 +98,40 @@ def axes_for_over(
     return tuple(selected)
 
 
-def label_measure(component: DomainComponent, label: str, /) -> Array:
-    selector = component.spec.component_for(label)
-    factor = component.domain.factor(label)
-    if isinstance(factor, RelabeledDomain):
-        factor = factor.base
-    if isinstance(factor, _AbstractGeometry):
-        if isinstance(selector, Interior):
-            return jnp.asarray(factor.volume, dtype=float)
-        if isinstance(selector, Boundary):
-            return jnp.asarray(factor.boundary_measure_value, dtype=float)
-        if isinstance(selector, Fixed):
-            return jnp.asarray(1.0)
-        raise TypeError(f"Unsupported geometry component {type(selector).__name__}.")
-    if isinstance(factor, _AbstractScalarDomain):
-        if isinstance(selector, Interior):
-            return jnp.asarray(factor.measure, dtype=float)
-        if isinstance(selector, Boundary):
-            return jnp.asarray(2.0)
-        if isinstance(selector, (FixedStart, FixedEnd, Fixed)):
-            return jnp.asarray(1.0)
-        raise TypeError(f"Unsupported scalar component {type(selector).__name__}.")
-    if isinstance(factor, DatasetDomain):
-        if isinstance(selector, Interior):
-            return jnp.asarray(factor.measure, dtype=float)
-        raise TypeError(f"Unsupported dataset component {type(selector).__name__}.")
-    from ..domain._ragged_series_dataset import RaggedSeriesDatasetDomain
-    from ..domain.graph._dataset import GraphDatasetDomain
-    from ..domain.graph._domain import GraphDomain
+def _block_measure(component: DomainComponent, block: tuple[str, ...], /) -> Array:
+    """Return one exact factor mass per complete factor represented by ``block``."""
+    block_labels = frozenset(block)
+    mass = jnp.asarray(1.0, dtype=float)
+    for factor_component in component.factor_components:
+        factor_labels = frozenset(factor_component.factor.labels)
+        overlap = block_labels & factor_labels
+        if not overlap:
+            continue
+        if overlap != factor_labels:
+            raise ValueError(
+                f"SampleLayout block {block!r} splits coupled factor "
+                f"{factor_component.factor.labels!r}."
+            )
+        mass = mass * require_exact_mass(
+            factor_component.measure.mass,
+            operation=f"sampling block {block!r} weight construction",
+        )
+    return mass
 
-    if isinstance(factor, RaggedSeriesDatasetDomain):
-        if isinstance(selector, Interior):
-            return jnp.asarray(factor.measure, dtype=float)
-        raise TypeError(f"Unsupported dataset component {type(selector).__name__}.")
-    if isinstance(factor, (GraphDomain, GraphDatasetDomain)):
-        return jnp.asarray(factor.component_measure(selector), dtype=float)
-    raise TypeError(f"Unsupported unary domain type {type(factor).__name__}.")
+
+def _component_base_mass(component: DomainComponent | ComponentSum, /) -> Array:
+    """Realize an exact component base mass without allocating mass descriptors."""
+    if isinstance(component, DomainComponent):
+        return _block_measure(component, component.domain.labels)
+    mass = jnp.asarray(0.0, dtype=float)
+    for term in component.terms:
+        mass = mass + _block_measure(term, term.domain.labels)
+    return mass
 
 
 def component_factor_fields(
     component: DomainComponent,
-    points: PointsBatch | CoordSeparableBatch | Any,
+    points: PointBatch | GridBatch | Any,
     /,
     *,
     key: Key[Array, ""],
@@ -146,15 +139,12 @@ def component_factor_fields(
 ) -> tuple[cx.Field, cx.Field]:
     """Evaluate dynamic selection and measure-modifier fields."""
     mask = cx.Field(jnp.asarray(1.0), dims=())
-    if isinstance(points, CoordSeparableBatch):
+    if isinstance(points, GridBatch):
         for coordinate_mask in points.coord_mask_by_label.values():
             values = jnp.asarray(coordinate_mask.data)
             mask = mask * cx.Field(values.astype(float), dims=coordinate_mask.dims)
     for label, where_function in component.where.items():
-        if (
-            isinstance(points, CoordSeparableBatch)
-            and label in points.coord_axes_by_label
-        ):
+        if isinstance(points, GridBatch) and label in points.coord_axes_by_label:
             continue
         wrapped = _ensure_special_kwonly_args(where_function)
         value = cx.cmap(wrapped, out_axes="leading")(points[label], key=key)
@@ -182,11 +172,11 @@ def component_factor_fields(
 
 
 def _custom_total_weight(component: DomainComponent, points: Any, /) -> cx.Field | None:
-    from ..domain._irregular_trajectory_dataset import (
+    from phydrax.domain import (
         irregular_trajectory_default_quadrature_total_weight,
+        trajectory_default_quadrature_total_weight,
     )
-    from ..domain._trajectory_dataset import trajectory_default_quadrature_total_weight
-    from ..domain.graph._trajectory import (
+    from phydrax.domain.graph import (
         graph_trajectory_default_quadrature_total_weight,
     )
 
@@ -221,9 +211,7 @@ def _point_weight(
     for block, axis in zip(structure.blocks, axis_names, strict=True):
         if axis not in axes:
             continue
-        mass = jnp.asarray(1.0)
-        for label in block:
-            mass = mass * label_measure(component, label)
+        mass = _block_measure(component, block)
         reference = first_field_leaf(points[block[0]])
         count = int(reference.named_shape[axis])
         total = total * cx.Field(
@@ -233,7 +221,7 @@ def _point_weight(
 
 
 def _coord_axes(
-    points: CoordSeparableBatch,
+    points: GridBatch,
     component: DomainComponent,
     over: str | tuple[str, ...] | None,
     /,
@@ -254,15 +242,14 @@ def _coord_axes(
 
 def _coord_weights(
     component: DomainComponent,
-    points: CoordSeparableBatch,
+    points: GridBatch,
     axes: tuple[str, ...],
     /,
 ) -> dict[str, cx.Field]:
     weights: dict[str, cx.Field] = {}
     for label, coordinate_axes in points.coord_axes_by_label.items():
         factor = component.domain.factor(label)
-        if isinstance(factor, RelabeledDomain):
-            factor = factor.base
+
         for coordinate_index, axis in enumerate(coordinate_axes):
             if axis not in axes:
                 continue
@@ -271,16 +258,16 @@ def _coord_weights(
             discretization = points.axis_discretization_by_axis.get(axis)
             if discretization is not None and discretization.quad_weights is not None:
                 values = discretization.quad_weights
-            elif isinstance(factor, _AbstractGeometry):
+            elif isinstance(factor, AbstractGeometry):
                 bounds = jnp.asarray(factor.mesh_bounds, dtype=float)
                 values = jnp.full(
                     (count,),
                     (bounds[1, coordinate_index] - bounds[0, coordinate_index])
                     / float(count),
                 )
-            elif isinstance(factor, _AbstractScalarDomain):
+            elif isinstance(factor, AbstractScalarDomain):
                 values = jnp.full(
-                    (count,), label_measure(component, label) / float(count)
+                    (count,), _block_measure(component, (label,)) / float(count)
                 )
             else:
                 raise TypeError(
@@ -293,9 +280,7 @@ def _coord_weights(
     for block, axis in zip(points.dense_structure.blocks, dense_names, strict=True):
         if axis not in axes:
             continue
-        mass = jnp.asarray(1.0)
-        for label in block:
-            mass = mass * label_measure(component, label)
+        mass = _block_measure(component, block)
         reference = first_field_leaf(points[block[0]])
         count = int(reference.named_shape[axis])
         weights[axis] = cx.Field(jnp.full((count,), mass / float(count)), dims=(axis,))
@@ -308,10 +293,10 @@ def materialize_sampled_component(
     /,
 ) -> PointIntegrationBatch | SeparableIntegrationBatch:
     """Attach authoritative component-measure weights to existing sampled points."""
-    if isinstance(target.component, DomainComponentUnion):
+    if isinstance(target.component, ComponentSum):
         raise TypeError("Materialize each union term against its aligned point batch.")
     component = target.component
-    if isinstance(points, CoordSeparableBatch):
+    if isinstance(points, GridBatch):
         axes = _coord_axes(points, component, target.axes)
         weights = _coord_weights(component, points, axes)
         coupled = cx.Field(jnp.asarray(1.0), dims=())
@@ -324,7 +309,7 @@ def materialize_sampled_component(
             weights,
             axes=axes,
             coupled_weight=coupled,
-            target_mass=component.measure(),
+            target_mass=_component_base_mass(component),
             provenance="component-sampled-separable",
         )
     axes = axes_for_over(points.structure, target.axes)
@@ -332,7 +317,7 @@ def materialize_sampled_component(
         points,
         _point_weight(component, points, axes),
         axes=axes,
-        target_mass=component.measure(),
+        target_mass=_component_base_mass(component),
         provenance="component-sampled",
     )
 
@@ -360,7 +345,7 @@ class IntegrationAxisSpec(AbstractAxisSpec):
 
 
 def _scalar_interior_rule_data(
-    factor: _AbstractScalarDomain,
+    factor: AbstractScalarDomain,
     data: QuadratureRuleData,
     /,
 ) -> tuple[Array, Array]:
@@ -392,14 +377,14 @@ def _materialize_scalar_interiors(
         label
         for label in component.domain.labels
         if isinstance(
-            component.spec.component_for(label),
+            component.spec.selection_for(label),
             (Fixed, FixedStart, FixedEnd),
         )
     )
     blocks = tuple(
         (label,) for label in component.domain.labels if label not in fixed_labels
     )
-    structure = ProductStructure(blocks).canonicalize(
+    structure = SampleLayout(blocks).canonicalize(
         component.domain.labels,
         fixed_labels=fixed_labels,
     )
@@ -407,10 +392,9 @@ def _materialize_scalar_interiors(
     weights_by_axis: dict[str, cx.Field] = {}
     for label in component.domain.labels:
         factor = component.domain.factor(label)
-        if isinstance(factor, RelabeledDomain):
-            factor = factor.base
-        selector = component.spec.component_for(label)
-        if not isinstance(factor, _AbstractScalarDomain):
+
+        selector = component.spec.selection_for(label)
+        if not isinstance(factor, AbstractScalarDomain):
             raise TypeError("Scalar fixed quadrature requires scalar domain factors.")
         if isinstance(selector, Interior):
             axis = structure.axis_for(label)
@@ -438,10 +422,10 @@ def _materialize_scalar_interiors(
     for axis in axes:
         total = total * weights_by_axis[axis]
     return PointIntegrationBatch(
-        PointsBatch(frozendict(points), structure),
+        PointBatch(frozendict(points), structure),
         total,
         axes=axes,
-        target_mass=component.measure(),
+        target_mass=_component_base_mass(component),
         provenance=f"{type(rule).__name__}:{data.nodes.shape[0]}",
     )
 
@@ -459,24 +443,23 @@ def _materialize_scalar_boundaries(
     fixed_labels: set[str] = set()
     for label in component.domain.labels:
         factor = component.domain.factor(label)
-        if isinstance(factor, RelabeledDomain):
-            factor = factor.base
-        selector = component.spec.component_for(label)
+
+        selector = component.spec.selection_for(label)
         if isinstance(selector, (Fixed, FixedStart, FixedEnd)):
             fixed_labels.add(label)
             if isinstance(selector, Fixed):
                 value = selector.value
             elif isinstance(selector, FixedStart):
-                if not isinstance(factor, _AbstractScalarDomain):
+                if not isinstance(factor, AbstractScalarDomain):
                     raise TypeError("FixedStart requires a scalar domain factor.")
                 value = factor.fixed("start")
             else:
-                if not isinstance(factor, _AbstractScalarDomain):
+                if not isinstance(factor, AbstractScalarDomain):
                     raise TypeError("FixedEnd requires a scalar domain factor.")
                 value = factor.fixed("end")
             points[label] = cx.Field(jnp.asarray(value), dims=())
             continue
-        if not isinstance(factor, _AbstractScalarDomain):
+        if not isinstance(factor, AbstractScalarDomain):
             raise ValueError("Scalar boundary quadrature requires scalar factors.")
         axis = f"__phydra_blk__{label}"
         if isinstance(selector, Boundary):
@@ -494,10 +477,10 @@ def _materialize_scalar_boundaries(
         points[label] = cx.Field(values, dims=(axis,))
         blocks.append((label,))
         weights_by_axis[axis] = cx.Field(weights, dims=(axis,))
-    structure = ProductStructure(tuple(blocks)).canonicalize(
+    structure = SampleLayout(tuple(blocks)).canonicalize(
         component.domain.labels, fixed_labels=frozenset(fixed_labels)
     )
-    batch = PointsBatch(frozendict(points), structure)
+    batch = PointBatch(frozendict(points), structure)
     axes = axes_for_over(structure, target.axes)
     total = cx.Field(jnp.asarray(1.0), dims=())
     for axis in axes:
@@ -506,7 +489,7 @@ def _materialize_scalar_boundaries(
         batch,
         total,
         axes=axes,
-        target_mass=component.measure(),
+        target_mass=_component_base_mass(component),
         provenance=f"scalar-boundary:{type(rule).__name__}",
     )
 
@@ -523,7 +506,7 @@ def _materialize_boundary_atlas(
         label
         for label in component.domain.labels
         if not isinstance(
-            component.spec.component_for(label), (Fixed, FixedStart, FixedEnd)
+            component.spec.selection_for(label), (Fixed, FixedStart, FixedEnd)
         )
     )
     if len(varying) != 1:
@@ -532,10 +515,9 @@ def _materialize_boundary_atlas(
             "use ProductIntegrationPlan for mixed factors."
         )
     label = varying[0]
-    selector = component.spec.component_for(label)
+    selector = component.spec.selection_for(label)
     factor = component.domain.factor(label)
-    if isinstance(factor, RelabeledDomain):
-        factor = factor.base
+
     if not isinstance(selector, Boundary) or not isinstance(
         factor, BoundaryAtlasProvider
     ):
@@ -566,50 +548,50 @@ def _materialize_boundary_atlas(
     )
     physical = atlas.map(chart_indices, reference)
     jacobian = atlas.jacobian(chart_indices, reference)
-    active = atlas.reference_mask(chart_indices, reference) & atlas.seam_owner[
-        chart_indices
-    ]
+    active = (
+        atlas.reference_mask(chart_indices, reference) & atlas.seam_owner[chart_indices]
+    )
     weights = jnp.where(
         active,
         jacobian * reference_data.weights[None, :],
         0.0,
     )
     fixed_labels = frozenset(other for other in component.domain.labels if other != label)
-    structure = ProductStructure(((label,),)).canonicalize(
+    structure = SampleLayout(((label,),)).canonicalize(
         component.domain.labels, fixed_labels=fixed_labels
     )
     axis = structure.axis_for(label)
     if axis is None:
         raise RuntimeError("Boundary-atlas structure has no integration axis.")
+    event_size = component.domain.coordinate(label).event_size
     points: dict[str, cx.Field] = {
-        label: cx.Field(physical.reshape((-1, factor.var_dim)), dims=(axis, None))
+        label: cx.Field(physical.reshape((-1, event_size)), dims=(axis, None))
     }
     for other in fixed_labels:
-        selector_ = component.spec.component_for(other)
+        selector_ = component.spec.selection_for(other)
         factor_ = component.domain.factor(other)
-        if isinstance(factor_, RelabeledDomain):
-            factor_ = factor_.base
+
         if isinstance(selector_, Fixed):
             value = selector_.value
         elif isinstance(selector_, FixedStart):
-            if not isinstance(factor_, _AbstractScalarDomain):
+            if not isinstance(factor_, AbstractScalarDomain):
                 raise TypeError("FixedStart requires a scalar domain factor.")
             value = factor_.fixed("start")
         else:
-            if not isinstance(factor_, _AbstractScalarDomain):
+            if not isinstance(factor_, AbstractScalarDomain):
                 raise TypeError("FixedEnd requires a scalar domain factor.")
             value = factor_.fixed("end")
-        dimensions = (None,) if isinstance(factor_, _AbstractGeometry) else ()
+        dimensions = (None,) if isinstance(factor_, AbstractGeometry) else ()
         points[other] = cx.Field(jnp.asarray(value), dims=dimensions)
     axes = axes_for_over(structure, target.axes)
     return PointIntegrationBatch(
-        PointsBatch(
+        PointBatch(
             frozendict({name: points[name] for name in component.domain.labels}),
             structure,
         ),
         cx.Field(weights.reshape((-1,)), dims=(axis,)),
         axes=axes,
-        target_mass=component.measure(),
+        target_mass=_component_base_mass(component),
         provenance=f"boundary-atlas:{type(rule).__name__}",
     )
 
@@ -620,7 +602,7 @@ def materialize_fixed_component(
     /,
 ) -> PointIntegrationBatch | SeparableIntegrationBatch | tuple[Any, ...]:
     """Lower component geometry and interval rules into typed batches."""
-    if isinstance(target.component, DomainComponentUnion):
+    if isinstance(target.component, ComponentSum):
         return tuple(
             materialize_fixed_component(
                 ComponentTarget(term, axes=target.axes, normalized=target.normalized),
@@ -630,7 +612,7 @@ def materialize_fixed_component(
         )
     component = target.component
     selectors = tuple(
-        component.spec.component_for(label) for label in component.domain.labels
+        component.spec.selection_for(label) for label in component.domain.labels
     )
     rule = plan.rule
     interval_rule_data(rule)
@@ -638,24 +620,18 @@ def materialize_fixed_component(
         factors = tuple(
             component.domain.factor(label) for label in component.domain.labels
         )
-        unwrapped = tuple(
-            factor.base if isinstance(factor, RelabeledDomain) else factor
-            for factor in factors
-        )
-        if all(isinstance(factor, _AbstractScalarDomain) for factor in unwrapped):
+        unwrapped = tuple(factor for factor in factors)
+        if all(isinstance(factor, AbstractScalarDomain) for factor in unwrapped):
             return _materialize_scalar_boundaries(component, target, rule)
         return _materialize_boundary_atlas(component, target, rule)
     factors = tuple(component.domain.factor(label) for label in component.domain.labels)
-    unwrapped_factors = tuple(
-        factor.base if isinstance(factor, RelabeledDomain) else factor
-        for factor in factors
-    )
-    if all(isinstance(factor, _AbstractScalarDomain) for factor in unwrapped_factors):
+    unwrapped_factors = tuple(factor for factor in factors)
+    if all(isinstance(factor, AbstractScalarDomain) for factor in unwrapped_factors):
         return _materialize_scalar_interiors(component, target, rule)
     spec = IntegrationAxisSpec(rule)
     coord_separable: dict[str, Any] = {}
     for label in component.domain.labels:
-        selector = component.spec.component_for(label)
+        selector = component.spec.selection_for(label)
         if isinstance(selector, (Fixed, FixedStart, FixedEnd)):
             continue
         if not isinstance(selector, Interior):
@@ -663,21 +639,17 @@ def materialize_fixed_component(
                 f"Unsupported fixed component selector {type(selector).__name__}."
             )
         factor = component.domain.factor(label)
-        if isinstance(factor, RelabeledDomain):
-            factor = factor.base
-        if isinstance(factor, _AbstractGeometry):
-            coord_separable[label] = (spec,) * int(factor.var_dim)
-        elif isinstance(factor, _AbstractScalarDomain):
+
+        if isinstance(factor, AbstractGeometry):
+            coord_separable[label] = (spec,) * int(factor.spatial_dim)
+        elif isinstance(factor, AbstractScalarDomain):
             coord_separable[label] = spec
         else:
             raise TypeError(
                 "Fixed quadrature currently supports scalar and geometric domain factors."
             )
-    points = component.sample_coord_separable(
-        coord_separable,
-        num_points=(),
-        dense_structure=ProductStructure(()),
-        sampler="uniform",
+    points = component.sample(
+        GridSampling(coord_separable, design="uniform"),
         key=DOC_KEY0,
     )
     return materialize_sampled_component(target, points)
@@ -688,7 +660,6 @@ __all__ = [
     "axes_for_over",
     "component_factor_fields",
     "first_field_leaf",
-    "label_measure",
     "materialize_fixed_component",
     "materialize_sampled_component",
     "sum_over",

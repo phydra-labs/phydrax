@@ -9,22 +9,23 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
+import phydrax as phx
 import phydrax.operators.differential._domain_ops as differential_domain_ops
 from phydrax.constraints import enforce_dirichlet, enforce_initial
 from phydrax.domain import (
     Boundary,
+    CallbackDerivativeRule,
     FixedStart,
     Interval1d,
-    ProductStructure,
+    SampleLayout,
     TimeInterval,
 )
-from phydrax.domain._function import DomainFunction
 from phydrax.nn.models import LatentContractionModel, LatentExecutionPolicy
 from phydrax.nn.models.core._base import _AbstractBaseModel
 from phydrax.operators.differential import dt_n, laplacian, partial_n, partial_t
 from phydrax.operators.differential._hooks import (
-    get_derivative_hook,
-    with_derivative_hook,
+    get_derivative_rule,
+    with_derivative_rule,
 )
 
 
@@ -124,8 +125,10 @@ def test_domain_model_blockwise_pointsbatch_singleton_blocks():
     u = domain.Model("x", "t")(model)
 
     component = domain.component()
-    structure = ProductStructure((("x",), ("t",)))
-    batch = component.sample((5, 7), structure=structure, key=jr.key(0))
+    structure = SampleLayout((("x",), ("t",)))
+    batch = component.sample(
+        phx.domain.PointSampling((5, 7), layout=structure), key=jr.key(0)
+    )
     out = u(batch)
 
     axis_x = batch.structure.axis_for("x")
@@ -151,8 +154,8 @@ def test_domain_model_warns_on_blockwise_fallback_for_paired_blocks():
     u = domain.Model("x", "t")(model)
 
     component = domain.component()
-    structure = ProductStructure((("x", "t"),))
-    batch = component.sample(9, structure=structure, key=jr.key(1))
+    structure = SampleLayout((("x", "t"),))
+    batch = component.sample(phx.domain.PointSampling(9, layout=structure), key=jr.key(1))
 
     with pytest.warns(UserWarning, match="singleton block"):
         out = u(batch)
@@ -174,10 +177,10 @@ def test_latent_derivative_path_matches_exact_values():
     u = domain.Model("x", "t")(model)
 
     component = domain.component()
-    batch = component.sample_coord_separable(
-        {"x": 9},
-        num_points=7,
-        dense_structure=ProductStructure((("t",),)),
+    batch = component.sample(
+        phx.domain.GridSampling(
+            {"x": 9}, dense=phx.domain.PointSampling(7, layout=SampleLayout((("t",),)))
+        ),
         key=jr.key(2),
     )
     x_axis = _axis_for_label_in_coord_batch(batch, "x")
@@ -227,10 +230,10 @@ def test_latent_derivative_path_flat_topology_matches_exact_values():
     )
     u = domain.Model("x", "t")(model)
     component = domain.component()
-    batch = component.sample_coord_separable(
-        {"x": 9},
-        num_points=7,
-        dense_structure=ProductStructure((("t",),)),
+    batch = component.sample(
+        phx.domain.GridSampling(
+            {"x": 9}, dense=phx.domain.PointSampling(7, layout=SampleLayout((("t",),)))
+        ),
         key=jr.key(12),
     )
     x_axis = _axis_for_label_in_coord_batch(batch, "x")
@@ -309,7 +312,7 @@ def test_enforced_dirichlet_preserves_latent_derivative_fast_path():
     u = domain.Model("x", "t")(model)
     boundary = domain.component({"x": Boundary()})
     u_enforced = enforce_dirichlet(u, boundary, var="x", target=0.0)
-    assert get_derivative_hook(u_enforced) is not None
+    assert get_derivative_rule(u_enforced) is not None
 
     du_dt = dt_n(u_enforced, var="t", order=1, backend="jet")
     with warnings.catch_warnings(record=True) as caught:
@@ -323,13 +326,13 @@ def test_enforced_dirichlet_preserves_latent_derivative_fast_path():
     ]
     assert not fallback_msgs
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        expected = du_dt.func(jnp.asarray([0.25]), 0.4, force_generic=True)
+    expected = jax.jacfwd(lambda time: u_enforced.func(jnp.asarray([0.25]), time))(
+        jnp.asarray(0.4)
+    )
     assert jnp.allclose(jnp.asarray(out), jnp.asarray(expected), atol=1e-6)
 
 
-def test_latent_derivative_path_warns_on_auto_fallback():
+def test_latent_derivative_path_warns_on_auto_fallback(monkeypatch):
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=2,
@@ -340,15 +343,20 @@ def test_latent_derivative_path_warns_on_auto_fallback():
     )
     u = domain.Model("x", "t")(model)
     du_dt = dt_n(u, var="t", order=2, backend="jet")
+    monkeypatch.setattr(
+        differential_domain_ops,
+        "_latent_try_partial_n_eval",
+        lambda *args, **kwargs: (None, "unsupported test topology"),
+    )
 
     with pytest.warns(
         UserWarning,
-        match="Falling back to generic derivative path for LatentContractionModel",
+        match="unsupported test topology",
     ):
-        _ = du_dt.func(jnp.asarray([0.25]), 0.4, force_generic=True)
+        _ = du_dt.func(jnp.asarray([0.25]), 0.4)
 
 
-def test_latent_derivative_path_respects_error_fallback():
+def test_latent_derivative_path_respects_error_fallback(monkeypatch):
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=2,
@@ -359,12 +367,17 @@ def test_latent_derivative_path_respects_error_fallback():
     )
     u = domain.Model("x", "t")(model)
     du_dt = dt_n(u, var="t", order=2, backend="jet")
+    monkeypatch.setattr(
+        differential_domain_ops,
+        "_latent_try_partial_n_eval",
+        lambda *args, **kwargs: (None, "unsupported test topology"),
+    )
 
     with pytest.raises(
         ValueError,
-        match="Falling back to generic derivative path for LatentContractionModel",
+        match="unsupported test topology",
     ):
-        _ = du_dt.func(jnp.asarray([0.25]), 0.4, force_generic=True)
+        _ = du_dt.func(jnp.asarray([0.25]), 0.4)
 
 
 def test_binary_expression_derivative_hook_composes():
@@ -395,12 +408,12 @@ def test_binary_expression_derivative_hook_composes():
         if n == 0:
             return base
         if n == 1:
-            return DomainFunction(domain=domain, deps=("x",), func=lambda x: 1.0)
-        return DomainFunction(domain=domain, deps=("x",), func=lambda x: 0.0)
+            return domain.Function("x")(lambda x: 1.0)
+        return domain.Function("x")(lambda x: 0.0)
 
-    hooked = with_derivative_hook(base, _base_hook)
+    hooked = with_derivative_rule(base, CallbackDerivativeRule(_base_hook))
     expr = (2.0 * hooked + 3.0) / (1.0 + hooked)
-    assert get_derivative_hook(expr) is not None
+    assert get_derivative_rule(expr) is not None
 
     dexpr = partial_n(expr, var="x", axis=0, order=1, backend="ad")
     x = jnp.asarray([0.25], dtype=float)
@@ -423,7 +436,7 @@ def test_boundary_gate_style_blend_preserves_hook():
     u_init = enforce_initial(u_raw, initial, var="t", targets={0: 0.0})
 
     blended = u_raw + 0.5 * (u_init - u_raw)
-    assert get_derivative_hook(blended) is not None
+    assert get_derivative_rule(blended) is not None
 
     du_dt = dt_n(blended, var="t", order=1, backend="ad")
     out = jnp.asarray(du_dt.func(jnp.asarray([0.2], dtype=float), 0.4))
@@ -450,10 +463,6 @@ def test_coord_separable_laplacian_uses_fwdfwd_path(monkeypatch):
         _latent_fast_should_not_run,
     )
 
-    batch = domain.component().sample_coord_separable(
-        {"x": 17},
-        dense_structure=ProductStructure(()),
-        key=jr.key(111),
-    )
+    batch = domain.component().sample(phx.domain.GridSampling({"x": 17}), key=jr.key(111))
     out = jnp.asarray(lap(batch).data)
     assert jnp.allclose(out, 2.0, atol=1e-6)

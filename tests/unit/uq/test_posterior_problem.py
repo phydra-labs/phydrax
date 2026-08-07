@@ -101,7 +101,7 @@ def test_supervised_likelihood_exposes_fixed_observations_and_log_probabilities(
         domain.component(),
         targets,
         likelihood,
-        num_cases=3,
+        sampling=phx.domain.PointSampling(3, design="uniform"),
     )
 
     observed = constraint.observed_batch()

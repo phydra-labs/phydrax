@@ -12,11 +12,11 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from phydrax.domain import BatchEvaluator, PointBatch
+
 from ...._callable import _ensure_special_kwonly_args
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
-from ....domain._function import BatchAwareCallable
-from ....domain._structure import PointsBatch
 from ..core._keys import EvalKey, split_eval_key
 
 
@@ -88,7 +88,7 @@ def _tree_to_feature_array(tree: Any, /, *, axis_rank: int, name: str) -> Array:
     return jnp.concatenate(parts, axis=-1)
 
 
-def _extract_payload(batch: PointsBatch, label: str, /) -> RaggedSeriesBatchInput:
+def _extract_payload(batch: PointBatch, label: str, /) -> RaggedSeriesBatchInput:
     payload = batch.points[label]
     if not isinstance(payload, Mapping):
         raise TypeError("RaggedSeriesModel expects a mapping payload for its label.")
@@ -150,7 +150,7 @@ def _extract_payload(batch: PointsBatch, label: str, /) -> RaggedSeriesBatchInpu
     )
 
 
-class RaggedSeriesModel(StrictModule, BatchAwareCallable):
+class RaggedSeriesModel(StrictModule, BatchEvaluator):
     """Wrap a ragged-series encoder as a Phydrax batch-aware `DomainFunction`."""
 
     model: Callable
@@ -168,8 +168,8 @@ class RaggedSeriesModel(StrictModule, BatchAwareCallable):
         key: EvalKey = DOC_KEY0,
         **kwargs: Any,
     ) -> cx.Field:
-        if not isinstance(batch, PointsBatch):
-            raise TypeError("RaggedSeriesModel requires PointsBatch evaluation.")
+        if not isinstance(batch, PointBatch):
+            raise TypeError("RaggedSeriesModel requires PointBatch evaluation.")
         if self.label not in batch.points:
             raise KeyError(f"RaggedSeriesModel label {self.label!r} missing from batch.")
         axis = batch.structure.axis_for(self.label)

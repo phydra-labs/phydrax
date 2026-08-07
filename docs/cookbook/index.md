@@ -18,11 +18,11 @@ via the same mathematical contract: minimize functionals over domains.
 
 ## How to choose a workflow
 
-### Point batches vs coord-separable grids
+### Point batches vs axis-based grids
 
-- Use **paired point sampling** (`PointsBatch`) for most PINN-style collocation and scattered data.
-- Use **coord-separable sampling** (`CoordSeparableBatch`) for spectral/basis operators and neural operators
-  (DeepONet/FNO-style), where you want explicit axis semantics and grid evaluation.
+- Use `PointSampling` → `PointBatch` for paired collocation and scattered data.
+- Use `GridSampling` → `GridBatch` for spectral/basis operators and axis-native
+  neural operators such as DeepONet and FNO.
 
 See [Guides → Domains and sampling](../guides_domain.md).
 

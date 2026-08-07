@@ -7,12 +7,13 @@ import jax.numpy as jnp
 import numpy as np
 import trimesh
 
-from phydrax.domain.geometry2d import Square
-from phydrax.domain.geometry3d import Cube, Geometry3DFromCAD
+import phydrax as phx
 
 
 def test_2d_sdf_jvp_vector_and_scalar_inputs():
-    geom = Square(center=(0.0, 0.0), side=1.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
+    )
 
     def f(p):
         return geom.adf(p)
@@ -29,7 +30,9 @@ def test_2d_sdf_jvp_vector_and_scalar_inputs():
 
 
 def test_3d_sdf_jvp_vector_and_scalar_inputs():
-    geom = Cube(center=(0.0, 0.0, 0.0), side=1.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=1.0).compile()
+    )
 
     def f(p):
         p = jnp.asarray(p)
@@ -49,7 +52,9 @@ def test_3d_sdf_jvp_vector_and_scalar_inputs():
 
 
 def test_compact_enforcement_gate_exact_zero_has_finite_linear_jet():
-    geometry = Square(center=(0.0, 0.0), side=1.0)
+    geometry = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=1.0).compile()
+    )
     gate = geometry.make_enforcement_gate(method="compact")
 
     def profile(offset):
@@ -68,7 +73,9 @@ def test_compact_enforcement_gate_exact_zero_has_finite_linear_jet():
 
 
 def test_3d_enforcement_gate_corner_has_finite_pseudoderivatives():
-    geom = Cube(center=(0.0, 0.0, 0.0), side=1.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=1.0).compile()
+    )
     gate = geom.make_enforcement_gate()
     corner = jnp.array([0.5, 0.5, 0.5])
 
@@ -98,7 +105,9 @@ def test_3d_enforcement_gate_vanishes_on_sliver_facet():
         ]
     )
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
-    geom = Geometry3DFromCAD(mesh, recenter=False)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.mesh_region_from_source(mesh, recenter=False).compile()
+    )
     gate = geom.make_enforcement_gate()
     facet_point = jnp.asarray(np.array([0.026, 0.957, 0.017]) @ vertices[[0, 1, 2]])
 

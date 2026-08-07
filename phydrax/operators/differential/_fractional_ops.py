@@ -11,10 +11,10 @@ import jax
 import jax.numpy as jnp
 import opt_einsum as oe
 
+from phydrax.domain import AbstractGeometry, AbstractScalarDomain, DomainFunction
+
 from ..._doc import DOC_KEY0
 from ..._sampling import get_sampler
-from ...domain._function import DomainFunction
-from ...domain._scalar import _AbstractScalarDomain
 from ..integral._local_ops import _uniform_ball_rule
 from ._domain_ops import _factor_and_dim, _resolve_var, grad
 
@@ -76,8 +76,9 @@ def fractional_laplacian(
         raise ValueError("alpha must be in (0,2).")
 
     var = _resolve_var(u, var)
-    factor, var_dim = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    _, var_dim = _factor_and_dim(u, var)
+    factor = u.domain.factor(var)
+    if not isinstance(factor, AbstractGeometry):
         raise ValueError(
             "fractional_laplacian(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -220,7 +221,7 @@ def fractional_derivative_gl_mc(
 
     var = _resolve_var(u, var)
     factor, var_dim = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if isinstance(factor, AbstractScalarDomain):
         raise ValueError(
             "fractional_derivative_gl_mc(var=...) requires a geometry variable, not a scalar variable."
         )

@@ -6,9 +6,10 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
 from phydrax.constraints import enforce_ragged_time_series, FunctionalConstraint
-from phydrax.domain import PointsBatch, ProductStructure, TrajectoryDatasetDomain
+from phydrax.domain import PointBatch, SampleLayout, TrajectoryDatasetDomain
 from phydrax.operators.differential import partial_n, partial_t
 
 
@@ -20,7 +21,7 @@ def _make_linear_problem():
     y0 = inputs[:, 0, None] + 2.0 * times[None, :]
     y1 = 1.0 - inputs[:, 0, None] + 3.0 * times[None, :]
     values = jnp.stack((y0, y1), axis=-1)
-    structure = ProductStructure((("data", "t"),))
+    structure = SampleLayout((("data", "t"),))
     return domain, values, structure
 
 
@@ -62,7 +63,7 @@ def test_enforce_ragged_time_series_supports_first_time_derivative():
 
     hard = enforce_ragged_time_series(free, domain, values)
     dt_hard = partial_t(hard, var="t")
-    batch = domain.component().sample(12, structure=structure, key=jr.key(1))
+    batch = domain.component().sample(phx.domain.PointSampling(12, layout=structure), key=jr.key(1))
     pred = jnp.asarray(dt_hard(batch, key=jr.key(2)).data)
     expected = jnp.broadcast_to(jnp.asarray([2.0, 3.0]), pred.shape)
     assert jnp.allclose(pred, expected, atol=1e-12)
@@ -83,7 +84,7 @@ def test_enforce_ragged_time_series_supports_cubic_hermite_second_time_derivativ
         gate="sin4",
     )
     d2_hard = partial_n(hard, var="t", order=2)
-    batch = domain.component().sample(12, structure=structure, key=jr.key(5))
+    batch = domain.component().sample(phx.domain.PointSampling(12, layout=structure), key=jr.key(5))
     pred = jnp.asarray(d2_hard(batch, key=jr.key(6)).data)
     assert jnp.allclose(pred, jnp.zeros_like(pred), atol=1e-10)
 
@@ -128,7 +129,7 @@ def test_enforce_ragged_time_series_requires_trajectory_batch_indices():
 
     hard = enforce_ragged_time_series(free, domain, values)
     batch = _all_observation_batch(domain, structure)
-    stripped = PointsBatch(
+    stripped = PointBatch(
         points=frozendict({"data": batch["data"], "t": batch["t"]}),
         structure=batch.structure,
     )
@@ -149,14 +150,9 @@ def test_physics_only_constraint_can_use_hard_enforced_ragged_data():
         return jnp.asarray([2.0, 3.0])
 
     hard = enforce_ragged_time_series(free, domain, values)
-    constraint = FunctionalConstraint.from_operator(
-        component=domain.component(),
-        operator=lambda u: partial_t(u, var="t") - rhs,
-        constraint_vars="u",
-        num_points=16,
-        structure=structure,
-        reduction="mean",
-    )
+    constraint = FunctionalConstraint.from_operator(component=domain.component(),
+    operator=lambda u: partial_t(u, var="t") - rhs,
+    constraint_vars="u", sampling=phx.domain.PointSampling(16, layout=structure), reduction="mean",)
 
     loss = constraint.loss({"u": hard}, key=jr.key(3))
     assert jnp.allclose(loss, 0.0, atol=1e-12)
@@ -176,14 +172,9 @@ def test_physics_only_constraint_can_use_second_derivative_hard_ragged_data():
         interpolation="cubic_hermite",
         gate="sin4",
     )
-    constraint = FunctionalConstraint.from_operator(
-        component=domain.component(),
-        operator=lambda u: partial_n(u, var="t", order=2),
-        constraint_vars="u",
-        num_points=16,
-        structure=structure,
-        reduction="mean",
-    )
+    constraint = FunctionalConstraint.from_operator(component=domain.component(),
+    operator=lambda u: partial_n(u, var="t", order=2),
+    constraint_vars="u", sampling=phx.domain.PointSampling(16, layout=structure), reduction="mean",)
 
     loss = constraint.loss({"u": hard}, key=jr.key(8))
     assert jnp.allclose(loss, 0.0, atol=1e-10)

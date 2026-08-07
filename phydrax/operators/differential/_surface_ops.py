@@ -9,9 +9,8 @@ from typing import Literal
 import jax.numpy as jnp
 import opt_einsum as oe
 
-from ...domain._components import DomainComponent
-from ...domain._function import DomainFunction
-from ...domain._scalar import _AbstractScalarDomain
+from phydrax.domain import AbstractScalarDomain, DomainComponent, DomainFunction
+
 from ...metrix import RiemannianMetric, tangent_projector_from_normal
 from ._domain_ops import _factor_and_dim, _resolve_var, curl, grad
 
@@ -44,7 +43,7 @@ def tangential_component(
     """
     var = _resolve_var(w, var)
     factor, _ = _factor_and_dim(w, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if isinstance(factor, AbstractScalarDomain):
         raise ValueError(
             "tangential_component(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -98,7 +97,7 @@ def surface_grad(
     """
     var = _resolve_var(u, var)
     factor, _ = _factor_and_dim(u, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if isinstance(factor, AbstractScalarDomain):
         raise ValueError(
             "surface_grad(var=...) requires a geometry variable, not a scalar variable."
         )
@@ -161,7 +160,7 @@ def surface_div(
     """
     var = _resolve_var(v, var)
     factor, _ = _factor_and_dim(v, var)
-    if isinstance(factor, _AbstractScalarDomain):
+    if isinstance(factor, AbstractScalarDomain):
         raise ValueError(
             "surface_div(var=...) requires a geometry variable, not a scalar variable."
         )

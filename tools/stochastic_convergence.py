@@ -375,7 +375,9 @@ def run_stochastic_advection_diffusion_benchmark(
         jnp.abs(jnp.trace(empirical_covariance) - 2.0 * variance) / (2.0 * variance)
     )
 
-    domain = phx.domain.Square(center=(0.0, 0.0), side=4.0)
+    domain = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=4.0).compile()
+    )
     zero_drift = domain.Function("x")(lambda x: jnp.zeros((2,)))
     rotation = jnp.asarray([[0.0, -1.0], [1.0, 0.0]])
     angular_noise = 0.6

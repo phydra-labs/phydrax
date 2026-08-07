@@ -13,6 +13,8 @@ import jax.random as jr
 import optax
 from jaxtyping import Array, Key
 
+from phydrax.domain import DomainFunction, EnforcementGateMethod
+
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._objective import AbstractObjectiveTerm
@@ -20,8 +22,6 @@ from .._strict import StrictModule
 from .._training import EvaluationParametersFn
 from ..constraints._base import AbstractConstraint
 from ..constraints._functional import FunctionalConstraint
-from ..domain._base import EnforcementGateMethod
-from ..domain._function import DomainFunction
 from ..operators.differential._runtime import derivative_runtime_context
 from ._enforced_constraint_pipeline import (
     EnforcedConstraintPipelines,

@@ -8,11 +8,11 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 
+import phydrax as phx
 from phydrax.domain import (
     DomainFunction,
     Interval1d,
-    ProductStructure,
-    Square,
+    SampleLayout,
     TimeInterval,
 )
 from phydrax.integration import from_samples, over
@@ -136,7 +136,9 @@ def _scalar_field_from_dense(field: cx.Field, axis: str) -> cx.Field:
 
 
 def test_latent_contraction_product_domain_partials():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     param = Interval1d(-1.0, 1.0).relabel("p")
     time = TimeInterval(0.0, 1.0)
     domain = geom @ param @ time
@@ -151,10 +153,11 @@ def test_latent_contraction_product_domain_partials():
     u = _latent_function(domain, model)
 
     component = domain.component()
-    sep = component.sample_coord_separable(
-        {"x": (4, 3)},
-        num_points=(5, 4),
-        dense_structure=ProductStructure((("p",), ("t",))),
+    sep = component.sample(
+        phx.domain.GridSampling(
+            {"x": (4, 3)},
+            dense=phx.domain.PointSampling((5, 4), layout=SampleLayout((("p",), ("t",)))),
+        ),
         key=jr.key(0),
     )
 
@@ -197,7 +200,9 @@ def test_latent_contraction_product_domain_partials():
 
 
 def test_latent_contraction_product_domain_integral_over_x():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     param = Interval1d(-1.0, 1.0).relabel("p")
     time = TimeInterval(0.0, 1.0)
     domain = geom @ param @ time
@@ -212,10 +217,11 @@ def test_latent_contraction_product_domain_integral_over_x():
     u = _latent_function(domain, model)
 
     component = domain.component()
-    sep = component.sample_coord_separable(
-        {"x": (6, 5)},
-        num_points=(4, 3),
-        dense_structure=ProductStructure((("p",), ("t",))),
+    sep = component.sample(
+        phx.domain.GridSampling(
+            {"x": (6, 5)},
+            dense=phx.domain.PointSampling((4, 3), layout=SampleLayout((("p",), ("t",)))),
+        ),
         key=jr.key(1),
     )
 
@@ -235,7 +241,9 @@ def test_latent_contraction_product_domain_integral_over_x():
 
 
 def test_latent_contraction_product_domain_paired_dense_block():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     param = Interval1d(-1.0, 1.0).relabel("p")
     time = TimeInterval(0.0, 1.0)
     domain = geom @ param @ time
@@ -250,10 +258,11 @@ def test_latent_contraction_product_domain_paired_dense_block():
     u = _latent_function(domain, model)
 
     component = domain.component()
-    sep = component.sample_coord_separable(
-        {"x": (3, 2)},
-        num_points=6,
-        dense_structure=ProductStructure((("p", "t"),)),
+    sep = component.sample(
+        phx.domain.GridSampling(
+            {"x": (3, 2)},
+            dense=phx.domain.PointSampling(6, layout=SampleLayout((("p", "t"),))),
+        ),
         key=jr.key(2),
     )
 
@@ -271,7 +280,9 @@ def test_latent_contraction_product_domain_paired_dense_block():
 
 
 def test_latent_contraction_multi_coord_separable_labels():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     param = Interval1d(-1.0, 1.0).relabel("p")
     time = TimeInterval(0.0, 1.0)
     domain = geom @ param @ time
@@ -286,10 +297,11 @@ def test_latent_contraction_multi_coord_separable_labels():
     u = _latent_function(domain, model)
 
     component = domain.component()
-    sep = component.sample_coord_separable(
-        {"x": (3, 2), "p": 4},
-        num_points=5,
-        dense_structure=ProductStructure((("t",),)),
+    sep = component.sample(
+        phx.domain.GridSampling(
+            {"x": (3, 2), "p": 4},
+            dense=phx.domain.PointSampling(5, layout=SampleLayout((("t",),))),
+        ),
         key=jr.key(3),
     )
 

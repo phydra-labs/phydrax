@@ -23,9 +23,9 @@ def _make_graph() -> phx.graph.GraphIR:
 def test_graph_domain_samples_node_batch():
     domain = phx.domain.GraphDomain(_make_graph())
     component = domain.component({"graph": phx.domain.Nodes()})
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
 
-    batch = component.sample(3, structure=structure, key=jr.key(0))
+    batch = component.sample(phx.domain.PointSampling(3, layout=structure), key=jr.key(0))
     axis = batch.structure.axis_for("graph")
 
     assert isinstance(batch, phx.domain.GraphBatch)
@@ -37,8 +37,8 @@ def test_graph_domain_samples_node_batch():
 def test_graph_domain_function_evaluates_over_nodes():
     domain = phx.domain.GraphDomain(_make_graph())
     component = domain.component({"graph": phx.domain.Nodes()})
-    structure = phx.domain.ProductStructure((("graph",),))
-    batch = component.sample(3, structure=structure, key=jr.key(1))
+    structure = phx.domain.SampleLayout((("graph",),))
+    batch = component.sample(phx.domain.PointSampling(3, layout=structure), key=jr.key(1))
 
     @domain.Function("graph")
     def u(node):
@@ -53,9 +53,9 @@ def test_graph_domain_function_evaluates_over_nodes():
 def test_graph_domain_samples_explicit_node_sets():
     domain = phx.domain.GraphDomain(_make_graph(), measure="count")
     component = domain.component({"graph": phx.domain.BoundaryNodes([0, 2])})
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
 
-    batch = component.sample(2, structure=structure, key=jr.key(1))
+    batch = component.sample(phx.domain.PointSampling(2, layout=structure), key=jr.key(1))
 
     assert batch.component_kind == "nodes"
     assert jnp.allclose(batch["graph"].data, jnp.array([[0.0], [2.0]]))
@@ -63,15 +63,15 @@ def test_graph_domain_samples_explicit_node_sets():
         batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data,
         jnp.array([0, 2], dtype=jnp.int32),
     )
-    assert jnp.allclose(component.measure(), 2.0)
+    assert jnp.allclose(component.mass.value, 2.0)
 
 
 def test_graph_domain_samples_explicit_edge_sets():
     domain = phx.domain.GraphDomain(_make_graph(), measure="count")
     component = domain.component({"graph": phx.domain.InterfaceEdges([2, 0])})
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
 
-    batch = component.sample(2, structure=structure, key=jr.key(1))
+    batch = component.sample(phx.domain.PointSampling(2, layout=structure), key=jr.key(1))
 
     assert batch.component_kind == "edges"
     assert jnp.allclose(batch["graph"].data, jnp.array([[2.5], [0.5]]))
@@ -79,16 +79,18 @@ def test_graph_domain_samples_explicit_edge_sets():
         batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data,
         jnp.array([2, 0], dtype=jnp.int32),
     )
-    assert jnp.allclose(component.measure(), 2.0)
+    assert jnp.allclose(component.mass.value, 2.0)
 
 
 def test_graph_domain_integral_measure_modes():
     graph = _make_graph()
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
 
     probability_domain = phx.domain.GraphDomain(graph, measure="probability")
     probability_component = probability_domain.component({"graph": phx.domain.Nodes()})
-    probability_batch = probability_component.sample(3, structure=structure)
+    probability_batch = probability_component.sample(
+        phx.domain.PointSampling(3, layout=structure)
+    )
     probability_realization = phx.integration.from_samples(
         phx.integration.over(probability_component), probability_batch
     )
@@ -97,7 +99,7 @@ def test_graph_domain_integral_measure_modes():
 
     count_domain = phx.domain.GraphDomain(graph, measure="count")
     count_component = count_domain.component({"graph": phx.domain.Nodes()})
-    count_batch = count_component.sample(3, structure=structure)
+    count_batch = count_component.sample(phx.domain.PointSampling(3, layout=structure))
     count_realization = phx.integration.from_samples(
         phx.integration.over(count_component), count_batch
     )
@@ -107,7 +109,7 @@ def test_graph_domain_integral_measure_modes():
 
 def test_graph_domain_constraint_zero_residual():
     domain = phx.domain.GraphDomain(_make_graph())
-    structure = phx.domain.ProductStructure((("graph",),))
+    structure = phx.domain.SampleLayout((("graph",),))
 
     @domain.Function("graph")
     def u(node):
@@ -118,8 +120,7 @@ def test_graph_domain_constraint_zero_residual():
         component=domain.component({"graph": phx.domain.Nodes()}),
         operator=lambda f: f,
         constraint_vars="u",
-        num_points=3,
-        structure=structure,
+        sampling=phx.domain.PointSampling(3, layout=structure),
     )
 
     loss = constraint.loss({"u": u}, key=jr.key(2))

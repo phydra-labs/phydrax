@@ -8,12 +8,13 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
 from phydrax.domain import (
     DomainFunction,
     FourierAxisSpec,
     Interval1d,
-    ProductStructure,
+    SampleLayout,
     TimeInterval,
 )
 from phydrax.domain._function import _rank1_leading_broadcast_op
@@ -29,8 +30,46 @@ def interval():
 @pytest.fixture
 def sample_batch(interval):
     component = interval.component()
-    structure = ProductStructure((("x",),))
-    return component.sample(8, structure=structure, key=jr.key(0))
+    structure = SampleLayout((("x",),))
+    return component.sample(phx.domain.PointSampling(8, layout=structure), key=jr.key(0))
+
+
+def test_function_binding_does_not_infer_key_from_signature(sample_batch, interval):
+    @interval.Function("x")
+    def function(x, *, key=None):
+        del x
+        return jnp.asarray(key is None, dtype=float)
+
+    assert isinstance(function.func, phx.domain.PointwiseEvaluator)
+    out = function(sample_batch, key=jr.key(1))
+    assert jnp.all(out.data == 1.0)
+
+
+def test_function_binding_explicitly_passes_key(sample_batch, interval):
+    @interval.Function(
+        "x",
+        binding=phx.domain.FunctionBinding(pass_key=True),
+    )
+    def function(x, *, key):
+        del x
+        return jr.uniform(key)
+
+    key = jr.key(2)
+    out = function(sample_batch, key=key)
+    assert jnp.allclose(out.data, jr.uniform(key))
+
+
+def test_function_binding_explicitly_passes_iteration(sample_batch, interval):
+    @interval.Function(
+        "x",
+        binding=phx.domain.FunctionBinding(pass_iter=True),
+    )
+    def function(x, *, iter_):
+        return iter_ * x[0]
+
+    out = function(sample_batch, iter_=3)
+    expected = 3.0 * sample_batch.points["x"].data[..., 0]
+    assert jnp.allclose(out.data, expected)
 
 
 def test_add(sample_batch, interval):
@@ -188,8 +227,10 @@ def test_domain_join_and_broadcast():
     assert h.domain.labels == dom.labels
 
     component = dom.component()
-    structure = ProductStructure((("x",), ("t",)))
-    batch = component.sample((4, 5), structure=structure, key=jr.key(0))
+    structure = SampleLayout((("x",), ("t",)))
+    batch = component.sample(
+        phx.domain.PointSampling((4, 5), layout=structure), key=jr.key(0)
+    )
     out = h(batch)
 
     axis_x = batch.structure.axis_for("x")
@@ -200,12 +241,8 @@ def test_domain_join_and_broadcast():
 
 
 def test_metadata_merge_rules(interval):
-    f = DomainFunction(domain=interval, deps=("x",), func=lambda x: x[0]).with_metadata(
-        m=1
-    )
-    g = DomainFunction(
-        domain=interval, deps=("x",), func=lambda x: 2.0 * x[0]
-    ).with_metadata(m=1)
+    f = interval.Function("x")(lambda x: x[0]).with_metadata(m=1)
+    g = interval.Function("x")(lambda x: 2.0 * x[0]).with_metadata(m=1)
     h = f + g
     assert h.metadata == f.metadata
 
@@ -238,10 +275,11 @@ def test_constant_with_dependencies_works_on_coord_separable_batch():
     h = u - const
 
     component = dom.component()
-    batch = component.sample_coord_separable(
-        {"x": FourierAxisSpec(8)},
-        num_points=5,
-        dense_structure=ProductStructure((("t",),)),
+    batch = component.sample(
+        phx.domain.GridSampling(
+            {"x": FourierAxisSpec(8)},
+            dense=phx.domain.PointSampling(5, layout=SampleLayout((("t",),))),
+        ),
         key=jr.key(0),
     )
     out = h(batch)
@@ -307,10 +345,11 @@ def test_blend_with_gate_matches_manual_expression():
     blended = blend_with_gate(base, overlay, gate)
     manual = base + gate * (overlay - base)
 
-    batch = dom.component().sample_coord_separable(
-        {"x": FourierAxisSpec(9)},
-        num_points=7,
-        dense_structure=ProductStructure((("t",),)),
+    batch = dom.component().sample(
+        phx.domain.GridSampling(
+            {"x": FourierAxisSpec(9)},
+            dense=phx.domain.PointSampling(7, layout=SampleLayout((("t",),))),
+        ),
         key=jr.key(11),
     )
 

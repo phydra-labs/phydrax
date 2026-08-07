@@ -4,113 +4,152 @@
 
 from __future__ import annotations
 
-import inspect
 import warnings
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
+import coordax as cx
+import jax
 import jax.numpy as jnp
+from jaxtyping import Array, Key
 
-from .._callable import _ensure_special_kwonly_args
+from .._doc import DOC_KEY0
 from .._strict import StrictModule
-from ..nn.models.core._base import _AbstractBaseModel, DomainInputMode
-from ..nn.models.core._loss import model_domain_metadata, ModelWithLoss
+from ._evaluation import (
+    BatchEvaluator,
+    complete_batch_axes,
+    evaluate_pointwise_callable,
+    try_blockwise_evaluation,
+)
 
 
-class StructuredCallable(StrictModule):
-    """Wrapper marking a callable as accepting structured (tuple) inputs."""
-
-    func: Callable
-
-    def __init__(self, func: Callable, /):
-        self.func = _ensure_special_kwonly_args(func)
-
-    def __call__(self, x: Any, /, *, key=None, iter_=None, **kwargs: Any):
-        return self.func(x, key=key, iter_=iter_, **kwargs)
+if TYPE_CHECKING:
+    from ..nn.models.core._binding import ModelBinding
 
 
-def structured(func: Callable, /) -> StructuredCallable:
-    """Mark a callable as supporting structured (tuple) inputs."""
-    return StructuredCallable(func)
-
-
-class _ConcatenatedModelCallable(StrictModule):
+class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
     raw_model: Any
-    input_mode: DomainInputMode
-    supports_structured_input: bool
-    supports_blockwise_input: bool
-    supports_axis_batch_input: bool
-    warn_on_auto_fallback: bool
-    _call_has_var_kwargs: bool
-    _call_has_key: bool
-    _call_has_iter: bool
+    domain_labels: tuple[str, ...]
+    deps: tuple[str, ...]
+    binding: ModelBinding
 
     def __init__(
         self,
         model: Callable,
         /,
         *,
-        input_mode: DomainInputMode | None = None,
+        domain_labels: tuple[str, ...],
+        deps: tuple[str, ...],
+        binding: ModelBinding,
     ):
-        self.raw_model = model
-        supports_structured_input = isinstance(model, StructuredCallable)
-        supports_blockwise_input = False
-        supports_axis_batch_input = False
-        warn_on_auto_fallback = False
-        inferred_mode: DomainInputMode = (
-            "structured" if supports_structured_input else "flat"
-        )
-        metadata = model_domain_metadata(model)
-        if metadata is not None:
-            (
-                inferred_mode,
-                supports_structured_input,
-                supports_blockwise_input,
-                supports_axis_batch_input,
-                warn_on_auto_fallback,
-            ) = metadata
-        mode = inferred_mode if input_mode is None else input_mode
-        if mode not in ("flat", "structured"):
-            raise ValueError("input_mode must be either 'flat' or 'structured'.")
-        if mode == "structured" and not supports_structured_input:
-            raise ValueError(
-                "input_mode='structured' requires a model that supports structured inputs. "
-                "Use structured=True for plain callables that intentionally accept tuple inputs."
+        from ..nn.models.core._base import _AbstractBaseModel
+        from ..nn.models.core._binding import ModelBinding
+        from ..nn.models.core._loss import ModelWithLoss
+
+        if not callable(model):
+            raise TypeError("Domain models must be callable.")
+        if not isinstance(binding, ModelBinding):
+            raise TypeError("Domain models require an explicit ModelBinding.")
+        if binding.batch_mode == "axis" and not isinstance(
+            model, (_AbstractBaseModel, ModelWithLoss)
+        ):
+            raise TypeError(
+                "Axis-batch model bindings require a Phydrax model implementation."
             )
-        self.input_mode = mode
-        self.supports_structured_input = bool(supports_structured_input)
-        self.supports_blockwise_input = bool(supports_blockwise_input)
-        self.supports_axis_batch_input = bool(supports_axis_batch_input)
-        self.warn_on_auto_fallback = bool(warn_on_auto_fallback)
-        sig = inspect.signature(model)
-        params = sig.parameters
-        has_var_kwargs = any(
-            p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
-        )
-        has_key = "key" in params
-        has_iter = "iter_" in params
-        if has_key and params["key"].kind != inspect.Parameter.KEYWORD_ONLY:
-            raise TypeError("`key` must be a keyword-only argument for model calls.")
-        if has_iter and params["iter_"].kind != inspect.Parameter.KEYWORD_ONLY:
-            raise TypeError("`iter_` must be a keyword-only argument for model calls.")
-        self._call_has_var_kwargs = bool(has_var_kwargs)
-        self._call_has_key = bool(has_key)
-        self._call_has_iter = bool(has_iter)
+        self.raw_model = model
+        self.domain_labels = tuple(domain_labels)
+        self.deps = tuple(deps)
+        self.binding = binding
 
     def emit_auto_fallback_warning(self, message: str, /) -> None:
-        if self.warn_on_auto_fallback:
+        if self.binding.warn_on_fallback:
             warnings.warn(message, UserWarning, stacklevel=3)
 
     def _call_model(self, x: Any, /, *, key=None, iter_=None, **kwargs: Any):
-        out_kwargs = kwargs
-        if self._call_has_key or self._call_has_var_kwargs:
-            out_kwargs = dict(out_kwargs)
-            out_kwargs["key"] = key
-        if iter_ is not None and (self._call_has_iter or self._call_has_var_kwargs):
-            if out_kwargs is kwargs:
-                out_kwargs = dict(out_kwargs)
-            out_kwargs["iter_"] = iter_
-        return self.raw_model(x, **out_kwargs)
+        return self.binding.call(
+            self.raw_model,
+            x,
+            key=key,
+            iter_=iter_,
+            kwargs=dict(kwargs),
+        )
+
+    def _structured_input(self, args: tuple[Any, ...], /) -> Any:
+        def _as_array_or_tuple(value: Any):
+            if isinstance(value, tuple):
+                return tuple(jnp.asarray(item) for item in value)
+            return jnp.asarray(value)
+
+        if len(args) == 1:
+            return _as_array_or_tuple(args[0])
+        packed: list[Any] = []
+        for value in args:
+            if isinstance(value, tuple):
+                packed.extend(jnp.asarray(item) for item in value)
+            else:
+                packed.append(jnp.asarray(value))
+        return tuple(packed)
+
+    def _call_blockwise(
+        self,
+        *args: Any,
+        key=None,
+        iter_=None,
+        **kwargs: Any,
+    ) -> Any:
+        return self._call_model(
+            self._structured_input(args),
+            key=key,
+            iter_=iter_,
+            **kwargs,
+        )
+
+    def __call_batch__(
+        self,
+        batch: Any,
+        /,
+        *,
+        key: Key[Array, ""] = DOC_KEY0,
+        iter_=None,
+        **kwargs: Any,
+    ) -> cx.Field:
+        if self.binding.batch_mode == "axis":
+            out = self.__call_axis_batch__(
+                batch,
+                self.deps,
+                key=key,
+                iter_=iter_,
+                **kwargs,
+            )
+            if not isinstance(out, cx.Field):
+                raise TypeError("Axis-batch model evaluation must return a Field.")
+            return out
+
+        if self.binding.batch_mode == "blockwise":
+            out, reason = try_blockwise_evaluation(
+                self._call_blockwise,
+                self.deps,
+                batch,
+                key=key,
+                iter_=iter_,
+                **kwargs,
+            )
+            if out is not None:
+                return complete_batch_axes(out, batch, self.domain_labels)
+            if reason is not None:
+                self.emit_auto_fallback_warning(
+                    "Falling back to pointwise evaluation for DomainFunction model: "
+                    + reason
+                )
+
+        return evaluate_pointwise_callable(
+            self,
+            deps=self.deps,
+            domain_labels=self.domain_labels,
+            points=batch,
+            key=key,
+            kwargs={"iter_": iter_, **kwargs},
+        )
 
     def __call_axis_batch__(
         self,
@@ -122,6 +161,9 @@ class _ConcatenatedModelCallable(StrictModule):
         iter_=None,
         **kwargs: Any,
     ):
+        from ..nn.models.core._base import _AbstractBaseModel
+        from ..nn.models.core._loss import ModelWithLoss
+
         if isinstance(self.raw_model, ModelWithLoss):
             return self.raw_model.__call_axis_batch__(
                 batch, deps, key=key, iter_=iter_, **kwargs
@@ -136,42 +178,57 @@ class _ConcatenatedModelCallable(StrictModule):
         if not args:
             raise ValueError("Model callable requires at least one positional input.")
 
-        input_mode = kwargs.pop("_phydrax_model_input_mode", self.input_mode)
-        if input_mode not in ("flat", "structured"):
-            raise ValueError(
-                "_phydrax_model_input_mode must be either 'flat' or 'structured'."
+        coordinate_positions = tuple(
+            index for index, value in enumerate(args) if isinstance(value, tuple)
+        )
+        if coordinate_positions:
+            coordinate_values = tuple(
+                jnp.asarray(coordinate).reshape((-1,))
+                for index in coordinate_positions
+                for coordinate in args[index]
             )
-        if input_mode == "structured" and not self.supports_structured_input:
-            raise ValueError(
-                "Structured model input was requested, but this model does not "
-                "support structured inputs."
+            if coordinate_values:
+
+                def call_point(*values: Any) -> Any:
+                    point_args = list(args)
+                    offset = 0
+                    for index in coordinate_positions:
+                        count = len(args[index])
+                        point_args[index] = jnp.stack(values[offset : offset + count])
+                        offset += count
+                    return self(
+                        *point_args,
+                        key=key,
+                        iter_=iter_,
+                        **kwargs,
+                    )
+
+                mapped = call_point
+                for position in reversed(range(len(coordinate_values))):
+                    mapped = jax.vmap(
+                        mapped,
+                        in_axes=tuple(
+                            0 if index == position else None
+                            for index in range(len(coordinate_values))
+                        ),
+                        out_axes=0,
+                    )
+                return mapped(*coordinate_values)
+
+        if self.binding.input_mode == "structured":
+            return self._call_model(
+                self._structured_input(args),
+                key=key,
+                iter_=iter_,
+                **kwargs,
             )
-
-        if input_mode == "structured":
-
-            def _as_array_or_tuple(value: Any):
-                if isinstance(value, tuple):
-                    return tuple(jnp.asarray(v) for v in value)
-                return jnp.asarray(value)
-
-            if len(args) == 1:
-                x_in = _as_array_or_tuple(args[0])
-            else:
-                packed: list[Any] = []
-                for value in args:
-                    if isinstance(value, tuple):
-                        packed.extend(jnp.asarray(v) for v in value)
-                    else:
-                        packed.append(jnp.asarray(value))
-                x_in = tuple(packed)
-            return self._call_model(x_in, key=key, iter_=iter_, **kwargs)
 
         arrays: list[Any] = []
         for value in args:
             if isinstance(value, tuple):
                 raise ValueError(
-                    "Model callable does not support structured inputs; got a tuple argument. "
-                    "Use a model that supports_structured_input() or explicitly materialize the grid."
+                    "Flat ModelBinding cannot pack tuple inputs; use a structured "
+                    "or blockwise binding, or materialize the grid explicitly."
                 )
             arrays.append(jnp.asarray(value))
 

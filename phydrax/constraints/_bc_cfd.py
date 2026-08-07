@@ -10,8 +10,8 @@ from typing import Any, Literal
 import jax.numpy as jnp
 from jaxtyping import ArrayLike
 
-from ..domain._components import DomainComponent, DomainComponentUnion
-from ..domain._function import DomainFunction
+from phydrax.domain import ComponentSum, DomainComponent, DomainFunction, SamplingPlan
+
 from ..operators.differential import directional_derivative, grad
 from ..operators.linalg import einsum
 from ._functional import FunctionalConstraint
@@ -20,9 +20,9 @@ from ._pointset import PointSetConstraint
 
 
 def _normal(
-    component: DomainComponent | DomainComponentUnion, *, var: str
+    component: DomainComponent | ComponentSum, *, var: str
 ) -> DomainFunction:
-    if isinstance(component, DomainComponentUnion):
+    if isinstance(component, ComponentSum):
         raise TypeError("Boundary normal requires a single DomainComponent, not a union.")
     return component.normal(var=var)
 
@@ -58,7 +58,7 @@ def _interp_target(
 
 def _coerce_value(
     value: Any,
-    component: DomainComponent | DomainComponentUnion,
+    component: DomainComponent | ComponentSum,
     /,
 ) -> DomainFunction | ArrayLike:
     if isinstance(value, DomainFunction):
@@ -79,9 +79,7 @@ def ContinuousSymmetryVelocityBoundaryConstraint(
     /,
     *,
     var: str = "x",
-    num_points: int | tuple[Any, ...],
-    structure: Any,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -96,18 +94,12 @@ def ContinuousSymmetryVelocityBoundaryConstraint(
     def operator(u: DomainFunction, /) -> DomainFunction:
         return _dot(u, n)
 
-    return FunctionalConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=velocity_var,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-        reduction=reduction,
-    )
+    return FunctionalConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=velocity_var, sampling=sampling, weight=weight,
+    label=label,
+    over=over,
+    reduction=reduction,)
 
 
 def ContinuousNoPenetrationBoundaryConstraint(
@@ -118,9 +110,7 @@ def ContinuousNoPenetrationBoundaryConstraint(
     wall_normal_velocity: DomainFunction | ArrayLike | None = None,
     wall_velocity: DomainFunction | ArrayLike | None = None,
     var: str = "x",
-    num_points: int | tuple[Any, ...],
-    structure: Any,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -159,18 +149,12 @@ def ContinuousNoPenetrationBoundaryConstraint(
     def operator(u: DomainFunction, /) -> DomainFunction:
         return _dot(u, n) - target
 
-    return FunctionalConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=velocity_var,
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-        reduction=reduction,
-    )
+    return FunctionalConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=velocity_var, sampling=sampling, weight=weight,
+    label=label,
+    over=over,
+    reduction=reduction,)
 
 
 def ContinuousSlipWallBoundaryConstraint(
@@ -182,9 +166,7 @@ def ContinuousSlipWallBoundaryConstraint(
     var: str = "x",
     viscosity: DomainFunction | ArrayLike,
     mode: Literal["reverse", "forward"] = "reverse",
-    num_points: int | tuple[Any, ...],
-    structure: Any,
-    sampler: str = "latin_hypercube",
+    sampling: SamplingPlan,
     weight: DomainFunction | ArrayLike = 1.0,
     label: str | None = None,
     over: str | tuple[str, ...] | None = None,
@@ -213,18 +195,12 @@ def ContinuousSlipWallBoundaryConstraint(
         tn = _outer_scalar_vec(_dot(traction, n), n)
         return traction - tn
 
-    return FunctionalConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=(velocity_var, pressure_var),
-        num_points=num_points,
-        structure=structure,
-        sampler=sampler,
-        weight=weight,
-        label=label,
-        over=over,
-        reduction=reduction,
-    )
+    return FunctionalConstraint.from_operator(component=component,
+    operator=operator,
+    constraint_vars=(velocity_var, pressure_var), sampling=sampling, weight=weight,
+    label=label,
+    over=over,
+    reduction=reduction,)
 
 
 # CFD Boundary Constraints (Discrete)

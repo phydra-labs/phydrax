@@ -6,12 +6,12 @@ import coordax as cx
 import jax.numpy as jnp
 
 from phydrax._frozendict import frozendict
-from phydrax.domain import Interval1d, PointsBatch, ProductStructure, TimeInterval
+from phydrax.domain import Interval1d, PointBatch, SampleLayout, TimeInterval
 from phydrax.solver import EnforcedConstraintPipelines, EnforcedInteriorData
 
 
 def _paired_batch(domain, xs, ts):
-    structure = ProductStructure((("x", "t"),)).canonicalize(domain.labels)
+    structure = SampleLayout((("x", "t"),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
     axis = axis_names[0]
@@ -23,7 +23,7 @@ def _paired_batch(domain, xs, ts):
             "t": cx.Field(jnp.asarray(ts, dtype=float).reshape((-1,)), dims=(axis,)),
         }
     )
-    return PointsBatch(points=points, structure=structure)
+    return PointBatch(points=points, structure=structure)
 
 
 def test_unified_interior_data_tracks_and_scattered():

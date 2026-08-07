@@ -11,10 +11,12 @@ import jax.numpy as jnp
 from jaxtyping import Array, Bool, Key
 
 from .._sampling import get_sampler
-from ._scalar import _AbstractScalarDomain
+from ._measure import BaseMeasure, ExactMass
+from ._scalar import AbstractScalarDomain
+from ._selection import Fixed, Interior, Selection
 
 
-def _open_unit_interval(values: Any, /) -> Array:
+def open_unit_interval(values: Any, /) -> Array:
     unit = jnp.asarray(values, dtype=float)
     epsilon = jnp.finfo(unit.dtype).eps
     return jnp.clip(unit, epsilon, 1.0 - epsilon)
@@ -32,7 +34,7 @@ class ReferenceDistribution(Protocol):
     def from_reference(self, value: Any, /) -> Array: ...
 
 
-class ProbabilityDomain(_AbstractScalarDomain):
+class ProbabilityDomain(AbstractScalarDomain):
     """A labeled scalar random variable carrying unit probability measure."""
 
     distribution: Any
@@ -56,6 +58,22 @@ class ProbabilityDomain(_AbstractScalarDomain):
     @property
     def measure(self) -> Array:
         return jnp.asarray(1.0, dtype=float)
+    def _component_base_measure(self, selection: Selection, /) -> BaseMeasure:
+        if isinstance(selection, Interior):
+            return BaseMeasure("probability", ExactMass(1.0), normalized=True)
+        if isinstance(selection, Fixed):
+            if selection.value.ndim != 0:
+                raise ValueError("A probability Fixed selection requires a scalar value.")
+            if not bool(jnp.asarray(self._contains(selection.value))):
+                raise ValueError(
+                    f"Fixed value {selection.value} lies outside probability support."
+                )
+            return BaseMeasure("dirac", ExactMass(1.0), normalized=True)
+        raise TypeError(
+            "Probability factors support only Interior or explicit Fixed selections."
+        )
+
+
 
     @property
     def bounds(self) -> Iterator[Array]:
@@ -119,10 +137,10 @@ class ProbabilityDomain(_AbstractScalarDomain):
             return jnp.asarray(
                 self.distribution.sample(key, sample_shape=(count,)), dtype=float
             )
-        unit = _open_unit_interval(get_sampler(sampler)(count, 1, key)).reshape((count,))
+        unit = open_unit_interval(get_sampler(sampler)(count, 1, key)).reshape((count,))
         return jnp.asarray(self.distribution.icdf(unit), dtype=float)
 
-    def equivalent(self, other: object, /) -> bool:
+    def _same_factor_support(self, other: object, /) -> bool:
         if not isinstance(other, ProbabilityDomain):
             return False
         equivalent = getattr(self.distribution, "equivalent", None)
@@ -134,4 +152,4 @@ class ProbabilityDomain(_AbstractScalarDomain):
         return jnp.asarray(self.distribution.contains(points), dtype=bool)
 
 
-__all__ = ["ProbabilityDomain", "ReferenceDistribution"]
+__all__ = ["open_unit_interval", "ProbabilityDomain", "ReferenceDistribution"]

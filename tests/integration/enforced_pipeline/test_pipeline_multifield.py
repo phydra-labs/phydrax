@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import pytest
 
 from phydrax._frozendict import frozendict
-from phydrax.domain import Boundary, Interval1d, PointsBatch, ProductStructure
+from phydrax.domain import Boundary, Interval1d, PointBatch, SampleLayout
 from phydrax.solver import (
     EnforcedConstraintPipelines,
     MultiFieldEnforcedConstraint,
@@ -16,14 +16,14 @@ from phydrax.solver import (
 
 
 def _line_batch(domain, xs):
-    structure = ProductStructure((("x",),)).canonicalize(domain.labels)
+    structure = SampleLayout((("x",),)).canonicalize(domain.labels)
     axis_names = structure.axis_names
     assert axis_names is not None
     axis = axis_names[0]
     points = frozendict(
         {"x": cx.Field(jnp.asarray(xs, dtype=float).reshape((-1, 1)), dims=(axis, None))}
     )
-    return PointsBatch(points=points, structure=structure)
+    return PointBatch(points=points, structure=structure)
 
 
 def test_multifield_pipeline_uses_enforced_covars():

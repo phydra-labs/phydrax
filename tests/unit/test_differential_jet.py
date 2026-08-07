@@ -4,7 +4,8 @@
 
 import jax.numpy as jnp
 
-from phydrax.domain import Interval1d, Square, TimeInterval
+import phydrax as phx
+from phydrax.domain import Interval1d, TimeInterval
 from phydrax.operators.differential import (
     bilaplacian,
     div_diag_k_grad,
@@ -105,7 +106,9 @@ def test_bilaplacian_backend_jet_matches_ad_1d():
 
 
 def test_bilaplacian_backend_jet_matches_ad_2d_mixed_terms():
-    geom = Square(center=(0.0, 0.0), side=2.0)
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def u(x):

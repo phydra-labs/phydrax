@@ -7,7 +7,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 from jaxtyping import ArrayLike
 
-from ...domain._function import DomainFunction
+from phydrax.domain import DomainFunction
 
 
 def delay(
