@@ -371,6 +371,48 @@ class _SemidiscreteEvaluator(StrictModule):
             assert expression.axis is not None
             source = self._expression_lift(expression.args[0], time, args)
             return None if source is None else source[..., expression.axis]
+        if expression.op == "negate":
+            source = self._expression_lift(expression.args[0], time, args)
+            return None if source is None else -source
+        if expression.op == "add":
+            lifts = tuple(
+                self._expression_lift(argument, time, args)
+                for argument in expression.args
+            )
+            present = tuple(lift for lift in lifts if lift is not None)
+            if not present:
+                return None
+            result = present[0]
+            for lift in present[1:]:
+                result = result + lift
+            return result
+        if expression.op == "multiply":
+            lifts = tuple(
+                self._expression_lift(argument, time, args)
+                for argument in expression.args
+            )
+            indices = tuple(
+                index for index, lift in enumerate(lifts) if lift is not None
+            )
+            if len(indices) != 1:
+                return None
+            selected = indices[0]
+            if any(
+                _field_degree(argument) > 0
+                for index, argument in enumerate(expression.args)
+                if index != selected
+            ):
+                return None
+            result = lifts[selected]
+            for index, argument in enumerate(expression.args):
+                if index != selected:
+                    result = result * self._evaluate(argument, time, args, {})
+            return result
+        if expression.op == "divide":
+            source = self._expression_lift(expression.args[0], time, args)
+            if source is None or _field_degree(expression.args[1]) > 0:
+                return None
+            return source / self._evaluate(expression.args[1], time, args, {})
         if expression.op not in (
             "derivative",
             "gradient",
@@ -525,10 +567,6 @@ class _SemidiscreteEvaluator(StrictModule):
         if expression.op == "constant":
             return None
         if expression.op == "parameter":
-            assert expression.symbol is not None
-            index = self.parameter_names.index(expression.symbol)
-            if self.parameter_functional[index]:
-                return tuple((0,) * rank for _ in range(components))
             return None
         argument_parities = tuple(
             self._parities(argument) for argument in expression.args
@@ -744,6 +782,21 @@ class _SemidiscreteEvaluator(StrictModule):
         fields: Mapping[str, Array],
         /,
     ) -> Any:
+        if (
+            node.op == "divergence"
+            and node.args[0].op == "gradient"
+            and node.coordinate == node.args[0].coordinate
+        ):
+            return self._evaluate(
+                PDEExpression(
+                    "laplacian",
+                    (node.args[0].args[0],),
+                    coordinate=node.coordinate,
+                ),
+                time,
+                args,
+                fields,
+            )
         if node.op == "constant":
             assert node.value is not None
             return node.value
@@ -833,6 +886,29 @@ class _SemidiscreteEvaluator(StrictModule):
             axes = self._axes(node.coordinate)
             lift = self._expression_lift(node.args[0], time, args)
             operand = values[0] if lift is None else values[0] - lift
+            if node.args[0].op == "coordinate" and node.op != "derivative":
+                assert node.args[0].symbol is not None
+                source_axes = self._axes(node.args[0].symbol)
+                source = jnp.asarray(values[0])
+                if node.op == "gradient":
+                    return jnp.stack(
+                        tuple(
+                            jnp.ones_like(source)
+                            if axis in source_axes
+                            else jnp.zeros_like(source)
+                            for axis in axes
+                        ),
+                        axis=-1,
+                    )
+                if node.op == "divergence":
+                    result = jnp.zeros_like(source[..., 0])
+                    for component, axis in enumerate(axes):
+                        if source_axes[component] == axis:
+                            result = result + 1.0
+                    return result
+                if node.op == "curl":
+                    return jnp.zeros_like(source)
+                return jnp.zeros_like(source)
             if node.op == "laplacian" and self.discretization.points is None:
                 return self.discretization.laplacian(operand)
             if node.op == "derivative":
@@ -872,11 +948,18 @@ class _SemidiscreteEvaluator(StrictModule):
             if node.op == "gradient":
                 from ..solver._spatial import TensorGridDiscretization
 
+                source_parities = self._parities(node.args[0])
                 components = []
                 for axis in axes:
+                    parity = (
+                        2
+                        if source_parities is None
+                        else source_parities[0][axis]
+                    )
                     if (
                         isinstance(self.discretization, TensorGridDiscretization)
                         and self.discretization.basis[axis] == "uniform"
+                        and parity != 1
                     ):
                         component = self.discretization.gradient(
                             operand,
@@ -992,19 +1075,20 @@ class _SemidiscreteEvaluator(StrictModule):
                 axes=integrated_axes,
             )
             spatial_rank = len(self.discretization.state_shape)
+            trailing = result.shape[spatial_rank - len(integrated_axes) :]
             if len(integrated_axes) < spatial_rank:
-                trailing = result.shape[spatial_rank - len(integrated_axes) :]
-                remaining_shape = iter(result.shape[: spatial_rank - len(integrated_axes)])
+                remaining_shape = iter(
+                    result.shape[: spatial_rank - len(integrated_axes)]
+                )
                 spatial_shape = tuple(
                     1 if axis in integrated_axes else next(remaining_shape)
                     for axis in range(spatial_rank)
                 )
                 result = result.reshape(spatial_shape + trailing)
-                result = jnp.broadcast_to(
-                    result,
-                    self.discretization.state_shape + trailing,
-                )
-            return result
+            return jnp.broadcast_to(
+                result,
+                self.discretization.state_shape + trailing,
+            )
         raise ValueError(f"Unsupported semidiscrete PDE operation {node.op!r}.")
 
     def _coerce_field_value(self, name: str, value: Any, /) -> Array:
@@ -1799,15 +1883,24 @@ def compile_semidiscrete_pde(
     rhs_expressions = _evolution_rhs(problem, time_coordinate)
     regions_by_name = {region.name: region for region in problem.regions}
     unsupported_integrals = tuple(
-        region
+        region_name
         for expression in rhs_expressions
-        for region in _integral_regions(expression)
-        if regions_by_name[region].kind != "interior"
+        for region_name in _integral_regions(expression)
+        if (
+            regions_by_name[region_name].kind != "interior"
+            or regions_by_name[region_name].component is not None
+            or len(set(regions_by_name[region_name].coordinates))
+            != len(regions_by_name[region_name].coordinates)
+            or any(
+                coordinate not in spatial_coordinate_set
+                for coordinate in regions_by_name[region_name].coordinates
+            )
+        )
     )
     if unsupported_integrals:
         raise ValueError(
-            "Semidiscrete volume quadrature only supports interior regions; "
-            f"got {unsupported_integrals}."
+            "Semidiscrete volume quadrature only supports unpartitioned interior "
+            f"spatial regions with unique coordinates; got {unsupported_integrals}."
         )
     if isinstance(discretization, SpectralSpatialDiscretization):
         if lifts:
@@ -1922,7 +2015,13 @@ def compile_semidiscrete_pde(
                 for axis in axes
             ):
                 continue
-            if node.op == "derivative" and node.args[0].op == "coordinate":
+            if node.args[0].op == "coordinate":
+                continue
+            if (
+                node.op == "divergence"
+                and node.args[0].op == "gradient"
+                and node.coordinate == node.args[0].coordinate
+            ):
                 continue
             parities = evaluator._parities(node.args[0])
             if parities is None or any(

@@ -1191,7 +1191,7 @@ def test_unsupported_region_and_condition_semantics_fail_at_compile_time():
         ),
         regions=(boundary_region,),
     )
-    with pytest.raises(ValueError, match="only supports interior regions"):
+    with pytest.raises(ValueError, match="only supports unpartitioned interior"):
         phx.equations.compile_semidiscrete_pde(boundary_integral, sine)
 
     component_region = phx.equations.PDERegion(
@@ -1283,3 +1283,200 @@ def test_coordinate_bounds_and_grouped_derivative_capabilities_are_validated():
     )
     with pytest.raises(ValueError, match="require an explicit axis"):
         phx.equations.compile_semidiscrete_pde(problem, spatial)
+
+
+def test_full_integrals_and_second_uniform_gradients_preserve_field_shape():
+    axis = phx.domain.FourierAxisSpec(16).materialize(0.0, 1.0)
+    spatial = phx.solver.TensorGridDiscretization((axis,))
+    x = phx.equations.PDECoordinate(
+        "x", "space", bounds=(0.0, 1.0), periodic=True
+    )
+    t = phx.equations.PDECoordinate("t", "time", bounds=(0.0, 1.0))
+    field = phx.equations.PDEField("u", coordinates=("x", "t"))
+    u = phx.equations.PDEExpression.field("u")
+    region = phx.equations.PDERegion("domain", "interior", ("x",))
+    integral_problem = phx.equations.PDEProblemIR(
+        coordinates=(x, t),
+        fields=(field,),
+        equations=(
+            phx.equations.PDEEquation(
+                "integral-derivative",
+                u.derivative("t"),
+                u.integrate("domain").derivative("x"),
+            ),
+        ),
+        regions=(region,),
+    )
+    integral_compiled = phx.equations.compile_semidiscrete_pde(
+        integral_problem,
+        spatial,
+        method="direct",
+    )
+    assert jnp.allclose(
+        integral_compiled(0.0, jnp.ones(spatial.state_shape), None),
+        jnp.zeros(spatial.state_shape),
+        atol=1e-12,
+    )
+
+    axes = tuple(
+        phx.domain.UniformAxisSpec(
+            16,
+            endpoint=False,
+            periodic=True,
+        ).materialize(0.0, 1.0)
+        for _ in range(2)
+    )
+    uniform = phx.solver.TensorGridDiscretization(axes)
+    grouped = phx.equations.PDECoordinate(
+        "x",
+        "space",
+        size=2,
+        bounds=(0.0, 1.0),
+        periodic=True,
+    )
+    grouped_field = phx.equations.PDEField("u", coordinates=("x", "t"))
+    second_gradient = (
+        u.gradient("x").component(0).gradient("x").component(0)
+    )
+    uniform_problem = phx.equations.PDEProblemIR(
+        coordinates=(grouped, t),
+        fields=(grouped_field,),
+        equations=(
+            phx.equations.PDEEquation(
+                "second-gradient",
+                u.derivative("t"),
+                second_gradient,
+            ),
+        ),
+    )
+    uniform_compiled = phx.equations.compile_semidiscrete_pde(
+        uniform_problem,
+        uniform,
+        method="direct",
+    )
+    state = jnp.broadcast_to(
+        jnp.sin(2.0 * jnp.pi * axes[0].nodes[:, None]),
+        uniform.state_shape,
+    )
+    assert jnp.allclose(
+        uniform_compiled(0.0, state, None),
+        uniform.partial_derivative(state, axis=0, order=2),
+    )
+
+
+def test_affine_lifts_and_coordinate_calculus_are_composition_safe():
+    axis = phx.domain.SineAxisSpec(32).materialize(0.0, 1.0)
+    spatial = phx.solver.TensorGridDiscretization((axis,))
+    base = _heat_problem(target=1.0)
+    u = phx.equations.PDEExpression.field("u")
+    lift = phx.equations.BoundaryLift(
+        "u",
+        1.0 + axis.nodes * (1.0 - axis.nodes),
+        lift_id="affine-composition-lift",
+    )
+
+    def problem(rhs):
+        return phx.equations.PDEProblemIR(
+            coordinates=base.coordinates,
+            fields=base.fields,
+            equations=(
+                phx.equations.PDEEquation(
+                    "calculus",
+                    u.derivative("t"),
+                    rhs,
+                ),
+            ),
+            conditions=base.conditions,
+            regions=base.regions,
+        )
+
+    laplacian = phx.equations.compile_semidiscrete_pde(
+        problem(u.laplacian("x")),
+        spatial,
+        boundary_lifts=(lift,),
+        method="direct",
+    )
+    negated = phx.equations.compile_semidiscrete_pde(
+        problem((-u).laplacian("x")),
+        spatial,
+        boundary_lifts=(lift,),
+        method="direct",
+    )
+    residual = 0.2 * jnp.sin(jnp.pi * axis.nodes)
+    assert jnp.allclose(
+        negated(0.0, residual, None),
+        -laplacian(0.0, residual, None),
+        rtol=1e-9,
+        atol=1e-9,
+    )
+
+    coordinate = phx.equations.PDEExpression.coordinate_value("x")
+    coordinate_compiled = phx.equations.compile_semidiscrete_pde(
+        phx.equations.PDEProblemIR(
+            coordinates=base.coordinates,
+            fields=base.fields,
+            equations=(
+                phx.equations.PDEEquation(
+                    "coordinate-calculus",
+                    u.derivative("t"),
+                    coordinate.gradient("x").divergence("x")
+                    + coordinate.laplacian("x"),
+                ),
+            ),
+        ),
+        spatial,
+        method="direct",
+    )
+    assert jnp.allclose(
+        coordinate_compiled(0.0, jnp.zeros(spatial.state_shape), None),
+        jnp.zeros(spatial.state_shape),
+    )
+
+
+def test_functional_parameter_parity_and_integral_region_contracts_are_explicit():
+    axis = phx.domain.SineAxisSpec(16).materialize(0.0, 1.0)
+    spatial = phx.solver.TensorGridDiscretization((axis,))
+    x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0))
+    t = phx.equations.PDECoordinate("t", "time", bounds=(0.0, 1.0))
+    field = phx.equations.PDEField("u", coordinates=("x", "t"))
+    u = phx.equations.PDEExpression.field("u")
+    parameter = phx.equations.PDEParameter("a", functional=True)
+    functional = phx.equations.PDEProblemIR(
+        coordinates=(x, t),
+        fields=(field,),
+        parameters=(parameter,),
+        equations=(
+            phx.equations.PDEEquation(
+                "functional-derivative",
+                u.derivative("t"),
+                phx.equations.PDEExpression.parameter("a").derivative("x"),
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="extension parity"):
+        phx.equations.compile_semidiscrete_pde(
+            functional,
+            spatial,
+            parameter_values={"a": jnp.ones(spatial.state_shape)},
+        )
+
+    invalid_region = phx.equations.PDERegion(
+        "space-time-slice",
+        "interior",
+        ("x", "t"),
+        component="subdomain",
+    )
+    invalid_integral = phx.equations.PDEProblemIR(
+        coordinates=(x, t),
+        fields=(field,),
+        equations=(
+            phx.equations.PDEEquation(
+                "invalid-integral",
+                u.derivative("t"),
+                u.integrate("space-time-slice"),
+            ),
+        ),
+        regions=(invalid_region,),
+    )
+    with pytest.raises(ValueError, match="unpartitioned interior spatial regions"):
+        phx.equations.compile_semidiscrete_pde(invalid_integral, spatial)
