@@ -31,6 +31,14 @@ from ._ir import (
     PDERegionKind,
     PDERepresentation,
 )
+from ._semidiscrete import (
+    BoundaryLift,
+    compile_semidiscrete_pde,
+    CompiledSpatialDynamics,
+    ResolvedSemidiscreteMethod,
+    SemidiscreteCompilationMethod,
+    SemidiscreteFieldLayout,
+)
 from ._randomized_compile import (
     analyze_randomized_compilation,
     compile_pde_randomized_objective,
@@ -62,11 +70,16 @@ from ._validate import infer_expression_type, PDEValueType, validate_pde_ir
 
 __all__ = [
     "analyze_randomized_compilation",
+    "BoundaryLift",
     "CompiledPDECondition",
     "CompiledPDEEquation",
     "CompiledPDEProblem",
+    "CompiledSpatialDynamics",
     "CompiledRandomizedPDEObjective",
     "DifferentialBackend",
+    "ResolvedSemidiscreteMethod",
+    "SemidiscreteCompilationMethod",
+    "SemidiscreteFieldLayout",
     "IntegralCompiler",
     "PDECondition",
     "PDEConditionKind",
@@ -92,6 +105,7 @@ __all__ = [
     "compile_pde_randomized_objective",
     "compile_randomized_pde_objective",
     "compile_pde_problem",
+    "compile_semidiscrete_pde",
     "infer_expression_type",
     "make_pde_operator",
     "pad_pde_tokens",

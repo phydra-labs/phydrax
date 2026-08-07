@@ -125,3 +125,95 @@ For discrete measurements, add a data-fit constraint alongside the PDE terms. Ph
     ```
 
 See [API → Constraints → Discrete](../api/constraints/discrete.md).
+
+## Compile the PDE IR to method-of-lines dynamics
+
+For an array solver, the same equation can be represented once as PDE IR and
+compiled against an existing spatial discretization. A sine basis encodes the
+homogeneous Dirichlet boundary condition; the compiler therefore rejects a
+periodic coordinate or a Neumann boundary condition paired with this basis.
+
+!!! example
+    ```python
+    import jax
+    import jax.numpy as jnp
+    import phydrax as phx
+
+    x = phx.equations.PDECoordinate(
+        "x", "space", bounds=(0.0, 1.0), periodic=False
+    )
+    t = phx.equations.PDECoordinate("t", "time", bounds=(0.0, 1.0))
+    field = phx.equations.PDEField("u", coordinates=("x", "t"))
+    diffusivity = phx.equations.PDEParameter("alpha", value=0.1)
+    u = phx.equations.PDEExpression.field("u")
+
+    boundary_region = phx.equations.PDERegion(
+        "x-boundary", "boundary", ("x",)
+    )
+    problem = phx.equations.PDEProblemIR(
+        coordinates=(x, t),
+        fields=(field,),
+        parameters=(diffusivity,),
+        equations=(
+            phx.equations.PDEEquation(
+                "heat",
+                u.derivative("t"),
+                phx.equations.PDEExpression.parameter("alpha")
+                * u.laplacian("x"),
+            ),
+        ),
+        conditions=(
+            phx.equations.PDECondition(
+                "homogeneous-dirichlet",
+                "boundary",
+                u,
+                region="x-boundary",
+                coordinate="x",
+            ),
+        ),
+        regions=(boundary_region,),
+    )
+
+    axis = phx.domain.SineAxisSpec(64).materialize(0.0, 1.0)
+    space = phx.solver.TensorGridDiscretization((axis,))
+    dynamics = phx.equations.compile_semidiscrete_pde(problem, space)
+
+    initial = jnp.sin(jnp.pi * axis.nodes)
+    drift = jax.jit(
+        lambda state, alpha: dynamics(0.0, state, {"alpha": alpha})
+    )(initial, jnp.asarray(0.1))
+
+    assert drift.shape == initial.shape
+    assert dynamics.semilinear_drift is not None
+    print(dynamics.compilation_id, dynamics.resolved_method)
+    ```
+
+`dynamics` has the solver-compatible signature `(time, state, args) -> state`.
+Scalar single-field problems retain the spatial state shape; multiple or vector
+fields use a static trailing-component packing described by
+`dynamics.layout`. Runtime parameter mappings remain differentiable.
+
+Nonhomogeneous Dirichlet or Neumann data require an explicit
+`phx.equations.BoundaryLift`. The evolved state is then the homogeneous residual
+and `dynamics.physical_state(time, state, args)` reconstructs the physical
+field. This explicit split prevents a nonperiodic boundary from being silently
+treated as periodic.
+
+`TensorGridDiscretization` also exposes `partial_derivative`, `gradient`,
+`divergence`, `curl`, and `integral` while preserving trailing field/component
+axes. A direct vector field uses `divergence(vector)`. The gradient's
+finite-difference and sine/cosine dual representation is explicit:
+`divergence(gradient, dual=True)` gives the discrete Laplacian. PDE IR
+`divergence(gradient(...))` tracks this representation automatically.
+Functional parameters accept either component constants or arrays aligned with
+the full spatial shape. Compilation IDs and semilinear operator IDs include
+resolved parameter values and boundary-lift IDs, so cached artifacts cannot be
+reused across different bound dynamics.
+
+Bounded PDE coordinates must match the materialized tensor-grid interval.
+Semidiscrete volume integrals accept interior spatial regions; boundary,
+interface, and component-specific boundary semantics are rejected rather than
+being approximated as whole-domain operations. On sine/cosine grids, nested
+calculus tracks primal and dual extension parity. Rewrite a differentiated
+nonlinear or boundary-incompatible composite into terms with explicit,
+compatible parity.
