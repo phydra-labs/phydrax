@@ -44,8 +44,12 @@ from ._stochastic import (
 )
 from ._state_geometry import (
     AbstractStateGeometry,
+    EmbeddedStateGeometry,
     EuclideanStateGeometry,
     LocalRetraction,
+    PointwiseStateGeometry,
+    SpecialOrthogonalStateGeometry,
+    SymmetricPositiveDefiniteStateGeometry,
 )
 from ._tensor import (
     contract_indices,
@@ -72,12 +76,16 @@ __all__ = [
     "ChartTransition",
     "CoordinateChart",
     "EmbeddedChart",
+    "EmbeddedStateGeometry",
     "EuclideanStateGeometry",
     "LeviCivitaConnection",
     "MetricJet",
     "MetricValidationReport",
     "RiemannianMetric",
     "LocalRetraction",
+    "PointwiseStateGeometry",
+    "SpecialOrthogonalStateGeometry",
+    "SymmetricPositiveDefiniteStateGeometry",
     "DENSITY_TENSOR",
     "SCALAR_TENSOR",
     "TensorType",

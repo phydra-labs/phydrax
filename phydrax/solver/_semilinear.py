@@ -344,6 +344,14 @@ def solve_semilinear_spde(
     """
     if not isinstance(spde, SemidiscreteSPDE):
         raise TypeError("solve_semilinear_spde requires a SemidiscreteSPDE.")
+    if (
+        spde.problem.state_geometry is not None
+        and not spde.problem.state_geometry.trivial
+    ):
+        raise ValueError(
+            "Semilinear exponential solvers do not support nontrivial "
+            "state_geometry."
+        )
     step_limit = float(dt)
     if not isfinite(step_limit) or step_limit <= 0.0:
         raise ValueError("dt must be finite and positive.")
@@ -553,6 +561,7 @@ def solve_semilinear_spde(
         wiener_term_slices=spde.problem.wiener_term_slices,
         solver_name=solver_name,
         interpretation=spde.problem.interpretation,
+        state_geometry_id=spde.problem.state_geometry_id,
     )
 
 

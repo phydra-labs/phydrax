@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..stochastic import WienerRealization
 from ._differential import DifferentialProblem, DifferentialSolution
+from ._geometric import AbstractGeometricSolver, RKMK, SRKMK
 
 
 class _VectorizedDenseInterpolation(eqx.Module):
@@ -199,11 +200,57 @@ def _validated_realization_interval(
         "DifferentialProblem t1 lies after the Wiener realization support.",
     )
     return start, end
+def _validated_state_geometry_solver(
+    problem: DifferentialProblem,
+    solver: Any,
+    /,
+) -> None:
+    geometry = problem.state_geometry
+    geometric = isinstance(solver, AbstractGeometricSolver)
+    if geometry is None:
+        if geometric:
+            raise ValueError(
+                "A geometric solver requires DifferentialProblem state_geometry."
+            )
+        return
+    if not geometry.trivial and not geometric:
+        raise ValueError(
+            "A nontrivial state_geometry requires an AbstractGeometricSolver; "
+            f"got {type(solver).__name__}."
+        )
+    if geometric and solver.geometry.geometry_id != geometry.geometry_id:
+        raise ValueError(
+            "Geometric solver and DifferentialProblem must carry the same "
+            "state_geometry_id."
+        )
+    if problem.stochastic and not geometry.trivial:
+        if problem.interpretation == "ito":
+            raise ValueError(
+                "Nontrivial state geometry supports explicit Stratonovich dynamics "
+                "only; generic Itô geometry is not implemented."
+            )
+        if not isinstance(solver, SRKMK):
+            raise ValueError(
+                "A stochastic nontrivial state_geometry requires SRKMK."
+            )
+    if not problem.stochastic and isinstance(solver, SRKMK):
+        raise ValueError("SRKMK requires a stochastic DifferentialProblem.")
+
+
 
 
 def _resolved_solver(problem: DifferentialProblem, solver: Any | None, /) -> Any:
     if solver is not None:
         return solver
+    if problem.state_geometry is not None and not problem.state_geometry.trivial:
+        if problem.stochastic:
+            if problem.interpretation == "ito":
+                raise ValueError(
+                    "Nontrivial state geometry supports explicit Stratonovich "
+                    "dynamics only."
+                )
+            return SRKMK(problem.state_geometry)
+        return RKMK(problem.state_geometry)
     if not problem.stochastic:
         return dfx.Tsit5()
     if problem.interpretation == "ito":
@@ -213,6 +260,7 @@ def _resolved_solver(problem: DifferentialProblem, solver: Any | None, /) -> Any
 
 def _resolved_controller(
     problem: DifferentialProblem,
+    solver: Any,
     controller: Any | None,
     /,
     *,
@@ -221,7 +269,7 @@ def _resolved_controller(
 ) -> Any:
     if controller is not None:
         return controller
-    if problem.stochastic:
+    if problem.stochastic or isinstance(solver, AbstractGeometricSolver):
         return dfx.ConstantStepSize()
     return dfx.PIDController(rtol=float(rtol), atol=float(atol))
 
@@ -368,10 +416,14 @@ def solve_diffrax(
 
     times = _save_times(problem, save_times)
     selected_solver = _resolved_solver(problem, solver)
+    _validated_state_geometry_solver(problem, selected_solver)
+    if isinstance(selected_solver, AbstractGeometricSolver) and dt0 is None:
+        raise ValueError("Geometric solvers require an explicit fixed dt0.")
     if realization is not None:
         _validated_stochastic_solver(problem, selected_solver, realization)
     controller = _resolved_controller(
         problem,
+        selected_solver,
         stepsize_controller,
         rtol=rtol,
         atol=atol,
@@ -406,6 +458,7 @@ def solve_diffrax(
         wiener_term_slices=problem.wiener_term_slices,
         solver_name=type(selected_solver).__name__,
         interpretation=problem.interpretation,
+        state_geometry_id=problem.state_geometry_id,
     )
 
 
@@ -441,9 +494,11 @@ def solve_diffrax_ensemble(
         raise TypeError("dense must be a bool.")
     times = _save_times(problem, save_times)
     selected_solver = _resolved_solver(problem, solver)
+    _validated_state_geometry_solver(problem, selected_solver)
     _validated_stochastic_solver(problem, selected_solver, realization)
     controller = _resolved_controller(
         problem,
+        selected_solver,
         stepsize_controller,
         rtol=rtol,
         atol=atol,
@@ -496,6 +551,7 @@ def solve_diffrax_ensemble(
         wiener_term_slices=problem.wiener_term_slices,
         solver_name=type(selected_solver).__name__,
         interpretation=problem.interpretation,
+        state_geometry_id=problem.state_geometry_id,
     )
 
 

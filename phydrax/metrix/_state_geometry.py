@@ -5,9 +5,13 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import Callable, Sequence
+from typing import Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
+import jax.scipy as jsp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import AbstractAttribute, StrictModule
@@ -260,8 +264,653 @@ class EuclideanStateGeometry(AbstractStateGeometry):
         return self.to_local(state_array + local, tangent)
 
 
+class EmbeddedStateGeometry(AbstractStateGeometry):
+    """Adapter for an embedded state space defined by explicit array callables."""
+
+    membership: Callable[[Array], Array]
+    tangent_projection: Callable[[Array, Array], Array]
+    retraction: Callable[[Array, Array], Array]
+    inverse_retraction: Callable[[Array, Array], Array] | None
+    retraction_pullback: Callable[[Array, Array, Array], Array] | None
+    geometry_id: str = eqx.field(static=True)
+    retraction_method: str = eqx.field(static=True)
+    trivial: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        membership: Callable[[Array], Array],
+        tangent_projection: Callable[[Array, Array], Array],
+        retraction: Callable[[Array, Array], Array],
+        geometry_id: str,
+        retraction_method: str,
+        inverse_retraction: Callable[[Array, Array], Array] | None = None,
+        retraction_pullback: Callable[[Array, Array, Array], Array] | None = None,
+    ):
+        for function, name in (
+            (membership, "membership"),
+            (tangent_projection, "tangent_projection"),
+            (retraction, "retraction"),
+        ):
+            if not callable(function):
+                raise TypeError(f"{name} must be callable.")
+        if inverse_retraction is not None and not callable(inverse_retraction):
+            raise TypeError("inverse_retraction must be callable or None.")
+        if retraction_pullback is not None and not callable(retraction_pullback):
+            raise TypeError("retraction_pullback must be callable or None.")
+        self.membership = membership
+        self.tangent_projection = tangent_projection
+        self.retraction = retraction
+        self.inverse_retraction = inverse_retraction
+        self.retraction_pullback = retraction_pullback
+        self.geometry_id = _identifier(geometry_id, "geometry_id")
+        self.retraction_method = _identifier(
+            retraction_method,
+            "retraction_method",
+        )
+        self.trivial = False
+
+    def contains(self, state: ArrayLike, /) -> Array:
+        return jnp.asarray(self.membership(jnp.asarray(state)), dtype=bool)
+
+    def project_tangent(
+        self,
+        state: ArrayLike,
+        vector: ArrayLike,
+        /,
+    ) -> Array:
+        state_array = jnp.asarray(state)
+        projected = jnp.asarray(
+            self.tangent_projection(state_array, jnp.asarray(vector))
+        )
+        _same_shape(projected, state_array, "Embedded tangent projection")
+        return projected
+
+    def to_local(
+        self,
+        state: ArrayLike,
+        tangent: ArrayLike,
+        /,
+    ) -> Array:
+        return self.project_tangent(state, tangent)
+
+    def from_local(
+        self,
+        state: ArrayLike,
+        local_tangent: ArrayLike,
+        /,
+    ) -> Array:
+        return self.project_tangent(state, local_tangent)
+
+    def retract(
+        self,
+        state: ArrayLike,
+        local_tangent: ArrayLike,
+        /,
+    ) -> Array:
+        state_array = jnp.asarray(state)
+        point = jnp.asarray(self.retraction(state_array, jnp.asarray(local_tangent)))
+        _same_shape(point, state_array, "Embedded retraction")
+        return point
+
+    def inverse_retract(
+        self,
+        state: ArrayLike,
+        point: ArrayLike,
+        /,
+    ) -> Array:
+        state_array = jnp.asarray(state)
+        point_array = jnp.asarray(point)
+        _same_shape(point_array, state_array, "Embedded retraction point")
+        if self.inverse_retraction is None:
+            return self.project_tangent(state_array, point_array - state_array)
+        local = jnp.asarray(self.inverse_retraction(state_array, point_array))
+        _same_shape(local, state_array, "Embedded inverse retraction")
+        return local
+
+    def pullback(
+        self,
+        state: ArrayLike,
+        local_tangent: ArrayLike,
+        tangent: ArrayLike,
+        /,
+    ) -> Array:
+        state_array = jnp.asarray(state)
+        local = jnp.asarray(local_tangent)
+        vector = jnp.asarray(tangent)
+        _same_shape(local, state_array, "Embedded local tangent")
+        _same_shape(vector, state_array, "Embedded retraction tangent")
+        if self.retraction_pullback is None:
+            return self.to_local(self.retract(state_array, local), vector)
+        velocity = jnp.asarray(
+            self.retraction_pullback(state_array, local, vector)
+        )
+        _same_shape(velocity, state_array, "Embedded retraction pullback")
+        return velocity
+
+
+def _point_shape(value: Sequence[int], /) -> tuple[int, ...]:
+    shape = tuple(int(size) for size in value)
+    if not shape or any(size <= 0 for size in shape):
+        raise ValueError("point_shape must contain positive dimensions.")
+    return shape
+
+
+class PointwiseStateGeometry(AbstractStateGeometry):
+    """Apply one state geometry independently over leading point axes."""
+
+    geometry: AbstractStateGeometry
+    point_shape: tuple[int, ...] = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
+    retraction_method: str = eqx.field(static=True)
+    trivial: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        geometry: AbstractStateGeometry,
+        point_shape: Sequence[int],
+        /,
+        *,
+        geometry_id: str | None = None,
+    ):
+        if not isinstance(geometry, AbstractStateGeometry):
+            raise TypeError("Pointwise geometry must wrap an AbstractStateGeometry.")
+        shape = _point_shape(point_shape)
+        self.geometry = geometry
+        self.point_shape = shape
+        self.geometry_id = (
+            f"{geometry.geometry_id}:pointwise:{'x'.join(map(str, shape))}"
+            if geometry_id is None
+            else _identifier(geometry_id, "geometry_id")
+        )
+        self.retraction_method = f"pointwise:{geometry.retraction_method}"
+        self.trivial = geometry.trivial
+
+    def _validate(self, value: ArrayLike, name: str, /) -> Array:
+        array = jnp.asarray(value)
+        if array.shape[-len(self.point_shape) :] != self.point_shape:
+            raise ValueError(
+                f"{name} must have trailing point shape {self.point_shape}; "
+                f"got {array.shape}."
+            )
+        return array
+
+    def _unary(self, function: Callable[[Array], Array], value: Array, /) -> Array:
+        if value.ndim == len(self.point_shape):
+            return function(value)
+        leading = value.shape[: -len(self.point_shape)]
+        flat = value.reshape((-1,) + self.point_shape)
+        mapped = jax.vmap(function)(flat)
+        return mapped.reshape(leading + mapped.shape[1:])
+
+    def _binary(
+        self,
+        function: Callable[[Array, Array], Array],
+        left: Array,
+        right: Array,
+        /,
+    ) -> Array:
+        if left.ndim == len(self.point_shape):
+            return function(left, right)
+        leading = left.shape[: -len(self.point_shape)]
+        left_flat = left.reshape((-1,) + self.point_shape)
+        right_flat = right.reshape((-1,) + self.point_shape)
+        mapped = jax.vmap(function)(left_flat, right_flat)
+        return mapped.reshape(leading + mapped.shape[1:])
+
+    def contains(self, state: ArrayLike, /) -> Array:
+        state_array = self._validate(state, "Pointwise state")
+        return jnp.all(self._unary(self.geometry.contains, state_array))
+
+    def project_tangent(
+        self,
+        state: ArrayLike,
+        vector: ArrayLike,
+        /,
+    ) -> Array:
+        state_array = self._validate(state, "Pointwise state")
+        vector_array = self._validate(vector, "Pointwise tangent")
+        _same_shape(vector_array, state_array, "Pointwise tangent")
+        return self._binary(
+            self.geometry.project_tangent,
+            state_array,
+            vector_array,
+        )
+
+    def to_local(
+        self,
+        state: ArrayLike,
+        tangent: ArrayLike,
+        /,
+    ) -> Array:
+        state_array = self._validate(state, "Pointwise state")
+        tangent_array = self._validate(tangent, "Pointwise tangent")
+        _same_shape(tangent_array, state_array, "Pointwise tangent")
+        return self._binary(self.geometry.to_local, state_array, tangent_array)
+
+    def from_local(
+        self,
+        state: ArrayLike,
+        local_tangent: ArrayLike,
+        /,
+    ) -> Array:
+        state_array = self._validate(state, "Pointwise state")
+        local = self._validate(local_tangent, "Pointwise local tangent")
+        _same_shape(local, state_array, "Pointwise local tangent")
+        return self._binary(self.geometry.from_local, state_array, local)
+
+    def retract(
+        self,
+        state: ArrayLike,
+        local_tangent: ArrayLike,
+        /,
+    ) -> Array:
+        state_array = self._validate(state, "Pointwise state")
+        local = self._validate(local_tangent, "Pointwise local tangent")
+        _same_shape(local, state_array, "Pointwise local tangent")
+        return self._binary(self.geometry.retract, state_array, local)
+
+    def inverse_retract(
+        self,
+        state: ArrayLike,
+        point: ArrayLike,
+        /,
+    ) -> Array:
+        state_array = self._validate(state, "Pointwise state")
+        point_array = self._validate(point, "Pointwise retraction point")
+        _same_shape(point_array, state_array, "Pointwise retraction point")
+        return self._binary(
+            self.geometry.inverse_retract,
+            state_array,
+            point_array,
+        )
+
+    def pullback(
+        self,
+        state: ArrayLike,
+        local_tangent: ArrayLike,
+        tangent: ArrayLike,
+        /,
+    ) -> Array:
+        state_array = self._validate(state, "Pointwise state")
+        local = self._validate(local_tangent, "Pointwise local tangent")
+        vector = self._validate(tangent, "Pointwise retraction tangent")
+        _same_shape(local, state_array, "Pointwise local tangent")
+        _same_shape(vector, state_array, "Pointwise retraction tangent")
+        leading = state_array.shape[: -len(self.point_shape)]
+        state_flat = state_array.reshape((-1,) + self.point_shape)
+        local_flat = local.reshape((-1,) + self.point_shape)
+        vector_flat = vector.reshape((-1,) + self.point_shape)
+        mapped = jax.vmap(self.geometry.pullback)(
+            state_flat,
+            local_flat,
+            vector_flat,
+        )
+        return mapped.reshape(leading + mapped.shape[1:])
+
+
+MatrixRetraction: TypeAlias = Literal["exponential", "cayley"]
+
+
+def _dimension(value: int, /) -> int:
+    dimension = int(value)
+    if dimension < 2:
+        raise ValueError("Matrix state geometry dimension must be at least two.")
+    return dimension
+
+
+def _matrix_shape(value: ArrayLike, dimension: int, name: str, /) -> Array:
+    array = jnp.asarray(value)
+    expected = (dimension, dimension)
+    if array.shape[-2:] != expected:
+        raise ValueError(
+            f"{name} must have trailing matrix shape {expected}; got {array.shape}."
+        )
+    return array
+
+
+def _transpose(value: Array, /) -> Array:
+    return jnp.swapaxes(value, -1, -2)
+
+
+def _symmetric(value: Array, /) -> Array:
+    return 0.5 * (value + _transpose(value))
+
+
+def _skew(value: Array, /) -> Array:
+    return 0.5 * (value - _transpose(value))
+
+
+def _matrix_map(function: Callable[[Array], Array], value: Array, /) -> Array:
+    if value.ndim == 2:
+        return function(value)
+    leading = value.shape[:-2]
+    flat = value.reshape((-1,) + value.shape[-2:])
+    mapped = jax.vmap(function)(flat)
+    return mapped.reshape(leading + mapped.shape[1:])
+
+
+def _matrix_exponential(value: Array, /) -> Array:
+    return _matrix_map(jsp.linalg.expm, value)
+
+
+class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
+    """Left-trivialized state geometry for one or batches of SO(n) matrices."""
+
+    dimension: int = eqx.field(static=True)
+    tolerance: float = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
+    retraction_method: MatrixRetraction = eqx.field(static=True)
+    trivial: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        dimension: int,
+        /,
+        *,
+        retraction: MatrixRetraction = "exponential",
+        tolerance: float = 1e-6,
+        geometry_id: str | None = None,
+    ):
+        n = _dimension(dimension)
+        if retraction not in ("exponential", "cayley"):
+            raise ValueError("SO(n) retraction must be 'exponential' or 'cayley'.")
+        if tolerance <= 0.0:
+            raise ValueError("tolerance must be positive.")
+        self.dimension = n
+        self.tolerance = float(tolerance)
+        self.geometry_id = (
+            f"state-geometry:so:{n}:{retraction}"
+            if geometry_id is None
+            else _identifier(geometry_id, "geometry_id")
+        )
+        self.retraction_method = retraction
+        self.trivial = False
+
+    def contains(self, state: ArrayLike, /) -> Array:
+        matrix = _matrix_shape(state, self.dimension, "SO(n) state")
+        identity = jnp.eye(self.dimension, dtype=matrix.dtype)
+        orthogonality = jnp.max(
+            jnp.abs(_transpose(matrix) @ matrix - identity),
+            axis=(-2, -1),
+        )
+        determinant = jnp.linalg.det(matrix)
+        finite = jnp.all(jnp.isfinite(matrix), axis=(-2, -1))
+        return jnp.all(
+            finite
+            & (orthogonality <= self.tolerance)
+            & (determinant > 0.0)
+        )
+
+    def project_tangent(
+        self,
+        state: ArrayLike,
+        vector: ArrayLike,
+        /,
+    ) -> Array:
+        matrix = _matrix_shape(state, self.dimension, "SO(n) state")
+        ambient = _matrix_shape(vector, self.dimension, "SO(n) tangent")
+        _same_shape(ambient, matrix, "SO(n) tangent")
+        return matrix @ _skew(_transpose(matrix) @ ambient)
+
+    def to_local(
+        self,
+        state: ArrayLike,
+        tangent: ArrayLike,
+        /,
+    ) -> Array:
+        matrix = _matrix_shape(state, self.dimension, "SO(n) state")
+        projected = self.project_tangent(matrix, tangent)
+        return _skew(_transpose(matrix) @ projected)
+
+    def from_local(
+        self,
+        state: ArrayLike,
+        local_tangent: ArrayLike,
+        /,
+    ) -> Array:
+        matrix = _matrix_shape(state, self.dimension, "SO(n) state")
+        local = _matrix_shape(
+            local_tangent,
+            self.dimension,
+            "SO(n) local tangent",
+        )
+        _same_shape(local, matrix, "SO(n) local tangent")
+        return matrix @ _skew(local)
+
+    def _increment(self, local_tangent: Array, /) -> Array:
+        algebra = _skew(local_tangent)
+        if self.retraction_method == "exponential":
+            return _matrix_exponential(algebra)
+        identity = jnp.eye(self.dimension, dtype=algebra.dtype)
+        return jnp.linalg.solve(
+            identity - 0.5 * algebra,
+            identity + 0.5 * algebra,
+        )
+
+    def retract(
+        self,
+        state: ArrayLike,
+        local_tangent: ArrayLike,
+        /,
+    ) -> Array:
+        matrix = _matrix_shape(state, self.dimension, "SO(n) state")
+        local = _matrix_shape(
+            local_tangent,
+            self.dimension,
+            "SO(n) local tangent",
+        )
+        _same_shape(local, matrix, "SO(n) local tangent")
+        return matrix @ self._increment(local)
+
+    def inverse_retract(
+        self,
+        state: ArrayLike,
+        point: ArrayLike,
+        /,
+    ) -> Array:
+        matrix = _matrix_shape(state, self.dimension, "SO(n) state")
+        target = _matrix_shape(point, self.dimension, "SO(n) retraction point")
+        _same_shape(target, matrix, "SO(n) retraction point")
+        relative = _transpose(matrix) @ target
+        if self.retraction_method == "cayley":
+            identity = jnp.eye(self.dimension, dtype=relative.dtype)
+            return 2.0 * _skew(
+                jnp.linalg.solve(relative + identity, relative - identity)
+            )
+        return _skew(relative - _transpose(relative)) * 0.5
+
+    def pullback(
+        self,
+        state: ArrayLike,
+        local_tangent: ArrayLike,
+        tangent: ArrayLike,
+        /,
+    ) -> Array:
+        matrix = _matrix_shape(state, self.dimension, "SO(n) state")
+        local = _skew(
+            _matrix_shape(
+                local_tangent,
+                self.dimension,
+                "SO(n) local tangent",
+            )
+        )
+        point = self.retract(matrix, local)
+        vector = self.project_tangent(point, tangent)
+        if self.retraction_method == "cayley":
+            identity = jnp.eye(self.dimension, dtype=matrix.dtype)
+            increment = self._increment(local)
+            derivative = _transpose(matrix) @ vector
+            return _skew(
+                2.0
+                * (identity - 0.5 * local)
+                @ derivative
+                @ jnp.linalg.inv(increment + identity)
+            )
+        body = _skew(_transpose(point) @ vector)
+        commutator1 = local @ body - body @ local
+        commutator2 = local @ commutator1 - commutator1 @ local
+        commutator3 = local @ commutator2 - commutator2 @ local
+        commutator4 = local @ commutator3 - commutator3 @ local
+        return _skew(
+            body
+            + 0.5 * commutator1
+            + commutator2 / 12.0
+            - commutator4 / 720.0
+        )
+
+
+class SymmetricPositiveDefiniteStateGeometry(AbstractStateGeometry):
+    """Congruence/exponential state geometry for SPD(n) matrices."""
+
+    dimension: int = eqx.field(static=True)
+    tolerance: float = eqx.field(static=True)
+    geometry_id: str = eqx.field(static=True)
+    retraction_method: str = eqx.field(static=True)
+    trivial: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        dimension: int,
+        /,
+        *,
+        tolerance: float = 1e-8,
+        geometry_id: str | None = None,
+    ):
+        n = _dimension(dimension)
+        if tolerance <= 0.0:
+            raise ValueError("tolerance must be positive.")
+        self.dimension = n
+        self.tolerance = float(tolerance)
+        self.geometry_id = (
+            f"state-geometry:spd:{n}:congruence-exponential"
+            if geometry_id is None
+            else _identifier(geometry_id, "geometry_id")
+        )
+        self.retraction_method = "congruence-exponential"
+        self.trivial = False
+
+    def _spectral_factors(self, state: Array, /) -> tuple[Array, Array]:
+        eigenvalues, eigenvectors = jnp.linalg.eigh(_symmetric(state))
+        safe = jnp.maximum(eigenvalues, jnp.finfo(state.dtype).tiny)
+        square_root = (
+            eigenvectors
+            * jnp.expand_dims(jnp.sqrt(safe), axis=-2)
+        ) @ _transpose(eigenvectors)
+        inverse_root = (
+            eigenvectors
+            * jnp.expand_dims(jax.lax.rsqrt(safe), axis=-2)
+        ) @ _transpose(eigenvectors)
+        return square_root, inverse_root
+
+    def contains(self, state: ArrayLike, /) -> Array:
+        matrix = _matrix_shape(state, self.dimension, "SPD(n) state")
+        symmetry_error = jnp.max(
+            jnp.abs(matrix - _transpose(matrix)),
+            axis=(-2, -1),
+        )
+        minimum = jnp.min(jnp.linalg.eigvalsh(_symmetric(matrix)), axis=-1)
+        finite = jnp.all(jnp.isfinite(matrix), axis=(-2, -1))
+        return jnp.all(
+            finite
+            & (symmetry_error <= self.tolerance)
+            & (minimum > self.tolerance)
+        )
+
+    def project_tangent(
+        self,
+        state: ArrayLike,
+        vector: ArrayLike,
+        /,
+    ) -> Array:
+        matrix = _matrix_shape(state, self.dimension, "SPD(n) state")
+        ambient = _matrix_shape(vector, self.dimension, "SPD(n) tangent")
+        _same_shape(ambient, matrix, "SPD(n) tangent")
+        return _symmetric(ambient)
+
+    def to_local(
+        self,
+        state: ArrayLike,
+        tangent: ArrayLike,
+        /,
+    ) -> Array:
+        matrix = _matrix_shape(state, self.dimension, "SPD(n) state")
+        projected = self.project_tangent(matrix, tangent)
+        _, inverse_root = self._spectral_factors(matrix)
+        return _symmetric(inverse_root @ projected @ inverse_root)
+
+    def from_local(
+        self,
+        state: ArrayLike,
+        local_tangent: ArrayLike,
+        /,
+    ) -> Array:
+        matrix = _matrix_shape(state, self.dimension, "SPD(n) state")
+        local = _matrix_shape(
+            local_tangent,
+            self.dimension,
+            "SPD(n) local tangent",
+        )
+        _same_shape(local, matrix, "SPD(n) local tangent")
+        square_root, _ = self._spectral_factors(matrix)
+        return _symmetric(square_root @ _symmetric(local) @ square_root)
+
+    def retract(
+        self,
+        state: ArrayLike,
+        local_tangent: ArrayLike,
+        /,
+    ) -> Array:
+        matrix = _matrix_shape(state, self.dimension, "SPD(n) state")
+        local = _matrix_shape(
+            local_tangent,
+            self.dimension,
+            "SPD(n) local tangent",
+        )
+        _same_shape(local, matrix, "SPD(n) local tangent")
+        square_root, _ = self._spectral_factors(matrix)
+        return _symmetric(
+            square_root @ _matrix_exponential(_symmetric(local)) @ square_root
+        )
+
+    def inverse_retract(
+        self,
+        state: ArrayLike,
+        point: ArrayLike,
+        /,
+    ) -> Array:
+        matrix = _matrix_shape(state, self.dimension, "SPD(n) state")
+        target = _matrix_shape(point, self.dimension, "SPD(n) retraction point")
+        _same_shape(target, matrix, "SPD(n) retraction point")
+        _, inverse_root = self._spectral_factors(matrix)
+        relative = _symmetric(inverse_root @ target @ inverse_root)
+        eigenvalues, eigenvectors = jnp.linalg.eigh(relative)
+        logarithm = (
+            eigenvectors
+            * jnp.expand_dims(
+                jnp.log(jnp.maximum(eigenvalues, jnp.finfo(relative.dtype).tiny)),
+                axis=-2,
+            )
+        ) @ _transpose(eigenvectors)
+        return _symmetric(logarithm)
+
+    def pullback(
+        self,
+        state: ArrayLike,
+        local_tangent: ArrayLike,
+        tangent: ArrayLike,
+        /,
+    ) -> Array:
+        point = self.retract(state, local_tangent)
+        return self.to_local(point, tangent)
+
+
 __all__ = [
     "AbstractStateGeometry",
+    "EmbeddedStateGeometry",
     "EuclideanStateGeometry",
     "LocalRetraction",
+    "PointwiseStateGeometry",
+    "SpecialOrthogonalStateGeometry",
+    "SymmetricPositiveDefiniteStateGeometry",
 ]
