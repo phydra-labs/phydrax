@@ -671,6 +671,7 @@ or quantiles are defined.
 | Cheap stochastic diagnostic | MC dropout with coherent full-function keys | Deep ensemble | Dropout spread is not calibrated automatically |
 | Random forcing, coefficients, geometry, or initial state | Preserve named input sample axes | Joint input/epistemic predictive design | Output query geometry must align across draws |
 | Small physical or calibration parameter posterior | NUTS/HMC or dense Laplace | Pathfinder or tempered SMC when justified | Likelihood must be normalized and deterministic |
+| Large factorized dataset or operator-case posterior | Fixed-step SGLD with a control variate | SGNHT after reference validation | Unadjusted draws require step-halving and exact-reference checks |
 | Selected neural-operator weights | Exact last-projection Laplace reference | Diagonal/Lanczos/LOBPCG Laplace | Full-weight inference is usually too large |
 | Distribution-free whole-field bands | `OperatorFunctionalConformal` | Score stratification or recalibration | Exchangeability does not survive arbitrary shifts |
 | Learned stochastic transition law | `GaussianFunctionOperator` with `uncertainty_source="process"` | Fixed-query `ConditionalFlowFunctionOperator` for demonstrated non-Gaussian residuals | A learned density is not a drift/diffusion identification |
@@ -982,6 +983,125 @@ inside `log_density`. NUTS is the default for low-dimensional physical parameter
 noise scales, and explicitly selected small subspaces. Sampling every neural-network
 weight is deliberately not the default.
 
+## Fixed-step stochastic-gradient MCMC
+
+Use stochastic-gradient MCMC only when the likelihood is a sum over many
+statistical factors and full-density transitions are the measured bottleneck.
+`MinibatchPosteriorProblem` makes that algebra explicit. A factor must be one
+independent likelihood contribution; it is not an arbitrary slice of a residual
+array. `ArrayMinibatchSource` emits deterministic shuffled epochs, retains the
+padded final batch, and excludes padding through `factor_mask`:
+
+```python
+minibatch_source = phx.uq.ArrayMinibatchSource(
+    {
+        "basis": sensor_basis,
+        "observation": observations,
+    },
+    batch_size=8,
+    seed=17,
+)
+
+
+def likelihood_factors(parameters, batch):
+    prediction = parameters["source"] * batch.data["basis"]
+    return observation_likelihood.log_prob(
+        prediction,
+        batch.data["observation"],
+    )
+
+
+minibatch_posterior = phx.uq.MinibatchPosteriorProblem(
+    parameter_space,
+    likelihood_factors,
+    num_factors=sensor_basis.size,
+    full_log_likelihood=posterior_problem.log_likelihood,
+    predict=lambda parameters, x: cx.Field(
+        parameters["source"] * 0.5 * x * (1.0 - x),
+        dims=("x",),
+    ),
+)
+minibatch_inspection = phx.uq.diagnose_minibatch_posterior(
+    minibatch_posterior,
+    minibatch_source,
+)
+if not minibatch_inspection.passed:
+    raise ValueError(minibatch_inspection.as_dict())
+```
+
+The inspection sums one complete epoch and compares both its value and gradient
+with `full_log_likelihood` when supplied. This catches incorrect population
+scaling, duplicated priors, missing factors, and source/problem mismatches before
+sampling.
+
+`sample_sgld` implements fixed-step overdamped Langevin updates.
+`sample_sgnht` adds momentum and a scalar thermostat to absorb stochastic-gradient
+noise:
+
+```python
+control = phx.uq.build_sgmcmc_control_variate(
+    minibatch_posterior,
+    minibatch_source,
+    map_result.position,
+)
+
+sgld = phx.uq.sample_sgld(
+    minibatch_posterior,
+    minibatch_source,
+    key=jr.key(20),
+    step_size=1e-4,
+    num_chains=4,
+    num_burnin=1000,
+    num_samples=2000,
+    steps_per_sample=2,
+    control_variate=control,
+    chain_method="vectorized",
+)
+sgnht = phx.uq.sample_sgnht(
+    minibatch_posterior,
+    minibatch_source,
+    key=jr.key(21),
+    step_size=5e-4,
+    diffusion=0.01,
+    num_chains=4,
+    num_burnin=1000,
+    num_samples=2000,
+    steps_per_sample=2,
+    control_variate=control,
+    chain_method="vectorized",
+)
+
+mixing = sgld.mixing_report(
+    max_rhat=1.05,
+    min_bulk_ess=200,
+    min_tail_ess=200,
+)
+mixing.raise_for_failure()
+```
+
+Both samplers preserve separate chain/draw axes, nested PyTrees, constrained
+physical samples, source configuration and fingerprint, deterministic keys,
+gradient/update throughput, memory, gradient-norm traces, and nonfinite-update
+locations. SGNHT additionally retains thermostat and momentum-norm traces.
+Checkpointing resumes the indexed source/transition schedule exactly and rejects
+changed problem, source, control-variate, PyTree, or sampler identities.
+
+These are unadjusted fixed-step approximations. Burn-in discards early states; it
+is not adaptation. Rank diagnostics measure between-chain mixing and do not detect
+stationary discretization bias. For every scientific use:
+
+1. rerun at half the step size and compare posterior and predictive moments;
+2. inspect stochastic-gradient variance, with and without a control variate;
+3. compare against NUTS or dense Laplace on a tractable reduced/reference problem;
+4. report the batch definition, population size, step size, burn-in, thinning,
+   update count, and approximation label.
+
+Prefer NUTS or Laplace when full-data inference is feasible. Current SG-MCMC
+sources support uniform factor subsampling only: no decreasing-step schedule,
+automatic step-size adaptation, query-anchor subsampling, likelihood-dependent
+sampling, multi-host source execution, SGHMC, pSGLD/RMSProp geometry, or online
+gradient-noise covariance estimation is implied.
+
 ## Flow-assisted NUTS
 
 `sample_flow_nuts` combines independently adapted NUTS chains with a shared
@@ -1201,11 +1321,14 @@ SHA-256 checksums, atomic replacement, and no pickle or Python object
 arrays. Portable archives export representable result arrays and explicitly list
 excluded live callables. `FlowNUTSResult` archives include frozen flow parameters,
 loss histories, local and global sampler statistics, deterministic keys, and phase
-timings. `phx.uq.to_arviz(posterior_draws)` accepts ordinary or flow-assisted MCMC,
-retains separate `chain` and `draw` dimensions, and adds flow acceptance, accepted
-proposal counts, log acceptance ratios, and nonfinite counts when present. Generic
-observed-data and pointwise-log-likelihood groups are omitted because
-`PosteriorProblem` does not promise that metadata.
+timings. `SGMCMCResult` archives include algorithm and approximation identities,
+source configuration and fingerprint, control-variate metadata, gradient/update
+accounting, thermostat or momentum traces when present, and deterministic replay
+keys. `phx.uq.to_arviz(posterior_draws)` accepts ordinary, flow-assisted, or
+stochastic-gradient MCMC and retains separate `chain` and `draw` dimensions.
+Method-specific sample statistics are added when present. Generic observed-data and
+pointwise-log-likelihood groups are omitted because neither posterior contract
+promises that metadata.
 
 ## Gaussian-process model discrepancy
 
@@ -1314,11 +1437,15 @@ Phydrax currently recommends:
    benchmarked against NUTS or Laplace where feasible.
 6. Pathfinder for rapid local diagnostics, always benchmarked against NUTS.
 7. Tempered SMC for low-dimensional mode discovery and evidence estimation.
-8. Deep ensembles for independently trained neural-model epistemic variation.
-9. Exact GP discrepancy for moderate scalar data, explicit coregionalization for
-   correlated outputs, and FITC only when dense scaling fails.
+8. Fixed-step SGLD, optionally with an exact-center control variate, for large
+   uniformly factorized likelihoods after step-halving and exact-reference checks.
+   Use SGNHT only when its momentum/thermostat dynamics improve measured mixing.
+9. Deep ensembles for independently trained neural-model epistemic variation.
+10. Exact GP discrepancy for moderate scalar data, explicit coregionalization for
+    correlated outputs, and FITC only when dense scaling fails.
 
-Mean-field VI, standalone variational normalizing-flow posteriors, SWAG, SGMCMC,
+Mean-field VI, standalone variational normalizing-flow posteriors, SWAG, SGHMC,
+pSGLD/RMSProp geometry, decreasing-step stochastic approximation,
 non-Gaussian/sparse variational GPs, and full-network HMC remain unsupported. None
 is silently approximated by the methods above.
 

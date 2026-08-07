@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections import deque
 from dataclasses import dataclass
 from math import ceil
@@ -121,7 +123,86 @@ class OperatorBatchLoader:
             "drop_last": self.drop_last,
             "split": self.split,
             "sampling": sampling_contract,
+            "normalization": (
+                None if self.normalization is None else self.normalization.to_dict()
+            ),
+            "dtype_policy": (
+                None if self.dtype_policy is None else self.dtype_policy.to_dict()
+            ),
+            "sharding": (
+                None
+                if self.sharding_policy is None
+                else {
+                    "mesh_axis": self.sharding_policy.mesh_axis,
+                    "case_axis": self.sharding_policy.case_axis,
+                    "mesh_shape": list(self.sharding_policy.mesh.devices.shape),
+                    "device_count": int(self.sharding_policy.mesh.devices.size),
+                }
+            ),
         }
+    def source_fingerprint(self) -> str:
+        """Hash source identity, case provenance, geometry, inputs, and targets."""
+        digest = hashlib.sha256()
+        configuration = json.dumps(
+            self.configuration(),
+            allow_nan=False,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        digest.update(configuration.encode("utf-8"))
+        for index in range(self.source.size):
+            metadata = self.source.case_metadata(index)
+            provenance = metadata.provenance
+            provenance_record = (
+                {"case_id": f"case:{index}"}
+                if provenance is None
+                else {
+                    "case_id": provenance.case_id,
+                    "identities": dict(provenance.identities),
+                    "order": dict(provenance.order),
+                }
+            )
+            digest.update(
+                json.dumps(
+                    provenance_record,
+                    allow_nan=False,
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode("utf-8")
+            )
+            selected = read_operator_case_batch(
+                self.source,
+                (index,),
+                sampling=self.sampling,
+                split=self.split,
+                epoch=0,
+            )
+            _update_array_tree_digest(digest, "batch", selected.batch)
+            _update_array_tree_digest(digest, "targets", selected.targets)
+        return digest.hexdigest()
+
+    def indices_for_epoch(self, epoch: int, /) -> tuple[tuple[int, ...], ...]:
+        """Return deterministic case-index chunks without preparing device data."""
+        return self._indices(epoch)
+
+    def prepare_indices(
+        self,
+        indices: Sequence[int],
+        /,
+        *,
+        epoch: int,
+        batch_index: int,
+    ) -> OperatorTrainingBatch:
+        """Prepare explicit case indices through the configured loader pipeline."""
+        selected = tuple(int(index) for index in indices)
+        if not selected:
+            raise ValueError("indices must contain at least one case.")
+        if any(index < 0 or index >= self.source.size for index in selected):
+            raise ValueError("indices contain a case outside the source.")
+        return self._prepare(selected, int(epoch), int(batch_index))
+
 
     def fixed_query_fingerprints(
         self,
@@ -261,6 +342,24 @@ class OperatorBatchLoader:
                 batch_index, indices = item
                 queue.append(self._prepare(indices, epoch, batch_index))
             yield current
+
+
+def _update_array_tree_digest(
+    digest: Any,
+    prefix: str,
+    tree: Any,
+    /,
+) -> None:
+    for path, leaf in jax.tree_util.tree_flatten_with_path(tree)[0]:
+        value = np.asarray(leaf)
+        if value.dtype.hasobject:
+            continue
+        contiguous = np.ascontiguousarray(value)
+        digest.update(prefix.encode("utf-8"))
+        digest.update((jax.tree_util.keystr(path) or "<root>").encode("utf-8"))
+        digest.update(contiguous.dtype.str.encode("ascii"))
+        digest.update(json.dumps(contiguous.shape).encode("ascii"))
+        digest.update(contiguous.tobytes(order="C"))
 
 
 __all__ = ["OperatorBatchLoader", "OperatorTrainingBatch"]

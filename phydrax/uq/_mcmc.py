@@ -17,6 +17,15 @@ from jaxtyping import Array, PyTree
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ._chain import (
+    _prepare_chain_positions,
+    _split_chain_keys,
+    _stack_trees,
+    _tree_nbytes,
+    _unstack_tree,
+    _validate_chain_method,
+    ChainMethod,
+)
 from ._checkpoint import (
     checkpoint_compatibility,
     CheckpointCorruptionError,
@@ -37,9 +46,6 @@ from ._posterior_predictive import (
     sample_observations_from_position_samples,
 )
 from ._predictive import PredictiveField
-
-
-ChainMethod = Literal["sequential", "vectorized"]
 
 
 class MCMCChainWarmup(StrictModule):
@@ -361,13 +367,7 @@ def _sample_mcmc(
     initial_step = float(initial_step_size)
     if initial_step <= 0.0:
         raise ValueError("initial_step_size must be positive.")
-    method: ChainMethod = chain_method
-    if method not in ("sequential", "vectorized"):
-        raise ValueError("chain_method must be 'sequential' or 'vectorized'.")
-    if initial_position is not None and initial_positions is not None:
-        raise ValueError(
-            "initial_position and initial_positions cannot both be supplied."
-        )
+    method = _validate_chain_method(chain_method)
     if resume_from is not None and (
         initial_position is not None or initial_positions is not None
     ):
@@ -389,41 +389,17 @@ def _sample_mcmc(
     if destination is not None and (checkpoint_id is None or not str(checkpoint_id)):
         raise ValueError("checkpoint_id is required for MCMC checkpointing.")
 
+    position, chain_positions = _prepare_chain_positions(
+        problem.initial_position,
+        num_chains=chains,
+        initial_position=initial_position,
+        initial_positions=initial_positions,
+    )
     if initial_positions is None:
-        position = (
-            problem.initial_position if initial_position is None else initial_position
-        )
         problem.parameter_space.constrain(position)
         value, gradient = jax.value_and_grad(problem.log_density)(position)
-        chain_positions = jax.tree_util.tree_map(
-            lambda leaf: jnp.broadcast_to(leaf, (chains, *leaf.shape)),
-            position,
-        )
         values = value
     else:
-        position = problem.initial_position
-        if jax.tree_util.tree_structure(
-            initial_positions
-        ) != jax.tree_util.tree_structure(problem.initial_position):
-            raise ValueError(
-                "initial_positions must have the ParameterSpace initial PyTree structure."
-            )
-        reference_leaves = jax.tree_util.tree_leaves(problem.initial_position)
-        position_leaves = jax.tree_util.tree_leaves(initial_positions)
-        for position_leaf, reference_leaf in zip(
-            position_leaves,
-            reference_leaves,
-            strict=True,
-        ):
-            if not eqx.is_inexact_array(position_leaf):
-                raise TypeError("Every initial_positions leaf must be an inexact array.")
-            expected_shape = (chains, *reference_leaf.shape)
-            if position_leaf.shape != expected_shape:
-                raise ValueError(
-                    "Every initial_positions leaf must have shape "
-                    f"{expected_shape}; received {position_leaf.shape}."
-                )
-        chain_positions = jax.tree_util.tree_map(jnp.asarray, initial_positions)
         values, gradient = jax.vmap(jax.value_and_grad(problem.log_density))(
             chain_positions
         )
@@ -433,8 +409,7 @@ def _sample_mcmc(
     ):
         raise FloatingPointError("Initial MCMC log density and gradient must be finite.")
 
-    root_key = jnp.asarray(key)
-    chain_keys = jr.split(root_key, chains)
+    root_key, chain_keys = _split_chain_keys(key, chains)
     split_keys = jax.vmap(lambda chain_key: jr.split(chain_key, 2))(chain_keys)
     warmup_keys = split_keys[:, 0]
     sample_keys = split_keys[:, 1]
@@ -986,18 +961,6 @@ def _empty_sample_tree(position, chains):
     )
 
 
-def _stack_trees(values):
-    return jax.tree_util.tree_map(lambda *leaves: jnp.stack(leaves), *values)
-
-
-def _unstack_tree(tree, count):
-    return tuple(
-        jax.tree_util.tree_map(lambda value: value[index], tree) for index in range(count)
-    )
-
-
-def _tree_nbytes(tree: PyTree[Any], /) -> int:
-    return sum(int(jnp.asarray(leaf).nbytes) for leaf in jax.tree_util.tree_leaves(tree))
 
 
 __all__ = [

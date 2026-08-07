@@ -19,6 +19,10 @@ class BenchmarkConfiguration:
     num_chains: int
     num_warmup: int
     num_draws: int
+    sgmcmc_burnin: int
+    sgmcmc_draws: int
+    sgmcmc_batch_size: int
+    sgmcmc_steps_per_sample: int
     pathfinder_samples: int
     smc_particles: int
     posterior_prediction_samples: int
@@ -43,6 +47,10 @@ PROFILES: dict[ProfileName, BenchmarkConfiguration] = {
         num_chains=4,
         num_warmup=100,
         num_draws=150,
+        sgmcmc_burnin=1_000,
+        sgmcmc_draws=1_000,
+        sgmcmc_batch_size=16,
+        sgmcmc_steps_per_sample=4,
         pathfinder_samples=768,
         smc_particles=800,
         posterior_prediction_samples=1_024,
@@ -66,6 +74,10 @@ PROFILES: dict[ProfileName, BenchmarkConfiguration] = {
         smc_particles=4_000,
         posterior_prediction_samples=8_192,
         calibration_cases=2_048,
+        sgmcmc_burnin=3_000,
+        sgmcmc_draws=5_000,
+        sgmcmc_batch_size=32,
+        sgmcmc_steps_per_sample=2,
         gp_repeats=12,
         jit_warm_repetitions=10,
         flow_adaptation_rounds=4,
