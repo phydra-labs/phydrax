@@ -7,7 +7,13 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.tree_util as jtu
 
-from phydrax.nn.models import FeynmaNN, FNO, KAN, MLP
+from phydrax.nn.models import (
+    FeynmaNN,
+    FNO,
+    KAN,
+    MLP,
+    OrthogonalPolynomialEdgeBasis,
+)
 
 
 def _num_params(model) -> int:
@@ -212,11 +218,24 @@ def test_fno_two_dimensional_scan_parameter_count_matches_loop():
 
 def test_kan_scan_parity_uniform():
     key = jr.key(18)
+    basis = OrthogonalPolynomialEdgeBasis(degree=3)
     k_loop = KAN(
-        in_size=3, out_size=2, width_size=6, depth=4, degree=3, scan=False, key=key
+        in_size=3,
+        out_size=2,
+        width_size=6,
+        depth=4,
+        edge_basis=basis,
+        scan=False,
+        key=key,
     )
     k_scan = KAN(
-        in_size=3, out_size=2, width_size=6, depth=4, degree=3, scan=True, key=key
+        in_size=3,
+        out_size=2,
+        width_size=6,
+        depth=4,
+        edge_basis=basis,
+        scan=True,
+        key=key,
     )
     x = jr.normal(jr.key(19), (3,))
     assert jnp.allclose(k_loop(x), k_scan(x))
@@ -224,11 +243,24 @@ def test_kan_scan_parity_uniform():
 
 def test_kan_scan_parameter_count_matches_loop():
     key = jr.key(22)
+    basis = OrthogonalPolynomialEdgeBasis(degree=3)
     k_loop = KAN(
-        in_size=3, out_size=2, width_size=6, depth=4, degree=3, scan=False, key=key
+        in_size=3,
+        out_size=2,
+        width_size=6,
+        depth=4,
+        edge_basis=basis,
+        scan=False,
+        key=key,
     )
     k_scan = KAN(
-        in_size=3, out_size=2, width_size=6, depth=4, degree=3, scan=True, key=key
+        in_size=3,
+        out_size=2,
+        width_size=6,
+        depth=4,
+        edge_basis=basis,
+        scan=True,
+        key=key,
     )
     assert _num_params(k_scan) == _num_params(k_loop)
 
@@ -238,7 +270,9 @@ def test_kan_scan_fallback_heterogeneous():
         in_size=3,
         out_size=2,
         hidden_sizes=(5, 7, 5),
-        degree=(2, 3, 4, 5),
+        edge_basis=tuple(
+            OrthogonalPolynomialEdgeBasis(degree=degree) for degree in (2, 3, 4, 5)
+        ),
         scan=True,
         key=jr.key(20),
     )

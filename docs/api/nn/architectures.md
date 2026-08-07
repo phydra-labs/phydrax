@@ -1,6 +1,6 @@
 # Architectures
 
-Common end-to-end model families (dense, separable, polynomial, and complex-valued).
+Common end-to-end model families (dense, separable, basis-edge, and complex-valued).
 
 !!! note
     Key notes:
@@ -8,7 +8,8 @@ Common end-to-end model families (dense, separable, polynomial, and complex-valu
     - `MLP` is a standard feed-forward network with optional residual connection.
     - `ModifiedMLP` reuses two persistent input encoders in every hidden-layer
       gate to improve information flow through deep coordinate networks.
-    - `KAN` replaces activations with polynomial edge functions.
+    - `KAN` replaces node activations with typed edge functions. It defaults to
+      global orthogonal polynomials and also supports fixed-grid B-splines.
     - `FeynmaNN` builds complex hidden states with a sum-over-paths block.
     - `MLP`, `ModifiedMLP`, `KAN`, `FeynmaNN`, and `FNO` support `scan=True`
       to use a scan-over-depth execution path when topology is compatible.
@@ -35,6 +36,53 @@ Common end-to-end model families (dense, separable, polynomial, and complex-valu
         members:
             - __init__
             - __call__
+
+`edge_basis` accepts one shared basis or one basis per layer. The spline basis
+uses an open-uniform grid on `[-1, 1]`, Greville-abscissa identity
+initialization, compact support, and a basis-specific Sobolev regularizer:
+
+```python
+import phydrax as phx
+
+basis = phx.nn.BSplineEdgeBasis(degree=3, num_intervals=8)
+model = phx.nn.KAN(
+    in_size=2,
+    out_size="scalar",
+    width_size=32,
+    depth=3,
+    edge_basis=basis,
+    scan=True,
+)
+```
+
+With `use_tanh=False`, values are inclusively clamped to the canonical interval:
+exact endpoints retain the one-sided edge derivative, while strictly exterior
+inputs have zero derivative.
+
+---
+
+::: phydrax.nn.AbstractEdgeBasis
+
+---
+
+::: phydrax.nn.OrthogonalPolynomialEdgeBasis
+    options:
+        members:
+            - __init__
+
+---
+
+::: phydrax.nn.BSplineGrid
+    options:
+        members:
+            - __init__
+
+---
+
+::: phydrax.nn.BSplineEdgeBasis
+    options:
+        members:
+            - __init__
 
 ---
 

@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
-from phydrax.nn.models import SeparableKAN
+from phydrax.nn.models import BSplineEdgeBasis, SeparableKAN
 
 
 @pytest.mark.parametrize("scan", (False, True), ids=("no_scan", "scan"))
@@ -52,7 +52,6 @@ def test_separable_kan_scalar_requires_split_input(scan):
             out_size="scalar",
             width_size=8,
             depth=1,
-            degree=3,
             scan=scan,
         )
 
@@ -66,7 +65,6 @@ def test_separable_kan_scalar_with_split_input(scan):
         split_input=2,
         width_size=6,
         depth=1,
-        degree=3,
         scan=scan,
         key=jr.key(3),
     )
@@ -74,3 +72,39 @@ def test_separable_kan_scalar_with_split_input(scan):
     y = model(x)
     assert y.shape == ()
     assert jnp.isfinite(y)
+
+
+def test_separable_bspline_kan_scan_matches_loop():
+    basis = BSplineEdgeBasis(degree=3, num_intervals=5)
+    key = jr.key(4)
+    loop = SeparableKAN(
+        in_size=2,
+        out_size="scalar",
+        latent_size=3,
+        width_size=6,
+        depth=3,
+        edge_basis=basis,
+        scan=False,
+        key=key,
+    )
+    scanned = SeparableKAN(
+        in_size=2,
+        out_size="scalar",
+        latent_size=3,
+        width_size=6,
+        depth=3,
+        edge_basis=basis,
+        scan=True,
+        key=key,
+    )
+    coordinates = (
+        jnp.linspace(-0.8, 0.8, 4),
+        jnp.linspace(-0.7, 0.7, 5),
+    )
+
+    loop_value = loop(coordinates)
+    scanned_value = scanned(coordinates)
+
+    assert scanned_value.shape == (4, 5)
+    assert jnp.allclose(scanned_value, loop_value)
+    assert all(model._scan_enabled for model in scanned.model.models)
