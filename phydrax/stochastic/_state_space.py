@@ -19,6 +19,12 @@ from jaxtyping import Array, ArrayLike, Key
 
 from .._frozendict import frozendict
 from .._strict import AbstractAttribute, StrictModule
+from ._linear_gaussian import (
+    degenerate_gaussian_log_prob,
+    LinearGaussianDynamics,
+    LinearGaussianParameterization,
+    LinearGaussianParameters,
+)
 from ._process import AbstractMarginalTransitionLaw, AbstractProcessDistribution
 
 
@@ -579,87 +585,156 @@ def _parameter(value: Array | Callable[..., ArrayLike], *args: Array) -> Array:
 
 
 class LinearGaussianTransitionKernel(AbstractTransitionKernel):
-    transition: Array | Callable[[Array, Array], ArrayLike]
-    offset: Array | Callable[[Array, Array], ArrayLike]
-    covariance: Array | Callable[[Array, Array], ArrayLike]
+    """Affine Gaussian transition driven by one interval parameterization."""
+
+    parameterization: LinearGaussianParameterization | LinearGaussianDynamics
     state_shape: tuple[int, ...] = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
+    parameterization_id: str = eqx.field(static=True)
+    resolved_method: str = eqx.field(static=True)
     has_log_density: bool = eqx.field(static=True)
 
     def __init__(
         self,
-        transition: ArrayLike | Callable[[Array, Array], ArrayLike],
-        covariance: ArrayLike | Callable[[Array, Array], ArrayLike],
+        transition: (
+            ArrayLike
+            | Callable[[Array, Array], ArrayLike]
+            | LinearGaussianParameterization
+            | LinearGaussianDynamics
+        ),
+        covariance: ArrayLike | Callable[[Array, Array], ArrayLike] | None = None,
         /,
         *,
-        state_shape: Sequence[int],
+        state_shape: Sequence[int] | None = None,
         offset: ArrayLike | Callable[[Array, Array], ArrayLike] = 0.0,
-        process_id: str = "linear-gaussian",
-        approximation_id: str = "exact-linear-gaussian",
+        process_id: str | None = None,
+        approximation_id: str | None = None,
         has_log_density: bool = True,
     ):
-        for owner, value in (
-            ("transition", transition),
-            ("covariance", covariance),
-            ("offset", offset),
+        if isinstance(
+            transition, (LinearGaussianParameterization, LinearGaussianDynamics)
         ):
-            if not callable(value) and bool(jnp.any(~jnp.isfinite(jnp.asarray(value)))):
-                raise ValueError(f"{owner} must be finite.")
-        self.transition = (
-            cast(Callable[[Array, Array], ArrayLike], transition)
-            if callable(transition)
-            else jnp.asarray(transition, dtype=float)
+            if covariance is not None:
+                raise TypeError(
+                    "covariance must be omitted when using a parameterization object."
+                )
+            if callable(offset) or bool(jnp.any(jnp.asarray(offset) != 0.0)):
+                raise TypeError(
+                    "offset must be omitted when using a parameterization object."
+                )
+            parameterization = transition
+            if state_shape is not None and _shape(
+                state_shape, owner="state_shape"
+            ) != parameterization.state_shape:
+                raise ValueError(
+                    "state_shape must match the parameterization state shape."
+                )
+            shape = parameterization.state_shape
+            default_process_id = (
+                parameterization.process_id
+                if isinstance(parameterization, LinearGaussianDynamics)
+                else "linear-gaussian"
+            )
+            default_approximation_id = (
+                parameterization.approximation_id
+                if isinstance(parameterization, LinearGaussianDynamics)
+                else "exact-linear-gaussian"
+            )
+            parameterization_id = (
+                parameterization.dynamics_id
+                if isinstance(parameterization, LinearGaussianDynamics)
+                else parameterization.parameterization_id
+            )
+        else:
+            if covariance is None:
+                raise TypeError(
+                    "covariance is required for the legacy transition parameterization."
+                )
+            if state_shape is None:
+                raise TypeError("state_shape is required.")
+            shape = _shape(state_shape, owner="state_shape")
+            parameterization = LinearGaussianParameterization(
+                transition,
+                covariance,
+                state_shape=shape,
+                offset=offset,
+            )
+            default_process_id = "linear-gaussian"
+            default_approximation_id = "exact-linear-gaussian"
+            parameterization_id = parameterization.parameterization_id
+        self.parameterization = parameterization
+        self.state_shape = shape
+        self.process_id = _name(
+            default_process_id if process_id is None else process_id,
+            owner="process_id",
         )
-        self.offset = (
-            cast(Callable[[Array, Array], ArrayLike], offset)
-            if callable(offset)
-            else jnp.asarray(offset, dtype=float)
+        self.approximation_id = _name(
+            (
+                default_approximation_id
+                if approximation_id is None
+                else approximation_id
+            ),
+            owner="approximation_id",
         )
-        self.covariance = (
-            cast(Callable[[Array, Array], ArrayLike], covariance)
-            if callable(covariance)
-            else jnp.asarray(covariance, dtype=float)
-        )
-        self.state_shape = _shape(state_shape, owner="state_shape")
-        self.process_id = _name(process_id, owner="process_id")
-        self.approximation_id = _name(approximation_id, owner="approximation_id")
+        self.parameterization_id = parameterization_id
+        self.resolved_method = parameterization.resolved_method
         self.has_log_density = bool(has_log_density)
 
-    def parameters(self, t0: ArrayLike, t1: ArrayLike, /) -> tuple[Array, Array, Array]:
-        start, end = jnp.asarray(t0), jnp.asarray(t1)
-        size = _event_size(self.state_shape)
-        transition = _parameter(self.transition, start, end)
-        covariance = _parameter(self.covariance, start, end)
-        offset = _parameter(self.offset, start, end)
-        if transition.shape[-2:] != (size, size):
-            raise ValueError("transition must end in state_size by state_size.")
-        if covariance.shape[-2:] != (size, size):
-            raise ValueError("covariance must end in state_size by state_size.")
-        offset = jnp.broadcast_to(offset, transition.shape[:-2] + (size,))
-        return transition, offset, covariance
+    @property
+    def transition(self):
+        return (
+            self.parameterization.transition
+            if isinstance(self.parameterization, LinearGaussianParameterization)
+            else self.parameterization
+        )
+
+    @property
+    def offset(self):
+        return self.parameterization.offset
+
+    @property
+    def covariance(self):
+        return (
+            self.parameterization.covariance
+            if isinstance(self.parameterization, LinearGaussianParameterization)
+            else self.parameterization.dispersion @ self.parameterization.dispersion.T
+        )
+
+    def parameters(
+        self, t0: ArrayLike, t1: ArrayLike, /
+    ) -> LinearGaussianParameters:
+        return self.parameterization.parameters(t0, t1)
 
     def mean(self, state: ArrayLike, t0: ArrayLike, t1: ArrayLike, /) -> Array:
-        values = jnp.asarray(state, dtype=float)
+        values = jnp.asarray(state)
         _ends_with(values, self.state_shape, owner="state")
         size = _event_size(self.state_shape)
         batch_shape = (
             values.shape[: -len(self.state_shape)] if self.state_shape else values.shape
         )
-        transition, offset, _ = self.parameters(t0, t1)
+        parameters = self.parameters(t0, t1)
         flat = values.reshape(batch_shape + (size,))
-        mean = jnp.einsum("...ij,...j->...i", transition, flat) + offset
+        mean = (
+            jnp.einsum("...ij,...j->...i", parameters.transition, flat)
+            + parameters.offset
+        )
         return mean.reshape(batch_shape + self.state_shape)
 
     def sample(self, key, state, t0, t1, /) -> TransitionSample:
         mean = self.mean(state, t0, t1)
-        _, _, covariance = self.parameters(t0, t1)
+        covariance = self.parameters(t0, t1).covariance
         size = _event_size(self.state_shape)
         batch_shape = (
             mean.shape[: -len(self.state_shape)] if self.state_shape else mean.shape
         )
         covariance = jnp.broadcast_to(covariance, batch_shape + (size, size))
         eigenvalues, eigenvectors = jnp.linalg.eigh(covariance)
+        tolerance = (
+            jnp.finfo(covariance.dtype).eps
+            * size
+            * jnp.maximum(jnp.max(jnp.abs(eigenvalues), axis=-1), 1.0)
+        )
         factor = eigenvectors * jnp.sqrt(jnp.maximum(eigenvalues, 0.0))[..., None, :]
         noise = jr.normal(key, batch_shape + (size,), dtype=mean.dtype)
         draw = mean.reshape(batch_shape + (size,)) + jnp.einsum(
@@ -667,7 +742,7 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
         )
         values = draw.reshape(mean.shape)
         valid = _event_finite(values, self.state_shape) & jnp.all(
-            eigenvalues >= -1e-10, axis=-1
+            eigenvalues >= -tolerance[..., None], axis=-1
         )
         return TransitionSample(
             values=values,
@@ -681,7 +756,7 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
         if not self.has_log_density:
             raise ValueError("This transition kernel does not provide a log density.")
         mean = self.mean(state, t0, t1)
-        _, _, covariance = self.parameters(t0, t1)
+        covariance = self.parameters(t0, t1).covariance
         size = _event_size(self.state_shape)
         batch_shape = (
             mean.shape[: -len(self.state_shape)] if self.state_shape else mean.shape
@@ -690,14 +765,7 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
         residual = jnp.asarray(next_state).reshape(batch_shape + (size,)) - mean.reshape(
             batch_shape + (size,)
         )
-        scale = jnp.linalg.cholesky(covariance)
-        solved = jax.scipy.linalg.solve_triangular(
-            scale, residual[..., None], lower=True
-        )[..., 0]
-        logdet = 2.0 * jnp.sum(jnp.log(jnp.diagonal(scale, axis1=-2, axis2=-1)), axis=-1)
-        return -0.5 * (
-            jnp.sum(solved**2, axis=-1) + logdet + size * jnp.log(2.0 * jnp.pi)
-        )
+        return degenerate_gaussian_log_prob(residual, covariance)
 
 
 class AbstractObservationModel(StrictModule):
