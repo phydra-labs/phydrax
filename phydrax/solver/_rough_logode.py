@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import types
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -22,6 +24,61 @@ from ._rough import (
     _fractional_hurst,
 )
 from ._rough_lift import LiftedRoughVectorFields, lift_rough_vector_fields
+
+
+def _class_identifier(value: Any, /) -> str:
+    cls = type(value)
+    return f"{cls.__module__}.{cls.__qualname__}"
+
+
+def _callable_identifier(value: Callable[..., Any], /) -> str:
+    if isinstance(value, (types.FunctionType, types.BuiltinFunctionType)):
+        return f"{value.__module__}.{value.__qualname__}"
+    return _class_identifier(value)
+
+
+def _update_configuration_digest(
+    digest: hashlib._Hash, value: Any, /
+) -> None:
+    digest.update(_class_identifier(value).encode("utf-8"))
+    digest.update(b"\0")
+    for leaf in jax.tree.leaves(value):
+        if eqx.is_array(leaf):
+            array = np.ascontiguousarray(np.asarray(jax.device_get(leaf)))
+            digest.update(str(array.dtype).encode("ascii"))
+            digest.update(repr(array.shape).encode("ascii"))
+            digest.update(array.tobytes())
+        elif callable(leaf):
+            digest.update(_callable_identifier(leaf).encode("utf-8"))
+        elif isinstance(leaf, (str, bool, int, float, complex, np.generic)):
+            digest.update(type(leaf).__name__.encode("ascii"))
+            digest.update(repr(leaf).encode("utf-8"))
+        else:
+            digest.update(_class_identifier(leaf).encode("utf-8"))
+        digest.update(b"\0")
+
+
+def _logode_solver_id(
+    ode_solver: Any,
+    stepsize_controller: Any,
+    adjoint: Any,
+    dt0: float | None,
+    max_steps: int,
+    explicit_fields: LiftedRoughVectorFields | None,
+    /,
+) -> str:
+    digest = hashlib.sha256(b"phydrax-rough-solver:logode:v1\0")
+    _update_configuration_digest(digest, ode_solver)
+    _update_configuration_digest(digest, stepsize_controller)
+    _update_configuration_digest(digest, adjoint)
+    digest.update(repr(dt0).encode("ascii"))
+    digest.update(str(max_steps).encode("ascii"))
+    if explicit_fields is None:
+        digest.update(b"automatic-lift")
+    else:
+        digest.update(b"explicit-lift\0")
+        digest.update(_callable_identifier(explicit_fields).encode("utf-8"))
+    return f"rough-solver:logode:{digest.hexdigest()}"
 
 
 def _validate_log_control(
@@ -183,6 +240,7 @@ class LogODE(AbstractRoughSolver):
     dt0: float | None = eqx.field(static=True)
     max_steps: int = eqx.field(static=True)
     solver_name: str = eqx.field(static=True)
+    solver_id: str = eqx.field(static=True)
     required_depth: int = eqx.field(static=True)
 
     def __init__(
@@ -199,13 +257,23 @@ class LogODE(AbstractRoughSolver):
             raise ValueError("max_steps must be positive.")
         if explicit_fields is not None and not callable(explicit_fields):
             raise TypeError("explicit_fields must be callable or None.")
+        resolved_dt0 = None if dt0 is None else float(dt0)
+        resolved_max_steps = int(max_steps)
         self.ode_solver = ode_solver
         self.stepsize_controller = stepsize_controller
         self.adjoint = adjoint
         self.explicit_fields = explicit_fields
-        self.dt0 = None if dt0 is None else float(dt0)
-        self.max_steps = int(max_steps)
+        self.dt0 = resolved_dt0
+        self.max_steps = resolved_max_steps
         self.solver_name = "LogODE"
+        self.solver_id = _logode_solver_id(
+            ode_solver,
+            stepsize_controller,
+            adjoint,
+            resolved_dt0,
+            resolved_max_steps,
+            explicit_fields,
+        )
         self.required_depth = 1
 
     def integrate(
@@ -375,8 +443,9 @@ class LinearLogODE(AbstractRoughSolver):
     """Explicit linear/operator log-ODE specialization using commutator lifts."""
 
     operators: tuple[Callable[[Array], ArrayLike], ...]
-    matrix_function_policy: MatrixFunctionPolicy | None
+    matrix_function_policy: MatrixFunctionPolicy
     solver_name: str = eqx.field(static=True)
+    solver_id: str = eqx.field(static=True)
     required_depth: int = eqx.field(static=True)
 
     def __init__(
@@ -395,9 +464,20 @@ class LinearLogODE(AbstractRoughSolver):
             raise TypeError(
                 "matrix_function_policy must be a MatrixFunctionPolicy or None."
             )
+        resolved_policy = (
+            MatrixFunctionPolicy()
+            if matrix_function_policy is None
+            else matrix_function_policy
+        )
         self.operators = resolved
-        self.matrix_function_policy = matrix_function_policy
+        self.matrix_function_policy = resolved_policy
         self.solver_name = "LinearLogODE"
+        self.solver_id = (
+            "rough-solver:linear-logode:"
+            f"{resolved_policy.method}:{resolved_policy.num_matvecs}:"
+            f"{resolved_policy.reorthogonalization}:"
+            f"{resolved_policy.differentiation}"
+        )
         self.required_depth = 1
 
     def integrate(

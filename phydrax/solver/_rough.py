@@ -110,6 +110,7 @@ class AbstractRoughSolver(StrictModule):
     """Algorithm consuming one finite-depth geometric rough control."""
 
     solver_name: AbstractAttribute[str]
+    solver_id: AbstractAttribute[str]
     required_depth: AbstractAttribute[int]
 
     @abstractmethod
@@ -249,10 +250,12 @@ class RoughEuler(AbstractRoughSolver):
     """First-level Young/Euler rough solver."""
 
     solver_name: str = eqx.field(static=True)
+    solver_id: str = eqx.field(static=True)
     required_depth: int = eqx.field(static=True)
 
     def __init__(self):
         self.solver_name = "RoughEuler"
+        self.solver_id = "rough-solver:rough-euler:v1"
         self.required_depth = 1
 
     def integrate(
@@ -275,10 +278,12 @@ class Davie(AbstractRoughSolver):
     """Depth-2 Davie expansion with JVP-computed word differentials."""
 
     solver_name: str = eqx.field(static=True)
+    solver_id: str = eqx.field(static=True)
     required_depth: int = eqx.field(static=True)
 
     def __init__(self):
         self.solver_name = "Davie"
+        self.solver_id = "rough-solver:davie:v1"
         self.required_depth = 2
 
     def integrate(
@@ -310,6 +315,7 @@ class RoughDifferentialSolution(StrictModule):
     statistics: frozendict[str, Array]
     sample_shape: tuple[int, ...] = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
+    state_geometry_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -321,6 +327,7 @@ class RoughDifferentialSolution(StrictModule):
         control: AbstractRoughControl,
         solver: AbstractRoughSolver,
         state_shape: Sequence[int],
+        state_geometry_id: str,
         statistics: Mapping[str, ArrayLike],
         metadata: Mapping[str, Any] | None = None,
     ):
@@ -347,6 +354,9 @@ class RoughDifferentialSolution(StrictModule):
         }
         if any(value.shape != expected_statuses for value in resolved_statistics.values()):
             raise ValueError("RDE statistics must align with control intervals.")
+        geometry_id = str(state_geometry_id)
+        if not geometry_id:
+            raise ValueError("state_geometry_id must be non-empty.")
         self.times = time_values
         self.states = state_values
         self.valid = valid_values
@@ -357,6 +367,15 @@ class RoughDifferentialSolution(StrictModule):
         self.statistics = frozendict(resolved_statistics)
         self.sample_shape = control.sample_shape
         self.state_shape = shape
+        self.state_geometry_id = geometry_id
+
+    @property
+    def solver_name(self) -> str:
+        return self.solver.solver_name
+
+    @property
+    def solver_id(self) -> str:
+        return self.solver.solver_id
 
     @property
     def successful(self) -> Array:
@@ -390,7 +409,9 @@ class RoughDifferentialSolution(StrictModule):
             approximation_id=self.control.control_id,
             metadata={
                 **dict(self.metadata),
-                "solver_name": self.solver.solver_name,
+                "solver_name": self.solver_name,
+                "solver_id": self.solver_id,
+                "state_geometry_id": self.state_geometry_id,
                 "rough_control_id": self.control.control_id,
                 "uncertainty_source": "process",
             },
@@ -449,13 +470,14 @@ def solve_rough_differential(
         control=control,
         solver=solver,
         state_shape=problem.state_shape,
+        state_geometry_id=problem.geometry.geometry_id,
         statistics=statistics,
         metadata={
             "problem_id": problem.problem_id,
             "num_intervals": control.num_steps,
             "driver_dimension": control.dimension,
             "control_depth": control.depth,
-            "geometry_id": problem.geometry.geometry_id,
+            "state_geometry_id": problem.geometry.geometry_id,
         },
     )
 
