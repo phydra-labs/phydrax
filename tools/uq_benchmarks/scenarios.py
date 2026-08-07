@@ -2266,6 +2266,363 @@ def stochastic_gradient_regression(
     )
 
 
+def linearized_uncertainty_propagation(
+    configuration: BenchmarkConfiguration,
+    seed: int,
+) -> ScenarioResult:
+    """Validate matrix-free local covariance propagation and normalized EIV inference."""
+    started = time.perf_counter()
+    root_key = jr.key(seed)
+    (
+        affine_key,
+        qmc_key,
+        data_key,
+        low_rank_key,
+        output_key,
+        probe_key,
+    ) = jr.split(root_key, 6)
+
+    affine_input_dimension = 6
+    affine_output_dimension = 4
+    affine_matrix = jr.normal(
+        affine_key,
+        (affine_output_dimension, affine_input_dimension),
+    ) / jnp.sqrt(affine_input_dimension)
+    affine_center = jnp.linspace(-0.4, 0.6, affine_input_dimension)
+    affine_variance = jnp.linspace(0.2, 1.1, affine_input_dimension)
+    affine_covariance = jnp.diag(affine_variance)
+    affine_expected = affine_matrix @ affine_covariance @ affine_matrix.T
+    affine_representations = (
+        phx.uq.DiagonalCovariance(affine_variance),
+        phx.uq.DenseCovariance(affine_covariance),
+        phx.uq.FactorCovariance(jnp.diag(jnp.sqrt(affine_variance))),
+        phx.uq.CovarianceOperator(
+            lambda vector: affine_covariance @ vector
+        ),
+    )
+    affine_results = tuple(
+        phx.uq.propagate_linearized(
+            lambda value: affine_matrix @ value,
+            affine_center,
+            covariance,
+        )
+        for covariance in affine_representations
+    )
+    affine_errors = tuple(
+        jnp.linalg.norm(result.materialize_covariance().matrix - affine_expected)
+        / jnp.linalg.norm(affine_expected)
+        for result in affine_results
+    )
+    affine_hutchinson = affine_results[-1].estimate_variance(
+        jr.fold_in(root_key, 1),
+        num_probes=configuration.linearized_hutchinson_probes,
+        batch_size=min(configuration.linearized_hutchinson_probes, 128),
+    )
+    affine_hutchinson_error = (
+        jnp.linalg.norm(affine_hutchinson.variance - jnp.diag(affine_expected))
+        / jnp.linalg.norm(jnp.diag(affine_expected))
+    )
+
+    common_effect = phx.uq.propagate_linearized(
+        lambda value: jnp.asarray(
+            [value[0] + value[2], value[1] + value[2]]
+        ),
+        jnp.zeros(3),
+        phx.uq.DiagonalCovariance(jnp.asarray([1.0, 1.0, 9.0])),
+    )
+    common_effect_expected = jnp.asarray([[10.0, 9.0], [9.0, 10.0]])
+    common_effect_error = jnp.linalg.norm(
+        common_effect.materialize_covariance().matrix - common_effect_expected
+    ) / jnp.linalg.norm(common_effect_expected)
+
+    nonlinear_center = jnp.asarray([0.6, -0.4])
+    nonlinear_base_covariance = jnp.asarray([[1.0, 0.35], [0.35, 0.8]])
+
+    def nonlinear_map(value):
+        return jnp.asarray(
+            [
+                jnp.sin(value[0]) + 0.1 * value[1] ** 2,
+                jnp.exp(0.2 * value[0] - 0.1 * value[1]),
+                value[0] * value[1],
+            ]
+        )
+
+    unit_design = phx.sampling.materialize_design(
+        phx.sampling.SobolDesign(scrambled=True),
+        count=configuration.linearized_qmc_samples,
+        dimension=2,
+        key=qmc_key,
+    )
+    epsilon = jnp.finfo(unit_design.dtype).eps
+    normal_design = jsp.special.ndtri(jnp.clip(unit_design, epsilon, 1.0 - epsilon))
+    nonlinear_scales = (0.25, 0.125, 0.0625)
+    nonlinear_covariance_errors: list[float] = []
+    nonlinear_mean_errors: list[float] = []
+    for scale in nonlinear_scales:
+        covariance = scale**2 * nonlinear_base_covariance
+        linearized = phx.uq.propagate_linearized(
+            nonlinear_map,
+            nonlinear_center,
+            phx.uq.DenseCovariance(covariance),
+        )
+        samples = nonlinear_center + normal_design @ jnp.linalg.cholesky(covariance).T
+        outputs = jax.vmap(nonlinear_map)(samples)
+        qmc_mean = jnp.mean(outputs, axis=0)
+        qmc_covariance = jnp.cov(outputs, rowvar=False)
+        linearized_covariance = linearized.materialize_covariance().matrix
+        nonlinear_covariance_errors.append(
+            float(
+                jnp.linalg.norm(linearized_covariance - qmc_covariance)
+                / jnp.linalg.norm(qmc_covariance)
+            )
+        )
+        nonlinear_mean_errors.append(
+            float(jnp.linalg.norm(linearized.mean - qmc_mean))
+        )
+
+    true_slope = 2.0
+    input_scale = 0.5
+    observation_scale = 0.12
+    latent_inputs = jnp.linspace(-2.0, 2.0, 12)
+    input_noise_key, observation_noise_key = jr.split(data_key)
+    measured_inputs = latent_inputs + input_scale * jr.normal(
+        input_noise_key,
+        latent_inputs.shape,
+    )
+    measured_targets = true_slope * latent_inputs + observation_scale * jr.normal(
+        observation_noise_key,
+        latent_inputs.shape,
+    )
+    measurement_term = phx.uq.LinearizedGaussianMeasurementLikelihood(
+        lambda slope, value: slope * value[0],
+        measured_inputs[:, None],
+        measured_targets,
+        input_covariance=jnp.asarray([[input_scale**2]]),
+        observation_covariance=jnp.asarray([[observation_scale**2]]),
+    )
+    slope_grid = jnp.linspace(0.5, 3.0, 1_024)
+    eiv_log_likelihood = jax.vmap(measurement_term.log_prob)(slope_grid)
+    def latent_log_likelihood(slope):
+        effective_scale = jnp.sqrt(
+            observation_scale**2 + slope**2 * input_scale**2
+        )
+        residual = measured_targets - slope * measured_inputs
+        return jnp.sum(
+            -0.5 * (residual / effective_scale) ** 2
+            - jnp.log(effective_scale * jnp.sqrt(2.0 * jnp.pi))
+        )
+
+    latent_reference_log_likelihood = jax.vmap(latent_log_likelihood)(slope_grid)
+    prior_log_density = -0.5 * (slope_grid / 3.0) ** 2
+    eiv_weights = jax.nn.softmax(eiv_log_likelihood + prior_log_density)
+    latent_weights = jax.nn.softmax(
+        latent_reference_log_likelihood + prior_log_density
+    )
+    ordinary_log_likelihood = jnp.sum(
+        -0.5
+        * (
+            (
+                measured_targets[None, :]
+                - slope_grid[:, None] * measured_inputs[None, :]
+            )
+            / observation_scale
+        )
+        ** 2,
+        axis=1,
+    )
+    ordinary_weights = jax.nn.softmax(ordinary_log_likelihood + prior_log_density)
+    eiv_mean = jnp.sum(eiv_weights * slope_grid)
+    latent_mean = jnp.sum(latent_weights * slope_grid)
+    ordinary_mean = jnp.sum(ordinary_weights * slope_grid)
+    eiv_variance = jnp.sum(eiv_weights * (slope_grid - eiv_mean) ** 2)
+    latent_variance = jnp.sum(latent_weights * (slope_grid - latent_mean) ** 2)
+
+    input_dimension = configuration.linearized_input_dimension
+    output_dimension = configuration.linearized_output_dimension
+    factor_rank = min(configuration.linearized_factor_rank, input_dimension)
+    factors = jr.normal(low_rank_key, (factor_rank, input_dimension)) / jnp.sqrt(
+        factor_rank
+    )
+    output_matrix = jr.normal(
+        output_key,
+        (output_dimension, input_dimension),
+    ) / jnp.sqrt(input_dimension)
+    low_rank = phx.uq.propagate_linearized(
+        lambda value: output_matrix @ value,
+        jnp.zeros(input_dimension),
+        phx.uq.FactorCovariance(factors),
+    )
+    propagated_factors = output_matrix @ factors.T
+    expected_variance = jnp.sum(propagated_factors**2, axis=1)
+    observed_variance = low_rank.exact_variance(
+        batch_size=max(1, factor_rank // 2)
+    )
+    operator_low_rank = phx.uq.propagate_linearized(
+        lambda value: output_matrix @ value,
+        jnp.zeros(input_dimension),
+        phx.uq.CovarianceOperator(
+            lambda vector: factors.T @ (factors @ vector)
+        ),
+    )
+    output_probe = jr.normal(probe_key, (output_dimension,))
+    expected_action = propagated_factors @ (
+        propagated_factors.T @ output_probe
+    )
+    observed_action = operator_low_rank.covariance_vector_product(output_probe)
+    low_rank_variance_error = (
+        jnp.linalg.norm(observed_variance - expected_variance)
+        / jnp.linalg.norm(expected_variance)
+    )
+    low_rank_action_error = (
+        jnp.linalg.norm(observed_action - expected_action)
+        / jnp.linalg.norm(expected_action)
+    )
+    hutchinson = operator_low_rank.estimate_variance(
+        jr.fold_in(root_key, 2),
+        num_probes=configuration.linearized_hutchinson_probes,
+        batch_size=min(configuration.linearized_hutchinson_probes, 64),
+    )
+    low_rank_hutchinson_error = (
+        jnp.linalg.norm(hutchinson.variance - expected_variance)
+        / jnp.linalg.norm(expected_variance)
+    )
+    low_rank_hutchinson_normalized_error = (
+        jnp.linalg.norm(hutchinson.variance - expected_variance)
+        / jnp.maximum(
+            jnp.linalg.norm(hutchinson.standard_error),
+            jnp.finfo(float).eps,
+        )
+    )
+    cold, compile_seconds, execute = _jit_timings(
+        lambda vector: operator_low_rank.covariance_vector_product(vector),
+        output_probe,
+        repetitions=configuration.jit_warm_repetitions,
+    )
+    represented_memory = int(factors.nbytes)
+    dense_output_memory = (
+        output_dimension * output_dimension * jnp.dtype(float).itemsize
+    )
+
+    metrics = {
+        "affine_representation_relative_error": metric(
+            max(float(value) for value in affine_errors),
+            "accuracy",
+            maximum=1.0e-11,
+        ),
+        "affine_hutchinson_relative_error": metric(
+            affine_hutchinson_error,
+            "accuracy",
+            maximum=0.15,
+        ),
+        "jcgm_common_effect_relative_error": metric(
+            common_effect_error,
+            "accuracy",
+            maximum=1.0e-12,
+        ),
+        "nonlinear_qmc_covariance_relative_error": metric(
+            nonlinear_covariance_errors[-1],
+            "accuracy",
+            maximum=0.08,
+        ),
+        "nonlinear_qmc_error_contraction": metric(
+            nonlinear_covariance_errors[-1] / nonlinear_covariance_errors[0],
+            "diagnostic",
+        ),
+        "eiv_latent_log_likelihood_max_error": metric(
+            jnp.max(
+                jnp.abs(
+                    eiv_log_likelihood - latent_reference_log_likelihood
+                )
+            ),
+            "accuracy",
+            maximum=1.0e-8,
+        ),
+        "eiv_latent_posterior_mean_error": metric(
+            jnp.abs(eiv_mean - latent_mean),
+            "accuracy",
+            maximum=1.0e-8,
+        ),
+        "eiv_latent_posterior_variance_relative_error": metric(
+            jnp.abs(eiv_variance - latent_variance) / latent_variance,
+            "accuracy",
+            maximum=1.0e-7,
+        ),
+        "ordinary_eiv_posterior_mean_discrepancy": metric(
+            jnp.abs(ordinary_mean - latent_mean),
+            "diagnostic",
+        ),
+        "low_rank_variance_relative_error": metric(
+            low_rank_variance_error,
+            "accuracy",
+            maximum=1.0e-11,
+        ),
+        "low_rank_operator_relative_error": metric(
+            low_rank_action_error,
+            "accuracy",
+            maximum=1.0e-11,
+        ),
+        "low_rank_hutchinson_relative_error": metric(
+            low_rank_hutchinson_error,
+            "diagnostic",
+        ),
+        "low_rank_hutchinson_normalized_error": metric(
+            low_rank_hutchinson_normalized_error,
+            "accuracy",
+            maximum=3.0,
+        ),
+        "matrix_free_memory_reduction": metric(
+            dense_output_memory / represented_memory,
+            "diagnostic",
+            minimum=100.0,
+        ),
+        "input_dimension": metric(input_dimension, "diagnostic"),
+        "output_dimension": metric(output_dimension, "diagnostic"),
+        "factor_rank": metric(factor_rank, "diagnostic"),
+        "represented_covariance_memory_bytes": metric(
+            represented_memory,
+            "performance",
+            unit="byte",
+        ),
+        "dense_output_covariance_memory_bytes": metric(
+            dense_output_memory,
+            "diagnostic",
+            unit="byte",
+        ),
+    }
+    metrics.update(
+        _performance_metrics(
+            wall_seconds=time.perf_counter() - started,
+            cold_seconds=cold,
+            compile_seconds=compile_seconds,
+            execution_seconds=execute,
+            sample_memory_bytes=represented_memory,
+        )
+    )
+    return ScenarioResult(
+        name="linearized_uncertainty_propagation",
+        description=linearized_uncertainty_propagation.__doc__ or "",
+        seed=seed,
+        metrics=metrics,
+        metadata={
+            "profile": configuration.profile,
+            "qmc_design": phx.sampling.design_signature("sobol_scrambled"),
+            "qmc_samples": configuration.linearized_qmc_samples,
+            "nonlinear_scales": list(nonlinear_scales),
+            "nonlinear_covariance_relative_errors": nonlinear_covariance_errors,
+            "nonlinear_mean_errors": nonlinear_mean_errors,
+            "input_dimension": input_dimension,
+            "output_dimension": output_dimension,
+            "factor_rank": factor_rank,
+            "hutchinson_probes": configuration.linearized_hutchinson_probes,
+            "represented_covariance_memory_bytes": represented_memory,
+            "dense_output_covariance_memory_bytes": dense_output_memory,
+            "eiv_posterior_mean": float(eiv_mean),
+            "latent_reference_posterior_mean": float(latent_mean),
+            "ordinary_posterior_mean": float(ordinary_mean),
+        },
+    )
+
+
 SCENARIOS: dict[str, Scenario] = {
     "elliptic_coefficient_inverse": elliptic_coefficient_inverse,
     "nonlinear_transformed_ode": nonlinear_transformed_ode,
@@ -2275,6 +2632,7 @@ SCENARIOS: dict[str, Scenario] = {
     "correlated_vector_discrepancy": correlated_vector_discrepancy,
     "flow_assisted_multimodal": flow_assisted_multimodal,
     "stochastic_gradient_regression": stochastic_gradient_regression,
+    "linearized_uncertainty_propagation": linearized_uncertainty_propagation,
 }
 
 

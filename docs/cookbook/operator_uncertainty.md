@@ -238,6 +238,42 @@ ensemble-member axes when both sources matter, and inspect
 conformal coverage remains an in-distribution statement over complete physical
 cases; it does not become a geometry-extrapolation guarantee.
 
+### 4b. Propagate local source covariance without flattening the field
+
+```python
+operator_linearization = phx.nn.linearize_operator(
+    members[0],
+    test_batch,
+    "state",
+    field_name="output",
+    key=jr.key(5),
+)
+source_covariance = phx.uq.DiagonalCovariance(
+    jnp.full_like(operator_linearization.base_input, 0.03**2)
+)
+local_operator_prediction = phx.uq.propagate_operator_linearized(
+    operator_linearization,
+    source_covariance,
+    geometry="discrete",
+)
+local_field_variance = local_operator_prediction.exact_variance()
+
+assert local_field_variance.dims == ("case", "x")
+```
+
+The result retains the operator query dimensions and uses the same matrix-free
+JVP/VJP covariance engine as any other physical map. `geometry="discrete"`
+means covariance of the finite nodal values, so pointwise variance and guarded
+dense materialization are well-defined.
+
+For a continuous function-space covariance, use `geometry="hilbert"` only when
+both source and output geometries carry explicit physical quadrature, as this
+recipe does. The pullback then uses the quadrature-aware Hilbert adjoint.
+Only `covariance_vector_product(...)` is exposed: a continuum covariance has no
+canonical pointwise diagonal until a Riesz-coordinate representation is
+declared.
+
+
 ## 5. Define a normalized operator observation likelihood
 
 An operator training loss is not automatically a posterior likelihood. A finite

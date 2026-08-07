@@ -177,6 +177,44 @@ as independent observations.
             - __init__
             - log_prob
 
+
+### Linearized errors in variables
+
+`LinearizedGaussianMeasurementLikelihood` is a normalized joint Gaussian
+likelihood for uncertain predictors and uncertain observations. For case \(i\),
+it evaluates the physical prediction \(f(\theta, x_i)\), pushes the declared
+input covariance through the local input derivative \(J_i\), and uses
+
+\[
+\Sigma_i(\theta)
+= \Sigma_{y,i}(\theta)
++ J_i(\theta)\Sigma_{x,i}(\theta)J_i(\theta)^\mathsf{T}.
+\]
+
+The log determinant of \(\Sigma_i(\theta)\) is part of every factor. Omitting it
+changes the posterior whenever the effective covariance depends on parameters.
+Input and observation covariance may be fixed arrays or parameter-dependent
+callbacks. Both shared and explicit per-case batching are supported. Output
+events are intentionally bounded by `max_output_dimension`, because normalized
+dense Gaussian factors require a Cholesky factorization.
+
+`log_prob_cases(...)` evaluates the same term on an external deterministic
+minibatch. Put measured inputs, targets, and original case indices in an
+`ArrayMinibatchSource`; use `log_prob_cases` as the
+`MinibatchPosteriorProblem` factor callable. This reuses the full-data
+likelihood exactly rather than defining a second stochastic objective.
+
+::: phydrax.uq.LinearizedGaussianMeasurementLikelihood
+    options:
+        members:
+            - __init__
+            - per_case_log_prob
+            - log_prob_cases
+            - log_prob
+
+---
+
+
 ## MAP estimation
 
 ::: phydrax.uq.find_map
@@ -343,6 +381,7 @@ on a tractable reference before interpreting these draws quantitatively.
             - sample_unconstrained
             - sample
             - predict
+            - linearized_predict
             - physical_covariance
             - physical_correlation
             - predict_observations
@@ -357,6 +396,7 @@ on a tractable reference before interpreting these draws quantitatively.
             - sample_unconstrained
             - sample
             - predict
+            - linearized_predict
             - predict_observations
 
 ---

@@ -23,6 +23,9 @@ from ..nn.models.core._operator import (
     OperatorOutputSpec,
     OperatorPrediction,
 )
+from ..nn.operator_training._linearization import OperatorLinearization
+from ._covariance import AbstractCovariance
+from ._linearized import LinearizedPropagationResult, propagate_linearized_map
 from ._predictive import (
     PredictionInterval,
     PredictiveField,
@@ -814,6 +817,87 @@ def operator_input_predictive(
     )
 
 
+def propagate_operator_linearized(
+    linearization: OperatorLinearization,
+    covariance: AbstractCovariance,
+    /,
+    *,
+    geometry: Literal["discrete", "hilbert"] = "discrete",
+    source_channel_metric: Array | None = None,
+    output_channel_metric: Array | None = None,
+) -> LinearizedPropagationResult:
+    """Propagate source covariance through one physical operator linearization."""
+    if not isinstance(linearization, OperatorLinearization):
+        raise TypeError("linearization must be an OperatorLinearization.")
+    if not isinstance(covariance, AbstractCovariance):
+        raise TypeError("covariance must implement AbstractCovariance.")
+    if geometry not in ("discrete", "hilbert"):
+        raise ValueError("geometry must be 'discrete' or 'hilbert'.")
+    if geometry == "discrete" and (
+        source_channel_metric is not None or output_channel_metric is not None
+    ):
+        raise ValueError("Channel metrics are available only for Hilbert geometry.")
+    if geometry == "hilbert" and (
+        not linearization.source_samples.has_physical_quadrature
+        or not linearization.output_query.has_physical_quadrature
+    ):
+        raise ValueError(
+            "Hilbert covariance propagation requires explicit physical quadrature "
+            "for both source and output geometries."
+        )
+
+    dims = _physical_dims(
+        linearization.output_query,
+        linearization.output_spec,
+        linearization.batch.case_axes,
+    )
+    expected = _expected_output_shape(
+        linearization.output_query,
+        linearization.output_spec,
+        linearization.batch.case_shape,
+    )
+    if linearization.base_output.shape != expected:
+        raise ValueError(
+            "Operator linearization output shape does not match its query contract; "
+            f"expected {expected}, got {linearization.base_output.shape}."
+        )
+    mask = _output_mask(
+        linearization.output_query,
+        linearization.output_spec,
+        linearization.batch.case_shape,
+    )
+    mean = cx.Field(
+        jnp.where(mask, linearization.base_output, 0.0),
+        dims=dims,
+    )
+
+    def pushforward(tangent):
+        values = linearization.pushforward(tangent)
+        return cx.Field(jnp.where(mask, values, 0.0), dims=dims)
+
+    def pullback(cotangent):
+        if not isinstance(cotangent, cx.Field):
+            raise TypeError("Operator covariance cotangents must be coordax.Field.")
+        values = jnp.where(mask, jnp.asarray(cotangent.data), 0.0)
+        if geometry == "discrete":
+            return linearization.pullback(values)
+        return linearization.adjoint(
+            values,
+            source_channel_metric=source_channel_metric,
+            output_channel_metric=output_channel_metric,
+        )
+
+    return propagate_linearized_map(
+        mean,
+        linearization.base_input,
+        covariance,
+        pushforward=pushforward,
+        pullback=pullback,
+        source="input",
+        coordinate_covariance=geometry == "discrete",
+    )
+
+
 def sample_operator_predictive(
     model: _AbstractOperatorModel,
     batch: OperatorBatch,
@@ -867,6 +951,7 @@ __all__ = [
     "OperatorPredictiveField",
     "operator_input_predictive",
     "operator_prediction_field",
+    "propagate_operator_linearized",
     "operator_predictive_from_samples",
     "sample_operator_predictive",
 ]

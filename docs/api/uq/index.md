@@ -5,7 +5,8 @@ optimization, BlackJAX NUTS/HMC, fixed-step SGLD/SGNHT with control variates,
 flow-assisted NUTS, Pathfinder, adaptive tempered SMC, dense and structured Laplace
 approximations, exact/sparse/correlated-output Gaussian-process model discrepancy,
 predictive fields, coherent stochastic models, likelihoods and proper scores,
-conformal calibration, uncertain-input propagation, and global sensitivity.
+matrix-free first-order covariance propagation, normalized errors-in-variables
+inference, conformal calibration, uncertain-input propagation, and global sensitivity.
 
 Stochastic-gradient samplers consume deterministic, content-addressed minibatch
 sources and preserve chain/draw structure, replay state, throughput, and mixing

@@ -10,6 +10,14 @@ from ._checkpoint import (
     CheckpointError,
 )
 from ._conformal import FunctionalConformal, NormalizedConformal, SplitConformal
+from ._covariance import (
+    AbstractCovariance,
+    covariance_representation,
+    CovarianceOperator,
+    DenseCovariance,
+    DiagonalCovariance,
+    FactorCovariance,
+)
 from ._diagnostics import (
     MCMCConvergenceError,
     MCMCConvergenceReport,
@@ -137,6 +145,13 @@ from ._likelihoods import (
     GaussianLocationScaleLikelihood,
     StudentTLikelihood,
 )
+from ._linearized import (
+    LinearizedDenseCovariance,
+    LinearizedPropagationResult,
+    LinearizedVarianceEstimate,
+    propagate_linearized,
+    propagate_linearized_map,
+)
 from ._map import find_map, MAPConvergenceError, MAPResult
 from ._martingale import (
     jump_compensator_diagnostics,
@@ -149,6 +164,10 @@ from ._martingale import (
     QuadraticVariationDiagnostics,
 )
 from ._mcmc import MCMCChainWarmup, MCMCResult, sample_hmc, sample_nuts
+from ._measurement_likelihood import (
+    CovarianceBatching,
+    LinearizedGaussianMeasurementLikelihood,
+)
 from ._metrics import (
     calibration_error,
     energy_distance,
@@ -180,6 +199,7 @@ from ._operator import (
     operator_predictive_from_samples,
     OperatorPredictionInterval,
     OperatorPredictiveField,
+    propagate_operator_linearized,
     sample_operator_predictive,
 )
 from ._operator_conformal import OperatorFunctionalConformal
@@ -495,6 +515,8 @@ __all__ = [
     "GaussianLikelihood",
     "GaussianLocationScaleLikelihood",
     "StudentTLikelihood",
+    "CovarianceBatching",
+    "LinearizedGaussianMeasurementLikelihood",
     "GaussianScaleCalibrator",
     "calibration_error",
     "energy_distance",
@@ -575,6 +597,7 @@ __all__ = [
     "OperatorMinibatchSource",
     "operator_input_predictive",
     "operator_prediction_field",
+    "propagate_operator_linearized",
     "OperatorPredictionInterval",
     "OperatorPredictiveField",
     "operator_predictive_from_samples",
@@ -596,6 +619,17 @@ __all__ = [
     "diagnose_minibatch_posterior",
     "MinibatchPosteriorCapabilities",
     "MinibatchPosteriorDiagnostics",
+    "AbstractCovariance",
+    "CovarianceOperator",
+    "DenseCovariance",
+    "DiagonalCovariance",
+    "FactorCovariance",
+    "covariance_representation",
+    "LinearizedDenseCovariance",
+    "LinearizedPropagationResult",
+    "LinearizedVarianceEstimate",
+    "propagate_linearized",
+    "propagate_linearized_map",
     "GaussianPriorWhitening",
     "AbstractPosteriorTerm",
     "CompositePosteriorLikelihood",

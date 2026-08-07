@@ -88,8 +88,11 @@ The enforced route is staged as boundary → initial → interior data. See:
 `phydrax.uq` keeps epistemic, uncertain-input, observation, stochastic-process,
 and numerical axes explicit in named `PredictiveField` results. NUTS/HMC, Laplace
 approximation, deep ensembles, and Gaussian-process discrepancy models produce
-coherent epistemic draws; probability domains, static random fields, and joint
-QMC propagate uncertain inputs. Global Wiener, Poisson-clock, composite, and
+coherent epistemic draws. Matrix-free JVP/VJP propagation transports diagonal,
+dense, low-rank, or operator-valued covariance through scientific maps; normalized
+errors-in-variables likelihoods account jointly for uncertain predictors and
+observations. Probability domains, static random fields, and joint QMC propagate
+full uncertain-input distributions. Global Wiener, Poisson-clock, composite, and
 coefficient-process realizations provide replayable process paths.
 Complete-field Gaussian or conditional-flow operators define transition
 marginals; typed Wiener/jump operator adapters define pathwise or composite
