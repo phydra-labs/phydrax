@@ -15,7 +15,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from ._ir import PDEExpression, PDEField, PDEProblemIR
-from ._validate import validate_pde_ir
+from ._validate import infer_expression_type, validate_pde_ir
 
 
 SemidiscreteCompilationMethod = Literal["auto", "direct", "semilinear"]
@@ -404,15 +404,47 @@ class _SemidiscreteEvaluator(StrictModule):
             ):
                 return None
             result = lifts[selected]
+            result_components = self._components(expression.args[selected])
             for index, argument in enumerate(expression.args):
-                if index != selected:
-                    result = result * self._evaluate(argument, time, args, {})
+                if index == selected:
+                    continue
+                factor = self._evaluate(argument, time, args, {})
+                factor_components = self._components(argument)
+                left = self._align_semantic_scalar(
+                    result,
+                    result_components,
+                    factor_components,
+                    factor,
+                )
+                right = self._align_semantic_scalar(
+                    factor,
+                    factor_components,
+                    result_components,
+                    result,
+                )
+                result = left * right
+                result_components = max(result_components, factor_components)
             return result
         if expression.op == "divide":
             source = self._expression_lift(expression.args[0], time, args)
             if source is None or _field_degree(expression.args[1]) > 0:
                 return None
-            return source / self._evaluate(expression.args[1], time, args, {})
+            denominator = self._evaluate(expression.args[1], time, args, {})
+            numerator_components = self._components(expression.args[0])
+            denominator_components = self._components(expression.args[1])
+            numerator = self._align_semantic_scalar(
+                source,
+                numerator_components,
+                denominator_components,
+                denominator,
+            )
+            aligned_denominator = self._align_semantic_scalar(
+                denominator,
+                denominator_components,
+                numerator_components,
+                source,
+            )
+            return numerator / aligned_denominator
         if expression.op not in (
             "derivative",
             "gradient",
@@ -463,6 +495,21 @@ class _SemidiscreteEvaluator(StrictModule):
         for axis in axes:
             result = result + self._lift_partial(source, axis=axis, order=2)
         return result
+
+    def _spatially_neutral(self, expression: PDEExpression, /) -> bool:
+        if expression.op == "constant":
+            return True
+        if expression.op == "parameter":
+            assert expression.symbol is not None
+            index = self.parameter_names.index(expression.symbol)
+            return not self.parameter_functional[index]
+        if expression.op == "coordinate":
+            return expression.symbol == self.time_coordinate
+        if expression.op == "field" or not expression.args:
+            return False
+        return all(
+            self._spatially_neutral(argument) for argument in expression.args
+        )
 
     def _lift_partial(
         self,
@@ -641,11 +688,22 @@ class _SemidiscreteEvaluator(StrictModule):
                 return spatial[0]
             return self._unknown_parities(components)
         if expression.op == "multiply":
-            if len(spatial) == 1:
+            if len(spatial) == 1 and all(
+                parity is not None or self._spatially_neutral(argument)
+                for argument, parity in zip(
+                    expression.args,
+                    argument_parities,
+                    strict=True,
+                )
+            ):
                 return spatial[0]
             return self._unknown_parities(components)
         if expression.op == "divide":
-            if argument_parities[0] is not None and argument_parities[1] is None:
+            if (
+                argument_parities[0] is not None
+                and argument_parities[1] is None
+                and self._spatially_neutral(expression.args[1])
+            ):
                 return argument_parities[0]
             return self._unknown_parities(components)
         if expression.op == "dot":
@@ -2004,6 +2062,14 @@ def compile_semidiscrete_pde(
                 "laplacian",
             ):
                 continue
+            if (
+                node.op in ("divergence", "curl")
+                and infer_expression_type(node.args[0], problem).is_scalar
+            ):
+                raise ValueError(
+                    f"{node.op} requires a vector-like operand, not a scalar "
+                    "with the same component count."
+                )
             assert node.coordinate is not None
             axes = evaluator._axes(node.coordinate)
             if node.op == "derivative" and node.axis is None and len(axes) != 1:

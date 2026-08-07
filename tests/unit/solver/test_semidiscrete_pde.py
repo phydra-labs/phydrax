@@ -1480,3 +1480,101 @@ def test_functional_parameter_parity_and_integral_region_contracts_are_explicit(
     )
     with pytest.raises(ValueError, match="unpartitioned interior spatial regions"):
         phx.equations.compile_semidiscrete_pde(invalid_integral, spatial)
+
+
+def test_variable_flux_parity_and_scalar_divergence_fail_explicitly():
+    axis = phx.domain.SineAxisSpec(16).materialize(0.0, 1.0)
+    spatial = phx.solver.TensorGridDiscretization((axis,))
+    x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0))
+    t = phx.equations.PDECoordinate("t", "time", bounds=(0.0, 1.0))
+    field = phx.equations.PDEField("u", coordinates=("x", "t"))
+    u = phx.equations.PDEExpression.field("u")
+    coordinate = phx.equations.PDEExpression.coordinate_value("x")
+
+    def problem(rhs, *, parameters=()):
+        return phx.equations.PDEProblemIR(
+            coordinates=(x, t),
+            fields=(field,),
+            parameters=parameters,
+            equations=(
+                phx.equations.PDEEquation("flux", u.derivative("t"), rhs),
+            ),
+        )
+
+    coordinate_flux = (
+        (1.0 + coordinate) * u.gradient("x")
+    ).divergence("x")
+    with pytest.raises(ValueError, match="extension parity"):
+        phx.equations.compile_semidiscrete_pde(
+            problem(coordinate_flux),
+            spatial,
+        )
+
+    parameter = phx.equations.PDEParameter("a", functional=True)
+    coefficient = phx.equations.PDEExpression.parameter("a")
+    parameter_flux = (coefficient * u.gradient("x")).divergence("x")
+    with pytest.raises(ValueError, match="extension parity"):
+        phx.equations.compile_semidiscrete_pde(
+            problem(parameter_flux, parameters=(parameter,)),
+            spatial,
+            parameter_values={"a": jnp.ones(spatial.state_shape)},
+        )
+
+    with pytest.raises(ValueError, match="requires a vector-like operand"):
+        phx.equations.compile_semidiscrete_pde(
+            problem(u.divergence("x")),
+            spatial,
+        )
+
+
+def test_vector_lift_multiplication_uses_semantic_axis_alignment():
+    axis = phx.domain.FourierAxisSpec(16).materialize(0.0, 1.0)
+    spatial = phx.solver.TensorGridDiscretization((axis,))
+    x = phx.equations.PDECoordinate(
+        "x", "space", bounds=(0.0, 1.0), periodic=True
+    )
+    t = phx.equations.PDECoordinate("t", "time", bounds=(0.0, 1.0))
+    field = phx.equations.PDEField(
+        "v",
+        representation="vector",
+        components=2,
+        coordinates=("x", "t"),
+    )
+    v = phx.equations.PDEExpression.field("v")
+    coordinate = phx.equations.PDEExpression.coordinate_value("x")
+    problem = phx.equations.PDEProblemIR(
+        coordinates=(x, t),
+        fields=(field,),
+        equations=(
+            phx.equations.PDEEquation(
+                "aligned-lift",
+                v.derivative("t"),
+                (coordinate * v).derivative("x"),
+            ),
+        ),
+    )
+    lift_value = jnp.stack(
+        (
+            1.0 + axis.nodes,
+            2.0 - axis.nodes,
+        ),
+        axis=-1,
+    )
+    compiled = phx.equations.compile_semidiscrete_pde(
+        problem,
+        spatial,
+        boundary_lifts=(
+            phx.equations.BoundaryLift(
+                "v",
+                lift_value,
+                lift_id="vector-coordinate-lift",
+            ),
+        ),
+        method="direct",
+    )
+    residual = jnp.zeros(spatial.state_shape + (2,))
+    expected = spatial.partial_derivative(
+        axis.nodes[..., None] * lift_value,
+        axis=0,
+    )
+    assert jnp.allclose(compiled(0.0, residual, None), expected)
