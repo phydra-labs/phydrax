@@ -9,7 +9,7 @@ Common end-to-end model families (dense, separable, basis-edge, and complex-valu
     - `ModifiedMLP` reuses two persistent input encoders in every hidden-layer
       gate to improve information flow through deep coordinate networks.
     - `KAN` replaces node activations with typed edge functions. It defaults to
-      global orthogonal polynomials and also supports fixed-grid B-splines.
+      global orthogonal polynomials and supports fixed or trainable B-spline grids.
     - `FeynmaNN` builds complex hidden states with a sum-over-paths block.
     - `MLP`, `ModifiedMLP`, `KAN`, `FeynmaNN`, and `FNO` support `scan=True`
       to use a scan-over-depth execution path when topology is compatible.
@@ -37,8 +37,8 @@ Common end-to-end model families (dense, separable, basis-edge, and complex-valu
             - __init__
             - __call__
 
-`edge_basis` accepts one shared basis or one basis per layer. The spline basis
-uses an open-uniform grid on `[-1, 1]`, Greville-abscissa identity
+`edge_basis` accepts one shared basis or one basis per layer. By default the
+spline basis uses an open-uniform grid on `[-1, 1]`, Greville-abscissa identity
 initialization, compact support, and a basis-specific Sobolev regularizer:
 
 ```python
@@ -54,6 +54,138 @@ model = phx.nn.KAN(
     scan=True,
 )
 ```
+
+An explicit nonuniform fixed grid uses the same basis contract:
+
+```python
+grid = phx.nn.BSplineGrid(
+    [-1.0, -1.0, -1.0, -0.6, -0.1, 0.45, 1.0, 1.0, 1.0],
+    2,
+)
+basis = phx.nn.BSplineEdgeBasis(grid=grid, regularization_order=1)
+```
+
+Knot arrays remain fixed under ordinary optimizer partitioning. A supplied grid
+determines the degree and coefficient count; `num_intervals` is only valid for
+the open-uniform convenience construction. Sobolev quadrature follows every
+positive knot span, including nonuniform and repeated-knot grids.
+
+One independent fixed grid per layer input channel is realized without changing
+the dense coefficient-array contract:
+
+```python
+basis = phx.nn.BSplineEdgeBasis(
+    degree=3,
+    num_intervals=8,
+    per_input=True,
+)
+```
+
+Every outgoing edge associated with one input channel shares that channel's
+grid. `BSplineGridBank` requires a homogeneous degree, knot count, positive-span
+count, and active interval, so repeated hidden layers remain scan-compatible.
+Use `KANGridAdaptationPlan(per_input=True)` to estimate each input grid from its
+own normalized activation marginal. The returned report aligns every transferred
+grid with `paths` and `input_indices`; `None` denotes one layer-shared transfer.
+Adaptation preserves coefficient count, projects learned edge functions into the
+new basis, returns a new model, and never mutates the source model.
+
+Trainable fixed-count knots are an explicit alternative:
+
+```python
+grid = phx.nn.TrainableBSplineGrid.open_uniform(
+    3,
+    8,
+    minimum_span=1e-3,
+)
+basis = phx.nn.BSplineEdgeBasis(
+    grid=grid,
+    knot_entropy_weight=1e-4,
+    knot_neighbor_weight=1e-4,
+)
+```
+
+`TrainableBSplineGrid` keeps both endpoints and their open-knot multiplicities
+fixed. A softmax allocation of live span logits preserves strict ordering,
+fixed coefficient count, and the configured physical minimum span. Span
+routing is discrete and receives no tangent; basis arithmetic, knot
+denominators, dynamic Sobolev quadrature, JVPs, VJPs, and Hessians retain knot
+tangents within the selected span. Entropy and neighboring log-span penalties
+discourage collapsed or violently alternating grids.
+
+Trainable grid logits are ordinary optimizer parameters. Coefficients and logits
+may be updated jointly, but alternating coefficient and lower-rate knot phases
+are safer for stiff PDE losses. `adapt_kan_grids` intentionally rejects
+trainable grids: quantile regridding is a pure between-phase structural
+operation, whereas trainable knots are same-structure optimizer state.
+Trainable per-input grid banks are not supported.
+
+Fixed polynomial-spline edges can also change coefficient count between optimizer
+phases. Refinement consumes nonnegative per-positive-span indicators keyed by
+`(layer, output, input)` and applies one global knot budget:
+
+```python
+import jax.numpy as jnp
+
+refined, refinement = phx.nn.refine_kan_edges(
+    model,
+    {(1, 3, 2): jnp.asarray([0.1, 0.8, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0])},
+    budget=1,
+)
+coarsened, coarsening = phx.nn.coarsen_kan_edges(
+    refined,
+    {(1, 3, 2): 1e-6},
+    budget=1,
+)
+```
+
+`refine_kan_edges` ranks indicators globally, inserts the midpoint of each
+selected positive span, and transfers the represented function exactly by
+Boehm knot insertion. `coarsen_kan_edges` tries each removable interior knot
+and accepts the best projection only when its coefficient-specific absolute
+L2 error certificate is within the requested tolerance. Both operations are
+pure and return aligned `KANCapacityAdaptationReport` diagnostics.
+
+Capacity is allocated only to selected scalar edges. Internally,
+`KANEdgeBlock` groups edges with identical grids into homogeneous dense arrays;
+this avoids padding every edge to the largest coefficient count. Repeated
+hidden layers remain scan-compatible when their resulting block layouts match.
+Otherwise `scan=True` safely falls back to the ordinary layer loop. Structural
+adaptation invalidates shape-dependent optimizer state, so perform it between
+training phases and initialize fresh optimizer state for the returned model.
+The structural API intentionally rejects trainable-knot, rational-spline, and
+non-spline edges.
+
+Positive-weight rational B-spline edges are available when a quotient is
+materially more parameter-efficient than an ordinary spline:
+
+```python
+basis = phx.nn.RationalBSplineEdgeBasis(
+    degree=3,
+    num_intervals=5,
+    maximum_log_weight=4.0,
+)
+model = phx.nn.KAN(
+    in_size=2,
+    out_size="scalar",
+    edge_basis=basis,
+)
+```
+
+Each edge owns `RationalBSplineEdgeParameters(control_values,
+raw_log_weights)`. Bounded log-weights are centered along the coefficient axis
+before exponentiation, removing the otherwise unidentifiable global weight
+scale while guaranteeing positive finite denominators. Zero raw log-weights
+reduce exactly to an ordinary polynomial B-spline, including identity
+initialization.
+
+The basis regularizes the Sobolev energy of the rational output itself, not the
+numerator and denominator separately. Optional log-weight magnitude,
+neighbor-variation, and denominator-floor terms control identifiability and
+conditioning. Value, parameter-gradient, Jacobian, Hessian, and homogeneous
+scan paths accept the structured edge-parameter PyTree. Rational edges support
+fixed shared grids and fixed per-input grid banks; trainable knots and explicit
+quantile regridding remain separate polynomial-spline policies.
 
 With `use_tanh=False`, values are inclusively clamped to the canonical interval:
 exact endpoints retain the one-sided edge derivative, while strictly exterior
@@ -76,6 +208,49 @@ inputs have zero derivative.
     options:
         members:
             - __init__
+
+---
+
+::: phydrax.nn.BSplineGridBank
+
+---
+
+::: phydrax.nn.TrainableBSplineGrid
+
+---
+
+::: phydrax.nn.KANGridAdaptationPlan
+
+---
+
+::: phydrax.nn.KANGridAdaptationReport
+
+---
+
+::: phydrax.nn.adapt_kan_grids
+
+---
+::: phydrax.nn.KANEdgeBlock
+
+---
+
+::: phydrax.nn.KANCapacityAdaptationReport
+
+---
+
+::: phydrax.nn.refine_kan_edges
+
+---
+
+::: phydrax.nn.coarsen_kan_edges
+
+---
+
+::: phydrax.nn.RationalBSplineEdgeParameters
+
+---
+
+::: phydrax.nn.RationalBSplineEdgeBasis
 
 ---
 

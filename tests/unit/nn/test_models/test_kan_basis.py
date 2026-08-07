@@ -9,11 +9,17 @@ import jax.random as jr
 import numpy as np
 import pytest
 
+import phydrax as phx
 from phydrax._trainable import partition_trainable
 from phydrax.nn.models import (
     BSplineEdgeBasis,
+    BSplineGrid,
+    BSplineGridBank,
     KAN,
     OrthogonalPolynomialEdgeBasis,
+    RationalBSplineEdgeBasis,
+    RationalBSplineEdgeParameters,
+    TrainableBSplineGrid,
 )
 
 
@@ -40,6 +46,252 @@ def test_bspline_kan_identity_and_boundary_jacobian(degree):
 
     assert np.allclose(np.asarray(values), np.asarray(points), rtol=1e-11, atol=1e-11)
     assert np.allclose(np.asarray(derivatives), 1.0, rtol=1e-10, atol=1e-10)
+
+
+def test_per_input_bspline_grids_preserve_identity_and_locality():
+    grids = (
+        BSplineGrid.open_uniform(3, 4),
+        BSplineGrid(
+            jnp.asarray([-1.0, -1.0, -1.0, -1.0, -0.86, -0.31, 0.57, 1.0, 1.0, 1.0, 1.0]),
+            3,
+        ),
+    )
+    basis = BSplineEdgeBasis(grid=BSplineGridBank.from_grids(grids))
+    model = KAN(
+        in_size=2,
+        out_size=2,
+        hidden_sizes=(),
+        edge_basis=basis,
+        scale_mode="none",
+        init="identity",
+        skip_connection=False,
+        use_bias=False,
+        key=jr.key(20),
+    )
+    inputs = jnp.asarray([0.23, -0.41])
+    jacobian = jax.jacrev(model)(inputs)
+    coefficient_gradient = jax.grad(
+        lambda coefficients: jnp.sum(
+            basis.evaluate(coefficients, inputs[None, :].repeat(2, 0))
+        )
+    )(model.layers[0].coeffs)
+
+    assert np.allclose(np.asarray(model(inputs)), np.asarray(inputs), atol=2e-12)
+    assert np.allclose(np.asarray(jacobian), np.eye(2), atol=2e-11)
+    assert np.array_equal(
+        np.asarray(jnp.count_nonzero(jnp.abs(coefficient_gradient) > 1e-12, axis=-1)),
+        np.full((2, 2), 4),
+    )
+
+
+def test_per_input_grid_specification_preserves_scan_execution():
+    basis = BSplineEdgeBasis(degree=3, num_intervals=5, per_input=True)
+    key = jr.key(21)
+    loop = KAN(
+        in_size=3,
+        out_size=2,
+        width_size=5,
+        depth=4,
+        edge_basis=basis,
+        scan=False,
+        key=key,
+    )
+    scanned = KAN(
+        in_size=3,
+        out_size=2,
+        width_size=5,
+        depth=4,
+        edge_basis=basis,
+        scan=True,
+        key=key,
+    )
+    inputs = jnp.asarray([0.12, -0.34, 0.56])
+
+    assert scanned._scan_enabled
+    assert all(
+        layer.edge_basis.grid.num_grids == layer.in_size for layer in scanned.layers
+    )
+    assert np.allclose(
+        np.asarray(eqx.filter_jit(scanned)(inputs)),
+        np.asarray(eqx.filter_jit(loop)(inputs)),
+        atol=2e-12,
+    )
+
+
+def test_trainable_bspline_grid_participates_in_kan_gradients_and_scan():
+    basis = BSplineEdgeBasis(
+        grid=TrainableBSplineGrid.open_uniform(3, 6),
+        knot_entropy_weight=0.05,
+        knot_neighbor_weight=0.02,
+    )
+    model = KAN(
+        in_size=3,
+        out_size=2,
+        width_size=5,
+        depth=4,
+        edge_basis=basis,
+        scan=True,
+        key=jr.key(22),
+    )
+    inputs = jnp.asarray([0.13, -0.27, 0.41])
+    _, gradient = eqx.filter_value_and_grad(
+        lambda candidate: (
+            jnp.sum(candidate(inputs) ** 2) + 1e-3 * candidate.regularization_loss()
+        )
+    )(model)
+    trainable, fixed = partition_trainable(model)
+
+    assert model._scan_enabled
+    assert trainable.layers[0].edge_basis.grid.raw_span_logits is not None
+    assert fixed.layers[0].edge_basis.grid.raw_span_logits is None
+    assert all(
+        np.all(np.isfinite(np.asarray(layer.edge_basis.grid.raw_span_logits)))
+        for layer in gradient.layers
+    )
+    assert np.isfinite(np.asarray(eqx.filter_jit(model)(inputs))).all()
+
+
+def test_trainable_grid_logits_optimize_without_losing_order():
+    initial = TrainableBSplineGrid.open_uniform(3, 6, minimum_span=0.01)
+    target = eqx.tree_at(
+        lambda grid: grid.raw_span_logits,
+        initial,
+        jnp.asarray([-1.4, -0.6, 0.8, 1.2, 0.3, -0.3]),
+    )
+    coefficients = jr.normal(jr.key(23), (1, 1, initial.coefficient_count))
+    query = jnp.linspace(-0.95, 0.95, 96)
+
+    def evaluate(grid):
+        edge_basis = BSplineEdgeBasis(grid=grid)
+        return jax.vmap(
+            lambda value: edge_basis.evaluate(coefficients, jnp.asarray([[value]]))[0, 0]
+        )(query)
+
+    target_values = evaluate(target)
+
+    def loss(logits):
+        grid = eqx.tree_at(lambda value: value.raw_span_logits, initial, logits)
+        return jnp.mean((evaluate(grid) - target_values) ** 2)
+
+    step = jax.jit(lambda logits: logits - 0.4 * jax.grad(loss)(logits))
+    logits = initial.raw_span_logits
+    initial_loss = float(loss(logits))
+    for _ in range(60):
+        logits = step(logits)
+    optimized = eqx.tree_at(
+        lambda grid: grid.raw_span_logits,
+        initial,
+        logits,
+    )
+
+    assert float(loss(logits)) < 0.2 * initial_loss
+    assert np.all(np.diff(np.asarray(optimized.breakpoints)) >= optimized.minimum_span)
+
+
+def test_rational_bspline_identity_scan_and_parameter_gradients():
+    basis = RationalBSplineEdgeBasis(degree=3, num_intervals=4)
+    model = KAN(
+        in_size=2,
+        out_size=2,
+        width_size=3,
+        depth=3,
+        edge_basis=basis,
+        init="identity",
+        scale_mode="none",
+        skip_connection=False,
+        use_bias=False,
+        scan=True,
+        key=jr.key(24),
+    )
+    inputs = jnp.asarray([0.21, -0.37])
+    value = model(inputs)
+    jacobian = jax.jacrev(model)(inputs)
+    _, gradient = eqx.filter_value_and_grad(
+        lambda candidate: jnp.sum(candidate(inputs) ** 2)
+    )(model)
+
+    assert model._scan_enabled
+    assert np.allclose(np.asarray(value), np.asarray(inputs), atol=2e-12)
+    assert np.allclose(np.asarray(jacobian), np.eye(2), atol=2e-11)
+    assert isinstance(model.layers[0].coeffs, RationalBSplineEdgeParameters)
+    assert np.all(np.isfinite(np.asarray(gradient.layers[0].coeffs.control_values)))
+    assert np.all(np.isfinite(np.asarray(gradient.layers[0].coeffs.raw_log_weights)))
+
+
+def test_rational_bspline_wins_equal_parameter_reciprocal_fit():
+    nodes = jnp.linspace(-1.0, 1.0, 512)
+    evaluation = jnp.linspace(-1.0, 1.0, 4096)
+    target = lambda values: 1.0 / (1.0 + 0.98 * values)
+    rational_grid = BSplineGrid.open_uniform(3, 3)
+    fit_plan = phx.operators.BSplineInterpolationPlan(
+        degree=3,
+        mode="least_squares",
+    )
+    numerator = phx.operators.fit_bspline(
+        nodes,
+        jnp.ones(nodes.shape),
+        plan=fit_plan,
+        grid=rational_grid,
+    ).coefficients
+    denominator = phx.operators.fit_bspline(
+        nodes,
+        1.0 + 0.98 * nodes,
+        plan=fit_plan,
+        grid=rational_grid,
+    ).coefficients
+    centered_log_weights = jnp.log(denominator) - jnp.mean(jnp.log(denominator))
+    raw_log_weights = jnp.arctanh(centered_log_weights / 4.0)
+    parameters = RationalBSplineEdgeParameters(
+        (numerator / denominator)[None, None, :],
+        raw_log_weights[None, None, :],
+    )
+    rational_basis = RationalBSplineEdgeBasis(grid=rational_grid)
+    rational_values = jax.vmap(
+        lambda value: rational_basis.evaluate(parameters, jnp.asarray([[value]]))[0, 0]
+    )(evaluation)
+    polynomial = phx.operators.fit_bspline(
+        nodes,
+        target(nodes),
+        plan=phx.operators.BSplineInterpolationPlan(
+            degree=3,
+            num_intervals=8,
+            mode="least_squares",
+        ),
+    )
+    expected = target(evaluation)
+    rational_error = jnp.linalg.norm(rational_values - expected) / jnp.linalg.norm(
+        expected
+    )
+    polynomial_error = jnp.linalg.norm(
+        polynomial(evaluation) - expected
+    ) / jnp.linalg.norm(expected)
+
+    assert parameters.control_values.size + parameters.raw_log_weights.size - 1 == 11
+    assert polynomial.coefficients.size == 11
+    assert float(rational_error) < 1e-11
+    assert float(rational_error) < 1e-8 * float(polynomial_error)
+
+
+def test_rational_regularizer_reduces_to_polynomial_energy_at_unit_weights():
+    polynomial = BSplineEdgeBasis(degree=3, num_intervals=4)
+    rational = RationalBSplineEdgeBasis(
+        degree=3,
+        num_intervals=4,
+        weight_magnitude_weight=0.0,
+        weight_variation_weight=0.0,
+        denominator_weight=0.0,
+    )
+    controls = jr.normal(jr.key(25), (2, 3, polynomial.coefficient_count))
+    parameters = RationalBSplineEdgeParameters(
+        controls,
+        jnp.zeros(controls.shape),
+    )
+
+    assert float(rational.regularization(parameters)) == pytest.approx(
+        float(polynomial.regularization(controls)),
+        rel=2e-11,
+        abs=2e-11,
+    )
 
 
 def test_orthogonal_kan_clipping_preserves_endpoint_derivatives():
