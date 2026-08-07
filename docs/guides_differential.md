@@ -290,12 +290,34 @@ compact depth-2 representation. For arbitrary static depth, construct a
 `LogSignatureControl` from fine piecewise-linear samples:
 
 ```python
+import jax.numpy as jnp
+import phydrax as phx
+
+
+fine_times = jnp.linspace(0.0, 1.0, 5)
+path_values = jnp.asarray(
+    [
+        [0.0, 0.0],
+        [0.2, -0.1],
+        [0.1, 0.3],
+        [0.5, 0.4],
+        [0.4, 0.8],
+    ]
+)
+initial_state = jnp.asarray([1.0])
+
+
+def vector_fields(time, state, args):
+    del time, args
+    return jnp.stack((0.2 * state, -0.1 * state), axis=-1)
+
+
 control = phx.stochastic.LogSignatureControl.from_values(
     fine_times,
     path_values,
     depth=3,
-    coarse_indices=(0, 8, 16, 24, 32),
-    source_id="sample-17",
+    coarse_indices=(0, 2, 4),
+    source_id="deterministic-depth-three",
 )
 ```
 
