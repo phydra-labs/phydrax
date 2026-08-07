@@ -1,5 +1,5 @@
 #
-#  Copyright © 2026 PHYDRA, Inc. All rights reserved.
+# Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
 from __future__ import annotations
@@ -18,10 +18,13 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, Key
 
-from ..models.core._operator import FunctionSamples, OperatorBatch, OperatorTargetBatch
-from ..models.core._operator_topology import operator_topology_fingerprint
 from ._dtype import OperatorDTypePolicy
+from ._fingerprint import operator_batch_schema
 from ._normalization import OperatorNormalizationPolicy
+
+
+_OPERATOR_TRAINING_CHECKPOINT_FORMAT = "phydrax-operator-training-checkpoint"
+_OPERATOR_TRAINING_CHECKPOINT_VERSION = 2
 
 
 def _sha256(path: Path, /) -> str:
@@ -31,89 +34,12 @@ def _sha256(path: Path, /) -> str:
             digest.update(block)
     return digest.hexdigest()
 
+
 def _prune_superseded_states(directory: Path, current_state_name: str, /) -> None:
     for stale_state in directory.glob("state-*.eqx"):
         if stale_state.name != current_state_name:
             stale_state.unlink(missing_ok=True)
     (directory / "state.tmp.eqx").unlink(missing_ok=True)
-
-
-def _samples_schema(samples: FunctionSamples, /) -> dict[str, Any]:
-    values = None
-    if samples.values is not None:
-        array = jnp.asarray(samples.values)
-        values = {"shape": list(array.shape), "dtype": str(array.dtype)}
-    coordinate_dim = None
-    if samples.coordinates is not None:
-        coordinate_dim = int(samples.coordinates.shape[-1])
-    elif samples.axes:
-        coordinate_dim = len(samples.axes)
-    topology = None
-    if samples.topology is not None:
-        topology = {
-            "kind": samples.topology.kind,
-            "site": samples.topology.site,
-            "entity": samples.topology.entity,
-            "case_shape": list(samples.topology.case_shape),
-            "sample_shape": list(samples.topology.sample_shape),
-            "num_graphs": samples.topology.graph.num_graphs,
-            "entity_count": samples.topology.entity_count,
-            "edge_count": int(samples.topology.graph.senders.shape[0])
-            if samples.topology.graph.senders is not None
-            else 0,
-            "fingerprint": operator_topology_fingerprint(samples.topology),
-        }
-    return {
-        "values": values,
-        "sample_shape": list(samples.sample_shape),
-        "coordinate_dim": coordinate_dim,
-        "geometry_case_shape": list(samples.geometry_case_shape),
-        "axes": [
-            {
-                "name": axis.name,
-                "size": axis.size,
-                "basis": axis.basis,
-                "periodic": axis.periodic,
-            }
-            for axis in samples.axes
-        ],
-        "has_quadrature": samples.quadrature_weights is not None
-        or any(axis.quadrature_weights is not None for axis in samples.axes),
-        "has_mask": samples.mask is not None,
-        "topology": topology,
-    }
-
-
-def operator_batch_schema(
-    batch: OperatorBatch,
-    /,
-    *,
-    target: OperatorTargetBatch | None = None,
-) -> dict[str, Any]:
-    """Return a JSON-safe compatibility contract for an operator batch."""
-    schema = {
-        "case_axes": list(batch.case_axes),
-        "case_shape": list(batch.case_shape),
-        "inputs": {
-            name: _samples_schema(samples) for name, samples in batch.inputs.items()
-        },
-        "queries": {
-            name: _samples_schema(samples) for name, samples in batch.queries.items()
-        },
-    }
-    if target is not None:
-        target.validate(batch)
-        schema["targets"] = {
-            name: {
-                "shape": list(field.values.shape),
-                "dtype": str(field.values.dtype),
-                "query_name": field.query_name,
-                "channels": field.spec.channels,
-                "component_names": list(field.spec.component_names),
-            }
-            for name, field in target.fields.items()
-        }
-    return schema
 
 
 @dataclass(frozen=True)
@@ -155,12 +81,14 @@ def save_operator_training_checkpoint(
     state_path = destination / state_name
     os.replace(temporary_state, state_path)
     manifest = {
+        "format": _OPERATOR_TRAINING_CHECKPOINT_FORMAT,
+        "version": _OPERATOR_TRAINING_CHECKPOINT_VERSION,
         "state_file": state_name,
         "state_sha256": checksum,
         "step": int(step),
         "key_data": np.asarray(jr.key_data(key)).tolist(),
         "key_impl": str(jr.key_impl(key)),
-        "normalization": (None if normalization is None else normalization.to_dict()),
+        "normalization": None if normalization is None else normalization.to_dict(),
         "dtype_policy": None if dtype_policy is None else dtype_policy.to_dict(),
         "schema": None if schema is None else dict(schema),
         "metadata": {} if metadata is None else dict(metadata),
@@ -175,18 +103,16 @@ def save_operator_training_checkpoint(
     return destination
 
 
-def load_operator_training_checkpoint(
+def _read_operator_training_manifest(
     path: str | Path,
-    model_like: Any,
-    optimizer_state_like: Any,
     /,
-    *,
-    expected_schema: Mapping[str, Any] | None = None,
-) -> OperatorTrainingCheckpoint:
-    """Verify and restore a checkpoint against explicit PyTree templates."""
+) -> tuple[dict[str, Any], Path]:
+    """Validate one current checkpoint manifest and its state checksum."""
     source = Path(path)
     manifest = json.loads((source / "manifest.json").read_text(encoding="utf-8"))
     expected = {
+        "format",
+        "version",
         "state_file",
         "state_sha256",
         "step",
@@ -206,10 +132,35 @@ def load_operator_training_checkpoint(
             "Operator training checkpoint must use the current canonical fields; "
             f"missing={sorted(missing)}, unknown={sorted(unknown)}."
         )
-    state_path = source / manifest["state_file"]
+    if manifest["format"] != _OPERATOR_TRAINING_CHECKPOINT_FORMAT:
+        raise ValueError("File is not a PhydraX operator training checkpoint.")
+    if manifest["version"] != _OPERATOR_TRAINING_CHECKPOINT_VERSION:
+        raise ValueError(
+            "Operator training checkpoint version does not match the current runtime."
+        )
+    if not isinstance(manifest["metadata"], dict):
+        raise ValueError("Operator training checkpoint metadata must be an object.")
+    state_name = manifest["state_file"]
+    if not isinstance(state_name, str) or not state_name:
+        raise ValueError("Operator training checkpoint state_file must be non-empty.")
+    state_path = source / state_name
     actual_checksum = _sha256(state_path)
     if actual_checksum != manifest["state_sha256"]:
         raise ValueError("Operator training checkpoint state checksum mismatch.")
+    return manifest, state_path
+
+
+def load_operator_training_checkpoint(
+    path: str | Path,
+    model_like: Any,
+    optimizer_state_like: Any,
+    /,
+    *,
+    expected_schema: Mapping[str, Any] | None = None,
+) -> OperatorTrainingCheckpoint:
+    """Verify and restore a checkpoint against explicit PyTree templates."""
+    source = Path(path)
+    manifest, state_path = _read_operator_training_manifest(source)
     if expected_schema is not None and manifest["schema"] != dict(expected_schema):
         raise ValueError("Operator training checkpoint schema mismatch.")
     model, optimizer_state = eqx.tree_deserialise_leaves(

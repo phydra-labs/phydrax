@@ -170,9 +170,7 @@ def _context_fixture():
         ]
     )
     weights = jnp.array([[0.1, 0.2, 0.3, 0.4], [0.4, 0.3, 0.2, 0.1]])
-    mask = jnp.array(
-        [[True, True, True, False], [True, True, False, False]]
-    )
+    mask = jnp.array([[True, True, True, False], [True, True, False, False]])
     samples = phx.nn.FunctionSamples(
         values=values,
         coordinates=coordinates,
@@ -184,14 +182,14 @@ def _context_fixture():
 
 def test_context_strategies_have_stable_fingerprints_and_physical_state():
     values, samples = _context_fixture()
-    learned_strategy = phx.nn.LearnedTokenContext(
-        channels=2, num_tokens=3, key=jr.key(0)
-    )
+    learned_strategy = phx.nn.LearnedTokenContext(channels=2, num_tokens=3, key=jr.key(0))
     pooled_strategy = phx.nn.PooledGeometryContext(channels=2, num_tokens=2)
     anchor_strategy = phx.nn.SampledAnchorContext(channels=2, num_anchors=2)
 
     learned = learned_strategy(values, samples, normalization_id="unit-scale")
-    learned_again = learned_strategy(values + 1000.0, samples, normalization_id="unit-scale")
+    learned_again = learned_strategy(
+        values + 1000.0, samples, normalization_id="unit-scale"
+    )
     pooled = pooled_strategy(values, samples, normalization_id="unit-scale")
     anchors = anchor_strategy(
         values,
@@ -208,15 +206,16 @@ def test_context_strategies_have_stable_fingerprints_and_physical_state():
     assert learned.schema_fingerprint == learned_again.schema_fingerprint
     assert learned.schema_fingerprint == pooled.schema_fingerprint
     assert learned.schema_fingerprint == anchors.schema_fingerprint
-    assert learned.schema_fingerprint != learned_strategy(
-        values, samples, normalization_id="other-scale"
-    ).schema_fingerprint
+    assert (
+        learned.schema_fingerprint
+        != learned_strategy(
+            values, samples, normalization_id="other-scale"
+        ).schema_fingerprint
+    )
 
     assert pooled.kind == "pooled_geometry"
     assert jnp.allclose(pooled.weights, jnp.array([[0.3, 0.3], [0.7, 0.0]]))
-    assert jnp.array_equal(
-        pooled.mask, jnp.array([[True, True], [True, False]])
-    )
+    assert jnp.array_equal(pooled.mask, jnp.array([[True, True], [True, False]]))
     assert jnp.allclose(
         pooled.coordinates[..., 0],
         jnp.array([[2.0 / 3.0, 2.0], [7.3 / 0.7, 0.0]]),
@@ -275,6 +274,7 @@ def test_lazy_case_sampling_reads_only_selected_cases_and_preserves_metadata():
         100,
         metadata_reader=metadata_reader,
         case_reader=case_reader,
+        content_fingerprint="test:lazy-cases-v1",
     )
     policy = AnchorQuerySamplingPolicy(
         anchor_counts={"u": 2},
@@ -317,9 +317,7 @@ def test_lazy_case_sampling_reads_only_selected_cases_and_preserves_metadata():
 
 
 def _tiny_encoded_operator_and_batch():
-    source_coordinates = jnp.array(
-        [[[0.0], [0.5], [1.0]], [[0.0], [0.25], [1.0]]]
-    )
+    source_coordinates = jnp.array([[[0.0], [0.5], [1.0]], [[0.0], [0.25], [1.0]]])
     query_coordinates = jnp.array(
         [
             [[0.0], [0.25], [0.5], [0.75], [1.0]],
@@ -340,7 +338,11 @@ def _tiny_encoded_operator_and_batch():
             [[True, True, False, True, True], [True, False, True, True, True]]
         ),
     )
-    batch = phx.nn.OperatorBatch(inputs={"u": source}, queries={"query": query}, case_axes=("scenario",),)
+    batch = phx.nn.OperatorBatch(
+        inputs={"u": source},
+        queries={"query": query},
+        case_axes=("scenario",),
+    )
     feature = phx.nn.MLP(
         in_size=2,
         out_size=1,
@@ -431,9 +433,7 @@ def test_npy_prediction_status_uses_current_canonical_fields(tmp_path):
 
 def test_typed_branch_interactions_are_synchronous_deterministic_and_validated():
     values, samples = _context_fixture()
-    sensor_state = phx.nn.PooledGeometryContext(channels=2, num_tokens=2)(
-        values, samples
-    )
+    sensor_state = phx.nn.PooledGeometryContext(channels=2, num_tokens=2)(values, samples)
     field_state = phx.nn.SampledAnchorContext(channels=2, num_anchors=2)(
         values, samples, indices=jnp.array([1, 3])
     )
@@ -476,12 +476,8 @@ def test_typed_branch_interactions_are_synchronous_deterministic_and_validated()
         "sensor",
     )
 
-    updated = phx.nn.apply_branch_interactions(
-        state, graph, {"shared": attention}, 1
-    )
-    repeated = phx.nn.apply_branch_interactions(
-        state, graph, {"shared": attention}, 1
-    )
+    updated = phx.nn.apply_branch_interactions(state, graph, {"shared": attention}, 1)
+    repeated = phx.nn.apply_branch_interactions(state, graph, {"shared": attention}, 1)
     for target_name, source_name in (("field", "sensor"), ("sensor", "field")):
         target = state.branch(target_name)
         source_state = state.branch(source_name)
@@ -504,9 +500,7 @@ def test_typed_branch_interactions_are_synchronous_deterministic_and_validated()
     with pytest.raises(ValueError, match="declared branches"):
         phx.nn.OperatorBranchGraph(
             (sensor, field),
-            interactions=(
-                phx.nn.BranchInteractionSpec("missing", "field", stage=0),
-            ),
+            interactions=(phx.nn.BranchInteractionSpec("missing", "field", stage=0),),
         )
     wrong_shape_attention = phx.nn.MeasureAwareAttention(
         source_channels=2,
@@ -529,9 +523,7 @@ def test_differential_decoders_normalize_transform_jit_and_differentiate():
         hidden_sizes=(),
         key=jr.key(30),
     )
-    normalization = phx.nn.DifferentialNormalization(
-        jnp.array([2.0]), jnp.array([4.0])
-    )
+    normalization = phx.nn.DifferentialNormalization(jnp.array([2.0]), jnp.array([4.0]))
     transform = phx.nn.LinearDifferentialTransform(jnp.array([[[3.0]]]))
     model = phx.nn.DifferentialFieldDecoder(
         decoder,
@@ -584,9 +576,7 @@ def test_pde_ir_round_trip_canonical_hash_tokens_and_constraint_execution():
     equivalent = PDEProblemIR(
         coordinates=problem.coordinates,
         fields=problem.fields,
-        equations=(
-            PDEEquation("unit_residual", PDEExpression.field("u") - 1.0),
-        ),
+        equations=(PDEEquation("unit_residual", PDEExpression.field("u") - 1.0),),
     )
 
     payload = pde_ir_to_json(problem)
@@ -739,10 +729,7 @@ def test_pde_numeric_metadata_accepts_finite_zero_and_negative_dimensions():
 def _canonical_expression_problem(expression):
     return PDEProblemIR(
         coordinates=(PDECoordinate("x", "space"),),
-        fields=tuple(
-            PDEField(name, coordinates=("x",))
-            for name in ("u", "v", "w", "z")
-        ),
+        fields=tuple(PDEField(name, coordinates=("x",)) for name in ("u", "v", "w", "z")),
         equations=(PDEEquation("governing", expression),),
     )
 
@@ -785,8 +772,7 @@ def _token_arrays(tokens):
 def test_associative_expression_canonicalization_is_recursive(expressions):
     fields = tuple(PDEExpression.field(name) for name in ("u", "v", "w", "z"))
     problems = tuple(
-        _canonical_expression_problem(expression)
-        for expression in expressions(*fields)
+        _canonical_expression_problem(expression) for expression in expressions(*fields)
     )
     payloads = tuple(pde_ir_to_json(problem) for problem in problems)
     hashes = tuple(pde_ir_hash(problem) for problem in problems)
@@ -806,9 +792,7 @@ def test_associative_expression_canonicalization_is_recursive(expressions):
 
 
 def test_nonassociative_expression_trees_remain_distinct():
-    u, v, w, _ = tuple(
-        PDEExpression.field(name) for name in ("u", "v", "w", "z")
-    )
+    u, v, w, _ = tuple(PDEExpression.field(name) for name in ("u", "v", "w", "z"))
     expressions = (
         (u / v) / w,
         u / (v / w),
@@ -864,10 +848,14 @@ def test_pde_compiler_executes_all_derivative_backends():
         atol=2e-2,
     )
 
-    basis_coordinates = LegendreAxisSpec(24).materialize(
-        jnp.array(-1.0),
-        jnp.array(1.0),
-    ).nodes
+    basis_coordinates = (
+        LegendreAxisSpec(24)
+        .materialize(
+            jnp.array(-1.0),
+            jnp.array(1.0),
+        )
+        .nodes
+    )
     basis = phx.equations.compile_pde_expression(
         field.derivative("x", order=2),
         problem,

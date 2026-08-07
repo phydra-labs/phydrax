@@ -29,8 +29,12 @@ def _batch(*, quadrature_scale: float = 1.0) -> phx.nn.OperatorBatch:
         values=jnp.ones((2, 3)),
         coordinates=coordinates,
     )
-    return phx.nn.OperatorBatch(inputs={"forcing": source}, queries={"query": query}, case_axes=("case",),
-    case_shape=(2,),)
+    return phx.nn.OperatorBatch(
+        inputs={"forcing": source},
+        queries={"query": query},
+        case_axes=("case",),
+        case_shape=(2,),
+    )
 
 
 def _prediction(parameters, batch, spec):
@@ -79,9 +83,9 @@ def test_operator_likelihood_matches_manual_sum_and_is_jittable():
     )
     parameters = {"level": jnp.asarray(1.5)}
 
-    combined = batch.require_single_query().mask_array(
-        case_shape=batch.case_shape
-    )[..., None]
+    combined = batch.require_single_query().mask_array(case_shape=batch.case_shape)[
+        ..., None
+    ]
     combined = jnp.broadcast_to(combined, target.shape) & observation_mask
     safe_target = jnp.where(combined, target, 0.0)
     elements = (
@@ -297,9 +301,9 @@ def test_dynamic_operator_likelihood_matches_fixed_full_batch_and_is_jittable():
         data,
         jnp.asarray([True, True, True, True, False]),
     )
-    compiled = eqx.filter_jit(
-        lambda value, batch: dynamic(value, batch)
-    )(parameter, likelihood_batch)
+    compiled = eqx.filter_jit(lambda value, batch: dynamic(value, batch))(
+        parameter, likelihood_batch
+    )
     assert compiled.shape == (5,)
     assert compiled[-1] == 0.0
 
@@ -330,10 +334,7 @@ def test_operator_minibatch_source_is_complete_padded_and_content_addressed():
     assert jnp.array_equal(jnp.sort(case_ids), jnp.arange(5.0))
     assert batches[-1].data.target.shape == (2, 4)
     assert not bool(batches[-1].factor_mask[-1])
-    assert (
-        source.configuration()["loader_source_fingerprint"]
-        == loader.source_fingerprint()
-    )
+    assert source.configuration()["loader_fingerprint"] == loader.fingerprint
 
     changed_seed = phx.uq.OperatorMinibatchSource(
         phx.nn.OperatorBatchLoader(

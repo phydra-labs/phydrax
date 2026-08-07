@@ -15,6 +15,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, PyTree
 
+from .._fingerprint import array_tree_fingerprint
 from .._strict import StrictModule
 from ..nn.models.core._operator import (
     FunctionSamples,
@@ -23,7 +24,6 @@ from ..nn.models.core._operator import (
     OperatorPrediction,
 )
 from ..nn.operator_training._loader import OperatorBatchLoader
-from ._checkpoint import array_tree_fingerprint
 from ._likelihoods import AbstractLikelihood, GaussianLikelihood
 from ._minibatch_posterior import LikelihoodBatch
 from ._operator import (
@@ -67,9 +67,7 @@ class OperatorLikelihoodData(StrictModule):
         if not selected_query_name or not selected_field_name:
             raise ValueError("field_name and query_name must be non-empty.")
         query = batch.query(selected_query_name)
-        expected_shape = (
-            batch.case_shape + query.sample_shape + output_spec.channel_shape
-        )
+        expected_shape = batch.case_shape + query.sample_shape + output_spec.channel_shape
         physical_dims = _physical_dims(query, output_spec, batch.case_axes)
         target_array = _target_array(
             target,
@@ -89,9 +87,7 @@ class OperatorLikelihoodData(StrictModule):
             has_channels=output_spec.channels != "scalar",
         )
         count = _case_count(batch.case_shape)
-        if bool(
-            jnp.any(~jnp.any(combined_mask.reshape((count, -1)), axis=-1))
-        ):
+        if bool(jnp.any(~jnp.any(combined_mask.reshape((count, -1)), axis=-1))):
             raise ValueError(
                 "Every physical operator case must contain at least one observation."
             )
@@ -110,12 +106,12 @@ class OperatorBatchObservationLikelihood(StrictModule):
     """Per-case normalized likelihood for dynamically supplied operator batches."""
 
     likelihood: AbstractLikelihood
-    predict_fn: Callable[
-        [PyTree[Any], OperatorBatch], OperatorPrediction
-    ] = eqx.field(static=True)
-    parameters_fn: Callable[
-        [PyTree[Any]], Mapping[str, ArrayLike | cx.Field]
-    ] | None = eqx.field(static=True)
+    predict_fn: Callable[[PyTree[Any], OperatorBatch], OperatorPrediction] = eqx.field(
+        static=True
+    )
+    parameters_fn: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.Field]] | None = (
+        eqx.field(static=True)
+    )
     label: str = eqx.field(static=True)
 
     def __init__(
@@ -124,9 +120,8 @@ class OperatorBatchObservationLikelihood(StrictModule):
         likelihood: AbstractLikelihood,
         /,
         *,
-        parameters: Callable[
-            [PyTree[Any]], Mapping[str, ArrayLike | cx.Field]
-        ] | None = None,
+        parameters: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.Field]]
+        | None = None,
         label: str = "operator_observation",
     ):
         if not callable(predict):
@@ -140,9 +135,7 @@ class OperatorBatchObservationLikelihood(StrictModule):
         self.parameters_fn = parameters
         self.label = _label(label)
 
-    def _likelihood_parameters(
-        self, parameters: PyTree[Any], /
-    ) -> dict[str, Array]:
+    def _likelihood_parameters(self, parameters: PyTree[Any], /) -> dict[str, Array]:
         return _likelihood_parameter_values(self.parameters_fn, parameters)
 
     def per_case_log_prob(
@@ -214,29 +207,27 @@ class OperatorMinibatchSource:
             raise ValueError("field_name must be non-empty.")
         first = loader.prepare_indices((0,), epoch=0, batch_index=0)
         field = first.targets.field(selected_field_name)
-        mask = None if observation_mask is None else jnp.asarray(
-            observation_mask, dtype=bool
+        mask = (
+            None
+            if observation_mask is None
+            else jnp.asarray(observation_mask, dtype=bool)
         )
         if mask is not None and (
             mask.ndim == 0 or int(mask.shape[0]) != loader.source.size
         ):
-            raise ValueError(
-                "observation_mask must have the source case axis in front."
-            )
-        loader_fingerprint = loader.source_fingerprint()
+            raise ValueError("observation_mask must have the source case axis in front.")
+        loader_fingerprint = loader.fingerprint
         configuration = {
             "type": f"{type(self).__module__}.{type(self).__qualname__}",
             "loader": loader.configuration(),
-            "loader_source_fingerprint": loader_fingerprint,
+            "loader_fingerprint": loader_fingerprint,
             "field_name": selected_field_name,
             "query_name": field.query_name,
             "output_spec": {
                 "channels": field.spec.channels,
                 "component_names": list(field.spec.component_names),
             },
-            "observation_mask": (
-                None if mask is None else array_tree_fingerprint(mask)
-            ),
+            "observation_mask": (None if mask is None else array_tree_fingerprint(mask)),
         }
         configuration_json = json.dumps(
             configuration,
@@ -251,9 +242,7 @@ class OperatorMinibatchSource:
         self.output_spec = field.spec
         self.observation_mask = mask
         self._configuration_json = configuration_json
-        self._fingerprint = hashlib.sha256(
-            configuration_json.encode("utf-8")
-        ).hexdigest()
+        self._fingerprint = hashlib.sha256(configuration_json.encode("utf-8")).hexdigest()
 
     @property
     def num_factors(self) -> int:
@@ -278,48 +267,43 @@ class OperatorMinibatchSource:
         epoch_index = int(epoch)
         if epoch_index < 0:
             raise ValueError("epoch must be nonnegative.")
-        for batch_index, indices in enumerate(
-            self.loader.indices_for_epoch(epoch_index)
-        ):
-            active_count = len(indices)
-            padded_indices = indices + (indices[-1],) * (
-                self.batch_capacity - active_count
-            )
-            prepared = self.loader.prepare_indices(
-                indices,
-                epoch=epoch_index,
-                batch_index=batch_index,
-            )
-            operator_batch = prepared.batch
-            operator_targets = prepared.targets
-            if active_count < self.batch_capacity:
-                selection = jnp.concatenate(
-                    (
-                        jnp.arange(active_count),
-                        jnp.full(
-                            (self.batch_capacity - active_count,),
-                            active_count - 1,
-                        ),
-                    )
+        with self.loader.epoch(epoch_index) as batches:
+            for prepared in batches:
+                indices = prepared.indices
+                active_count = len(indices)
+                padded_indices = indices + (indices[-1],) * (
+                    self.batch_capacity - active_count
                 )
-                operator_batch = operator_batch.take(selection)
-                operator_targets = operator_targets.take(selection)
-            target_field = operator_targets.field(self.field_name)
-            selected_mask = (
-                None
-                if self.observation_mask is None
-                else self.observation_mask[jnp.asarray(padded_indices)]
-            )
-            data = OperatorLikelihoodData(
-                operator_batch,
-                target_field.values,
-                output_spec=self.output_spec,
-                field_name=self.field_name,
-                query_name=self.query_name,
-                observation_mask=selected_mask,
-            )
-            factor_mask = jnp.arange(self.batch_capacity) < active_count
-            yield LikelihoodBatch(data, factor_mask)
+                operator_batch = prepared.batch
+                operator_targets = prepared.targets
+                if active_count < self.batch_capacity:
+                    selection = jnp.concatenate(
+                        (
+                            jnp.arange(active_count),
+                            jnp.full(
+                                (self.batch_capacity - active_count,),
+                                active_count - 1,
+                            ),
+                        )
+                    )
+                    operator_batch = operator_batch.take(selection)
+                    operator_targets = operator_targets.take(selection)
+                target_field = operator_targets.field(self.field_name)
+                selected_mask = (
+                    None
+                    if self.observation_mask is None
+                    else self.observation_mask[jnp.asarray(padded_indices)]
+                )
+                data = OperatorLikelihoodData(
+                    operator_batch,
+                    target_field.values,
+                    output_spec=self.output_spec,
+                    field_name=self.field_name,
+                    query_name=self.query_name,
+                    observation_mask=selected_mask,
+                )
+                factor_mask = jnp.arange(self.batch_capacity) < active_count
+                yield LikelihoodBatch(data, factor_mask)
 
 
 class FixedOperatorObservationLikelihood(AbstractPosteriorTerm):
@@ -370,9 +354,7 @@ class FixedOperatorObservationLikelihood(AbstractPosteriorTerm):
         if not selected_query_name or not selected_field_name:
             raise ValueError("field_name and query_name must be non-empty.")
         query = batch.query(selected_query_name)
-        expected_shape = (
-            batch.case_shape + query.sample_shape + output_spec.channel_shape
-        )
+        expected_shape = batch.case_shape + query.sample_shape + output_spec.channel_shape
         physical_dims = _physical_dims(query, output_spec, batch.case_axes)
         target_array = _target_array(
             target,
@@ -487,9 +469,7 @@ def _validated_operator_prediction(
 
 
 def _likelihood_parameter_values(
-    callback: Callable[
-        [PyTree[Any]], Mapping[str, ArrayLike | cx.Field]
-    ] | None,
+    callback: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.Field]] | None,
     parameters: PyTree[Any],
     /,
 ) -> dict[str, Array]:
@@ -525,9 +505,7 @@ def _operator_per_case_log_prob(
     )
     values = jnp.broadcast_to(values, target.shape)
     invalid_prediction = observation_mask & ~jnp.isfinite(prediction)
-    invalid_density = observation_mask & (
-        jnp.isnan(values) | jnp.isposinf(values)
-    )
+    invalid_density = observation_mask & (jnp.isnan(values) | jnp.isposinf(values))
     elements = jnp.where(observation_mask, values, 0.0)
     elements = jnp.where(
         invalid_prediction | invalid_density,

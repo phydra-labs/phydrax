@@ -45,8 +45,8 @@ from ..models.core._operator_sharding import (
 from ..models.core._operator_task import OperatorTask
 from ..models.layers._dropout import inference_mode
 from ._checkpoint import (
+    _read_operator_training_manifest,
     load_operator_training_checkpoint,
-    operator_batch_schema,
     save_operator_training_checkpoint,
 )
 from ._dataset import OperatorDataset
@@ -57,6 +57,7 @@ from ._execution import (
     nondimensionalize_targets,
     physicalize_prediction,
 )
+from ._fingerprint import operator_fit_schema
 from ._loader import OperatorBatchLoader, OperatorTrainingBatch
 from ._losses import (
     AbstractOperatorLossTerm,
@@ -205,8 +206,6 @@ def _canonical_hash(value: Any, /) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-
-
 def _raw_loader(
     data: FitInput,
     /,
@@ -218,9 +217,8 @@ def _raw_loader(
     split: str,
 ) -> OperatorBatchLoader:
     if isinstance(data, OperatorBatchLoader):
-        source_data = data.dataset
         return OperatorBatchLoader(
-            source_data,
+            data.source,
             batch_size=data.batch_size,
             shuffle=data.shuffle,
             seed=data.seed,
@@ -266,7 +264,9 @@ def _place_batch(
     sharding_policy: OperatorShardingPolicy | None,
 ) -> OperatorTrainingBatch:
     physical_batch = raw.batch if raw.physical_batch is None else raw.physical_batch
-    physical_targets = raw.targets if raw.physical_targets is None else raw.physical_targets
+    physical_targets = (
+        raw.targets if raw.physical_targets is None else raw.physical_targets
+    )
     batch, targets = _nondimensionalize(physical_batch, physical_targets, task)
     if normalization is not None:
         batch = normalization.normalize_batch(batch)
@@ -394,7 +394,9 @@ def fit_operator(
     loss_terms: Sequence[AbstractOperatorLossTerm] | None = None,
     output_pipeline: OperatorOutputPipeline | None = None,
     include_model_losses: bool = True,
-    optimizer: optax.GradientTransformation | optax.GradientTransformationExtraArgs | None = None,
+    optimizer: optax.GradientTransformation
+    | optax.GradientTransformationExtraArgs
+    | None = None,
     optimizer_id: str | None = None,
     evaluation_parameters: EvaluationParametersFn | None = None,
     evaluation_parameters_id: str | None = None,
@@ -501,9 +503,54 @@ def fit_operator(
             split="validation",
         )
     )
-    first_raw = next(raw_train_loader.epoch(0), None)
-    if first_raw is None:
-        raise ValueError("Training data must contain at least one batch.")
+    checkpoint = None if checkpoint_path is None else Path(checkpoint_path)
+    resume_manifest: dict[str, Any] | None = None
+    resume_probe: tuple[int, int] | None = None
+    if checkpoint is not None and resume and (checkpoint / "manifest.json").is_file():
+        resume_manifest, _ = _read_operator_training_manifest(checkpoint)
+    current_data_contract = {
+        "train_loader_fingerprint": raw_train_loader.fingerprint,
+        "validation_loader_fingerprint": (
+            None if raw_validation_loader is None else raw_validation_loader.fingerprint
+        ),
+    }
+    if resume_manifest is not None:
+        metadata = resume_manifest["metadata"]
+        data_contract = metadata.get("data_contract")
+        if data_contract != current_data_contract:
+            raise ValueError("Operator fit checkpoint data contract mismatch.")
+        saved_progress = metadata.get("progress")
+        if not isinstance(saved_progress, dict):
+            raise ValueError("Operator fit checkpoint progress is missing or invalid.")
+        probe_epoch = int(saved_progress["epoch"])
+        probe_batch = int(saved_progress["next_batch_index"])
+        if probe_epoch < 0:
+            raise ValueError("Operator fit checkpoint epoch is invalid.")
+        plan = raw_train_loader.epoch_plan(probe_epoch)
+        if probe_batch < 0 or probe_batch > plan.batch_count:
+            raise ValueError("Operator fit checkpoint batch cursor is invalid.")
+        if probe_batch == plan.batch_count:
+            probe_epoch += 1
+            probe_batch = 0
+            plan = raw_train_loader.epoch_plan(probe_epoch)
+        if probe_epoch >= int(epochs):
+            probe_epoch = max(0, int(epochs) - 1)
+            probe_batch = 0
+            plan = raw_train_loader.epoch_plan(probe_epoch)
+        if plan.batch_count == 0:
+            raise ValueError("Training data must contain at least one batch.")
+        resume_probe = (probe_epoch, probe_batch)
+    else:
+        plan = raw_train_loader.epoch_plan(0)
+        if plan.batch_count == 0:
+            raise ValueError("Training data must contain at least one batch.")
+        probe_epoch = 0
+        probe_batch = 0
+    first_raw = raw_train_loader.prepare_indices(
+        plan.batch(probe_batch),
+        epoch=probe_epoch,
+        batch_index=probe_batch,
+    )
 
     resolved_dtype = OperatorDTypePolicy() if dtype_policy is None else dtype_policy
     if not isinstance(resolved_dtype, OperatorDTypePolicy):
@@ -537,7 +584,9 @@ def fit_operator(
     if resolved_normalization is not None and not isinstance(
         resolved_normalization, OperatorNormalizationPolicy
     ):
-        raise TypeError("normalization must be an OperatorNormalizationPolicy, 'fit', or None.")
+        raise TypeError(
+            "normalization must be an OperatorNormalizationPolicy, 'fit', or None."
+        )
 
     first = _place_batch(
         first_raw,
@@ -580,10 +629,8 @@ def fit_operator(
             tuple(task.query_by_name)
         )
         if raw_validation_loader is not None:
-            validation_fixed_queries = (
-                raw_validation_loader.fixed_query_fingerprints(
-                    tuple(task.query_by_name)
-                )
+            validation_fixed_queries = raw_validation_loader.fixed_query_fingerprints(
+                tuple(task.query_by_name)
             )
             if validation_fixed_queries != fixed_query_fingerprints:
                 raise ValueError(
@@ -621,8 +668,8 @@ def fit_operator(
     if validation_config is not None and raw_validation_loader is None:
         raise ValueError("validation_policy requires validation data.")
     model_labels = model_loss_labels(model) if include_model_losses else ()
-    metric_names = ("loss",) + term_names + tuple(
-        f"model_loss/{label}" for label in model_labels
+    metric_names = (
+        ("loss",) + term_names + tuple(f"model_loss/{label}" for label in model_labels)
     )
     if len(set(metric_names)) != len(metric_names):
         raise ValueError("Training metric names must be unique.")
@@ -793,15 +840,42 @@ def fit_operator(
     run_gradient_fn = eqx.filter_jit(gradient_fn) if jit else gradient_fn
     run_update_fn = eqx.filter_jit(update_fn) if jit else update_fn
 
-    def prepared_epoch(loader: OperatorBatchLoader, epoch: int):
-        for raw in loader.epoch(epoch):
-            yield _place_batch(
-                raw,
+    def prepared_epoch(
+        loader: OperatorBatchLoader,
+        epoch: int,
+        *,
+        start_batch: int = 0,
+        retained_first: OperatorTrainingBatch | None = None,
+    ):
+        next_batch = int(start_batch)
+        retained_batch = None
+        if retained_first is not None:
+            if (
+                retained_first.epoch != int(epoch)
+                or retained_first.batch_index != next_batch
+            ):
+                raise ValueError(
+                    "Retained training probe does not match the resume cursor."
+                )
+            retained_batch = _place_batch(
+                retained_first,
                 task=task,
                 normalization=resolved_normalization,
                 dtype_policy=resolved_dtype,
                 sharding_policy=sharding_policy,
             )
+            next_batch += 1
+        with loader.epoch(epoch, start_batch=next_batch) as batches:
+            if retained_batch is not None:
+                yield retained_batch
+            for raw in batches:
+                yield _place_batch(
+                    raw,
+                    task=task,
+                    normalization=resolved_normalization,
+                    dtype_policy=resolved_dtype,
+                    sharding_policy=sharding_policy,
+                )
 
     def evaluate(current_model, loader: OperatorBatchLoader, step: int):
         totals = [0.0] * len(metric_names)
@@ -841,9 +915,7 @@ def fit_operator(
         int(steps)
         if steps is not None
         else int(epochs)
-        * ceil(
-            raw_train_loader.batches_per_epoch / int(gradient_accumulation)
-        )
+        * ceil(raw_train_loader.batches_per_epoch / int(gradient_accumulation))
     )
     master_key = jr.key(seed) if key is None else key
     progress = TrainingProgress()
@@ -862,7 +934,6 @@ def fit_operator(
     train_history: list[dict[str, float]] = []
     validation_steps: list[int] = []
     validation_history: list[dict[str, float]] = []
-    checkpoint = None if checkpoint_path is None else Path(checkpoint_path)
     resumed_from_step = 0
     prior_training_seconds = 0.0
 
@@ -892,11 +963,9 @@ def fit_operator(
             if raw_validation_loader is None
             else raw_validation_loader.configuration()
         ),
-        "train_source_fingerprint": raw_train_loader.source_fingerprint(),
-        "validation_source_fingerprint": (
-            None
-            if raw_validation_loader is None
-            else raw_validation_loader.source_fingerprint()
+        "train_loader_fingerprint": raw_train_loader.fingerprint,
+        "validation_loader_fingerprint": (
+            None if raw_validation_loader is None else raw_validation_loader.fingerprint
         ),
         "sharding": (
             None
@@ -914,11 +983,12 @@ def fit_operator(
         fit_contract_data["evaluation_parameters_id"] = resolved_evaluation_parameters_id
     fit_contract = _canonical_json(fit_contract_data)
     schema = {
-        "batch": operator_batch_schema(first.batch, target=first.targets),
+        "fit": operator_fit_schema(first.batch, target=first.targets),
     }
 
     initial_metrics: dict[str, float]
-    if checkpoint is not None and resume and (checkpoint / "manifest.json").is_file():
+    if resume_manifest is not None:
+        assert checkpoint is not None
         state_template = (
             optimizer_state,
             gradient_accumulator,
@@ -965,13 +1035,9 @@ def fit_operator(
         train_steps = [int(value) for value in metadata["train_steps"]]
         train_history = [dict(values) for values in metadata["train_metrics"]]
         validation_steps = [int(value) for value in metadata["validation_steps"]]
-        validation_history = [
-            dict(values) for values in metadata["validation_metrics"]
-        ]
+        validation_history = [dict(values) for values in metadata["validation_metrics"]]
         initial_metrics = dict(metadata["initial_metrics"])
-        accumulated_metrics = [
-            float(value) for value in metadata["accumulated_metrics"]
-        ]
+        accumulated_metrics = [float(value) for value in metadata["accumulated_metrics"]]
         prior_training_seconds = float(metadata["training_seconds"])
         resumed_from_step = progress.update_step
         parameters, fixed = partition_trainable(model)
@@ -1006,9 +1072,7 @@ def fit_operator(
     def save_progress(training_seconds: float) -> None:
         if checkpoint is None:
             return
-        primary = (
-            sharding_policy is None or sharding_policy.is_primary_process
-        )
+        primary = sharding_policy is None or sharding_policy.is_primary_process
         if not primary:
             sharding_policy.synchronize(
                 f"fit_operator_checkpoint_{control.progress.update_step}"
@@ -1032,6 +1096,7 @@ def fit_operator(
             schema=schema,
             metadata={
                 "fit_contract": fit_contract,
+                "data_contract": current_data_contract,
                 "progress": asdict(control.progress),
                 "initial_metrics": initial_metrics,
                 "train_steps": train_steps,
@@ -1098,10 +1163,7 @@ def fit_operator(
     logger_context = (
         nullcontext(None)
         if tensorboard_log_dir is None
-        or (
-            sharding_policy is not None
-            and not sharding_policy.is_primary_process
-        )
+        or (sharding_policy is not None and not sharding_policy.is_primary_process)
         else TensorBoardLogger(tensorboard_log_dir)
     )
     started = time.perf_counter()
@@ -1113,9 +1175,16 @@ def fit_operator(
                 if control.stop_requested or signal_guard.stop_requested:
                     break
                 control.emit("epoch_begin", metrics={"epoch": epoch})
-                for training_batch in prepared_epoch(raw_train_loader, epoch):
-                    if training_batch.batch_index < control.progress.next_batch_index:
-                        continue
+                epoch_start_batch = control.progress.next_batch_index
+                retained_first = (
+                    first_raw if resume_probe == (epoch, epoch_start_batch) else None
+                )
+                for training_batch in prepared_epoch(
+                    raw_train_loader,
+                    epoch,
+                    start_batch=epoch_start_batch,
+                    retained_first=retained_first,
+                ):
                     if control.progress.update_step >= maximum_steps:
                         break
                     if control.stop_requested or signal_guard.stop_requested:
@@ -1218,7 +1287,10 @@ def fit_operator(
                             loss_scale * mixed_precision.growth_factor,
                         )
                     control.emit("batch_end", metrics=metrics)
-                    if tensorboard is not None and update_step % int(tensorboard_every) == 0:
+                    if (
+                        tensorboard is not None
+                        and update_step % int(tensorboard_every) == 0
+                    ):
                         for name, value in metrics.items():
                             tensorboard.scalar(f"train/{name}", value, update_step)
                         tensorboard.scalar("train/loss_scale", loss_scale, update_step)
@@ -1257,11 +1329,17 @@ def fit_operator(
                                     update_step,
                                 )
                     elapsed = prior_training_seconds + time.perf_counter() - started
-                    if checkpoint is not None and update_step % int(checkpoint_every) == 0:
+                    if (
+                        checkpoint is not None
+                        and update_step % int(checkpoint_every) == 0
+                    ):
                         save_progress(elapsed)
                     if control.stop_requested:
                         break
-                if control.progress.next_batch_index >= raw_train_loader.batches_per_epoch:
+                if (
+                    control.progress.next_batch_index
+                    >= raw_train_loader.batches_per_epoch
+                ):
                     control.progress = replace(
                         control.progress,
                         epoch=epoch + 1,
@@ -1281,10 +1359,7 @@ def fit_operator(
     if (
         raw_validation_loader is not None
         and validation_config is not None
-        and (
-            not validation_steps
-            or validation_steps[-1] != control.progress.update_step
-        )
+        and (not validation_steps or validation_steps[-1] != control.progress.update_step)
     ):
         validation_metrics = evaluate(
             evaluation_model,
@@ -1327,9 +1402,7 @@ def fit_operator(
         train_steps=tuple(train_steps),
         train_metrics=tuple(frozendict(values) for values in train_history),
         validation_steps=tuple(validation_steps),
-        validation_metrics=tuple(
-            frozendict(values) for values in validation_history
-        ),
+        validation_metrics=tuple(frozendict(values) for values in validation_history),
         final_metrics=frozendict(final_metrics),
     )
     return OperatorFitResult(

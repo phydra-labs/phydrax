@@ -20,6 +20,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import PyTree
 
+from .._fingerprint import array_tree_fingerprint, array_tree_signature
 from ._posterior import PosteriorProblem
 
 
@@ -113,14 +114,14 @@ def checkpoint_compatibility(
     initial = problem.initial_position
     value, gradient = jax.value_and_grad(problem.log_density)(initial)
     jax.block_until_ready(value)
-    dynamic_records = _array_records(problem)
-    probe_records = _array_records({"value": value, "gradient": gradient})
     return {
         "checkpoint_id": identifier,
         "problem_type": _qualified_type(problem),
-        "parameter_tree": tree_signature(initial),
-        "problem_array_digest": _records_digest(dynamic_records),
-        "initial_probe_digest": _records_digest(probe_records),
+        "parameter_tree": array_tree_signature(initial),
+        "problem_array_digest": array_tree_fingerprint(problem)["sha256"],
+        "initial_probe_digest": array_tree_fingerprint(
+            {"value": value, "gradient": gradient}
+        )["sha256"],
         "settings": normalized_settings,
     }
 
@@ -190,27 +191,6 @@ def unpack_array_tree(
             )
         leaves.append(value)
     return jax.tree_util.tree_unflatten(treedef, leaves)
-
-
-def tree_signature(tree: PyTree[Any], /) -> list[dict[str, Any]]:
-    """Return stable array-path, shape, and dtype records for a PyTree."""
-    return [
-        {
-            "path": jax.tree_util.keystr(path) or "<root>",
-            "shape": list(np.asarray(leaf).shape),
-            "dtype": np.asarray(leaf).dtype.str,
-        }
-        for path, leaf in jax.tree_util.tree_flatten_with_path(tree)[0]
-    ]
-
-
-def array_tree_fingerprint(tree: PyTree[Any], /) -> dict[str, Any]:
-    """Return a content-sensitive, JSON-compatible fingerprint for an array tree."""
-    records = _array_records(tree)
-    return {
-        "signature": tree_signature(tree),
-        "sha256": _records_digest(records),
-    }
 
 
 def _write_array_archive(
@@ -346,30 +326,6 @@ def _read_array_archive(
         ) from error
 
 
-def _array_records(tree: PyTree[Any]) -> list[tuple[str, np.ndarray]]:
-    records = []
-    for path, leaf in jax.tree_util.tree_flatten_with_path(tree)[0]:
-        try:
-            value = np.asarray(leaf)
-        except (TypeError, ValueError):
-            continue
-        if value.dtype.hasobject:
-            continue
-        records.append((jax.tree_util.keystr(path) or "<root>", value))
-    return records
-
-
-def _records_digest(records: list[tuple[str, np.ndarray]]) -> str:
-    digest = hashlib.sha256()
-    for path, value in records:
-        contiguous = np.ascontiguousarray(value)
-        digest.update(path.encode("utf-8"))
-        digest.update(contiguous.dtype.str.encode("ascii"))
-        digest.update(json.dumps(contiguous.shape).encode("ascii"))
-        digest.update(contiguous.tobytes(order="C"))
-    return digest.hexdigest()
-
-
 def _runtime_versions() -> dict[str, str]:
     return {
         "phydrax": importlib.metadata.version("phydrax"),
@@ -415,5 +371,4 @@ __all__ = [
     "CheckpointCompatibilityError",
     "CheckpointCorruptionError",
     "CheckpointError",
-    "array_tree_fingerprint",
 ]

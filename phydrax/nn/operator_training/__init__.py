@@ -11,7 +11,6 @@ from ._artifact import (
 )
 from ._checkpoint import (
     load_operator_training_checkpoint,
-    operator_batch_schema,
     OperatorTrainingCheckpoint,
     save_operator_training_checkpoint,
 )
@@ -30,6 +29,7 @@ from ._distributional import (
     OperatorDistributionNLL,
 )
 from ._dtype import DTypeName, OperatorDTypePolicy
+from ._fingerprint import operator_batch_schema, operator_dataset_fingerprint
 from ._fit import (
     fit_operator,
     OperatorFitHistory,
@@ -38,7 +38,12 @@ from ._fit import (
     OperatorValidationPolicy,
 )
 from ._linearization import linearize_operator, OperatorLinearization
-from ._loader import OperatorBatchLoader, OperatorTrainingBatch
+from ._loader import (
+    OperatorBatchEpoch,
+    OperatorBatchLoader,
+    OperatorEpochPlan,
+    OperatorTrainingBatch,
+)
 from ._losses import (
     AbstractOperatorLossTerm,
     CochainResidualInput,
@@ -161,6 +166,7 @@ __all__ = [
     "fit_operator_normalization",
     "fit_operator",
     "OperatorBatchLoader",
+    "OperatorBatchEpoch",
     "OperatorCaseProvenance",
     "OperatorDataset",
     "OperatorDatasetSplit",
@@ -172,6 +178,7 @@ __all__ = [
     "OperatorMixedPrecisionPolicy",
     "OperatorRollout",
     "OperatorSplitPolicy",
+    "OperatorEpochPlan",
     "OperatorTrainingBatch",
     "OperatorTrainingCheckpoint",
     "RolloutHorizonSchedule",
@@ -218,6 +225,7 @@ __all__ = [
     "save_operator_normalization",
     "OperatorValidationPolicy",
     "operator_batch_schema",
+    "operator_dataset_fingerprint",
     "operator_dataset_from_arrays",
     "operator_dataset_from_cases",
     "save_operator_training_checkpoint",

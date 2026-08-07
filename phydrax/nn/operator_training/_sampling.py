@@ -8,13 +8,15 @@ import abc
 import hashlib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from functools import cached_property
 from math import prod
-from typing import Literal
+from typing import Any, Literal
 
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from ..._fingerprint import canonical_mapping
 from ..models.core._operator import (
     FunctionSamples,
     OperatorBatch,
@@ -28,6 +30,7 @@ from ._dataset import (
     OperatorCaseProvenance,
     OperatorDataset,
 )
+from ._fingerprint import operator_dataset_fingerprint
 
 
 SamplingStrategy = Literal[
@@ -58,7 +61,9 @@ class SampleSelection:
             raise ValueError("Sample indices must be non-negative.")
         if any(not np.isfinite(value) or value <= 0.0 for value in self.probabilities):
             raise ValueError("Selection probabilities must be finite and positive.")
-        if any(not np.isfinite(value) or value < 0.0 for value in self.importance_weights):
+        if any(
+            not np.isfinite(value) or value < 0.0 for value in self.importance_weights
+        ):
             raise ValueError("Importance weights must be finite and non-negative.")
 
 
@@ -77,6 +82,7 @@ class OperatorCaseReadRequest:
 
     input_selections: Mapping[str, SampleSelection]
     query_selections: Mapping[str, SampleSelection]
+
 
 @dataclass(frozen=True)
 class OperatorCase:
@@ -107,6 +113,24 @@ class OperatorCaseSource(abc.ABC):
     def size(self) -> int:
         raise NotImplementedError
 
+    @property
+    @abc.abstractmethod
+    def content_fingerprint(self) -> str:
+        """Stable identity of the immutable logical case sequence."""
+        raise NotImplementedError
+
+    @property
+    def background_read_safe(self) -> bool:
+        """Whether case preparation may run on one dedicated background thread."""
+        return False
+
+    def configuration(self) -> Mapping[str, Any]:
+        """Return cheap source semantics included in loader compatibility."""
+        return {
+            "type": f"{type(self).__module__}.{type(self).__qualname__}",
+            "size": self.size,
+        }
+
     @abc.abstractmethod
     def case_metadata(self, index: int, /) -> OperatorCaseMetadata:
         raise NotImplementedError
@@ -133,7 +157,9 @@ def _geometry_only(samples: FunctionSamples, /) -> FunctionSamples:
     )
 
 
-def _selection_arrays(samples: FunctionSamples, /) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _selection_arrays(
+    samples: FunctionSamples, /
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     if samples.geometry_case_shape:
         raise ValueError("Sampling metadata must describe one unbatched case.")
     coordinates = np.asarray(samples.coordinates_array(flatten=True))
@@ -247,9 +273,7 @@ def take_function_samples(
     else:
         sample_ndim = len(samples.sample_shape)
         trailing = samples.values.shape[sample_ndim:]
-        flattened = samples.values.reshape(
-            (prod(samples.sample_shape),) + trailing
-        )
+        flattened = samples.values.reshape((prod(samples.sample_shape),) + trailing)
         values = jnp.take(flattened, indices, axis=0)
     return FunctionSamples(
         values=values,
@@ -262,8 +286,6 @@ def take_function_samples(
             else take_operator_topology(samples.topology, indices)
         ),
     )
-
-
 
 
 def take_query_targets(
@@ -335,8 +357,7 @@ class AnchorQuerySamplingPolicy:
         purpose: str,
     ) -> int:
         payload = (
-            f"{self.seed}|{split}|{int(epoch)}|{int(case_index)}|"
-            f"{branch}|{purpose}"
+            f"{self.seed}|{split}|{int(epoch)}|{int(case_index)}|{branch}|{purpose}"
         ).encode("utf-8")
         return int.from_bytes(hashlib.sha256(payload).digest()[:8], "little")
 
@@ -353,9 +374,7 @@ class AnchorQuerySamplingPolicy:
         selections: dict[str, SampleSelection] = {}
         for name, count in self.anchor_counts:
             if name not in metadata.inputs:
-                raise KeyError(
-                    f"Sampling policy requests unknown input branch {name!r}."
-                )
+                raise KeyError(f"Sampling policy requests unknown input branch {name!r}.")
             selections[name] = select_function_samples(
                 metadata.inputs[name],
                 count,
@@ -373,9 +392,7 @@ class AnchorQuerySamplingPolicy:
         query_selections: dict[str, SampleSelection] = {}
         for name, count in self.query_counts:
             if name not in metadata.queries:
-                raise KeyError(
-                    f"Sampling policy requests unknown query branch {name!r}."
-                )
+                raise KeyError(f"Sampling policy requests unknown query branch {name!r}.")
             query_selections[name] = select_function_samples(
                 metadata.queries[name],
                 count,
@@ -402,6 +419,14 @@ class InMemoryOperatorCaseSource(OperatorCaseSource):
     def size(self) -> int:
         return self.dataset.size
 
+    @cached_property
+    def content_fingerprint(self) -> str:
+        return operator_dataset_fingerprint(self.dataset)
+
+    @property
+    def background_read_safe(self) -> bool:
+        return True
+
     def _batch(self, index: int) -> OperatorBatch:
         position = int(index)
         if position < 0 or position >= self.size:
@@ -413,12 +438,10 @@ class InMemoryOperatorCaseSource(OperatorCaseSource):
         assert self.dataset.provenance is not None
         return OperatorCaseMetadata(
             inputs={
-                name: _geometry_only(samples)
-                for name, samples in batch.inputs.items()
+                name: _geometry_only(samples) for name, samples in batch.inputs.items()
             },
             queries={
-                name: _geometry_only(samples)
-                for name, samples in batch.queries.items()
+                name: _geometry_only(samples) for name, samples in batch.queries.items()
             },
             provenance=self.dataset.provenance[int(index)],
         )
@@ -479,16 +502,42 @@ class CallbackOperatorCaseSource(OperatorCaseSource):
         *,
         metadata_reader: Callable[[int], OperatorCaseMetadata],
         case_reader: Callable[[int, OperatorCaseReadRequest | None], OperatorCase],
+        content_fingerprint: str,
+        background_read_safe: bool = False,
+        configuration: Mapping[str, Any] | None = None,
     ):
         if int(size) <= 0:
             raise ValueError("Callback source size must be positive.")
+        fingerprint = str(content_fingerprint).strip()
+        if not fingerprint:
+            raise ValueError("Callback source content_fingerprint must be non-empty.")
+        source_configuration = canonical_mapping(
+            {} if configuration is None else configuration
+        )
         self._size = int(size)
+        self._content_fingerprint = fingerprint
+        self._background_read_safe = bool(background_read_safe)
+        self._configuration = source_configuration
         self.metadata_reader = metadata_reader
         self.case_reader = case_reader
 
     @property
     def size(self) -> int:
         return self._size
+
+    @property
+    def content_fingerprint(self) -> str:
+        return self._content_fingerprint
+
+    @property
+    def background_read_safe(self) -> bool:
+        return self._background_read_safe
+
+    def configuration(self) -> Mapping[str, Any]:
+        return {
+            **super().configuration(),
+            "parameters": dict(self._configuration),
+        }
 
     def case_metadata(self, index: int, /) -> OperatorCaseMetadata:
         return self.metadata_reader(int(index))
