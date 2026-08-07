@@ -580,8 +580,8 @@ class MarginalTransitionKernel(AbstractTransitionKernel):
 def _parameter(value: Array | Callable[..., ArrayLike], *args: Array) -> Array:
     if callable(value):
         function = cast(Callable[..., ArrayLike], value)
-        return jnp.asarray(function(*args))
-    return jnp.asarray(value)
+        return jnp.asarray(function(*args), dtype=float)
+    return jnp.asarray(value, dtype=float)
 
 
 class LinearGaussianTransitionKernel(AbstractTransitionKernel):

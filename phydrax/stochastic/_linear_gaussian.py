@@ -40,11 +40,16 @@ def _name(value: str, /, *, owner: str) -> str:
     return value
 
 
+def _inexact(value: ArrayLike, /) -> Array:
+    array = jnp.asarray(value)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+
+
 def _parameter(value: ParameterValue, start: Array, end: Array, /) -> Array:
     if callable(value):
         function = cast(Callable[[Array, Array], ArrayLike], value)
-        return jnp.asarray(function(start, end))
-    return jnp.asarray(value)
+        return _inexact(function(start, end))
+    return _inexact(value)
 
 
 class LinearGaussianParameterization(StrictModule):
@@ -78,17 +83,17 @@ class LinearGaussianParameterization(StrictModule):
         self.transition = (
             cast(Callable[[Array, Array], ArrayLike], transition)
             if callable(transition)
-            else jnp.asarray(transition)
+            else _inexact(transition)
         )
         self.offset = (
             cast(Callable[[Array, Array], ArrayLike], offset)
             if callable(offset)
-            else jnp.asarray(offset)
+            else _inexact(offset)
         )
         self.covariance = (
             cast(Callable[[Array, Array], ArrayLike], covariance)
             if callable(covariance)
-            else jnp.asarray(covariance)
+            else _inexact(covariance)
         )
         self.state_shape = _shape(state_shape)
         self.parameterization_id = _name(

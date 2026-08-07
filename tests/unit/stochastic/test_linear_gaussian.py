@@ -121,10 +121,10 @@ def test_singular_transition_sampling_log_density_and_provenance():
 
 def test_legacy_transition_constructor_uses_one_parameterization_object():
     kernel = phx.stochastic.LinearGaussianTransitionKernel(
-        jnp.eye(2),
-        jnp.diag(jnp.asarray([0.2, 0.4])),
+        jnp.eye(2, dtype=jnp.int32),
+        jnp.diag(jnp.asarray([1, 2], dtype=jnp.int32)),
         state_shape=(2,),
-        offset=jnp.asarray([0.1, -0.1]),
+        offset=jnp.asarray([1, -1], dtype=jnp.int32),
     )
     transition, offset, covariance = kernel.parameters(0.0, 1.0)
     assert isinstance(
@@ -133,3 +133,6 @@ def test_legacy_transition_constructor_uses_one_parameterization_object():
     assert jnp.array_equal(transition, kernel.transition)
     assert jnp.array_equal(offset, kernel.offset)
     assert jnp.array_equal(covariance, kernel.covariance)
+    assert jnp.issubdtype(covariance.dtype, jnp.inexact)
+    assert kernel.sample(jr.key(8), jnp.zeros(2), 0.0, 1.0).valid
+    assert jnp.isfinite(kernel.log_prob(jnp.zeros(2), jnp.zeros(2), 0.0, 1.0))
