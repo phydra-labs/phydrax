@@ -5,6 +5,7 @@
 """Native deterministic reconstruction primitives."""
 
 from ._barycentric import barycentric_basis, barycentric_interpolate
+from ._bspline import bspline_stencil
 from ._fourier import (
     FOURIER_CAPABILITIES,
     fourier_interpolate,
@@ -67,6 +68,7 @@ __all__ = [
     "RectilinearBoundaryMode",
     "apply_gather_stencil",
     "barycentric_basis",
+    "bspline_stencil",
     "cubic_hermite_interpolate",
     "cubic_hermite_segment",
     "fourier_interpolate",

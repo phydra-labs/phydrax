@@ -121,6 +121,14 @@ surface patch per face, trim loops, tessellation-to-face identities, and an impo
 report. Supported analytic OCCT surfaces remain analytic patches; other faces are
 represented by rational tensor-product B-splines.
 
+Rational spline evaluation uses the shared span-local B-spline kernel. Each
+curve query gathers `degree + 1` controls; each surface query gathers only the
+tensor product of the active controls in its two parameter axes. Expanded
+nonuniform and repeated OCCT knot vectors are preserved. At an exact chart
+endpoint the final polynomial span supplies the one-sided differential, so
+surface Jacobians and boundary frames remain finite instead of collapsing to a
+constant endpoint branch.
+
 ```python
 import build123d as bd
 
@@ -133,12 +141,14 @@ geometry = source.compile()
 print(source.model.report)
 ```
 
-`FixedTopologyBRepSource` reevaluates an imported tessellation from trainable patch
-parameters while preserving face topology and boundary entity identity. Its
-realization exposes the current vertices, faces, atlas, and a differentiable seam
-residual. The validity region requires unchanged topology, positive surface
-Jacobians, and compatible seams; `BRepSeamCompatibility` makes the last condition
-an explicit design constraint.
+`FixedTopologyBRepSource` reevaluates an imported tessellation from trainable
+patch parameters while preserving face topology, boundary entity identity, knot
+vectors, degrees, and knot-span topology. Rational B-spline control points and
+weights remain differentiable; moving knots across a query is intentionally not
+part of this fixed-topology contract. A realization exposes the current
+vertices, faces, atlas, and a differentiable seam residual. The validity region
+requires unchanged topology, positive surface Jacobians, and compatible seams;
+`BRepSeamCompatibility` makes the last condition an explicit design constraint.
 
 ## Sketches and geometric constraints
 

@@ -3,12 +3,17 @@
 #
 
 import build123d as bd
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from OCP.BRepAdaptor import BRepAdaptor_Surface
+from OCP.gp import gp_Pnt, gp_Vec
+from scipy.interpolate import BSpline as SciPyBSpline
 
 import phydrax as phx
+from phydrax.geometry.brep import BRepBoundaryMap
 
 
 def _tetrahedron():
@@ -171,6 +176,362 @@ def test_rational_bspline_surface_is_jax_differentiable():
     assert float(
         phx.geometry.surface_jacobian(patch, jnp.asarray([0.5, 0.5]))
     ) == pytest.approx(np.sqrt(1.5))
+
+
+def test_rational_bspline_surface_preserves_endpoint_differentials():
+    control_points = jnp.asarray(
+        [
+            [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            [[1.0, 0.0, 0.0], [1.0, 1.0, 0.0]],
+        ]
+    )
+    knots = jnp.asarray([0.0, 0.0, 1.0, 1.0])
+    patch = phx.geometry.BSplineSurfacePatch(
+        control_points,
+        jnp.ones((2, 2)),
+        knots,
+        knots,
+        1,
+        1,
+    )
+    parameters = jnp.asarray([[0.5, 0.5], [1.0 - 1e-6, 0.5], [1.0, 0.5]])
+
+    values = patch.evaluate(parameters)
+    differential = phx.geometry.surface_differential(patch, parameters)
+    jacobian = phx.geometry.surface_jacobian(patch, parameters)
+    normal = phx.geometry.surface_normal(patch, parameters)
+    expected_differential = jnp.broadcast_to(
+        jnp.asarray([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]]),
+        differential.shape,
+    )
+
+    expected_values = jnp.concatenate(
+        (parameters, jnp.zeros(parameters.shape[:-1] + (1,))),
+        axis=-1,
+    )
+    assert np.allclose(np.asarray(values), np.asarray(expected_values))
+    assert np.allclose(np.asarray(differential), np.asarray(expected_differential))
+    assert np.allclose(np.asarray(jacobian), 1.0)
+    assert np.allclose(np.asarray(normal), [0.0, 0.0, 1.0])
+
+    boundary_map = BRepBoundaryMap(
+        (patch,),
+        jnp.asarray([[[0.0, 0.0], [1.0, 1.0]]]),
+    )
+    assert np.allclose(
+        np.asarray(
+            boundary_map.jacobian(
+                jnp.asarray([0]),
+                jnp.asarray([[1.0, 0.5]]),
+            )
+        ),
+        1.0,
+    )
+
+
+def test_rational_bspline_surface_matches_tensor_product_oracle():
+    u_degree = 2
+    v_degree = 3
+    u_knots = np.asarray([0.0, 0.0, 0.0, 0.3, 0.5, 0.5, 1.0, 1.0, 1.0])
+    v_knots = np.asarray([0.0, 0.0, 0.0, 0.0, 0.35, 0.8, 1.0, 1.0, 1.0, 1.0])
+    control_points = np.asarray(
+        [
+            [
+                [
+                    float(u_index) / 5.0,
+                    float(v_index) / 5.0,
+                    0.04 * u_index**2 + 0.03 * u_index * v_index,
+                ]
+                for v_index in range(6)
+            ]
+            for u_index in range(6)
+        ]
+    )
+    weights = np.asarray(
+        [
+            [1.0 + 0.05 * u_index + 0.03 * v_index for v_index in range(6)]
+            for u_index in range(6)
+        ]
+    )
+    parameters = np.asarray(
+        [
+            [0.0, 0.0],
+            [0.3, 0.35],
+            [0.5, 0.8],
+            [0.72, 1.0],
+            [1.0, 0.55],
+            [1.0, 1.0],
+        ]
+    )
+
+    u_oracle = SciPyBSpline(u_knots, np.eye(6), u_degree)
+    v_oracle = SciPyBSpline(v_knots, np.eye(6), v_degree)
+    u_basis = u_oracle(parameters[:, 0])
+    v_basis = v_oracle(parameters[:, 1])
+    du_basis = u_oracle(parameters[:, 0], nu=1)
+    dv_basis = v_oracle(parameters[:, 1], nu=1)
+    coefficients = np.einsum("qi,qj,ij->qij", u_basis, v_basis, weights)
+    u_coefficients = np.einsum("qi,qj,ij->qij", du_basis, v_basis, weights)
+    v_coefficients = np.einsum("qi,qj,ij->qij", u_basis, dv_basis, weights)
+    denominator = np.sum(coefficients, axis=(1, 2))
+    numerator = np.einsum("qij,ijc->qc", coefficients, control_points)
+    expected_values = numerator / denominator[:, None]
+
+    u_numerator = np.einsum("qij,ijc->qc", u_coefficients, control_points)
+    v_numerator = np.einsum("qij,ijc->qc", v_coefficients, control_points)
+    u_denominator = np.sum(u_coefficients, axis=(1, 2))
+    v_denominator = np.sum(v_coefficients, axis=(1, 2))
+    expected_u = (
+        u_numerator * denominator[:, None] - numerator * u_denominator[:, None]
+    ) / denominator[:, None] ** 2
+    expected_v = (
+        v_numerator * denominator[:, None] - numerator * v_denominator[:, None]
+    ) / denominator[:, None] ** 2
+    expected_differential = np.stack((expected_u, expected_v), axis=-1)
+
+    patch = phx.geometry.BSplineSurfacePatch(
+        control_points,
+        weights,
+        u_knots,
+        v_knots,
+        u_degree,
+        v_degree,
+    )
+    actual_values = jax.jit(lambda value: patch.evaluate(value))(jnp.asarray(parameters))
+    actual_differential = phx.geometry.surface_differential(
+        patch,
+        jnp.asarray(parameters),
+    )
+    assert np.allclose(
+        np.asarray(actual_values),
+        expected_values,
+        rtol=1e-9,
+        atol=1e-9,
+    )
+    assert np.allclose(
+        np.asarray(actual_differential),
+        expected_differential,
+        rtol=1e-9,
+        atol=1e-9,
+    )
+
+    def height(center_weight):
+        dynamic_weights = jnp.asarray(weights).at[2, 3].set(center_weight)
+        dynamic_patch = phx.geometry.BSplineSurfacePatch(
+            control_points,
+            dynamic_weights,
+            u_knots,
+            v_knots,
+            u_degree,
+            v_degree,
+        )
+        return dynamic_patch.evaluate(jnp.asarray([0.43, 0.57]))[2]
+
+    center_weight = weights[2, 3]
+    epsilon = 1e-5
+    finite_difference = (
+        float(height(center_weight + epsilon)) - float(height(center_weight - epsilon))
+    ) / (2.0 * epsilon)
+    assert float(jax.grad(height)(jnp.asarray(center_weight))) == pytest.approx(
+        finite_difference,
+        rel=1e-7,
+        abs=1e-9,
+    )
+
+
+def test_rational_bspline_curve_matches_scipy_and_endpoint_derivative():
+    degree = 3
+    knots = np.asarray([0.0, 0.0, 0.0, 0.0, 0.4, 0.7, 1.0, 1.0, 1.0, 1.0])
+    control_points = np.asarray(
+        [
+            [0.0, 0.0],
+            [0.2, 0.5],
+            [0.4, -0.1],
+            [0.7, 0.8],
+            [0.9, 0.3],
+            [1.0, 1.0],
+        ]
+    )
+    weights = np.asarray([1.0, 1.2, 0.8, 1.1, 0.9, 1.3])
+    query = np.asarray([0.0, 0.23, 0.7, 1.0])
+    basis_oracle = SciPyBSpline(knots, np.eye(6), degree)
+    basis = basis_oracle(query)
+    derivative_basis = basis_oracle(query, nu=1)
+    coefficients = basis * weights
+    derivative_coefficients = derivative_basis * weights
+    denominator = np.sum(coefficients, axis=-1)
+    derivative_denominator = np.sum(derivative_coefficients, axis=-1)
+    numerator = coefficients @ control_points
+    derivative_numerator = derivative_coefficients @ control_points
+    expected_values = numerator / denominator[:, None]
+    expected_derivative = (
+        derivative_numerator * denominator[:, None]
+        - numerator * derivative_denominator[:, None]
+    ) / denominator[:, None] ** 2
+
+    curve = phx.geometry.BSplineCurve(control_points, weights, knots, degree)
+    actual_values = curve.evaluate(jnp.asarray(query))
+    actual_derivative = jax.vmap(jax.jacfwd(lambda parameter: curve.evaluate(parameter)))(
+        jnp.asarray(query)
+    )
+    assert np.allclose(np.asarray(actual_values), expected_values, atol=1e-10)
+    assert np.allclose(
+        np.asarray(actual_derivative),
+        expected_derivative,
+        rtol=1e-9,
+        atol=1e-9,
+    )
+
+    singular = phx.geometry.BSplineCurve(
+        [[0.0, 0.0], [1.0, 0.0]],
+        [1.0, -1.0],
+        [0.0, 0.0, 1.0, 1.0],
+        1,
+    )
+    with pytest.raises(eqx.EquinoxRuntimeError, match="denominator"):
+        jax.block_until_ready(singular.evaluate(jnp.asarray(0.5)))
+
+
+def test_occt_bspline_import_matches_native_surface_differential():
+    coordinates = np.linspace(0.0, 1.0, 5)
+    face = bd.Face.make_surface_from_array_of_points(
+        [
+            [
+                (
+                    float(u),
+                    float(v),
+                    0.15 * float(u) * float(v)
+                    + 0.05 * float(u) ** 2
+                    - 0.03 * float(v) ** 2,
+                )
+                for u in coordinates
+            ]
+            for v in coordinates
+        ],
+        tol=1e-6,
+        min_deg=2,
+        max_deg=3,
+    )
+    model = phx.geometry.model_from_occt_shape(
+        face.wrapped,
+        linear_deflection=0.05,
+        angular_deflection=0.2,
+    )
+    assert len(model.patches) == 1
+    assert isinstance(model.patches[0], phx.geometry.BSplineSurfacePatch)
+    assert model.report.converted_surface_count == 0
+
+    normalized = np.asarray([[0.0, 0.0], [0.2, 0.3], [0.5, 0.5], [1.0, 0.6], [0.4, 1.0]])
+    bounds = np.asarray(model.parameter_bounds[0])
+    parameters = bounds[0] + normalized * (bounds[1] - bounds[0])
+    native_surface = BRepAdaptor_Surface(face.wrapped, True).BSpline()
+    expected_values = []
+    expected_differentials = []
+    for u, v in parameters:
+        point = gp_Pnt()
+        u_tangent = gp_Vec()
+        v_tangent = gp_Vec()
+        native_surface.D1(
+            float(u),
+            float(v),
+            point,
+            u_tangent,
+            v_tangent,
+        )
+        expected_values.append([point.X(), point.Y(), point.Z()])
+        expected_differentials.append(
+            [
+                [u_tangent.X(), v_tangent.X()],
+                [u_tangent.Y(), v_tangent.Y()],
+                [u_tangent.Z(), v_tangent.Z()],
+            ]
+        )
+
+    patch = model.patches[0]
+    actual_values = patch.evaluate(jnp.asarray(parameters))
+    actual_differentials = phx.geometry.surface_differential(
+        patch,
+        jnp.asarray(parameters),
+    )
+    assert np.allclose(np.asarray(actual_values), expected_values, atol=1e-10)
+    assert np.allclose(
+        np.asarray(actual_differentials),
+        expected_differentials,
+        rtol=1e-9,
+        atol=1e-9,
+    )
+
+    frame = model.boundary_atlas.frame(
+        jnp.zeros((normalized.shape[0],), dtype=jnp.int32),
+        jnp.asarray(normalized),
+    )
+    assert np.all(np.isfinite(np.asarray(frame.origin)))
+    assert np.all(np.isfinite(np.asarray(frame.tangents)))
+    assert np.all(np.isfinite(np.asarray(frame.normal)))
+    assert np.all(np.asarray(frame.jacobian) > 0.0)
+
+
+def test_fixed_topology_bspline_loft_preserves_mixed_patch_dispatch():
+    wires = [
+        bd.Wire.make_circle(
+            1.0,
+            plane=bd.Plane(origin=(0.0, 0.0, 0.0)),
+        ),
+        bd.Wire.make_circle(
+            1.25,
+            plane=bd.Plane(origin=(0.15, -0.05, 0.8)),
+        ),
+        bd.Wire.make_circle(
+            0.9,
+            plane=bd.Plane(origin=(-0.1, 0.1, 1.7)),
+        ),
+    ]
+    model = phx.geometry.model_from_occt_shape(
+        bd.Solid.make_loft(wires).wrapped,
+        linear_deflection=0.1,
+        angular_deflection=0.25,
+    )
+    assert tuple(type(patch).__name__ for patch in model.patches) == (
+        "BSplineSurfacePatch",
+        "PlanePatch",
+        "PlanePatch",
+    )
+
+    geometry = phx.geometry.BRepSource(model).compile()
+    assert float(geometry.measure) > 0.0
+    references = jnp.asarray([[0.0, 0.0], [0.5, 0.5], [1.0, 0.4], [0.3, 1.0]])
+    indices = jnp.zeros((references.shape[0],), dtype=jnp.int32)
+    frame = geometry.boundary_atlas.frame(indices, references)
+    assert np.all(np.isfinite(np.asarray(frame.normal)))
+    assert np.all(np.asarray(frame.jacobian) > 0.0)
+
+    differentiable = phx.geometry.FixedTopologyBRepSource(model).compile()
+    control_index = next(
+        index
+        for index, spec in enumerate(differentiable.schema.specs)
+        if spec.parameter_id.name == "control_points"
+    )
+    weight_index = next(
+        index
+        for index, spec in enumerate(differentiable.schema.specs)
+        if spec.parameter_id.name == "weights"
+    )
+    control_points = differentiable.state.values[control_index]
+    weights = differentiable.state.values[weight_index]
+    state = differentiable.state.replace_at(
+        control_index,
+        control_points.at[0, 0, 2].add(1e-3),
+    ).replace_at(
+        weight_index,
+        weights.at[0, 0].multiply(1.01),
+    )
+    realization = differentiable.kernel.realize(state)
+    realized_frame = realization.atlas.frame(indices, references)
+    assert np.array_equal(np.asarray(realization.faces), np.asarray(model.mesh_faces))
+    assert np.all(np.isfinite(np.asarray(realization.vertices)))
+    assert np.all(np.isfinite(np.asarray(realized_frame.normal)))
+    assert np.all(np.asarray(realized_frame.jacobian) > 0.0)
+    assert np.isfinite(float(realization.seam_residual))
 
 
 def test_level_set_domain_ansatz_factor_has_unit_boundary_jet():

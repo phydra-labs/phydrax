@@ -21,12 +21,28 @@ reconstruction while keeping the existing semantic APIs:
   transfer, including even-grid Nyquist splitting and merging;
 - Smolyak interpolation retains its sparse combination structure and uses the
   shared barycentric basis primitive.
+- rational CAD curves and surfaces use span-local B-spline maps with explicit
+  derivative weights and exactly `degree + 1` active controls per parameter axis.
 
 The common operation is a sparse or structured map from source values to query
 values. Map construction owns indices, weights, validity, and support; map
 application handles arbitrary trailing payload dimensions without replicating
 source rows. Unsupported queries remain explicit. Mask behavior is selected as
 strict rejection, valid-weight renormalization, or an adapter-owned fill value.
+
+B-spline source values are control coefficients, not interpolation samples. An
+expanded, nondecreasing knot vector and a degree define the active parameter
+interval and the sparse control routes. Exact interior knots use the right-hand
+span; the exact upper endpoint uses the final span and therefore has the
+one-sided polynomial derivative rather than a constant endpoint branch. Value
+weights form a partition of unity, while every positive-order derivative weight
+sums to zero. Repeated knots and arbitrary trailing real or complex payload
+dimensions remain supported.
+
+This local map preserves the useful fixed-reconstruction-map idea from
+[Splinex](https://github.com/cornelius-braun/splinex) without adding Splinex as a
+dependency or adopting its dense basis matrices, implicit control padding, or
+control-point-as-sample semantics.
 
 Method-specific semantics are intentionally not hidden behind a universal
 string-dispatched public function. Nearest ties, temporal extrapolation,
