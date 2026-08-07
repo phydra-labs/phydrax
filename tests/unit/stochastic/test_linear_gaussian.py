@@ -1,7 +1,7 @@
-import pytest
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import pytest
 
 import phydrax as phx
 

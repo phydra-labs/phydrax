@@ -17,13 +17,13 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..stochastic import AbstractRoughControl, LogSignatureControl, PrimitiveBasis
-from ._matrix_functions import MatrixFunctionPolicy, matrix_exponential_action
+from ._matrix_functions import matrix_exponential_action, MatrixFunctionPolicy
 from ._rough import (
+    _fractional_hurst,
     AbstractRoughSolver,
     RoughDifferentialProblem,
-    _fractional_hurst,
 )
-from ._rough_lift import LiftedRoughVectorFields, lift_rough_vector_fields
+from ._rough_lift import lift_rough_vector_fields, LiftedRoughVectorFields
 
 
 def _class_identifier(value: Any, /) -> str:

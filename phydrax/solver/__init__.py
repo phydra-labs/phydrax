@@ -108,17 +108,6 @@ from ._differential import (
     NoiseStructure,
     WienerTerm,
 )
-from ._geometric import (
-    AbstractGeometricSolver,
-    CommutatorFreeSolver,
-    CommutatorFreeTableau,
-    commutator_free_midpoint_tableau,
-    GeometricEuler,
-    GeometricLocalInterpolation,
-    RKMK,
-    SRKMK,
-    solver_state_geometry,
-)
 from ._diffrax_backend import solve_diffrax, solve_diffrax_ensemble
 from ._enforced_constraint_pipeline import (
     EnforcedConstraintPipeline,
@@ -133,6 +122,17 @@ from ._fbsde import (
     solve_coupled_fbsde_explicit,
 )
 from ._functional_solver import FunctionalSolver
+from ._geometric import (
+    AbstractGeometricSolver,
+    commutator_free_midpoint_tableau,
+    CommutatorFreeSolver,
+    CommutatorFreeTableau,
+    GeometricEuler,
+    GeometricLocalInterpolation,
+    RKMK,
+    solver_state_geometry,
+    SRKMK,
+)
 from ._integration import spatial_measure
 from ._jump import (
     finite_state_generator,
@@ -214,7 +214,7 @@ from ._rough import (
     RoughVectorFields,
     solve_rough_differential,
 )
-from ._rough_lift import LiftedRoughVectorFields, lift_rough_vector_fields
+from ._rough_lift import lift_rough_vector_fields, LiftedRoughVectorFields
 from ._rough_logode import LinearLogODE, LogODE
 from ._semilinear import (
     exact_modal_stochastic_convolution,

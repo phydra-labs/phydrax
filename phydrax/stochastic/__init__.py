@@ -48,9 +48,9 @@ from ._feynman_kac import (
 )
 from ._fractional import (
     FractionalGaussianInterpolation,
-    FractionalGaussianSamplingMethod,
     FractionalGaussianProcess,
     FractionalGaussianRealization,
+    FractionalGaussianSamplingMethod,
 )
 from ._hierarchy import (
     NoiseCoupling,
@@ -93,6 +93,11 @@ from ._levy import (
     LevyJumpSeries,
     LevyProcessRealization,
     SymmetricStableLevyProcess,
+)
+from ._linear_gaussian import (
+    LinearGaussianDynamics,
+    LinearGaussianParameterization,
+    LinearGaussianParameters,
 )
 from ._martingale import (
     carre_du_champ,
@@ -185,11 +190,6 @@ from ._solution import (
     SPDESolutionConcept,
     SPDESolutionSpec,
     validate_spde_formulation,
-)
-from ._linear_gaussian import (
-    LinearGaussianDynamics,
-    LinearGaussianParameterization,
-    LinearGaussianParameters,
 )
 from ._solver_transition import (
     DifferentialTransitionKernel,

@@ -15,9 +15,9 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._frozendict import frozendict
-from ..metrix import AbstractStateGeometry
 from .._strict import StrictModule
 from .._uncertainty import UncertaintySource, validate_uncertainty_source
+from ..metrix import AbstractStateGeometry
 from ..stochastic import WienerRealization
 
 

@@ -31,14 +31,6 @@ from ._ir import (
     PDERegionKind,
     PDERepresentation,
 )
-from ._semidiscrete import (
-    BoundaryLift,
-    compile_semidiscrete_pde,
-    CompiledSpatialDynamics,
-    ResolvedSemidiscreteMethod,
-    SemidiscreteCompilationMethod,
-    SemidiscreteFieldLayout,
-)
 from ._randomized_compile import (
     analyze_randomized_compilation,
     compile_pde_randomized_objective,
@@ -48,6 +40,14 @@ from ._randomized_compile import (
     RandomizedDifferentialMethod,
     RandomizedDifferentialPlan,
     RandomizedNodeCoupling,
+)
+from ._semidiscrete import (
+    BoundaryLift,
+    compile_semidiscrete_pde,
+    CompiledSpatialDynamics,
+    ResolvedSemidiscreteMethod,
+    SemidiscreteCompilationMethod,
+    SemidiscreteFieldLayout,
 )
 from ._serialize import (
     pde_ir_from_dict,

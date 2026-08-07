@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from math import prod
-from typing import NamedTuple, cast
+from typing import cast, NamedTuple
 
 import equinox as eqx
 import jax

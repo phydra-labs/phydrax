@@ -7,7 +7,6 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Sequence
 from itertools import pairwise, product
-from math import factorial
 
 import equinox as eqx
 import jax

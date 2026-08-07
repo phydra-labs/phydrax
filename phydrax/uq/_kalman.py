@@ -14,18 +14,18 @@ import numpy as np
 from jaxtyping import Array, Key
 
 from .._strict import StrictModule
-from ._gaussian_chain import (
-    associative_affine_values,
-    associative_freeze,
-    associative_gaussian_filter,
-    associative_gaussian_smoother,
-)
 from ..stochastic._state_space import (
     GaussianStatePrior,
     LinearGaussianObservationModel,
     LinearGaussianTransitionKernel,
     state_space_key,
     StateSpaceProblem,
+)
+from ._gaussian_chain import (
+    associative_affine_values,
+    associative_freeze,
+    associative_gaussian_filter,
+    associative_gaussian_smoother,
 )
 
 
