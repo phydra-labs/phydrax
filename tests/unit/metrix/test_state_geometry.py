@@ -88,6 +88,18 @@ def test_special_orthogonal_retractions_preserve_group(method):
     assert jnp.allclose(point.T @ point, jnp.eye(3), atol=1e-10)
     assert jnp.linalg.det(point) > 0.0
     assert jnp.allclose(geometry.to_local(base, base @ local), local)
+    assert jnp.allclose(geometry.inverse_retract(base, point), local, atol=2e-10)
+    midpoint = geometry.interpolate(base, point, 0.5)
+    assert bool(geometry.contains(midpoint))
+    assert jnp.allclose(geometry.interpolate(base, point, 1.0), point, atol=2e-10)
+
+
+def test_so_exponential_inverse_rejects_rotations_outside_local_neighborhood():
+    geometry = SpecialOrthogonalStateGeometry(2)
+    local = jnp.array([[0.0, -2.0], [2.0, 0.0]])
+    point = geometry.retract(jnp.eye(2), local)
+    with pytest.raises(Exception, match="principal local rotation"):
+        geometry.inverse_retract(jnp.eye(2), point)
 
 
 def test_spd_congruence_retraction_and_inverse_are_positive_definite():
@@ -104,6 +116,20 @@ def test_spd_congruence_retraction_and_inverse_are_positive_definite():
         lambda scale: jnp.trace(geometry.retract(base, scale * local))
     )(jnp.asarray(0.5))
     assert jnp.isfinite(gradient)
+
+
+def test_spd_pullback_inverts_retraction_differential():
+    geometry = SymmetricPositiveDefiniteStateGeometry(2)
+    base = jnp.array([[2.0, 0.35], [0.35, 1.2]])
+    local = jnp.array([[0.25, -0.12], [-0.12, -0.08]])
+    direction = jnp.array([[-0.06, 0.09], [0.09, 0.11]])
+    epsilon = 1e-5
+    tangent = (
+        geometry.retract(base, local + epsilon * direction)
+        - geometry.retract(base, local - epsilon * direction)
+    ) / (2.0 * epsilon)
+    recovered = geometry.pullback(base, local, tangent)
+    assert jnp.allclose(recovered, direction, rtol=2e-7, atol=2e-8)
 
 
 def test_spd_retraction_gradient_is_finite_at_repeated_eigenvalues():
@@ -136,6 +162,28 @@ def test_spd_inverse_retraction_gradients_are_finite_at_relative_identity():
     assert jnp.allclose(point_jvp, direction)
 
 
+def test_spd_logarithm_jvp_is_stable_for_tiny_separated_spectrum():
+    geometry = SymmetricPositiveDefiniteStateGeometry(2)
+    identity = jnp.eye(2)
+    point = jnp.diag(jnp.array([1e-6, 1e-4]))
+    direction = jnp.diag(jnp.array([1e-8, 1e-7]))
+    local = geometry.inverse_retract(identity, point)
+    _, derivative = jax.jvp(
+        lambda value: geometry.inverse_retract(identity, value),
+        (point,),
+        (direction,),
+    )
+    assert jnp.allclose(
+        jnp.diagonal(local),
+        jnp.log(jnp.array([1e-6, 1e-4])),
+    )
+    assert jnp.all(jnp.isfinite(derivative))
+    assert jnp.allclose(
+        jnp.diagonal(derivative),
+        jnp.array([1e-2, 1e-3]),
+    )
+
+
 def test_embedded_and_pointwise_adapters_preserve_explicit_contracts():
     sphere = EmbeddedStateGeometry(
         membership=lambda state: jnp.isclose(jnp.linalg.norm(state), 1.0),
@@ -151,6 +199,8 @@ def test_embedded_and_pointwise_adapters_preserve_explicit_contracts():
     base = jnp.array([1.0, 0.0, 0.0])
     point = sphere.retract(base, jnp.array([0.0, 0.2, 0.0]))
     assert bool(sphere.contains(point))
+    assert not sphere.supports_exact_pullback
+    assert not sphere.supports_commutator_free
 
     pointwise = PointwiseStateGeometry(
         SpecialOrthogonalStateGeometry(2),

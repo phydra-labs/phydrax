@@ -109,6 +109,10 @@ class RKMK(AbstractGeometricSolver):
     ):
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError("RKMK geometry must be an AbstractStateGeometry.")
+        if not geometry.supports_exact_pullback:
+            raise ValueError(
+                "RKMK requires geometry with explicit exact pullback capability."
+            )
         if method not in ("midpoint", "rk4"):
             raise ValueError("RKMK method must be 'midpoint' or 'rk4'.")
         self.geometry = geometry
@@ -241,6 +245,10 @@ class CommutatorFreeSolver(AbstractGeometricSolver):
             raise TypeError(
                 "CommutatorFreeSolver geometry must be an AbstractStateGeometry."
             )
+        if not geometry.supports_commutator_free:
+            raise ValueError(
+                "CommutatorFreeSolver requires shared-trivialization capability."
+            )
         resolved = commutator_free_midpoint_tableau() if tableau is None else tableau
         if not isinstance(resolved, CommutatorFreeTableau):
             raise TypeError("tableau must be a CommutatorFreeTableau or None.")
@@ -309,6 +317,10 @@ class SRKMK(AbstractGeometricSolver, dfx.AbstractStratonovichSolver):
     def __init__(self, geometry: AbstractStateGeometry, /):
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError("SRKMK geometry must be an AbstractStateGeometry.")
+        if not geometry.supports_exact_pullback:
+            raise ValueError(
+                "SRKMK requires geometry with explicit exact pullback capability."
+            )
         self.geometry = geometry
         self.solver_id = f"solver:srkmk:{geometry.geometry_id}"
         self.resolved_method = f"stratonovich-heun:{geometry.retraction_method}"
@@ -332,24 +344,26 @@ class SRKMK(AbstractGeometricSolver, dfx.AbstractStratonovichSolver):
         dw = diffusion.contr(t0, t1)
         drift_ambient = drift.vf_prod(t0, y0, args, dt)
         diffusion_ambient = diffusion.vf_prod(t0, y0, args, dw)
-        drift_local = self.geometry.to_local(
-            y0,
+        retraction = self.geometry.local_retraction(y0)
+        zero = jnp.zeros_like(y0)
+        drift_local = retraction.pullback(
+            zero,
             self.geometry.project_tangent(y0, drift_ambient),
         )
-        diffusion_local = self.geometry.to_local(
-            y0,
+        diffusion_local = retraction.pullback(
+            zero,
             self.geometry.project_tangent(y0, diffusion_ambient),
         )
-        predictor = self.geometry.retract(y0, diffusion_local)
+        predictor = retraction.evaluate(diffusion_local)
         corrected_ambient = diffusion.vf_prod(t1, predictor, args, dw)
-        corrected_local = self.geometry.to_local(
-            predictor,
+        corrected_local = retraction.pullback(
+            diffusion_local,
             self.geometry.project_tangent(predictor, corrected_ambient),
         )
         local_increment = drift_local + 0.5 * (
             diffusion_local + corrected_local
         )
-        y1 = self.geometry.retract(y0, local_increment)
+        y1 = retraction.evaluate(local_increment)
         dense_info = dict(
             y0=y0,
             y1=y1,

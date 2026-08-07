@@ -117,6 +117,7 @@ from ._geometric import (
     GeometricLocalInterpolation,
     RKMK,
     SRKMK,
+    solver_state_geometry,
 )
 from ._diffrax_backend import solve_diffrax, solve_diffrax_ensemble
 from ._enforced_constraint_pipeline import (
@@ -310,6 +311,7 @@ __all__ = [
     "LeastSquaresBSDEDiagnostics",
     "RKMK",
     "SRKMK",
+    "solver_state_geometry",
     "LeastSquaresBSDEResult",
     "ParticleVectorField",
     "RoughDifferentialProblem",

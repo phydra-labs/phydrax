@@ -562,6 +562,8 @@ def solve_semilinear_spde(
         solver_name=solver_name,
         interpretation=spde.problem.interpretation,
         state_geometry_id=spde.problem.state_geometry_id,
+        solver_id=f"solver:semilinear:{resolved_scheme}",
+        resolved_method=f"{resolved_scheme}:{policy.method}",
     )
 
 

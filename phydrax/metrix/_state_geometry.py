@@ -41,6 +41,8 @@ class AbstractStateGeometry(StrictModule):
     geometry_id: AbstractAttribute[str]
     retraction_method: AbstractAttribute[str]
     trivial: AbstractAttribute[bool]
+    supports_exact_pullback: AbstractAttribute[bool]
+    supports_commutator_free: AbstractAttribute[bool]
 
     @abstractmethod
     def contains(self, state: ArrayLike, /) -> Array:
@@ -173,6 +175,11 @@ class LocalRetraction(StrictModule):
         tangent: ArrayLike,
         /,
     ) -> Array:
+        if not self.geometry.supports_exact_pullback:
+            raise ValueError(
+                "Local retraction pullback requires explicit inverse-differential "
+                "capability."
+            )
         local = jnp.asarray(local_tangent)
         vector = jnp.asarray(tangent)
         _same_shape(local, self.base_point, "Local retraction coordinates")
@@ -191,6 +198,8 @@ class EuclideanStateGeometry(AbstractStateGeometry):
     retraction_method: str = eqx.field(static=True)
     trivial: bool = eqx.field(static=True)
 
+    supports_exact_pullback: bool = eqx.field(static=True)
+    supports_commutator_free: bool = eqx.field(static=True)
     def __init__(
         self,
         *,
@@ -199,6 +208,9 @@ class EuclideanStateGeometry(AbstractStateGeometry):
         self.geometry_id = _identifier(geometry_id, "geometry_id")
         self.retraction_method = "addition"
         self.trivial = True
+
+        self.supports_exact_pullback = True
+        self.supports_commutator_free = True
 
     def contains(self, state: ArrayLike, /) -> Array:
         return jnp.all(jnp.isfinite(jnp.asarray(state)))
@@ -275,6 +287,8 @@ class EmbeddedStateGeometry(AbstractStateGeometry):
     geometry_id: str = eqx.field(static=True)
     retraction_method: str = eqx.field(static=True)
     trivial: bool = eqx.field(static=True)
+    supports_exact_pullback: bool = eqx.field(static=True)
+    supports_commutator_free: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -309,6 +323,10 @@ class EmbeddedStateGeometry(AbstractStateGeometry):
             "retraction_method",
         )
         self.trivial = False
+        self.supports_exact_pullback = (
+            inverse_retraction is not None and retraction_pullback is not None
+        )
+        self.supports_commutator_free = False
 
     def contains(self, state: ArrayLike, /) -> Array:
         return jnp.asarray(self.membership(jnp.asarray(state)), dtype=bool)
@@ -381,7 +399,9 @@ class EmbeddedStateGeometry(AbstractStateGeometry):
         _same_shape(local, state_array, "Embedded local tangent")
         _same_shape(vector, state_array, "Embedded retraction tangent")
         if self.retraction_pullback is None:
-            return self.to_local(self.retract(state_array, local), vector)
+            raise ValueError(
+                "Embedded pullback requires an explicit retraction_pullback callable."
+            )
         velocity = jnp.asarray(
             self.retraction_pullback(state_array, local, vector)
         )
@@ -404,6 +424,8 @@ class PointwiseStateGeometry(AbstractStateGeometry):
     geometry_id: str = eqx.field(static=True)
     retraction_method: str = eqx.field(static=True)
     trivial: bool = eqx.field(static=True)
+    supports_exact_pullback: bool = eqx.field(static=True)
+    supports_commutator_free: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -425,6 +447,8 @@ class PointwiseStateGeometry(AbstractStateGeometry):
         )
         self.retraction_method = f"pointwise:{geometry.retraction_method}"
         self.trivial = geometry.trivial
+        self.supports_exact_pullback = geometry.supports_exact_pullback
+        self.supports_commutator_free = geometry.supports_commutator_free
 
     def _validate(self, value: ArrayLike, name: str, /) -> Array:
         array = jnp.asarray(value)
@@ -617,13 +641,14 @@ def _symmetric_matrix_logarithm_jvp(primals, tangents):
     left = jnp.expand_dims(safe, axis=-1)
     right = jnp.expand_dims(safe, axis=-2)
     difference = left - right
-    scale = jnp.maximum(jnp.maximum(jnp.abs(left), jnp.abs(right)), 1.0)
+    scale = jnp.maximum(
+        jnp.maximum(jnp.abs(left), jnp.abs(right)),
+        jnp.finfo(value.dtype).tiny,
+    )
     close = jnp.abs(difference) <= jnp.sqrt(jnp.finfo(value.dtype).eps) * scale
     safe_difference = jnp.where(close, 1.0, difference)
-    divided_difference = (
-        jnp.expand_dims(jnp.log(safe), axis=-1)
-        - jnp.expand_dims(jnp.log(safe), axis=-2)
-    ) / safe_difference
+    relative_difference = jnp.where(close, 0.0, difference / right)
+    divided_difference = jnp.log1p(relative_difference) / safe_difference
     coefficient = jnp.where(
         close,
         2.0 / (left + right),
@@ -637,6 +662,25 @@ def _symmetric_matrix_logarithm_jvp(primals, tangents):
 
 
 
+def _principal_local_so_logarithm(value: Array, /) -> Array:
+    identity = jnp.eye(value.shape[-1], dtype=value.dtype)
+    cayley = jnp.linalg.solve(value + identity, value - identity)
+    radius = jnp.linalg.norm(cayley, ord=2, axis=(-2, -1))
+    cayley = eqx.error_if(
+        cayley,
+        jnp.any(radius >= 0.9),
+        "SO exponential inverse_retract requires a principal local rotation "
+        "with Cayley radius below 0.9.",
+    )
+    square = cayley @ cayley
+    term = cayley
+    series = cayley
+    for denominator in range(3, 32, 2):
+        term = term @ square
+        series = series + term / denominator
+    return _skew(2.0 * series)
+
+
 
 class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
     """Left-trivialized state geometry for one or batches of SO(n) matrices."""
@@ -646,6 +690,8 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
     geometry_id: str = eqx.field(static=True)
     retraction_method: MatrixRetraction = eqx.field(static=True)
     trivial: bool = eqx.field(static=True)
+    supports_exact_pullback: bool = eqx.field(static=True)
+    supports_commutator_free: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -670,6 +716,8 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
         )
         self.retraction_method = retraction
         self.trivial = False
+        self.supports_exact_pullback = True
+        self.supports_commutator_free = True
 
     def contains(self, state: ArrayLike, /) -> Array:
         matrix = _matrix_shape(state, self.dimension, "SO(n) state")
@@ -759,10 +807,9 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
         relative = _transpose(matrix) @ target
         if self.retraction_method == "cayley":
             identity = jnp.eye(self.dimension, dtype=relative.dtype)
-            return 2.0 * _skew(
-                jnp.linalg.solve(relative + identity, relative - identity)
-            )
-        return _skew(relative - _transpose(relative)) * 0.5
+            cayley = jnp.linalg.solve(relative + identity, relative - identity)
+            return 2.0 * _skew(cayley)
+        return _principal_local_so_logarithm(relative)
 
     def pullback(
         self,
@@ -781,27 +828,12 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
         )
         point = self.retract(matrix, local)
         vector = self.project_tangent(point, tangent)
-        if self.retraction_method == "cayley":
-            identity = jnp.eye(self.dimension, dtype=matrix.dtype)
-            increment = self._increment(local)
-            derivative = _transpose(matrix) @ vector
-            return _skew(
-                2.0
-                * (identity - 0.5 * local)
-                @ derivative
-                @ jnp.linalg.inv(increment + identity)
-            )
-        body = _skew(_transpose(point) @ vector)
-        commutator1 = local @ body - body @ local
-        commutator2 = local @ commutator1 - commutator1 @ local
-        commutator3 = local @ commutator2 - commutator2 @ local
-        commutator4 = local @ commutator3 - commutator3 @ local
-        return _skew(
-            body
-            + 0.5 * commutator1
-            + commutator2 / 12.0
-            - commutator4 / 720.0
+        _, velocity = jax.jvp(
+            lambda target: self.inverse_retract(matrix, target),
+            (point,),
+            (vector,),
         )
+        return _skew(velocity)
 
 
 class SymmetricPositiveDefiniteStateGeometry(AbstractStateGeometry):
@@ -812,6 +844,8 @@ class SymmetricPositiveDefiniteStateGeometry(AbstractStateGeometry):
     geometry_id: str = eqx.field(static=True)
     retraction_method: str = eqx.field(static=True)
     trivial: bool = eqx.field(static=True)
+    supports_exact_pullback: bool = eqx.field(static=True)
+    supports_commutator_free: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -833,6 +867,8 @@ class SymmetricPositiveDefiniteStateGeometry(AbstractStateGeometry):
         )
         self.retraction_method = "congruence-exponential"
         self.trivial = False
+        self.supports_exact_pullback = True
+        self.supports_commutator_free = False
 
     def _congruence_factor(self, state: Array, /) -> Array:
         return jnp.linalg.cholesky(_symmetric(state))
@@ -938,8 +974,20 @@ class SymmetricPositiveDefiniteStateGeometry(AbstractStateGeometry):
         tangent: ArrayLike,
         /,
     ) -> Array:
-        point = self.retract(state, local_tangent)
-        return self.to_local(point, tangent)
+        matrix = _matrix_shape(state, self.dimension, "SPD(n) state")
+        local = _matrix_shape(
+            local_tangent,
+            self.dimension,
+            "SPD(n) local tangent",
+        )
+        point = self.retract(matrix, local)
+        vector = self.project_tangent(point, tangent)
+        _, velocity = jax.jvp(
+            lambda target: self.inverse_retract(matrix, target),
+            (point,),
+            (vector,),
+        )
+        return _symmetric(velocity)
 
 
 __all__ = [

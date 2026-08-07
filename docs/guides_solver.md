@@ -62,17 +62,22 @@ solution = phx.solver.solve_diffrax(
 )
 ```
 
-`GeometricEuler` and `RKMK` integrate deterministic dynamics.
-`CommutatorFreeSolver` executes an explicit `CommutatorFreeTableau`; each
-composition is a retraction rather than an ambient addition. `SRKMK` is the
-explicit Stratonovich solver for nontrivial geometry. Generic Itô geometry is
-intentionally rejected rather than approximated by projection.
+`GeometricEuler` and `RKMK` integrate deterministic dynamics. RKMK requires an
+exact local pullback; an `EmbeddedStateGeometry` must therefore supply explicit
+inverse-retraction and pullback callables. `CommutatorFreeSolver` executes an
+explicit `CommutatorFreeTableau` only when the geometry declares a shared
+trivialization (the built-in Euclidean and SO(n) geometries). SPD(n) uses RKMK
+rather than the commutator-free solver. `SRKMK` is the explicit Stratonovich
+solver for nontrivial geometry. Generic Itô geometry is intentionally rejected
+rather than approximated by projection.
 
-SO(n) supports exponential and Cayley retractions. SPD(n) uses a symmetric
-congruence/exponential retraction. Dense interpolation and root-finding events
-evaluate through the same retraction, so queried states remain on the declared
-state space. `DifferentialSolution.state_geometry_id` records the resolved
-geometry alongside solver and stochastic provenance.
+SO(n) supports exponential and Cayley retractions. Its exponential inverse is a
+principal local logarithm and explicitly rejects steps outside its supported
+neighborhood. SPD(n) uses a symmetric congruence/exponential retraction. Dense
+interpolation and root-finding events evaluate through the same retraction, so
+queried states remain on the declared state space.
+`DifferentialSolution.state_geometry_id`, `solver_id`, and `resolved_method`
+record geometry and numerical-method provenance.
 
 
 `DifferentialSolution.to_predictive()` converts an ensemble to a

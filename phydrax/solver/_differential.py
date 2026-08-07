@@ -214,6 +214,8 @@ class DifferentialSolution(StrictModule):
     solver_name: str = eqx.field(static=True)
     interpretation: DifferentialInterpretation = eqx.field(static=True)
     state_geometry_id: str | None = eqx.field(static=True)
+    solver_id: str = eqx.field(static=True)
+    resolved_method: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -233,6 +235,8 @@ class DifferentialSolution(StrictModule):
         solver_name: str,
         interpretation: DifferentialInterpretation,
         state_geometry_id: str | None = None,
+        solver_id: str | None = None,
+        resolved_method: str | None = None,
     ):
         samples = tuple(int(size) for size in sample_shape)
         if any(size <= 0 for size in samples):
@@ -258,6 +262,21 @@ class DifferentialSolution(StrictModule):
             )
         if not isinstance(solver_name, str) or not solver_name:
             raise ValueError("DifferentialSolution solver_name must be non-empty.")
+        resolved_solver_id = (
+            f"solver:{solver_name}" if solver_id is None else solver_id
+        )
+        resolved_solver_method = (
+            solver_name if resolved_method is None else resolved_method
+        )
+        if not isinstance(resolved_solver_id, str) or not resolved_solver_id:
+            raise ValueError("DifferentialSolution solver_id must be non-empty.")
+        if (
+            not isinstance(resolved_solver_method, str)
+            or not resolved_solver_method
+        ):
+            raise ValueError(
+                "DifferentialSolution resolved_method must be non-empty."
+            )
         if interpretation not in ("ito", "stratonovich"):
             raise ValueError("interpretation must be 'ito' or 'stratonovich'.")
         if state_geometry_id is not None and (
@@ -291,6 +310,8 @@ class DifferentialSolution(StrictModule):
         self.solver_name = solver_name
         self.interpretation = interpretation
         self.state_geometry_id = state_geometry_id
+        self.solver_id = resolved_solver_id
+        self.resolved_method = resolved_solver_method
 
     @property
     def num_times(self) -> int:

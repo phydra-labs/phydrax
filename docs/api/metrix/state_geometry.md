@@ -15,18 +15,23 @@ records both a stable retraction ID and the resolved method.
 - `EuclideanStateGeometry` is the identity/addition geometry. It is marked
   trivial, so ordinary Diffrax solvers remain supported.
 - `EmbeddedStateGeometry` adapts explicit membership, tangent-projection, and
-  retraction callables. Optional inverse-retraction and pullback callables refine
-  higher-order local integration.
+  retraction callables. RKMK/SRKMK require both explicit inverse-retraction and
+  pullback callables; the generic projection fallback is not treated as an
+  inverse differential.
 - `PointwiseStateGeometry` applies one geometry independently across leading
-  point axes while preserving those axes.
+  point axes while preserving those axes and its wrapped capabilities.
 - `SpecialOrthogonalStateGeometry` represents SO(n), using skew tangent
-  coordinates and either an exponential or Cayley retraction.
+  coordinates and either an exponential or Cayley retraction. It supplies the
+  shared trivialization required by commutator-free tableaux.
 - `SymmetricPositiveDefiniteStateGeometry` represents SPD(n), using symmetric
-  tangent coordinates and a congruence/exponential retraction.
+  tangent coordinates and a congruence/exponential retraction. It has exact
+  local pullbacks but no shared group trivialization, so use RKMK rather than
+  `CommutatorFreeSolver`.
 
-Every geometry has a stable `geometry_id` and a `retraction_method`. Membership,
-projection, retraction, dense interpolation, JIT compilation, and differentiation
-operate on JAX arrays.
+Every geometry has a stable `geometry_id`, a `retraction_method`, and explicit
+exact-pullback/shared-trivialization capability flags. Membership, projection,
+retraction, dense interpolation, JIT compilation, and differentiation operate
+on JAX arrays.
 
 ::: phydrax.metrix.AbstractStateGeometry
     options:

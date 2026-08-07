@@ -88,13 +88,16 @@ solution = phx.solver.solve_diffrax(
 
 Set `DifferentialProblem.state_geometry` when the state is constrained to an
 array manifold. Construction validates initial membership. Nontrivial geometry
-rejects ordinary solvers; deterministic solves use `GeometricEuler`, `RKMK`, or
-`CommutatorFreeSolver`, while stochastic solves require explicit Stratonovich
-semantics and `SRKMK`. All geometric methods are fixed-step and require `dt0`.
+rejects ordinary solvers. `GeometricEuler` is first order; `RKMK` requires an
+exact local pullback. `CommutatorFreeSolver` additionally requires a declared
+shared trivialization, supplied by the built-in Euclidean and SO(n) geometries
+but not SPD(n) or generic embedded adapters. Stochastic solves require explicit
+Stratonovich semantics and `SRKMK`. All geometric methods are fixed-step and
+require `dt0`.
 
-The solver's geometry ID must equal the problem's. The resolved ID is retained
-as `DifferentialSolution.state_geometry_id`. Geometric local interpolation is
-also used by dense queries and Diffrax root-finding events.
+The solver's geometry ID must equal the problem's. The solution retains
+`state_geometry_id`, stable `solver_id`, and `resolved_method`. Geometric local
+interpolation is also used by dense queries and Diffrax root-finding events.
 
 ::: phydrax.solver.GeometricEuler
 
@@ -114,6 +117,9 @@ also used by dense queries and Diffrax root-finding events.
 
 ::: phydrax.solver.SRKMK
 
+---
+
+::: phydrax.solver.solver_state_geometry
 
 ## Dense vector interpolation
 
@@ -266,6 +272,9 @@ or SDE. For an SDE, pass one global `WienerRealization`; the result retains a
 After event localization, the stochastic segment is evaluated at the exact
 located endpoint so restarting at a jump does not replace the global Brownian
 path with a dense-interpolation approximation.
+
+Hybrid jump integration currently rejects nontrivial `state_geometry`; jump
+updates and event restarts are not yet geometry-aware.
 
 `finite_state_generator` constructs an explicit continuous-time Markov-chain
 generator only for declared finite state sets. `boundary_policy="raise"`
@@ -649,9 +658,10 @@ coupled population trajectory.
 
 `DifferentialSolution.valid` marks finite saved states. `successful` reduces that mask
 across saved times for each realization. `backend_result`, `stats`, `event_mask`,
-`solver_name`, `interpretation`, the `WienerRealization`, and named Wiener-term slices
-preserve the integration and stochastic provenance needed to reproduce or couple a
-path ensemble.
+`solver_name`, stable `solver_id`, resolved-method provenance, `interpretation`,
+the `WienerRealization`, geometry ID, and named Wiener-term slices preserve the
+integration and stochastic provenance needed to reproduce or couple a path
+ensemble.
 
 `to_stochastic_trajectory` preserves physical-case and realization axes instead
 of flattening them. `StochasticTrajectory` retains validity, path/coupling,

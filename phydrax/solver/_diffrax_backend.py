@@ -200,6 +200,8 @@ def _validated_realization_interval(
         "DifferentialProblem t1 lies after the Wiener realization support.",
     )
     return start, end
+
+
 def _validated_state_geometry_solver(
     problem: DifferentialProblem,
     solver: Any,
@@ -235,6 +237,13 @@ def _validated_state_geometry_solver(
             )
     if not problem.stochastic and isinstance(solver, SRKMK):
         raise ValueError("SRKMK requires a stochastic DifferentialProblem.")
+def _solver_provenance(solver: Any, /) -> tuple[str, str]:
+    if isinstance(solver, AbstractGeometricSolver):
+        return solver.solver_id, solver.resolved_method
+    name = type(solver).__name__
+    return f"solver:diffrax:{name}", name
+
+
 
 
 
@@ -454,6 +463,7 @@ def solve_diffrax(
     )
     native_times = jnp.asarray(native.ts)
     native_states = jnp.asarray(native.ys)
+    solver_id, resolved_method = _solver_provenance(selected_solver)
     return DifferentialSolution(
         times=native_times,
         states=native_states,
@@ -467,6 +477,8 @@ def solve_diffrax(
         solver_name=type(selected_solver).__name__,
         interpretation=problem.interpretation,
         state_geometry_id=problem.state_geometry_id,
+        solver_id=solver_id,
+        resolved_method=resolved_method,
     )
 
 
@@ -540,6 +552,7 @@ def solve_diffrax_ensemble(
     )
     native_times = jnp.asarray(native.ts)
     native_states = jnp.asarray(native.ys)
+    solver_id, resolved_method = _solver_provenance(selected_solver)
     return DifferentialSolution(
         times=native_times,
         states=native_states,
@@ -560,6 +573,8 @@ def solve_diffrax_ensemble(
         solver_name=type(selected_solver).__name__,
         interpretation=problem.interpretation,
         state_geometry_id=problem.state_geometry_id,
+        solver_id=solver_id,
+        resolved_method=resolved_method,
     )
 
 
