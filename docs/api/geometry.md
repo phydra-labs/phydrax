@@ -161,6 +161,77 @@ particular representation. Available constraints include parameter targets and
 equalities, point distances, interior/exterior clearance, measure and boundary
 measure targets, boundary-point conditions, and B-Rep seam compatibility.
 
+## Bounded global design search
+
+`DifferentialEvolutionSearch` is intended for low-dimensional geometry design
+problems whose residual objective is nonsmooth, multimodal, or poorly served by a
+single local initialization. It searches the squared residual from
+`DesignConstraintSystem` over an explicit finite box. Differential evolution is a
+stochastic global heuristic: convergence reports population-fitness dispersion, not
+a proof of global optimality or coverage of every basin.
+
+Search bounds and physical schema bounds have different roles. `ParameterSpec.bounds`
+describe physical admissibility and may be one-sided or absent. `search(..., bounds=...)`
+defines the finite algorithmic box. Every trainable degree of freedom must have finite
+lower and upper search limits, and those limits must remain inside any finite physical
+schema bounds. Scalar limits broadcast across a parameter; array limits must match its
+declared shape.
+
+The root PRNG key is required. The initial population uses the typed
+`phydrax.sampling` design substrate; Latin hypercube is the default, while scrambled
+Sobol and the other supported reference designs may be selected explicitly. The
+current state is inserted into the first population member. Generated candidates are
+reflected into the box before both evaluation and storage.
+
+```python
+import jax.random as jr
+import phydrax as phx
+
+geometry = phx.geometry.Sphere(
+    center=(0.0, 0.0, 0.0),
+    radius=1.0,
+    feature_id="body",
+).compile()
+center = phx.geometry.ParameterId("body", "center")
+radius = phx.geometry.ParameterId("body", "radius")
+
+system = phx.geometry.DesignConstraintSystem(
+    geometry,
+    (phx.geometry.ParameterTarget(radius, 1.5),),
+)
+search = phx.geometry.DifferentialEvolutionSearch(
+    32,
+    100,
+    design=phx.sampling.SobolDesign(scrambled=True),
+)
+global_result = system.search(
+    search,
+    key=jr.key(0),
+    bounds={
+        center: ((-0.25, -0.25, -0.25), (0.25, 0.25, 0.25)),
+        radius: (0.25, 2.5),
+    },
+)
+
+# Local refinement is a separate, explicit phase.
+local_result = system.solve(initial_state=global_result.state)
+optimized_geometry = geometry.with_state(local_result.state)
+domain = phx.domain.GeometryDomain(optimized_geometry)
+```
+
+`DesignSearchResult` preserves the final population and objectives, best-objective
+history, exact generation and objective-evaluation counts, invalid-evaluation count,
+resolved bounds, root key, design signature, and termination reason. Its global
+`converged` flag is independent of `ConstraintSolveResult.converged` from the optional
+local phase. Keeping the phases separate makes extra evaluations and failure modes
+observable.
+
+Global search currently requires
+`geometry.field_certificate.validity_region == "all_space"`. Restricted regions such
+as fixed-topology B-Rep validity cannot yet provide an executable per-candidate
+validity predicate, so search fails before objective evaluation rather than silently
+crossing an uncertified region.
+
 ## Reconstruction with provenance
 
 Point-cloud, planar, terrain, and LiDAR reconstruction are explicit pipelines:
@@ -207,6 +278,14 @@ a primitive constructor.
 ---
 
 ::: phydrax.geometry.DesignConstraintSystem
+
+---
+
+::: phydrax.geometry.DifferentialEvolutionSearch
+
+---
+
+::: phydrax.geometry.DesignSearchResult
 
 ---
 

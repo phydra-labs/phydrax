@@ -1557,6 +1557,9 @@ VJP actions, and applies \(J C_x J^\mathrm{H}\) without constructing a
 Jacobian.
 
 ```python
+def forward(diffusivity, source):
+    return diffusivity + source
+
 center = {
     "diffusivity": jnp.asarray(0.2),
     "source": jnp.asarray([0.9, 1.0, 1.1]),
@@ -1610,9 +1613,6 @@ integration. String shorthands such as `"sobol_scrambled"` and typed
 reproducibility, and capability contract.
 
 ```python
-def forward(diffusivity, source):
-    return diffusivity + source
-
 inputs = phx.uq.sample_joint(
     {
         "diffusivity": phx.uq.LogNormal(-2.0, 0.25),

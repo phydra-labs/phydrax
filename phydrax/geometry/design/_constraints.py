@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike, Key
 
 from ..._strict import StrictModule
 from .._capabilities import (
@@ -20,6 +21,10 @@ from .._capabilities import (
 )
 from .._contracts import CompiledGeometry, GeometryKernel
 from ._schema import DesignState, ParameterId, ParameterSchema
+
+
+if TYPE_CHECKING:
+    from ._search import DesignSearchResult, DifferentialEvolutionSearch
 
 
 class AbstractDesignConstraint(StrictModule):
@@ -367,13 +372,24 @@ class DesignConstraintSystem(StrictModule):
             tuple(state.values[index].reshape((-1,)) for index in self.trainable_indices)
         )
 
-    def unpack(self, vector: Array, /) -> DesignState:
+    def unpack(
+        self,
+        vector: Array,
+        /,
+        *,
+        base_state: DesignState | None = None,
+    ) -> DesignState:
         vector_ = jnp.asarray(vector, dtype=float).reshape((-1,))
         if vector_.shape != self.lower_bounds.shape:
             raise ValueError(
                 "vector has the wrong number of trainable degrees of freedom."
             )
-        values = list(self.geometry.state.values)
+        state = self.geometry.state if base_state is None else base_state
+        if not isinstance(state, DesignState):
+            raise TypeError("base_state must be a DesignState or None.")
+        if state.schema != self.geometry.schema:
+            raise ValueError("base_state schema does not match the constraint system.")
+        values = list(state.values)
         for index, (start, stop, shape) in zip(
             self.trainable_indices, self.slices, strict=True
         ):
@@ -391,9 +407,30 @@ class DesignConstraintSystem(StrictModule):
         )
         return jnp.concatenate(values)
 
+    def search(
+        self,
+        search: DifferentialEvolutionSearch,
+        /,
+        *,
+        key: Key[Array, ""],
+        bounds: Mapping[ParameterId, tuple[ArrayLike, ArrayLike]] | None = None,
+        initial_state: DesignState | None = None,
+    ) -> DesignSearchResult:
+        """Search globally over a finite box of trainable geometry parameters."""
+        from ._search import search_design_constraints
+
+        return search_design_constraints(
+            self,
+            search,
+            key=key,
+            bounds=bounds,
+            initial_state=initial_state,
+        )
+
     def solve(
         self,
         *,
+        initial_state: DesignState | None = None,
         max_iterations: int = 32,
         tolerance: float = 1e-9,
         damping: float = 1e-8,
@@ -403,10 +440,13 @@ class DesignConstraintSystem(StrictModule):
             raise ValueError("iteration counts must be positive.")
         if tolerance <= 0.0 or damping <= 0.0:
             raise ValueError("tolerance and damping must be positive.")
-        initial = self.pack(self.geometry.state)
+        state = self.geometry.state if initial_state is None else initial_state
+        if not isinstance(state, DesignState):
+            raise TypeError("initial_state must be a DesignState or None.")
+        initial = self.pack(state)
 
         def residual_vector(vector):
-            return self.residual(self.unpack(vector))
+            return self.residual(self.unpack(vector, base_state=state))
 
         initial_norm = jnp.linalg.norm(residual_vector(initial))
         loop_state = (
@@ -463,7 +503,7 @@ class DesignConstraintSystem(StrictModule):
         vector, converged, iterations = jax.lax.fori_loop(
             0, max_iterations, iteration, loop_state
         )
-        state = self.unpack(vector)
+        state = self.unpack(vector, base_state=state)
         residual = self.residual(state)
         return ConstraintSolveResult(
             state=state,

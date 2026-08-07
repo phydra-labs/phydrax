@@ -600,16 +600,37 @@ def test_sketch_and_design_constraint_solvers_lower_to_geometry():
         sphere,
         (phx.geometry.MeasureTarget(target_volume),),
     )
-    design_solution = system.solve()
     radius_id = next(
         parameter_id
         for parameter_id in sphere.schema.parameter_ids
         if parameter_id.name == "radius"
     )
+    center_id = next(
+        parameter_id
+        for parameter_id in sphere.schema.parameter_ids
+        if parameter_id.name == "center"
+    )
+    global_solution = system.search(
+        phx.geometry.DifferentialEvolutionSearch(
+            8,
+            4,
+            relative_tolerance=0.0,
+            absolute_tolerance=0.0,
+        ),
+        key=jax.random.key(12),
+        bounds={
+            center_id: (-0.25, 0.25),
+            radius_id: (0.25, 2.5),
+        },
+    )
+    design_solution = system.solve(initial_state=global_solution.state)
     assert bool(design_solution.converged)
     assert float(design_solution.state.values[sphere.schema.index(radius_id)]) == (
         pytest.approx(target_radius)
     )
+    optimized = sphere.with_state(design_solution.state)
+    domain = phx.domain.GeometryDomain(optimized)
+    assert float(domain.measure) == pytest.approx(target_volume)
 
 
 def test_affine_geometry_preserves_boundary_tags_and_exact_atlas_measure():

@@ -281,8 +281,15 @@ shape.
 `optim=` can be:
 
 - an Optax `GradientTransformation` (standard first-order optimizers),
-- an Optax `GradientTransformationExtraArgs` (line-search style optimizers),
-- an evosax algorithm instance (evolutionary strategies).
+- an Optax `GradientTransformationExtraArgs` (line-search style optimizers), or
+- an Evosax distribution-based algorithm.
+
+Evosax population-based algorithms are not accepted by `FunctionalSolver`. They
+require an explicit initial population, finite search bounds, and selection semantics
+that a general neural-network parameter PyTree does not provide. Low-dimensional
+geometry design uses
+[`DesignConstraintSystem.search`](api/geometry.md#bounded-global-design-search),
+which supplies those contracts explicitly.
 
 ### Optimizer evaluation parameters
 
@@ -557,9 +564,10 @@ loss1 = solver.loss(key=jr.key(1))
 print(loss0, loss1)
 ```
 
-## EvoSax example (gradient-free)
+## Evosax example (gradient-free)
 
-To use evolutionary strategies, pass an evosax algorithm instance as `optim=...`:
+`Open_ES` is an Evosax distribution-based algorithm, so it can optimize the
+trainable parameter PyTree managed by `FunctionalSolver`:
 
 ```python
 import equinox as eqx

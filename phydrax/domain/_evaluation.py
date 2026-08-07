@@ -37,9 +37,7 @@ class FunctionBinding:
         kwargs: Mapping[str, Any],
     ) -> Any:
         call_kwargs = kwargs
-        if (self.pass_key and key is not None) or (
-            self.pass_iter and iter_ is not None
-        ):
+        if (self.pass_key and key is not None) or (self.pass_iter and iter_ is not None):
             call_kwargs = dict(kwargs)
             if self.pass_key and key is not None:
                 call_kwargs["key"] = key
@@ -299,9 +297,7 @@ def complete_batch_axes(
         out = field
         for label in domain_labels:
             coord_axes = (
-                None
-                if coord_axes_by_label is None
-                else coord_axes_by_label.get(label)
+                None if coord_axes_by_label is None else coord_axes_by_label.get(label)
             )
             if coord_axes is not None:
                 for axis in coord_axes:
@@ -378,9 +374,7 @@ def try_blockwise_evaluation(
             return None, "GridBatch.dense_structure must be canonicalized."
         for dep in deps:
             dep_axes = (
-                None
-                if coord_axes_by_label is None
-                else coord_axes_by_label.get(dep)
+                None if coord_axes_by_label is None else coord_axes_by_label.get(dep)
             )
             arg = _as_blockwise_arg(points[dep])
             if arg is None:
@@ -401,9 +395,14 @@ def try_blockwise_evaluation(
 
     axes = _dedupe_axes(axis_order)
     values = jnp.asarray(evaluator(*args, key=key, **kwargs))
-    if values.ndim < len(axes):
-        return None, "model output rank is smaller than its blockwise axis rank."
-    return cx.Field(values, dims=axes + (None,) * (values.ndim - len(axes))), None
+    used_axes = _mapped_axis_prefix(values, axes, points)
+    return (
+        cx.Field(
+            values,
+            dims=used_axes + (None,) * (values.ndim - len(used_axes)),
+        ),
+        None,
+    )
 
 
 def evaluate_pointwise_callable(
@@ -428,10 +427,7 @@ def evaluate_pointwise_callable(
             for block in dense_structure.blocks
             if any(label in deps for label in block)
         )
-        mapped_axes = tuple(
-            dense_structure.axis_for(block[0])
-            for block in mapped_blocks
-        )
+        mapped_axes = tuple(dense_structure.axis_for(block[0]) for block in mapped_blocks)
         if any(axis is None for axis in mapped_axes):
             raise ValueError("GridBatch dense axes must be canonicalized.")
 
