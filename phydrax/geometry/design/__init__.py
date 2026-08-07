@@ -29,7 +29,6 @@ _CONSTRAINT_EXPORTS = frozenset(
 _SEARCH_EXPORTS = frozenset(
     {
         "DesignSearchResult",
-        "DifferentialEvolutionSearch",
     }
 )
 _SKETCH_EXPORTS = frozenset(
@@ -84,7 +83,6 @@ __all__ = [
     "DesignSearchResult",
     "DesignState",
     "EqualLength",
-    "DifferentialEvolutionSearch",
     "ExteriorClearance",
     "FixedPoint",
     "Horizontal",

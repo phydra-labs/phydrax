@@ -3,8 +3,10 @@
 #
 
 from collections.abc import Callable, Sequence
-from typing import Literal
+from typing import Any, Literal
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
@@ -29,22 +31,81 @@ def _canonicalize_edge_inputs(inputs: Array, use_tanh: bool) -> Array:
     )
 
 
+class KANEdgeBlock(StrictModule):
+    """Shape-homogeneous sparse collection of KAN edges sharing one basis."""
+
+    output_indices: tuple[int, ...] = eqx.field(static=True)
+    input_indices: tuple[int, ...] = eqx.field(static=True)
+    edge_basis: AbstractEdgeBasis
+    coeffs: Any
+
+    def __init__(
+        self,
+        *,
+        output_indices: Sequence[int],
+        input_indices: Sequence[int],
+        edge_basis: AbstractEdgeBasis,
+        coeffs: Any,
+    ):
+        outputs = tuple(int(index) for index in output_indices)
+        inputs = tuple(int(index) for index in input_indices)
+        if not outputs or len(outputs) != len(inputs):
+            raise ValueError(
+                "KAN edge blocks require equally sized nonempty index sequences."
+            )
+        if any(index < 0 for index in (*outputs, *inputs)):
+            raise ValueError("KAN edge-block indices must be nonnegative.")
+        if not isinstance(edge_basis, AbstractEdgeBasis):
+            raise TypeError("edge_basis must implement AbstractEdgeBasis.")
+        for leaf in jax.tree.leaves(coeffs):
+            if eqx.is_array(leaf) and (
+                leaf.ndim < 2 or leaf.shape[:2] != (len(outputs), 1)
+            ):
+                raise ValueError(
+                    "Every KAN edge-block parameter array must begin with "
+                    "(edge_count, 1)."
+                )
+        self.output_indices = outputs
+        self.input_indices = inputs
+        self.edge_basis = edge_basis
+        self.coeffs = coeffs
+
+    @property
+    def edge_count(self) -> int:
+        return len(self.output_indices)
+
+    @property
+    def degree(self) -> int:
+        return self.edge_basis.degree
+
+    def evaluate(self, edge_inputs: Array, /) -> Array:
+        selected = edge_inputs[
+            jnp.asarray(self.output_indices, dtype=jnp.int32),
+            jnp.asarray(self.input_indices, dtype=jnp.int32),
+        ]
+        return self.edge_basis.evaluate(self.coeffs, selected[:, None])[:, 0]
+
+    def regularization(self) -> Array:
+        return self.edge_basis.regularization(self.coeffs)
+
+
 class KANLayer(StrictModule):
     """A single KAN layer whose scalar edge functions share one typed basis."""
 
     in_size: int | tuple[int, ...] | Literal["scalar"]
     out_size: int | tuple[int, ...] | Literal["scalar"]
-    edge_basis: AbstractEdgeBasis
+    edge_basis: AbstractEdgeBasis | None
     use_tanh: bool
     scale_mode: Literal["edge", "input", "none"]
     init: Literal["default", "identity"]
     autoscale: bool
 
-    coeffs: Array  # (out, in, edge_basis.coefficient_count)
+    coeffs: Any | None  # dense edge-parameter PyTree; None for sparse blocks
     scales: Array | None  # (out, in) if edge, (in,) if input
     bias: Array | None  # (out,)
     ascale: Array | None
     abias: Array | None
+    edge_blocks: tuple[KANEdgeBlock, ...]
 
     def __init__(
         self,
@@ -82,6 +143,7 @@ class KANLayer(StrictModule):
 
         in_ = _get_size(in_size_c)
         out_ = _get_size(out_size_c)
+        basis = basis.for_layer(in_, out_)
         ckey, skey, _unused_key, akey = jr.split(key, 4)
         coefficients = basis.initialize_coefficients(out_, in_, init, ckey)
         if scale_mode == "edge":
@@ -108,29 +170,33 @@ class KANLayer(StrictModule):
             self.ascale = None
             self.abias = None
 
+        self.edge_blocks = ()
+
     @property
     def degree(self) -> int:
-        return self.edge_basis.degree
+        if self.edge_basis is not None:
+            return self.edge_basis.degree
+        return max(block.degree for block in self.edge_blocks)
 
-    def __call__(self, x: Array) -> Array:
+    def _input_vector(self, x: Array, /) -> Array:
         in_ = _get_size(self.in_size)
         x_arr = jnp.asarray(x)
         if self.in_size == "scalar":
             if x_arr.shape == ():
-                x_vec = x_arr.reshape((1,))
-            elif x_arr.shape == (1,):
-                x_vec = x_arr
-            else:
-                raise ValueError(
-                    f"KANLayer expected scalar input shape () or (1,), got {x_arr.shape}."
-                )
-        else:
-            if x_arr.ndim != 1 or int(x_arr.shape[0]) != in_:
-                raise ValueError(
-                    f"KANLayer expected input shape ({in_},); got {x_arr.shape}."
-                )
-            x_vec = x_arr
+                return x_arr.reshape((1,))
+            if x_arr.shape == (1,):
+                return x_arr
+            raise ValueError(
+                f"KANLayer expected scalar input shape () or (1,), got {x_arr.shape}."
+            )
+        if x_arr.ndim != 1 or int(x_arr.shape[0]) != in_:
+            raise ValueError(
+                f"KANLayer expected input shape ({in_},); got {x_arr.shape}."
+            )
+        return x_arr
 
+    def _normalized_edge_inputs(self, x: Array, /) -> Array:
+        x_vec = self._input_vector(x)
         if self.scale_mode == "edge":
             if self.scales is None:
                 raise RuntimeError("KAN edge scales are missing.")
@@ -146,25 +212,58 @@ class KANLayer(StrictModule):
                 input_values = x_vec
             edge_inputs = jnp.broadcast_to(
                 input_values,
-                self.coeffs.shape[:2],
+                (_get_size(self.out_size), _get_size(self.in_size)),
             )
-        edge_inputs = _canonicalize_edge_inputs(edge_inputs, self.use_tanh)
-        edge_values = self.edge_basis.evaluate(self.coeffs, edge_inputs)
-        output = jnp.sum(edge_values, axis=-1)
+        return _canonicalize_edge_inputs(edge_inputs, self.use_tanh)
+
+    def __call__(self, x: Array) -> Array:
+        edge_inputs = self._normalized_edge_inputs(x)
+        if self.edge_blocks:
+            output = None
+            output_indices = None
+            for block in self.edge_blocks:
+                block_values = block.evaluate(edge_inputs)
+                if output is None:
+                    output = jnp.zeros(
+                        (_get_size(self.out_size),),
+                        dtype=block_values.dtype,
+                    )
+                output_indices = jnp.asarray(
+                    block.output_indices,
+                    dtype=jnp.int32,
+                )
+                output = output.at[output_indices].add(block_values)
+            if output is None or output_indices is None:
+                raise RuntimeError("KAN edge-block execution produced no output.")
+        else:
+            if self.edge_basis is None or self.coeffs is None:
+                raise RuntimeError("Dense KAN layer edge parameters are missing.")
+            edge_values = self.edge_basis.evaluate(self.coeffs, edge_inputs)
+            output = jnp.sum(edge_values, axis=-1)
         if self.bias is not None:
             output = output + self.bias
         if self.out_size == "scalar":
             return output.reshape(())
         return output
 
+    def regularization(self) -> Array:
+        if self.edge_blocks:
+            penalty = jnp.array(0.0)
+            for block in self.edge_blocks:
+                penalty = penalty + block.regularization()
+            return penalty
+        if self.edge_basis is None or self.coeffs is None:
+            raise RuntimeError("Dense KAN layer edge parameters are missing.")
+        return self.edge_basis.regularization(self.coeffs)
+
 
 class KAN(_AbstractBaseModel):
     """Kolmogorov-Arnold Network with typed scalar edge-function bases.
 
     ``edge_basis`` may be one basis shared by every layer or one basis per layer.
-    The default remains a degree-five Chebyshev basis. ``BSplineEdgeBasis``
-    supplies compactly supported fixed-grid edge functions without changing the
-    model's residual, scaling, or scan semantics.
+    The default remains a degree-five Chebyshev basis. B-spline and rational
+    B-spline edge bases supply compact support without changing the model's
+    residual, scaling, or scan semantics.
     """
 
     layers: tuple[KANLayer, ...]
@@ -294,6 +393,26 @@ class KAN(_AbstractBaseModel):
             else None
         )
 
+    def _replace_layers(self, layers: tuple[KANLayer, ...], /) -> "KAN":
+        if len(layers) != len(self.layers):
+            raise ValueError("Replacement KAN layers must preserve the layer count.")
+        scan_static = None
+        scan_enabled = False
+        if self.scan and len(layers) > 2:
+            _, scan_static_candidate, scan_enabled = pack_scan_modules(layers[1:-1])
+            if scan_enabled:
+                scan_static = scan_static_candidate
+        return eqx.tree_at(
+            lambda model: (
+                model.layers,
+                model._scan_enabled,
+                model._scan_static,
+            ),
+            self,
+            (layers, scan_enabled, scan_static),
+            is_leaf=lambda value: value is None,
+        )
+
     def __call__(
         self,
         x: Array,
@@ -330,7 +449,5 @@ class KAN(_AbstractBaseModel):
         """Return the sum of basis-specific edge regularizers."""
         regularization = jnp.array(0.0)
         for layer in self.layers:
-            regularization = regularization + layer.edge_basis.regularization(
-                layer.coeffs
-            )
+            regularization = regularization + layer.regularization()
         return jnp.asarray(alpha, dtype=regularization.dtype) * regularization

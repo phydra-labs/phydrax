@@ -1174,14 +1174,38 @@ loader = phx.nn.OperatorBatchLoader(
     dtype_policy=dtype_policy,
     prefetch=2,
 )
-for training_batch in loader.epoch(0):
-    prediction = training_model(training_batch.batch)
+with loader.epoch(0) as batches:
+    for training_batch in batches:
+        prediction = training_model(training_batch.batch)
 ```
 
 `fit_operator` is the owner of optimization, dynamic loss terms, validation,
 best-model selection, gradient accumulation, mixed precision, sharding, callbacks,
 and exact resume. The loader remains useful for inspection, but production code
-should not build a second optimizer loop around it:
+should not build a second optimizer loop around it.
+
+The loader uses a versioned, stateless position-to-case permutation, so memory
+does not scale with the number of cases and `loader.epoch(epoch,
+start_batch=...)` begins directly at a saved suffix. `prefetch` bounds an
+ordered host-side queue; it changes timing only, not `loader.fingerprint`.
+In-memory sources permit one background reader. Callback sources remain
+synchronous unless their adapter explicitly declares `background_read_safe=True`.
+Use the context-manager form whenever iteration may stop early so its producer
+is closed deterministically.
+
+Keep loader timing separate from model-quality benchmarks:
+
+```console
+python -m tools.operator_benchmarks.data_plane \
+    --cases 4096 --batch-size 64 --resolution 128 --prefetch 2
+```
+
+The record separates ordering compilation, cold and cached fingerprints,
+first-batch latency, steady-state throughput, host and device memory, and the
+pre-I/O resume gate. Controlled reader and consumer latencies can be supplied
+to measure overlap without mixing model accuracy into the data-plane result.
+
+`fit_operator` remains the production optimization owner:
 
 ```python
 fit_result = phx.nn.fit_operator(
@@ -1367,6 +1391,14 @@ with `AnchorQuerySamplingPolicy` and `read_operator_case_batch`; only requested
 case indices and sampled source/query points are read. Values, coordinates,
 quadrature, and masks remain one selection unit.
 
+A callback source must provide `content_fingerprint`, for example a SHA-256
+digest over an immutable dataset revision, adapter version, and per-file
+checksums. The digest must be available without metadata or case reads.
+Provenance alone is not content identity: target values, geometry, measures,
+masks, topology, and output specifications can change while provenance stays
+constant. Opt in to `background_read_safe=True` only when one dedicated reader
+thread may call the adapter safely and every read finishes in finite time.
+
 Encoded operators can evaluate query sets in fixed-capacity chunks without
 re-encoding the source:
 
@@ -1393,12 +1425,15 @@ The final chunk is padded and masked internally, so padding contributes neither
 output nor physical measure. Use `NpyPredictionSink` when the assembled output
 must remain off device and outside process memory.
 
-`save_operator_training_checkpoint` persists the model, optimizer state, exact
-PRNG key, normalization, dtype policy, batch schema, and user metadata. Restore
-with model and optimizer-state templates; loading rejects checksum or schema
-mismatches. A successful save publishes the new manifest atomically and prunes
-superseded state blobs, so periodic validation retains one resumable state per
-trial instead of one full optimizer snapshot per validation step.
+`save_operator_training_checkpoint` persists the model, optimizer and
+gradient-accumulation state, exact PRNG key, normalization, dtype policy,
+semantic fit schema, logical epoch/batch cursor, loader identity, and user
+metadata in the current versioned format. Resume validates the manifest,
+version, state checksum, source content, ordering algorithm, and fit contract
+before case I/O. It then reads the exact next batch once and uses it for the
+first resumed update. A successful save publishes the new manifest atomically
+and prunes superseded state blobs, so periodic validation retains one resumable
+state per trial. Old checkpoint formats are rejected rather than migrated.
 
 `save_operator_artifact` stores the execution model, physical output pipeline and
 fingerprint, fixed-query geometry fingerprints, normalization, dtype, evidence,

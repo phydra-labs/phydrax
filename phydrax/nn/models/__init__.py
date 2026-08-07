@@ -71,12 +71,26 @@ from .architectures._in_context import (
     InContextOperatorState,
     OperatorPromptState,
 )
-from .architectures._kan import KAN
+from .architectures._kan import KAN, KANEdgeBlock
+from .architectures._kan_adaptation import (
+    adapt_kan_grids,
+    KANGridAdaptationPlan,
+    KANGridAdaptationReport,
+)
 from .architectures._kan_basis import (
     AbstractEdgeBasis,
     BSplineEdgeBasis,
     BSplineGrid,
+    BSplineGridBank,
     OrthogonalPolynomialEdgeBasis,
+    RationalBSplineEdgeBasis,
+    RationalBSplineEdgeParameters,
+    TrainableBSplineGrid,
+)
+from .architectures._kan_capacity import (
+    coarsen_kan_edges,
+    KANCapacityAdaptationReport,
+    refine_kan_edges,
 )
 from .architectures._koopman import KoopmanTemporalOperator
 from .architectures._laplace import LaplaceTemporalOperator
@@ -403,8 +417,19 @@ __all__ = [
     "AbstractEdgeBasis",
     "BSplineEdgeBasis",
     "BSplineGrid",
+    "BSplineGridBank",
+    "TrainableBSplineGrid",
+    "adapt_kan_grids",
+    "KANGridAdaptationPlan",
+    "KANGridAdaptationReport",
     "KAN",
+    "RationalBSplineEdgeBasis",
+    "RationalBSplineEdgeParameters",
     "OrthogonalPolynomialEdgeBasis",
+    "KANEdgeBlock",
+    "KANCapacityAdaptationReport",
+    "coarsen_kan_edges",
+    "refine_kan_edges",
     "Linear",
     "MLP",
     "NativeGraphOperator",

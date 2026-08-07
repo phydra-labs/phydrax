@@ -187,6 +187,7 @@ nav:
             - State-space models: "api/stochastic/state_space.md"
             - Martingales and stopping: "api/stochastic/martingales.md"
             - Backward stochastic equations: "api/stochastic/bsde.md"
+        - Optimization: "api/optim.md"
         - Solver:
             - Overview: "api/solver/index.md"
             - Differential equations: "api/solver/differential.md"

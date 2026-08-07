@@ -17,10 +17,10 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, Key
 
+from .._fingerprint import array_tree_fingerprint
 from .._strict import StrictModule
 from ..stochastic._state_space import state_space_key, StateSpaceProblem
 from ._checkpoint import (
-    array_tree_fingerprint,
     read_checkpoint_archive,
     write_checkpoint_archive,
 )

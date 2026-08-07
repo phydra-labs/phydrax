@@ -71,6 +71,15 @@ def _assert_archive_matches_adapter(result, destination):
 
 def test_portable_result_archives_cover_declared_uq_result_types(tmp_path):
     problem = _problem()
+    map_search = phx.uq.search_map(
+        problem,
+        phx.optim.DifferentialEvolutionSearch(4, 0),
+        key=jr.key(939),
+        position_bounds=(
+            {"offset": -2.0, "slope": -2.0},
+            {"offset": 2.0, "slope": 2.0},
+        ),
+    )
     mode = phx.uq.find_map(problem, gradient_tolerance=1e-8)
     dense_laplace = phx.uq.fit_laplace(problem, mode.position)
     structured_laplace = phx.uq.fit_laplace(
@@ -129,6 +138,7 @@ def test_portable_result_archives_cover_declared_uq_result_types(tmp_path):
     )
 
     results = (
+        map_search,
         mode,
         dense_laplace,
         structured_laplace,
@@ -148,6 +158,7 @@ def test_portable_result_archives_cover_declared_uq_result_types(tmp_path):
         kinds.append(archive.kind)
 
     assert kinds == [
+        "map_search",
         "map",
         "laplace",
         "structured_laplace",
@@ -219,9 +230,7 @@ def _sgmcmc_result():
         ),
         lambda parameter, batch: -0.5 * (batch.data - parameter) ** 2,
         num_factors=source.num_factors,
-        full_log_likelihood=lambda parameter: jnp.sum(
-            -0.5 * (data - parameter) ** 2
-        ),
+        full_log_likelihood=lambda parameter: jnp.sum(-0.5 * (data - parameter) ** 2),
     )
     control = phx.uq.build_sgmcmc_control_variate(
         problem,
@@ -286,6 +295,5 @@ def test_sgmcmc_arviz_export_preserves_approximation_and_thermostat_semantics():
         "momentum_norm",
     }
     assert all(
-        sample_stats[name].dims == ("chain", "draw")
-        for name in sample_stats.data_vars
+        sample_stats[name].dims == ("chain", "draw") for name in sample_stats.data_vars
     )

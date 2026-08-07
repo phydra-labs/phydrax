@@ -13,9 +13,9 @@ from typing import Literal, TypeAlias
 import jax.numpy as jnp
 import jax.random as jr
 
+from .._fingerprint import array_tree_fingerprint
 from ..stochastic._state_space import StateSpaceProblem
 from ._checkpoint import (
-    array_tree_fingerprint,
     read_checkpoint_archive,
     write_checkpoint_archive,
 )

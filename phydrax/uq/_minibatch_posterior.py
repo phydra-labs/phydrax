@@ -7,17 +7,16 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Iterator, Mapping
-from math import ceil
 from typing import Any, Protocol, runtime_checkable
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
+from .._data_plane import EPOCH_ORDER_ALGORITHM, IndexEpochPlan
+from .._fingerprint import array_tree_fingerprint
 from .._strict import StrictModule
-from ._checkpoint import array_tree_fingerprint
 from ._posterior import ParameterSpace
 
 
@@ -108,12 +107,20 @@ class ArrayMinibatchSource(StrictModule):
         source_seed = int(seed)
         if source_seed < 0:
             raise ValueError("seed must be nonnegative.")
-        batches = ceil(population / capacity)
+        batches = IndexEpochPlan(
+            population,
+            capacity,
+            True,
+            source_seed,
+            0,
+            False,
+        ).batch_count
         configuration = {
             "type": f"{type(self).__module__}.{type(self).__qualname__}",
             "num_factors": population,
             "batch_size": capacity,
             "seed": source_seed,
+            "ordering": EPOCH_ORDER_ALGORITHM,
             "data": array_tree_fingerprint(arrays),
         }
         configuration_json = json.dumps(
@@ -151,23 +158,20 @@ class ArrayMinibatchSource(StrictModule):
         return json.loads(self._configuration_json)
 
     def epoch(self, epoch: int, /) -> Iterator[LikelihoodBatch]:
-        epoch_index = int(epoch)
-        if epoch_index < 0:
-            raise ValueError("epoch must be nonnegative.")
-        generator = np.random.default_rng(
-            np.random.SeedSequence((self._seed, epoch_index))
+        plan = IndexEpochPlan(
+            self._num_factors,
+            self._batch_capacity,
+            True,
+            self._seed,
+            int(epoch),
+            False,
         )
-        permutation = generator.permutation(self._num_factors)
-        for start in range(0, self._num_factors, self._batch_capacity):
-            active_indices = permutation[start : start + self._batch_capacity]
-            active_count = int(active_indices.size)
-            if active_count < self._batch_capacity:
-                padded_indices = np.empty(self._batch_capacity, dtype=permutation.dtype)
-                padded_indices[:active_count] = active_indices
-                padded_indices[active_count:] = active_indices[-1]
-            else:
-                padded_indices = active_indices
-            batch_indices = jnp.asarray(padded_indices)
+        for _, active_indices in plan.iter_batches():
+            active_count = len(active_indices)
+            padded_indices = active_indices + (active_indices[-1],) * (
+                self._batch_capacity - active_count
+            )
+            batch_indices = jnp.asarray(padded_indices, dtype=jnp.int32)
             batch_data = jax.tree_util.tree_map(
                 lambda leaf: leaf[batch_indices],
                 self.data,
@@ -192,9 +196,7 @@ class MinibatchPosteriorProblem(StrictModule):
     def __init__(
         self,
         parameter_space: ParameterSpace,
-        log_likelihood_factors: Callable[
-            [PyTree[Any], LikelihoodBatch], ArrayLike
-        ],
+        log_likelihood_factors: Callable[[PyTree[Any], LikelihoodBatch], ArrayLike],
         /,
         *,
         num_factors: int,

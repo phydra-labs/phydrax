@@ -952,18 +952,65 @@ domain-specific query arguments.
 
 ## MAP estimation
 
+### Bounded global initialization
+
+`search_map` minimizes `PosteriorProblem.negative_log_density(...)` over an explicit
+finite box when the posterior is multimodal, nonsmooth, or poorly served by one local
+initialization. The box is defined in the `ParameterSpace`'s unconstrained position
+coordinates, not in physical parameter coordinates. Lower and upper bounds must be
+PyTrees matching `space.initial`; a scalar bound may broadcast only within its
+corresponding leaf. Every resolved value must be finite and strictly ordered.
+
+```python
+search = phx.optim.DifferentialEvolutionSearch(
+    32,
+    100,
+    design=phx.sampling.SobolDesign(scrambled=True),
+)
+global_mode = phx.uq.search_map(
+    posterior,
+    search,
+    key=jr.key(10),
+    position_bounds=(
+        {"source": -6.0},
+        {"source": 6.0},
+    ),
+)
+```
+
+The search evaluates the same full posterior density used by local MAP, including
+priors and bijector Jacobians. Bounded unconstrained positions therefore reconstruct
+valid positive or interval-valued physical parameters through their declared
+bijectors. Bounds are never inferred from priors or physical bijector endpoints.
+
+`MAPSearchResult` preserves the best unconstrained position and constrained
+parameters, final population positions and objectives, resolved bound PyTrees, root
+key, search configuration, initialization design signature, best-objective history,
+and exact generation, objective-evaluation, and invalid-evaluation counts.
+Non-finite candidates are counted and excluded from selection. The population is an
+optimizer state shaped by selection; it is not a posterior sample. Population
+dispersion convergence is not stationarity evidence or proof of a global optimum.
+
+### Local MAP refinement
+
 `find_map` compiles the complete JAX-native strong-Wolfe L-BFGS transition and
 reports both unconstrained and physical positions, final log density and gradient
 norm, objective evaluations, compilation time, warm execution time, total runtime,
-and a termination reason:
+and a termination reason. Pass the global position explicitly when local refinement
+is wanted:
 
 ```python
 mode = phx.uq.find_map(
     posterior,
+    global_mode.position,
     gradient_tolerance=1e-7,
     max_steps=500,
 )
 ```
+
+`search_map` never runs L-BFGS or Laplace implicitly. This keeps the global
+population criterion, local gradient criterion, extra evaluations, and failure modes
+separate and observable.
 
 `MAPResult.compilation_seconds`, `execution_seconds`, and `mean_step_seconds`
 separate compiler cost from numerical optimization. Repeated problems reuse the
@@ -1385,14 +1432,17 @@ portable = phx.uq.read_result_archive(result_path)
 ```
 
 Both are ZIP containers with JSON metadata, individual NumPy array members,
-SHA-256 checksums, atomic replacement, and no pickle or Python object
-arrays. Portable archives export representable result arrays and explicitly list
-excluded live callables. `FlowNUTSResult` archives include frozen flow parameters,
-loss histories, local and global sampler statistics, deterministic keys, and phase
-timings. `SGMCMCResult` archives include algorithm and approximation identities,
-source configuration and fingerprint, control-variate metadata, gradient/update
-accounting, thermostat or momentum traces when present, and deterministic replay
-keys. `phx.uq.to_arviz(posterior_draws)` accepts ordinary, flow-assisted, or
+SHA-256 checksums, atomic replacement, and no pickle or Python object arrays.
+Portable archives export representable result arrays and explicitly list excluded
+live callables. `MAPSearchResult` archives retain the reconstructed best position,
+full final population, resolved bounds, deterministic key, convergence history,
+search configuration, design provenance, and exact evaluation accounting.
+`FlowNUTSResult` archives include frozen flow parameters, loss histories, local and
+global sampler statistics, deterministic keys, and phase timings. `SGMCMCResult`
+archives include algorithm and approximation identities, source configuration and
+fingerprint, control-variate metadata, gradient/update accounting, thermostat or
+momentum traces when present, and deterministic replay keys.
+`phx.uq.to_arviz(posterior_draws)` accepts ordinary, flow-assisted, or
 stochastic-gradient MCMC and retains separate `chain` and `draw` dimensions.
 Method-specific sample statistics are added when present. Generic observed-data and
 pointwise-log-likelihood groups are omitted because neither posterior contract

@@ -11,7 +11,6 @@ import pytest
 
 import phydrax as phx
 from phydrax.geometry.design import AbstractDesignConstraint
-from phydrax.geometry.design._search import _reflect_unit_box
 
 
 class _ConstantConstraint(AbstractDesignConstraint):
@@ -41,28 +40,9 @@ def _sphere_problem(*, constraint=None):
     return geometry, system, parameter_ids, bounds
 
 
-def test_configuration_validation():
-    with pytest.raises(ValueError, match="at least 4"):
-        phx.geometry.DifferentialEvolutionSearch(3, 4)
-    with pytest.raises(ValueError, match="non-negative"):
-        phx.geometry.DifferentialEvolutionSearch(4, -1)
-    with pytest.raises(ValueError, match="strategy"):
-        phx.geometry.DifferentialEvolutionSearch(4, 1, strategy="invalid")
-    with pytest.raises(ValueError, match="differential_weight"):
-        phx.geometry.DifferentialEvolutionSearch(4, 1, differential_weight=2.0)
-    with pytest.raises(ValueError, match="crossover_rate"):
-        phx.geometry.DifferentialEvolutionSearch(4, 1, crossover_rate=1.1)
-    with pytest.raises(ValueError, match="relative_tolerance"):
-        phx.geometry.DifferentialEvolutionSearch(4, 1, relative_tolerance=-1.0)
-    with pytest.raises(ValueError, match="absolute_tolerance"):
-        phx.geometry.DifferentialEvolutionSearch(4, 1, absolute_tolerance=jnp.nan)
-    with pytest.raises(ValueError, match="design must be one of"):
-        phx.geometry.DifferentialEvolutionSearch(4, 1, design="unknown")
-
-
 def test_search_bounds_are_complete_finite_and_physically_admissible():
     geometry, system, parameter_ids, bounds = _sphere_problem()
-    search = phx.geometry.DifferentialEvolutionSearch(4, 0)
+    search = phx.optim.DifferentialEvolutionSearch(4, 0)
 
     with pytest.raises(ValueError, match="center"):
         system.search(
@@ -116,7 +96,7 @@ def test_search_bounds_are_complete_finite_and_physically_admissible():
 
 def test_search_is_reproducible_bounded_and_exactly_accounted():
     geometry, system, _parameter_ids, bounds = _sphere_problem()
-    search = phx.geometry.DifferentialEvolutionSearch(
+    search = phx.optim.DifferentialEvolutionSearch(
         8,
         4,
         strategy="rand1bin",
@@ -173,7 +153,7 @@ def test_initial_population_convergence_and_invalid_objectives_are_explicit():
         constraint=_ConstantConstraint()
     )
     converged = constant_system.search(
-        phx.geometry.DifferentialEvolutionSearch(4, 10),
+        phx.optim.DifferentialEvolutionSearch(4, 10),
         key=jr.key(0),
         bounds=bounds,
     )
@@ -187,7 +167,7 @@ def test_initial_population_convergence_and_invalid_objectives_are_explicit():
         constraint=_InvalidConstraint()
     )
     invalid = invalid_system.search(
-        phx.geometry.DifferentialEvolutionSearch(4, 10),
+        phx.optim.DifferentialEvolutionSearch(4, 10),
         key=jr.key(0),
         bounds=bounds,
     )
@@ -198,18 +178,6 @@ def test_initial_population_convergence_and_invalid_objectives_are_explicit():
     assert invalid.termination_reason == "no_finite_candidates"
     assert np.all(np.isinf(np.asarray(invalid.population_objectives)))
     assert bool(jnp.isnan(invalid.objective))
-
-
-def test_repair_reflects_arbitrary_overshoot_into_unit_box():
-    candidates = jnp.asarray([-4.2, -1.2, -0.2, 0.2, 1.2, 2.2, 5.2])
-    repaired = _reflect_unit_box(candidates)
-    np.testing.assert_allclose(
-        repaired,
-        jnp.asarray([0.2, 0.8, 0.2, 0.2, 0.8, 0.2, 0.8]),
-        atol=1e-12,
-    )
-    assert np.all(np.asarray(repaired) >= 0.0)
-    assert np.all(np.asarray(repaired) <= 1.0)
 
 
 def test_restricted_geometry_validity_region_fails_before_evaluation(monkeypatch):
@@ -223,7 +191,7 @@ def test_restricted_geometry_validity_region_fails_before_evaluation(monkeypatch
 
     with pytest.raises(NotImplementedError, match="validity region"):
         system.search(
-            phx.geometry.DifferentialEvolutionSearch(4, 1),
+            phx.optim.DifferentialEvolutionSearch(4, 1),
             key=jr.key(0),
             bounds=bounds,
         )
