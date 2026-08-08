@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from math import isfinite
 from typing import Any, Literal
 
 import coordax as cx
+import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import ArrayLike
+from jaxtyping import Array, ArrayLike, PyTree
 
 from .._frozendict import frozendict
 from .._sampling import get_sampler
@@ -277,4 +279,785 @@ def _reduce_sample_outputs(
     return sums / denominator
 
 
-__all__ = ["SobolResult", "sobol_indices"]
+SENSITIVITY_SUCCESS = 0
+SENSITIVITY_NONFINITE = 1
+SENSITIVITY_INVALID_INFORMATION = 2
+
+
+class SensitivityGradientResult(StrictModule):
+    """Gradient estimate with estimator and random-mechanism provenance."""
+
+    gradient: PyTree[Array]
+    standard_error: PyTree[Array] | None
+    valid: Array
+    status: Array
+    estimator_id: str = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
+    noise_id: str | None = eqx.field(static=True)
+    resampling_id: str | None = eqx.field(static=True)
+    approximation: str = eqx.field(static=True)
+    num_samples: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        gradient: PyTree[Array],
+        standard_error: PyTree[Array] | None,
+        /,
+        *,
+        valid: ArrayLike,
+        status: ArrayLike,
+        estimator_id: str,
+        method_id: str,
+        noise_id: str | None,
+        resampling_id: str | None,
+        approximation: str,
+        num_samples: int,
+    ):
+        if not estimator_id or not method_id or not approximation:
+            raise ValueError("Sensitivity provenance IDs must be non-empty.")
+        if noise_id is not None and not noise_id:
+            raise ValueError("noise_id must be non-empty or None.")
+        if resampling_id is not None and not resampling_id:
+            raise ValueError("resampling_id must be non-empty or None.")
+        if int(num_samples) <= 0:
+            raise ValueError("num_samples must be positive.")
+        self.gradient = gradient
+        self.standard_error = standard_error
+        self.valid = jnp.asarray(valid, dtype=bool)
+        self.status = jnp.asarray(status, dtype=jnp.int32)
+        self.estimator_id = str(estimator_id)
+        self.method_id = str(method_id)
+        self.noise_id = noise_id
+        self.resampling_id = resampling_id
+        self.approximation = str(approximation)
+        self.num_samples = int(num_samples)
+
+
+class ResamplingScoreResult(StrictModule):
+    """Likelihood-ratio contribution from one declared resampling operation."""
+
+    gradient: PyTree[Array]
+    standard_error: PyTree[Array]
+    centered_scores: PyTree[Array]
+    expected_centered_score: PyTree[Array]
+    normalized_weights: Array
+    ancestor_indices: Array
+    valid: Array
+    status: Array
+    estimator_id: str = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
+    noise_id: str | None = eqx.field(static=True)
+    resampling_id: str = eqx.field(static=True)
+    approximation: str = eqx.field(static=True)
+    num_particles: int = eqx.field(static=True)
+    num_draws: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        gradient: PyTree[Array],
+        standard_error: PyTree[Array],
+        centered_scores: PyTree[Array],
+        expected_centered_score: PyTree[Array],
+        normalized_weights: ArrayLike,
+        ancestor_indices: ArrayLike,
+        valid: ArrayLike,
+        status: ArrayLike,
+        noise_id: str | None,
+        resampling_id: str,
+    ):
+        weights = jnp.asarray(normalized_weights)
+        ancestors = jnp.asarray(ancestor_indices, dtype=jnp.int32)
+        if weights.ndim != 1:
+            raise ValueError("normalized_weights must be rank one.")
+        if ancestors.ndim != 1 or int(ancestors.size) == 0:
+            raise ValueError("ancestor_indices must be non-empty and rank one.")
+        if not resampling_id:
+            raise ValueError("resampling_id must be non-empty.")
+        self.gradient = gradient
+        self.standard_error = standard_error
+        self.centered_scores = centered_scores
+        self.expected_centered_score = expected_centered_score
+        self.normalized_weights = weights
+        self.ancestor_indices = ancestors
+        self.valid = jnp.asarray(valid, dtype=bool)
+        self.status = jnp.asarray(status, dtype=jnp.int32)
+        self.estimator_id = "resampling_score"
+        self.method_id = "categorical_log_probability_score"
+        self.noise_id = noise_id
+        self.resampling_id = str(resampling_id)
+        self.approximation = "monte_carlo_likelihood_ratio"
+        self.num_particles = int(weights.size)
+        self.num_draws = int(ancestors.size)
+
+
+class SensitivityActionResult(StrictModule):
+    """One matrix-free curvature action and its operator provenance."""
+
+    action: PyTree[Array]
+    valid: Array
+    status: Array
+    operator_id: str = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
+    approximation: str = eqx.field(static=True)
+    regularization: float = eqx.field(static=True)
+    num_samples: int | None = eqx.field(static=True)
+
+    def __init__(
+        self,
+        action: PyTree[Array],
+        /,
+        *,
+        valid: ArrayLike,
+        status: ArrayLike,
+        operator_id: str,
+        method_id: str,
+        approximation: str,
+        regularization: float,
+        num_samples: int | None,
+    ):
+        if not operator_id or not method_id or not approximation:
+            raise ValueError("Sensitivity action provenance IDs must be non-empty.")
+        self.action = action
+        self.valid = jnp.asarray(valid, dtype=bool)
+        self.status = jnp.asarray(status, dtype=jnp.int32)
+        self.operator_id = str(operator_id)
+        self.method_id = str(method_id)
+        self.approximation = str(approximation)
+        self.regularization = float(regularization)
+        self.num_samples = None if num_samples is None else int(num_samples)
+
+
+class EmpiricalDirectionsResult(StrictModule):
+    """Dominant local Gramian directions from matrix-free derivative actions."""
+
+    directions: Array
+    strengths: Array
+    valid: Array
+    status: Array
+    quantity: str = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
+    approximation: str = eqx.field(static=True)
+    regularization: float = eqx.field(static=True)
+    ambient_shape: tuple[int, ...] = eqx.field(static=True)
+    ambient_dimension: int = eqx.field(static=True)
+    rank: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        directions: ArrayLike,
+        strengths: ArrayLike,
+        valid: ArrayLike,
+        status: ArrayLike,
+        quantity: str,
+        regularization: float,
+        ambient_shape: tuple[int, ...],
+    ):
+        vectors = jnp.asarray(directions)
+        values = jnp.asarray(strengths)
+        if vectors.ndim != 2 or values.shape != (vectors.shape[1],):
+            raise ValueError("Directions and strengths have incompatible shapes.")
+        if not quantity:
+            raise ValueError("quantity must be non-empty.")
+        self.directions = vectors
+        self.strengths = values
+        self.valid = jnp.asarray(valid, dtype=bool)
+        self.status = jnp.asarray(status, dtype=jnp.int32)
+        self.quantity = str(quantity)
+        self.method_id = "matrix_free_actions_dense_eigh"
+        self.approximation = "empirical_local_linearization"
+        self.regularization = float(regularization)
+        self.ambient_shape = tuple(int(size) for size in ambient_shape)
+        self.ambient_dimension = int(vectors.shape[0])
+        self.rank = int(vectors.shape[1])
+
+
+class ExperimentDesignResult(StrictModule):
+    """Scalar information-design objective with an explicit validity status."""
+
+    value: Array
+    eigenvalues: Array
+    valid: Array
+    status: Array
+    criterion: str = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
+    approximation: str = eqx.field(static=True)
+    regularization: float = eqx.field(static=True)
+    dimension: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        value: ArrayLike,
+        eigenvalues: ArrayLike,
+        valid: ArrayLike,
+        status: ArrayLike,
+        criterion: str,
+        method_id: str,
+        approximation: str,
+        regularization: float,
+    ):
+        spectrum = jnp.asarray(eigenvalues)
+        if spectrum.ndim != 1 or int(spectrum.size) == 0:
+            raise ValueError("eigenvalues must be a non-empty rank-1 array.")
+        self.value = jnp.asarray(value)
+        self.eigenvalues = spectrum
+        self.valid = jnp.asarray(valid, dtype=bool)
+        self.status = jnp.asarray(status, dtype=jnp.int32)
+        self.criterion = str(criterion)
+        self.method_id = str(method_id)
+        self.approximation = str(approximation)
+        self.regularization = float(regularization)
+        self.dimension = int(spectrum.size)
+
+
+def likelihood_ratio_gradient(
+    values: ArrayLike,
+    scores: PyTree[Array],
+    /,
+    *,
+    baseline: Literal["mean", "none"] | ArrayLike | None = "mean",
+    noise_id: str | None = None,
+    method_id: str = "score_function",
+) -> SensitivityGradientResult:
+    """Estimate ``E[f score]`` while retaining the score-estimator identity."""
+    observations = jnp.asarray(values)
+    if observations.ndim == 0 or int(observations.shape[0]) < 2:
+        raise ValueError("values must have at least two samples on axis zero.")
+    count = int(observations.shape[0])
+    score_leaves = jax.tree_util.tree_leaves(scores)
+    if not score_leaves:
+        raise ValueError("scores must contain at least one array leaf.")
+    if any(
+        jnp.asarray(leaf).ndim == 0 or int(jnp.asarray(leaf).shape[0]) != count
+        for leaf in score_leaves
+    ):
+        raise ValueError("Every score leaf must share the values sample axis.")
+    if isinstance(baseline, str):
+        if baseline not in ("mean", "none"):
+            raise ValueError("baseline must be 'mean', 'none', None, or an array.")
+        center = jnp.mean(observations, axis=0) if baseline == "mean" else 0.0
+        covariance_correction = count / (count - 1) if baseline == "mean" else 1.0
+    elif baseline is None:
+        center = 0.0
+        covariance_correction = 1.0
+    else:
+        center = jnp.broadcast_to(jnp.asarray(baseline), observations.shape[1:])
+        covariance_correction = 1.0
+    centered = observations - center
+
+    contribution_tree = jax.tree_util.tree_map(
+        lambda score: jax.vmap(
+            lambda value, score_value: jnp.tensordot(value, score_value, axes=0)
+        )(centered, jnp.asarray(score)),
+        scores,
+    )
+    gradient = jax.tree_util.tree_map(
+        lambda values: covariance_correction * jnp.mean(values, axis=0),
+        contribution_tree,
+    )
+    standard_error = jax.tree_util.tree_map(
+        lambda values: (
+            covariance_correction * jnp.std(values, axis=0, ddof=1) / jnp.sqrt(count)
+        ),
+        contribution_tree,
+    )
+    finite = jnp.all(jnp.isfinite(observations)) & _tree_all_finite(scores)
+    finite = finite & _tree_all_finite(gradient) & _tree_all_finite(standard_error)
+    status = jnp.where(finite, SENSITIVITY_SUCCESS, SENSITIVITY_NONFINITE)
+    return SensitivityGradientResult(
+        gradient,
+        standard_error,
+        valid=finite,
+        status=status,
+        estimator_id="likelihood_ratio",
+        method_id=method_id,
+        noise_id=noise_id,
+        resampling_id=None,
+        approximation="monte_carlo_score_function",
+        num_samples=count,
+    )
+
+
+def fixed_noise_pathwise_gradient(
+    function: Callable[[PyTree[Array], PyTree[Array]], ArrayLike],
+    parameters: PyTree[Array],
+    noise: PyTree[Array],
+    /,
+    *,
+    noise_id: str,
+    method: Literal["reverse", "forward"] = "reverse",
+) -> SensitivityGradientResult:
+    """Differentiate a response while holding one named noise realization fixed."""
+    if not callable(function):
+        raise TypeError("function must be callable.")
+    if not noise_id:
+        raise ValueError("noise_id must be non-empty.")
+
+    def evaluate(value):
+        response = function(value, noise)
+        return response, response
+
+    if method == "reverse":
+        gradient, response = jax.jacrev(evaluate, has_aux=True)(parameters)
+        method_id = "jax_jacrev_fixed_noise"
+    elif method == "forward":
+        gradient, response = jax.jacfwd(evaluate, has_aux=True)(parameters)
+        method_id = "jax_jacfwd_fixed_noise"
+    else:
+        raise ValueError("method must be 'reverse' or 'forward'.")
+    finite = (
+        _tree_all_finite(parameters)
+        & _tree_all_finite(noise)
+        & _tree_all_finite(response)
+        & _tree_all_finite(gradient)
+    )
+    status = jnp.where(finite, SENSITIVITY_SUCCESS, SENSITIVITY_NONFINITE)
+    return SensitivityGradientResult(
+        gradient,
+        None,
+        valid=finite,
+        status=status,
+        estimator_id="fixed_noise_pathwise",
+        method_id=method_id,
+        noise_id=noise_id,
+        resampling_id=None,
+        approximation="exact_autodiff_for_fixed_realization",
+        num_samples=1,
+    )
+
+
+def resampling_score_gradient(
+    values: ArrayLike,
+    log_weights: ArrayLike,
+    log_weight_scores: PyTree[Array],
+    ancestor_indices: ArrayLike,
+    /,
+    *,
+    resampling_id: str,
+    noise_id: str | None = None,
+) -> ResamplingScoreResult:
+    """Estimate the categorical resampling score, including normalization."""
+    observations = jnp.asarray(values)
+    logits = jnp.asarray(log_weights)
+    ancestors = jnp.asarray(ancestor_indices)
+    if logits.ndim != 1 or int(logits.size) == 0:
+        raise ValueError("log_weights must be a non-empty rank-1 array.")
+    count = int(logits.size)
+    if observations.ndim == 0 or int(observations.shape[0]) != count:
+        raise ValueError("values must share the particle axis of log_weights.")
+    if ancestors.ndim != 1 or int(ancestors.size) == 0:
+        raise ValueError("ancestor_indices must be a non-empty rank-1 array.")
+    if not jnp.issubdtype(ancestors.dtype, jnp.integer):
+        raise TypeError("ancestor_indices must have an integer dtype.")
+    if bool(jnp.any((ancestors < 0) | (ancestors >= count))):
+        raise ValueError("ancestor_indices contain an out-of-range particle index.")
+    score_leaves = jax.tree_util.tree_leaves(log_weight_scores)
+    if not score_leaves or any(
+        jnp.asarray(leaf).ndim == 0 or int(jnp.asarray(leaf).shape[0]) != count
+        for leaf in score_leaves
+    ):
+        raise ValueError("Every log-weight score must share the particle axis.")
+    weights = jax.nn.softmax(logits)
+
+    def score_mean(score):
+        return jnp.tensordot(weights, jnp.asarray(score), axes=((0,), (0,)))
+
+    centered_scores = jax.tree_util.tree_map(
+        lambda score: jnp.asarray(score) - score_mean(score),
+        log_weight_scores,
+    )
+    expected_score = jax.tree_util.tree_map(
+        lambda score: jnp.tensordot(weights, score, axes=((0,), (0,))),
+        centered_scores,
+    )
+    selected_values = observations[ancestors]
+
+    contribution_tree = jax.tree_util.tree_map(
+        lambda score: jax.vmap(
+            lambda value, score_value: jnp.tensordot(value, score_value, axes=0)
+        )(selected_values, score[ancestors]),
+        centered_scores,
+    )
+    gradient = jax.tree_util.tree_map(
+        lambda values: jnp.mean(values, axis=0),
+        contribution_tree,
+    )
+    standard_error = jax.tree_util.tree_map(
+        lambda values: jnp.std(values, axis=0, ddof=1) / jnp.sqrt(ancestors.size),
+        contribution_tree,
+    )
+    finite = (
+        jnp.all(jnp.isfinite(observations))
+        & jnp.all(jnp.isfinite(logits))
+        & _tree_all_finite(centered_scores)
+        & _tree_all_finite(gradient)
+        & _tree_all_finite(standard_error)
+    )
+    status = jnp.where(finite, SENSITIVITY_SUCCESS, SENSITIVITY_NONFINITE)
+    return ResamplingScoreResult(
+        gradient=gradient,
+        standard_error=standard_error,
+        centered_scores=centered_scores,
+        expected_centered_score=expected_score,
+        normalized_weights=weights,
+        ancestor_indices=ancestors,
+        valid=finite,
+        status=status,
+        noise_id=noise_id,
+        resampling_id=resampling_id,
+    )
+
+
+def fisher_information_action(
+    scores: ArrayLike,
+    vector: ArrayLike,
+    /,
+    *,
+    weights: ArrayLike | None = None,
+    regularization: float = 0.0,
+    method_id: str = "empirical_outer_product",
+) -> SensitivityActionResult:
+    """Apply an empirical Fisher matrix without materializing it."""
+    score_array = jnp.asarray(scores)
+    direction = jnp.asarray(vector)
+    if score_array.ndim < 2 or int(score_array.shape[0]) == 0:
+        raise ValueError("scores must have shape (sample, *parameter_shape).")
+    if score_array.shape[1:] != direction.shape:
+        raise ValueError("vector shape must match one score sample.")
+    penalty = float(regularization)
+    if not isfinite(penalty) or penalty < 0.0:
+        raise ValueError("regularization must be finite and non-negative.")
+    count = int(score_array.shape[0])
+    flat_scores = score_array.reshape((count, -1))
+    flat_direction = direction.reshape(-1)
+    if weights is None:
+        normalized = jnp.full((count,), 1.0 / count)
+        weights_valid = jnp.asarray(True)
+    else:
+        sample_weights = jnp.asarray(weights)
+        if sample_weights.shape != (count,):
+            raise ValueError("weights must have one entry per score sample.")
+        normalized = sample_weights / jnp.sum(sample_weights)
+        weights_valid = (
+            jnp.all(jnp.isfinite(sample_weights))
+            & jnp.all(sample_weights >= 0.0)
+            & (jnp.sum(sample_weights) > 0.0)
+        )
+    flat_action = flat_scores.T @ (normalized * (flat_scores @ flat_direction))
+    action = flat_action.reshape(direction.shape) + penalty * direction
+    finite = (
+        jnp.all(jnp.isfinite(score_array))
+        & jnp.all(jnp.isfinite(normalized))
+        & jnp.all(normalized >= 0.0)
+        & weights_valid
+        & jnp.all(jnp.isfinite(action))
+    )
+    status = jnp.where(finite, SENSITIVITY_SUCCESS, SENSITIVITY_NONFINITE)
+    return SensitivityActionResult(
+        action,
+        valid=finite,
+        status=status,
+        operator_id="fisher_information",
+        method_id=method_id,
+        approximation="empirical_matrix_free",
+        regularization=penalty,
+        num_samples=count,
+    )
+
+
+def gauss_newton_action(
+    residual_fn: Callable[[PyTree[Array]], PyTree[Array]],
+    parameters: PyTree[Array],
+    vector: PyTree[Array],
+    /,
+    *,
+    regularization: float = 0.0,
+    method_id: str = "jax_jvp_vjp",
+) -> SensitivityActionResult:
+    """Apply ``JᵀJ`` by one JVP and one VJP, without a dense Jacobian."""
+    if not callable(residual_fn):
+        raise TypeError("residual_fn must be callable.")
+    penalty = float(regularization)
+    if not isfinite(penalty) or penalty < 0.0:
+        raise ValueError("regularization must be finite and non-negative.")
+    residual, linearized = jax.linearize(residual_fn, parameters)
+    tangent_residual = linearized(vector)
+    pullback = jax.linear_transpose(linearized, parameters)
+    action = pullback(tangent_residual)[0]
+    action = jax.tree_util.tree_map(
+        lambda value, direction: value + penalty * direction,
+        action,
+        vector,
+    )
+    finite = (
+        _tree_all_finite(residual)
+        & _tree_all_finite(tangent_residual)
+        & _tree_all_finite(action)
+    )
+    status = jnp.where(finite, SENSITIVITY_SUCCESS, SENSITIVITY_NONFINITE)
+    return SensitivityActionResult(
+        action,
+        valid=finite,
+        status=status,
+        operator_id="gauss_newton",
+        method_id=method_id,
+        approximation="matrix_free_local_linearization",
+        regularization=penalty,
+        num_samples=None,
+    )
+
+
+def empirical_observability_directions(
+    output_fn: Callable[[Array], ArrayLike],
+    state: ArrayLike,
+    /,
+    *,
+    rank: int,
+    regularization: float = 0.0,
+    max_dimension: int = 256,
+) -> EmpiricalDirectionsResult:
+    """Return dominant directions of the local empirical observability Gramian."""
+    if not callable(output_fn):
+        raise TypeError("output_fn must be callable.")
+    center = jnp.asarray(state)
+    shape = tuple(center.shape)
+    dimension = int(center.size)
+    retained = _validate_direction_request(dimension, rank, max_dimension)
+    penalty = _validate_regularization(regularization)
+    output, pushforward = jax.linearize(
+        lambda value: jnp.asarray(output_fn(value)), center
+    )
+    pullback = jax.linear_transpose(pushforward, center)
+
+    def action(flat_vector):
+        vector = flat_vector.reshape(shape)
+        value = pullback(pushforward(vector))[0]
+        return value.reshape(-1) + penalty * flat_vector
+
+    matrix = jax.vmap(action)(jnp.eye(dimension)).T
+    return _eigen_directions(
+        matrix,
+        rank=retained,
+        quantity="observability",
+        regularization=penalty,
+        ambient_shape=shape,
+        additional_valid=jnp.all(jnp.isfinite(output)),
+    )
+
+
+def empirical_controllability_directions(
+    response_fn: Callable[[Array], ArrayLike],
+    inputs: ArrayLike,
+    /,
+    *,
+    rank: int,
+    regularization: float = 0.0,
+    max_dimension: int = 256,
+) -> EmpiricalDirectionsResult:
+    """Return dominant output directions of the local controllability Gramian."""
+    control = jnp.asarray(inputs)
+    response, pushforward = jax.linearize(
+        lambda value: jnp.asarray(response_fn(value)), control
+    )
+    response_shape = tuple(response.shape)
+    dimension = int(response.size)
+    retained = _validate_direction_request(dimension, rank, max_dimension)
+    penalty = _validate_regularization(regularization)
+    pullback = jax.linear_transpose(pushforward, control)
+
+    def action(flat_vector):
+        vector = flat_vector.reshape(response_shape)
+        input_covector = pullback(vector)[0]
+        value = pushforward(input_covector)
+        return value.reshape(-1) + penalty * flat_vector
+
+    matrix = jax.vmap(action)(jnp.eye(dimension)).T
+    return _eigen_directions(
+        matrix,
+        rank=retained,
+        quantity="controllability",
+        regularization=penalty,
+        ambient_shape=response_shape,
+        additional_valid=jnp.all(jnp.isfinite(response)),
+    )
+
+
+def experiment_design_objective(
+    information: ArrayLike | Callable[[Array], ArrayLike],
+    /,
+    *,
+    criterion: Literal["d_optimal", "a_optimal", "e_optimal", "mutual_information"],
+    dimension: int | None = None,
+    regularization: float = 0.0,
+    noise_variance: float = 1.0,
+    max_dimension: int = 256,
+) -> ExperimentDesignResult:
+    """Evaluate a guarded A-, D-, E-, or mutual-information design objective."""
+    penalty = _validate_regularization(regularization)
+    if callable(information):
+        if dimension is None:
+            raise ValueError(
+                "dimension is required for a matrix-free information action."
+            )
+        size = int(dimension)
+        if size <= 0 or size > int(max_dimension):
+            raise ValueError(
+                "dimension must be positive and no larger than max_dimension."
+            )
+        basis = jnp.eye(size)
+        matrix = jax.vmap(lambda vector: jnp.asarray(information(vector)))(basis).T
+        method_id = "matrix_free_actions_materialized"
+        approximation = "exact_guarded_materialization"
+    else:
+        matrix = jnp.asarray(information)
+        if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1] or matrix.shape[0] == 0:
+            raise ValueError("information must be a non-empty square matrix.")
+        size = int(matrix.shape[0])
+        if dimension is not None and int(dimension) != size:
+            raise ValueError("dimension does not match the information matrix.")
+        if size > int(max_dimension):
+            raise ValueError("Dense information exceeds max_dimension.")
+        method_id = "dense_information"
+        approximation = "exact_dense"
+    effective = matrix + penalty * jnp.eye(size, dtype=matrix.dtype)
+    eigenvalues = jnp.linalg.eigvalsh(effective)
+    tolerance = (
+        64.0
+        * jnp.finfo(effective.dtype).eps
+        * jnp.maximum(1.0, jnp.linalg.norm(effective))
+    )
+    symmetric = jnp.linalg.norm(effective - effective.T) <= tolerance
+    positive = jnp.all(eigenvalues > 0.0)
+    positive_semidefinite = jnp.all(eigenvalues >= -tolerance)
+    finite = jnp.all(jnp.isfinite(effective)) & jnp.all(jnp.isfinite(eigenvalues))
+    base_valid = finite & symmetric & positive_semidefinite
+    if criterion == "d_optimal":
+        _, log_determinant = jnp.linalg.slogdet(effective)
+        raw_value = log_determinant
+        criterion_valid = base_valid & positive
+    elif criterion == "a_optimal":
+        raw_value = -jnp.trace(jnp.linalg.inv(effective))
+        criterion_valid = base_valid & positive
+    elif criterion == "e_optimal":
+        raw_value = eigenvalues[0]
+        criterion_valid = base_valid
+    elif criterion == "mutual_information":
+        variance = float(noise_variance)
+        if not isfinite(variance) or variance <= 0.0:
+            raise ValueError("noise_variance must be finite and positive.")
+        _, log_determinant = jnp.linalg.slogdet(
+            jnp.eye(size, dtype=matrix.dtype) + effective / variance
+        )
+        raw_value = 0.5 * log_determinant
+        criterion_valid = base_valid
+    else:
+        raise ValueError(
+            "criterion must be 'd_optimal', 'a_optimal', 'e_optimal', "
+            "or 'mutual_information'."
+        )
+    reported_valid = criterion_valid & jnp.isfinite(raw_value)
+    value = jnp.where(reported_valid, raw_value, jnp.nan)
+    status = jnp.where(
+        reported_valid,
+        SENSITIVITY_SUCCESS,
+        SENSITIVITY_INVALID_INFORMATION,
+    )
+    return ExperimentDesignResult(
+        value=value,
+        eigenvalues=eigenvalues,
+        valid=reported_valid,
+        status=status,
+        criterion=criterion,
+        method_id=method_id,
+        approximation=approximation,
+        regularization=penalty,
+    )
+
+
+def _tree_all_finite(tree: PyTree[Array], /) -> Array:
+    leaves = jax.tree_util.tree_leaves(tree)
+    if not leaves:
+        return jnp.asarray(False)
+    return jnp.all(jnp.stack(tuple(jnp.all(jnp.isfinite(leaf)) for leaf in leaves)))
+
+
+def _validate_regularization(value: float, /) -> float:
+    penalty = float(value)
+    if not isfinite(penalty) or penalty < 0.0:
+        raise ValueError("regularization must be finite and non-negative.")
+    return penalty
+
+
+def _validate_direction_request(
+    dimension: int,
+    rank: int,
+    max_dimension: int,
+    /,
+) -> int:
+    retained = int(rank)
+    if dimension <= 0:
+        raise ValueError("The empirical direction space must be non-empty.")
+    if dimension > int(max_dimension):
+        raise ValueError("Empirical direction materialization exceeds max_dimension.")
+    if retained <= 0 or retained > dimension:
+        raise ValueError("rank must lie between one and the ambient dimension.")
+    return retained
+
+
+def _eigen_directions(
+    matrix: Array,
+    /,
+    *,
+    rank: int,
+    quantity: str,
+    regularization: float,
+    ambient_shape: tuple[int, ...],
+    additional_valid: Array,
+) -> EmpiricalDirectionsResult:
+    eigenvalues, eigenvectors = jnp.linalg.eigh(matrix)
+    strengths = eigenvalues[-rank:][::-1]
+    directions = eigenvectors[:, -rank:][:, ::-1]
+    tolerance = (
+        64.0 * jnp.finfo(matrix.dtype).eps * jnp.maximum(1.0, jnp.linalg.norm(matrix))
+    )
+    valid = (
+        additional_valid
+        & jnp.all(jnp.isfinite(matrix))
+        & jnp.all(jnp.isfinite(strengths))
+        & (jnp.linalg.norm(matrix - matrix.T) <= tolerance)
+        & jnp.all(strengths >= -tolerance)
+    )
+    status = jnp.where(valid, SENSITIVITY_SUCCESS, SENSITIVITY_INVALID_INFORMATION)
+    return EmpiricalDirectionsResult(
+        directions=directions,
+        strengths=strengths,
+        valid=valid,
+        status=status,
+        quantity=quantity,
+        regularization=regularization,
+        ambient_shape=ambient_shape,
+    )
+
+
+__all__ = [
+    "EmpiricalDirectionsResult",
+    "ExperimentDesignResult",
+    "ResamplingScoreResult",
+    "SENSITIVITY_INVALID_INFORMATION",
+    "SENSITIVITY_NONFINITE",
+    "SENSITIVITY_SUCCESS",
+    "SensitivityActionResult",
+    "SensitivityGradientResult",
+    "empirical_controllability_directions",
+    "empirical_observability_directions",
+    "experiment_design_objective",
+    "fisher_information_action",
+    "fixed_noise_pathwise_gradient",
+    "gauss_newton_action",
+    "likelihood_ratio_gradient",
+    "resampling_score_gradient",
+    "SobolResult",
+    "sobol_indices",
+]

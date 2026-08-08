@@ -20,6 +20,7 @@ from ..stochastic._state_space import (
     LinearGaussianObservationModel,
     state_space_key,
     StateSpaceProblem,
+    StateSpaceStepContext,
 )
 from ._predictive import PredictiveField, SampleAxis
 
@@ -87,11 +88,13 @@ def _case_value(value: Array, case_index: int, case_shape: tuple[int, ...], /) -
     return array.reshape((prod(case_shape),) + array.shape[len(case_shape) :])[case_index]
 
 
-def _observation_covariance(model, time: Array, /) -> Array:
+def _observation_covariance(
+    model, time: Array, context: StateSpaceStepContext, /
+) -> Array:
     if isinstance(model, GaussianObservationModel):
-        return model.covariance_at(time)
+        return model.covariance_at(time, context)
     if isinstance(model, LinearGaussianObservationModel):
-        return model.parameters(time)[2]
+        return model.parameters(time, context)[2]
     raise TypeError("The ensemble transform filter requires Gaussian observations.")
 
 
@@ -153,6 +156,7 @@ class EnsembleFilterResult(StrictModule):
     model_id: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
     sequence_id: str = eqx.field(static=True)
+    input_id: str | None = eqx.field(static=True)
     inflation: float = eqx.field(static=True)
     covariance_regularization: float = eqx.field(static=True)
 
@@ -225,6 +229,7 @@ def _forecast(
     cases = []
     valid_cases = []
     for case_index, case_id in enumerate(problem.observations.case_ids):
+        context = problem.step_context(case_index, state.step_index)
         members = []
         member_validity = []
         for member in range(count):
@@ -243,6 +248,7 @@ def _forecast(
                     previous[case_index, member],
                     starts[case_index],
                     ends[case_index],
+                    context,
                 )
                 sample_valid = jnp.all(sample.valid) & jnp.all(sample.status == 0)
                 members.append(
@@ -272,6 +278,7 @@ def _etkf_case(
     value: Array,
     mask: Array,
     time: Array,
+    context: StateSpaceStepContext,
     /,
     *,
     inflation: float,
@@ -290,7 +297,9 @@ def _etkf_case(
     for member in range(count):
         observations.append(
             problem.model.observation.location(
-                inflated_forecast[member].reshape(problem.model.state_shape), time
+                inflated_forecast[member].reshape(problem.model.state_shape),
+                time,
+                context,
             )
         )
     forecast_observations = jnp.stack(observations, axis=0).reshape(
@@ -307,7 +316,7 @@ def _etkf_case(
         0.0,
     )
     covariance = jnp.asarray(
-        _observation_covariance(problem.model.observation, time)
+        _observation_covariance(problem.model.observation, time, context)
     ).reshape((observation_size, observation_size))
     identity_observation = jnp.eye(observation_size, dtype=forecast.dtype)
     effective_covariance = (
@@ -413,6 +422,7 @@ def ensemble_filter_step(
                 flat_values[case_index],
                 flat_masks[case_index],
                 flat_times[case_index],
+                problem.step_context(case_index, state.step_index),
                 inflation=state.inflation,
                 covariance_regularization=state.covariance_regularization,
             )
@@ -433,6 +443,7 @@ def ensemble_filter_step(
                     problem.model.observation.location(
                         previous[case_index, member],
                         state.time.reshape((-1,))[case_index],
+                        problem.step_context(case_index, state.step_index),
                     )
                     for member in range(count)
                 ],
@@ -577,6 +588,9 @@ def ensemble_transform_kalman_filter(
         model_id=problem.model.model_id,
         problem_id=problem.problem_id,
         sequence_id=problem.observations.sequence_id,
+        input_id=(
+            None if problem.input_signal is None else problem.input_signal.input_id
+        ),
         inflation=state.inflation,
         covariance_regularization=state.covariance_regularization,
     )

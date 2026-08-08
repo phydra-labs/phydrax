@@ -87,7 +87,7 @@ def test_missing_observation_is_forecast_only_and_smoother_is_terminally_exact()
 def test_nonlinear_gaussian_observation_and_diagnostics():
     base = _problem()
     observation = phx.stochastic.GaussianObservationModel(
-        lambda state, time: state**2,
+        lambda state, time, context: state**2,
         jnp.asarray([[0.2]]),
         state_shape=(1,),
         observation_shape=(1,),
@@ -124,7 +124,7 @@ def test_high_dimensional_path_uses_ensemble_rank_not_state_covariance():
         prior_id="high-dimensional-prior",
     )
     transition = phx.stochastic.CallableTransitionKernel(
-        lambda key, state, t0, t1: state + 0.05 * jr.normal(key, state.shape),
+        lambda key, state, t0, t1, context: state + 0.05 * jr.normal(key, state.shape),
         state_shape=(state_size,),
         process_id="high-dimensional-process",
         approximation_id="explicit",

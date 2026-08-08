@@ -140,7 +140,17 @@ from ._differential import (
     WienerTerm,
 )
 from ._diffrax_backend import solve_diffrax, solve_diffrax_ensemble
+from ._diffrax_cde import ControlledDifferentialSolution, solve_diffrax_cde
 from ._diffrax_delay_backend import solve_diffrax_delay
+from ._driving_path import (
+    AbstractDifferentiableDrivingPath,
+    CallableDrivingPath,
+    CausalBackwardHermiteDrivingPath,
+    DrivingPathFitDiagnostics,
+    FixedBSplineDrivingPath,
+    OfflineCubicDrivingPath,
+    PiecewiseLinearDrivingPath,
+)
 from ._enforced_constraint_pipeline import (
     EnforcedConstraintPipeline,
     EnforcedConstraintPipelines,
@@ -205,6 +215,18 @@ from ._levy import (
     LevySmallJumpApproximation,
     solve_levy_sde,
 )
+from ._lyapunov_spectrum import (
+    kaplan_yorke_dimension,
+    LYAPUNOV_INSUFFICIENT_ACCUMULATION,
+    LYAPUNOV_NONFINITE_TANGENT,
+    LYAPUNOV_SINGULAR_TANGENT,
+    lyapunov_spectrum_flow,
+    lyapunov_spectrum_map,
+    LYAPUNOV_SUCCESS,
+    LyapunovSpectrumCheckpoint,
+    LyapunovSpectrumMethod,
+    LyapunovSpectrumResult,
+)
 from ._matrix_functions import (
     matrix_exponential_action,
     matrix_function_action,
@@ -226,12 +248,34 @@ from ._memory import (
     VolterraKernel,
     VolterraVectorField,
 )
+from ._neural_cde import (
+    neural_cde_loss,
+    NeuralCDETrainingData,
+    NeuralCDETrainingState,
+    NeuralCDEVectorField,
+    train_neural_cde,
+)
 from ._noise import SpatialNoiseApproximation, SpatialNoiseBasis
 from ._particles import (
     InteractingParticleProblem,
     InteractingParticleSolution,
     ParticleVectorField,
     solve_interacting_particles,
+)
+from ._probabilistic_ode import (
+    PROBABILISTIC_ODE_NONFINITE,
+    probabilistic_ode_status_name,
+    PROBABILISTIC_ODE_STEP_LIMIT_REACHED,
+    PROBABILISTIC_ODE_STIFF,
+    PROBABILISTIC_ODE_SUCCESS,
+    ProbabilisticODECalibration,
+    ProbabilisticODECovarianceOutput,
+    ProbabilisticODEFactorization,
+    ProbabilisticODEMethod,
+    ProbabilisticODESolution,
+    ProbabilisticODEStatus,
+    ProbabilisticODEUpdate,
+    solve_probabilistic_ode,
 )
 from ._reflected_bsde import (
     predict_reflected_path_dependent_control,
@@ -300,6 +344,7 @@ from ._state_transfer import (
 
 
 __all__ = [
+    "AbstractDifferentiableDrivingPath",
     "AbstractGeometricSolver",
     "AbstractSpatialDiscretization",
     "AbstractBSDERegressionBasis",
@@ -332,6 +377,9 @@ __all__ = [
     "DeepSplittingSolution",
     "PicardSourceContext",
     "CallableBSDERegressionBasis",
+    "CallableDrivingPath",
+    "CausalBackwardHermiteDrivingPath",
+    "ControlledDifferentialSolution",
     "ConstantDelay",
     "CheckpointedDelayAdjoint",
     "SegmentedDelayAdjoint",
@@ -346,6 +394,7 @@ __all__ = [
     "DerivativeDelay",
     "DistributedDelay",
     "DistributedDelayKernel",
+    "DrivingPathFitDiagnostics",
     "FunctionalDelay",
     "HistoryFunctional",
     "EndpointNeutralFunctional",
@@ -362,6 +411,7 @@ __all__ = [
     "DifferentialProblem",
     "DifferentialSolution",
     "DifferentialVectorField",
+    "FixedBSplineDrivingPath",
     "FunctionalCollocationPlan",
     "FunctionalDifferentialBoundaryProblem",
     "FunctionalDifferentialContext",
@@ -388,6 +438,25 @@ __all__ = [
     "LevySDESolverDiagnostics",
     "LevySDEVectorField",
     "LevySmallJumpApproximation",
+    "LYAPUNOV_INSUFFICIENT_ACCUMULATION",
+    "LYAPUNOV_NONFINITE_TANGENT",
+    "LYAPUNOV_SINGULAR_TANGENT",
+    "LYAPUNOV_SUCCESS",
+    "LyapunovSpectrumCheckpoint",
+    "LyapunovSpectrumMethod",
+    "LyapunovSpectrumResult",
+    "PROBABILISTIC_ODE_NONFINITE",
+    "PROBABILISTIC_ODE_STEP_LIMIT_REACHED",
+    "PROBABILISTIC_ODE_STIFF",
+    "PROBABILISTIC_ODE_SUCCESS",
+    "probabilistic_ode_status_name",
+    "ProbabilisticODECalibration",
+    "ProbabilisticODECovarianceOutput",
+    "ProbabilisticODEFactorization",
+    "ProbabilisticODEMethod",
+    "ProbabilisticODESolution",
+    "ProbabilisticODEStatus",
+    "ProbabilisticODEUpdate",
     "IdentityStateTransfer",
     "MatrixFunctionDifferentiation",
     "MatrixFunctionKind",
@@ -408,6 +477,12 @@ __all__ = [
     "solver_state_geometry",
     "LeastSquaresBSDEResult",
     "ParticleVectorField",
+    "NeuralCDETrainingData",
+    "NeuralCDETrainingState",
+    "NeuralCDEVectorField",
+    "neural_cde_loss",
+    "OfflineCubicDrivingPath",
+    "PiecewiseLinearDrivingPath",
     "AbstractRoughSolver",
     "Davie",
     "LiftedRoughVectorFields",
@@ -439,6 +514,7 @@ __all__ = [
     "PolynomialBSDERegressionBasis",
     "predict_bsde_least_squares_control",
     "predict_bsde_least_squares_value",
+    "kaplan_yorke_dimension",
     "predict_reflected_path_dependent_control",
     "predict_reflected_path_dependent_value",
     "reflected_path_dependent_bsde_diagnostics",
@@ -462,6 +538,8 @@ __all__ = [
     "VolterraFreeTerm",
     "VolterraKernel",
     "VolterraVectorField",
+    "lyapunov_spectrum_flow",
+    "lyapunov_spectrum_map",
     "semidiscretize_reaction_diffusion",
     "coupled_strong_error",
     "exact_modal_stochastic_convolution",
@@ -473,6 +551,7 @@ __all__ = [
     "solve_caputo_fractional",
     "solve_convolution_volterra",
     "solve_diffrax",
+    "solve_diffrax_cde",
     "fixed_delay_history_capacity",
     "solve_diffrax_delay",
     "solve_diffrax_delay_segmented",
@@ -487,6 +566,7 @@ __all__ = [
     "solve_coupled_fbsde_explicit",
     "solve_interacting_particles",
     "solve_rough_differential",
+    "solve_probabilistic_ode",
     "solve_rough_delay",
     "solve_deep_picard",
     "solve_deep_bsde",
@@ -501,6 +581,7 @@ __all__ = [
     "FunctionalSolver",
     "EnforcedConstraintPipeline",
     "EnforcedConstraintPipelines",
+    "train_neural_cde",
     "EnforcedInteriorData",
     "SingleFieldEnforcedConstraint",
     "MultiFieldEnforcedConstraint",

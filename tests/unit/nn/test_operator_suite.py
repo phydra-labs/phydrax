@@ -161,6 +161,7 @@ def test_operator_architecture_tiers_and_recommendation_eligibility_are_exact():
             "GaussianFunctionOperator",
             "Poseidon",
             "DPOT",
+            "DiagonalStateSpaceMixer",
             "Transolver",
             "TransolverPlusPlus",
             "GNOT",

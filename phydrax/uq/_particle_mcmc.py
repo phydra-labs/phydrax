@@ -333,6 +333,7 @@ def conditional_particle_filter(
             end = flat_times[case_index, step]
             value = flat_values[case_index, step]
             mask = flat_masks[case_index, step]
+            context = problem.step_context(case_index, step)
             resampling_key = state_space_key(
                 key, "conditional-smc-resampling", case_id, step
             )
@@ -348,6 +349,7 @@ def conditional_particle_filter(
                             particles[case_index, particle_index],
                             start,
                             end,
+                            context,
                         )
                         for particle_index in range(count)
                     ]
@@ -373,7 +375,7 @@ def conditional_particle_filter(
             proposal_valid = [jnp.asarray(True)]
             if problem.model.transition.has_log_density:
                 reference_log_prob = problem.model.transition.log_prob(
-                    proposed[0], parents[0], start, end
+                    proposed[0], parents[0], start, end, context
                 )
                 proposal_valid[0] = jnp.isfinite(reference_log_prob)
             for particle_index in range(1, count):
@@ -385,7 +387,11 @@ def conditional_particle_filter(
                     member=particle_index,
                 )
                 sample = problem.model.transition.sample(
-                    transition_key, parents[particle_index], start, end
+                    transition_key,
+                    parents[particle_index],
+                    start,
+                    end,
+                    context,
                 )
                 valid = jnp.all(sample.valid) & jnp.all(sample.status == 0)
                 proposed.append(jnp.where(valid, sample.values, parents[particle_index]))
@@ -395,7 +401,11 @@ def conditional_particle_filter(
             observation_log_weights = jnp.stack(
                 [
                     problem.model.observation.log_prob(
-                        value, proposed[particle_index], end, mask
+                        value,
+                        proposed[particle_index],
+                        end,
+                        mask,
+                        context,
                     )
                     for particle_index in range(count)
                 ]

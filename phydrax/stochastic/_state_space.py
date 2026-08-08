@@ -26,6 +26,10 @@ from ._linear_gaussian import (
     LinearGaussianParameters,
 )
 from ._process import AbstractMarginalTransitionLaw, AbstractProcessDistribution
+from ._state_space_input import (
+    AbstractStateSpaceInput,
+    InputEvaluation,
+)
 
 
 def _shape(value: Sequence[int], /, *, owner: str) -> tuple[int, ...]:
@@ -86,6 +90,54 @@ def state_space_key(
     key = jr.fold_in(key, second)
     key = jr.fold_in(key, jnp.asarray(step, dtype=jnp.uint32))
     return jr.fold_in(key, jnp.asarray(member, dtype=jnp.uint32))
+
+
+class StateSpaceStepContext(StrictModule):
+    """Dynamic context shared by one transition and observation schedule step."""
+
+    args: Any
+    case_index: Array
+    step_index: Array
+    transition_start_input: Array
+    transition_end_input: Array
+    observation_input: Array
+    input_breakpoints: Array
+    input_breakpoint_valid: Array
+    input_valid: Array
+    input_signal: AbstractStateSpaceInput | None
+
+    @classmethod
+    def empty(
+        cls,
+        /,
+        *,
+        args: Any = None,
+        case_index: ArrayLike = 0,
+        step_index: ArrayLike = 0,
+    ) -> StateSpaceStepContext:
+        absent = jnp.empty((0,), dtype=float)
+        return cls(
+            args=args,
+            case_index=jnp.asarray(case_index, dtype=jnp.int32),
+            step_index=jnp.asarray(step_index, dtype=jnp.int32),
+            transition_start_input=absent,
+            transition_end_input=absent,
+            observation_input=absent,
+            input_breakpoints=absent,
+            input_breakpoint_valid=jnp.empty((0,), dtype=bool),
+            input_valid=jnp.asarray(True),
+            input_signal=None,
+        )
+
+    def evaluate_input(
+        self,
+        time: ArrayLike,
+        /,
+    ) -> InputEvaluation:
+        """Evaluate the same interval-local input at an arbitrary internal time."""
+        if self.input_signal is None:
+            raise ValueError("This state-space step has no exogenous input signal.")
+        return self.input_signal.evaluate(time, self.case_index)
 
 
 class ObservationSequence(StrictModule):
@@ -454,6 +506,7 @@ class AbstractTransitionKernel(StrictModule):
         state: ArrayLike,
         t0: ArrayLike,
         t1: ArrayLike,
+        context: StateSpaceStepContext,
         /,
     ) -> TransitionSample:
         raise NotImplementedError
@@ -465,14 +518,19 @@ class AbstractTransitionKernel(StrictModule):
         state: ArrayLike,
         t0: ArrayLike,
         t1: ArrayLike,
+        context: StateSpaceStepContext,
         /,
     ) -> Array:
         raise NotImplementedError
 
 
 class CallableTransitionKernel(AbstractTransitionKernel):
-    sample_fn: Callable[[Array, Array, Array, Array], Array | TransitionSample]
-    log_prob_fn: Callable[[Array, Array, Array, Array], Array] | None
+    sample_fn: Callable[
+        [Array, Array, Array, Array, StateSpaceStepContext], Array | TransitionSample
+    ]
+    log_prob_fn: (
+        Callable[[Array, Array, Array, Array, StateSpaceStepContext], Array] | None
+    )
     state_shape: tuple[int, ...] = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
@@ -480,13 +538,18 @@ class CallableTransitionKernel(AbstractTransitionKernel):
 
     def __init__(
         self,
-        sample_fn: Callable[[Array, Array, Array, Array], Array | TransitionSample],
+        sample_fn: Callable[
+            [Array, Array, Array, Array, StateSpaceStepContext],
+            Array | TransitionSample,
+        ],
         /,
         *,
         state_shape: Sequence[int],
         process_id: str,
         approximation_id: str,
-        log_prob_fn: Callable[[Array, Array, Array, Array], Array] | None = None,
+        log_prob_fn: (
+            Callable[[Array, Array, Array, Array, StateSpaceStepContext], Array] | None
+        ) = None,
     ):
         if not callable(sample_fn):
             raise TypeError("sample_fn must be callable.")
@@ -499,10 +562,12 @@ class CallableTransitionKernel(AbstractTransitionKernel):
         self.approximation_id = _name(approximation_id, owner="approximation_id")
         self.has_log_density = log_prob_fn is not None
 
-    def sample(self, key, state, t0, t1, /) -> TransitionSample:
+    def sample(self, key, state, t0, t1, context, /) -> TransitionSample:
         state_array = jnp.asarray(state)
         _ends_with(state_array, self.state_shape, owner="state")
-        result = self.sample_fn(key, state_array, jnp.asarray(t0), jnp.asarray(t1))
+        result = self.sample_fn(
+            key, state_array, jnp.asarray(t0), jnp.asarray(t1), context
+        )
         if isinstance(result, TransitionSample):
             if result.process_id != self.process_id:
                 raise ValueError("TransitionSample process_id does not match its kernel.")
@@ -519,7 +584,7 @@ class CallableTransitionKernel(AbstractTransitionKernel):
             approximation_id=self.approximation_id,
         )
 
-    def log_prob(self, next_state, state, t0, t1, /) -> Array:
+    def log_prob(self, next_state, state, t0, t1, context, /) -> Array:
         if self.log_prob_fn is None:
             raise ValueError("This transition kernel does not provide a log density.")
         return jnp.asarray(
@@ -528,6 +593,7 @@ class CallableTransitionKernel(AbstractTransitionKernel):
                 jnp.asarray(state),
                 jnp.asarray(t0),
                 jnp.asarray(t1),
+                context,
             )
         )
 
@@ -554,7 +620,8 @@ class MarginalTransitionKernel(AbstractTransitionKernel):
         self.approximation_id = _name(approximation_id, owner="approximation_id")
         self.has_log_density = True
 
-    def sample(self, key, state, t0, t1, /) -> TransitionSample:
+    def sample(self, key, state, t0, t1, context, /) -> TransitionSample:
+        del context
         state_array = jnp.asarray(state)
         _ends_with(state_array, self.state_shape, owner="state")
         distribution = self.law.marginal_transition(state_array, t0=t0, t1=t1)
@@ -572,7 +639,8 @@ class MarginalTransitionKernel(AbstractTransitionKernel):
             approximation_id=self.approximation_id,
         )
 
-    def log_prob(self, next_state, state, t0, t1, /) -> Array:
+    def log_prob(self, next_state, state, t0, t1, context, /) -> Array:
+        del context
         distribution = self.law.marginal_transition(state, t0=t0, t1=t1)
         return distribution.log_prob(next_state)
 
@@ -624,9 +692,11 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
                     "offset must be omitted when using a parameterization object."
                 )
             parameterization = transition
-            if state_shape is not None and _shape(
-                state_shape, owner="state_shape"
-            ) != parameterization.state_shape:
+            if (
+                state_shape is not None
+                and _shape(state_shape, owner="state_shape")
+                != parameterization.state_shape
+            ):
                 raise ValueError(
                     "state_shape must match the parameterization state shape."
                 )
@@ -670,11 +740,7 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
             owner="process_id",
         )
         self.approximation_id = _name(
-            (
-                default_approximation_id
-                if approximation_id is None
-                else approximation_id
-            ),
+            (default_approximation_id if approximation_id is None else approximation_id),
             owner="approximation_id",
         )
         self.parameterization_id = parameterization_id
@@ -702,18 +768,29 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
         )
 
     def parameters(
-        self, t0: ArrayLike, t1: ArrayLike, /
+        self,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
     ) -> LinearGaussianParameters:
-        return self.parameterization.parameters(t0, t1)
+        return self.parameterization.parameters(t0, t1, context)
 
-    def mean(self, state: ArrayLike, t0: ArrayLike, t1: ArrayLike, /) -> Array:
+    def mean(
+        self,
+        state: ArrayLike,
+        t0: ArrayLike,
+        t1: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
         values = jnp.asarray(state)
         _ends_with(values, self.state_shape, owner="state")
         size = _event_size(self.state_shape)
         batch_shape = (
             values.shape[: -len(self.state_shape)] if self.state_shape else values.shape
         )
-        parameters = self.parameters(t0, t1)
+        parameters = self.parameters(t0, t1, context)
         flat = values.reshape(batch_shape + (size,))
         mean = (
             jnp.einsum("...ij,...j->...i", parameters.transition, flat)
@@ -721,9 +798,9 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
         )
         return mean.reshape(batch_shape + self.state_shape)
 
-    def sample(self, key, state, t0, t1, /) -> TransitionSample:
-        mean = self.mean(state, t0, t1)
-        covariance = self.parameters(t0, t1).covariance
+    def sample(self, key, state, t0, t1, context, /) -> TransitionSample:
+        mean = self.mean(state, t0, t1, context)
+        covariance = self.parameters(t0, t1, context).covariance
         size = _event_size(self.state_shape)
         batch_shape = (
             mean.shape[: -len(self.state_shape)] if self.state_shape else mean.shape
@@ -752,11 +829,11 @@ class LinearGaussianTransitionKernel(AbstractTransitionKernel):
             approximation_id=self.approximation_id,
         )
 
-    def log_prob(self, next_state, state, t0, t1, /) -> Array:
+    def log_prob(self, next_state, state, t0, t1, context, /) -> Array:
         if not self.has_log_density:
             raise ValueError("This transition kernel does not provide a log density.")
-        mean = self.mean(state, t0, t1)
-        covariance = self.parameters(t0, t1).covariance
+        mean = self.mean(state, t0, t1, context)
+        covariance = self.parameters(t0, t1, context).covariance
         size = _event_size(self.state_shape)
         batch_shape = (
             mean.shape[: -len(self.state_shape)] if self.state_shape else mean.shape
@@ -776,12 +853,20 @@ class AbstractObservationModel(StrictModule):
     observation_id: AbstractAttribute[str]
 
     @abstractmethod
-    def location(self, state: ArrayLike, time: ArrayLike, /) -> Array:
+    def location(
+        self, state: ArrayLike, time: ArrayLike, context: StateSpaceStepContext, /
+    ) -> Array:
         raise NotImplementedError
 
     @abstractmethod
     def log_prob(
-        self, value: ArrayLike, state: ArrayLike, time: ArrayLike, mask: ArrayLike, /
+        self,
+        value: ArrayLike,
+        state: ArrayLike,
+        time: ArrayLike,
+        mask: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
     ) -> Array:
         raise NotImplementedError
 
@@ -791,24 +876,29 @@ class AbstractObservationModel(StrictModule):
         key: Key[Array, ""],
         state: ArrayLike,
         time: ArrayLike,
+        context: StateSpaceStepContext,
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         raise NotImplementedError
 
 
 class CallableObservationModel(AbstractObservationModel):
-    location_fn: Callable[[Array, Array], Array]
-    log_prob_fn: Callable[[Array, Array, Array, Array], Array]
-    sample_fn: Callable[[Array, Array, Array, tuple[int, ...]], Array]
+    location_fn: Callable[[Array, Array, StateSpaceStepContext], Array]
+    log_prob_fn: Callable[[Array, Array, Array, Array, StateSpaceStepContext], Array]
+    sample_fn: Callable[
+        [Array, Array, Array, tuple[int, ...], StateSpaceStepContext], Array
+    ]
     state_shape: tuple[int, ...] = eqx.field(static=True)
     observation_shape: tuple[int, ...] = eqx.field(static=True)
     observation_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        location_fn: Callable[[Array, Array], Array],
-        log_prob_fn: Callable[[Array, Array, Array, Array], Array],
-        sample_fn: Callable[[Array, Array, Array, tuple[int, ...]], Array],
+        location_fn: Callable[[Array, Array, StateSpaceStepContext], Array],
+        log_prob_fn: Callable[[Array, Array, Array, Array, StateSpaceStepContext], Array],
+        sample_fn: Callable[
+            [Array, Array, Array, tuple[int, ...], StateSpaceStepContext], Array
+        ],
         /,
         *,
         state_shape: Sequence[int],
@@ -828,25 +918,32 @@ class CallableObservationModel(AbstractObservationModel):
         self.observation_shape = _shape(observation_shape, owner="observation_shape")
         self.observation_id = _name(observation_id, owner="observation_id")
 
-    def location(self, state, time, /) -> Array:
-        values = jnp.asarray(self.location_fn(jnp.asarray(state), jnp.asarray(time)))
+    def location(self, state, time, context, /) -> Array:
+        values = jnp.asarray(
+            self.location_fn(jnp.asarray(state), jnp.asarray(time), context)
+        )
         _ends_with(values, self.observation_shape, owner="observation location")
         return values
 
-    def log_prob(self, value, state, time, mask, /) -> Array:
+    def log_prob(self, value, state, time, mask, context, /) -> Array:
         return jnp.asarray(
             self.log_prob_fn(
                 jnp.asarray(value),
                 jnp.asarray(state),
                 jnp.asarray(time),
                 jnp.asarray(mask),
+                context,
             )
         )
 
-    def sample(self, key, state, time, sample_shape=()) -> Array:
+    def sample(self, key, state, time, context, sample_shape=()) -> Array:
         return jnp.asarray(
             self.sample_fn(
-                key, jnp.asarray(state), jnp.asarray(time), tuple(sample_shape)
+                key,
+                jnp.asarray(state),
+                jnp.asarray(time),
+                tuple(sample_shape),
+                context,
             )
         )
 
@@ -872,31 +969,23 @@ def _masked_gaussian_log_prob(
         batch_shape + (size,)
     )
     covariance = jnp.broadcast_to(covariance, batch_shape + (size, size))
-    active = mask.astype(covariance.dtype)
-    covariance = covariance * active[..., :, None] * active[..., None, :] + jnp.eye(
-        size, dtype=covariance.dtype
-    ) * (1.0 - active[..., :, None])
+    active_pairs = mask[..., :, None] & mask[..., None, :]
+    covariance = jnp.where(active_pairs, covariance, jnp.zeros_like(covariance))
     residual = jnp.where(mask, value - location, 0.0)
-    scale = jnp.linalg.cholesky(covariance)
-    solved = jax.scipy.linalg.solve_triangular(scale, residual[..., None], lower=True)[
-        ..., 0
-    ]
-    logdet = 2.0 * jnp.sum(jnp.log(jnp.diagonal(scale, axis1=-2, axis2=-1)), axis=-1)
-    count = jnp.sum(mask, axis=-1)
-    return -0.5 * (jnp.sum(solved**2, axis=-1) + logdet + count * jnp.log(2.0 * jnp.pi))
+    return degenerate_gaussian_log_prob(residual, covariance)
 
 
 class GaussianObservationModel(AbstractObservationModel):
-    location_fn: Callable[[Array, Array], Array]
-    covariance: Array | Callable[[Array], ArrayLike]
+    location_fn: Callable[[Array, Array, StateSpaceStepContext], Array]
+    covariance: Array | Callable[[Array, StateSpaceStepContext], ArrayLike]
     state_shape: tuple[int, ...] = eqx.field(static=True)
     observation_shape: tuple[int, ...] = eqx.field(static=True)
     observation_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        location: Callable[[Array, Array], Array],
-        covariance: ArrayLike | Callable[[Array], ArrayLike],
+        location: Callable[[Array, Array, StateSpaceStepContext], Array],
+        covariance: ArrayLike | Callable[[Array, StateSpaceStepContext], ArrayLike],
         /,
         *,
         state_shape: Sequence[int],
@@ -907,7 +996,7 @@ class GaussianObservationModel(AbstractObservationModel):
             raise TypeError("location must be callable.")
         self.location_fn = location
         self.covariance = (
-            cast(Callable[[Array], ArrayLike], covariance)
+            cast(Callable[[Array, StateSpaceStepContext], ArrayLike], covariance)
             if callable(covariance)
             else jnp.asarray(covariance, dtype=float)
         )
@@ -915,29 +1004,31 @@ class GaussianObservationModel(AbstractObservationModel):
         self.observation_shape = _shape(observation_shape, owner="observation_shape")
         self.observation_id = _name(observation_id, owner="observation_id")
 
-    def location(self, state, time, /) -> Array:
-        values = jnp.asarray(self.location_fn(jnp.asarray(state), jnp.asarray(time)))
+    def location(self, state, time, context, /) -> Array:
+        values = jnp.asarray(
+            self.location_fn(jnp.asarray(state), jnp.asarray(time), context)
+        )
         _ends_with(values, self.observation_shape, owner="observation location")
         return values
 
-    def covariance_at(self, time: ArrayLike, /) -> Array:
-        values = _parameter(self.covariance, jnp.asarray(time))
+    def covariance_at(self, time: ArrayLike, context: StateSpaceStepContext, /) -> Array:
+        values = _parameter(self.covariance, jnp.asarray(time), context)
         size = _event_size(self.observation_shape)
         if values.shape[-2:] != (size, size):
             raise ValueError("Observation covariance has an incompatible trailing shape.")
         return values
 
-    def log_prob(self, value, state, time, mask, /) -> Array:
+    def log_prob(self, value, state, time, mask, context, /) -> Array:
         return _masked_gaussian_log_prob(
             jnp.asarray(value),
-            self.location(state, time),
-            self.covariance_at(time),
+            self.location(state, time, context),
+            self.covariance_at(time, context),
             jnp.asarray(mask, dtype=bool),
             observation_shape=self.observation_shape,
         )
 
-    def sample(self, key, state, time, sample_shape=()) -> Array:
-        location = self.location(state, time)
+    def sample(self, key, state, time, context, sample_shape=()) -> Array:
+        location = self.location(state, time, context)
         size = _event_size(self.observation_shape)
         batch_shape = (
             location.shape[: -len(self.observation_shape)]
@@ -945,7 +1036,7 @@ class GaussianObservationModel(AbstractObservationModel):
             else location.shape
         )
         covariance = jnp.broadcast_to(
-            self.covariance_at(time), batch_shape + (size, size)
+            self.covariance_at(time, context), batch_shape + (size, size)
         )
         scale = jnp.linalg.cholesky(covariance)
         samples = _shape(sample_shape, owner="sample_shape")
@@ -957,36 +1048,36 @@ class GaussianObservationModel(AbstractObservationModel):
 
 
 class LinearGaussianObservationModel(AbstractObservationModel):
-    matrix: Array | Callable[[Array], ArrayLike]
-    offset: Array | Callable[[Array], ArrayLike]
-    covariance: Array | Callable[[Array], ArrayLike]
+    matrix: Array | Callable[[Array, StateSpaceStepContext], ArrayLike]
+    offset: Array | Callable[[Array, StateSpaceStepContext], ArrayLike]
+    covariance: Array | Callable[[Array, StateSpaceStepContext], ArrayLike]
     state_shape: tuple[int, ...] = eqx.field(static=True)
     observation_shape: tuple[int, ...] = eqx.field(static=True)
     observation_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        matrix: ArrayLike | Callable[[Array], ArrayLike],
-        covariance: ArrayLike | Callable[[Array], ArrayLike],
+        matrix: ArrayLike | Callable[[Array, StateSpaceStepContext], ArrayLike],
+        covariance: ArrayLike | Callable[[Array, StateSpaceStepContext], ArrayLike],
         /,
         *,
         state_shape: Sequence[int],
         observation_shape: Sequence[int],
-        offset: ArrayLike | Callable[[Array], ArrayLike] = 0.0,
+        offset: ArrayLike | Callable[[Array, StateSpaceStepContext], ArrayLike] = 0.0,
         observation_id: str = "linear-gaussian-observation",
     ):
         self.matrix = (
-            cast(Callable[[Array], ArrayLike], matrix)
+            cast(Callable[[Array, StateSpaceStepContext], ArrayLike], matrix)
             if callable(matrix)
             else jnp.asarray(matrix, dtype=float)
         )
         self.offset = (
-            cast(Callable[[Array], ArrayLike], offset)
+            cast(Callable[[Array, StateSpaceStepContext], ArrayLike], offset)
             if callable(offset)
             else jnp.asarray(offset, dtype=float)
         )
         self.covariance = (
-            cast(Callable[[Array], ArrayLike], covariance)
+            cast(Callable[[Array, StateSpaceStepContext], ArrayLike], covariance)
             if callable(covariance)
             else jnp.asarray(covariance, dtype=float)
         )
@@ -994,13 +1085,15 @@ class LinearGaussianObservationModel(AbstractObservationModel):
         self.observation_shape = _shape(observation_shape, owner="observation_shape")
         self.observation_id = _name(observation_id, owner="observation_id")
 
-    def parameters(self, time: ArrayLike, /) -> tuple[Array, Array, Array]:
+    def parameters(
+        self, time: ArrayLike, context: StateSpaceStepContext, /
+    ) -> tuple[Array, Array, Array]:
         t = jnp.asarray(time)
         state_size = _event_size(self.state_shape)
         observation_size = _event_size(self.observation_shape)
-        matrix = _parameter(self.matrix, t)
-        covariance = _parameter(self.covariance, t)
-        offset = _parameter(self.offset, t)
+        matrix = _parameter(self.matrix, t, context)
+        covariance = _parameter(self.covariance, t, context)
+        offset = _parameter(self.offset, t, context)
         if matrix.shape[-2:] != (observation_size, state_size):
             raise ValueError("Observation matrix has an incompatible trailing shape.")
         if covariance.shape[-2:] != (observation_size, observation_size):
@@ -1008,7 +1101,7 @@ class LinearGaussianObservationModel(AbstractObservationModel):
         offset = jnp.broadcast_to(offset, matrix.shape[:-2] + (observation_size,))
         return matrix, offset, covariance
 
-    def location(self, state, time, /) -> Array:
+    def location(self, state, time, context, /) -> Array:
         state_array = jnp.asarray(state, dtype=float)
         _ends_with(state_array, self.state_shape, owner="state")
         state_size = _event_size(self.state_shape)
@@ -1018,7 +1111,7 @@ class LinearGaussianObservationModel(AbstractObservationModel):
             if self.state_shape
             else state_array.shape
         )
-        matrix, offset, _ = self.parameters(time)
+        matrix, offset, _ = self.parameters(time, context)
         values = (
             jnp.einsum(
                 "...ij,...j->...i",
@@ -1029,19 +1122,19 @@ class LinearGaussianObservationModel(AbstractObservationModel):
         )
         return values.reshape(batch_shape + self.observation_shape)
 
-    def log_prob(self, value, state, time, mask, /) -> Array:
-        _, _, covariance = self.parameters(time)
+    def log_prob(self, value, state, time, mask, context, /) -> Array:
+        _, _, covariance = self.parameters(time, context)
         return _masked_gaussian_log_prob(
             jnp.asarray(value),
-            self.location(state, time),
+            self.location(state, time, context),
             covariance,
             jnp.asarray(mask, dtype=bool),
             observation_shape=self.observation_shape,
         )
 
-    def sample(self, key, state, time, sample_shape=()) -> Array:
-        location = self.location(state, time)
-        _, _, covariance = self.parameters(time)
+    def sample(self, key, state, time, context, sample_shape=()) -> Array:
+        location = self.location(state, time, context)
+        _, _, covariance = self.parameters(time, context)
         observation_size = _event_size(self.observation_shape)
         batch_shape = (
             location.shape[: -len(self.observation_shape)]
@@ -1123,12 +1216,117 @@ class StateSpaceModel(StrictModule):
         self.approximation_id = transition.approximation_id
 
 
+def _state_space_input_validity(
+    observations: ObservationSequence,
+    initial_time: Array,
+    input_signal: AbstractStateSpaceInput | None,
+    /,
+) -> Array:
+    """Prevalidate one typed input over every active physical schedule interval."""
+    num_steps = observations.num_steps
+    if input_signal is None:
+        return jnp.ones(observations.case_shape + (num_steps,), dtype=bool)
+    case_count = prod(observations.case_shape) if observations.case_shape else 1
+    flat_times = observations.times.reshape((case_count, num_steps))
+    flat_initial = initial_time.reshape((case_count,))
+    flat_active = observations.step_valid.reshape((case_count, num_steps))
+    case_validity: list[Array] = []
+    for case_index in range(case_count):
+        step_validity: list[Array] = []
+        for step_index in range(num_steps):
+            start = (
+                flat_initial[case_index]
+                if step_index == 0
+                else flat_times[case_index, step_index - 1]
+            )
+            end = flat_times[case_index, step_index]
+            start_evaluation = input_signal.evaluate(start, case_index)
+            end_evaluation = input_signal.evaluate(end, case_index)
+            valid = start_evaluation.valid & end_evaluation.valid
+            step_validity.append(
+                jnp.where(flat_active[case_index, step_index], valid, True)
+            )
+        case_validity.append(jnp.stack(step_validity))
+    input_valid = jnp.stack(case_validity).reshape(observations.case_shape + (num_steps,))
+    if bool(jnp.any(~input_valid)):
+        raise ValueError(
+            "Input signal does not support every active transition endpoint "
+            "and observation time."
+        )
+    return input_valid
+
+
+def _state_space_step_context(
+    observations: ObservationSequence,
+    initial_time: Array,
+    input_signal: AbstractStateSpaceInput | None,
+    input_valid: Array,
+    args: Any,
+    case_index: ArrayLike,
+    step_index: ArrayLike,
+    /,
+) -> StateSpaceStepContext:
+    """Construct one canonical context from a validated physical schedule."""
+    case_index_ = jnp.asarray(case_index, dtype=jnp.int32).reshape(())
+    step_index_ = jnp.asarray(step_index, dtype=jnp.int32).reshape(())
+    if input_signal is None:
+        return StateSpaceStepContext.empty(
+            args=args,
+            case_index=case_index_,
+            step_index=step_index_,
+        )
+
+    case_count = prod(observations.case_shape) if observations.case_shape else 1
+    num_steps = observations.num_steps
+    times = observations.times.reshape((case_count, num_steps))
+    initial = initial_time.reshape((case_count,))
+    completed = step_index_ >= num_steps
+    schedule_index = jnp.clip(step_index_, 0, num_steps - 1)
+    previous_index = jnp.maximum(schedule_index - 1, 0)
+    end = times[case_index_, schedule_index]
+    start = jnp.where(
+        schedule_index == 0,
+        initial[case_index_],
+        times[case_index_, previous_index],
+    )
+    start = jnp.where(completed, end, start)
+    start_evaluation = input_signal.evaluate(start, case_index_)
+    end_evaluation = input_signal.evaluate(end, case_index_)
+    input_breakpoints, input_breakpoint_valid = input_signal.breakpoints(
+        start,
+        end,
+        case_index_,
+    )
+    schedule_valid = input_valid.reshape((case_count, num_steps))[
+        case_index_, schedule_index
+    ]
+    valid = jnp.where(
+        completed,
+        end_evaluation.valid,
+        schedule_valid & start_evaluation.valid & end_evaluation.valid,
+    )
+    return StateSpaceStepContext(
+        args=args,
+        case_index=case_index_,
+        step_index=step_index_,
+        transition_start_input=start_evaluation.value,
+        transition_end_input=end_evaluation.value,
+        observation_input=end_evaluation.value,
+        input_breakpoints=input_breakpoints,
+        input_breakpoint_valid=input_breakpoint_valid,
+        input_valid=valid,
+        input_signal=input_signal,
+    )
+
+
 class StateSpaceProblem(StrictModule):
     """State-space model bound to one canonical masked observation schedule."""
 
     model: StateSpaceModel
     observations: ObservationSequence
     initial_time: Array
+    input_signal: AbstractStateSpaceInput | None
+    input_valid: Array
     args: Any
     problem_id: str = eqx.field(static=True)
 
@@ -1141,6 +1339,7 @@ class StateSpaceProblem(StrictModule):
         initial_time: ArrayLike,
         problem_id: str,
         args: Any = None,
+        input_signal: AbstractStateSpaceInput | None = None,
     ):
         if not isinstance(model, StateSpaceModel):
             raise TypeError("model must be a StateSpaceModel.")
@@ -1150,6 +1349,13 @@ class StateSpaceProblem(StrictModule):
             raise ValueError("Prior batch_shape must equal the observation case_shape.")
         if model.observation_shape != observations.observation_shape:
             raise ValueError("Model and sequence observation shapes must agree.")
+        if input_signal is not None:
+            if not isinstance(input_signal, AbstractStateSpaceInput):
+                raise TypeError("input_signal must implement AbstractStateSpaceInput.")
+            if input_signal.case_shape != observations.case_shape:
+                raise ValueError(
+                    "Input signal case_shape must equal the observation case_shape."
+                )
         initial = jnp.asarray(initial_time, dtype=float)
         initial = jnp.broadcast_to(initial, observations.case_shape)
         if bool(jnp.any(~jnp.isfinite(initial))):
@@ -1159,11 +1365,35 @@ class StateSpaceProblem(StrictModule):
             raise ValueError(
                 "initial_time cannot exceed the first valid observation time."
             )
+        input_valid = _state_space_input_validity(
+            observations,
+            initial,
+            input_signal,
+        )
         self.model = model
         self.observations = observations
         self.initial_time = initial
+        self.input_signal = input_signal
+        self.input_valid = input_valid
         self.args = args
         self.problem_id = _name(problem_id, owner="problem_id")
+
+    def step_context(
+        self,
+        case_index: ArrayLike,
+        step_index: ArrayLike,
+        /,
+    ) -> StateSpaceStepContext:
+        """Construct the canonical context for one physical schedule step."""
+        return _state_space_step_context(
+            self.observations,
+            self.initial_time,
+            self.input_signal,
+            self.input_valid,
+            self.args,
+            case_index,
+            step_index,
+        )
 
 
 __all__ = [
@@ -1183,5 +1413,6 @@ __all__ = [
     "state_space_key",
     "StateSpaceModel",
     "StateSpaceProblem",
+    "StateSpaceStepContext",
     "TransitionSample",
 ]

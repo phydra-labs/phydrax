@@ -78,6 +78,9 @@ tests = [
     "pytest-testmon>=2.2.0",
     "pytest-xdist>=3.8.0",
 ]
+qp = [
+    "qpax==0.1.4",
+]
 qa = [
     "ruff>=0.14.14",
     "ty>=0.0.13",

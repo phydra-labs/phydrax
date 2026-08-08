@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from math import prod
-from typing import cast, NamedTuple
+from typing import Any, cast, NamedTuple
 
 import equinox as eqx
 import jax
@@ -24,7 +24,7 @@ class LinearGaussianParameters(NamedTuple):
     covariance: Array
 
 
-ParameterValue = Array | Callable[[Array, Array], ArrayLike]
+ParameterValue = Array | Callable[[Array, Array, Any], ArrayLike]
 
 
 def _shape(value: Sequence[int], /) -> tuple[int, ...]:
@@ -45,10 +45,10 @@ def _inexact(value: ArrayLike, /) -> Array:
     return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
 
 
-def _parameter(value: ParameterValue, start: Array, end: Array, /) -> Array:
+def _parameter(value: ParameterValue, start: Array, end: Array, context: Any, /) -> Array:
     if callable(value):
-        function = cast(Callable[[Array, Array], ArrayLike], value)
-        return _inexact(function(start, end))
+        function = cast(Callable[[Array, Array, Any], ArrayLike], value)
+        return _inexact(function(start, end, context))
     return _inexact(value)
 
 
@@ -64,12 +64,12 @@ class LinearGaussianParameterization(StrictModule):
 
     def __init__(
         self,
-        transition: ArrayLike | Callable[[Array, Array], ArrayLike],
-        covariance: ArrayLike | Callable[[Array, Array], ArrayLike],
+        transition: ArrayLike | Callable[[Array, Array, Any], ArrayLike],
+        covariance: ArrayLike | Callable[[Array, Array, Any], ArrayLike],
         /,
         *,
         state_shape: Sequence[int],
-        offset: ArrayLike | Callable[[Array, Array], ArrayLike] = 0.0,
+        offset: ArrayLike | Callable[[Array, Array, Any], ArrayLike] = 0.0,
         parameterization_id: str = "linear-gaussian-parameters",
         resolved_method: str = "provided",
     ):
@@ -81,32 +81,32 @@ class LinearGaussianParameterization(StrictModule):
             if not callable(value) and bool(jnp.any(~jnp.isfinite(jnp.asarray(value)))):
                 raise ValueError(f"{owner} must be finite.")
         self.transition = (
-            cast(Callable[[Array, Array], ArrayLike], transition)
+            cast(Callable[[Array, Array, Any], ArrayLike], transition)
             if callable(transition)
             else _inexact(transition)
         )
         self.offset = (
-            cast(Callable[[Array, Array], ArrayLike], offset)
+            cast(Callable[[Array, Array, Any], ArrayLike], offset)
             if callable(offset)
             else _inexact(offset)
         )
         self.covariance = (
-            cast(Callable[[Array, Array], ArrayLike], covariance)
+            cast(Callable[[Array, Array, Any], ArrayLike], covariance)
             if callable(covariance)
             else _inexact(covariance)
         )
         self.state_shape = _shape(state_shape)
-        self.parameterization_id = _name(
-            parameterization_id, owner="parameterization_id"
-        )
+        self.parameterization_id = _name(parameterization_id, owner="parameterization_id")
         self.resolved_method = _name(resolved_method, owner="resolved_method")
 
-    def parameters(self, t0: ArrayLike, t1: ArrayLike, /) -> LinearGaussianParameters:
+    def parameters(
+        self, t0: ArrayLike, t1: ArrayLike, context: Any, /
+    ) -> LinearGaussianParameters:
         start, end = jnp.asarray(t0), jnp.asarray(t1)
         size = prod(self.state_shape) if self.state_shape else 1
-        transition = _parameter(self.transition, start, end)
-        covariance = _parameter(self.covariance, start, end)
-        offset = _parameter(self.offset, start, end)
+        transition = _parameter(self.transition, start, end, context)
+        covariance = _parameter(self.covariance, start, end, context)
+        offset = _parameter(self.offset, start, end, context)
         if transition.shape[-2:] != (size, size):
             raise ValueError("transition must end in state_size by state_size.")
         if covariance.shape[-2:] != (size, size):
@@ -193,7 +193,10 @@ class LinearGaussianDynamics(StrictModule):
         drift = jnp.einsum("ij,...j->...i", self.drift_matrix, flat) + self.offset
         return drift.reshape(values.shape)
 
-    def parameters(self, t0: ArrayLike, t1: ArrayLike, /) -> LinearGaussianParameters:
+    def parameters(
+        self, t0: ArrayLike, t1: ArrayLike, context: Any, /
+    ) -> LinearGaussianParameters:
+        del context
         start, end = jnp.asarray(t0), jnp.asarray(t1)
         duration = end - start
         dtype = jnp.result_type(self.drift_matrix, duration)
@@ -219,9 +222,11 @@ class LinearGaussianDynamics(StrictModule):
 
         return LinearGaussianParameters(transition, affine, covariance)
 
-    def discretize(self, t0: ArrayLike, t1: ArrayLike, /) -> LinearGaussianParameters:
+    def discretize(
+        self, t0: ArrayLike, t1: ArrayLike, context: Any, /
+    ) -> LinearGaussianParameters:
         """Return exact interval parameters; equivalent to ``parameters``."""
-        return self.parameters(t0, t1)
+        return self.parameters(t0, t1, context)
 
 
 def degenerate_gaussian_log_prob(residual: Array, covariance: Array, /) -> Array:
@@ -237,9 +242,7 @@ def degenerate_gaussian_log_prob(residual: Array, covariance: Array, /) -> Array
         axis=-1,
     )
     safe_values = jnp.where(positive, eigenvalues, 1.0)
-    quadratic = jnp.sum(
-        jnp.where(positive, coordinates**2 / safe_values, 0.0), axis=-1
-    )
+    quadratic = jnp.sum(jnp.where(positive, coordinates**2 / safe_values, 0.0), axis=-1)
     logdet = jnp.sum(jnp.where(positive, jnp.log(safe_values), 0.0), axis=-1)
     rank = jnp.sum(positive, axis=-1)
     value = -0.5 * (quadratic + logdet + rank * jnp.log(2.0 * jnp.pi))

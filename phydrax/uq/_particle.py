@@ -7,7 +7,7 @@ from __future__ import annotations
 from math import prod
 from os import PathLike
 from pathlib import Path
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import coordax as cx
 import equinox as eqx
@@ -75,9 +75,17 @@ def effective_sample_size(log_weights: Array, /) -> Array:
 
 def _normalized_probabilities(log_weights: Array, /) -> Array:
     normalized, _, valid = normalize_log_weights(log_weights)
-    if not bool(valid):
-        raise ValueError("Cannot resample a degenerate weight vector.")
+    normalized = eqx.error_if(
+        normalized,
+        ~jnp.all(valid),
+        "Cannot resample a degenerate weight vector.",
+    )
     return jnp.exp(normalized)
+
+
+def _stop_indices(indices: Array, /) -> Array:
+    """Mark discrete genealogy choices as explicitly nondifferentiable."""
+    return jax.lax.stop_gradient(jnp.asarray(indices, dtype=jnp.int32))
 
 
 def resample_indices(
@@ -96,17 +104,15 @@ def resample_indices(
     count = int(values.shape[0])
     probabilities = _normalized_probabilities(values)
     if method == "multinomial":
-        return jr.categorical(key, jnp.log(probabilities), shape=(count,)).astype(
-            jnp.int32
-        )
+        return _stop_indices(jr.categorical(key, jnp.log(probabilities), shape=(count,)))
     cumulative = jnp.cumsum(probabilities).at[-1].set(1.0)
     if method == "systematic":
         offset = jr.uniform(key, (), minval=0.0, maxval=1.0 / count)
         positions = offset + jnp.arange(count, dtype=float) / count
-        return jnp.searchsorted(cumulative, positions, side="right").astype(jnp.int32)
+        return _stop_indices(jnp.searchsorted(cumulative, positions, side="right"))
     if method == "stratified":
         positions = (jnp.arange(count, dtype=float) + jr.uniform(key, (count,))) / count
-        return jnp.searchsorted(cumulative, positions, side="right").astype(jnp.int32)
+        return _stop_indices(jnp.searchsorted(cumulative, positions, side="right"))
     expected = count * probabilities
     deterministic_counts = jnp.floor(expected).astype(jnp.int32)
     deterministic_total = jnp.sum(deterministic_counts)
@@ -127,10 +133,12 @@ def resample_indices(
         shape=(count,),
     ).astype(jnp.int32)
     positions = jnp.arange(count, dtype=jnp.int32)
-    return jnp.where(
-        positions < deterministic_total,
-        deterministic,
-        random_indices[jnp.maximum(positions - deterministic_total, 0)],
+    return _stop_indices(
+        jnp.where(
+            positions < deterministic_total,
+            deterministic,
+            random_indices[jnp.maximum(positions - deterministic_total, 0)],
+        )
     )
 
 
@@ -229,6 +237,7 @@ class ParticleFilterResult(StrictModule):
     model_id: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
     sequence_id: str = eqx.field(static=True)
+    input_id: str | None = eqx.field(static=True)
     resampling_method: ResamplingMethod = eqx.field(static=True)
     resampling_policy: ResamplingPolicy = eqx.field(static=True)
     resampling_threshold: float = eqx.field(static=True)
@@ -236,6 +245,115 @@ class ParticleFilterResult(StrictModule):
     @property
     def successful(self) -> Array:
         return jnp.all(self.valid | ~self.step_valid, axis=-1)
+
+
+class ParticleSmootherResult(StrictModule):
+    """Full-interval empirical marginals induced by the realized genealogy."""
+
+    particles: Array
+    log_weights: Array
+    means: Array
+    lineage_indices: Array
+    horizons: Array
+    step_valid: Array
+    valid: Array
+    status: Array
+    times: Array
+    filter_result: ParticleFilterResult
+    state_shape: tuple[int, ...] = eqx.field(static=True)
+    case_shape: tuple[int, ...] = eqx.field(static=True)
+    case_axes: tuple[str, ...] = eqx.field(static=True)
+    case_ids: tuple[str, ...] = eqx.field(static=True)
+    num_particles: int = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
+    ancestry_gradient: str = eqx.field(static=True)
+    model_id: str = eqx.field(static=True)
+    problem_id: str = eqx.field(static=True)
+    sequence_id: str = eqx.field(static=True)
+    input_id: str | None = eqx.field(static=True)
+    resampling_method: ResamplingMethod = eqx.field(static=True)
+    resampling_policy: ResamplingPolicy = eqx.field(static=True)
+
+    @property
+    def successful(self) -> Array:
+        return jnp.all(self.valid | ~self.step_valid, axis=-1)
+
+
+class ParticleBackwardSmootherResult(StrictModule):
+    """Density-based full-interval particle marginals and backward kernels."""
+
+    particles: Array
+    log_weights: Array
+    means: Array
+    backward_log_probabilities: Array
+    pair_log_weights: Array
+    step_valid: Array
+    valid: Array
+    status: Array
+    times: Array
+    filter_result: ParticleFilterResult
+    state_shape: tuple[int, ...] = eqx.field(static=True)
+    case_shape: tuple[int, ...] = eqx.field(static=True)
+    case_axes: tuple[str, ...] = eqx.field(static=True)
+    case_ids: tuple[str, ...] = eqx.field(static=True)
+    num_particles: int = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
+    model_id: str = eqx.field(static=True)
+    problem_id: str = eqx.field(static=True)
+    sequence_id: str = eqx.field(static=True)
+    input_id: str | None = eqx.field(static=True)
+    process_id: str = eqx.field(static=True)
+    approximation_id: str = eqx.field(static=True)
+
+    @property
+    def successful(self) -> Array:
+        return jnp.all(self.valid | ~self.step_valid, axis=-1)
+
+
+class ParticleBackwardSimulationResult(StrictModule):
+    """Backward-simulated paths with their discrete particle-index provenance."""
+
+    paths: Array
+    particle_indices: Array
+    step_valid: Array
+    valid: Array
+    smoother: ParticleBackwardSmootherResult
+    sample_shape: tuple[int, ...] = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
+    ancestry_gradient: str = eqx.field(static=True)
+    model_id: str = eqx.field(static=True)
+    problem_id: str = eqx.field(static=True)
+    sequence_id: str = eqx.field(static=True)
+    input_id: str | None = eqx.field(static=True)
+
+
+class ParticleFisherScoreResult(StrictModule):
+    """Transition-density Fisher-identity score over particle smoothing pairs."""
+
+    transition_score: Any
+    flat_score: Array
+    case_scores: Array
+    valid: Array
+    smoother: ParticleBackwardSmootherResult
+    parameter_size: int = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
+    process_id: str = eqx.field(static=True)
+    approximation_id: str = eqx.field(static=True)
+    model_id: str = eqx.field(static=True)
+    problem_id: str = eqx.field(static=True)
+    sequence_id: str = eqx.field(static=True)
+    input_id: str | None = eqx.field(static=True)
+
+
+class ParticleFisherInformationResult(StrictModule):
+    """Empirical Fisher information formed from physical-case score vectors."""
+
+    information: Array
+    case_scores: Array
+    valid: Array
+    score_result: ParticleFisherScoreResult
+    parameter_size: int = eqx.field(static=True)
+    method_id: str = eqx.field(static=True)
 
 
 def initialize_particle_filter(
@@ -309,6 +427,7 @@ def _propagate_particles(
     propagated_cases = []
     valid_cases = []
     for case_index, case_id in enumerate(problem.observations.case_ids):
+        context = problem.step_context(case_index, state.step_index)
         propagated = []
         particle_valid = []
         for particle_index in range(count):
@@ -327,6 +446,7 @@ def _propagate_particles(
                     previous[case_index, particle_index],
                     starts[case_index],
                     ends[case_index],
+                    context,
                 )
                 sample_valid = jnp.all(sample.valid) & jnp.all(sample.status == 0)
                 propagated.append(
@@ -371,6 +491,7 @@ def _observation_log_likelihoods(
     active_flat = active.reshape((case_count,))
     likelihoods = []
     for case_index in range(case_count):
+        context = problem.step_context(case_index, state.step_index)
         case_likelihoods = []
         for particle_index in range(count):
             if bool(active_flat[case_index]):
@@ -379,6 +500,7 @@ def _observation_log_likelihoods(
                     particles[case_index, particle_index],
                     flat_times[case_index],
                     flat_mask[case_index],
+                    context,
                 )
                 case_likelihoods.append(jnp.asarray(value).reshape(()))
             else:
@@ -480,7 +602,9 @@ def particle_filter_step(
         case_shape + (count,) + problem.model.state_shape
     )
     next_log_weights = jnp.stack(output_weights, axis=0).reshape(case_shape + (count,))
-    ancestors = jnp.stack(ancestor_indices, axis=0).reshape(case_shape + (count,))
+    ancestors = _stop_indices(
+        jnp.stack(ancestor_indices, axis=0).reshape(case_shape + (count,))
+    )
     resampled = jnp.stack(resampled_values, axis=0).reshape(case_shape)
     status = jnp.where(
         ~active,
@@ -604,6 +728,9 @@ def bootstrap_particle_filter(
         model_id=problem.model.model_id,
         problem_id=problem.problem_id,
         sequence_id=problem.observations.sequence_id,
+        input_id=(
+            None if problem.input_signal is None else problem.input_signal.input_id
+        ),
         resampling_method=state.resampling_method,
         resampling_policy=state.resampling_policy,
         resampling_threshold=state.resampling_threshold,
@@ -611,6 +738,546 @@ def bootstrap_particle_filter(
     if raise_on_failure and not bool(jnp.all(result.successful)):
         raise RuntimeError("Particle filtering failed for at least one physical case.")
     return result
+
+
+def full_particle_smoother(
+    result: ParticleFilterResult,
+    /,
+) -> ParticleSmootherResult:
+    """Form full-interval marginals from the complete realized genealogy."""
+    if not isinstance(result, ParticleFilterResult):
+        raise TypeError("result must be a ParticleFilterResult.")
+    case_shape = result.case_shape
+    case_count = prod(case_shape) if case_shape else 1
+    num_steps = result.problem.observations.num_steps
+    count = result.num_particles
+    state_shape = result.state_shape
+    particles = result.particles.reshape((case_count, num_steps, count) + state_shape)
+    filter_weights = result.log_weights.reshape((case_count, num_steps, count))
+    ancestors = result.ancestor_indices.reshape((case_count, num_steps, count))
+    active = result.step_valid.reshape((case_count, num_steps))
+    filter_valid = result.valid.reshape((case_count, num_steps)) & active
+    smoothed_weights = jnp.full_like(filter_weights, -jnp.inf)
+    lineages = jnp.broadcast_to(
+        jnp.arange(count, dtype=jnp.int32), (case_count, num_steps, count)
+    )
+    horizons = jnp.arange(num_steps, dtype=jnp.int32)[None, :].repeat(case_count, axis=0)
+    smoother_valid = jnp.zeros((case_count, num_steps), dtype=bool)
+    for case_index in range(case_count):
+        active_count = int(np.sum(np.asarray(jax.device_get(active[case_index]))))
+        if active_count == 0:
+            continue
+        terminal = active_count - 1
+        case_valid = bool(jnp.all(filter_valid[case_index, : terminal + 1]))
+        terminal_weights = filter_weights[case_index, terminal]
+        for target in range(active_count):
+            lineage = jnp.arange(count, dtype=jnp.int32)
+            for step in range(terminal, target, -1):
+                lineage = ancestors[case_index, step, lineage]
+            lineage = _stop_indices(lineage)
+            grouped = jax.scipy.special.logsumexp(
+                jnp.where(
+                    lineage[None, :] == jnp.arange(count, dtype=jnp.int32)[:, None],
+                    terminal_weights[None, :],
+                    -jnp.inf,
+                ),
+                axis=-1,
+            )
+            normalized, _, weights_valid = normalize_log_weights(grouped)
+            path_valid = case_valid and bool(weights_valid)
+            smoothed_weights = smoothed_weights.at[case_index, target].set(
+                jnp.where(path_valid, normalized, -jnp.inf)
+            )
+            lineages = lineages.at[case_index, target].set(lineage)
+            horizons = horizons.at[case_index, target].set(terminal)
+            smoother_valid = smoother_valid.at[case_index, target].set(path_valid)
+    means = jnp.sum(
+        jnp.exp(smoothed_weights)[..., *(None for _ in state_shape)] * particles,
+        axis=2,
+    )
+    means = jnp.where(
+        smoother_valid[..., *(None for _ in state_shape)],
+        means,
+        jnp.nan,
+    )
+    return ParticleSmootherResult(
+        particles=result.particles,
+        log_weights=smoothed_weights.reshape(case_shape + (num_steps, count)),
+        means=means.reshape(case_shape + (num_steps,) + state_shape),
+        lineage_indices=_stop_indices(lineages.reshape(case_shape + (num_steps, count))),
+        horizons=horizons.reshape(case_shape + (num_steps,)),
+        step_valid=result.step_valid,
+        valid=smoother_valid.reshape(case_shape + (num_steps,)),
+        status=result.status,
+        times=result.times,
+        filter_result=result,
+        state_shape=state_shape,
+        case_shape=case_shape,
+        case_axes=result.case_axes,
+        case_ids=result.case_ids,
+        num_particles=count,
+        method_id="full-particle-ancestry",
+        ancestry_gradient="stop",
+        model_id=result.model_id,
+        problem_id=result.problem_id,
+        sequence_id=result.sequence_id,
+        input_id=result.input_id,
+        resampling_method=result.resampling_method,
+        resampling_policy=result.resampling_policy,
+    )
+
+
+def particle_backward_smoother(
+    result: ParticleFilterResult,
+    /,
+) -> ParticleBackwardSmootherResult:
+    """Compute full-interval FFBSm marginals from normalized transition densities."""
+    if not isinstance(result, ParticleFilterResult):
+        raise TypeError("result must be a ParticleFilterResult.")
+    transition = result.problem.model.transition
+    if not transition.has_log_density:
+        raise ValueError(
+            "Density-based particle smoothing requires a normalized transition density."
+        )
+    case_shape = result.case_shape
+    case_count = prod(case_shape) if case_shape else 1
+    num_steps = result.problem.observations.num_steps
+    count = result.num_particles
+    state_shape = result.state_shape
+    particles = result.particles.reshape((case_count, num_steps, count) + state_shape)
+    filter_weights = result.log_weights.reshape((case_count, num_steps, count))
+    times = result.times.reshape((case_count, num_steps))
+    active = result.step_valid.reshape((case_count, num_steps))
+    filter_valid = result.valid.reshape((case_count, num_steps)) & active
+    smoothed_weights = jnp.full_like(filter_weights, -jnp.inf)
+    backward = jnp.full(
+        (case_count, max(num_steps - 1, 0), count, count),
+        -jnp.inf,
+        dtype=filter_weights.dtype,
+    )
+    pairs = jnp.full_like(backward, -jnp.inf)
+    smoother_valid = jnp.zeros((case_count, num_steps), dtype=bool)
+    for case_index in range(case_count):
+        active_count = int(np.sum(np.asarray(jax.device_get(active[case_index]))))
+        if active_count == 0:
+            continue
+        terminal = active_count - 1
+        if not bool(jnp.all(filter_valid[case_index, :active_count])):
+            continue
+        terminal_weights, _, terminal_valid = normalize_log_weights(
+            filter_weights[case_index, terminal]
+        )
+        if not bool(terminal_valid):
+            continue
+        smoothed_weights = smoothed_weights.at[case_index, terminal].set(terminal_weights)
+        smoother_valid = smoother_valid.at[case_index, terminal].set(True)
+        for step in range(terminal - 1, -1, -1):
+            density_rows = []
+            for next_index in range(count):
+                density_row = []
+                for previous_index in range(count):
+                    density_row.append(
+                        jnp.asarray(
+                            transition.log_prob(
+                                particles[case_index, step + 1, next_index],
+                                particles[case_index, step, previous_index],
+                                times[case_index, step],
+                                times[case_index, step + 1],
+                                result.problem.step_context(case_index, step + 1),
+                            )
+                        ).reshape(())
+                    )
+                density_rows.append(jnp.stack(density_row))
+            density = jnp.stack(density_rows)
+            unnormalized = filter_weights[case_index, step][None, :] + density
+            log_normalizers = jax.scipy.special.logsumexp(unnormalized, axis=-1)
+            row_valid = jnp.isfinite(log_normalizers) & jnp.all(
+                ~jnp.isnan(unnormalized), axis=-1
+            )
+            next_weights = smoothed_weights[case_index, step + 1]
+            required_rows = jnp.isfinite(next_weights)
+            if not bool(jnp.all(row_valid | ~required_rows)):
+                raise RuntimeError(
+                    "Backward particle probabilities degenerated for a physical case."
+                )
+            backward_step = jnp.where(
+                row_valid[:, None],
+                unnormalized - log_normalizers[:, None],
+                -jnp.inf,
+            )
+            pair_step = next_weights[:, None] + backward_step
+            current = jax.scipy.special.logsumexp(pair_step, axis=0)
+            current, _, current_valid = normalize_log_weights(current)
+            if not bool(current_valid):
+                raise RuntimeError(
+                    "Backward particle marginals degenerated for a physical case."
+                )
+            backward = backward.at[case_index, step].set(backward_step)
+            pairs = pairs.at[case_index, step].set(pair_step)
+            smoothed_weights = smoothed_weights.at[case_index, step].set(current)
+            smoother_valid = smoother_valid.at[case_index, step].set(True)
+    means = jnp.sum(
+        jnp.exp(smoothed_weights)[..., *(None for _ in state_shape)] * particles,
+        axis=2,
+    )
+    means = jnp.where(
+        smoother_valid[..., *(None for _ in state_shape)],
+        means,
+        jnp.nan,
+    )
+    return ParticleBackwardSmootherResult(
+        particles=result.particles,
+        log_weights=smoothed_weights.reshape(case_shape + (num_steps, count)),
+        means=means.reshape(case_shape + (num_steps,) + state_shape),
+        backward_log_probabilities=backward.reshape(
+            case_shape + (max(num_steps - 1, 0), count, count)
+        ),
+        pair_log_weights=pairs.reshape(
+            case_shape + (max(num_steps - 1, 0), count, count)
+        ),
+        step_valid=result.step_valid,
+        valid=smoother_valid.reshape(case_shape + (num_steps,)),
+        status=result.status,
+        times=result.times,
+        filter_result=result,
+        state_shape=state_shape,
+        case_shape=case_shape,
+        case_axes=result.case_axes,
+        case_ids=result.case_ids,
+        num_particles=count,
+        method_id="particle-ffbsm",
+        model_id=result.model_id,
+        problem_id=result.problem_id,
+        sequence_id=result.sequence_id,
+        input_id=result.input_id,
+        process_id=transition.process_id,
+        approximation_id=transition.approximation_id,
+    )
+
+
+def particle_backward_simulation(
+    key: Key[Array, ""],
+    result: ParticleFilterResult,
+    /,
+    *,
+    sample_shape: tuple[int, ...] = (),
+) -> ParticleBackwardSimulationResult:
+    """Draw FFBSi paths while retaining the sampled nondifferentiable indices."""
+    smoother = particle_backward_smoother(result)
+    samples = tuple(int(size) for size in sample_shape)
+    if any(size <= 0 for size in samples):
+        raise ValueError("sample_shape dimensions must be positive.")
+    sample_count = prod(samples) if samples else 1
+    case_count = prod(result.case_shape) if result.case_shape else 1
+    num_steps = result.problem.observations.num_steps
+    state_size = prod(result.state_shape) if result.state_shape else 1
+    particles = result.particles.reshape(
+        (case_count, num_steps, result.num_particles, state_size)
+    )
+    weights = smoother.log_weights.reshape((case_count, num_steps, result.num_particles))
+    backward = smoother.backward_log_probabilities.reshape(
+        (case_count, max(num_steps - 1, 0), result.num_particles, result.num_particles)
+    )
+    active = result.step_valid.reshape((case_count, num_steps))
+    paths = np.full((sample_count, case_count, num_steps, state_size), np.nan)
+    particle_indices = np.full((sample_count, case_count, num_steps), -1, dtype=np.int32)
+    sample_valid = np.zeros((sample_count, case_count), dtype=bool)
+    for sample_index in range(sample_count):
+        for case_index, case_id in enumerate(result.case_ids):
+            active_count = int(np.sum(np.asarray(jax.device_get(active[case_index]))))
+            if active_count == 0 or not bool(
+                jnp.all(
+                    smoother.valid.reshape((case_count, num_steps))[
+                        case_index, :active_count
+                    ]
+                )
+            ):
+                continue
+            terminal = active_count - 1
+            terminal_key = state_space_key(
+                key,
+                "particle-backward-simulation",
+                case_id,
+                terminal,
+                member=sample_index,
+            )
+            particle_index = _sample_terminal_index(
+                terminal_key, weights[case_index, terminal]
+            )
+            particle_indices[sample_index, case_index, terminal] = particle_index
+            paths[sample_index, case_index, terminal] = np.asarray(
+                particles[case_index, terminal, particle_index]
+            )
+            for step in range(terminal - 1, -1, -1):
+                draw_key = state_space_key(
+                    key,
+                    "particle-backward-simulation",
+                    case_id,
+                    step,
+                    member=sample_index,
+                )
+                particle_index = _sample_terminal_index(
+                    draw_key, backward[case_index, step, particle_index]
+                )
+                particle_indices[sample_index, case_index, step] = particle_index
+                paths[sample_index, case_index, step] = np.asarray(
+                    particles[case_index, step, particle_index]
+                )
+            sample_valid[sample_index, case_index] = True
+    output_paths = jnp.asarray(paths).reshape(
+        samples + result.case_shape + (num_steps,) + result.state_shape
+    )
+    output_indices = _stop_indices(
+        jnp.asarray(particle_indices).reshape(samples + result.case_shape + (num_steps,))
+    )
+    output_valid = jnp.asarray(sample_valid).reshape(samples + result.case_shape)
+    if not samples:
+        output_paths = output_paths.reshape(
+            result.case_shape + (num_steps,) + result.state_shape
+        )
+        output_indices = output_indices.reshape(result.case_shape + (num_steps,))
+        output_valid = output_valid.reshape(result.case_shape)
+    return ParticleBackwardSimulationResult(
+        paths=output_paths,
+        particle_indices=output_indices,
+        step_valid=result.step_valid,
+        valid=output_valid,
+        smoother=smoother,
+        sample_shape=samples,
+        method_id="particle-ffbsi",
+        ancestry_gradient="stop",
+        model_id=result.model_id,
+        problem_id=result.problem_id,
+        sequence_id=result.sequence_id,
+        input_id=result.input_id,
+    )
+
+
+def _initial_transition_pair_probabilities(
+    smoother: ParticleBackwardSmootherResult,
+    case_index: int,
+    /,
+) -> tuple[Array, Array, Array]:
+    """Reconstruct the filter's initial cloud and its first smoothed pair law."""
+    result = smoother.filter_result
+    case_shape = result.case_shape
+    case_count = prod(case_shape) if case_shape else 1
+    num_steps = result.problem.observations.num_steps
+    count = result.num_particles
+    initial_particles = []
+    for particle_index in range(count):
+        draw_key = state_space_key(
+            result.final_state.root_key,
+            "particle-filter-prior",
+            result.case_ids[case_index],
+            0,
+            member=particle_index,
+        )
+        draw = result.problem.model.prior.sample(draw_key)
+        initial_particles.append(_case_value(draw, case_index, case_shape))
+    initial = jnp.stack(initial_particles)
+    predicted = result.predicted_particles.reshape(
+        (case_count, num_steps, count) + result.state_shape
+    )[case_index, 0]
+    first_weights = smoother.log_weights.reshape((case_count, num_steps, count))[
+        case_index, 0
+    ]
+    first_ancestors = result.ancestor_indices.reshape((case_count, num_steps, count))[
+        case_index, 0
+    ]
+    predicted_weights = jax.scipy.special.logsumexp(
+        jnp.where(
+            first_ancestors[None, :] == jnp.arange(count, dtype=jnp.int32)[:, None],
+            first_weights[None, :],
+            -jnp.inf,
+        ),
+        axis=-1,
+    )
+    transition = result.problem.model.transition
+    initial_time = result.problem.initial_time.reshape((case_count,))[case_index]
+    first_time = result.times.reshape((case_count, num_steps))[case_index, 0]
+    density_rows = []
+    for next_index in range(count):
+        density_row = []
+        for previous_index in range(count):
+            density_row.append(
+                jnp.asarray(
+                    transition.log_prob(
+                        predicted[next_index],
+                        initial[previous_index],
+                        initial_time,
+                        first_time,
+                        result.problem.step_context(case_index, 0),
+                    )
+                ).reshape(())
+            )
+        density_rows.append(jnp.stack(density_row))
+    density = jnp.stack(density_rows)
+    unnormalized = -jnp.log(float(count)) + density
+    log_normalizers = jax.scipy.special.logsumexp(unnormalized, axis=-1)
+    row_valid = jnp.isfinite(log_normalizers) & jnp.all(~jnp.isnan(unnormalized), axis=-1)
+    backward = jnp.where(
+        row_valid[:, None],
+        unnormalized - log_normalizers[:, None],
+        -jnp.inf,
+    )
+    pair_probabilities = jnp.exp(predicted_weights[:, None] + backward)
+    return initial, predicted, jax.lax.stop_gradient(pair_probabilities)
+
+
+def _weighted_log_density(probability: Array, log_density: Array, /) -> Array:
+    safe_log_density = jnp.where(probability > 0.0, log_density, 0.0)
+    return probability * safe_log_density
+
+
+def _case_transition_objective(
+    transition: Any,
+    smoother: ParticleBackwardSmootherResult,
+    case_index: int,
+    /,
+) -> Array:
+    result = smoother.filter_result
+    case_count = prod(result.case_shape) if result.case_shape else 1
+    num_steps = result.problem.observations.num_steps
+    count = result.num_particles
+    particles = result.particles.reshape(
+        (case_count, num_steps, count) + result.state_shape
+    )
+    times = result.times.reshape((case_count, num_steps))
+    pairs = jax.lax.stop_gradient(
+        jnp.exp(
+            smoother.pair_log_weights.reshape(
+                (case_count, max(num_steps - 1, 0), count, count)
+            )[case_index]
+        )
+    )
+    active_count = int(
+        np.sum(
+            np.asarray(
+                jax.device_get(
+                    result.step_valid.reshape((case_count, num_steps))[case_index]
+                )
+            )
+        )
+    )
+    objective = jnp.asarray(0.0, dtype=result.particles.dtype)
+    if active_count > 0:
+        initial, first_particles, initial_pairs = _initial_transition_pair_probabilities(
+            smoother, case_index
+        )
+        initial_time = result.problem.initial_time.reshape((case_count,))[case_index]
+        first_time = times[case_index, 0]
+        for next_index in range(count):
+            for previous_index in range(count):
+                probability = initial_pairs[next_index, previous_index]
+                log_density = jnp.asarray(
+                    transition.log_prob(
+                        first_particles[next_index],
+                        initial[previous_index],
+                        initial_time,
+                        first_time,
+                        result.problem.step_context(case_index, 0),
+                    )
+                ).reshape(())
+                objective = objective + _weighted_log_density(probability, log_density)
+    for step in range(max(active_count - 1, 0)):
+        for next_index in range(count):
+            for previous_index in range(count):
+                probability = pairs[step, next_index, previous_index]
+                log_density = jnp.asarray(
+                    transition.log_prob(
+                        particles[case_index, step + 1, next_index],
+                        particles[case_index, step, previous_index],
+                        times[case_index, step],
+                        times[case_index, step + 1],
+                        result.problem.step_context(case_index, step + 1),
+                    )
+                ).reshape(())
+                objective = objective + _weighted_log_density(probability, log_density)
+    return objective
+
+
+def _flatten_transition_score(score: Any, /) -> Array:
+    leaves = [
+        jnp.ravel(leaf)
+        for leaf in jax.tree_util.tree_leaves(score)
+        if eqx.is_inexact_array(leaf)
+    ]
+    if not leaves:
+        raise ValueError("The transition kernel has no differentiable array parameters.")
+    return jnp.concatenate(leaves)
+
+
+def particle_fisher_score(
+    smoother: ParticleBackwardSmootherResult,
+    /,
+) -> ParticleFisherScoreResult:
+    """Estimate the stored-transition score using Fisher's smoothing identity."""
+    if not isinstance(smoother, ParticleBackwardSmootherResult):
+        raise TypeError("smoother must be a ParticleBackwardSmootherResult.")
+    transition = smoother.filter_result.problem.model.transition
+    if not transition.has_log_density:
+        raise ValueError("A Fisher score requires a normalized transition density.")
+    case_count = prod(smoother.case_shape) if smoother.case_shape else 1
+    valid = smoother.successful.reshape((case_count,))
+    case_scores = []
+    for case_index in range(case_count):
+        case_gradient = eqx.filter_grad(
+            lambda kernel: _case_transition_objective(kernel, smoother, case_index)
+        )(transition)
+        flattened = _flatten_transition_score(case_gradient)
+        case_scores.append(jnp.where(valid[case_index], flattened, 0.0))
+    stacked = jnp.stack(case_scores)
+    total_gradient = eqx.filter_grad(
+        lambda kernel: sum(
+            (
+                _case_transition_objective(kernel, smoother, case_index)
+                for case_index in range(case_count)
+            ),
+            start=jnp.asarray(0.0, dtype=smoother.particles.dtype),
+        )
+    )(transition)
+    flat_score = _flatten_transition_score(total_gradient)
+    return ParticleFisherScoreResult(
+        transition_score=total_gradient,
+        flat_score=flat_score,
+        case_scores=stacked.reshape(smoother.case_shape + (flat_score.shape[0],)),
+        valid=valid.reshape(smoother.case_shape),
+        smoother=smoother,
+        parameter_size=int(flat_score.shape[0]),
+        method_id="particle-fisher-transition-score",
+        process_id=transition.process_id,
+        approximation_id=transition.approximation_id,
+        model_id=smoother.model_id,
+        problem_id=smoother.problem_id,
+        sequence_id=smoother.sequence_id,
+        input_id=smoother.input_id,
+    )
+
+
+def particle_fisher_information(
+    smoother: ParticleBackwardSmootherResult,
+    /,
+) -> ParticleFisherInformationResult:
+    """Form an empirical physical-case Fisher matrix from transition scores."""
+    score = particle_fisher_score(smoother)
+    case_count = prod(smoother.case_shape) if smoother.case_shape else 1
+    case_scores = score.case_scores.reshape((case_count, score.parameter_size))
+    valid = score.valid.reshape((case_count,))
+    valid_count = jnp.sum(valid)
+    information = jnp.einsum(
+        "ci,cj->ij",
+        jnp.where(valid[:, None], case_scores, 0.0),
+        jnp.where(valid[:, None], case_scores, 0.0),
+    ) / jnp.maximum(valid_count, 1)
+    return ParticleFisherInformationResult(
+        information=information,
+        case_scores=score.case_scores,
+        valid=score.valid,
+        score_result=score,
+        parameter_size=score.parameter_size,
+        method_id="particle-empirical-transition-fisher",
+    )
 
 
 def _sample_terminal_index(
@@ -688,83 +1355,8 @@ def sample_particle_backward_paths(
     *,
     sample_shape: tuple[int, ...] = (),
 ) -> Array:
-    """Run backward simulation using normalized transition densities."""
-    if not isinstance(result, ParticleFilterResult):
-        raise TypeError("result must be a ParticleFilterResult.")
-    transition = result.problem.model.transition
-    if not transition.has_log_density:
-        raise ValueError("Backward simulation requires a normalized transition density.")
-    samples = tuple(int(size) for size in sample_shape)
-    if any(size <= 0 for size in samples):
-        raise ValueError("sample_shape dimensions must be positive.")
-    sample_count = prod(samples) if samples else 1
-    case_count = prod(result.case_shape) if result.case_shape else 1
-    num_steps = result.step_valid.shape[-1]
-    state_size = prod(result.state_shape) if result.state_shape else 1
-    particles = result.particles.reshape(
-        (case_count, num_steps, result.num_particles, state_size)
-    )
-    weights = result.log_weights.reshape((case_count, num_steps, result.num_particles))
-    times = result.times.reshape((case_count, num_steps))
-    active = result.step_valid.reshape((case_count, num_steps))
-    paths = np.zeros((sample_count, case_count, num_steps, state_size))
-    for sample_index in range(sample_count):
-        for case_index, case_id in enumerate(result.case_ids):
-            valid_count = int(np.sum(np.asarray(active[case_index])))
-            if valid_count == 0:
-                continue
-            terminal = valid_count - 1
-            terminal_key = state_space_key(
-                key,
-                "particle-backward-smoother",
-                case_id,
-                terminal,
-                member=sample_index,
-            )
-            particle_index = _sample_terminal_index(
-                terminal_key, weights[case_index, terminal]
-            )
-            path = jnp.zeros((num_steps, state_size), dtype=particles.dtype)
-            path = path.at[terminal].set(particles[case_index, terminal, particle_index])
-            for step in range(terminal - 1, -1, -1):
-                transition_terms = []
-                for candidate in range(result.num_particles):
-                    transition_terms.append(
-                        jnp.asarray(
-                            transition.log_prob(
-                                path[step + 1].reshape(result.state_shape),
-                                particles[case_index, step, candidate].reshape(
-                                    result.state_shape
-                                ),
-                                times[case_index, step],
-                                times[case_index, step + 1],
-                            )
-                        ).reshape(())
-                    )
-                backward_weights = weights[case_index, step] + jnp.stack(transition_terms)
-                normalized, _, valid = normalize_log_weights(backward_weights)
-                if not bool(valid):
-                    raise RuntimeError(
-                        "Backward particle weights degenerated for a physical case."
-                    )
-                draw_key = state_space_key(
-                    key,
-                    "particle-backward-smoother",
-                    case_id,
-                    step,
-                    member=sample_index,
-                )
-                particle_index = _sample_terminal_index(draw_key, normalized)
-                path = path.at[step].set(particles[case_index, step, particle_index])
-            if valid_count < num_steps:
-                path = path.at[valid_count:].set(path[terminal])
-            paths[sample_index, case_index] = np.asarray(path)
-    output = jnp.asarray(paths).reshape(
-        samples + result.case_shape + (num_steps,) + result.state_shape
-    )
-    if samples:
-        return output
-    return output.reshape(result.case_shape + (num_steps,) + result.state_shape)
+    """Draw density-based FFBSi paths and return only their state values."""
+    return particle_backward_simulation(key, result, sample_shape=sample_shape).paths
 
 
 def particle_filter_predictive(
@@ -886,6 +1478,9 @@ def _particle_checkpoint_compatibility(
         "problem_id": problem.problem_id,
         "model_id": problem.model.model_id,
         "sequence_id": problem.observations.sequence_id,
+        "input_id": (
+            None if problem.input_signal is None else problem.input_signal.input_id
+        ),
         "state_shape": list(problem.model.state_shape),
         "observation_shape": list(problem.model.observation_shape),
         "case_shape": list(problem.observations.case_shape),
@@ -1010,6 +1605,7 @@ def read_particle_filter_checkpoint(
 __all__ = [
     "bootstrap_particle_filter",
     "effective_sample_size",
+    "full_particle_smoother",
     "initialize_particle_filter",
     "normalize_log_weights",
     "PARTICLE_FILTER_NONFINITE",
@@ -1017,6 +1613,10 @@ __all__ = [
     "read_particle_filter_checkpoint",
     "PARTICLE_FILTER_TRANSITION_FAILURE",
     "PARTICLE_FILTER_WEIGHT_DEGENERACY",
+    "particle_backward_simulation",
+    "particle_backward_smoother",
+    "ParticleBackwardSimulationResult",
+    "ParticleBackwardSmootherResult",
     "particle_filter_diagnostics",
     "ParticleFilterDiagnostics",
     "particle_filter_predictive",
@@ -1026,6 +1626,11 @@ __all__ = [
     "ParticleFilterStatus",
     "ParticleFilterStep",
     "particle_filter_step",
+    "particle_fisher_information",
+    "ParticleFisherInformationResult",
+    "particle_fisher_score",
+    "ParticleFisherScoreResult",
+    "ParticleSmootherResult",
     "resample_indices",
     "ResamplingMethod",
     "write_particle_filter_checkpoint",

@@ -14,7 +14,12 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ._process import AbstractPathwiseTransition
-from ._state_space import AbstractTransitionKernel, TransitionSample
+from ._state_space import (
+    AbstractTransitionKernel,
+    StateSpaceStepContext,
+    TransitionSample,
+)
+from ._state_space_input import SampledStateSpaceInput
 
 
 JumpTransitionAlgorithm: TypeAlias = Literal["next_reaction", "direct_ssa"]
@@ -64,12 +69,91 @@ def _transition_sample(
     )
 
 
+def _input_controller(
+    context: StateSpaceStepContext,
+    controller: Any,
+    dt0: Array | None,
+    start: Array,
+    end: Array,
+    /,
+    *,
+    stochastic: bool,
+    rtol: float,
+    atol: float,
+) -> tuple[Any, Array | None]:
+    """Force solver steps across every declared exogenous-input breakpoint."""
+    import diffrax as dfx
+
+    breakpoint_mask = np.asarray(context.input_breakpoint_valid, dtype=bool)
+    if not np.any(breakpoint_mask):
+        return controller, dt0
+    breakpoints = np.asarray(context.input_breakpoints, dtype=float)[breakpoint_mask]
+    signal = context.input_signal
+    discontinuous = (
+        isinstance(signal, SampledStateSpaceInput)
+        and signal.interpolation == "zero-order-hold"
+    )
+
+    resolved = controller
+    if resolved is None and not stochastic:
+        resolved = dfx.PIDController(rtol=rtol, atol=atol)
+    if isinstance(resolved, dfx.AbstractAdaptiveStepSizeController):
+        return (
+            dfx.ClipStepSizeController(
+                resolved,
+                jump_ts=breakpoints if discontinuous else None,
+                step_ts=None if discontinuous else breakpoints,
+            ),
+            dt0,
+        )
+
+    if resolved is None:
+        resolved = dfx.ConstantStepSize()
+    if isinstance(resolved, dfx.StepTo):
+        base_times = np.asarray(resolved.ts, dtype=float)
+    elif isinstance(resolved, dfx.ConstantStepSize):
+        if dt0 is None:
+            raise ValueError(
+                "Fixed-step input breakpoints require an explicit transition dt0."
+            )
+        start_value = float(start)
+        end_value = float(end)
+        step = abs(float(dt0))
+        step_count = int(np.ceil((end_value - start_value) / step))
+        base_times = np.linspace(start_value, end_value, step_count + 1)
+    else:
+        raise TypeError(
+            "Input breakpoints require an adaptive, ConstantStepSize, or StepTo "
+            "transition controller."
+        )
+
+    if discontinuous:
+        breakpoint_steps = np.concatenate(
+            (
+                np.nextafter(breakpoints, -np.inf),
+                np.nextafter(breakpoints, np.inf),
+            )
+        )
+    else:
+        breakpoint_steps = breakpoints
+    schedule = np.unique(
+        np.concatenate(
+            (
+                base_times,
+                breakpoint_steps,
+                np.asarray([float(start), float(end)]),
+            )
+        )
+    )
+    schedule = schedule[(schedule >= float(start)) & (schedule <= float(end))]
+    return dfx.StepTo(ts=jnp.asarray(schedule, dtype=start.dtype)), None
+
+
 class DifferentialTransitionKernel(AbstractTransitionKernel):
     """One-interval ODE/SDE transition evaluated by the canonical Diffrax backend."""
 
     drift: Callable
     wiener_terms: tuple[Any, ...]
-    args: Any
     solver: Any
     stepsize_controller: Any
     adjoint: Any
@@ -93,7 +177,6 @@ class DifferentialTransitionKernel(AbstractTransitionKernel):
         process_id: str,
         wiener_terms: Sequence[Any] = (),
         interpretation: str = "ito",
-        args: Any = None,
         solver: Any = None,
         stepsize_controller: Any = None,
         adjoint: Any = None,
@@ -129,7 +212,6 @@ class DifferentialTransitionKernel(AbstractTransitionKernel):
             raise ValueError("max_steps must be positive.")
         self.drift = drift
         self.wiener_terms = terms
-        self.args = args
         self.solver = solver
         self.stepsize_controller = stepsize_controller
         self.adjoint = adjoint
@@ -144,7 +226,7 @@ class DifferentialTransitionKernel(AbstractTransitionKernel):
         self.atol = float(atol)
         self.max_steps = int(max_steps)
 
-    def sample(self, key, state, t0, t1, /) -> TransitionSample:
+    def sample(self, key, state, t0, t1, context, /) -> TransitionSample:
         from ..solver import DifferentialProblem, solve_diffrax
         from ._wiener import WienerRealization
 
@@ -154,12 +236,22 @@ class DifferentialTransitionKernel(AbstractTransitionKernel):
                 f"state must have shape {self.state_shape}; got {state_array.shape}."
             )
         start, end, support = _interval(t0, t1)
+        controller, dt0 = _input_controller(
+            context,
+            self.stepsize_controller,
+            self.dt0,
+            start,
+            end,
+            stochastic=bool(self.wiener_terms),
+            rtol=self.rtol,
+            atol=self.atol,
+        )
         problem = DifferentialProblem(
             self.drift,
             state_array,
             t0=start,
             t1=end,
-            args=self.args,
+            args=context,
             wiener_terms=self.wiener_terms,
             interpretation=self.interpretation,
         )
@@ -180,16 +272,16 @@ class DifferentialTransitionKernel(AbstractTransitionKernel):
             save_times=jnp.asarray([end]),
             realization=realization,
             solver=self.solver,
-            stepsize_controller=self.stepsize_controller,
+            stepsize_controller=controller,
             adjoint=self.adjoint,
-            dt0=self.dt0,
+            dt0=dt0,
             rtol=self.rtol,
             atol=self.atol,
             max_steps=self.max_steps,
             throw=False,
         )
         values = solution.states[-1]
-        valid = solution.valid[-1] & jnp.all(jnp.isfinite(values))
+        valid = context.input_valid & solution.valid[-1] & jnp.all(jnp.isfinite(values))
         return _transition_sample(
             values,
             valid,
@@ -198,8 +290,8 @@ class DifferentialTransitionKernel(AbstractTransitionKernel):
             approximation_id=self.approximation_id,
         )
 
-    def log_prob(self, next_state, state, t0, t1, /) -> Array:
-        del next_state, state, t0, t1
+    def log_prob(self, next_state, state, t0, t1, context, /) -> Array:
+        del next_state, state, t0, t1, context
         raise ValueError("Differential solver transitions do not provide a density.")
 
 
@@ -207,7 +299,6 @@ class JumpTransitionKernel(AbstractTransitionKernel):
     """One-interval finite-activity pure-jump transition."""
 
     process: Any
-    args: Any
     state_shape: tuple[int, ...] = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
@@ -224,7 +315,6 @@ class JumpTransitionKernel(AbstractTransitionKernel):
         max_events_per_channel: int,
         algorithm: JumpTransitionAlgorithm = "next_reaction",
         max_events: int | None = None,
-        args: Any = None,
         approximation_id: str | None = None,
     ):
         from ._jump import AbstractJumpProcess
@@ -240,7 +330,6 @@ class JumpTransitionKernel(AbstractTransitionKernel):
         if total_capacity is not None and total_capacity < 1:
             raise ValueError("max_events must be positive or None.")
         self.process = process
-        self.args = args
         self.state_shape = process.state_shape
         self.process_id = process.process_id
         self.approximation_id = _name(
@@ -252,7 +341,7 @@ class JumpTransitionKernel(AbstractTransitionKernel):
         self.max_events_per_channel = capacity
         self.max_events = total_capacity
 
-    def sample(self, key, state, t0, t1, /) -> TransitionSample:
+    def sample(self, key, state, t0, t1, context, /) -> TransitionSample:
         from ..solver import solve_direct_ssa, solve_next_reaction
         from ._jump import PoissonClockRealization
 
@@ -280,7 +369,7 @@ class JumpTransitionKernel(AbstractTransitionKernel):
             t0=start,
             t1=end,
             save_times=jnp.asarray([end]),
-            args=self.args,
+            args=context,
             max_events=self.max_events,
         )
         values = solution.states[-1]
@@ -293,8 +382,8 @@ class JumpTransitionKernel(AbstractTransitionKernel):
             approximation_id=self.approximation_id,
         )
 
-    def log_prob(self, next_state, state, t0, t1, /) -> Array:
-        del next_state, state, t0, t1
+    def log_prob(self, next_state, state, t0, t1, context, /) -> Array:
+        del next_state, state, t0, t1, context
         raise ValueError("Jump solver transitions do not provide a density.")
 
 
@@ -304,7 +393,6 @@ class JumpDifferentialTransitionKernel(AbstractTransitionKernel):
     drift: Callable
     jump_process: Any
     wiener_terms: tuple[Any, ...]
-    args: Any
     solver: Any
     stepsize_controller: Any
     dt0: Array | None
@@ -333,7 +421,6 @@ class JumpDifferentialTransitionKernel(AbstractTransitionKernel):
         process_id: str | None = None,
         wiener_terms: Sequence[Any] = (),
         interpretation: str = "ito",
-        args: Any = None,
         solver: Any = None,
         stepsize_controller: Any = None,
         dt0: ArrayLike | None = None,
@@ -382,7 +469,6 @@ class JumpDifferentialTransitionKernel(AbstractTransitionKernel):
         self.drift = drift
         self.jump_process = jump_process
         self.wiener_terms = terms
-        self.args = args
         self.solver = solver
         self.stepsize_controller = stepsize_controller
         self.dt0 = resolved_dt0
@@ -403,7 +489,7 @@ class JumpDifferentialTransitionKernel(AbstractTransitionKernel):
         self.event_atol = float(event_atol)
         self.max_steps = int(max_steps)
 
-    def sample(self, key, state, t0, t1, /) -> TransitionSample:
+    def sample(self, key, state, t0, t1, context, /) -> TransitionSample:
         from ..solver import (
             DifferentialProblem,
             JumpDifferentialProblem,
@@ -418,12 +504,22 @@ class JumpDifferentialTransitionKernel(AbstractTransitionKernel):
                 f"state must have shape {self.state_shape}; got {state_array.shape}."
             )
         start, end, support = _interval(t0, t1)
+        controller, dt0 = _input_controller(
+            context,
+            self.stepsize_controller,
+            self.dt0,
+            start,
+            end,
+            stochastic=bool(self.wiener_terms),
+            rtol=self.rtol,
+            atol=self.atol,
+        )
         differential = DifferentialProblem(
             self.drift,
             state_array,
             t0=start,
             t1=end,
-            args=self.args,
+            args=context,
             wiener_terms=self.wiener_terms,
             interpretation=self.interpretation,
         )
@@ -457,8 +553,8 @@ class JumpDifferentialTransitionKernel(AbstractTransitionKernel):
             save_times=jnp.asarray([start, end]),
             wiener_realization=wiener,
             solver=self.solver,
-            stepsize_controller=self.stepsize_controller,
-            dt0=self.dt0,
+            stepsize_controller=controller,
+            dt0=dt0,
             rtol=self.rtol,
             atol=self.atol,
             event_rtol=self.event_rtol,
@@ -468,7 +564,8 @@ class JumpDifferentialTransitionKernel(AbstractTransitionKernel):
         )
         values = solution.states[-1]
         valid = (
-            solution.valid[-1]
+            context.input_valid
+            & solution.valid[-1]
             & solution.events.successful
             & jnp.all(jnp.isfinite(values))
         )
@@ -480,8 +577,8 @@ class JumpDifferentialTransitionKernel(AbstractTransitionKernel):
             approximation_id=self.approximation_id,
         )
 
-    def log_prob(self, next_state, state, t0, t1, /) -> Array:
-        del next_state, state, t0, t1
+    def log_prob(self, next_state, state, t0, t1, context, /) -> Array:
+        del next_state, state, t0, t1, context
         raise ValueError("Hybrid solver transitions do not provide a density.")
 
 
@@ -533,17 +630,27 @@ class FiniteStateTransitionKernel(AbstractTransitionKernel):
         indices = jnp.argmax(matches, axis=-1)
         return indices, valid, batch_shape
 
-    def sample(self, key, state, t0, t1, /) -> TransitionSample:
+    def sample(self, key, state, t0, t1, context, /) -> TransitionSample:
+        del context
         start, end, _ = _interval(t0, t1)
         values = jnp.asarray(state)
         indices, valid, batch_shape = self._indices(values)
         matrix = self.generator.transition_matrix(end - start)
-        probabilities = jnp.maximum(matrix[indices], 0.0)
-        probabilities = probabilities / jnp.sum(probabilities, axis=-1, keepdims=True)
-        draws = jr.categorical(key, jnp.log(probabilities), axis=-1)
+        probabilities = matrix[indices]
+        matrix_valid = (
+            jnp.all(jnp.isfinite(matrix))
+            & jnp.all(matrix >= 0.0)
+            & jnp.all(jnp.abs(jnp.sum(matrix, axis=-1) - 1.0) <= 1e-5)
+        )
+        logits = jnp.where(
+            probabilities > 0.0,
+            jnp.log(probabilities),
+            -jnp.inf,
+        )
+        draws = jr.categorical(key, logits, axis=-1)
         next_values = self.generator.states[draws].reshape(batch_shape + self.state_shape)
         valid_shape = batch_shape
-        valid_values = valid.reshape(valid_shape)
+        valid_values = valid.reshape(valid_shape) & matrix_valid
         output = jnp.where(
             valid_values[..., *([None] * len(self.state_shape))],
             next_values,
@@ -557,7 +664,8 @@ class FiniteStateTransitionKernel(AbstractTransitionKernel):
             approximation_id=self.approximation_id,
         )
 
-    def log_prob(self, next_state, state, t0, t1, /) -> Array:
+    def log_prob(self, next_state, state, t0, t1, context, /) -> Array:
+        del context
         start, end, _ = _interval(t0, t1)
         current, current_valid, batch_shape = self._indices(state)
         following, following_valid, next_batch_shape = self._indices(next_state)
@@ -577,7 +685,7 @@ class PathwiseTransitionKernel(AbstractTransitionKernel):
     """Adapter from an explicit-driver pathwise law to a sampled Markov kernel."""
 
     law: AbstractPathwiseTransition
-    driver_sampler: Callable[[Array, Array, Array], Array]
+    driver_sampler: Callable[[Array, Array, Array, StateSpaceStepContext], Array]
     state_shape: tuple[int, ...] = eqx.field(static=True)
     process_id: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
@@ -586,7 +694,7 @@ class PathwiseTransitionKernel(AbstractTransitionKernel):
     def __init__(
         self,
         law: AbstractPathwiseTransition,
-        driver_sampler: Callable[[Array, Array, Array], Array],
+        driver_sampler: Callable[[Array, Array, Array, StateSpaceStepContext], Array],
         /,
         *,
         approximation_id: str = "sampled-pathwise-transition",
@@ -602,11 +710,13 @@ class PathwiseTransitionKernel(AbstractTransitionKernel):
         self.approximation_id = _name(approximation_id, owner="approximation_id")
         self.has_log_density = False
 
-    def sample(self, key, state, t0, t1, /) -> TransitionSample:
+    def sample(self, key, state, t0, t1, context, /) -> TransitionSample:
         state_array = jnp.asarray(state)
         if tuple(state_array.shape[-len(self.state_shape) :]) != self.state_shape:
             raise ValueError("state has an incompatible trailing state shape.")
-        driver = jnp.asarray(self.driver_sampler(key, jnp.asarray(t0), jnp.asarray(t1)))
+        driver = jnp.asarray(
+            self.driver_sampler(key, jnp.asarray(t0), jnp.asarray(t1), context)
+        )
         if tuple(driver.shape[-len(self.law.driver_shape) :]) != self.law.driver_shape:
             raise ValueError("driver_sampler returned an incompatible driver shape.")
         values = jnp.asarray(
@@ -626,8 +736,8 @@ class PathwiseTransitionKernel(AbstractTransitionKernel):
             approximation_id=self.approximation_id,
         )
 
-    def log_prob(self, next_state, state, t0, t1, /) -> Array:
-        del next_state, state, t0, t1
+    def log_prob(self, next_state, state, t0, t1, context, /) -> Array:
+        del next_state, state, t0, t1, context
         raise ValueError("Sampled pathwise transitions do not provide a density.")
 
 

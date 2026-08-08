@@ -57,12 +57,14 @@ def test_fully_adapted_auxiliary_filter_has_exact_incremental_correction():
     )
     exact = phx.uq.exact_state_space_log_likelihood(problem)
     predicted = result.predicted_particles[0]
+    context = phx.stochastic.StateSpaceStepContext.empty(args=problem.args)
     observation_log_prob = jax.vmap(
         lambda state: problem.model.observation.log_prob(
             jnp.asarray([1.0]),
             state,
             jnp.asarray(1.0),
             jnp.asarray([True]),
+            context,
         )
     )(predicted)
     parent_lookahead = result.auxiliary_log_weights[0][
@@ -87,9 +89,18 @@ def test_fully_adapted_auxiliary_filter_has_exact_incremental_correction():
 def test_callable_guided_proposal_computes_target_density_correction():
     problem = _problem()
 
-    def sample(key, current_problem, previous, t0, t1, observation, mask):
+    def sample(
+        key,
+        current_problem,
+        previous,
+        t0,
+        t1,
+        observation,
+        mask,
+        context,
+    ):
         del observation, mask
-        return current_problem.model.transition.sample(key, previous, t0, t1)
+        return current_problem.model.transition.sample(key, previous, t0, t1, context)
 
     def log_prob(
         proposed,
@@ -99,9 +110,12 @@ def test_callable_guided_proposal_computes_target_density_correction():
         t1,
         observation,
         mask,
+        context,
     ):
         del observation, mask
-        return current_problem.model.transition.log_prob(proposed, previous, t0, t1)
+        return current_problem.model.transition.log_prob(
+            proposed, previous, t0, t1, context
+        )
 
     proposal = phx.uq.CallableGuidedParticleProposal(
         sample,

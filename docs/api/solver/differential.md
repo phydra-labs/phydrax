@@ -84,6 +84,319 @@ solution = phx.solver.solve_diffrax(
 
 ::: phydrax.solver.solve_diffrax
 
+## Controlled differential equations
+
+### Differentiable driving paths
+
+`AbstractDifferentiableDrivingPath` is Phydrax's public first-level control
+contract. A path has closed `support`, a stable `path_id`, a fixed
+`value_shape`, and `evaluate`, `increment`, and `derivative` operations.
+`breakpoints` has fixed JAX capacity; the aligned Boolean `breakpoint_mask`
+identifies the active interior times at which the first derivative may jump.
+The `side="left"` or `"right"` argument gives exact one-sided semantics at
+those times.
+
+The concrete paths make interpolation provenance explicit:
+
+- `CallableDrivingPath` wraps declared value and derivative callbacks together
+  with support, shape, ID, and a complete derivative-breakpoint schedule.
+- `PiecewiseLinearDrivingPath` interpolates a valid sampled prefix exactly.
+  Every active interior sample time is a derivative breakpoint.
+- `CausalBackwardHermiteDrivingPath` uses only already-observed backward
+  slopes. The first interval is linear and its derivative is continuous at
+  knots; this is a causal interpolation, not an offline smoothing fit.
+- `OfflineCubicDrivingPath` is a global natural cubic interpolant. It needs at
+  least four valid samples and uses a JAX tridiagonal solve.
+- `FixedBSplineDrivingPath` evaluates a validated `BSplineGrid`. The grid is
+  non-trainable configuration, while its finite, inexact `coefficients` are
+  ordinary differentiable JAX leaves. Repeated knots have exact one-sided
+  derivative semantics; the grid must still declare a continuous path.
+
+Sampled paths preserve the physical leading sample axis. `time_mask` must be a
+prefix, and `value_mask` must make each sample wholly valid or wholly invalid;
+partial payload repair is rejected. Valid sample times must be finite and
+strictly increasing and valid values finite. Times are promoted to real inexact
+arrays; numeric values are promoted to an inexact dtype without changing their
+physical axes, while masks remain Boolean. No path silently fills, sorts,
+extrapolates, or repairs observations.
+
+The `fit` methods on the three sampled path classes return
+`DrivingPathFitDiagnostics`. It records support, residual norm and maximum,
+minimum and maximum sample spacing, validity/status, sample count and capacity,
+value shape, regularization, and exact `method_id`, `approximation_id`, and
+`backend`. These interpolants have `regularization == 0`; diagnostics never
+relabel interpolation residual as statistical uncertainty.
+
+Gradients follow the numeric leaves. In particular, differentiating through a
+`FixedBSplineDrivingPath` returns a coefficient gradient with the same physical
+basis and payload axes as `coefficients`. Grid topology, masks, IDs, and
+breakpoint schedules are discrete provenance, not differentiable parameters.
+Declared callbacks and `RoughDifferentialProblem` fields must return arrays of
+the documented shape; Phydrax does not transpose or infer coefficient axes.
+Use an inexact dtype for coefficients that participate in gradients.
+
+::: phydrax.solver.AbstractDifferentiableDrivingPath
+
+---
+
+::: phydrax.solver.CallableDrivingPath
+
+---
+
+::: phydrax.solver.PiecewiseLinearDrivingPath
+
+---
+
+::: phydrax.solver.CausalBackwardHermiteDrivingPath
+
+---
+
+::: phydrax.solver.OfflineCubicDrivingPath
+
+---
+
+::: phydrax.solver.FixedBSplineDrivingPath
+
+---
+
+::: phydrax.solver.DrivingPathFitDiagnostics
+
+### CDE solve and the CDE/RDE boundary
+
+`solve_diffrax_cde` solves the differentiable first-level equation
+`dY = V0(t, Y, args) dt + V(t, Y, args) dX`. Construct its dynamics with
+`RoughDifferentialProblem`: `vector_fields(time, state, args)` returns
+`state_shape + (driver_dimension,)`, and an optional
+`drift(time, state, args)` returns `state_shape`. The context is always the
+last callback argument. The path must have exact shape
+`(driver_dimension,)`; matrix- or scalar-shaped controls are not reshaped.
+
+This is deliberately not the rough path solver. A differentiable path supplies
+only first-level values and derivatives. An `AbstractRoughControl` with
+nontrivial second-level information must go to `solve_rough_differential`;
+`solve_diffrax_cde` rejects it rather than discard its lift. Conversely, do not
+replace the Phydrax adapter with an ordinary `diffrax.ControlTerm`.
+`solve_diffrax_cde` lowers the declared CDE to a Phydrax
+`DifferentialProblem`, retains the path and problem IDs, and returns a
+`ControlledDifferentialSolution` with the underlying
+`DifferentialSolution`, interpolation class, control dimension, derivative
+schedule, and lowering metadata.
+
+Derivative breakpoints are exact integration boundaries. Active interior
+breakpoints are passed to `diffrax.ClipStepSizeController` as both `step_ts`
+and `jump_ts`, so a step lands on the knot and restarts with the selected
+one-sided derivative. A path with breakpoint capacity therefore requires an
+adaptive Diffrax controller, normally `diffrax.PIDController`; a fixed-step
+controller is rejected even if the requested grid happens to contain the
+knots. The schedule is stop-gradient discrete data. There is no hidden
+fallback that ignores or perturbs a breakpoint.
+
+All ordinary `solve_diffrax` controls remain explicit: solver, step-size
+controller, adjoint, initial step, event, tolerances, dense output, step
+capacity, and throw policy. `ControlledDifferentialSolution.valid`,
+`successful`, solver and geometry provenance, event information, and dense
+`evaluate` are delegated without changing axes or masks.
+
+::: phydrax.solver.ControlledDifferentialSolution
+
+---
+
+::: phydrax.solver.solve_diffrax_cde
+
+### Neural CDE loss, training, and exact resume
+
+`NeuralCDEVectorField` adapts a callable such as `phydrax.nn.MLP` or
+`phydrax.nn.KAN`. The model consumes a flattened physical state and must return
+exactly `prod(state_shape) * control_dimension` coefficients; the adapter
+restores `state_shape + (control_dimension,)`.
+
+`NeuralCDETrainingData` keeps one differentiable path per physical case,
+case-leading initial states, rank-two `(case, observation)` times and validity,
+and observations shaped `(case, observation) + state_shape`. Every path must
+share the same vector control dimension. Valid times are finite, strictly
+increasing within a case, and inside its path support. `time_channel` must
+evaluate to the physical observation time; this prevents an implicit index
+axis from replacing physical time. Invalid observations remain masked rather
+than imputed. Stable `case_ids` and `data_id` retain data provenance.
+
+`neural_cde_loss` solves each selected case through `solve_diffrax_cde` at its
+own valid physical observation times and returns mean squared error over valid
+state scalars. `solve_options` cannot override those save times.
+`train_neural_cde` applies deterministic Optax mini-batches and returns
+`NeuralCDETrainingState`, including the vector field, optimizer state, last
+loss, exact epoch/batch/update position, ordering algorithm, and data,
+optimizer, solver-configuration, and dynamics IDs.
+
+Start training with `vector_field=...` and no `state`. Resume with
+`state=previous_state` and no `vector_field`; changing batch size, seed,
+shuffle choice, data, optimizer ID, solver configuration ID, or dynamics ID
+changes the training fingerprint and is rejected. Resume occurs at the exact
+private data-plane batch boundary. There is no implicit optimizer reset,
+reshuffle, skipped batch, or compatibility repair.
+
+::: phydrax.solver.NeuralCDEVectorField
+
+---
+
+::: phydrax.solver.NeuralCDETrainingData
+
+---
+
+::: phydrax.solver.NeuralCDETrainingState
+
+---
+
+::: phydrax.solver.neural_cde_loss
+
+---
+
+::: phydrax.solver.train_neural_cde
+
+## Probabilistic ODE filtering
+
+`solve_probabilistic_ode` applies a native-JAX Gaussian ODE filter to a real,
+deterministic, Euclidean `DifferentialProblem`; it does not dispatch to
+Diffrax. `ProbabilisticODEMethod` chooses integrated-Wiener order one through
+four, EK0 or EK1 residual linearization, fixed capacity, optional smoothing,
+factorization and covariance representation, diffusion calibration,
+tolerances, explicit covariance regularization, stiffness threshold, and a
+stable `method_id`.
+
+The public literal contracts are `ProbabilisticODEUpdate` (`"ek0"` or
+`"ek1"`), `ProbabilisticODEFactorization` (`"dense"` or
+`"block_diagonal"`), `ProbabilisticODECovarianceOutput` (`"dense"` or
+`"matrix_free"`), `ProbabilisticODECalibration` (`"none"` or
+`"quasi_mle"`), and `ProbabilisticODEStatus` (`"success"`, `"stiff"`,
+`"nonfinite"`, or `"step_limit_reached"`).
+
+The posterior keeps five uncertainty sources separate:
+
+- `"numerical"` is integrated-Wiener discretization uncertainty;
+- `"process"` is declared model-discrepancy covariance;
+- `"observation"` is declared residual-observation covariance;
+- `"initial_condition"` is declared initial-state covariance;
+- `"parameter"` propagates the declared covariance of flattened
+  `DifferentialProblem.args`.
+
+None is silently converted into SDE process noise or merged with another
+source. A stochastic `DifferentialProblem` is rejected. Parameter uncertainty
+requires inexact problem arguments. `source_covariances`,
+`covariance_factor`, `covariance_matvec`, and guarded `dense_covariance`
+preserve this provenance at each physical save time.
+
+With `adaptive=True`, a uniform pilot pass computes dimensionless residuals and
+redistributes exactly `num_steps` across the interval. This is fixed-work
+residual adaptation, not an unbounded accept/reject controller, and it cannot
+be combined with `step_size`. `"quasi_mle"` calibration rescales only the
+numerical covariance component from accumulated normalized residuals;
+`"none"` keeps `base_diffusion`. Optional smoothing is Rauch--Tung--Striebel
+smoothing over the fixed grid.
+
+Dense filtering guards the augmented dimension
+`(order + 1) * state_size` with `max_dense_dimension`.
+`dense_covariance` separately guards physical-state materialization. Exceeding
+either guard raises; Phydrax never falls back to block diagonal.
+`factorization="block_diagonal"` is an explicit diagonal-across-state
+approximation and rejects non-diagonal input covariances. Covariance
+regularization is exactly the requested nonnegative value; there is no hidden
+jitter or posterior repair.
+
+`ProbabilisticODESolution` exposes means, standard deviations, optional dense
+covariances, factor and source covariances, residuals, normalized residuals,
+step sizes, calibrated diffusion scale, quasi likelihood, validity, stats,
+checkpoint, and exact method/approximation/discretization/backend IDs. Status
+codes are `PROBABILISTIC_ODE_SUCCESS`,
+`PROBABILISTIC_ODE_STIFF`, `PROBABILISTIC_ODE_NONFINITE`, and
+`PROBABILISTIC_ODE_STEP_LIMIT_REACHED`; use
+`probabilistic_ode_status_name` for their stable names. `successful` requires
+success status and every saved marginal valid.
+
+Resume only from `solution.checkpoint`, with the same method ID,
+factorization, state shape, and explicit nominal `step_size`; the resumed
+problem must start at the checkpoint time. Adaptive solves do not resume
+through this fixed-step checkpoint route. Provenance mismatches fail rather
+than restart or reinterpret a checkpoint.
+
+::: phydrax.solver.ProbabilisticODEMethod
+
+---
+
+::: phydrax.solver.ProbabilisticODESolution
+
+---
+
+::: phydrax.solver.probabilistic_ode_status_name
+
+---
+
+::: phydrax.solver.solve_probabilistic_ode
+
+## Lyapunov spectra
+
+`lyapunov_spectrum_map` and `lyapunov_spectrum_flow` implement the public
+`LyapunovSpectrumMethod` value `"periodic_qr"`. They propagate a thin tangent
+basis, periodically QR-factor it, and accumulate logarithmic stretch only
+after burn-in. `leading_k=None` requests the full state dimension; a smaller
+rank computes only the leading finite-time exponents.
+
+For a map, `map_fn(state, args)` advances one physical iterate and
+`tangent_action(state, vector, args)` optionally supplies a matrix-free
+Jacobian action. Without it, JAX JVP supplies that action. `qr_interval`,
+`burn_in`, and `accumulation_interval` are iterate counts, and accumulation
+must be a positive multiple of QR cadence.
+
+For a flow, callbacks retain the state-space context-last signatures
+`drift(time, state, args)` and
+`tangent_action(time, state, vector, args)`. The implementation uses explicit
+fixed-step RK4 for both state and tangent basis, not Diffrax and not an
+adaptive method. `step_size`, QR cadence, burn-in, accumulation cadence, and
+problem duration must align at integer step counts. The result records
+`discretization_id="fixed_rk4_dt=..."`; changing the step changes the
+finite-time approximation.
+
+QR occurs at the configured cadence and also exactly at the burn boundary and
+the end of a call, so no trailing tangent stretch is lost. The accumulation
+history is emitted at `accumulation_interval` and at the end. A too-short call
+can therefore return `LYAPUNOV_INSUFFICIENT_ACCUMULATION`. Other explicit
+status codes are `LYAPUNOV_SUCCESS`, `LYAPUNOV_NONFINITE_TANGENT`, and
+`LYAPUNOV_SINGULAR_TANGENT`; `valid` and `status` are never repaired.
+
+`LyapunovSpectrumCheckpoint` contains the physical state, orthonormal basis,
+accumulated log stretch and time, current time, step and interval counters,
+validity/status, state/rank metadata, cadence, burn-in, and exact system,
+tangent, backend, and discretization provenance. Resume reuses all of it.
+System kind and ID, cadence, burn-in, accumulation cadence, tangent method,
+backend, discretization, and rank must match; a flow continuation's
+`DifferentialProblem.t0` must equal `checkpoint.current_time`. Supplying a new
+initial basis on resume is rejected.
+
+`LyapunovSpectrumResult` carries the final exponents, finite-time history and
+physical accumulation times, last-history convergence drift, final state,
+checkpoint, validity/status, and complete method provenance. Its
+`kaplan_yorke_dimension` is valid only for a finite, valid full spectrum.
+`kaplan_yorke_dimension(exponents)` is also public for a non-empty rank-one
+array containing an explicitly supplied complete spectrum. A `leading_k`
+truncation cannot certify the Kaplan--Yorke dimension and is marked invalid
+rather than extrapolated.
+
+::: phydrax.solver.LyapunovSpectrumCheckpoint
+
+---
+
+::: phydrax.solver.LyapunovSpectrumResult
+
+---
+
+::: phydrax.solver.kaplan_yorke_dimension
+
+---
+
+::: phydrax.solver.lyapunov_spectrum_map
+
+---
+
+::: phydrax.solver.lyapunov_spectrum_flow
+
 ## Geometric ODE and Stratonovich solve
 
 Set `DifferentialProblem.state_geometry` when the state is constrained to an

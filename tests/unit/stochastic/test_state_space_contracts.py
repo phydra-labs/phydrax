@@ -98,13 +98,22 @@ def test_linear_gaussian_roles_sample_and_normalize_masked_observations():
     problem = _linear_problem(mask=jnp.asarray([[True], [False]]))
     transition = problem.model.transition
     observation = problem.model.observation
+    context = phx.stochastic.StateSpaceStepContext.empty()
 
-    sample = transition.sample(jr.key(1), jnp.zeros((4, 1)), 0.0, 0.5)
+    sample = transition.sample(jr.key(1), jnp.zeros((4, 1)), 0.0, 0.5, context)
     observed = observation.log_prob(
-        jnp.asarray([1.0]), jnp.asarray([0.0]), 0.5, jnp.asarray([True])
+        jnp.asarray([1.0]),
+        jnp.asarray([0.0]),
+        0.5,
+        jnp.asarray([True]),
+        context,
     )
     missing = observation.log_prob(
-        jnp.asarray([1.0]), jnp.asarray([0.0]), 0.5, jnp.asarray([False])
+        jnp.asarray([1.0]),
+        jnp.asarray([0.0]),
+        0.5,
+        jnp.asarray([False]),
+        context,
     )
 
     assert sample.values.shape == (4, 1)
@@ -116,21 +125,90 @@ def test_linear_gaussian_roles_sample_and_normalize_masked_observations():
 def test_likelihood_observation_adapter_reduces_only_observed_components():
     model = phx.uq.LikelihoodObservationModel(
         phx.uq.GaussianLikelihood(0.5),
-        lambda state, time: state,
+        lambda state, time, context: state + 0.0 * time + 0.0 * context.step_index,
         state_shape=(2,),
         observation_shape=(2,),
         observation_id="sensor",
     )
+    context = phx.stochastic.StateSpaceStepContext.empty()
     value = model.log_prob(
         jnp.asarray([1.0, 50.0]),
         jnp.asarray([1.0, 0.0]),
         0.0,
         jnp.asarray([True, False]),
+        context,
     )
     expected = phx.uq.GaussianLikelihood(0.5).log_prob(1.0, 1.0)
 
     assert jnp.allclose(value, expected)
-    assert model.sample(jr.key(2), jnp.zeros(2), 0.0, (3,)).shape == (3, 2)
+    assert model.sample(
+        jr.key(2), jnp.zeros(2), 0.0, context, sample_shape=(3,)
+    ).shape == (3, 2)
+
+
+def test_callable_adapters_receive_context_as_the_final_callback_argument():
+    transition = phx.stochastic.CallableTransitionKernel(
+        lambda key, state, t0, t1, context: state + (t1 - t0) * context.args["rate"],
+        state_shape=(1,),
+        process_id="context-transition",
+        approximation_id="hand-checked",
+        log_prob_fn=lambda next_state, state, t0, t1, context: (
+            -jnp.sum((next_state - state - (t1 - t0) * context.args["rate"]) ** 2)
+        ),
+    )
+
+    def observation_sample(key, state, time, sample_shape, context):
+        del key
+        location = state + time * context.args["slope"]
+        return jnp.broadcast_to(location, sample_shape + location.shape)
+
+    observation = phx.stochastic.CallableObservationModel(
+        lambda state, time, context: state + time * context.args["slope"],
+        lambda value, state, time, mask, context: (
+            -jnp.sum(
+                jnp.where(
+                    mask,
+                    (value - state - time * context.args["slope"]) ** 2,
+                    0.0,
+                )
+            )
+        ),
+        observation_sample,
+        state_shape=(1,),
+        observation_shape=(1,),
+        observation_id="context-observation",
+    )
+    context = phx.stochastic.StateSpaceStepContext.empty(
+        args={"rate": jnp.asarray(2.0), "slope": jnp.asarray(3.0)}
+    )
+
+    transition_sample = transition.sample(
+        jr.key(3), jnp.asarray([1.0]), 0.5, 1.0, context
+    )
+    transition_log_prob = transition.log_prob(
+        jnp.asarray([2.0]), jnp.asarray([1.0]), 0.5, 1.0, context
+    )
+    location = observation.location(jnp.asarray([1.0]), 2.0, context)
+    observation_log_prob = observation.log_prob(
+        jnp.asarray([7.0]),
+        jnp.asarray([1.0]),
+        2.0,
+        jnp.asarray([True]),
+        context,
+    )
+    draws = observation.sample(
+        jr.key(4),
+        jnp.asarray([1.0]),
+        2.0,
+        context,
+        sample_shape=(2,),
+    )
+
+    assert jnp.allclose(transition_sample.values, jnp.asarray([2.0]))
+    assert jnp.allclose(transition_log_prob, 0.0)
+    assert jnp.allclose(location, jnp.asarray([7.0]))
+    assert jnp.allclose(observation_log_prob, 0.0)
+    assert jnp.allclose(draws, jnp.asarray([[7.0], [7.0]]))
 
 
 def test_state_space_keys_are_case_identity_and_prefix_stable():

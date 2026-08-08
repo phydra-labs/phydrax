@@ -17,11 +17,15 @@ from jaxtyping import Array, ArrayLike, Key
 from .._frozendict import frozendict
 from .._strict import StrictModule
 from ..stochastic._state_space import (
+    _state_space_input_validity,
+    _state_space_step_context,
     AbstractStatePrior,
     AbstractTransitionKernel,
     ObservationSequence,
     state_space_key,
+    StateSpaceStepContext,
 )
+from ..stochastic._state_space_input import AbstractStateSpaceInput
 from ._particle import (
     effective_sample_size,
     normalize_log_weights,
@@ -37,11 +41,11 @@ from ._particle import (
 
 InitialLinearGaussian: TypeAlias = Callable[[Array, Any], tuple[ArrayLike, ArrayLike]]
 ConditionalLinearTransition: TypeAlias = Callable[
-    [Array, Array, Array, Array, Any],
+    [Array, Array, Array, Array, StateSpaceStepContext],
     tuple[ArrayLike, ArrayLike, ArrayLike],
 ]
 ConditionalLinearObservation: TypeAlias = Callable[
-    [Array, Array, Any],
+    [Array, Array, StateSpaceStepContext],
     tuple[ArrayLike, ArrayLike, ArrayLike],
 ]
 
@@ -52,8 +56,8 @@ class RaoBlackwellizedStateSpaceModel(StrictModule):
     The callbacks return normalized Gaussian parameters:
 
     - ``initial_linear_gaussian(mode, args) -> (mean, covariance)``;
-    - ``linear_transition(previous_mode, mode, t0, t1, args) -> (A, b, Q)``;
-    - ``observation(mode, time, args) -> (H, d, R)``.
+    - ``linear_transition(previous_mode, mode, t0, t1, context) -> (A, b, Q)``;
+    - ``observation(mode, time, context) -> (H, d, R)``.
     """
 
     nonlinear_prior: AbstractStatePrior
@@ -139,7 +143,7 @@ class RaoBlackwellizedStateSpaceModel(StrictModule):
         nonlinear_state: ArrayLike,
         t0: ArrayLike,
         t1: ArrayLike,
-        args: Any = None,
+        context: StateSpaceStepContext,
         /,
     ) -> tuple[Array, Array, Array]:
         matrix, offset, covariance = self.linear_transition_fn(
@@ -147,7 +151,7 @@ class RaoBlackwellizedStateSpaceModel(StrictModule):
             jnp.asarray(nonlinear_state),
             jnp.asarray(t0),
             jnp.asarray(t1),
-            args,
+            context,
         )
         size = prod(self.linear_state_shape) if self.linear_state_shape else 1
         matrix_array = jnp.asarray(matrix, dtype=float)
@@ -163,11 +167,11 @@ class RaoBlackwellizedStateSpaceModel(StrictModule):
         self,
         nonlinear_state: ArrayLike,
         time: ArrayLike,
-        args: Any = None,
+        context: StateSpaceStepContext,
         /,
     ) -> tuple[Array, Array, Array]:
         matrix, offset, covariance = self.observation_fn(
-            jnp.asarray(nonlinear_state), jnp.asarray(time), args
+            jnp.asarray(nonlinear_state), jnp.asarray(time), context
         )
         linear_size = prod(self.linear_state_shape) if self.linear_state_shape else 1
         observation_size = prod(self.observation_shape) if self.observation_shape else 1
@@ -189,6 +193,8 @@ class RaoBlackwellizedStateSpaceProblem(StrictModule):
     model: RaoBlackwellizedStateSpaceModel
     observations: ObservationSequence
     initial_time: Array
+    input_signal: AbstractStateSpaceInput | None
+    input_valid: Array
     args: Any
     problem_id: str = eqx.field(static=True)
 
@@ -201,6 +207,7 @@ class RaoBlackwellizedStateSpaceProblem(StrictModule):
         initial_time: ArrayLike,
         problem_id: str,
         args: Any = None,
+        input_signal: AbstractStateSpaceInput | None = None,
     ):
         if not isinstance(model, RaoBlackwellizedStateSpaceModel):
             raise TypeError("model must be a RaoBlackwellizedStateSpaceModel.")
@@ -212,6 +219,13 @@ class RaoBlackwellizedStateSpaceProblem(StrictModule):
             )
         if model.observation_shape != observations.observation_shape:
             raise ValueError("Model and sequence observation shapes must agree.")
+        if input_signal is not None:
+            if not isinstance(input_signal, AbstractStateSpaceInput):
+                raise TypeError("input_signal must implement AbstractStateSpaceInput.")
+            if input_signal.case_shape != observations.case_shape:
+                raise ValueError(
+                    "Input signal case_shape must equal the observation case_shape."
+                )
         initial = jnp.broadcast_to(
             jnp.asarray(initial_time, dtype=float), observations.case_shape
         )
@@ -221,11 +235,31 @@ class RaoBlackwellizedStateSpaceProblem(StrictModule):
             raise ValueError("initial_time cannot exceed the first observation time.")
         if not isinstance(problem_id, str) or not problem_id:
             raise ValueError("problem_id must be a non-empty string.")
+        input_valid = _state_space_input_validity(
+            observations,
+            initial,
+            input_signal,
+        )
         self.model = model
         self.observations = observations
         self.initial_time = initial
+        self.input_signal = input_signal
+        self.input_valid = input_valid
         self.args = args
         self.problem_id = problem_id
+
+    def step_context(
+        self, case_index: ArrayLike, step_index: ArrayLike, /
+    ) -> StateSpaceStepContext:
+        return _state_space_step_context(
+            self.observations,
+            self.initial_time,
+            self.input_signal,
+            self.input_valid,
+            self.args,
+            case_index,
+            step_index,
+        )
 
 
 class RaoBlackwellizedFilterState(StrictModule):
@@ -312,16 +346,16 @@ def _condition_linear_state(
     t1: Array,
     value: Array,
     mask: Array,
-    args: Any,
+    context: StateSpaceStepContext,
     /,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
     linear_size = prod(model.linear_state_shape) if model.linear_state_shape else 1
     observation_size = prod(model.observation_shape) if model.observation_shape else 1
     transition, transition_offset, process_covariance = (
-        model.linear_transition_parameters(previous_nonlinear, nonlinear, t0, t1, args)
+        model.linear_transition_parameters(previous_nonlinear, nonlinear, t0, t1, context)
     )
     observation, observation_offset, observation_covariance = (
-        model.observation_parameters(nonlinear, t1, args)
+        model.observation_parameters(nonlinear, t1, context)
     )
     flat_mean = previous_mean.reshape((linear_size,))
     forecast_mean = transition @ flat_mean + transition_offset
@@ -513,6 +547,7 @@ def rao_blackwellized_particle_filter(
             end = flat_times[case_index, step]
             value = flat_values[case_index, step]
             mask = flat_masks[case_index, step]
+            context = problem.step_context(case_index, step)
             proposed_modes = []
             forecast_means = []
             forecast_covariances = []
@@ -533,6 +568,7 @@ def rao_blackwellized_particle_filter(
                     nonlinear_particles[case_index, particle_index],
                     start,
                     end,
+                    context,
                 )
                 mode_valid = jnp.all(transition_sample.valid) & jnp.all(
                     transition_sample.status == 0
@@ -552,7 +588,7 @@ def rao_blackwellized_particle_filter(
                     end,
                     value,
                     mask,
-                    problem.args,
+                    context,
                 )
                 forecast_mean, forecast_covariance = conditioned[:2]
                 filtered_mean, filtered_covariance, likelihood, linear_valid = (

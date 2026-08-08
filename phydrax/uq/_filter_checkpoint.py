@@ -39,6 +39,9 @@ def _base_compatibility(problem: StateSpaceProblem, /) -> dict[str, object]:
         "problem_id": problem.problem_id,
         "model_id": problem.model.model_id,
         "sequence_id": problem.observations.sequence_id,
+        "input_id": (
+            None if problem.input_signal is None else problem.input_signal.input_id
+        ),
         "state_shape": list(problem.model.state_shape),
         "observation_shape": list(problem.model.observation_shape),
         "case_shape": list(problem.observations.case_shape),
@@ -94,7 +97,7 @@ def write_kalman_filter_checkpoint(
         path,
         kind="kalman-filter-state-v1",
         compatibility=compatibility,
-        state={"step_index": state.step_index},
+        state={"step_index": _validate_step_index(state.step_index, problem)},
         arrays={
             "mean": state.mean,
             "covariance": state.covariance,
