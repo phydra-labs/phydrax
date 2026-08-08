@@ -83,7 +83,7 @@ def test_gino_configuration_executes_encode_process_decode():
         radius=2.0,
         source_measure=jnp.ones((4,)) / 4.0,
     )
-    processor = phx.nn.FNO(
+    processor = phx.nn.operator.architectures.FNO(
         width=4,
         depth=1,
         n_modes=(2,),

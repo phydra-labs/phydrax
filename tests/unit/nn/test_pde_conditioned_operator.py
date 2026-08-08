@@ -9,7 +9,7 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
-from phydrax.nn.models.architectures._pde_conditioned import (
+from phydrax.nn.operator.architectures.conditioning._pde_conditioned import (
     PDEConditionedInput,
     PDEConditionedOperator,
 )
@@ -35,10 +35,10 @@ def _batch(*, cases: int = 2, identical: bool = False):
     else:
         values = source
         case_axes = ()
-    return phx.nn.OperatorBatch(
-        inputs={"source": phx.nn.FunctionSamples(values=values)},
+    return phx.nn.operator.OperatorBatch(
+        inputs={"source": phx.nn.operator.FunctionSamples(values=values)},
         queries={
-            "query": phx.nn.FunctionSamples(
+            "query": phx.nn.operator.FunctionSamples(
                 values=None,
                 coordinates=jnp.linspace(0.0, 1.0, 5)[:, None],
             )
@@ -49,16 +49,16 @@ def _batch(*, cases: int = 2, identical: bool = False):
 
 def _model():
     source_key, equation_key, trunk_key, encoder_key = jr.split(jr.key(0), 4)
-    operator = phx.nn.DeepONet(
+    operator = phx.nn.operator.architectures.DeepONet(
         branch={
-            "source": phx.nn.MLP(
+            "source": phx.nn.models.MLP(
                 in_size=3,
                 out_size=4,
                 width_size=8,
                 depth=2,
                 key=source_key,
             ),
-            "pde": phx.nn.MLP(
+            "pde": phx.nn.models.MLP(
                 in_size=4,
                 out_size=4,
                 width_size=8,
@@ -66,7 +66,7 @@ def _model():
                 key=equation_key,
             ),
         },
-        trunk=phx.nn.MLP(
+        trunk=phx.nn.models.MLP(
             in_size=1,
             out_size=4,
             width_size=8,
@@ -78,7 +78,7 @@ def _model():
         in_size=3,
         fusion="sum",
     )
-    encoder = phx.nn.PDEConditionEncoder(
+    encoder = phx.nn.operator.architectures.PDEConditionEncoder(
         width=4,
         depth=1,
         dimension_rank=0,
@@ -104,7 +104,7 @@ def test_pde_conditioned_operator_composes_canonical_tasks_and_contracts():
     output = model(PDEConditionedInput(batch, tokens), key=key)
     equivalent_output = model(PDEConditionedInput(batch, equivalent), key=key)
     changed_output = model(PDEConditionedInput(batch, changed), key=key)
-    conditioned = phx.nn.attach_pde_condition(
+    conditioned = phx.nn.operator.architectures.attach_pde_condition(
         batch,
         tokens,
         model.encoder,

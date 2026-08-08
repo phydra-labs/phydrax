@@ -39,6 +39,7 @@ broadcasting.
     ```
 """
 
+from .._model import ModelBinding, ModelEvaluator
 from . import graph
 from ._base import (
     AbstractGeometry,
@@ -192,6 +193,8 @@ __all__ = [
     "as_cochain_field",
     "cochain_field_spec",
     "BatchEvaluator",
+    "ModelBinding",
+    "ModelEvaluator",
     "CallbackDerivativeRule",
     "DerivativeBackend",
     "DerivativeBasis",

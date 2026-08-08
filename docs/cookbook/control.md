@@ -247,7 +247,7 @@ convex-hull certificate covers continuous componentwise control bounds only.
 ```python
 import jax.random as jr
 
-coarse_grid = phx.nn.BSplineGrid(
+coarse_grid = phx.nn.models.BSplineGrid(
     jnp.asarray([0.0, 0.0, 3.0, 6.0, 6.0]),
     1,
 )
@@ -288,7 +288,7 @@ control_bound = spline.bound_certificate(
 if not bool(control_bound.certified):
     raise RuntimeError("the continuous B-spline control bound was not certified")
 
-fine_grid = phx.nn.BSplineGrid(
+fine_grid = phx.nn.models.BSplineGrid(
     jnp.asarray([0.0, 0.0, 1.5, 3.0, 4.5, 6.0, 6.0]),
     1,
 )

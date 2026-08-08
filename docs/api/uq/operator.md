@@ -62,7 +62,7 @@ invalid whole-function draw or raises immediately according to `valid_policy`.
 ## Linearized source covariance
 
 `propagate_operator_linearized` consumes the physical source-to-field
-`OperatorLinearization` returned by `phydrax.nn.linearize_operator`. The result
+`OperatorLinearization` returned by `phydrax.nn.operator.training.linearize_operator`. The result
 retains case axes, output query dimensions, masks, and output-channel metadata.
 It exposes \(J C_x J^\mathrm{H}\) through the common matrix-free propagation
 result rather than flattening an operator field into an anonymous tensor API.
@@ -96,7 +96,7 @@ Deep ensembles are the default epistemic baseline for every geometry
 architecture. MC dropout is meaningful only if the stochastic layer was active
 during fitting: `RIGNO` exposes `processor_edge_dropout`; `GAOT` exposes
 attention and feed-forward dropout. One root PRNG key denotes one coherent
-whole-function draw. Use `phydrax.nn.inference_mode` before deterministic
+whole-function draw. Use `phydrax.nn.layers.inference_mode` before deterministic
 deployment or posterior-density construction.
 
 Weight-space inference should target an explicit `ParameterSubspace`. Useful
@@ -133,27 +133,27 @@ It scores the normalized execution-space density and respects valid query masks.
 No `"space=\"physical\""` shortcut is exposed: normalization transforms and their
 Jacobians must be part of a physical-space density explicitly.
 
-::: phydrax.nn.AbstractOperatorDistribution
+::: phydrax.nn.operator.AbstractOperatorDistribution
 
 ---
 
-::: phydrax.nn.AbstractProbabilisticOperatorModel
+::: phydrax.nn.operator.AbstractProbabilisticOperatorModel
 
 ---
 
-::: phydrax.nn.GaussianOperatorDistribution
+::: phydrax.nn.operator.GaussianOperatorDistribution
 
 ---
 
-::: phydrax.nn.FlowJAXOperatorDistribution
+::: phydrax.nn.operator.architectures.FlowJAXOperatorDistribution
 
 ---
 
-::: phydrax.nn.OperatorDistributionNLL
+::: phydrax.nn.operator.training.OperatorDistributionNLL
 
 ---
 
-::: phydrax.nn.operator_distribution_nll
+::: phydrax.nn.operator.training.operator_distribution_nll
 
 ## Process-consistent operator transitions
 
@@ -192,55 +192,55 @@ learned marginal transition. `DistributionalSemigroupObjective` remains the
 callback-based batch-training form of a complete-field energy-distance
 semigroup loss.
 
-::: phydrax.nn.OperatorTransitionSpec
+::: phydrax.nn.operator.training.OperatorTransitionSpec
 
 ---
 
-::: phydrax.nn.OperatorDriverBinding
+::: phydrax.nn.operator.training.OperatorDriverBinding
 
 ---
 
-::: phydrax.nn.OperatorProcessDistribution
+::: phydrax.nn.operator.training.OperatorProcessDistribution
 
 ---
 
-::: phydrax.nn.OperatorMarginalTransition
+::: phydrax.nn.operator.training.OperatorMarginalTransition
 
 ---
 
-::: phydrax.nn.OperatorPathwiseTransition
+::: phydrax.nn.operator.training.OperatorPathwiseTransition
 
 ---
 
-::: phydrax.nn.OperatorProcessTransition
+::: phydrax.nn.operator.training.OperatorProcessTransition
 
 ---
 
-::: phydrax.nn.OperatorJumpTransition
+::: phydrax.nn.operator.training.OperatorJumpTransition
 
 ---
 
-::: phydrax.nn.StochasticOperatorRollout
+::: phydrax.nn.operator.training.StochasticOperatorRollout
 
 ---
 
-::: phydrax.nn.marginal_operator_rollout
+::: phydrax.nn.operator.training.marginal_operator_rollout
 
 ---
 
-::: phydrax.nn.pathwise_operator_rollout
+::: phydrax.nn.operator.training.pathwise_operator_rollout
 
 ---
 
-::: phydrax.nn.process_operator_rollout
+::: phydrax.nn.operator.training.process_operator_rollout
 
 ---
 
-::: phydrax.nn.operator_markov_chain_nll
+::: phydrax.nn.operator.training.operator_markov_chain_nll
 
 ---
 
-::: phydrax.nn.direct_operator_horizon_nll
+::: phydrax.nn.operator.training.direct_operator_horizon_nll
 
 ---
 
@@ -248,19 +248,19 @@ semigroup loss.
 
 ---
 
-::: phydrax.nn.operator_jump_generator_objective
+::: phydrax.nn.operator.training.operator_jump_generator_objective
 
 ---
 
-::: phydrax.nn.operator_weak_generator_objective
+::: phydrax.nn.operator.training.operator_weak_generator_objective
 
 ---
 
-::: phydrax.nn.DistributionalSemigroupObjective
+::: phydrax.nn.operator.training.DistributionalSemigroupObjective
 
 ---
 
-::: phydrax.nn.conditioned_distributional_semigroup_loss
+::: phydrax.nn.operator.training.conditioned_distributional_semigroup_loss
 
 ## Fixed observation likelihood
 

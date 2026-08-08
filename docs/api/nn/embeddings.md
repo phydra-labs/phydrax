@@ -27,7 +27,7 @@ embedding leaves wavevector gradients enabled while keeping phases fixed.
 ```python
 import phydrax as phx
 
-embedding = phx.nn.ExplicitFourierFeatureEmbeddings.from_periodic_modes(
+embedding = phx.nn.layers.ExplicitFourierFeatureEmbeddings.from_periodic_modes(
     in_size=2,
     coordinate=0,
     period=2.0,
@@ -40,32 +40,32 @@ embedding = phx.nn.ExplicitFourierFeatureEmbeddings.from_periodic_modes(
 The example encodes the first coordinate with ten exact harmonics, passes the
 second coordinate through unchanged, and appends a constant feature.
 
-::: phydrax.nn.ExplicitFourierFeatureEmbeddings
+::: phydrax.nn.layers.ExplicitFourierFeatureEmbeddings
     options:
         members:
             - __init__
             - from_periodic_modes
             - __call__
 
-::: phydrax.nn.MultiscaleFourierFeatureEmbeddings
+::: phydrax.nn.layers.MultiscaleFourierFeatureEmbeddings
     options:
         members:
             - __init__
             - __call__
 
-::: phydrax.nn.HybridFourierFeatureEmbeddings
+::: phydrax.nn.layers.HybridFourierFeatureEmbeddings
     options:
         members:
             - __init__
             - __call__
 
-::: phydrax.nn.RandomFourierFeatureEmbeddings
+::: phydrax.nn.layers.RandomFourierFeatureEmbeddings
     options:
         members:
             - __init__
             - __call__
 
-::: phydrax.nn.TrainableFourierFeatureEmbeddings
+::: phydrax.nn.layers.TrainableFourierFeatureEmbeddings
     options:
         members:
             - __init__

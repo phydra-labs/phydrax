@@ -16,15 +16,15 @@ from phydrax.domain import ConcatenatedModelEvaluator, Domain, DomainFunction
 
 from .._doc import DOC_KEY0
 from .._term import AbstractScalarTerm
-from ..nn.models.core._base import _AbstractOperatorModel
-from ..nn.models.core._loss import ModelWithLoss
-from ..nn.models.core._operator import OperatorBatch
-from ..nn.models.core._operator_metrics import (
+from ..nn._loss import ModelWithLoss
+from ..nn.operator.adapters import OperatorContextModel
+from ..nn.operator.data import OperatorBatch
+from ..nn.operator.metrics import (
     operator_h1_loss,
     operator_l2_loss,
     operator_spectral_loss,
 )
-from ..nn.models.wrappers._operator_context import OperatorContextModel
+from ..nn.operator.protocols import OperatorModel
 
 
 OperatorLoss = Literal["l2", "h1", "spectral"]
@@ -37,10 +37,10 @@ def _operator_callable(function: DomainFunction, /) -> Callable:
         )
     model = function.func.raw_model
     if isinstance(model, ModelWithLoss):
-        if not isinstance(model.model, _AbstractOperatorModel):
+        if not isinstance(model.model, OperatorModel):
             raise TypeError("Wrapped model is not a PhydraX neural operator.")
         return model
-    if not isinstance(model, _AbstractOperatorModel):
+    if not isinstance(model, OperatorModel):
         raise TypeError("DomainFunction model is not a PhydraX neural operator.")
     return model
 
@@ -331,7 +331,9 @@ class DifferentialPhysicsInformedOperatorTerm(AbstractScalarTerm):
                 int(size) for size in values.shape[len(batch.case_shape) + 1 :]
             )
             values = values.reshape(
-                batch.case_shape + batch.require_single_query().sample_shape + trailing_shape
+                batch.case_shape
+                + batch.require_single_query().sample_shape
+                + trailing_shape
             )
             total = total + _metric(
                 self.loss_kind,

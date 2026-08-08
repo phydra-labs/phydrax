@@ -48,12 +48,14 @@ def test_ragged_series_supervised_constraint_matches_exact_vector_targets():
             axis=-1,
         )
 
-    u = domain.Function("data")(phx.nn.RaggedSeriesModel(exact))
+    u = domain.Function("data")(phx.nn.models.RaggedSeriesModel(exact))
     term = RaggedSeriesSupervisedTerm(
         "u",
         domain.component(),
         targets,
-        sampling=phx.domain.PointSampling(16, layout=SampleLayout((("data",),)), design="uniform"),
+        sampling=phx.domain.PointSampling(
+            16, layout=SampleLayout((("data",),)), design="uniform"
+        ),
     )
 
     loss = term.loss({"u": u}, key=jr.key(0))
@@ -106,7 +108,7 @@ def test_ragged_series_supervised_constraint_loss_uses_sampled_series_payload():
         valid_sum = jnp.sum(series0 * payload.mask.astype(series0.dtype), axis=1)
         return jnp.stack((valid_sum, -valid_sum), axis=-1)
 
-    u = domain.Function("data")(phx.nn.RaggedSeriesModel(sampled_model))
+    u = domain.Function("data")(phx.nn.models.RaggedSeriesModel(sampled_model))
     term = RaggedSeriesSupervisedTerm(
         "u",
         domain.component(),
@@ -126,7 +128,9 @@ def test_ragged_series_supervised_constraint_bucketed_covers_cases_once():
         "u",
         domain.component(),
         targets,
-        sampling=phx.domain.PointSampling(4, layout=SampleLayout((("data",),)), design="uniform"),
+        sampling=phx.domain.PointSampling(
+            4, layout=SampleLayout((("data",),)), design="uniform"
+        ),
         num_buckets=2,
         label="train",
     )

@@ -307,28 +307,28 @@ def _(jax, jnp, jr, phx):
         domain = geom @ time_dom
 
         key_x, key_t, key_bw = jr.split(key, 3)
-        model = phx.nn.LatentContractionModel(
+        model = phx.nn.models.LatentContractionModel(
             latent_size=int(latent_size),
             out_size="scalar",
-            execution_policy=phx.nn.LatentExecutionPolicy(
+            execution_policy=phx.nn.models.LatentExecutionPolicy(
                 topology="best_effort_flat",
                 layout="coord_separable",
                 fallback="error",
             ),
-            x=phx.nn.MLP(
+            x=phx.nn.models.MLP(
                 in_size="scalar",
                 out_size=int(latent_size),
                 width_size=int(width_size),
                 depth=int(depth),
-                activation=phx.nn.Stan(int(width_size)),
+                activation=phx.nn.activations.Stan(int(width_size)),
                 key=key_x,
             ),
-            t=phx.nn.MLP(
+            t=phx.nn.models.MLP(
                 in_size="scalar",
                 out_size=int(latent_size),
                 width_size=int(width_size),
                 depth=int(depth),
-                activation=phx.nn.Stan(int(width_size)),
+                activation=phx.nn.activations.Stan(int(width_size)),
                 key=key_t,
             ),
         )

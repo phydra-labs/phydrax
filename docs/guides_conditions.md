@@ -173,7 +173,7 @@ See [Integrals and measures](guides_integrals.md) for target and plan details.
 import jax.random as jr
 import optax
 
-model = phx.nn.MLP(
+model = phx.nn.models.MLP(
     in_size="scalar",
     out_size="scalar",
     width_size=32,

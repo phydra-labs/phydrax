@@ -15,14 +15,14 @@ import phydrax as phx
 
 
 def _dataset(cases=10, resolution=8):
-    axis = phx.nn.OperatorAxis(
+    axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, resolution),
         quadrature_weights=jnp.full((resolution,), 1.0 / resolution),
     )
     offsets = jnp.arange(cases, dtype=float)[:, None]
     values = offsets + axis.nodes[None, :]
-    return phx.nn.operator_dataset_from_arrays(
+    return phx.nn.operator.training.operator_dataset_from_arrays(
         {"state": values},
         {"solution": 2.0 * values},
         source_axes={"state": (axis,)},
@@ -31,7 +31,7 @@ def _dataset(cases=10, resolution=8):
 
 
 def _targets(batch, values):
-    return phx.nn.OperatorTargetBatch.from_arrays(
+    return phx.nn.operator.OperatorTargetBatch.from_arrays(
         {"solution": values},
         batch,
     )
@@ -39,11 +39,11 @@ def _targets(batch, values):
 
 def test_normalization_is_training_only_invertible_and_persisted(tmp_path):
     dataset = _dataset()
-    split = phx.nn.split_operator_dataset(
+    split = phx.nn.operator.training.split_operator_dataset(
         dataset,
-        policy=phx.nn.OperatorSplitPolicy(seed=7),
+        policy=phx.nn.operator.training.OperatorSplitPolicy(seed=7),
     )
-    policy = phx.nn.fit_operator_normalization(
+    policy = phx.nn.operator.training.fit_operator_normalization(
         split.train.batch,
         split.train.targets,
         normalize_coordinates=True,
@@ -68,8 +68,8 @@ def test_normalization_is_training_only_invertible_and_persisted(tmp_path):
         split.validation.targets.field("solution").values,
     )
 
-    path = phx.nn.save_operator_normalization(tmp_path / "normalization.json", policy)
-    loaded = phx.nn.load_operator_normalization(path)
+    path = phx.nn.operator.training.save_operator_normalization(tmp_path / "normalization.json", policy)
+    loaded = phx.nn.operator.training.load_operator_normalization(path)
     assert loaded.to_dict() == policy.to_dict()
     assert "format_version" not in policy.to_dict()
 
@@ -78,15 +78,15 @@ def test_quadrature_normalization_is_invariant_to_sampling_density():
     def sampled_batch(values, weights):
         count = int(values.shape[0])
         coordinates = jnp.linspace(0.0, 1.0, count)[:, None]
-        samples = phx.nn.FunctionSamples(
+        samples = phx.nn.operator.FunctionSamples(
             values=values,
             coordinates=coordinates,
             quadrature_weights=weights,
         )
-        return phx.nn.OperatorBatch(
+        return phx.nn.operator.OperatorBatch(
             inputs={"state": samples},
             queries={
-                "query": phx.nn.FunctionSamples(
+                "query": phx.nn.operator.FunctionSamples(
                     values=None,
                     coordinates=coordinates,
                     quadrature_weights=weights,
@@ -102,16 +102,16 @@ def test_quadrature_normalization_is_invariant_to_sampling_density():
         jnp.array([1.0 / 6.0, 1.0 / 6.0, 1.0 / 6.0, 0.5]),
     )
 
-    sparse_quadrature = phx.nn.fit_operator_normalization(
+    sparse_quadrature = phx.nn.operator.training.fit_operator_normalization(
         sparse, _targets(sparse, sparse_values), weighting="quadrature"
     )
-    dense_quadrature = phx.nn.fit_operator_normalization(
+    dense_quadrature = phx.nn.operator.training.fit_operator_normalization(
         dense, _targets(dense, dense_values), weighting="quadrature"
     )
-    sparse_uniform = phx.nn.fit_operator_normalization(
+    sparse_uniform = phx.nn.operator.training.fit_operator_normalization(
         sparse, _targets(sparse, sparse_values), weighting="uniform"
     )
-    dense_uniform = phx.nn.fit_operator_normalization(
+    dense_uniform = phx.nn.operator.training.fit_operator_normalization(
         dense, _targets(dense, dense_values), weighting="uniform"
     )
 
@@ -139,9 +139,9 @@ def test_quadrature_normalization_is_invariant_to_sampling_density():
 
 def test_dataset_splitting_and_variable_cardinality_adapter_are_deterministic():
     dataset = _dataset(cases=12)
-    policy = phx.nn.OperatorSplitPolicy(seed=3)
-    first = phx.nn.split_operator_dataset(dataset, policy=policy)
-    second = phx.nn.split_operator_dataset(dataset, policy=policy)
+    policy = phx.nn.operator.training.OperatorSplitPolicy(seed=3)
+    first = phx.nn.operator.training.split_operator_dataset(dataset, policy=policy)
+    second = phx.nn.operator.training.split_operator_dataset(dataset, policy=policy)
     assert first.train_indices == second.train_indices
     assert set(first.train_indices).isdisjoint(first.validation_indices)
     assert set(first.train_indices).isdisjoint(first.test_indices)
@@ -151,14 +151,14 @@ def test_dataset_splitting_and_variable_cardinality_adapter_are_deterministic():
     targets = []
     for count in (3, 5, 4):
         coordinates = jnp.linspace(0.0, 1.0, count)[:, None]
-        samples = phx.nn.FunctionSamples(
+        samples = phx.nn.operator.FunctionSamples(
             values=coordinates[:, 0],
             coordinates=coordinates,
         )
-        batch = phx.nn.OperatorBatch(
+        batch = phx.nn.operator.OperatorBatch(
             inputs={"state": samples},
             queries={
-                "query": phx.nn.FunctionSamples(
+                "query": phx.nn.operator.FunctionSamples(
                     values=None,
                     coordinates=coordinates,
                 )
@@ -166,7 +166,7 @@ def test_dataset_splitting_and_variable_cardinality_adapter_are_deterministic():
         )
         cases.append(batch)
         targets.append(_targets(batch, coordinates[:, 0] ** 2))
-    ragged = phx.nn.operator_dataset_from_cases(cases, targets)
+    ragged = phx.nn.operator.training.operator_dataset_from_cases(cases, targets)
     assert ragged.batch.query("query").sample_shape == (5,)
     assert ragged.targets.field("solution").values.shape == (3, 5)
     assert jnp.array_equal(
@@ -184,23 +184,23 @@ def test_dataset_splitting_and_variable_cardinality_adapter_are_deterministic():
 def test_provenance_group_and_chronological_splits_prevent_leakage():
     base = _dataset(cases=12)
     grouped_provenance = tuple(
-        phx.nn.OperatorCaseProvenance(
+        phx.nn.operator.OperatorCaseProvenance(
             f"case-{index}",
             identities={"simulation": f"simulation-{index // 2}"},
             order={"time": float(index)},
         )
         for index in range(12)
     )
-    grouped = phx.nn.OperatorDataset(
+    grouped = phx.nn.operator.training.OperatorDataset(
         base.batch,
         base.targets,
         grouped_provenance,
     )
-    split = phx.nn.split_operator_dataset(
+    split = phx.nn.operator.training.split_operator_dataset(
         grouped,
         train_fraction=0.5,
         validation_fraction=0.25,
-        policy=phx.nn.OperatorSplitPolicy(
+        policy=phx.nn.operator.training.OperatorSplitPolicy(
             group_by=("simulation",),
             seed=19,
         ),
@@ -214,39 +214,39 @@ def test_provenance_group_and_chronological_splits_prevent_leakage():
         members = {2 * simulation, 2 * simulation + 1}
         assert sum(bool(members & partition) for partition in partitions) == 1
 
-    chronological = phx.nn.OperatorDataset(
+    chronological = phx.nn.operator.training.OperatorDataset(
         base.batch,
         base.targets,
         tuple(
-            phx.nn.OperatorCaseProvenance(
+            phx.nn.operator.OperatorCaseProvenance(
                 f"ordered-{index}",
                 order={"time": float(index)},
             )
             for index in range(12)
         ),
     )
-    ordered = phx.nn.split_operator_dataset(
+    ordered = phx.nn.operator.training.split_operator_dataset(
         chronological,
         train_fraction=0.5,
         validation_fraction=0.25,
-        policy=phx.nn.OperatorSplitPolicy(group_by=(), order_by="time"),
+        policy=phx.nn.operator.training.OperatorSplitPolicy(group_by=(), order_by="time"),
     )
     assert max(ordered.train_indices) < min(ordered.validation_indices)
     assert max(ordered.validation_indices) < min(ordered.test_indices)
 
 
 def test_dataset_preserves_named_multi_query_target_contracts():
-    axis = phx.nn.OperatorAxis("x", jnp.linspace(0.0, 1.0, 3))
-    batch = phx.nn.OperatorBatch(
+    axis = phx.nn.operator.OperatorAxis("x", jnp.linspace(0.0, 1.0, 3))
+    batch = phx.nn.operator.OperatorBatch(
         inputs={
-            "state": phx.nn.FunctionSamples(
+            "state": phx.nn.operator.FunctionSamples(
                 values=jnp.arange(6.0).reshape(2, 3),
                 axes=(axis,),
             )
         },
         queries={
-            "state-query": phx.nn.FunctionSamples(values=None, axes=(axis,)),
-            "flux-query": phx.nn.FunctionSamples(
+            "state-query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,)),
+            "flux-query": phx.nn.operator.FunctionSamples(
                 values=None,
                 coordinates=jnp.linspace(0.0, 1.0, 4)[:, None],
             ),
@@ -254,7 +254,7 @@ def test_dataset_preserves_named_multi_query_target_contracts():
         case_axes=("case",),
         case_shape=(2,),
     )
-    targets = phx.nn.OperatorTargetBatch.from_arrays(
+    targets = phx.nn.operator.OperatorTargetBatch.from_arrays(
         {
             "state": jnp.ones((2, 3)),
             "flux": jnp.ones((2, 4, 2)),
@@ -265,14 +265,14 @@ def test_dataset_preserves_named_multi_query_target_contracts():
             "flux": "flux-query",
         },
         specs={
-            "state": phx.nn.OperatorOutputSpec(),
-            "flux": phx.nn.OperatorOutputSpec(
+            "state": phx.nn.operator.OperatorOutputSpec(),
+            "flux": phx.nn.operator.OperatorOutputSpec(
                 2,
                 component_names=("x", "y"),
             ),
         },
     )
-    dataset = phx.nn.OperatorDataset(batch, targets)
+    dataset = phx.nn.operator.training.OperatorDataset(batch, targets)
     selected = dataset.take(jnp.array([1]))
     assert tuple(selected.targets.fields) == ("state", "flux")
     assert selected.targets.field("state").values.shape == (1, 3)
@@ -282,20 +282,20 @@ def test_dataset_preserves_named_multi_query_target_contracts():
 
 
 def test_named_normalization_and_dtype_preserve_complex_fields(tmp_path):
-    axis = phx.nn.OperatorAxis("x", jnp.linspace(0.0, 1.0, 3))
+    axis = phx.nn.operator.OperatorAxis("x", jnp.linspace(0.0, 1.0, 3))
     complex_values = jnp.arange(6.0).reshape(2, 3) + 1j * jnp.arange(6.0, 12.0).reshape(
         2, 3
     )
-    batch = phx.nn.OperatorBatch(
+    batch = phx.nn.operator.OperatorBatch(
         inputs={
-            "wave": phx.nn.FunctionSamples(
+            "wave": phx.nn.operator.FunctionSamples(
                 values=complex_values,
                 axes=(axis,),
             )
         },
         queries={
-            "wave-query": phx.nn.FunctionSamples(values=None, axes=(axis,)),
-            "sensor-query": phx.nn.FunctionSamples(
+            "wave-query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,)),
+            "sensor-query": phx.nn.operator.FunctionSamples(
                 values=None,
                 coordinates=jnp.array([[0.1], [0.9]]),
             ),
@@ -303,7 +303,7 @@ def test_named_normalization_and_dtype_preserve_complex_fields(tmp_path):
         case_axes=("case",),
         case_shape=(2,),
     )
-    targets = phx.nn.OperatorTargetBatch.from_arrays(
+    targets = phx.nn.operator.OperatorTargetBatch.from_arrays(
         {
             "wave": 2.0 * complex_values,
             "sensor": jnp.arange(8.0).reshape(2, 2, 2),
@@ -314,7 +314,7 @@ def test_named_normalization_and_dtype_preserve_complex_fields(tmp_path):
             "sensor": "sensor-query",
         },
     )
-    policy = phx.nn.fit_operator_normalization(
+    policy = phx.nn.operator.training.fit_operator_normalization(
         batch,
         targets,
         normalize_coordinates=True,
@@ -331,15 +331,15 @@ def test_named_normalization_and_dtype_preserve_complex_fields(tmp_path):
         restored.field("sensor").values,
         targets.field("sensor").values,
     )
-    loaded = phx.nn.load_operator_normalization(
-        phx.nn.save_operator_normalization(tmp_path / "complex.json", policy)
+    loaded = phx.nn.operator.training.load_operator_normalization(
+        phx.nn.operator.training.save_operator_normalization(tmp_path / "complex.json", policy)
     )
     assert jnp.allclose(
         loaded.targets["wave"].mean,
         policy.targets["wave"].mean,
     )
 
-    dtype = phx.nn.OperatorDTypePolicy(compute_dtype="float32")
+    dtype = phx.nn.operator.training.OperatorDTypePolicy(compute_dtype="float32")
     cast_targets = dtype.cast_targets(targets)
     cast_batch = dtype.cast_batch(batch)
     assert cast_targets.field("wave").values.dtype == jnp.complex64
@@ -376,17 +376,17 @@ def test_checkpoint_restores_exact_optimizer_rng_and_policies(tmp_path):
     model, state, key = _stochastic_step(model, state, optimizer, key)
 
     dataset = _dataset(cases=4)
-    normalization = phx.nn.fit_operator_normalization(
+    normalization = phx.nn.operator.training.fit_operator_normalization(
         dataset.batch,
         dataset.targets,
     )
-    dtype_policy = phx.nn.OperatorDTypePolicy(
+    dtype_policy = phx.nn.operator.training.OperatorDTypePolicy(
         parameter_dtype="float64",
         compute_dtype="float32",
         reduction_dtype="float64",
     )
-    schema = phx.nn.operator_batch_schema(dataset.batch, target=dataset.targets)
-    path = phx.nn.save_operator_training_checkpoint(
+    schema = phx.nn.operator.training.operator_batch_schema(dataset.batch, target=dataset.targets)
+    path = phx.nn.operator.training.save_operator_training_checkpoint(
         tmp_path / "checkpoint",
         model,
         state,
@@ -405,7 +405,7 @@ def test_checkpoint_restores_exact_optimizer_rng_and_policies(tmp_path):
         model, state, optimizer, key
     )
 
-    restored = phx.nn.load_operator_training_checkpoint(
+    restored = phx.nn.operator.training.load_operator_training_checkpoint(
         path,
         model,
         state,
@@ -428,7 +428,7 @@ def test_checkpoint_restores_exact_optimizer_rng_and_policies(tmp_path):
 
     first_state_files = tuple(path.glob("state-*.eqx"))
     assert len(first_state_files) == 1
-    phx.nn.save_operator_training_checkpoint(
+    phx.nn.operator.training.save_operator_training_checkpoint(
         path,
         expected_model,
         expected_state,
@@ -449,7 +449,7 @@ def test_checkpoint_restores_exact_optimizer_rng_and_policies(tmp_path):
     manifest.pop("version")
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(ValueError, match="current canonical fields"):
-        phx.nn.load_operator_training_checkpoint(
+        phx.nn.operator.training.load_operator_training_checkpoint(
             path,
             expected_model,
             expected_state,
@@ -466,14 +466,14 @@ class _IncrementOperator:
 def _advance(batch, feedback, step):
     del step
     source = batch.input("state")
-    updated = phx.nn.FunctionSamples(
+    updated = phx.nn.operator.FunctionSamples(
         values=feedback,
         axes=source.axes,
         coordinates=source.coordinates,
         quadrature_weights=source.quadrature_weights,
         mask=source.mask,
     )
-    return phx.nn.OperatorBatch(
+    return phx.nn.operator.OperatorBatch(
         inputs={"state": updated},
         queries=batch.queries,
         case_axes=batch.case_axes,
@@ -483,9 +483,9 @@ def _advance(batch, feedback, step):
 
 def test_autoregressive_rollout_curricula_and_gradients():
     dataset = _dataset(cases=3, resolution=5)
-    initial = phx.nn.OperatorBatch(
+    initial = phx.nn.operator.OperatorBatch(
         inputs={
-            "state": phx.nn.FunctionSamples(
+            "state": phx.nn.operator.FunctionSamples(
                 values=jnp.zeros_like(dataset.batch.input("state").values),
                 axes=dataset.batch.input("state").axes,
             )
@@ -498,7 +498,7 @@ def test_autoregressive_rollout_curricula_and_gradients():
         tuple(jnp.full((3, 5), value) for value in (1.0, 2.0, 3.0)),
         axis=0,
     )
-    rollout = phx.nn.autoregressive_operator_rollout(
+    rollout = phx.nn.operator.training.autoregressive_operator_rollout(
         _IncrementOperator(),
         initial,
         3,
@@ -506,9 +506,9 @@ def test_autoregressive_rollout_curricula_and_gradients():
         key=jr.key(0),
     )
     assert jnp.array_equal(rollout.predictions, targets)
-    schedule = phx.nn.RolloutHorizonSchedule(1, 3, transition_steps=10)
-    forcing = phx.nn.TeacherForcingSchedule(1.0, 0.0, transition_steps=10)
-    loss = phx.nn.autoregressive_operator_loss(
+    schedule = phx.nn.operator.training.RolloutHorizonSchedule(1, 3, transition_steps=10)
+    forcing = phx.nn.operator.training.TeacherForcingSchedule(1.0, 0.0, transition_steps=10)
+    loss = phx.nn.operator.training.autoregressive_operator_loss(
         _IncrementOperator(),
         initial,
         targets,
@@ -523,13 +523,13 @@ def test_autoregressive_rollout_curricula_and_gradients():
 
 def test_dtype_and_prefetch_loader_apply_explicit_device_policy():
     dataset = _dataset(cases=8)
-    dtype_policy = phx.nn.OperatorDTypePolicy(
+    dtype_policy = phx.nn.operator.training.OperatorDTypePolicy(
         parameter_dtype="float32",
         compute_dtype="float32",
         reduction_dtype="float64",
     )
-    sharding = phx.nn.OperatorShardingPolicy(mesh_axis="data")
-    loader = phx.nn.OperatorBatchLoader(
+    sharding = phx.nn.operator.OperatorShardingPolicy(mesh_axis="data")
+    loader = phx.nn.operator.training.OperatorBatchLoader(
         dataset,
         batch_size=3,
         seed=11,
@@ -544,7 +544,7 @@ def test_dtype_and_prefetch_loader_apply_explicit_device_policy():
     assert first[0].targets.field("solution").values.dtype == jnp.float32
     assert first[0].batch.input("state").values.sharding.spec[0] == "data"
 
-    model = phx.nn.FNO(width=4, depth=1, n_modes=(3,), key=jr.key(3))
+    model = phx.nn.operator.architectures.FNO(width=4, depth=1, n_modes=(3,), key=jr.key(3))
     cast_model = dtype_policy.cast_model(model)
     leaves = jax.tree_util.tree_leaves(eqx.filter(cast_model, eqx.is_inexact_array))
     assert leaves and all(
@@ -571,7 +571,7 @@ def _prediction_energy(
 
 
 def _fit_model(*, seed=0):
-    return phx.nn.FNO(
+    return phx.nn.operator.architectures.FNO(
         in_channels="scalar",
         out_channels="scalar",
         width=4,
@@ -583,7 +583,7 @@ def _fit_model(*, seed=0):
 
 def test_fit_operator_compiles_accumulates_normalizes_and_composes_losses():
     dataset = _dataset(cases=8)
-    result = phx.nn.fit_operator(
+    result = phx.nn.operator.training.fit_operator(
         _fit_model(),
         dataset,
         epochs=1,
@@ -591,18 +591,18 @@ def test_fit_operator_compiles_accumulates_normalizes_and_composes_losses():
         gradient_accumulation=2,
         normalization="fit",
         loss_terms=(
-            phx.nn.SupervisedOperatorLoss(
+            phx.nn.operator.training.SupervisedOperatorLoss(
                 prediction_field="output",
                 target_field="solution",
             ),
-            phx.nn.OperatorLossTerm(
+            phx.nn.operator.training.OperatorLossTerm(
                 "prediction_energy",
                 _prediction_energy,
                 weight=1e-3,
                 identity="tests.prediction_energy.v1",
             ),
         ),
-        mixed_precision=phx.nn.OperatorMixedPrecisionPolicy(
+        mixed_precision=phx.nn.operator.training.OperatorMixedPrecisionPolicy(
             initial_scale=128.0,
             growth_interval=1,
         ),
@@ -628,7 +628,7 @@ def test_fit_operator_resume_is_bitwise_exact_with_shuffle_and_accumulation(tmp_
         "checkpoint_every": 1,
         "configuration": {"test_contract": "exact-resume-v1"},
     }
-    uninterrupted = phx.nn.fit_operator(
+    uninterrupted = phx.nn.operator.training.fit_operator(
         model,
         dataset,
         epochs=2,
@@ -636,7 +636,7 @@ def test_fit_operator_resume_is_bitwise_exact_with_shuffle_and_accumulation(tmp_
         **common,
     )
     checkpoint = tmp_path / "fit-checkpoint"
-    phx.nn.fit_operator(
+    phx.nn.operator.training.fit_operator(
         model,
         dataset,
         epochs=1,
@@ -644,7 +644,7 @@ def test_fit_operator_resume_is_bitwise_exact_with_shuffle_and_accumulation(tmp_
         checkpoint_path=checkpoint,
         **common,
     )
-    resumed = phx.nn.fit_operator(
+    resumed = phx.nn.operator.training.fit_operator(
         model,
         dataset,
         epochs=2,
@@ -665,11 +665,11 @@ def test_fit_operator_resume_is_bitwise_exact_with_shuffle_and_accumulation(tmp_
 
 def test_fit_operator_returns_task_bound_physical_operator():
     dataset = _dataset(cases=4)
-    task = phx.nn.OperatorTask(
+    task = phx.nn.operator.OperatorTask(
         "scaled-map",
         dimension_basis=("length",),
         fields=(
-            phx.nn.OperatorFieldSpec(
+            phx.nn.operator.OperatorFieldSpec(
                 "input",
                 role="source",
                 source_name="state",
@@ -677,7 +677,7 @@ def test_fit_operator_returns_task_bound_physical_operator():
                 scale=2.0,
                 offset=1.0,
             ),
-            phx.nn.OperatorFieldSpec(
+            phx.nn.operator.OperatorFieldSpec(
                 "solution",
                 role="target",
                 query_name="query",
@@ -687,26 +687,26 @@ def test_fit_operator_returns_task_bound_physical_operator():
             ),
         ),
         queries=(
-            phx.nn.OperatorQuerySpec(
+            phx.nn.operator.OperatorQuerySpec(
                 "query",
                 geometry_kind="tensor_grid",
                 coordinate_components=("x",),
                 coordinate_dimensions=((1.0,),),
             ),
         ),
-        problem=phx.nn.OperatorProblemSpec(
+        problem=phx.nn.operator.OperatorProblemSpec(
             source_query_relation="coincident",
             query_is_fixed=False,
         ),
     )
-    output_pipeline = phx.nn.OperatorOutputPipeline(
-        phx.nn.ConservationProjection("solution", source_name="state")
+    output_pipeline = phx.nn.operator.training.OperatorOutputPipeline(
+        phx.nn.operator.training.ConservationProjection("solution", source_name="state")
     )
-    result = phx.nn.fit_operator(
+    result = phx.nn.operator.training.fit_operator(
         _fit_model(seed=4),
         dataset,
         task=task,
-        training_evidence=phx.nn.OperatorTrainingEvidence("task_specific"),
+        training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
         output_field_map={"output": "solution"},
         epochs=1,
         steps=1,
@@ -722,12 +722,12 @@ def test_fit_operator_returns_task_bound_physical_operator():
     assert result.output_pipeline is output_pipeline
     assert result.trained_operator.output_pipeline is output_pipeline
     assert jnp.allclose(
-        phx.nn.operator_integral(
+        phx.nn.operator.training.operator_integral(
             prediction.field("solution").values,
             dataset.batch.query("query"),
             case_shape=dataset.batch.case_shape,
         ),
-        phx.nn.operator_integral(
+        phx.nn.operator.training.operator_integral(
             dataset.batch.input("state").values,
             dataset.batch.input("state"),
             case_shape=dataset.batch.case_shape,
@@ -742,7 +742,7 @@ def test_fit_operator_callbacks_can_stop_at_an_update_boundary():
         events.append(event.name)
         return event.name == "batch_end"
 
-    result = phx.nn.fit_operator(
+    result = phx.nn.operator.training.fit_operator(
         _fit_model(seed=5),
         _dataset(cases=8),
         epochs=4,

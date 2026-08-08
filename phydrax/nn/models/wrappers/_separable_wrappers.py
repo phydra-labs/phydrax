@@ -18,23 +18,24 @@ from phydrax.domain import GridBatch, PointBatch
 
 from ...._doc import DOC_KEY0
 from ...._frozendict import frozendict
+from ...._model import AxisModelEvaluator, ModelBinding, StructuredDerivativeProvider
 from ...._strict import StrictModule
-from ..._utils import _get_size, _identity
-from .._utils import _contract_str, _stack_separable
-from ..core._base import _AbstractBaseModel, _AbstractStructuredInputModel
-from ..core._binding import ModelBinding
-from ..core._keys import EvalKey, split_eval_key
-from ..core._scan_utils import (
+from ..._base import _AbstractBaseModel, _AbstractStructuredInputModel
+from ..._keys import EvalKey, split_eval_key
+from ..._scan import (
     pack_scan_modules,
     scan_apply_with_data,
     stack_scan_dynamics,
 )
+from ..._utils import _get_size, _identity
+from .._utils import _contract_str, _stack_separable
 from ._axis_contraction import (
     AxisContractionPlan,
     AxisFactor,
     AxisProductTerm,
     contract_axis_factors,
 )
+from ._latent_derivative import evaluate_latent_partial
 
 
 class LatentExecutionPolicy(StrictModule):
@@ -80,7 +81,11 @@ class _LatentTopologyPlan(StrictModule):
         self.fallback_message = fallback_message
 
 
-class LatentContractionModel(_AbstractStructuredInputModel):
+class LatentContractionModel(
+    _AbstractStructuredInputModel,
+    AxisModelEvaluator,
+    StructuredDerivativeProvider,
+):
     r"""Latent contraction wrapper for product-domain factor models.
 
     This implements a low-rank (CP-style) factorization over a product input
@@ -207,6 +212,34 @@ class LatentContractionModel(_AbstractStructuredInputModel):
             raise ValueError(message)
         if self.execution_policy.fallback == "warn":
             warnings.warn(message, UserWarning, stacklevel=3)
+
+    def handle_structured_derivative_fallback(self, reason: str, /) -> None:
+        self._auto_fallback(
+            "Falling back to generic derivative evaluation for "
+            f"LatentContractionModel: {reason}"
+        )
+
+    def try_structured_partial(
+        self,
+        *,
+        deps: tuple[str, ...],
+        var: str,
+        axis: int,
+        order: int,
+        args: tuple[Any, ...],
+        key: Any,
+        kwargs: dict[str, Any],
+    ) -> tuple[Any | None, str | None]:
+        return evaluate_latent_partial(
+            self,
+            deps=deps,
+            var=var,
+            axis=axis,
+            order=order,
+            args=args,
+            key=key,
+            kwargs=kwargs,
+        )
 
     def _canonical_factor_inputs(
         self,

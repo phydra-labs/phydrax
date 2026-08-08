@@ -7,7 +7,7 @@ from jaxtyping import Array
 import phydrax as phx
 
 
-class _BrownianFieldOperator(phx.nn.AbstractProbabilisticOperatorModel):
+class _BrownianFieldOperator(phx.nn.operator.AbstractProbabilisticOperatorModel):
     scale_power: Array
     uncertainty_source: str
     in_size: str
@@ -21,19 +21,19 @@ class _BrownianFieldOperator(phx.nn.AbstractProbabilisticOperatorModel):
 
     @property
     def operator_output_specs(self):
-        return {"output": phx.nn.OperatorOutputSpec("scalar")}
+        return {"output": phx.nn.operator.OperatorOutputSpec("scalar")}
 
     def distribution(self, batch, /, *, key=None):
         del key
         state = batch.input("state").values
         duration = batch.input("duration").values
         forcing = batch.input("forcing").values
-        return phx.nn.GaussianOperatorDistribution(
+        return phx.nn.operator.GaussianOperatorDistribution(
             mean=state + duration * forcing,
             scale=duration**self.scale_power,
             factors=None,
             query=batch.require_single_query(),
-            output_spec=phx.nn.OperatorOutputSpec("scalar"),
+            output_spec=phx.nn.operator.OperatorOutputSpec("scalar"),
             case_axes=batch.case_axes,
             case_shape=batch.case_shape,
             uncertainty_source=self.uncertainty_source,
@@ -51,7 +51,7 @@ class _AdditiveDriverOperator(eqx.Module):
 
 
 def _transition_batch(*, cases=2, size=4, driver=False, forcing=0.0):
-    axis = phx.nn.OperatorAxis(
+    axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, size, endpoint=False),
         quadrature_weights=jnp.full((size,), 1.0 / size),
@@ -59,26 +59,26 @@ def _transition_batch(*, cases=2, size=4, driver=False, forcing=0.0):
     )
     values = jnp.zeros((cases, size))
     inputs = {
-        "state": phx.nn.FunctionSamples(values=values, axes=(axis,)),
-        "duration": phx.nn.FunctionSamples(values=jnp.ones_like(values), axes=(axis,)),
-        "forcing": phx.nn.FunctionSamples(
+        "state": phx.nn.operator.FunctionSamples(values=values, axes=(axis,)),
+        "duration": phx.nn.operator.FunctionSamples(values=jnp.ones_like(values), axes=(axis,)),
+        "forcing": phx.nn.operator.FunctionSamples(
             values=jnp.full_like(values, forcing),
             axes=(axis,),
         ),
     }
     if driver:
-        inputs["driver"] = phx.nn.FunctionSamples(values=values, axes=(axis,))
-    return phx.nn.OperatorBatch(
+        inputs["driver"] = phx.nn.operator.FunctionSamples(values=values, axes=(axis,))
+    return phx.nn.operator.OperatorBatch(
         inputs=inputs,
-        queries={"query": phx.nn.FunctionSamples(values=None, axes=(axis,))},
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,))},
         case_axes=("case",),
     )
 
 
 def _marginal_law(*, forcing=0.0, uncertainty_source="process"):
     batch = _transition_batch(forcing=forcing)
-    spec = phx.nn.OperatorTransitionSpec(phx.nn.OperatorOutputSpec("scalar"))
-    return phx.nn.OperatorMarginalTransition(
+    spec = phx.nn.operator.training.OperatorTransitionSpec(phx.nn.operator.OperatorOutputSpec("scalar"))
+    return phx.nn.operator.training.OperatorMarginalTransition(
         _BrownianFieldOperator(uncertainty_source=uncertainty_source),
         batch,
         spec,
@@ -88,10 +88,10 @@ def _marginal_law(*, forcing=0.0, uncertainty_source="process"):
 
 def _pathwise_law(*, forcing=0.0):
     batch = _transition_batch(driver=True, forcing=forcing)
-    spec = phx.nn.OperatorTransitionSpec(
-        phx.nn.OperatorOutputSpec("scalar"),
+    spec = phx.nn.operator.training.OperatorTransitionSpec(
+        phx.nn.operator.OperatorOutputSpec("scalar"),
         driver_bindings=(
-            phx.nn.OperatorDriverBinding(
+            phx.nn.operator.training.OperatorDriverBinding(
                 "driver",
                 "wiener",
                 kind="wiener",
@@ -99,7 +99,7 @@ def _pathwise_law(*, forcing=0.0):
             ),
         ),
     )
-    return phx.nn.OperatorPathwiseTransition(
+    return phx.nn.operator.training.OperatorPathwiseTransition(
         _AdditiveDriverOperator(),
         batch,
         spec,
@@ -112,7 +112,7 @@ def test_marginal_transition_is_process_distribution_and_preserves_forcing():
     state = jnp.zeros((2, 4))
     distribution = law.marginal_transition(state, t0=0.1, t1=0.5)
 
-    assert isinstance(distribution, phx.nn.OperatorProcessDistribution)
+    assert isinstance(distribution, phx.nn.operator.training.OperatorProcessDistribution)
     assert distribution.uncertainty_source == "process"
     assert distribution.batch_shape == (2,)
     assert distribution.event_shape == (4,)
@@ -127,25 +127,25 @@ def test_marginal_transition_is_process_distribution_and_preserves_forcing():
 def test_marginal_rollout_replays_and_exports_process_uncertainty():
     law = _marginal_law()
     times = jnp.asarray([0.0, 0.2, 0.5])
-    first = phx.nn.marginal_operator_rollout(
+    first = phx.nn.operator.training.marginal_operator_rollout(
         law,
         times,
         key=jr.key(1),
         num_realizations=32,
     )
-    replay = phx.nn.marginal_operator_rollout(
+    replay = phx.nn.operator.training.marginal_operator_rollout(
         law,
         times,
         key=jr.key(1),
         num_realizations=32,
     )
-    independent = phx.nn.marginal_operator_rollout(
+    independent = phx.nn.operator.training.marginal_operator_rollout(
         law,
         times,
         key=jr.key(2),
         num_realizations=32,
     )
-    shifted_initial = phx.nn.marginal_operator_rollout(
+    shifted_initial = phx.nn.operator.training.marginal_operator_rollout(
         law,
         times,
         key=jr.key(1),
@@ -182,12 +182,12 @@ def test_pathwise_rollout_reuses_one_wiener_field_and_satisfies_cocycle():
         tolerance=1e-3,
         label="operator-driver",
     )
-    coarse = phx.nn.pathwise_operator_rollout(
+    coarse = phx.nn.operator.training.pathwise_operator_rollout(
         law,
         driver,
         jnp.asarray([0.0, 0.5]),
     )
-    fine = phx.nn.pathwise_operator_rollout(
+    fine = phx.nn.operator.training.pathwise_operator_rollout(
         law,
         driver,
         jnp.asarray([0.0, 0.2, 0.5]),
@@ -212,7 +212,7 @@ def test_pathwise_rollout_reuses_one_wiener_field_and_satisfies_cocycle():
         support=(0.0, 1.0),
         sample_shape=(8,),
     )
-    case_specific = phx.nn.pathwise_operator_rollout(
+    case_specific = phx.nn.operator.training.pathwise_operator_rollout(
         law,
         case_driver,
         jnp.asarray([0.0, 0.5]),
@@ -247,7 +247,7 @@ def test_pathwise_rollout_reuses_one_wiener_field_and_satisfies_cocycle():
         sample_shape=(2,),
     )
     with pytest.raises(ValueError, match="Driver noise shape"):
-        phx.nn.pathwise_operator_rollout(
+        phx.nn.operator.training.pathwise_operator_rollout(
             law,
             wrong_driver,
             jnp.asarray([0.0, 0.5]),
@@ -258,13 +258,13 @@ def test_operator_transition_objectives_are_exactly_shaped_jittable_and_differen
     law = _marginal_law()
     states = jnp.zeros((3, 2, 4))
     times = jnp.asarray([0.0, 0.2, 0.5])
-    chain = phx.nn.operator_markov_chain_nll(
+    chain = phx.nn.operator.training.operator_markov_chain_nll(
         law,
         states,
         times,
         reduction="none",
     )
-    direct = phx.nn.direct_operator_horizon_nll(
+    direct = phx.nn.operator.training.direct_operator_horizon_nll(
         law,
         states[0],
         states[1:],
@@ -296,7 +296,7 @@ def test_operator_transition_objectives_are_exactly_shaped_jittable_and_differen
     assert jnp.isfinite(value)
     assert jnp.isfinite(gradient.model.scale_power)
 
-    generator = phx.nn.operator_weak_generator_objective(
+    generator = phx.nn.operator.training.operator_weak_generator_objective(
         law,
         states[0],
         time=0.0,

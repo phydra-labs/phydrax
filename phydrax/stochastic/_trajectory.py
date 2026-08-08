@@ -739,10 +739,8 @@ class StochasticTransitionView(StrictModule):
         case_axis: str = "transition",
     ):
         """Lower valid transitions to the canonical neural-operator dataset."""
-        from ..nn.operator_training import (
-            operator_dataset_from_arrays,
-            OperatorCaseProvenance,
-        )
+        from ..nn.operator import OperatorCaseProvenance
+        from ..nn.operator.training import operator_dataset_from_arrays
 
         axes = tuple(source_axes)
         targets_axes = axes if query_axes is None else tuple(query_axes)

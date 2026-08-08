@@ -9,7 +9,7 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
-from phydrax.nn.operator_training import (
+from phydrax.nn.operator.training import (
     conditioned_semigroup_consistency_loss,
     ConditionedSemigroupObjective,
 )
@@ -43,7 +43,7 @@ class _KeyedTransition(eqx.Module):
 def _batch(*, channels=None):
     cases = 3
     points = 4
-    axis = phx.nn.OperatorAxis(
+    axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, points),
         quadrature_weights=jnp.asarray([0.1, 0.2, 0.3, 0.4]),
@@ -58,10 +58,10 @@ def _batch(*, channels=None):
             [False, True, True, True],
         ]
     )
-    return phx.nn.OperatorBatch(inputs={
-        "state": phx.nn.FunctionSamples(values=state, axes=(axis,)),
-        "duration": phx.nn.FunctionSamples(values=duration, axes=(axis,)),
-    }, queries={"query": phx.nn.FunctionSamples(values=None, axes=(axis,), mask=mask)}, case_axes=("case",),)
+    return phx.nn.operator.OperatorBatch(inputs={
+        "state": phx.nn.operator.FunctionSamples(values=state, axes=(axis,)),
+        "duration": phx.nn.operator.FunctionSamples(values=duration, axes=(axis,)),
+    }, queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,), mask=mask)}, case_axes=("case",),)
 
 
 def _condition(batch, duration):
@@ -198,8 +198,8 @@ def test_semigroup_evaluation_key_modes_are_deterministic(key_mode):
 
 
 def test_semigroup_public_exports_are_available_from_nn_namespace():
-    assert phx.nn.ConditionedSemigroupObjective is ConditionedSemigroupObjective
+    assert phx.nn.operator.training.ConditionedSemigroupObjective is ConditionedSemigroupObjective
     assert (
-        phx.nn.conditioned_semigroup_consistency_loss
+        phx.nn.operator.training.conditioned_semigroup_consistency_loss
         is conditioned_semigroup_consistency_loss
     )

@@ -44,7 +44,7 @@ class _ConstantDifferentialKernel(eqx.Module):
 def _axis(size, *, name="x", endpoint=True):
     nodes = jnp.linspace(0.0, 1.0, size, endpoint=endpoint)
     weights = jnp.ones((size,), dtype=float) / size
-    return phx.nn.OperatorAxis(
+    return phx.nn.operator.OperatorAxis(
         name,
         nodes,
         quadrature_weights=weights,
@@ -54,9 +54,9 @@ def _axis(size, *, name="x", endpoint=True):
 
 
 def _grid_batch(values, axes, *, source="u", case_axes=()):
-    samples = phx.nn.FunctionSamples(values=values, axes=axes)
-    query = phx.nn.FunctionSamples(values=None, axes=axes)
-    return phx.nn.OperatorBatch(
+    samples = phx.nn.operator.FunctionSamples(values=values, axes=axes)
+    query = phx.nn.operator.FunctionSamples(values=None, axes=axes)
+    return phx.nn.operator.OperatorBatch(
         inputs={source: samples},
         queries={"query": query},
         case_axes=case_axes,
@@ -71,15 +71,15 @@ def _parameter_count(model):
 
 
 def test_operator_architecture_status_is_deeply_immutable():
-    status = phx.nn.operator_architecture_status("FNO")
+    status = phx.nn.operator.operator_architecture_status("FNO")
     assert (
-        phx.nn.operator_architecture_status is phx.nn.models.operator_architecture_status
+        phx.nn.operator.operator_architecture_status is phx.nn.operator.operator_architecture_status
     )
-    assert phx.nn.OperatorArchitectureStatus is phx.nn.models.OperatorArchitectureStatus
+    assert phx.nn.operator.OperatorArchitectureStatus is phx.nn.operator.OperatorArchitectureStatus
     with pytest.raises(FrozenInstanceError):
         status.tier = "research"
     with pytest.raises(TypeError):
-        phx.nn.OPERATOR_ARCHITECTURE_STATUSES["FNO"] = status
+        phx.nn.operator.OPERATOR_ARCHITECTURE_STATUSES["FNO"] = status
     assert hash(status)
 
 
@@ -110,8 +110,8 @@ def test_operator_architecture_status_is_deeply_immutable():
 )
 def test_operator_architecture_status_normalizes_aliases(alias, canonical_name):
     assert (
-        phx.nn.operator_architecture_status(alias)
-        is phx.nn.OPERATOR_ARCHITECTURE_STATUSES[canonical_name]
+        phx.nn.operator.operator_architecture_status(alias)
+        is phx.nn.operator.OPERATOR_ARCHITECTURE_STATUSES[canonical_name]
     )
 
 
@@ -169,11 +169,11 @@ def test_operator_architecture_tiers_and_recommendation_eligibility_are_exact():
             "GreenKernelOperator",
         },
     }
-    assert set(phx.nn.OPERATOR_ARCHITECTURE_STATUSES) == set().union(
+    assert set(phx.nn.operator.OPERATOR_ARCHITECTURE_STATUSES) == set().union(
         *expected_tiers.values()
     )
     for tier, names in expected_tiers.items():
-        statuses = {name: phx.nn.operator_architecture_status(name) for name in names}
+        statuses = {name: phx.nn.operator.operator_architecture_status(name) for name in names}
         assert all(status.tier == tier for status in statuses.values())
         assert all(
             status.recommendation_eligible == (tier == "stable")
@@ -183,7 +183,7 @@ def test_operator_architecture_tiers_and_recommendation_eligibility_are_exact():
 
 
 def test_tfno_is_an_fno_tucker_configuration_not_an_architecture_class():
-    status = phx.nn.operator_architecture_status("tensorized FNO")
+    status = phx.nn.operator.operator_architecture_status("tensorized FNO")
     assert status.name == "TFNO"
     assert status.architecture == "FNO"
     assert status.configuration == (("factorization", "tucker"),)
@@ -191,23 +191,23 @@ def test_tfno_is_an_fno_tucker_configuration_not_an_architecture_class():
 
 
 def test_mionet_is_a_deeponet_configuration():
-    status = phx.nn.operator_architecture_status("multiple-input operator network")
+    status = phx.nn.operator.operator_architecture_status("multiple-input operator network")
     assert status.architecture == "DeepONet"
     assert status.configuration == (("branch", "mapping"), ("fusion", "product"))
 
 
 def test_transolver_plus_plus_is_an_overlap_configuration():
-    status = phx.nn.operator_architecture_status("Transolver++")
+    status = phx.nn.operator.operator_architecture_status("Transolver++")
     assert status.architecture == "Transolver"
     assert status.configuration == (("slice_top_k", "greater_than_one"),)
     assert not status.recommendation_eligible
 
 
 def test_pod_and_graph_operator_statuses_are_configured_explicitly():
-    pod = phx.nn.operator_architecture_status("POD DeepONet")
+    pod = phx.nn.operator.operator_architecture_status("POD DeepONet")
     assert pod.architecture == "DeepONet"
     assert pod.configuration == (("trunk", "pod_basis"),)
-    graph = phx.nn.operator_architecture_status("graph operator")
+    graph = phx.nn.operator.operator_architecture_status("graph operator")
     assert graph.name == "GraphNeuralOperator"
     assert graph.tier == "experimental"
     assert not graph.recommendation_eligible
@@ -215,43 +215,43 @@ def test_pod_and_graph_operator_statuses_are_configured_explicitly():
 
 def test_operator_architecture_status_rejects_unknown_names():
     with pytest.raises(ValueError, match="Unknown operator architecture"):
-        phx.nn.operator_architecture_status("not-an-operator")
+        phx.nn.operator.operator_architecture_status("not-an-operator")
 
 
 def test_function_samples_combine_quadrature_and_mask():
-    x = phx.nn.OperatorAxis(
+    x = phx.nn.operator.OperatorAxis(
         "x", jnp.arange(3.0), quadrature_weights=jnp.array([0.2, 0.3, 0.5])
     )
-    y = phx.nn.OperatorAxis(
+    y = phx.nn.operator.OperatorAxis(
         "y", jnp.arange(2.0), quadrature_weights=jnp.array([0.4, 0.6])
     )
     mask = jnp.array([[True, False], [True, True], [False, True]])
-    samples = phx.nn.FunctionSamples(values=None, axes=(x, y), mask=mask)
+    samples = phx.nn.operator.FunctionSamples(values=None, axes=(x, y), mask=mask)
     expected = jnp.multiply.outer(x.quadrature_weights, y.quadrature_weights) * mask
     assert jnp.allclose(samples.weights(), expected)
     assert jnp.allclose(jnp.sum(samples.weights(normalized=True)), 1.0)
 
 
 def test_operator_metrics_are_per_case_and_quadrature_aware():
-    axis = phx.nn.OperatorAxis(
+    axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.array([0.0, 0.25, 1.0]),
         quadrature_weights=jnp.array([0.1, 0.2, 0.7]),
     )
-    query = phx.nn.FunctionSamples(values=None, axes=(axis,))
+    query = phx.nn.operator.FunctionSamples(values=None, axes=(axis,))
     prediction = jnp.array([[1.0, 0.0, 0.0], [0.0, 0.0, 2.0]])
     target = jnp.zeros_like(prediction)
-    per_case = phx.nn.operator_l2_loss(prediction, target, query, reduction="none")
+    per_case = phx.nn.operator.operator_l2_loss(prediction, target, query, reduction="none")
     assert jnp.allclose(per_case, jnp.array([jnp.sqrt(0.1), 2.0 * jnp.sqrt(0.7)]))
     assert jnp.allclose(
-        phx.nn.operator_conservation_error(prediction, target, query, reduction="none"),
+        phx.nn.operator.operator_conservation_error(prediction, target, query, reduction="none"),
         jnp.array([0.1, 1.4]),
     )
 
 
 @pytest.mark.parametrize("shape", ((9, 10), (10, 9), (9, 9), (10, 10)))
 def test_spectral_conv_nd_preserves_odd_even_shapes(shape):
-    layer = phx.nn.SpectralConvND(
+    layer = phx.nn.operator.architectures.SpectralConvND(
         in_channels=2,
         out_channels=3,
         n_modes=(4, 4),
@@ -263,7 +263,7 @@ def test_spectral_conv_nd_preserves_odd_even_shapes(shape):
 
 
 def test_spectral_conv_nd_learns_negative_frequency_block():
-    layer = phx.nn.SpectralConvND(
+    layer = phx.nn.operator.architectures.SpectralConvND(
         in_channels=1,
         out_channels=1,
         n_modes=(3, 3),
@@ -280,7 +280,7 @@ def test_spectral_conv_nd_learns_negative_frequency_block():
 
 @pytest.mark.parametrize("factorization", ("dense", "cp", "tucker"))
 def test_spectral_factorizations_have_finite_gradients(factorization):
-    layer = phx.nn.SpectralConvND(
+    layer = phx.nn.operator.architectures.SpectralConvND(
         in_channels=2,
         out_channels=2,
         n_modes=(3, 3),
@@ -296,7 +296,7 @@ def test_spectral_factorizations_have_finite_gradients(factorization):
 
 
 def test_fno_native_batch_matches_vmap_and_resolution_independent_parameters():
-    model = phx.nn.FNO(
+    model = phx.nn.operator.architectures.FNO(
         n_modes=(4, 4),
         in_channels=2,
         out_channels=2,
@@ -316,7 +316,7 @@ def test_fno_native_batch_matches_vmap_and_resolution_independent_parameters():
 
 
 def test_fno_prefers_explicit_channels_when_spatial_sizes_are_ambiguous():
-    model = phx.nn.FNO(
+    model = phx.nn.operator.architectures.FNO(
         n_modes=(2, 2),
         in_channels=4,
         out_channels=1,
@@ -332,10 +332,10 @@ def test_fno_prefers_explicit_channels_when_spatial_sizes_are_ambiguous():
 
 def test_spectral_resampling_preserves_constants_and_multiscale_shape():
     values = jnp.ones((2, 15, 17, 3))
-    resized = phx.nn.spectral_resample(values, (8, 9))
+    resized = phx.nn.operator.architectures.spectral_resample(values, (8, 9))
     assert resized.shape == (2, 8, 9, 3)
     assert jnp.allclose(resized, 1.0)
-    layer = phx.nn.MultiScaleSpectralConvND(
+    layer = phx.nn.operator.architectures.MultiScaleSpectralConvND(
         in_channels=3,
         out_channels=4,
         n_modes=(4, 4),
@@ -348,10 +348,10 @@ def test_spectral_resampling_preserves_constants_and_multiscale_shape():
 @pytest.mark.parametrize("basis", ("fourier", "sine", "cosine", "legendre"))
 def test_basis_spectral_policy_supports_nonuniform_nodes(basis):
     nodes = jnp.linspace(0.0, 1.0, 11) ** 2
-    axis = phx.nn.OperatorAxis(
+    axis = phx.nn.operator.OperatorAxis(
         "x", nodes, quadrature_weights=jnp.gradient(nodes), basis=basis
     )
-    layer = phx.nn.BasisSpectralConvND(
+    layer = phx.nn.operator.layers.BasisSpectralConvND(
         in_channels=1,
         out_channels=2,
         n_modes=5,
@@ -368,12 +368,12 @@ def test_integral_branch_is_permutation_invariant_and_mask_aware():
     weights = jnp.array([0.1, 0.2, 0.3, 0.4])
     mask = jnp.array([True, True, False, True])
     values = jnp.array([1.0, 2.0, 1000.0, 4.0])
-    encoder = phx.nn.IntegralBranchEncoder(
+    encoder = phx.nn.operator.architectures.IntegralBranchEncoder(
         feature_model=_FeatureMap(2, 2),
         latent_size=2,
         coord_dim=1,
     )
-    samples = phx.nn.FunctionSamples(
+    samples = phx.nn.operator.FunctionSamples(
         values=values,
         coordinates=coordinates,
         quadrature_weights=weights,
@@ -381,14 +381,14 @@ def test_integral_branch_is_permutation_invariant_and_mask_aware():
     )
     encoded = encoder(samples, case_ndim=0)
     permutation = jnp.array([3, 1, 0, 2])
-    permuted = phx.nn.FunctionSamples(
+    permuted = phx.nn.operator.FunctionSamples(
         values=values[permutation],
         coordinates=coordinates[permutation],
         quadrature_weights=weights[permutation],
         mask=mask[permutation],
     )
     assert jnp.allclose(encoded, encoder(permuted, case_ndim=0))
-    changed_masked = phx.nn.FunctionSamples(
+    changed_masked = phx.nn.operator.FunctionSamples(
         values=values.at[2].set(-999.0),
         coordinates=coordinates,
         quadrature_weights=weights,
@@ -400,38 +400,38 @@ def test_integral_branch_is_permutation_invariant_and_mask_aware():
 def test_mionet_product_fusion_and_pod_decode():
     sensor_axis = _axis(6, name="sensor")
     query_axis = _axis(5)
-    encoder_a = phx.nn.IntegralBranchEncoder(
+    encoder_a = phx.nn.operator.architectures.IntegralBranchEncoder(
         feature_model=_FeatureMap(2, 2), latent_size=2, coord_dim=1
     )
-    encoder_b = phx.nn.IntegralBranchEncoder(
+    encoder_b = phx.nn.operator.architectures.IntegralBranchEncoder(
         feature_model=_FeatureMap(2, 2), latent_size=2, coord_dim=1
     )
-    basis = phx.nn.PODBasis(jnp.ones((5, 2)), latent_size=2)
-    model = phx.nn.DeepONet(
+    basis = phx.nn.operator.architectures.PODBasis(jnp.ones((5, 2)), latent_size=2)
+    model = phx.nn.operator.architectures.DeepONet(
         branch={"a": encoder_a, "b": encoder_b},
         trunk=basis,
         coord_dim=1,
         latent_size=2,
         fusion="product",
     )
-    batch = phx.nn.OperatorBatch(
+    batch = phx.nn.operator.OperatorBatch(
         inputs={
-            "a": phx.nn.FunctionSamples(values=jnp.ones((3, 6)), axes=(sensor_axis,)),
-            "b": phx.nn.FunctionSamples(
+            "a": phx.nn.operator.FunctionSamples(values=jnp.ones((3, 6)), axes=(sensor_axis,)),
+            "b": phx.nn.operator.FunctionSamples(
                 values=2.0 * jnp.ones((3, 6)), axes=(sensor_axis,)
             ),
         },
-        queries={"query": phx.nn.FunctionSamples(values=None, axes=(query_axis,))},
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(query_axis,))},
         case_axes=("case",),
     )
     assert model(batch).shape == (3, 5)
 
 
 def test_deeponet_chunked_and_unchunked_queries_agree():
-    branch = phx.nn.MLP(in_size=4, out_size=5, width_size=8, depth=2, key=jr.key(0))
-    trunk = phx.nn.MLP(in_size=1, out_size=5, width_size=8, depth=2, key=jr.key(1))
-    full = phx.nn.DeepONet(branch=branch, trunk=trunk, coord_dim=1, latent_size=5)
-    chunked = phx.nn.DeepONet(
+    branch = phx.nn.models.MLP(in_size=4, out_size=5, width_size=8, depth=2, key=jr.key(0))
+    trunk = phx.nn.models.MLP(in_size=1, out_size=5, width_size=8, depth=2, key=jr.key(1))
+    full = phx.nn.operator.architectures.DeepONet(branch=branch, trunk=trunk, coord_dim=1, latent_size=5)
+    chunked = phx.nn.operator.architectures.DeepONet(
         branch=branch,
         trunk=trunk,
         coord_dim=1,
@@ -445,7 +445,7 @@ def test_deeponet_chunked_and_unchunked_queries_agree():
 def test_local_differential_operator_annihilates_constants():
     axis = _axis(12)
     batch = _grid_batch(jnp.ones((2, 12)), (axis,), case_axes=("case",))
-    model = phx.nn.LocalDifferentialOperator(
+    model = phx.nn.operator.architectures.LocalDifferentialOperator(
         kernel_model=_ConstantDifferentialKernel(1),
         coord_dim=1,
         radius=0.3,
@@ -454,19 +454,19 @@ def test_local_differential_operator_annihilates_constants():
 
 
 def test_laplace_operator_has_stable_poles_real_output_and_strict_causality():
-    source_axis = phx.nn.OperatorAxis("t", jnp.array([0.0, 0.2, 0.5, 0.8, 1.0]))
-    query_axis = phx.nn.OperatorAxis("t_query", jnp.array([0.05, 0.15]))
+    source_axis = phx.nn.operator.OperatorAxis("t", jnp.array([0.0, 0.2, 0.5, 0.8, 1.0]))
+    query_axis = phx.nn.operator.OperatorAxis("t_query", jnp.array([0.05, 0.15]))
     values = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
-    model = phx.nn.LaplaceTemporalOperator(num_poles=5, key=jr.key(0))
+    model = phx.nn.operator.architectures.LaplaceTemporalOperator(num_poles=5, key=jr.key(0))
 
     def evaluate(source_values):
         return model(
-            phx.nn.OperatorBatch(
+            phx.nn.operator.OperatorBatch(
                 inputs={
-                    "u": phx.nn.FunctionSamples(values=source_values, axes=(source_axis,))
+                    "u": phx.nn.operator.FunctionSamples(values=source_values, axes=(source_axis,))
                 },
                 queries={
-                    "query": phx.nn.FunctionSamples(values=None, axes=(query_axis,))
+                    "query": phx.nn.operator.FunctionSamples(values=None, axes=(query_axis,))
                 },
             )
         )
@@ -480,15 +480,15 @@ def test_laplace_operator_has_stable_poles_real_output_and_strict_causality():
 
 def test_operator_attention_shapes_and_measure_aware_slice_pooling():
     axis = _axis(7)
-    samples = phx.nn.FunctionSamples(values=None, axes=(axis,))
+    samples = phx.nn.operator.FunctionSamples(values=None, axes=(axis,))
     values = jr.normal(jr.key(0), (2, 7, 4))
-    attention = phx.nn.OperatorAttention(
+    attention = phx.nn.operator.layers.OperatorAttention(
         source_channels=4, num_heads=2, head_dim=3, key=jr.key(1)
     )
-    slices = phx.nn.SliceAttention(
+    slices = phx.nn.operator.layers.SliceAttention(
         channels=4, num_slices=3, num_heads=2, head_dim=3, key=jr.key(2)
     )
-    axial = phx.nn.AxialOperatorAttention(
+    axial = phx.nn.operator.layers.AxialOperatorAttention(
         channels=4, num_heads=2, head_dim=3, key=jr.key(3)
     )
     assert attention(values, samples).shape == values.shape
@@ -502,9 +502,9 @@ def test_cno_family_handles_odd_grids_and_native_batches(model_name):
     y_axis = jnp.linspace(0.0, 1.0, 17)
     values = jr.normal(jr.key(0), (2, 15, 17))
     if model_name == "cno":
-        model = phx.nn.CNO(spatial_ndim=2, width=4, depth=2, key=jr.key(1))
+        model = phx.nn.operator.architectures.CNO(spatial_ndim=2, width=4, depth=2, key=jr.key(1))
     else:
-        model = phx.nn.UNO(spatial_ndim=2, widths=(4, 6, 8), key=jr.key(1))
+        model = phx.nn.operator.architectures.UNO(spatial_ndim=2, widths=(4, 6, 8), key=jr.key(1))
     output = model((values, x_axis, y_axis))
     assert output.shape == values.shape
     assert jnp.all(jnp.isfinite(output))
@@ -513,7 +513,7 @@ def test_cno_family_handles_odd_grids_and_native_batches(model_name):
 def test_sfno_is_finite_and_resolution_independent_in_parameter_count():
     theta = jnp.linspace(0.1, jnp.pi - 0.1, 6)
     phi = jnp.linspace(0.0, 2.0 * jnp.pi, 9, endpoint=False)
-    model = phx.nn.SFNO(width=4, depth=2, max_degree=3, key=jr.key(0))
+    model = phx.nn.operator.architectures.SFNO(width=4, depth=2, max_degree=3, key=jr.key(0))
     count = _parameter_count(model)
     output = model((jnp.ones((2, 6, 9)), theta, phi))
     theta_fine = jnp.linspace(0.1, jnp.pi - 0.1, 8)
@@ -528,7 +528,7 @@ def test_sfno_is_finite_and_resolution_independent_in_parameter_count():
 def test_operator_constraints_compose_data_and_physics_losses():
     axis = _axis(8)
     batch = _grid_batch(jnp.ones((2, 8)), (axis,), source="data", case_axes=("case",))
-    model = phx.nn.FNO(width=4, depth=1, n_modes=(3,), key=jr.key(0))
+    model = phx.nn.operator.architectures.FNO(width=4, depth=1, n_modes=(3,), key=jr.key(0))
     domain = phx.domain.DatasetDomain(jnp.ones((2, 8))) @ phx.domain.Interval1d(0.0, 1.0)
     function = domain.Model("data", "x")(model)
     data = phx.terms.OperatorDatasetTerm(
@@ -546,7 +546,7 @@ def test_operator_constraints_compose_data_and_physics_losses():
 def test_external_operator_manifest_roundtrip_and_adapter(tmp_path):
     checkpoint = tmp_path / "checkpoint.bin"
     checkpoint.write_bytes(b"operator-state")
-    manifest = phx.nn.OperatorCheckpointManifest(
+    manifest = phx.nn.operator.adapters.OperatorCheckpointManifest(
         architecture="test-operator",
         model_version="1.2.0",
         source_uri="https://example.test/source",
@@ -559,14 +559,14 @@ def test_external_operator_manifest_roundtrip_and_adapter(tmp_path):
         dataset_provenance=("analytic",),
         code_license="test-only",
         weights_license="test-only",
-        checkpoint_sha256=phx.nn.checkpoint_sha256(checkpoint),
+        checkpoint_sha256=phx.nn.operator.adapters.checkpoint_sha256(checkpoint),
     )
     path = tmp_path / "operator.json"
-    phx.nn.save_operator_manifest(path, manifest)
-    loaded = phx.nn.load_operator_manifest(path)
+    phx.nn.operator.adapters.save_operator_manifest(path, manifest)
+    loaded = phx.nn.operator.adapters.load_operator_manifest(path)
     axis = _axis(5)
     batch = _grid_batch(jnp.arange(5.0), (axis,))
-    adapter = phx.nn.ExternalOperatorAdapter(
+    adapter = phx.nn.operator.adapters.ExternalOperatorAdapter(
         runner=lambda payload, key: 2.0 * payload,
         input_adapter=lambda operator_batch, _: operator_batch.input("u").values,
         output_adapter=lambda output, operator_batch, _: output,
@@ -577,7 +577,7 @@ def test_external_operator_manifest_roundtrip_and_adapter(tmp_path):
     assert loaded.to_dict() == manifest.to_dict()
     assert "format_version" not in loaded.to_dict()
     assert jnp.allclose(adapter(batch), 2.0 * jnp.arange(5.0))
-    verified = phx.nn.load_external_operator_adapter(
+    verified = phx.nn.operator.adapters.load_external_operator_adapter(
         path,
         checkpoint,
         lambda operator_manifest, checkpoint_path: lambda payload, key: 2.0 * payload,
@@ -589,7 +589,7 @@ def test_external_operator_manifest_roundtrip_and_adapter(tmp_path):
     assert jnp.allclose(verified(batch), 2.0 * jnp.arange(5.0))
     checkpoint.write_bytes(b"corrupted")
     with pytest.raises(ValueError, match="checksum mismatch"):
-        phx.nn.load_external_operator_adapter(
+        phx.nn.operator.adapters.load_external_operator_adapter(
             path,
             checkpoint,
             lambda operator_manifest, checkpoint_path: lambda payload, key: payload,

@@ -15,14 +15,14 @@ Common end-to-end model families (dense, separable, basis-edge, and complex-valu
       to use a scan-over-depth execution path when topology is compatible.
     - `scan=True` is primarily a compile-time optimization for deeper repeated blocks.
 
-::: phydrax.nn.MLP
+::: phydrax.nn.models.MLP
     options:
         members:
             - __init__
             - __call__
 
 ---
-::: phydrax.nn.ModifiedMLP
+::: phydrax.nn.models.ModifiedMLP
     options:
         members:
             - __init__
@@ -31,7 +31,7 @@ Common end-to-end model families (dense, separable, basis-edge, and complex-valu
 ---
 
 
-::: phydrax.nn.KAN
+::: phydrax.nn.models.KAN
     options:
         members:
             - __init__
@@ -44,8 +44,8 @@ initialization, compact support, and a basis-specific Sobolev regularizer:
 ```python
 import phydrax as phx
 
-basis = phx.nn.BSplineEdgeBasis(degree=3, num_intervals=8)
-model = phx.nn.KAN(
+basis = phx.nn.models.BSplineEdgeBasis(degree=3, num_intervals=8)
+model = phx.nn.models.KAN(
     in_size=2,
     out_size="scalar",
     width_size=32,
@@ -58,11 +58,11 @@ model = phx.nn.KAN(
 An explicit nonuniform fixed grid uses the same basis contract:
 
 ```python
-grid = phx.nn.BSplineGrid(
+grid = phx.nn.models.BSplineGrid(
     [-1.0, -1.0, -1.0, -0.6, -0.1, 0.45, 1.0, 1.0, 1.0],
     2,
 )
-basis = phx.nn.BSplineEdgeBasis(grid=grid, regularization_order=1)
+basis = phx.nn.models.BSplineEdgeBasis(grid=grid, regularization_order=1)
 ```
 
 Knot arrays remain fixed under ordinary optimizer partitioning. A supplied grid
@@ -74,7 +74,7 @@ One independent fixed grid per layer input channel is realized without changing
 the dense coefficient-array contract:
 
 ```python
-basis = phx.nn.BSplineEdgeBasis(
+basis = phx.nn.models.BSplineEdgeBasis(
     degree=3,
     num_intervals=8,
     per_input=True,
@@ -93,12 +93,12 @@ new basis, returns a new model, and never mutates the source model.
 Trainable fixed-count knots are an explicit alternative:
 
 ```python
-grid = phx.nn.TrainableBSplineGrid.open_uniform(
+grid = phx.nn.models.TrainableBSplineGrid.open_uniform(
     3,
     8,
     minimum_span=1e-3,
 )
-basis = phx.nn.BSplineEdgeBasis(
+basis = phx.nn.models.BSplineEdgeBasis(
     grid=grid,
     knot_entropy_weight=1e-4,
     knot_neighbor_weight=1e-4,
@@ -127,12 +127,12 @@ phases. Refinement consumes nonnegative per-positive-span indicators keyed by
 ```python
 import jax.numpy as jnp
 
-refined, refinement = phx.nn.refine_kan_edges(
+refined, refinement = phx.nn.models.refine_kan_edges(
     model,
     {(0, 3, 1): jnp.asarray([0.1, 0.8, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0])},
     budget=1,
 )
-coarsened, coarsening = phx.nn.coarsen_kan_edges(
+coarsened, coarsening = phx.nn.models.coarsen_kan_edges(
     refined,
     {(0, 3, 1): 1e-6},
     budget=1,
@@ -160,12 +160,12 @@ Positive-weight rational B-spline edges are available when a quotient is
 materially more parameter-efficient than an ordinary spline:
 
 ```python
-basis = phx.nn.RationalBSplineEdgeBasis(
+basis = phx.nn.models.RationalBSplineEdgeBasis(
     degree=3,
     num_intervals=5,
     maximum_log_weight=4.0,
 )
-model = phx.nn.KAN(
+model = phx.nn.models.KAN(
     in_size=2,
     out_size="scalar",
     width_size=32,
@@ -195,75 +195,75 @@ inputs have zero derivative.
 
 ---
 
-::: phydrax.nn.AbstractEdgeBasis
+::: phydrax.nn.models.AbstractEdgeBasis
 
 ---
 
-::: phydrax.nn.OrthogonalPolynomialEdgeBasis
+::: phydrax.nn.models.OrthogonalPolynomialEdgeBasis
     options:
         members:
             - __init__
 
 ---
 
-::: phydrax.nn.BSplineGrid
+::: phydrax.nn.models.BSplineGrid
     options:
         members:
             - __init__
 
 ---
 
-::: phydrax.nn.BSplineGridBank
+::: phydrax.nn.models.BSplineGridBank
 
 ---
 
-::: phydrax.nn.TrainableBSplineGrid
+::: phydrax.nn.models.TrainableBSplineGrid
 
 ---
 
-::: phydrax.nn.KANGridAdaptationPlan
+::: phydrax.nn.models.KANGridAdaptationPlan
 
 ---
 
-::: phydrax.nn.KANGridAdaptationReport
+::: phydrax.nn.models.KANGridAdaptationReport
 
 ---
 
-::: phydrax.nn.adapt_kan_grids
+::: phydrax.nn.models.adapt_kan_grids
 
 ---
-::: phydrax.nn.KANEdgeBlock
-
----
-
-::: phydrax.nn.KANCapacityAdaptationReport
+::: phydrax.nn.models.KANEdgeBlock
 
 ---
 
-::: phydrax.nn.refine_kan_edges
+::: phydrax.nn.models.KANCapacityAdaptationReport
 
 ---
 
-::: phydrax.nn.coarsen_kan_edges
+::: phydrax.nn.models.refine_kan_edges
 
 ---
 
-::: phydrax.nn.RationalBSplineEdgeParameters
+::: phydrax.nn.models.coarsen_kan_edges
 
 ---
 
-::: phydrax.nn.RationalBSplineEdgeBasis
+::: phydrax.nn.models.RationalBSplineEdgeParameters
 
 ---
 
-::: phydrax.nn.BSplineEdgeBasis
+::: phydrax.nn.models.RationalBSplineEdgeBasis
+
+---
+
+::: phydrax.nn.models.BSplineEdgeBasis
     options:
         members:
             - __init__
 
 ---
 
-::: phydrax.nn.FeynmaNN
+::: phydrax.nn.models.FeynmaNN
     options:
         members:
             - __init__
@@ -312,7 +312,7 @@ system.
     values = jnp.sin(times)
     valid = jnp.asarray([True, True, True, False])
 
-    mixer = phx.nn.DiagonalStateSpaceMixer(
+    mixer = phx.nn.operator.architectures.DiagonalStateSpaceMixer(
         in_channels="scalar",
         out_channels="scalar",
         state_size=16,
@@ -366,7 +366,7 @@ raw sequence overrides and a custom initial state are rejected on that call path
 The source/query checks do not silently alter
 coordinates, masks, or IDs.
 
-::: phydrax.nn.DiagonalStateSpaceMixer
+::: phydrax.nn.operator.architectures.DiagonalStateSpaceMixer
     options:
         members:
             - __init__
@@ -418,11 +418,36 @@ both its volume and boundary sources.
 
 ---
 
-::: phydrax.nn.FunctionSamples
+::: phydrax.nn.operator.FunctionSamples
 
 ---
 
-::: phydrax.nn.OperatorBatch
+::: phydrax.nn.operator.OperatorBatch
+
+### Engine contract and package ownership
+
+`AbstractOperatorModel` is the public base for native and third-party PhydraX
+engines. It implements the canonical `OperatorModel` contract, including named
+output specifications, configured capabilities, validated evaluation, and a
+prevalidated execution path used by training and compiled inference. Architecture
+implementations are grouped by representation—spectral, geometric, attention,
+conditioning, dynamics, and probabilistic—behind the stable
+`phydrax.nn.operator.architectures` facade.
+
+Portable third-party engines register an
+`OperatorArchitectureCodec` with an explicitly versioned architecture ID. A
+codec may provide configuration encode/decode functions; artifacts persist that
+identity rather than a Python defining-module path.
+
+::: phydrax.nn.operator.OperatorModel
+
+---
+
+::: phydrax.nn.operator.AbstractOperatorModel
+
+---
+
+::: phydrax.nn.operator.training.OperatorArchitectureCodec
 
 ### Reusable state, multi-query batches, and physical branches
 
@@ -454,47 +479,47 @@ gradients, curl, rotated gradients, or symmetric gradients.
 units; `LinearDifferentialTransform` exposes an explicit validated coefficient
 map. This decoder is pointwise and is not an `OperatorBatch` query decoder.
 
-::: phydrax.nn.AbstractEncodedOperatorModel
+::: phydrax.nn.operator.AbstractEncodedOperatorModel
 
 ---
 
-::: phydrax.nn.LearnedTokenContext
+::: phydrax.nn.operator.LearnedTokenContext
 
 ---
 
-::: phydrax.nn.PooledGeometryContext
+::: phydrax.nn.operator.PooledGeometryContext
 
 ---
 
-::: phydrax.nn.SampledAnchorContext
+::: phydrax.nn.operator.SampledAnchorContext
 
 ---
 
-::: phydrax.nn.OperatorBranchSpec
+::: phydrax.nn.operator.OperatorBranchSpec
 
 ---
 
-::: phydrax.nn.BranchInteractionSpec
+::: phydrax.nn.operator.BranchInteractionSpec
 
 ---
 
-::: phydrax.nn.OperatorBranchGraph
+::: phydrax.nn.operator.OperatorBranchGraph
 
 ---
 
-::: phydrax.nn.apply_branch_interactions
+::: phydrax.nn.operator.apply_branch_interactions
 
 ---
 
-::: phydrax.nn.DifferentialNormalization
+::: phydrax.nn.models.DifferentialNormalization
 
 ---
 
-::: phydrax.nn.LinearDifferentialTransform
+::: phydrax.nn.models.LinearDifferentialTransform
 
 ---
 
-::: phydrax.nn.DifferentialFieldDecoder
+::: phydrax.nn.models.DifferentialFieldDecoder
 
 ### Production sampling and streamed inference
 
@@ -521,31 +546,30 @@ fixed-capacity chunks. `decode_query_chunks` encodes an
 `AbstractEncodedOperatorModel` once, pads only the final query chunk, compiles a
 shape-stable decoder, and writes through an `OperatorPredictionSink`.
 `ArrayPredictionSink` collects an in-memory result; `NpyPredictionSink` writes
-the same ordered chunks incrementally. These APIs are re-exported from
-`phydrax.nn`; their protocol types remain available from
-`phydrax.nn.operator_training`.
+the same ordered chunks incrementally. These APIs and protocols are owned by
+`phydrax.nn.operator.training`.
 
-::: phydrax.nn.AnchorQuerySamplingPolicy
-
----
-
-::: phydrax.nn.CallbackOperatorCaseSource
+::: phydrax.nn.operator.AnchorQuerySamplingPolicy
 
 ---
 
-::: phydrax.nn.read_operator_case_batch
+::: phydrax.nn.operator.CallbackOperatorCaseSource
 
 ---
 
-::: phydrax.nn.ArrayOperatorQuerySource
+::: phydrax.nn.operator.read_operator_case_batch
 
 ---
 
-::: phydrax.nn.ArrayPredictionSink
+::: phydrax.nn.operator.training.ArrayOperatorQuerySource
 
 ---
 
-::: phydrax.nn.decode_query_chunks
+::: phydrax.nn.operator.training.ArrayPredictionSink
+
+---
+
+::: phydrax.nn.operator.training.decode_query_chunks
 
 ### Fourier and basis operators
 
@@ -588,15 +612,15 @@ coordinates with an exact direct backend or an explicitly tolerance-controlled
 NUFFT backend. Both preserve channel-last fields and leading case axes; the
 point sampler also accepts physical uniform axis nodes and periods.
 
-::: phydrax.nn.spectral_resample
+::: phydrax.nn.operator.architectures.spectral_resample
 
 ---
 
-::: phydrax.nn.sample_fourier_grid
+::: phydrax.nn.layers.sample_fourier_grid
 
 ---
 
-::: phydrax.nn.FNO
+::: phydrax.nn.operator.architectures.FNO
     options:
         members:
             - __init__
@@ -604,18 +628,7 @@ point sampler also accepts physical uniform axis nodes and periods.
             - with_active_modes
 
 ---
-::: phydrax.nn.HOFNO
-    options:
-        members:
-            - __init__
-            - __call__
-            - with_active_modes
-
----
-
-
-
-::: phydrax.nn.SpectralConvND
+::: phydrax.nn.operator.architectures.HOFNO
     options:
         members:
             - __init__
@@ -624,7 +637,18 @@ point sampler also accepts physical uniform axis nodes and periods.
 
 ---
 
-::: phydrax.nn.BasisSpectralConvND
+
+
+::: phydrax.nn.operator.architectures.SpectralConvND
+    options:
+        members:
+            - __init__
+            - __call__
+            - with_active_modes
+
+---
+
+::: phydrax.nn.operator.layers.BasisSpectralConvND
     options:
         members:
             - __init__
@@ -661,7 +685,7 @@ sparse matrices and computes only the requested low modes for large meshes;
 small or nearly full spectra use a dense solve. Repeated eigenvalues are grouped
 as one eigenspace for basis-gauge-safe spectral mixing.
 
-::: phydrax.nn.IFNO
+::: phydrax.nn.operator.architectures.IFNO
     options:
         members:
             - __init__
@@ -670,11 +694,11 @@ as one eigenspace for basis-gauge-safe spectral mixing.
 
 ---
 
-::: phydrax.nn.IFNOConvergence
+::: phydrax.nn.operator.architectures.IFNOConvergence
 
 ---
 
-::: phydrax.nn.AxialFactorizedFNO
+::: phydrax.nn.operator.architectures.AxialFactorizedFNO
     options:
         members:
             - __init__
@@ -682,7 +706,7 @@ as one eigenspace for basis-gauge-safe spectral mixing.
 
 ---
 
-::: phydrax.nn.WaveletNeuralOperator
+::: phydrax.nn.operator.architectures.WaveletNeuralOperator
     options:
         members:
             - __init__
@@ -690,7 +714,7 @@ as one eigenspace for basis-gauge-safe spectral mixing.
 
 ---
 
-::: phydrax.nn.MultiwaveletOperator
+::: phydrax.nn.operator.architectures.MultiwaveletOperator
     options:
         members:
             - __init__
@@ -698,11 +722,11 @@ as one eigenspace for basis-gauge-safe spectral mixing.
 
 ---
 
-::: phydrax.nn.SpectralDiscretization
+::: phydrax.nn.operator.architectures.SpectralDiscretization
 
 ---
 
-::: phydrax.nn.ManifoldSpectralOperator
+::: phydrax.nn.operator.architectures.ManifoldSpectralOperator
     options:
         members:
             - __init__
@@ -716,7 +740,7 @@ POD bases, and multiple functional inputs. A branch mapping plus
 `fusion="product"` is the MIONet configuration; `sum` and learned `concat` reuse
 the same substrate.
 
-::: phydrax.nn.DeepONet
+::: phydrax.nn.operator.architectures.DeepONet
     options:
         members:
             - __init__
@@ -724,7 +748,7 @@ the same substrate.
 
 ---
 
-::: phydrax.nn.IntegralBranchEncoder
+::: phydrax.nn.operator.architectures.IntegralBranchEncoder
     options:
         members:
             - __init__
@@ -732,7 +756,7 @@ the same substrate.
 
 ---
 
-::: phydrax.nn.PODBasis
+::: phydrax.nn.operator.architectures.PODBasis
     options:
         members:
             - __init__
@@ -751,7 +775,7 @@ the same substrate.
   `AxialOperatorAttention` cover continuum self/cross attention, Transolver-style
   slices, variable physical fields, and tensor-axis factorization.
 
-::: phydrax.nn.LocalIntegralOperator
+::: phydrax.nn.operator.architectures.LocalIntegralOperator
     options:
         members:
             - __init__
@@ -759,7 +783,7 @@ the same substrate.
 
 ---
 
-::: phydrax.nn.LocalDifferentialOperator
+::: phydrax.nn.operator.architectures.LocalDifferentialOperator
     options:
         members:
             - __init__
@@ -767,7 +791,7 @@ the same substrate.
 
 ---
 
-::: phydrax.nn.LaplaceTemporalOperator
+::: phydrax.nn.operator.architectures.LaplaceTemporalOperator
     options:
         members:
             - __init__
@@ -776,7 +800,7 @@ the same substrate.
 
 ---
 
-::: phydrax.nn.OperatorAttention
+::: phydrax.nn.operator.layers.OperatorAttention
     options:
         members:
             - __init__
@@ -791,7 +815,7 @@ same representation-aware blocks. `SFNO` uses true spherical harmonics, shares
 weights by spherical degree, and is not a planar FFT over an equirectangular
 image.
 
-::: phydrax.nn.CNO
+::: phydrax.nn.operator.architectures.CNO
     options:
         members:
             - __init__
@@ -799,7 +823,7 @@ image.
 
 ---
 
-::: phydrax.nn.UNO
+::: phydrax.nn.operator.architectures.UNO
     options:
         members:
             - __init__
@@ -807,7 +831,7 @@ image.
 
 ---
 
-::: phydrax.nn.SFNO
+::: phydrax.nn.operator.architectures.SFNO
     options:
         members:
             - __init__
@@ -891,14 +915,14 @@ generic remedy for corrupted or missing source mass. These are opt-in modeling
 choices; neither `GINO` nor `GeometryInformedFlower` is promoted beyond research
 tier by the current evidence.
 
-::: phydrax.nn.GINO
+::: phydrax.nn.operator.architectures.GINO
     options:
         members:
             - __init__
             - __call__
 
 ---
-::: phydrax.nn.GeometryInformedFlower
+::: phydrax.nn.operator.architectures.GeometryInformedFlower
     options:
         members:
             - __init__
@@ -908,7 +932,7 @@ tier by the current evidence.
 ---
 
 
-::: phydrax.nn.RIGNO
+::: phydrax.nn.operator.architectures.RIGNO
     options:
         members:
             - __init__
@@ -916,7 +940,7 @@ tier by the current evidence.
 
 ---
 
-::: phydrax.nn.GAOT
+::: phydrax.nn.operator.architectures.GAOT
     options:
         members:
             - __init__
@@ -924,35 +948,35 @@ tier by the current evidence.
 
 ---
 
-::: phydrax.nn.GraphKernelTransfer
+::: phydrax.nn.operator.layers.GraphKernelTransfer
 
 ---
 
-::: phydrax.nn.GraphAttentionTransfer
+::: phydrax.nn.operator.layers.GraphAttentionTransfer
 
 ---
 
-::: phydrax.nn.MultiscaleGraphTransfer
+::: phydrax.nn.operator.layers.MultiscaleGraphTransfer
 
 ---
 
-::: phydrax.nn.TensorGridLatentGeometry
+::: phydrax.nn.operator.TensorGridLatentGeometry
 
 ---
 
-::: phydrax.nn.RegionalPointLatentGeometry
+::: phydrax.nn.operator.RegionalPointLatentGeometry
 
 ---
 
-::: phydrax.nn.GeometryOperatorDiagnostics
+::: phydrax.nn.operator.architectures.GeometryOperatorDiagnostics
 
 ---
 
-::: phydrax.nn.RegionalGraphProcessor
+::: phydrax.nn.operator.layers.RegionalGraphProcessor
 
 ---
 
-::: phydrax.nn.OperatorTransformerProcessor
+::: phydrax.nn.operator.layers.OperatorTransformerProcessor
 
 Transolver-style `SliceAttention` remains a separate layer-level configuration:
 physical points are assigned to a fixed number of learned slices, global
@@ -987,19 +1011,19 @@ sample construction and model execution.
 
 ---
 
-::: phydrax.nn.function_samples_from_cochain
+::: phydrax.nn.operator.function_samples_from_cochain
 
 ---
 
-::: phydrax.nn.TopologicalRouteConfig
+::: phydrax.nn.operator.architectures.TopologicalRouteConfig
 
 ---
 
-::: phydrax.nn.TopologicalCochainBlock
+::: phydrax.nn.operator.architectures.TopologicalCochainBlock
 
 ---
 
-::: phydrax.nn.CochainNeuralOperator
+::: phydrax.nn.operator.architectures.CochainNeuralOperator
 
 ---
 
@@ -1037,7 +1061,7 @@ three-dimensional O(3)-equivariant geometry configuration: inputs and outputs
 must use explicit `O3Representation` contracts and source quadrature. Equivariance
 does not remove its finite-radius or representation-content assumptions.
 
-::: phydrax.nn.MeasureAwareAttention
+::: phydrax.nn.layers.MeasureAwareAttention
     options:
         members:
             - __init__
@@ -1045,25 +1069,7 @@ does not remove its finite-radius or representation-content assumptions.
 
 ---
 
-::: phydrax.nn.UPT
-    options:
-        members:
-            - __init__
-            - __call__
-            - encode_inputs
-            - decode_query
-
----
-
-::: phydrax.nn.ABUPT
-    options:
-        members:
-            - __init__
-            - __call__
-
----
-
-::: phydrax.nn.Transolver
+::: phydrax.nn.operator.architectures.UPT
     options:
         members:
             - __init__
@@ -1073,7 +1079,7 @@ does not remove its finite-radius or representation-content assumptions.
 
 ---
 
-::: phydrax.nn.GNOT
+::: phydrax.nn.operator.architectures.ABUPT
     options:
         members:
             - __init__
@@ -1081,7 +1087,17 @@ does not remove its finite-radius or representation-content assumptions.
 
 ---
 
-::: phydrax.nn.CoDANO
+::: phydrax.nn.operator.architectures.Transolver
+    options:
+        members:
+            - __init__
+            - __call__
+            - encode_inputs
+            - decode_query
+
+---
+
+::: phydrax.nn.operator.architectures.GNOT
     options:
         members:
             - __init__
@@ -1089,7 +1105,15 @@ does not remove its finite-radius or representation-content assumptions.
 
 ---
 
-::: phydrax.nn.EqGINO
+::: phydrax.nn.operator.architectures.CoDANO
+    options:
+        members:
+            - __init__
+            - __call__
+
+---
+
+::: phydrax.nn.operator.architectures.EqGINO
 
 ### Nonlinear, prompt, probabilistic, and PDE-IR conditioning
 
@@ -1161,7 +1185,7 @@ a consistent alpha-renaming leaves the encoding unchanged while `u + u` remains
 distinct from `u + v`. Arbitrary `PDEProblemIR.metadata` is provenance, not a
 neural semantic channel.
 
-::: phydrax.nn.FiLMCoordinateDecoder
+::: phydrax.nn.operator.architectures.FiLMCoordinateDecoder
     options:
         members:
             - __init__
@@ -1169,7 +1193,7 @@ neural semantic channel.
 
 ---
 
-::: phydrax.nn.CoordinateConditionedOperator
+::: phydrax.nn.operator.architectures.CoordinateConditionedOperator
     options:
         members:
             - __init__
@@ -1179,19 +1203,19 @@ neural semantic channel.
 
 ---
 
-::: phydrax.nn.OperatorSupervisedExample
+::: phydrax.nn.operator.OperatorSupervisedExample
 
 ---
 
-::: phydrax.nn.OperatorPrompt
+::: phydrax.nn.operator.OperatorPrompt
 
 ---
 
-::: phydrax.nn.PromptedOperatorBatch
+::: phydrax.nn.operator.PromptedOperatorBatch
 
 ---
 
-::: phydrax.nn.InContextOperator
+::: phydrax.nn.operator.architectures.InContextOperator
     options:
         members:
             - __init__
@@ -1200,15 +1224,15 @@ neural semantic channel.
 
 ---
 
-::: phydrax.nn.AbstractOperatorDistribution
+::: phydrax.nn.operator.AbstractOperatorDistribution
 
 ---
 
-::: phydrax.nn.AbstractProbabilisticOperatorModel
+::: phydrax.nn.operator.AbstractProbabilisticOperatorModel
 
 ---
 
-::: phydrax.nn.GaussianFunctionOperator
+::: phydrax.nn.operator.architectures.GaussianFunctionOperator
     options:
         members:
             - __init__
@@ -1218,12 +1242,12 @@ neural semantic channel.
 
 ---
 
-::: phydrax.nn.GaussianOperatorDistribution
+::: phydrax.nn.operator.GaussianOperatorDistribution
 
 ---
 
 
-::: phydrax.nn.OperatorBatchConditioner
+::: phydrax.nn.operator.architectures.OperatorBatchConditioner
     options:
         members:
             - __init__
@@ -1231,7 +1255,7 @@ neural semantic channel.
 
 ---
 
-::: phydrax.nn.ConditionalFlowFunctionOperator
+::: phydrax.nn.operator.architectures.ConditionalFlowFunctionOperator
     options:
         members:
             - __init__
@@ -1240,23 +1264,23 @@ neural semantic channel.
 
 ---
 
-::: phydrax.nn.FlowJAXOperatorDistribution
+::: phydrax.nn.operator.architectures.FlowJAXOperatorDistribution
 
 ---
 
-::: phydrax.nn.conditional_coupling_flow_operator
+::: phydrax.nn.operator.architectures.conditional_coupling_flow_operator
 
 ---
 
-::: phydrax.nn.StateTimeProcessConditioner
+::: phydrax.nn.models.StateTimeProcessConditioner
 
 ---
 
-::: phydrax.nn.IdentityCoefficientTransition
+::: phydrax.nn.models.IdentityCoefficientTransition
 
 ---
 
-::: phydrax.nn.LatentFlowJAXCoefficientProcess
+::: phydrax.nn.models.LatentFlowJAXCoefficientProcess
     options:
         members:
             - __init__
@@ -1264,15 +1288,15 @@ neural semantic channel.
 
 ---
 
-::: phydrax.nn.FlowJAXProcessDistribution
+::: phydrax.nn.models.FlowJAXProcessDistribution
 
 ---
 
-::: phydrax.nn.conditional_coupling_flow_process
+::: phydrax.nn.models.conditional_coupling_flow_process
 
 ---
 
-::: phydrax.nn.PDEConditionEncoder
+::: phydrax.nn.operator.architectures.PDEConditionEncoder
     options:
         members:
             - __init__
@@ -1280,7 +1304,7 @@ neural semantic channel.
 
 ---
 
-::: phydrax.nn.attach_pde_condition
+::: phydrax.nn.operator.architectures.attach_pde_condition
 
 ### Pretraining-shaped grid architectures
 
@@ -1299,7 +1323,7 @@ three sample axes while respecting a supplied mask; `DPOT.corrupt_batch`
 preserves the remaining `OperatorBatch` metadata. Neither large-scale denoising
 pretraining nor pretrained DPOT checkpoints are bundled.
 
-::: phydrax.nn.Poseidon
+::: phydrax.nn.operator.architectures.Poseidon
     options:
         members:
             - __init__
@@ -1307,7 +1331,7 @@ pretraining nor pretrained DPOT checkpoints are bundled.
 
 ---
 
-::: phydrax.nn.DPOT
+::: phydrax.nn.operator.architectures.DPOT
     options:
         members:
             - __init__
@@ -1316,7 +1340,7 @@ pretraining nor pretrained DPOT checkpoints are bundled.
 
 ---
 
-::: phydrax.nn.dpot_corrupt_history
+::: phydrax.nn.operator.architectures.dpot_corrupt_history
 
 ### Stable temporal evolution and learned Green kernels
 
@@ -1335,7 +1359,7 @@ Boundary normals or condition descriptors belong in boundary value channels.
 The learned kernels do not impose a particular Green function, PDE, or boundary
 condition exactly.
 
-::: phydrax.nn.KoopmanTemporalOperator
+::: phydrax.nn.operator.architectures.KoopmanTemporalOperator
     options:
         members:
             - __init__
@@ -1345,7 +1369,7 @@ condition exactly.
 
 ---
 
-::: phydrax.nn.GreenKernelOperator
+::: phydrax.nn.operator.architectures.GreenKernelOperator
     options:
         members:
             - __init__
@@ -1382,7 +1406,7 @@ Euclidean displacement is not treated as intrinsically valid manifold transport.
 
 ---
 
-::: phydrax.nn.Flower
+::: phydrax.nn.operator.architectures.Flower
     options:
         members:
             - __init__
@@ -1391,7 +1415,7 @@ Euclidean displacement is not treated as intrinsically valid manifold transport.
 
 ---
 
-::: phydrax.nn.MultiheadWarp
+::: phydrax.nn.layers.MultiheadWarp
     options:
         members:
             - __init__
@@ -1403,7 +1427,7 @@ Euclidean displacement is not treated as intrinsically valid manifold transport.
 
 ---
 
-::: phydrax.nn.ProbabilisticMultiheadWarp
+::: phydrax.nn.layers.ProbabilisticMultiheadWarp
     options:
         members:
             - __init__
@@ -1413,7 +1437,7 @@ Euclidean displacement is not treated as intrinsically valid manifold transport.
 
 ---
 
-::: phydrax.nn.ManifoldMultiheadWarp
+::: phydrax.nn.layers.ManifoldMultiheadWarp
     options:
         members:
             - __init__
@@ -1427,11 +1451,11 @@ Euclidean displacement is not treated as intrinsically valid manifold transport.
 
 ---
 
-::: phydrax.nn.warp_field
+::: phydrax.nn.layers.warp_field
 
 ---
 
-::: phydrax.nn.conservative_remap
+::: phydrax.nn.layers.conservative_remap
 
 ### Public maturity tiers
 
@@ -1475,11 +1499,11 @@ integrity, matched multi-seed evidence, and the relevant family-parity checks.
 
 ---
 
-::: phydrax.nn.operator_architecture_status
+::: phydrax.nn.operator.operator_architecture_status
 
 ---
 
-::: phydrax.nn.OperatorArchitectureStatus
+::: phydrax.nn.operator.OperatorArchitectureStatus
 
 ### Architecture applicability
 
@@ -1805,7 +1829,7 @@ class.
 `OperatorContextModel` and `bind_operator_context` expose independent,
 differentiable point queries while keeping all source functions fixed.
 
-The `operator_training` package supplies deterministic dataset splits,
+The `operator.training` package supplies deterministic dataset splits,
 mask-preserving collation, persisted training-only normalization, exact
 model/optimizer/RNG checkpoints, explicit parameter/compute/reduction dtypes,
 scheduled autoregressive rollouts, and prefetching sharded loaders.
@@ -1829,7 +1853,7 @@ checkpoint before framework-specific tokenization or execution.
 
 ---
 
-::: phydrax.nn.OperatorContextModel
+::: phydrax.nn.operator.adapters.OperatorContextModel
     options:
         members:
             - __init__
@@ -1838,7 +1862,7 @@ checkpoint before framework-specific tokenization or execution.
 
 ---
 
-::: phydrax.nn.OperatorNormalizationPolicy
+::: phydrax.nn.operator.training.OperatorNormalizationPolicy
     options:
         members:
             - normalize_batch
@@ -1848,7 +1872,7 @@ checkpoint before framework-specific tokenization or execution.
 
 ---
 
-::: phydrax.nn.OperatorBatchLoader
+::: phydrax.nn.operator.training.OperatorBatchLoader
     options:
         members:
             - __init__
@@ -1872,15 +1896,15 @@ output-field mapping.
 
 ---
 
-::: phydrax.nn.OperatorTask
+::: phydrax.nn.operator.OperatorTask
 
 ---
 
-::: phydrax.nn.OperatorTrainingEvidence
+::: phydrax.nn.operator.OperatorTrainingEvidence
 
 ---
 
-::: phydrax.nn.TrainedOperator
+::: phydrax.nn.operator.training.TrainedOperator
     options:
         members:
             - prepare
@@ -1915,25 +1939,36 @@ identifier is part of the exact-resume contract, so changing or omitting it reje
 resume before training continues. With the default `None` lifecycle, existing
 checkpoint fingerprints are unchanged.
 
----
-
-::: phydrax.nn.fit_operator
-
----
-
-::: phydrax.nn.OperatorFitResult
-
----
-
-::: phydrax.nn.OperatorValidationPolicy
+Every `TrainedOperator` owns one immutable `OperatorExecutionPlan`. The plan binds
+task validation, training-only normalization, dtype placement, case sharding,
+output physicalization, explicit-mask padding, and the eager or compiled execution
+strategy. `prepare`, `predict_prepared`, and `predict` therefore share the same
+validated field semantics. Compilation changes only the lowering strategy, and
+that choice is recorded in the plan fingerprint guarding prepared inputs.
 
 ---
 
-::: phydrax.nn.OperatorMixedPrecisionPolicy
+::: phydrax.nn.operator.training.OperatorExecutionPlan
 
 ---
 
-::: phydrax.nn.OperatorShardingPolicy
+::: phydrax.nn.operator.training.fit_operator
+
+---
+
+::: phydrax.nn.operator.training.OperatorFitResult
+
+---
+
+::: phydrax.nn.operator.training.OperatorValidationPolicy
+
+---
+
+::: phydrax.nn.operator.training.OperatorMixedPrecisionPolicy
+
+---
+
+::: phydrax.nn.operator.OperatorShardingPolicy
 
 ### Losses and physical-space output maps
 
@@ -1952,39 +1987,39 @@ and explicit or previously fitted output scaling.
 
 ---
 
-::: phydrax.nn.SupervisedOperatorLoss
+::: phydrax.nn.operator.training.SupervisedOperatorLoss
 
 ---
 
-::: phydrax.nn.OperatorLossTerm
+::: phydrax.nn.operator.training.OperatorLossTerm
 
 ---
 
-::: phydrax.nn.WeakOperatorLoss
+::: phydrax.nn.operator.training.WeakOperatorLoss
 
 
 ---
 
-::: phydrax.nn.OperatorLossContext
+::: phydrax.nn.operator.training.OperatorLossContext
 
 ---
 
-::: phydrax.nn.CochainResidualInput
+::: phydrax.nn.operator.training.CochainResidualInput
 
 ---
 
-::: phydrax.nn.CochainResidualLoss
+::: phydrax.nn.operator.training.CochainResidualLoss
 ---
 
-::: phydrax.nn.HardConstraintTransform
-
----
-
-::: phydrax.nn.ConservationProjection
+::: phydrax.nn.operator.training.HardConstraintTransform
 
 ---
 
-::: phydrax.nn.OperatorOutputPipeline
+::: phydrax.nn.operator.training.ConservationProjection
+
+---
+
+::: phydrax.nn.operator.training.OperatorOutputPipeline
 
 ### Measured metrics and matrix-free derivatives
 
@@ -1996,31 +2031,31 @@ pullback.
 
 ---
 
-::: phydrax.nn.operator_hilbert_inner_product
+::: phydrax.nn.operator.training.operator_hilbert_inner_product
 
 ---
 
-::: phydrax.nn.operator_hilbert_norm
+::: phydrax.nn.operator.training.operator_hilbert_norm
 
 ---
 
-::: phydrax.nn.operator_hilbert_relative_error
+::: phydrax.nn.operator.training.operator_hilbert_relative_error
 
 ---
 
-::: phydrax.nn.operator_weak_form_loss
+::: phydrax.nn.operator.training.operator_weak_form_loss
 
 ---
 
-::: phydrax.nn.project_operator_conservation
+::: phydrax.nn.operator.training.project_operator_conservation
 
 ---
 
-::: phydrax.nn.linearize_operator
+::: phydrax.nn.operator.training.linearize_operator
 
 ---
 
-::: phydrax.nn.OperatorLinearization
+::: phydrax.nn.operator.training.OperatorLinearization
     options:
         members:
             - pushforward
@@ -2034,41 +2069,43 @@ pullback.
 and target reads. Query sampling is applied before collation, so values,
 coordinates, masks, and quadrature remain aligned. Encoded operators can decode
 an `OperatorQuerySource` into an `OperatorPredictionSink` without retaining the
-full query or prediction on device. The canonical artifact verifies execution-model and
-training-state digests, fixed-query geometry fingerprints, physical output-pipeline identity,
-normalization, dtype, provenance, and architecture contracts before constructing
-a deployed operator. Artifacts are development snapshots rather than a
-backward-compatibility surface; regenerate them after the canonical representation changes.
+full query or prediction on device. The canonical artifact verifies execution-model
+and training-state digests, fixed-query geometry fingerprints, physical
+output-pipeline identity, normalization, dtype, provenance, and architecture
+contracts before constructing a deployed operator. Portable recipes encode model
+types and callables with versioned registry identities, never defining-module
+paths, so package reorganization does not invalidate an artifact. Artifacts remain
+development snapshots when the canonical representation itself changes.
 
 ---
 
-::: phydrax.nn.OperatorCaseSource
+::: phydrax.nn.operator.OperatorCaseSource
 
 ---
 
-::: phydrax.nn.CallbackOperatorCaseSource
+::: phydrax.nn.operator.CallbackOperatorCaseSource
 
 ---
 
-::: phydrax.nn.AnchorQuerySamplingPolicy
+::: phydrax.nn.operator.AnchorQuerySamplingPolicy
 
 ---
 
-::: phydrax.nn.decode_query_chunks
+::: phydrax.nn.operator.training.decode_query_chunks
 
 ---
 
-::: phydrax.nn.save_operator_training_checkpoint
+::: phydrax.nn.operator.training.save_operator_training_checkpoint
 
 ---
 
-::: phydrax.nn.load_operator_training_checkpoint
+::: phydrax.nn.operator.training.load_operator_training_checkpoint
 
 ---
 
-::: phydrax.nn.save_operator_artifact
+::: phydrax.nn.operator.training.save_operator_artifact
 
 ---
 
-::: phydrax.nn.load_trained_operator
+::: phydrax.nn.operator.training.load_trained_operator
 

@@ -28,8 +28,8 @@ from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._strict import StrictModule
 from .._term import AbstractSamplingTerm
+from ..domain.graph._model import _full_node_batch
 from ..graph import cochain_metric_reduce, CochainMetricReduction, CochainResidualProgram
-from ..nn.models.wrappers._graph import _full_node_batch
 
 
 def _component_degree(component: DomainComponent, /) -> int:
@@ -119,7 +119,9 @@ class _ProgramDomainOutput(StrictModule, BatchEvaluator):
         **kwargs: Any,
     ) -> cx.Field:
         if not isinstance(batch, GraphBatch) or batch.component_kind != "nodes":
-            raise TypeError("Cochain residual programs require node-backed GraphBatch data.")
+            raise TypeError(
+                "Cochain residual programs require node-backed GraphBatch data."
+            )
         axis = batch.structure.axis_for(batch.graph_label)
         if axis is None:
             raise ValueError("GraphBatch has no graph sampling axis.")
@@ -160,7 +162,9 @@ def cochain_residual_field(
     if not isinstance(program, CochainResidualProgram):
         raise TypeError("cochain_residual_field requires a CochainResidualProgram.")
     if frozenset(fields) != frozenset(program.input_specs):
-        raise ValueError("Program field names must exactly match its declared input schema.")
+        raise ValueError(
+            "Program field names must exactly match its declared input schema."
+        )
     output_name = str(output)
     if output_name not in program.output_specs:
         raise KeyError(f"Unknown cochain residual output {output_name!r}.")
@@ -236,7 +240,11 @@ class CochainResidualTerm(AbstractSamplingTerm):
     ):
         if not isinstance(component, DomainComponent):
             raise TypeError("CochainResidualTerm requires one DomainComponent.")
-        if component.where or component.where_all is not None or component.weight_all is not None:
+        if (
+            component.where
+            or component.where_all is not None
+            or component.weight_all is not None
+        ):
             raise ValueError(
                 "CochainResidualTerm does not accept component filters or weights; "
                 "encode masks in CochainCells and scalar weighting in the term."
@@ -284,11 +292,7 @@ class CochainResidualTerm(AbstractSamplingTerm):
         fixed_batch: GraphBatch | None = None,
         fixed_batch_key: Key[Array, ""] = DOC_KEY0,
     ) -> "CochainResidualTerm":
-        names = (
-            (fields,)
-            if isinstance(fields, str)
-            else tuple(fields)
-        )
+        names = (fields,) if isinstance(fields, str) else tuple(fields)
 
         def residual(functions: Mapping[str, DomainFunction], /) -> DomainFunction:
             return operator(*(functions[name] for name in names))
@@ -354,7 +358,6 @@ class CochainResidualTerm(AbstractSamplingTerm):
             fixed_batch=fixed_batch,
             fixed_batch_key=fixed_batch_key,
         )
-
 
     def _sample_once(self, *, key: Key[Array, ""] = DOC_KEY0) -> GraphBatch:
         batch = self.component.sample(self.sampling, key=key)

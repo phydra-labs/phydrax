@@ -16,8 +16,7 @@ from jaxtyping import PyTree
 from phydrax._trainable import partition_trainable
 from phydrax.domain import ConcatenatedModelEvaluator, DomainFunction
 
-from ..nn.models.architectures._mlp import MLP
-from ..nn.models.layers._linear import Linear
+from .._model import KFACAffineBlock, KFACLayoutProvider
 from ..optim._kfac._blocks import initialize_block_state
 from ..optim._kfac._config import KFAC
 from ..optim._kfac._types import (
@@ -79,17 +78,17 @@ def build_kfac_plan(
     )
 
 
-def _validate_linear(layer: Linear, /, *, name: str) -> None:
-    if layer.random_weight_factorization:
+def _validate_affine_block(block: KFACAffineBlock, /, *, name: str) -> None:
+    if block.random_weight_factorization:
         raise ValueError(
             f"KFAC does not support random weight factorization; disable rwf for {name}."
         )
-    if layer.enforce_positive_weights:
+    if block.enforce_positive_weights:
         raise ValueError(
             f"KFAC does not support positive-weight reparameterization in {name}."
         )
-    if jnp.iscomplexobj(layer.weight) or (
-        layer.bias is not None and jnp.iscomplexobj(layer.bias)
+    if jnp.iscomplexobj(block.weight) or (
+        block.bias is not None and jnp.iscomplexobj(block.bias)
     ):
         raise ValueError(f"KFAC requires real affine parameters; {name} is complex.")
 
@@ -97,10 +96,10 @@ def _validate_linear(layer: Linear, /, *, name: str) -> None:
 def validate_model_coverage(
     functions: Mapping[str, DomainFunction],
     /,
-) -> tuple[tuple[str, MLP], ...]:
-    """Validate and return the raw pointwise flat MLPs covered by KFAC."""
+) -> tuple[tuple[str, tuple[KFACAffineBlock, ...]], ...]:
+    """Validate and return explicitly declared affine blocks covered by KFAC."""
 
-    models: list[tuple[str, MLP]] = []
+    layouts: list[tuple[str, tuple[KFACAffineBlock, ...]]] = []
     seen_parameter_ids: set[int] = set()
     for field_name, function in functions.items():
         evaluator = function.func
@@ -117,7 +116,7 @@ def validate_model_coverage(
             ):
                 raise ValueError(
                     f"KFAC field {field_name!r} has unsupported non-scalar "
-                    "trainable state outside a Phydrax MLP."
+                    "trainable state outside a KFAC layout provider."
                 )
             continue
         binding = evaluator.binding
@@ -127,43 +126,43 @@ def validate_model_coverage(
                 "batch_mode='pointwise'."
             )
         model = evaluator.raw_model
-        if not isinstance(model, MLP):
+        if not isinstance(model, KFACLayoutProvider):
             if trainable_leaves:
                 raise ValueError(
                     f"KFAC field {field_name!r} uses unsupported model type "
-                    f"{type(model).__name__}; expected phydrax.nn.MLP."
+                    f"{type(model).__name__}; expected a KFACLayoutProvider."
                 )
             continue
-        for site, dropout in enumerate(model.dropouts):
-            if dropout.p > 0.0 and not dropout.inference:
-                raise ValueError(
-                    f"KFAC rejects active dropout in field {field_name!r} at site {site}."
-                )
-        named_layers: list[tuple[str, Linear]] = [
-            (f"{field_name}/layers/{index}", layer)
-            for index, layer in enumerate(model.layers)
-        ]
-        if model._residual_proj is not None:
-            named_layers.append(
-                (f"{field_name}/residual_projection", model._residual_proj)
+        validation_errors = model.kfac_validation_errors()
+        if validation_errors:
+            raise ValueError(
+                f"KFAC rejects {validation_errors[0]} in field {field_name!r}."
             )
-        for layer_name, layer in named_layers:
-            _validate_linear(layer, name=layer_name)
-            parameter_arrays = (layer.weight,) + (
-                () if layer.bias is None else (layer.bias,)
+        affine_blocks = model.kfac_affine_blocks()
+        if not affine_blocks:
+            raise ValueError(
+                f"KFAC field {field_name!r} declared no affine parameter blocks."
+            )
+        named_blocks = tuple(
+            (f"{field_name}/{block.name}", block) for block in affine_blocks
+        )
+        for block_name, block in named_blocks:
+            _validate_affine_block(block, name=block_name)
+            parameter_arrays = (block.weight,) + (
+                () if block.bias is None else (block.bias,)
             )
             for parameter in parameter_arrays:
                 parameter_id = id(parameter)
                 if parameter_id in seen_parameter_ids:
                     raise ValueError(
                         "KFAC does not support shared or reused affine parameters; "
-                        f"duplicate ownership detected at {layer_name}."
+                        f"duplicate ownership detected at {block_name}."
                     )
                 seen_parameter_ids.add(parameter_id)
-        models.append((field_name, model))
-    if not models:
-        raise ValueError("KFAC found no trainable phydrax.nn.MLP fields.")
-    return tuple(models)
+        layouts.append((field_name, affine_blocks))
+    if not layouts:
+        raise ValueError("KFAC found no trainable KFACLayoutProvider fields.")
+    return tuple(layouts)
 
 
 def _flat_leaf_slices(params: PyTree[Any], /) -> tuple[dict[int, tuple[int, ...]], int]:
@@ -193,43 +192,36 @@ def discover_parameter_layout(
     if uncovered not in ("error", "diagonal"):
         raise ValueError("uncovered must be either 'error' or 'diagonal'.")
 
-    models = validate_model_coverage(functions)
+    layouts = validate_model_coverage(functions)
     leaf_slices, parameter_count = _flat_leaf_slices(params)
     covered: set[int] = set()
     blocks: list[AffineBlockSpec] = []
-    for field_name, model in models:
-        named_layers: list[tuple[str, Linear]] = [
-            (f"{field_name}/layers/{index}", layer)
-            for index, layer in enumerate(model.layers)
-        ]
-        if model._residual_proj is not None:
-            named_layers.append(
-                (f"{field_name}/residual_projection", model._residual_proj)
-            )
-        for layer_name, layer in named_layers:
-            weight_indices = leaf_slices[id(layer.weight)]
-            bias_indices = () if layer.bias is None else leaf_slices[id(layer.bias)]
-            out_size, in_size = (int(value) for value in layer.weight.shape)
+    for field_name, affine_blocks in layouts:
+        for block in affine_blocks:
+            block_name = f"{field_name}/{block.name}"
+            weight_indices = leaf_slices[id(block.weight)]
+            bias_indices = () if block.bias is None else leaf_slices[id(block.bias)]
+            out_size, in_size = (int(value) for value in block.weight.shape)
             augmented_indices: list[int] = []
             for output_index in range(out_size):
                 row_start = output_index * in_size
                 augmented_indices.extend(weight_indices[row_start : row_start + in_size])
-                if layer.bias is not None:
+                if block.bias is not None:
                     augmented_indices.append(bias_indices[output_index])
             block_indices = tuple(augmented_indices)
             overlap = covered.intersection(block_indices)
             if overlap:
                 raise ValueError(
-                    f"KFAC affine block {layer_name} overlaps another parameter block."
+                    f"KFAC affine block {block_name} overlaps another parameter block."
                 )
             covered.update(block_indices)
             blocks.append(
                 AffineBlockSpec(
-                    name=layer_name,
+                    name=block_name,
                     indices=block_indices,
                     output_size=out_size,
-                    input_size=in_size + int(layer.bias is not None),
-                    has_bias=layer.bias is not None,
+                    input_size=in_size + int(block.bias is not None),
+                    has_bias=block.bias is not None,
                 )
             )
 
@@ -242,7 +234,7 @@ def discover_parameter_layout(
             approximation = "diagonal"
         else:
             raise ValueError(
-                "KFAC found unsupported trainable parameters outside affine MLP blocks "
+                "KFAC found unsupported trainable parameters outside declared affine blocks "
                 f"({len(remaining)} scalars); set uncovered='diagonal' or increase "
                 "exact_block_max_size."
             )

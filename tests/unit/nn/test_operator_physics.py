@@ -10,11 +10,11 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-from phydrax.nn.models.core._base import _AbstractOperatorModel
+from phydrax.nn.operator import AbstractOperatorModel
 
 
 def _axis(size=5):
-    return phx.nn.OperatorAxis(
+    return phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, size),
         quadrature_weights=jnp.asarray([0.1, 0.2, 0.4, 0.2, 0.1]),
@@ -22,12 +22,12 @@ def _axis(size=5):
 
 
 def _prediction(values, query, *, name="output", channels="scalar"):
-    return phx.nn.OperatorPrediction.from_field(
+    return phx.nn.operator.OperatorPrediction.from_field(
         name,
         values,
         "query",
         query,
-        spec=phx.nn.OperatorOutputSpec(channels),
+        spec=phx.nn.operator.OperatorOutputSpec(channels),
         case_axes=("case",),
         case_shape=(2,),
     )
@@ -35,7 +35,7 @@ def _prediction(values, query, *, name="output", channels="scalar"):
 
 def test_hilbert_metrics_are_complex_measure_and_mask_aware():
     axis = _axis()
-    query = phx.nn.FunctionSamples(
+    query = phx.nn.operator.FunctionSamples(
         values=None,
         axes=(axis,),
         mask=jnp.asarray([True, True, True, True, False]),
@@ -50,7 +50,7 @@ def test_hilbert_metrics_are_complex_measure_and_mask_aware():
         jnp.abs(values[:, :4]) ** 2 * jnp.asarray([0.1, 0.2, 0.4, 0.2]),
         axis=1,
     )
-    energy = phx.nn.operator_hilbert_norm(
+    energy = phx.nn.operator.training.operator_hilbert_norm(
         values,
         query,
         case_shape=(2,),
@@ -58,7 +58,7 @@ def test_hilbert_metrics_are_complex_measure_and_mask_aware():
     )
     assert jnp.allclose(energy, expected_energy)
     assert jnp.allclose(
-        phx.nn.operator_hilbert_relative_error(
+        phx.nn.operator.training.operator_hilbert_relative_error(
             2.0 * values,
             values,
             query,
@@ -69,12 +69,12 @@ def test_hilbert_metrics_are_complex_measure_and_mask_aware():
 
 
 def test_physical_quadrature_predicate_accepts_tensor_and_case_shaped_measures():
-    tensor = phx.nn.FunctionSamples(values=None, axes=(_axis(),))
+    tensor = phx.nn.operator.FunctionSamples(values=None, axes=(_axis(),))
     coordinates = jnp.broadcast_to(
         jnp.linspace(0.0, 1.0, 5)[None, :, None],
         (2, 5, 1),
     )
-    point_cloud = phx.nn.FunctionSamples(
+    point_cloud = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=coordinates,
         quadrature_weights=jnp.asarray(
@@ -88,7 +88,7 @@ def test_physical_quadrature_predicate_accepts_tensor_and_case_shaped_measures()
 
 def test_conservation_projection_is_exact_and_differentiable():
     axis = _axis()
-    query = phx.nn.FunctionSamples(
+    query = phx.nn.operator.FunctionSamples(
         values=None,
         axes=(axis,),
         mask=jnp.asarray([True, True, True, True, False]),
@@ -96,20 +96,20 @@ def test_conservation_projection_is_exact_and_differentiable():
     values = jnp.arange(20.0).reshape((2, 5, 2))
     target = jnp.asarray([[2.0, -1.0], [0.5, 3.0]])
 
-    projected = phx.nn.project_operator_conservation(
+    projected = phx.nn.operator.training.project_operator_conservation(
         values,
         query,
         target,
         case_shape=(2,),
     )
     assert jnp.allclose(
-        phx.nn.operator_integral(projected, query, case_shape=(2,)),
+        phx.nn.operator.training.operator_integral(projected, query, case_shape=(2,)),
         target,
     )
     assert jnp.all(projected[:, -1] == 0.0)
 
     def objective(raw):
-        constrained = phx.nn.project_operator_conservation(
+        constrained = phx.nn.operator.training.project_operator_conservation(
             raw,
             query,
             target,
@@ -124,16 +124,20 @@ def test_conservation_projection_is_exact_and_differentiable():
 
 def test_output_pipeline_enforces_lift_and_boundary_envelope():
     axis = _axis()
-    query = phx.nn.FunctionSamples(values=None, axes=(axis,))
-    batch = phx.nn.OperatorBatch(
-        inputs={"source": phx.nn.FunctionSamples(values=jnp.ones((2, 5)), axes=(axis,))},
+    query = phx.nn.operator.FunctionSamples(values=None, axes=(axis,))
+    batch = phx.nn.operator.OperatorBatch(
+        inputs={
+            "source": phx.nn.operator.FunctionSamples(
+                values=jnp.ones((2, 5)), axes=(axis,)
+            )
+        },
         queries={"query": query},
         case_axes=("case",),
         case_shape=(2,),
     )
     raw = _prediction(jnp.full((2, 5), 7.0), query)
-    pipeline = phx.nn.OperatorOutputPipeline(
-        phx.nn.HardConstraintTransform(
+    pipeline = phx.nn.operator.training.OperatorOutputPipeline(
+        phx.nn.operator.training.HardConstraintTransform(
             "output",
             envelope_fn=lambda coordinates, batch, *, key: (
                 coordinates[..., 0] * (1.0 - coordinates[..., 0])
@@ -141,7 +145,7 @@ def test_output_pipeline_enforces_lift_and_boundary_envelope():
             identity="unit-interval-dirichlet-v1",
             lift_fn=lambda coordinates, batch, *, key: coordinates[..., 0],
         ),
-        phx.nn.ConservationProjection(
+        phx.nn.operator.training.ConservationProjection(
             "output",
             source_name="source",
             correction_fn=lambda coordinates, batch, *, key: (
@@ -155,7 +159,7 @@ def test_output_pipeline_enforces_lift_and_boundary_envelope():
     assert jnp.allclose(values[:, 0], 0.0)
     assert jnp.allclose(values[:, -1], 1.0)
     assert jnp.allclose(
-        phx.nn.operator_integral(values, query, case_shape=(2,)),
+        phx.nn.operator.training.operator_integral(values, query, case_shape=(2,)),
         jnp.ones((2,)),
     )
     assert transformed.case_axes == raw.case_axes
@@ -164,25 +168,28 @@ def test_output_pipeline_enforces_lift_and_boundary_envelope():
 
 def test_weak_form_loss_detects_and_normalizes_test_moments():
     axis = _axis()
-    query = phx.nn.FunctionSamples(values=None, axes=(axis,))
+    query = phx.nn.operator.FunctionSamples(values=None, axes=(axis,))
     x = axis.nodes
     residual = jnp.broadcast_to(x - 0.5, (2, 5))
     constant_test = jnp.ones((5, 1))
     scaled_test = 9.0 * constant_test
-    assert phx.nn.operator_weak_form_loss(
-        residual,
-        constant_test,
-        query,
-        case_shape=(2,),
-    ) < 1e-28
+    assert (
+        phx.nn.operator.training.operator_weak_form_loss(
+            residual,
+            constant_test,
+            query,
+            case_shape=(2,),
+        )
+        < 1e-28
+    )
     assert jnp.allclose(
-        phx.nn.operator_weak_form_loss(
+        phx.nn.operator.training.operator_weak_form_loss(
             residual + 1.0,
             constant_test,
             query,
             case_shape=(2,),
         ),
-        phx.nn.operator_weak_form_loss(
+        phx.nn.operator.training.operator_weak_form_loss(
             residual + 1.0,
             scaled_test,
             query,
@@ -190,49 +197,50 @@ def test_weak_form_loss_detects_and_normalizes_test_moments():
         ),
     )
 
+
 def test_dynamic_weak_loss_selects_physical_integration_measure():
     execution_axis = _axis()
-    physical_axis = phx.nn.OperatorAxis(
+    physical_axis = phx.nn.operator.OperatorAxis(
         "x",
         execution_axis.nodes,
         quadrature_weights=2.0 * execution_axis.quadrature_weights,
     )
-    execution_batch = phx.nn.OperatorBatch(
+    execution_batch = phx.nn.operator.OperatorBatch(
         inputs={
-            "source": phx.nn.FunctionSamples(
+            "source": phx.nn.operator.FunctionSamples(
                 values=jnp.ones((2, 5)),
                 axes=(execution_axis,),
             )
         },
         queries={
-            "query": phx.nn.FunctionSamples(values=None, axes=(execution_axis,))
+            "query": phx.nn.operator.FunctionSamples(values=None, axes=(execution_axis,))
         },
         case_axes=("case",),
         case_shape=(2,),
     )
-    physical_batch = phx.nn.OperatorBatch(
+    physical_batch = phx.nn.operator.OperatorBatch(
         inputs={
-            "source": phx.nn.FunctionSamples(
+            "source": phx.nn.operator.FunctionSamples(
                 values=jnp.ones((2, 5)),
                 axes=(physical_axis,),
             )
         },
         queries={
-            "query": phx.nn.FunctionSamples(values=None, axes=(physical_axis,))
+            "query": phx.nn.operator.FunctionSamples(values=None, axes=(physical_axis,))
         },
         case_axes=("case",),
         case_shape=(2,),
     )
-    targets = phx.nn.OperatorTargetBatch.from_arrays(
+    targets = phx.nn.operator.OperatorTargetBatch.from_arrays(
         {"output": jnp.zeros((2, 5))},
         execution_batch,
     )
-    physical_targets = phx.nn.OperatorTargetBatch.from_arrays(
+    physical_targets = phx.nn.operator.OperatorTargetBatch.from_arrays(
         {"output": jnp.zeros((2, 5))},
         physical_batch,
     )
     prediction = _prediction(jnp.zeros((2, 5)), execution_batch.query("query"))
-    term = phx.nn.WeakOperatorLoss(
+    term = phx.nn.operator.training.WeakOperatorLoss(
         "weak_constant",
         residual_fn=lambda prediction, batch, targets, **kwargs: jnp.ones((2, 5)),
         test_fn=lambda batch, **kwargs: jnp.ones((5, 1)),
@@ -247,7 +255,7 @@ def test_dynamic_weak_loss_selects_physical_integration_measure():
         key=jr.key(0),
         step=jnp.asarray(0),
         training=True,
-        context=phx.nn.OperatorLossContext(
+        context=phx.nn.operator.training.OperatorLossContext(
             execution_prediction=prediction,
             execution_batch=execution_batch,
             execution_targets=targets,
@@ -260,17 +268,19 @@ def test_dynamic_weak_loss_selects_physical_integration_measure():
         ),
     )
     assert jnp.allclose(value, 2.0)
-    assert term.fingerprint != phx.nn.WeakOperatorLoss(
-        "weak_constant",
-        residual_fn=lambda prediction, batch, targets, **kwargs: jnp.ones((2, 5)),
-        test_fn=lambda batch, **kwargs: jnp.ones((5, 1)),
-        identity="constant-residual-v1",
-        space="execution",
-    ).fingerprint
+    assert (
+        term.fingerprint
+        != phx.nn.operator.training.WeakOperatorLoss(
+            "weak_constant",
+            residual_fn=lambda prediction, batch, targets, **kwargs: jnp.ones((2, 5)),
+            test_fn=lambda batch, **kwargs: jnp.ones((5, 1)),
+            identity="constant-residual-v1",
+            space="execution",
+        ).fingerprint
+    )
 
 
-
-class _NonlinearPointwiseOperator(_AbstractOperatorModel):
+class _NonlinearPointwiseOperator(AbstractOperatorModel):
     in_size: str = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
@@ -289,11 +299,10 @@ class _NonlinearPointwiseOperator(_AbstractOperatorModel):
 
     @property
     def operator_contract(self):
-        return phx.nn.operator_architecture_contract("DeepONet")
+        return phx.nn.operator.operator_architecture_contract("DeepONet")
 
 
-
-class _ComplexPointwiseOperator(_AbstractOperatorModel):
+class _ComplexPointwiseOperator(AbstractOperatorModel):
     in_size: str = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
@@ -314,48 +323,54 @@ class _ComplexPointwiseOperator(_AbstractOperatorModel):
 def test_trained_operator_applies_conservation_inside_physical_prediction():
     axis = _axis()
     source = jnp.linspace(0.2, 1.1, 10).reshape((2, 5))
-    batch = phx.nn.OperatorBatch(
-        inputs={"source": phx.nn.FunctionSamples(values=source, axes=(axis,))},
-        queries={"query": phx.nn.FunctionSamples(values=None, axes=(axis,))},
+    batch = phx.nn.operator.OperatorBatch(
+        inputs={"source": phx.nn.operator.FunctionSamples(values=source, axes=(axis,))},
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,))},
         case_axes=("case",),
         case_shape=(2,),
     )
-    task = phx.nn.OperatorTask(
+    task = phx.nn.operator.OperatorTask(
         "conservative-pointwise",
         dimension_basis=("length",),
         fields=(
-            phx.nn.OperatorFieldSpec("source", role="source", source_name="source"),
-            phx.nn.OperatorFieldSpec("output", role="target", query_name="query"),
+            phx.nn.operator.OperatorFieldSpec(
+                "source", role="source", source_name="source"
+            ),
+            phx.nn.operator.OperatorFieldSpec(
+                "output", role="target", query_name="query"
+            ),
         ),
         queries=(
-            phx.nn.OperatorQuerySpec(
+            phx.nn.operator.OperatorQuerySpec(
                 "query",
                 geometry_kind="tensor_grid",
                 coordinate_components=("x",),
                 coordinate_dimensions=((1.0,),),
             ),
         ),
-        problem=phx.nn.OperatorProblemSpec(
+        problem=phx.nn.operator.OperatorProblemSpec(
             source_query_relation="coincident",
             query_is_fixed=False,
         ),
     )
-    model = phx.nn.TrainedOperator(
+    model = phx.nn.operator.training.TrainedOperator(
         _NonlinearPointwiseOperator(),
         task,
-        training_evidence=phx.nn.OperatorTrainingEvidence("task_specific"),
-        output_pipeline=phx.nn.OperatorOutputPipeline(
-            phx.nn.ConservationProjection("output", source_name="source")
+        training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
+        output_pipeline=phx.nn.operator.training.OperatorOutputPipeline(
+            phx.nn.operator.training.ConservationProjection(
+                "output", source_name="source"
+            )
         ),
     )
     prediction = model.predict(batch, key=jr.key(2))
     assert jnp.allclose(
-        phx.nn.operator_integral(
+        phx.nn.operator.training.operator_integral(
             prediction.field("output").values,
             batch.query("query"),
             case_shape=batch.case_shape,
         ),
-        phx.nn.operator_integral(
+        phx.nn.operator.training.operator_integral(
             source,
             batch.input("source"),
             case_shape=batch.case_shape,
@@ -366,13 +381,13 @@ def test_trained_operator_applies_conservation_inside_physical_prediction():
 def test_matrix_free_linearization_satisfies_weighted_adjoint_identity():
     axis = _axis()
     source = jnp.linspace(-0.4, 0.8, 10).reshape((2, 5))
-    batch = phx.nn.OperatorBatch(
-        inputs={"source": phx.nn.FunctionSamples(values=source, axes=(axis,))},
-        queries={"query": phx.nn.FunctionSamples(values=None, axes=(axis,))},
+    batch = phx.nn.operator.OperatorBatch(
+        inputs={"source": phx.nn.operator.FunctionSamples(values=source, axes=(axis,))},
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,))},
         case_axes=("case",),
         case_shape=(2,),
     )
-    linearization = phx.nn.linearize_operator(
+    linearization = phx.nn.operator.training.linearize_operator(
         _NonlinearPointwiseOperator(),
         batch,
         "source",
@@ -383,25 +398,26 @@ def test_matrix_free_linearization_satisfies_weighted_adjoint_identity():
     assert jnp.allclose(linearization.pushforward(tangent), expected)
     assert jnp.max(linearization.adjoint_identity_error(tangent, cotangent)) < 1e-12
 
+
 def test_complex_operator_adjoint_is_hermitian():
     axis = _axis()
-    source = (
-        jnp.linspace(0.1, 1.0, 10) + 1.0j * jnp.linspace(-0.5, 0.4, 10)
-    ).reshape((2, 5))
-    batch = phx.nn.OperatorBatch(
-        inputs={"source": phx.nn.FunctionSamples(values=source, axes=(axis,))},
-        queries={"query": phx.nn.FunctionSamples(values=None, axes=(axis,))},
+    source = (jnp.linspace(0.1, 1.0, 10) + 1.0j * jnp.linspace(-0.5, 0.4, 10)).reshape(
+        (2, 5)
+    )
+    batch = phx.nn.operator.OperatorBatch(
+        inputs={"source": phx.nn.operator.FunctionSamples(values=source, axes=(axis,))},
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,))},
         case_axes=("case",),
         case_shape=(2,),
     )
-    linearization = phx.nn.linearize_operator(
+    linearization = phx.nn.operator.training.linearize_operator(
         _ComplexPointwiseOperator(),
         batch,
         "source",
     )
-    cotangent = (
-        jnp.cos(jnp.arange(10.0)) + 1.0j * jnp.sin(jnp.arange(10.0))
-    ).reshape((2, 5))
+    cotangent = (jnp.cos(jnp.arange(10.0)) + 1.0j * jnp.sin(jnp.arange(10.0))).reshape(
+        (2, 5)
+    )
     assert jnp.allclose(
         linearization.adjoint(cotangent),
         (1.0 - 2.0j) * cotangent,
@@ -411,18 +427,18 @@ def test_complex_operator_adjoint_is_hermitian():
 def test_trained_operator_linearization_uses_physical_units():
     axis = _axis()
     source = jnp.linspace(1.0, 3.0, 10).reshape((2, 5))
-    batch = phx.nn.OperatorBatch(
-        inputs={"source": phx.nn.FunctionSamples(values=source, axes=(axis,))},
-        queries={"query": phx.nn.FunctionSamples(values=None, axes=(axis,))},
+    batch = phx.nn.operator.OperatorBatch(
+        inputs={"source": phx.nn.operator.FunctionSamples(values=source, axes=(axis,))},
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,))},
         case_axes=("case",),
         case_shape=(2,),
     )
-    task = phx.nn.OperatorTask(
+    task = phx.nn.operator.OperatorTask(
         "scaled-pointwise-map",
         revision="1",
         dimension_basis=("value",),
         fields=(
-            phx.nn.OperatorFieldSpec(
+            phx.nn.operator.OperatorFieldSpec(
                 "input",
                 role="source",
                 source_name="source",
@@ -430,7 +446,7 @@ def test_trained_operator_linearization_uses_physical_units():
                 scale=2.0,
                 offset=1.0,
             ),
-            phx.nn.OperatorFieldSpec(
+            phx.nn.operator.OperatorFieldSpec(
                 "solution",
                 role="target",
                 query_name="query",
@@ -440,7 +456,7 @@ def test_trained_operator_linearization_uses_physical_units():
             ),
         ),
         queries=(
-            phx.nn.OperatorQuerySpec(
+            phx.nn.operator.OperatorQuerySpec(
                 "query",
                 geometry_kind="tensor_grid",
                 coordinate_components=("x",),
@@ -448,15 +464,15 @@ def test_trained_operator_linearization_uses_physical_units():
             ),
         ),
     )
-    trained = phx.nn.TrainedOperator(
+    trained = phx.nn.operator.training.TrainedOperator(
         _NonlinearPointwiseOperator(),
         task,
-        training_evidence=phx.nn.OperatorTrainingEvidence(
+        training_evidence=phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"
         ),
         output_field_map={"output": "solution"},
     )
-    linearization = phx.nn.linearize_operator(
+    linearization = phx.nn.operator.training.linearize_operator(
         trained,
         batch,
         "source",
@@ -473,17 +489,17 @@ def _predict_two_fields(model, batch, key):
     coordinates = query.coordinates_array(case_shape=batch.case_shape)
     radius_squared = jnp.sum(coordinates**2, axis=-1)
     product = coordinates[..., 0] * coordinates[..., 1]
-    return phx.nn.OperatorPrediction(
+    return phx.nn.operator.OperatorPrediction(
         {
-            "radius_squared": phx.nn.OperatorFieldBatch(
+            "radius_squared": phx.nn.operator.OperatorFieldBatch(
                 radius_squared,
                 query_name="points",
-                spec=phx.nn.OperatorOutputSpec("scalar"),
+                spec=phx.nn.operator.OperatorOutputSpec("scalar"),
             ),
-            "product": phx.nn.OperatorFieldBatch(
+            "product": phx.nn.operator.OperatorFieldBatch(
                 product,
                 query_name="points",
-                spec=phx.nn.OperatorOutputSpec("scalar"),
+                spec=phx.nn.operator.OperatorOutputSpec("scalar"),
             ),
         },
         batch.queries,
@@ -492,7 +508,7 @@ def _predict_two_fields(model, batch, key):
     )
 
 
-class _TwoFieldPointOperator(_AbstractOperatorModel):
+class _TwoFieldPointOperator(AbstractOperatorModel):
     _operator_prediction_builder: ClassVar = staticmethod(_predict_two_fields)
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
@@ -503,7 +519,7 @@ class _TwoFieldPointOperator(_AbstractOperatorModel):
 
     @property
     def operator_output_specs(self):
-        spec = phx.nn.OperatorOutputSpec("scalar")
+        spec = phx.nn.operator.OperatorOutputSpec("scalar")
         return {"radius_squared": spec, "product": spec}
 
     def __call_operator_batch__(self, batch, *, key=None):
@@ -514,15 +530,20 @@ class _TwoFieldPointOperator(_AbstractOperatorModel):
 
 
 def test_operator_context_supports_multiple_coordinates_queries_and_outputs():
-    query = phx.nn.FunctionSamples(
+    query = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=jnp.asarray([[0.0, 0.0]]),
     )
-    batch = phx.nn.OperatorBatch(
-        inputs={"source": phx.nn.FunctionSamples(values=jnp.ones((2, 1)), coordinates=jnp.asarray([[0.0, 0.0]]))},
+    batch = phx.nn.operator.OperatorBatch(
+        inputs={
+            "source": phx.nn.operator.FunctionSamples(
+                values=jnp.ones((2, 1)),
+                coordinates=jnp.asarray([[0.0, 0.0]]),
+            )
+        },
         queries={
             "points": query,
-            "unused": phx.nn.FunctionSamples(
+            "unused": phx.nn.operator.FunctionSamples(
                 values=None,
                 coordinates=jnp.asarray([[1.0, 1.0]]),
             ),
@@ -530,13 +551,15 @@ def test_operator_context_supports_multiple_coordinates_queries_and_outputs():
         case_axes=("case",),
         case_shape=(2,),
     )
-    context = phx.nn.bind_operator_context(
+    context = phx.nn.operator.adapters.bind_operator_context(
         _TwoFieldPointOperator(),
         batch,
         query_name="points",
         field_name="radius_squared",
     )
-    domain = phx.domain.GeometryDomain(phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile())
+    domain = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     function = context.domain_function(domain, "x")
     laplacian = phx.operators.laplacian(function, var="x")
     point = jnp.asarray([0.2, -0.3])

@@ -14,6 +14,7 @@ from phydrax.domain.graph import (
     with_cochain_field_spec,
 )
 
+from ...domain.graph import GraphModel
 from ...graph import (
     CochainBoundaryKind,
     CochainCodifferential,
@@ -23,7 +24,6 @@ from ...graph import (
     CochainHodgeLaplacian,
     HodgeLaplacianComponent,
 )
-from ...nn.models.wrappers._graph import GraphModel
 
 
 _INPUT_KEY = "_phydrax_cochain_input"

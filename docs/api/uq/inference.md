@@ -881,7 +881,7 @@ auxiliary randomness.
 
 ## Dropout
 
-::: phydrax.nn.Dropout
+::: phydrax.nn.layers.Dropout
     options:
         members:
             - __init__
@@ -889,7 +889,7 @@ auxiliary randomness.
 
 ---
 
-::: phydrax.nn.inference_mode
+::: phydrax.nn.layers.inference_mode
 
 ## Ensembles
 

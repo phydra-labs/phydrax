@@ -29,32 +29,48 @@ from phydrax.equations import (
     PDEProblemIR,
     tokenize_pde_ir,
 )
-from phydrax.nn import (
+from phydrax.nn.operator import (
     AnchorQuerySamplingPolicy,
-    ArrayOperatorQuerySource,
-    ArrayPredictionSink,
     CallbackOperatorCaseSource,
-    decode_query_chunks,
     OperatorCase,
     OperatorCaseMetadata,
     read_operator_case_batch,
     take_function_samples,
     take_query_targets,
 )
+from phydrax.nn.operator.training import (
+    ArrayOperatorQuerySource,
+    ArrayPredictionSink,
+    decode_query_chunks,
+)
 from phydrax.terms import ResidualPenalty
 
 
-def test_operator_training_substrate_is_reexported_from_nn():
-    training_exports = set(phx.nn.operator_training.__all__)
-    assert training_exports <= set(phx.nn.__all__)
-    assert all(
-        getattr(phx.nn, name) is getattr(phx.nn.operator_training, name)
-        for name in training_exports
+def test_operator_training_substrate_has_explicit_namespace_ownership():
+    training_exports = set(phx.nn.operator.training.__all__)
+    assert set(phx.nn.__all__) == {"activations", "layers", "models", "operator"}
+    assert {"MLP", "SeparableMLP"} <= set(vars(phx.nn.models))
+    assert {"Linear", "MeasureAwareAttention", "RandomFourierFeatureEmbeddings"} <= set(
+        vars(phx.nn.layers)
     )
+    assert {"FNO", "DeepONet"} <= set(vars(phx.nn.operator.architectures))
+    assert {"AbstractOperatorModel", "OperatorModel"} <= set(vars(phx.nn.operator))
+    assert {"OperatorAttention", "BasisSpectralConvND"} <= set(
+        vars(phx.nn.operator.layers)
+    )
+    assert {"TrainedOperator", "OperatorExecutionPlan"} <= set(
+        vars(phx.nn.operator.training)
+    )
+    assert {"MLP", "Linear", "FNO", "TrainedOperator"}.isdisjoint(vars(phx.nn))
+    assert {"FNO", "OperatorAttention", "RandomFourierFeatureEmbeddings"}.isdisjoint(
+        vars(phx.nn.models)
+    )
+    assert {"OperatorAttention", "BasisSpectralConvND"}.isdisjoint(vars(phx.nn.layers))
+    assert training_exports.isdisjoint(vars(phx.nn))
 
 
 def _point_samples(coordinates, *, values=None, weights=None, mask=None):
-    return phx.nn.FunctionSamples(
+    return phx.nn.operator.FunctionSamples(
         values=None if values is None else jnp.asarray(values, dtype=float),
         coordinates=jnp.asarray(coordinates, dtype=float),
         quadrature_weights=None if weights is None else jnp.asarray(weights, dtype=float),
@@ -72,7 +88,7 @@ def _multi_query_case(
     flux_weights,
     flux_mask,
 ):
-    return phx.nn.OperatorBatch(
+    return phx.nn.operator.OperatorBatch(
         inputs={
             "u": _point_samples(
                 source_coordinates,
@@ -113,7 +129,7 @@ def test_multi_query_batches_stack_and_preserve_per_query_metadata():
         [True],
     )
 
-    batch = phx.nn.stack_operator_batches((first, second), case_axis="scenario")
+    batch = phx.nn.operator.stack_operator_batches((first, second), case_axis="scenario")
 
     assert batch.case_axes == ("scenario",)
     assert batch.case_shape == (2,)
@@ -136,16 +152,16 @@ def test_multi_query_batches_stack_and_preserve_per_query_metadata():
     assert selected.case_shape == ()
     assert jnp.array_equal(selected.query("flux").mask, jnp.array([True, False, False]))
 
-    state_spec = phx.nn.OperatorOutputSpec()
-    flux_spec = phx.nn.OperatorOutputSpec(2, component_names=("x", "y"))
-    prediction = phx.nn.OperatorPrediction(
+    state_spec = phx.nn.operator.OperatorOutputSpec()
+    flux_spec = phx.nn.operator.OperatorOutputSpec(2, component_names=("x", "y"))
+    prediction = phx.nn.operator.OperatorPrediction(
         {
-            "state": phx.nn.OperatorFieldBatch(
+            "state": phx.nn.operator.OperatorFieldBatch(
                 jnp.zeros((2, 3)),
                 query_name="state",
                 spec=state_spec,
             ),
-            "flux": phx.nn.OperatorFieldBatch(
+            "flux": phx.nn.operator.OperatorFieldBatch(
                 jnp.zeros((2, 3, 2)),
                 query_name="flux",
                 spec=flux_spec,
@@ -171,7 +187,7 @@ def _context_fixture():
     )
     weights = jnp.array([[0.1, 0.2, 0.3, 0.4], [0.4, 0.3, 0.2, 0.1]])
     mask = jnp.array([[True, True, True, False], [True, True, False, False]])
-    samples = phx.nn.FunctionSamples(
+    samples = phx.nn.operator.FunctionSamples(
         values=values,
         coordinates=coordinates,
         quadrature_weights=weights,
@@ -182,9 +198,11 @@ def _context_fixture():
 
 def test_context_strategies_have_stable_fingerprints_and_physical_state():
     values, samples = _context_fixture()
-    learned_strategy = phx.nn.LearnedTokenContext(channels=2, num_tokens=3, key=jr.key(0))
-    pooled_strategy = phx.nn.PooledGeometryContext(channels=2, num_tokens=2)
-    anchor_strategy = phx.nn.SampledAnchorContext(channels=2, num_anchors=2)
+    learned_strategy = phx.nn.operator.LearnedTokenContext(
+        channels=2, num_tokens=3, key=jr.key(0)
+    )
+    pooled_strategy = phx.nn.operator.PooledGeometryContext(channels=2, num_tokens=2)
+    anchor_strategy = phx.nn.operator.SampledAnchorContext(channels=2, num_anchors=2)
 
     learned = learned_strategy(values, samples, normalization_id="unit-scale")
     learned_again = learned_strategy(
@@ -258,13 +276,13 @@ def test_lazy_case_sampling_reads_only_selected_cases_and_preserves_metadata():
             selection = request.query_selections["query"]
             targets = take_query_targets(targets, query.sample_shape, selection)
             query = take_function_samples(query, selection)
-        batch = phx.nn.OperatorBatch(
+        batch = phx.nn.operator.OperatorBatch(
             inputs={"u": source},
             queries={"query": query},
         )
         return OperatorCase(
             batch,
-            phx.nn.OperatorTargetBatch.from_arrays(
+            phx.nn.operator.OperatorTargetBatch.from_arrays(
                 {"solution": targets},
                 batch,
             ),
@@ -324,13 +342,13 @@ def _tiny_encoded_operator_and_batch():
             [[0.1], [0.3], [0.5], [0.7], [0.9]],
         ]
     )
-    source = phx.nn.FunctionSamples(
+    source = phx.nn.operator.FunctionSamples(
         values=jnp.array([[1.0, 2.0, 3.0], [3.0, 2.0, 1.0]]),
         coordinates=source_coordinates,
         quadrature_weights=jnp.array([[0.2, 0.3, 0.5], [0.4, 0.2, 0.4]]),
         mask=jnp.array([[True, True, True], [True, False, True]]),
     )
-    query = phx.nn.FunctionSamples(
+    query = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=query_coordinates,
         quadrature_weights=jnp.full((2, 5), 0.2),
@@ -338,30 +356,30 @@ def _tiny_encoded_operator_and_batch():
             [[True, True, False, True, True], [True, False, True, True, True]]
         ),
     )
-    batch = phx.nn.OperatorBatch(
+    batch = phx.nn.operator.OperatorBatch(
         inputs={"u": source},
         queries={"query": query},
         case_axes=("scenario",),
     )
-    feature = phx.nn.MLP(
+    feature = phx.nn.models.MLP(
         in_size=2,
         out_size=1,
         hidden_sizes=(),
         key=jr.key(10),
     )
-    branch = phx.nn.IntegralBranchEncoder(
+    branch = phx.nn.operator.architectures.IntegralBranchEncoder(
         feature_model=feature,
         latent_size=1,
         coord_dim=1,
     )
-    decoder = phx.nn.FiLMCoordinateDecoder(
+    decoder = phx.nn.operator.architectures.FiLMCoordinateDecoder(
         latent_size=1,
         coord_dim=1,
         width=2,
         depth=1,
         key=jr.key(11),
     )
-    model = phx.nn.CoordinateConditionedOperator(
+    model = phx.nn.operator.architectures.CoordinateConditionedOperator(
         branch=branch,
         decoder=decoder,
         coord_dim=1,
@@ -414,7 +432,7 @@ def test_npy_prediction_status_uses_current_canonical_fields(tmp_path):
         fingerprint="scenario-query-current",
     )
     output_path = tmp_path / "prediction.npy"
-    sink = phx.nn.NpyPredictionSink(output_path)
+    sink = phx.nn.operator.training.NpyPredictionSink(output_path)
     result = decode_query_chunks(
         model,
         batch,
@@ -433,32 +451,36 @@ def test_npy_prediction_status_uses_current_canonical_fields(tmp_path):
 
 def test_typed_branch_interactions_are_synchronous_deterministic_and_validated():
     values, samples = _context_fixture()
-    sensor_state = phx.nn.PooledGeometryContext(channels=2, num_tokens=2)(values, samples)
-    field_state = phx.nn.SampledAnchorContext(channels=2, num_anchors=2)(
+    sensor_state = phx.nn.operator.PooledGeometryContext(channels=2, num_tokens=2)(
+        values, samples
+    )
+    field_state = phx.nn.operator.SampledAnchorContext(channels=2, num_anchors=2)(
         values, samples, indices=jnp.array([1, 3])
     )
-    state = phx.nn.BranchedEncodedOperatorState(
+    state = phx.nn.operator.BranchedEncodedOperatorState(
         {"sensor": sensor_state, "field": field_state}
     )
-    sensor = phx.nn.OperatorBranchSpec(
+    sensor = phx.nn.operator.OperatorBranchSpec(
         "sensor",
         role="conditioning",
         geometry_kind="point_cloud",
         processor_group="encoder",
     )
-    field = phx.nn.OperatorBranchSpec(
+    field = phx.nn.operator.OperatorBranchSpec(
         "field",
         role="prediction",
         geometry_kind="geometry",
         query_name="state",
-        output_spec=phx.nn.OperatorOutputSpec(),
+        output_spec=phx.nn.operator.OperatorOutputSpec(),
         decoder_group="state-head",
     )
-    interactions = phx.nn.bidirectional_branch_interactions(
+    interactions = phx.nn.operator.bidirectional_branch_interactions(
         "sensor", "field", stage=1, parameter_group="shared", scale=0.5
     )
-    graph = phx.nn.OperatorBranchGraph((sensor, field), interactions=interactions)
-    attention = phx.nn.MeasureAwareAttention(
+    graph = phx.nn.operator.OperatorBranchGraph(
+        (sensor, field), interactions=interactions
+    )
+    attention = phx.nn.layers.MeasureAwareAttention(
         source_channels=2,
         query_channels=2,
         out_channels=2,
@@ -476,8 +498,12 @@ def test_typed_branch_interactions_are_synchronous_deterministic_and_validated()
         "sensor",
     )
 
-    updated = phx.nn.apply_branch_interactions(state, graph, {"shared": attention}, 1)
-    repeated = phx.nn.apply_branch_interactions(state, graph, {"shared": attention}, 1)
+    updated = phx.nn.operator.apply_branch_interactions(
+        state, graph, {"shared": attention}, 1
+    )
+    repeated = phx.nn.operator.apply_branch_interactions(
+        state, graph, {"shared": attention}, 1
+    )
     for target_name, source_name in (("field", "sensor"), ("sensor", "field")):
         target = state.branch(target_name)
         source_state = state.branch(source_name)
@@ -498,11 +524,13 @@ def test_typed_branch_interactions_are_synchronous_deterministic_and_validated()
         )
 
     with pytest.raises(ValueError, match="declared branches"):
-        phx.nn.OperatorBranchGraph(
+        phx.nn.operator.OperatorBranchGraph(
             (sensor, field),
-            interactions=(phx.nn.BranchInteractionSpec("missing", "field", stage=0),),
+            interactions=(
+                phx.nn.operator.BranchInteractionSpec("missing", "field", stage=0),
+            ),
         )
-    wrong_shape_attention = phx.nn.MeasureAwareAttention(
+    wrong_shape_attention = phx.nn.layers.MeasureAwareAttention(
         source_channels=2,
         query_channels=2,
         out_channels=1,
@@ -511,21 +539,23 @@ def test_typed_branch_interactions_are_synchronous_deterministic_and_validated()
         key=jr.key(21),
     )
     with pytest.raises(ValueError, match="output channels"):
-        phx.nn.apply_branch_interactions(
+        phx.nn.operator.apply_branch_interactions(
             state, graph, {"shared": wrong_shape_attention}, 1
         )
 
 
 def test_differential_decoders_normalize_transform_jit_and_differentiate():
-    decoder = phx.nn.MLP(
+    decoder = phx.nn.models.MLP(
         in_size=1,
         out_size="scalar",
         hidden_sizes=(),
         key=jr.key(30),
     )
-    normalization = phx.nn.DifferentialNormalization(jnp.array([2.0]), jnp.array([4.0]))
-    transform = phx.nn.LinearDifferentialTransform(jnp.array([[[3.0]]]))
-    model = phx.nn.DifferentialFieldDecoder(
+    normalization = phx.nn.models.DifferentialNormalization(
+        jnp.array([2.0]), jnp.array([4.0])
+    )
+    transform = phx.nn.models.LinearDifferentialTransform(jnp.array([[[3.0]]]))
+    model = phx.nn.models.DifferentialFieldDecoder(
         decoder,
         transform=transform,
         normalization=normalization,
@@ -546,7 +576,7 @@ def test_differential_decoders_normalize_transform_jit_and_differentiate():
     assert jnp.allclose(eager, expected)
     assert jnp.allclose(compiled, eager)
     assert jnp.allclose(
-        phx.nn.DifferentialFieldDecoder(
+        phx.nn.models.DifferentialFieldDecoder(
             decoder,
             transform="gradient",
             normalization=normalization,
@@ -558,7 +588,7 @@ def test_differential_decoders_normalize_transform_jit_and_differentiate():
     assert jnp.linalg.norm(gradient.transform.coefficients) > 0.0
 
     with pytest.raises(ValueError, match="coefficients require shape"):
-        phx.nn.LinearDifferentialTransform(jnp.ones((1, 1)))
+        phx.nn.models.LinearDifferentialTransform(jnp.ones((1, 1)))
     with pytest.raises(ValueError, match="Jacobian must end"):
         normalization.physical_jacobian(jnp.ones((2, 2)))
     with pytest.raises(ValueError, match="trailing size 1"):
@@ -909,6 +939,6 @@ def test_pde_compiler_rejects_invalid_backend_before_expression_dispatch():
 
 def test_scatter_operator_graph_entities_is_exported_from_nn():
     assert (
-        phx.nn.scatter_operator_graph_entities
-        is phx.nn.models.scatter_operator_graph_entities
+        phx.nn.operator.scatter_operator_graph_entities
+        is phx.nn.operator.scatter_operator_graph_entities
     )

@@ -9,7 +9,7 @@ from typing import Literal
 import coordax as cx
 import jax.numpy as jnp
 
-from ..integration import DiscreteMeasureTarget, WeightedSampleTarget
+from ..integration._targets import DiscreteMeasureTarget, WeightedSampleTarget
 from ._trajectory import StochasticTrajectory
 
 

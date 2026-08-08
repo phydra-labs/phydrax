@@ -14,7 +14,7 @@ import phydrax as phx
 
 
 def _identity_basis_layer(basis, modes, axis):
-    layer = phx.nn.BasisSpectralConvND(
+    layer = phx.nn.operator.layers.BasisSpectralConvND(
         in_channels=1,
         out_channels=1,
         n_modes=modes,
@@ -81,7 +81,7 @@ def test_fourier_spectral_conv_exactly_preserves_retained_mode():
     count = 32
     x = jnp.arange(count, dtype=float)
     signal = jnp.cos(2.0 * jnp.pi * 2.0 * x / count)[:, None]
-    layer = phx.nn.SpectralConvND(
+    layer = phx.nn.operator.architectures.SpectralConvND(
         in_channels=1,
         out_channels=1,
         n_modes=4,
@@ -98,7 +98,7 @@ def test_fourier_spectral_conv_exactly_learns_negative_signed_block():
     x = jnp.arange(nx, dtype=float)[:, None]
     y = jnp.arange(ny, dtype=float)[None, :]
     signal = jnp.cos(2.0 * jnp.pi * (-x / nx + y / ny))[..., None]
-    layer = phx.nn.SpectralConvND(
+    layer = phx.nn.operator.architectures.SpectralConvND(
         in_channels=1,
         out_channels=1,
         n_modes=(3, 3),
@@ -116,7 +116,7 @@ def test_fourier_spectral_conv_exactly_learns_negative_signed_block():
 def test_basis_projection_reconstructs_representable_functions(basis):
     if basis == "fourier":
         nodes = jnp.linspace(0.0, 1.0, 40, endpoint=False)
-        axis = phx.nn.OperatorAxis(
+        axis = phx.nn.operator.OperatorAxis(
             "x",
             nodes,
             quadrature_weights=jnp.full((40,), 1.0 / 40.0),
@@ -131,17 +131,17 @@ def test_basis_projection_reconstructs_representable_functions(basis):
         )
     elif basis == "sine":
         nodes = jnp.linspace(0.0, 1.0, 41)
-        axis = phx.nn.OperatorAxis("x", nodes, basis="sine")
+        axis = phx.nn.operator.OperatorAxis("x", nodes, basis="sine")
         modes = 3
         signal = jnp.sin(jnp.pi * nodes) + 0.4 * jnp.sin(3.0 * jnp.pi * nodes)
     elif basis == "cosine":
         nodes = jnp.linspace(0.0, 1.0, 41) ** 1.3
-        axis = phx.nn.OperatorAxis("x", nodes, basis="cosine")
+        axis = phx.nn.operator.OperatorAxis("x", nodes, basis="cosine")
         modes = 4
         signal = 1.0 + 0.2 * jnp.cos(jnp.pi * nodes) - 0.3 * jnp.cos(3.0 * jnp.pi * nodes)
     else:
         nodes = jnp.linspace(0.0, 1.0, 41) ** 1.2
-        axis = phx.nn.OperatorAxis("x", nodes, basis="legendre")
+        axis = phx.nn.operator.OperatorAxis("x", nodes, basis="legendre")
         modes = 4
         z = 2.0 * nodes - 1.0
         signal = 1.0 + 0.4 * z - 0.2 * 0.5 * (3.0 * z**2 - 1.0)
@@ -155,7 +155,7 @@ def test_basis_projection_reconstructs_representable_functions(basis):
 def test_basis_projection_error_decreases_with_modes(basis):
     if basis == "fourier":
         nodes = jnp.linspace(0.0, 1.0, 80, endpoint=False)
-        axis = phx.nn.OperatorAxis(
+        axis = phx.nn.operator.OperatorAxis(
             "x",
             nodes,
             quadrature_weights=jnp.full((80,), 1.0 / 80.0),
@@ -165,15 +165,15 @@ def test_basis_projection_error_decreases_with_modes(basis):
         signal = jnp.exp(0.4 * jnp.cos(2.0 * jnp.pi * nodes))
     elif basis == "sine":
         nodes = jnp.linspace(0.0, 1.0, 81)
-        axis = phx.nn.OperatorAxis("x", nodes, basis="sine")
+        axis = phx.nn.operator.OperatorAxis("x", nodes, basis="sine")
         signal = nodes * (1.0 - nodes) * jnp.exp(nodes)
     elif basis == "cosine":
         nodes = jnp.linspace(0.0, 1.0, 81) ** 1.2
-        axis = phx.nn.OperatorAxis("x", nodes, basis="cosine")
+        axis = phx.nn.operator.OperatorAxis("x", nodes, basis="cosine")
         signal = jnp.exp(0.3 * jnp.cos(jnp.pi * nodes))
     else:
         nodes = jnp.linspace(0.0, 1.0, 81) ** 1.2
-        axis = phx.nn.OperatorAxis("x", nodes, basis="legendre")
+        axis = phx.nn.operator.OperatorAxis("x", nodes, basis="legendre")
         signal = jnp.exp(nodes)
 
     low, _ = _identity_basis_layer(basis, 3, axis)
@@ -185,7 +185,7 @@ def test_basis_projection_error_decreases_with_modes(basis):
 
 def test_basis_projection_is_jittable_and_differentiable():
     nodes = jnp.linspace(0.0, 1.0, 32) ** 1.2
-    axis = phx.nn.OperatorAxis("x", nodes, basis="legendre")
+    axis = phx.nn.operator.OperatorAxis("x", nodes, basis="legendre")
     layer, _ = _identity_basis_layer("legendre", 8, axis)
     values = jnp.exp(nodes)[:, None]
 
@@ -197,7 +197,7 @@ def test_basis_projection_is_jittable_and_differentiable():
 
 
 def _integral_encoder():
-    return phx.nn.IntegralBranchEncoder(
+    return phx.nn.operator.architectures.IntegralBranchEncoder(
         feature_model=_ValueFeature(),
         latent_size=1,
         coord_dim=1,
@@ -209,7 +209,7 @@ def test_integral_branch_padding_and_permutation_are_exact_invariances():
     values = jnp.array([1.0, 2.0, 4.0, 8.0])
     weights = jnp.array([0.1, 0.2, 0.3, 0.4])
     encoder = _integral_encoder()
-    samples = phx.nn.FunctionSamples(
+    samples = phx.nn.operator.FunctionSamples(
         values=values,
         coordinates=coordinates,
         quadrature_weights=weights,
@@ -217,12 +217,12 @@ def test_integral_branch_padding_and_permutation_are_exact_invariances():
     reference = encoder(samples, case_ndim=0)
 
     permutation = jnp.array([2, 0, 3, 1])
-    permuted = phx.nn.FunctionSamples(
+    permuted = phx.nn.operator.FunctionSamples(
         values=values[permutation],
         coordinates=coordinates[permutation],
         quadrature_weights=weights[permutation],
     )
-    padded = phx.nn.FunctionSamples(
+    padded = phx.nn.operator.FunctionSamples(
         values=jnp.concatenate((values, jnp.array([1e12, -1e12]))),
         coordinates=jnp.concatenate((coordinates, jnp.zeros((2, 1))), axis=0),
         quadrature_weights=jnp.concatenate((weights, jnp.ones((2,)))),
@@ -237,7 +237,7 @@ def test_integral_branch_has_midpoint_quadrature_convergence():
 
     def error(count):
         coordinates = (jnp.arange(count, dtype=float) + 0.5) / count
-        samples = phx.nn.FunctionSamples(
+        samples = phx.nn.operator.FunctionSamples(
             values=coordinates**2,
             coordinates=coordinates[:, None],
             quadrature_weights=jnp.full((count,), 1.0 / count),
@@ -250,7 +250,7 @@ def test_integral_branch_has_midpoint_quadrature_convergence():
 
 def test_ragged_batched_deeponet_matches_individual_evaluations():
     encoder = _integral_encoder()
-    model = phx.nn.DeepONet(
+    model = phx.nn.operator.architectures.DeepONet(
         branch=encoder,
         trunk=_ConstantTrunk(),
         coord_dim=1,
@@ -260,9 +260,9 @@ def test_ragged_batched_deeponet_matches_individual_evaluations():
     def make_batch(source_count, query_count):
         source_x = (jnp.arange(source_count, dtype=float) + 0.5) / source_count
         query_x = jnp.linspace(0.0, 1.0, query_count)
-        return phx.nn.OperatorBatch(
+        return phx.nn.operator.OperatorBatch(
             inputs={
-                "u": phx.nn.FunctionSamples(
+                "u": phx.nn.operator.FunctionSamples(
                     values=source_x**2,
                     coordinates=source_x[:, None],
                     quadrature_weights=jnp.full(
@@ -272,7 +272,7 @@ def test_ragged_batched_deeponet_matches_individual_evaluations():
                 )
             },
             queries={
-                "query": phx.nn.FunctionSamples(
+                "query": phx.nn.operator.FunctionSamples(
                     values=None,
                     coordinates=query_x[:, None],
                 )
@@ -283,7 +283,7 @@ def test_ragged_batched_deeponet_matches_individual_evaluations():
     second = make_batch(13, 3)
     expected_first = model(first)
     expected_second = model(second)
-    stacked = phx.nn.stack_operator_batches((first, second), case_axis="case")
+    stacked = phx.nn.operator.stack_operator_batches((first, second), case_axis="case")
     actual = model(stacked)
 
     assert jnp.allclose(actual[0, :5], expected_first)
@@ -293,22 +293,22 @@ def test_ragged_batched_deeponet_matches_individual_evaluations():
 
 def _local_integral_estimate(count):
     coordinates = (jnp.arange(count, dtype=float) + 0.5) / count
-    batch = phx.nn.OperatorBatch(
+    batch = phx.nn.operator.OperatorBatch(
         inputs={
-            "u": phx.nn.FunctionSamples(
+            "u": phx.nn.operator.FunctionSamples(
                 values=coordinates**2,
                 coordinates=coordinates[:, None],
                 quadrature_weights=jnp.full((count,), 1.0 / count),
             )
         },
         queries={
-            "query": phx.nn.FunctionSamples(
+            "query": phx.nn.operator.FunctionSamples(
                 values=None,
                 coordinates=jnp.array([[0.37]]),
             )
         },
     )
-    operator = phx.nn.LocalIntegralOperator(
+    operator = phx.nn.operator.architectures.LocalIntegralOperator(
         kernel_model=_SourceValueKernel(),
         coord_dim=1,
     )
@@ -400,7 +400,7 @@ def test_graph_integral_is_invariant_to_source_permutation():
 
 
 def _known_exponential_laplace_operator(decay=1.3):
-    model = phx.nn.LaplaceTemporalOperator(
+    model = phx.nn.operator.architectures.LaplaceTemporalOperator(
         num_poles=1,
         max_initial_frequency=0.0,
         key=jr.key(0),
@@ -430,10 +430,10 @@ def _aligned_temporal_batch(count, values=None):
     time = jnp.linspace(0.0, 2.0, count)
     if values is None:
         values = jnp.ones((count,))
-    axis = phx.nn.OperatorAxis("t", time)
-    return phx.nn.OperatorBatch(
-        inputs={"u": phx.nn.FunctionSamples(values=values, axes=(axis,))},
-        queries={"query": phx.nn.FunctionSamples(values=None, axes=(axis,))},
+    axis = phx.nn.operator.OperatorAxis("t", time)
+    return phx.nn.operator.OperatorBatch(
+        inputs={"u": phx.nn.operator.FunctionSamples(values=values, axes=(axis,))},
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,))},
     )
 
 
@@ -479,12 +479,12 @@ def test_laplace_recurrence_is_stable_and_differentiable_for_long_sequences():
 
 
 def _sphere_axes(n_theta, n_phi):
-    theta = phx.nn.OperatorAxis(
+    theta = phx.nn.operator.OperatorAxis(
         "theta",
         jnp.linspace(0.0, jnp.pi, n_theta),
         basis="sphere",
     )
-    phi = phx.nn.OperatorAxis(
+    phi = phx.nn.operator.OperatorAxis(
         "phi",
         jnp.linspace(0.0, 2.0 * jnp.pi, n_phi, endpoint=False),
         quadrature_weights=jnp.full((n_phi,), 2.0 * jnp.pi / n_phi),
@@ -496,7 +496,7 @@ def _sphere_axes(n_theta, n_phi):
 
 def _degree_filter(gains, n_theta=48, n_phi=64):
     axes = _sphere_axes(n_theta, n_phi)
-    layer = phx.nn.SphericalSpectralConv(
+    layer = phx.nn.operator.architectures.SphericalSpectralConv(
         in_channels=1,
         out_channels=1,
         max_degree=len(gains),
@@ -589,7 +589,7 @@ def test_spherical_degree_filter_is_equivariant_to_arbitrary_rotation():
 
 def _attention_samples(weights, mask=None):
     count = len(weights)
-    return phx.nn.FunctionSamples(
+    return phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=jnp.arange(count, dtype=float)[:, None],
         quadrature_weights=jnp.asarray(weights),
@@ -601,7 +601,7 @@ def test_operator_attention_is_permutation_equivariant():
     values = jr.normal(jr.key(20), (7, 3))
     weights = jnp.array([0.05, 0.1, 0.15, 0.2, 0.1, 0.25, 0.15])
     samples = _attention_samples(weights)
-    attention = phx.nn.OperatorAttention(
+    attention = phx.nn.operator.layers.OperatorAttention(
         source_channels=3,
         num_heads=2,
         head_dim=4,
@@ -609,7 +609,7 @@ def test_operator_attention_is_permutation_equivariant():
     )
     reference = attention(values, samples)
     permutation = jnp.array([4, 0, 6, 2, 1, 5, 3])
-    permuted_samples = phx.nn.FunctionSamples(
+    permuted_samples = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=samples.coordinates[permutation],
         quadrature_weights=weights[permutation],
@@ -623,21 +623,21 @@ def test_operator_attention_is_invariant_to_masked_padding(kind):
     values = jr.normal(jr.key(22), (5, 3))
     samples = _attention_samples(jnp.full((5,), 0.2))
     padded_values = jnp.concatenate((values, jnp.full((3, 3), 1e10)), axis=0)
-    padded_samples = phx.nn.FunctionSamples(
+    padded_samples = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=jnp.arange(8, dtype=float)[:, None],
         quadrature_weights=jnp.concatenate((jnp.full((5,), 0.2), jnp.ones((3,)))),
         mask=jnp.array([True, True, True, True, True, False, False, False]),
     )
     if kind == "operator":
-        attention = phx.nn.OperatorAttention(
+        attention = phx.nn.operator.layers.OperatorAttention(
             source_channels=3,
             num_heads=2,
             head_dim=4,
             key=jr.key(23),
         )
     else:
-        attention = phx.nn.SliceAttention(
+        attention = phx.nn.operator.layers.SliceAttention(
             channels=3,
             num_slices=4,
             num_heads=2,
@@ -651,7 +651,7 @@ def test_operator_attention_is_invariant_to_masked_padding(kind):
 
 
 def test_cross_attention_is_continuum_consistent_under_measure_splitting():
-    attention = phx.nn.OperatorAttention(
+    attention = phx.nn.operator.layers.OperatorAttention(
         source_channels=2,
         query_channels=2,
         num_heads=2,
@@ -675,27 +675,27 @@ def test_quadrature_operator_value_gradients_equal_analytic_weights(kind):
     coordinates = jnp.array([[0.05], [0.2], [0.55], [0.9]])
     weights = jnp.array([0.1, 0.2, 0.3, 0.4])
     values = jnp.array([0.7, -0.2, 1.3, 2.0])
-    query = phx.nn.FunctionSamples(
+    query = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=jnp.array([[0.37]]),
     )
     if kind == "deeponet":
-        model = phx.nn.DeepONet(
+        model = phx.nn.operator.architectures.DeepONet(
             branch=_integral_encoder(),
             trunk=_ConstantTrunk(),
             coord_dim=1,
             latent_size=1,
         )
     else:
-        model = phx.nn.LocalIntegralOperator(
+        model = phx.nn.operator.architectures.LocalIntegralOperator(
             kernel_model=_SourceValueKernel(),
             coord_dim=1,
         )
 
     def evaluate(source_values):
-        batch = phx.nn.OperatorBatch(
+        batch = phx.nn.operator.OperatorBatch(
             inputs={
-                "u": phx.nn.FunctionSamples(
+                "u": phx.nn.operator.FunctionSamples(
                     values=source_values,
                     coordinates=coordinates,
                     quadrature_weights=weights,
@@ -738,7 +738,7 @@ def test_retained_fourier_mode_has_identity_energy_gradient():
         0.7 * jnp.cos(2.0 * jnp.pi * x / count)
         + 0.2 * jnp.sin(2.0 * jnp.pi * 3.0 * x / count)
     )[:, None]
-    layer = phx.nn.SpectralConvND(
+    layer = phx.nn.operator.architectures.SpectralConvND(
         in_channels=1,
         out_channels=1,
         n_modes=5,
@@ -753,40 +753,40 @@ def test_retained_fourier_mode_has_identity_energy_gradient():
 def test_sparse_neighbor_execution_matches_dense_radius_operator(kind):
     source_x = jnp.linspace(0.0, 1.0, 64)
     query_x = jnp.linspace(0.03, 0.97, 31)
-    batch = phx.nn.OperatorBatch(
+    batch = phx.nn.operator.OperatorBatch(
         inputs={
-            "u": phx.nn.FunctionSamples(
+            "u": phx.nn.operator.FunctionSamples(
                 values=jnp.sin(2.0 * jnp.pi * source_x),
                 coordinates=source_x[:, None],
                 quadrature_weights=jnp.full((64,), 1.0 / 64.0),
             )
         },
         queries={
-            "query": phx.nn.FunctionSamples(
+            "query": phx.nn.operator.FunctionSamples(
                 values=None,
                 coordinates=query_x[:, None],
             )
         },
     )
     if kind == "integral":
-        dense = phx.nn.LocalIntegralOperator(
+        dense = phx.nn.operator.architectures.LocalIntegralOperator(
             kernel_model=_SourceValueKernel(),
             coord_dim=1,
             radius=0.08,
         )
-        sparse = phx.nn.LocalIntegralOperator(
+        sparse = phx.nn.operator.architectures.LocalIntegralOperator(
             kernel_model=_SourceValueKernel(),
             coord_dim=1,
             radius=0.08,
             max_neighbors=12,
         )
     else:
-        dense = phx.nn.LocalDifferentialOperator(
+        dense = phx.nn.operator.architectures.LocalDifferentialOperator(
             kernel_model=_ConstantDifferentialKernel(),
             coord_dim=1,
             radius=0.08,
         )
-        sparse = phx.nn.LocalDifferentialOperator(
+        sparse = phx.nn.operator.architectures.LocalDifferentialOperator(
             kernel_model=_ConstantDifferentialKernel(),
             coord_dim=1,
             radius=0.08,
@@ -797,11 +797,11 @@ def test_sparse_neighbor_execution_matches_dense_radius_operator(kind):
 
 def test_basis_transform_plan_reuses_exact_projection_matrices():
     nodes = jnp.linspace(0.0, 1.0, 41) ** 1.3
-    axis = phx.nn.OperatorAxis("x", nodes, basis="legendre")
+    axis = phx.nn.operator.OperatorAxis("x", nodes, basis="legendre")
     layer, _ = _identity_basis_layer("legendre", 8, axis)
     values = jnp.exp(nodes)[:, None]
     plan = layer.plan((axis,))
-    assert isinstance(plan, phx.nn.BasisTransformPlan)
+    assert isinstance(plan, phx.nn.operator.layers.BasisTransformPlan)
     expected = layer(values, (axis,))
     actual = eqx.filter_jit(lambda x: layer(x, (axis,), plan=plan))(values)
     assert jnp.allclose(actual, expected, rtol=1e-12, atol=1e-12)
@@ -811,7 +811,7 @@ def test_spherical_transform_plan_reuses_basis_and_quadrature():
     layer, axes = _degree_filter((0.8, -0.3, 1.2, 0.4), 25, 36)
     values = jr.normal(jr.key(40), (25, 36, 1))
     plan = layer.plan(axes)
-    assert isinstance(plan, phx.nn.SphericalTransformPlan)
+    assert isinstance(plan, phx.nn.operator.architectures.SphericalTransformPlan)
     expected = layer(values, axes)
     actual = eqx.filter_jit(lambda x: layer(x, axes, plan=plan))(values)
     assert jnp.allclose(actual, expected, rtol=1e-12, atol=1e-12)

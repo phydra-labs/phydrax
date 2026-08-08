@@ -268,7 +268,7 @@ law. `process_sample_statistics` and `gaussian_process_diagnostics` expose
 finite-sample moments, log density, replay, query consistency, cocycle error,
 and empirical Gaussian-moment error.
 
-`phx.nn.conditional_coupling_flow_process` builds a
+`phx.nn.models.conditional_coupling_flow_process` builds a
 `LatentFlowJAXCoefficientProcess` for non-Gaussian latent transition marginals.
 It intentionally implements only `AbstractMarginalTransitionLaw`: independent
 FlowJAX transition draws do not identify a common driving path and must not be
@@ -398,18 +398,18 @@ A probabilistic complete-field operator becomes a marginal stochastic law
 through `OperatorMarginalTransition`:
 
 ```py
-spec = phx.nn.OperatorTransitionSpec(
-    phx.nn.OperatorOutputSpec("scalar"),
+spec = phx.nn.operator.training.OperatorTransitionSpec(
+    phx.nn.operator.OperatorOutputSpec("scalar"),
     state_input="state",
     duration_input="duration",
 )
-law = phx.nn.OperatorMarginalTransition(
+law = phx.nn.operator.training.OperatorMarginalTransition(
     probabilistic_operator,
     transition_batch,
     spec,
     process_id="stochastic-heat",
 )
-rollout = phx.nn.marginal_operator_rollout(
+rollout = phx.nn.operator.training.marginal_operator_rollout(
     law,
     jnp.asarray([0.0, 0.1, 0.25, 0.5]),
     key=jr.key(3),
@@ -431,10 +431,10 @@ An operator conditioned on explicit additive Wiener increments instead uses
 `OperatorPathwiseTransition` and one typed driver binding:
 
 ```py
-path_spec = phx.nn.OperatorTransitionSpec(
-    phx.nn.OperatorOutputSpec("scalar"),
+path_spec = phx.nn.operator.training.OperatorTransitionSpec(
+    phx.nn.operator.OperatorOutputSpec("scalar"),
     driver_bindings=(
-        phx.nn.OperatorDriverBinding(
+        phx.nn.operator.training.OperatorDriverBinding(
             "driver",
             "wiener",
             kind="wiener",
@@ -442,13 +442,13 @@ path_spec = phx.nn.OperatorTransitionSpec(
         ),
     ),
 )
-flow = phx.nn.OperatorPathwiseTransition(
+flow = phx.nn.operator.training.OperatorPathwiseTransition(
     driver_conditioned_operator,
     transition_batch_with_driver,
     path_spec,
     process_id="driven-stochastic-heat",
 )
-pathwise = phx.nn.pathwise_operator_rollout(
+pathwise = phx.nn.operator.training.pathwise_operator_rollout(
     flow,
     wiener_realization,
     jnp.asarray([0.0, 0.1, 0.25, 0.5]),
@@ -470,16 +470,16 @@ components provide event times, offsets, channels, marks, masks, or
 per-channel counts. `OperatorJumpTransition` is the jump-only specialization.
 
 ```py
-mixed_spec = phx.nn.OperatorTransitionSpec(
-    phx.nn.OperatorOutputSpec("scalar"),
+mixed_spec = phx.nn.operator.training.OperatorTransitionSpec(
+    phx.nn.operator.OperatorOutputSpec("scalar"),
     driver_bindings=(
-        phx.nn.OperatorDriverBinding(
+        phx.nn.operator.training.OperatorDriverBinding(
             "noise",
             "wiener",
             kind="wiener",
             quantity="increment",
         ),
-        phx.nn.OperatorDriverBinding(
+        phx.nn.operator.training.OperatorDriverBinding(
             "counts",
             "jump",
             kind="jump",
@@ -487,7 +487,7 @@ mixed_spec = phx.nn.OperatorTransitionSpec(
         ),
     ),
 )
-mixed_law = phx.nn.OperatorProcessTransition(
+mixed_law = phx.nn.operator.training.OperatorProcessTransition(
     mixed_driver_operator,
     transition_batch_with_drivers,
     mixed_spec,
@@ -496,7 +496,7 @@ mixed_law = phx.nn.OperatorProcessTransition(
 driver = phx.stochastic.CompositeStochasticRealization(
     {"wiener": wiener_realization, "jump": poisson_realization}
 )
-mixed_rollout = phx.nn.process_operator_rollout(
+mixed_rollout = phx.nn.operator.training.process_operator_rollout(
     mixed_law,
     driver,
     times,
@@ -577,7 +577,7 @@ Phydrax default.
 ```python
 import jax.random as jr
 
-model = phx.nn.MLP(
+model = phx.nn.models.MLP(
     in_size=2,
     out_size="scalar",
     width_size=64,
@@ -587,7 +587,7 @@ model = phx.nn.MLP(
 )
 ```
 
-Use `phx.nn.inference_mode(model)` to return an immutable copy with dropout disabled.
+Use `phx.nn.layers.inference_mode(model)` to return an immutable copy with dropout disabled.
 
 
 ## Deep ensembles and randomized priors
@@ -862,8 +862,8 @@ shared affine output head. Select every factor's final layer explicitly with
 `from_subtree_paths(...)`:
 
 ```python
-separable = phx.nn.inference_mode(
-    phx.nn.SeparableMLP(
+separable = phx.nn.layers.inference_mode(
+    phx.nn.models.SeparableMLP(
         in_size=2,
         out_size="scalar",
         latent_size=8,

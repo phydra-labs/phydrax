@@ -47,7 +47,7 @@ def _annulus_complex(*, harmonics=False):
 
 def _fields():
     return (
-        phx.nn.OperatorFieldSpec(
+        phx.nn.operator.OperatorFieldSpec(
             "vertex",
             role="both",
             source_name="vertex_source",
@@ -58,7 +58,7 @@ def _fields():
                 sampling="point_value",
             ),
         ),
-        phx.nn.OperatorFieldSpec(
+        phx.nn.operator.OperatorFieldSpec(
             "edge",
             role="both",
             source_name="edge_source",
@@ -77,11 +77,11 @@ def _task(fields=None):
     query_names = tuple(
         field.query_name for field in resolved_fields if field.is_target
     )
-    return phx.nn.OperatorTask(
+    return phx.nn.operator.OperatorTask(
         "cochain-map",
         fields=resolved_fields,
         queries=tuple(
-            phx.nn.OperatorQuerySpec(
+            phx.nn.operator.OperatorQuerySpec(
                 name,
                 geometry_kind="cell_complex",
                 coordinate_components=("x", "y"),
@@ -90,7 +90,7 @@ def _task(fields=None):
             )
             for name in query_names
         ),
-        problem=phx.nn.OperatorProblemSpec(
+        problem=phx.nn.operator.OperatorProblemSpec(
             source_query_relation="shared_topology",
             query_is_fixed=False,
             requires_resolution_transfer=True,
@@ -110,28 +110,28 @@ def _batch(complex_ir=None, *, cases=3, edge_values=None):
             2.0,
             cases * edge_count,
         ).reshape(cases, edge_count)
-    vertex_source = phx.nn.function_samples_from_cochain(
+    vertex_source = phx.nn.operator.function_samples_from_cochain(
         complex_ir,
         0,
         values=vertex_values,
     )
-    edge_source = phx.nn.function_samples_from_cochain(
+    edge_source = phx.nn.operator.function_samples_from_cochain(
         complex_ir,
         1,
         values=edge_values,
     )
-    return phx.nn.OperatorBatch(
+    return phx.nn.operator.OperatorBatch(
         inputs={
             "vertex_source": vertex_source,
             "edge_source": edge_source,
         },
         queries={
-            "vertex_query": phx.nn.function_samples_from_cochain(
+            "vertex_query": phx.nn.operator.function_samples_from_cochain(
                 complex_ir,
                 0,
                 values=None,
             ),
-            "edge_query": phx.nn.function_samples_from_cochain(
+            "edge_query": phx.nn.operator.function_samples_from_cochain(
                 complex_ir,
                 1,
                 values=None,
@@ -144,7 +144,7 @@ def _batch(complex_ir=None, *, cases=3, edge_values=None):
 
 def _dataset(batch):
     fields = _fields()
-    targets = phx.nn.OperatorTargetBatch.from_arrays(
+    targets = phx.nn.operator.OperatorTargetBatch.from_arrays(
         {
             "vertex": 0.5 * batch.input("vertex_source").values + 0.1,
             "edge": -0.25 * batch.input("edge_source").values,
@@ -158,11 +158,11 @@ def _dataset(batch):
             field.name: field.output_spec for field in fields if field.is_target
         },
     )
-    return phx.nn.OperatorDataset(batch, targets)
+    return phx.nn.operator.training.OperatorDataset(batch, targets)
 
 
 def _model(*, key=jr.key(0), routes=None):
-    return phx.nn.CochainNeuralOperator(
+    return phx.nn.operator.architectures.CochainNeuralOperator(
         _fields(),
         width=5,
         depth=2,
@@ -177,7 +177,7 @@ def _trainable_arrays(model):
 
 def test_cochain_field_semantics_roundtrip_through_operator_task():
     task = _task()
-    restored = phx.nn.OperatorTask.from_dict(task.to_dict())
+    restored = phx.nn.operator.OperatorTask.from_dict(task.to_dict())
 
     assert restored.fingerprint == task.fingerprint
     assert restored.fields[0].cochain.to_dict() == {
@@ -188,7 +188,7 @@ def test_cochain_field_semantics_roundtrip_through_operator_task():
     }
     assert restored.fields[1].cochain.cell_orientation == "signed"
     with pytest.raises(ValueError, match="zero dimensional offsets"):
-        phx.nn.OperatorFieldSpec(
+        phx.nn.operator.OperatorFieldSpec(
             "invalid",
             role="source",
             offset=1.0,
@@ -202,14 +202,14 @@ def test_cochain_field_semantics_roundtrip_through_operator_task():
 
 def test_cochain_topology_survives_materialization_padding_stacking_and_slicing():
     batch = _batch(cases=2)
-    first = phx.nn.slice_operator_batch(batch, 0)
-    second = phx.nn.slice_operator_batch(batch, 1)
-    restacked = phx.nn.stack_operator_batches(
+    first = phx.nn.operator.slice_operator_batch(batch, 0)
+    second = phx.nn.operator.slice_operator_batch(batch, 1)
+    restacked = phx.nn.operator.stack_operator_batches(
         (first, second),
         case_axis="case",
     )
-    padded = phx.nn.pad_function_samples(first.input("edge_source"), 7)
-    graph = phx.nn.materialize_operator_fields(restacked, _fields())
+    padded = phx.nn.operator.pad_function_samples(first.input("edge_source"), 7)
+    graph = phx.nn.operator.materialize_operator_fields(restacked, _fields())
 
     topology = restacked.input("edge_source").topology
     assert topology is not None
@@ -234,17 +234,17 @@ def test_cochain_topology_survives_materialization_padding_stacking_and_slicing(
 
 def test_cochain_capability_contract_accepts_typed_fields_and_rejects_mismatch():
     batch = _batch(cases=2)
-    accepted = phx.nn.validate_operator_architecture(
+    accepted = phx.nn.operator.validate_operator_architecture(
         "CochainNeuralOperator",
         batch,
         problem=_task().problem,
-        training_evidence=phx.nn.OperatorTrainingEvidence(
+        training_evidence=phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"
         ),
         fields=_fields(),
     )
 
-    mismatched = phx.nn.OperatorBatch(
+    mismatched = phx.nn.operator.OperatorBatch(
         inputs=batch.inputs,
         queries={
             "vertex_query": batch.query("vertex_query"),
@@ -255,11 +255,11 @@ def test_cochain_capability_contract_accepts_typed_fields_and_rejects_mismatch()
         case_axes=batch.case_axes,
         case_shape=batch.case_shape,
     )
-    rejected = phx.nn.validate_operator_architecture(
+    rejected = phx.nn.operator.validate_operator_architecture(
         "CochainNeuralOperator",
         mismatched,
         problem=_task().problem,
-        training_evidence=phx.nn.OperatorTrainingEvidence(
+        training_evidence=phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"
         ),
         fields=_fields(),
@@ -342,7 +342,7 @@ def test_cochain_operator_is_equivariant_to_independent_cell_reorientation():
 
 def test_harmonic_route_requires_and_uses_precomputed_topological_basis():
     fields = (
-        phx.nn.OperatorFieldSpec(
+        phx.nn.operator.OperatorFieldSpec(
             "edge",
             role="both",
             source_name="edge_source",
@@ -354,7 +354,7 @@ def test_harmonic_route_requires_and_uses_precomputed_topological_basis():
             ),
         ),
     )
-    routes = phx.nn.TopologicalRouteConfig(
+    routes = phx.nn.operator.architectures.TopologicalRouteConfig(
         self_route=False,
         exterior_derivative=False,
         codifferential=False,
@@ -362,7 +362,7 @@ def test_harmonic_route_requires_and_uses_precomputed_topological_basis():
         upper_laplacian=False,
         harmonic=True,
     )
-    model = phx.nn.CochainNeuralOperator(
+    model = phx.nn.operator.architectures.CochainNeuralOperator(
         fields,
         width=3,
         depth=1,
@@ -372,16 +372,16 @@ def test_harmonic_route_requires_and_uses_precomputed_topological_basis():
 
     def edge_batch(complex_ir):
         count = complex_ir.cell_counts[1]
-        return phx.nn.OperatorBatch(
+        return phx.nn.operator.OperatorBatch(
             inputs={
-                "edge_source": phx.nn.function_samples_from_cochain(
+                "edge_source": phx.nn.operator.function_samples_from_cochain(
                     complex_ir,
                     1,
                     values=jnp.linspace(-1.0, 1.0, count),
                 )
             },
             queries={
-                "edge_query": phx.nn.function_samples_from_cochain(
+                "edge_query": phx.nn.operator.function_samples_from_cochain(
                     complex_ir,
                     1,
                     values=None,
@@ -399,10 +399,10 @@ def test_harmonic_route_requires_and_uses_precomputed_topological_basis():
 
 def test_zero_update_topological_block_has_exact_semigroup_identity():
     complex_ir = _square_complex()
-    block = phx.nn.TopologicalCochainBlock(
+    block = phx.nn.operator.architectures.TopologicalCochainBlock(
         2,
         (0, 1, 2),
-        routes=phx.nn.TopologicalRouteConfig(
+        routes=phx.nn.operator.architectures.TopologicalRouteConfig(
             self_route=True,
             exterior_derivative=False,
             codifferential=False,
@@ -432,7 +432,7 @@ def test_zero_update_topological_block_has_exact_semigroup_identity():
 def test_cochain_normalization_centers_invariant_fields_but_not_signed_fields():
     batch = _batch(cases=3)
     dataset = _dataset(batch)
-    policy = phx.nn.fit_operator_normalization(
+    policy = phx.nn.operator.training.fit_operator_normalization(
         batch,
         dataset.targets,
         fields=_fields(),
@@ -448,7 +448,7 @@ def test_cochain_normalization_centers_invariant_fields_but_not_signed_fields():
         batch,
         reoriented_edges,
     )
-    reoriented_targets = phx.nn.OperatorTargetBatch.from_arrays(
+    reoriented_targets = phx.nn.operator.OperatorTargetBatch.from_arrays(
         {
             "vertex": dataset.targets.field("vertex").values,
             "edge": phx.graph.reorient_cochain(
@@ -459,7 +459,7 @@ def test_cochain_normalization_centers_invariant_fields_but_not_signed_fields():
         reoriented_batch,
         query_names={"vertex": "vertex_query", "edge": "edge_query"},
     )
-    transformed_policy = phx.nn.fit_operator_normalization(
+    transformed_policy = phx.nn.operator.training.fit_operator_normalization(
         reoriented_batch,
         reoriented_targets,
         fields=_fields(),
@@ -484,7 +484,7 @@ def test_multi_field_training_and_checkpoint_resume_are_exact(tmp_path):
     model = _model(key=jr.key(12))
     common = {
         "task": _task(),
-        "training_evidence": phx.nn.OperatorTrainingEvidence(
+        "training_evidence": phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"
         ),
         "learning_rate": 1e-3,
@@ -496,21 +496,21 @@ def test_multi_field_training_and_checkpoint_resume_are_exact(tmp_path):
         "checkpoint_every": 1,
     }
 
-    uninterrupted = phx.nn.fit_operator(
+    uninterrupted = phx.nn.operator.training.fit_operator(
         model,
         dataset,
         steps=2,
         **common,
     )
     checkpoint = tmp_path / "cochain-checkpoint"
-    first = phx.nn.fit_operator(
+    first = phx.nn.operator.training.fit_operator(
         model,
         dataset,
         steps=1,
         checkpoint_path=checkpoint,
         **common,
     )
-    resumed = phx.nn.fit_operator(
+    resumed = phx.nn.operator.training.fit_operator(
         model,
         dataset,
         steps=2,
@@ -567,12 +567,12 @@ def _source_matching_loss(
     identity="tests.cochain.source_matching",
     topology_fingerprint=None,
 ):
-    return phx.nn.CochainResidualLoss(
+    return phx.nn.operator.training.CochainResidualLoss(
         name="zero_form_physics",
         program=_source_matching_program(identity=identity),
         inputs={
-            "u": phx.nn.CochainResidualInput("prediction", "vertex"),
-            "forcing": phx.nn.CochainResidualInput("source", "vertex"),
+            "u": phx.nn.operator.training.CochainResidualInput("prediction", "vertex"),
+            "forcing": phx.nn.operator.training.CochainResidualInput("source", "vertex"),
         },
         output="residual",
         reduction="metric_mean",
@@ -582,12 +582,12 @@ def _source_matching_loss(
 
 def _targetless_dataset(*, cases=2):
     batch = _batch(cases=cases)
-    targets = phx.nn.OperatorTargetBatch.from_arrays({}, batch)
-    return phx.nn.OperatorDataset(batch, targets)
+    targets = phx.nn.operator.OperatorTargetBatch.from_arrays({}, batch)
+    return phx.nn.operator.training.OperatorDataset(batch, targets)
 
 
 def _small_cochain_model(*, key):
-    return phx.nn.CochainNeuralOperator(
+    return phx.nn.operator.architectures.CochainNeuralOperator(
         _fields(),
         width=3,
         depth=1,
@@ -597,7 +597,7 @@ def _small_cochain_model(*, key):
 
 def _physics_loss_value(term, model, dataset):
     prediction = model.predict(dataset.batch)
-    context = phx.nn.OperatorLossContext(
+    context = phx.nn.operator.training.OperatorLossContext(
         prediction,
         dataset.batch,
         dataset.targets,
@@ -644,7 +644,7 @@ def test_targetless_cochain_pino_update_and_checkpoint_resume_are_exact(tmp_path
     term = _source_matching_loss()
     common = {
         "task": _task(),
-        "training_evidence": phx.nn.OperatorTrainingEvidence(
+        "training_evidence": phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"
         ),
         "loss_terms": (term,),
@@ -657,7 +657,7 @@ def test_targetless_cochain_pino_update_and_checkpoint_resume_are_exact(tmp_path
         "checkpoint_every": 1,
     }
     initial_loss = _physics_loss_value(term, model, dataset)
-    uninterrupted = phx.nn.fit_operator(
+    uninterrupted = phx.nn.operator.training.fit_operator(
         model,
         dataset,
         steps=2,
@@ -666,14 +666,14 @@ def test_targetless_cochain_pino_update_and_checkpoint_resume_are_exact(tmp_path
     trained_loss = _physics_loss_value(term, uninterrupted.execution_model, dataset)
 
     checkpoint = tmp_path / "targetless-cochain-checkpoint"
-    first = phx.nn.fit_operator(
+    first = phx.nn.operator.training.fit_operator(
         model,
         dataset,
         steps=1,
         checkpoint_path=checkpoint,
         **common,
     )
-    resumed = phx.nn.fit_operator(
+    resumed = phx.nn.operator.training.fit_operator(
         model,
         dataset,
         steps=2,
@@ -698,7 +698,7 @@ def test_targetless_cochain_pino_update_and_checkpoint_resume_are_exact(tmp_path
         _source_matching_loss(identity="tests.cochain.incompatible_physics"),
     )
     with pytest.raises(ValueError, match="checkpoint contract mismatch"):
-        phx.nn.fit_operator(
+        phx.nn.operator.training.fit_operator(
             model,
             dataset,
             steps=2,
@@ -713,7 +713,7 @@ def test_targetless_operator_fit_requires_explicit_physics_and_scaling():
     model = _small_cochain_model(key=jr.key(32))
     common = {
         "task": _task(),
-        "training_evidence": phx.nn.OperatorTrainingEvidence(
+        "training_evidence": phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"
         ),
         "batch_size": 2,
@@ -723,9 +723,9 @@ def test_targetless_operator_fit_requires_explicit_physics_and_scaling():
     }
 
     with pytest.raises(ValueError, match="explicit physics loss_terms"):
-        phx.nn.fit_operator(model, dataset, **common)
+        phx.nn.operator.training.fit_operator(model, dataset, **common)
     with pytest.raises(ValueError, match="supervised targets"):
-        phx.nn.fit_operator(
+        phx.nn.operator.training.fit_operator(
             model,
             dataset,
             loss_terms=(_source_matching_loss(),),

@@ -8,8 +8,8 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
+from phydrax.nn._base import _AbstractBaseModel
 from phydrax.nn.models import LatentContractionModel, LatentExecutionPolicy, MLP
-from phydrax.nn.models.core._base import _AbstractBaseModel
 
 
 FlatTopology = Literal["flat", "best_effort_flat", "strict_flat"]

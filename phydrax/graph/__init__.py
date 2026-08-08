@@ -170,6 +170,19 @@ from ._neural_operators import (
     GraphProcessor,
     RepeatedGraphProcessor,
 )
+from ._operator_topology import (
+    broadcast_operator_topology,
+    operator_graph_fingerprint,
+    operator_topology_fingerprint,
+    OperatorTopology,
+    OperatorTopologyEntity,
+    OperatorTopologyKind,
+    OperatorTopologySite,
+    pad_operator_topology,
+    slice_operator_topology,
+    stack_operator_topologies,
+    take_operator_topology,
+)
 from ._ops import concatenated_args, partition_softmax
 from ._padding import (
     dynamically_batch,
@@ -235,6 +248,17 @@ __all__ = [
     "nn",
     "Graph",
     "GraphIR",
+    "OperatorTopology",
+    "OperatorTopologyEntity",
+    "OperatorTopologyKind",
+    "OperatorTopologySite",
+    "broadcast_operator_topology",
+    "operator_graph_fingerprint",
+    "operator_topology_fingerprint",
+    "pad_operator_topology",
+    "slice_operator_topology",
+    "stack_operator_topologies",
+    "take_operator_topology",
     "ensure_graph",
     "is_graph_like",
     "graph_counts",

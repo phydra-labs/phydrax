@@ -325,7 +325,7 @@ def main() -> None:
         test_resolution=arguments.resolution + arguments.resolution // 2,
         num_cases=4,
     )
-    model = phx.nn.FNO(
+    model = phx.nn.operator.architectures.FNO(
         width=12,
         depth=2,
         n_modes=(min(6, arguments.resolution // 2),),

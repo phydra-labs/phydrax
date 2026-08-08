@@ -218,42 +218,42 @@ def test_jump_diffusion_uses_one_global_wiener_path_across_event_restarts():
 
 
 def test_composite_process_operator_rollout_combines_wiener_and_jump_drivers():
-    x_axis = phx.nn.OperatorAxis("x", jnp.linspace(0.0, 1.0, 3, endpoint=False))
-    channel_axis = phx.nn.OperatorAxis("channel", jnp.arange(1.0))
-    template = phx.nn.OperatorBatch(
+    x_axis = phx.nn.operator.OperatorAxis("x", jnp.linspace(0.0, 1.0, 3, endpoint=False))
+    channel_axis = phx.nn.operator.OperatorAxis("channel", jnp.arange(1.0))
+    template = phx.nn.operator.OperatorBatch(
         inputs={
-            "state": phx.nn.FunctionSamples(
+            "state": phx.nn.operator.FunctionSamples(
                 values=jnp.zeros((2, 3)),
                 axes=(x_axis,),
             ),
-            "duration": phx.nn.FunctionSamples(
+            "duration": phx.nn.operator.FunctionSamples(
                 values=jnp.ones((2, 3)),
                 axes=(x_axis,),
             ),
-            "wiener_increment": phx.nn.FunctionSamples(
+            "wiener_increment": phx.nn.operator.FunctionSamples(
                 values=jnp.zeros((2, 3)),
                 axes=(x_axis,),
             ),
-            "jump_counts": phx.nn.FunctionSamples(
+            "jump_counts": phx.nn.operator.FunctionSamples(
                 values=jnp.zeros((2, 1)),
                 axes=(channel_axis,),
             ),
         },
         queries={
-            "query": phx.nn.FunctionSamples(values=None, axes=(x_axis,)),
+            "query": phx.nn.operator.FunctionSamples(values=None, axes=(x_axis,)),
         },
         case_axes=("case",),
     )
-    spec = phx.nn.OperatorTransitionSpec(
-        phx.nn.OperatorOutputSpec("scalar"),
+    spec = phx.nn.operator.training.OperatorTransitionSpec(
+        phx.nn.operator.OperatorOutputSpec("scalar"),
         driver_bindings=(
-            phx.nn.OperatorDriverBinding(
+            phx.nn.operator.training.OperatorDriverBinding(
                 "wiener_increment",
                 "wiener",
                 kind="wiener",
                 quantity="increment",
             ),
-            phx.nn.OperatorDriverBinding(
+            phx.nn.operator.training.OperatorDriverBinding(
                 "jump_counts",
                 "jump",
                 kind="jump",
@@ -261,7 +261,7 @@ def test_composite_process_operator_rollout_combines_wiener_and_jump_drivers():
             ),
         ),
     )
-    law = phx.nn.OperatorProcessTransition(
+    law = phx.nn.operator.training.OperatorProcessTransition(
         _MixedDriverOperator(),
         template,
         spec,
@@ -293,13 +293,13 @@ def test_composite_process_operator_rollout_combines_wiener_and_jump_drivers():
     realization = phx.stochastic.CompositeStochasticRealization(
         {"wiener": wiener, "jump": poisson}
     )
-    coarse = phx.nn.process_operator_rollout(
+    coarse = phx.nn.operator.training.process_operator_rollout(
         law,
         realization,
         jnp.asarray([0.0, 0.4, 1.0]),
         jump_events={"jump": jump_solution.events},
     )
-    fine = phx.nn.process_operator_rollout(
+    fine = phx.nn.operator.training.process_operator_rollout(
         law,
         realization,
         jnp.asarray([0.0, 0.2, 0.4, 0.7, 1.0]),

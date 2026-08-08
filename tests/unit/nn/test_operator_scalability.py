@@ -22,7 +22,7 @@ def test_resolution_scaling_profile_uses_one_parameterization():
         test_resolution=12,
         num_cases=3,
     )
-    model = phx.nn.FNO(
+    model = phx.nn.operator.architectures.FNO(
         width=4,
         depth=1,
         n_modes=(3,),
@@ -42,7 +42,7 @@ def test_resolution_scaling_profile_uses_one_parameterization():
 
 def test_resolution_specific_models_have_constant_parameter_count():
     models = tuple(
-        phx.nn.FNO(
+        phx.nn.operator.architectures.FNO(
             width=4,
             depth=1,
             n_modes=(3,),
@@ -59,15 +59,15 @@ def test_case_sharding_preserves_operator_values_and_replicates_parameters():
         test_resolution=12,
         num_cases=4,
     )
-    model = phx.nn.FNO(
+    model = phx.nn.operator.architectures.FNO(
         width=4,
         depth=1,
         n_modes=(3,),
         key=jr.key(1),
     )
-    policy = phx.nn.OperatorShardingPolicy(mesh_axis="data")
-    sharded_batch = phx.nn.shard_operator_batch(scenario.train_batch, policy)
-    sharded_model = phx.nn.replicate_operator_model(model, policy)
+    policy = phx.nn.operator.OperatorShardingPolicy(mesh_axis="data")
+    sharded_batch = phx.nn.operator.shard_operator_batch(scenario.train_batch, policy)
+    sharded_model = phx.nn.operator.replicate_operator_model(model, policy)
 
     values = sharded_batch.input("state").values
     assert isinstance(values.sharding, NamedSharding)

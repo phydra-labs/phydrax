@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from phydrax.nn import OperatorCheckpointManifest, verify_operator_checkpoint
+from phydrax.nn.operator.adapters import (
+    OperatorCheckpointManifest,
+    verify_operator_checkpoint,
+)
 
 from .matrix import OperatorBenchmarkAggregate
 

@@ -24,11 +24,11 @@ def _flower(*, spatial_ndim=1, key=jr.key(0), **kwargs):
         key=key,
     )
     settings.update(kwargs)
-    return phx.nn.Flower(**settings)
+    return phx.nn.operator.architectures.Flower(**settings)
 
 
 def _axis(name, nodes, *, periodic=False, quadrature_weights=None):
-    return phx.nn.OperatorAxis(
+    return phx.nn.operator.OperatorAxis(
         name,
         jnp.asarray(nodes),
         periodic=periodic,
@@ -37,8 +37,8 @@ def _axis(name, nodes, *, periodic=False, quadrature_weights=None):
 
 
 def _batch(values, axes, query, *, source_mask=None):
-    return phx.nn.OperatorBatch(inputs={
-        "state": phx.nn.FunctionSamples(
+    return phx.nn.operator.OperatorBatch(inputs={
+        "state": phx.nn.operator.FunctionSamples(
             values=values,
             axes=axes,
             mask=source_mask,
@@ -59,8 +59,8 @@ def test_flower_omitted_generalized_options_preserve_explicit_default_execution(
         coordinate_embedding=False,
         key=jr.key(1),
     )
-    implicit = phx.nn.Flower(**settings)
-    explicit = phx.nn.Flower(
+    implicit = phx.nn.operator.architectures.Flower(**settings)
+    explicit = phx.nn.operator.architectures.Flower(
         **settings,
         fill_value=0.0,
         transition_mode="learned",
@@ -135,13 +135,13 @@ def test_flower_source_holes_are_supported_and_remain_masked(mask_mode):
     batch = _batch(
         values,
         (axis,),
-        phx.nn.FunctionSamples(values=None, axes=(axis,)),
+        phx.nn.operator.FunctionSamples(values=None, axes=(axis,)),
         source_mask=source_mask,
     )
     changed_batch = _batch(
         values.at[1].set(-1000.0),
         (axis,),
-        phx.nn.FunctionSamples(values=None, axes=(axis,)),
+        phx.nn.operator.FunctionSamples(values=None, axes=(axis,)),
         source_mask=source_mask,
     )
     model = _flower(
@@ -171,7 +171,7 @@ def test_interpolating_flower_accepts_arbitrary_tensor_grid_and_point_queries(
     if query_kind == "tensor_grid":
         query_x = _axis("x", jnp.array([-0.8, 0.0, 0.7]))
         query_y = _axis("y", jnp.array([-0.9, -0.25, 0.1, 0.55, 0.9]))
-        query = phx.nn.FunctionSamples(values=None, axes=(query_x, query_y))
+        query = phx.nn.operator.FunctionSamples(values=None, axes=(query_x, query_y))
         expected_shape = (3, 5)
     else:
         coordinates = jnp.array(
@@ -183,7 +183,7 @@ def test_interpolating_flower_accepts_arbitrary_tensor_grid_and_point_queries(
                 [0.8, 0.9],
             ]
         )
-        query = phx.nn.FunctionSamples(values=None, coordinates=coordinates)
+        query = phx.nn.operator.FunctionSamples(values=None, coordinates=coordinates)
         expected_shape = (5,)
     batch = _batch(values, (source_x, source_y), query)
     model = _flower(
@@ -209,7 +209,7 @@ def test_conservative_flower_matches_source_and_arbitrary_query_mass():
     )
     values = jnp.array([1.0, 2.0, -1.0, 4.0])
     query_weights = jnp.array([0.4, 0.9, 0.7])
-    query = phx.nn.FunctionSamples(
+    query = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=jnp.array([[-0.8], [-0.1], [0.55]]),
         quadrature_weights=query_weights,

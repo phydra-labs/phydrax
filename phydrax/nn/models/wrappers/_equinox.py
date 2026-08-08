@@ -11,9 +11,9 @@ from jaxtyping import Array
 
 from ...._callable import _ensure_special_kwonly_args
 from ...._doc import DOC_KEY0
+from ..._base import _AbstractBaseModel, _AbstractStructuredInputModel
+from ..._keys import EvalKey
 from ..._utils import _canonical_size, _get_size, _get_value_shape, SizeLike
-from ..core._base import _AbstractBaseModel, _AbstractStructuredInputModel
-from ..core._keys import EvalKey
 
 
 _Layout = Literal["value", "passthrough"]

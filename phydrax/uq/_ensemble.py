@@ -17,9 +17,10 @@ import jax.random as jr
 from .._frozendict import frozendict
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..nn.models.core._base import _AbstractBaseModel, _AbstractOperatorModel
-from ..nn.models.core._keys import EvalKey, split_eval_key
-from ..nn.models.core._operator import OperatorBatch
+from ..nn._base import _AbstractBaseModel
+from ..nn._keys import EvalKey, split_eval_key
+from ..nn.operator.data import OperatorBatch
+from ..nn.operator.protocols import OperatorModel
 from ._operator import operator_predictive_from_samples, OperatorPredictiveField
 from ._predictive import _sample_validity, PredictiveField, SampleAxis
 
@@ -139,12 +140,12 @@ class HomogeneousFunctionEnsemble(StrictModule):
         if not isinstance(batch, OperatorBatch):
             raise TypeError("batch must be an OperatorBatch.")
         template_member = _take_member(self.model, 0)
-        if not isinstance(template_member, _AbstractOperatorModel):
+        if not isinstance(template_member, OperatorModel):
             raise TypeError(
-                "Homogeneous operator ensembles require native operator members."
+                "Homogeneous operator ensembles require operator-protocol members."
             )
         member_keys = jr.split(key, self.num_members)
-        template_prediction = template_member.predict(batch, key=member_keys[0])
+        template_prediction = template_member.evaluate(batch, key=member_keys[0])
         template_field = template_prediction.field(field_name)
         if template_field.query_name != query_name:
             raise ValueError(
@@ -153,7 +154,7 @@ class HomogeneousFunctionEnsemble(StrictModule):
             )
 
         def evaluate(member, member_key):
-            return member.predict(batch, key=member_key).field(field_name).values
+            return member.evaluate(batch, key=member_key).field(field_name).values
 
         data = eqx.filter_vmap(
             evaluate,
@@ -273,13 +274,13 @@ class HeterogeneousFunctionEnsemble(StrictModule):
         """Evaluate heterogeneous operator members on one aligned batch."""
         if not isinstance(batch, OperatorBatch):
             raise TypeError("batch must be an OperatorBatch.")
-        if any(not isinstance(member, _AbstractOperatorModel) for member in self.members):
+        if any(not isinstance(member, OperatorModel) for member in self.members):
             raise TypeError(
-                "Heterogeneous operator ensembles require native operator members."
+                "Heterogeneous operator ensembles require operator-protocol members."
             )
         operator_members = tuple(self.members)
         first = operator_members[0]
-        first_prediction = first.predict(
+        first_prediction = first.evaluate(
             batch,
             key=jr.fold_in(key, self.num_members),
         )
@@ -291,7 +292,7 @@ class HeterogeneousFunctionEnsemble(StrictModule):
             )
         first_spec = first_field.spec
         predictions = tuple(
-            member.predict(batch, key=member_key).field(field_name)
+            member.evaluate(batch, key=member_key).field(field_name)
             for member, member_key in zip(
                 operator_members,
                 jr.split(key, self.num_members),

@@ -52,8 +52,8 @@ The payload contains:
 
 For row-aligned targets, pair this domain with
 `phydrax.terms.RaggedSeriesSupervisedTerm`. For neural models, wrap a
-ragged-series encoder with `phydrax.nn.RaggedSeriesModel`; the built-in
-`phydrax.nn.MaskedSeriesPoolingModel` provides a small masked-pooling baseline.
+ragged-series encoder with `phydrax.nn.models.RaggedSeriesModel`; the built-in
+`phydrax.nn.models.MaskedSeriesPoolingModel` provides a small masked-pooling baseline.
 
 ## Long series
 

@@ -45,13 +45,13 @@ class OperatorDataPlaneBenchmark:
 
 
 def _dataset(cases: int, resolution: int):
-    axis = phx.nn.OperatorAxis(
+    axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, resolution),
         quadrature_weights=jnp.full((resolution,), 1.0 / resolution),
     )
     values = jnp.arange(cases, dtype=jnp.float32)[:, None] + axis.nodes[None, :]
-    return phx.nn.operator_dataset_from_arrays(
+    return phx.nn.operator.training.operator_dataset_from_arrays(
         {"state": values},
         {"solution": 2.0 * values},
         source_axes={"state": (axis,)},
@@ -60,7 +60,7 @@ def _dataset(cases: int, resolution: int):
 
 
 def _callback_source(dataset, *, read_latency: float, fingerprint: str | None = None):
-    backing = phx.nn.InMemoryOperatorCaseSource(dataset)
+    backing = phx.nn.operator.InMemoryOperatorCaseSource(dataset)
     reads: list[int] = []
 
     def metadata_reader(index):
@@ -72,7 +72,7 @@ def _callback_source(dataset, *, read_latency: float, fingerprint: str | None = 
             time.sleep(read_latency)
         return backing.read_case(index, request=request)
 
-    source = phx.nn.CallbackOperatorCaseSource(
+    source = phx.nn.operator.CallbackOperatorCaseSource(
         dataset.size,
         metadata_reader=metadata_reader,
         case_reader=case_reader,
@@ -160,7 +160,7 @@ def run_data_plane_benchmark(
     jax.block_until_ready(compiled_order(positions))
     ordering_compile_seconds = time.perf_counter() - compile_started
 
-    fingerprint_source = phx.nn.InMemoryOperatorCaseSource(dataset)
+    fingerprint_source = phx.nn.operator.InMemoryOperatorCaseSource(dataset)
     fingerprint_started = time.perf_counter()
     content_fingerprint = fingerprint_source.content_fingerprint
     fingerprint_cold_seconds = time.perf_counter() - fingerprint_started
@@ -172,7 +172,7 @@ def run_data_plane_benchmark(
         dataset,
         read_latency=float(read_latency_seconds),
     )
-    fingerprint_loader = phx.nn.OperatorBatchLoader(
+    fingerprint_loader = phx.nn.operator.training.OperatorBatchLoader(
         fingerprint_callback,
         batch_size=int(batch_size),
         seed=1729,
@@ -193,7 +193,7 @@ def run_data_plane_benchmark(
         )
         sync_profiles.append(
             _profile_epoch(
-                phx.nn.OperatorBatchLoader(
+                phx.nn.operator.training.OperatorBatchLoader(
                     sync_source,
                     batch_size=int(batch_size),
                     seed=1729,
@@ -204,7 +204,7 @@ def run_data_plane_benchmark(
         )
         prefetched_profiles.append(
             _profile_epoch(
-                phx.nn.OperatorBatchLoader(
+                phx.nn.operator.training.OperatorBatchLoader(
                     prefetched_source,
                     batch_size=int(batch_size),
                     seed=1729,
@@ -230,7 +230,7 @@ def run_data_plane_benchmark(
         read_latency=float(read_latency_seconds),
         fingerprint="benchmark:incompatible-content",
     )
-    incompatible_loader = phx.nn.OperatorBatchLoader(
+    incompatible_loader = phx.nn.operator.training.OperatorBatchLoader(
         incompatible_source,
         batch_size=int(batch_size),
         seed=1729,

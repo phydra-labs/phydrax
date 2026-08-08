@@ -3,21 +3,9 @@
 #
 
 import string
-from collections.abc import Sequence
-from typing import Any
 
 import jax.numpy as jnp
 from jax import Array
-
-
-def _tuple(item: Any, /) -> tuple[Any, ...] | None:
-    if item is None:
-        return None
-    if isinstance(item, str):
-        return (item,)
-    if isinstance(item, Sequence):
-        return tuple(item)
-    return (item,)
 
 
 def _stack_separable(coords: tuple[Array, ...], /) -> Array:

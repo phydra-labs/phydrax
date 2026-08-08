@@ -12,7 +12,7 @@ from phydrax.operators.differential import laplacian, partial_n
 
 
 def _model(domain, in_size, key):
-    network = phx.nn.MLP(
+    network = phx.nn.models.MLP(
         in_size=in_size,
         out_size="scalar",
         hidden_sizes=(2,),

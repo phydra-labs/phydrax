@@ -8,7 +8,7 @@ Low-level model building blocks.
     - `Linear` supports Random Weight Factorization (RWF) and optional complex parameters.
     - `Dropout(mode="feature")` shares one feature/channel mask over leading field axes.
 
-::: phydrax.nn.Linear
+::: phydrax.nn.layers.Linear
     options:
         members:
             - __init__
@@ -16,7 +16,7 @@ Low-level model building blocks.
 
 ---
 
-::: phydrax.nn.Dropout
+::: phydrax.nn.layers.Dropout
     options:
         members:
             - __init__
@@ -24,4 +24,4 @@ Low-level model building blocks.
 
 ---
 
-::: phydrax.nn.inference_mode
+::: phydrax.nn.layers.inference_mode

@@ -101,6 +101,10 @@ learned arrays in the surrounding model remain trainable.
 
 ::: phydrax.graph.RepeatedGraphProcessor
 
+---
+
+::: phydrax.domain.graph.GraphModel
+
 ## Graph process wrappers
 
 Graph process wrappers turn graph vector fields into one-step or multi-step
@@ -120,7 +124,7 @@ can be used directly in `ResidualPenalty` losses.
 
 ---
 
-::: phydrax.nn.GraphRolloutModel
+::: phydrax.domain.graph.GraphRolloutModel
 
 ## Equivariant graph operators
 

@@ -1258,11 +1258,11 @@ def _near_identity_diagnostic(
     threshold: float,
     quick: bool,
 ) -> NearIdentityDiagnostic:
-    if isinstance(scenario.train_target, phx.nn.OperatorTargetBatch):
+    if isinstance(scenario.train_target, phx.nn.operator.OperatorTargetBatch):
         relative_l2 = max(
             float(
                 jax.block_until_ready(
-                    phx.nn.operator_l2_loss(
+                    phx.nn.operator.operator_l2_loss(
                         jnp.zeros_like(field.values),
                         field.values,
                         scenario.train_batch.query(field.query_name),
@@ -1286,7 +1286,7 @@ def _near_identity_diagnostic(
         prediction = baseline(scenario.train_batch)
         relative_l2 = float(
             jax.block_until_ready(
-                phx.nn.operator_l2_loss(
+                phx.nn.operator.operator_l2_loss(
                     prediction,
                     scenario.train_target,
                     scenario.train_batch.require_single_query(),
@@ -1662,7 +1662,7 @@ def _rank_diagnostics(
     return effective_rank, rank_99, rank_fraction, maximum_rank
 
 
-def _primary_samples(batch: phx.nn.OperatorBatch, /):
+def _primary_samples(batch: phx.nn.operator.OperatorBatch, /):
     source_key = max(
         sorted(batch.inputs),
         key=lambda name: int(np.prod(batch.input(name).sample_shape, dtype=np.int64)),
@@ -1671,8 +1671,8 @@ def _primary_samples(batch: phx.nn.OperatorBatch, /):
 
 
 def _sample_geometries_coincide(
-    source: phx.nn.FunctionSamples,
-    query: phx.nn.FunctionSamples,
+    source: phx.nn.operator.FunctionSamples,
+    query: phx.nn.operator.FunctionSamples,
     /,
 ) -> bool:
     if source.sample_shape != query.sample_shape:
@@ -1693,7 +1693,7 @@ def _sample_geometries_coincide(
     )
 
 
-def _batch_case_features(batch: phx.nn.OperatorBatch, /) -> np.ndarray | None:
+def _batch_case_features(batch: phx.nn.operator.OperatorBatch, /) -> np.ndarray | None:
     case_count = int(np.prod(batch.case_shape, dtype=np.int64))
     parts = []
     for name in sorted(batch.inputs):
@@ -1708,11 +1708,11 @@ def _batch_case_features(batch: phx.nn.OperatorBatch, /) -> np.ndarray | None:
 
 
 def _target_case_matrix(
-    target: jax.Array | phx.nn.OperatorTargetBatch,
+    target: jax.Array | phx.nn.operator.OperatorTargetBatch,
     case_shape: tuple[int, ...],
     /,
 ) -> np.ndarray:
-    if not isinstance(target, phx.nn.OperatorTargetBatch):
+    if not isinstance(target, phx.nn.operator.OperatorTargetBatch):
         return _case_matrix(target, case_shape)
     return np.concatenate(
         tuple(_case_matrix(field.values, case_shape) for field in target.fields.values()),
@@ -1752,7 +1752,7 @@ def audit_scenario_difficulty(
     identity_relative_l2 = None
     persistence_relative_change = None
     if (
-        not isinstance(target_values, phx.nn.OperatorTargetBatch)
+        not isinstance(target_values, phx.nn.operator.OperatorTargetBatch)
         and len(scenario.train_batch.inputs) == 1
         and source_values is not None
         and source_values.shape == target_values.shape
@@ -1871,7 +1871,7 @@ def native_kernel_parity_checks() -> tuple[KernelParityCheck, ...]:
     checks = []
     values = jr.normal(jr.key(100), (8, 10, 2))
     for factorization in ("cp", "tucker"):
-        factorized = phx.nn.SpectralConvND(
+        factorized = phx.nn.operator.architectures.SpectralConvND(
             in_channels=2,
             out_channels=3,
             n_modes=(3, 4),
@@ -1879,7 +1879,7 @@ def native_kernel_parity_checks() -> tuple[KernelParityCheck, ...]:
             rank=2,
             key=jr.key(101),
         )
-        dense = phx.nn.SpectralConvND(
+        dense = phx.nn.operator.architectures.SpectralConvND(
             in_channels=2,
             out_channels=3,
             n_modes=(3, 4),
@@ -1906,28 +1906,28 @@ def native_kernel_parity_checks() -> tuple[KernelParityCheck, ...]:
             )
         )
 
-    source_axis = phx.nn.OperatorAxis("x", jnp.linspace(0.0, 1.0, 7))
-    query_axis = phx.nn.OperatorAxis("x", jnp.linspace(0.0, 1.0, 11))
-    deeponet_batch = phx.nn.OperatorBatch(
+    source_axis = phx.nn.operator.OperatorAxis("x", jnp.linspace(0.0, 1.0, 7))
+    query_axis = phx.nn.operator.OperatorAxis("x", jnp.linspace(0.0, 1.0, 11))
+    deeponet_batch = phx.nn.operator.OperatorBatch(
         inputs={
-            "forcing": phx.nn.FunctionSamples(
+            "forcing": phx.nn.operator.FunctionSamples(
                 values=jr.normal(jr.key(106), (3, 7)),
                 axes=(source_axis,),
             )
         },
-        queries={"query": phx.nn.FunctionSamples(values=None, axes=(query_axis,))},
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(query_axis,))},
         case_axes=("case",),
         case_shape=(3,),
     )
-    deeponet = phx.nn.DeepONet(
-        branch=phx.nn.MLP(
+    deeponet = phx.nn.operator.architectures.DeepONet(
+        branch=phx.nn.models.MLP(
             in_size=7,
             out_size=4,
             width_size=6,
             depth=2,
             key=jr.key(107),
         ),
-        trunk=phx.nn.MLP(
+        trunk=phx.nn.models.MLP(
             in_size=1,
             out_size=4,
             width_size=6,
@@ -1958,17 +1958,17 @@ def native_kernel_parity_checks() -> tuple[KernelParityCheck, ...]:
         )
     )
 
-    time_axis = phx.nn.OperatorAxis("t", jnp.linspace(0.0, 2.0, 33))
-    temporal_batch = phx.nn.OperatorBatch(
+    time_axis = phx.nn.operator.OperatorAxis("t", jnp.linspace(0.0, 2.0, 33))
+    temporal_batch = phx.nn.operator.OperatorBatch(
         inputs={
-            "forcing": phx.nn.FunctionSamples(
+            "forcing": phx.nn.operator.FunctionSamples(
                 values=jnp.sin(time_axis.nodes),
                 axes=(time_axis,),
             )
         },
-        queries={"query": phx.nn.FunctionSamples(values=None, axes=(time_axis,))},
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(time_axis,))},
     )
-    laplace = phx.nn.LaplaceTemporalOperator(num_poles=4, key=jr.key(103))
+    laplace = phx.nn.operator.architectures.LaplaceTemporalOperator(num_poles=4, key=jr.key(103))
     laplace_error = _relative_array_error(
         laplace.recurrent(temporal_batch),
         laplace(temporal_batch),
@@ -1986,14 +1986,14 @@ def native_kernel_parity_checks() -> tuple[KernelParityCheck, ...]:
 
     theta_nodes = jnp.linspace(0.0, jnp.pi, 9)
     phi_nodes = jnp.linspace(0.0, 2.0 * jnp.pi, 16, endpoint=False)
-    theta_axis = phx.nn.OperatorAxis("theta", theta_nodes, basis="legendre")
-    phi_axis = phx.nn.OperatorAxis(
+    theta_axis = phx.nn.operator.OperatorAxis("theta", theta_nodes, basis="legendre")
+    phi_axis = phx.nn.operator.OperatorAxis(
         "phi",
         phi_nodes,
         basis="fourier",
         periodic=True,
     )
-    spherical = phx.nn.SphericalSpectralConv(
+    spherical = phx.nn.operator.architectures.SphericalSpectralConv(
         in_channels=1,
         out_channels=1,
         max_degree=3,
@@ -2064,7 +2064,7 @@ def native_kernel_parity_checks() -> tuple[KernelParityCheck, ...]:
         )
     )
 
-    regional_processor = phx.nn.RegionalGraphProcessor(
+    regional_processor = phx.nn.operator.layers.RegionalGraphProcessor(
         4,
         2,
         neighbors=3,
@@ -2111,7 +2111,7 @@ def native_kernel_parity_checks() -> tuple[KernelParityCheck, ...]:
         )
     )
 
-    transformer_processor = phx.nn.OperatorTransformerProcessor(
+    transformer_processor = phx.nn.operator.layers.OperatorTransformerProcessor(
         (2, 2),
         2,
         patch_shape=1,
@@ -2234,7 +2234,7 @@ def load_family_parity_evidence(path: str | Path, /) -> tuple[FamilyParityEviden
 
 
 class _NormalizedOperator(eqx.Module):
-    model: Callable[[phx.nn.OperatorBatch], jax.Array]
+    model: Callable[[phx.nn.operator.OperatorBatch], jax.Array]
     input_statistics: tuple[tuple[str, float, float], ...] = eqx.field(static=True)
     target_location: float = eqx.field(static=True)
     target_scale: float = eqx.field(static=True)
@@ -2261,7 +2261,7 @@ class _NormalizedOperator(eqx.Module):
         self.domain_support_key = domain_support_key
         self.conservation_source_key = conservation_source_key
 
-    def __call__(self, batch: phx.nn.OperatorBatch):
+    def __call__(self, batch: phx.nn.operator.OperatorBatch):
         statistics = {
             name: (location, scale) for name, location, scale in self.input_statistics
         }
@@ -2301,14 +2301,14 @@ class _NormalizedOperator(eqx.Module):
                 else:
                     location, scale = statistics[name]
                     values = (values - location) / scale
-            inputs[name] = phx.nn.FunctionSamples(
+            inputs[name] = phx.nn.operator.FunctionSamples(
                 values=values,
                 axes=samples.axes,
                 coordinates=samples.coordinates,
                 quadrature_weights=samples.quadrature_weights,
                 mask=samples.mask,
             )
-        normalized_batch = phx.nn.OperatorBatch(
+        normalized_batch = phx.nn.operator.OperatorBatch(
             inputs=inputs,
             queries={"query": batch.require_single_query()},
             case_axes=batch.case_axes,
@@ -3130,7 +3130,7 @@ def _training_subset_scenario(
     indices = jnp.arange(requested)
     target = (
         scenario.train_target.take(indices)
-        if isinstance(scenario.train_target, phx.nn.OperatorTargetBatch)
+        if isinstance(scenario.train_target, phx.nn.operator.OperatorTargetBatch)
         else jnp.take(scenario.train_target, indices, axis=0)
     )
     return replace(

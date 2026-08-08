@@ -3,6 +3,11 @@
 Phydrax models are Equinox modules with explicit `in_size` / `out_size` semantics and
 support for structured inputs used in product-domain factorization.
 
+Public ownership is explicit: `phydrax.nn.models` contains pointwise, separable,
+and process models; `phydrax.nn.layers` contains reusable layers and Fourier
+feature embeddings; and `phydrax.nn.operator` contains neural-operator data,
+engines, architectures, layers, adapters, and training workflows.
+
 !!! note
     Key notes:
 

@@ -13,7 +13,7 @@ from ._coordinate import CoordinateSpec
 
 
 if TYPE_CHECKING:
-    from ..nn.models.core._binding import ModelBinding
+    from .._model import ModelBinding
     from ._evaluation import FunctionBinding
 
 
@@ -193,9 +193,7 @@ class Domain(StrictModule):
         binding: "ModelBinding | None" = None,
     ):
         """Bind a model with an explicit domain input contract."""
-        from ..nn.models.core._base import _AbstractBaseModel
-        from ..nn.models.core._binding import ModelBinding
-        from ..nn.models.core._loss import ModelWithLoss
+        from .._model import ModelBinding, ModelEvaluator
         from ._function import DomainFunction
         from ._model_function import ConcatenatedModelEvaluator
 
@@ -210,7 +208,7 @@ class Domain(StrictModule):
                 )
 
         def decorator(model):
-            if isinstance(model, (_AbstractBaseModel, ModelWithLoss)):
+            if isinstance(model, ModelEvaluator):
                 declared_binding = model.input_binding()
                 if binding is not None and binding != declared_binding:
                     raise ValueError(
@@ -221,7 +219,7 @@ class Domain(StrictModule):
             else:
                 if binding is None:
                     raise TypeError(
-                        "Plain callable models require binding=phx.nn.ModelBinding(...)."
+                        "Plain callable models require binding=phx.domain.ModelBinding(...)."
                     )
                 resolved_binding = binding
 

@@ -128,7 +128,7 @@ def test_finite_state_transition_has_exact_normalized_mass_and_filters():
 
 
 def test_operator_pathwise_transition_filters_complete_fields():
-    axis = phx.nn.OperatorAxis(
+    axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, 4, endpoint=False),
         quadrature_weights=jnp.full((4,), 0.25),
@@ -136,24 +136,24 @@ def test_operator_pathwise_transition_filters_complete_fields():
     )
     zeros = jnp.zeros((4,))
     inputs = {
-        "state": phx.nn.FunctionSamples(values=zeros, axes=(axis,)),
-        "duration": phx.nn.FunctionSamples(values=jnp.ones((4,)), axes=(axis,)),
-        "forcing": phx.nn.FunctionSamples(values=zeros, axes=(axis,)),
-        "driver": phx.nn.FunctionSamples(values=zeros, axes=(axis,)),
+        "state": phx.nn.operator.FunctionSamples(values=zeros, axes=(axis,)),
+        "duration": phx.nn.operator.FunctionSamples(values=jnp.ones((4,)), axes=(axis,)),
+        "forcing": phx.nn.operator.FunctionSamples(values=zeros, axes=(axis,)),
+        "driver": phx.nn.operator.FunctionSamples(values=zeros, axes=(axis,)),
     }
-    batch = phx.nn.OperatorBatch(
+    batch = phx.nn.operator.OperatorBatch(
         inputs=inputs,
-        queries={"query": phx.nn.FunctionSamples(values=None, axes=(axis,))},
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,))},
     )
-    spec = phx.nn.OperatorTransitionSpec(
-        phx.nn.OperatorOutputSpec("scalar"),
+    spec = phx.nn.operator.training.OperatorTransitionSpec(
+        phx.nn.operator.OperatorOutputSpec("scalar"),
         driver_bindings=(
-            phx.nn.OperatorDriverBinding(
+            phx.nn.operator.training.OperatorDriverBinding(
                 "driver", "wiener", kind="wiener", quantity="increment"
             ),
         ),
     )
-    law = phx.nn.OperatorPathwiseTransition(
+    law = phx.nn.operator.training.OperatorPathwiseTransition(
         _AdditiveFieldOperator(), batch, spec, process_id="field-driver"
     )
     transition = phx.stochastic.PathwiseTransitionKernel(

@@ -14,10 +14,10 @@ def _batch(
     *,
     cases: int = 2,
     mask=None,
-) -> phx.nn.OperatorBatch:
+) -> phx.nn.operator.OperatorBatch:
     nodes = jnp.asarray(coordinates, dtype=float)
     query_coordinates = jnp.broadcast_to(nodes[None, :, None], (cases, nodes.size, 1))
-    query = phx.nn.FunctionSamples(
+    query = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=query_coordinates,
         quadrature_weights=jnp.broadcast_to(
@@ -26,11 +26,11 @@ def _batch(
         ),
         mask=None if mask is None else jnp.asarray(mask, dtype=bool),
     )
-    source = phx.nn.FunctionSamples(
+    source = phx.nn.operator.FunctionSamples(
         values=jnp.ones((cases, nodes.size)),
         coordinates=query_coordinates,
     )
-    return phx.nn.OperatorBatch(inputs={"forcing": source}, queries={"query": query}, case_axes=("case",),
+    return phx.nn.operator.OperatorBatch(inputs={"forcing": source}, queries={"query": query}, case_axes=("case",),
     case_shape=(cases,),)
 
 
@@ -38,7 +38,7 @@ def _predictive(samples, batch):
     return phx.uq.operator_predictive_from_samples(
         jnp.asarray(samples, dtype=float),
         batch,
-        phx.nn.OperatorOutputSpec("scalar"),
+        phx.nn.operator.OperatorOutputSpec("scalar"),
         sample_axes=(phx.uq.SampleAxis("member", "epistemic"),),
         field_name="output",
         query_name="query",
@@ -147,8 +147,8 @@ def test_operator_scores_are_invariant_to_equal_weight_point_splitting():
 
 def test_operator_interval_pointwise_and_simultaneous_coverage_differ():
     batch = _batch([0.0, 0.5, 1.0], [1.0, 1.0, 1.0])
-    spec = phx.nn.OperatorOutputSpec("scalar")
-    lower = phx.nn.OperatorPrediction.from_field(
+    spec = phx.nn.operator.OperatorOutputSpec("scalar")
+    lower = phx.nn.operator.OperatorPrediction.from_field(
         "output",
         -jnp.ones((2, 3)),
         "query",
@@ -157,7 +157,7 @@ def test_operator_interval_pointwise_and_simultaneous_coverage_differ():
         case_axes=batch.case_axes,
         case_shape=batch.case_shape,
     )
-    upper = phx.nn.OperatorPrediction.from_field(
+    upper = phx.nn.operator.OperatorPrediction.from_field(
         "output",
         jnp.ones((2, 3)),
         "query",

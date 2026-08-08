@@ -23,9 +23,9 @@ def _metadata(
 
 def _axis(
     data: phx.stochastic.StochasticTransitionView,
-) -> phx.nn.OperatorAxis:
+) -> phx.nn.operator.OperatorAxis:
     value = _metadata(data, "operator_axis")
-    if not isinstance(value, phx.nn.OperatorAxis):
+    if not isinstance(value, phx.nn.operator.OperatorAxis):
         raise TypeError("Stochastic benchmark operator_axis metadata is invalid.")
     return value
 
@@ -62,7 +62,7 @@ def _final_states(
 def _evaluation_batch(
     data: phx.stochastic.StochasticTransitionView,
     case_indices: Sequence[int] | None = None,
-) -> phx.nn.OperatorBatch:
+) -> phx.nn.operator.OperatorBatch:
     indices = (
         jnp.arange(data.num_cases, dtype=jnp.int32)
         if case_indices is None
@@ -71,12 +71,12 @@ def _evaluation_batch(
     states = _physical_initial_states(data)[indices]
     durations = jnp.full_like(states, data.duration)
     axis = _axis(data)
-    return phx.nn.OperatorBatch(
+    return phx.nn.operator.OperatorBatch(
         inputs={
-            "state": phx.nn.FunctionSamples(values=states, axes=(axis,)),
-            "duration": phx.nn.FunctionSamples(values=durations, axes=(axis,)),
+            "state": phx.nn.operator.FunctionSamples(values=states, axes=(axis,)),
+            "duration": phx.nn.operator.FunctionSamples(values=durations, axes=(axis,)),
         },
-        queries={"query": phx.nn.FunctionSamples(values=None, axes=(axis,))},
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,))},
         case_axes=("case",),
     )
 
@@ -84,7 +84,7 @@ def _evaluation_batch(
 def _operator_dataset(
     data: phx.stochastic.StochasticTransitionView,
     case_indices: Sequence[int] | None = None,
-) -> phx.nn.OperatorDataset:
+) -> phx.nn.operator.training.OperatorDataset:
     dataset = data.operator_dataset(source_axes=(_axis(data),))
     if case_indices is None:
         return dataset
@@ -132,7 +132,7 @@ def _linear_transition_moments(
     return mean, 0.5 * (covariance + covariance.T)
 
 
-class LinearGaussianReferenceOperator(phx.nn.AbstractProbabilisticOperatorModel):
+class LinearGaussianReferenceOperator(phx.nn.operator.AbstractProbabilisticOperatorModel):
     """Exact transition law for a finite-dimensional self-adjoint linear SDE."""
 
     drift_eigenvalues: Array
@@ -175,7 +175,7 @@ class LinearGaussianReferenceOperator(phx.nn.AbstractProbabilisticOperatorModel)
 
     @property
     def operator_output_specs(self):
-        return {"output": phx.nn.OperatorOutputSpec("scalar")}
+        return {"output": phx.nn.operator.OperatorOutputSpec("scalar")}
 
     def distribution(self, batch, /, *, key=None):
         del key
@@ -217,12 +217,12 @@ class LinearGaussianReferenceOperator(phx.nn.AbstractProbabilisticOperatorModel)
         )
         mean = means.reshape(batch.case_shape + (size,))
         factor = factors.reshape(batch.case_shape + (size, size))
-        return phx.nn.GaussianOperatorDistribution(
+        return phx.nn.operator.GaussianOperatorDistribution(
             mean=mean,
             scale=jnp.full_like(mean, self.diagonal_jitter),
             factors=factor,
             query=batch.require_single_query(),
-            output_spec=phx.nn.OperatorOutputSpec("scalar"),
+            output_spec=phx.nn.operator.OperatorOutputSpec("scalar"),
             case_axes=batch.case_axes,
             case_shape=batch.case_shape,
             uncertainty_source="process",
@@ -305,7 +305,7 @@ def stochastic_heat_transition_data(
         initial,
         float(duration),
     )
-    axis = phx.nn.OperatorAxis(
+    axis = phx.nn.operator.OperatorAxis(
         "x",
         axis_discretization.nodes,
         quadrature_weights=axis_discretization.quad_weights,
@@ -389,7 +389,7 @@ def allen_cahn_transition_data(
                 basis_id=noise_basis.basis_id,
             )
         )
-    axis = phx.nn.OperatorAxis(
+    axis = phx.nn.operator.OperatorAxis(
         "x",
         axis_discretization.nodes,
         quadrature_weights=axis_discretization.quad_weights,
@@ -429,7 +429,7 @@ def _operator_predictive(samples, batch, sample_dim):
     return phx.uq.operator_predictive_from_samples(
         samples,
         batch,
-        phx.nn.OperatorOutputSpec("scalar"),
+        phx.nn.operator.OperatorOutputSpec("scalar"),
         sample_axes=(phx.uq.SampleAxis(sample_dim, "process"),),
         field_name="output",
         query_name="query",
@@ -462,12 +462,12 @@ def run_stochastic_heat_gaussian_benchmark(
         (dataset.num_cases,) + factors.shape,
     )
     fixed_scale = jnp.full_like(mean, float(jitter))
-    low_rank = phx.nn.GaussianOperatorDistribution(
+    low_rank = phx.nn.operator.GaussianOperatorDistribution(
         mean=mean,
         scale=fixed_scale,
         factors=factors,
         query=query,
-        output_spec=phx.nn.OperatorOutputSpec("scalar"),
+        output_spec=phx.nn.operator.OperatorOutputSpec("scalar"),
         case_axes=batch.case_axes,
         case_shape=batch.case_shape,
         uncertainty_source="process",
@@ -476,12 +476,12 @@ def run_stochastic_heat_gaussian_benchmark(
         jnp.sqrt(jnp.maximum(jnp.diag(covariance), 0.0) + float(jitter) ** 2),
         mean.shape,
     )
-    diagonal = phx.nn.GaussianOperatorDistribution(
+    diagonal = phx.nn.operator.GaussianOperatorDistribution(
         mean=mean,
         scale=diagonal_scale,
         factors=None,
         query=query,
-        output_spec=phx.nn.OperatorOutputSpec("scalar"),
+        output_spec=phx.nn.operator.OperatorOutputSpec("scalar"),
         case_axes=batch.case_axes,
         case_shape=batch.case_shape,
         uncertainty_source="process",
@@ -592,10 +592,10 @@ def run_stochastic_heat_process_benchmark(
 
     batch = _evaluation_batch(dataset)
     initial_states = _physical_initial_states(dataset)
-    transition = phx.nn.OperatorMarginalTransition(
+    transition = phx.nn.operator.training.OperatorMarginalTransition(
         LinearGaussianReferenceOperator(drift, noise),
         batch,
-        phx.nn.OperatorTransitionSpec(phx.nn.OperatorOutputSpec("scalar")),
+        phx.nn.operator.training.OperatorTransitionSpec(phx.nn.operator.OperatorOutputSpec("scalar")),
         process_id="analytic-stochastic-heat",
     )
     direct = transition.marginal_transition(
@@ -604,7 +604,7 @@ def run_stochastic_heat_process_benchmark(
         t1=dataset.duration,
     )
     operator_distribution = direct.operator_distribution
-    if not isinstance(operator_distribution, phx.nn.GaussianOperatorDistribution):
+    if not isinstance(operator_distribution, phx.nn.operator.GaussianOperatorDistribution):
         raise TypeError("Analytic heat transition must return a Gaussian distribution.")
     direct_covariance = operator_distribution.dense_covariance()
     expected_covariance = jnp.broadcast_to(
@@ -620,14 +620,14 @@ def run_stochastic_heat_process_benchmark(
 
     times = jnp.asarray([0.0, 0.5 * dataset.duration, dataset.duration])
     rollout_key, objective_key = jr.split(jr.fold_in(key, 1))
-    rollout = phx.nn.marginal_operator_rollout(
+    rollout = phx.nn.operator.training.marginal_operator_rollout(
         transition,
         times,
         initial_state=initial_states,
         key=rollout_key,
         num_realizations=count,
     )
-    replay = phx.nn.marginal_operator_rollout(
+    replay = phx.nn.operator.training.marginal_operator_rollout(
         transition,
         times,
         initial_state=initial_states,
@@ -724,7 +724,7 @@ def _fit_allen_cahn_trial(
     if reference.shape[0] > evaluation_samples:
         reference = reference[:evaluation_samples]
     grid_size = _axis(data).size
-    location = phx.nn.FNO(
+    location = phx.nn.operator.architectures.FNO(
         n_modes=(max(1, grid_size // 3),),
         in_channels="scalar",
         out_channels="scalar",
@@ -734,8 +734,8 @@ def _fit_allen_cahn_trial(
         source_key="state",
         key=jr.key(seed),
     )
-    encoder = phx.nn.FixedBranchEncoder(
-        phx.nn.MLP(
+    encoder = phx.nn.operator.architectures.FixedBranchEncoder(
+        phx.nn.models.MLP(
             in_size=grid_size,
             out_size=8,
             width_size=16,
@@ -744,8 +744,8 @@ def _fit_allen_cahn_trial(
         ),
         8,
     )
-    conditioner = phx.nn.OperatorBatchConditioner({"state": encoder})
-    flow = phx.nn.conditional_coupling_flow_operator(
+    conditioner = phx.nn.operator.architectures.OperatorBatchConditioner({"state": encoder})
+    flow = phx.nn.operator.architectures.conditional_coupling_flow_operator(
         jr.key(seed + 2),
         location_model=location,
         conditioner=conditioner,
@@ -755,7 +755,7 @@ def _fit_allen_cahn_trial(
         nn_width=16,
         nn_depth=1,
     )
-    gaussian_base = phx.nn.FNO(
+    gaussian_base = phx.nn.operator.architectures.FNO(
         n_modes=(max(1, grid_size // 3),),
         in_channels="scalar",
         out_channels=4,
@@ -765,7 +765,7 @@ def _fit_allen_cahn_trial(
         source_key="state",
         key=jr.key(seed + 3),
     )
-    gaussian = phx.nn.GaussianFunctionOperator(
+    gaussian = phx.nn.operator.architectures.GaussianFunctionOperator(
         gaussian_base,
         out_channels="scalar",
         factor_rank=2,
@@ -779,8 +779,8 @@ def _fit_allen_cahn_trial(
 
     gaussian_initial_nll = heldout_nll(gaussian)
     flow_initial_nll = heldout_nll(flow)
-    loss = (phx.nn.OperatorDistributionNLL(),)
-    gaussian_fit = phx.nn.fit_operator(
+    loss = (phx.nn.operator.training.OperatorDistributionNLL(),)
+    gaussian_fit = phx.nn.operator.training.fit_operator(
         gaussian,
         train,
         loss_terms=loss,
@@ -791,7 +791,7 @@ def _fit_allen_cahn_trial(
         seed=seed,
         jit=True,
     )
-    flow_fit = phx.nn.fit_operator(
+    flow_fit = phx.nn.operator.training.fit_operator(
         flow,
         train,
         loss_terms=loss,
@@ -806,10 +806,10 @@ def _fit_allen_cahn_trial(
     fitted_flow = flow_fit.execution_model
     if not isinstance(
         fitted_gaussian,
-        phx.nn.AbstractProbabilisticOperatorModel,
+        phx.nn.operator.AbstractProbabilisticOperatorModel,
     ) or not isinstance(
         fitted_flow,
-        phx.nn.AbstractProbabilisticOperatorModel,
+        phx.nn.operator.AbstractProbabilisticOperatorModel,
     ):
         raise TypeError(
             "Distributional training must preserve probabilistic operator models."

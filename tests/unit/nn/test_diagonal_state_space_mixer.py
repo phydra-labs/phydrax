@@ -12,7 +12,7 @@ import phydrax as phx
 
 
 def _scalar_oracle_mixer(input_integration, *, rate=0.7):
-    model = phx.nn.DiagonalStateSpaceMixer(
+    model = phx.nn.operator.architectures.DiagonalStateSpaceMixer(
         state_size=1,
         input_integration=input_integration,
         initial_decay=rate,
@@ -46,7 +46,7 @@ def _scalar_oracle_mixer(input_integration, *, rate=0.7):
 
 @pytest.mark.parametrize("input_integration", ("zoh", "linear"))
 def test_recurrent_matches_direct_variable_step_convolution(input_integration):
-    model = phx.nn.DiagonalStateSpaceMixer(
+    model = phx.nn.operator.architectures.DiagonalStateSpaceMixer(
         in_channels=2,
         out_channels=3,
         state_size=5,
@@ -100,7 +100,7 @@ def test_zoh_and_linear_input_semantics_are_distinct_and_linear_is_exact_for_ram
 
 
 def test_ragged_prefix_masks_ignore_padded_times_and_inputs():
-    model = phx.nn.DiagonalStateSpaceMixer(
+    model = phx.nn.operator.architectures.DiagonalStateSpaceMixer(
         in_channels=2,
         out_channels=2,
         state_size=4,
@@ -152,7 +152,7 @@ def test_strictly_stable_conjugate_poles_preserve_long_memory():
 
 
 def test_compile_and_parameter_and_input_gradients_are_finite():
-    model = phx.nn.DiagonalStateSpaceMixer(
+    model = phx.nn.operator.architectures.DiagonalStateSpaceMixer(
         in_channels=2,
         out_channels=2,
         state_size=4,
@@ -185,7 +185,7 @@ def test_compile_and_parameter_and_input_gradients_are_finite():
 
 @pytest.mark.parametrize("input_integration", ("zoh", "linear"))
 def test_associative_execution_matches_recurrent_with_ragged_cases(input_integration):
-    model = phx.nn.DiagonalStateSpaceMixer(
+    model = phx.nn.operator.architectures.DiagonalStateSpaceMixer(
         in_channels=2,
         out_channels=2,
         state_size=6,
@@ -215,7 +215,7 @@ def test_associative_execution_matches_recurrent_with_ragged_cases(input_integra
 
 
 def test_operator_batch_preserves_case_times_masks_and_prediction_contract():
-    model = phx.nn.DiagonalStateSpaceMixer(
+    model = phx.nn.operator.architectures.DiagonalStateSpaceMixer(
         in_channels=2,
         out_channels=3,
         state_size=4,
@@ -231,14 +231,14 @@ def test_operator_batch_preserves_case_times_masks_and_prediction_contract():
         ]
     )
     mask = jnp.array([[True, True, True, False, False], [True, True, True, True, True]])
-    batch = phx.nn.OperatorBatch(
+    batch = phx.nn.operator.OperatorBatch(
         inputs={
-            "signal": phx.nn.FunctionSamples(
+            "signal": phx.nn.operator.FunctionSamples(
                 values=values, coordinates=coordinates, mask=mask
             )
         },
         queries={
-            "query": phx.nn.FunctionSamples(
+            "query": phx.nn.operator.FunctionSamples(
                 values=None, coordinates=coordinates, mask=mask
             )
         },
@@ -265,7 +265,7 @@ def test_operator_batch_preserves_case_times_masks_and_prediction_contract():
 
 
 def test_dense_reference_rejects_lengths_above_configured_bound():
-    model = phx.nn.DiagonalStateSpaceMixer(
+    model = phx.nn.operator.architectures.DiagonalStateSpaceMixer(
         state_size=2,
         max_direct_length=3,
         key=jr.key(14),
@@ -275,7 +275,7 @@ def test_dense_reference_rejects_lengths_above_configured_bound():
 
 
 def test_stiff_decay_initialization_and_repeated_nodes_remain_finite():
-    model = phx.nn.DiagonalStateSpaceMixer(
+    model = phx.nn.operator.architectures.DiagonalStateSpaceMixer(
         state_size=2,
         initial_decay=1_000.0,
         min_decay=1e-4,
@@ -301,7 +301,7 @@ def test_stiff_decay_initialization_and_repeated_nodes_remain_finite():
 )
 def test_nonfinite_or_unrepresentable_stability_parameters_are_rejected(parameters):
     with pytest.raises(ValueError):
-        phx.nn.DiagonalStateSpaceMixer(**parameters)
+        phx.nn.operator.architectures.DiagonalStateSpaceMixer(**parameters)
 
 
 def test_linear_input_coefficient_does_not_overflow_for_large_finite_decay():
@@ -319,23 +319,23 @@ def test_linear_input_coefficient_does_not_overflow_for_large_finite_decay():
 
 
 def test_scalar_length_one_operator_batch_preserves_singleton_case_axis():
-    model = phx.nn.DiagonalStateSpaceMixer(
+    model = phx.nn.operator.architectures.DiagonalStateSpaceMixer(
         state_size=2,
         source_key="signal",
         key=jr.key(16),
     )
     coordinates = jnp.zeros((1, 1, 1))
     mask = jnp.ones((1, 1), dtype=bool)
-    batch = phx.nn.OperatorBatch(
+    batch = phx.nn.operator.OperatorBatch(
         inputs={
-            "signal": phx.nn.FunctionSamples(
+            "signal": phx.nn.operator.FunctionSamples(
                 values=jnp.ones((1, 1)),
                 coordinates=coordinates,
                 mask=mask,
             )
         },
         queries={
-            "query": phx.nn.FunctionSamples(
+            "query": phx.nn.operator.FunctionSamples(
                 values=None,
                 coordinates=coordinates,
                 mask=mask,

@@ -5,7 +5,7 @@
 import jax.numpy as jnp
 import pytest
 
-from phydrax.nn import ModelBinding
+from phydrax.domain import ModelBinding
 
 
 def test_flat_model_binding_packs_scalar_and_vector_points():

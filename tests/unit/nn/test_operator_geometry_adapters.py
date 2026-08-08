@@ -13,13 +13,13 @@ import phydrax as phx
 def test_geometry_sampling_preserves_interior_and_boundary_measures():
     geometry = phx.domain.GeometryDomain(phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile())
 
-    interior = phx.nn.function_samples_from_geometry(
+    interior = phx.nn.operator.function_samples_from_geometry(
         geometry,
         12,
         component="interior",
         key=jr.key(0),
     )
-    boundary = phx.nn.function_samples_from_geometry(
+    boundary = phx.nn.operator.function_samples_from_geometry(
         geometry,
         10,
         component="boundary",
@@ -41,12 +41,12 @@ def test_canonical_triangle_mesh_builds_graph_and_simplicial_operator_topologies
     )
     values = jnp.sum(mesh.vertices[:, :2], axis=-1)
 
-    graph_samples = phx.nn.function_samples_from_mesh(
+    graph_samples = phx.nn.operator.function_samples_from_mesh(
         mesh,
         values=values,
         topology_kind="graph",
     )
-    simplicial_samples = phx.nn.function_samples_from_mesh(
+    simplicial_samples = phx.nn.operator.function_samples_from_mesh(
         mesh,
         values=values,
         topology_kind="simplicial",
@@ -67,7 +67,7 @@ def test_mesh_region_uses_surface_vertex_measure():
     host_mesh = trimesh.creation.box(extents=(1.0, 2.0, 3.0))
     region = phx.geometry.mesh_region_from_source(host_mesh, recenter=False)
 
-    samples = phx.nn.function_samples_from_mesh(region)
+    samples = phx.nn.operator.function_samples_from_mesh(region)
 
     assert samples.coordinates.shape == (region.vertices.shape[0], 3)
     assert jnp.sum(samples.quadrature()) == pytest.approx(float(host_mesh.area))
@@ -84,14 +84,14 @@ def test_batched_point_cloud_adapter_compacts_masked_graph_nodes():
     mask = jnp.asarray([[True, True, True, False], [True, True, True, True]])
     values = jnp.arange(8.0).reshape((2, 4))
 
-    samples = phx.nn.function_samples_from_point_cloud(
+    samples = phx.nn.operator.function_samples_from_point_cloud(
         coordinates,
         values=values,
         mask=mask,
         quadrature_weights=jnp.ones((2, 4)),
         k=2,
     )
-    graph = phx.nn.operator_graph_from_samples(samples, case_shape=(2,))
+    graph = phx.nn.operator.operator_graph_from_samples(samples, case_shape=(2,))
 
     assert samples.geometry_case_shape == (2,)
     assert samples.topology.case_shape == (2,)

@@ -49,15 +49,15 @@ class _SourceValueKernel(eqx.Module):
 
 
 def _point_batch(source_coordinates, source_values, query_coordinates):
-    return phx.nn.OperatorBatch(
+    return phx.nn.operator.OperatorBatch(
         inputs={
-            "u": phx.nn.FunctionSamples(
+            "u": phx.nn.operator.FunctionSamples(
                 values=jnp.asarray(source_values),
                 coordinates=jnp.asarray(source_coordinates),
             )
         },
         queries={
-            "query": phx.nn.FunctionSamples(
+            "query": phx.nn.operator.FunctionSamples(
                 values=None,
                 coordinates=jnp.asarray(query_coordinates),
             )
@@ -66,10 +66,10 @@ def _point_batch(source_coordinates, source_values, query_coordinates):
 
 
 def test_function_samples_values_are_one_array_or_none():
-    samples = phx.nn.FunctionSamples(values=[[1.0], [2.0]])
+    samples = phx.nn.operator.FunctionSamples(values=[[1.0], [2.0]])
     assert samples.values.shape == (2, 1)
     with pytest.raises(TypeError, match="one array or None"):
-        phx.nn.FunctionSamples(values={"u": jnp.ones((2,))})
+        phx.nn.operator.FunctionSamples(values={"u": jnp.ones((2,))})
 
 
 def test_per_case_geometry_weights_and_metrics_reduce_independently():
@@ -81,7 +81,7 @@ def test_per_case_geometry_weights_and_metrics_reduce_independently():
     )
     quadrature = jnp.array([[0.5, 0.5, 0.0], [0.2, 0.3, 0.5]])
     mask = jnp.array([[True, True, False], [True, True, True]])
-    query = phx.nn.FunctionSamples(
+    query = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=coordinates,
         quadrature_weights=quadrature,
@@ -97,7 +97,7 @@ def test_per_case_geometry_weights_and_metrics_reduce_independently():
 
     prediction = jnp.array([[1.0, 1.0, 1000.0], [1.0, 2.0, 3.0]])
     target = jnp.zeros_like(prediction)
-    error = phx.nn.operator_l2_loss(
+    error = phx.nn.operator.operator_l2_loss(
         prediction,
         target,
         query,
@@ -118,7 +118,7 @@ def test_stack_operator_batches_pads_ragged_points_and_slices_cases():
         [[0.2], [0.8]],
     )
 
-    batch = phx.nn.stack_operator_batches((first, second), case_axis="case")
+    batch = phx.nn.operator.stack_operator_batches((first, second), case_axis="case")
     assert batch.case_axes == ("case",)
     assert batch.case_shape == (2,)
     assert batch.input("u").sample_shape == (4,)
@@ -152,27 +152,27 @@ def test_per_case_deeponet_uses_case_specific_source_and_query_geometry():
             [[0.25], [0.75]],
         ]
     )
-    source = phx.nn.FunctionSamples(
+    source = phx.nn.operator.FunctionSamples(
         values=jnp.ones((2, 3)),
         coordinates=source_coordinates,
         quadrature_weights=jnp.full((2, 3), 1.0 / 3.0),
     )
-    query = phx.nn.FunctionSamples(
+    query = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=query_coordinates,
         mask=jnp.array([[True, True], [True, False]]),
     )
-    batch = phx.nn.OperatorBatch(
+    batch = phx.nn.operator.OperatorBatch(
         inputs={"u": source},
         queries={"query": query},
         case_axes=("case",),
     )
-    branch = phx.nn.IntegralBranchEncoder(
+    branch = phx.nn.operator.architectures.IntegralBranchEncoder(
         feature_model=_CoordinateFeature(2, 1),
         latent_size=1,
         coord_dim=1,
     )
-    model = phx.nn.DeepONet(
+    model = phx.nn.operator.architectures.DeepONet(
         branch=branch,
         trunk=_Trunk(),
         coord_dim=1,
@@ -195,13 +195,13 @@ def test_local_integral_operator_supports_per_case_ragged_geometry():
             [[0.0], [0.2], [0.0]],
         ]
     )
-    source = phx.nn.FunctionSamples(
+    source = phx.nn.operator.FunctionSamples(
         values=jnp.array([[1.0, 2.0, 3.0], [4.0, 6.0, 1000.0]]),
         coordinates=source_coordinates,
         quadrature_weights=jnp.array([[0.2, 0.3, 0.5], [0.5, 0.5, 0.0]]),
         mask=jnp.array([[True, True, True], [True, True, False]]),
     )
-    query = phx.nn.FunctionSamples(
+    query = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=jnp.array(
             [
@@ -211,12 +211,12 @@ def test_local_integral_operator_supports_per_case_ragged_geometry():
         ),
         mask=jnp.array([[True, True], [True, False]]),
     )
-    batch = phx.nn.OperatorBatch(
+    batch = phx.nn.operator.OperatorBatch(
         inputs={"u": source},
         queries={"query": query},
         case_axes=("case",),
     )
-    model = phx.nn.LocalIntegralOperator(
+    model = phx.nn.operator.architectures.LocalIntegralOperator(
         kernel_model=_SourceValueKernel(),
         coord_dim=1,
     )
@@ -228,17 +228,17 @@ def test_local_integral_operator_supports_per_case_ragged_geometry():
 
 
 def test_operator_batch_rejects_mismatched_case_layouts():
-    source = phx.nn.FunctionSamples(
+    source = phx.nn.operator.FunctionSamples(
         values=jnp.ones((3, 4)),
         coordinates=jnp.ones((2, 4, 1)),
     )
-    query = phx.nn.FunctionSamples(
+    query = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=jnp.ones((2, 5, 1)),
     )
 
     with pytest.raises(ValueError, match="inconsistent case shapes"):
-        phx.nn.OperatorBatch(
+        phx.nn.operator.OperatorBatch(
             inputs={"u": source},
             queries={"query": query},
             case_axes=("case",),
@@ -247,7 +247,7 @@ def test_operator_batch_rejects_mismatched_case_layouts():
 
 def test_case_slicing_preserves_shared_coordinates_with_per_case_masks():
     coordinates = jnp.linspace(0.0, 1.0, 5)[:, None]
-    source = phx.nn.FunctionSamples(
+    source = phx.nn.operator.FunctionSamples(
         values=jnp.arange(20.0).reshape((4, 5)),
         coordinates=coordinates,
         mask=jnp.asarray(
@@ -259,9 +259,9 @@ def test_case_slicing_preserves_shared_coordinates_with_per_case_masks():
             ]
         ),
     )
-    batch = phx.nn.OperatorBatch(
+    batch = phx.nn.operator.OperatorBatch(
         inputs={"u": source},
-        queries={"query": phx.nn.FunctionSamples(values=None, coordinates=coordinates)},
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, coordinates=coordinates)},
         case_axes=("case",),
         case_shape=(4,),
     )

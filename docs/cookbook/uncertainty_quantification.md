@@ -21,7 +21,7 @@ import phydrax as phx
 
 
 def model_factory(key):
-    return phx.nn.MLP(
+    return phx.nn.models.MLP(
         in_size=1,
         out_size="scalar",
         width_size=64,

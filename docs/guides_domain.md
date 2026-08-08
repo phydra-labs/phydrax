@@ -59,7 +59,7 @@ retained. The canonical replacements are:
 | `PointsBatch` / `CoordSeparableBatch` | `PointBatch` / `GridBatch` |
 | `operator_domain_view_from_coord_separable(...)` | `operator_domain_view_from_grid(...)` |
 | Inline `num_points=...`, `structure=...` sampling | `source=per_step(mean_over(component), PointSampling(..., layout=...))` |
-| `Domain.Model(..., structured=True)` | `Domain.Model(..., binding=phx.nn.ModelBinding.axis())` |
+| `Domain.Model(..., structured=True)` | `Domain.Model(..., binding=phx.nn.models.ModelBinding.axis())` |
 
 `PointSampling` owns paired-site count and design. `GridSampling` owns named
 axis specifications and an optional point plan for remaining labels. A

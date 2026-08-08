@@ -20,8 +20,8 @@ from phydrax.domain import (
     TimeInterval,
 )
 from phydrax.enforcement import enforce_dirichlet, enforce_initial
+from phydrax.nn._base import _AbstractBaseModel
 from phydrax.nn.models import LatentContractionModel, LatentExecutionPolicy
-from phydrax.nn.models.core._base import _AbstractBaseModel
 from phydrax.operators.differential import dt_n, laplacian, partial_n, partial_t
 from phydrax.operators.differential._hooks import (
     get_derivative_rule,
@@ -344,8 +344,8 @@ def test_latent_derivative_path_warns_on_auto_fallback(monkeypatch):
     u = domain.Model("x", "t")(model)
     du_dt = dt_n(u, var="t", order=2, backend="jet")
     monkeypatch.setattr(
-        differential_domain_ops,
-        "_latent_try_partial_n_eval",
+        LatentContractionModel,
+        "try_structured_partial",
         lambda *args, **kwargs: (None, "unsupported test topology"),
     )
 
@@ -368,8 +368,8 @@ def test_latent_derivative_path_respects_error_fallback(monkeypatch):
     u = domain.Model("x", "t")(model)
     du_dt = dt_n(u, var="t", order=2, backend="jet")
     monkeypatch.setattr(
-        differential_domain_ops,
-        "_latent_try_partial_n_eval",
+        LatentContractionModel,
+        "try_structured_partial",
         lambda *args, **kwargs: (None, "unsupported test topology"),
     )
 
@@ -458,8 +458,8 @@ def test_coord_separable_laplacian_uses_fwdfwd_path(monkeypatch):
         raise AssertionError("coord-separable laplacian should bypass latent fast path.")
 
     monkeypatch.setattr(
-        differential_domain_ops,
-        "_latent_try_partial_n_eval",
+        LatentContractionModel,
+        "try_structured_partial",
         _latent_fast_should_not_run,
     )
 

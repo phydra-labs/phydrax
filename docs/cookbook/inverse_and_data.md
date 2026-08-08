@@ -43,8 +43,8 @@ operator. Everything is still “minimize functionals over domains”.
         return 0.0
 
     # State u(x) and unknown coefficient k(x) (positive via final activation)
-    u_model = phx.nn.MLP(in_size=2, out_size="scalar", width_size=16, depth=2, key=jr.key(0))
-    k_model = phx.nn.MLP(
+    u_model = phx.nn.models.MLP(in_size=2, out_size="scalar", width_size=16, depth=2, key=jr.key(0))
+    k_model = phx.nn.models.MLP(
         in_size=2,
         out_size="scalar",
         width_size=16,

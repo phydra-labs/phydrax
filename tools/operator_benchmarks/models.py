@@ -15,7 +15,7 @@ import phydrax as phx
 from .scenarios import augment_square_group_training, OperatorBenchmarkScenario
 
 
-def _apply_query_mask(output, batch: phx.nn.OperatorBatch):
+def _apply_query_mask(output, batch: phx.nn.operator.OperatorBatch):
     mask = batch.require_single_query().mask_array(case_shape=batch.case_shape)
     while mask.ndim < jnp.asarray(output).ndim:
         mask = mask[..., None]
@@ -30,7 +30,7 @@ class IdentityBaseline(eqx.Module):
     def __init__(self, source_key: str):
         self.source_key = str(source_key)
 
-    def __call__(self, batch: phx.nn.OperatorBatch):
+    def __call__(self, batch: phx.nn.operator.OperatorBatch):
         source = batch.input(self.source_key)
         if (
             source.values is None
@@ -49,7 +49,7 @@ class WeightedMeanBaseline(eqx.Module):
     def __init__(self, source_key: str):
         self.source_key = str(source_key)
 
-    def __call__(self, batch: phx.nn.OperatorBatch):
+    def __call__(self, batch: phx.nn.operator.OperatorBatch):
         source = batch.input(self.source_key)
         if source.values is None or not source.sample_shape:
             raise ValueError(
@@ -80,7 +80,7 @@ class NearestNeighborBaseline(eqx.Module):
     def __init__(self, source_key: str):
         self.source_key = str(source_key)
 
-    def __call__(self, batch: phx.nn.OperatorBatch):
+    def __call__(self, batch: phx.nn.operator.OperatorBatch):
         source = batch.input(self.source_key)
         if source.values is None or not source.sample_shape:
             raise ValueError("NearestNeighborBaseline requires sampled source values.")
@@ -143,7 +143,7 @@ class ConstantOutputBaseline(eqx.Module):
         self.output_shape = tuple(int(size) for size in mean.shape)
         self.value = tuple(float(value) for value in mean.reshape(-1))
 
-    def __call__(self, batch: phx.nn.OperatorBatch):
+    def __call__(self, batch: phx.nn.operator.OperatorBatch):
         value = jnp.asarray(self.value).reshape(self.output_shape)
         output = jnp.broadcast_to(
             value,
@@ -162,7 +162,7 @@ class LinearInterpolationBaseline(eqx.Module):
     def __init__(self, source_key: str):
         self.source_key = str(source_key)
 
-    def __call__(self, batch: phx.nn.OperatorBatch):
+    def __call__(self, batch: phx.nn.operator.OperatorBatch):
         source = batch.input(self.source_key)
         if source.values is None or _coordinate_dimension(source) != 1:
             raise ValueError(
@@ -205,7 +205,7 @@ class LinearInterpolationBaseline(eqx.Module):
         return _apply_query_mask(output, batch)
 
 
-def _flatten_batch_inputs(batch: phx.nn.OperatorBatch, names: tuple[str, ...]):
+def _flatten_batch_inputs(batch: phx.nn.operator.OperatorBatch, names: tuple[str, ...]):
     case_count = prod(batch.case_shape) if batch.case_shape else 1
     features = []
     for name in names:
@@ -249,7 +249,7 @@ class PODLinearROMBaseline(eqx.Module):
         )
         self.coefficient_map = jnp.linalg.pinv(design) @ coefficients
 
-    def __call__(self, batch: phx.nn.OperatorBatch):
+    def __call__(self, batch: phx.nn.operator.OperatorBatch):
         if batch.require_single_query().sample_shape != self.query_shape:
             raise ValueError("PODLinearROMBaseline requires its fitted query geometry.")
         features = _flatten_batch_inputs(batch, self.input_names)
@@ -276,7 +276,7 @@ class PointwiseAffineBaseline(eqx.Module):
         self.weight = 0.1 * jr.normal(key, ())
         self.bias = jnp.zeros(())
 
-    def __call__(self, batch: phx.nn.OperatorBatch):
+    def __call__(self, batch: phx.nn.operator.OperatorBatch):
         source = batch.input(self.source_key)
         if (
             source.values is None
@@ -323,7 +323,7 @@ _BENCHMARK_CAPABILITY_ARCHITECTURES = {
 def _operator_problem_spec(
     scenario: OperatorBenchmarkScenario,
     /,
-) -> phx.nn.OperatorProblemSpec:
+) -> phx.nn.operator.OperatorProblemSpec:
     if scenario.task is not None:
         return scenario.task.problem
     batches = (
@@ -338,14 +338,14 @@ def _operator_problem_spec(
     )
     source_name, _ = _primary_source(scenario)
 
-    def has_shared_topology(batch: phx.nn.OperatorBatch, /) -> bool:
+    def has_shared_topology(batch: phx.nn.operator.OperatorBatch, /) -> bool:
         source_topology = batch.input(source_name).topology
         query_topology = batch.require_single_query().topology
         if source_topology is None or query_topology is None:
             return False
-        return phx.nn.operator_topology_fingerprint(
+        return phx.nn.operator.operator_topology_fingerprint(
             source_topology
-        ) == phx.nn.operator_topology_fingerprint(query_topology)
+        ) == phx.nn.operator.operator_topology_fingerprint(query_topology)
 
     shared_topology = all(has_shared_topology(batch) for batch in batches)
     coincident = all(
@@ -371,7 +371,7 @@ def _operator_problem_spec(
         (evaluation.rollout_steps for evaluation in scenario.evaluations),
         default=1,
     )
-    return phx.nn.OperatorProblemSpec(
+    return phx.nn.operator.OperatorProblemSpec(
         source_query_relation=source_query_relation,
         query_is_fixed=query_is_fixed,
         requires_resolution_transfer=resolution_transfer,
@@ -382,7 +382,7 @@ def _operator_problem_spec(
 def _operator_field_specs(
     scenario: OperatorBenchmarkScenario,
     /,
-) -> tuple[phx.nn.OperatorFieldSpec, ...]:
+) -> tuple[phx.nn.operator.OperatorFieldSpec, ...]:
     if scenario.task is not None:
         return scenario.task.fields
     symmetry = scenario.symmetry
@@ -394,7 +394,7 @@ def _operator_field_specs(
     )
     return (
         *(
-            phx.nn.OperatorFieldSpec(
+            phx.nn.operator.OperatorFieldSpec(
                 name,
                 role="source",
                 source_name=name,
@@ -402,7 +402,7 @@ def _operator_field_specs(
             )
             for name in scenario.train_batch.inputs
         ),
-        phx.nn.OperatorFieldSpec(
+        phx.nn.operator.OperatorFieldSpec(
             "solution",
             role="target",
             query_name="query",
@@ -415,7 +415,7 @@ def _architecture_capability_reports(
     architecture: "OperatorArchitecture",
     scenario: OperatorBenchmarkScenario,
     /,
-) -> tuple[phx.nn.OperatorCompatibilityReport, ...]:
+) -> tuple[phx.nn.operator.OperatorCompatibilityReport, ...]:
     capability_name = (
         architecture.capability_name
         or _BENCHMARK_CAPABILITY_ARCHITECTURES.get(architecture.name)
@@ -434,13 +434,13 @@ def _architecture_capability_reports(
         *(evaluation.batch for evaluation in scenario.evaluations),
     )
     return tuple(
-        phx.nn.validate_operator_architecture(
+        phx.nn.operator.validate_operator_architecture(
             capability_name,
             batch,
             configuration=configuration,
             problem=problem,
             fields=_operator_field_specs(scenario),
-            training_evidence=phx.nn.OperatorTrainingEvidence(regime="task_specific"),
+            training_evidence=phx.nn.operator.OperatorTrainingEvidence(regime="task_specific"),
         )
         for batch in batches
     )
@@ -506,7 +506,7 @@ class OperatorArchitecture:
         self,
         scenario: OperatorBenchmarkScenario,
         /,
-    ) -> tuple[phx.nn.OperatorCompatibilityReport, ...]:
+    ) -> tuple[phx.nn.operator.OperatorCompatibilityReport, ...]:
         """Return the public configured-contract report for every scenario split."""
         return _architecture_capability_reports(self, scenario)
 
@@ -537,8 +537,8 @@ def _coincident(scenario: OperatorBenchmarkScenario) -> bool:
 
 
 def _same_query_geometry(
-    left: phx.nn.FunctionSamples,
-    right: phx.nn.FunctionSamples,
+    left: phx.nn.operator.FunctionSamples,
+    right: phx.nn.operator.FunctionSamples,
     /,
 ) -> bool:
     if left.sample_shape != right.sample_shape or len(left.axes) != len(right.axes):
@@ -564,7 +564,7 @@ def _scalar_source(scenario: OperatorBenchmarkScenario) -> bool:
     return jnp.asarray(source.values).ndim == expected
 
 
-def _coordinate_dimension(samples: phx.nn.FunctionSamples) -> int:
+def _coordinate_dimension(samples: phx.nn.operator.FunctionSamples) -> int:
     if samples.axes:
         return len(samples.axes)
     if samples.coordinates is not None:
@@ -594,14 +594,14 @@ def _deeponet_factory(*, pod: bool, quick: bool):
                 trailing = jnp.asarray(samples.values).shape[case_ndim + sample_ndim :]
                 channels = 1 if not trailing else int(prod(trailing))
                 coord_dim = _coordinate_dimension(samples)
-                feature = phx.nn.MLP(
+                feature = phx.nn.models.MLP(
                     in_size=channels + coord_dim,
                     out_size=latent,
                     width_size=max(2, round((12 if quick else 48) * size_scale)),
                     depth=2,
                     key=next(keys),
                 )
-                branches[name] = phx.nn.IntegralBranchEncoder(
+                branches[name] = phx.nn.operator.architectures.IntegralBranchEncoder(
                     feature_model=feature,
                     latent_size=latent,
                     value_channels="scalar" if channels == 1 else channels,
@@ -609,14 +609,14 @@ def _deeponet_factory(*, pod: bool, quick: bool):
                 )
             else:
                 in_size = prod(jnp.asarray(samples.values).shape[len(batch.case_shape) :])
-                branch_model = phx.nn.MLP(
+                branch_model = phx.nn.models.MLP(
                     in_size=in_size,
                     out_size=latent,
                     width_size=max(2, round((12 if quick else 48) * size_scale)),
                     depth=2,
                     key=next(keys),
                 )
-                branches[name] = phx.nn.FixedBranchEncoder(branch_model, latent)
+                branches[name] = phx.nn.operator.architectures.FixedBranchEncoder(branch_model, latent)
         query_dim = _coordinate_dimension(batch.require_single_query())
         if pod:
             target = jnp.asarray(scenario.train_target).reshape(
@@ -626,16 +626,16 @@ def _deeponet_factory(*, pod: bool, quick: bool):
             basis = right[:latent].T.reshape(
                 batch.require_single_query().sample_shape + (latent,)
             )
-            trunk = phx.nn.PODBasis(basis, latent_size=latent)
+            trunk = phx.nn.operator.architectures.PODBasis(basis, latent_size=latent)
         else:
-            trunk = phx.nn.MLP(
+            trunk = phx.nn.models.MLP(
                 in_size=query_dim,
                 out_size=latent,
                 width_size=max(2, round((12 if quick else 48) * size_scale)),
                 depth=2,
                 key=next(keys),
             )
-        return phx.nn.DeepONet(
+        return phx.nn.operator.architectures.DeepONet(
             branch=branches,
             trunk=trunk,
             coord_dim=query_dim,
@@ -654,7 +654,7 @@ def _fno_factory(*, factorization: str, quick: bool):
         )
         channels = _sample_channels(source, scenario.train_batch.case_shape)
         output_channels = _target_channels(scenario)
-        return phx.nn.FNO(
+        return phx.nn.operator.architectures.FNO(
             n_modes=modes,
             in_channels="scalar" if channels == 1 else channels,
             out_channels="scalar" if output_channels == 1 else output_channels,
@@ -710,7 +710,7 @@ def _hofno_factory(
         )
         channels = _sample_channels(source, scenario.train_batch.case_shape)
         output_channels = _target_channels(scenario)
-        return phx.nn.HOFNO(
+        return phx.nn.operator.architectures.HOFNO(
             n_modes=modes,
             in_channels="scalar" if channels == 1 else channels,
             out_channels="scalar" if output_channels == 1 else output_channels,
@@ -775,11 +775,11 @@ def _implicit_fno_factory(*, axial: bool, quick: bool):
             "key": jr.key(seed),
         }
         if axial:
-            return phx.nn.AxialFactorizedFNO(
+            return phx.nn.operator.architectures.AxialFactorizedFNO(
                 **common,
                 depth=1 if quick else 4,
             )
-        return phx.nn.IFNO(
+        return phx.nn.operator.architectures.IFNO(
             **common,
             iterations=1 if quick else 8,
         )
@@ -792,7 +792,7 @@ def _poseidon_factory(*, quick: bool):
         name, source = _primary_source(scenario)
         channels = _sample_channels(source, scenario.train_batch.case_shape)
         output_channels = _target_channels(scenario)
-        return phx.nn.Poseidon(
+        return phx.nn.operator.architectures.Poseidon(
             image_shape=source.sample_shape,
             patch_size=1,
             in_channels="scalar" if channels == 1 else channels,
@@ -820,7 +820,7 @@ def _cno_factory(*, uno: bool, quick: bool):
             "out_channels": "scalar" if output_channels == 1 else output_channels,
         }
         if uno:
-            return phx.nn.UNO(
+            return phx.nn.operator.architectures.UNO(
                 spatial_ndim=len(source.sample_shape),
                 widths=tuple(
                     max(2, round(width * size_scale))
@@ -830,7 +830,7 @@ def _cno_factory(*, uno: bool, quick: bool):
                 source_key=name,
                 key=jr.key(seed),
             )
-        return phx.nn.CNO(
+        return phx.nn.operator.architectures.CNO(
             spatial_ndim=len(source.sample_shape),
             width=max(2, round((4 if quick else 32) * size_scale)),
             depth=1 if quick else 4,
@@ -847,7 +847,7 @@ def _wavelet_factory(*, quick: bool):
         name, source = _primary_source(scenario)
         channels = _sample_channels(source, scenario.train_batch.case_shape)
         output_channels = _target_channels(scenario)
-        return phx.nn.WaveletNeuralOperator(
+        return phx.nn.operator.architectures.WaveletNeuralOperator(
             source.sample_shape,
             in_channels="scalar" if channels == 1 else channels,
             out_channels="scalar" if output_channels == 1 else output_channels,
@@ -901,7 +901,7 @@ def _flower_factory(
     transition_mode: Literal["learned", "resolution_consistent"],
 ):
     def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
-        return phx.nn.Flower(
+        return phx.nn.operator.architectures.Flower(
             **_flower_settings(
                 scenario,
                 size_scale,
@@ -943,14 +943,14 @@ def _local_factory(*, quick: bool):
     def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
         name, source = _primary_source(scenario)
         coord_dim = _coordinate_dimension(source)
-        kernel = phx.nn.MLP(
+        kernel = phx.nn.models.MLP(
             in_size=1 + 3 * coord_dim,
             out_size=1,
             width_size=max(2, round((8 if quick else 48) * size_scale)),
             depth=2,
             key=jr.key(seed),
         )
-        return phx.nn.LocalIntegralOperator(
+        return phx.nn.operator.architectures.LocalIntegralOperator(
             kernel_model=kernel,
             coord_dim=coord_dim,
             source_key=name,
@@ -963,7 +963,7 @@ def _local_factory(*, quick: bool):
 def _sfno_factory(*, quick: bool):
     def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
         name, source = _primary_source(scenario)
-        return phx.nn.SFNO(
+        return phx.nn.operator.architectures.SFNO(
             in_channels="scalar",
             out_channels="scalar",
             width=max(2, round((4 if quick else 24) * size_scale)),
@@ -983,7 +983,7 @@ def _sfno_factory(*, quick: bool):
 def _laplace_factory(*, quick: bool):
     def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
         name, _ = _primary_source(scenario)
-        return phx.nn.LaplaceTemporalOperator(
+        return phx.nn.operator.architectures.LaplaceTemporalOperator(
             in_channels="scalar",
             out_channels="scalar",
             num_poles=max(1, round((4 if quick else 24) * size_scale)),
@@ -995,7 +995,7 @@ def _laplace_factory(*, quick: bool):
 
 
 def _sample_channels(
-    samples: phx.nn.FunctionSamples,
+    samples: phx.nn.operator.FunctionSamples,
     case_shape: tuple[int, ...],
 ) -> int:
     if samples.values is None:
@@ -1051,7 +1051,7 @@ def _transolver_factory(*, quick: bool):
         )
         channels = _sample_channels(source, scenario.train_batch.case_shape)
         output_channels = _target_channels(scenario)
-        return phx.nn.Transolver(
+        return phx.nn.operator.architectures.Transolver(
             in_channels="scalar" if channels == 1 else channels,
             out_channels="scalar" if output_channels == 1 else output_channels,
             coord_dim=_coordinate_dimension(source),
@@ -1089,7 +1089,7 @@ def _gnot_factory(*, quick: bool):
             if batch.require_single_query().values is None
             else _sample_channels(batch.require_single_query(), batch.case_shape)
         )
-        return phx.nn.GNOT(
+        return phx.nn.operator.architectures.GNOT(
             in_channels=source_channels,
             out_channels="scalar" if output_channels == 1 else output_channels,
             coord_dim=_coordinate_dimension(batch.require_single_query()),
@@ -1117,7 +1117,7 @@ def _upt_factory(*, quick: bool):
         )
         channels = _sample_channels(source, scenario.train_batch.case_shape)
         output_channels = _target_channels(scenario)
-        return phx.nn.UPT(
+        return phx.nn.operator.architectures.UPT(
             in_channels="scalar" if channels == 1 else channels,
             out_channels="scalar" if output_channels == 1 else output_channels,
             coord_dim=_coordinate_dimension(source),
@@ -1204,7 +1204,7 @@ def _gino_settings(
 
 def _gino_factory(*, quick: bool):
     def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
-        return phx.nn.GINO(
+        return phx.nn.operator.architectures.GINO(
             **_gino_settings(scenario, size_scale, quick=quick),
             key=jr.key(seed),
         )
@@ -1297,7 +1297,7 @@ def _geometry_informed_flower_factory(
     conserve_mass: bool = False,
 ):
     def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
-        return phx.nn.GeometryInformedFlower(
+        return phx.nn.operator.architectures.GeometryInformedFlower(
             **_geometry_informed_flower_settings(
                 scenario,
                 size_scale,
@@ -1415,7 +1415,7 @@ def _rigno_settings(
 
 def _rigno_factory(*, quick: bool):
     def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
-        return phx.nn.RIGNO(
+        return phx.nn.operator.architectures.RIGNO(
             **_rigno_settings(scenario, size_scale, quick=quick),
             key=jr.key(seed),
         )
@@ -1516,7 +1516,7 @@ def _gaot_settings(
 
 def _gaot_factory(*, quick: bool):
     def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
-        return phx.nn.GAOT(
+        return phx.nn.operator.architectures.GAOT(
             **_gaot_settings(scenario, size_scale, quick=quick),
             key=jr.key(seed),
         )
@@ -1645,7 +1645,7 @@ def _fixed_input_shapes(scenario: OperatorBenchmarkScenario, /) -> bool:
 
 
 def _channel_layout(
-    samples: phx.nn.FunctionSamples,
+    samples: phx.nn.operator.FunctionSamples,
     case_shape: tuple[int, ...],
 ) -> tuple[int, ...] | None:
     if samples.values is None:
@@ -1702,7 +1702,7 @@ def _field_channels_compatible(scenario: OperatorBenchmarkScenario, /) -> bool:
     return True
 
 
-def _uniform_axis(axis: phx.nn.OperatorAxis) -> bool:
+def _uniform_axis(axis: phx.nn.operator.OperatorAxis) -> bool:
     if int(axis.nodes.shape[0]) < 2:
         return False
     spacing = jnp.diff(axis.nodes)
@@ -1759,7 +1759,7 @@ def _poseidon_compatible(scenario: OperatorBenchmarkScenario, /) -> bool:
 
 def _all_source_batches(
     scenario: OperatorBenchmarkScenario,
-) -> tuple[phx.nn.OperatorBatch, ...]:
+) -> tuple[phx.nn.operator.OperatorBatch, ...]:
     validation = () if scenario.validation is None else (scenario.validation.batch,)
     return (
         scenario.train_batch,
@@ -1836,7 +1836,7 @@ def _flower_resolution_compatible(
 def _cochain_factory(
     *,
     quick: bool,
-    routes: phx.nn.TopologicalRouteConfig,
+    routes: phx.nn.operator.architectures.TopologicalRouteConfig,
 ):
     def factory(
         scenario: OperatorBenchmarkScenario,
@@ -1849,7 +1849,7 @@ def _cochain_factory(
         width = max(2, round(base_width * float(size_scale) ** 0.5))
         depth = 2 if quick else 4
         boundary_policy = dict(scenario.metadata).get("boundary_policy", "absolute")
-        return phx.nn.CochainNeuralOperator(
+        return phx.nn.operator.architectures.CochainNeuralOperator(
             scenario.task.fields,
             width=width,
             depth=depth,
@@ -1862,7 +1862,7 @@ def _cochain_factory(
 
 
 def _cochain_configuration(
-    routes: phx.nn.TopologicalRouteConfig,
+    routes: phx.nn.operator.architectures.TopologicalRouteConfig,
     *,
     quick: bool,
 ):
@@ -1890,7 +1890,7 @@ def _cochain_architectures(
     *,
     quick: bool,
 ) -> tuple[OperatorArchitecture, ...]:
-    pointwise = phx.nn.TopologicalRouteConfig(
+    pointwise = phx.nn.operator.architectures.TopologicalRouteConfig(
         self_route=True,
         exterior_derivative=False,
         codifferential=False,
@@ -1898,9 +1898,9 @@ def _cochain_architectures(
         upper_laplacian=False,
         harmonic=False,
     )
-    local = phx.nn.TopologicalRouteConfig(harmonic=False)
+    local = phx.nn.operator.architectures.TopologicalRouteConfig(harmonic=False)
     harmonic_task = "harmonic_one_form" in scenario.regimes
-    full = phx.nn.TopologicalRouteConfig(harmonic=harmonic_task)
+    full = phx.nn.operator.architectures.TopologicalRouteConfig(harmonic=harmonic_task)
     candidates = [
         OperatorArchitecture(
             "cochain_pointwise",

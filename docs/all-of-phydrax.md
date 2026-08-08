@@ -87,7 +87,8 @@ The enforced route is staged as boundary → initial → interior data. See:
 
 ### Irregular sequences: one generic diagonal state-space mixer
 
-`phydrax.nn.DiagonalStateSpaceMixer` is the generic diagonal continuous-time
+`phydrax.nn.operator.architectures.DiagonalStateSpaceMixer` is the generic
+diagonal continuous-time
 state-space sequence layer. It supports zero-order-hold or linear input
 integration on irregular, masked schedules and recurrent or associative
 execution. It is one configurable class, not a collection of branded mixer
@@ -210,7 +211,7 @@ with the analytic choice \(g(x,y)=x^2+y^2\) (so the exact solution is \(u^\star(
         return x[0] ** 2 + x[1] ** 2
 
     # Trainable field u_theta(x)
-    model = phx.nn.MLP(
+    model = phx.nn.models.MLP(
         in_size=2,
         out_size="scalar",
         width_size=16,
@@ -269,7 +270,7 @@ which maps \(u\mapsto\tilde u\).
     def g(x):
         return x[0] ** 2 + x[1] ** 2
 
-    model = phx.nn.MLP(in_size=2, out_size="scalar", width_size=16, depth=2, key=jr.key(0))
+    model = phx.nn.models.MLP(in_size=2, out_size="scalar", width_size=16, depth=2, key=jr.key(0))
     u = geom.Model("x")(model)
     functions = {"u": u}
 

@@ -27,9 +27,9 @@ from phydrax.domain import (
 )
 
 from ..._doc import DOC_KEY0
+from ..._model import StructuredDerivativeProvider
 from ..._strict import StrictModule
 from ...domain._evaluation import evaluate_pointwise_callable
-from ...nn._utils import _get_size
 from ._array_ops import (
     _basis_nth_derivative,
     _fd_nth_derivative,
@@ -220,17 +220,13 @@ def _ensure_ad_engine_backend(
         raise ValueError("ad_engine is only supported when backend='ad'.")
 
 
-def _latent_model_from_domain_function(
+def _structured_derivative_provider(
     u: DomainFunction, /
-) -> tuple[Any, ConcatenatedModelEvaluator] | None:
+) -> StructuredDerivativeProvider | None:
     if not isinstance(u.func, ConcatenatedModelEvaluator):
         return None
-    raw_model = u.func.raw_model
-    from ...nn.models.wrappers._separable_wrappers import LatentContractionModel
-
-    if isinstance(raw_model, LatentContractionModel):
-        return raw_model, u.func
-    return None
+    model = u.func.raw_model
+    return model if isinstance(model, StructuredDerivativeProvider) else None
 
 
 def _const_scalar(fn: DomainFunction, /) -> float | None:
@@ -399,15 +395,16 @@ def _try_laplacian_rule(
     return out
 
 
-def _emit_latent_fallback_warning(u: DomainFunction, reason: str, /) -> None:
-    msg = "Falling back to generic derivative path for LatentContractionModel: " + reason
-    model_info = _latent_model_from_domain_function(u)
-    if model_info is not None:
-        model, _ = model_info
-        model._auto_fallback(msg)
-        return
-    if isinstance(u.func, ConcatenatedModelEvaluator):
-        u.func.emit_auto_fallback_warning(msg)
+def _emit_structured_derivative_fallback(
+    u: DomainFunction, reason: str, /
+) -> None:
+    provider = _structured_derivative_provider(u)
+    if provider is not None:
+        provider.handle_structured_derivative_fallback(reason)
+    elif isinstance(u.func, ConcatenatedModelEvaluator):
+        u.func.emit_auto_fallback_warning(
+            "Falling back to generic derivative evaluation: " + reason
+        )
 
 
 def _runtime_signature(value: Any, /) -> Any:
@@ -457,132 +454,7 @@ def _partial_eval_cache_key(
     )
 
 
-_LatentDerivativeExecutor = Callable[
-    [Any, Sequence[jax.Array], Sequence[tuple[int, ...]]], jax.Array
-]
-
-
-def _latent_exec_grouped(
-    model: Any, latents: Sequence[jax.Array], batch_shapes: Sequence[tuple[int, ...]], /
-) -> jax.Array:
-    return model._contract_latents(latents, batch_shapes, topology="grouped")
-
-
-def _latent_exec_flat(
-    model: Any, latents: Sequence[jax.Array], batch_shapes: Sequence[tuple[int, ...]], /
-) -> jax.Array:
-    return model._contract_latents(latents, batch_shapes, topology="flat")
-
-
-_LATENT_DERIVATIVE_EXECUTORS: dict[str, _LatentDerivativeExecutor] = {
-    "grouped": _latent_exec_grouped,
-    "flat": _latent_exec_flat,
-}
-
-
-def _latent_derivative_executor_plan(
-    model: Any, /
-) -> tuple[_LatentDerivativeExecutor, str | None]:
-    plan = model._plan_topology(supports_flat=True)
-    return _LATENT_DERIVATIVE_EXECUTORS[plan.effective], plan.fallback_message
-
-
-def _latent_factor_nth_latents(
-    model: Any,
-    factor_model: Any,
-    pts: Any,
-    /,
-    *,
-    name: str,
-    key: Any,
-    axis_i: int,
-    order_i: int,
-) -> tuple[jax.Array | None, tuple[int, ...] | None, str | None]:
-    in_dim = _get_size(factor_model.in_size)
-    if not (0 <= int(axis_i) < int(in_dim)):
-        return (
-            None,
-            None,
-            f"requested axis={axis_i} but factor {name!r} has in_size={in_dim}.",
-        )
-
-    if isinstance(pts, tuple):
-        coords = tuple(jnp.asarray(c) for c in pts)
-        if len(coords) != int(in_dim):
-            return (
-                None,
-                None,
-                f"factor {name!r} expected {in_dim} coord arrays, got {len(coords)}.",
-            )
-        if not all(c.ndim == 1 for c in coords):
-            return (
-                None,
-                None,
-                f"factor {name!r} requires 1D coord arrays for tuple inputs.",
-            )
-
-        def _latents_at_coord(coord):
-            new_pts = coords[:axis_i] + (coord,) + coords[axis_i + 1 :]
-            latents, _ = model._eval_factor(factor_model, new_pts, name=name, key=key)
-            return latents
-
-        v = jnp.ones_like(coords[axis_i])
-        latents = jet_dn(_latents_at_coord, coords[axis_i], v, n=order_i)
-        batch_shape = tuple(int(c.shape[0]) for c in coords)
-        return latents, batch_shape, None
-
-    arr = jnp.asarray(pts)
-
-    def _latents_from_input(inp):
-        latents, _ = model._eval_factor_array(factor_model, inp, name=name, key=key)
-        return latents
-
-    if arr.ndim == 0:
-        if int(in_dim) != 1:
-            return (
-                None,
-                None,
-                f"factor {name!r} scalar input is incompatible with in_size={in_dim}.",
-            )
-        v = jnp.ones_like(arr)
-        latents = jet_dn(_latents_from_input, arr, v, n=order_i)
-        return latents, (), None
-
-    if arr.ndim == 1:
-        if int(in_dim) == 1:
-            v = jnp.ones_like(arr)
-        elif int(arr.shape[0]) == int(in_dim):
-            v = jnp.zeros_like(arr).at[axis_i].set(1.0)
-        else:
-            return (
-                None,
-                None,
-                f"factor {name!r} expected shape ({in_dim},), got {arr.shape}.",
-            )
-        latents = jet_dn(_latents_from_input, arr, v, n=order_i)
-        _, batch_shape = model._eval_factor_array(factor_model, arr, name=name, key=key)
-        return latents, batch_shape, None
-
-    if arr.ndim == 2 and int(arr.shape[1]) == int(in_dim):
-
-        def _nth_single(row):
-            if int(in_dim) == 1:
-                v = jnp.ones_like(row)
-            else:
-                v = jnp.zeros_like(row).at[axis_i].set(1.0)
-            return jet_dn(_latents_from_input, row, v, n=order_i)
-
-        latents = jax.vmap(_nth_single)(arr)
-        return latents, (int(arr.shape[0]),), None
-
-    return (
-        None,
-        None,
-        f"factor {name!r} has unsupported input shape {arr.shape} for optimized derivative path.",
-    )
-
-
-def _latent_try_partial_n_eval(
+def _try_structured_partial_eval(
     u: DomainFunction,
     /,
     *,
@@ -593,98 +465,18 @@ def _latent_try_partial_n_eval(
     key: Any,
     kwargs: dict[str, Any],
 ) -> tuple[jax.Array | None, str | None]:
-    model_info = _latent_model_from_domain_function(u)
-    if model_info is None:
+    provider = _structured_derivative_provider(u)
+    if provider is None:
         return None, None
-
-    model, _ = model_info
-    del kwargs
-    if len(args) != len(model.factor_models):
-        return (
-            None,
-            "optimized latent derivative path requires one dependency per latent factor.",
-        )
-    if var not in u.deps:
-        return None, f"variable {var!r} is not in DomainFunction dependencies."
-
-    if model.execution_policy.layout not in model._supported_layouts:
-        model._auto_fallback(
-            "Latent derivative fast path currently supports "
-            "auto/dense_points/coord_separable/hybrid/full_tensor layouts; "
-            f"requested layout={model.execution_policy.layout!r}. Falling back to generic derivatives."
-        )
-        return None, None
-
-    executor, provider_fallback_msg = _latent_derivative_executor_plan(model)
-    if provider_fallback_msg is not None:
-        model._auto_fallback(provider_fallback_msg)
-
-    dep_idx = int(u.deps.index(var))
-    factor_inputs = list(args)
-    keys = model._split_key(key)
-    latents: list[jax.Array] = []
-    batch_shapes: list[tuple[int, ...]] = []
-    for i, (name, factor_model, pts, k) in enumerate(
-        zip(model.factor_names, model.factor_models, factor_inputs, keys, strict=True)
-    ):
-        if i == dep_idx:
-            lat, batch_shape, reason = _latent_factor_nth_latents(
-                model,
-                factor_model,
-                pts,
-                name=name,
-                key=k,
-                axis_i=axis_i,
-                order_i=order_i,
-            )
-            if reason is not None or lat is None or batch_shape is None:
-                return None, reason
-        else:
-            lat, batch_shape = model._eval_factor(factor_model, pts, name=name, key=k)
-        latents.append(lat)
-        batch_shapes.append(batch_shape)
-
-    try:
-        out = executor(model, latents, batch_shapes)
-    except Exception as exc:
-        if model.execution_policy.topology == "best_effort_flat":
-            model._auto_fallback(
-                "Latent derivative flat provider failed; falling back to grouped. "
-                f"Reason: {exc}"
-            )
-            out = _latent_exec_grouped(model, latents, batch_shapes)
-        else:
-            return (
-                None,
-                "latent derivative provider failed to evaluate optimized path: "
-                + str(exc),
-            )
-    out = model._finalize(out)
-
-    batch_ndim = sum(len(shape) for shape in batch_shapes)
-    if batch_ndim > 1 and out.ndim >= batch_ndim:
-        axes_by_dep: list[tuple[int, ...]] = []
-        axis_cursor = 0
-        for shape in batch_shapes:
-            dep_axes = tuple(range(axis_cursor, axis_cursor + len(shape)))
-            axes_by_dep.append(dep_axes)
-            axis_cursor += len(shape)
-
-        dense_axes: list[int] = []
-        coord_axes: list[int] = []
-        for dep_arg, dep_axes in zip(args, axes_by_dep, strict=True):
-            if isinstance(dep_arg, tuple):
-                coord_axes.extend(dep_axes)
-            else:
-                dense_axes.extend(dep_axes)
-
-        desired_batch_axes = tuple(dense_axes + coord_axes)
-        current_batch_axes = tuple(range(batch_ndim))
-        if desired_batch_axes != current_batch_axes:
-            perm = desired_batch_axes + tuple(range(batch_ndim, out.ndim))
-            out = jnp.transpose(out, perm)
-
-    return out, None
+    return provider.try_structured_partial(
+        deps=u.deps,
+        var=var,
+        axis=axis_i,
+        order=order_i,
+        args=tuple(args),
+        key=key,
+        kwargs=kwargs,
+    )
 
 
 def grad(
@@ -1029,7 +821,7 @@ def hessian(
 
     if (
         get_derivative_rule(u) is not None
-        or _latent_model_from_domain_function(u) is not None
+        or _structured_derivative_provider(u) is not None
     ):
         if factor.kind == "scalar":
             return partial_n(
@@ -2402,13 +2194,13 @@ def partial_n(
             out = partial(out, var=var, axis=axis, mode=mode_eff, ad_engine="jvp")
         return out
 
-    if backend == "ad" and _latent_model_from_domain_function(u) is not None:
+    if backend == "ad" and _structured_derivative_provider(u) is not None:
         out = u
         for _ in range(order_i):
             out = partial(out, var=var, axis=axis, mode=mode_eff, ad_engine=ad_engine)
         return out
 
-    if backend == "ad" and _latent_model_from_domain_function(u) is None:
+    if backend == "ad" and _structured_derivative_provider(u) is None:
         out = u
         for _ in range(order_i):
             out = partial(out, var=var, axis=axis, mode=mode_eff, ad_engine="auto")
@@ -2504,7 +2296,7 @@ def partial_n(
         x0 = args[idx]
 
         if backend == "ad" or backend == "jet":
-            fast_out, fast_reason = _latent_try_partial_n_eval(
+            fast_out, fast_reason = _try_structured_partial_eval(
                 u,
                 var=var,
                 axis_i=axis_i,
@@ -2516,7 +2308,7 @@ def partial_n(
             if fast_out is not None:
                 return _return(fast_out)
             if fast_reason is not None:
-                _emit_latent_fallback_warning(u, fast_reason)
+                _emit_structured_derivative_fallback(u, fast_reason)
 
         if backend == "fd" or backend == "basis":
             if not isinstance(x0, tuple):

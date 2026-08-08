@@ -132,7 +132,7 @@ def test_explicit_laplacian_agrees_with_matrix_free_application():
 def test_existing_spectral_plan_is_reused_without_a_second_basis_convention():
     eigenvalues = jnp.asarray([0.0, 1.0, 4.0])
     eigenvectors = jnp.eye(3)
-    plan = phx.nn.SpectralDiscretization.from_eigenpairs(
+    plan = phx.nn.operator.architectures.SpectralDiscretization.from_eigenpairs(
         eigenvalues,
         eigenvectors,
         jnp.ones((3,)),

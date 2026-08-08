@@ -204,7 +204,7 @@ field, generates Feynman--Kac targets, and trains the next global field through
 query-conditioned plan makes the training distribution explicit:
 
 ```python
-trainable_model = phx.nn.MLP(
+trainable_model = phx.nn.models.MLP(
     in_size=2,
     out_size=1,
     width_size=32,

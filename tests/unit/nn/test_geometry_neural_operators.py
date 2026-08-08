@@ -10,11 +10,11 @@ import optax
 import pytest
 
 import phydrax as phx
-from phydrax.nn.models.core._operator_geometry import (
+from phydrax.geometry.operator import (
     RegionalPointLatentGeometry,
     TensorGridLatentGeometry,
 )
-from phydrax.nn.models.layers import (
+from phydrax.nn.operator.layers import (
     GeometryMomentEmbedding,
     GraphAttentionTransfer,
     GraphKernelTransfer,
@@ -262,7 +262,7 @@ def test_multiscale_gates_form_a_partition_of_unity():
 
 
 def _gino(*, query_channels=0, in_channels="scalar", source_key="u", key=jr.key(20)):
-    return phx.nn.GINO(
+    return phx.nn.operator.architectures.GINO(
         in_channels=in_channels,
         out_channels="scalar",
         coord_dim=1,
@@ -299,13 +299,13 @@ def _gino_batch(*, query_covariates=False):
     query_values = (
         jnp.cos(2.0 * jnp.pi * query_coordinates[..., 0]) if query_covariates else None
     )
-    return phx.nn.OperatorBatch(inputs={
-        "u": phx.nn.FunctionSamples(
+    return phx.nn.operator.OperatorBatch(inputs={
+        "u": phx.nn.operator.FunctionSamples(
             values=jnp.sin(2.0 * jnp.pi * source_coordinates[..., 0]),
             coordinates=source_coordinates,
             quadrature_weights=jnp.full((2, 8), 1.0 / 8.0),
         )
-    }, queries={"query": phx.nn.FunctionSamples(
+    }, queries={"query": phx.nn.operator.FunctionSamples(
         values=query_values,
         coordinates=query_coordinates,
         mask=jnp.array(
@@ -331,8 +331,8 @@ def test_gino_supports_query_covariates_and_source_permutation():
     reference = model(batch)
     permutation = jnp.array([7, 1, 5, 0, 3, 6, 2, 4])
     source = batch.input("u")
-    permuted = phx.nn.OperatorBatch(inputs={
-        "u": phx.nn.FunctionSamples(
+    permuted = phx.nn.operator.OperatorBatch(inputs={
+        "u": phx.nn.operator.FunctionSamples(
             values=source.values[:, permutation],
             coordinates=source.coordinates[:, permutation],
             quadrature_weights=source.quadrature_weights[:, permutation],
@@ -346,18 +346,18 @@ def test_gino_fuses_independently_sampled_multiple_sources():
     first_coordinates = jnp.linspace(0.0, 1.0, 8)[:, None]
     second_coordinates = jnp.linspace(0.05, 0.95, 9)[:, None]
     query = jnp.linspace(0.1, 0.9, 4)[:, None]
-    batch = phx.nn.OperatorBatch(inputs={
-        "u": phx.nn.FunctionSamples(
+    batch = phx.nn.operator.OperatorBatch(inputs={
+        "u": phx.nn.operator.FunctionSamples(
             values=jnp.sin(first_coordinates[:, 0]),
             coordinates=first_coordinates,
             quadrature_weights=jnp.full((8,), 1.0 / 8.0),
         ),
-        "v": phx.nn.FunctionSamples(
+        "v": phx.nn.operator.FunctionSamples(
             values=jnp.cos(second_coordinates[:, 0]),
             coordinates=second_coordinates,
             quadrature_weights=jnp.full((9,), 1.0 / 9.0),
         ),
-    }, queries={"query": phx.nn.FunctionSamples(values=None, coordinates=query)}, )
+    }, queries={"query": phx.nn.operator.FunctionSamples(values=None, coordinates=query)}, )
     model = _gino(
         in_channels={"u": 1, "v": 1},
         source_key=None,
@@ -404,14 +404,14 @@ def test_gino_training_checkpoint_resumes_exactly(tmp_path):
         return eqx.apply_updates(current, updates), optimizer_state
 
     model, state = step(model, state)
-    schema = phx.nn.operator_batch_schema(
+    schema = phx.nn.operator.training.operator_batch_schema(
         batch,
-        target=phx.nn.OperatorTargetBatch.from_arrays(
+        target=phx.nn.operator.OperatorTargetBatch.from_arrays(
             {"output": target},
             batch,
         ),
     )
-    checkpoint = phx.nn.save_operator_training_checkpoint(
+    checkpoint = phx.nn.operator.training.save_operator_training_checkpoint(
         tmp_path / "checkpoint",
         model,
         state,
@@ -421,7 +421,7 @@ def test_gino_training_checkpoint_resumes_exactly(tmp_path):
         metadata={"architecture": "GINO"},
     )
     expected_model, expected_state = step(model, state)
-    restored = phx.nn.load_operator_training_checkpoint(
+    restored = phx.nn.operator.training.load_operator_training_checkpoint(
         checkpoint,
         model,
         state,
@@ -445,7 +445,7 @@ def test_gino_training_checkpoint_resumes_exactly(tmp_path):
 
 
 def _rigno(*, key=jr.key(30)):
-    return phx.nn.RIGNO(
+    return phx.nn.operator.architectures.RIGNO(
         in_channels="scalar",
         out_channels="scalar",
         coord_dim=1,
@@ -510,8 +510,8 @@ def test_rigno_supports_case_geometry_query_masks_and_graph_isolation():
     batch = _gino_batch()
     source = batch.input("u")
     changed_values = jnp.asarray(source.values).at[1].add(100.0)
-    changed = phx.nn.OperatorBatch(inputs={
-        "u": phx.nn.FunctionSamples(
+    changed = phx.nn.operator.OperatorBatch(inputs={
+        "u": phx.nn.operator.FunctionSamples(
             values=changed_values,
             coordinates=source.coordinates,
             quadrature_weights=source.quadrature_weights,
@@ -545,7 +545,7 @@ def test_rigno_has_finite_parameter_gradients_and_serializes(tmp_path):
     assert gradient_leaves
     assert all(jnp.all(jnp.isfinite(leaf)) for leaf in gradient_leaves)
     assert jnp.allclose(restored(batch), model(batch))
-    status = phx.nn.operator_architecture_status(
+    status = phx.nn.operator.operator_architecture_status(
         "resolution invariant graph neural operator"
     )
     assert status.name == "RIGNO"
@@ -661,14 +661,14 @@ def _gaot_batch():
             [[0.15, 0.1], [0.4, 0.7], [0.65, 0.35], [0.9, 0.75], [0.45, 0.55]],
         ]
     )
-    return phx.nn.OperatorBatch(inputs={
-        "u": phx.nn.FunctionSamples(
+    return phx.nn.operator.OperatorBatch(inputs={
+        "u": phx.nn.operator.FunctionSamples(
             values=jnp.sin(jnp.pi * source_coordinates[..., 0])
             * jnp.cos(jnp.pi * source_coordinates[..., 1]),
             coordinates=source_coordinates,
             quadrature_weights=jnp.full((2, 9), 1.0 / 9.0),
         )
-    }, queries={"query": phx.nn.FunctionSamples(
+    }, queries={"query": phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=query_coordinates,
         mask=jnp.array(
@@ -678,7 +678,7 @@ def _gaot_batch():
 
 
 def _gaot(*, key=jr.key(50)):
-    return phx.nn.GAOT(
+    return phx.nn.operator.architectures.GAOT(
         in_channels="scalar",
         out_channels="scalar",
         coord_dim=2,
@@ -704,8 +704,8 @@ def test_gaot_supports_case_geometry_query_masks_and_graph_isolation():
     model = _gaot()
     batch = _gaot_batch()
     source = batch.input("u")
-    changed = phx.nn.OperatorBatch(inputs={
-        "u": phx.nn.FunctionSamples(
+    changed = phx.nn.operator.OperatorBatch(inputs={
+        "u": phx.nn.operator.FunctionSamples(
             values=jnp.asarray(source.values).at[1].add(20.0),
             coordinates=source.coordinates,
             quadrature_weights=source.quadrature_weights,
@@ -734,7 +734,7 @@ def test_gaot_has_finite_parameter_gradients_serializes_and_is_research(tmp_path
     path = tmp_path / "gaot.eqx"
     eqx.tree_serialise_leaves(path, model)
     restored = eqx.tree_deserialise_leaves(path, model)
-    status = phx.nn.operator_architecture_status("geometry-aware operator transformer")
+    status = phx.nn.operator.operator_architecture_status("geometry-aware operator transformer")
 
     assert jnp.isfinite(loss)
     assert leaves

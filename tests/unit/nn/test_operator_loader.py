@@ -33,14 +33,14 @@ def _dataset(
     nodes = jnp.linspace(0.0, 1.0, resolution) + node_offset
     weights = jnp.full((resolution,), 1.0 / resolution)
     weights = weights.at[0].add(weight_offset)
-    axis = phx.nn.OperatorAxis(
+    axis = phx.nn.operator.OperatorAxis(
         "x",
         nodes,
         quadrature_weights=weights,
     )
     values = jnp.arange(cases, dtype=float)[:, None] + nodes[None, :] + input_offset
     query_mask = jnp.arange(resolution) != resolution - 1 if masked else None
-    return phx.nn.operator_dataset_from_arrays(
+    return phx.nn.operator.training.operator_dataset_from_arrays(
         {"state": values},
         {"solution": 2.0 * values + target_offset},
         source_axes={"state": (axis,)},
@@ -58,7 +58,7 @@ def _callback_source(*, size=8, safe=False, fail_at=None, fingerprint="cases-v1"
     weights = jnp.full((3,), 1.0 / 3.0)
 
     def samples(*, values=None):
-        return phx.nn.FunctionSamples(
+        return phx.nn.operator.FunctionSamples(
             values=values,
             coordinates=coordinates,
             quadrature_weights=weights,
@@ -67,7 +67,7 @@ def _callback_source(*, size=8, safe=False, fail_at=None, fingerprint="cases-v1"
     def metadata_reader(index):
         metadata_reads.append(index)
         geometry = samples()
-        return phx.nn.OperatorCaseMetadata(
+        return phx.nn.operator.OperatorCaseMetadata(
             inputs={"state": geometry},
             queries={"query": geometry},
         )
@@ -78,17 +78,17 @@ def _callback_source(*, size=8, safe=False, fail_at=None, fingerprint="cases-v1"
         reader_threads.append(threading.current_thread().name)
         if index == fail_at:
             raise RuntimeError(f"reader failed at case {index}")
-        batch = phx.nn.OperatorBatch(
+        batch = phx.nn.operator.OperatorBatch(
             inputs={"state": samples(values=jnp.full((3,), float(index)))},
             queries={"query": samples()},
         )
-        targets = phx.nn.OperatorTargetBatch.from_arrays(
+        targets = phx.nn.operator.OperatorTargetBatch.from_arrays(
             {"solution": jnp.full((3,), 2.0 * index)},
             batch,
         )
-        return phx.nn.OperatorCase(batch, targets)
+        return phx.nn.operator.OperatorCase(batch, targets)
 
-    source = phx.nn.CallbackOperatorCaseSource(
+    source = phx.nn.operator.CallbackOperatorCaseSource(
         size,
         metadata_reader=metadata_reader,
         case_reader=case_reader,
@@ -124,7 +124,7 @@ def test_array_fingerprint_golden_vector_is_stable():
 
 def test_dataset_and_loader_fingerprints_cover_content_but_not_prefetch():
     provenance = tuple(
-        phx.nn.OperatorCaseProvenance(
+        phx.nn.operator.OperatorCaseProvenance(
             f"case-{index}",
             identities={"trajectory": f"run-{index // 2}"},
             order={"time": float(index)},
@@ -133,35 +133,35 @@ def test_dataset_and_loader_fingerprints_cover_content_but_not_prefetch():
     )
     baseline = _dataset(provenance=provenance)
     equivalent = _dataset(provenance=provenance)
-    baseline_fingerprint = phx.nn.operator_dataset_fingerprint(baseline)
+    baseline_fingerprint = phx.nn.operator.training.operator_dataset_fingerprint(baseline)
 
-    assert phx.nn.operator_dataset_fingerprint(equivalent) == baseline_fingerprint
+    assert phx.nn.operator.training.operator_dataset_fingerprint(equivalent) == baseline_fingerprint
     assert (
-        phx.nn.operator_dataset_fingerprint(
+        phx.nn.operator.training.operator_dataset_fingerprint(
             _dataset(input_offset=0.25, provenance=provenance)
         )
         != baseline_fingerprint
     )
     assert (
-        phx.nn.operator_dataset_fingerprint(
+        phx.nn.operator.training.operator_dataset_fingerprint(
             _dataset(target_offset=0.25, provenance=provenance)
         )
         != baseline_fingerprint
     )
     assert (
-        phx.nn.operator_dataset_fingerprint(
+        phx.nn.operator.training.operator_dataset_fingerprint(
             _dataset(node_offset=0.25, provenance=provenance)
         )
         != baseline_fingerprint
     )
     assert (
-        phx.nn.operator_dataset_fingerprint(
+        phx.nn.operator.training.operator_dataset_fingerprint(
             _dataset(weight_offset=0.01, provenance=provenance)
         )
         != baseline_fingerprint
     )
     assert (
-        phx.nn.operator_dataset_fingerprint(_dataset(masked=True, provenance=provenance))
+        phx.nn.operator.training.operator_dataset_fingerprint(_dataset(masked=True, provenance=provenance))
         != baseline_fingerprint
     )
 
@@ -176,27 +176,27 @@ def test_dataset_and_loader_fingerprints_cover_content_but_not_prefetch():
     )
     for changed in (changed_case_id, changed_identity, changed_order):
         assert (
-            phx.nn.operator_dataset_fingerprint(
-                phx.nn.OperatorDataset(baseline.batch, baseline.targets, changed)
+            phx.nn.operator.training.operator_dataset_fingerprint(
+                phx.nn.operator.training.OperatorDataset(baseline.batch, baseline.targets, changed)
             )
             != baseline_fingerprint
         )
 
-    synchronous = phx.nn.OperatorBatchLoader(
+    synchronous = phx.nn.operator.training.OperatorBatchLoader(
         baseline,
         batch_size=3,
         shuffle=True,
         seed=5,
         prefetch=0,
     )
-    prefetched = phx.nn.OperatorBatchLoader(
+    prefetched = phx.nn.operator.training.OperatorBatchLoader(
         equivalent,
         batch_size=3,
         shuffle=True,
         seed=5,
         prefetch=4,
     )
-    changed_seed = phx.nn.OperatorBatchLoader(
+    changed_seed = phx.nn.operator.training.OperatorBatchLoader(
         equivalent,
         batch_size=3,
         shuffle=True,
@@ -210,7 +210,7 @@ def test_dataset_and_loader_fingerprints_cover_content_but_not_prefetch():
 
 
 def test_loader_fingerprint_and_public_epoch_plan_contract_are_stable():
-    loader = phx.nn.OperatorBatchLoader(
+    loader = phx.nn.operator.training.OperatorBatchLoader(
         _dataset(cases=6, resolution=4),
         batch_size=4,
         shuffle=True,
@@ -219,8 +219,8 @@ def test_loader_fingerprint_and_public_epoch_plan_contract_are_stable():
         prefetch=2,
         split="train",
     )
-    positional = phx.nn.OperatorEpochPlan(7, 3, True, 5, 2, False)
-    keyword = phx.nn.OperatorEpochPlan(
+    positional = phx.nn.operator.training.OperatorEpochPlan(7, 3, True, 5, 2, False)
+    keyword = phx.nn.operator.training.OperatorEpochPlan(
         source_size=7,
         batch_size=3,
         shuffle=True,
@@ -231,16 +231,16 @@ def test_loader_fingerprint_and_public_epoch_plan_contract_are_stable():
 
     assert (
         loader.fingerprint
-        == "bf17eed12d5b31cf72f1d7f7cae637b6d8951a4c6573ae05cf8532975c41d2a9"
+        == "37afe9c0c6e9a24005f4141575d30d4ad1c94da288a09811a10d8479aa86ee6f"
     )
-    assert type(positional) is phx.nn.OperatorEpochPlan
+    assert type(positional) is phx.nn.operator.training.OperatorEpochPlan
     assert positional == keyword
     assert tuple(positional) == tuple(keyword)
 
 
 def test_callback_fingerprint_lookup_performs_no_hidden_reads():
     source, metadata_reads, case_reads, _ = _callback_source(size=100)
-    loader = phx.nn.OperatorBatchLoader(
+    loader = phx.nn.operator.training.OperatorBatchLoader(
         source,
         batch_size=7,
         shuffle=True,
@@ -258,7 +258,7 @@ def test_callback_fingerprint_lookup_performs_no_hidden_reads():
 
 def test_prefetch_preserves_order_and_has_bounded_read_ahead():
     source, _, case_reads, reader_threads = _callback_source(size=7, safe=True)
-    loader = phx.nn.OperatorBatchLoader(
+    loader = phx.nn.operator.training.OperatorBatchLoader(
         source,
         batch_size=1,
         shuffle=False,
@@ -282,7 +282,7 @@ def test_prefetch_preserves_order_and_has_bounded_read_ahead():
 
 def test_unsafe_callback_source_stays_synchronous():
     source, _, case_reads, reader_threads = _callback_source(size=4, safe=False)
-    loader = phx.nn.OperatorBatchLoader(
+    loader = phx.nn.operator.training.OperatorBatchLoader(
         source,
         batch_size=1,
         shuffle=False,
@@ -300,14 +300,14 @@ def test_unsafe_callback_source_stays_synchronous():
 
 def test_prefetch_matches_synchronous_batches_and_propagates_reader_errors():
     dataset = _dataset(cases=11)
-    synchronous = phx.nn.OperatorBatchLoader(
+    synchronous = phx.nn.operator.training.OperatorBatchLoader(
         dataset,
         batch_size=3,
         shuffle=True,
         seed=19,
         prefetch=0,
     )
-    prefetched = phx.nn.OperatorBatchLoader(
+    prefetched = phx.nn.operator.training.OperatorBatchLoader(
         dataset,
         batch_size=3,
         shuffle=True,
@@ -337,7 +337,7 @@ def test_prefetch_matches_synchronous_batches_and_propagates_reader_errors():
     )
 
     source, _, _, _ = _callback_source(size=4, safe=True, fail_at=1)
-    failing = phx.nn.OperatorBatchLoader(
+    failing = phx.nn.operator.training.OperatorBatchLoader(
         source,
         batch_size=1,
         shuffle=False,
@@ -353,7 +353,7 @@ def test_prefetch_matches_synchronous_batches_and_propagates_reader_errors():
 
 
 def _logged_dataset_source(dataset, reads, *, fingerprint=None):
-    backing = phx.nn.InMemoryOperatorCaseSource(dataset)
+    backing = phx.nn.operator.InMemoryOperatorCaseSource(dataset)
 
     def metadata_reader(index):
         return backing.case_metadata(index)
@@ -362,7 +362,7 @@ def _logged_dataset_source(dataset, reads, *, fingerprint=None):
         reads.append(index)
         return backing.read_case(index, request=request)
 
-    return phx.nn.CallbackOperatorCaseSource(
+    return phx.nn.operator.CallbackOperatorCaseSource(
         dataset.size,
         metadata_reader=metadata_reader,
         case_reader=case_reader,
@@ -375,7 +375,7 @@ def _logged_dataset_source(dataset, reads, *, fingerprint=None):
 
 
 def _fit_model():
-    return phx.nn.FNO(
+    return phx.nn.operator.architectures.FNO(
         in_channels="scalar",
         out_channels="scalar",
         width=4,
@@ -399,7 +399,7 @@ def test_lazy_fit_resumes_at_short_final_batch_and_rejects_source_before_reads(
     }
 
     uninterrupted_reads = []
-    uninterrupted = phx.nn.fit_operator(
+    uninterrupted = phx.nn.operator.training.fit_operator(
         _fit_model(),
         _logged_dataset_source(dataset, uninterrupted_reads),
         steps=3,
@@ -410,7 +410,7 @@ def test_lazy_fit_resumes_at_short_final_batch_and_rejects_source_before_reads(
     checkpoint = tmp_path / "lazy-fit-checkpoint"
     resumed_reads = []
     resumable_source = _logged_dataset_source(dataset, resumed_reads)
-    phx.nn.fit_operator(
+    phx.nn.operator.training.fit_operator(
         _fit_model(),
         resumable_source,
         steps=1,
@@ -420,7 +420,7 @@ def test_lazy_fit_resumes_at_short_final_batch_and_rejects_source_before_reads(
     )
     resumed_reads.clear()
     expected_first_indices = (
-        phx.nn.OperatorBatchLoader(
+        phx.nn.operator.training.OperatorBatchLoader(
             resumable_source,
             batch_size=2,
             shuffle=True,
@@ -431,7 +431,7 @@ def test_lazy_fit_resumes_at_short_final_batch_and_rejects_source_before_reads(
         .batch(2)
     )
 
-    resumed = phx.nn.fit_operator(
+    resumed = phx.nn.operator.training.fit_operator(
         _fit_model(),
         resumable_source,
         steps=3,
@@ -463,7 +463,7 @@ def test_lazy_fit_resumes_at_short_final_batch_and_rejects_source_before_reads(
         fingerprint="test:different-content",
     )
     with pytest.raises(ValueError, match="data contract mismatch"):
-        phx.nn.fit_operator(
+        phx.nn.operator.training.fit_operator(
             _fit_model(),
             incompatible_source,
             steps=4,
@@ -476,7 +476,7 @@ def test_lazy_fit_resumes_at_short_final_batch_and_rejects_source_before_reads(
 
     changed_order_reads = []
     with pytest.raises(ValueError, match="data contract mismatch"):
-        phx.nn.fit_operator(
+        phx.nn.operator.training.fit_operator(
             _fit_model(),
             _logged_dataset_source(dataset, changed_order_reads),
             steps=4,
@@ -493,7 +493,7 @@ def test_lazy_fit_resumes_at_short_final_batch_and_rejects_source_before_reads(
     corrupt_state.write_bytes(corrupt_state.read_bytes() + b"corrupt")
     corrupt_reads = []
     with pytest.raises(ValueError, match="checksum mismatch"):
-        phx.nn.fit_operator(
+        phx.nn.operator.training.fit_operator(
             _fit_model(),
             _logged_dataset_source(dataset, corrupt_reads),
             steps=4,
@@ -510,7 +510,7 @@ def test_lazy_fit_resumes_at_short_final_batch_and_rejects_source_before_reads(
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     old_format_reads = []
     with pytest.raises(ValueError, match="current canonical fields"):
-        phx.nn.fit_operator(
+        phx.nn.operator.training.fit_operator(
             _fit_model(),
             _logged_dataset_source(dataset, old_format_reads),
             steps=4,

@@ -157,7 +157,7 @@ state = phx.domain.Interval1d(-2.0, 2.0)
 time = phx.domain.TimeInterval(0.0, 1.0)
 domain = state @ time
 
-model = phx.nn.MLP(
+model = phx.nn.models.MLP(
     in_size=2,
     out_size="scalar",
     width_size=32,
@@ -279,7 +279,7 @@ score_domain = phx.domain.HyperRectangle(
     jnp.full((score_dimension,), 5.0),
     label="x",
 ) @ phx.domain.TimeInterval(0.0, 1.0)
-score_model = phx.nn.MLP(
+score_model = phx.nn.models.MLP(
     in_size=score_dimension + 1,
     out_size=score_dimension,
     width_size=32,
@@ -429,7 +429,7 @@ the root key changes paths; changing the grid, rank, spectrum, or modes changes
 `TensorGridDiscretization` also supports periodic finite differences, sine bases with
 homogeneous Dirichlet semantics, cosine bases with homogeneous Neumann semantics, and
 multidimensional tensor grids. `SpectralSpatialDiscretization` reuses a precomputed
-manifold `phydrax.nn.SpectralDiscretization` without changing its eigenbasis convention.
+manifold `phydrax.nn.operator.architectures.SpectralDiscretization` without changing its eigenbasis convention.
 
 ## Stochastic Allen--Cahn
 

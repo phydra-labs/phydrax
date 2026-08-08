@@ -7,7 +7,7 @@ from jaxtyping import Array
 import phydrax as phx
 
 
-class _BrownianTransition(phx.nn.AbstractProbabilisticOperatorModel):
+class _BrownianTransition(phx.nn.operator.AbstractProbabilisticOperatorModel):
     scale_power: Array
     uncertainty_source: str
     in_size: str
@@ -21,7 +21,7 @@ class _BrownianTransition(phx.nn.AbstractProbabilisticOperatorModel):
 
     @property
     def operator_output_specs(self):
-        return {"output": phx.nn.OperatorOutputSpec("scalar")}
+        return {"output": phx.nn.operator.OperatorOutputSpec("scalar")}
 
     def distribution(self, batch, /, *, key=None):
         state = batch.input("state").values
@@ -30,12 +30,12 @@ class _BrownianTransition(phx.nn.AbstractProbabilisticOperatorModel):
             duration[..., None] ** self.scale_power,
             state.shape,
         )
-        return phx.nn.GaussianOperatorDistribution(
+        return phx.nn.operator.GaussianOperatorDistribution(
             mean=state,
             scale=scale,
             factors=None,
             query=batch.require_single_query(),
-            output_spec=phx.nn.OperatorOutputSpec("scalar"),
+            output_spec=phx.nn.operator.OperatorOutputSpec("scalar"),
             case_axes=batch.case_axes,
             case_shape=batch.case_shape,
             uncertainty_source=self.uncertainty_source,
@@ -43,7 +43,7 @@ class _BrownianTransition(phx.nn.AbstractProbabilisticOperatorModel):
 
 
 def _transition_batch(cases=2, size=4):
-    axis = phx.nn.OperatorAxis(
+    axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, size, endpoint=False),
         quadrature_weights=jnp.full((size,), 1.0 / size),
@@ -51,12 +51,12 @@ def _transition_batch(cases=2, size=4):
     )
     state = jnp.zeros((cases, size))
     duration = jnp.full((cases, size), 0.1)
-    return phx.nn.OperatorBatch(
+    return phx.nn.operator.OperatorBatch(
         inputs={
-            "state": phx.nn.FunctionSamples(values=state, axes=(axis,)),
-            "duration": phx.nn.FunctionSamples(values=duration, axes=(axis,)),
+            "state": phx.nn.operator.FunctionSamples(values=state, axes=(axis,)),
+            "duration": phx.nn.operator.FunctionSamples(values=duration, axes=(axis,)),
         },
-        queries={"query": phx.nn.FunctionSamples(values=None, axes=(axis,))},
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,))},
         case_axes=("case",),
     )
 
@@ -96,7 +96,7 @@ def test_operator_ensemble_energy_distance_respects_query_measure_and_geometry()
     left = phx.uq.operator_predictive_from_samples(
         left_samples,
         batch,
-        phx.nn.OperatorOutputSpec("scalar"),
+        phx.nn.operator.OperatorOutputSpec("scalar"),
         sample_axes=(phx.uq.SampleAxis("left", "process"),),
         field_name="output",
         query_name="query",
@@ -104,7 +104,7 @@ def test_operator_ensemble_energy_distance_respects_query_measure_and_geometry()
     right = phx.uq.operator_predictive_from_samples(
         right_samples,
         batch,
-        phx.nn.OperatorOutputSpec("scalar"),
+        phx.nn.operator.OperatorOutputSpec("scalar"),
         sample_axes=(phx.uq.SampleAxis("right", "process"),),
         field_name="output",
         query_name="query",
@@ -132,7 +132,7 @@ def test_operator_ensemble_energy_distance_respects_query_measure_and_geometry()
     shifted = phx.uq.operator_predictive_from_samples(
         jr.normal(jr.key(2), (8, 2, 5)),
         shifted_batch,
-        phx.nn.OperatorOutputSpec("scalar"),
+        phx.nn.operator.OperatorOutputSpec("scalar"),
         sample_axes=(phx.uq.SampleAxis("shifted", "process"),),
         field_name="output",
         query_name="query",
@@ -143,7 +143,7 @@ def test_operator_ensemble_energy_distance_respects_query_measure_and_geometry()
 
 def test_distributional_semigroup_recognizes_brownian_composition_and_key_replay():
     batch = _transition_batch(cases=2, size=4)
-    objective = phx.nn.DistributionalSemigroupObjective(
+    objective = phx.nn.operator.training.DistributionalSemigroupObjective(
         num_samples=32,
         chunk_size=8,
         reduction="mean",

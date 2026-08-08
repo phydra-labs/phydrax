@@ -126,7 +126,7 @@ def test_state_space_problem_rejects_input_without_schedule_support():
 
 
 def test_bspline_input_values_and_coefficient_gradients_are_hand_checked():
-    grid = phx.nn.BSplineGrid(jnp.asarray([0.0, 0.0, 1.0, 2.0, 2.0]), 1)
+    grid = phx.nn.models.BSplineGrid(jnp.asarray([0.0, 0.0, 1.0, 2.0, 2.0]), 1)
     signal = phx.stochastic.BSplineStateSpaceInput(
         grid,
         jnp.asarray([[0.0], [10.0], [20.0]]),
@@ -213,7 +213,7 @@ def test_state_space_input_case_indices_are_bounds_checked(
         )
     else:
         signal = phx.stochastic.BSplineStateSpaceInput(
-            phx.nn.BSplineGrid(jnp.asarray([0.0, 0.0, 1.0, 2.0, 2.0]), 1),
+            phx.nn.models.BSplineGrid(jnp.asarray([0.0, 0.0, 1.0, 2.0, 2.0]), 1),
             jnp.asarray(
                 [
                     [[0.0], [1.0], [2.0]],

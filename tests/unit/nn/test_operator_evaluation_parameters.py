@@ -14,13 +14,13 @@ from phydrax._trainable import combine_trainable, partition_trainable
 
 
 def _dataset():
-    axis = phx.nn.OperatorAxis(
+    axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, 4),
         quadrature_weights=jnp.full((4,), 0.25),
     )
     values = jnp.stack((axis.nodes, axis.nodes + 1.0))
-    return phx.nn.operator_dataset_from_arrays(
+    return phx.nn.operator.training.operator_dataset_from_arrays(
         {"state": values},
         {"solution": 2.0 * values},
         source_axes={"state": (axis,)},
@@ -29,7 +29,7 @@ def _dataset():
 
 
 def _model():
-    return phx.nn.FNO(
+    return phx.nn.operator.architectures.FNO(
         in_channels="scalar",
         out_channels="scalar",
         width=2,
@@ -44,7 +44,7 @@ def _schedule_free():
 
 
 def _schedule_free_fit(model, dataset, **kwargs):
-    return phx.nn.fit_operator(
+    return phx.nn.operator.training.fit_operator(
         model,
         dataset,
         optimizer=_schedule_free(),
@@ -73,14 +73,14 @@ def test_fit_operator_returns_and_validates_on_evaluation_model():
     def shifted(_state, parameters):
         return jax.tree.map(lambda value: value + 1.0, parameters)
 
-    baseline = phx.nn.fit_operator(
+    baseline = phx.nn.operator.training.fit_operator(
         model,
         dataset,
         validation=dataset,
         steps=0,
         jit=False,
     )
-    evaluated = phx.nn.fit_operator(
+    evaluated = phx.nn.operator.training.fit_operator(
         model,
         dataset,
         validation=dataset,
@@ -169,12 +169,12 @@ def test_schedule_free_resume_rejects_changed_or_missing_evaluator_id(
         kwargs["evaluation_parameters_id"] = resume_id
 
     with pytest.raises(ValueError, match="checkpoint contract mismatch"):
-        phx.nn.fit_operator(model, dataset, **kwargs)
+        phx.nn.operator.training.fit_operator(model, dataset, **kwargs)
 
 
 def test_checkpointed_evaluation_transform_requires_stable_id(tmp_path):
     with pytest.raises(ValueError, match="stable evaluation_parameters_id"):
-        phx.nn.fit_operator(
+        phx.nn.operator.training.fit_operator(
             _model(),
             _dataset(),
             steps=0,
@@ -188,7 +188,7 @@ def test_checkpointed_evaluation_transform_requires_stable_id(tmp_path):
 
 def test_operator_evaluation_transform_must_preserve_parameter_structure():
     with pytest.raises(ValueError, match="PyTree structure"):
-        phx.nn.fit_operator(
+        phx.nn.operator.training.fit_operator(
             _model(),
             _dataset(),
             steps=0,

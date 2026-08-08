@@ -58,7 +58,7 @@ import phydrax as phx
 space = phx.domain.Interval1d(0.0, 1.0)
 interior = space.component()
 
-model = phx.nn.MLP(
+model = phx.nn.models.MLP(
     in_size="scalar",
     out_size="scalar",
     width_size=16,

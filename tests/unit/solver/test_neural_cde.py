@@ -65,7 +65,7 @@ def test_vector_field_adapter_composes_callable_mlp_and_kan_models():
         control_dimension=2,
     )
     mlp_field = phx.solver.NeuralCDEVectorField(
-        phx.nn.MLP(
+        phx.nn.models.MLP(
             in_size=1,
             out_size=2,
             width_size=3,
@@ -76,7 +76,7 @@ def test_vector_field_adapter_composes_callable_mlp_and_kan_models():
         control_dimension=2,
     )
     kan_field = phx.solver.NeuralCDEVectorField(
-        phx.nn.KAN(
+        phx.nn.models.KAN(
             in_size=1,
             out_size=2,
             width_size=3,

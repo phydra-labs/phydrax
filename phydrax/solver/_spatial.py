@@ -20,6 +20,7 @@ from jaxtyping import Array, ArrayLike
 
 from phydrax.domain import AxisDiscretization, broadcasted_grid, GridSpec
 
+from .._model import SpectralDiscretizationProvider
 from .._strict import StrictModule
 from ..operators.differential._array_ops import (
     _basis_nth_derivative,
@@ -707,10 +708,8 @@ class SpectralSpatialDiscretization(AbstractSpatialDiscretization):
     _discretization_id: str = eqx.field(static=True)
 
     def __init__(self, plan: Any, /):
-        from ..nn.models.architectures._manifold_spectral import SpectralDiscretization
-
-        if not isinstance(plan, SpectralDiscretization):
-            raise TypeError("plan must be an nn.SpectralDiscretization.")
+        if not isinstance(plan, SpectralDiscretizationProvider):
+            raise TypeError("plan must implement SpectralDiscretizationProvider.")
         self.plan = plan
         self._state_shape = (int(plan.num_points),)
         self._discretization_id = _hash_parts(
