@@ -7,7 +7,7 @@ import jax.numpy as jnp
 
 from phydrax._frozendict import frozendict
 from phydrax.domain import Interval1d, PointBatch, SampleLayout, TimeInterval
-from phydrax.solver import EnforcedConstraintPipelines, EnforcedInteriorData
+from phydrax.enforcement import EnforcementProgram, InteriorAnchors
 
 
 def _paired_batch(domain, xs, ts):
@@ -35,7 +35,7 @@ def test_unified_interior_data_tracks_and_scattered():
     def u(x, t):
         return x[0] * 0.0 + t * 0.0
 
-    scattered = EnforcedInteriorData(
+    scattered = InteriorAnchors(
         "u",
         points={
             "x": jnp.array([[0.2], [0.8]], dtype=float),
@@ -46,17 +46,14 @@ def test_unified_interior_data_tracks_and_scattered():
         envelope_scale=0.5,
     )
 
-    tracks = EnforcedInteriorData(
+    tracks = InteriorAnchors(
         "u",
         sensors=jnp.array([[0.5]], dtype=float),
         times=jnp.array([0.2, 0.6], dtype=float),
         sensor_values=jnp.array([[3.0, 4.0]], dtype=float),
     )
 
-    pipelines = EnforcedConstraintPipelines.build(
-        functions={"u": u},
-        interior_data=[scattered, tracks],
-    )
+    pipelines = EnforcementProgram.build(functions={"u": u}, interior=[scattered, tracks], )
     u_enforced = pipelines.apply({"u": u})["u"]
 
     xs = jnp.array([0.2, 0.8, 0.5, 0.5], dtype=float)
@@ -77,7 +74,7 @@ def test_enforced_interior_data_hermite_track_matches_curve():
     def u(x, t):
         return x[0] * 0.0 + t * 0.0
 
-    tracks = EnforcedInteriorData(
+    tracks = InteriorAnchors(
         "u",
         sensors=jnp.array([[0.5]], dtype=float),
         times=jnp.array([0.0, 1.0], dtype=float),
@@ -85,10 +82,7 @@ def test_enforced_interior_data_hermite_track_matches_curve():
         time_interp="hermite",
     )
 
-    pipelines = EnforcedConstraintPipelines.build(
-        functions={"u": u},
-        interior_data=[tracks],
-    )
+    pipelines = EnforcementProgram.build(functions={"u": u}, interior=[tracks], )
     u_enforced = pipelines.apply({"u": u})["u"]
 
     xs = jnp.array([0.5, 0.5], dtype=float)

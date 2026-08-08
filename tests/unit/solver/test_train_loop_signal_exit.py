@@ -8,8 +8,8 @@ import jax.numpy as jnp
 import jax.random as jr
 import optax
 
+import phydrax as phx
 import phydrax.solver._functional_train as functional_train
-from phydrax.constraints import DiscreteInteriorDataConstraint
 from phydrax.domain import HyperRectangle
 from phydrax.nn import MLP
 from phydrax.solver import FunctionalSolver
@@ -18,7 +18,11 @@ from phydrax.solver import FunctionalSolver
 def _make_solver(seed: int = 0) -> FunctionalSolver:
     domain = HyperRectangle(jnp.asarray([0.0]), jnp.asarray([1.0]), label="x")
     points = jnp.linspace(0.0, 1.0, 5).reshape((-1, 1))
-    values = 1.0 + 2.0 * points[:, 0]
+
+    @domain.Function("x")
+    def target(x):
+        return 1.0 + 2.0 * x[0]
+
     model = MLP(
         in_size=1,
         out_size="scalar",
@@ -26,14 +30,14 @@ def _make_solver(seed: int = 0) -> FunctionalSolver:
         key=jr.key(seed),
     )
     u = domain.Model("x")(model)
-    data = DiscreteInteriorDataConstraint(
-        "u",
-        domain,
-        points={"x": points},
-        values=values,
-        label="data",
+    component = domain.component()
+    batch = component.points({"x": points})
+    condition = phx.conditions.Observation("u", component, target)
+    source = phx.integration.fixed(
+        phx.integration.from_samples(phx.integration.mean_over(component), batch)
     )
-    return FunctionalSolver(functions={"u": u}, constraints=[data])
+    data = phx.terms.ObservationPenalty(condition, source, label="data")
+    return FunctionalSolver(functions={"u": u}, terms=[data])
 
 
 def test_training_signal_guard_records_sigint_and_restores_handler():

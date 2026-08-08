@@ -1,7 +1,8 @@
 # Open-system amplitude damping
 
 This recipe verifies a two-level Lindblad master equation through a complex residual
-constraint. Let $|0\rangle$ be the ground state, $|1\rangle$ the excited state, and
+condition and penalty. Let $|0\rangle$ be the ground state, $|1\rangle$ the excited
+state, and
 
 $$
 L=\sqrt{\gamma}\,|0\rangle\langle1|.
@@ -58,28 +59,32 @@ assert jnp.allclose(phx.operators.unit_trace_residual(rho).func(0.4), 0.0)
 assert jnp.allclose(population.func(0.4), jnp.exp(-gamma * 0.4))
 assert jnp.real(population.func(1.2)) < jnp.real(population.func(0.2))
 
-constraint = phx.constraints.FunctionalConstraint.from_operator(
-    component=time.component(),
-    operator=lambda density: phx.operators.lindblad_residual(
+component = time.component()
+condition = phx.conditions.Residual(
+    "rho",
+    component,
+    lambda density: phx.operators.lindblad_residual(
         density,
         H,
         (L,),
     ),
-    constraint_vars="rho",
-    sampling=phx.domain.PointSampling(
+    label="lindblad",
+)
+source = phx.integration.per_step(
+    phx.integration.mean_over(condition.on),
+    phx.domain.PointSampling(
         32,
         layout=phx.domain.SampleLayout((("t",),)),
     ),
-    reduction="mean",
-    label="lindblad",
 )
+term = phx.terms.ResidualPenalty(condition, source, scale=1.0)
 exact = phx.solver.FunctionalSolver(
     functions={"rho": rho},
-    constraints=[constraint],
+    terms=[term],
 )
 perturbed = phx.solver.FunctionalSolver(
     functions={"rho": perturbed_rho},
-    constraints=[constraint],
+    terms=[term],
 )
 
 exact_loss = exact.loss(key=jr.key(0))

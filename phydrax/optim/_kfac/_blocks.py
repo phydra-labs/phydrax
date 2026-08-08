@@ -85,6 +85,8 @@ def estimate_kron_factors_from_chunks(
                 (block.output_size, block.output_size), dtype=dtype
             )
             target_trace = jnp.asarray(0.0, dtype=dtype)
+        assert sensitivity_sum is not None
+        assert target_trace is not None
         matrices = jacobian.reshape(
             (int(jacobian.shape[0]), block.output_size, block.input_size)
         )

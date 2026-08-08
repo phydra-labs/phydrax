@@ -7,8 +7,8 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
-from phydrax.constraints import SupervisedDatasetConstraint
 from phydrax.domain import DatasetDomain, SampleLayout
+from phydrax.terms import SupervisedDatasetTerm
 
 
 def test_supervised_dataset_constraint_supervises_scalar_targets_exactly():
@@ -20,7 +20,7 @@ def test_supervised_dataset_constraint_supervises_scalar_targets_exactly():
     def u(row):
         return row[0] + 2.0 * row[1]
 
-    constraint = SupervisedDatasetConstraint(
+    constraint = SupervisedDatasetTerm(
         "u",
         domain.component(),
         targets,
@@ -44,7 +44,7 @@ def test_supervised_dataset_constraint_supervises_vector_targets_exactly():
     def theta(row):
         return jnp.asarray([row[0] + row[1], row[0] - row[1]])
 
-    constraint = SupervisedDatasetConstraint(
+    constraint = SupervisedDatasetTerm(
         "theta",
         domain.component(),
         targets,
@@ -62,7 +62,7 @@ def test_supervised_dataset_constraint_aligns_sampled_indices_with_targets():
     data = jnp.arange(10.0, dtype=float).reshape((5, 2))
     domain = DatasetDomain(data)
     targets = jnp.asarray([10.0, 20.0, 30.0, 40.0, 50.0])
-    constraint = SupervisedDatasetConstraint(
+    constraint = SupervisedDatasetTerm(
         "u",
         domain.component(),
         targets,
@@ -80,7 +80,7 @@ def test_supervised_dataset_constraint_samples_only_index_subset():
     domain = DatasetDomain(data)
     targets = data[:, 0]
     allowed = jnp.asarray([1, 3, 5], dtype=jnp.int32)
-    constraint = SupervisedDatasetConstraint(
+    constraint = SupervisedDatasetTerm(
         "u",
         domain.component(),
         targets,
@@ -105,7 +105,7 @@ def test_supervised_dataset_constraint_supports_pytree_rows():
     def u(row):
         return row["a"][0] + row["b"]
 
-    constraint = SupervisedDatasetConstraint(
+    constraint = SupervisedDatasetTerm(
         "u",
         domain.component(),
         targets,
@@ -120,7 +120,7 @@ def test_supervised_dataset_constraint_validates_targets_and_sampling():
     domain = DatasetDomain(jnp.zeros((3, 2), dtype=float))
 
     with pytest.raises(ValueError, match="leading axis"):
-        SupervisedDatasetConstraint(
+        SupervisedDatasetTerm(
             "u",
             domain.component(),
             jnp.zeros((4,), dtype=float),
@@ -128,7 +128,7 @@ def test_supervised_dataset_constraint_validates_targets_and_sampling():
         )
 
     with pytest.raises(ValueError, match="sampling count"):
-        SupervisedDatasetConstraint(
+        SupervisedDatasetTerm(
             "u",
             domain.component(),
             jnp.zeros((3,), dtype=float),
@@ -136,7 +136,7 @@ def test_supervised_dataset_constraint_validates_targets_and_sampling():
         )
 
     with pytest.raises(ValueError, match="indices"):
-        SupervisedDatasetConstraint(
+        SupervisedDatasetTerm(
             "u",
             domain.component(),
             jnp.zeros((3,), dtype=float),

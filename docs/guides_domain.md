@@ -58,7 +58,7 @@ retained. The canonical replacements are:
 | `component.sample_coord_separable(...)` | `component.sample(GridSampling({...}))` |
 | `PointsBatch` / `CoordSeparableBatch` | `PointBatch` / `GridBatch` |
 | `operator_domain_view_from_coord_separable(...)` | `operator_domain_view_from_grid(...)` |
-| Constraint `num_points=...`, `structure=...` | `sampling=PointSampling(..., layout=...)` |
+| Inline `num_points=...`, `structure=...` sampling | `source=per_step(mean_over(component), PointSampling(..., layout=...))` |
 | `Domain.Model(..., structured=True)` | `Domain.Model(..., binding=phx.nn.ModelBinding.axis())` |
 
 `PointSampling` owns paired-site count and design. `GridSampling` owns named
@@ -92,14 +92,18 @@ points = jnp.array(
         [0.5, 0.4, 0.3, 0.2, 0.1, 0.0],
     ]
 )
-values = jnp.sum(points, axis=1)
+component = features.component()
+batch = component.points(points)
 
-data = phx.constraints.DiscreteInteriorDataConstraint(
-    "u",
-    features,
-    points=points,
-    values=values,
+@features.Function("x")
+def observed(x):
+    return jnp.sum(x)
+
+observation = phx.conditions.Observation("u", component, observed)
+source = phx.integration.fixed(
+    phx.integration.from_samples(phx.integration.mean_over(component), batch)
 )
+data = phx.terms.ObservationPenalty(observation, source)
 ```
 
 `points` is the raw `(N, d)` array. Do not wrap it in a dictionary unless the
@@ -113,7 +117,7 @@ the right shape when rows are PyTrees, multimodal inputs, branch conditions, or
 finite cases that will later be paired with physical coordinates.
 
 For row-aligned scalar/vector targets on the empirical rows themselves, use
-`SupervisedDatasetConstraint`:
+`SupervisedDatasetTerm`:
 
 ```python
 import jax.numpy as jnp
@@ -127,7 +131,7 @@ dataset_domain = phx.domain.DatasetDomain(rows)
 def u(row):
     return row[0] + 2.0 * row[1]
 
-constraint = phx.constraints.SupervisedDatasetConstraint(
+term = phx.terms.SupervisedDatasetTerm(
     "u",
     dataset_domain.component(),
     targets,
@@ -155,14 +159,14 @@ paired, so sampling and fixed-end slices are row-aware.
 Because the row and time are coupled, use `SampleLayout((("data", "t"),))`
 for trajectory point sampling, including fixed-time components.
 The same paired batches support hard branch-conditional data enforcement through
-`enforce_ragged_time_series`; choose `cubic_hermite` interpolation when second time
-derivatives are part of the physics residual.
+`phx.enforcement.enforce_ragged_time_series`; choose `cubic_hermite`
+interpolation when second time derivatives are part of the physics residual.
 
 Keep static case features and time-varying signals separate. Store static scalars
 or vectors in the `inputs` rows, and expose observed ragged signals with
-`TrajectorySignal` when residuals need them. Per-case scalar/vector labels should
-use `TrajectoryCaseDataConstraint` rather than being repeated as constant time
-series.
+`phx.terms.TrajectorySignal` when residuals need them. Per-case scalar/vector
+labels should use `phx.terms.TrajectoryCaseDataTerm` rather than being repeated
+as constant time series.
 
 ```python
 import jax.numpy as jnp
@@ -175,16 +179,25 @@ trajectory_domain = phx.domain.TrajectoryDatasetDomain(inputs, lengths, dt=0.5)
 
 component = trajectory_domain.component()
 layout = phx.domain.SampleLayout((("data", "t"),))
-batch = component.sample(
-    phx.domain.PointSampling(8, layout=layout),
-    key=jr.key(0),
-)
+sampling = phx.domain.PointSampling(8, layout=layout)
+batch = component.sample(sampling, key=jr.key(0))
 
 @trajectory_domain.Function("data", "t")
 def u(data, t):
     return data[0] + t
 
 values = u(batch)
+
+condition = phx.conditions.Residual(
+    "u",
+    component,
+    lambda u: phx.operators.partial_t(u, var="t") - 1.0,
+)
+source = phx.integration.per_step(
+    phx.integration.mean_over(component),
+    sampling,
+)
+physics = phx.terms.ResidualPenalty(condition, source)
 ```
 
 ```python
@@ -192,14 +205,14 @@ signal_values = (
     inputs[:, 0, None]
     + trajectory_domain.dt * jnp.arange(trajectory_domain.max_length)[None, :]
 )
-forcing = phx.constraints.TrajectorySignal(
+forcing = phx.terms.TrajectorySignal(
     trajectory_domain,
     signal_values,
     interpolation="linear",
 )
 
 targets = jnp.asarray([[1.0, 0.0], [2.0, -1.0], [3.0, -2.0]])
-case_target = phx.constraints.TrajectoryCaseDataConstraint(
+case_target = phx.terms.TrajectoryCaseDataTerm(
     "theta",
     trajectory_domain.component(),
     targets,
@@ -208,7 +221,7 @@ case_target = phx.constraints.TrajectoryCaseDataConstraint(
 ```
 
 Functions on a domain are wrapped as `DomainFunction`s. The key idea is that a `DomainFunction`
-declares which labels it depends on, and operators/constraints use those labels consistently.
+declares which labels it depends on, and operators, conditions, and terms use those labels consistently.
 
 ```python
 @domain.Function("x", "t")
@@ -226,8 +239,8 @@ switches protocol because of hidden call-time flags.
 
 ## Components: interior, boundary, and fixed slices
 
-Constraints and integrals are typically evaluated over a **domain component**, which selects a
-subset of each factor:
+Conditions, penalties, and integrals are typically evaluated over a **domain
+component**, which selects a subset of each factor:
 
 - `Interior()`: the interior of a geometry or scalar interval;
 - `Boundary()`: the boundary of a geometry or scalar interval (endpoints in 1D);
@@ -259,7 +272,7 @@ excluded from point samples or represented by a mask in grid samples.
 
 ## Paired point sampling (`PointBatch`)
 
-Most pointwise PDE residual constraints use a `PointSampling` plan with a
+Most pointwise PDE residual penalties use a `PointSampling` plan with a
 `SampleLayout`.
 
 A `SampleLayout` partitions sampled labels into jointly sampled blocks. Each block

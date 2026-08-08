@@ -96,7 +96,7 @@ def test_supervised_likelihood_exposes_fixed_observations_and_log_probabilities(
 
     targets = 1.5 + 2.0 * rows[:, 0]
     likelihood = phx.uq.GaussianLikelihood(0.2)
-    constraint = phx.constraints.SupervisedLikelihoodConstraint(
+    constraint = phx.terms.SupervisedLikelihoodTerm(
         "u",
         domain.component(),
         targets,

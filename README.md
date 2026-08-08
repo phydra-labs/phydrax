@@ -124,28 +124,39 @@ model = phx.nn.MLP(
 )
 u = geom.Model("x")(model)
 
-layout = phx.domain.SampleLayout((("x",),))
-
-# Interior PDE residual: Δu - 4 = 0
-pde = phx.constraints.ContinuousPointwiseInteriorConstraint(
+# Conditions state scientific semantics.
+interior = geom.component()
+pde = phx.conditions.Residual(
     "u",
-    geom,
-    operator=lambda f: phx.operators.laplacian(f, var="x") - 4.0,
-    sampling=phx.domain.PointSampling(64, layout=layout),
+    interior,
+    lambda u: phx.operators.laplacian(u, var="x") - 4.0,
 )
 
-# Soft Dirichlet boundary: u - g = 0 on ∂Ω
 boundary = geom.component({"x": phx.domain.Boundary()})
-bc = phx.constraints.ContinuousDirichletBoundaryConstraint(
-    "u",
-    boundary,
-    target=g,
-    sampling=phx.domain.PointSampling(32, layout=layout),
-    weight=10.0,
-    reduction="mean",
+bc = phx.conditions.Dirichlet("u", boundary, target=g)
+
+# Integration sources own numerical realization; terms produce scalar penalties.
+pde_penalty = phx.terms.ResidualPenalty(
+    pde,
+    phx.integration.per_step(
+        phx.integration.mean_over(pde.on),
+        phx.integration.MonteCarloPlan(64),
+    ),
+)
+bc_penalty = phx.terms.ResidualPenalty(
+    bc,
+    phx.integration.per_step(
+        phx.integration.mean_over(bc.on),
+        phx.integration.MonteCarloPlan(32),
+    ),
+    scale=10.0,
 )
 
-solver = phx.solver.FunctionalSolver(functions={"u": u}, constraints=[pde, bc])
+solver = phx.solver.FunctionalSolver(
+    functions={"u": u},
+    terms=(pde_penalty, bc_penalty),
+    enforcement=None,
+)
 solver = solver.solve(num_iter=20, optim=optax.adam(1e-3), seed=0)
 ```
 

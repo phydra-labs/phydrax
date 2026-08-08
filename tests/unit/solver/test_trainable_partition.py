@@ -11,9 +11,10 @@ import jax.random as jr
 
 import phydrax as phx
 from phydrax._trainable import partition_trainable
-from phydrax.constraints import enforce_ragged_time_series, TrajectorySignal
 from phydrax.domain import DomainFunction, Interval1d, TrajectoryDatasetDomain
+from phydrax.enforcement import enforce_ragged_time_series
 from phydrax.nn import MLP
+from phydrax.terms import TrajectorySignal
 
 
 def _inexact_leaves(tree):

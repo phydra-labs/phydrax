@@ -121,8 +121,11 @@ def test_mesh_cotangent_laplacian_integrates_with_graph_model_keys():
             output_key="lap_u",
         )
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(component=nodes,
-    operator=residual,
-    constraint_vars="u", sampling=phx.domain.PointSampling(bundle.graph.num_nodes, layout=structure), )
+    condition = phx.conditions.Residual("u", nodes, residual)
+    source = phx.integration.per_step(
+        phx.integration.mean_over(nodes),
+        phx.domain.PointSampling(bundle.graph.num_nodes, layout=structure),
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
 
-    assert constraint.loss({"u": u}, key=jr.key(0)) < 1e-12
+    assert term.loss({"u": u}, key=jr.key(0)) < 1e-12

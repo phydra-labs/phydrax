@@ -46,7 +46,7 @@ def test_graph_target_aligns_repeated_cases_and_node_sets():
         component=phx.domain.BoundaryNodes([1]),
         structure=phx.domain.SampleLayout((("graph",),)),
     )
-    target = phx.constraints.GraphTarget(
+    target = phx.terms.GraphTarget(
         domain,
         _node_targets(),
         component_kind="nodes",
@@ -67,7 +67,7 @@ def test_graph_supervised_constraint_zero_for_matching_node_function():
     def u(node):
         return 10.0 + 2.0 * node[0]
 
-    constraint = phx.constraints.GraphSupervisedConstraint(
+    constraint = phx.terms.GraphSupervisedTerm(
         "u",
         component,
         _linear_node_targets(),
@@ -91,7 +91,7 @@ def test_graph_trajectory_signal_matches_nearest_observations():
     for graph, length in zip(domain.graphs, domain.lengths.tolist(), strict=True):
         times = domain.start + domain.dt * jnp.arange(int(length))
         values.append(graph.nodes[:, 0][None, :] + 2.0 * times[:, None])
-    signal = phx.constraints.GraphTrajectorySignal(domain, tuple(values))
+    signal = phx.terms.GraphTrajectorySignal(domain, tuple(values))
     component = domain.component({"graph": phx.domain.Nodes(), "t": phx.domain.Interior()})
     batch = domain.points_from_case_time(
         [0, 1],
@@ -114,7 +114,7 @@ def test_graph_trajectory_signal_linearly_interpolates_time():
     for graph, length in zip(domain.graphs, domain.lengths.tolist(), strict=True):
         times = domain.start + domain.dt * jnp.arange(int(length))
         values.append(graph.nodes[:, 0][None, :] + 2.0 * times[:, None])
-    signal = phx.constraints.GraphTrajectorySignal(
+    signal = phx.terms.GraphTrajectorySignal(
         domain,
         tuple(values),
         interpolation="linear",
@@ -148,7 +148,7 @@ def test_graph_trajectory_supervised_constraint_zero_for_matching_function():
     def u(node, t):
         return node[0] + 2.0 * t
 
-    constraint = phx.constraints.GraphTrajectorySupervisedConstraint(
+    constraint = phx.terms.GraphTrajectorySupervisedTerm(
         "u",
         component,
         tuple(values),

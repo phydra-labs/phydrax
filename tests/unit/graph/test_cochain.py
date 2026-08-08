@@ -550,10 +550,10 @@ def test_cochain_residual_constraint_composes_graph_and_time_measures(
         component=component,
         structure=structure,
     )
-    constraint = phx.constraints.CochainResidualConstraint(
+    constraint = phx.terms.CochainResidualTerm(
         component=component,
         residual=lambda functions: functions["u"],
-        constraint_vars=("u",),
+        fields=("u",),
         sampling=phx.domain.PointSampling(2, layout=structure),
         reduction="graph_mean",
     )

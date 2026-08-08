@@ -43,14 +43,15 @@ uses a type-II generalized Gauss–Newton (GGN) curvature model.
 
 For square-root-weighted residual roots $r(\theta)$, KFAC models the type-II GGN
 $J_r^\mathsf{T}J_r$. The curvature therefore remains nonzero when a residual value is
-zero but its parameter Jacobian is not. Constraint weights, pointwise weights, masks,
-quadrature masses, and mean/integral normalization are included exactly once when the
-residual roots are formed.
+zero but its parameter Jacobian is not. Term scales, pointwise weights, masks, quadrature
+masses, and mean/integral normalization are included exactly once when the residual roots
+are formed.
 
 Each supported affine weight-and-bias block is approximated independently. Contributions
-from distinct `FunctionalConstraint` terms retain separate exponential-moving-average
-state and are combined as a sum of Kronecker products; no artificial cross-constraint
-terms are introduced. `approximation="expand"` retains every singular mode of each
+from distinct `phydrax.terms.ResidualPenalty` terms retain separate
+exponential-moving-average state and are combined as a sum of Kronecker products; no
+artificial cross-term products are introduced. `approximation="expand"` retains every
+singular mode of each
 residual-event block Jacobian. `"reduce"` retains its leading mode and uses less work at
 the cost of a coarser factorization. Both variants preserve the exact block trace.
 
@@ -74,12 +75,12 @@ first-order KFAC.
 
 ### Sampling and line search
 
-Every optimizer step materializes one batch for each active constraint. The same batches,
-adaptive-collocation weights, evaluation keys, and iteration value are reused for the
-gradient, factor update, and all Armijo candidates. Adaptive collocation is refreshed at
-most once before the step. When `train_constraint_sample_size` is set, the first step
-warms all per-constraint factors; later steps update only the sampled terms while
-retaining their stored factors.
+Every optimizer step materializes one integration realization for each active term. The
+same realizations—including adaptive-collocation weights—evaluation keys, and iteration
+value are reused for the gradient, factor update, and all Armijo candidates. Adaptive
+collocation is refreshed at most once before the step. When `train_term_sample_size` is
+set, the first step warms all per-term factors; later steps update only the sampled terms
+while retaining their stored factors.
 
 `line_search=True` uses frozen-batch Armijo backtracking. A failed finite search returns a
 zero step; a search whose every candidate is nonfinite raises an error. Set
@@ -90,17 +91,17 @@ zero step; a search whose every candidate is nonfinite raises an error. Set
 
 | Supported | Notes |
 |---|---|
-| `FunctionalSolver` with one or more `FunctionalConstraint` terms | Every active constraint must expose nonnegative quadratic residual roots. |
+| `FunctionalSolver` with one or more `phydrax.terms.ResidualPenalty` terms | Every training term must expose nonnegative quadratic residual roots. |
 | Pointwise flat `phydrax.nn.MLP` fields | Scalar or tensor outputs; scanned execution, ordinary skip connections, and learned skip projections are supported. |
 | Soft and hard-enforced PINNs | Hard ansätze remain in the differentiated residual graph. |
 | Coupled fields and inverse scalar parameters | Small parameters outside affine MLP blocks use one exact dense block up to `exact_block_max_size`. |
 | Mean and integral reductions | Component masks, quadrature masses, global weights, pointwise weights, and adaptive batch weights are preserved. |
-| Constraint subsampling and adaptive collocation | Per-constraint factors persist across inactive steps. |
+| Term subsampling and adaptive collocation | Per-term factors persist across inactive steps. |
 
 | Rejected by default | Reason or explicit alternative |
 |---|---|
-| Standalone/signed `objectives` and attached model losses | They do not provide nonnegative residual roots for the GGN model. Express a nonnegative square as a `FunctionalConstraint`. |
-| Non-`FunctionalConstraint` terms | No structured residual-root contract. |
+| Raw signed scalar terms and attached model losses | They do not provide nonnegative residual roots for the GGN model. Express a nonnegative square as a `ResidualPenalty`. |
+| Non-`ResidualPenalty` training terms | No structured residual-root contract. |
 | Structured, blockwise, or axis-batched models | The initial implementation covers pointwise flat `MLP` fields only. |
 | Random-weight-factorized, positive-weight, or complex affine layers | Their parameterization is not an ordinary real affine block. |
 | Active dropout or other stochastic model execution | Gradient, curvature, and line search would not share a deterministic function. |
@@ -138,8 +139,8 @@ count, accepted step size, line-search steps, maximum PCG iterations and relativ
 residual, quadratic update norm, parameter and block counts, a damped factor-condition
 estimate, and—when `profile_adaptive=True`—gradient, factor, linear-solve, line-search,
 first-step, and steady-step wall times. Scalar optimization metrics are emitted to
-TensorBoard when enabled; `log_constraints=True` additionally emits the same per-term
-training/evaluation losses and data/adaptive metrics as the standard solver path.
+TensorBoard when enabled; `log_terms=True` additionally emits the same per-term
+training/evaluation values and data/adaptive metrics as the standard solver path.
 
 ### Benchmark campaign
 

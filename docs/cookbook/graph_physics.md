@@ -57,25 +57,43 @@ continuous coordinates are not the only natural indexing structure.
     assert jnp.allclose(lap_u(node_batch).data, jnp.array([-1.0, -1.0, 2.0]))
     assert jnp.allclose(lap_u(boundary_batch).data, jnp.array([-1.0, 2.0]))
 
-    diffusion = phx.constraints.FunctionalConstraint.from_operator(
-        component=nodes,
-        operator=phx.operators.graph_incidence_laplacian,
-        constraint_vars="u",
-        sampling=phx.domain.PointSampling(n_nodes, layout=layout),
+    diffusion_condition = phx.conditions.Residual(
+        "u",
+        nodes,
+        phx.operators.graph_incidence_laplacian,
+    )
+    diffusion_source = phx.integration.per_step(
+        phx.integration.mean_over(nodes),
+        phx.domain.PointSampling(n_nodes, layout=layout),
+    )
+    diffusion = phx.terms.ResidualPenalty(diffusion_condition, diffusion_source)
+
+    gradient_condition = phx.conditions.Residual(
+        "u",
+        edges,
+        phx.operators.graph_gradient,
+    )
+    gradient_source = phx.integration.per_step(
+        phx.integration.mean_over(edges),
+        phx.domain.PointSampling(n_edges, layout=layout),
+    )
+    constant_gradient = phx.terms.ResidualPenalty(
+        gradient_condition,
+        gradient_source,
     )
 
-    constant_gradient = phx.constraints.FunctionalConstraint.from_operator(
-        component=edges,
-        operator=phx.operators.graph_gradient,
-        constraint_vars="u",
-        sampling=phx.domain.PointSampling(n_edges, layout=layout),
+    boundary_diffusion_condition = phx.conditions.Residual(
+        "u",
+        boundary_nodes,
+        phx.operators.graph_incidence_laplacian,
     )
-
-    boundary_diffusion = phx.constraints.FunctionalConstraint.from_operator(
-        component=boundary_nodes,
-        operator=phx.operators.graph_incidence_laplacian,
-        constraint_vars="u",
-        sampling=phx.domain.PointSampling(n_boundary_nodes, layout=layout),
+    boundary_diffusion_source = phx.integration.per_step(
+        phx.integration.mean_over(boundary_nodes),
+        phx.domain.PointSampling(n_boundary_nodes, layout=layout),
+    )
+    boundary_diffusion = phx.terms.ResidualPenalty(
+        boundary_diffusion_condition,
+        boundary_diffusion_source,
     )
 
     @domain.Function("graph")
@@ -92,9 +110,9 @@ continuous coordinates are not the only natural indexing structure.
 
 The graph residual above is a finite-topology analogue of
 \(\nabla\cdot(k\nabla u)\). A learned graph model can be exposed as a
-`DomainFunction` with `GraphDomain.GraphModel(...)`, then constrained with the
-same `FunctionalConstraint` and `FunctionalSolver` machinery used for continuous
-PDEs.
+`DomainFunction` with `GraphDomain.GraphModel(...)`, then trained with the same
+`Residual`, explicit integration source, `ResidualPenalty`, and `FunctionalSolver`
+machinery used for continuous PDEs.
 
 Use `graph_gradient` for node-to-edge differences, `graph_divergence` for
 edge-to-node conservation terms, and `graph_incidence_laplacian` for the
@@ -129,29 +147,38 @@ and constraints see the enforced values.
     def u(node):
         return node[0]
 
-    hard_u = phx.constraints.enforce_graph_values(u, boundary, target=5.0)
+    hard_u = phx.enforcement.enforce_graph_values(u, boundary, target=5.0)
     batch = nodes.sample(
         phx.domain.PointSampling(graph.num_nodes, layout=layout)
     )
     assert jnp.allclose(hard_u(batch).data, jnp.array([5.0, 1.0, 5.0]))
 
-    bc = phx.constraints.FunctionalConstraint.from_operator(
-        component=boundary,
-        operator=lambda f: f - 5.0,
-        constraint_vars="u",
-        sampling=phx.domain.PointSampling(boundary_count, layout=layout),
-    )
-    assert bc.loss({"u": hard_u}) < 1e-12
-
-    term = phx.solver.SingleFieldEnforcedConstraint(
+    bc_condition = phx.conditions.Residual(
         "u",
         boundary,
-        lambda f: phx.constraints.enforce_graph_values(f, boundary, target=5.0),
+        lambda f: f - 5.0,
     )
+    bc_source = phx.integration.per_step(
+        phx.integration.mean_over(boundary),
+        phx.domain.PointSampling(boundary_count, layout=layout),
+    )
+    bc = phx.terms.ResidualPenalty(bc_condition, bc_source)
+    assert bc.loss({"u": hard_u}) < 1e-12
+
+    condition = phx.conditions.Dirichlet("u", boundary, target=5.0)
+    spec = phx.enforcement.EnforcementSpec(
+        condition,
+        kind="custom",
+        transform=lambda f, _: phx.enforcement.enforce_graph_values(
+            f, boundary, target=5.0
+        ),
+    )
+    functions = {"u": u}
+    program = phx.enforcement.compile(functions, (spec,))
     solver = phx.solver.FunctionalSolver(
-        functions={"u": u},
-        constraints=(),
-        constraint_terms=[term],
+        functions=functions,
+        terms=(),
+        enforcement=program,
     )
     solver_u = solver.ansatz_functions().get("u")
     assert jnp.allclose(solver_u(batch).data, jnp.array([5.0, 1.0, 5.0]))
@@ -160,8 +187,8 @@ and constraints see the enforced values.
 ## Named residual builders
 
 Common graph physics residuals are available as named operator compositions.
-They return normal `DomainFunction`s and are meant to be used with
-`FunctionalConstraint.from_operator(...)`.
+They return normal `DomainFunction`s and are meant to be used as operators in
+`Residual` conditions.
 
 !!! example
     ```python
@@ -185,20 +212,24 @@ They return normal `DomainFunction`s and are meant to be used with
         del node
         return 1.0
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=nodes,
-        operator=phx.operators.graph_poisson_residual,
-        constraint_vars="u",
-        sampling=phx.domain.PointSampling(node_count, layout=layout),
+    condition = phx.conditions.Residual(
+        "u",
+        nodes,
+        phx.operators.graph_poisson_residual,
     )
-    assert constraint.loss({"u": constant_u}) < 1e-12
+    source = phx.integration.per_step(
+        phx.integration.mean_over(nodes),
+        phx.domain.PointSampling(node_count, layout=layout),
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
+    assert term.loss({"u": constant_u}) < 1e-12
     ```
 
 ## Graph neural operator blocks
 
 Executable `GraphIR -> GraphIR` blocks can be wrapped as `DomainFunction`s. This
 keeps learned graph operators and physics-encoded operators inside the same
-constraint path.
+residual-term path.
 
 !!! example
     ```python
@@ -225,14 +256,14 @@ constraint path.
     def residual(f):
         return domain.GraphModel(phx.graph.GraphDiffusion(), input_fn=f)
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=nodes,
-        operator=residual,
-        constraint_vars="u",
-        sampling=phx.domain.PointSampling(graph.num_nodes, layout=layout),
+    condition = phx.conditions.Residual("u", nodes, residual)
+    source = phx.integration.per_step(
+        phx.integration.mean_over(nodes),
+        phx.domain.PointSampling(graph.num_nodes, layout=layout),
     )
+    term = phx.terms.ResidualPenalty(condition, source)
 
-    assert constraint.loss({"u": u}) < 1e-12
+    assert term.loss({"u": u}) < 1e-12
     ```
 
 ## Edge-biased graph attention
@@ -599,16 +630,23 @@ Equinox/JAX arrays in the surrounding graph model remain optimizer parameters.
             output_key="residual",
         )
 
-    side_input_constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=side_input_nodes,
-        operator=side_input_residual,
-        constraint_vars="u",
-        sampling=phx.domain.PointSampling(
+    side_input_condition = phx.conditions.Residual(
+        "u",
+        side_input_nodes,
+        side_input_residual,
+    )
+    side_input_source = phx.integration.per_step(
+        phx.integration.mean_over(side_input_nodes),
+        phx.domain.PointSampling(
             side_input_graph.num_nodes,
             layout=side_input_layout,
         ),
     )
-    assert side_input_constraint.loss({"u": side_input_u}) < 1e-12
+    side_input_term = phx.terms.ResidualPenalty(
+        side_input_condition,
+        side_input_source,
+    )
+    assert side_input_term.loss({"u": side_input_u}) < 1e-12
     ```
 
 ## Equivariant graph operators
@@ -874,7 +912,7 @@ other cell degree.
     boundary_vertices = domain.component(
         {"graph": phx.domain.CochainCells(0, region="boundary")}
     )
-    pressure = phx.constraints.enforce_cochain_values(
+    pressure = phx.enforcement.enforce_cochain_values(
         pressure,
         boundary_vertices,
         target=0.0,
@@ -919,7 +957,7 @@ other cell degree.
     interior_vertices = domain.component(
         {"graph": phx.domain.CochainCells(0, region="interior")}
     )
-    constitutive = phx.constraints.CochainResidualConstraint.from_program(
+    constitutive = phx.terms.CochainResidualTerm.from_program(
         component=edge_cells,
         program=program,
         field_map=field_map,
@@ -931,7 +969,7 @@ other cell degree.
         reduction="metric_mean",
         sampling_mode="fixed",
     )
-    mass = phx.constraints.CochainResidualConstraint.from_program(
+    mass = phx.terms.CochainResidualTerm.from_program(
         component=interior_vertices,
         program=program,
         field_map=field_map,
@@ -942,23 +980,23 @@ other cell degree.
     )
     solver = phx.solver.FunctionalSolver(
         functions=fields,
-        constraints=(constitutive, mass),
+        terms=(constitutive, mass),
     )
     loss = solver.loss()
     ```
 
-`CochainResidualProgram` is the shared residual core: the fixed-complex
-constraint above and `CochainResidualLoss` in operator training execute the
-same callable and validate the same degree schema. Give the program an explicit
-stable `identity` when checkpoints must remain exactly resumable.
+`CochainResidualProgram` is the shared residual core: the fixed-complex term
+above and the same `CochainResidualTerm` in operator training execute one
+callable and validate one degree schema. Give the program an explicit stable
+`identity` when checkpoints must remain exactly resumable.
 
-`CochainResidualConstraint` reduces a squared residual per graph or graph-time
-segment. `graph_mean` is an arithmetic cell mean, `metric_mean` normalizes by
-the segment Hodge-star mass, and `metric_sum` retains physical mass. Padding is
-masked before reduction, differently sized meshes contribute one graph segment
-each, and graph-trajectory quadrature multiplies—not replaces—the cochain
-metric. Use `metric_sum` for an integral law and `metric_mean` when the objective
-should not scale with physical domain measure.
+`CochainResidualTerm` reduces a squared residual per graph or graph-time segment.
+`graph_mean` is an arithmetic cell mean, `metric_mean` normalizes by the segment
+Hodge-star mass, and `metric_sum` retains physical mass. Padding is masked before
+reduction, differently sized meshes contribute one graph segment each, and
+graph-trajectory quadrature multiplies—not replaces—the cochain metric. Use
+`metric_sum` for an integral law and `metric_mean` when the objective should not
+scale with physical domain measure.
 
 The domain-level operators
 `phx.operators.cochain_exterior_derivative`,
@@ -1083,21 +1121,24 @@ batched topology.
     residual = phx.operators.graph_incidence_laplacian(u)
     assert jnp.allclose(residual(batch).data, jnp.zeros((case_count,)))
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=boundary,
-        operator=phx.operators.graph_incidence_laplacian,
-        constraint_vars="u",
-        sampling=phx.domain.PointSampling(case_count, layout=layout),
+    condition = phx.conditions.Residual(
+        "u",
+        boundary,
+        phx.operators.graph_incidence_laplacian,
     )
-    assert constraint.loss({"u": u}) < 1e-12
+    source = phx.integration.per_step(
+        phx.integration.mean_over(boundary),
+        phx.domain.PointSampling(case_count, layout=layout),
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
+    assert term.loss({"u": u}) < 1e-12
     ```
 
 ## Supervised graph operator data
 
 Graph-family targets can be exposed as fixed `DomainFunction`s or used directly
-as supervised constraints. Targets are provided per graph case and stay aligned
-with sampled graph entities, including explicit node/edge subsets and repeated
-cases.
+as supervised terms. Targets are provided per graph case and stay aligned with
+sampled graph entities, including explicit node/edge subsets and repeated cases.
 
 !!! example
     ```python
@@ -1133,7 +1174,7 @@ cases.
     def u(node):
         return 10.0 + 2.0 * node[0]
 
-    target_fn = phx.constraints.GraphTarget(domain, targets)
+    target_fn = phx.terms.GraphTarget(domain, targets)
     batch = domain.points_from_indices(
         [1, 0, 1],
         component=phx.domain.BoundaryNodes([1]),
@@ -1141,7 +1182,7 @@ cases.
     )
     assert jnp.allclose(target_fn(batch).data, jnp.array([18.0, 12.0, 18.0]))
 
-    constraint = phx.constraints.GraphSupervisedConstraint(
+    term = phx.terms.GraphSupervisedTerm(
         "u",
         nodes,
         targets,
@@ -1150,7 +1191,7 @@ cases.
             layout=phx.domain.SampleLayout((("graph",),)),
         ),
     )
-    assert constraint.loss({"u": u}, key=jr.key(0)) < 1e-12
+    assert term.loss({"u": u}, key=jr.key(0)) < 1e-12
 
     trajectory = phx.domain.GraphTrajectoryDatasetDomain(
         (graph0, graph1),
@@ -1164,7 +1205,7 @@ cases.
         time_values = jnp.expand_dims(times, axis=1)
         values.append(node_values + 2.0 * time_values)
 
-    signal = phx.constraints.GraphTrajectorySignal(
+    signal = phx.terms.GraphTrajectorySignal(
         trajectory,
         tuple(values),
         interpolation="linear",
@@ -1262,17 +1303,17 @@ preserving mesh metadata in the graph payload.
             output_key="lap_u",
         )
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=nodes,
-        operator=residual,
-        constraint_vars="u",
-        sampling=phx.domain.PointSampling(
+    condition = phx.conditions.Residual("u", nodes, residual)
+    source = phx.integration.per_step(
+        phx.integration.mean_over(nodes),
+        phx.domain.PointSampling(
             bundle.graph.num_nodes,
             layout=layout,
         ),
     )
+    term = phx.terms.ResidualPenalty(condition, source)
 
-    assert constraint.loss({"u": u}) < 1e-12
+    assert term.loss({"u": u}) < 1e-12
     assert "cotangent_weight" in bundle.graph.edges
     assert "mass" in bundle.graph.nodes
     ```
@@ -1283,7 +1324,7 @@ Graph process helpers wrap `GraphIR -> GraphIR` vector fields as one-step
 integrators and autoregressive rollouts. One-step process models can be exposed
 with `GraphDomain.GraphModel(...)`; multi-step process predictions can be
 exposed with `GraphDomain.GraphRolloutModel(...)` and compared by ordinary
-constraints.
+residual terms.
 
 !!! example
     ```python
@@ -1325,14 +1366,14 @@ constraints.
         return rollout - target
 
     rollout_model = domain.GraphRolloutModel(stepper, steps=2, input_fn=u)
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=graph_nodes,
-        operator=residual,
-        constraint_vars="rollout",
-        sampling=phx.domain.PointSampling(graph.num_nodes, layout=layout),
+    condition = phx.conditions.Residual("rollout", graph_nodes, residual)
+    source = phx.integration.per_step(
+        phx.integration.mean_over(graph_nodes),
+        phx.domain.PointSampling(graph.num_nodes, layout=layout),
     )
+    term = phx.terms.ResidualPenalty(condition, source)
 
-    assert constraint.loss({"rollout": rollout_model}) < 1e-12
+    assert term.loss({"rollout": rollout_model}) < 1e-12
     ```
 
 ## Graph trajectories
@@ -1381,12 +1422,16 @@ arguments.
         del node, t
         return 1.0
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=edges_at_start,
-        operator=phx.operators.graph_gradient,
-        constraint_vars="u",
-        sampling=phx.domain.PointSampling(case_count, layout=layout),
+    condition = phx.conditions.Residual(
+        "u",
+        edges_at_start,
+        phx.operators.graph_gradient,
     )
+    source = phx.integration.per_step(
+        phx.integration.mean_over(edges_at_start),
+        phx.domain.PointSampling(case_count, layout=layout),
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
 
-    assert constraint.loss({"u": u}) < 1e-12
+    assert term.loss({"u": u}) < 1e-12
     ```

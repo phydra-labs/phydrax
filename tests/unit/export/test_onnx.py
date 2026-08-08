@@ -127,7 +127,7 @@ def test_solver_save_onnx_exports_named_ansatz_function(monkeypatch, tmp_path):
     def u(x):
         return x + 1.0
 
-    solver = phx.solver.FunctionalSolver(functions={"u": u}, constraints=())
+    solver = phx.solver.FunctionalSolver(functions={"u": u}, terms=())
     result = solver.save_onnx(
         "u",
         tmp_path / "solver_u.onnx",

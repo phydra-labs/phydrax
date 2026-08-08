@@ -51,7 +51,7 @@ The payload contains:
 - `sample_scale`: `length / valid_sample_count`, useful for sampled sum estimates.
 
 For row-aligned targets, pair this domain with
-`phydrax.constraints.RaggedSeriesSupervisedConstraint`. For neural models, wrap a
+`phydrax.terms.RaggedSeriesSupervisedTerm`. For neural models, wrap a
 ragged-series encoder with `phydrax.nn.RaggedSeriesModel`; the built-in
 `phydrax.nn.MaskedSeriesPoolingModel` provides a small masked-pooling baseline.
 
@@ -60,10 +60,10 @@ ragged-series encoder with `phydrax.nn.RaggedSeriesModel`; the built-in
 Full-row batches materialize `(batch, global_Lmax, ...)`, which is simple and
 deterministic but can be expensive when one case is much longer than the others.
 For training on long records, use sampled fixed-width views through
-`RaggedSeriesSupervisedConstraint`:
+`RaggedSeriesSupervisedTerm`:
 
 ```python
-constraint = phx.constraints.RaggedSeriesSupervisedConstraint(
+term = phx.terms.RaggedSeriesSupervisedTerm(
     "u",
     domain.component(),
     targets,
@@ -95,7 +95,7 @@ When you want full-sequence supervision but the global maximum length is much
 larger than most records, bucket by length:
 
 ```python
-constraints = phx.constraints.RaggedSeriesSupervisedConstraint.bucketed(
+terms = phx.terms.RaggedSeriesSupervisedTerm.bucketed(
     "u",
     domain.component(),
     targets,
@@ -108,15 +108,12 @@ constraints = phx.constraints.RaggedSeriesSupervisedConstraint.bucketed(
 )
 ```
 
-This returns one constraint per non-empty length bucket. Each bucket samples from
-its own case subset and materializes a prefix view whose width is that bucket's
+This returns one term per non-empty length bucket. Each bucket samples from its
+own case subset and materializes a prefix view whose width is that bucket's
 maximum valid length, so every case in the bucket is covered without padding to
-the global maximum length. The requested `num_cases` is split across buckets by
+the global maximum length. The requested case count is split across buckets by
 case count, and bucket losses are scaled so the combined estimator matches one
-full padded constraint with the same reduction while avoiding global padding. For
-many bucket shapes, call `solve(..., train_constraint_sample_size=1)` so JIT
-compiles one bucket-shaped optimizer step at a time instead of one large graph
-containing every bucket.
+full padded term with the same reduction while avoiding global padding.
 
 ::: phydrax.domain.RaggedSeriesDatasetDomain
     options:

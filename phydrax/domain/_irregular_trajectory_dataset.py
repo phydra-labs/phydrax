@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Literal, TYPE_CHECKING
 
 import coordax as cx
 import equinox as eqx
@@ -30,6 +30,10 @@ from ._trajectory_dataset import (
     TrajectoryMeasure,
     TrajectorySampling,
 )
+
+
+if TYPE_CHECKING:
+    from ._function import DomainFunction
 
 
 def _tree_leading_axis_size(tree: PyTree[ArrayLike], /) -> int:
@@ -310,6 +314,30 @@ class IrregularTrajectoryDatasetDomain(JointFactor):
     def size(self) -> int:
         """Number of trajectory cases."""
         return int(self.lengths.shape[0])
+
+    def field(self, values: ArrayLike, /) -> "DomainFunction":
+        """Expose case-aligned target values at every sampled trajectory time."""
+        from ._observation import indexed_field
+
+        return indexed_field(
+            self,
+            values,
+            size=self.size,
+            index_key=TRAJECTORY_CASE_INDEX_KEY,
+            owner="IrregularTrajectoryDatasetDomain.field",
+        )
+
+    def signal(
+        self,
+        values: ArrayLike,
+        /,
+        *,
+        interpolation: Literal["nearest", "linear", "cubic_hermite"] = "linear",
+    ) -> "DomainFunction":
+        """Expose padded trajectory observations as an interpolated field."""
+        from ._trajectory_signal import TrajectorySignal
+
+        return TrajectorySignal(self, values, interpolation=interpolation)
 
     @property
     def max_length(self) -> int:

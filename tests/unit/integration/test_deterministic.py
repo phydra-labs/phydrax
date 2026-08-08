@@ -91,6 +91,37 @@ def test_from_samples_attaches_target_measure_without_resampling():
     assert jnp.allclose(first.value.data, 1.0 / 3.0, atol=2e-2)
 
 
+def test_domain_sampling_plan_materializes_a_reducible_realization():
+    domain = _interval()
+    component = domain.component()
+    plan = phx.domain.PointSampling(
+        4096,
+        layout=phx.domain.SampleLayout((("x",),)),
+        design="uniform",
+    )
+    function = domain.Function("x")(lambda x: x**2)
+
+    realization = phx.integration.materialize(
+        phx.integration.mean_over(component),
+        plan,
+        key=jr.key(6),
+    )
+    estimate = phx.integration.reduce(function, realization)
+
+    assert estimate.num_evaluations == 4096
+    assert jnp.allclose(estimate.value.data, 1.0 / 3.0, atol=2e-2)
+
+
+def test_domain_sampling_plan_requires_explicit_key_ownership():
+    domain = _interval()
+
+    with pytest.raises(ValueError, match="requires key"):
+        phx.integration.materialize(
+            phx.integration.mean_over(domain.component()),
+            phx.domain.PointSampling(4),
+        )
+
+
 def test_scalar_boundary_and_interior_factors_form_one_product_rule():
     space = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     time = phx.domain.ScalarInterval(0.0, 2.0, label="t")

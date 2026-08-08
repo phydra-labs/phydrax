@@ -7,8 +7,9 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
-from phydrax.constraints import ContinuousInitialConstraint
-from phydrax.domain import FixedStart, Interval1d, SampleLayout, TimeInterval
+from phydrax.conditions import Initial
+from phydrax.domain import FixedStart, Interval1d, TimeInterval
+from phydrax.terms import ResidualPenalty
 
 
 def test_continuous_initial_constraint_zero_when_satisfied():
@@ -17,16 +18,33 @@ def test_continuous_initial_constraint_zero_when_satisfied():
     dom = geom @ time
 
     component = dom.component({"t": FixedStart()})
-    structure = SampleLayout((("x",),))
+    source = phx.integration.per_step(
+        phx.integration.mean_over(component),
+        phx.integration.MonteCarloPlan(8),
+    )
 
     u = dom.Function()(1.0)
-    c = ContinuousInitialConstraint(
-        "u",
-        component,
-        func=1.0,
-        sampling=phx.domain.PointSampling(8, layout=structure),
+    condition = Initial("u", component, target=1.0)
+    term = ResidualPenalty(condition, source)
+    loss = term.loss({"u": u}, key=jr.key(0))
+    assert jnp.allclose(loss, 0.0)
+
+
+def test_callable_initial_target_ignores_unbound_iteration_context():
+    geom = Interval1d(0.0, 1.0)
+    time = TimeInterval(0.0, 1.0)
+    domain = geom @ time
+    component = domain.component({"t": FixedStart()})
+    source = phx.integration.per_step(
+        phx.integration.mean_over(component),
+        phx.integration.MonteCarloPlan(8),
     )
-    loss = c.loss({"u": u}, key=jr.key(0))
+    u = domain.Function("x", "t")(lambda x, t: x[0])
+    condition = Initial("u", component, target=lambda x: x[0])
+    term = ResidualPenalty(condition, source)
+
+    loss = term.loss({"u": u}, key=jr.key(0), iter_=jnp.asarray(1))
+
     assert jnp.allclose(loss, 0.0)
 
 
@@ -36,13 +54,7 @@ def test_continuous_initial_constraint_requires_fixed_start():
     dom = geom @ time
 
     component = dom.component()
-    structure = SampleLayout((("x", "t"),))
     u = dom.Function()(0.0)
 
     with pytest.raises(ValueError):
-        ContinuousInitialConstraint(
-            "u",
-            component,
-            func=0.0,
-            sampling=phx.domain.PointSampling(8, layout=structure),
-        )
+        Initial("u", component, target=0.0)

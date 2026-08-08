@@ -12,7 +12,12 @@ import jax.random as jr
 import jax.tree_util as jtu
 from jaxtyping import Array, Key
 
-from phydrax.domain import ComponentSum, DomainFunction
+from phydrax.domain import (
+    ComponentSum,
+    DomainFunction,
+    GridSampling,
+    PointSampling,
+)
 
 from .._doc import DOC_KEY0
 from .._sampling import AntitheticDesign, design_capabilities
@@ -111,7 +116,17 @@ def _base_target(target: Any, /) -> Any:
     return target.base if isinstance(target, DensityTarget) else target
 
 
+
+def _is_domain_sampling_plan(plan: Any, /) -> bool:
+    return isinstance(plan, (PointSampling, GridSampling)) or (
+        isinstance(plan, tuple)
+        and bool(plan)
+        and all(isinstance(term, PointSampling) for term in plan)
+    )
+
 def _requires_random_key(plan: Any, /) -> bool:
+    if _is_domain_sampling_plan(plan):
+        return True
     if isinstance(plan, ProductIntegrationPlan):
         return any(_requires_random_key(factor) for factor in plan.plans.values())
     if isinstance(
@@ -181,7 +196,33 @@ def materialize(
     else:
         sampling_key, evaluation_key = jr.split(cast(Key[Array, ""], key))
     base = _base_target(target)
-    if isinstance(plan, FixedQuadraturePlan):
+    if _is_domain_sampling_plan(plan):
+        if not isinstance(base, ComponentTarget):
+            raise TypeError("Domain sampling requires a component target.")
+        component = base.component
+        if isinstance(component, ComponentSum):
+            if isinstance(plan, GridSampling):
+                raise TypeError("Component unions do not support GridSampling.")
+            points = component.sample(plan, key=sampling_key)
+            batch = tuple(
+                materialize_sampled_component(
+                    ComponentTarget(
+                        term,
+                        axes=base.axes,
+                        normalized=base.normalized,
+                    ),
+                    term_points,
+                )
+                for term, term_points in zip(component.terms, points, strict=True)
+            )
+        else:
+            if isinstance(plan, tuple):
+                raise TypeError(
+                    "A single component target requires one domain sampling plan."
+                )
+            points = component.sample(plan, key=sampling_key)
+            batch = materialize_sampled_component(base, points)
+    elif isinstance(plan, FixedQuadraturePlan):
         if isinstance(base, ComponentTarget):
             batch = materialize_fixed_component(base, plan)
         elif isinstance(base, ProbabilityTarget):
@@ -324,6 +365,16 @@ def reduce(
         return integrate_multilevel(integrand, realization.batch, **kwargs)
     base = _base_target(target)
     if plan is None and isinstance(base, ComponentTarget):
+        if isinstance(target, DensityTarget):
+            return integrate_fixed_density(
+                integrand, target, realization.batch, key=key, kwargs=kwargs
+            )
+        return integrate_fixed_component(
+            integrand, target, realization.batch, key=key, kwargs=kwargs
+        )
+    if _is_domain_sampling_plan(plan):
+        if not isinstance(base, ComponentTarget):
+            raise TypeError("Domain sampling requires a component target.")
         if isinstance(target, DensityTarget):
             return integrate_fixed_density(
                 integrand, target, realization.batch, key=key, kwargs=kwargs

@@ -1,9 +1,9 @@
 # Splits
 
 Index split helpers return JAX integer arrays. Use them with
-`SupervisedDatasetConstraint(indices=...)`,
-`RaggedTimeSeriesDataConstraint(case_indices=...)`, and
-`TrajectoryCaseDataConstraint(case_indices=...)`.
+`SupervisedDatasetTerm(indices=...)`,
+`RaggedTimeSeriesDataTerm(case_indices=...)`, and
+`TrajectoryCaseDataTerm(case_indices=...)`.
 
 ```python
 import jax.random as jr

@@ -70,7 +70,7 @@ def test_operator_valued_likelihood_constraint_scores_transformed_observation():
         return row[0] + row[1]
 
     targets = 2.0 * (data[:, 0] + data[:, 1])
-    constraint = phx.constraints.SupervisedLikelihoodConstraint(
+    constraint = phx.terms.SupervisedLikelihoodTerm(
         "u",
         domain.component(),
         targets,

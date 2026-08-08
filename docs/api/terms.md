@@ -1,0 +1,164 @@
+# Scalar terms
+
+Raw scalar terms for `FunctionalSolver`. Unlike penalties built from conditions and
+integration sources, these terms do not require squared-residual semantics or
+nonnegativity.
+
+`IntegralFunctional` uses the same target, plan, and realization contract as
+[`phydrax.integration`](integration.md).
+
+## Sampled term batches
+
+`AbstractSamplingTerm` separates expensive random-label construction from the
+differentiated scalar loss. `FunctionalSolver` calls each sampled term's
+`sample(key=...)` exactly once per optimizer update, before the compiled
+value-and-gradient call, and threads that immutable PyTree batch through every
+same-update evaluation. Ordinary terms receive no batch.
+
+Use a fixed batch for common-random-number optimization and deterministic replay.
+Use `sampling_mode="resample"` only when target refresh is part of the estimator.
+Different sampled terms receive deterministic distinct subkeys. The sampling
+policy must remain static during a compiled training run; changing probe count, path
+count, or chunk shape requires a separate compilation.
+
+## Feynman--Kac regression
+
+`FeynmanKacRegressionTerm` fits value and optional control fields to frozen
+global-in-time labels generated from a `BSDEProblem`. Targets and their reported
+Monte Carlo uncertainty are stopped before differentiation. Value and control weights
+are explicit and zero control weight does not require a control model or labels.
+
+::: phydrax.terms.FeynmanKacRegressionTerm
+
+---
+
+::: phydrax.terms.FeynmanKacRegressionDiagnostics
+
+## Randomized residual terms
+
+`RandomizedResidualTerm` consumes raw residual realizations rather than a
+pre-averaged stochastic operator estimate. This distinction is required for
+estimator-aware squaring:
+
+- `loss_mode="u_statistic"` estimates a squared mean from distinct probe pairs and
+  is unbiased, but an individual batch may be negative;
+- `loss_mode="independent_product"` multiplies two independently generated residual
+  ensembles;
+- `loss_mode="plug_in"` squares the sample mean and is nonnegative but biased upward
+  by estimator variance.
+
+Signed unbiased terms are incompatible with naive `keep_best=True` model
+selection: a more negative noisy batch is not a better nonnegative mathematical loss.
+Use fixed probes or independent validation for selection, and inspect
+`RandomizedResidualDiagnostics` rather than treating the training scalar as a
+certificate of PDE error.
+
+::: phydrax.terms.RandomizedResidualTerm
+
+---
+
+::: phydrax.terms.RandomizedResidualBatch
+
+---
+
+::: phydrax.terms.RandomizedResidualDiagnostics
+
+## Particle score matching
+
+`ScoreMatchingTerm` learns a score field
+\(s_\theta(t,x)\approx\nabla_x\log p_t(x)\) from state-time particles without
+normalizing or reconstructing a density. `method="exact"` computes the score
+divergence exactly, `method="implicit"` estimates it with JVP probes, and
+`method="sliced"` uses projected score matching. The score output must have exactly
+the state shape.
+
+Trajectory masks, per-node weights, path identities, and time coverage are retained.
+Reported path uncertainty reduces over independent path clusters, not flattened
+state-time nodes. A score field is the delivered quantity; normalized-density
+reconstruction is a separate problem.
+
+::: phydrax.terms.ScoreMatchingTerm
+
+---
+
+::: phydrax.terms.ScoreMatchingPolicy
+
+---
+
+::: phydrax.terms.ScoreMatchingDiagnostics
+
+## Supporting contracts
+
+`BatchSampler` and `ResidualEvaluator` are the callable protocols used by randomized
+residual terms. `RandomizedResidualLossMode` and
+`RandomizedResidualSamplingMode` are the corresponding literal policy types.
+`LabelProvider` is the Feynman--Kac label callback contract.
+`ScoreSampleProvider`, `ScoreMatchingMethod`, and `ScoreMatchingSamplingMode` provide
+the equivalent score-matching contracts.
+
+::: phydrax.terms.RandomizedResidualSamples
+
+---
+
+::: phydrax.terms.ScoreMatchingBatch
+
+## Base term types
+
+::: phydrax.terms.AbstractScalarTerm
+
+::: phydrax.terms.AbstractSamplingTerm
+
+::: phydrax.terms.IntegralFunctional
+
+## Adaptive residual collocation
+
+Adaptive collocation is a sampling policy for pointwise-capable terms, not a
+condition type. Attach a policy through
+`integration.adaptive(target, initial_plan, policy)` and pass that source to a
+`ResidualPenalty`. The solver owns the resulting population lifecycle.
+
+::: phydrax.sampling.collocation.AbstractCollocationPolicy
+
+---
+
+::: phydrax.sampling.collocation.CollocationPolicy
+
+---
+
+::: phydrax.sampling.collocation.CoresetCollocationPolicy
+
+---
+
+::: phydrax.sampling.collocation.SeparableCollocationPolicy
+
+---
+
+::: phydrax.sampling.collocation.HierarchicalAxisPolicy
+
+---
+
+::: phydrax.sampling.collocation.ControlledCollocationPolicy
+
+---
+
+::: phydrax.sampling.collocation.RefreshSchedule
+
+---
+
+::: phydrax.sampling.collocation.ResidualMonitor
+
+---
+
+::: phydrax.sampling.collocation.RefreshGuard
+
+---
+
+::: phydrax.sampling.collocation.AdaptationBudget
+
+---
+
+::: phydrax.sampling.collocation.CoverageAnchors
+
+---
+
+::: phydrax.sampling.collocation.collocation_policy_support

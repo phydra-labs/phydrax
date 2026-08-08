@@ -67,22 +67,23 @@ For this runnable example, we choose a simple analytic “operator” that maps 
 
     # Sample empirical rows in one point block and x on an explicit axis.
     nx = 32
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=domain.component(),
-        operator=residual,
-        constraint_vars="u",
-        sampling=phx.domain.GridSampling(
-            {"x": phx.domain.UniformAxisSpec(nx)},
-            dense=phx.domain.PointSampling(
-                8,
-                layout=phx.domain.SampleLayout((("data",),)),
-                design="uniform",
-            ),
+    component = domain.component()
+    sampling = phx.domain.GridSampling(
+        {"x": phx.domain.UniformAxisSpec(nx)},
+        dense=phx.domain.PointSampling(
+            8,
+            layout=phx.domain.SampleLayout((("data",),)),
+            design="uniform",
         ),
-        reduction="mean",
     )
+    condition = phx.conditions.Residual("u", component, residual)
+    source = phx.integration.per_step(
+        phx.integration.mean_over(component),
+        sampling,
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
 
-    solver = phx.solver.FunctionalSolver(functions={"u": u_hat}, constraints=[constraint])
+    solver = phx.solver.FunctionalSolver(functions={"u": u_hat}, terms=[term])
     solver = solver.solve(num_iter=20, optim=optax.adam(1e-3), seed=0)
     ```
 
@@ -1090,7 +1091,7 @@ prediction = model(multi_input_batch)
 
 ## Data plus native physics at different resolutions
 
-PINO is expressed by composing constraints around one operator-backed
+PINO is expressed by composing terms around one operator-backed
 `DomainFunction`. The supervised term may use a coarse query set while the
 physics term uses a separate fine query set.
 
@@ -1099,7 +1100,7 @@ coarse_batch = batch
 coarse_target = jnp.zeros(query.sample_shape)
 fine_physics_batch = batch
 
-data_term = phx.constraints.OperatorDatasetConstraint(
+data_term = phx.terms.OperatorDatasetTerm(
     "u",
     coarse_batch,
     coarse_target,
@@ -1109,7 +1110,7 @@ data_term = phx.constraints.OperatorDatasetConstraint(
 
 # Domain.Model retains the trainable operator in the solver function tree.
 operator_function = geom.Model("x")(model)
-physics_term = phx.constraints.DifferentialPhysicsInformedOperatorConstraint(
+physics_term = phx.terms.DifferentialPhysicsInformedOperatorTerm(
     "u",
     fine_physics_batch,
     geom,
@@ -1117,10 +1118,10 @@ physics_term = phx.constraints.DifferentialPhysicsInformedOperatorConstraint(
     lambda u: phx.operators.laplacian(u, var="x"),
     loss="l2",
 )
-constraints = phx.constraints.operator_constraint_suite(data_term, physics_term)
+terms = phx.terms.operator_term_suite(data_term, physics_term)
 ```
 
-`DifferentialPhysicsInformedOperatorConstraint` fixes every source function in
+`DifferentialPhysicsInformedOperatorTerm` fixes every source function in
 the `OperatorBatch`, constructs differentiable point queries, and applies the
 residual `DomainFunction` at the query coordinates. Ordinary PhydraX
 differential operators therefore remain the single derivative implementation.

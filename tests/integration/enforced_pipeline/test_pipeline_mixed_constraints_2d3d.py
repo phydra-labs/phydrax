@@ -8,7 +8,6 @@ import jax.numpy as jnp
 
 import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.constraints import enforce_dirichlet, FunctionalConstraint
 from phydrax.domain import (
     Boundary,
     FixedStart,
@@ -16,11 +15,11 @@ from phydrax.domain import (
     SampleLayout,
     TimeInterval,
 )
-from phydrax.operators.differential import grad
-from phydrax.solver import (
-    EnforcedConstraintPipelines,
-    EnforcedInteriorData,
-    SingleFieldEnforcedConstraint,
+from phydrax.enforcement import (
+    enforce_dirichlet,
+    EnforcementProgram,
+    EnforcementSpec,
+    InteriorAnchors,
 )
 
 
@@ -59,57 +58,43 @@ def test_mixed_constraints_2d_transient():
     full_boundary = domain.component({"x": Boundary()})
     initial = domain.component({"t": FixedStart()})
 
-    constraints = [
-        SingleFieldEnforcedConstraint(
-            "u",
-            left,
-            lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
+    specs = [
+        EnforcementSpec(
+            phx.conditions.Dirichlet("u", left, target=1.0),
+            kind="custom",
+            transform=lambda f, _: enforce_dirichlet(
+                f, full_boundary, var="x", target=1.0
+            ),
         ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            right,
-            lambda f: enforce_dirichlet(f, full_boundary, var="x", target=2.0),
+        EnforcementSpec(
+            phx.conditions.Dirichlet("u", right, target=2.0),
+            kind="custom",
+            transform=lambda f, _: enforce_dirichlet(
+                f, full_boundary, var="x", target=2.0
+            ),
         ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: enforce_dirichlet(f, initial, var="t", target=3.0),
-            time_derivative_order=0,
-            initial_target=3.0,
-        ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: enforce_dirichlet(f, initial, var="t", target=3.0),
-            time_derivative_order=1,
-            initial_target=1.0,
-        ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: enforce_dirichlet(f, initial, var="t", target=3.0),
-            time_derivative_order=2,
-            initial_target=0.0,
-        ),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=3.0, order=0)),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=1.0, order=1)),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=0.0, order=2)),
     ]
 
     sensors = jnp.array([[0.2, 0.1], [0.4, -0.2]], dtype=float)
     times = jnp.array([0.25, 0.75], dtype=float)
     sensor_values = jnp.array([[4.0, 5.0], [6.0, 7.0]], dtype=float)
-    interior = EnforcedInteriorData(
+    interior = InteriorAnchors(
         "u",
         sensors=sensors,
         times=times,
         sensor_values=sensor_values,
     )
 
-    pipelines = EnforcedConstraintPipelines.build(
+    program = EnforcementProgram.build(
         functions={"u": u},
-        constraints=constraints,
-        interior_data=[interior],
+        specs=specs,
+        interior=[interior],
         num_reference=256,
     )
-    u_enforced = pipelines.apply({"u": u})["u"]
+    u_enforced = program.apply({"u": u})["u"]
 
     out = _eval(
         domain,
@@ -129,12 +114,18 @@ def test_mixed_constraints_2d_transient():
     out = _eval(domain, u_enforced, xs=xs, ts=ts)
     assert jnp.allclose(out, expected, atol=1e-3)
 
-    soft = FunctionalConstraint.from_operator(
-        component=domain.component({"x": Boundary()}),
-        operator=lambda f: grad(f, var="x"),
-        constraint_vars="u",
-        sampling=phx.domain.PointSampling(16, layout=SampleLayout((("x", "t"),))),
-        reduction="mean",
+    soft_condition = phx.conditions.Neumann(
+        "u",
+        domain.component({"x": Boundary()}),
+        var="x",
+        target=0.0,
+    )
+    soft = phx.terms.ResidualPenalty(
+        soft_condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(soft_condition.on),
+            phx.integration.MonteCarloPlan(16),
+        ),
     )
     loss = eqx.filter_jit(lambda: soft.loss({"u": u_enforced}))()
     assert jnp.isfinite(loss)
@@ -156,57 +147,43 @@ def test_mixed_constraints_3d_transient():
     full_boundary = domain.component({"x": Boundary()})
     initial = domain.component({"t": FixedStart()})
 
-    constraints = [
-        SingleFieldEnforcedConstraint(
-            "u",
-            left,
-            lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
+    specs = [
+        EnforcementSpec(
+            phx.conditions.Dirichlet("u", left, target=1.0),
+            kind="custom",
+            transform=lambda f, _: enforce_dirichlet(
+                f, full_boundary, var="x", target=1.0
+            ),
         ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            right,
-            lambda f: enforce_dirichlet(f, full_boundary, var="x", target=2.0),
+        EnforcementSpec(
+            phx.conditions.Dirichlet("u", right, target=2.0),
+            kind="custom",
+            transform=lambda f, _: enforce_dirichlet(
+                f, full_boundary, var="x", target=2.0
+            ),
         ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: enforce_dirichlet(f, initial, var="t", target=3.0),
-            time_derivative_order=0,
-            initial_target=3.0,
-        ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: enforce_dirichlet(f, initial, var="t", target=3.0),
-            time_derivative_order=1,
-            initial_target=1.0,
-        ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: enforce_dirichlet(f, initial, var="t", target=3.0),
-            time_derivative_order=2,
-            initial_target=0.0,
-        ),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=3.0, order=0)),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=1.0, order=1)),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=0.0, order=2)),
     ]
 
     sensors = jnp.array([[0.2, 0.1, -0.1], [0.4, -0.2, 0.3]], dtype=float)
     times = jnp.array([0.25, 0.75], dtype=float)
     sensor_values = jnp.array([[4.0, 5.0], [6.0, 7.0]], dtype=float)
-    interior = EnforcedInteriorData(
+    interior = InteriorAnchors(
         "u",
         sensors=sensors,
         times=times,
         sensor_values=sensor_values,
     )
 
-    pipelines = EnforcedConstraintPipelines.build(
+    program = EnforcementProgram.build(
         functions={"u": u},
-        constraints=constraints,
-        interior_data=[interior],
+        specs=specs,
+        interior=[interior],
         num_reference=256,
     )
-    u_enforced = pipelines.apply({"u": u})["u"]
+    u_enforced = program.apply({"u": u})["u"]
 
     out = _eval(
         domain,
@@ -226,12 +203,18 @@ def test_mixed_constraints_3d_transient():
     out = _eval(domain, u_enforced, xs=xs, ts=ts)
     assert jnp.allclose(out, expected, atol=1e-3)
 
-    soft = FunctionalConstraint.from_operator(
-        component=domain.component({"x": Boundary()}),
-        operator=lambda f: grad(f, var="x"),
-        constraint_vars="u",
-        sampling=phx.domain.PointSampling(16, layout=SampleLayout((("x", "t"),))),
-        reduction="mean",
+    soft_condition = phx.conditions.Neumann(
+        "u",
+        domain.component({"x": Boundary()}),
+        var="x",
+        target=0.0,
+    )
+    soft = phx.terms.ResidualPenalty(
+        soft_condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(soft_condition.on),
+            phx.integration.MonteCarloPlan(16),
+        ),
     )
     loss = eqx.filter_jit(lambda: soft.loss({"u": u_enforced}))()
     assert jnp.isfinite(loss)

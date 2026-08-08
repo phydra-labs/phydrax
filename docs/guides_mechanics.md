@@ -162,14 +162,17 @@ assert jnp.allclose(
 assert jnp.allclose(self_bracket.func(jnp.asarray([0.2]), jnp.asarray([0.3])), 0.0)
 ```
 
-## Residual constraints versus raw objectives
+## Residual penalties versus signed objectives
 
 These are different mathematical operations:
 
-1. **Strong residual minimization** puts an Euler–Lagrange or Hamiltonian residual in
-   a `FunctionalConstraint`. The constraint reduces a nonnegative pointwise penalty.
-2. **Energy minimization** puts a signed density in `IntegralFunctional`. The returned
-   integral is not squared.
+1. **Strong residual minimization** represents an Euler–Lagrange or Hamiltonian
+   residual with `phydrax.conditions.Residual`, samples it through an explicit
+   `phydrax.integration` source, and evaluates it with
+   `phydrax.terms.ResidualPenalty`. The penalty reduces a nonnegative pointwise
+   squared magnitude.
+2. **Energy minimization** puts a signed density in
+   `phydrax.terms.IntegralFunctional`. The returned integral is not squared.
 3. **Stationary action** asks for a stationary point of
    $\mathcal S[q]=\int L(q,\dot q,t)\,dt$. A stationary point need not minimize the
    action, so sending raw action to a gradient-minimizing solver is not generally valid.
@@ -180,7 +183,7 @@ $$
 \mathcal J[u]=\int_\Omega\left(\frac12|\nabla u|^2-fu\right)\,dx.
 $$
 
-Use `phydrax.objectives.IntegralFunctional` for this signed integral and enforce
+Use `phydrax.terms.IntegralFunctional` for this signed integral and enforce
 essential boundary conditions in the ansatz. See the
 [mechanics cookbook](cookbook/mechanics.md) for an end-to-end example.
 

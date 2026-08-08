@@ -13,12 +13,17 @@ SIGMA_Z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=complex)
 
 
 def _schrodinger_constraint(time, hamiltonian):
-    return phx.constraints.FunctionalConstraint.from_operator(
-        component=time.component(),
-        operator=lambda state: phx.operators.schrodinger_residual(state, hamiltonian),
-        constraint_vars="psi",
-        sampling=phx.domain.PointSampling(32, layout=phx.domain.SampleLayout((("t",),))),
-        reduction="mean",
+    condition = phx.conditions.Residual(
+        "psi",
+        time.component(),
+        lambda state: phx.operators.schrodinger_residual(state, hamiltonian),
+    )
+    return phx.terms.ResidualPenalty(
+        condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(condition.on),
+            phx.integration.MonteCarloPlan(32),
+        ),
     )
 
 
@@ -36,14 +41,8 @@ def test_complex_schrodinger_residual_runs_through_functional_solver():
         return jnp.asarray([jnp.exp(-0.3j * omega * t), 0.0j])
 
     constraint = _schrodinger_constraint(time, hamiltonian)
-    exact_solver = phx.solver.FunctionalSolver(
-        functions={"psi": exact_state},
-        constraints=[constraint],
-    )
-    perturbed_solver = phx.solver.FunctionalSolver(
-        functions={"psi": perturbed_state},
-        constraints=[constraint],
-    )
+    exact_solver = phx.solver.FunctionalSolver(functions={"psi": exact_state}, terms=[constraint], )
+    perturbed_solver = phx.solver.FunctionalSolver(functions={"psi": perturbed_state}, terms=[constraint], )
 
     loss_fn = eqx.filter_jit(lambda solver, key: solver.loss(key=key))
     exact_loss = loss_fn(exact_solver, jr.key(0))

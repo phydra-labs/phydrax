@@ -116,9 +116,14 @@ def test_simplicial_hodge_laplacian_integrates_with_graph_model_and_constraints(
 
     model = residual(u)
     batch = vertices.sample(phx.domain.PointSampling(3, layout=structure))
-    constraint = phx.constraints.FunctionalConstraint.from_operator(component=vertices,
-    operator=lambda f: residual(f) - model,
-    constraint_vars="u", sampling=phx.domain.PointSampling(3, layout=structure), )
+    condition = phx.conditions.Residual(
+        "u", vertices, lambda f: residual(f) - model
+    )
+    source = phx.integration.per_step(
+        phx.integration.mean_over(vertices),
+        phx.domain.PointSampling(3, layout=structure),
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
 
     assert jnp.allclose(model(batch).data, jnp.array([-1.0, 2.0, -1.0]))
-    assert constraint.loss({"u": u}, key=jr.key(0)) < 1e-12
+    assert term.loss({"u": u}, key=jr.key(0)) < 1e-12

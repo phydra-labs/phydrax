@@ -12,15 +12,15 @@ import optax
 from jaxtyping import ArrayLike
 
 from .._strict import StrictModule
-from ..objectives._deep_bsde import (
+from ..stochastic._bsde import BSDEPathBatch, BSDEProblem
+from ..terms._deep_bsde import (
     deep_bsde_rollout,
     deep_bsde_shooting_diagnostics,
     DeepBSDERollout,
     DeepBSDESamplingMode,
     DeepBSDEShootingDiagnostics,
-    DeepBSDEShootingObjective,
+    DeepBSDEShootingTerm,
 )
-from ..stochastic._bsde import BSDEPathBatch, BSDEProblem
 from ._functional_solver import FunctionalSolver
 
 
@@ -70,7 +70,7 @@ def solve_deep_bsde(
     if optim is None:
         optim = optax.adam(1e-3)
     root_key = jr.key(int(seed))
-    objective = DeepBSDEShootingObjective(
+    objective = DeepBSDEShootingTerm(
         problem,
         initial_value_name=initial_value_name,
         control_name=control_name,
@@ -81,9 +81,9 @@ def solve_deep_bsde(
         label="deep-bsde-shooting",
     )
     temporary = eqx.tree_at(
-        lambda value: value.objectives,
+        lambda value: (value.terms, value.collocation),
         solver,
-        solver.objectives + (objective,),
+        (solver.terms + (objective,), solver.collocation + (None,)),
     )
     trained = temporary.solve(
         num_iter=steps,
@@ -94,9 +94,9 @@ def solve_deep_bsde(
         log_every=log_every,
     )
     trained = eqx.tree_at(
-        lambda value: value.objectives,
+        lambda value: (value.terms, value.collocation),
         trained,
-        trained.objectives[:-1],
+        (trained.terms[:-1], trained.collocation[:-1]),
     )
     paths = (
         problem.sample(jr.fold_in(root_key, 200))

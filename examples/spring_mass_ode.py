@@ -69,8 +69,10 @@ def _(mo):
     \dot{x}_1(0)=\dot{x}_2(0)=\dot{x}_3(0)=0.
     $$
 
-    We enforce all six initial conditions exactly by construction, then train with
-    a single matrix-form residual loss.
+    The ODE and initial conditions state the physics. A per-step integration
+    source realizes the ODE condition, `ResidualPenalty` produces its scalar
+    loss, and the enforcement compiler makes all six initial values exact before
+    `FunctionalSolver` evaluates the term.
     """
     )
     return
@@ -83,9 +85,11 @@ def _(mo):
             r"""
             ## Why this setup is strong
 
-            1. ICs are enforced directly in the ansatz (no IC penalty balancing).
-            2. Training objective focuses on residual physics only.
-            3. Time derivatives use AD with JVP (`dt_n(..., order=2, ad_engine="jvp")`).
+            1. `Initial` conditions state position and velocity semantics.
+            2. Compiled enforcement satisfies them without penalty balancing.
+            3. A per-step source realizes the residual as a normalized mean.
+            4. `ResidualPenalty` is the solver's single scalar term.
+            5. Time derivatives use AD with JVP (`dt_n(..., order=2, ad_engine="jvp")`).
             """
         ),
         kind="success",
@@ -180,9 +184,8 @@ def _(eqx, jax, jnp, phx):
                 f"Expected positive physical time span, got t_min={t_min_phys}, t_max={t_max_phys}."
             )
 
-        # Train on normalized time s in [0, 1], while preserving physical ODE scaling.
+        # Train on normalized time s in [0, 1], preserving physical ODE scaling.
         time_domain = phx.domain.TimeInterval(0.0, 1.0)
-        structure_t = phx.domain.SampleLayout((("t",),))
         x_model = phx.nn.SeparableMLP(
             in_size="scalar",
             out_size=3,
@@ -194,24 +197,24 @@ def _(eqx, jax, jnp, phx):
         )
         x_raw = time_domain.Model("t")(x_model)
 
-        @time_domain.Function("t")
-        def tau(t):
-            if isinstance(t, tuple):
-                if len(t) != 1:
-                    raise ValueError(
-                        f"Expected a single scalar-axis tuple input, got {len(t)} axes."
-                    )
-                t = t[0]
-            return t
-
-        @time_domain.Function()
-        def x_anchor():
-            return jnp.asarray([1.0, 0.0, 0.0], dtype=float)
-
-        # Hard IC ansatz is intentionally used here: it yields better residual
-        # conditioning for this ODE than the generic initial-overlay parameterization.
-        tau2 = tau * tau
-        x = x_anchor + tau2 * x_raw
+        initial = time_domain.component({"t": phx.domain.FixedStart()})
+        initial_position = phx.conditions.Initial(
+            "x",
+            initial,
+            target=jnp.asarray([1.0, 0.0, 0.0], dtype=float),
+            evolution_var="t",
+        )
+        initial_velocity = phx.conditions.Initial(
+            "x",
+            initial,
+            target=jnp.zeros((3,), dtype=float),
+            evolution_var="t",
+            order=1,
+        )
+        enforcement = (
+            phx.enforcement.EnforcementSpec(initial_position),
+            phx.enforcement.EnforcementSpec(initial_velocity),
+        )
 
         k_mat = jnp.asarray(
             [
@@ -222,23 +225,26 @@ def _(eqx, jax, jnp, phx):
             dtype=float,
         )
 
-        residual = phx.constraints.ContinuousPointwiseInteriorConstraint(
+        residual = phx.conditions.Residual(
             "x",
-            time_domain,
-            operator=lambda x: (
+            time_domain.component(),
+            lambda x: (
                 (1.0 / (t_span * t_span))
                 * phx.operators.dt_n(x, var="t", order=2, ad_engine="jvp")
                 + phx.operators.einsum("ij,...j->...i", k_mat, x)
             ),
-            num_points=num_t_interior,
-            structure=structure_t,
-            reduction="mean",
             label="ode_matrix",
         )
+        source = phx.integration.per_step(
+            phx.integration.mean_over(residual.on),
+            phx.integration.MonteCarloPlan(int(num_t_interior)),
+        )
+        penalty = phx.terms.ResidualPenalty(residual, source)
 
         solver = phx.solver.FunctionalSolver(
-            functions={"x": x},
-            constraints=[residual],
+            functions={"x": x_raw},
+            terms=(penalty,),
+            enforcement=enforcement,
         )
 
         model_params = count_parameters(x_model)

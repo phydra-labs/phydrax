@@ -531,13 +531,13 @@ def test_operator_constraints_compose_data_and_physics_losses():
     model = phx.nn.FNO(width=4, depth=1, n_modes=(3,), key=jr.key(0))
     domain = phx.domain.DatasetDomain(jnp.ones((2, 8))) @ phx.domain.Interval1d(0.0, 1.0)
     function = domain.Model("data", "x")(model)
-    data = phx.constraints.OperatorDatasetConstraint(
+    data = phx.terms.OperatorDatasetTerm(
         "u", batch, jnp.zeros((2, 8)), relative=False
     )
-    physics = phx.constraints.PhysicsInformedOperatorConstraint(
+    physics = phx.terms.PhysicsInformedOperatorTerm(
         "u", batch, lambda prediction, _: prediction
     )
-    suite = phx.constraints.operator_constraint_suite(data, physics)
+    suite = phx.terms.operator_term_suite(data, physics)
     assert len(suite) == 2
     assert jnp.isfinite(data.loss({"u": function}, key=jr.key(1)))
     assert jnp.isfinite(physics.loss({"u": function}, key=jr.key(1)))

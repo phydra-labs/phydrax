@@ -9,8 +9,8 @@ import numpy as np
 import pytest
 
 import phydrax as phx
-from phydrax.constraints import enforce_dirichlet
 from phydrax.domain import Boundary
+from phydrax.enforcement import enforce_dirichlet
 
 
 def test_geometry2d_sdf_signs_and_boundary():

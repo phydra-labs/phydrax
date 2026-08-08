@@ -107,8 +107,9 @@ def test_graph_domain_integral_measure_modes():
     assert jnp.allclose(count_integral.data, 3.0)
 
 
-def test_graph_domain_constraint_zero_residual():
+def test_graph_domain_residual_penalty_is_zero():
     domain = phx.domain.GraphDomain(_make_graph())
+    component = domain.component({"graph": phx.domain.Nodes()})
     structure = phx.domain.SampleLayout((("graph",),))
 
     @domain.Function("graph")
@@ -116,12 +117,12 @@ def test_graph_domain_constraint_zero_residual():
         del node
         return 0.0
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=domain.component({"graph": phx.domain.Nodes()}),
-        operator=lambda f: f,
-        constraint_vars="u",
-        sampling=phx.domain.PointSampling(3, layout=structure),
+    condition = phx.conditions.Residual("u", component, lambda f: f)
+    source = phx.integration.per_step(
+        phx.integration.mean_over(component),
+        phx.domain.PointSampling(3, layout=structure),
     )
+    term = phx.terms.ResidualPenalty(condition, source)
 
-    loss = constraint.loss({"u": u}, key=jr.key(2))
+    loss = term.loss({"u": u}, key=jr.key(2))
     assert loss < 1e-12

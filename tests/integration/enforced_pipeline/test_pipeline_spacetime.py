@@ -6,8 +6,8 @@ import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.constraints import enforce_dirichlet
 from phydrax.domain import (
     Boundary,
     FixedStart,
@@ -16,11 +16,7 @@ from phydrax.domain import (
     SampleLayout,
     TimeInterval,
 )
-from phydrax.solver import (
-    EnforcedConstraintPipelines,
-    EnforcedInteriorData,
-    SingleFieldEnforcedConstraint,
-)
+from phydrax.enforcement import EnforcementProgram, EnforcementSpec, InteriorAnchors
 
 
 def _paired_batch(domain, xs, ts):
@@ -51,15 +47,11 @@ def test_enforced_pipeline_boundary_initial_interior_spacetime():
     boundary_component = domain.component({"x": Boundary()})
     initial_component = domain.component({"t": FixedStart()})
 
-    boundary_constraint = SingleFieldEnforcedConstraint(
-        "u",
-        boundary_component,
-        lambda f: enforce_dirichlet(f, boundary_component, var="x", target=5.0),
+    boundary_constraint = EnforcementSpec(
+        phx.conditions.Dirichlet("u", boundary_component, target=5.0)
     )
-    initial_constraint = SingleFieldEnforcedConstraint(
-        "u",
-        initial_component,
-        lambda f: enforce_dirichlet(f, initial_component, var="t", target=2.0),
+    initial_constraint = EnforcementSpec(
+        phx.conditions.Initial("u", initial_component, target=2.0)
     )
 
     anchors = {
@@ -67,17 +59,17 @@ def test_enforced_pipeline_boundary_initial_interior_spacetime():
         "t": jnp.array([0.6, 0.4], dtype=float),
     }
     anchor_values = jnp.array([3.0, 4.0], dtype=float)
-    interior = EnforcedInteriorData(
+    interior = InteriorAnchors(
         "u",
         points=anchors,
         values=anchor_values,
         eps_snap=1e-12,
     )
 
-    pipelines = EnforcedConstraintPipelines.build(
+    pipelines = EnforcementProgram.build(
         functions={"u": u},
-        constraints=[boundary_constraint, initial_constraint],
-        interior_data=[interior],
+        specs=[boundary_constraint, initial_constraint],
+        interior=[interior],
         num_reference=256,
     )
     u_enforced = pipelines.apply({"u": u})["u"]

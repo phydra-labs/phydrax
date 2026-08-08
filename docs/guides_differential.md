@@ -141,8 +141,8 @@ $$
 The diffusion factor is required in this mode; covariance alone does not
 identify the correction. See
 [API → Operators → Differential](api/operators/differential.md) for shapes and
-[API → Constraints → Continuous](api/constraints/continuous.md) for stationary
-and time-dependent residual constructors.
+[API → Conditions](api/conditions/index.md) for stationary and time-dependent
+residual constructors.
 
 ## Backends: autodiff, finite differences, spectral/basis
 

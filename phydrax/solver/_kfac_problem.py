@@ -17,10 +17,11 @@ from jaxtyping import Array, PyTree
 
 from phydrax._doc import DOC_KEY0
 from phydrax._trainable import combine_trainable
-from phydrax.constraints import FunctionalConstraint
-from phydrax.domain import DomainFunction, GridBatch, PointBatch
+from phydrax.domain import DomainFunction
+from phydrax.integration import IntegrationRealization
+from phydrax.integration._execution import resolve_integration
 from phydrax.operators.differential._runtime import derivative_runtime_context
-from phydrax.solver._model_losses import function_model_loss_values
+from phydrax.terms import ResidualPenalty
 
 from ..optim._kfac._blocks import (
     AffineFactorObservation,
@@ -32,76 +33,71 @@ from ._kfac_layout import ParameterLayout
 
 
 @dataclass(frozen=True, slots=True)
-class FrozenConstraintTerm:
-    """One sampled FunctionalConstraint reused for curvature, gradient, and search."""
+class FrozenResidualTerm:
+    """One materialized ResidualPenalty reused for curvature, gradient, and search."""
 
-    constraint: FunctionalConstraint
-    batch: PointBatch | GridBatch | tuple[PointBatch, ...]
-    batch_weight: cx.Field | None
-    key: Array
+    term: ResidualPenalty
+    realization: IntegrationRealization
     scale: float = 1.0
 
 
-def materialize_constraint_terms(
-    constraints: Sequence[Any],
+def materialize_frozen_terms(
+    terms: Sequence[Any],
     collocation: Sequence[Any | None],
     /,
     *,
     key: Array = DOC_KEY0,
     scale: float = 1.0,
-) -> tuple[FrozenConstraintTerm, ...]:
-    """Freeze one sampled batch representation for every active constraint."""
+) -> tuple[FrozenResidualTerm, ...]:
+    """Freeze one integration realization for every active training term."""
 
-    keys = jr.split(key, len(constraints))
-    terms: list[FrozenConstraintTerm] = []
-    for constraint, population, term_key in zip(
-        constraints,
+    keys = jr.split(key, len(terms))
+    frozen: list[FrozenResidualTerm] = []
+    for term, population, term_key in zip(
+        terms,
         collocation,
         keys,
         strict=True,
     ):
-        sampling_key, evaluation_key = jr.split(term_key)
-        if not isinstance(constraint, FunctionalConstraint):
+        realization_key = term_key
+        if not isinstance(term, ResidualPenalty):
             raise TypeError(
-                "KFAC supports FunctionalConstraint terms only; "
-                f"got {type(constraint).__name__}."
+                "KFAC supports ResidualPenalty training terms only; "
+                f"got {type(term).__name__}."
             )
         if population is None:
-            batch = constraint.sample(key=sampling_key)
-            batch_weight = None
+            realization = resolve_integration(term.source, key=realization_key)
         else:
-            policy = constraint.collocation_policy
-            if policy is None:
-                raise ValueError(
-                    "KFAC received adaptive collocation state without a policy."
-                )
-            batch, batch_weight = policy.loss_batch_and_weight(population)
-        terms.append(
-            FrozenConstraintTerm(
-                constraint=constraint,
-                batch=batch,
-                batch_weight=batch_weight,
-                key=evaluation_key,
+            batch, local_weight = term.policy.loss_batch_and_weight(population)
+            realization = term._adaptive_realization(
+                batch,
+                local_weight,
+                key=realization_key,
+            )
+        frozen.append(
+            FrozenResidualTerm(
+                term=term,
+                realization=realization,
                 scale=float(scale),
             )
         )
-    return tuple(terms)
+    return tuple(frozen)
 
 
 def validate_derivative_coverage(
-    constraints: Sequence[Any],
+    terms: Sequence[Any],
     functions: dict[str, DomainFunction] | Any,
     /,
 ) -> None:
-    """Reject derivative contracts beyond the second-order KFAC support boundary."""
+    """Reject training terms and derivatives outside KFAC's support boundary."""
 
-    for constraint in constraints:
-        if not isinstance(constraint, FunctionalConstraint):
+    for term in terms:
+        if not isinstance(term, ResidualPenalty):
             raise TypeError(
-                "KFAC supports FunctionalConstraint terms only; "
-                f"got {type(constraint).__name__}."
+                "KFAC supports ResidualPenalty training terms only; "
+                f"got {type(term).__name__}."
             )
-        trace_derivative_requests(constraint.residual, functions)
+        trace_derivative_requests(term.condition.residual, functions)
 
 
 def _scaled_residual_data(data, /, *, scale: float) -> Array:
@@ -129,7 +125,7 @@ def frozen_term_residual_vector(
     params: PyTree[Any],
     non_trainable: PyTree[Any],
     solver,
-    term: FrozenConstraintTerm,
+    term: FrozenResidualTerm,
     /,
     *,
     iter_: Array | int | None,
@@ -138,16 +134,12 @@ def frozen_term_residual_vector(
 
     functions = combine_trainable(params, non_trainable)
     enforced = (
-        functions
-        if solver.constraint_pipelines is None
-        else solver.constraint_pipelines.apply(functions)
+        functions if solver.enforcement is None else solver.enforcement.apply(functions)
     )
     with derivative_runtime_context():
-        data = term.constraint._quadratic_residual_data(
+        data = term.term._quadratic_residual_data(
             enforced,
-            key=term.key,
-            batch=term.batch,
-            batch_weight=term.batch_weight,
+            realization=term.realization,
             iter_=iter_,
         )
     return _scaled_residual_data(data, scale=term.scale)
@@ -158,7 +150,7 @@ def _block_jacobian_chunks(
     unravel,
     non_trainable: PyTree[Any],
     solver,
-    term: FrozenConstraintTerm,
+    term: FrozenResidualTerm,
     indices: tuple[int, ...],
     /,
     *,
@@ -182,7 +174,7 @@ def _block_jacobian_chunks(
 
     residual_size = int(residual_from_block(block_params).size)
     if residual_size == 0:
-        raise ValueError("KFAC requires every active constraint to yield residual roots.")
+        raise ValueError("KFAC requires every active term to yield residual roots.")
     padded_size = ((residual_size + int(chunk_size) - 1) // int(chunk_size)) * int(
         chunk_size
     )
@@ -210,7 +202,7 @@ def term_block_curvature_observations(
     params: PyTree[Any],
     non_trainable: PyTree[Any],
     solver,
-    terms: tuple[FrozenConstraintTerm, ...],
+    terms: tuple[FrozenResidualTerm, ...],
     layout: ParameterLayout,
     /,
     *,
@@ -285,7 +277,7 @@ def term_residual_jacobians(
     params: PyTree[Any],
     non_trainable: PyTree[Any],
     solver,
-    terms: tuple[FrozenConstraintTerm, ...],
+    terms: tuple[FrozenResidualTerm, ...],
     /,
     *,
     iter_: Array | int | None,
@@ -314,42 +306,26 @@ def frozen_loss(
     params: PyTree[Any],
     non_trainable: PyTree[Any],
     solver,
-    terms: tuple[FrozenConstraintTerm, ...],
+    terms: tuple[FrozenResidualTerm, ...],
     /,
     *,
-    objective_key: Array,
     iter_: Array | int | None,
 ) -> Array:
-    """Evaluate the full objective while reusing every sampled constraint batch."""
+    """Evaluate the total loss while reusing every materialized term."""
 
     functions = combine_trainable(params, non_trainable)
     enforced = (
-        functions
-        if solver.constraint_pipelines is None
-        else solver.constraint_pipelines.apply(functions)
+        functions if solver.enforcement is None else solver.enforcement.apply(functions)
     )
     total = jnp.asarray(0.0, dtype=float)
     with derivative_runtime_context():
         for term in terms:
-            data = term.constraint._quadratic_residual_data(
+            data = term.term._quadratic_residual_data(
                 enforced,
-                key=term.key,
-                batch=term.batch,
-                batch_weight=term.batch_weight,
+                realization=term.realization,
                 iter_=iter_,
             )
             total = total + float(term.scale) * jnp.asarray(data.loss).reshape(())
-        objective_keys = jr.split(objective_key, len(solver.objectives))
-        for objective, key in zip(solver.objectives, objective_keys, strict=True):
-            total = total + jnp.asarray(
-                objective.loss(enforced, key=key, iter_=iter_)
-            ).reshape(())
-        for model_loss in function_model_loss_values(
-            functions,
-            key=jr.fold_in(objective_key, len(solver.objectives)),
-            iter_=iter_,
-        ):
-            total = total + jnp.asarray(model_loss).reshape(())
     return total
 
 
@@ -357,10 +333,9 @@ def frozen_loss_and_flat_gradient(
     params: PyTree[Any],
     non_trainable: PyTree[Any],
     solver,
-    terms: tuple[FrozenConstraintTerm, ...],
+    terms: tuple[FrozenResidualTerm, ...],
     /,
     *,
-    objective_key: Array,
     iter_: Array | int | None,
 ) -> tuple[Array, Array, Any]:
     """Return frozen-batch loss and gradient in the shared flat parameter order."""
@@ -373,7 +348,6 @@ def frozen_loss_and_flat_gradient(
             non_trainable,
             solver,
             terms,
-            objective_key=objective_key,
             iter_=iter_,
         )
 
@@ -382,11 +356,11 @@ def frozen_loss_and_flat_gradient(
 
 
 __all__ = [
-    "FrozenConstraintTerm",
+    "FrozenResidualTerm",
     "frozen_loss",
     "frozen_loss_and_flat_gradient",
     "frozen_term_residual_vector",
-    "materialize_constraint_terms",
+    "materialize_frozen_terms",
     "term_block_curvature_observations",
     "term_residual_jacobians",
     "validate_derivative_coverage",

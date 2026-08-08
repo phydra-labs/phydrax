@@ -3,12 +3,12 @@ import optax
 import pytest
 
 import phydrax as phx
-from phydrax.objectives._feynman_kac import FeynmanKacRegressionObjective
 from phydrax.stochastic._bsde import BSDEPathBatch, BSDEProblem
 from phydrax.stochastic._feynman_kac import (
     FeynmanKacLabelBatch,
     FeynmanKacSamplingPlan,
 )
+from phydrax.terms._feynman_kac import FeynmanKacRegressionTerm
 
 
 def _problem():
@@ -74,7 +74,7 @@ def test_fixed_regression_objective_trains_a_global_value_parameter():
     problem = _problem()
     plan = _plan()
     labels = _labels(problem, plan)
-    objective = FeynmanKacRegressionObjective(
+    objective = FeynmanKacRegressionTerm(
         problem,
         plan,
         value_name="value",
@@ -83,8 +83,7 @@ def test_fixed_regression_objective_trains_a_global_value_parameter():
     domain = phx.domain.Interval1d(0.0, 1.0)
     solver = phx.solver.FunctionalSolver(
         functions={"value": domain.Parameter(jnp.asarray([0.0]))},
-        constraints=(),
-        objectives=(objective,),
+        terms=(objective,),
     )
 
     initial = objective.loss(solver.functions, batch=labels)
@@ -112,7 +111,7 @@ def test_resampled_provider_is_called_once_per_optimizer_update():
         calls.append(key)
         return labels
 
-    objective = FeynmanKacRegressionObjective(
+    objective = FeynmanKacRegressionTerm(
         problem,
         plan,
         value_name="value",
@@ -121,8 +120,7 @@ def test_resampled_provider_is_called_once_per_optimizer_update():
     domain = phx.domain.Interval1d(0.0, 1.0)
     phx.solver.FunctionalSolver(
         functions={"value": domain.Parameter(jnp.asarray([0.0]))},
-        constraints=(),
-        objectives=(objective,),
+        terms=(objective,),
     ).solve(
         num_iter=5,
         optim=optax.sgd(0.1),
@@ -138,7 +136,7 @@ def test_control_targets_can_train_against_value_autodiff():
     problem = _problem()
     plan = _plan(control=True)
     labels = _labels(problem, plan, control=True)
-    objective = FeynmanKacRegressionObjective(
+    objective = FeynmanKacRegressionTerm(
         problem,
         plan,
         value_name="value",
@@ -156,7 +154,7 @@ def test_zero_valid_mass_and_provenance_mismatch_fail_early():
     problem = _problem()
     plan = _plan()
     invalid = _labels(problem, plan, valid=jnp.zeros((3,), dtype=bool))
-    objective = FeynmanKacRegressionObjective(
+    objective = FeynmanKacRegressionTerm(
         problem,
         plan,
         value_name="value",
@@ -173,7 +171,7 @@ def test_zero_valid_mass_and_provenance_mismatch_fail_early():
         refresh_mode="fixed",
     )
     with pytest.raises(ValueError, match="provenance"):
-        FeynmanKacRegressionObjective(
+        FeynmanKacRegressionTerm(
             problem,
             other_plan,
             value_name="value",

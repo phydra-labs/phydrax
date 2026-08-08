@@ -7,17 +7,18 @@ import jax.random as jr
 import optax
 
 import phydrax as phx
-from phydrax.constraints import (
+from phydrax.conditions import Residual
+from phydrax.domain import Interval1d, SampleLayout
+from phydrax.nn import MLP
+from phydrax.sampling.collocation import (
     controlled_collocation,
     ControlledCollocationPopulation,
-    FunctionalConstraint,
     PeriodicCollocation,
     R3,
     RefreshGuard,
 )
-from phydrax.domain import Interval1d, SampleLayout
-from phydrax.nn import MLP
 from phydrax.solver import FunctionalSolver
+from phydrax.terms import ResidualPenalty
 
 
 def _trainable_interval_solver(policy):
@@ -31,21 +32,21 @@ def _trainable_interval_solver(policy):
         key=jr.key(0),
     )
     u = domain.Model("x")(model)
-    constraint = FunctionalConstraint.from_operator(
-        component=domain.component(),
-        operator=lambda field: field - 1.0,
-        constraint_vars="u",
-        sampling=phx.domain.PointSampling(16, layout=structure, design="uniform"),
-        collocation_policy=policy,
+    condition = Residual("u", domain.component(), lambda field: field - 1.0)
+    source = phx.integration.adaptive(
+        phx.integration.mean_over(condition.on),
+        phx.domain.PointSampling(16, layout=structure, design="uniform"),
+        policy,
     )
-    return FunctionalSolver(functions={"u": u}, constraints=(constraint,))
+    term = ResidualPenalty(condition, source)
+    return FunctionalSolver(functions={"u": u}, terms=(term,))
 
 
 def test_solver_initializes_and_uses_adaptive_population():
     solver = _trainable_interval_solver(R3(refresh_every=1, sampler="uniform"))
     assert len(solver.collocation) == 1
     assert solver.collocation[0] is not None
-    loss = solver.loss(key=jr.key(1), iter_=1)
+    loss = solver.loss(key=jr.key(1), step=1)
     assert jnp.isfinite(loss)
 
 
@@ -84,7 +85,7 @@ def test_solver_logs_adaptive_population_diagnostics(capsys):
         jit=True,
         keep_best=False,
         log_every=1,
-        log_constraints=True,
+        log_terms=True,
     )
     output = capsys.readouterr().out
     assert "refresh_count=" in output

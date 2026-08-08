@@ -39,7 +39,7 @@ def _graphs() -> tuple[phx.graph.GraphIR, phx.graph.GraphIR]:
     return graph0, graph1
 
 
-def test_enforce_graph_values_overwrites_boundary_nodes_and_satisfies_constraint():
+def test_enforce_graph_values_overwrites_boundary_nodes_and_satisfies_residual():
     graph = _line_graph()
     domain = phx.domain.GraphDomain(graph)
     structure = phx.domain.SampleLayout((("graph",),))
@@ -51,16 +51,16 @@ def test_enforce_graph_values_overwrites_boundary_nodes_and_satisfies_constraint
     def u(node):
         return node[0]
 
-    hard_u = phx.constraints.enforce_graph_values(u, boundary, target=5.0)
+    hard_u = phx.enforcement.enforce_graph_values(u, boundary, target=5.0)
     assert jnp.allclose(hard_u(node_batch).data, jnp.array([5.0, 1.0, 5.0]))
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=boundary,
-        operator=lambda f: f - 5.0,
-        constraint_vars="u",
-        sampling=phx.domain.PointSampling(2, layout=structure),
+    condition = phx.conditions.Residual("u", boundary, lambda f: f - 5.0)
+    source = phx.integration.per_step(
+        phx.integration.mean_over(boundary),
+        phx.domain.PointSampling(2, layout=structure),
     )
-    assert constraint.loss({"u": hard_u}) < 1e-12
+    term = phx.terms.ResidualPenalty(condition, source)
+    assert term.loss({"u": hard_u}) < 1e-12
 
 
 def test_enforce_graph_values_is_seen_by_graph_gradient_full_node_view():
@@ -84,7 +84,7 @@ def test_enforce_graph_values_is_seen_by_graph_gradient_full_node_view():
         del node
         return 0.0
 
-    hard_u = phx.constraints.enforce_graph_values(u, left, target=2.0)
+    hard_u = phx.enforcement.enforce_graph_values(u, left, target=2.0)
 
     assert jnp.allclose(phx.operators.graph_gradient(hard_u)(edge_batch).data, -2.0)
 
@@ -116,12 +116,12 @@ def test_enforce_graph_values_supports_edge_and_global_components():
     def scale(global_):
         return global_[0]
 
-    hard_flux = phx.constraints.enforce_graph_values(
+    hard_flux = phx.enforcement.enforce_graph_values(
         flux,
         domain.component({"graph": phx.domain.EdgeSet([1])}),
         target=-1.0,
     )
-    hard_scale = phx.constraints.enforce_graph_values(
+    hard_scale = phx.enforcement.enforce_graph_values(
         scale,
         domain.component({"graph": phx.domain.Globals()}),
         target=9.0,
@@ -144,7 +144,7 @@ def test_enforce_graph_values_uses_local_indices_for_graph_dataset_batches():
     def u(node):
         return node[0]
 
-    hard_u = phx.constraints.enforce_graph_values(u, boundary, target=7.0)
+    hard_u = phx.enforcement.enforce_graph_values(u, boundary, target=7.0)
 
     assert jnp.allclose(hard_u(full_nodes).data, jnp.array([0.0, 7.0, 2.0, 7.0, 8.0]))
 
@@ -178,12 +178,12 @@ def test_enforce_graph_values_supports_time_dependent_graph_trajectory_targets()
         del node
         return 10.0 + t
 
-    hard_u = phx.constraints.enforce_graph_values(u, boundary, target=target)
+    hard_u = phx.enforcement.enforce_graph_values(u, boundary, target=target)
 
     assert jnp.allclose(hard_u(batch).data, jnp.array([0.0, 10.5, 0.0, 11.0, 0.0]))
 
 
-def test_graph_value_enforcement_integrates_with_functional_solver_terms():
+def test_graph_value_enforcement_integrates_with_functional_solver():
     graph = _line_graph()
     domain = phx.domain.GraphDomain(graph)
     structure = phx.domain.SampleLayout((("graph",),))
@@ -196,15 +196,22 @@ def test_graph_value_enforcement_integrates_with_functional_solver_terms():
     def u(node):
         return node[0]
 
-    term = phx.solver.SingleFieldEnforcedConstraint(
-        "u",
-        boundary,
-        lambda f: phx.constraints.enforce_graph_values(f, boundary, target=5.0),
+    functions = {"u": u}
+    condition = phx.conditions.Dirichlet("u", boundary, target=5.0)
+    spec = phx.enforcement.EnforcementSpec(
+        condition,
+        kind="custom",
+        transform=lambda value, _get_field: phx.enforcement.enforce_graph_values(
+            value,
+            boundary,
+            target=5.0,
+        ),
     )
+    program = phx.enforcement.compile(functions, [spec])
     solver = phx.solver.FunctionalSolver(
-        functions={"u": u},
-        constraints=(),
-        constraint_terms=[term],
+        functions=functions,
+        terms=(),
+        enforcement=program,
     )
 
     assert jnp.allclose(solver["u"](node_batch).data, jnp.array([5.0, 1.0, 5.0]))
@@ -266,7 +273,7 @@ def test_enforce_cochain_values_preserves_signed_semantics_and_rejects_mismatch(
     all_edges = domain.component({"graph": phx.domain.CochainCells(1)}).sample(
         phx.domain.PointSampling(complex_ir.cell_counts[1], layout=structure)
     )
-    hard = phx.constraints.enforce_cochain_values(
+    hard = phx.enforcement.enforce_cochain_values(
         edge_form,
         boundary,
         target=target,
@@ -280,7 +287,7 @@ def test_enforce_cochain_values_preserves_signed_semantics_and_rejects_mismatch(
     assert jnp.allclose(hard_values[boundary_mask], target_values[boundary_mask])
     assert jnp.allclose(hard_values[~boundary_mask], base_values[~boundary_mask])
     with pytest.raises(ValueError, match="same degree, side, orientation"):
-        phx.constraints.enforce_cochain_values(
+        phx.enforcement.enforce_cochain_values(
             edge_form,
             boundary,
             target=vertex_form,
@@ -302,7 +309,7 @@ def test_hard_cochain_boundary_remains_exact_during_solver_optimization():
     )
     field = phx.domain.as_cochain_field(candidate, zero_spec)
     boundary = domain.component({"graph": phx.domain.CochainCells(0, region="boundary")})
-    field = phx.constraints.enforce_cochain_values(field, boundary, target=0.0)
+    field = phx.enforcement.enforce_cochain_values(field, boundary, target=0.0)
 
     exact_vertices = jnp.asarray([0.0, 0.0, 0.0, 0.0, 1.0])
     exact = jnp.where(
@@ -324,7 +331,7 @@ def test_hard_cochain_boundary_remains_exact_during_solver_optimization():
 
     forcing = phx.domain.as_cochain_field(forcing_raw, zero_spec)
     interior = domain.component({"graph": phx.domain.CochainCells(0, region="interior")})
-    constraint = phx.constraints.CochainResidualConstraint(
+    term = phx.terms.CochainResidualTerm(
         component=interior,
         residual=lambda functions: (
             phx.operators.cochain_hodge_laplacian(
@@ -333,15 +340,12 @@ def test_hard_cochain_boundary_remains_exact_during_solver_optimization():
             )
             - forcing
         ),
-        constraint_vars=("u",),
+        fields=("u",),
         sampling=phx.domain.PointSampling(1, layout=structure),
         reduction="metric_sum",
         sampling_mode="fixed",
     )
-    solver = phx.solver.FunctionalSolver(
-        functions={"u": field},
-        constraints=(constraint,),
-    )
+    solver = phx.solver.FunctionalSolver(functions={"u": field}, terms=(term,))
     initial_loss = solver.loss()
     trained = solver.solve(
         num_iter=40,

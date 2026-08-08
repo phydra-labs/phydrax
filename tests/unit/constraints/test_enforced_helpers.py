@@ -9,15 +9,6 @@ import pytest
 
 import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.constraints import (
-    enforce_blend,
-    enforce_dirichlet,
-    enforce_initial,
-    enforce_neumann,
-    enforce_robin,
-    enforce_sommerfeld,
-    enforce_traction,
-)
 from phydrax.domain import (
     Boundary,
     FixedEnd,
@@ -27,6 +18,15 @@ from phydrax.domain import (
     PointBatch,
     SampleLayout,
     TimeInterval,
+)
+from phydrax.enforcement import (
+    enforce_blend,
+    enforce_dirichlet,
+    enforce_initial,
+    enforce_neumann,
+    enforce_robin,
+    enforce_sommerfeld,
+    enforce_traction,
 )
 from phydrax.operators.differential import dt
 from phydrax.operators.differential._domain_ops import directional_derivative

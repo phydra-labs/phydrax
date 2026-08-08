@@ -8,7 +8,6 @@ import jax.numpy as jnp
 
 import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.constraints import enforce_dirichlet
 from phydrax.domain import (
     Boundary,
     FixedStart,
@@ -17,12 +16,13 @@ from phydrax.domain import (
     SampleLayout,
     TimeInterval,
 )
-from phydrax.operators.differential import partial_x
-from phydrax.solver import (
-    EnforcedConstraintPipelines,
-    EnforcedInteriorData,
-    SingleFieldEnforcedConstraint,
+from phydrax.enforcement import (
+    enforce_dirichlet,
+    EnforcementProgram,
+    EnforcementSpec,
+    InteriorAnchors,
 )
+from phydrax.operators.differential import partial_x
 
 
 def _paired_batch_xp(domain, xs, ps):
@@ -75,16 +75,20 @@ def test_xp_steady_state_explicit_anchors():
     right = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] > 0.5})
     full_boundary = domain.component({"x": Boundary()})
 
-    constraints = [
-        SingleFieldEnforcedConstraint(
-            "u",
-            left,
-            lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
+    specs = [
+        EnforcementSpec(
+            phx.conditions.Dirichlet("u", left, target=1.0),
+            kind="custom",
+            transform=lambda f, _: enforce_dirichlet(
+                f, full_boundary, var="x", target=1.0
+            ),
         ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            right,
-            lambda f: enforce_dirichlet(f, full_boundary, var="x", target=2.0),
+        EnforcementSpec(
+            phx.conditions.Dirichlet("u", right, target=2.0),
+            kind="custom",
+            transform=lambda f, _: enforce_dirichlet(
+                f, full_boundary, var="x", target=2.0
+            ),
         ),
     ]
 
@@ -93,15 +97,15 @@ def test_xp_steady_state_explicit_anchors():
         "p": jnp.array([[-0.5], [0.5]], dtype=float),
     }
     values = jnp.array([3.0, 4.0], dtype=float)
-    interior = EnforcedInteriorData("u", points=anchors, values=values)
+    interior = InteriorAnchors("u", points=anchors, values=values)
 
-    pipelines = EnforcedConstraintPipelines.build(
+    program = EnforcementProgram.build(
         functions={"u": u},
-        constraints=constraints,
-        interior_data=[interior],
+        specs=specs,
+        interior=[interior],
         num_reference=128,
     )
-    u_enforced = pipelines.apply({"u": u})["u"]
+    u_enforced = program.apply({"u": u})["u"]
     eval_jit = eqx.filter_jit(lambda b: u_enforced(b).data)
 
     batch = _paired_batch_xp(
@@ -158,38 +162,24 @@ def test_xpt_transient_explicit_anchors():
     initial = domain.component({"t": FixedStart()})
     full_boundary = domain.component({"x": Boundary()})
 
-    constraints = [
-        SingleFieldEnforcedConstraint(
-            "u",
-            left,
-            lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
+    specs = [
+        EnforcementSpec(
+            phx.conditions.Dirichlet("u", left, target=1.0),
+            kind="custom",
+            transform=lambda f, _: enforce_dirichlet(
+                f, full_boundary, var="x", target=1.0
+            ),
         ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            right,
-            lambda f: enforce_dirichlet(f, full_boundary, var="x", target=2.0),
+        EnforcementSpec(
+            phx.conditions.Dirichlet("u", right, target=2.0),
+            kind="custom",
+            transform=lambda f, _: enforce_dirichlet(
+                f, full_boundary, var="x", target=2.0
+            ),
         ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: enforce_dirichlet(f, initial, var="t", target=3.0),
-            time_derivative_order=0,
-            initial_target=3.0,
-        ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: enforce_dirichlet(f, initial, var="t", target=3.0),
-            time_derivative_order=1,
-            initial_target=1.0,
-        ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: enforce_dirichlet(f, initial, var="t", target=3.0),
-            time_derivative_order=2,
-            initial_target=0.0,
-        ),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=3.0, order=0)),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=1.0, order=1)),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=0.0, order=2)),
     ]
 
     anchors = {
@@ -198,15 +188,15 @@ def test_xpt_transient_explicit_anchors():
         "t": jnp.array([0.4, 0.6], dtype=float),
     }
     values = jnp.array([4.0, 5.0], dtype=float)
-    interior = EnforcedInteriorData("u", points=anchors, values=values)
+    interior = InteriorAnchors("u", points=anchors, values=values)
 
-    pipelines = EnforcedConstraintPipelines.build(
+    program = EnforcementProgram.build(
         functions={"u": u},
-        constraints=constraints,
-        interior_data=[interior],
+        specs=specs,
+        interior=[interior],
         num_reference=128,
     )
-    u_enforced = pipelines.apply({"u": u})["u"]
+    u_enforced = program.apply({"u": u})["u"]
     eval_jit = eqx.filter_jit(lambda b: u_enforced(b).data)
 
     batch = _paired_batch_xpt(

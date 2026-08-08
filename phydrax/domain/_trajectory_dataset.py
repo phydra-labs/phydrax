@@ -27,6 +27,7 @@ from ._structure import _validate_label, NumPoints, PointBatch, SampleLayout
 
 
 if TYPE_CHECKING:
+    from ._function import DomainFunction
     from ._irregular_trajectory_dataset import IrregularTrajectoryDatasetDomain
 
 
@@ -349,6 +350,36 @@ class TrajectoryDatasetDomain(JointFactor):
     def size(self) -> int:
         """Number of trajectory cases."""
         return int(self.lengths.shape[0])
+
+    def field(self, values: ArrayLike, /) -> "DomainFunction":
+        """Expose case-aligned target values at every sampled trajectory time."""
+        from ._observation import indexed_field
+
+        return indexed_field(
+            self,
+            values,
+            size=self.size,
+            index_key=TRAJECTORY_CASE_INDEX_KEY,
+            owner="TrajectoryDatasetDomain.field",
+        )
+
+    def signal(
+        self,
+        values: ArrayLike,
+        /,
+        *,
+        interpolation: Literal["nearest", "linear", "cubic_hermite"] = "linear",
+        snap_tol: float = 1e-10,
+    ) -> "DomainFunction":
+        """Expose padded trajectory observations as an interpolated field."""
+        from ._trajectory_signal import TrajectorySignal
+
+        return TrajectorySignal(
+            self,
+            values,
+            interpolation=interpolation,
+            snap_tol=snap_tol,
+        )
 
     @property
     def max_length(self) -> int:

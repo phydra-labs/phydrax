@@ -10,7 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jaxtyping import Array, ArrayLike, Key
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
@@ -249,6 +249,90 @@ def _sample_scalar(
         idx = jr.randint(key, shape=(int(num_points),), minval=0, maxval=2)
         return choices[idx]
     raise TypeError(f"Unsupported scalar component {type(component).__name__}.")
+def _explicit_point_array(domain: Domain, label: str, value: ArrayLike, /) -> Array:
+    factor = domain.factor(label)
+    array = jnp.asarray(value, dtype=float)
+    if isinstance(factor, AbstractGeometry):
+        if array.ndim == 1:
+            array = array.reshape((-1, 1) if int(factor.spatial_dim) == 1 else (1, -1))
+        if array.ndim != 2 or int(array.shape[1]) != int(factor.spatial_dim):
+            raise ValueError(
+                f"Geometry coordinates for {label!r} must have shape "
+                f"(num_points, {factor.spatial_dim}), got {array.shape}."
+            )
+        return array
+    if isinstance(factor, AbstractScalarDomain):
+        if array.ndim == 0:
+            return array.reshape((1,))
+        if array.ndim == 1:
+            return array
+        if array.ndim == 2 and int(array.shape[1]) == 1:
+            return array[:, 0]
+        raise ValueError(
+            f"Scalar coordinates for {label!r} must have shape (num_points,), "
+            f"got {array.shape}."
+        )
+    raise TypeError(
+        f"Explicit points do not support factor {type(factor).__name__} "
+        f"for label {label!r}."
+    )
+
+
+def _split_explicit_points(
+    domain: Domain,
+    labels: tuple[str, ...],
+    coordinates: ArrayLike,
+    /,
+) -> frozendict[str, Array]:
+    stacked = jnp.asarray(coordinates, dtype=float)
+    if stacked.ndim == 1:
+        stacked = stacked.reshape((1, -1))
+    if stacked.ndim != 2:
+        raise ValueError(
+            "Stacked coordinates must have shape (num_points, coordinate_dim), "
+            f"got {stacked.shape}."
+        )
+
+    widths: list[int] = []
+    for label in labels:
+        factor = domain.factor(label)
+        if isinstance(factor, AbstractGeometry):
+            widths.append(int(factor.spatial_dim))
+        elif isinstance(factor, AbstractScalarDomain):
+            widths.append(1)
+        else:
+            raise TypeError(
+                f"Explicit points do not support factor {type(factor).__name__} "
+                f"for label {label!r}."
+            )
+    total = sum(widths)
+    if int(stacked.shape[1]) != total:
+        raise ValueError(
+            f"Stacked coordinates require coordinate_dim={total}, "
+            f"got {stacked.shape[1]}."
+        )
+
+    result: dict[str, Array] = {}
+    offset = 0
+    for label, width in zip(labels, widths, strict=True):
+        result[label] = (
+            stacked[:, offset]
+            if width == 1
+            else stacked[:, offset : offset + width]
+        )
+        offset += width
+    return frozendict(result)
+
+
+def _fixed_component_labels(component: "DomainComponent", /) -> frozenset[str]:
+    return frozenset(
+        label
+        for label in component.domain.labels
+        if isinstance(
+            component.spec.selection_for(label),
+            (FixedStart, FixedEnd, Fixed),
+        )
+    )
 
 
 class DomainComponent(StrictModule):
@@ -583,6 +667,102 @@ class DomainComponent(StrictModule):
             graph_label=graph_label,
             component_kind=graph_batch.component_kind,
         )
+
+    def points(
+        self,
+        coordinates: Mapping[str, ArrayLike] | ArrayLike,
+        /,
+    ) -> PointBatch:
+        """Bind explicit coordinates to this component as one paired point batch."""
+        fixed_labels = _fixed_component_labels(self)
+        free_labels = tuple(
+            label for label in self.domain.labels if label not in fixed_labels
+        )
+        layout = SampleLayout((free_labels,) if free_labels else ()).canonicalize(
+            self.domain.labels,
+            fixed_labels=fixed_labels,
+        )
+        axis_names = layout.axis_names
+        if axis_names is None:
+            raise RuntimeError("Explicit-point layout was not canonicalized.")
+        axis = axis_names[0] if axis_names else None
+
+        if isinstance(coordinates, Mapping):
+            unknown = tuple(
+                label for label in coordinates if label not in self.domain.labels
+            )
+            if unknown:
+                raise KeyError(f"Unknown explicit coordinate labels {unknown!r}.")
+            raw = frozendict(
+                {
+                    label: jnp.asarray(value, dtype=float)
+                    for label, value in coordinates.items()
+                }
+            )
+        else:
+            if not free_labels:
+                raise ValueError(
+                    "A fully fixed component requires an empty coordinate mapping."
+                )
+            raw = _split_explicit_points(self.domain, free_labels, coordinates)
+
+        points: dict[str, Any] = {}
+        point_count: int | None = None
+        for label in self.domain.labels:
+            selection = self.spec.selection_for(label)
+            factor = self.domain.factor(label)
+            if label in fixed_labels:
+                if isinstance(factor, AbstractScalarDomain):
+                    if isinstance(selection, FixedStart):
+                        value = factor.fixed("start")
+                    elif isinstance(selection, FixedEnd):
+                        value = factor.fixed("end")
+                    else:
+                        assert isinstance(selection, Fixed)
+                        value = jnp.asarray(selection.value, dtype=float).reshape(())
+                    points[label] = cx.Field(
+                        jnp.asarray(value, dtype=float).reshape(()),
+                        dims=(),
+                    )
+                    continue
+                if isinstance(factor, AbstractGeometry):
+                    if not isinstance(selection, Fixed):
+                        raise TypeError(
+                            f"Fixed geometry label {label!r} requires Fixed(...)."
+                        )
+                    value = jnp.asarray(selection.value, dtype=float).reshape(
+                        (int(factor.spatial_dim),)
+                    )
+                    points[label] = cx.Field(value, dims=(None,))
+                    continue
+                raise TypeError(
+                    f"Explicit points do not support fixed factor "
+                    f"{type(factor).__name__} for label {label!r}."
+                )
+
+            if label not in raw:
+                raise KeyError(
+                    f"Missing explicit coordinates for free label {label!r}; "
+                    f"expected {free_labels!r}."
+                )
+            if axis is None:
+                raise RuntimeError("Free explicit coordinates require a sampling axis.")
+            value = _explicit_point_array(self.domain, label, raw[label])
+            count = int(value.shape[0])
+            if point_count is None:
+                point_count = count
+            elif count != point_count:
+                raise ValueError(
+                    "Explicit coordinate labels must have the same leading "
+                    f"point count; expected {point_count}, got {count} for {label!r}."
+                )
+            points[label] = (
+                cx.Field(value, dims=(axis, None))
+                if isinstance(factor, AbstractGeometry)
+                else cx.Field(value, dims=(axis,))
+            )
+
+        return PointBatch(frozendict(points), layout)
 
     @overload
     def sample(
@@ -1503,6 +1683,9 @@ class ComponentSum(StrictModule):
         num_terms = len(self.terms)
         if min_points_per_term < 1:
             raise ValueError("min_points_per_term must be >= 1.")
+        if isinstance(sampling, GridSampling):
+            raise TypeError("ComponentSum does not support GridSampling.")
+
 
         if isinstance(sampling, PointSampling):
             if not isinstance(sampling.count, int):

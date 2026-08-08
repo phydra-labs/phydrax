@@ -10,14 +10,13 @@ from typing import Any, Literal, TYPE_CHECKING
 
 import jax.numpy as jnp
 
-from phydrax.domain import SamplingPlan
-
 from ._ir import PDECondition, PDEEquation, PDEExpression, PDEProblemIR
 from ._validate import infer_expression_type, validate_pde_ir
 
 
 if TYPE_CHECKING:
     from phydrax.domain import DomainFunction
+    from phydrax.integration import IntegrationSource
 
 
 
@@ -272,26 +271,24 @@ def make_pde_operator(
     return operator
 
 
-def compile_pde_functional_constraint(
+def compile_pde_residual_term(
     expression: PDEExpression,
     problem: PDEProblemIR,
     /,
     *,
     component: Any,
-    sampling: SamplingPlan,
+    source: IntegrationSource,
     field_names: tuple[str, ...] | None = None,
     parameters: Mapping[str, Any] | None = None,
     coordinates: Mapping[str, DomainFunction] | None = None,
     differential_backend: DifferentialBackend = "ad",
     integral_compiler: IntegralCompiler | None = None,
-    weight: Any = 1.0,
+    scale: Any = 1.0,
     label: str | None = None,
-    over: str | tuple[str, ...] | None = None,
-    reduction: Literal["mean", "integral"] = "mean",
-    sampling_mode: Literal["resample", "fixed"] = "resample",
 ) -> Any:
-    """Compile an IR residual directly into a native FunctionalConstraint."""
-    from ..constraints._functional import FunctionalConstraint
+    """Compile an IR equation into a declarative residual and numerical penalty."""
+    from ..conditions import Residual
+    from ..terms import ResidualPenalty
 
     names = (
         tuple(field.name for field in problem.fields)
@@ -307,17 +304,8 @@ def compile_pde_functional_constraint(
         differential_backend=differential_backend,
         integral_compiler=integral_compiler,
     )
-    return FunctionalConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=names,
-        sampling=sampling,
-        weight=weight,
-        label=label,
-        over=over,
-        reduction=reduction,
-        sampling_mode=sampling_mode,
-    )
+    condition = Residual(names, component, operator, label=label)
+    return ResidualPenalty(condition, source, scale=scale)
 
 
 def compile_pde_problem(
@@ -374,7 +362,7 @@ __all__ = [
     "DifferentialBackend",
     "IntegralCompiler",
     "compile_pde_expression",
-    "compile_pde_functional_constraint",
+    "compile_pde_residual_term",
     "compile_pde_problem",
     "make_pde_operator",
 ]

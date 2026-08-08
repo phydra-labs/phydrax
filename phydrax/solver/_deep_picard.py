@@ -18,7 +18,6 @@ from jaxtyping import Array, ArrayLike, Key
 from phydrax.domain import DomainFunction
 
 from .._strict import StrictModule
-from ..objectives._feynman_kac import FeynmanKacRegressionObjective
 from ..stochastic._bsde import (
     _pointwise_autodiff_control,
     _pointwise_values,
@@ -34,6 +33,7 @@ from ..stochastic._feynman_kac import (
     query_feynman_kac_labels,
     trajectory_node_feynman_kac_labels,
 )
+from ..terms._feynman_kac import FeynmanKacRegressionTerm
 from ._functional_solver import FunctionalSolver
 
 
@@ -567,7 +567,7 @@ def solve_deep_picard(
             damping=damping,
             key=jr.fold_in(root_key, 200 + outer),
         )
-        objective = FeynmanKacRegressionObjective(
+        objective = FeynmanKacRegressionTerm(
             problem,
             sampling_plan,
             value_name=value_name,
@@ -580,9 +580,9 @@ def solve_deep_picard(
             label=f"deep-picard-{outer + 1}",
         )
         temporary = eqx.tree_at(
-            lambda value: value.objectives,
+            lambda value: (value.terms, value.collocation),
             current,
-            current.objectives + (objective,),
+            (current.terms + (objective,), current.collocation + (None,)),
         )
         trained = temporary.solve(
             num_iter=inner_steps,
@@ -593,9 +593,9 @@ def solve_deep_picard(
             log_every=log_every,
         )
         current = eqx.tree_at(
-            lambda value: value.objectives,
+            lambda value: (value.terms, value.collocation),
             trained,
-            trained.objectives[:-1],
+            (trained.terms[:-1], trained.collocation[:-1]),
         )
         validation_labels = _iteration_labels(
             problem,

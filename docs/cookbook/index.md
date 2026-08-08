@@ -33,8 +33,8 @@ For boundary/initial conditions you can either:
 - add penalty terms (soft constraints), or
 - build an enforced ansatz \(\tilde u=\mathcal{H}(u)\) and train only on the remaining terms.
 
-See [API → Constraints → Enforced constraint ansätze](../api/constraints/enforced.md) and
-[API → Solver → Enforced constraint pipelines](../api/solver/enforced_constraints.md).
+See [API → Enforcement](../api/enforcement.md) and
+[API → Solver → Exact enforcement](../api/solver/enforcement.md).
 
 ### Differentiation backends
 

@@ -3,7 +3,7 @@
 #
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 
 import coordax as cx
 import equinox as eqx
@@ -28,6 +28,10 @@ from ._components import (
     graph_component_kind,
     GraphComponentKind,
 )
+
+
+if TYPE_CHECKING:
+    from .._function import DomainFunction
 
 
 GRAPH_DATASET_INDEX_KEY = "__phydrax_graph_dataset_index__"
@@ -224,6 +228,18 @@ class GraphDatasetDomain(JointFactor):
     def size(self) -> int:
         """Number of graph cases in the finite dataset."""
         return len(self.graphs)
+
+    def field(
+        self,
+        values: ArrayLike | Sequence[ArrayLike],
+        /,
+        *,
+        component_kind: GraphComponentKind = "nodes",
+    ) -> "DomainFunction":
+        """Expose graph-case targets aligned to sampled entities."""
+        from ._observation import GraphTarget
+
+        return GraphTarget(self, values, component_kind=component_kind)
 
     @property
     def measure_mode(self) -> GraphDatasetMeasureMode:

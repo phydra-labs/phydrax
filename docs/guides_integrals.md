@@ -519,11 +519,17 @@ plan = phx.integration.ProductIntegrationPlan(
 )
 ```
 
-Axis groups must be disjoint and cover every active label exactly once. Fixed labels
-need no plan. Mixed deterministic/stochastic products preserve the stochastic axis in
-the reduction and compute uncertainty only after deterministic factors have been
-integrated out. Randomized-QMC factors need independent replicates before the product
-estimate can report uncertainty.
+Axis groups must be disjoint and cover every non-fixed label exactly once. Fixed
+labels need no plan. Deterministic product factors require interior selectors;
+Monte Carlo and QMC factors also accept selectors with an exact reference
+transport, including interval boundaries.
+
+Separate stochastic groups form a tensor-product estimator. Phydrax reports no
+single-realization standard error for that dependent Cartesian sample; group the
+labels under one joint stochastic plan when a paired joint design is intended.
+Replicated randomized-QMC tensor products report uncertainty across independent
+full-product replicates. Mixed deterministic/stochastic products preserve each
+stochastic axis until deterministic factors have been integrated out.
 
 Product plans honor `target.axes`: only selected factor axes and their geometry
 corrections are reduced. Control variates are supported by direct Monte Carlo and QMC
@@ -570,13 +576,14 @@ invalid bounds or weights, exhausted adaptive budgets, proposal-support failures
 unsampled strata. A deterministic rule never fabricates a variance estimate from its
 node values.
 
-## Integral objectives
+## Integral functionals
 
-`phx.objectives.IntegralFunctional` accepts the same `target` and `plan`.
-`materialization_policy="fixed"` reuses one realization across objective calls;
-`"per_step"` materializes from the call key; and `"caller"` requires an explicit
-realization. Raw signed integral functionals are added directly to `FunctionalSolver`;
-residual constraints remain nonnegative losses.
+`phx.terms.IntegralFunctional` accepts an integration target and an explicit
+realization source. Use `fixed(realization)` to reuse one materialization,
+`per_step(target, plan)` to materialize from each evaluation key, or
+`caller(target)` to require a caller-supplied realization. Raw signed integral
+functionals are added directly to `FunctionalSolver`; residual penalties remain
+nonnegative.
 
 The local, nonlocal, spatial, and time-convolution operators under
 `phx.operators` remain field-transform operators. They are separate from the global

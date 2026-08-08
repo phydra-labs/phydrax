@@ -30,7 +30,7 @@
 
 ---
 
-::: phydrax.constraints.SupervisedLikelihoodConstraint
+::: phydrax.terms.SupervisedLikelihoodTerm
     options:
         members:
             - __init__

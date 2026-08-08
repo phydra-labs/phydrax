@@ -1,7 +1,7 @@
 # Two-level closed-system quantum dynamics
 
 This recipe checks a complex Schrödinger trajectory through the same sampled
-constraint and `FunctionalSolver` path used for PDE residuals.
+`ResidualPenalty` and `FunctionalSolver` path used for PDE residuals.
 
 Take
 
@@ -43,25 +43,29 @@ def perturbed_psi(t):
         [jnp.exp(-0.3j * omega * t), jnp.exp(0.3j * omega * t)]
     ) / jnp.sqrt(2.0)
 
-constraint = phx.constraints.FunctionalConstraint.from_operator(
-    component=time.component(),
-    operator=lambda state: phx.operators.schrodinger_residual(state, H),
-    constraint_vars="psi",
-    sampling=phx.domain.PointSampling(
+component = time.component()
+condition = phx.conditions.Residual(
+    "psi",
+    component,
+    lambda state: phx.operators.schrodinger_residual(state, H),
+    label="schrodinger",
+)
+source = phx.integration.per_step(
+    phx.integration.mean_over(condition.on),
+    phx.domain.PointSampling(
         32,
         layout=phx.domain.SampleLayout((("t",),)),
     ),
-    reduction="mean",
-    label="schrodinger",
 )
+term = phx.terms.ResidualPenalty(condition, source, scale=1.0)
 
 exact = phx.solver.FunctionalSolver(
     functions={"psi": psi},
-    constraints=[constraint],
+    terms=[term],
 )
 perturbed = phx.solver.FunctionalSolver(
     functions={"psi": perturbed_psi},
-    constraints=[constraint],
+    terms=[term],
 )
 
 exact_loss = exact.loss(key=jr.key(0))
@@ -91,11 +95,11 @@ assert jnp.allclose(phx.operators.unit_trace_residual(density).func(0.4), 0.0)
 assert jnp.allclose(phx.operators.von_neumann_residual(density, H).func(0.4), 0.0)
 ```
 
-The constraint loss uses $\sum_i\overline{r_i}r_i$, not $\sum_i r_i^2$; the result is
+The residual penalty uses $\sum_i\overline{r_i}r_i$, not $\sum_i r_i^2$; the result is
 therefore real and nonnegative for complex wavefunctions. The zero loss only checks the
 differential equation. In a learned solve, initial or boundary data must also select the
 intended solution, and normalization or positivity should be enforced by suitable
-constraints or parameterization.
+observation penalties or parameterization.
 
 For a spatial wavefunction, replace the matrix `H` with a callable Hamiltonian action:
 

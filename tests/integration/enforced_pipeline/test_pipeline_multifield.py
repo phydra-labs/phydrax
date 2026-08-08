@@ -6,13 +6,10 @@ import coordax as cx
 import jax.numpy as jnp
 import pytest
 
+import phydrax as phx
 from phydrax._frozendict import frozendict
 from phydrax.domain import Boundary, Interval1d, PointBatch, SampleLayout
-from phydrax.solver import (
-    EnforcedConstraintPipelines,
-    MultiFieldEnforcedConstraint,
-    SingleFieldEnforcedConstraint,
-)
+from phydrax.enforcement import EnforcementProgram, EnforcementSpec
 
 
 def _line_batch(domain, xs):
@@ -39,23 +36,29 @@ def test_multifield_pipeline_uses_enforced_covars():
 
     boundary_component = geom.component({"x": Boundary()})
 
-    v_constraint = SingleFieldEnforcedConstraint(
+    v_condition = phx.conditions.Dirichlet(
         "v",
         boundary_component,
-        lambda f: f + 2.0,
+        target=lambda x: x[0] + 2.0,
     )
-
-    u_constraint = MultiFieldEnforcedConstraint(
-        "u",
+    v_spec = EnforcementSpec(
+        v_condition,
+        kind="custom",
+        transform=lambda value, _get_field: value + 2.0,
+    )
+    u_condition = phx.conditions.Residual(
+        ("u", "v"),
         boundary_component,
-        ("v",),
-        lambda _u, get_field: get_field("v"),
+        lambda first, second: first - second,
+    )
+    u_spec = EnforcementSpec(
+        u_condition,
+        field="u",
+        kind="custom",
+        transform=lambda _value, get_field: get_field("v"),
     )
 
-    pipelines = EnforcedConstraintPipelines.build(
-        functions={"u": u, "v": v},
-        constraints=[u_constraint, v_constraint],
-    )
+    pipelines = EnforcementProgram.build(functions={"u": u, "v": v}, specs=[u_spec, v_spec], )
     enforced = pipelines.apply({"u": u, "v": v})
 
     batch = _line_batch(geom, xs=jnp.array([0.3, 0.7]))
@@ -78,21 +81,28 @@ def test_multifield_pipeline_cycle_error():
 
     boundary_component = geom.component({"x": Boundary()})
 
-    u_constraint = MultiFieldEnforcedConstraint(
-        "u",
+    u_condition = phx.conditions.Residual(
+        ("u", "v"),
         boundary_component,
-        ("v",),
-        lambda _u, get_field: get_field("v"),
+        lambda first, second: first - second,
     )
-    v_constraint = MultiFieldEnforcedConstraint(
-        "v",
+    v_condition = phx.conditions.Residual(
+        ("v", "u"),
         boundary_component,
-        ("u",),
-        lambda _v, get_field: get_field("u"),
+        lambda first, second: first - second,
+    )
+    u_spec = EnforcementSpec(
+        u_condition,
+        field="u",
+        kind="custom",
+        transform=lambda _value, get_field: get_field("v"),
+    )
+    v_spec = EnforcementSpec(
+        v_condition,
+        field="v",
+        kind="custom",
+        transform=lambda _value, get_field: get_field("u"),
     )
 
     with pytest.raises(ValueError, match="dependency cycle"):
-        EnforcedConstraintPipelines.build(
-            functions={"u": u, "v": v},
-            constraints=[u_constraint, v_constraint],
-        )
+        EnforcementProgram.build(functions={"u": u, "v": v}, specs=[u_spec, v_spec], )

@@ -52,10 +52,7 @@ def test_dimension_100_quadratic_hjb_deep_picard_smoke():
         label="x",
     ) @ phx.domain.TimeInterval(0.0, 1.0)
     value = domain.Function("t", "x")(_LinearHJBValue(jnp.asarray(0.0)))
-    solver = phx.solver.FunctionalSolver(
-        functions={"value": value},
-        constraints=(),
-    )
+    solver = phx.solver.FunctionalSolver(functions={"value": value}, terms=(), )
     plan = FeynmanKacSamplingPlan(
         terminal_time=1.0,
         sampling_mode="queries",

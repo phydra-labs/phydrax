@@ -1,8 +1,9 @@
 # Graph operators
 
 Graph operators act on `DomainFunction`s over `GraphDomain` components. They
-preserve Phydrax's usual constraint path: an operator builds a residual
-`DomainFunction`, and `FunctionalConstraint` samples the relevant graph component.
+preserve Phydrax's usual residual path: an operator builds a residual
+`DomainFunction`, and `ResidualPenalty` samples the relevant graph component
+through an explicit integration source.
 
 ## Reductions and adjacency
 
@@ -31,8 +32,8 @@ preserve Phydrax's usual constraint path: an operator builds a residual
 ## Physics residual builders
 
 These helpers compose graph calculus operators into common residual forms. They
-return ordinary `DomainFunction`s, so they can be passed directly to
-`FunctionalConstraint.from_operator(...)`.
+return ordinary `DomainFunction`s, so they can be used directly as operators in
+`Residual` conditions.
 
 ::: phydrax.operators.graph_poisson_residual
 
@@ -63,10 +64,10 @@ used directly, placed inside process steppers, or exposed as `DomainFunction`s
 with `GraphDomain.GraphModel(...)`, `GraphDatasetDomain.GraphModel(...)`, or
 `GraphTrajectoryDatasetDomain.GraphModel(...)`. Autoregressive graph processes
 can be exposed with `GraphDomain.GraphRolloutModel(...)` to supervise multi-step
-predictions through the same constraint machinery. Graph model wrappers can
-install node, edge, and graph-global `DomainFunction` inputs before executing
-the block, which lets learned operators consume state fields, coefficient
-fields, and case parameters through the same constraint path. `GraphIR` topology
+predictions through the same term machinery. Graph model wrappers can install
+node, edge, and graph-global `DomainFunction` inputs before executing the block,
+which lets learned operators consume state fields, coefficient fields, and case
+parameters through the same residual path. `GraphIR` topology
 and query-graph geometry stored inside these blocks are fixed solver state;
 learned arrays in the surrounding model remain trainable.
 
@@ -105,7 +106,7 @@ learned arrays in the surrounding model remain trainable.
 Graph process wrappers turn graph vector fields into one-step or multi-step
 operators. `GraphRolloutModel` keeps the sampled graph entity axis first and
 returns rollout time as an unnamed trailing axis, so predicted graph trajectories
-can be used directly in `FunctionalConstraint` losses.
+can be used directly in `ResidualPenalty` losses.
 
 ::: phydrax.graph.EulerGraphStepper
 
@@ -286,10 +287,10 @@ same sparse kernels as the array-level functions above.
 ### Shared residual programs and metric reduction
 
 `CochainResidualProgram` declares named input/output cochain schemas around one
-full-complex residual callable. The same program can be bound to
-`CochainResidualConstraint` for a fixed-complex PINN or to
-`CochainResidualLoss` for operator training. Its fingerprint includes the
-explicit callable identity and every field semantic.
+full-complex residual callable. The same program can be bound to a
+`phydrax.terms.CochainResidualTerm` for fixed-complex PINNs or operator training.
+Its fingerprint includes the explicit callable identity and every field
+semantic.
 
 `cochain_metric_reduce` first reduces each nonempty graph segment and then
 averages segments. `graph_mean` is an arithmetic cell mean, `metric_mean` is a

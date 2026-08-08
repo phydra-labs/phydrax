@@ -8,20 +8,20 @@ import optax
 import pytest
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
-from phydrax.constraints import (
-    DiscreteInteriorDataConstraint,
-    DiscreteTimeDataConstraint,
-    SupervisedDatasetConstraint,
-)
+import phydrax as phx
 from phydrax.domain import DatasetDomain, HyperRectangle, PointSampling, TimeInterval
 from phydrax.nn import MLP
 from phydrax.solver import FunctionalSolver
+from phydrax.terms import SupervisedDatasetTerm
 
 
 def _make_supervised_solver(seed: int = 0) -> FunctionalSolver:
     domain = HyperRectangle(jnp.asarray([0.0]), jnp.asarray([1.0]), label="x")
     points = jnp.linspace(0.0, 1.0, 5).reshape((-1, 1))
-    values = 1.0 + 2.0 * points[:, 0]
+
+    @domain.Function("x")
+    def target(x):
+        return 1.0 + 2.0 * x[0]
 
     model = MLP(
         in_size=1,
@@ -30,14 +30,14 @@ def _make_supervised_solver(seed: int = 0) -> FunctionalSolver:
         key=jr.key(seed),
     )
     u = domain.Model("x")(model)
-    data = DiscreteInteriorDataConstraint(
-        "u",
-        domain,
-        points={"x": points},
-        values=values,
-        label="data",
+    component = domain.component()
+    batch = component.points({"x": points})
+    condition = phx.conditions.Observation("u", component, target)
+    source = phx.integration.fixed(
+        phx.integration.from_samples(phx.integration.mean_over(component), batch)
     )
-    return FunctionalSolver(functions={"u": u}, constraints=[data])
+    data = phx.terms.ObservationPenalty(condition, source, label="data")
+    return FunctionalSolver(functions={"u": u}, terms=[data])
 
 
 def _make_dataset_solver_with_eval(seed: int = 0) -> FunctionalSolver:
@@ -51,7 +51,7 @@ def _make_dataset_solver_with_eval(seed: int = 0) -> FunctionalSolver:
         key=jr.key(seed),
     )
     u = domain.Model("data")(model)
-    train = SupervisedDatasetConstraint(
+    train = SupervisedDatasetTerm(
         "u",
         domain.component(),
         targets,
@@ -59,7 +59,7 @@ def _make_dataset_solver_with_eval(seed: int = 0) -> FunctionalSolver:
         indices=jnp.asarray([0, 1, 2, 3], dtype=jnp.int32),
         label="train_data",
     )
-    eval_data = SupervisedDatasetConstraint(
+    eval_data = SupervisedDatasetTerm(
         "u",
         domain.component(),
         targets,
@@ -69,12 +69,12 @@ def _make_dataset_solver_with_eval(seed: int = 0) -> FunctionalSolver:
     )
     return FunctionalSolver(
         functions={"u": u},
-        constraints=[train],
-        eval_constraints=[eval_data],
+        terms=[train],
+        evaluation_terms=[eval_data],
     )
 
 
-def _make_dataset_solver_with_two_train_constraints(seed: int = 0) -> FunctionalSolver:
+def _make_dataset_solver_with_two_train_terms(seed: int = 0) -> FunctionalSolver:
     rows = jnp.linspace(0.0, 1.0, 8).reshape((-1, 1))
     domain = DatasetDomain(rows)
     targets = 1.0 + 2.0 * rows[:, 0]
@@ -85,7 +85,7 @@ def _make_dataset_solver_with_two_train_constraints(seed: int = 0) -> Functional
         key=jr.key(seed),
     )
     u = domain.Model("data")(model)
-    train_a = SupervisedDatasetConstraint(
+    train_a = SupervisedDatasetTerm(
         "u",
         domain.component(),
         targets,
@@ -93,7 +93,7 @@ def _make_dataset_solver_with_two_train_constraints(seed: int = 0) -> Functional
         indices=jnp.asarray([0, 1, 2, 3], dtype=jnp.int32),
         label="train_a",
     )
-    train_b = SupervisedDatasetConstraint(
+    train_b = SupervisedDatasetTerm(
         "u",
         domain.component(),
         targets,
@@ -101,33 +101,32 @@ def _make_dataset_solver_with_two_train_constraints(seed: int = 0) -> Functional
         indices=jnp.asarray([4, 5, 6, 7], dtype=jnp.int32),
         label="train_b",
     )
-    return FunctionalSolver(functions={"u": u}, constraints=[train_a, train_b])
+    return FunctionalSolver(functions={"u": u}, terms=[train_a, train_b])
 
 
-def test_discrete_interior_data_constraint_reports_exact_data_metrics():
+def test_finite_interior_observation_reports_exact_data_metrics():
     domain = HyperRectangle(jnp.asarray([0.0]), jnp.asarray([1.0]), label="x")
     points = jnp.linspace(0.0, 1.0, 5).reshape((-1, 1))
-    values = 1.0 + 2.0 * points[:, 0]
 
     @domain.Function("x")
     def exact(x):
         return 1.0 + 2.0 * x[0]
 
-    constraint = DiscreteInteriorDataConstraint(
-        "u",
-        domain,
-        points={"x": points},
-        values=values,
-        label="data",
+    component = domain.component()
+    batch = component.points({"x": points})
+    condition = phx.conditions.Observation("u", component, exact)
+    source = phx.integration.fixed(
+        phx.integration.from_samples(phx.integration.mean_over(component), batch)
     )
+    term = phx.terms.ObservationPenalty(condition, source, label="data")
 
-    metrics = constraint.data_metrics({"u": exact}, key=jr.key(0))
+    metrics = term.data_metrics({"u": exact}, key=jr.key(0))
     assert jnp.allclose(metrics["data_accuracy"], 1.0)
     assert jnp.allclose(metrics["data_relative_l2_error"], 0.0)
     assert jnp.allclose(metrics["data_rmse"], 0.0)
 
 
-def test_discrete_time_data_constraint_reports_exact_data_metrics():
+def test_finite_time_observation_reports_exact_data_metrics():
     time = TimeInterval(0.0, 1.0)
 
     @time.Function("t")
@@ -135,16 +134,21 @@ def test_discrete_time_data_constraint_reports_exact_data_metrics():
         return t**2
 
     times = jnp.linspace(0.0, 1.0, 5)
-    values = times**2
-    constraint = DiscreteTimeDataConstraint("u", time, times=times, values=values)
+    component = time.component()
+    batch = component.points({"t": times})
+    condition = phx.conditions.Observation("u", component, exact)
+    source = phx.integration.fixed(
+        phx.integration.from_samples(phx.integration.mean_over(component), batch)
+    )
+    term = phx.terms.ObservationPenalty(condition, source)
 
-    metrics = constraint.data_metrics({"u": exact}, key=jr.key(0))
+    metrics = term.data_metrics({"u": exact}, key=jr.key(0))
     assert jnp.allclose(metrics["data_accuracy"], 1.0)
     assert jnp.allclose(metrics["data_relative_l2_error"], 0.0)
     assert jnp.allclose(metrics["data_rmse"], 0.0)
 
 
-def test_solve_text_log_includes_discrete_data_metrics(tmp_path):
+def test_solve_text_log_includes_observation_data_metrics(tmp_path):
     solver = _make_supervised_solver()
     log_path = tmp_path / "train.log"
 
@@ -162,7 +166,7 @@ def test_solve_text_log_includes_discrete_data_metrics(tmp_path):
     assert "data_rmse=" in text
 
 
-def test_solve_text_log_includes_eval_constraints(tmp_path):
+def test_solve_text_log_includes_evaluation_terms(tmp_path):
     solver = _make_dataset_solver_with_eval()
     log_path = tmp_path / "train_eval.log"
 
@@ -180,8 +184,8 @@ def test_solve_text_log_includes_eval_constraints(tmp_path):
     assert "data_accuracy=" in text
 
 
-def test_solve_can_subsample_train_constraints_and_log_all_constraints(tmp_path):
-    solver = _make_dataset_solver_with_two_train_constraints()
+def test_solve_can_subsample_train_terms_and_log_all_terms(tmp_path):
+    solver = _make_dataset_solver_with_two_train_terms()
     log_path = tmp_path / "train_subset.log"
 
     solver.solve(
@@ -190,7 +194,7 @@ def test_solve_can_subsample_train_constraints_and_log_all_constraints(tmp_path)
         seed=0,
         log_every=1,
         log_path=log_path,
-        train_constraint_sample_size=1,
+        train_term_sample_size=1,
     )
 
     text = log_path.read_text(encoding="utf-8")
@@ -198,31 +202,31 @@ def test_solve_can_subsample_train_constraints_and_log_all_constraints(tmp_path)
     assert "[train 1] train_b:" in text
 
 
-def test_solve_can_subsample_train_constraints_without_constraint_logging():
-    solver = _make_dataset_solver_with_two_train_constraints()
+def test_solve_can_subsample_train_terms_without_term_logging():
+    solver = _make_dataset_solver_with_two_train_terms()
 
     solver.solve(
         num_iter=2,
         optim=optax.adam(1e-2),
         seed=0,
         log_every=0,
-        log_constraints=False,
-        train_constraint_sample_size=1,
+        log_terms=False,
+        train_term_sample_size=1,
     )
 
 
-def test_solve_rejects_invalid_train_constraint_sample_size():
-    solver = _make_dataset_solver_with_two_train_constraints()
+def test_solve_rejects_invalid_train_term_sample_size():
+    solver = _make_dataset_solver_with_two_train_terms()
 
-    with pytest.raises(ValueError, match="train_constraint_sample_size"):
+    with pytest.raises(ValueError, match="train_term_sample_size"):
         solver.solve(
             num_iter=1,
             optim=optax.adam(1e-2),
-            train_constraint_sample_size=0,
+            train_term_sample_size=0,
         )
 
 
-def test_solver_loss_excludes_eval_constraints():
+def test_solver_loss_excludes_evaluation_terms():
     domain = DatasetDomain(jnp.asarray([[0.0], [1.0], [2.0]]))
     train_targets = jnp.asarray([0.0, 1.0, 2.0])
     eval_targets = jnp.asarray([10.0, 10.0, 10.0])
@@ -231,13 +235,13 @@ def test_solver_loss_excludes_eval_constraints():
     def u(data):
         return data[0]
 
-    train = SupervisedDatasetConstraint(
+    train = SupervisedDatasetTerm(
         "u",
         domain.component(),
         train_targets,
         sampling=PointSampling(8, design="uniform"),
     )
-    eval_data = SupervisedDatasetConstraint(
+    eval_data = SupervisedDatasetTerm(
         "u",
         domain.component(),
         eval_targets,
@@ -245,8 +249,8 @@ def test_solver_loss_excludes_eval_constraints():
     )
     solver = FunctionalSolver(
         functions={"u": u},
-        constraints=[train],
-        eval_constraints=[eval_data],
+        terms=[train],
+        evaluation_terms=[eval_data],
     )
 
     assert jnp.allclose(solver.loss(key=jr.key(4)), 0.0, atol=1e-12)
@@ -275,12 +279,8 @@ def test_solve_tensorboard_log_includes_loss_and_data_metrics(tmp_path):
     assert "train/loss" in scalar_tags
     assert "train/best_loss" in scalar_tags
     assert "train/iter_time_s" in scalar_tags
-    assert "train/constraints/000_data/loss" in scalar_tags
-    assert "train/constraints/000_data/data_accuracy" in scalar_tags
-    assert "constraints/000_data/loss" in scalar_tags
-    assert "constraints/000_data/data_accuracy" in scalar_tags
-    assert "constraints/000_data/data_relative_l2_error" in scalar_tags
-    assert "constraints/000_data/data_rmse" in scalar_tags
+    assert "train/terms/000_data/value" in scalar_tags
+    assert "train/terms/000_data/data_accuracy" in scalar_tags
 
 
 def test_solve_tensorboard_log_includes_eval_metrics(tmp_path):
@@ -300,8 +300,8 @@ def test_solve_tensorboard_log_includes_eval_metrics(tmp_path):
     accumulator.Reload()
     scalar_tags = set(accumulator.Tags()["scalars"])
 
-    assert "train/constraints/000_train_data/loss" in scalar_tags
-    assert "eval/constraints/000_eval_data/loss" in scalar_tags
-    assert "eval/constraints/000_eval_data/data_accuracy" in scalar_tags
-    assert "eval/constraints/000_eval_data/data_relative_l2_error" in scalar_tags
-    assert "eval/constraints/000_eval_data/data_rmse" in scalar_tags
+    assert "train/terms/000_train_data/value" in scalar_tags
+    assert "eval/terms/000_eval_data/value" in scalar_tags
+    assert "eval/terms/000_eval_data/data_accuracy" in scalar_tags
+    assert "eval/terms/000_eval_data/data_relative_l2_error" in scalar_tags
+    assert "eval/terms/000_eval_data/data_rmse" in scalar_tags

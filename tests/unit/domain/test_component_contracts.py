@@ -11,7 +11,9 @@ from phydrax.domain import (
     DatasetDomain,
     ExactMass,
     Fixed,
+    FixedStart,
     ScalarInterval,
+    TimeInterval,
     UnknownMass,
 )
 
@@ -79,3 +81,28 @@ def test_product_boundary_mass_is_additive_over_codimension_one_terms():
     assert len(boundary.terms) == 4
     assert isinstance(boundary.mass, ExactMass)
     assert jnp.isclose(boundary.mass.value, 2.0 * (2.0 + 4.0))
+
+
+def test_component_points_binds_explicit_coordinates_and_fixed_slices():
+    space = ScalarInterval(-1.0, 1.0, label="x")
+    time = TimeInterval(2.0, 3.0)
+    component = (space @ time).component({"t": FixedStart()})
+
+    mapped = component.points({"x": jnp.array([-0.5, 0.75])})
+    stacked = component.points(jnp.array([[-0.5], [0.75]]))
+
+    assert mapped.structure == stacked.structure
+    assert mapped["x"].dims == (mapped.structure.axis_names[0],)
+    assert mapped["t"].dims == ()
+    assert jnp.array_equal(mapped["x"].data, stacked["x"].data)
+    assert jnp.array_equal(mapped["t"].data, jnp.asarray(2.0))
+
+
+def test_component_points_rejects_inconsistent_coordinate_counts():
+    x = ScalarInterval(0.0, 1.0, label="x")
+    y = ScalarInterval(0.0, 1.0, label="y")
+
+    with pytest.raises(ValueError, match="same leading point count"):
+        (x @ y).component().points(
+            {"x": jnp.array([0.0, 1.0]), "y": jnp.array([0.0])}
+        )

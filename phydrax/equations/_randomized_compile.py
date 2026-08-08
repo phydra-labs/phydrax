@@ -27,16 +27,16 @@ if TYPE_CHECKING:
         SamplingPlan,
     )
 
-    from ..objectives._randomized_residual import (
-        RandomizedResidualLossMode,
-        RandomizedResidualObjective,
-        RandomizedResidualSamples,
-    )
     from ..operators.differential._dimension_estimators import (
         DimensionSamplingPolicy,
     )
     from ..operators.differential._stochastic_estimators import (
         StochasticTracePolicy,
+    )
+    from ..terms._randomized_residual import (
+        RandomizedResidualLossMode,
+        RandomizedResidualSamples,
+        RandomizedResidualTerm,
     )
 from ._compile import compile_pde_expression
 from ._ir import PDEEquation, PDEExpression, PDEProblemIR
@@ -177,8 +177,8 @@ class RandomizedCompilationReport:
 
 
 @dataclass(frozen=True, slots=True)
-class CompiledRandomizedPDEObjective:
-    objective: RandomizedResidualObjective
+class CompiledRandomizedPDETerm:
+    term: RandomizedResidualTerm
     report: RandomizedCompilationReport
     source: PDEEquation
 
@@ -574,7 +574,7 @@ class _RandomizedPDEEvaluator(StrictModule):
     ) -> RandomizedResidualSamples:
         from phydrax.domain import DomainFunction, GridBatch, PointBatch
 
-        from ..objectives._randomized_residual import RandomizedResidualSamples
+        from ..terms._randomized_residual import RandomizedResidualSamples
 
         if isinstance(collocation, tuple):
             raise TypeError("Randomized PDE objectives do not support ComponentSum batches.")
@@ -644,7 +644,7 @@ class _RandomizedCollocationSampler(StrictModule):
         return self.component.sample(self.sampling, key=key)
 
 
-def compile_pde_randomized_objective(
+def compile_pde_randomized_term(
     problem: PDEProblemIR,
     equation: str | PDEEquation,
     plan: RandomizedDifferentialPlan,
@@ -658,14 +658,14 @@ def compile_pde_randomized_objective(
     sampling_mode: Literal["resample", "fixed"] = "resample",
     fixed_batch: PointBatch | GridBatch | None = None,
     fixed_batch_key: Key[Array, ""] = jr.key(0),
-) -> CompiledRandomizedPDEObjective:
-    """Compile one scalar IR equation to an estimator-aware sampled objective."""
+) -> CompiledRandomizedPDETerm:
+    """Compile one scalar IR equation to an estimator-aware sampled term."""
     from phydrax.domain import ComponentSum, DomainComponent
 
-    from ..objectives._randomized_residual import RandomizedResidualObjective
+    from ..terms._randomized_residual import RandomizedResidualTerm
 
     if isinstance(component, ComponentSum):
-        raise TypeError("Randomized PDE objectives do not support ComponentSum.")
+        raise TypeError("Randomized PDE terms do not support ComponentSum.")
     if not isinstance(component, DomainComponent):
         raise TypeError("component must be a DomainComponent.")
     report = analyze_randomized_compilation(problem, equation, plan)
@@ -695,7 +695,7 @@ def compile_pde_randomized_objective(
         expression=source.residual,
         randomized_paths=report.randomized_node_paths,
     )
-    objective = RandomizedResidualObjective(
+    term = RandomizedResidualTerm(
         evaluator,
         collocation=collocation,
         loss_mode=plan.loss_mode,
@@ -703,19 +703,15 @@ def compile_pde_randomized_objective(
         scalar_weight=weight,
         label=source.name if label is None else label,
     )
-    return CompiledRandomizedPDEObjective(objective, report, source)
+    return CompiledRandomizedPDETerm(term, report, source)
 
 
-def compile_randomized_pde_objective(*args: Any, **kwargs: Any):
-    """Alias with noun ordering matching ``compile_pde_problem``."""
-    return compile_pde_randomized_objective(*args, **kwargs)
 
 
 __all__ = [
     "analyze_randomized_compilation",
-    "CompiledRandomizedPDEObjective",
-    "compile_pde_randomized_objective",
-    "compile_randomized_pde_objective",
+    "CompiledRandomizedPDETerm",
+    "compile_pde_randomized_term",
     "RandomizedCompilationReport",
     "RandomizedDifferentialMethod",
     "RandomizedDifferentialPlan",

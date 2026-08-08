@@ -57,46 +57,70 @@ operator. Everything is still “minimize functionals over domains”.
     k = geom.Model("x")(k_model)
 
     layout = phx.domain.SampleLayout((("x",),))
+    interior = geom.component()
 
     def pde_operator(u_f, k_f):
         grad_u = phx.operators.grad(u_f, var="x")      # ∇u (vector)
         flux = k_f * grad_u                            # k∇u
         return -phx.operators.div(flux, var="x") - f    # -∇·(k∇u) - f
 
-    pde = phx.constraints.ContinuousPointwiseInteriorConstraint(
+    pde_condition = phx.conditions.Residual(
         ("u", "k"),
-        geom,
-        operator=pde_operator,
-        sampling=phx.domain.PointSampling(128, layout=layout),
-        reduction="mean",
+        interior,
+        pde_operator,
+    )
+    pde = phx.terms.ResidualPenalty(
+        pde_condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(pde_condition.on),
+            phx.domain.PointSampling(128, layout=layout),
+        ),
     )
 
     boundary = geom.component({"x": phx.domain.Boundary()})
-    bc = phx.constraints.ContinuousDirichletBoundaryConstraint(
-        "u",
-        boundary,
-        target=g,
-        sampling=phx.domain.PointSampling(64, layout=layout),
-        weight=10.0,
+    boundary_condition = phx.conditions.Dirichlet("u", boundary, target=g)
+    bc = phx.terms.ResidualPenalty(
+        boundary_condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(boundary_condition.on),
+            phx.domain.PointSampling(64, layout=layout),
+        ),
+        scale=10.0,
     )
 
     # Optional anchor data for u at scattered points
     anchors = jnp.array([[0.0, 0.0], [0.5, -0.25]])
     values = jnp.array([0.0, 0.1])
-    data = phx.constraints.DiscreteInteriorDataConstraint(
-        "u",
-        geom,
-        points={"x": anchors},
-        values=values,
-        weight=1.0,
+
+    @geom.Function("x")
+    def observed_u(x):
+        nearest = jnp.argmin(jnp.sum((anchors - x) ** 2, axis=-1))
+        return values[nearest]
+
+    observation = phx.conditions.Observation("u", interior, observed_u)
+    observation_batch = interior.points({"x": anchors})
+    data = phx.terms.ObservationPenalty(
+        observation,
+        phx.integration.fixed(
+            phx.integration.from_samples(
+                phx.integration.mean_over(observation.on),
+                observation_batch,
+            )
+        ),
+        scale=1.0,
     )
 
-    solver = phx.solver.FunctionalSolver(functions={"u": u, "k": k}, constraints=[pde, bc, data])
+    solver = phx.solver.FunctionalSolver(
+        functions={"u": u, "k": k},
+        terms=(pde, bc, data),
+    )
     solver = solver.solve(num_iter=20, optim=optax.adam(1e-3), seed=0)
     ```
 
 ## Notes
 
 - For scalar unknown parameters (global coefficients), consider `domain.Parameter(...)` for a trainable constant.
-- If you want to enforce \(u=g\) exactly, replace the boundary penalty with an enforced term (see the Poisson recipe).
-- For sensor tracks over time, use `DiscreteInteriorDataConstraint(..., sensors=..., times=..., sensor_values=...)`.
+- To enforce \(u=g\) exactly, replace the boundary penalty with an
+  `phx.enforcement.EnforcementSpec` (see the Poisson recipe).
+- For sensor tracks over time, construct their paired coordinates with
+  `component.points(...)` and use a fixed `ObservationPenalty` source.

@@ -1309,7 +1309,7 @@ def _hybrid_stochastic_paths(
     path_signs: Array,
     solver: Any,
     stepsize_controller: Any,
-    dt0: Array,
+    dt0: Array | None,
     root_finder: Any,
     max_steps: int,
     max_events: int,

@@ -18,13 +18,13 @@ from jaxtyping import Array, ArrayLike, Key
 from phydrax.domain import Domain, DomainFunction
 
 from .._strict import StrictModule
-from ..objectives._deep_splitting import (
+from ..stochastic._bsde import _predictor_value, BSDEPathBatch, BSDEProblem
+from ..terms._deep_splitting import (
     deep_splitting_labels,
     DeepSplittingLabelBatch,
     DeepSplittingRegressionDiagnostics,
-    DeepSplittingRegressionObjective,
+    DeepSplittingRegressionTerm,
 )
-from ..stochastic._bsde import _predictor_value, BSDEPathBatch, BSDEProblem
 from ._functional_solver import FunctionalSolver
 
 
@@ -357,7 +357,7 @@ def solve_deep_splitting(
             )
         else:
             labels = _label_provider(problem, next_predictor, index, times)
-        objective = DeepSplittingRegressionObjective(
+        objective = DeepSplittingRegressionTerm(
             problem,
             value_name=value_name,
             slice_index=index,
@@ -367,9 +367,9 @@ def solve_deep_splitting(
         )
         initial_solver = working if warm_start else solver
         temporary = eqx.tree_at(
-            lambda value: value.objectives,
+            lambda value: (value.terms, value.collocation),
             initial_solver,
-            initial_solver.objectives + (objective,),
+            (initial_solver.terms + (objective,), initial_solver.collocation + (None,)),
         )
         trained = temporary.solve(
             num_iter=inner_steps,
@@ -380,9 +380,9 @@ def solve_deep_splitting(
             log_every=log_every,
         )
         trained = eqx.tree_at(
-            lambda value: value.objectives,
+            lambda value: (value.terms, value.collocation),
             trained,
-            trained.objectives[:-1],
+            (trained.terms[:-1], trained.collocation[:-1]),
         )
         learned_slice = trained.ansatz_functions()[value_name]
         validation_labels = deep_splitting_labels(
@@ -392,7 +392,7 @@ def solve_deep_splitting(
             index,
             key=jr.fold_in(root_key, 2000 + index),
         )
-        validation_objective = DeepSplittingRegressionObjective(
+        validation_objective = DeepSplittingRegressionTerm(
             problem,
             value_name=value_name,
             slice_index=index,

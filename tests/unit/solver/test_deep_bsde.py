@@ -2,12 +2,12 @@ import jax.numpy as jnp
 import optax
 
 import phydrax as phx
-from phydrax.objectives._deep_bsde import (
-    deep_bsde_rollout,
-    DeepBSDEShootingObjective,
-)
 from phydrax.solver._deep_bsde import solve_deep_bsde
 from phydrax.stochastic._bsde import BSDEPathBatch, BSDEProblem
+from phydrax.terms._deep_bsde import (
+    deep_bsde_rollout,
+    DeepBSDEShootingTerm,
+)
 
 
 def _brownian_paths():
@@ -58,7 +58,7 @@ def test_deep_bsde_rollout_reproduces_linear_brownian_solution():
     control = _constant(domain, [[1.0]])
 
     rollout = deep_bsde_rollout(problem, paths, initial, control)
-    objective = DeepBSDEShootingObjective(
+    objective = DeepBSDEShootingTerm(
         problem,
         initial_value_name="initial",
         control_name="control",
@@ -89,13 +89,10 @@ def test_solve_deep_bsde_trains_initial_value_and_removes_temporary_objective():
     )
     problem = _problem(paths, terminal=lambda state, args: jnp.asarray([2.0]))
     domain = phx.domain.Interval1d(-1.0, 1.0)
-    solver = phx.solver.FunctionalSolver(
-        functions={
-            "initial": domain.Parameter(jnp.asarray([0.0])),
-            "control": _constant(domain, [[0.0]]),
-        },
-        constraints=(),
-    )
+    solver = phx.solver.FunctionalSolver(functions={
+        "initial": domain.Parameter(jnp.asarray([0.0])),
+        "control": _constant(domain, [[0.0]]),
+    }, terms=(), )
 
     result = solve_deep_bsde(
         solver,
@@ -113,5 +110,5 @@ def test_solve_deep_bsde_trains_initial_value_and_removes_temporary_objective():
     assert result.diagnostics.terminal_rmse < 1e-8
     assert jnp.allclose(result.diagnostics.initial_mean, jnp.asarray([2.0]), atol=1e-8)
     assert result.diagnostics.passed
-    assert result.solver.objectives == solver.objectives
+    assert result.solver.terms == solver.terms
     assert jnp.allclose(solver["initial"].func(), jnp.asarray([0.0]))

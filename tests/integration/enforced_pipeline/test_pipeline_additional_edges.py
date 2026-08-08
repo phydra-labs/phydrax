@@ -9,13 +9,6 @@ import pytest
 
 import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.constraints import (
-    enforce_dirichlet,
-    enforce_neumann,
-    enforce_robin,
-    enforce_sommerfeld,
-    enforce_traction,
-)
 from phydrax.domain import (
     Boundary,
     FixedStart,
@@ -23,6 +16,14 @@ from phydrax.domain import (
     PointBatch,
     SampleLayout,
     TimeInterval,
+)
+from phydrax.enforcement import (
+    enforce_dirichlet,
+    enforce_neumann,
+    enforce_traction,
+    EnforcementProgram,
+    EnforcementSpec,
+    InteriorAnchors,
 )
 from phydrax.integration import from_samples, mean_over
 from phydrax.operators.differential import (
@@ -33,11 +34,6 @@ from phydrax.operators.differential import (
 )
 from phydrax.operators.integral import mean
 from phydrax.operators.linalg import einsum
-from phydrax.solver import (
-    EnforcedConstraintPipelines,
-    EnforcedInteriorData,
-    SingleFieldEnforcedConstraint,
-)
 
 
 def _line_batch(domain, xs):
@@ -76,14 +72,14 @@ def test_error_missing_anchor_label():
     def u(x, t):
         return x[0] + t
 
-    interior = EnforcedInteriorData(
+    interior = InteriorAnchors(
         "u",
         points={"x": jnp.array([[0.25]], dtype=float)},
         values=jnp.array([1.0], dtype=float),
     )
 
     with pytest.raises(KeyError, match="missing labels"):
-        EnforcedConstraintPipelines.build(functions={"u": u}, interior_data=[interior])
+        EnforcementProgram.build(functions={"u": u}, interior=[interior])
 
 
 def test_error_anchor_on_boundary():
@@ -96,13 +92,11 @@ def test_error_anchor_on_boundary():
         return x[0] + t
 
     boundary = domain.component({"x": Boundary()})
-    boundary_constraint = SingleFieldEnforcedConstraint(
-        "u",
-        boundary,
-        lambda f: enforce_dirichlet(f, boundary, var="x", target=1.0),
+    boundary_constraint = EnforcementSpec(
+        phx.conditions.Dirichlet("u", boundary, target=1.0)
     )
 
-    interior = EnforcedInteriorData(
+    interior = InteriorAnchors(
         "u",
         points={
             "x": jnp.array([[0.0]], dtype=float),
@@ -112,10 +106,10 @@ def test_error_anchor_on_boundary():
     )
 
     with pytest.raises(ValueError, match="M\\(z_i\\)=0"):
-        EnforcedConstraintPipelines.build(
+        EnforcementProgram.build(
             functions={"u": u},
-            constraints=[boundary_constraint],
-            interior_data=[interior],
+            specs=[boundary_constraint],
+            interior=[interior],
         )
 
 
@@ -129,14 +123,11 @@ def test_error_anchor_on_initial_time():
         return x[0] + t
 
     initial = domain.component({"t": FixedStart()})
-    initial_constraint = SingleFieldEnforcedConstraint(
-        "u",
-        initial,
-        lambda f: enforce_dirichlet(f, initial, var="t", target=2.0),
-        time_derivative_order=0,
+    initial_constraint = EnforcementSpec(
+        phx.conditions.Initial("u", initial, target=2.0, order=0)
     )
 
-    interior = EnforcedInteriorData(
+    interior = InteriorAnchors(
         "u",
         points={
             "x": jnp.array([[0.25]], dtype=float),
@@ -146,10 +137,10 @@ def test_error_anchor_on_initial_time():
     )
 
     with pytest.raises(ValueError, match="M\\(z_i\\)=0"):
-        EnforcedConstraintPipelines.build(
+        EnforcementProgram.build(
             functions={"u": u},
-            constraints=[initial_constraint],
-            interior_data=[interior],
+            specs=[initial_constraint],
+            interior=[interior],
         )
 
 
@@ -166,11 +157,11 @@ def test_error_conflicting_duplicate_anchors():
         "x": jnp.array([[0.25]], dtype=float),
         "t": jnp.array([0.5], dtype=float),
     }
-    a = EnforcedInteriorData("u", points=points, values=jnp.array([1.0], dtype=float))
-    b = EnforcedInteriorData("u", points=points, values=jnp.array([2.0], dtype=float))
+    a = InteriorAnchors("u", points=points, values=jnp.array([1.0], dtype=float))
+    b = InteriorAnchors("u", points=points, values=jnp.array([2.0], dtype=float))
 
     with pytest.raises(ValueError, match="Conflicting coincident interior anchors"):
-        EnforcedConstraintPipelines.build(functions={"u": u}, interior_data=[a, b])
+        EnforcementProgram.build(functions={"u": u}, interior=[a, b])
 
 
 def test_identity_remainder_toggle_changes_output():
@@ -182,21 +173,21 @@ def test_identity_remainder_toggle_changes_output():
 
     left = geom.component({"x": Boundary()}, where={"x": lambda p: p[0] < 0.5})
     full_boundary = geom.component({"x": Boundary()})
-    left_constraint = SingleFieldEnforcedConstraint(
-        "u",
-        left,
-        lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
+    left_constraint = EnforcementSpec(
+        phx.conditions.Dirichlet("u", left, target=1.0),
+        kind="custom",
+        transform=lambda f, _: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
     )
 
-    pipes_no = EnforcedConstraintPipelines.build(
+    pipes_no = EnforcementProgram.build(
         functions={"u": u},
-        constraints=[left_constraint],
+        specs=[left_constraint],
         include_identity_remainder=False,
         num_reference=256,
     )
-    pipes_yes = EnforcedConstraintPipelines.build(
+    pipes_yes = EnforcementProgram.build(
         functions={"u": u},
-        constraints=[left_constraint],
+        specs=[left_constraint],
         include_identity_remainder=True,
         num_reference=256,
     )
@@ -223,11 +214,18 @@ def test_enforce_traction_enforces_zero_boundary():
     def u(x):
         return jnp.array([0.0, 0.0])
 
-    constraint = SingleFieldEnforcedConstraint(
+    condition = phx.conditions.solids.Traction(
         "u",
         component,
-        lambda f: enforce_traction(
-            f,
+        lambda_=1.0,
+        mu=1.0,
+        traction=jnp.array([0.0, 0.0]),
+    )
+    spec = EnforcementSpec(
+        condition,
+        kind="custom",
+        transform=lambda value, _get_field: enforce_traction(
+            value,
             component,
             var="x",
             lambda_=1.0,
@@ -236,9 +234,9 @@ def test_enforce_traction_enforces_zero_boundary():
         ),
     )
 
-    pipelines = EnforcedConstraintPipelines.build(
+    pipelines = EnforcementProgram.build(
         functions={"u": u},
-        constraints=[constraint],
+        specs=[spec],
         num_reference=128,
     )
     u_enforced = pipelines.apply({"u": u})["u"]
@@ -270,15 +268,13 @@ def test_enforce_neumann_enforces_zero_normal_derivative():
     def u(x):
         return x[0] ** 2
 
-    constraint = SingleFieldEnforcedConstraint(
-        "u",
-        component,
-        lambda f: enforce_neumann(f, component, var="x", target=0.0, mode="forward"),
+    constraint = EnforcementSpec(
+        phx.conditions.Neumann("u", component, var="x", target=0.0, mode="forward")
     )
 
-    pipelines = EnforcedConstraintPipelines.build(
+    pipelines = EnforcementProgram.build(
         functions={"u": u},
-        constraints=[constraint],
+        specs=[constraint],
         num_reference=128,
     )
     u_enforced = pipelines.apply({"u": u})["u"]
@@ -313,23 +309,21 @@ def test_enforce_robin_enforces_boundary_relation():
     def u(x):
         return x[0]
 
-    constraint = SingleFieldEnforcedConstraint(
-        "u",
-        component,
-        lambda f: enforce_robin(
-            f,
+    constraint = EnforcementSpec(
+        phx.conditions.Robin(
+            "u",
             component,
             var="x",
-            dirichlet_coeff=2.0,
-            neumann_coeff=1.0,
+            dirichlet_coefficient=2.0,
+            neumann_coefficient=1.0,
             target=0.0,
             mode="forward",
-        ),
+        )
     )
 
-    pipelines = EnforcedConstraintPipelines.build(
+    pipelines = EnforcementProgram.build(
         functions={"u": u},
-        constraints=[constraint],
+        specs=[constraint],
         num_reference=128,
     )
     u_enforced = pipelines.apply({"u": u})["u"]
@@ -365,22 +359,15 @@ def test_enforce_sommerfeld_enforces_absorbing_condition():
     def u(x, t):
         return t
 
-    constraint = SingleFieldEnforcedConstraint(
-        "u",
-        component,
-        lambda f: enforce_sommerfeld(
-            f,
-            component,
-            var="x",
-            time_var="t",
-            wavespeed=1.0,
-            target=0.0,
-        ),
+    constraint = EnforcementSpec(
+        phx.conditions.Absorbing(
+            "u", component, var="x", time_var="t", wavespeed=1.0, target=0.0
+        )
     )
 
-    pipelines = EnforcedConstraintPipelines.build(
+    pipelines = EnforcementProgram.build(
         functions={"u": u},
-        constraints=[constraint],
+        specs=[constraint],
         num_reference=128,
     )
     u_enforced = pipelines.apply({"u": u})["u"]
@@ -412,14 +399,14 @@ def test_envelope_extremes():
     anchors = {"x": jnp.array([[0.0]], dtype=float), "t": jnp.array([0.0], dtype=float)}
     values = jnp.array([5.0], dtype=float)
 
-    small = EnforcedInteriorData(
+    small = InteriorAnchors(
         "u",
         points=anchors,
         values=values,
         use_envelope=True,
         envelope_scale=0.1,
     )
-    large = EnforcedInteriorData(
+    large = InteriorAnchors(
         "u",
         points=anchors,
         values=values,
@@ -427,12 +414,8 @@ def test_envelope_extremes():
         envelope_scale=10.0,
     )
 
-    pipe_small = EnforcedConstraintPipelines.build(
-        functions={"u": u}, interior_data=[small]
-    )
-    pipe_large = EnforcedConstraintPipelines.build(
-        functions={"u": u}, interior_data=[large]
-    )
+    pipe_small = EnforcementProgram.build(functions={"u": u}, interior=[small])
+    pipe_large = EnforcementProgram.build(functions={"u": u}, interior=[large])
 
     u_small = pipe_small.apply({"u": u})["u"]
     u_large = pipe_large.apply({"u": u})["u"]
@@ -501,11 +484,9 @@ def test_pipeline_points_vs_coord_separable():
 
     anchors = {"x": jnp.array([[0.25]], dtype=float)}
     values = jnp.array([0.0625], dtype=float)
-    interior = EnforcedInteriorData("u", points=anchors, values=values)
+    interior = InteriorAnchors("u", points=anchors, values=values)
 
-    pipes = EnforcedConstraintPipelines.build(
-        functions={"u": u}, interior_data=[interior]
-    )
+    pipes = EnforcementProgram.build(functions={"u": u}, interior=[interior])
     u_enforced = pipes.apply({"u": u})["u"]
     eval_jit = eqx.filter_jit(lambda f, b: f(b).data)
 
@@ -527,20 +508,16 @@ def test_gated_pipeline_points_vs_coord_separable():
     def u(x):
         return x[0] ** 2
 
-    constraint = SingleFieldEnforcedConstraint(
-        "u",
-        boundary,
-        lambda f: enforce_dirichlet(f, boundary, var="x", target=0.0),
-    )
-    interior = EnforcedInteriorData(
+    constraint = EnforcementSpec(phx.conditions.Dirichlet("u", boundary, target=0.0))
+    interior = InteriorAnchors(
         "u",
         points={"x": jnp.array([[0.25]], dtype=float)},
         values=jnp.array([0.125], dtype=float),
     )
-    pipes = EnforcedConstraintPipelines.build(
+    pipes = EnforcementProgram.build(
         functions={"u": u},
-        constraints=[constraint],
-        interior_data=[interior],
+        specs=[constraint],
+        interior=[interior],
     )
     u_enforced = pipes.apply({"u": u})["u"]
     eval_jit = eqx.filter_jit(lambda f, b: f(b).data)
@@ -564,11 +541,9 @@ def test_operator_stack_with_pipeline():
 
     anchors = {"x": jnp.array([[0.25]], dtype=float)}
     values = jnp.array([0.0625], dtype=float)
-    interior = EnforcedInteriorData("u", points=anchors, values=values)
+    interior = InteriorAnchors("u", points=anchors, values=values)
 
-    pipes = EnforcedConstraintPipelines.build(
-        functions={"u": u}, interior_data=[interior]
-    )
+    pipes = EnforcementProgram.build(functions={"u": u}, interior=[interior])
     u_enforced = pipes.apply({"u": u})["u"]
 
     component = geom.component()
@@ -594,11 +569,9 @@ def test_jit_pipeline_determinism():
 
     anchors = {"x": jnp.array([[0.5]], dtype=float)}
     values = jnp.array([1.5], dtype=float)
-    interior = EnforcedInteriorData("u", points=anchors, values=values)
+    interior = InteriorAnchors("u", points=anchors, values=values)
 
-    pipes = EnforcedConstraintPipelines.build(
-        functions={"u": u}, interior_data=[interior]
-    )
+    pipes = EnforcementProgram.build(functions={"u": u}, interior=[interior])
     u_enforced = pipes.apply({"u": u})["u"]
 
     batch = _line_batch(geom, xs=jnp.array([0.25, 0.75], dtype=float))
@@ -620,15 +593,11 @@ def test_pipeline_passthrough_for_unconstrained_field():
         return x[0] * 2.0
 
     boundary = geom.component({"x": Boundary()})
-    constraint = SingleFieldEnforcedConstraint(
-        "u",
-        boundary,
-        lambda f: enforce_dirichlet(f, boundary, var="x", target=0.0),
-    )
+    constraint = EnforcementSpec(phx.conditions.Dirichlet("u", boundary, target=0.0))
 
-    pipes = EnforcedConstraintPipelines.build(
+    pipes = EnforcementProgram.build(
         functions={"u": u, "v": v},
-        constraints=[constraint],
+        specs=[constraint],
         num_reference=128,
     )
     enforced = pipes.apply({"u": u, "v": v})
@@ -650,14 +619,10 @@ def test_boundary_constraint_multiple_geometry_labels_error():
         return x[0] + p[0]
 
     both = domain.component({"x": Boundary(), "p": Boundary()})
-    constraint = SingleFieldEnforcedConstraint(
-        "u",
-        both,
-        lambda f: enforce_dirichlet(f, both, var="x", target=1.0),
-    )
+    constraint = EnforcementSpec(phx.conditions.Dirichlet("u", both, target=1.0))
 
-    with pytest.raises(ValueError, match="exactly one geometry Boundary"):
-        EnforcedConstraintPipelines.build(functions={"u": u}, constraints=[constraint])
+    with pytest.raises(ValueError, match="exactly one geometry boundary"):
+        EnforcementProgram.build(functions={"u": u}, specs=[constraint])
 
 
 def test_sensor_tracks_require_xt_domain():
@@ -670,7 +635,7 @@ def test_sensor_tracks_require_xt_domain():
     def u(x, p, t):
         return x[0] + p[0] + t
 
-    interior = EnforcedInteriorData(
+    interior = InteriorAnchors(
         "u",
         sensors=jnp.array([[0.25]], dtype=float),
         times=jnp.array([0.5], dtype=float),
@@ -678,7 +643,7 @@ def test_sensor_tracks_require_xt_domain():
     )
 
     with pytest.raises(ValueError, match="domain labels exactly"):
-        EnforcedConstraintPipelines.build(functions={"u": u}, interior_data=[interior])
+        EnforcementProgram.build(functions={"u": u}, interior=[interior])
 
 
 def test_vector_output_interior_data():
@@ -690,11 +655,9 @@ def test_vector_output_interior_data():
 
     anchors = {"x": jnp.array([[0.25], [0.75]], dtype=float)}
     values = jnp.array([[1.0, 2.0], [3.0, 4.0]], dtype=float)
-    interior = EnforcedInteriorData("u", points=anchors, values=values)
+    interior = InteriorAnchors("u", points=anchors, values=values)
 
-    pipes = EnforcedConstraintPipelines.build(
-        functions={"u": u}, interior_data=[interior]
-    )
+    pipes = EnforcementProgram.build(functions={"u": u}, interior=[interior])
     u_enforced = pipes.apply({"u": u})["u"]
 
     batch = _line_batch(geom, xs=anchors["x"])

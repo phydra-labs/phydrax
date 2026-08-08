@@ -179,11 +179,16 @@ def test_graph_incidence_laplacian_constraint_on_boundary_nodes():
         del node
         return 2.0
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(component=component,
-    operator=phx.operators.graph_incidence_laplacian,
-    constraint_vars="u", sampling=phx.domain.PointSampling(2, layout=structure), )
+    condition = phx.conditions.Residual(
+        "u", component, phx.operators.graph_incidence_laplacian
+    )
+    source = phx.integration.per_step(
+        phx.integration.mean_over(component),
+        phx.domain.PointSampling(2, layout=structure),
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
 
-    assert constraint.loss({"u": u}) < 1e-12
+    assert term.loss({"u": u}) < 1e-12
 
 
 def test_graph_laplacian_constraint_zero_for_constant_field():
@@ -196,11 +201,14 @@ def test_graph_laplacian_constraint_zero_for_constant_field():
         del node
         return 2.0
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(component=component,
-    operator=phx.operators.graph_laplacian,
-    constraint_vars="u", sampling=phx.domain.PointSampling(3, layout=structure), )
+    condition = phx.conditions.Residual("u", component, phx.operators.graph_laplacian)
+    source = phx.integration.per_step(
+        phx.integration.mean_over(component),
+        phx.domain.PointSampling(3, layout=structure),
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
 
-    assert constraint.loss({"u": u}) < 1e-12
+    assert term.loss({"u": u}) < 1e-12
 
 
 def test_graph_gradient_constraint_zero_for_constant_field_on_edges():
@@ -213,8 +221,11 @@ def test_graph_gradient_constraint_zero_for_constant_field_on_edges():
         del node
         return 2.0
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(component=component,
-    operator=phx.operators.graph_gradient,
-    constraint_vars="u", sampling=phx.domain.PointSampling(2, layout=structure), )
+    condition = phx.conditions.Residual("u", component, phx.operators.graph_gradient)
+    source = phx.integration.per_step(
+        phx.integration.mean_over(component),
+        phx.domain.PointSampling(2, layout=structure),
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
 
-    assert constraint.loss({"u": u}) < 1e-12
+    assert term.loss({"u": u}) < 1e-12

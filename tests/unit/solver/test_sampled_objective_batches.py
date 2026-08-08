@@ -10,7 +10,7 @@ from jaxtyping import Array, Key
 import phydrax as phx
 
 
-class _NestedSampledObjective(phx.objectives.AbstractSamplingObjectiveTerm):
+class _NestedSampledObjective(phx.terms.AbstractSamplingTerm):
     recorder: Callable[[Key[Array, ""]], None] = eqx.field(static=True)
     target_shift: float = eqx.field(static=True)
     label: str | None = eqx.field(static=True)
@@ -35,11 +35,7 @@ class _NestedSampledObjective(phx.objectives.AbstractSamplingObjectiveTerm):
 
 def _solver(*objectives):
     domain = phx.domain.Interval1d(0.0, 1.0)
-    return phx.solver.FunctionalSolver(
-        functions={"u": domain.Parameter(1.0)},
-        constraints=(),
-        objectives=objectives,
-    )
+    return phx.solver.FunctionalSolver(functions={"u": domain.Parameter(1.0)}, terms=objectives, )
 
 
 def _key_recorder(store):

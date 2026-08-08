@@ -6,21 +6,20 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-from phydrax.constraints import (
+from phydrax.domain import Interval1d, SampleLayout
+from phydrax.sampling.collocation import (
     AdaptationBudget,
     collocation_policy_support,
     controlled_collocation,
     ControlledCollocationPopulation,
     CoresetCollocation,
     CoverageAnchors,
-    FunctionalConstraint,
     PeriodicCollocation,
     R3,
     RARD,
     RefreshGuard,
     RefreshSchedule,
 )
-from phydrax.domain import Interval1d, SampleLayout
 
 
 def _controlled_interval(*, anchors=0.0, budget=None, guard=None):
@@ -38,14 +37,15 @@ def _controlled_interval(*, anchors=0.0, budget=None, guard=None):
         budget=AdaptationBudget() if budget is None else budget,
         anchors=CoverageAnchors(anchors),
     )
-    constraint = FunctionalConstraint.from_operator(
-        component=domain.component(),
-        operator=lambda field: field,
-        constraint_vars="u",
-        sampling=phx.domain.PointSampling(16, layout=structure, design="uniform"),
-        collocation_policy=policy,
+    component = domain.component()
+    condition = phx.conditions.Residual("u", component, lambda field: field)
+    source = phx.integration.adaptive(
+        phx.integration.mean_over(component),
+        phx.domain.PointSampling(16, layout=structure, design="uniform"),
+        policy,
     )
-    return domain, constraint, policy
+    term = phx.terms.ResidualPenalty(condition, source)
+    return domain, term, policy
 
 
 def _x(population):
@@ -240,18 +240,19 @@ def test_controlled_coreset_policy_preserves_selection_metrics_through_anchors()
         schedule=RefreshSchedule(1),
         anchors=CoverageAnchors(0.25),
     )
-    constraint = FunctionalConstraint.from_operator(
-        component=domain.component(),
-        operator=lambda field: field,
-        constraint_vars="u",
-        sampling=phx.domain.PointSampling(16, layout=structure, design="uniform"),
-        collocation_policy=policy,
+    component = domain.component()
+    condition = phx.conditions.Residual("u", component, lambda field: field)
+    source = phx.integration.adaptive(
+        phx.integration.mean_over(component),
+        phx.domain.PointSampling(16, layout=structure, design="uniform"),
+        policy,
     )
-    initial = policy.initialize(constraint, key=jr.key(30))
+    term = phx.terms.ResidualPenalty(condition, source)
+    initial = policy.initialize(term, key=jr.key(30))
     anchors = _x(initial)[:4]
 
     refreshed = policy.refresh(
-        constraint,
+        term,
         {"u": domain.Function("x")(lambda x: x[0])},
         initial,
         key=jr.key(31),

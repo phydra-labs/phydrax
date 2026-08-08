@@ -12,11 +12,6 @@ import jax.random as jr
 
 import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.constraints import (
-    ContinuousInitialConstraint,
-    ContinuousPointwiseInteriorConstraint,
-    enforce_dirichlet,
-)
 from phydrax.domain import (
     Boundary,
     FixedStart,
@@ -27,15 +22,12 @@ from phydrax.domain import (
     SampleLayout,
     TimeInterval,
 )
+from phydrax.enforcement import EnforcementSpec, InteriorAnchors
 from phydrax.nn.models import LatentContractionModel
 from phydrax.nn.models.core._base import _AbstractBaseModel
 from phydrax.operators.differential import dt, dt_n, laplacian
 from phydrax.operators.differential._hooks import get_derivative_rule
-from phydrax.solver import (
-    EnforcedInteriorData,
-    FunctionalSolver,
-    SingleFieldEnforcedConstraint,
-)
+from phydrax.solver import FunctionalSolver
 
 
 def _paired_batch(domain, xs, ts):
@@ -66,35 +58,33 @@ def test_functional_solver_builds_enforced_pipeline_terms():
     boundary_component = domain.component({"x": Boundary()})
     initial_component = domain.component({"t": FixedStart()})
 
-    boundary_constraint = SingleFieldEnforcedConstraint(
-        "u",
-        boundary_component,
-        lambda f: enforce_dirichlet(f, boundary_component, var="x", target=5.0),
-    )
-    initial_constraint = SingleFieldEnforcedConstraint(
-        "u",
-        initial_component,
-        lambda f: enforce_dirichlet(f, initial_component, var="t", target=2.0),
-    )
+    boundary_constraint = EnforcementSpec(phx.conditions.Dirichlet("u", boundary_component, target=5.0))
+    initial_constraint = EnforcementSpec(phx.conditions.Initial("u", initial_component, target=2.0))
 
     anchors = {
         "x": jnp.array([[0.25], [0.75]], dtype=float),
         "t": jnp.array([0.6, 0.4], dtype=float),
     }
     anchor_values = jnp.array([3.0, 4.0], dtype=float)
-    interior = EnforcedInteriorData(
+    interior = InteriorAnchors(
         "u",
         points=anchors,
         values=anchor_values,
         eps_snap=1e-12,
     )
 
+    functions = {"u": u}
+    specs = [boundary_constraint, initial_constraint]
+    program = phx.enforcement.compile(
+        functions,
+        specs,
+        interior=[interior],
+        options=phx.enforcement.EnforcementOptions(num_reference=256),
+    )
     solver = FunctionalSolver(
-        functions={"u": u},
-        constraints=(),
-        constraint_terms=[boundary_constraint, initial_constraint],
-        interior_data_terms=[interior],
-        boundary_weight_num_reference=256,
+        functions=functions,
+        terms=(),
+        enforcement=program,
     )
     u_enforced = solver.ansatz_functions()["u"]
     eval_jit = eqx.filter_jit(lambda b: u_enforced(b).data)
@@ -125,21 +115,31 @@ def test_initial_constraint_coord_separable_spatial():
         return 0.0
 
     initial_component = domain.component({"t": FixedStart()})
-    structure = SampleLayout((("x",),))
 
-    constraint = ContinuousInitialConstraint(
+    initial_condition = phx.conditions.Initial(
         "u",
         initial_component,
-        func=0.0,
-        sampling=phx.domain.GridSampling({"x": 5}),
+        target=0.0,
+    )
+    batch = initial_condition.on.sample(
+        phx.domain.GridSampling({"x": 5}),
+        key=jr.key(0),
+    )
+    initial_term = phx.terms.ResidualPenalty(
+        initial_condition,
+        phx.integration.fixed(
+            phx.integration.from_samples(
+                phx.integration.mean_over(initial_condition.on),
+                batch,
+            )
+        ),
     )
 
-    batch = constraint.sample(key=jr.key(0))
     assert isinstance(batch, GridBatch)
     assert isinstance(batch.points["x"], tuple)
     assert len(batch.points["x"]) == 1
 
-    loss = constraint.loss({"u": u}, key=jr.key(0))
+    loss = initial_term.loss({"u": u}, key=jr.key(0))
     assert jnp.allclose(loss, 0.0, atol=1e-6)
 
 
@@ -165,7 +165,7 @@ class _ScalarLatentModel(_AbstractBaseModel):
         return jnp.stack([x, jnp.array(1.0)], axis=-1)
 
 
-def test_enforced_constraints_respected_with_latent_contraction_model():
+def test_enforced_conditions_respected_with_latent_contraction_model():
     domain = Interval1d(0.0, 1.0) @ TimeInterval(0.0, 1.0)
     model = LatentContractionModel(
         latent_size=2,
@@ -187,33 +187,22 @@ def test_enforced_constraints_respected_with_latent_contraction_model():
         del x
         return 0.0
 
-    terms = [
-        SingleFieldEnforcedConstraint(
-            "u",
-            boundary,
-            lambda f: enforce_dirichlet(f, boundary, var="x", target=0.0),
-        ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: f,
-            time_derivative_order=0,
-            initial_target=u0_target,
-        ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: f,
-            time_derivative_order=1,
-            initial_target=ut0_target,
-        ),
+    specs = [
+        EnforcementSpec(phx.conditions.Dirichlet("u", boundary, target=0.0)),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=u0_target, order=0)),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=ut0_target, order=1)),
     ]
 
+    functions = {"u": u_raw}
+    program = phx.enforcement.compile(
+        functions,
+        specs,
+        options=phx.enforcement.EnforcementOptions(num_reference=128),
+    )
     solver = FunctionalSolver(
-        functions={"u": u_raw},
-        constraints=(),
-        constraint_terms=terms,
-        boundary_weight_num_reference=128,
+        functions=functions,
+        terms=(),
+        enforcement=program,
     )
     u = solver.ansatz_functions()["u"]
 
@@ -257,40 +246,23 @@ def test_enforced_initial_overlay_boundary_compatible_preserves_all_orders():
     def utt0_target(x):
         return -jnp.sin(jnp.pi * x[0])
 
-    terms = [
-        SingleFieldEnforcedConstraint(
-            "u",
-            boundary,
-            lambda f: enforce_dirichlet(f, boundary, var="x", target=0.0),
-        ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: f,
-            time_derivative_order=0,
-            initial_target=u0_target,
-        ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: f,
-            time_derivative_order=1,
-            initial_target=ut0_target,
-        ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: f,
-            time_derivative_order=2,
-            initial_target=utt0_target,
-        ),
+    specs = [
+        EnforcementSpec(phx.conditions.Dirichlet("u", boundary, target=0.0)),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=u0_target, order=0)),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=ut0_target, order=1)),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=utt0_target, order=2)),
     ]
 
+    functions = {"u": u_raw}
+    program = phx.enforcement.compile(
+        functions,
+        specs,
+        options=phx.enforcement.EnforcementOptions(num_reference=128),
+    )
     solver = FunctionalSolver(
-        functions={"u": u_raw},
-        constraints=(),
-        constraint_terms=terms,
-        boundary_weight_num_reference=128,
+        functions=functions,
+        terms=(),
+        enforcement=program,
     )
     u = solver.ansatz_functions()["u"]
 
@@ -336,36 +308,25 @@ def test_enforced_initial_overlay_incompatible_keeps_boundary_gate():
     def ut0_target(x):
         return 1.0 + x[0]
 
-    terms = [
-        SingleFieldEnforcedConstraint(
-            "u",
-            boundary,
-            lambda f: enforce_dirichlet(f, boundary, var="x", target=0.0),
-        ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: f,
-            time_derivative_order=0,
-            initial_target=u0_target,
-        ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: f,
-            time_derivative_order=1,
-            initial_target=ut0_target,
-        ),
+    specs = [
+        EnforcementSpec(phx.conditions.Dirichlet("u", boundary, target=0.0)),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=u0_target, order=0)),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=ut0_target, order=1)),
     ]
 
-    solver = FunctionalSolver(
-        functions={"u": u_raw},
-        constraints=(),
-        constraint_terms=terms,
-        boundary_weight_num_reference=128,
+    functions = {"u": u_raw}
+    program = phx.enforcement.compile(
+        functions,
+        specs,
+        options=phx.enforcement.EnforcementOptions(num_reference=128),
     )
-    assert solver.constraint_pipelines is not None
-    pipeline = solver.constraint_pipelines.pipelines["u"]
+    solver = FunctionalSolver(
+        functions=functions,
+        terms=(),
+        enforcement=program,
+    )
+    assert solver.enforcement is not None
+    pipeline = solver.enforcement.pipelines["u"]
     assert pipeline.initial_overlay_boundary_compatible is False
 
     u = solver.ansatz_functions()["u"]
@@ -402,41 +363,41 @@ def test_wave_like_loss_with_coord_separable_enforced_terms_runs():
     def ut0_target(x):
         return 0.0 * x[0]
 
-    terms = [
-        SingleFieldEnforcedConstraint(
-            "u",
-            boundary,
-            lambda f: enforce_dirichlet(f, boundary, var="x", target=0.0),
-        ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: f,
-            time_derivative_order=0,
-            initial_target=u0_target,
-        ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: f,
-            time_derivative_order=1,
-            initial_target=ut0_target,
-        ),
+    specs = [
+        EnforcementSpec(phx.conditions.Dirichlet("u", boundary, target=0.0)),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=u0_target, order=0)),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=ut0_target, order=1)),
     ]
 
-    pde = ContinuousPointwiseInteriorConstraint(
+    pde_condition = phx.conditions.Residual(
         "u",
-        domain,
-        operator=lambda f: dt_n(f, var="t", order=2) - laplacian(f, var="x"),
-        sampling=phx.domain.GridSampling({"x": 16, "t": 8}),
-        reduction="mean",
+        domain.component(),
+        lambda f: dt_n(f, var="t", order=2) - laplacian(f, var="x"),
+    )
+    batch = pde_condition.on.sample(
+        phx.domain.GridSampling({"x": 16, "t": 8}),
+        key=jr.key(9),
+    )
+    pde = phx.terms.ResidualPenalty(
+        pde_condition,
+        phx.integration.fixed(
+            phx.integration.from_samples(
+                phx.integration.mean_over(pde_condition.on),
+                batch,
+            )
+        ),
     )
 
+    functions = {"u": u_raw}
+    program = phx.enforcement.compile(
+        functions,
+        specs,
+        options=phx.enforcement.EnforcementOptions(num_reference=128),
+    )
     solver = FunctionalSolver(
-        functions={"u": u_raw},
-        constraints=[pde],
-        constraint_terms=terms,
-        boundary_weight_num_reference=128,
+        functions=functions,
+        terms=[pde],
+        enforcement=program,
     )
 
     loss = solver.loss(key=jr.key(9))
@@ -464,33 +425,22 @@ def test_enforced_pipeline_stacked_overlays_keep_derivative_hooks_and_fast_path(
     def ut0_target(x):
         return 0.0 * x[0]
 
-    terms = [
-        SingleFieldEnforcedConstraint(
-            "u",
-            boundary,
-            lambda f: enforce_dirichlet(f, boundary, var="x", target=0.0),
-        ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: f,
-            time_derivative_order=0,
-            initial_target=u0_target,
-        ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: f,
-            time_derivative_order=1,
-            initial_target=ut0_target,
-        ),
+    specs = [
+        EnforcementSpec(phx.conditions.Dirichlet("u", boundary, target=0.0)),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=u0_target, order=0)),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=ut0_target, order=1)),
     ]
 
+    functions = {"u": u_raw}
+    program = phx.enforcement.compile(
+        functions,
+        specs,
+        options=phx.enforcement.EnforcementOptions(num_reference=128),
+    )
     solver = FunctionalSolver(
-        functions={"u": u_raw},
-        constraints=(),
-        constraint_terms=terms,
-        boundary_weight_num_reference=128,
+        functions=functions,
+        terms=(),
+        enforcement=program,
     )
     u = solver.ansatz_functions()["u"]
     assert get_derivative_rule(u) is not None

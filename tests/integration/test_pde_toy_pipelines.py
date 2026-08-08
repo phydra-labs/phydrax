@@ -6,25 +6,16 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-from phydrax.constraints import enforce_dirichlet
-from phydrax.constraints._continuous_interior import (
-    ContinuousInitialFunctionConstraint,
-    ContinuousPointwiseInteriorConstraint,
-)
 from phydrax.domain import (
     Boundary,
     FixedStart,
     FourierAxisSpec,
     Interval1d,
-    SampleLayout,
     TimeInterval,
 )
+from phydrax.enforcement import enforce_dirichlet, EnforcementSpec, InteriorAnchors
 from phydrax.operators.differential import bilaplacian, dt, laplacian
-from phydrax.solver import (
-    EnforcedInteriorData,
-    FunctionalSolver,
-    SingleFieldEnforcedConstraint,
-)
+from phydrax.solver import FunctionalSolver
 
 
 def test_pde_toy_steady_pipeline_zero_loss():
@@ -38,35 +29,45 @@ def test_pde_toy_steady_pipeline_zero_loss():
     right = geom.component({"x": Boundary()}, where={"x": lambda p: p[0] >= 0.5})
     full_boundary = geom.component({"x": Boundary()})
 
-    left_constraint = SingleFieldEnforcedConstraint(
-        "u",
-        left,
-        lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
+    left_constraint = EnforcementSpec(
+        phx.conditions.Dirichlet("u", left, target=1.0),
+        kind="custom",
+        transform=lambda f, _: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
     )
-    right_constraint = SingleFieldEnforcedConstraint(
-        "u",
-        right,
-        lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
+    right_constraint = EnforcementSpec(
+        phx.conditions.Dirichlet("u", right, target=1.0),
+        kind="custom",
+        transform=lambda f, _: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
     )
 
     anchors = {"x": jnp.array([[0.25], [0.75]], dtype=float)}
     values = jnp.array([1.0, 1.0], dtype=float)
-    interior = EnforcedInteriorData("u", points=anchors, values=values)
+    interior = InteriorAnchors("u", points=anchors, values=values)
 
-    structure = SampleLayout((("x",),))
-    pde_constraint = ContinuousPointwiseInteriorConstraint(
+    pde_condition = phx.conditions.Residual(
         "u",
-        geom,
-        operator=lambda f: laplacian(f, var="x"),
-        sampling=phx.domain.PointSampling(64, layout=structure),
+        geom.component(),
+        lambda f: laplacian(f, var="x"),
+    )
+    pde_term = phx.terms.ResidualPenalty(
+        pde_condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(pde_condition.on),
+            phx.integration.MonteCarloPlan(64),
+        ),
     )
 
+    functions = {"u": u}
+    program = phx.enforcement.compile(
+        functions,
+        [left_constraint, right_constraint],
+        interior=[interior],
+        options=phx.enforcement.EnforcementOptions(num_reference=256),
+    )
     solver = FunctionalSolver(
-        functions={"u": u},
-        constraints=[pde_constraint],
-        constraint_terms=[left_constraint, right_constraint],
-        interior_data_terms=[interior],
-        boundary_weight_num_reference=256,
+        functions=functions,
+        terms=[pde_term],
+        enforcement=program,
     )
     loss = solver.loss(key=jr.key(0))
     assert loss < 1e-6
@@ -80,24 +81,23 @@ def test_pde_toy_steady_pipeline_zero_loss_jet_backend():
         return 1.0
 
     # Jet cannot be mixed with enforced boundary constraints (Boundary() enforced constraints /
-    # EnforcedInteriorData) because the enforced pipeline traces through the MLS/BVH weight
+    # InteriorAnchors) because the enforced pipeline traces through the MLS/BVH weight
     # computation, which uses primitives not supported by jax.experimental.jet
     # (e.g. lax.cond, softplus/logaddexp custom_jvp, and clip/min/max rules).
-    structure = SampleLayout((("x",),))
-    pde_constraint = ContinuousPointwiseInteriorConstraint(
+    pde_condition = phx.conditions.Residual(
         "u",
-        geom,
-        operator=lambda f: laplacian(f, var="x", backend="jet"),
-        sampling=phx.domain.PointSampling(64, layout=structure),
+        geom.component(),
+        lambda f: laplacian(f, var="x", backend="jet"),
+    )
+    pde_term = phx.terms.ResidualPenalty(
+        pde_condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(pde_condition.on),
+            phx.integration.MonteCarloPlan(64),
+        ),
     )
 
-    solver = FunctionalSolver(
-        functions={"u": u},
-        constraints=[pde_constraint],
-        constraint_terms=[],
-        interior_data_terms=[],
-        boundary_weight_num_reference=256,
-    )
+    solver = FunctionalSolver(functions={"u": u}, terms=[pde_term])
     loss = solver.loss(key=jr.key(0))
     assert loss < 1e-6
 
@@ -113,38 +113,54 @@ def test_pde_toy_steady_pipeline_zero_loss_basis_backend_coord_separable():
     right = geom.component({"x": Boundary()}, where={"x": lambda p: p[0] >= 0.5})
     full_boundary = geom.component({"x": Boundary()})
 
-    left_constraint = SingleFieldEnforcedConstraint(
-        "u",
-        left,
-        lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
+    left_constraint = EnforcementSpec(
+        phx.conditions.Dirichlet("u", left, target=1.0),
+        kind="custom",
+        transform=lambda f, _: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
     )
-    right_constraint = SingleFieldEnforcedConstraint(
-        "u",
-        right,
-        lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
+    right_constraint = EnforcementSpec(
+        phx.conditions.Dirichlet("u", right, target=1.0),
+        kind="custom",
+        transform=lambda f, _: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
     )
 
     anchors = {"x": jnp.array([[0.25], [0.75]], dtype=float)}
     values = jnp.array([1.0, 1.0], dtype=float)
-    interior = EnforcedInteriorData("u", points=anchors, values=values)
+    interior = InteriorAnchors("u", points=anchors, values=values)
 
-    structure = SampleLayout((("x",),))
-    pde_constraint = ContinuousPointwiseInteriorConstraint("u",
-    geom,
-    operator=lambda f: laplacian(
-        f,
-        var="x",
-        backend="basis",
-        basis="fourier",
-        periodic=True,
-    ), sampling=phx.domain.GridSampling({"x": FourierAxisSpec(64)}), )
+    pde_condition = phx.conditions.Residual(
+        "u",
+        geom.component(),
+        lambda f: laplacian(
+            f,
+            var="x",
+            backend="basis",
+            basis="fourier",
+            periodic=True,
+        ),
+    )
+    batch = pde_condition.on.sample(phx.domain.GridSampling({"x": FourierAxisSpec(64)}))
+    pde_term = phx.terms.ResidualPenalty(
+        pde_condition,
+        phx.integration.fixed(
+            phx.integration.from_samples(
+                phx.integration.mean_over(pde_condition.on),
+                batch,
+            )
+        ),
+    )
 
+    functions = {"u": u}
+    program = phx.enforcement.compile(
+        functions,
+        [left_constraint, right_constraint],
+        interior=[interior],
+        options=phx.enforcement.EnforcementOptions(num_reference=256),
+    )
     solver = FunctionalSolver(
-        functions={"u": u},
-        constraints=[pde_constraint],
-        constraint_terms=[left_constraint, right_constraint],
-        interior_data_terms=[interior],
-        boundary_weight_num_reference=256,
+        functions=functions,
+        terms=[pde_term],
+        enforcement=program,
     )
     loss = solver.loss(key=jr.key(0))
     assert loss < 1e-6
@@ -158,23 +174,22 @@ def test_pde_toy_steady_pipeline_zero_loss_bilaplacian_jet_backend():
         return 1.0
 
     # Jet cannot be mixed with enforced boundary constraints (Boundary() enforced constraints /
-    # EnforcedInteriorData) because the enforced pipeline traces through the MLS/BVH weight
+    # InteriorAnchors) because the enforced pipeline traces through the MLS/BVH weight
     # computation, which uses primitives not supported by jax.experimental.jet.
-    structure = SampleLayout((("x",),))
-    pde_constraint = ContinuousPointwiseInteriorConstraint(
+    pde_condition = phx.conditions.Residual(
         "u",
-        geom,
-        operator=lambda f: bilaplacian(f, var="x", backend="jet"),
-        sampling=phx.domain.PointSampling(64, layout=structure),
+        geom.component(),
+        lambda f: bilaplacian(f, var="x", backend="jet"),
+    )
+    pde_term = phx.terms.ResidualPenalty(
+        pde_condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(pde_condition.on),
+            phx.integration.MonteCarloPlan(64),
+        ),
     )
 
-    solver = FunctionalSolver(
-        functions={"u": u},
-        constraints=[pde_constraint],
-        constraint_terms=[],
-        interior_data_terms=[],
-        boundary_weight_num_reference=256,
-    )
+    solver = FunctionalSolver(functions={"u": u}, terms=[pde_term])
     loss = solver.loss(key=jr.key(0))
     assert loss < 1e-6
 
@@ -193,38 +208,24 @@ def test_pde_toy_transient_pipeline_zero_loss():
     initial = domain.component({"t": FixedStart()})
     full_boundary = domain.component({"x": Boundary()})
 
-    constraints = [
-        SingleFieldEnforcedConstraint(
-            "u",
-            left,
-            lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
+    specs = [
+        EnforcementSpec(
+            phx.conditions.Dirichlet("u", left, target=1.0),
+            kind="custom",
+            transform=lambda f, _: enforce_dirichlet(
+                f, full_boundary, var="x", target=1.0
+            ),
         ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            right,
-            lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
+        EnforcementSpec(
+            phx.conditions.Dirichlet("u", right, target=1.0),
+            kind="custom",
+            transform=lambda f, _: enforce_dirichlet(
+                f, full_boundary, var="x", target=1.0
+            ),
         ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: enforce_dirichlet(f, initial, var="t", target=1.0),
-            time_derivative_order=0,
-            initial_target=1.0,
-        ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: enforce_dirichlet(f, initial, var="t", target=1.0),
-            time_derivative_order=1,
-            initial_target=0.0,
-        ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: enforce_dirichlet(f, initial, var="t", target=1.0),
-            time_derivative_order=2,
-            initial_target=0.0,
-        ),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=1.0, order=0)),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=0.0, order=1)),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=0.0, order=2)),
     ]
 
     anchors = {
@@ -232,28 +233,45 @@ def test_pde_toy_transient_pipeline_zero_loss():
         "t": jnp.array([0.4, 0.6], dtype=float),
     }
     values = jnp.array([1.0, 1.0], dtype=float)
-    interior = EnforcedInteriorData("u", points=anchors, values=values)
+    interior = InteriorAnchors("u", points=anchors, values=values)
 
-    structure = SampleLayout((("x", "t"),))
-    pde_time = ContinuousPointwiseInteriorConstraint(
+    pde_time_condition = phx.conditions.Residual(
         "u",
-        domain,
-        operator=lambda f: dt(f, var="t"),
-        sampling=phx.domain.PointSampling(64, layout=structure),
+        domain.component(),
+        lambda f: dt(f, var="t"),
     )
-    pde_space = ContinuousPointwiseInteriorConstraint(
+    pde_space_condition = phx.conditions.Residual(
         "u",
-        domain,
-        operator=lambda f: laplacian(f, var="x"),
-        sampling=phx.domain.PointSampling(64, layout=structure),
+        domain.component(),
+        lambda f: laplacian(f, var="x"),
+    )
+    plan = phx.integration.MonteCarloPlan(64)
+    pde_time = phx.terms.ResidualPenalty(
+        pde_time_condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(pde_time_condition.on),
+            plan,
+        ),
+    )
+    pde_space = phx.terms.ResidualPenalty(
+        pde_space_condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(pde_space_condition.on),
+            plan,
+        ),
     )
 
+    functions = {"u": u}
+    program = phx.enforcement.compile(
+        functions,
+        specs,
+        interior=[interior],
+        options=phx.enforcement.EnforcementOptions(num_reference=256),
+    )
     solver = FunctionalSolver(
-        functions={"u": u},
-        constraints=[pde_time, pde_space],
-        constraint_terms=constraints,
-        interior_data_terms=[interior],
-        boundary_weight_num_reference=256,
+        functions=functions,
+        terms=[pde_time, pde_space],
+        enforcement=program,
     )
     loss = solver.loss(key=jr.key(0))
     assert loss < 1e-6
@@ -269,28 +287,37 @@ def test_pde_toy_transient_pipeline_zero_loss_jet_backend():
         return 1.0
 
     # Jet cannot be mixed with enforced boundary constraints (Boundary() enforced constraints /
-    # EnforcedInteriorData) because the enforced pipeline traces through the MLS/BVH weight
+    # InteriorAnchors) because the enforced pipeline traces through the MLS/BVH weight
     # computation, which uses primitives not supported by jax.experimental.jet.
-    structure = SampleLayout((("x", "t"),))
-    pde_time = ContinuousPointwiseInteriorConstraint(
+    pde_time_condition = phx.conditions.Residual(
         "u",
-        domain,
-        operator=lambda f: dt(f, var="t"),
-        sampling=phx.domain.PointSampling(64, layout=structure),
+        domain.component(),
+        lambda f: dt(f, var="t"),
     )
-    pde_space = ContinuousPointwiseInteriorConstraint(
+    pde_space_condition = phx.conditions.Residual(
         "u",
-        domain,
-        operator=lambda f: laplacian(f, var="x", backend="jet"),
-        sampling=phx.domain.PointSampling(64, layout=structure),
+        domain.component(),
+        lambda f: laplacian(f, var="x", backend="jet"),
+    )
+    plan = phx.integration.MonteCarloPlan(64)
+    pde_time = phx.terms.ResidualPenalty(
+        pde_time_condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(pde_time_condition.on),
+            plan,
+        ),
+    )
+    pde_space = phx.terms.ResidualPenalty(
+        pde_space_condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(pde_space_condition.on),
+            plan,
+        ),
     )
 
     solver = FunctionalSolver(
         functions={"u": u},
-        constraints=[pde_time, pde_space],
-        constraint_terms=[],
-        interior_data_terms=[],
-        boundary_weight_num_reference=256,
+        terms=[pde_time, pde_space],
     )
     loss = solver.loss(key=jr.key(0))
     assert loss < 1e-6
@@ -306,44 +333,33 @@ def test_pde_toy_transient_enforced_initial_targets_dt2_zero_jet_backend():
         return 1.0 + t**2
 
     initial = domain.component({"t": FixedStart()})
-    enforced_initial_constraints = [
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: enforce_dirichlet(f, initial, var="t", target=1.0),
-            time_derivative_order=0,
-            initial_target=1.0,
-        ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: enforce_dirichlet(f, initial, var="t", target=1.0),
-            time_derivative_order=1,
-            initial_target=0.0,
-        ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: enforce_dirichlet(f, initial, var="t", target=1.0),
-            time_derivative_order=2,
-            initial_target=0.0,
-        ),
+    specs = [
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=1.0, order=0)),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=0.0, order=1)),
+        EnforcementSpec(phx.conditions.Initial("u", initial, target=0.0, order=2)),
     ]
 
-    constraint = ContinuousInitialFunctionConstraint(
+    initial_condition = phx.conditions.Initial(
         "u",
-        domain,
-        func=0.0,
-        time_derivative_order=2,
-        time_derivative_backend="jet",
-        sampling=phx.domain.PointSampling(64, layout=SampleLayout((("x",),))),
+        initial,
+        target=0.0,
+        order=2,
+        backend="jet",
+    )
+    initial_term = phx.terms.ResidualPenalty(
+        initial_condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(initial_condition.on),
+            phx.integration.MonteCarloPlan(64),
+        ),
     )
 
+    functions = {"u": u}
+    program = phx.enforcement.compile(functions, specs)
     solver = FunctionalSolver(
-        functions={"u": u},
-        constraints=[constraint],
-        constraint_terms=enforced_initial_constraints,
-        interior_data_terms=[],
+        functions=functions,
+        terms=[initial_term],
+        enforcement=program,
     )
     loss = solver.loss(key=jr.key(0))
     assert loss < 1e-6

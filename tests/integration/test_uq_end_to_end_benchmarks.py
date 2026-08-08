@@ -50,21 +50,21 @@ def test_inverse_poisson_likelihood_and_posterior_benchmark():
 
     state = source_parameter * sensor_basis
     likelihood = phx.uq.GaussianLikelihood(observation_scale)
-    constraint = phx.constraints.SupervisedLikelihoodConstraint(
+    constraint = phx.terms.SupervisedLikelihoodTerm(
         "u",
         sensor_domain.component(),
         observations,
         likelihood,
         sampling=phx.domain.PointSampling(96, design="uniform"),
     )
-    solver = phx.solver.FunctionalSolver(functions={"u": state}, constraints=[constraint])
+    solver = phx.solver.FunctionalSolver(functions={"u": state}, terms=[constraint])
     initial_nll = solver.loss(key=jr.key(11))
     trained = solver.solve(
         num_iter=250,
         optim=optax.adam(5e-2),
         seed=12,
         jit=True,
-        keep_best=True,
+        keep_best=False,  # Per-step minibatch losses are not a stable selector.
     )
 
     sensor_points = {

@@ -169,10 +169,10 @@ Carlo standard error. `directional_stratonovich_correction` computes the
 Stratonovich-to-Itô correction by JVPs.
 
 `probability_current` returns the advective-diffusive Fokker--Planck current.
-`ContinuousProbabilityFluxBoundaryConstraint` constrains its outward normal
-component; the default target is zero and therefore represents a reflecting
+`phx.conditions.stochastic.ProbabilityFlux(...)` constrains the outward normal
+component of `probability_current`; its zero target represents a reflecting
 boundary. Positivity, normalization, initial data, and flux remain separate
-constraints.
+conditions.
 
 ## Static random fields
 
@@ -374,8 +374,8 @@ generator, and terminal condition. `evaluate_bsde` returns terminal,
 interval-local, and global trajectory residuals with an explicit quadrature
 rule. A supplied control model represents $Z$ directly; autodiff instead
 computes $Z=\nabla_xu\,\sigma$ and exposes the corresponding semilinear PDE
-residual. `BSDEObjective` attaches the same decomposition to
-`FunctionalSolver` with fixed or resampled paths.
+residual. `BSDETerm` attaches the same decomposition to `FunctionalSolver` with
+fixed or resampled paths.
 
 `solve_coupled_fbsde_explicit` supports forward drift and diffusion depending
 on current value/control predictions. `JumpBSDEProblem` adds finite-activity
@@ -595,7 +595,7 @@ Use `phx.nn.inference_mode(model)` to return an immutable copy with dropout disa
 `HomogeneousFunctionEnsemble` stores one member-axis-stacked PyTree and evaluates it
 with `equinox.filter_vmap`. Every array leaf must carry the member axis and static
 configuration must be shared. `HeterogeneousFunctionEnsemble` is the tuple fallback
-for different architectures, graph topologies, constraints, or solver settings.
+for different architectures, graph topologies, conditions, or solver settings.
 
 Train members independently with `fit_ensemble`; do not vectorize high-level solver
 logging or adaptive-collocation state. `RandomizedPriorModel` adds an independently
@@ -754,14 +754,14 @@ JSON and Parquet artifacts under
 ## Observation likelihoods and proper scores
 
 Native likelihoods include fixed-scale Gaussian, heteroscedastic Gaussian, and
-Student-t observations. `SupervisedLikelihoodConstraint` aligns targets through a
+Student-t observations. `SupervisedLikelihoodTerm` aligns targets through a
 `DatasetDomain` and can score a transformed physical observable:
 
 ```python
 dataset = phx.domain.DatasetDomain(jnp.linspace(0.0, 1.0, 64)[:, None])
 observed_flux = jnp.zeros((64,))
 
-constraint = phx.constraints.SupervisedLikelihoodConstraint(
+term = phx.terms.SupervisedLikelihoodTerm(
     "u",
     dataset.component(),
     observed_flux,
@@ -919,13 +919,13 @@ posterior = phx.uq.PosteriorProblem(
 ```
 
 `FunctionalSolver.loss()` is a training objective, not a posterior density. Arbitrary
-constraint weights, changing collocation samples, and mean reductions do not define
-likelihood normalization. For a `SupervisedLikelihoodConstraint`, call
+term scales, changing collocation samples, and mean reductions do not define
+likelihood normalization. For a `SupervisedLikelihoodTerm`, call
 `observed_batch()` once and sum its unreduced `log_prob(...)` values inside the
 posterior likelihood. Never call random `sample()` from a posterior density.
 
 Use `FixedObservationLikelihood`, `FixedResidualLikelihood`, and
-`FixedConstraintLikelihood` to construct deterministic, sum-reduced normalized
+`FixedSupervisedLikelihood` to construct deterministic, sum-reduced normalized
 posterior terms. `PosteriorProblem.from_terms(...)` combines them without routing
 through `FunctionalSolver.loss()`.
 
@@ -1089,7 +1089,7 @@ Thin a completed, convergence-checked MCMC result only as explicit post-processi
 ```python
 posterior_coreset = phx.uq.thin_posterior(
     posterior_draws,
-    phx.uq.SteinThinning(200),
+    phx.uq.SteinThinning(4),
     key=jr.key(11),
 )
 prediction = posterior_coreset.predict(
@@ -1097,6 +1097,9 @@ prediction = posterior_coreset.predict(
     batch_size=64,
 )
 ```
+
+The executable smoke example retains four of its eight draws per chain. A
+production run may retain 200 only after sampling more than 200 draws per chain.
 
 `SteinThinning` evaluates the exact transformed-posterior score and greedily minimizes
 an inverse-multiquadric kernel Stein discrepancy inside each chain. The result keeps

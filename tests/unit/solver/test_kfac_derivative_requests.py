@@ -18,13 +18,15 @@ def test_trace_derivative_requests_keeps_laplacian_contracted():
     def u(x):
         return x[0] ** 2 + x[0] * x[1]
 
-    requests = trace_derivative_requests(
-        lambda functions: (
-            laplacian(functions["u"], var="x")
-            + partial_n(functions["u"], var="x", axis=1, order=1)
+    condition = phx.conditions.Residual(
+        "u",
+        domain.component(),
+        lambda field: (
+            laplacian(field, var="x")
+            + partial_n(field, var="x", axis=1, order=1)
         ),
-        {"u": u},
     )
+    requests = trace_derivative_requests(condition.residual, {"u": u})
 
     assert len(requests) == 2
     assert any(request.contracted_laplacian for request in requests)
@@ -39,16 +41,18 @@ def test_trace_derivative_requests_rejects_derivatives_above_order_two():
     def u(x):
         return x[0] ** 3
 
+    condition = phx.conditions.Residual(
+        "u",
+        domain.component(),
+        lambda field: partial_n(
+            field,
+            var="x",
+            axis=0,
+            order=3,
+        ),
+    )
     with pytest.raises(ValueError, match="through order two"):
-        trace_derivative_requests(
-            lambda functions: partial_n(
-                functions["u"],
-                var="x",
-                axis=0,
-                order=3,
-            ),
-            {"u": u},
-        )
+        trace_derivative_requests(condition.residual, {"u": u})
 
 
 def test_trace_derivative_requests_rejects_nested_laplacians():
@@ -58,11 +62,13 @@ def test_trace_derivative_requests_rejects_nested_laplacians():
     def u(x):
         return x[0] ** 4
 
+    condition = phx.conditions.Residual(
+        "u",
+        domain.component(),
+        lambda field: laplacian(
+            laplacian(field, var="x"),
+            var="x",
+        ),
+    )
     with pytest.raises(ValueError, match="order 4"):
-        trace_derivative_requests(
-            lambda functions: laplacian(
-                laplacian(functions["u"], var="x"),
-                var="x",
-            ),
-            {"u": u},
-        )
+        trace_derivative_requests(condition.residual, {"u": u})

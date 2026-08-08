@@ -37,18 +37,19 @@ def function_model_loss_values(
     /,
     *,
     key: Key[Array, ""] = DOC_KEY0,
-    iter_: Array | None = None,
+    iter_: int | Array | None = None,
 ) -> tuple[Array, ...]:
     """Evaluate all model objective terms in a function tree."""
     values: list[Array] = []
     seen_models: set[int] = set()
     counter = [0]
+    resolved_iter = None if iter_ is None else jnp.asarray(iter_)
     for model in _iter_model_roots(functions, seen_nodes=set()):
         values.extend(
             _model_loss_values(
                 model,
                 key=key,
-                iter_=iter_,
+                iter_=resolved_iter,
                 seen=seen_models,
                 counter=counter,
             )

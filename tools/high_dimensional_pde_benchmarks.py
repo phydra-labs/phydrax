@@ -686,7 +686,7 @@ def _linear_hjb_solver(dimension: int, /) -> phx.solver.FunctionalSolver:
     )
     return phx.solver.FunctionalSolver(
         functions={"value": value},
-        constraints=(),
+        terms=(),
     )
 
 def _linear_hjb_shooting_solver(dimension: int, /) -> phx.solver.FunctionalSolver:
@@ -705,7 +705,7 @@ def _linear_hjb_shooting_solver(dimension: int, /) -> phx.solver.FunctionalSolve
             "initial": domain.Parameter(jnp.asarray([0.0])),
             "control": control,
         },
-        constraints=(),
+        terms=(),
     )
 
 
@@ -1154,10 +1154,10 @@ def _implicit_score_record(
         deps=("x", "t"),
         func=_OrnsteinUhlenbeckScore(variance),
     )
-    objective = phx.objectives.ScoreMatchingObjective(
+    term = phx.terms.ScoreMatchingTerm(
         "score",
         samples,
-        policy=phx.objectives.ScoreMatchingPolicy(
+        policy=phx.terms.ScoreMatchingPolicy(
             "implicit",
             num_probes=num_probes,
         ),
@@ -1166,14 +1166,14 @@ def _implicit_score_record(
 
     def operation(value):
         del value
-        return objective.loss(functions, key=objective_key)
+        return term.loss(functions, key=objective_key)
 
     estimate, compile_ms, wall_ms = _measure(
         operation,
         jnp.asarray(0.0),
         repeats=repeats,
     )
-    diagnostics = objective.diagnostics(functions, key=objective_key)
+    diagnostics = term.diagnostics(functions, key=objective_key)
     value = float(estimate)
     reference = -0.5 * float(dimension) / float(variance)
     standard_error = float(diagnostics.path_standard_error)

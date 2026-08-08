@@ -7,18 +7,19 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-from phydrax.constraints import (
+from phydrax.conditions import Residual
+from phydrax.domain import Interval1d, PointBatch, SampleLayout
+from phydrax.sampling import HaltonDesign
+from phydrax.sampling.collocation import (
     CoresetCollocation,
-    FunctionalConstraint,
     PeriodicCollocation,
     R3,
     RARD,
 )
-from phydrax.domain import Interval1d, PointBatch, SampleLayout
-from phydrax.sampling import HaltonDesign
+from phydrax.terms import ResidualPenalty
 
 
-def _interval_constraint(
+def _interval_term(
     policy,
     *,
     num_points=32,
@@ -33,14 +34,18 @@ def _interval_constraint(
     def coordinate(x):
         return residual_scale * (x[0] / upper) ** residual_power
 
-    constraint = FunctionalConstraint.from_operator(
-        component=domain.component(),
-        operator=lambda _u: coordinate,
-        constraint_vars="u",
-        sampling=phx.domain.PointSampling(num_points, layout=structure, design="uniform"),
-        collocation_policy=policy,
+    condition = Residual("u", domain.component(), lambda _u: coordinate)
+    source = phx.integration.adaptive(
+        phx.integration.mean_over(condition.on),
+        phx.domain.PointSampling(
+            num_points,
+            layout=structure,
+            design="uniform",
+        ),
+        policy,
     )
-    return domain, constraint, {"u": domain.Function()(0.0)}
+    term = ResidualPenalty(condition, source)
+    return domain, term, {"u": domain.Function()(0.0)}
 
 
 def _coordinates(population):
@@ -51,9 +56,9 @@ def _coordinates(population):
 
 def test_periodic_collocation_replaces_a_fixed_size_population():
     policy = PeriodicCollocation(refresh_every=2, sampler="uniform")
-    _domain, constraint, functions = _interval_constraint(policy)
-    initial = policy.initialize(constraint, key=jr.key(0))
-    refreshed = policy.refresh(constraint, functions, initial, key=jr.key(1), iter_=2)
+    _domain, term, functions = _interval_term(policy)
+    initial = policy.initialize(term, key=jr.key(0))
+    refreshed = policy.refresh(term, functions, initial, key=jr.key(1), iter_=2)
     assert isinstance(initial.batch, PointBatch)
     assert refreshed.batch.structure == initial.batch.structure
     assert _coordinates(refreshed).shape == _coordinates(initial).shape
@@ -65,11 +70,11 @@ def test_collocation_policy_accepts_typed_reference_design():
         refresh_every=1,
         sampler=HaltonDesign(scrambled=True),
     )
-    _domain, constraint, functions = _interval_constraint(policy)
-    population = policy.initialize(constraint, key=jr.key(2))
+    _domain, term, functions = _interval_term(policy)
+    population = policy.initialize(term, key=jr.key(2))
 
     refreshed = policy.refresh(
-        constraint,
+        term,
         functions,
         population,
         key=jr.key(3),
@@ -82,10 +87,10 @@ def test_collocation_policy_accepts_typed_reference_design():
 
 def test_r3_retains_difficult_points_and_preserves_population_size():
     policy = R3(refresh_every=1, sampler="uniform")
-    _domain, constraint, functions = _interval_constraint(policy, num_points=64)
-    initial = policy.initialize(constraint, key=jr.key(4))
+    _domain, term, functions = _interval_term(policy, num_points=64)
+    initial = policy.initialize(term, key=jr.key(4))
     initial_x = _coordinates(initial)
-    refreshed = policy.refresh(constraint, functions, initial, key=jr.key(5), iter_=1)
+    refreshed = policy.refresh(term, functions, initial, key=jr.key(5), iter_=1)
     refreshed_x = _coordinates(refreshed)
     assert refreshed_x.shape == initial_x.shape
     difficult = initial_x[initial_x * initial_x > jnp.mean(initial_x * initial_x)]
@@ -99,11 +104,11 @@ def test_fixed_capacity_rar_d_activates_new_slots():
         initial_active_fraction=0.5,
         refinement_fraction=0.25,
     )
-    _domain, constraint, functions = _interval_constraint(policy, num_points=40)
-    initial = policy.initialize(constraint, key=jr.key(12))
+    _domain, term, functions = _interval_term(policy, num_points=40)
+    initial = policy.initialize(term, key=jr.key(12))
     assert initial.active is not None
     before = int(jnp.sum(jnp.asarray(initial.active.data)))
-    refreshed = policy.refresh(constraint, functions, initial, key=jr.key(13), iter_=1)
+    refreshed = policy.refresh(term, functions, initial, key=jr.key(13), iter_=1)
     assert refreshed.active is not None
     assert int(jnp.sum(jnp.asarray(refreshed.active.data))) == before + 10
     assert _coordinates(refreshed).shape == (40,)
@@ -116,7 +121,7 @@ def test_coreset_collocation_preserves_capacity_and_reports_candidate_cost():
         candidate_multiplier=4,
         block_size=8,
     )
-    _domain, constraint, functions = _interval_constraint(policy, num_points=16)
+    _domain, constraint, functions = _interval_term(policy, num_points=16)
     initial = policy.initialize(constraint, key=jr.key(20))
 
     refreshed = policy.refresh(
@@ -142,9 +147,9 @@ def test_coreset_collocation_preserves_capacity_and_reports_candidate_cost():
 
 def test_coreset_defaults_delay_refresh_and_controlled_policy_preserves_activation():
     policy = CoresetCollocation(refresh_every=5)
-    _domain, constraint, _functions = _interval_constraint(policy)
+    _domain, constraint, _functions = _interval_term(policy)
     population = policy.initialize(constraint, key=jr.key(30))
-    controlled = phx.constraints.controlled_collocation(policy)
+    controlled = phx.sampling.collocation.controlled_collocation(policy)
 
     assert policy.start_at == 10
     assert not bool(policy.should_refresh(population, 9))
@@ -163,11 +168,11 @@ def test_coreset_importance_is_invariant_to_residual_units():
         max_fill_distance_ratio=10.0,
         block_size=8,
     )
-    _domain, base_constraint, base_functions = _interval_constraint(
+    _domain, base_constraint, base_functions = _interval_term(
         policy,
         num_points=16,
     )
-    _domain, scaled_constraint, scaled_functions = _interval_constraint(
+    _domain, scaled_constraint, scaled_functions = _interval_term(
         policy,
         num_points=16,
         residual_scale=1_000.0,
@@ -203,12 +208,12 @@ def test_coreset_auto_scale_is_affine_invariant_and_ess_guard_is_enforced():
         max_fill_distance_ratio=10.0,
         block_size=8,
     )
-    _domain, unit_constraint, unit_functions = _interval_constraint(
+    _domain, unit_constraint, unit_functions = _interval_term(
         policy,
         num_points=16,
         residual_power=32,
     )
-    _domain, scaled_constraint, scaled_functions = _interval_constraint(
+    _domain, scaled_constraint, scaled_functions = _interval_term(
         policy,
         num_points=16,
         upper=100.0,
@@ -259,7 +264,7 @@ def test_coreset_fill_distance_guard_retains_the_current_population():
         kernel=phx.coresets.RadialKernel(length_scale=0.01),
         block_size=16,
     )
-    _domain, constraint, functions = _interval_constraint(
+    _domain, constraint, functions = _interval_term(
         policy,
         num_points=16,
         residual_power=32,
@@ -286,7 +291,9 @@ def test_coreset_fill_distance_guard_retains_the_current_population():
 
 
 def test_coreset_collocation_is_declared_conditional():
-    support = phx.constraints.collocation_policy_support(CoresetCollocation())
+    support = phx.sampling.collocation.collocation_policy_support(
+        CoresetCollocation()
+    )
 
     assert support.name == "coreset"
     assert support.tier == "conditional"

@@ -138,7 +138,7 @@ def trace_derivative_requests(
     }
     result = residual(traced)
     if not isinstance(result, DomainFunction):
-        raise TypeError("A FunctionalConstraint residual must return a DomainFunction.")
+        raise TypeError("A ResidualPenalty condition must return a DomainFunction.")
 
     unique: list[DerivativeRequest] = []
     seen: set[DerivativeRequest] = set()

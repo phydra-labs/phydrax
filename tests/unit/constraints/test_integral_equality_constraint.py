@@ -6,31 +6,27 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-from phydrax.constraints import IntegralEqualityConstraint
-from phydrax.domain import Interval1d, SampleLayout
+from phydrax.conditions import Moment
+from phydrax.domain import Interval1d
+from phydrax.terms import MomentPenalty
 
 
 def test_integral_equal_penalty_matches_exact_constant_integral():
     geom = Interval1d(0.0, 2.0)
     component = geom.component()
-    structure = SampleLayout((("x",),))
+    source = phx.integration.per_step(
+        phx.integration.over(component),
+        phx.integration.MonteCarloPlan(32),
+    )
 
     one = geom.Function()(1.0)
 
-    c = IntegralEqualityConstraint.from_integrand(
-        component=component,
-        integrand=one,
-        equal_to=2.0,
-        sampling=phx.domain.PointSampling(32, layout=structure),
-    )
-    loss = c.loss({}, key=jr.key(0))
+    condition = Moment("u", component, lambda u: u, target=2.0)
+    term = MomentPenalty(condition, source)
+    loss = term.loss({"u": one}, key=jr.key(0))
     assert jnp.allclose(loss, 0.0)
 
-    c2 = IntegralEqualityConstraint.from_integrand(
-        component=component,
-        integrand=one,
-        equal_to=0.0,
-        sampling=phx.domain.PointSampling(32, layout=structure),
-    )
-    loss2 = c2.loss({}, key=jr.key(0))
+    condition2 = Moment("u", component, lambda u: u, target=0.0)
+    term2 = MomentPenalty(condition2, source)
+    loss2 = term2.loss({"u": one}, key=jr.key(0))
     assert jnp.allclose(loss2, 4.0)

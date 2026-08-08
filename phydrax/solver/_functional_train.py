@@ -20,7 +20,7 @@ from evosax.algorithms.population_based.base import PopulationBasedAlgorithm
 from jax import core as jcore
 
 from .._frozendict import frozendict
-from .._objective import AbstractSamplingObjectiveTerm
+from .._term import AbstractSamplingTerm, evaluate
 from .._trainable import combine_trainable, partition_trainable
 from .._training import (
     EvaluationParametersFn,
@@ -32,9 +32,10 @@ from .._training import (
     TrainingProgress,
     TrainingSignalGuard as _TrainingSignalGuard,
 )
-from ..constraints._adaptive_control import ControlledCollocationPolicy
-from ..constraints._functional import FunctionalConstraint
+from ..integration import AdaptiveIntegration
 from ..operators.differential._runtime import derivative_runtime_context
+from ..sampling.collocation import ControlledCollocationPolicy
+from ..terms._residual import ResidualPenalty
 from ._model_losses import function_model_loss_labels, function_model_loss_values
 
 
@@ -54,40 +55,57 @@ class _SupportsDataMetrics(Protocol):
     ) -> dict[str, Any]: ...
 
 
-def _sample_objective_batches(objectives: tuple[Any, ...], /, *, key: Any):
-    keys = jr.split(key, len(objectives))
+def _sample_term_batches(
+    terms: tuple[Any, ...],
+    populations: tuple[Any | None, ...],
+    /,
+    *,
+    key: Any,
+):
+    keys = jr.split(key, len(terms))
     return tuple(
-        objective.sample(key=objective_key)
-        if isinstance(objective, AbstractSamplingObjectiveTerm)
+        term.sample(key=term_key)
+        if population is None and isinstance(term, AbstractSamplingTerm)
         else None
-        for objective, objective_key in zip(objectives, keys, strict=True)
+        for term, population, term_key in zip(
+            terms,
+            populations,
+            keys,
+            strict=True,
+        )
     )
 
 
-def _constraint_label(constraint: Any, /) -> str:
-    label = getattr(constraint, "label", None)
-    if label:
-        return str(label)
-    return type(constraint).__name__
+def _adaptive_policy(term: Any, /):
+    if not isinstance(term, ResidualPenalty) or not isinstance(
+        term.source, AdaptiveIntegration
+    ):
+        raise TypeError(
+            "Adaptive collocation requires ResidualPenalty with an "
+            "AdaptiveIntegration source."
+        )
+    return term.policy
+
+
+def _term_label(term: Any, /) -> str:
+    return term.label or type(term).__name__
 
 
 def _clean_tag_part(value: str, /) -> str:
     cleaned = "".join(
         ch if ch.isalnum() or ch in "._-" else "_" for ch in str(value)
     ).strip("_")
-    return cleaned or "constraint"
+    return cleaned or "term"
 
 
-def _constraint_tag(index: int, name: str, /) -> str:
-    return f"constraints/{index:03d}_{_clean_tag_part(name)}"
+def _term_tag(index: int, name: str, /) -> str:
+    return f"terms/{index:03d}_{_clean_tag_part(name)}"
 
 
 def _model_loss_tag(index: int, name: str, /) -> str:
     return f"model_losses/{index:03d}_{_clean_tag_part(name)}"
 
 
-def _objective_tag(index: int, name: str, /) -> str:
-    return f"objectives/{index:03d}_{_clean_tag_part(name)}"
 
 
 def _metric_suffix(metrics: dict[str, Any], /) -> str:
@@ -112,46 +130,44 @@ def _best_display_value(
     return loss
 
 
-def _train_constraint_sample_size(
+def _train_term_sample_size(
     value: int | None,
     /,
     *,
-    num_constraints: int,
+    num_terms: int,
 ) -> int | None:
     if value is None:
         return None
-    n_constraints = int(num_constraints)
-    if n_constraints <= 0:
-        raise ValueError(
-            "train_constraint_sample_size requires at least one training constraint."
-        )
+    count = int(num_terms)
+    if count <= 0:
+        raise ValueError("train_term_sample_size requires at least one training term.")
     sample_size = int(value)
     if sample_size <= 0:
-        raise ValueError("train_constraint_sample_size must be positive.")
-    if sample_size >= n_constraints:
+        raise ValueError("train_term_sample_size must be positive.")
+    if sample_size >= count:
         return None
     return sample_size
 
 
-def _active_train_constraints(
-    constraints: tuple[Any, ...],
+def _active_train_terms(
+    terms: tuple[Any, ...],
     /,
     *,
     sample_size: int | None,
     key: Any,
 ) -> tuple[tuple[Any, ...], tuple[int, ...], Any]:
-    n_constraints = len(constraints)
+    count = len(terms)
     if sample_size is None:
-        return constraints, tuple(range(n_constraints)), jnp.asarray(1.0, dtype=float)
+        return terms, tuple(range(count)), jnp.asarray(1.0, dtype=float)
     sampled = jr.choice(
         key,
-        n_constraints,
+        count,
         shape=(int(sample_size),),
         replace=False,
     )
     active_indices = tuple(int(i) for i in np.asarray(sampled, dtype=np.int32))
-    active = tuple(constraints[i] for i in active_indices)
-    scale = jnp.asarray(n_constraints / int(sample_size), dtype=float)
+    active = tuple(terms[i] for i in active_indices)
+    scale = jnp.asarray(count / int(sample_size), dtype=float)
     return active, active_indices, scale
 
 
@@ -159,41 +175,35 @@ def _expanded_train_terms(
     active_terms: Any,
     /,
     *,
-    active_constraint_indices: tuple[int, ...],
-    num_constraints: int,
+    active_term_indices: tuple[int, ...],
+    num_terms: int,
 ) -> Any:
     active_arr = jnp.asarray(active_terms, dtype=float).reshape((-1,))
     if int(active_arr.shape[0]) == 0:
-        return jnp.zeros((int(num_constraints),), dtype=float)
-    out = jnp.full((int(num_constraints),), jnp.nan, dtype=float)
-    for local_i, constraint_i in enumerate(active_constraint_indices):
-        out = out.at[int(constraint_i)].set(active_arr[int(local_i)])
+        return jnp.zeros((int(num_terms),), dtype=float)
+    out = jnp.full((int(num_terms),), jnp.nan, dtype=float)
+    for local_i, term_i in enumerate(active_term_indices):
+        out = out.at[int(term_i)].set(active_arr[int(local_i)])
     return out
 
 
-def _write_constraint_tensorboard_scalars(
+def _write_term_tensorboard_scalars(
     writer: _TensorBoardLogger,
     *,
     step: int,
     namespace: str,
-    constraint_names: tuple[str, ...],
+    term_names: tuple[str, ...],
     terms: Any,
     data_metrics: tuple[dict[str, Any], ...],
-    write_legacy: bool = False,
 ) -> None:
     terms_arr = jnp.asarray(terms, dtype=float)
     for i, (name, val) in enumerate(
-        zip(constraint_names, list(map(float, terms_arr)), strict=True)
+        zip(term_names, list(map(float, terms_arr)), strict=True)
     ):
-        base = _constraint_tag(i, name)
-        prefix = f"{namespace}/{base}"
-        writer.scalar(f"{prefix}/loss", val, step)
-        if write_legacy:
-            writer.scalar(f"{base}/loss", val, step)
+        prefix = f"{namespace}/{_term_tag(i, name)}"
+        writer.scalar(f"{prefix}/value", val, step)
         for metric_name, metric_value in data_metrics[i].items():
             writer.scalar(f"{prefix}/{metric_name}", metric_value, step)
-            if write_legacy:
-                writer.scalar(f"{base}/{metric_name}", metric_value, step)
 
 
 def _write_model_loss_tensorboard_scalars(
@@ -210,18 +220,6 @@ def _write_model_loss_tensorboard_scalars(
         writer.scalar(f"train/{_model_loss_tag(i, name)}/loss", val, step)
 
 
-def _write_objective_tensorboard_scalars(
-    writer: _TensorBoardLogger,
-    *,
-    step: int,
-    objective_names: tuple[str, ...],
-    terms: Any,
-) -> None:
-    terms_arr = jnp.asarray(terms, dtype=float)
-    for i, (name, val) in enumerate(
-        zip(objective_names, list(map(float, terms_arr)), strict=True)
-    ):
-        writer.scalar(f"train/{_objective_tag(i, name)}/value", val, step)
 
 
 def _log_tensorboard_scalars(
@@ -232,17 +230,15 @@ def _log_tensorboard_scalars(
     best_loss: float,
     evaluation_loss: Any | None,
     iter_time_s: float,
-    train_constraint_names: tuple[str, ...],
+    train_term_names: tuple[str, ...],
     train_terms: Any,
     train_data_metrics: tuple[dict[str, Any], ...],
-    train_objective_names: tuple[str, ...],
-    train_objective_terms: Any,
     train_model_loss_names: tuple[str, ...],
     train_model_loss_terms: Any,
-    eval_constraint_names: tuple[str, ...],
+    evaluation_term_names: tuple[str, ...],
     eval_terms: Any,
     eval_data_metrics: tuple[dict[str, Any], ...],
-    log_constraints: bool,
+    log_terms: bool,
 ) -> None:
     writer.scalar("train/loss", loss, step)
     writer.scalar("train/best_loss", best_loss, step)
@@ -250,23 +246,16 @@ def _log_tensorboard_scalars(
         writer.scalar("eval/loss", evaluation_loss, step)
     writer.scalar("train/iter_time_s", iter_time_s, step)
 
-    if not log_constraints:
+    if not log_terms:
         return
 
-    _write_constraint_tensorboard_scalars(
+    _write_term_tensorboard_scalars(
         writer,
         step=step,
         namespace="train",
-        constraint_names=train_constraint_names,
+        term_names=train_term_names,
         terms=train_terms,
         data_metrics=train_data_metrics,
-        write_legacy=True,
-    )
-    _write_objective_tensorboard_scalars(
-        writer,
-        step=step,
-        objective_names=train_objective_names,
-        terms=train_objective_terms,
     )
     _write_model_loss_tensorboard_scalars(
         writer,
@@ -274,40 +263,44 @@ def _log_tensorboard_scalars(
         model_loss_names=train_model_loss_names,
         terms=train_model_loss_terms,
     )
-    _write_constraint_tensorboard_scalars(
+    _write_term_tensorboard_scalars(
         writer,
         step=step,
         namespace="eval",
-        constraint_names=eval_constraint_names,
+        term_names=evaluation_term_names,
         terms=eval_terms,
         data_metrics=eval_data_metrics,
     )
 
 
-def _adaptive_constraint_loss(
-    constraint,
+def _term_value(
+    term,
     population: Any | None,
+    materialized_batch: Any | None,
     functions,
     /,
     *,
     key,
     iter_,
 ):
-    if population is None:
-        return constraint.loss(functions, key=key, iter_=iter_)
-    if not isinstance(constraint, FunctionalConstraint):
-        raise TypeError("Adaptive collocation is only valid for FunctionalConstraint.")
-    policy = constraint.collocation_policy
-    if policy is None:
-        raise ValueError("Adaptive population requires a collocation policy.")
-    batch, batch_weight = policy.loss_batch_and_weight(population)
-    return constraint.loss(
+    evaluation_kwargs: dict[str, Any] = {}
+    if population is not None:
+        policy = _adaptive_policy(term)
+        batch, local_weight = policy.loss_batch_and_weight(population)
+        evaluation_kwargs["realization"] = term._adaptive_realization(
+            batch,
+            local_weight,
+            key=key,
+        )
+    elif materialized_batch is not None:
+        evaluation_kwargs["batch"] = materialized_batch
+    return evaluate(
+        term,
         functions,
         key=key,
-        iter_=iter_,
-        batch=batch,
-        batch_weight=batch_weight,
-    )
+        step=iter_,
+        **evaluation_kwargs,
+    ).value
 
 
 def _refresh_collocation(
@@ -319,31 +312,25 @@ def _refresh_collocation(
     key,
     iter_,
 ) -> tuple[Any | None, ...]:
-    if solver.constraint_pipelines is None:
+    if solver.enforcement is None:
         enforced = functions
     else:
-        enforced = solver.constraint_pipelines.apply(functions)
-    keys = jr.split(key, len(solver.constraints))
+        enforced = solver.enforcement.apply(functions)
+    keys = jr.split(key, len(solver.terms))
     refreshed: list[Any | None] = []
-    for constraint, population, constraint_key in zip(
-        solver.constraints, collocation, keys, strict=True
+    for term, population, term_key in zip(
+        solver.terms, collocation, keys, strict=True
     ):
         if population is None:
             refreshed.append(None)
             continue
-        if not isinstance(constraint, FunctionalConstraint):
-            raise TypeError(
-                "Adaptive collocation is only valid for FunctionalConstraint."
-            )
-        policy = constraint.collocation_policy
-        if policy is None:
-            raise ValueError("Adaptive population requires a collocation policy.")
+        policy = _adaptive_policy(term)
         if bool(policy.should_refresh(population, iter_)):
             population = policy.refresh(
-                constraint,
+                term,
                 enforced,
                 population,
-                key=constraint_key,
+                key=term_key,
                 iter_=iter_,
             )
         refreshed.append(population)
@@ -359,29 +346,25 @@ def _settle_collocation(
     key,
     iter_,
 ) -> tuple[Any | None, ...]:
-    if solver.constraint_pipelines is None:
+    if solver.enforcement is None:
         enforced = functions
     else:
-        enforced = solver.constraint_pipelines.apply(functions)
-    keys = jr.split(key, len(solver.constraints))
+        enforced = solver.enforcement.apply(functions)
+    keys = jr.split(key, len(solver.terms))
     settled: list[Any | None] = []
-    for constraint, population, constraint_key in zip(
-        solver.constraints, collocation, keys, strict=True
+    for term, population, term_key in zip(
+        solver.terms, collocation, keys, strict=True
     ):
         if population is None:
             settled.append(None)
             continue
-        if not isinstance(constraint, FunctionalConstraint):
-            raise TypeError(
-                "Adaptive collocation is only valid for FunctionalConstraint."
-            )
-        policy = constraint.collocation_policy
+        policy = _adaptive_policy(term)
         if isinstance(policy, ControlledCollocationPolicy):
             population = policy.settle(
-                constraint,
+                term,
                 enforced,
                 population,
-                key=constraint_key,
+                key=term_key,
                 iter_=iter_,
             )
         settled.append(population)
@@ -394,27 +377,21 @@ def _record_collocation_training_evaluations(
     /,
     *,
     multiplier: int = 1,
-    constraint_indices: tuple[int, ...] | None = None,
+    term_indices: tuple[int, ...] | None = None,
 ) -> tuple[Any | None, ...]:
     selected = (
         None
-        if constraint_indices is None
-        else frozenset(int(index) for index in constraint_indices)
+        if term_indices is None
+        else frozenset(int(index) for index in term_indices)
     )
     recorded: list[Any | None] = []
-    for index, (constraint, population) in enumerate(
-        zip(solver.constraints, collocation, strict=True)
+    for index, (term, population) in enumerate(
+        zip(solver.terms, collocation, strict=True)
     ):
         if population is None or (selected is not None and index not in selected):
             recorded.append(population)
             continue
-        if not isinstance(constraint, FunctionalConstraint):
-            raise TypeError(
-                "Adaptive collocation is only valid for FunctionalConstraint."
-            )
-        policy = constraint.collocation_policy
-        if policy is None:
-            raise ValueError("Adaptive population requires a collocation policy.")
+        policy = _adaptive_policy(term)
         if isinstance(policy, ControlledCollocationPolicy):
             population = policy.record_training_evaluation(
                 population,
@@ -430,21 +407,15 @@ def _collocation_data_metrics(
     /,
 ) -> tuple[dict[str, jax.Array], ...]:
     metrics: list[dict[str, jax.Array]] = []
-    for constraint, population in zip(
-        solver.constraints,
+    for term, population in zip(
+        solver.terms,
         collocation,
         strict=True,
     ):
         if population is None:
             metrics.append({})
             continue
-        if not isinstance(constraint, FunctionalConstraint):
-            raise TypeError(
-                "Adaptive collocation is only valid for FunctionalConstraint."
-            )
-        policy = constraint.collocation_policy
-        if policy is None:
-            raise ValueError("Adaptive population requires a collocation policy.")
+        policy = _adaptive_policy(term)
         metrics.append(policy.data_metrics(population))
     return tuple(metrics)
 
@@ -461,13 +432,13 @@ def solve(
     jit: bool = True,
     keep_best: bool = True,
     log_every: int = 1,
-    log_constraints: bool = True,
+    log_terms: bool = True,
     log_path: str | Path | None = None,
     tensorboard_log_dir: str | Path | None = None,
     tensorboard_every: int | None = None,
     tensorboard_flush_every: int = 10,
     profile_adaptive: bool = False,
-    train_constraint_sample_size: int | None = None,
+    train_term_sample_size: int | None = None,
 ) -> "FunctionalSolver":
     if num_iter == 0:
         return self
@@ -509,13 +480,13 @@ def solve(
             jit=jit,
             keep_best=keep_best,
             log_every=log_every,
-            log_constraints=log_constraints,
+            log_terms=log_terms,
             log_path=log_path,
             tensorboard_log_dir=tensorboard_log_dir,
             tensorboard_every=tensorboard_every,
             tensorboard_flush_every=tensorboard_flush_every,
             profile_adaptive=profile_adaptive,
-            train_constraint_sample_size=train_constraint_sample_size,
+            train_term_sample_size=train_term_sample_size,
         )
     else:
         raise TypeError(
@@ -548,156 +519,124 @@ def solve(
         tb_flush_every_ = int(tensorboard_flush_every)
         if tb_flush_every_ <= 0:
             raise ValueError("tensorboard_flush_every must be positive.")
-        log_constraints_ = bool(log_constraints)
-        constraint_names = tuple(_constraint_label(c) for c in self.constraints)
-        objective_names = tuple(_constraint_label(term) for term in self.objectives)
+        log_terms_ = bool(log_terms)
+        term_names = tuple(_term_label(c) for c in self.terms)
         model_loss_names = function_model_loss_labels(self.functions)
-        eval_constraint_names = tuple(_constraint_label(c) for c in self.eval_constraints)
-        constraint_sample_size = _train_constraint_sample_size(
-            train_constraint_sample_size,
-            num_constraints=len(self.constraints),
+        evaluation_term_names = tuple(_term_label(c) for c in self.evaluation_terms)
+        term_sample_size = _train_term_sample_size(
+            train_term_sample_size,
+            num_terms=len(self.terms),
         )
 
         def _loss_wrt_params(
             params_,
             non_trainable_,
             solver,
-            constraints,
-            constraint_scale,
+            active_terms_,
+            term_scale,
             key,
             iter_,
             collocation_,
-            objective_batches_,
+            materialized_batches_,
         ):
             functions = combine_trainable(params_, non_trainable_)
-            if solver.constraint_pipelines is None:
+            if solver.enforcement is None:
                 enforced = functions
             else:
-                enforced = solver.constraint_pipelines.apply(functions)
-            num_constraints = len(constraints)
-            num_objectives = len(solver.objectives)
-            num_terms = num_constraints + num_objectives
-            keys = jr.split(key, num_terms)
-            constraint_keys = keys[:num_constraints]
-            objective_keys = keys[num_constraints:]
+                enforced = solver.enforcement.apply(functions)
+            term_keys = jr.split(key, len(active_terms_))
             total = jnp.array(0.0, dtype=float)
-            scale = jnp.asarray(constraint_scale, dtype=float).reshape(())
+            scale = jnp.asarray(term_scale, dtype=float).reshape(())
+            evaluated: list[jax.Array] = []
             with derivative_runtime_context():
-                if not log_constraints_:
-                    for c, population, k in zip(
-                        constraints, collocation_, constraint_keys, strict=True
-                    ):
-                        term = _adaptive_constraint_loss(
-                            c, population, enforced, key=k, iter_=iter_
-                        )
-                        total = total + scale * jnp.asarray(term, dtype=float).reshape(())
-                    for objective, objective_key, objective_batch in zip(
-                        solver.objectives,
-                        objective_keys,
-                        objective_batches_,
-                        strict=True,
-                    ):
-                        if objective_batch is None:
-                            term = objective.loss(
-                                enforced, key=objective_key, iter_=iter_
-                            )
-                        else:
-                            term = objective.loss(
-                                enforced,
-                                key=objective_key,
-                                iter_=iter_,
-                                batch=objective_batch,
-                            )
-                        total = total + jnp.asarray(term, dtype=float).reshape(())
-                    for term in function_model_loss_values(
-                        functions,
-                        key=jr.fold_in(key, num_terms),
-                        iter_=iter_,
-                    ):
-                        total = total + jnp.asarray(term, dtype=float).reshape(())
-                    return total, jnp.zeros((0,), dtype=float)
-
-                terms: list[jax.Array] = []
-                for c, population, k in zip(
-                    constraints, collocation_, constraint_keys, strict=True
-                ):
-                    term = _adaptive_constraint_loss(
-                        c, population, enforced, key=k, iter_=iter_
-                    )
-                    raw_term = jnp.asarray(term, dtype=float).reshape(())
-                    scaled_term = scale * raw_term
-                    terms.append(scaled_term)
-                    total = total + scaled_term
-                for objective, objective_key, objective_batch in zip(
-                    solver.objectives,
-                    objective_keys,
-                    objective_batches_,
+                for term, population, batch, term_key in zip(
+                    active_terms_,
+                    collocation_,
+                    materialized_batches_,
+                    term_keys,
                     strict=True,
                 ):
-                    if objective_batch is None:
-                        term = objective.loss(enforced, key=objective_key, iter_=iter_)
-                    else:
-                        term = objective.loss(
-                            enforced,
-                            key=objective_key,
-                            iter_=iter_,
-                            batch=objective_batch,
-                        )
-                    term = jnp.asarray(term, dtype=float).reshape(())
-                    terms.append(term)
-                    total = total + term
-                for term in function_model_loss_values(
+                    value = _term_value(
+                        term,
+                        population,
+                        batch,
+                        enforced,
+                        key=term_key,
+                        iter_=iter_,
+                    )
+                    scaled_value = scale * jnp.asarray(value, dtype=float).reshape(())
+                    total = total + scaled_value
+                    if log_terms_:
+                        evaluated.append(scaled_value)
+                for value in function_model_loss_values(
                     functions,
-                    key=jr.fold_in(key, num_terms),
+                    key=jr.fold_in(key, len(active_terms_)),
                     iter_=iter_,
                 ):
-                    term = jnp.asarray(term, dtype=float).reshape(())
-                    terms.append(term)
-                    total = total + term
-                if terms:
-                    return total, jnp.stack(terms, axis=0)
-                return total, jnp.zeros((0,), dtype=float)
+                    scalar_value = jnp.asarray(value, dtype=float).reshape(())
+                    total = total + scalar_value
+                    if log_terms_:
+                        evaluated.append(scalar_value)
+            if evaluated:
+                return total, jnp.stack(evaluated, axis=0)
+            return total, jnp.zeros((0,), dtype=float)
 
         def _enforced_functions_wrt_params(params_, non_trainable_, solver):
             functions = combine_trainable(params_, non_trainable_)
-            if solver.constraint_pipelines is None:
+            if solver.enforcement is None:
                 return functions
-            return solver.constraint_pipelines.apply(functions)
+            return solver.enforcement.apply(functions)
 
-        def _terms_wrt_constraints(
+        def _term_values_wrt_params(
             params_,
             non_trainable_,
             solver,
-            constraints,
+            requested_terms,
             key,
             iter_,
         ):
             enforced = _enforced_functions_wrt_params(params_, non_trainable_, solver)
-            keys = jr.split(key, len(constraints))
-            terms: list[jax.Array] = []
+            keys = jr.split(key, len(requested_terms))
+            batches = _sample_term_batches(
+                requested_terms,
+                (None,) * len(requested_terms),
+                key=jr.fold_in(key, 1),
+            )
+            values: list[jax.Array] = []
             with derivative_runtime_context():
-                for c, k in zip(constraints, keys, strict=True):
-                    term = c.loss(enforced, key=k, iter_=iter_)
-                    terms.append(jnp.asarray(term, dtype=float).reshape(()))
-            if terms:
-                return jnp.stack(terms, axis=0)
+                for term, batch, term_key in zip(
+                    requested_terms, batches, keys, strict=True
+                ):
+                    value = _term_value(
+                        term,
+                        None,
+                        batch,
+                        enforced,
+                        key=term_key,
+                        iter_=iter_,
+                    )
+                    values.append(jnp.asarray(value, dtype=float).reshape(()))
+            if values:
+                return jnp.stack(values, axis=0)
             return jnp.zeros((0,), dtype=float)
 
-        def _data_metrics_wrt_constraints(
+        def _data_metrics_wrt_terms(
             params_,
             non_trainable_,
             solver,
-            constraints,
+            requested_terms,
             key,
             iter_,
         ):
             enforced = _enforced_functions_wrt_params(params_, non_trainable_, solver)
-            keys = jr.split(key, len(constraints))
+            keys = jr.split(key, len(requested_terms))
             metrics: list[dict[str, Any]] = []
             with derivative_runtime_context():
-                for c, k in zip(constraints, keys, strict=True):
-                    if isinstance(c, _SupportsDataMetrics):
-                        metrics.append(c.data_metrics(enforced, key=k, iter_=iter_))
+                for term, term_key in zip(requested_terms, keys, strict=True):
+                    if isinstance(term, _SupportsDataMetrics):
+                        metrics.append(
+                            term.data_metrics(enforced, key=term_key, iter_=iter_)
+                        )
                     else:
                         metrics.append({})
             return tuple(metrics)
@@ -706,17 +645,17 @@ def solve(
 
         is_linesearch = _opt_linesearch is not None
 
-        def solve_step_constraints(
+        def solve_step_terms(
             params_,
             non_trainable_,
             opt_state,
             solver,
-            constraints,
-            constraint_scale,
+            active_terms_,
+            term_scale,
             key,
             iter_,
             collocation_,
-            objective_batches_,
+            materialized_batches_,
         ):
             if is_linesearch:
                 import jax.tree_util as jtu
@@ -726,24 +665,24 @@ def solve(
                         p,
                         non_trainable_,
                         solver,
-                        constraints,
-                        constraint_scale,
+                        active_terms_,
+                        term_scale,
                         key,
                         iter_,
                         collocation_,
-                        objective_batches_,
+                        materialized_batches_,
                     )[0]
 
-                (value, _terms0), grads = loss_fn(
+                (value, _term_values0), grads = loss_fn(
                     params_,
                     non_trainable_,
                     solver,
-                    constraints,
-                    constraint_scale,
+                    active_terms_,
+                    term_scale,
                     key,
                     iter_,
                     collocation_,
-                    objective_batches_,
+                    materialized_batches_,
                 )
                 grads = jtu.tree_map(
                     lambda a: (
@@ -764,39 +703,39 @@ def solve(
                     value_fn=_value_fn,
                 )
                 params_ = eqx.apply_updates(params_, updates)
-                loss_val, terms = _loss_wrt_params(
+                loss_val, term_values = _loss_wrt_params(
                     params_,
                     non_trainable_,
                     solver,
-                    constraints,
-                    constraint_scale,
+                    active_terms_,
+                    term_scale,
                     key,
                     iter_,
                     collocation_,
-                    objective_batches_,
+                    materialized_batches_,
                 )
-                return params_, opt_state, loss_val, terms
+                return params_, opt_state, loss_val, term_values
 
-            (loss_val, terms), grads = loss_fn(
+            (loss_val, term_values), grads = loss_fn(
                 params_,
                 non_trainable_,
                 solver,
-                constraints,
-                constraint_scale,
+                active_terms_,
+                term_scale,
                 key,
                 iter_,
                 collocation_,
-                objective_batches_,
+                materialized_batches_,
             )
             assert _opt_standard is not None
             updates, opt_state = _opt_standard.update(grads, opt_state, params_)
             params_ = eqx.apply_updates(params_, updates)
-            return params_, opt_state, loss_val, terms
+            return params_, opt_state, loss_val, term_values
 
         solve_step = (
-            eqx.filter_jit(solve_step_constraints)
+            eqx.filter_jit(solve_step_terms)
             if jit and not is_linesearch
-            else solve_step_constraints
+            else solve_step_terms
         )
         selection_loss_fn = (
             eqx.filter_jit(_loss_wrt_params)
@@ -854,32 +793,33 @@ def solve(
                     jax.block_until_ready(collocation)
                     refresh_wall_time += time.perf_counter() - refresh_started
                 optimizer_started = time.perf_counter() if profile_adaptive else 0.0
-                active_constraints, active_constraint_indices, constraint_scale = (
-                    _active_train_constraints(
-                        self.constraints,
-                        sample_size=constraint_sample_size,
+                active_terms, active_term_indices, term_scale = (
+                    _active_train_terms(
+                        self.terms,
+                        sample_size=term_sample_size,
                         key=jr.fold_in(subkey, 17),
                     )
                 )
                 active_collocation = tuple(
-                    collocation[index] for index in active_constraint_indices
+                    collocation[index] for index in active_term_indices
                 )
-                objective_batches = _sample_objective_batches(
-                    self.objectives,
+                materialized_batches = _sample_term_batches(
+                    active_terms,
+                    active_collocation,
                     key=jr.fold_in(subkey, 211),
                 )
                 pre_update_params = params
-                params, opt_state, loss_val, terms = solve_step(
+                params, opt_state, loss_val, term_values = solve_step(
                     params,
                     non_trainable,
                     opt_state,
                     self,
-                    active_constraints,
-                    constraint_scale,
+                    active_terms,
+                    term_scale,
                     subkey,
                     iter_,
                     active_collocation,
-                    objective_batches,
+                    materialized_batches,
                 )
                 if profile_adaptive:
                     jax.block_until_ready((params, opt_state, loss_val))
@@ -892,23 +832,17 @@ def solve(
                 collocation = _record_collocation_training_evaluations(
                     self,
                     collocation,
-                    constraint_indices=active_constraint_indices,
+                    term_indices=active_term_indices,
                 )
                 completed = epoch + 1
-                terms_arr = jnp.asarray(terms, dtype=float)
-                active_constraint_count = len(active_constraints)
-                train_constraint_terms = _expanded_train_terms(
-                    terms_arr[:active_constraint_count],
-                    active_constraint_indices=active_constraint_indices,
-                    num_constraints=len(constraint_names),
+                values_arr = jnp.asarray(term_values, dtype=float)
+                active_term_count = len(active_terms)
+                train_term_values = _expanded_train_terms(
+                    values_arr[:active_term_count],
+                    active_term_indices=active_term_indices,
+                    num_terms=len(term_names),
                 )
-                objective_count = len(objective_names)
-                train_objective_terms = terms_arr[
-                    active_constraint_count : active_constraint_count + objective_count
-                ]
-                train_model_loss_terms = terms_arr[
-                    active_constraint_count + objective_count :
-                ]
+                train_model_loss_terms = values_arr[active_term_count:]
                 step = epoch + 1
                 control.complete_update(step)
                 current_evaluation_params = resolve_evaluation_parameters(
@@ -928,12 +862,12 @@ def solve(
                             current_evaluation_params,
                             non_trainable,
                             self,
-                            active_constraints,
-                            constraint_scale,
+                            active_terms,
+                            term_scale,
                             subkey,
                             iter_,
                             active_collocation,
-                            objective_batches,
+                            materialized_batches,
                         )
                         selection_parameters = current_evaluation_params
                         selection_loss = evaluation_loss
@@ -955,18 +889,18 @@ def solve(
                 console_step = log_every_ > 0 and (step % log_every_ == 0)
                 tensorboard_step = tb_every_ is not None and (step % tb_every_ == 0)
                 train_data_metrics: tuple[dict[str, Any], ...] = tuple(
-                    {} for _ in self.constraints
+                    {} for _ in self.terms
                 )
                 eval_terms = jnp.zeros((0,), dtype=float)
                 eval_data_metrics: tuple[dict[str, Any], ...] = tuple(
-                    {} for _ in self.eval_constraints
+                    {} for _ in self.evaluation_terms
                 )
-                if log_constraints_ and (console_step or tensorboard_step):
-                    train_data_metrics = _data_metrics_wrt_constraints(
+                if log_terms_ and (console_step or tensorboard_step):
+                    train_data_metrics = _data_metrics_wrt_terms(
                         current_evaluation_params,
                         non_trainable,
                         self,
-                        self.constraints,
+                        self.terms,
                         jr.fold_in(subkey, 1),
                         iter_,
                     )
@@ -982,19 +916,19 @@ def solve(
                             strict=True,
                         )
                     )
-                    eval_terms = _terms_wrt_constraints(
+                    eval_terms = _term_values_wrt_params(
                         current_evaluation_params,
                         non_trainable,
                         self,
-                        self.eval_constraints,
+                        self.evaluation_terms,
                         jr.fold_in(subkey, 2),
                         iter_,
                     )
-                    eval_data_metrics = _data_metrics_wrt_constraints(
+                    eval_data_metrics = _data_metrics_wrt_terms(
                         current_evaluation_params,
                         non_trainable,
                         self,
-                        self.eval_constraints,
+                        self.evaluation_terms,
                         jr.fold_in(subkey, 3),
                         iter_,
                     )
@@ -1017,28 +951,17 @@ def solve(
                         f"best={best_display:.6e} iter_time={iter_time_s:.3f}s",
                         file=out_file,
                     )
-                    if log_constraints_:
+                    if log_terms_:
                         for i, (name, val) in enumerate(
                             zip(
-                                constraint_names,
-                                list(map(float, train_constraint_terms)),
+                                term_names,
+                                list(map(float, train_term_values)),
                                 strict=True,
                             )
                         ):
                             suffix = _metric_suffix(train_data_metrics[i])
                             print(
                                 f"  [train {i}] {name}: {val:.6e}{suffix}",
-                                file=out_file,
-                            )
-                        for i, (name, val) in enumerate(
-                            zip(
-                                objective_names,
-                                list(map(float, train_objective_terms)),
-                                strict=True,
-                            )
-                        ):
-                            print(
-                                f"  [objective {i}] {name}: {val:.6e}",
                                 file=out_file,
                             )
                         for i, (name, val) in enumerate(
@@ -1055,7 +978,7 @@ def solve(
                         eval_terms_arr = jnp.asarray(eval_terms, dtype=float)
                         for i, (name, val) in enumerate(
                             zip(
-                                eval_constraint_names,
+                                evaluation_term_names,
                                 list(map(float, eval_terms_arr)),
                                 strict=True,
                             )
@@ -1079,17 +1002,15 @@ def solve(
                         best_loss=best_display,
                         evaluation_loss=evaluation_loss,
                         iter_time_s=iter_time_s,
-                        train_constraint_names=constraint_names,
-                        train_terms=train_constraint_terms,
+                        train_term_names=term_names,
+                        train_terms=train_term_values,
                         train_data_metrics=train_data_metrics,
-                        train_objective_names=objective_names,
-                        train_objective_terms=train_objective_terms,
                         train_model_loss_names=model_loss_names,
                         train_model_loss_terms=train_model_loss_terms,
-                        eval_constraint_names=eval_constraint_names,
+                        evaluation_term_names=evaluation_term_names,
                         eval_terms=eval_terms,
                         eval_data_metrics=eval_data_metrics,
-                        log_constraints=log_constraints_,
+                        log_terms=log_terms_,
                     )
                     if step % tb_flush_every_ == 0:
                         tb_writer.flush()
@@ -1153,20 +1074,19 @@ def _solve_evosax_distribution(
     jit: bool,
     keep_best: bool,
     log_every: int,
-    log_constraints: bool,
+    log_terms: bool,
     log_path: str | Path | None,
     tensorboard_log_dir: str | Path | None = None,
     tensorboard_every: int | None = None,
     tensorboard_flush_every: int = 10,
     profile_adaptive: bool = False,
     tensorboard_writer: _TensorBoardLogger | None = None,
-    train_constraint_sample_size: int | None = None,
+    train_term_sample_size: int | None = None,
 ) -> "FunctionalSolver":
-    from ..constraints._base import AbstractSamplingConstraint
 
-    if train_constraint_sample_size is not None:
+    if train_term_sample_size is not None:
         raise NotImplementedError(
-            "train_constraint_sample_size is currently supported only for Optax "
+            "train_term_sample_size is currently supported only for Optax "
             "optimizers."
         )
 
@@ -1182,11 +1102,10 @@ def _solve_evosax_distribution(
     tb_flush_every_ = int(tensorboard_flush_every)
     if tb_flush_every_ <= 0:
         raise ValueError("tensorboard_flush_every must be positive.")
-    log_constraints_ = bool(log_constraints)
-    constraint_names = tuple(_constraint_label(c) for c in self.constraints)
-    objective_names = tuple(_constraint_label(term) for term in self.objectives)
+    log_terms_ = bool(log_terms)
+    term_names = tuple(_term_label(c) for c in self.terms)
     model_loss_names = function_model_loss_labels(self.functions)
-    eval_constraint_names = tuple(_constraint_label(c) for c in self.eval_constraints)
+    evaluation_term_names = tuple(_term_label(c) for c in self.evaluation_terms)
 
     algo_params = algo.default_params
 
@@ -1196,161 +1115,136 @@ def _solve_evosax_distribution(
         solver,
         key,
         iter_,
-        batches,
-        objective_batches,
+        populations,
+        materialized_batches,
     ):
         functions = combine_trainable(p, non_trainable_)
-        if solver.constraint_pipelines is None:
+        if solver.enforcement is None:
             enforced = functions
         else:
-            enforced = solver.constraint_pipelines.apply(functions)
-        num_constraints = len(solver.constraints)
-        num_objectives = len(solver.objectives)
-        num_terms = num_constraints + num_objectives
-        keys = jr.split(key, num_terms)
-        constraint_keys = keys[:num_constraints]
-        objective_keys = keys[num_constraints:]
+            enforced = solver.enforcement.apply(functions)
+        term_keys = jr.split(key, len(solver.terms))
         total = jnp.array(0.0, dtype=float)
         with derivative_runtime_context():
-            for c, k, batch_info in zip(
-                solver.constraints, constraint_keys, batches, strict=True
-            ):
-                if batch_info is None:
-                    total = total + c.loss(enforced, key=k, iter_=iter_)
-                else:
-                    batch, batch_weight = batch_info
-                    if batch_weight is None:
-                        total = total + c.loss(enforced, key=k, iter_=iter_, batch=batch)
-                    else:
-                        total = total + c.loss(
-                            enforced,
-                            key=k,
-                            iter_=iter_,
-                            batch=batch,
-                            batch_weight=batch_weight,
-                        )
-            for objective, objective_key, objective_batch in zip(
-                solver.objectives,
-                objective_keys,
-                objective_batches,
+            for term, population, batch, term_key in zip(
+                solver.terms,
+                populations,
+                materialized_batches,
+                term_keys,
                 strict=True,
             ):
-                if objective_batch is None:
-                    term = objective.loss(enforced, key=objective_key, iter_=iter_)
-                else:
-                    term = objective.loss(
-                        enforced,
-                        key=objective_key,
-                        iter_=iter_,
-                        batch=objective_batch,
-                    )
-                total = total + jnp.asarray(term, dtype=float).reshape(())
-            for term in function_model_loss_values(
+                value = _term_value(
+                    term,
+                    population,
+                    batch,
+                    enforced,
+                    key=term_key,
+                    iter_=iter_,
+                )
+                total = total + jnp.asarray(value, dtype=float).reshape(())
+            for value in function_model_loss_values(
                 functions,
-                key=jr.fold_in(key, num_terms),
+                key=jr.fold_in(key, len(solver.terms)),
                 iter_=iter_,
             ):
-                total = total + jnp.asarray(term, dtype=float).reshape(())
+                total = total + jnp.asarray(value, dtype=float).reshape(())
         return total
 
-    def _terms_for_params(
+    def _values_for_params(
         p,
         non_trainable_,
         solver,
         key,
         iter_,
-        batches,
-        objective_batches,
+        populations,
+        materialized_batches,
     ):
         functions = combine_trainable(p, non_trainable_)
-        if solver.constraint_pipelines is None:
+        if solver.enforcement is None:
             enforced = functions
         else:
-            enforced = solver.constraint_pipelines.apply(functions)
-        num_constraints = len(solver.constraints)
-        num_objectives = len(solver.objectives)
-        num_terms = num_constraints + num_objectives
-        keys = jr.split(key, num_terms)
-        constraint_keys = keys[:num_constraints]
-        objective_keys = keys[num_constraints:]
-        terms: list[jax.Array] = []
+            enforced = solver.enforcement.apply(functions)
+        term_keys = jr.split(key, len(solver.terms))
+        values: list[jax.Array] = []
         with derivative_runtime_context():
-            for c, k, batch_info in zip(
-                solver.constraints, constraint_keys, batches, strict=True
-            ):
-                if batch_info is None:
-                    term = c.loss(enforced, key=k, iter_=iter_)
-                else:
-                    batch, batch_weight = batch_info
-                    if batch_weight is None:
-                        term = c.loss(enforced, key=k, iter_=iter_, batch=batch)
-                    else:
-                        term = c.loss(
-                            enforced,
-                            key=k,
-                            iter_=iter_,
-                            batch=batch,
-                            batch_weight=batch_weight,
-                        )
-                terms.append(jnp.asarray(term, dtype=float).reshape(()))
-            for objective, objective_key, objective_batch in zip(
-                solver.objectives,
-                objective_keys,
-                objective_batches,
+            for term, population, batch, term_key in zip(
+                solver.terms,
+                populations,
+                materialized_batches,
+                term_keys,
                 strict=True,
             ):
-                if objective_batch is None:
-                    term = objective.loss(enforced, key=objective_key, iter_=iter_)
-                else:
-                    term = objective.loss(
-                        enforced,
-                        key=objective_key,
-                        iter_=iter_,
-                        batch=objective_batch,
-                    )
-                terms.append(jnp.asarray(term, dtype=float).reshape(()))
-            for term in function_model_loss_values(
+                value = _term_value(
+                    term,
+                    population,
+                    batch,
+                    enforced,
+                    key=term_key,
+                    iter_=iter_,
+                )
+                values.append(jnp.asarray(value, dtype=float).reshape(()))
+            for value in function_model_loss_values(
                 functions,
-                key=jr.fold_in(key, num_terms),
+                key=jr.fold_in(key, len(solver.terms)),
                 iter_=iter_,
             ):
-                terms.append(jnp.asarray(term, dtype=float).reshape(()))
-        if terms:
-            return jnp.stack(terms, axis=0)
+                values.append(jnp.asarray(value, dtype=float).reshape(()))
+        if values:
+            return jnp.stack(values, axis=0)
         return jnp.zeros((0,), dtype=float)
 
     def _enforced_functions_for_params(p, non_trainable_, solver):
         functions = combine_trainable(p, non_trainable_)
-        if solver.constraint_pipelines is None:
+        if solver.enforcement is None:
             return functions
-        return solver.constraint_pipelines.apply(functions)
+        return solver.enforcement.apply(functions)
 
-    def _terms_for_constraints(p, non_trainable_, solver, constraints, key, iter_):
+    def _evaluation_term_values_for_params(
+        p, non_trainable_, solver, requested_terms, key, iter_
+    ):
         enforced = _enforced_functions_for_params(p, non_trainable_, solver)
-        keys = jr.split(key, len(constraints))
-        terms: list[jax.Array] = []
+        keys = jr.split(key, len(requested_terms))
+        batches = _sample_term_batches(
+            requested_terms,
+            (None,) * len(requested_terms),
+            key=jr.fold_in(key, 1),
+        )
+        values: list[jax.Array] = []
         with derivative_runtime_context():
-            for c, k in zip(constraints, keys, strict=True):
-                term = c.loss(enforced, key=k, iter_=iter_)
-                terms.append(jnp.asarray(term, dtype=float).reshape(()))
-        if terms:
-            return jnp.stack(terms, axis=0)
+            for term, batch, term_key in zip(
+                requested_terms, batches, keys, strict=True
+            ):
+                value = _term_value(
+                    term,
+                    None,
+                    batch,
+                    enforced,
+                    key=term_key,
+                    iter_=iter_,
+                )
+                values.append(jnp.asarray(value, dtype=float).reshape(()))
+        if values:
+            return jnp.stack(values, axis=0)
         return jnp.zeros((0,), dtype=float)
 
-    def _data_metrics_for_constraints(p, non_trainable_, solver, constraints, key, iter_):
+    def _data_metrics_for_terms(
+        p, non_trainable_, solver, requested_terms, key, iter_
+    ):
         enforced = _enforced_functions_for_params(p, non_trainable_, solver)
-        keys = jr.split(key, len(constraints))
+        keys = jr.split(key, len(requested_terms))
         metrics: list[dict[str, Any]] = []
         with derivative_runtime_context():
-            for c, k in zip(constraints, keys, strict=True):
-                if isinstance(c, _SupportsDataMetrics):
-                    metrics.append(c.data_metrics(enforced, key=k, iter_=iter_))
+            for term, term_key in zip(requested_terms, keys, strict=True):
+                if isinstance(term, _SupportsDataMetrics):
+                    metrics.append(
+                        term.data_metrics(enforced, key=term_key, iter_=iter_)
+                    )
                 else:
                     metrics.append({})
         return tuple(metrics)
 
     loss_fn = eqx.filter_jit(_loss_for_params) if jit else _loss_for_params
-    terms_fn = eqx.filter_jit(_terms_for_params) if jit else _terms_for_params
+    terms_fn = eqx.filter_jit(_values_for_params) if jit else _values_for_params
 
     key = jr.key(seed)
     evo_state = algo.init(key, mean=params, params=algo_params)
@@ -1427,34 +1321,13 @@ def _solve_evosax_distribution(
                     refresh_wall_time += time.perf_counter() - refresh_started
                 optimizer_started = time.perf_counter() if profile_adaptive else 0.0
 
-                # Common random numbers (CRN): sample each constraint batch once per
-                # generation and reuse it across the full population to reduce variance
-                # and avoid vmapping through host callbacks.
+                # Common random numbers: sample every stochastic term once per
+                # generation and reuse the materialized batches across the population.
                 batch_key = jr.fold_in(eval_key, 0)
-                batch_keys = jr.split(batch_key, len(self.constraints))
-                batches: list[Any] = []
-                for c, adaptive_population, k in zip(
-                    self.constraints, collocation, batch_keys, strict=True
-                ):
-                    if adaptive_population is not None:
-                        if not isinstance(c, FunctionalConstraint):
-                            raise TypeError(
-                                "Adaptive collocation is only valid for FunctionalConstraint."
-                            )
-                        policy = c.collocation_policy
-                        if policy is None:
-                            raise ValueError(
-                                "Adaptive population requires a collocation policy."
-                            )
-                        batches.append(policy.loss_batch_and_weight(adaptive_population))
-                    elif isinstance(c, AbstractSamplingConstraint):
-                        batches.append((c.sample(key=k), None))
-                    else:
-                        batches.append(None)
-                batches_tuple = tuple(batches)
-                objective_batches_tuple = _sample_objective_batches(
-                    self.objectives,
-                    key=jr.fold_in(batch_key, 1),
+                materialized_batches = _sample_term_batches(
+                    self.terms,
+                    collocation,
+                    key=batch_key,
                 )
 
                 eval_key_shared = jr.fold_in(eval_key, 1)
@@ -1465,8 +1338,8 @@ def _solve_evosax_distribution(
                         self,
                         eval_key_shared,
                         iter_,
-                        batches_tuple,
-                        objective_batches_tuple,
+                        collocation,
+                        materialized_batches,
                     )
                 )(population)
                 evo_state, _ = algo.tell(
@@ -1479,8 +1352,8 @@ def _solve_evosax_distribution(
                     self,
                     eval_key_shared,
                     iter_,
-                    batches_tuple,
-                    objective_batches_tuple,
+                    collocation,
+                    materialized_batches,
                 )
                 if profile_adaptive:
                     jax.block_until_ready((evo_state, cand_params, cand_loss))
@@ -1510,62 +1383,51 @@ def _solve_evosax_distribution(
                 console_step = log_every_ > 0 and (step % log_every_ == 0)
                 tensorboard_step = tb_every_ is not None and (step % tb_every_ == 0)
                 train_data_metrics: tuple[dict[str, Any], ...] = tuple(
-                    {} for _ in self.constraints
+                    {} for _ in self.terms
                 )
                 eval_terms = jnp.zeros((0,), dtype=float)
                 eval_data_metrics: tuple[dict[str, Any], ...] = tuple(
-                    {} for _ in self.eval_constraints
+                    {} for _ in self.evaluation_terms
                 )
-                terms_arr = jnp.zeros((0,), dtype=float)
-                train_constraint_terms = terms_arr[: len(constraint_names)]
-                objective_count = len(objective_names)
-                train_objective_terms = terms_arr[
-                    len(constraint_names) : len(constraint_names) + objective_count
-                ]
-                train_model_loss_terms = terms_arr[
-                    len(constraint_names) + objective_count :
-                ]
-                if log_constraints_ and (console_step or tensorboard_step):
-                    terms_arr = jnp.asarray(
+                values_arr = jnp.zeros((0,), dtype=float)
+                train_term_values = values_arr[: len(term_names)]
+                train_model_loss_terms = values_arr[len(term_names) :]
+                if log_terms_ and (console_step or tensorboard_step):
+                    values_arr = jnp.asarray(
                         terms_fn(
                             cand_params,
                             non_trainable,
                             self,
                             eval_key_shared,
                             iter_,
-                            batches_tuple,
-                            objective_batches_tuple,
+                            collocation,
+                            materialized_batches,
                         ),
                         dtype=float,
                     )
-                    train_constraint_terms = terms_arr[: len(constraint_names)]
-                    train_objective_terms = terms_arr[
-                        len(constraint_names) : len(constraint_names) + objective_count
-                    ]
-                    train_model_loss_terms = terms_arr[
-                        len(constraint_names) + objective_count :
-                    ]
-                    train_data_metrics = _data_metrics_for_constraints(
+                    train_term_values = values_arr[: len(term_names)]
+                    train_model_loss_terms = values_arr[len(term_names) :]
+                    train_data_metrics = _data_metrics_for_terms(
                         cand_params,
                         non_trainable,
                         self,
-                        self.constraints,
+                        self.terms,
                         jr.fold_in(eval_key_shared, 1),
                         iter_,
                     )
-                    eval_terms = _terms_for_constraints(
+                    eval_terms = _evaluation_term_values_for_params(
                         cand_params,
                         non_trainable,
                         self,
-                        self.eval_constraints,
+                        self.evaluation_terms,
                         jr.fold_in(eval_key_shared, 2),
                         iter_,
                     )
-                    eval_data_metrics = _data_metrics_for_constraints(
+                    eval_data_metrics = _data_metrics_for_terms(
                         cand_params,
                         non_trainable,
                         self,
-                        self.eval_constraints,
+                        self.evaluation_terms,
                         jr.fold_in(eval_key_shared, 3),
                         iter_,
                     )
@@ -1583,28 +1445,17 @@ def _solve_evosax_distribution(
                         f"iter_time={iter_time_s:.3f}s",
                         file=out_file,
                     )
-                    if log_constraints_:
+                    if log_terms_:
                         for i, (name, val) in enumerate(
                             zip(
-                                constraint_names,
-                                list(map(float, train_constraint_terms)),
+                                term_names,
+                                list(map(float, train_term_values)),
                                 strict=True,
                             )
                         ):
                             suffix = _metric_suffix(train_data_metrics[i])
                             print(
                                 f"  [train {i}] {name}: {val:.6e}{suffix}",
-                                file=out_file,
-                            )
-                        for i, (name, val) in enumerate(
-                            zip(
-                                objective_names,
-                                list(map(float, train_objective_terms)),
-                                strict=True,
-                            )
-                        ):
-                            print(
-                                f"  [objective {i}] {name}: {val:.6e}",
                                 file=out_file,
                             )
                         for i, (name, val) in enumerate(
@@ -1621,7 +1472,7 @@ def _solve_evosax_distribution(
                         eval_terms_arr = jnp.asarray(eval_terms, dtype=float)
                         for i, (name, val) in enumerate(
                             zip(
-                                eval_constraint_names,
+                                evaluation_term_names,
                                 list(map(float, eval_terms_arr)),
                                 strict=True,
                             )
@@ -1645,17 +1496,15 @@ def _solve_evosax_distribution(
                         best_loss=best_display,
                         evaluation_loss=None,
                         iter_time_s=iter_time_s,
-                        train_constraint_names=constraint_names,
-                        train_terms=train_constraint_terms,
+                        train_term_names=term_names,
+                        train_terms=train_term_values,
                         train_data_metrics=train_data_metrics,
-                        train_objective_names=objective_names,
-                        train_objective_terms=train_objective_terms,
                         train_model_loss_names=model_loss_names,
                         train_model_loss_terms=train_model_loss_terms,
-                        eval_constraint_names=eval_constraint_names,
+                        evaluation_term_names=evaluation_term_names,
                         eval_terms=eval_terms,
                         eval_data_metrics=eval_data_metrics,
-                        log_constraints=log_constraints_,
+                        log_terms=log_terms_,
                     )
                     if step % tb_flush_every_ == 0:
                         tb_writer.flush()

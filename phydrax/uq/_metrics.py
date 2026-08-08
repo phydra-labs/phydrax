@@ -10,8 +10,8 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 from jaxtyping import Array, ArrayLike
 
+from .._likelihoods import AbstractLikelihood
 from .._strict import StrictModule
-from ._likelihoods import AbstractLikelihood
 
 
 Reduction = Literal["mean", "sum", "none"]

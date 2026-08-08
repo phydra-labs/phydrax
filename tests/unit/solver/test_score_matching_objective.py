@@ -5,11 +5,11 @@ import optax
 import pytest
 
 import phydrax as phx
-from phydrax.objectives._score_matching import (
-    ScoreMatchingObjective,
-    ScoreMatchingPolicy,
-)
 from phydrax.stochastic._state_time import trajectory_state_time_samples
+from phydrax.terms._score_matching import (
+    ScoreMatchingPolicy,
+    ScoreMatchingTerm,
+)
 
 
 class _LinearScore(eqx.Module):
@@ -58,12 +58,12 @@ def test_exact_and_implicit_score_matching_agree_for_diagonal_linear_score():
     trajectory = _trajectory(dimension=dimension, paths=128, times=3)
     samples = trajectory_state_time_samples(trajectory, time_label="t")
     score = _score_function(_LinearScore(jnp.asarray(-0.7)), dimension)
-    exact = ScoreMatchingObjective(
+    exact = ScoreMatchingTerm(
         "score",
         samples,
         policy=ScoreMatchingPolicy("exact"),
     )
-    implicit = ScoreMatchingObjective(
+    implicit = ScoreMatchingTerm(
         "score",
         samples,
         policy=ScoreMatchingPolicy("implicit", num_probes=4),
@@ -84,12 +84,12 @@ def test_sliced_score_matching_matches_implicit_objective_in_expectation():
     trajectory = _trajectory(dimension=dimension, paths=512, times=2, seed=2)
     samples = trajectory_state_time_samples(trajectory, time_label="t")
     score = _score_function(_LinearScore(jnp.asarray(-0.5)), dimension)
-    implicit = ScoreMatchingObjective(
+    implicit = ScoreMatchingTerm(
         "score",
         samples,
         policy=ScoreMatchingPolicy("implicit", num_probes=8),
     )
-    sliced = ScoreMatchingObjective(
+    sliced = ScoreMatchingTerm(
         "score",
         samples,
         policy=ScoreMatchingPolicy("sliced", num_probes=256),
@@ -120,7 +120,7 @@ def test_masks_exclude_invalid_particle_states_and_time_coverage_is_reported():
     )
     samples = trajectory_state_time_samples(trajectory, time_label="t")
     score = _score_function(_LinearScore(jnp.asarray(-1.0)), 1)
-    objective = ScoreMatchingObjective(
+    objective = ScoreMatchingTerm(
         "score",
         samples,
         policy=ScoreMatchingPolicy("exact"),
@@ -147,12 +147,12 @@ def test_probe_standard_error_decreases_for_off_diagonal_divergence():
         jnp.ones((dimension, dimension)) - jnp.eye(dimension)
     )
     score = _score_function(_MatrixScore(matrix), dimension)
-    small = ScoreMatchingObjective(
+    small = ScoreMatchingTerm(
         "score",
         samples,
         policy=ScoreMatchingPolicy("implicit", num_probes=8),
     )
-    large = ScoreMatchingObjective(
+    large = ScoreMatchingTerm(
         "score",
         samples,
         policy=ScoreMatchingPolicy("implicit", num_probes=512),
@@ -173,16 +173,12 @@ def test_implicit_score_matching_trains_gaussian_score_field():
     trajectory = _trajectory(dimension=dimension, paths=1024, times=2, seed=4)
     samples = trajectory_state_time_samples(trajectory, time_label="t")
     score = _score_function(_LinearScore(jnp.asarray(0.2)), dimension)
-    objective = ScoreMatchingObjective(
+    objective = ScoreMatchingTerm(
         "score",
         samples,
         policy=ScoreMatchingPolicy("implicit", num_probes=4),
     )
-    solver = phx.solver.FunctionalSolver(
-        functions={"score": score},
-        constraints=(),
-        objectives=(objective,),
-    )
+    solver = phx.solver.FunctionalSolver(functions={"score": score}, terms=(objective,), )
 
     trained = solver.solve(
         num_iter=120,
@@ -206,17 +202,13 @@ def test_resampled_particle_provider_runs_once_per_optimizer_update():
         return _trajectory(dimension=2, paths=32, times=1, seed=len(calls))
 
     score = _score_function(_LinearScore(jnp.asarray(0.1)), 2)
-    objective = ScoreMatchingObjective(
+    objective = ScoreMatchingTerm(
         "score",
         provider,
         sampling_mode="resample",
         policy=ScoreMatchingPolicy("implicit", num_probes=2),
     )
-    solver = phx.solver.FunctionalSolver(
-        functions={"score": score},
-        constraints=(),
-        objectives=(objective,),
-    )
+    solver = phx.solver.FunctionalSolver(functions={"score": score}, terms=(objective,), )
 
     solver.solve(
         num_iter=4,
@@ -233,7 +225,7 @@ def test_dimension_100_implicit_smoke_uses_jvps_and_rejects_scalar_score():
     dimension = 100
     trajectory = _trajectory(dimension=dimension, paths=4, times=1, seed=6)
     samples = trajectory_state_time_samples(trajectory, time_label="t")
-    objective = ScoreMatchingObjective(
+    objective = ScoreMatchingTerm(
         "score",
         samples,
         policy=ScoreMatchingPolicy("implicit", num_probes=4),
