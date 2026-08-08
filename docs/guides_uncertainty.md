@@ -1053,13 +1053,27 @@ report = posterior_draws.convergence_report(
 report.raise_for_failure()
 ```
 
-`chain_method="sequential"` is the conservative low-compilation-memory path;
-`"vectorized"` compiles one batched transition while preserving identical chain keys
-and separate chain/draw axes. `convergence_report(...)` applies caller-controlled
-release gates and reports exact failing PyTree leaves. `MCMCResult` retains tuned
-warmup parameters, final chain states, energies, integration depths, deterministic
-keys, adaptation and sampling runtimes, throughput, and sample-memory size. A
-repeated root key reproduces samples and diagnostics.
+`chain_method="sequential"` is the conservative low-compilation-memory path.
+`"vectorized"` compiles one batched transition and synchronizes chains after every
+draw. `"interleaved"` retains vectorized warmup, then advances every active production
+chain by one velocity-Verlet step per scheduler tick. A chain that finishes a draw can
+begin its next draw while another chain continues a longer trajectory. All methods
+preserve the same indexed chain keys and separate chain/draw axes.
+
+Interleaving is intended for many-chain accelerator workloads where trajectory
+lengths vary and each log-density gradient is expensive. It can be slower for a few
+chains, cheap targets, or nearly uniform trajectory lengths, so it is explicit rather
+than automatic. Checkpoints remain equal-draw boundaries: a small
+`checkpoint_every`, especially one draw, removes most of the scheduling benefit.
+Flow-assisted NUTS does not currently accept the interleaved method. The scheduling
+construction follows [Efficiently Vectorized MCMC on Modern
+Accelerators](https://arxiv.org/abs/2503.17405).
+
+`convergence_report(...)` applies caller-controlled release gates and reports exact
+failing PyTree leaves. `MCMCResult` retains tuned warmup parameters, final chain
+states, energies, integration depths, deterministic keys, adaptation and sampling
+runtimes, throughput, and sample-memory size. A repeated root key reproduces samples
+and diagnostics.
 
 Pass `initial_positions` with one leading chain axis when chains must begin at
 different represented modes; `initial_position` retains the replicated-start

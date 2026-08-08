@@ -243,6 +243,7 @@ nuts = phx.uq.sample_nuts(
     num_warmup=1000,
     num_samples=1000,
     target_acceptance_rate=0.9,
+    chain_method="interleaved",
 )
 assert nuts.diagnostics.max_rhat < 1.01
 assert nuts.diagnostics.divergence_count == 0
@@ -274,6 +275,12 @@ rank-normalized $\hat R$, bulk/tail ESS, acceptance, divergence, energy, depth, 
 warmup diagnostics. Dense Laplace is a local Gaussian approximation; agreement on
 this conjugate problem is a correctness check, not evidence that every nonlinear
 posterior is Gaussian.
+
+`chain_method="interleaved"` is the explicit accelerator-oriented scheduling
+choice: chains can cross draw boundaries independently when NUTS trajectory lengths
+differ. Prefer it for many chains with expensive posterior gradients. This conjugate
+example is intentionally small; `"sequential"` or `"vectorized"` can be faster for
+similarly cheap targets.
 
 Structured Laplace automatically whitens declared Gaussian priors; transformed
 physical covariance is available through `physical_covariance_vector_product`.

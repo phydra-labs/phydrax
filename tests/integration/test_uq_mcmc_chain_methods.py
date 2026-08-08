@@ -6,6 +6,7 @@ import coordax as cx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import pytest
 
 import phydrax as phx
 
@@ -54,15 +55,61 @@ def test_vectorized_nuts_replays_and_matches_independent_sequential_chains():
     )
     sequential = phx.uq.sample_nuts(problem, **settings, chain_method="sequential")
     vectorized = phx.uq.sample_nuts(problem, **settings, chain_method="vectorized")
-    replay = phx.uq.sample_nuts(problem, **settings, chain_method="vectorized")
+    vectorized_replay = phx.uq.sample_nuts(
+        problem,
+        **settings,
+        chain_method="vectorized",
+    )
+    interleaved = phx.uq.sample_nuts(
+        problem,
+        **settings,
+        chain_method="interleaved",
+    )
+    interleaved_replay = phx.uq.sample_nuts(
+        problem,
+        **settings,
+        chain_method="interleaved",
+    )
 
-    _assert_tree_equal(vectorized.samples, replay.samples)
-    _assert_tree_equal(vectorized.unconstrained_samples, replay.unconstrained_samples)
+    _assert_tree_equal(vectorized.samples, vectorized_replay.samples)
+    _assert_tree_equal(
+        vectorized.unconstrained_samples,
+        vectorized_replay.unconstrained_samples,
+    )
+    _assert_tree_equal(interleaved.samples, interleaved_replay.samples)
+    _assert_tree_equal(
+        interleaved.unconstrained_samples,
+        interleaved_replay.unconstrained_samples,
+    )
     _assert_tree_close(sequential.samples, vectorized.samples)
+    _assert_tree_close(vectorized.samples, interleaved.samples)
+    _assert_tree_close(vectorized.final_states, interleaved.final_states)
+    assert jnp.allclose(
+        vectorized.acceptance_rate,
+        interleaved.acceptance_rate,
+        rtol=0.0,
+        atol=1e-10,
+    )
+    assert jnp.allclose(
+        vectorized.energy,
+        interleaved.energy,
+        rtol=0.0,
+        atol=1e-10,
+    )
+    assert jnp.array_equal(
+        vectorized.num_integration_steps,
+        interleaved.num_integration_steps,
+    )
+    assert jnp.array_equal(
+        vectorized.num_trajectory_expansions,
+        interleaved.num_trajectory_expansions,
+    )
+    assert jnp.array_equal(vectorized.divergent, interleaved.divergent)
     assert jnp.array_equal(sequential.divergent, vectorized.divergent)
     assert jnp.array_equal(sequential.chain_keys, vectorized.chain_keys)
     assert vectorized.chain_method == "vectorized"
     assert sequential.chain_method == "sequential"
+    assert interleaved.chain_method == "interleaved"
     assert not jnp.array_equal(vectorized.samples[0], vectorized.samples[1])
     assert vectorized.diagnostics.rhat.shape == (2,)
     assert vectorized.sample_memory_bytes == sequential.sample_memory_bytes
@@ -71,8 +118,8 @@ def test_vectorized_nuts_replays_and_matches_independent_sequential_chains():
     assert vectorized.samples_per_second > 0.0
 
     query = jnp.linspace(0.0, 1.0, 9)
-    full = vectorized.predict(query)
-    chunked = vectorized.predict(query, batch_size=17)
+    full = interleaved.predict(query)
+    chunked = interleaved.predict(query, batch_size=17)
     assert jnp.array_equal(full.samples.data, chunked.samples.data)
     assert full.samples.shape == (3, 60, 9)
 
@@ -102,7 +149,8 @@ def test_vectorized_hmc_preserves_fixed_trajectory_and_diagnostics():
     assert jnp.isfinite(vectorized.diagnostics.max_rhat)
 
 
-def test_vectorized_nuts_supports_dense_and_diagonal_mass_adaptation():
+@pytest.mark.parametrize("chain_method", ["vectorized", "interleaved"])
+def test_vectorized_nuts_supports_dense_and_diagonal_mass_adaptation(chain_method):
     problem = _correlated_problem()
     settings = dict(
         key=jr.key(202),
@@ -112,7 +160,7 @@ def test_vectorized_nuts_supports_dense_and_diagonal_mass_adaptation():
         initial_step_size=0.2,
         target_acceptance_rate=0.9,
         max_num_doublings=7,
-        chain_method="vectorized",
+        chain_method=chain_method,
     )
     diagonal = phx.uq.sample_nuts(
         problem,
@@ -203,7 +251,7 @@ def test_nuts_and_hmc_sample_every_separable_mlp_final_layer_subtree():
         num_warmup=15,
         num_samples=8,
         initial_step_size=0.02,
-        chain_method="vectorized",
+        chain_method="interleaved",
     )
 
     for result in (hmc, nuts):
@@ -214,3 +262,27 @@ def test_nuts_and_hmc_sample_every_separable_mlp_final_layer_subtree():
         )
         first_draw = jax.tree_util.tree_map(lambda leaf: leaf[0, 0], result.samples)
         assert jnp.all(jnp.isfinite(jax.vmap(subspace.reconstruct(first_draw))(inputs)))
+
+
+def test_interleaved_chain_method_is_nuts_specific():
+    problem = _correlated_problem()
+
+    with pytest.raises(ValueError, match="sequential.*vectorized"):
+        phx.uq.sample_hmc(
+            problem,
+            key=jr.key(206),
+            num_integration_steps=3,
+            num_chains=2,
+            num_warmup=8,
+            num_samples=4,
+            chain_method="interleaved",
+        )
+    with pytest.raises(ValueError, match="interleaved"):
+        phx.uq.sample_nuts(
+            problem,
+            key=jr.key(207),
+            num_chains=2,
+            num_warmup=8,
+            num_samples=4,
+            chain_method="unknown",
+        )

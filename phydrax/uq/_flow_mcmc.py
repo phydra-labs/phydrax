@@ -7,7 +7,7 @@ from __future__ import annotations
 import importlib.metadata
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import blackjax
 import equinox as eqx
@@ -372,7 +372,7 @@ class FlowNUTSResult(StrictModule):
 
     @property
     def chain_method(self) -> ChainMethod:
-        return self.mcmc.chain_method
+        return cast(ChainMethod, self.mcmc.chain_method)
 
     @property
     def num_chains(self) -> int:

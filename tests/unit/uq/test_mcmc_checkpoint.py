@@ -27,11 +27,20 @@ def _assert_tree_equal(left, right):
     assert all(jax.tree_util.tree_leaves(comparisons))
 
 
-@pytest.mark.parametrize("algorithm", ["nuts", "hmc"])
+@pytest.mark.parametrize(
+    ("algorithm", "chain_method", "checkpoint_every"),
+    [
+        ("nuts", "vectorized", 8),
+        ("nuts", "interleaved", 7),
+        ("hmc", "vectorized", 8),
+    ],
+)
 def test_interrupted_mcmc_resume_is_exact_and_does_not_repeat_warmup(
     tmp_path,
     monkeypatch,
     algorithm,
+    chain_method,
+    checkpoint_every,
 ):
     problem = _problem()
     common = {
@@ -41,8 +50,8 @@ def test_interrupted_mcmc_resume_is_exact_and_does_not_repeat_warmup(
         "num_samples": 24,
         "initial_step_size": 0.2,
         "target_acceptance_rate": 0.9,
-        "chain_method": "vectorized",
-        "checkpoint_id": f"exact-{algorithm}",
+        "chain_method": chain_method,
+        "checkpoint_id": f"exact-{algorithm}-{chain_method}",
     }
     if algorithm == "nuts":
         sample = phx.uq.sample_nuts
@@ -57,7 +66,7 @@ def test_interrupted_mcmc_resume_is_exact_and_does_not_repeat_warmup(
 
     def interrupting_write(destination, **kwargs):
         original_write(destination, **kwargs)
-        if kwargs["completed"] == 8:
+        if kwargs["completed"] == checkpoint_every:
             raise RuntimeError("simulated interruption")
 
     monkeypatch.setattr(mcmc_module, "_write_mcmc_checkpoint", interrupting_write)
@@ -66,7 +75,7 @@ def test_interrupted_mcmc_resume_is_exact_and_does_not_repeat_warmup(
             problem,
             **common,
             checkpoint_path=checkpoint,
-            checkpoint_every=8,
+            checkpoint_every=checkpoint_every,
         )
     monkeypatch.setattr(mcmc_module, "_write_mcmc_checkpoint", original_write)
 
@@ -78,7 +87,7 @@ def test_interrupted_mcmc_resume_is_exact_and_does_not_repeat_warmup(
         problem,
         **common,
         resume_from=checkpoint,
-        checkpoint_every=8,
+        checkpoint_every=checkpoint_every,
     )
 
     _assert_tree_equal(resumed.samples, direct.samples)
@@ -131,6 +140,13 @@ def test_mcmc_checkpoint_rejects_incompatible_identity_and_corruption(tmp_path):
             checkpoint_path=None,
             resume_from=checkpoint,
         )
+    with pytest.raises(phx.uq.CheckpointCompatibilityError):
+        phx.uq.sample_nuts(
+            problem,
+            **(settings | {"chain_method": "interleaved"}),
+            checkpoint_path=None,
+            resume_from=checkpoint,
+        )
 
     checkpoint.write_bytes(checkpoint.read_bytes()[:64])
     with pytest.raises(phx.uq.CheckpointCorruptionError, match="Cannot read"):
@@ -140,6 +156,50 @@ def test_mcmc_checkpoint_rejects_incompatible_identity_and_corruption(tmp_path):
             checkpoint_path=None,
             resume_from=checkpoint,
         )
+
+
+def test_interleaved_checkpoint_can_extend_without_repeating_draws(tmp_path):
+    problem = _problem()
+    checkpoint = tmp_path / "extended.phxckpt"
+    settings = {
+        "key": jr.key(924),
+        "num_chains": 2,
+        "num_warmup": 20,
+        "initial_step_size": 0.2,
+        "target_acceptance_rate": 0.9,
+        "max_num_doublings": 5,
+        "chain_method": "interleaved",
+        "checkpoint_id": "extend-interleaved",
+    }
+    direct = phx.uq.sample_nuts(problem, **settings, num_samples=17)
+    phx.uq.sample_nuts(
+        problem,
+        **settings,
+        num_samples=8,
+        checkpoint_path=checkpoint,
+        checkpoint_every=5,
+    )
+    extended = phx.uq.sample_nuts(
+        problem,
+        **settings,
+        num_samples=17,
+        resume_from=checkpoint,
+        checkpoint_every=5,
+    )
+
+    _assert_tree_equal(extended.samples, direct.samples)
+    _assert_tree_equal(extended.final_states, direct.final_states)
+    assert jnp.array_equal(extended.log_density, direct.log_density)
+    assert jnp.array_equal(extended.acceptance_rate, direct.acceptance_rate)
+    assert jnp.array_equal(extended.divergent, direct.divergent)
+    assert jnp.array_equal(
+        extended.num_integration_steps,
+        direct.num_integration_steps,
+    )
+    assert jnp.array_equal(
+        extended.num_trajectory_expansions,
+        direct.num_trajectory_expansions,
+    )
 
 
 def test_mcmc_accepts_distinct_initial_positions_for_each_chain():
