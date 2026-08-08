@@ -16,29 +16,42 @@ def test_multi_output_gp_uses_declared_cross_output_covariance():
     latent = 0.15 * jnp.sin(2.0 * jnp.pi * observation_x)
     discrepancy = jnp.stack([latent, -0.6 * latent], axis=1)
     output_covariance = jnp.array([[1.0, -0.75], [-0.75, 1.0]])
-    model = phx.uq.MultiOutputGaussianProcessDiscrepancy(
+    output_names = ("velocity", "pressure")
+    model = phx.uq.MultiOutputGaussianProcessDiscrepancy.from_dense(
         observation_x,
         base + discrepancy,
-        output_covariance=output_covariance,
-        output_names=("velocity", "pressure"),
-        kernel="exp_squared",
+        output_names=output_names,
+    )
+    coregionalization = phx.uq.Coregionalization(
+        jnp.linalg.cholesky(output_covariance),
+        jnp.zeros((2,)),
+        output_names=output_names,
+    )
+    state = phx.uq.MultiOutputGaussianProcessLikelihoodState(
+        kernel=phx.uq.IntrinsicCoregionalizationKernel(
+            phx.kernels.AmplitudeKernel(
+                phx.kernels.SquaredExponentialKernel(length_scale=0.25),
+                0.15,
+            ),
+            coregionalization,
+        ),
+        noise_scale=jnp.array([0.01, 0.015]),
     )
     query = jnp.linspace(0.0, 1.0, 31)
-    query_base = jnp.stack([query, 2.0 * query], axis=1)
-    conditioned = model.condition(
-        base,
+    query_design = phx.uq.MultiOutputDesign.from_dense(
         query,
-        amplitude=0.15,
-        length_scale=0.25,
-        noise_scale=jnp.array([0.01, 0.015]),
-        point_dim="x",
-        output_dim="field",
+        output_names=output_names,
     )
+    query_base = jnp.stack([query, 2.0 * query], axis=1)
+    conditioned = model.condition(base, query_design, state=state)
     prediction = conditioned.predictive_field(
         query_base,
         jr.key(2),
         num_samples=20,
-        observation_variance=jnp.array([0.01**2, 0.015**2]),
+        observation_variance=jnp.tile(
+            jnp.array([0.01**2, 0.015**2]),
+            (query.size, 1),
+        ),
     )
 
     expected = jnp.stack(
@@ -48,27 +61,22 @@ def test_multi_output_gp_uses_declared_cross_output_covariance():
         ],
         axis=1,
     )
+    dense_mean = conditioned.dense_mean()
     posterior_cross_correlation = conditioned.covariance[0, 1] / jnp.sqrt(
         conditioned.covariance[0, 0] * conditioned.covariance[1, 1]
     )
+
     assert model.num_outputs == 2
-    assert conditioned.output_names == ("velocity", "pressure")
-    assert conditioned.mean.shape == (31, 2)
-    assert conditioned.sample(jr.key(1), num_samples=7).shape == (7, 31, 2)
+    assert conditioned.output_names == output_names
+    assert dense_mean.shape == (31, 2)
+    assert conditioned.sample(jr.key(1), num_samples=7).shape == (7, 62)
     assert prediction.samples.dims == (
         "__phydra_uq_discrepancy",
-        "x",
-        "field",
+        "observation",
     )
-    assert jnp.sqrt(jnp.mean((conditioned.mean - expected) ** 2)) < 0.01
+    assert jnp.sqrt(jnp.mean((dense_mean - expected) ** 2)) < 0.01
     assert posterior_cross_correlation < -0.05
-
-    with pytest.raises(ValueError, match="positive definite"):
-        phx.uq.MultiOutputGaussianProcessDiscrepancy(
-            observation_x,
-            base,
-            output_covariance=jnp.array([[1.0, 2.0], [2.0, 1.0]]),
-        )
+    assert jnp.linalg.eigvalsh(coregionalization.covariance).min() >= 0.0
 
 
 def test_sparse_fitc_matches_exact_gp_without_quadratic_training_storage():
@@ -79,28 +87,47 @@ def test_sparse_fitc_matches_exact_gp_without_quadratic_training_storage():
     exact = phx.uq.ExactGaussianProcessDiscrepancy(
         observation_x,
         observations,
-        kernel="exp_squared",
     )
     sparse = phx.uq.SparseGaussianProcessDiscrepancy.from_evenly_spaced_subset(
         observation_x,
         observations,
         num_inducing=24,
-        kernel="exp_squared",
     )
     query = jnp.linspace(0.0, 1.0, 75)
-    settings = dict(amplitude=0.25, length_scale=0.2, noise_scale=0.02)
-    exact_condition = exact.condition(physical_mean, query, **settings)
-    sparse_condition = sparse.condition(physical_mean, query, **settings)
-    exact_log_probability = exact.log_marginal_likelihood(physical_mean, **settings)
-    sparse_log_probability = sparse.log_marginal_likelihood(physical_mean, **settings)
+
+    def state(length_scale):
+        return phx.uq.GaussianProcessLikelihoodState(
+            kernel=phx.kernels.AmplitudeKernel(
+                phx.kernels.SquaredExponentialKernel(length_scale=length_scale),
+                0.25,
+            ),
+            noise_scale=0.02,
+        )
+
+    exact_condition = exact.condition(
+        physical_mean,
+        query,
+        state=state(0.2),
+    )
+    sparse_condition = sparse.condition(
+        physical_mean,
+        query,
+        state=state(0.2),
+    )
+    exact_log_probability = exact.log_marginal_likelihood(
+        physical_mean,
+        state=state(0.2),
+    )
+    sparse_log_probability = sparse.log_marginal_likelihood(
+        physical_mean,
+        state=state(0.2),
+    )
     gradient = jax.grad(
         lambda length_scale: sparse.log_marginal_likelihood(
             physical_mean,
-            amplitude=settings["amplitude"],
-            length_scale=length_scale,
-            noise_scale=settings["noise_scale"],
+            state=state(length_scale),
         )
-    )(settings["length_scale"])
+    )(jnp.asarray(0.2))
 
     assert sparse.num_inducing == 24
     assert sparse.factor_storage_elements < observation_x.size**2 / 2
@@ -120,67 +147,55 @@ def test_fixed_gp_factors_reuse_likelihood_gradients_and_conditioning_geometry()
     observations = physical(0.8) + 0.2 * jnp.sin(2.0 * jnp.pi * coordinate)
     query_coordinate = jnp.linspace(0.0, 1.0, 21)
     query_points = jnp.stack([query_coordinate, query_coordinate**2], axis=1)
-    settings = {
-        "amplitude": 0.25,
-        "length_scale": jnp.array([0.2, 0.35]),
-        "noise_scale": 0.015,
-    }
     exact = phx.uq.ExactGaussianProcessDiscrepancy(
         observation_points,
         observations,
-        kernel="matern52",
     )
     sparse = phx.uq.SparseGaussianProcessDiscrepancy.from_evenly_spaced_subset(
         observation_points,
         observations,
         num_inducing=12,
-        kernel="matern52",
     )
-    exact_factor = exact.factor(**settings)
-    sparse_factor = sparse.factor(**settings)
+
+    def state(length_scale):
+        return phx.uq.GaussianProcessLikelihoodState(
+            kernel=phx.kernels.AmplitudeKernel(
+                phx.kernels.Matern52Kernel(length_scale=length_scale),
+                0.25,
+            ),
+            noise_scale=0.015,
+        )
+
+    fixed_state = state(jnp.array([0.2, 0.35]))
+    exact_factor = exact.factor(state=fixed_state)
+    sparse_factor = sparse.factor(state=fixed_state)
     exact_conditioner = exact_factor.conditioner(query_points, output_dim="query")
     sparse_conditioner = sparse_factor.conditioner(query_points, output_dim="query")
 
     def dynamic_exact(parameter):
-        return exact.log_marginal_likelihood(physical(parameter), **settings)
+        return exact.log_marginal_likelihood(physical(parameter), state=fixed_state)
 
     def factored_exact(parameter):
         return exact_factor.log_probability(exact.residual(physical(parameter)))
 
     def dynamic_sparse(parameter):
-        return sparse.log_marginal_likelihood(physical(parameter), **settings)
+        return sparse.log_marginal_likelihood(physical(parameter), state=fixed_state)
 
     def factored_sparse(parameter):
         return sparse_factor.log_probability(sparse.residual(physical(parameter)))
-
-    def dynamic_exact_length_scale(length_scale):
-        return exact.log_marginal_likelihood(
-            physical(parameter),
-            amplitude=settings["amplitude"],
-            length_scale=length_scale,
-            noise_scale=settings["noise_scale"],
-        )
-
-    def dynamic_sparse_length_scale(length_scale):
-        return sparse.log_marginal_likelihood(
-            physical(parameter),
-            amplitude=settings["amplitude"],
-            length_scale=length_scale,
-            noise_scale=settings["noise_scale"],
-        )
 
     parameter = jnp.asarray(0.75)
     exact_dynamic_condition = exact.condition(
         physical(parameter),
         query_points,
+        state=fixed_state,
         output_dim="query",
-        **settings,
     )
     sparse_dynamic_condition = sparse.condition(
         physical(parameter),
         query_points,
+        state=fixed_state,
         output_dim="query",
-        **settings,
     )
     exact_factored_condition = exact_conditioner.condition(
         exact.residual(physical(parameter))
@@ -194,17 +209,32 @@ def test_fixed_gp_factors_reuse_likelihood_gradients_and_conditioning_geometry()
     assert jnp.allclose(dynamic_exact(parameter), factored_exact(parameter))
     assert jnp.allclose(dynamic_sparse(parameter), factored_sparse(parameter))
     assert jnp.allclose(
-        jax.grad(dynamic_exact)(parameter), jax.grad(factored_exact)(parameter)
+        jax.grad(dynamic_exact)(parameter),
+        jax.grad(factored_exact)(parameter),
     )
     assert jnp.allclose(
         jax.grad(dynamic_sparse)(parameter),
         jax.grad(factored_sparse)(parameter),
     )
     assert jnp.all(
-        jnp.isfinite(jax.grad(dynamic_exact_length_scale)(settings["length_scale"]))
+        jnp.isfinite(
+            jax.grad(
+                lambda length_scale: exact.log_marginal_likelihood(
+                    physical(parameter),
+                    state=state(length_scale),
+                )
+            )(jnp.array([0.2, 0.35]))
+        )
     )
     assert jnp.all(
-        jnp.isfinite(jax.grad(dynamic_sparse_length_scale)(settings["length_scale"]))
+        jnp.isfinite(
+            jax.grad(
+                lambda length_scale: sparse.log_marginal_likelihood(
+                    physical(parameter),
+                    state=state(length_scale),
+                )
+            )(jnp.array([0.2, 0.35]))
+        )
     )
     assert jnp.allclose(
         exact_dynamic_condition.mean,

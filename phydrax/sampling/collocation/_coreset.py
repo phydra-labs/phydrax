@@ -20,10 +20,14 @@ from phydrax.coresets import (
     CoresetSelection,
     kernel_herd,
     KernelHerding,
-    RadialKernel,
     weighted_mmd,
 )
 from phydrax.domain import PointBatch, PointSampling
+from phydrax.kernels import (
+    AbstractPositiveDefiniteKernel,
+    AbstractStationaryKernel,
+    SquaredExponentialKernel,
+)
 
 from ..._doc import DOC_KEY0
 from ..._sampling import DesignLike, resolve_design, UnitDesign
@@ -143,7 +147,7 @@ class CoresetCollocationPolicy(AbstractCollocationPolicy):
     minimum_ess_fraction: Array
     max_fill_distance_ratio: Array
     epsilon: Array
-    kernel: RadialKernel | None
+    kernel: AbstractPositiveDefiniteKernel | None
     kernel_scale_factor: Array
     block_size: int = eqx.field(static=True)
 
@@ -159,7 +163,7 @@ class CoresetCollocationPolicy(AbstractCollocationPolicy):
         minimum_ess_fraction: float = 0.5,
         max_fill_distance_ratio: float = 3.0,
         epsilon: float = 1e-12,
-        kernel: RadialKernel | None = None,
+        kernel: AbstractPositiveDefiniteKernel | None = None,
         kernel_scale_factor: float = 1.0,
         block_size: int = 256,
     ):
@@ -189,8 +193,8 @@ class CoresetCollocationPolicy(AbstractCollocationPolicy):
             raise ValueError("max_fill_distance_ratio must be finite and at least one.")
         if not isfinite(epsilon_value) or epsilon_value <= 0.0:
             raise ValueError("epsilon must be finite and strictly positive.")
-        if kernel is not None and not isinstance(kernel, RadialKernel):
-            raise TypeError("kernel must be a RadialKernel or None.")
+        if kernel is not None and not isinstance(kernel, AbstractPositiveDefiniteKernel):
+            raise TypeError("kernel must be an AbstractPositiveDefiniteKernel or None.")
         if not isfinite(scale_factor) or scale_factor <= 0.0:
             raise ValueError("kernel_scale_factor must be finite and strictly positive.")
         if block <= 0:
@@ -267,9 +271,7 @@ class CoresetCollocationPolicy(AbstractCollocationPolicy):
                     diagnostics.effective_uniform_fraction,
                     dtype=float,
                 ),
-                "coreset_minimum_ess_fraction": jnp.asarray(
-                    self.minimum_ess_fraction
-                ),
+                "coreset_minimum_ess_fraction": jnp.asarray(self.minimum_ess_fraction),
                 "coreset_max_fill_distance_ratio": jnp.asarray(
                     self.max_fill_distance_ratio
                 ),
@@ -289,9 +291,7 @@ class CoresetCollocationPolicy(AbstractCollocationPolicy):
                     self.kernel is None,
                     dtype=float,
                 ),
-                "coreset_kernel_scale_factor": jnp.asarray(
-                    self.kernel_scale_factor
-                ),
+                "coreset_kernel_scale_factor": jnp.asarray(self.kernel_scale_factor),
                 "coreset_kernel_length_scale_min": jnp.asarray(
                     diagnostics.kernel_length_scale_min,
                     dtype=float,
@@ -419,8 +419,7 @@ class CoresetCollocationPolicy(AbstractCollocationPolicy):
             numerical_slack = jnp.sqrt(jnp.finfo(normalized_features.dtype).eps)
             coverage_valid = bool(
                 proposal_fill_distance
-                <= self.max_fill_distance_ratio * baseline_fill_distance
-                + numerical_slack
+                <= self.max_fill_distance_ratio * baseline_fill_distance + numerical_slack
             )
         else:
             proposal_fill_distance = jnp.asarray(jnp.inf, dtype=float)
@@ -459,7 +458,10 @@ class CoresetCollocationPolicy(AbstractCollocationPolicy):
             + size * size
             + fallback_kernel_evaluations
         )
-        length_scale = jnp.asarray(resolved_kernel.length_scale, dtype=float)
+        if isinstance(resolved_kernel, AbstractStationaryKernel):
+            length_scale = jnp.asarray(resolved_kernel.length_scale, dtype=float)
+        else:
+            length_scale = jnp.asarray(jnp.nan, dtype=float)
         return CollocationPopulation(
             selected_batch,
             age=age,
@@ -497,7 +499,7 @@ def _compiled_weighted_mmd(
     source_points: Array,
     comparison_points: Array,
     source_log_weights: Array,
-    kernel: RadialKernel,
+    kernel: AbstractPositiveDefiniteKernel,
     block_size: int,
     /,
 ) -> Array:
@@ -544,8 +546,7 @@ def _normalized_importance(
     tolerance = 16.0 * jnp.finfo(values.dtype).eps
     admissible_signal_fraction_squared = jnp.where(
         excess_signal_concentration > tolerance,
-        (target_concentration - uniform_probability)
-        / excess_signal_concentration,
+        (target_concentration - uniform_probability) / excess_signal_concentration,
         1.0,
     )
     required_uniform_fraction = 1.0 - jnp.sqrt(
@@ -585,24 +586,14 @@ def _resolve_selection_kernel(
     features: Array,
     /,
     *,
-    kernel: RadialKernel | None,
+    kernel: AbstractPositiveDefiniteKernel | None,
     scale_factor: Array,
-) -> RadialKernel:
-    coordinate_size = int(features.shape[1])
+) -> AbstractPositiveDefiniteKernel:
     if kernel is not None:
-        length_scale = jnp.asarray(kernel.length_scale)
-        if (
-            length_scale.ndim == 1
-            and length_scale.shape[0] not in (1, coordinate_size)
-        ):
-            raise ValueError(
-                "Explicit coreset kernel length_scale must be scalar or match "
-                "the normalized coordinate size."
-            )
         return kernel
     length_scale = scale_factor * _median_pairwise_distance(features)
     minimum_scale = jnp.sqrt(jnp.finfo(features.dtype).eps)
-    return RadialKernel(length_scale=jnp.maximum(length_scale, minimum_scale))
+    return SquaredExponentialKernel(length_scale=jnp.maximum(length_scale, minimum_scale))
 
 
 @jax.jit
@@ -612,7 +603,8 @@ def _median_pairwise_distance(features: Array, /) -> Array:
     if sample_count < 2:
         return jnp.asarray(1.0, dtype=features.dtype)
     sample_indices = (
-        jnp.arange(sample_count, dtype=jnp.int32) * (point_count - 1)
+        jnp.arange(sample_count, dtype=jnp.int32)
+        * (point_count - 1)
         // (sample_count - 1)
     )
     sample = features[sample_indices]
@@ -692,9 +684,7 @@ def _coverage_fill_distance(
             jnp.full((block,), jnp.inf, dtype=source.dtype),
         )
         left_valid = source_start + offsets < source_count
-        block_maximum = jnp.max(
-            jnp.where(left_valid, minimum_squared_distance, 0.0)
-        )
+        block_maximum = jnp.max(jnp.where(left_valid, minimum_squared_distance, 0.0))
         return jnp.maximum(maximum_squared_distance, block_maximum)
 
     maximum_squared_distance = jax.lax.fori_loop(

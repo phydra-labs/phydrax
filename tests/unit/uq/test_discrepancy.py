@@ -18,31 +18,32 @@ def test_exact_gp_discrepancy_marginalizes_and_conditions_coherent_functions():
     model = phx.uq.ExactGaussianProcessDiscrepancy(
         observation_x,
         observations,
-        kernel="exp_squared",
+    )
+    state = phx.uq.GaussianProcessLikelihoodState(
+        kernel=phx.kernels.AmplitudeKernel(
+            phx.kernels.SquaredExponentialKernel(length_scale=0.25),
+            0.2,
+        ),
+        noise_scale=0.01,
         jitter=1e-9,
     )
-    hyperparameters = {
-        "amplitude": 0.2,
-        "length_scale": 0.25,
-        "noise_scale": 0.01,
-    }
     query = cx.Field(jnp.linspace(0.0, 1.0, 31), dims=("x",))
 
     log_probability = model.log_marginal_likelihood(
         physical_mean,
-        **hyperparameters,
+        state=state,
     )
     conditioned = model.condition(
         physical_mean,
         query,
-        **hyperparameters,
+        state=state,
     )
     samples = conditioned.sample(jr.key(0), num_samples=16)
     prediction = conditioned.predictive_field(
         2.0 * query.data,
         jr.key(1),
         num_samples=12,
-        observation_variance=hyperparameters["noise_scale"] ** 2,
+        observation_variance=state.noise_scale**2,
     )
 
     assert jnp.isfinite(log_probability)
@@ -56,7 +57,7 @@ def test_exact_gp_discrepancy_marginalizes_and_conditions_coherent_functions():
     assert prediction.samples.shape == (12, 31)
     assert jnp.allclose(
         prediction.observation_variance().data,
-        hyperparameters["noise_scale"] ** 2,
+        state.noise_scale**2,
     )
     expected_discrepancy = 0.15 * jnp.sin(2.0 * jnp.pi * query.data)
     assert jnp.sqrt(jnp.mean((conditioned.mean - expected_discrepancy) ** 2)) < 0.02
@@ -69,16 +70,20 @@ def test_gp_discrepancy_improves_a_misspecified_physical_model():
     model = phx.uq.ExactGaussianProcessDiscrepancy(
         observation_x,
         truth(observation_x),
-        kernel="matern32",
+    )
+    state = phx.uq.GaussianProcessLikelihoodState(
+        kernel=phx.kernels.AmplitudeKernel(
+            phx.kernels.Matern32Kernel(length_scale=0.3),
+            0.03,
+        ),
+        noise_scale=0.003,
     )
     query = jnp.linspace(0.0, 1.0, 101)
     base = 4.0 * 0.5 * query * (1.0 - query)
     conditioned = model.condition(
         base_at_observations,
         query,
-        amplitude=0.03,
-        length_scale=0.3,
-        noise_scale=0.003,
+        state=state,
         output_dim="x",
     )
 

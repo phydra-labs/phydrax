@@ -38,7 +38,9 @@ class CoresetSelection(StrictModule):
         if indices_.ndim != 1:
             raise ValueError("Coreset indices must be one-dimensional.")
         if log_weights_.shape != indices_.shape or mask_.shape != indices_.shape:
-            raise ValueError("Coreset indices, log_weights, and mask must have equal shape.")
+            raise ValueError(
+                "Coreset indices, log_weights, and mask must have equal shape."
+            )
         method_ = str(method)
         if not method_:
             raise ValueError("Coreset selection method must be non-empty.")
@@ -88,7 +90,7 @@ class KernelHerdingDiagnostics(StrictModule):
     source_points: int = eqx.field(static=True)
     capacity: int = eqx.field(static=True)
     coordinate_size: int = eqx.field(static=True)
-    kernel: str = eqx.field(static=True)
+    kernel_id: str = eqx.field(static=True)
 
 
 class PivotedCholeskyDiagnostics(StrictModule):
@@ -101,7 +103,7 @@ class PivotedCholeskyDiagnostics(StrictModule):
     explained_trace_fraction: Array
     source_points: int = eqx.field(static=True)
     capacity: int = eqx.field(static=True)
-    kernel: str = eqx.field(static=True)
+    kernel_id: str = eqx.field(static=True)
 
 
 __all__ = [

@@ -481,14 +481,16 @@ would have less than `minimum_ess_fraction × candidate_count` effective samples
 policy increases the effective uniform fraction and reports the adjustment.
 
 Candidate coordinates are range-normalized on every refresh. With `kernel=None` (the
-default), the radial-kernel length scale is the median nonzero pairwise distance of a
-bounded candidate subsample. Pass an explicit `phx.coresets.RadialKernel(...)` to
-override that scale in normalized-coordinate units. The fill-distance guard rejects a
-proposal whose normalized candidate fill distance exceeds
-`max_fill_distance_ratio` times that of the current population. Selection validity,
-acceptance, MMD, requested and effective mixture fractions, importance ESS, resolved
-kernel scale, fill distances, guard activation, candidate count, and kernel-evaluation
-count are all exposed through solver data metrics.
+default), the policy constructs a shared `SquaredExponentialKernel` whose length
+scale is the median nonzero pairwise distance of a bounded candidate subsample. Pass
+any explicit `phx.kernels.AbstractPositiveDefiniteKernel` to use the same covariance
+semantics as GP inference; for example,
+`phx.kernels.Matern32Kernel(length_scale=0.25)` uses normalized-coordinate units.
+The fill-distance guard rejects a proposal whose normalized candidate fill distance
+exceeds `max_fill_distance_ratio` times that of the current population. Selection
+validity, acceptance, MMD, requested and effective mixture fractions, importance ESS,
+resolved stationary scales, fill distances, guard activation, candidate count, and
+kernel-evaluation count are all exposed through solver data metrics.
 
 The policy uses the ordinary `ControlledCollocationPolicy` monitor, rollback, budget,
 and `CoverageAnchors` contracts. Its residual-derived sampling measure intentionally

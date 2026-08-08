@@ -1508,8 +1508,8 @@ promises that metadata.
 
 ## Gaussian-process model discrepancy
 
-`ExactGaussianProcessDiscrepancy` models an additive scalar discrepancy
-$\delta(x)$ rather than mislabeling neural-network spread as model-form uncertainty:
+`ExactGaussianProcessDiscrepancy` models an additive latent discrepancy
+$\delta(x)$ rather than relabeling neural-network spread as model-form uncertainty:
 
 $$
 y = u_\theta(x) + \delta(x) + \epsilon,\qquad
@@ -1517,113 +1517,267 @@ y = u_\theta(x) + \delta(x) + \epsilon,\qquad
 \epsilon\sim\mathcal N(0,\sigma^2).
 $$
 
-Its log marginal likelihood analytically integrates the latent discrepancy values.
-This makes physical parameters and kernel hyperparameters ordinary
-`PosteriorProblem` leaves for NUTS or dense Laplace:
+The observation container and likelihood state are separate. The state owns one
+shared `phydrax.kernels` covariance expression, observation noise, and explicit
+factorization jitter:
 
 ```python
-discrepancy = phx.uq.ExactGaussianProcessDiscrepancy(
-    sensor_x,
-    observed,
-    kernel="matern32",
+kernel = phx.kernels.AmplitudeKernel(
+    phx.kernels.Matern32Kernel(length_scale=0.25),
+    0.03,
 )
+state = phx.uq.GaussianProcessLikelihoodState(
+    kernel=kernel,
+    noise_scale=0.005,
+)
+discrepancy = phx.uq.ExactGaussianProcessDiscrepancy(sensor_x, observed)
 
 log_likelihood = discrepancy.log_marginal_likelihood(
     4.0 * basis,
-    amplitude=0.03,
-    length_scale=0.25,
-    noise_scale=0.005,
+    state=state,
 )
+query_x = jnp.linspace(0.0, 1.0, 65)
 conditioned = discrepancy.condition(
     4.0 * basis,
-    jnp.linspace(0.0, 1.0, 65),
-    amplitude=0.03,
-    length_scale=0.25,
-    noise_scale=0.005,
+    query_x,
+    state=state,
     output_dim="x",
 )
 predictive = conditioned.predictive_field(
-    4.0 * 0.5 * jnp.linspace(0.0, 1.0, 65) * (1.0 - jnp.linspace(0.0, 1.0, 65)),
+    4.0 * 0.5 * query_x * (1.0 - query_x),
     jr.key(12),
     num_samples=256,
-    observation_variance=0.005**2,
+    observation_variance=state.noise_scale**2,
 )
 ```
 
-When the kernel hyperparameters and point designs are fixed, factor the observation
-covariance once instead of rebuilding it for every physical-parameter evaluation:
+Conditioned samples are coherent functions over every query point. Latent GP
+variation is an epistemic sample axis. Measurement noise is separate conditional
+observation variance and is never added to the reported latent covariance.
+
+### Fixed and inferred covariance states
+
+When the kernel and point designs are fixed, factor the observation covariance once:
 
 ```python
-factor = discrepancy.factor(
-    amplitude=0.03,
-    length_scale=0.25,
-    noise_scale=0.005,
-)
-conditioner = factor.conditioner(
-    jnp.linspace(0.0, 1.0, 65),
-    output_dim="x",
-)
+factor = discrepancy.factor(state=state)
+conditioner = factor.conditioner(query_x, output_dim="x")
 
 residual = discrepancy.residual(4.0 * basis)
 log_likelihood = factor.log_probability(residual)
 conditioned = conditioner.condition(residual)
 ```
 
-`ExactGaussianProcessFactor` retains the dense Cholesky factor.
-`SparseGaussianProcessFactor` retains the FITC feature, diagonal, and correction
-factors. A `GaussianProcessConditioner` additionally precomputes the query/observation
-projection and conditional covariance, so changing a residual only performs a
-matrix-vector product. Factor construction is intended to be amortized over repeated
-evaluations. Hyperparameters passed to `factor(...)` are fixed: use
-`log_marginal_likelihood(...)` when amplitude, length scale, or noise remains an
-inferred parameter.
+`ExactGaussianProcessFactor` retains a dense Cholesky factor.
+`SparseGaussianProcessFactor` retains FITC features, diagonal terms, and a small
+correction factor. `GaussianProcessConditioner` additionally precomputes the
+query/observation projection and conditional covariance, so a changed residual costs
+one matrix-vector product. `factor_storage_elements` exposes the retained storage.
 
-For a fixed sparse-GP kernel geometry, randomized pivoted Cholesky can choose inducing
-inputs from the observed design:
+If covariance parameters are inferred, construct the state from posterior leaves
+inside the likelihood term:
+
+```python
+def gp_state(parameters):
+    return phx.uq.GaussianProcessLikelihoodState(
+        kernel=phx.kernels.AmplitudeKernel(
+            phx.kernels.Matern52Kernel(
+                length_scale=parameters["length_scale"],
+            ),
+            parameters["amplitude"],
+        ),
+        noise_scale=parameters["noise_scale"],
+    )
+
+
+term = phx.uq.GaussianProcessMarginalLikelihood(
+    discrepancy,
+    lambda parameters: parameters["source"] * basis,
+    state=gp_state,
+)
+```
+
+The kernel PyTree and every array-valued hyperparameter remain differentiable.
+Positive bijectors and informative priors belong in `ParameterSpace`; the GP layer
+does not silently transform unconstrained values.
+
+### Kernel composition, deep kernels, and finite features
+
+`phydrax.kernels` is shared by GP inference, coreset compression, and inducing-point
+selection. Sums, products, nonnegative covariance scales, standard-deviation
+amplitudes, affine input transforms, and deterministic feature pullbacks preserve
+positive definiteness structurally. Subtraction and unconstrained signed scaling are
+not kernel operations.
+
+`InputTransformedKernel(base, feature_map, ...)` gives a deep kernel when
+`feature_map` is an Equinox module. Its parameters remain leaves of the likelihood
+state and receive gradients through exact or FITC inference. A transform declares its
+actual derivative support; functional GP observations use the propagated certificate
+instead of assuming every learned feature map is twice differentiable.
+
+`FiniteFeatureKernel` represents whitened features explicitly. Scalar exact GP
+factorization detects it and uses the finite feature space rather than assembling a
+dense observation Cholesky. This is an exact Woodbury/determinant-lemma route for the
+declared finite-rank covariance, not an inducing-point approximation. See
+[API → Positive-definite kernels](api/kernels.md).
+
+### FITC and inducing-point selection
+
+Use FITC only after dense conditioning is a measured bottleneck. It costs
+$O(nm^2+m^3)$ work and $O(nm+m^2)$ factor storage for $m$ inducing points, but changes
+the covariance approximation and therefore requires held-out comparison with exact
+inference.
 
 ```python
 observation_points = jnp.linspace(0.0, 1.0, 65)[:, None]
+spatial_kernel = phx.kernels.Matern32Kernel(length_scale=0.25)
 inducing = phx.uq.select_inducing_points(
     observation_points,
     32,
     key=jr.key(12),
-    kernel=phx.coresets.RadialKernel("matern32", length_scale=0.25),
+    kernel=spatial_kernel,
+)
+sparse_state = phx.uq.GaussianProcessLikelihoodState(
+    kernel=phx.kernels.AmplitudeKernel(spatial_kernel, 0.03),
+    noise_scale=0.005,
 )
 factor = phx.uq.SparseGaussianProcessFactor(
     observation_points,
     inducing.points,
-    amplitude=0.03,
-    length_scale=0.25,
-    noise_scale=0.005,
-    kernel="matern32",
+    state=sparse_state,
 )
 ```
 
-`InducingPointSelection.diagnostics` reports initial and residual kernel trace and the
-explained fraction. Reuse the selection only while its point geometry and kernel scale
-remain fixed; it does not optimize predictive likelihood and does not replace model
-validation.
+`InducingPointSelection.diagnostics` reports initial and residual kernel trace and
+the explained fraction. Reuse a selection only while its point geometry and kernel
+remain fixed. Pivoted Cholesky optimizes residual kernel trace, not predictive
+likelihood, and does not replace validation.
 
-Conditioned samples are coherent functions over all query points. Latent GP
-variation is an epistemic sample axis; independent measurement noise remains
-conditional observation variance.
+### Correlated and heterotopic outputs
 
-`ExactGaussianProcessDiscrepancy` is the dense scalar-output reference.
-`SparseGaussianProcessDiscrepancy` uses an explicit FITC inducing set with
-$O(nm^2+m^3)$ work and $O(nm+m^2)$ factor storage; use it only after dense
-conditioning is the measured bottleneck. `factor_storage_elements` makes that
-tradeoff visible.
+`MultiOutputDesign` stores one row per observed point/channel pair. Its dense
+constructor accepts a mask, so different channels may be missing at different
+locations without imputation. `Coregionalization` parameterizes an output covariance
+as a factor product plus a nonnegative diagonal; no free matrix is trusted to remain
+positive semidefinite.
 
-`MultiOutputGaussianProcessDiscrepancy` implements a separable intrinsic
-coregionalization covariance $K_x\otimes B$. The positive-definite output covariance
-$B$ is required—outputs are never made independent by default. Its conditioned
-samples preserve both point and output dimensions.
+`IntrinsicCoregionalizationKernel` combines one spatial kernel with one output
+covariance. `LinearModelCoregionalizationKernel` sums several independently
+parameterized spatial/output components. Both use one flat covariance ordering and
+return coherent cross-output draws:
+
+```python
+output_names = ("velocity", "pressure")
+observation_mask = jnp.ones((sensor_x.size, 2), dtype=bool)
+observation_mask = observation_mask.at[::3, 1].set(False)
+vector_physical_mean = jnp.stack((4.0 * basis, -2.0 * basis), axis=1)
+vector_observations = vector_physical_mean + jnp.stack(
+    (
+        0.02 * jnp.sin(2.0 * jnp.pi * sensor_x),
+        0.03 * jnp.cos(2.0 * jnp.pi * sensor_x),
+    ),
+    axis=1,
+)
+output_weights = jnp.asarray([[0.8, 0.0], [-0.3, 0.6]])
+output_diagonal = jnp.asarray([0.1, 0.15])
+design = phx.uq.MultiOutputDesign.from_dense(
+    sensor_x,
+    output_names=output_names,
+    mask=observation_mask,
+)
+model = phx.uq.MultiOutputGaussianProcessDiscrepancy(
+    design,
+    vector_observations,
+)
+coregionalization = phx.uq.Coregionalization(
+    output_weights,
+    output_diagonal,
+    output_names=output_names,
+)
+multi_state = phx.uq.MultiOutputGaussianProcessLikelihoodState(
+    kernel=phx.uq.IntrinsicCoregionalizationKernel(
+        phx.kernels.Matern52Kernel(length_scale=0.2),
+        coregionalization,
+    ),
+    noise_scale=jnp.asarray([0.01, 0.02]),
+)
+query_design = phx.uq.MultiOutputDesign.from_dense(
+    query_x,
+    output_names=output_names,
+)
+conditioned = model.condition(
+    vector_physical_mean,
+    query_design,
+    state=multi_state,
+)
+dense_mean = conditioned.dense_mean()
+```
+
+### Values and differential observations
+
+`FunctionalGaussianProcessDiscrepancy` conditions one latent scalar field on a
+heterogeneous sequence of linear-functional blocks. Built-ins cover values, partial
+and directional derivatives, and the Laplacian. Linear combinations may contain
+dynamic JAX coefficients, allowing an unknown PDE coefficient to enter both the
+functional covariance and the posterior gradient:
+
+```python
+value_points = jnp.linspace(0.05, 0.95, 8)[:, None]
+interior_points = jnp.linspace(0.1, 0.9, 6)[:, None]
+diffusion = jnp.asarray(0.2)
+measured_values = jnp.sin(jnp.pi * value_points[:, 0])
+measured_forcing = (
+    diffusion * jnp.pi**2 * jnp.sin(jnp.pi * interior_points[:, 0])
+)
+value_mean = jnp.zeros_like(measured_values)
+forcing_mean = jnp.zeros_like(measured_forcing)
+
+value = phx.uq.value_functional(1)
+laplacian = phx.uq.laplacian_functional(1)
+
+def operator_model(diffusion):
+    blocks = (
+        phx.uq.FunctionalObservationBlock(
+            value_points,
+            value,
+            name="field-values",
+        ),
+        phx.uq.FunctionalObservationBlock(
+            interior_points,
+            -diffusion * laplacian,
+            name="elliptic-operator",
+        ),
+    )
+    return phx.uq.FunctionalGaussianProcessDiscrepancy(
+        blocks,
+        (measured_values, measured_forcing),
+    )
+
+
+functional_state = phx.uq.FunctionalGaussianProcessLikelihoodState(
+    kernel=phx.kernels.SquaredExponentialKernel(length_scale=0.25),
+    noise_scale=jnp.asarray([0.005, 0.02]),
+)
+score = operator_model(diffusion).log_marginal_likelihood(
+    (value_mean, forcing_mean),
+    state=functional_state,
+)
+```
+
+The kernel must certify the derivative order required by every block:
+Matérn-3/2 supports first derivatives, Matérn-5/2 supports second derivatives, and
+the squared-exponential kernel has no finite declared limit. An unsupported
+functional raises rather than changing the kernel. Add an explicit value-functional
+`inducing_design` to the state for interdomain FITC; omitting it selects exact
+functional inference.
+
+### Identifiability
 
 Physical parameters and a flexible discrepancy can explain the same signal.
 `discrepancy_identifiability_report(...)` therefore requires repeated baseline,
-fixed-hyperparameter GP, and jointly inferred GP comparisons. It gates physical
-parameter bias, held-out NLL/CRPS, coverage, and maximum physical/GP posterior
-correlation, returning every exact failure rather than a generic warning.
+fixed-state GP, and jointly inferred GP comparisons. It gates physical-parameter
+bias, held-out NLL/CRPS, coverage, and maximum physical/GP posterior correlation,
+returning every exact failure rather than a generic warning.
 
 ## Method boundaries
 
@@ -1643,8 +1797,10 @@ Phydrax currently recommends:
    uniformly factorized likelihoods after step-halving and exact-reference checks.
    Use SGNHT only when its momentum/thermostat dynamics improve measured mixing.
 9. Deep ensembles for independently trained neural-model epistemic variation.
-10. Exact GP discrepancy for moderate scalar data, explicit coregionalization for
-    correlated outputs, and FITC only when dense scaling fails.
+10. Exact GP discrepancy for moderate scalar data; explicit ICM/LMC for correlated
+    heterotopic outputs; functional GP blocks for value/operator data; exact
+    finite-feature factors when the covariance has declared finite rank; and FITC
+    only when dense scaling fails a measured workload.
 
 Mean-field VI, standalone variational normalizing-flow posteriors, SWAG, SGHMC,
 pSGLD/RMSProp geometry, decreasing-step stochastic approximation,

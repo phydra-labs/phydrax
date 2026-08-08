@@ -10,6 +10,8 @@ Top-level package namespace. Most functionality lives in subpackages:
 - `phydrax.conditions`: residual, moment, observation, and physical condition declarations
 - `phydrax.terms`: penalty terms and specialized numerical/data terms
 - `phydrax.integration`: integration targets, sources, reductions, and realizations
+- `phydrax.kernels`: composable positive-definite covariance functions shared by
+  Gaussian-process and coreset algorithms
 - `phydrax.enforcement`: exact condition transforms and enforcement programs
 - `phydrax.optim`: structured residual KFAC and domain-neutral optimization
   configurations consumed by bounded geometry and posterior workflows

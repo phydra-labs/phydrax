@@ -123,6 +123,7 @@ nav:
     - API:
         - Overview: "api/phydrax.md"
         - Integration: "api/integration.md"
+        - Positive-definite kernels: "api/kernels.md"
         - Geometry substrate: "api/geometry.md"
         - Domains:
             - Overview: "api/domain/index.md"

@@ -589,9 +589,9 @@ initial-particle count.
 
 ## 10. Represent omitted physics with a GP discrepancy
 
-
 An ensemble cannot identify a physical mode that every member omits. Model that
-failure explicitly as $y=u_\theta(x)+\delta(x)+\epsilon$:
+failure explicitly as $y=u_\theta(x)+\delta(x)+\epsilon$. Keep observations separate
+from the typed covariance/noise state:
 
 ```python
 misspecified_observations = (
@@ -600,21 +600,24 @@ misspecified_observations = (
 discrepancy_model = phx.uq.ExactGaussianProcessDiscrepancy(
     sensor_x,
     misspecified_observations,
-    kernel="matern32",
 )
 sparse_discrepancy = phx.uq.SparseGaussianProcessDiscrepancy.from_evenly_spaced_subset(
     sensor_x,
     misspecified_observations,
     num_inducing=8,
-    kernel="matern32",
+)
+gp_state = phx.uq.GaussianProcessLikelihoodState(
+    kernel=phx.kernels.AmplitudeKernel(
+        phx.kernels.Matern32Kernel(length_scale=0.25),
+        0.03,
+    ),
+    noise_scale=0.005,
 )
 
 conditioned_discrepancy = discrepancy_model.condition(
     4.0 * sensor_basis,
     posterior_query,
-    amplitude=0.03,
-    length_scale=0.25,
-    noise_scale=0.005,
+    state=gp_state,
     output_dim="x",
 )
 physical_mean = 4.0 * 0.5 * posterior_query * (1.0 - posterior_query)
@@ -622,25 +625,164 @@ discrepancy_prediction = conditioned_discrepancy.predictive_field(
     physical_mean,
     jr.key(7),
     num_samples=256,
-    observation_variance=0.005**2,
+    observation_variance=gp_state.noise_scale**2,
 )
 ```
 
-`log_marginal_likelihood` analytically integrates the latent GP values and can be
-used inside `PosteriorProblem` to infer physical parameters, amplitude, length scale,
-and noise scale jointly. Use positive bijectors and informative priors. Always compare
-against a no-discrepancy model: physical parameters and a flexible discrepancy can
+`log_marginal_likelihood` analytically integrates latent GP values. For fixed kernel
+parameters, reuse `discrepancy_model.factor(state=gp_state)` inside every
+physical-parameter evaluation. When amplitude, length scale, or noise are inferred,
+build a `GaussianProcessLikelihoodState` from the current parameter PyTree:
+
+```python
+def inferred_gp_state(parameters):
+    return phx.uq.GaussianProcessLikelihoodState(
+        kernel=phx.kernels.AmplitudeKernel(
+            phx.kernels.Matern32Kernel(
+                length_scale=parameters["length_scale"],
+            ),
+            parameters["amplitude"],
+        ),
+        noise_scale=parameters["noise_scale"],
+    )
+
+
+gp_term = phx.uq.GaussianProcessMarginalLikelihood(
+    discrepancy_model,
+    lambda parameters: parameters["source"] * sensor_basis,
+    state=inferred_gp_state,
+)
+```
+
+Put positive bijectors and informative priors on those leaves. Always compare against
+a no-discrepancy model: the physical parameters and a flexible discrepancy may
 otherwise explain the same observations.
 
-The exact scalar GP is the correctness reference. Use the explicit FITC
-`SparseGaussianProcessDiscrepancy` only when dense $O(n^3)$ conditioning is a
-measured bottleneck; compare its held-out scores and `factor_storage_elements`
-against the exact model. For vector fields, `MultiOutputGaussianProcessDiscrepancy`
-requires a positive-definite output covariance and produces correlated output draws.
-It never assumes output independence.
+The exact scalar GP is the correctness reference. Use explicit FITC only when dense
+$O(n^3)$ conditioning is a measured bottleneck. Compare held-out scores and
+`factor_storage_elements` against exact inference. The same kernel object can select
+inducing points:
 
-Before releasing a jointly inferred physical/discrepancy model, call
-`discrepancy_identifiability_report` with repeated no-discrepancy, fixed-GP, and
-joint-GP results. A passing report requires reduced physical-parameter bias,
-improved held-out NLL and CRPS, adequate coverage, and bounded physical/GP posterior
-correlation.
+```python
+selection = phx.uq.select_inducing_points(
+    sensor_x[:, None],
+    8,
+    key=jr.key(8),
+    kernel=gp_state.kernel,
+)
+sparse_factor = phx.uq.SparseGaussianProcessFactor(
+    sensor_x,
+    selection.points,
+    state=gp_state,
+)
+```
+
+### 10a. Preserve missing correlated outputs
+
+Do not impute absent channels or fit one independent GP per output. Encode the
+observed point/channel rows and a PSD output covariance:
+
+```python
+output_names = ("velocity", "pressure")
+observed_output_mask = jnp.ones((sensor_x.size, 2), dtype=bool)
+observed_output_mask = observed_output_mask.at[::3, 1].set(False)
+vector_physical_mean = jnp.stack((4.0 * sensor_basis, -2.0 * sensor_basis), axis=1)
+vector_observations = vector_physical_mean + jnp.stack(
+    (
+        0.02 * jnp.sin(2.0 * jnp.pi * sensor_x),
+        0.03 * jnp.cos(2.0 * jnp.pi * sensor_x),
+    ),
+    axis=1,
+)
+observation_design = phx.uq.MultiOutputDesign.from_dense(
+    sensor_x,
+    output_names=output_names,
+    mask=observed_output_mask,
+)
+vector_gp = phx.uq.MultiOutputGaussianProcessDiscrepancy(
+    observation_design,
+    vector_observations,
+)
+coregionalization = phx.uq.Coregionalization(
+    jnp.asarray([[0.8, 0.0], [-0.3, 0.6]]),
+    jnp.asarray([0.1, 0.15]),
+    output_names=output_names,
+)
+vector_state = phx.uq.MultiOutputGaussianProcessLikelihoodState(
+    kernel=phx.uq.IntrinsicCoregionalizationKernel(
+        phx.kernels.Matern52Kernel(length_scale=0.2),
+        coregionalization,
+    ),
+    noise_scale=jnp.asarray([0.01, 0.02]),
+)
+query_design = phx.uq.MultiOutputDesign.from_dense(
+    posterior_query,
+    output_names=output_names,
+)
+vector_condition = vector_gp.condition(
+    vector_physical_mean,
+    query_design,
+    state=vector_state,
+)
+vector_mean = vector_condition.dense_mean()
+```
+
+Use `LinearModelCoregionalizationKernel` when several latent spatial scales are
+scientifically required. ICM and LMC both preserve cross-output covariance and
+heterotopic row ordering.
+
+### 10b. Condition on a differential operator
+
+Represent values and PDE observations as blocks of one latent field. Dynamic
+coefficients remain differentiable:
+
+```python
+value_points = jnp.linspace(0.05, 0.95, 8)[:, None]
+interior_points = jnp.linspace(0.1, 0.9, 6)[:, None]
+diffusion = jnp.asarray(0.2)
+measured_values = jnp.sin(jnp.pi * value_points[:, 0])
+measured_forcing = (
+    diffusion * jnp.pi**2 * jnp.sin(jnp.pi * interior_points[:, 0])
+)
+value_mean = jnp.zeros_like(measured_values)
+forcing_mean = jnp.zeros_like(measured_forcing)
+
+value = phx.uq.value_functional(1)
+laplacian = phx.uq.laplacian_functional(1)
+
+def functional_gp(diffusion):
+    return phx.uq.FunctionalGaussianProcessDiscrepancy(
+        (
+            phx.uq.FunctionalObservationBlock(
+                value_points,
+                value,
+                name="field-values",
+            ),
+            phx.uq.FunctionalObservationBlock(
+                interior_points,
+                -diffusion * laplacian,
+                name="elliptic-operator",
+            ),
+        ),
+        (measured_values, measured_forcing),
+    )
+
+
+functional_state = phx.uq.FunctionalGaussianProcessLikelihoodState(
+    kernel=phx.kernels.SquaredExponentialKernel(length_scale=0.25),
+    noise_scale=jnp.asarray([0.005, 0.02]),
+)
+operator_score = functional_gp(diffusion).log_marginal_likelihood(
+    (value_mean, forcing_mean),
+    state=functional_state,
+)
+```
+
+The kernel's certified derivative order must support every functional. Add an
+explicit value-functional `inducing_design` to `functional_state` only after exact
+operator inference becomes the measured bottleneck.
+
+Before release, run `discrepancy_identifiability_report` on repeated
+no-discrepancy, fixed-GP, and jointly inferred-GP results. A passing report requires
+reduced physical-parameter bias, improved held-out NLL and CRPS, adequate coverage,
+and bounded physical/GP posterior correlation.

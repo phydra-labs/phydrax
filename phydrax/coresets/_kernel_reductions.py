@@ -4,82 +4,15 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
-import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array, ArrayLike
+from jaxtyping import Array
 
-from .._strict import StrictModule
-
-
-KernelName = Literal[
-    "squared_exponential",
-    "matern32",
-    "matern52",
-    "inverse_multiquadric",
-]
-
-
-class RadialKernel(StrictModule):
-    """Small scalar radial-kernel contract for coreset selection."""
-
-    length_scale: Array
-    name: KernelName = eqx.field(static=True)
-
-    def __init__(
-        self,
-        name: KernelName = "squared_exponential",
-        /,
-        *,
-        length_scale: ArrayLike = 1.0,
-    ):
-        if name not in (
-            "squared_exponential",
-            "matern32",
-            "matern52",
-            "inverse_multiquadric",
-        ):
-            raise ValueError(f"Unknown coreset kernel {name!r}.")
-        scale = jnp.asarray(length_scale, dtype=float)
-        if scale.ndim > 1:
-            raise ValueError("length_scale must be scalar or one-dimensional.")
-        if bool(jnp.any(~jnp.isfinite(scale) | (scale <= 0.0))):
-            raise ValueError("length_scale must be finite and strictly positive.")
-        self.name = name
-        self.length_scale = scale
-
-    def __call__(self, left: Array, right: Array, /) -> Array:
-        left_ = jnp.asarray(left, dtype=float)
-        right_ = jnp.asarray(right, dtype=float)
-        delta = (left_ - right_) / self.length_scale
-        squared_distance = jnp.sum(delta * delta, axis=-1)
-        if self.name == "squared_exponential":
-            return jnp.exp(-0.5 * squared_distance)
-        distance = jnp.sqrt(jnp.maximum(squared_distance, 0.0))
-        if self.name == "matern32":
-            scaled = jnp.sqrt(3.0) * distance
-            return (1.0 + scaled) * jnp.exp(-scaled)
-        if self.name == "matern52":
-            scaled = jnp.sqrt(5.0) * distance
-            return (1.0 + scaled + scaled * scaled / 3.0) * jnp.exp(-scaled)
-        return jax.lax.rsqrt(1.0 + squared_distance)
-
-
-def kernel_matrix(kernel: RadialKernel, left: Array, right: Array, /) -> Array:
-    """Evaluate a scalar kernel over two leading point axes."""
-    left_ = jnp.asarray(left, dtype=float)
-    right_ = jnp.asarray(right, dtype=float)
-    if left_.ndim != 2 or right_.ndim != 2:
-        raise ValueError("Kernel point arrays must be two-dimensional.")
-    if left_.shape[1] != right_.shape[1]:
-        raise ValueError("Kernel point arrays must have equal coordinate size.")
-    return kernel(left_[:, None, :], right_[None, :, :])
+from phydrax.kernels import AbstractPositiveDefiniteKernel
 
 
 def _weighted_kernel_sum(
-    kernel: RadialKernel,
+    kernel: AbstractPositiveDefiniteKernel,
     left: Array,
     left_weights: Array,
     right: Array,
@@ -125,10 +58,8 @@ def _weighted_kernel_sum(
                 (right_start,),
                 (block,),
             )
-            values = kernel_matrix(kernel, left_points, right_points)
-            return subtotal + jnp.sum(
-                left_mass[:, None] * values * right_mass[None, :]
-            )
+            values = kernel.matrix(left_points, right_points)
+            return subtotal + jnp.sum(left_mass[:, None] * values * right_mass[None, :])
 
         return jax.lax.fori_loop(
             0,
@@ -146,7 +77,7 @@ def _weighted_kernel_sum(
 
 
 def _weighted_kernel_mean(
-    kernel: RadialKernel,
+    kernel: AbstractPositiveDefiniteKernel,
     points: Array,
     weights: Array,
     /,
@@ -181,7 +112,7 @@ def _weighted_kernel_mean(
                 (inner_start,),
                 (block,),
             )
-            return subtotal + kernel_matrix(kernel, outer_points, inner_points) @ inner_weights
+            return subtotal + kernel.matrix(outer_points, inner_points) @ inner_weights
 
         block_mean = jax.lax.fori_loop(
             0,
@@ -192,6 +123,3 @@ def _weighted_kernel_mean(
         return jax.lax.dynamic_update_slice(means, block_mean, (outer_start,))
 
     return jax.lax.fori_loop(0, blocks, outer_body, output)[:count]
-
-
-__all__ = ["KernelName", "RadialKernel", "kernel_matrix"]

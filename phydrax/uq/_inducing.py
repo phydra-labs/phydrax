@@ -11,10 +11,10 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
 from phydrax.coresets import (
-    RadialKernel,
     randomized_pivoted_cholesky,
     RandomizedPivotedCholesky,
 )
+from phydrax.kernels import AbstractPositiveDefiniteKernel
 
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
@@ -45,7 +45,7 @@ def select_inducing_points(
     /,
     *,
     key: Key[Array, ""] = DOC_KEY0,
-    kernel: RadialKernel | None = None,
+    kernel: AbstractPositiveDefiniteKernel | None = None,
 ) -> InducingPointSelection:
     """Select sparse-GP inducing inputs with randomized pivoted Cholesky."""
     raw = (
