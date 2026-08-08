@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, cast, Literal
 
 import blackjax
 import equinox as eqx
@@ -24,7 +24,9 @@ from ._chain import (
     _tree_nbytes,
     _unstack_tree,
     _validate_chain_method,
+    _validate_nuts_chain_method,
     ChainMethod,
+    NUTSChainMethod,
 )
 from ._checkpoint import (
     checkpoint_compatibility,
@@ -40,6 +42,7 @@ from ._diagnostics import (
     MCMCConvergenceThresholds,
     MCMCDiagnostics,
 )
+from ._interleaved_nuts import build_interleaved_nuts_advancer
 from ._posterior import PosteriorProblem
 from ._posterior_predictive import (
     predict_from_position_samples,
@@ -94,7 +97,7 @@ class MCMCResult(StrictModule):
     duration_seconds: float = eqx.field(static=True)
     sample_memory_bytes: int = eqx.field(static=True)
     max_num_doublings: int | None = eqx.field(static=True)
-    chain_method: ChainMethod = eqx.field(static=True)
+    chain_method: NUTSChainMethod = eqx.field(static=True)
     adaptation_duration_seconds: float = eqx.field(static=True)
     sampling_duration_seconds: float = eqx.field(static=True)
     samples_per_second: float = eqx.field(static=True)
@@ -119,7 +122,7 @@ class MCMCResult(StrictModule):
         algorithm: str,
         duration_seconds: float,
         max_num_doublings: int | None,
-        chain_method: ChainMethod,
+        chain_method: NUTSChainMethod,
         adaptation_duration_seconds: float,
         sampling_duration_seconds: float,
     ):
@@ -255,13 +258,19 @@ def sample_nuts(
     initial_step_size: float = 1.0,
     is_mass_matrix_diagonal: bool = True,
     max_num_doublings: int = 10,
-    chain_method: ChainMethod = "sequential",
+    chain_method: NUTSChainMethod = "sequential",
     checkpoint_path: str | Path | None = None,
     checkpoint_every: int | None = None,
     checkpoint_id: str | None = None,
     resume_from: str | Path | None = None,
 ) -> MCMCResult:
-    """Run independently adapted BlackJAX No-U-Turn sampler chains."""
+    """Run independently adapted BlackJAX No-U-Turn sampler chains.
+
+    ``chain_method=\"interleaved\"`` keeps vectorized warmup and lets production
+    chains cross draw boundaries independently within each sampling chunk. It
+    targets many-chain accelerator workloads with unequal NUTS trajectory lengths;
+    sequential and vectorized execution remain available for cheaper targets.
+    """
     if int(max_num_doublings) <= 0:
         raise ValueError("max_num_doublings must be positive.")
     return _sample_mcmc(
@@ -344,7 +353,7 @@ def _sample_mcmc(
     initial_step_size: float,
     is_mass_matrix_diagonal: bool,
     extra_parameters: dict[str, Any],
-    chain_method: ChainMethod,
+    chain_method: NUTSChainMethod,
     checkpoint_path: str | Path | None,
     checkpoint_every: int | None,
     checkpoint_id: str | None,
@@ -367,7 +376,11 @@ def _sample_mcmc(
     initial_step = float(initial_step_size)
     if initial_step <= 0.0:
         raise ValueError("initial_step_size must be positive.")
-    method = _validate_chain_method(chain_method)
+    method = (
+        _validate_nuts_chain_method(chain_method)
+        if algorithm == "nuts"
+        else _validate_chain_method(cast(ChainMethod, chain_method))
+    )
     if resume_from is not None and (
         initial_position is not None or initial_positions is not None
     ):
@@ -435,6 +448,13 @@ def _sample_mcmc(
     )
     algorithm_factory = blackjax.nuts if algorithm == "nuts" else blackjax.hmc
     logdensity_fn = lambda current: problem.log_density(current)
+    advance_mcmc = _build_mcmc_advancer(
+        algorithm_factory,
+        logdensity_fn,
+        algorithm=algorithm,
+        extra_parameters=extra_parameters,
+        chain_method=method,
+    )
     started = time.perf_counter()
 
     if resume_from is None:
@@ -524,18 +544,13 @@ def _sample_mcmc(
     while completed < draws:
         chunk = min(interval, draws - completed)
         sampling_started = time.perf_counter()
-        current_states, chunk_samples, chunk_metrics = _advance_mcmc(
-            algorithm_factory,
-            logdensity_fn,
+        current_states, chunk_samples, chunk_metrics = advance_mcmc(
             current_states,
             step_sizes,
             inverse_mass_matrices,
             sample_keys,
             start=completed,
             count=chunk,
-            algorithm=algorithm,
-            extra_parameters=extra_parameters,
-            chain_method=method,
         )
         jax.block_until_ready(chunk_metrics["log_density"])
         sampling_duration += time.perf_counter() - sampling_started
@@ -658,8 +673,8 @@ def _adapt_mcmc(
         target_acceptance_rate=target_acceptance_rate,
         **extra_parameters,
     )
-    adaptation_run: Any = adaptation.run
-    if chain_method == "vectorized":
+    adaptation_run = cast(Any, adaptation.run)
+    if chain_method in ("vectorized", "interleaved"):
         started = time.perf_counter()
 
         def adapt_chain(warmup_key, chain_position):
@@ -712,20 +727,40 @@ def _adapt_mcmc(
     )
 
 
-def _advance_mcmc(
+def _build_mcmc_advancer(
     algorithm_factory,
     logdensity_fn,
-    current_states,
-    step_sizes,
-    inverse_mass_matrices,
-    sample_keys,
     *,
-    start,
-    count,
     algorithm,
     extra_parameters,
     chain_method,
 ):
+    if algorithm == "nuts" and chain_method == "interleaved":
+        compiled = build_interleaved_nuts_advancer(
+            logdensity_fn,
+            max_num_doublings=int(extra_parameters["max_num_doublings"]),
+        )
+
+        def advance_interleaved(
+            current_states,
+            step_sizes,
+            inverse_mass_matrices,
+            sample_keys,
+            *,
+            start,
+            count,
+        ):
+            draw_keys = _mcmc_draw_keys(sample_keys, start=start, count=count)
+            final_states, samples, metrics, _ = compiled(
+                current_states,
+                step_sizes,
+                inverse_mass_matrices,
+                draw_keys,
+            )
+            return final_states, samples, metrics
+
+        return advance_interleaved
+
     kernel = algorithm_factory.build_kernel()
     if algorithm == "nuts":
         max_num_doublings = int(extra_parameters["max_num_doublings"])
@@ -753,11 +788,6 @@ def _advance_mcmc(
                 num_integration_steps,
             )
 
-    indices = jnp.arange(start, start + count, dtype=jnp.uint32)
-    draw_keys = jax.vmap(
-        lambda sample_key: jax.vmap(lambda index: jr.fold_in(sample_key, index))(indices)
-    )(sample_keys)
-
     def run_chain(initial_state, keys, step_size, inverse_mass_matrix):
         def one_step(state, draw_key):
             next_state, info = transition(
@@ -770,50 +800,77 @@ def _advance_mcmc(
 
         return jax.lax.scan(one_step, initial_state, keys)
 
-    if chain_method == "vectorized":
-        final_states, (states, infos) = jax.jit(jax.vmap(run_chain))(
-            current_states,
-            draw_keys,
-            step_sizes,
-            inverse_mass_matrices,
-        )
-    else:
-        chain_states = _unstack_tree(current_states, int(sample_keys.shape[0]))
-        final_values = []
-        state_values = []
-        info_values = []
-        compiled = jax.jit(run_chain)
-        for index, chain_state in enumerate(chain_states):
-            final_state, (states, infos) = compiled(
-                chain_state,
-                draw_keys[index],
-                step_sizes[index],
-                inverse_mass_matrices[index],
-            )
-            final_values.append(final_state)
-            state_values.append(states)
-            info_values.append(infos)
-        final_states = _stack_trees(final_values)
-        states = _stack_trees(state_values)
-        infos = _stack_trees(info_values)
+    compiled = (
+        jax.jit(jax.vmap(run_chain))
+        if chain_method == "vectorized"
+        else jax.jit(run_chain)
+    )
 
-    trajectory_expansions = (
-        infos.num_trajectory_expansions
-        if hasattr(infos, "num_trajectory_expansions")
-        else jnp.zeros_like(infos.num_integration_steps)
-    )
-    return (
-        final_states,
-        states.position,
-        {
-            "log_density": states.logdensity,
-            "acceptance_rate": infos.acceptance_rate,
-            "divergent": infos.is_divergent,
-            "energy": infos.energy,
-            "num_integration_steps": infos.num_integration_steps,
-            "num_trajectory_expansions": trajectory_expansions,
-        },
-    )
+    def advance(
+        current_states,
+        step_sizes,
+        inverse_mass_matrices,
+        sample_keys,
+        *,
+        start,
+        count,
+    ):
+        draw_keys = _mcmc_draw_keys(sample_keys, start=start, count=count)
+        if chain_method == "vectorized":
+            final_states, (states, infos) = compiled(
+                current_states,
+                draw_keys,
+                step_sizes,
+                inverse_mass_matrices,
+            )
+        else:
+            chain_states = _unstack_tree(
+                current_states,
+                int(sample_keys.shape[0]),
+            )
+            final_values = []
+            state_values = []
+            info_values = []
+            for index, chain_state in enumerate(chain_states):
+                final_state, (states, infos) = compiled(
+                    chain_state,
+                    draw_keys[index],
+                    step_sizes[index],
+                    inverse_mass_matrices[index],
+                )
+                final_values.append(final_state)
+                state_values.append(states)
+                info_values.append(infos)
+            final_states = _stack_trees(final_values)
+            states = _stack_trees(state_values)
+            infos = _stack_trees(info_values)
+
+        trajectory_expansions = (
+            infos.num_trajectory_expansions
+            if algorithm == "nuts"
+            else jnp.zeros_like(infos.num_integration_steps)
+        )
+        return (
+            final_states,
+            states.position,
+            {
+                "log_density": states.logdensity,
+                "acceptance_rate": infos.acceptance_rate,
+                "divergent": infos.is_divergent,
+                "energy": infos.energy,
+                "num_integration_steps": infos.num_integration_steps,
+                "num_trajectory_expansions": trajectory_expansions,
+            },
+        )
+
+    return advance
+
+
+def _mcmc_draw_keys(sample_keys, *, start, count):
+    indices = jnp.arange(start, start + count, dtype=jnp.uint32)
+    return jax.vmap(
+        lambda sample_key: jax.vmap(lambda index: jr.fold_in(sample_key, index))(indices)
+    )(sample_keys)
 
 
 def _write_mcmc_checkpoint(
@@ -959,8 +1016,6 @@ def _empty_sample_tree(position, chains):
         lambda value: jnp.empty((chains, 0, *value.shape), dtype=value.dtype),
         position,
     )
-
-
 
 
 __all__ = [

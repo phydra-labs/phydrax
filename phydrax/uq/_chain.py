@@ -14,11 +14,20 @@ from jaxtyping import Array, PyTree
 
 
 ChainMethod = Literal["sequential", "vectorized"]
+NUTSChainMethod = Literal["sequential", "vectorized", "interleaved"]
 
 
 def _validate_chain_method(value: ChainMethod, /) -> ChainMethod:
     if value not in ("sequential", "vectorized"):
         raise ValueError("chain_method must be 'sequential' or 'vectorized'.")
+    return value
+
+
+def _validate_nuts_chain_method(value: NUTSChainMethod, /) -> NUTSChainMethod:
+    if value not in ("sequential", "vectorized", "interleaved"):
+        raise ValueError(
+            "chain_method must be 'sequential', 'vectorized', or 'interleaved'."
+        )
     return value
 
 
@@ -66,7 +75,9 @@ def _prepare_chain_positions(
 
     position = reference if initial_position is None else initial_position
     if jax.tree_util.tree_structure(position) != reference_structure:
-        raise ValueError("initial_position must have the reference initial PyTree structure.")
+        raise ValueError(
+            "initial_position must have the reference initial PyTree structure."
+        )
     position_leaves = jax.tree_util.tree_leaves(position)
     for position_leaf, reference_leaf in zip(
         position_leaves,
@@ -107,4 +118,4 @@ def _tree_nbytes(tree: PyTree[Any], /) -> int:
     return sum(int(jnp.asarray(leaf).nbytes) for leaf in jax.tree_util.tree_leaves(tree))
 
 
-__all__ = ["ChainMethod"]
+__all__ = ["ChainMethod", "NUTSChainMethod"]
