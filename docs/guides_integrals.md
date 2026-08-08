@@ -48,6 +48,7 @@ density mass.
 
 ```python
 import phydrax as phx
+import jax.numpy as jnp
 
 space = phx.domain.ScalarInterval(-1.0, 2.0, label="x")
 
@@ -95,6 +96,44 @@ form.
 An integrand may itself be any nonempty PyTree of `DomainFunction`, callable, or
 array leaves. Reduction preserves that container structure and every leaf dtype in
 `estimate.value`; method diagnostics are returned with the same leaf structure.
+
+## Compress a reusable finite realization
+
+For several expensive integrands over the same finite positive measure, insert
+compression between materialization and reduction:
+
+```python
+samples = jnp.linspace(0.0, 2.0, 25)
+log_weights = jnp.zeros((25,))
+source = phx.integration.materialize(
+    phx.integration.weighted(samples, log_weights)
+)
+compressed = phx.integration.compress(
+    source,
+    phx.coresets.MomentRecombination(),
+    features=jnp.stack((samples, samples**2), axis=1),
+)
+
+estimate_a = phx.integration.reduce(lambda x: jnp.exp(x), compressed)
+estimate_b = phx.integration.reduce(lambda x: jnp.cos(x), compressed)
+```
+
+`MomentRecombination` returns nonnegative weights and preserves the supplied feature
+moments, including mass through its internal constant feature. The result retains at
+most one more active point than the supplied feature count. `KernelHerding(k)` instead
+selects `k` equally weighted points that greedily reduce a blockwise kernel MMD.
+
+Compression currently accepts a finite, one-axis `PointIntegrationBatch` or
+`WeightedSampleBatch`. It rejects signed weights and any stratum, antithetic pair,
+replicate, or component-union structure that cannot yet be preserved exactly. Source
+ancestry, target mass, named sample axes, masks, execution key, and provenance survive
+the reduction. `CompressedIntegrationDiagnostics` keeps selection evidence separate
+from downstream integration diagnostics.
+
+Compression discrepancy is not reported as `IntegrationEstimate.error_estimate`:
+feature-moment residual and MMD are construction diagnostics, not general error bounds
+for an arbitrary later integrand. Amortize compression only when its construction cost
+is repaid across expensive evaluations.
 
 ## Adaptive one-dimensional quadrature
 

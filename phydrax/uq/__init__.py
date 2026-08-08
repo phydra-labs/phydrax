@@ -117,6 +117,7 @@ from ._guided_particle import (
     LinearGaussianGuidedParticleProposal,
     ParticleProposalSample,
 )
+from ._inducing import InducingPointSelection, select_inducing_points
 from ._integration import particle_posterior_measure
 from ._kalman import (
     initialize_kalman_filter,
@@ -265,6 +266,7 @@ from ._posterior import (
     PosteriorProblem,
     SigmoidIntervalBijector,
 )
+from ._posterior_coreset import PosteriorCoreset, SteinThinning, thin_posterior
 from ._posterior_diagnostics import (
     diagnose_posterior,
     PosteriorCapabilities,
@@ -688,4 +690,9 @@ __all__ = [
     "export_result",
     "read_result_archive",
     "to_arviz",
+    "InducingPointSelection",
+    "PosteriorCoreset",
+    "SteinThinning",
+    "select_inducing_points",
+    "thin_posterior",
 ]

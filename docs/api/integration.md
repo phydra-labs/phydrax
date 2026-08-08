@@ -50,6 +50,38 @@ measures, and composed space/time/stochastic reductions.
 
 ::: phydrax.integration.IntegrationRealization
 
+---
+
+::: phydrax.integration.compress
+
+## Measure compression
+
+::: phydrax.coresets.MomentRecombination
+
+---
+
+::: phydrax.coresets.moment_recombine
+
+---
+
+::: phydrax.coresets.KernelHerding
+
+---
+
+::: phydrax.coresets.kernel_herd
+
+---
+
+::: phydrax.coresets.weighted_mmd
+
+---
+
+::: phydrax.integration.MeasureCompressionDiagnostics
+
+---
+
+::: phydrax.integration.CompressedIntegrationDiagnostics
+
 ## Targets
 
 ::: phydrax.integration.over

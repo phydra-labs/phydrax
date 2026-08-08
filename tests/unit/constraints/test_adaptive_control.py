@@ -11,6 +11,7 @@ from phydrax.constraints import (
     collocation_policy_support,
     controlled_collocation,
     ControlledCollocationPopulation,
+    CoresetCollocation,
     CoverageAnchors,
     FunctionalConstraint,
     PeriodicCollocation,
@@ -223,3 +224,41 @@ def test_monitor_budget_reserves_validation_for_every_proposal():
     assert not bool(settled.proposal_pending)
     assert int(settled.monitor_evaluations) == 32
     assert not bool(policy.should_refresh(settled, 3))
+
+
+
+def test_controlled_coreset_policy_preserves_selection_metrics_through_anchors():
+    domain = Interval1d(0.0, 1.0)
+    structure = SampleLayout((("x",),))
+    policy = controlled_collocation(
+        CoresetCollocation(
+            refresh_every=1,
+            sampler="halton_scrambled",
+            candidate_multiplier=3,
+            block_size=8,
+        ),
+        schedule=RefreshSchedule(1),
+        anchors=CoverageAnchors(0.25),
+    )
+    constraint = FunctionalConstraint.from_operator(
+        component=domain.component(),
+        operator=lambda field: field,
+        constraint_vars="u",
+        sampling=phx.domain.PointSampling(16, layout=structure, design="uniform"),
+        collocation_policy=policy,
+    )
+    initial = policy.initialize(constraint, key=jr.key(30))
+    anchors = _x(initial)[:4]
+
+    refreshed = policy.refresh(
+        constraint,
+        {"u": domain.Function("x")(lambda x: x[0])},
+        initial,
+        key=jr.key(31),
+        iter_=1,
+    )
+    metrics = policy.data_metrics(refreshed)
+
+    assert jnp.array_equal(_x(refreshed)[:4], anchors)
+    assert int(metrics["coreset_candidate_count"]) == 48
+    assert jnp.isfinite(metrics["coreset_selection_mmd"])

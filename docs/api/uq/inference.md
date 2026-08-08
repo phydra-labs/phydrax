@@ -361,6 +361,22 @@ on a tractable reference before interpreting these draws quantitatively.
             - predict_observations
             - convergence_report
 
+
+### Posterior compression
+
+::: phydrax.uq.thin_posterior
+
+---
+
+::: phydrax.uq.SteinThinning
+
+---
+
+::: phydrax.uq.PosteriorCoreset
+    options:
+        members:
+            - predict
+            - predict_observations
 ---
 
 ::: phydrax.uq.MCMCChainWarmup
@@ -612,6 +628,15 @@ auxiliary randomness.
             - log_probability
             - conditioner
             - condition
+
+
+---
+
+::: phydrax.uq.select_inducing_points
+
+---
+
+::: phydrax.uq.InducingPointSelection
 
 ### Identifiability gates
 

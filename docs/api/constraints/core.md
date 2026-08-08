@@ -55,6 +55,16 @@ for estimator semantics, geometry support, and budget comparisons.
 
 ---
 
+::: phydrax.constraints.CoresetCollocationPolicy
+    options:
+        members:
+            - __init__
+            - initialize
+            - refresh
+            - data_metrics
+
+---
+
 
 ::: phydrax.constraints.SeparableCollocationPolicy
     options:

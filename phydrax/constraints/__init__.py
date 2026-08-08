@@ -66,6 +66,7 @@ from ._adaptive_control import (
     RefreshSchedule,
     ResidualMonitor,
 )
+from ._adaptive_coreset import CoresetCollocation, CoresetCollocationPolicy
 from ._adaptive_separable import (
     HierarchicalAxisCollocation,
     HierarchicalAxisPolicy,
@@ -218,6 +219,8 @@ __all__ = [
     "AbstractCollocationPolicy",
     "CollocationPolicy",
     "CollocationPopulation",
+    "CoresetCollocation",
+    "CoresetCollocationPolicy",
     "PeriodicCollocation",
     "R3",
     "RARD",
