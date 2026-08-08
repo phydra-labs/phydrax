@@ -53,6 +53,7 @@ dependencies = [
     "tinygp>=0.3.1,<0.4",
     "trimesh[easy]>=4.11.1",
     "optimistix>=0.1.0",
+    "qpax>=0.1.4",
 ]
 
 [project.optional-dependencies]
@@ -77,9 +78,6 @@ tests = [
     "pytest-sugar>=1.1.1",
     "pytest-testmon>=2.2.0",
     "pytest-xdist>=3.8.0",
-]
-qp = [
-    "qpax==0.1.4",
 ]
 qa = [
     "ruff>=0.14.14",

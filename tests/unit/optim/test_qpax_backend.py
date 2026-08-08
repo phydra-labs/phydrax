@@ -6,11 +6,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import qpax
 
 import phydrax as phx
-
-
-qpax = pytest.importorskip("qpax")
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])

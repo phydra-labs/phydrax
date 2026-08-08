@@ -228,10 +228,10 @@ output, and cross spectra reuse diagnosed control resolvents and reject unstable
 singular, non-Hermitian, or non-positive-semidefinite inputs instead of clipping
 or repairing them.
 
-The built-in QP solver requires no extra package. The optional QPax 0.1.4
-backend is installed with `uv add 'phydrax[qp]'` and is exposed only through its
-implicit backend. QP results preserve primal/dual residuals, regularization,
-validity/status, and backend provenance; no backend is selected as a hidden
+QPax 0.1.4 is a core runtime dependency and is integrated through its implicit
+backend. The Phydrax dense solver remains the default; select QPax explicitly with
+`method="qpax-implicit"`. QP results preserve primal/dual residuals, regularization,
+validity/status, and backend provenance, and neither backend is used as a hidden
 fallback.
 
 High-dimensional PDE support is structure-aware rather than a claim that one generic

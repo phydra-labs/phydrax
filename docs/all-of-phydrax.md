@@ -158,9 +158,9 @@ fallback, projection, covariance repair, or undeclared regularization.
 
 Canonical QPs live in `phydrax.optim`. The built-in dense primal-dual path and
 dense active-set differentiation preserve primal/dual residuals, status,
-regularization, and backend provenance. The optional `qp` dependency enables
-QPax 0.1.4 only through its implicit backend; installing it does not introduce an
-automatic fallback or make all QP solution maps differentiable.
+regularization, and backend provenance. QPax 0.1.4 is a core runtime dependency
+integrated only through its implicit backend; its availability does not introduce
+an automatic fallback or make all QP solution maps differentiable.
 
 Lyapunov spectra for flows and maps, control-theoretic Gramian actions, implicit
 Lyapunov/Riccati sensitivities, state-space score/Fisher actions, empirical
@@ -569,7 +569,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   problems and inputs, transition kernels, and structural model compilation.
 - `phydrax.uq` for Gaussian factors and transforms, filtering/smoothing,
   state-space estimation, sensitivities, and stochastic spectra.
-- `phydrax.optim` for canonical QPs and the optional implicit QPax backend.
+- `phydrax.optim` for canonical QPs and the native implicit QPax backend.
 - `phydrax.control` for finite-horizon control, linear systems, LQR/iLQR,
   multiple shooting, compiled QPs, and MPC.
 - `phydrax.solver` for training, differential equations, controlled dynamics,

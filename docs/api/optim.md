@@ -209,10 +209,9 @@ warm-start argument, elastic repair, or backend fallback.
 
 `solve_quadratic_program` returns the complete audited result. Its default
 `method="dense-primal-dual"` uses the Phydrax dense primal-dual implementation.
-`method="qpax-implicit"` selects QPax 0.1.4 explicitly and records that backend;
-install the optional dependency with `pip install "phydrax[qp]"`. If QPax is
-not installed or its call fails, Phydrax does not silently run the native
-solver.
+`method="qpax-implicit"` selects the required QPax 0.1.4 runtime dependency
+explicitly and records that backend. If its call fails, Phydrax does not silently
+run the dense solver.
 The public `QPMethod` type is
 `Literal["dense-primal-dual", "qpax-implicit"]`; the primal-only
 `QPDifferentiableMethod` type is

@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import importlib
 from collections.abc import Sequence
 from functools import partial
 from typing import Literal, TypeAlias
@@ -16,6 +15,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ._qpax_backend import solve_qpax_implicit, solve_qpax_implicit_primal
 
 
 QPMethod: TypeAlias = Literal["dense-primal-dual", "qpax-implicit"]
@@ -893,9 +893,8 @@ def solve_quadratic_program(
         )
         backend = "phydrax"
     elif method == "qpax-implicit":
-        adapter = importlib.import_module("phydrax.optim._qpax_backend")
         primal, slack, inequality_dual, equality_dual, backend_converged, iterations = (
-            adapter.solve_qpax_implicit(
+            solve_qpax_implicit(
                 *arrays,
                 tolerance=tolerance,
                 max_iterations=max_iterations,
@@ -1186,8 +1185,7 @@ def solve_quadratic_program_primal(
             active_tolerance,
         )
     elif method == "qpax-implicit":
-        adapter = importlib.import_module("phydrax.optim._qpax_backend")
-        primal = adapter.solve_qpax_implicit_primal(
+        primal = solve_qpax_implicit_primal(
             *arrays,
             tolerance=tolerance,
             max_iterations=max_iterations,
