@@ -2,7 +2,7 @@
 
 This recipe builds one Brownian path ensemble, evaluates a Markovian BSDE, differentiates
 the value model to obtain its control, and reuses the same residual as a trainable
-objective. It then shows the contracts for fully coupled forward-backward systems and
+term. It then shows the contracts for fully coupled forward-backward systems and
 finite-activity jump compensation.
 
 ## 1. Generate forward paths once
@@ -123,7 +123,7 @@ domain = (
 def value_model(t, state):
     return jnp.asarray([state[0] ** 2 + 1.0 - t])
 
-objective = phx.objectives.BSDEObjective(
+term = phx.terms.BSDETerm(
     problem,
     value_name="value",
     control_mode="autodiff",
@@ -131,13 +131,12 @@ objective = phx.objectives.BSDEObjective(
     sampling_mode="fixed",
     fixed_paths=paths,
 )
-objective_value = objective.loss({"value": value_model})
+term_value = term.loss({"value": value_model})
 ```
 
-The same objective can be passed in the `objectives` collection of a
-`FunctionalSolver`. The value model remains a normal `DomainFunction`; the objective
-owns path sampling and stochastic-residual reduction rather than introducing a second
-training loop.
+The same term can be passed in the `terms` collection of a `FunctionalSolver`. The
+value model remains a normal `DomainFunction`; the term owns path sampling and
+stochastic-residual reduction rather than introducing a second training loop.
 
 ## 4. Generate global Feynman--Kac regression labels
 
@@ -160,7 +159,7 @@ labels = phx.stochastic.trajectory_node_feynman_kac_labels(
     label_plan,
     key=jr.key(2),
 )
-regression = phx.objectives.FeynmanKacRegressionObjective(
+regression = phx.terms.FeynmanKacRegressionTerm(
     problem,
     label_plan,
     value_name="value",
@@ -215,7 +214,7 @@ trainable_model = phx.nn.MLP(
 trainable_value = domain.Model("t", "x")(trainable_model)
 picard_solver = phx.solver.FunctionalSolver(
     functions={"value": trainable_value},
-    constraints=(),
+    terms=(),
 )
 picard_plan = phx.stochastic.FeynmanKacSamplingPlan(
     terminal_time=1.0,
@@ -272,7 +271,7 @@ shooting_solver = phx.solver.FunctionalSolver(
         "initial": domain.Parameter(jnp.asarray([0.0])),
         "control": domain.Parameter(jnp.asarray([[0.0]])),
     },
-    constraints=(),
+    terms=(),
 )
 shooting_result = phx.solver.solve_deep_bsde(
     shooting_solver,
@@ -316,7 +315,7 @@ coarse_paths = phx.stochastic.BSDEPathBatch(
 )
 splitting_solver = phx.solver.FunctionalSolver(
     functions={"value": domain.Parameter(jnp.asarray([0.0]))},
-    constraints=(),
+    terms=(),
 )
 splitting_result = phx.solver.solve_deep_splitting(
     splitting_solver,

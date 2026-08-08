@@ -51,55 +51,74 @@ Let \(x\in[0,1]\), \(t\in[0,T]\). In Phydrax:
     layout_x = phx.domain.SampleLayout((("x",),))
 
     # PDE residual: u_t - alpha * u_xx = 0
-    pde = phx.constraints.ContinuousPointwiseInteriorConstraint(
+    interior = domain.component()
+    pde_condition = phx.conditions.Residual(
         "u",
-        domain,
-        operator=lambda f: phx.operators.dt(f, var="t") - alpha * phx.operators.laplacian(f, var="x"),
-        sampling=phx.domain.PointSampling(128, layout=layout_xt),
-        reduction="mean",
+        interior,
+        lambda f: (
+            phx.operators.dt(f, var="t")
+            - alpha * phx.operators.laplacian(f, var="x")
+        ),
+    )
+    pde = phx.terms.ResidualPenalty(
+        pde_condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(pde_condition.on),
+            phx.domain.PointSampling(128, layout=layout_xt),
+        ),
     )
 
     # Dirichlet boundary at x endpoints (soft)
     boundary = domain.component({"x": phx.domain.Boundary()})
-    bc = phx.constraints.ContinuousDirichletBoundaryConstraint(
-        "u",
-        boundary,
-        target=0.0,
-        sampling=phx.domain.PointSampling(64, layout=layout_xt),
-        weight=10.0,
-        reduction="mean",
+    boundary_condition = phx.conditions.Dirichlet("u", boundary, target=0.0)
+    bc = phx.terms.ResidualPenalty(
+        boundary_condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(boundary_condition.on),
+            phx.domain.PointSampling(64, layout=layout_xt),
+        ),
+        scale=10.0,
     )
 
     # Initial condition u(x,0) = u0(x)
-    ic = phx.constraints.ContinuousInitialFunctionConstraint(
+    initial_slice = domain.component({"t": phx.domain.FixedStart()})
+    initial_condition = phx.conditions.Initial(
         "u",
-        domain,
-        func=u0,
+        initial_slice,
+        target=u0,
         evolution_var="t",
-        time_derivative_order=0,
-        sampling=phx.domain.PointSampling(32, layout=layout_x),
-        weight=10.0,
-        reduction="mean",
+        order=0,
+    )
+    ic = phx.terms.ResidualPenalty(
+        initial_condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(initial_condition.on),
+            phx.domain.PointSampling(32, layout=layout_x),
+        ),
+        scale=10.0,
     )
 
-    solver = phx.solver.FunctionalSolver(functions={"u": u}, constraints=[pde, bc, ic])
+    solver = phx.solver.FunctionalSolver(functions={"u": u}, terms=(pde, bc, ic))
     solver = solver.solve(num_iter=20, optim=optax.adam(1e-3), seed=0)
     ```
 
 ### Higher-order initial data
 
-To constrain \(\partial_t^k u(\cdot,0)\) for \(k>0\), use `time_derivative_order=k`. For high-order time derivatives,
-`time_derivative_backend="jet"` can be more direct than nested Jacobians.
+To constrain \(\partial_t^k u(\cdot,0)\) for \(k>0\), set `order=k` on
+`phx.conditions.Initial`. For high-order time derivatives, `backend="jet"` can
+be more direct than nested Jacobians.
 
 ## Adding sensors (time tracks) or anchors (scattered data)
 
-For discrete measurements, add a data-fit constraint alongside the PDE terms. Phydrax supports:
+For discrete measurements, add an observation penalty alongside the PDE terms.
+Phydrax supports:
 
 - **Anchors**: scattered \((x_i,t_i)\mapsto y_i\).
 - **Sensor tracks**: fixed sensors \(x_m\) with measurements over time \(y_m(t_j)\).
 
 !!! example
-    Sensor tracks via `DiscreteInteriorDataConstraint`:
+    Sensor tracks become an explicit finite `PointBatch` and fixed integration
+    source:
 
     ```python
     import jax.numpy as jnp
@@ -109,18 +128,35 @@ For discrete measurements, add a data-fit constraint alongside the PDE terms. Ph
     times = jnp.linspace(0.0, T, 51)          # T time points
     sensor_values = jnp.zeros((2, 51))        # shape (M, T) for scalar u
 
-    data = phx.constraints.DiscreteInteriorDataConstraint(
-        "u",
-        domain,
-        sensors=sensors,
-        times=times,
-        sensor_values=sensor_values,
-        sampling=phx.domain.PointSampling(256, layout=layout_xt),
-        weight=1.0,
+    @domain.Function("x", "t")
+    def observed_temperature(x, t):
+        sensor_index = jnp.argmin(jnp.sum((sensors - x) ** 2, axis=-1))
+        time_index = jnp.argmin(jnp.abs(times - t))
+        return sensor_values[sensor_index, time_index]
+
+    track_x = jnp.repeat(sensors, times.size, axis=0)
+    track_t = jnp.tile(times, sensors.shape[0])
+    observation_index = jnp.arange(256) % track_t.size
+    observation_batch = domain.component().points(
+        {"x": track_x[observation_index], "t": track_t[observation_index]}
+    )
+    observation = phx.conditions.Observation(
+        "u", domain.component(), observed_temperature
+    )
+    observation_source = phx.integration.fixed(
+        phx.integration.from_samples(
+            phx.integration.mean_over(observation.on),
+            observation_batch,
+        )
+    )
+    data = phx.terms.ObservationPenalty(
+        observation,
+        observation_source,
+        scale=1.0,
     )
     ```
 
-See [API → Constraints → Discrete](../api/constraints/discrete.md).
+See [Guide → Conditions, integration, terms, and enforcement](../guides_conditions.md).
 
 ## Compile the PDE IR to method-of-lines dynamics
 

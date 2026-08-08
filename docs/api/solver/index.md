@@ -1,11 +1,11 @@
 # Solver
 
-Phydrax has two separate solver paths: functional minimization for physics/data
-objectives and direct finite-dimensional ODE/SDE, differentiable controlled,
+Phydrax has two separate solver paths: functional minimization over physics/data
+terms and direct finite-dimensional ODE/SDE, differentiable controlled,
 probabilistic ODE, Lyapunov, finite-activity jump, hybrid jump-differential, or
 semidiscrete SPDE integration.
 
-For a conceptual overview (loss evaluation, enforced pipelines, training loop behavior), see
+For a conceptual overview (loss evaluation, exact enforcement, training loop behavior), see
 [Guides → Solvers and training](../../guides_solver.md).
 
 - [Differential equation integration](differential.md) defines reproducible ODE/SDE,
@@ -16,14 +16,20 @@ For a conceptual overview (loss evaluation, enforced pipelines, training loop be
   stochastic/geometric/rough/jump histories, functional/distributed/state-dependent/
   neutral delays, bounded and infinite memory, convolution, Caputo integration, and
   global collocation for future arguments.
-- [Functional solver](functional_solver.md) assembles constraints, objectives, and
-  model losses for optimization.
+- [Functional solver](functional_solver.md) assembles training terms, evaluation
+  terms, exact enforcement, and model-attached losses for optimization.
 
 !!! note
     Key notes:
 
-    - Use `FunctionalSolver` to sum constraint losses and attached model losses.
-    - Use enforced constraint pipelines to enforce conditions by construction (no penalty term).
+    - Use `FunctionalSolver(functions=..., terms=..., evaluation_terms=...,
+      enforcement=...)` to optimize scalar terms and report separate evaluation terms.
+    - Compile exact conditions into an `EnforcementProgram` and pass that program
+      as `enforcement`.
+    - Use `log_terms` to control per-term reporting and `train_term_sample_size`
+      to take an unbiased fixed-size subset of training terms per optimizer step.
+    - `phydrax.optim.kfac(...)` accepts quadratic `ResidualPenalty` terms and freezes
+      each active term realization across its gradient, curvature update, and line search.
     - Use `DifferentialProblem` plus `solve_diffrax` for numerical ODE/SDE trajectories.
     - Use `AbstractDifferentiableDrivingPath` plus `solve_diffrax_cde` for smooth
       first-level controls; rough controls and their second level belong to

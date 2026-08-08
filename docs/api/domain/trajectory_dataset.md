@@ -18,21 +18,21 @@ Use a `SampleLayout` block containing both labels, even for `FixedStart()`,
 conditional on the sampled dataset row.
 
 Axis-based trajectory grids are intentionally unsupported. Use joint point
-mini-batches for physics residuals and ragged data constraints.
+mini-batches for physics residuals and ragged data terms.
 
 For exact branch-conditional data, pair this domain with
-`phydrax.constraints.enforce_ragged_time_series(...)`. The enforcer uses the
-row index carried by trajectory batches, so the hard condition is tied to the
+`phydrax.enforcement.enforce_ragged_time_series(...)`. The enforcer uses the row
+index carried by trajectory batches, so the hard condition is tied to the
 dataset element rather than inferred from branch values. Linear hard interpolation
 supports first-order time residuals; `cubic_hermite` supports second-order time
 residuals and optional selected-component enforcement.
 
 If the trajectory data is an observed input rather than the learned field, use
-`phydrax.constraints.TrajectorySignal(...)` to expose it as a fixed
-`DomainFunction` over `(data, t)`. If the target is attached to the dataset row
-itself, use `phydrax.constraints.TrajectoryCaseDataConstraint(...)` so the target
-is supervised once per case rather than repeated over time. Fixed signals and
-domain arrays remain non-trainable solver state even though they are JAX arrays.
+`phydrax.terms.TrajectorySignal(...)` to expose it as a fixed `DomainFunction`
+over `(data, t)`. If the target is attached to the dataset row itself, use
+`phydrax.terms.TrajectoryCaseDataTerm(...)` so the target is supervised once per
+case rather than repeated over time. Fixed signals and domain arrays remain
+non-trainable solver state even though they are JAX arrays.
 
 Measure modes:
 
@@ -55,6 +55,17 @@ sampling = phx.domain.PointSampling(
     layout=phx.domain.SampleLayout((("data", "t"),)),
 )
 batch = component.sample(sampling, key=jr.key(0))
+
+condition = phx.conditions.Residual(
+    "u",
+    component,
+    lambda u: phx.operators.partial_t(u, var="t"),
+)
+source = phx.integration.per_step(
+    phx.integration.mean_over(component),
+    sampling,
+)
+physics = phx.terms.ResidualPenalty(condition, source)
 ```
 
 ## Uniform Time Grids

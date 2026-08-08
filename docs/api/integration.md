@@ -82,6 +82,37 @@ measures, and composed space/time/stochastic reductions.
 
 ::: phydrax.integration.CompressedIntegrationDiagnostics
 
+---
+
+## Term integration sources
+
+Scalar penalties make realization ownership explicit:
+
+- `per_step(target, plan)` materializes a fresh realization for each term
+  evaluation;
+- `fixed(realization)` reuses one materialized realization;
+- `caller(target)` requires the evaluation caller to supply a compatible
+  realization;
+- `adaptive(target, initial_plan, policy)` delegates collocation refresh to
+  `FunctionalSolver`.
+
+Use `mean_over(condition.on)` for normalized pointwise residual means and
+`over(condition.on)` for physical or counting-measure integrals.
+
+::: phydrax.integration.per_step
+
+---
+
+::: phydrax.integration.fixed
+
+---
+
+::: phydrax.integration.caller
+
+---
+
+::: phydrax.integration.adaptive
+
 ## Targets
 
 ::: phydrax.integration.over

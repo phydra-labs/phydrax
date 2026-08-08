@@ -7,7 +7,6 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
-from phydrax.constraints import FunctionalConstraint
 from phydrax.domain import (
     FixedEnd,
     SampleLayout,
@@ -99,7 +98,7 @@ def test_trajectory_dataset_equivalence_includes_ragged_lengths():
     assert not first.same_support(different)
 
 
-def test_trajectory_dataset_participates_in_time_residual_constraints():
+def test_trajectory_dataset_participates_in_time_residual_terms():
     inputs = jnp.arange(3.0).reshape((3, 1))
     domain = TrajectoryDatasetDomain(inputs, jnp.asarray([2, 4, 3]), dt=0.25)
     component = domain.component()
@@ -109,9 +108,14 @@ def test_trajectory_dataset_participates_in_time_residual_constraints():
     def exact(data, t):
         return data[0] + t
 
-    constraint = FunctionalConstraint.from_operator(component=component,
-    operator=lambda u: partial_t(u, var="t") - 1.0,
-    constraint_vars="u", sampling=phx.domain.PointSampling(16, layout=structure), reduction="mean",)
+    condition = phx.conditions.Residual(
+        "u", component, lambda u: partial_t(u, var="t") - 1.0
+    )
+    source = phx.integration.per_step(
+        phx.integration.mean_over(component),
+        phx.domain.PointSampling(16, layout=structure),
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
 
-    loss = constraint.loss({"u": exact}, key=jr.key(3))
+    loss = term.loss({"u": exact}, key=jr.key(3))
     assert jnp.allclose(loss, 0.0, atol=1e-12)

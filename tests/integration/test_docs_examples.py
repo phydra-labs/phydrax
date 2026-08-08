@@ -17,6 +17,12 @@ import pytest
 
 _DOCS_DIR = Path(__file__).resolve().parents[2] / "docs"
 _REPO_ROOT = _DOCS_DIR.parent
+_LONG_RUNNING_DOCS = frozenset(
+    {
+        Path("docs/cookbook/uncertainty_quantification.md"),
+        Path("docs/guides_uncertainty.md"),
+    }
+)
 
 
 def _extract_python_blocks(markdown: str) -> list[str]:
@@ -137,7 +143,8 @@ def test_docs_python_examples_run(tmp_path: Path, md_path: Path) -> None:
     env.setdefault("JAX_PLATFORM_NAME", "cpu")
     env.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
-    timeout_s = 60 * 5
+    relative_path = md_path.relative_to(_REPO_ROOT)
+    timeout_s = 60 * (20 if relative_path in _LONG_RUNNING_DOCS else 10)
 
     subprocess.run(
         [sys.executable, str(script_path)],

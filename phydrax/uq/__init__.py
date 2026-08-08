@@ -4,6 +4,12 @@
 
 """Native uncertainty-quantification tools for Phydrax."""
 
+from .._likelihoods import (
+    AbstractLikelihood,
+    GaussianLikelihood,
+    GaussianLocationScaleLikelihood,
+    StudentTLikelihood,
+)
 from ._checkpoint import (
     CheckpointCompatibilityError,
     CheckpointCorruptionError,
@@ -184,12 +190,6 @@ from ._kalman import (
 )
 from ._laplace import fit_laplace, LaplaceCurvatureError, LaplaceResult
 from ._laplax_backend import StructuredLaplaceResult
-from ._likelihoods import (
-    AbstractLikelihood,
-    GaussianLikelihood,
-    GaussianLocationScaleLikelihood,
-    StudentTLikelihood,
-)
 from ._linearized import (
     LinearizedDenseCovariance,
     LinearizedPropagationResult,
@@ -341,9 +341,9 @@ from ._posterior_diagnostics import (
 from ._posterior_terms import (
     AbstractPosteriorTerm,
     CompositePosteriorLikelihood,
-    FixedConstraintLikelihood,
     FixedObservationLikelihood,
     FixedResidualLikelihood,
+    FixedSupervisedLikelihood,
     GaussianProcessMarginalLikelihood,
 )
 from ._predictive import (
@@ -848,7 +848,7 @@ __all__ = [
     "GaussianPriorWhitening",
     "AbstractPosteriorTerm",
     "CompositePosteriorLikelihood",
-    "FixedConstraintLikelihood",
+    "FixedSupervisedLikelihood",
     "FixedObservationLikelihood",
     "FixedResidualLikelihood",
     "GaussianProcessMarginalLikelihood",

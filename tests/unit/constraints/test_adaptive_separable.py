@@ -7,17 +7,16 @@ import jax.random as jr
 import optax
 
 import phydrax as phx
-from phydrax.constraints import (
-    FunctionalConstraint,
-    HierarchicalAxisCollocation,
-    PeriodicSeparableCollocation,
-    SeparableCollocationPopulation,
-)
 from phydrax.domain import (
     GridBatch,
     GridSpec,
     HyperRectangle,
     NestedDyadicAxisSpec,
+)
+from phydrax.sampling.collocation import (
+    HierarchicalAxisCollocation,
+    PeriodicSeparableCollocation,
+    SeparableCollocationPopulation,
 )
 from phydrax.solver import FunctionalSolver
 
@@ -32,15 +31,16 @@ def _square_constraint(policy, *, counts=(12, 10)):
         x0, _x1 = x
         return x0 + 1.0
 
-    constraint = FunctionalConstraint.from_operator(
-        component=domain.component(),
-        operator=lambda _u: shifted_x,
-        constraint_vars="u",
-        sampling=phx.domain.GridSampling({"x": counts}, design="uniform"),
-        collocation_policy=policy,
+    component = domain.component()
+    condition = phx.conditions.Residual("u", component, lambda _u: shifted_x)
+    source = phx.integration.adaptive(
+        phx.integration.mean_over(component),
+        phx.domain.GridSampling({"x": counts}, design="uniform"),
+        policy,
     )
+    term = phx.terms.ResidualPenalty(condition, source)
     functions = {"u": domain.Function()(0.0)}
-    return domain, constraint, functions
+    return domain, term, functions
 
 
 def _axis(population, index):
@@ -52,14 +52,17 @@ def _axis(population, index):
 def test_separable_population_tracks_logical_and_active_counts():
     policy = PeriodicSeparableCollocation(refresh_every=2)
     domain = phx.domain.GeometryDomain(phx.geometry.Circle((0.0, 0.0), 1.0).compile())
-    constraint = FunctionalConstraint.from_operator(
-        component=domain.component(),
-        operator=lambda _u: domain.Function()(1.0),
-        constraint_vars="u",
-        sampling=phx.domain.GridSampling({"x": (16, 14)}),
-        collocation_policy=policy,
+    component = domain.component()
+    condition = phx.conditions.Residual(
+        "u", component, lambda _u: domain.Function()(1.0)
     )
-    population = policy.initialize(constraint, key=jr.key(0))
+    source = phx.integration.adaptive(
+        phx.integration.mean_over(component),
+        phx.domain.GridSampling({"x": (16, 14)}),
+        policy,
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
+    population = policy.initialize(term, key=jr.key(0))
     assert isinstance(population, SeparableCollocationPopulation)
     assert int(population.logical_point_count) == 16 * 14
     assert 0 < int(population.active_logical_point_count) < 16 * 14
@@ -120,20 +123,20 @@ def test_hierarchical_axes_activate_nested_nodes_without_shape_changes():
         return x0 + 1.0
 
     spec = NestedDyadicAxisSpec(9, initial_level=1)
-    constraint = FunctionalConstraint.from_operator(
-        component=domain.component(),
-        operator=lambda _u: shifted_x,
-        constraint_vars="u",
-        sampling=phx.domain.GridSampling({"x": GridSpec((spec, spec))}),
-        collocation_policy=policy,
-        reduction="integral",
+    component = domain.component()
+    condition = phx.conditions.Residual("u", component, lambda _u: shifted_x)
+    source = phx.integration.adaptive(
+        phx.integration.over(component),
+        phx.domain.GridSampling({"x": GridSpec((spec, spec))}),
+        policy,
     )
+    term = phx.terms.ResidualPenalty(condition, source)
     functions = {"u": domain.Function()(0.0)}
-    initial = policy.initialize(constraint, key=jr.key(20))
+    initial = policy.initialize(term, key=jr.key(20))
     assert int(initial.logical_point_count) == 81
     assert int(initial.active_logical_point_count) == 1
     refreshed = policy.refresh(
-        constraint,
+        term,
         functions,
         initial,
         key=jr.key(21),
@@ -149,8 +152,8 @@ def test_hierarchical_axes_activate_nested_nodes_without_shape_changes():
 
 def test_solver_trains_with_separable_population():
     policy = PeriodicSeparableCollocation(refresh_every=1)
-    domain, constraint, functions = _square_constraint(policy, counts=(6, 5))
-    solver = FunctionalSolver(functions=functions, constraints=[constraint])
+    domain, term, functions = _square_constraint(policy, counts=(6, 5))
+    solver = FunctionalSolver(functions=functions, terms=[term])
     trained = solver.solve(
         num_iter=2,
         optim=optax.adam(1e-3),

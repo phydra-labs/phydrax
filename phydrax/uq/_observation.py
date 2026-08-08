@@ -14,8 +14,8 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+from .._likelihoods import AbstractLikelihood
 from ..stochastic._state_space import AbstractObservationModel, StateSpaceStepContext
-from ._likelihoods import AbstractLikelihood
 
 
 def _shape(value: Sequence[int], /, *, owner: str) -> tuple[int, ...]:

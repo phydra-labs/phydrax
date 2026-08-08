@@ -8,7 +8,6 @@ import pytest
 
 import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.constraints import enforce_ragged_time_series, FunctionalConstraint
 from phydrax.domain import PointBatch, SampleLayout, TrajectoryDatasetDomain
 from phydrax.operators.differential import partial_n, partial_t
 
@@ -45,7 +44,7 @@ def test_enforce_ragged_time_series_matches_all_observed_nodes_exactly():
         del data, t
         return jnp.asarray([10.0, -10.0])
 
-    hard = enforce_ragged_time_series(free, domain, values)
+    hard = phx.enforcement.enforce_ragged_time_series(free, domain, values)
     batch = _all_observation_batch(domain, structure)
     pred = jnp.asarray(hard(batch, key=jr.key(0)).data)
     case_indices = domain.flat_case_indices
@@ -61,7 +60,7 @@ def test_enforce_ragged_time_series_supports_first_time_derivative():
     def free(data, t):
         return jnp.asarray([data[0] + 2.0 * t, 1.0 - data[0] + 3.0 * t])
 
-    hard = enforce_ragged_time_series(free, domain, values)
+    hard = phx.enforcement.enforce_ragged_time_series(free, domain, values)
     dt_hard = partial_t(hard, var="t")
     batch = domain.component().sample(phx.domain.PointSampling(12, layout=structure), key=jr.key(1))
     pred = jnp.asarray(dt_hard(batch, key=jr.key(2)).data)
@@ -76,7 +75,7 @@ def test_enforce_ragged_time_series_supports_cubic_hermite_second_time_derivativ
     def free(data, t):
         return jnp.asarray([data[0] + 2.0 * t, 1.0 - data[0] + 3.0 * t])
 
-    hard = enforce_ragged_time_series(
+    hard = phx.enforcement.enforce_ragged_time_series(
         free,
         domain,
         values,
@@ -96,7 +95,9 @@ def test_enforce_ragged_time_series_rejects_linear_second_time_derivative():
     def free(data, t):
         return jnp.asarray([data[0] + 2.0 * t, 1.0 - data[0] + 3.0 * t])
 
-    hard = enforce_ragged_time_series(free, domain, values, interpolation="linear")
+    hard = phx.enforcement.enforce_ragged_time_series(
+        free, domain, values, interpolation="linear"
+    )
 
     with pytest.raises(ValueError, match="linear.*order 1"):
         partial_n(hard, var="t", order=2)
@@ -110,7 +111,9 @@ def test_enforce_ragged_time_series_can_enforce_selected_components():
         del data, t
         return jnp.asarray([10.0, -5.0])
 
-    hard = enforce_ragged_time_series(free, domain, values, components=[0])
+    hard = phx.enforcement.enforce_ragged_time_series(
+        free, domain, values, components=[0]
+    )
     batch = _all_observation_batch(domain, structure)
     pred = jnp.asarray(hard(batch, key=jr.key(7)).data)
     case_indices = domain.flat_case_indices
@@ -127,7 +130,7 @@ def test_enforce_ragged_time_series_requires_trajectory_batch_indices():
     def free(data, t):
         return jnp.asarray([data[0] + 2.0 * t, 1.0 - data[0] + 3.0 * t])
 
-    hard = enforce_ragged_time_series(free, domain, values)
+    hard = phx.enforcement.enforce_ragged_time_series(free, domain, values)
     batch = _all_observation_batch(domain, structure)
     stripped = PointBatch(
         points=frozendict({"data": batch["data"], "t": batch["t"]}),
@@ -149,12 +152,18 @@ def test_physics_only_constraint_can_use_hard_enforced_ragged_data():
     def rhs():
         return jnp.asarray([2.0, 3.0])
 
-    hard = enforce_ragged_time_series(free, domain, values)
-    constraint = FunctionalConstraint.from_operator(component=domain.component(),
-    operator=lambda u: partial_t(u, var="t") - rhs,
-    constraint_vars="u", sampling=phx.domain.PointSampling(16, layout=structure), reduction="mean",)
+    hard = phx.enforcement.enforce_ragged_time_series(free, domain, values)
+    component = domain.component()
+    condition = phx.conditions.Residual(
+        "u", component, lambda u: partial_t(u, var="t") - rhs
+    )
+    source = phx.integration.per_step(
+        phx.integration.mean_over(component),
+        phx.domain.PointSampling(16, layout=structure),
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
 
-    loss = constraint.loss({"u": hard}, key=jr.key(3))
+    loss = term.loss({"u": hard}, key=jr.key(3))
     assert jnp.allclose(loss, 0.0, atol=1e-12)
 
 
@@ -165,16 +174,22 @@ def test_physics_only_constraint_can_use_second_derivative_hard_ragged_data():
     def free(data, t):
         return jnp.asarray([data[0] + 2.0 * t, 1.0 - data[0] + 3.0 * t])
 
-    hard = enforce_ragged_time_series(
+    hard = phx.enforcement.enforce_ragged_time_series(
         free,
         domain,
         values,
         interpolation="cubic_hermite",
         gate="sin4",
     )
-    constraint = FunctionalConstraint.from_operator(component=domain.component(),
-    operator=lambda u: partial_n(u, var="t", order=2),
-    constraint_vars="u", sampling=phx.domain.PointSampling(16, layout=structure), reduction="mean",)
+    component = domain.component()
+    condition = phx.conditions.Residual(
+        "u", component, lambda u: partial_n(u, var="t", order=2)
+    )
+    source = phx.integration.per_step(
+        phx.integration.mean_over(component),
+        phx.domain.PointSampling(16, layout=structure),
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
 
-    loss = constraint.loss({"u": hard}, key=jr.key(8))
+    loss = term.loss({"u": hard}, key=jr.key(8))
     assert jnp.allclose(loss, 0.0, atol=1e-10)

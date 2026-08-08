@@ -1,8 +1,8 @@
 # Getting started
 
-Phydrax is a scientific machine learning toolkit for PDEs, constraints, and domain-aware models, built on [JAX](https://github.com/jax-ml/jax) + [Equinox](https://github.com/patrick-kidger/equinox).
-It provides composable building blocks for geometry, operators, and training pipelines, with
-an emphasis on explicit control of objectives and data sampling.
+Phydrax is a scientific machine learning toolkit for PDEs, conditions, and domain-aware models, built on [JAX](https://github.com/jax-ml/jax) + [Equinox](https://github.com/patrick-kidger/equinox).
+It provides composable building blocks for geometry, operators, explicit integration, and training pipelines, with
+an emphasis on explicit numerical measures and data sampling.
 
 ## Unifying view: minimize functionals over domains
 
@@ -11,17 +11,17 @@ Phydrax organizes PDE/physics learning around a single pattern:
 1) choose a domain (and components like interior/boundary/slices),  
 2) define fields as functions on that domain,  
 3) build composable operators of domain functions,  
-4) build scalar objectives (functionals) as integrals/means of residuals over components,  
-5) minimize the resulting functional.
+4) describe residuals, moments, and observations as conditions,
+5) attach each condition to an explicit integration source and train on its penalty term.
 
 Conceptually, the optimized functional has the form
 
 $$
-\mathcal J[u] = \sum_i \ell_i[u] + \sum_j \mathcal F_j[u] + \sum_k r_k(\theta),
+\mathcal J[u] = \sum_i \ell_i[u] + \sum_k r_k(\theta),
 $$
 
-where $\ell_i$ are residual/data constraint penalties, $\mathcal F_j$ are raw scalar
-functionals such as signed energies, and $r_k$ are model-level losses.
+where each \(\ell_i\) is a nonnegative residual, moment, or observation penalty
+with an explicit source, and \(r_k\) is a model-level loss.
 
 ## Core objects (mental model)
 
@@ -38,15 +38,15 @@ Most workflows are composing a few primitives:
   and quantum matrix operators.
 - **Integration**: explicit targets define measures, plans define numerical
   realizations, and estimates carry method-valid diagnostics and provenance.
-- **Constraints**: scalar loss terms built from residuals on components.
-- **Objectives**: raw scalar terms, including signed integral energies for Ritz minimization.
+- **Conditions**: typed residual, moment, and observation declarations on components.
+- **Terms**: nonnegative penalties that turn conditions into trainable scalar terms.
 - **Model losses**: optional parameter-space penalties attached directly to models.
-- **FunctionalSolver**: sums constraints, raw objectives, and model losses into a differentiable scalar functional and runs optimization.
+- **FunctionalSolver**: sums `terms` and model losses into a differentiable scalar functional and runs optimization.
 
 Optional (but central in many PDE problems):
 
-- **Enforced constraints**: build an ansatz \(\tilde u\) that satisfies boundary/initial conditions by construction,
-  then train on the remaining terms.
+- **Enforcement**: build an ansatz \(\tilde u\) that satisfies boundary/initial conditions by construction,
+  then train it against the remaining terms.
 
 ## Core flow
 
@@ -54,7 +54,7 @@ If you are new to the library, start with:
 
 1. Define a domain (space, time, or products of both).
 2. Define functions on that domain.
-3. Add constraints, raw objectives, and operators to construct a functional $\mathcal J$.
+3. Declare conditions, their explicit integration sources, and penalty terms to construct a functional $\mathcal J$.
 4. Train or evaluate with a solver.
 
 ## Example
@@ -96,28 +96,34 @@ model = phx.nn.MLP(
 u = geom.Model("x")(model)
 
 layout = phx.domain.SampleLayout((("x",),))
+interior = geom.component()
 
 # Interior PDE residual: Δu - 4 = 0
-pde = phx.constraints.ContinuousPointwiseInteriorConstraint(
+pde_condition = phx.conditions.Residual(
     "u",
-    geom,
-    operator=lambda f: phx.operators.laplacian(f, var="x") - 4.0,
-    sampling=phx.domain.PointSampling(64, layout=layout),
-    reduction="mean",
+    interior,
+    lambda u: phx.operators.laplacian(u, var="x") - 4.0,
 )
+pde_source = phx.integration.per_step(
+    phx.integration.mean_over(pde_condition.on),
+    phx.domain.PointSampling(64, layout=layout),
+)
+pde_term = phx.terms.ResidualPenalty(pde_condition, pde_source)
 
 # Soft Dirichlet boundary: u - g = 0 on ∂Ω
 boundary = geom.component({"x": phx.domain.Boundary()})
-bc = phx.constraints.ContinuousDirichletBoundaryConstraint(
-    "u",
-    boundary,
-    target=g,
-    sampling=phx.domain.PointSampling(32, layout=layout),
-    weight=10.0,
-    reduction="mean",
+boundary_condition = phx.conditions.Residual("u", boundary, lambda u: u - g)
+boundary_source = phx.integration.per_step(
+    phx.integration.mean_over(boundary_condition.on),
+    phx.domain.PointSampling(32, layout=layout),
+)
+boundary_term = phx.terms.ResidualPenalty(
+    boundary_condition, boundary_source, scale=10.0
 )
 
-solver = phx.solver.FunctionalSolver(functions={"u": u}, constraints=[pde, bc])
+solver = phx.solver.FunctionalSolver(
+    functions={"u": u}, terms=[pde_term, boundary_term]
+)
 solver = solver.solve(num_iter=20, optim=optax.adam(1e-3), seed=0)
 ```
 

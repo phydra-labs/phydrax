@@ -99,7 +99,7 @@ def test_graph_dataset_domain_graph_gradient_on_local_edge_set():
     assert jnp.allclose(grad(batch).data, jnp.array([1.0, 2.0]))
 
 
-def test_graph_dataset_domain_samples_through_functional_constraint():
+def test_graph_dataset_domain_samples_through_residual_penalty():
     domain = phx.domain.GraphDatasetDomain(_graphs())
     component = domain.component({"graph": phx.domain.EdgeSet([0])})
     structure = phx.domain.SampleLayout((("graph",),))
@@ -109,11 +109,16 @@ def test_graph_dataset_domain_samples_through_functional_constraint():
         del node
         return 2.0
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(component=component,
-    operator=phx.operators.graph_gradient,
-    constraint_vars="u", sampling=phx.domain.PointSampling(2, layout=structure), )
+    condition = phx.conditions.Residual(
+        "u", component, phx.operators.graph_gradient
+    )
+    source = phx.integration.per_step(
+        phx.integration.mean_over(component),
+        phx.domain.PointSampling(2, layout=structure),
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
 
-    assert constraint.loss({"u": u}, key=jr.key(0)) < 1e-12
+    assert term.loss({"u": u}, key=jr.key(0)) < 1e-12
 
 
 def test_graph_dataset_domain_graph_model_restricts_to_node_set():

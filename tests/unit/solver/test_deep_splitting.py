@@ -3,12 +3,12 @@ import jax.numpy as jnp
 import optax
 
 import phydrax as phx
-from phydrax.objectives._deep_splitting import (
-    deep_splitting_labels,
-    DeepSplittingRegressionObjective,
-)
 from phydrax.solver._deep_splitting import solve_deep_splitting
 from phydrax.stochastic._bsde import BSDEPathBatch, BSDEProblem
+from phydrax.terms._deep_splitting import (
+    deep_splitting_labels,
+    DeepSplittingRegressionTerm,
+)
 
 
 def _paths():
@@ -49,7 +49,7 @@ def test_deep_splitting_labels_use_explicit_right_endpoint_source():
         1,
     )
     domain = phx.domain.Interval1d(-1.0, 1.0)
-    objective = DeepSplittingRegressionObjective(
+    objective = DeepSplittingRegressionTerm(
         problem,
         value_name="value",
         slice_index=1,
@@ -68,10 +68,7 @@ def test_solve_deep_splitting_trains_distinct_slices_and_interpolates_field():
     paths = _paths()
     problem = _problem(paths)
     domain = phx.domain.Interval1d(-1.0, 1.0)
-    solver = phx.solver.FunctionalSolver(
-        functions={"value": domain.Parameter(jnp.asarray([0.0]))},
-        constraints=(),
-    )
+    solver = phx.solver.FunctionalSolver(functions={"value": domain.Parameter(jnp.asarray([0.0]))}, terms=(), )
 
     result = solve_deep_splitting(
         solver,
@@ -98,7 +95,7 @@ def test_solve_deep_splitting_trains_distinct_slices_and_interpolates_field():
     assert result.completed_slices == 2
     assert result.diagnostics.passed
     assert jnp.all(result.diagnostics.one_step_rmse < 1e-8)
-    assert result.solver.objectives == solver.objectives
+    assert result.solver.terms == solver.terms
     assert jnp.allclose(solver["value"].func(), jnp.asarray([0.0]))
 
     space_time = domain @ phx.domain.TimeInterval(0.0, 1.0)

@@ -9,8 +9,8 @@ This appendix formalizes the mathematics behind Phydrax’s **Physics-Constraine
 Here “PCI” refers to the *entire* staged enforcement map $u\mapsto \tilde u$; the final stage is the
 interior anchor/data overlay.
 
-The implementation corresponds to the staging performed by `EnforcedConstraintPipeline` / `EnforcedConstraintPipelines`,
-the enforced ansätze in `phydrax.constraints` (e.g. Dirichlet/Neumann/Robin), the BVH-accelerated weight construction
+The implementation corresponds to the compiled enforcement constructed by `EnforcementProgram` in
+`phydrax.enforcement`, including its Dirichlet/Neumann/Robin enforced ansätze, the BVH-accelerated weight construction
 used for boundary blending, and the IDW-based interior anchor overlay.
 
 ## A.0. Setting and notation

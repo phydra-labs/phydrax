@@ -27,18 +27,22 @@ vector.
             [0.5, 0.4, 0.3, 0.2, 0.1, 0.0],
         ]
     )
-    values = jnp.sum(points, axis=1)
+
+    @features.Function("x")
+    def observed(x):
+        return jnp.sum(x)
 
     @features.Function("x")
     def u(x):
         return jnp.sum(x)
 
-    data = phx.constraints.DiscreteInteriorDataConstraint(
-        "u",
-        features,
-        points=points,
-        values=values,
+    component = features.component()
+    batch = component.points(points)
+    observation = phx.conditions.Observation("u", component, observed)
+    source = phx.integration.fixed(
+        phx.integration.from_samples(phx.integration.mean_over(component), batch)
     )
+    data = phx.terms.ObservationPenalty(observation, source)
     ```
 
 ::: phydrax.domain.HyperRectangle

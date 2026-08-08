@@ -14,11 +14,10 @@ import pytest
 
 import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.constraints import FunctionalConstraint
 from phydrax.domain import Interval1d, LegendreAxisSpec, SampleLayout
 from phydrax.equations import (
-    compile_pde_functional_constraint,
     compile_pde_problem,
+    compile_pde_residual_term,
     pad_pde_tokens,
     pde_ir_from_json,
     pde_ir_hash,
@@ -42,6 +41,7 @@ from phydrax.nn import (
     take_function_samples,
     take_query_targets,
 )
+from phydrax.terms import ResidualPenalty
 
 
 def test_operator_training_substrate_is_reexported_from_nn():
@@ -606,16 +606,22 @@ def test_pde_ir_round_trip_canonical_hash_tokens_and_constraint_execution():
         jnp.array([-1.0]),
     )
 
-    constraint = compile_pde_functional_constraint(
+    component = geometry.component()
+    target = phx.integration.mean_over(component)
+    realization = phx.integration.materialize(
+        target,
+        phx.domain.PointSampling(4, layout=SampleLayout((("x",),))),
+        key=jr.key(0),
+    )
+    term = compile_pde_residual_term(
         residual,
         problem,
-        component=geometry.component(),
-        sampling=phx.domain.PointSampling(4, layout=SampleLayout((("x",),))),
+        component=component,
+        source=phx.integration.fixed(realization),
         field_names=("u",),
-        sampling_mode="fixed",
     )
-    assert isinstance(constraint, FunctionalConstraint)
-    assert jnp.allclose(constraint.loss({"u": u}), 1.0)
+    assert isinstance(term, ResidualPenalty)
+    assert jnp.allclose(term.loss({"u": u}), 1.0)
 
 
 @pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
@@ -888,11 +894,11 @@ def test_pde_compiler_rejects_invalid_backend_before_expression_dispatch():
             fields={"u": u},
             differential_backend="definitely_invalid",
         ),
-        lambda: compile_pde_functional_constraint(
+        lambda: compile_pde_residual_term(
             constant,
             problem,
             component=None,
-            sampling=phx.domain.PointSampling(1, layout=None),
+            source=None,
             differential_backend="definitely_invalid",
         ),
     )

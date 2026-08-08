@@ -14,14 +14,14 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, PyTree
 
 from .._frozendict import frozendict
+from .._likelihoods import AbstractLikelihood
 from .._strict import StrictModule
-from ._likelihoods import AbstractLikelihood
 
 
 if TYPE_CHECKING:
-    from ..constraints._likelihood import SupervisedLikelihoodConstraint
-    from ..constraints._supervised_dataset import SupervisedDatasetBatch
     from ..domain import DomainFunction
+    from ..terms._likelihood import SupervisedLikelihoodTerm
+    from ..terms._supervised_dataset import SupervisedDatasetBatch
     from ._discrepancy import (
         ExactGaussianProcessDiscrepancy,
         SparseGaussianProcessDiscrepancy,
@@ -204,10 +204,10 @@ class GaussianProcessMarginalLikelihood(AbstractPosteriorTerm):
         return jnp.asarray(value, dtype=float).reshape((1,))
 
 
-class FixedConstraintLikelihood(AbstractPosteriorTerm):
-    """Adapter from a supervised likelihood constraint and its frozen full batch."""
+class FixedSupervisedLikelihood(AbstractPosteriorTerm):
+    """Adapter from a supervised likelihood term and its frozen full batch."""
 
-    constraint: SupervisedLikelihoodConstraint
+    term: SupervisedLikelihoodTerm
     batch: SupervisedDatasetBatch
     functions_fn: Callable[[PyTree[Any]], Mapping[str, DomainFunction]] = eqx.field(
         static=True
@@ -215,35 +215,35 @@ class FixedConstraintLikelihood(AbstractPosteriorTerm):
 
     def __init__(
         self,
-        constraint: SupervisedLikelihoodConstraint,
+        term: SupervisedLikelihoodTerm,
         functions: Callable[[PyTree[Any]], Mapping[str, DomainFunction]],
         /,
         *,
         batch: SupervisedDatasetBatch | None = None,
         label: str | None = None,
     ):
-        from ..constraints._likelihood import SupervisedLikelihoodConstraint
-        from ..constraints._supervised_dataset import SupervisedDatasetBatch
+        from ..terms._likelihood import SupervisedLikelihoodTerm
+        from ..terms._supervised_dataset import SupervisedDatasetBatch
 
-        if not isinstance(constraint, SupervisedLikelihoodConstraint):
-            raise TypeError("constraint must be a SupervisedLikelihoodConstraint.")
+        if not isinstance(term, SupervisedLikelihoodTerm):
+            raise TypeError("term must be a SupervisedLikelihoodTerm.")
         if not callable(functions):
             raise TypeError("functions must be callable.")
-        batch_value = constraint.observed_batch() if batch is None else batch
+        batch_value = term.observed_batch() if batch is None else batch
         if not isinstance(batch_value, SupervisedDatasetBatch):
             raise TypeError("batch must be a SupervisedDatasetBatch or None.")
         if int(batch_value.indices.size) <= 0:
-            raise ValueError("Fixed constraint batches must be non-empty.")
-        self.constraint = constraint
+            raise ValueError("Fixed supervised batches must be non-empty.")
+        self.term = term
         self.functions_fn = functions
         self.batch = batch_value
-        self.label = _label(label or constraint.label or "constraint_likelihood")
+        self.label = _label(label or term.label or "supervised_likelihood")
 
     def per_case_log_prob(self, parameters: PyTree[Any], /) -> Array:
         functions = self.functions_fn(parameters)
         if not isinstance(functions, Mapping) or not functions:
             raise TypeError("functions must return a non-empty DomainFunction mapping.")
-        return self.constraint.log_prob(functions, batch=self.batch)
+        return self.term.log_prob(functions, batch=self.batch)
 
 
 class CompositePosteriorLikelihood(StrictModule):
@@ -329,7 +329,7 @@ def _align_observations(prediction: Array, target: Array) -> tuple[Array, Array]
 __all__ = [
     "AbstractPosteriorTerm",
     "CompositePosteriorLikelihood",
-    "FixedConstraintLikelihood",
+    "FixedSupervisedLikelihood",
     "FixedObservationLikelihood",
     "FixedResidualLikelihood",
     "GaussianProcessMarginalLikelihood",

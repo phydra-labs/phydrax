@@ -5,15 +5,12 @@
 """
 # Solver
 
-Solvers assemble constraints, data, and attached model losses into a loss and
-provide utilities for training or evaluation. The main entry point is
-`FunctionalSolver`.
+Solvers aggregate numerical terms and attached model losses for training or
+evaluation. `FunctionalSolver` consumes one ordered `terms` collection.
 
-## Enforced constraints
-
-Enforced constraint pipelines modify functions by construction so that boundary
-and initial conditions are satisfied exactly. This is useful for enforcing
-$u|_{\\partial \\Omega} = g$ or $u|_{t=0} = u_0$ without penalty terms.
+Hard `EnforcementSpec` declarations may also compile boundary, initial, and
+interior requirements into an `EnforcementProgram` that transforms fields before
+term evaluation.
 
 !!! example
     ```python
@@ -26,18 +23,20 @@ $u|_{\\partial \\Omega} = g$ or $u|_{t=0} = u_0$ without penalty terms.
     def u(x):
         return 1.0
 
-    structure = phx.domain.SampleLayout((("x",),))
-    constraint = phx.constraints.ContinuousPointwiseInteriorConstraint(
-        "u",
-        geom,
-        operator=lambda f: f,
-        num_points=32,
-        structure=structure,
+    component = geom.component()
+    condition = phx.conditions.Residual("u", component, lambda field: field)
+    source = phx.integration.per_step(
+        phx.integration.mean_over(component),
+        phx.domain.PointSampling(
+            32,
+            layout=phx.domain.SampleLayout((("x",),)),
+        ),
     )
+    term = phx.terms.ResidualPenalty(condition, source)
 
     solver = phx.solver.FunctionalSolver(
         functions={"u": u},
-        constraints=[constraint],
+        terms=(term,),
     )
 
     loss = solver.loss(key=jr.key(0))
@@ -150,13 +149,6 @@ from ._driving_path import (
     FixedBSplineDrivingPath,
     OfflineCubicDrivingPath,
     PiecewiseLinearDrivingPath,
-)
-from ._enforced_constraint_pipeline import (
-    EnforcedConstraintPipeline,
-    EnforcedConstraintPipelines,
-    EnforcedInteriorData,
-    MultiFieldEnforcedConstraint,
-    SingleFieldEnforcedConstraint,
 )
 from ._fbsde import (
     CoupledFBSDEProblem,
@@ -579,10 +571,5 @@ __all__ = [
     "solve_reflected_path_dependent_bsde",
     "weak_observable_estimate",
     "FunctionalSolver",
-    "EnforcedConstraintPipeline",
-    "EnforcedConstraintPipelines",
     "train_neural_cde",
-    "EnforcedInteriorData",
-    "SingleFieldEnforcedConstraint",
-    "MultiFieldEnforcedConstraint",
 ]

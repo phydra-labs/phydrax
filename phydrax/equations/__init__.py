@@ -6,8 +6,8 @@
 
 from ._compile import (
     compile_pde_expression,
-    compile_pde_functional_constraint,
     compile_pde_problem,
+    compile_pde_residual_term,
     CompiledPDECondition,
     CompiledPDEEquation,
     CompiledPDEProblem,
@@ -33,9 +33,8 @@ from ._ir import (
 )
 from ._randomized_compile import (
     analyze_randomized_compilation,
-    compile_pde_randomized_objective,
-    compile_randomized_pde_objective,
-    CompiledRandomizedPDEObjective,
+    compile_pde_randomized_term,
+    CompiledRandomizedPDETerm,
     RandomizedCompilationReport,
     RandomizedDifferentialMethod,
     RandomizedDifferentialPlan,
@@ -75,7 +74,7 @@ __all__ = [
     "CompiledPDEEquation",
     "CompiledPDEProblem",
     "CompiledSpatialDynamics",
-    "CompiledRandomizedPDEObjective",
+    "CompiledRandomizedPDETerm",
     "DifferentialBackend",
     "ResolvedSemidiscreteMethod",
     "SemidiscreteCompilationMethod",
@@ -101,9 +100,8 @@ __all__ = [
     "PDETokenBatch",
     "as_expression",
     "compile_pde_expression",
-    "compile_pde_functional_constraint",
-    "compile_pde_randomized_objective",
-    "compile_randomized_pde_objective",
+    "compile_pde_residual_term",
+    "compile_pde_randomized_term",
     "compile_pde_problem",
     "compile_semidiscrete_pde",
     "infer_expression_type",

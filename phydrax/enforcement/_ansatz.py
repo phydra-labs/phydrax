@@ -1,0 +1,1115 @@
+#
+#  Copyright © 2026 PHYDRA, Inc. All rights reserved.
+#
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
+from math import factorial
+from typing import Any, Literal
+
+import jax
+import jax.numpy as jnp
+import jax.random as jr
+import numpy as np
+from jaxtyping import Array, ArrayLike, Key
+
+from phydrax.domain import (
+    AbstractGeometry,
+    AbstractScalarDomain,
+    Boundary,
+    CallbackDerivativeRule,
+    ComponentSum,
+    DomainComponent,
+    DomainFunction,
+    EnforcementGateMethod,
+    Fixed,
+    FixedEnd,
+    FixedStart,
+    Interior,
+)
+
+from .._bvh import beam_select_leaf_items, build_point_bvh
+from .._callable import _ensure_special_kwonly_args
+from .._doc import DOC_KEY0
+from .._strict import StrictModule
+from ..operators.differential._domain_ops import (
+    cauchy_stress,
+    directional_derivative,
+    dt,
+    grad,
+    partial_n,
+)
+from ..operators.differential._hooks import (
+    blend_with_gate,
+    nth_quotient_rule,
+    with_derivative_rule,
+)
+from ..operators.linalg import einsum
+
+
+class _IdentityCallable(StrictModule):
+    def __call__(self, x, /, *, key=None, **kwargs):
+        del key, kwargs
+        if isinstance(x, tuple):
+            if len(x) != 1:
+                raise ValueError(
+                    "Scalar identity helper expected a single coord-separable axis."
+                )
+            return x[0]
+        return x
+
+
+class _InitialPolynomialCallable(StrictModule):
+    targets: tuple[DomainFunction, ...]
+    coeffs: tuple[float, ...]
+    target_pos: tuple[tuple[int, ...], ...]
+    var_pos: int | None
+    t0: Array
+
+    def __init__(
+        self,
+        *,
+        targets: tuple[DomainFunction, ...],
+        coeffs: tuple[float, ...],
+        target_pos: tuple[tuple[int, ...], ...],
+        var_pos: int | None,
+        t0: Array,
+    ):
+        self.targets = targets
+        self.coeffs = coeffs
+        self.target_pos = target_pos
+        self.var_pos = var_pos
+        self.t0 = jnp.asarray(t0, dtype=float).reshape(())
+
+    def __call__(self, *args, key=None, **kwargs):
+        def _mul_aligned(a: Any, b: Any, /) -> Array:
+            a_arr = jnp.asarray(a)
+            b_arr = jnp.asarray(b)
+            try:
+                return a_arr * b_arr
+            except (TypeError, ValueError):
+                if a_arr.ndim == 2 and int(a_arr.shape[0]) == 1 and b_arr.ndim == 1:
+                    return b_arr[:, None] * a_arr
+                if b_arr.ndim == 2 and int(b_arr.shape[0]) == 1 and a_arr.ndim == 1:
+                    return a_arr[:, None] * b_arr
+                if a_arr.ndim == 1 and b_arr.ndim == 1:
+                    return a_arr[:, None] * b_arr[None, :]
+                if (
+                    a_arr.ndim == 1
+                    and b_arr.ndim >= 2
+                    and int(a_arr.shape[0]) == int(b_arr.shape[0])
+                ):
+                    shape = (int(a_arr.shape[0]),) + (1,) * (b_arr.ndim - 1)
+                    return a_arr.reshape(shape) * b_arr
+                if (
+                    b_arr.ndim == 1
+                    and a_arr.ndim >= 2
+                    and int(b_arr.shape[0]) == int(a_arr.shape[0])
+                ):
+                    shape = (int(b_arr.shape[0]),) + (1,) * (a_arr.ndim - 1)
+                    return a_arr * b_arr.reshape(shape)
+                raise
+
+        dt = None
+        if self.var_pos is not None:
+            dt = jnp.asarray(args[self.var_pos], dtype=float) - self.t0
+
+        out = jnp.asarray(0.0, dtype=float)
+        dt_pow = (
+            jnp.ones_like(dt, dtype=float)
+            if dt is not None
+            else jnp.asarray(1.0, dtype=float)
+        )
+        for target, coeff, pos in zip(
+            self.targets,
+            self.coeffs,
+            self.target_pos,
+            strict=True,
+        ):
+            target_args = tuple(args[i] for i in pos)
+            target_val = target.func(*target_args, key=key, **kwargs)
+            out = out + float(coeff) * _mul_aligned(dt_pow, target_val)
+            if dt is not None:
+                dt_pow = dt_pow * dt
+        return out
+
+
+def _constant_weight(value: float, /) -> Callable[[Array], Array]:
+    def _w(x, *, key=None, **kwargs):
+        del x, key, kwargs
+        return jnp.asarray(value, dtype=float)
+
+    return _w
+
+
+def _coerce_value(value: Any, u: DomainFunction, /) -> DomainFunction | ArrayLike:
+    if isinstance(value, DomainFunction):
+        return value
+    if callable(value):
+        return DomainFunction(domain=u.domain, deps=u.deps, func=value, metadata={})
+    return value
+
+
+def _guard_no_coord_separable(
+    u: DomainFunction,
+    /,
+    *,
+    var: str,
+    op_name: str,
+) -> DomainFunction:
+    if var not in u.deps:
+        return u
+
+    var_pos = u.deps.index(var)
+
+    def _guarded(*args, key=None, **kwargs):
+        x = args[var_pos]
+        if isinstance(x, tuple):
+            raise ValueError(
+                f"{op_name} does not support coord-separable (tuple-of-axes) evaluation "
+                "because it relies on geometry boundary normals. Use dense/point sampling "
+                "or a compatible constraint/ansatz."
+            )
+        return u.func(*args, key=key, **kwargs)
+
+    return DomainFunction(
+        domain=u.domain, deps=u.deps, func=_guarded, metadata=u.metadata
+    )
+
+
+def _safe_norms(values: Array, /, *, keepdims: bool = False) -> Array:
+    if values.ndim == 1:
+        values = jnp.expand_dims(values, axis=-1)
+    value_norms_squared = jnp.sum(jnp.square(values), axis=-1, keepdims=keepdims)
+    value_norms = jnp.sqrt(value_norms_squared + jnp.finfo(float).eps)
+    return value_norms
+
+
+def _enforcement_weight_fn(
+    geom: AbstractGeometry,
+    where: Callable | None,
+    /,
+    *,
+    num_reference: int = 3_000_000,
+    sampler: str = "latin_hypercube",
+    key: Key[Array, ""] = DOC_KEY0,
+    on_empty: Literal["error", "zero"] = "error",
+) -> Callable[[Array], Array]:
+    """Compute a boundary-subset weight function using a point BVH.
+
+    Computes an oriented MLS distance-to-subset field, then returns an inverse-power
+    weight function suitable for blending multiple enforced ansatz pieces via weighted
+    averaging.
+    """
+    if where is None:
+        return _constant_weight(1.0)
+
+    where_wrapped = _ensure_special_kwonly_args(where)
+
+    bounds = jnp.asarray(geom.mesh_bounds, dtype=float)
+    diameter = float(jnp.linalg.norm(bounds[1] - bounds[0]) + 1e-12)
+
+    n_ref = int(num_reference)
+    ref_points = jnp.asarray(
+        geom.sample_boundary(n_ref, sampler=sampler, key=key),
+        dtype=float,
+    )
+    mask = jax.vmap(where_wrapped)(ref_points)
+    if int(jnp.sum(mask)) == 0:
+        if on_empty == "error":
+            raise ValueError(
+                "Enforced-constraint subset predicate selects no boundary points."
+            )
+        return _constant_weight(0.0)
+
+    P = jnp.asarray(ref_points[mask], dtype=float)
+    ref_normals = jnp.asarray(geom._boundary_normals(P), dtype=float)
+    ref_normals = ref_normals / (_safe_norms(ref_normals, keepdims=True) + 1e-12)
+    N = ref_normals
+
+    h = 0.02 * diameter
+    sigma = h
+    kappa = 0.25
+    normal_floor = 0.5
+    leaf_size = 32
+    beam_width = 16  # beam_width * leaf_size == 512 candidates
+    eps = 1e-12
+
+    bvh = build_point_bvh(np.asarray(P), leaf_size=leaf_size, dtype=jnp.float64)
+    steps = int(bvh.max_depth + 2)
+
+    def _select_candidates(q: Array, /) -> tuple[Array, Array]:
+        return beam_select_leaf_items(
+            q,
+            bvh=bvh,
+            beam_width=beam_width,
+            steps=steps,
+        )
+
+    def _mls_distance(x: Array, /) -> Array:
+        x = jnp.asarray(x, dtype=float).reshape((-1,))
+
+        q_sel = jax.lax.stop_gradient(x)
+        idx, valid = _select_candidates(q_sel)
+
+        p = P[idx]
+        n = N[idx]
+
+        r = x[None, :] - p
+        dist2 = jnp.sum(r * r, axis=1)
+
+        has_valid = jnp.any(valid)
+
+        def _do(_: Any) -> Array:
+            inv_h2 = 1.0 / (h * h + eps)
+            s_dist = -dist2 * inv_h2
+            s_dist = jnp.where(valid, s_dist, jnp.asarray(-jnp.inf))
+            s_dist = s_dist - jax.lax.stop_gradient(jnp.max(s_dist))
+            w_dist = jnp.exp(s_dist)
+
+            rnorm = jnp.sqrt(dist2 + eps)
+            rhat = r / rnorm[:, None]
+            cos = jnp.sum(rhat * n, axis=1)
+            cos = jnp.clip(cos, -1.0, 1.0)
+            penalty = (1.0 - cos) ** 2
+            w_norm = 1.0 / (1.0 + kappa * penalty)
+            w_norm = normal_floor + (1.0 - normal_floor) * w_norm
+            w_norm = jnp.where(valid, w_norm, 0.0)
+
+            w = w_dist * w_norm
+            wsum = jnp.sum(w) + eps
+            w = w / wsum
+
+            proj = jnp.sum(n * r, axis=1)
+            return jnp.sum(w * proj)
+
+        return jax.lax.cond(has_valid, _do, lambda _: jnp.asarray(1.0), operand=None)
+
+    def _weight_from_point(x: Array, /) -> Array:
+        f = _mls_distance(x)
+        alpha = sigma + eps
+        rho = 2.0 * alpha * (jax.nn.softplus(f / alpha) - jnp.log(2.0))
+        rho = jnp.abs(rho)
+        return (rho + 1e-16) ** -2
+
+    def _weight_point(
+        x: Array | tuple[Array, ...],
+        /,
+        *,
+        key=None,
+        **kwargs,
+    ) -> Array:
+        del key, kwargs
+        if isinstance(x, tuple):
+            coords = tuple(jnp.asarray(c, dtype=float) for c in x)
+            if not coords:
+                raise ValueError("Weight function received an empty coord tuple.")
+            if not all(c.ndim == 1 for c in coords):
+                raise ValueError(
+                    "Coord-separable inputs for boundary weight must be 1D axes."
+                )
+            if len(coords) != int(geom.spatial_dim):
+                raise ValueError(
+                    f"Boundary weight expected {int(geom.spatial_dim)} coord axes, got {len(coords)}."
+                )
+            if len(coords) == 1:
+                return jax.vmap(
+                    lambda xi: _weight_from_point(jnp.asarray([xi], dtype=float))
+                )(coords[0])
+
+            mesh = jnp.meshgrid(*coords, indexing="ij")
+            flat_points = jnp.stack([m.reshape(-1) for m in mesh], axis=1)
+            flat_weights = jax.vmap(_weight_from_point)(flat_points)
+            out_shape = tuple(int(c.shape[0]) for c in coords)
+            return flat_weights.reshape(out_shape)
+
+        x_arr = jnp.asarray(x, dtype=float)
+        if x_arr.ndim == 0:
+            return _weight_from_point(jnp.asarray([x_arr], dtype=float))
+        if x_arr.ndim == 1:
+            if int(x_arr.shape[0]) != int(geom.spatial_dim):
+                raise ValueError(
+                    f"Boundary weight expected point shape ({int(geom.spatial_dim)},), got {x_arr.shape}."
+                )
+            return _weight_from_point(x_arr)
+        if x_arr.ndim == 2:
+            if int(x_arr.shape[1]) != int(geom.spatial_dim):
+                raise ValueError(
+                    f"Boundary weight expected point batch shape (N,{int(geom.spatial_dim)}), got {x_arr.shape}."
+                )
+            return jax.vmap(_weight_from_point)(x_arr)
+        raise ValueError(
+            "Boundary weight expected input with shape (), (d,), (N,d), or coord-separable tuple."
+        )
+
+    return _weight_point
+
+
+def _boundary_ansatz_factor(
+    component: DomainComponent,
+    factor: AbstractGeometry,
+    *,
+    var: str,
+) -> DomainFunction:
+    return component.domain.Function(var)(factor.boundary_ansatz_factor)
+
+
+def _boundary_ansatz_normal_extension(
+    psi: DomainFunction,
+    *,
+    var: str,
+    mode: Literal["reverse", "forward"],
+) -> DomainFunction:
+    r"""Return the canonical smooth normal extension $\nu=\nabla\psi$.
+
+    The unit-jet contract for ``psi`` gives $\nu=n$ on every regular boundary
+    point. Unlike an everywhere-normalized nearest-boundary field, ``nu`` may
+    vanish in the interior and therefore need not jump across a medial set.
+    """
+    return grad(psi, var=var, mode=mode)
+
+
+def _reject_filtered_boundary(
+    component: DomainComponent,
+    /,
+    *,
+    var: str,
+    op_name: str,
+) -> None:
+    if component.where or component.where_all is not None:
+        raise ValueError(
+            f"{op_name} cannot directly enforce a filtered Boundary() component "
+            f"for {var!r}: its geometry gate vanishes on the full boundary. "
+            "Build one ansatz per boundary piece and combine them with enforce_blend."
+        )
+
+
+def enforce_dirichlet(
+    u: DomainFunction,
+    component: DomainComponent,
+    /,
+    *,
+    var: str = "x",
+    target: DomainFunction | ArrayLike | None = None,
+    gate_method: EnforcementGateMethod = "auto",
+    gate_saturation_fraction: float = 0.5,
+    gate_linear_fraction: float = 0.5,
+) -> DomainFunction:
+    r"""Enforced Dirichlet ansatz enforcing $u=g$ on a component.
+
+    For a geometry boundary, this uses a dimensionless enforcement gate $b$ that is
+    zero on $\partial\Omega$ and order one in the interior:
+
+    $$
+    u^*(x) = g(x) + b(x)\,(u(x) - g(x)).
+    $$
+
+    The gate is intentionally distinct from the geometry's signed boundary-defining
+    field. Boundary-normal APIs continue to use that geometry field. Derivative hard
+    constraints instead use a dimensional unit-jet factor $\psi$ and its canonical
+    smooth extension $\nu=\nabla\psi$. ``gate_method="auto"`` uses the global
+    R-equivalence gate for CAD geometry; the saturation and linear fractions configure
+    the explicit ``"compact"`` fallback. Exact analytic gates ignore these mesh controls.
+
+    For scalar domains (e.g. time), an appropriate vanishing factor is constructed
+    directly from $(t-t_0)$, $(t-t_1)$, etc.
+    """
+    if isinstance(component, ComponentSum):
+        raise TypeError(
+            "enforce_dirichlet requires a DomainComponent, not a ComponentSum."
+        )
+
+    if var not in component.domain.labels:
+        raise KeyError(f"Label {var!r} not in domain {component.domain.labels}.")
+
+    factor = component.domain.factor(var)
+
+    comp = component.spec.selection_for(var)
+    if isinstance(comp, Interior):
+        raise ValueError("enforce_dirichlet requires a non-interior component for var.")
+
+    value = 0.0 if target is None else _coerce_value(target, u)
+    if isinstance(value, DomainFunction):
+        value_fn = value
+    else:
+        value_fn = DomainFunction(domain=u.domain, deps=(), func=value, metadata={})
+
+    if isinstance(factor, AbstractGeometry):
+        if not isinstance(comp, Boundary):
+            raise ValueError(
+                "enforce_dirichlet for geometry vars requires component Boundary()."
+            )
+        _reject_filtered_boundary(
+            component,
+            var=var,
+            op_name="enforce_dirichlet",
+        )
+        gate = component.enforcement_gate(
+            method=gate_method,
+            var=var,
+            saturation_fraction=gate_saturation_fraction,
+            linear_fraction=gate_linear_fraction,
+        )
+        return blend_with_gate(value_fn, u, gate)
+
+    if isinstance(factor, AbstractScalarDomain):
+        t = DomainFunction(domain=component.domain, deps=(var,), func=_IdentityCallable())
+        if isinstance(comp, FixedStart):
+            phi = t - factor.fixed("start")
+        elif isinstance(comp, FixedEnd):
+            phi = t - factor.fixed("end")
+        elif isinstance(comp, Fixed):
+            phi = t - jnp.asarray(comp.value, dtype=float).reshape(())
+        elif isinstance(comp, Boundary):
+            phi = (t - factor.fixed("start")) * (t - factor.fixed("end"))
+        else:
+            raise TypeError(f"Unsupported scalar component {type(comp).__name__}.")
+
+        return blend_with_gate(value_fn, u, phi)
+
+    raise TypeError(f"Unsupported domain factor type {type(factor).__name__}.")
+
+
+def enforce_neumann(
+    u: DomainFunction,
+    component: DomainComponent,
+    /,
+    *,
+    var: str = "x",
+    target: DomainFunction | ArrayLike | None = None,
+    mode: Literal["reverse", "forward"] = "reverse",
+) -> DomainFunction:
+    r"""Enforced Neumann ansatz enforcing $\partial u/\partial n = g$ on a boundary.
+
+    For a geometry boundary, let $\psi$ be a dimensional ansatz factor satisfying
+    $\psi=0$ and $\partial_n\psi=1$, and define its canonical interior normal
+    extension $\nu=\nabla\psi$. Because $\nu=n$ on every regular boundary point,
+    this constructs
+
+    $$
+    u^* = u + \psi\,\bigl(g - D_\nu u\bigr),
+    $$
+
+    which yields $\partial u^*/\partial n = g$ on $\partial\Omega$ under mild
+    regularity assumptions. Signed-distance geometry uses its certified field
+    directly; a general level set is rescaled to have an outward unit boundary
+    jet. The extension follows the representation's documented piecewise
+    regularity away from the boundary.
+    """
+    if isinstance(component, ComponentSum):
+        raise TypeError("enforce_neumann requires a DomainComponent, not a ComponentSum.")
+
+    if var not in component.domain.labels:
+        raise KeyError(f"Label {var!r} not in domain {component.domain.labels}.")
+
+    factor = component.domain.factor(var)
+
+    if not isinstance(factor, AbstractGeometry):
+        raise TypeError("enforce_neumann is only defined for geometry variables.")
+
+    comp = component.spec.selection_for(var)
+    if not isinstance(comp, Boundary):
+        raise ValueError("enforce_neumann requires component Boundary() for var.")
+    _reject_filtered_boundary(component, var=var, op_name="enforce_neumann")
+
+    psi = _boundary_ansatz_factor(component, factor, var=var)
+    normal_extension = _boundary_ansatz_normal_extension(psi, var=var, mode=mode)
+
+    du_dnu = directional_derivative(u, normal_extension, var=var, mode=mode)
+
+    value = 0.0 if target is None else _coerce_value(target, u)
+    out = u + psi * (value - du_dnu)
+    return _guard_no_coord_separable(out, var=var, op_name="enforce_neumann")
+
+
+def enforce_traction(
+    u: DomainFunction,
+    component: DomainComponent,
+    /,
+    *,
+    var: str = "x",
+    target: DomainFunction | ArrayLike | None = None,
+    lambda_: DomainFunction | ArrayLike,
+    mu: DomainFunction | ArrayLike,
+    mode: Literal["reverse", "forward"] = "reverse",
+) -> DomainFunction:
+    r"""Enforced traction ansatz for linear elasticity on a boundary.
+
+    For isotropic linear elasticity, the traction is $t=\sigma(u)\,n$.
+    This constructs a corrected displacement $u^*$ that aims to satisfy
+
+    $$
+    \sigma(u^*)\,n = t_{\text{target}}
+    $$
+
+    on the boundary by adding a displacement correction proportional to the
+    dimensional unit-jet ansatz factor $\psi$.
+
+    Interior residuals and decompositions use $\nu=\nabla\psi$ in place of an
+    everywhere-normalized pseudonormal. Since $\nu=n$ on every regular boundary point,
+    this leaves the stated boundary traction unchanged while avoiding artificial
+    medial-set jumps.
+
+    Let
+
+    $$
+    r \;=\; t_{\text{target}} - \sigma(u)\,n
+    $$
+
+    be the traction residual, and decompose it into normal/tangential parts
+
+    $$
+    r_n = (r\cdot n)\,n,\qquad r_t = r - r_n.
+    $$
+
+    Using Lamé parameters $\lambda,\mu$, define the correction field
+
+    $$
+    v \;=\; \frac{r_t}{\mu} \;+\; \frac{r_n}{\lambda + 2\mu},
+    $$
+
+    and return the hard-constraint ansatz
+
+    $$
+    u^*(x) \;=\; u(x) + \psi(x)\,v(x).
+    $$
+
+    Since $\partial\psi/\partial n=1$ on the boundary, when $v$ varies slowly in
+    the normal direction the induced traction correction is approximately
+    $\sigma(\psi v)\,n \approx \mu\,v_t + (\lambda+2\mu)\,v_n$ (with
+    $v_n=(v\cdot n)\,n$ and $v_t=v-v_n$), making $u^*$ enforce the target traction
+    to first order.
+    """
+    if isinstance(component, ComponentSum):
+        raise TypeError(
+            "enforce_traction requires a DomainComponent, not a ComponentSum."
+        )
+
+    if var not in component.domain.labels:
+        raise KeyError(f"Label {var!r} not in domain {component.domain.labels}.")
+
+    factor = component.domain.factor(var)
+
+    if not isinstance(factor, AbstractGeometry):
+        raise TypeError("enforce_traction is only defined for geometry variables.")
+
+    comp = component.spec.selection_for(var)
+    if not isinstance(comp, Boundary):
+        raise ValueError("enforce_traction requires component Boundary() for var.")
+    _reject_filtered_boundary(component, var=var, op_name="enforce_traction")
+
+    psi = _boundary_ansatz_factor(component, factor, var=var)
+    normal_extension = _boundary_ansatz_normal_extension(psi, var=var, mode=mode)
+
+    if target is None:
+        target_val: DomainFunction | ArrayLike = 0.0
+    else:
+        target_val = _coerce_value(target, u)
+    target_fn = (
+        target_val
+        if isinstance(target_val, DomainFunction)
+        else DomainFunction(domain=u.domain, deps=(), func=target_val, metadata={})
+    )
+
+    lambda_val = _coerce_value(lambda_, u)
+    lambda_fn = (
+        lambda_val
+        if isinstance(lambda_val, DomainFunction)
+        else DomainFunction(domain=u.domain, deps=(), func=lambda_val, metadata={})
+    )
+
+    mu_val = _coerce_value(mu, u)
+    mu_fn = (
+        mu_val
+        if isinstance(mu_val, DomainFunction)
+        else DomainFunction(domain=u.domain, deps=(), func=mu_val, metadata={})
+    )
+
+    sigma = cauchy_stress(u, lambda_=lambda_fn, mu=mu_fn, var=var, mode=mode)
+    traction = einsum("...ij,...j->...i", sigma, normal_extension)
+
+    r = target_fn - traction
+    r_dot_n = einsum("...i,...i->...", r, normal_extension)
+    r_n = einsum("...,...i->...i", r_dot_n, normal_extension)
+    r_t = r - r_n
+
+    denom_n = lambda_fn + 2.0 * mu_fn
+    v = (r_t / mu_fn) + (r_n / denom_n)
+
+    out = u + psi * v
+    return _guard_no_coord_separable(out, var=var, op_name="enforce_traction")
+
+
+def enforce_robin(
+    u: DomainFunction,
+    component: DomainComponent,
+    /,
+    *,
+    var: str = "x",
+    dirichlet_coeff: DomainFunction | ArrayLike | None = None,
+    neumann_coeff: DomainFunction | ArrayLike | None = None,
+    target: DomainFunction | ArrayLike | None = None,
+    mode: Literal["reverse", "forward"] = "reverse",
+) -> DomainFunction:
+    r"""Enforced Robin ansatz enforcing $a\,u + b\,\partial u/\partial n = g$.
+
+    On a geometry boundary, let $\psi$ be a dimensional ansatz factor satisfying
+    $\psi=0$ and $\partial_n\psi=1$, and let $\nu=\nabla\psi$. Define the
+    extended residual $r=g-a\,u-b\,D_\nu u$. Since $\nu=n$ on the boundary, the
+    returned ansatz
+
+    $$
+    u^* \;=\; u + \frac{\psi}{b}\,r
+    $$
+
+    yields $a\,u^* + b\,\partial u^*/\partial n = g$ on $\partial\Omega$ under
+    mild regularity assumptions, without requiring a discontinuous unit-normal
+    extension in the interior.
+    """
+    if isinstance(component, ComponentSum):
+        raise TypeError("enforce_robin requires a DomainComponent, not a ComponentSum.")
+
+    if var not in component.domain.labels:
+        raise KeyError(f"Label {var!r} not in domain {component.domain.labels}.")
+
+    factor = component.domain.factor(var)
+
+    if not isinstance(factor, AbstractGeometry):
+        raise TypeError("enforce_robin is only defined for geometry variables.")
+
+    comp = component.spec.selection_for(var)
+    if not isinstance(comp, Boundary):
+        raise ValueError("enforce_robin requires component Boundary() for var.")
+    _reject_filtered_boundary(component, var=var, op_name="enforce_robin")
+
+    g = 0.0 if target is None else _coerce_value(target, u)
+    a = 1.0 if dirichlet_coeff is None else _coerce_value(dirichlet_coeff, u)
+
+    if neumann_coeff is None:
+        return enforce_dirichlet(u, component, var=var, target=g / a)
+    if not isinstance(neumann_coeff, DomainFunction) and not callable(neumann_coeff):
+        b_val = jnp.asarray(neumann_coeff, dtype=float)
+        if b_val.shape == () and float(b_val) == 0.0:
+            return enforce_dirichlet(u, component, var=var, target=g / a)
+
+    psi = _boundary_ansatz_factor(component, factor, var=var)
+    normal_extension = _boundary_ansatz_normal_extension(psi, var=var, mode=mode)
+    du_dnu = directional_derivative(u, normal_extension, var=var, mode=mode)
+
+    if isinstance(a, DomainFunction):
+        a_fn = a
+    else:
+        a_fn = DomainFunction(domain=u.domain, deps=(), func=a, metadata={})
+    b_val = _coerce_value(neumann_coeff, u)
+    if isinstance(b_val, DomainFunction):
+        b_fn = b_val
+    else:
+        b_fn = DomainFunction(domain=u.domain, deps=(), func=b_val, metadata={})
+    if isinstance(g, DomainFunction):
+        g_fn = g
+    else:
+        g_fn = DomainFunction(domain=u.domain, deps=(), func=g, metadata={})
+
+    r = g_fn - a_fn * u - b_fn * du_dnu
+    out = u + (psi / b_fn) * r
+    return _guard_no_coord_separable(out, var=var, op_name="enforce_robin")
+
+
+def enforce_sommerfeld(
+    u: DomainFunction,
+    component: DomainComponent,
+    /,
+    *,
+    var: str = "x",
+    time_var: str = "t",
+    wavespeed: DomainFunction | ArrayLike | None = None,
+    target: DomainFunction | ArrayLike | None = None,
+    mode: Literal["reverse", "forward"] = "reverse",
+) -> DomainFunction:
+    r"""Enforced Sommerfeld/absorbing boundary ansatz.
+
+    Enforces the first-order radiation condition
+
+    $$
+    \frac{\partial u}{\partial n} + \frac{1}{c}\frac{\partial u}{\partial t} = g
+    $$
+
+    on the selected boundary component using a dimensional ansatz factor $\psi$
+    satisfying $\psi=0$ and $\partial_n\psi=1$. With the smooth interior extension
+    $\nu=\nabla\psi$, let
+
+    $$
+    r = g - D_\nu u - \frac{1}{c}\frac{\partial u}{\partial t}.
+    $$
+
+    The returned ansatz is
+
+    $$
+    u^* \;=\; u + \psi\,r,
+    $$
+
+    which yields the Sommerfeld condition on $\partial\Omega$ because $\nu=n$
+    there, under the same assumptions as `enforce_neumann`.
+    """
+    if isinstance(component, ComponentSum):
+        raise TypeError(
+            "enforce_sommerfeld requires a DomainComponent, not a ComponentSum."
+        )
+
+    if var not in component.domain.labels:
+        raise KeyError(f"Label {var!r} not in domain {component.domain.labels}.")
+    if time_var not in component.domain.labels:
+        raise KeyError(f"Label {time_var!r} not in domain {component.domain.labels}.")
+
+    factor = component.domain.factor(var)
+
+    if not isinstance(factor, AbstractGeometry):
+        raise TypeError("enforce_sommerfeld is only defined for geometry variables.")
+
+    comp = component.spec.selection_for(var)
+    if not isinstance(comp, Boundary):
+        raise ValueError("enforce_sommerfeld requires component Boundary() for var.")
+    _reject_filtered_boundary(component, var=var, op_name="enforce_sommerfeld")
+
+    psi = _boundary_ansatz_factor(component, factor, var=var)
+    normal_extension = _boundary_ansatz_normal_extension(psi, var=var, mode=mode)
+    du_dnu = directional_derivative(u, normal_extension, var=var, mode=mode)
+    du_dt = dt(u, var=time_var, mode=mode)
+
+    c = 1.0 if wavespeed is None else _coerce_value(wavespeed, u)
+    g = 0.0 if target is None else _coerce_value(target, u)
+
+    if isinstance(c, DomainFunction):
+        c_fn = c
+    else:
+        c_fn = DomainFunction(domain=u.domain, deps=(), func=c, metadata={})
+    if isinstance(g, DomainFunction):
+        g_fn = g
+    else:
+        g_fn = DomainFunction(domain=u.domain, deps=(), func=g, metadata={})
+
+    r = g_fn - du_dnu - (1.0 / c_fn) * du_dt
+    out = u + psi * r
+    return _guard_no_coord_separable(out, var=var, op_name="enforce_sommerfeld")
+
+
+def enforce_initial(
+    u: DomainFunction,
+    component: DomainComponent,
+    /,
+    *,
+    var: str = "t",
+    targets: Mapping[int, DomainFunction | ArrayLike],
+    gate: Literal["rational", "poly"] = "rational",
+    gate_eps: float = 1e-2,
+) -> DomainFunction:
+    r"""Enforced initial-condition ansatz matching time derivatives at a fixed time.
+
+    Let $t_0$ be the fixed time selected by `component` (e.g. `FixedStart()`).
+    Given targets for derivatives $u^{(k)}(t_0)$ for $k=0,\dots,m$, this constructs a
+    Taylor-like polynomial
+
+    $$
+    p(t) = \sum_{k=0}^{m} \frac{u^{(k)}(t_0)}{k!}\,(t-t_0)^k
+    $$
+
+    and returns
+
+    $$
+    u^*(t) = p(t) + g(t)\,(u(t)-p(t)),
+    $$
+
+    which matches all specified derivatives exactly at $t=t_0$.
+
+    By default, `g` is a bounded rational gate based on normalized time-from-$t_0$
+    that avoids unbounded polynomial growth away from the initial slice. Set
+    `gate="poly"` to recover the original $(t-t_0)^{m+1}$ gate.
+    """
+    if isinstance(component, ComponentSum):
+        raise TypeError("enforce_initial requires a DomainComponent, not a ComponentSum.")
+    if var not in component.domain.labels:
+        raise KeyError(f"Label {var!r} not in domain {component.domain.labels}.")
+    if not targets:
+        raise ValueError("enforce_initial requires at least one derivative target.")
+
+    factor = component.domain.factor(var)
+
+    if not isinstance(factor, AbstractScalarDomain):
+        raise TypeError("enforce_initial requires a scalar evolution variable.")
+
+    comp = component.spec.selection_for(var)
+    if isinstance(comp, FixedStart):
+        t0 = factor.fixed("start")
+    elif isinstance(comp, FixedEnd):
+        t0 = factor.fixed("end")
+    elif isinstance(comp, Fixed):
+        t0 = jnp.asarray(comp.value, dtype=float).reshape(())
+    else:
+        raise ValueError(
+            "enforce_initial requires FixedStart/FixedEnd/Fixed for the evolution var."
+        )
+
+    targets_by_order: dict[int, DomainFunction | ArrayLike] = {}
+    for order, target in targets.items():
+        if target is None:
+            raise ValueError("enforce_initial targets may not be None.")
+        order_i = int(order)
+        if order_i < 0:
+            raise ValueError(
+                "enforce_initial targets must use non-negative derivative orders."
+            )
+        if order_i in targets_by_order:
+            raise ValueError(
+                f"enforce_initial received duplicate targets for order {order_i}."
+            )
+        if callable(target) and not isinstance(target, DomainFunction):
+            target = DomainFunction(
+                domain=u.domain, deps=u.deps, func=target, metadata={}
+            )
+        targets_by_order[order_i] = target
+
+    max_order = max(targets_by_order)
+    for order in range(max_order + 1):
+        if order not in targets_by_order:
+            raise ValueError(
+                "enforce_initial requires targets for all derivative orders from 0..max_order."
+            )
+
+    targets_ordered: list[DomainFunction] = []
+    for order in range(max_order + 1):
+        target = targets_by_order[order]
+        if isinstance(target, DomainFunction):
+            target_fn = target
+        else:
+            target_fn = DomainFunction(
+                domain=u.domain,
+                deps=(),
+                func=target,
+                metadata={},
+            )
+        if target_fn.domain.labels != u.domain.labels:
+            target_fn = target_fn.promote(u.domain)
+        targets_ordered.append(target_fn)
+
+    poly_dep_set: set[str] = set()
+    for target_fn in targets_ordered:
+        poly_dep_set.update(target_fn.deps)
+    if max_order > 0:
+        poly_dep_set.add(var)
+    poly_deps = tuple(lbl for lbl in u.domain.labels if lbl in poly_dep_set)
+    dep_idx = {lbl: i for i, lbl in enumerate(poly_deps)}
+
+    target_pos = tuple(
+        tuple(dep_idx[lbl] for lbl in target_fn.deps) for target_fn in targets_ordered
+    )
+    coeffs = tuple(1.0 / float(factorial(order)) for order in range(max_order + 1))
+    var_pos: int | None = dep_idx.get(var)
+    poly = DomainFunction(
+        domain=u.domain,
+        deps=poly_deps,
+        func=_InitialPolynomialCallable(
+            targets=tuple(targets_ordered),
+            coeffs=coeffs,
+            target_pos=target_pos,
+            var_pos=var_pos,
+            t0=t0,
+        ),
+        metadata={},
+    )
+
+    t = DomainFunction(domain=component.domain, deps=(var,), func=_IdentityCallable())
+    dt = t - t0
+
+    q = int(max_order + 1)
+    if gate == "poly":
+        return poly + (dt**q) * (u - poly)
+    if gate != "rational":
+        raise ValueError("gate must be 'rational' or 'poly'.")
+
+    gate_eps_f = float(gate_eps)
+    if gate_eps_f <= 0.0:
+        raise ValueError("gate_eps must be > 0.")
+
+    t_start = jnp.asarray(factor.fixed("start"), dtype=float).reshape(())
+    t_end = jnp.asarray(factor.fixed("end"), dtype=float).reshape(())
+    if isinstance(comp, Fixed):
+        # Use a symmetric distance scale around t0 so the gate saturates on the
+        # larger side of the interval.
+        L = jnp.maximum(jnp.abs(t0 - t_start), jnp.abs(t_end - t0)) + 1e-12
+        dt_gate = abs(dt)
+    else:
+        L = jnp.abs(t_end - t_start) + 1e-12
+        dt_gate = dt if isinstance(comp, FixedStart) else (-dt)
+
+    scale = L * (gate_eps_f ** (1.0 / float(q)))
+    tau = dt_gate / scale
+    tau_pow = tau**q
+    g = tau_pow / (1.0 + tau_pow)
+    return blend_with_gate(poly, u, g)
+
+
+def _complement_where(
+    wheres: Sequence[Callable | None],
+    /,
+) -> Callable[[Array], Array] | None:
+    if any(w is None for w in wheres):
+        return None
+    if not wheres:
+        return _constant_weight(1.0)
+
+    wrapped = tuple(_ensure_special_kwonly_args(w) for w in wheres if w is not None)
+
+    def _union(x: Array, /) -> Array:
+        out = wrapped[0](x)
+        for fn in wrapped[1:]:
+            out = jnp.logical_or(out, fn(x))
+        return out
+
+    def _comp(x: Array, /) -> Array:
+        return jnp.logical_not(_union(x))
+
+    return _comp
+
+
+def enforce_blend(
+    u: DomainFunction,
+    pieces: Sequence[tuple[DomainComponent, DomainFunction]],
+    /,
+    *,
+    var: str = "x",
+    include_identity_remainder: bool = True,
+    num_reference: int = 3_000_000,
+    sampler: str = "latin_hypercube",
+    key: Key[Array, ""] = DOC_KEY0,
+) -> DomainFunction:
+    r"""Blend multiple enforced ansatz pieces via ported MLS/BVH weights.
+
+    Each piece contributes $w_i\,u_i^*$ and the final output is:
+
+    $$
+    u_{\text{enforced}} = \frac{\sum_i w_i\,u_i^*}{\sum_i w_i}.
+    $$
+
+    If `include_identity_remainder=True`, this also adds an identity term for the
+    complement of the union of piece predicates (using `component.where[var]`), which
+    prevents subset enforced constraints from leaking onto other boundary segments.
+    """
+    if not pieces:
+        raise ValueError("enforce_blend requires at least one piece.")
+
+    if var not in u.domain.labels:
+        raise KeyError(f"Label {var!r} not in domain {u.domain.labels}.")
+
+    base_factor = u.domain.factor(var)
+
+    if not isinstance(base_factor, AbstractGeometry):
+        raise TypeError("enforce_blend currently supports only geometry variables.")
+    geom = base_factor
+
+    resolved_pieces: list[tuple[DomainComponent, DomainFunction]] = []
+    for component, u_piece in pieces:
+        if isinstance(component, ComponentSum):
+            raise TypeError("enforce_blend pieces must be DomainComponent (not a union).")
+        if not isinstance(u_piece, DomainFunction):
+            if callable(u_piece):
+                u_piece = DomainFunction(
+                    domain=u.domain, deps=u.deps, func=u_piece, metadata={}
+                )
+            else:
+                u_piece = DomainFunction(
+                    domain=u.domain, deps=(), func=u_piece, metadata={}
+                )
+
+        if var not in component.domain.labels:
+            raise KeyError(
+                f"Label {var!r} not in piece domain {component.domain.labels}."
+            )
+        factor = component.domain.factor(var)
+
+        if not isinstance(factor, AbstractGeometry):
+            raise TypeError("enforce_blend pieces must use a geometry label for var.")
+        if not geom.same_support(factor):
+            raise ValueError(
+                "enforce_blend requires all pieces to share an equivalent geometry."
+            )
+
+        comp = component.spec.selection_for(var)
+        if not isinstance(comp, Boundary):
+            raise ValueError("enforce_blend pieces require component Boundary() for var.")
+        resolved_pieces.append((component, u_piece))
+
+    num_terms = len(resolved_pieces) + (1 if include_identity_remainder else 0)
+    keys = jr.split(key, num_terms)
+    key_iter = iter(keys)
+
+    numerator = DomainFunction(domain=u.domain, deps=(), func=0.0, metadata=u.metadata)
+    denominator = DomainFunction(domain=u.domain, deps=(), func=0.0, metadata={})
+
+    wheres: list[Callable | None] = []
+    for component, u_piece in resolved_pieces:
+        where_fn = component.where.get(var)
+        wheres.append(where_fn)
+        w_fn = _enforcement_weight_fn(
+            geom,
+            where_fn,
+            num_reference=num_reference,
+            sampler=sampler,
+            key=next(key_iter),
+            on_empty="error",
+        )
+        w = u.domain.Function(var)(w_fn)
+        numerator = numerator + w * u_piece
+        denominator = denominator + w
+
+    if include_identity_remainder:
+        rem_where = _complement_where(wheres)
+        if rem_where is not None:
+            w_rem_fn = _enforcement_weight_fn(
+                geom,
+                rem_where,
+                num_reference=num_reference,
+                sampler=sampler,
+                key=next(key_iter),
+                on_empty="zero",
+            )
+            w_rem = u.domain.Function(var)(w_rem_fn)
+            numerator = numerator + w_rem * u
+            denominator = denominator + w_rem
+
+    blended = numerator / denominator
+
+    def _hook(
+        *,
+        var: str,
+        axis: int | None,
+        order: int,
+        mode: Literal["reverse", "forward"],
+        backend: Literal["ad", "jet", "fd", "basis"],
+        basis: Literal["poly", "fourier", "sine", "cosine"],
+        periodic: bool,
+    ) -> DomainFunction | None:
+        if backend not in ("ad", "jet"):
+            return None
+
+        def _derive(fn: DomainFunction, k: int, /) -> DomainFunction:
+            return partial_n(
+                fn,
+                var=var,
+                axis=axis,
+                order=int(k),
+                mode=mode,
+                backend=backend,
+                basis=basis,
+                periodic=periodic,
+            )
+
+        return nth_quotient_rule(
+            numerator,
+            denominator,
+            var=var,
+            order=int(order),
+            derive=_derive,
+        )
+
+    return with_derivative_rule(blended, CallbackDerivativeRule(_hook))

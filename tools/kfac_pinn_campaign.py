@@ -21,12 +21,11 @@ from jax.flatten_util import ravel_pytree
 
 import phydrax as phx
 from phydrax._trainable import combine_trainable, partition_trainable
-from phydrax.constraints import FunctionalConstraint
 from phydrax.operators.differential import laplacian, partial_n
 from phydrax.solver._kfac_problem import (
     frozen_loss,
     frozen_loss_and_flat_gradient,
-    materialize_constraint_terms,
+    materialize_frozen_terms,
     term_residual_jacobians,
 )
 
@@ -55,18 +54,23 @@ def _network(domain, *, in_size, width, depth, key):
     return domain.Model(*domain.labels)(model)
 
 
-def _fixed_constraint(component, operator, variables, *, samples, key, weight=1.0):
-    return FunctionalConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=variables,
-        sampling=phx.domain.PointSampling(
+def _fixed_residual_term(component, operator, fields, *, samples, key, scale=1.0):
+    condition = phx.conditions.Residual(fields, component, operator)
+    batch = component.sample(
+        phx.domain.PointSampling(
             int(samples),
             layout=phx.domain.SampleLayout((component.domain.labels,)),
         ),
-        sampling_mode="fixed",
-        fixed_batch_key=key,
-        weight=weight,
+        key=key,
+    )
+    realization = phx.integration.from_samples(
+        phx.integration.mean_over(condition.on),
+        batch,
+    )
+    return phx.terms.ResidualPenalty(
+        condition,
+        phx.integration.fixed(realization),
+        scale=scale,
     )
 
 
@@ -78,7 +82,7 @@ def _poisson_1d(width, depth, samples, key):
     def forcing(x):
         return (jnp.pi**2) * jnp.sin(jnp.pi * x[0])
 
-    residual = _fixed_constraint(
+    residual = _fixed_residual_term(
         domain.component(),
         lambda field: laplacian(field, var="x") + forcing,
         "u",
@@ -86,16 +90,17 @@ def _poisson_1d(width, depth, samples, key):
         key=jr.fold_in(key, 1),
     )
     boundary_component = domain.component({"x": phx.domain.Boundary()})
-    boundary = _fixed_constraint(
+    boundary = _fixed_residual_term(
         boundary_component,
         lambda field: field,
         "u",
         samples=max(4, samples // 2),
         key=jr.fold_in(key, 2),
-        weight=5.0,
+        scale=5.0,
     )
     return phx.solver.FunctionalSolver(
-        functions={"u": u}, constraints=(residual, boundary)
+        functions={"u": u},
+        terms=(residual, boundary),
     )
 
 
@@ -104,14 +109,14 @@ def _poisson_2d(width, depth, samples, key):
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
     u = _network(domain, in_size=2, width=width, depth=depth, key=key)
-    residual = _fixed_constraint(
+    residual = _fixed_residual_term(
         domain.component(),
         lambda field: laplacian(field, var="x") - 4.0,
         "u",
         samples=samples,
         key=jr.fold_in(key, 1),
     )
-    return phx.solver.FunctionalSolver(functions={"u": u}, constraints=residual)
+    return phx.solver.FunctionalSolver(functions={"u": u}, terms=residual)
 
 
 def _spacetime_problem(width, depth, samples, key, *, burgers):
@@ -141,14 +146,14 @@ def _spacetime_problem(width, depth, samples, key, *, burgers):
                 partial_n(field, var="t", order=1) - laplacian(field, var="x") - forcing
             )
 
-    residual = _fixed_constraint(
+    residual = _fixed_residual_term(
         domain.component(),
         operator,
         "u",
         samples=samples,
         key=jr.fold_in(key, 1),
     )
-    return phx.solver.FunctionalSolver(functions={"u": u}, constraints=residual)
+    return phx.solver.FunctionalSolver(functions={"u": u}, terms=residual)
 
 
 def _poisson_high_dim(width, depth, samples, key, *, dimension=100):
@@ -168,14 +173,14 @@ def _poisson_high_dim(width, depth, samples, key, *, dimension=100):
         )
         return total - 2.0 * float(dimension)
 
-    residual = _fixed_constraint(
+    residual = _fixed_residual_term(
         domain.component(),
         operator,
         "u",
         samples=samples,
         key=jr.fold_in(key, 1),
     )
-    return phx.solver.FunctionalSolver(functions={"u": u}, constraints=residual)
+    return phx.solver.FunctionalSolver(functions={"u": u}, terms=residual)
 
 
 def _coupled(width, depth, samples, key):
@@ -188,14 +193,14 @@ def _coupled(width, depth, samples, key):
     def first_forcing(x):
         return 2.0 + x[0]
 
-    first = _fixed_constraint(
+    first = _fixed_residual_term(
         domain.component(),
         lambda u_field, v_field: laplacian(u_field, var="x") + v_field - first_forcing,
         ("u", "v"),
         samples=samples,
         key=jr.fold_in(key, 1),
     )
-    second = _fixed_constraint(
+    second = _fixed_residual_term(
         domain.component(),
         lambda u_field, v_field: u_field - v_field,
         ("u", "v"),
@@ -203,7 +208,8 @@ def _coupled(width, depth, samples, key):
         key=jr.fold_in(key, 2),
     )
     return phx.solver.FunctionalSolver(
-        functions={"u": u, "v": v}, constraints=(first, second)
+        functions={"u": u, "v": v},
+        terms=(first, second),
     )
 
 
@@ -220,14 +226,14 @@ def _inverse(width, depth, samples, key):
     def equation_target(x):
         return 2.0 * x[0]
 
-    state = _fixed_constraint(
+    state = _fixed_residual_term(
         domain.component(),
         lambda field: field - state_target,
         "u",
         samples=samples,
         key=jr.fold_in(key, 1),
     )
-    equation = _fixed_constraint(
+    equation = _fixed_residual_term(
         domain.component(),
         lambda field, parameter: parameter * field - equation_target,
         ("u", "coefficient"),
@@ -236,7 +242,7 @@ def _inverse(width, depth, samples, key):
     )
     return phx.solver.FunctionalSolver(
         functions={"u": u, "coefficient": coefficient},
-        constraints=(state, equation),
+        terms=(state, equation),
     )
 
 
@@ -265,8 +271,8 @@ def _solve_exact_ggn(solver, *, steps, seed, damping=1e-3):
     for step in range(int(steps)):
         step_started = time.perf_counter()
         key = jr.fold_in(jr.key(seed), step)
-        terms = materialize_constraint_terms(
-            solver.constraints,
+        terms = materialize_frozen_terms(
+            solver.terms,
             solver.collocation,
             key=key,
         )
@@ -275,7 +281,6 @@ def _solve_exact_ggn(solver, *, steps, seed, damping=1e-3):
             non_trainable,
             solver,
             terms,
-            objective_key=jr.fold_in(key, 1),
             iter_=step + 1,
         )
         flat, jacobians, _ = term_residual_jacobians(
@@ -297,7 +302,6 @@ def _solve_exact_ggn(solver, *, steps, seed, damping=1e-3):
                 non_trainable,
                 solver,
                 terms,
-                objective_key=jr.fold_in(key, 1),
                 iter_=step + 1,
             )
             if bool(candidate_loss < loss):
@@ -327,18 +331,14 @@ def _peak_device_memory_bytes():
     return None if value is None else int(value)
 
 
-def _sampling_evaluations(sampling):
-    if isinstance(sampling, tuple):
-        return sum(_sampling_evaluations(item) for item in sampling)
-    counts = (
-        (int(sampling.count),)
-        if isinstance(sampling.count, int)
-        else tuple(int(count) for count in sampling.count)
-    )
-    total = 1
-    for count in counts:
-        total *= count
-    return total
+def _integration_evaluations(term):
+    source = term.source
+    if not isinstance(source, phx.integration.FixedIntegration):
+        raise TypeError("Campaign terms must use FixedIntegration sources.")
+    batch = source.realization.batch
+    if not isinstance(batch, phx.integration.PointIntegrationBatch):
+        raise TypeError("Campaign terms must use point integration batches.")
+    return int(batch.weights.data.size)
 
 
 def _diagnostic_float(diagnostics, name):
@@ -505,8 +505,8 @@ def _run_one(args):
             diagnostics,
             "optimizer/kfac/factor_condition_estimate_max",
         ),
-        "collocation_point_steps": int(args.steps)
-        * sum(_sampling_evaluations(term.sampling) for term in solver.constraints),
+        "integration_point_steps": int(args.steps)
+        * sum(_integration_evaluations(term) for term in solver.terms),
     }
     print(json.dumps(result, sort_keys=True))
 

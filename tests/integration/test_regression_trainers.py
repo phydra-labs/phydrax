@@ -8,7 +8,6 @@ import optax
 from evosax import algorithms as evo_algos
 
 import phydrax as phx
-from phydrax.constraints import PointSetConstraint
 from phydrax.nn.models import MLP
 from phydrax.solver import FunctionalSolver
 
@@ -26,18 +25,18 @@ def _make_regression_solver(seed: int, *, scan: bool = False) -> FunctionalSolve
     grid = jnp.stack(jnp.meshgrid(xs, xs, indexing="ij"), axis=-1).reshape((-1, 2))
 
     component = geom.component()
-    constraint = PointSetConstraint.from_points(
-        component=component,
-        points={"x": grid},
-        residual=lambda fns: fns["u"] - target,
-        reduction="mean",
+    batch = component.points({"x": grid})
+    condition = phx.conditions.Observation("u", component, target)
+    source = phx.integration.fixed(
+        phx.integration.from_samples(phx.integration.mean_over(component), batch)
     )
+    term = phx.terms.ObservationPenalty(condition, source)
 
     model = MLP(
         in_size=2, out_size="scalar", hidden_sizes=(), scan=scan, key=jr.key(seed)
     )
     u = geom.Model("x")(model)
-    return FunctionalSolver(functions={"u": u}, constraints=[constraint])
+    return FunctionalSolver(functions={"u": u}, terms=[term])
 
 
 def test_regression_2d_optax():

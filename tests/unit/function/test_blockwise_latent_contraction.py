@@ -11,7 +11,6 @@ import pytest
 
 import phydrax as phx
 import phydrax.operators.differential._domain_ops as differential_domain_ops
-from phydrax.constraints import enforce_dirichlet, enforce_initial
 from phydrax.domain import (
     Boundary,
     CallbackDerivativeRule,
@@ -20,6 +19,7 @@ from phydrax.domain import (
     SampleLayout,
     TimeInterval,
 )
+from phydrax.enforcement import enforce_dirichlet, enforce_initial
 from phydrax.nn.models import LatentContractionModel, LatentExecutionPolicy
 from phydrax.nn.models.core._base import _AbstractBaseModel
 from phydrax.operators.differential import dt_n, laplacian, partial_n, partial_t

@@ -5,9 +5,9 @@ import optax
 import pytest
 
 import phydrax as phx
-from phydrax.objectives._randomized_residual import (
-    RandomizedResidualObjective,
+from phydrax.terms._randomized_residual import (
     RandomizedResidualSamples,
+    RandomizedResidualTerm,
 )
 
 
@@ -37,7 +37,7 @@ def _noisy_evaluator(*, num_realizations, scale):
 
 def test_u_statistic_is_unbiased_for_noisy_residual_and_has_exact_gradient():
     parameter = jnp.asarray(0.7)
-    objective = RandomizedResidualObjective(
+    objective = RandomizedResidualTerm(
         _noisy_evaluator(num_realizations=4096, scale=1.5),
         collocation={"count": 1},
         sampling_mode="fixed",
@@ -59,19 +59,19 @@ def test_plugin_exposes_variance_bias_while_independent_product_is_unbiased():
     parameter = jnp.asarray(0.4)
     collocation = {"count": 8192}
     evaluator = _noisy_evaluator(num_realizations=4, scale=2.0)
-    u_statistic = RandomizedResidualObjective(
+    u_statistic = RandomizedResidualTerm(
         evaluator,
         collocation=collocation,
         sampling_mode="fixed",
         loss_mode="u_statistic",
     )
-    plug_in = RandomizedResidualObjective(
+    plug_in = RandomizedResidualTerm(
         evaluator,
         collocation=collocation,
         sampling_mode="fixed",
         loss_mode="plug_in",
     )
-    independent = RandomizedResidualObjective(
+    independent = RandomizedResidualTerm(
         evaluator,
         collocation=collocation,
         sampling_mode="fixed",
@@ -108,7 +108,7 @@ def test_vector_complex_residuals_masks_and_weights_reduce_correctly():
             weights=batch["weights"],
         )
 
-    objective = RandomizedResidualObjective(
+    objective = RandomizedResidualTerm(
         evaluator,
         collocation=collocation,
         sampling_mode="fixed",
@@ -130,16 +130,12 @@ def test_resampled_collocation_is_materialized_once_per_optimizer_update():
         residual = _parameter(functions) - batch["target"]
         return RandomizedResidualSamples(jnp.stack((residual, residual)))
 
-    objective = RandomizedResidualObjective(
+    objective = RandomizedResidualTerm(
         evaluator,
         collocation=sampler,
         sampling_mode="resample",
     )
-    solver = phx.solver.FunctionalSolver(
-        functions=_functions(0.0),
-        constraints=(),
-        objectives=(objective,),
-    )
+    solver = phx.solver.FunctionalSolver(functions=_functions(0.0), terms=(objective,), )
 
     trained = solver.solve(
         num_iter=5,
@@ -162,7 +158,7 @@ def test_zero_valid_mass_is_rejected():
             mask=jnp.zeros((3,), dtype=bool),
         )
 
-    objective = RandomizedResidualObjective(
+    objective = RandomizedResidualTerm(
         evaluator,
         collocation={"points": jnp.ones((3, 1))},
         sampling_mode="fixed",

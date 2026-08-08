@@ -9,19 +9,18 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
-from phydrax.constraints import enforce_dirichlet, FunctionalConstraint
-from phydrax.domain import Boundary, PointSampling, SampleLayout
+from phydrax.domain import Boundary
+from phydrax.enforcement import enforce_dirichlet
 from phydrax.optim._kfac._blocks import (
     initialize_block_state,
     update_block_state,
     update_block_state_from_observations,
 )
-from phydrax.solver import FunctionalSolver, SingleFieldEnforcedConstraint
 from phydrax.solver._kfac_layout import discover_parameter_layout
 from phydrax.solver._kfac_problem import (
     frozen_loss_and_flat_gradient,
     frozen_term_residual_vector,
-    materialize_constraint_terms,
+    materialize_frozen_terms,
     term_block_curvature_observations,
     term_residual_jacobians,
     validate_derivative_coverage,
@@ -38,6 +37,17 @@ def _zero_model(model):
         model = eqx.tree_at(lambda item: item.layers[index].bias, model, bias)
     return model
 
+def _residual_term(domain, fields, operator, *, samples, density=None):
+    condition = phx.conditions.Residual(fields, domain.component(), operator)
+    return phx.terms.ResidualPenalty(
+        condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(condition.on),
+            phx.integration.MonteCarloPlan(samples),
+        ),
+        density=density,
+    )
+
 
 def test_type_two_residual_curvature_is_nonzero_at_zero_residual():
     domain = phx.domain.Interval1d(0.0, 1.0)
@@ -51,16 +61,11 @@ def test_type_two_residual_curvature_is_nonzero_at_zero_residual():
         )
     )
     u = domain.Model("x")(model)
-    constraint = FunctionalConstraint.from_operator(
-        component=domain.component(),
-        operator=lambda field: field,
-        constraint_vars="u",
-        sampling=PointSampling(7, layout=SampleLayout((("x",),))),
-    )
-    solver = FunctionalSolver(functions={"u": u}, constraints=constraint)
+    term = _residual_term(domain, "u", lambda field: field, samples=7)
+    solver = phx.solver.FunctionalSolver(functions={"u": u}, terms=term)
     params, non_trainable = solver.partition_functions()
-    terms = materialize_constraint_terms(
-        solver.constraints,
+    terms = materialize_frozen_terms(
+        solver.terms,
         solver.collocation,
         key=jr.key(5),
     )
@@ -84,7 +89,7 @@ def test_type_two_residual_curvature_is_nonzero_at_zero_residual():
     assert jnp.sum(jnp.square(jacobians[0])) > 0.0
 
 
-def test_frozen_objective_uses_clamped_quadratic_coefficients():
+def test_frozen_loss_uses_nonnegative_quadratic_coefficients():
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = phx.nn.MLP(
         in_size=1,
@@ -95,23 +100,23 @@ def test_frozen_objective_uses_clamped_quadratic_coefficients():
     )
 
     @domain.Function("x")
-    def tiny_negative_weight(x):
-        return -5e-13 * jnp.ones_like(x[0])
+    def zero_density(x):
+        return jnp.zeros_like(x[0])
 
-    constraint = FunctionalConstraint.from_operator(
-        component=domain.component(),
-        operator=lambda field: field,
-        constraint_vars="u",
-        sampling=PointSampling(5, layout=SampleLayout((("x",),))),
-        weight=tiny_negative_weight,
+    term = _residual_term(
+        domain,
+        "u",
+        lambda field: field,
+        samples=5,
+        density=zero_density,
     )
-    solver = FunctionalSolver(
+    solver = phx.solver.FunctionalSolver(
         functions={"u": domain.Model("x")(model)},
-        constraints=constraint,
+        terms=term,
     )
     params, non_trainable = solver.partition_functions()
-    terms = materialize_constraint_terms(
-        solver.constraints,
+    terms = materialize_frozen_terms(
+        solver.terms,
         solver.collocation,
         key=jr.key(34),
     )
@@ -120,7 +125,6 @@ def test_frozen_objective_uses_clamped_quadratic_coefficients():
         non_trainable,
         solver,
         terms,
-        objective_key=jr.key(35),
         iter_=jnp.asarray(1.0),
     )
     residual = frozen_term_residual_vector(
@@ -147,27 +151,35 @@ def test_hard_enforced_ansatz_has_finite_residual_curvature():
     )
     raw = domain.Model("x")(model)
     boundary = domain.component({"x": Boundary()})
-    hard = SingleFieldEnforcedConstraint(
-        "u",
-        boundary,
-        lambda field: enforce_dirichlet(field, boundary, var="x", target=0.0),
+    spec = phx.enforcement.EnforcementSpec(
+        phx.conditions.Dirichlet("u", boundary, target=0.0),
+        kind="custom",
+        transform=lambda field, _get_field: enforce_dirichlet(
+            field,
+            boundary,
+            var="x",
+            target=0.0,
+        ),
     )
-    constraint = FunctionalConstraint.from_operator(
-        component=domain.component(),
-        operator=lambda field: field,
-        constraint_vars="u",
-        sampling=PointSampling(6, layout=SampleLayout((("x",),))),
+    term = _residual_term(domain, "u", lambda field: field, samples=6)
+    enforcement = phx.enforcement.compile(
+        {"u": raw},
+        (spec,),
+        options=phx.enforcement.EnforcementOptions(num_reference=64),
+        key=jr.key(6),
     )
-    solver = FunctionalSolver(
+    solver = phx.solver.FunctionalSolver(
         functions={"u": raw},
-        constraints=constraint,
-        constraint_terms=(hard,),
-        boundary_weight_num_reference=64,
+        terms=term,
+        enforcement=enforcement,
     )
     params, non_trainable = solver.partition_functions()
-    validate_derivative_coverage(solver.constraints, solver.ansatz_functions())
-    terms = materialize_constraint_terms(
-        solver.constraints,
+    validate_derivative_coverage(
+        solver.terms,
+        solver.enforcement.apply(solver.functions),
+    )
+    terms = materialize_frozen_terms(
+        solver.terms,
         solver.collocation,
         key=jr.key(7),
     )
@@ -197,13 +209,13 @@ def test_streamed_block_observations_match_dense_jacobian_oracle(approximation):
         "u": domain.Model("x")(model),
         "coefficient": domain.Parameter(0.7),
     }
-    constraint = FunctionalConstraint.from_operator(
-        component=domain.component(),
-        operator=lambda field, coefficient: coefficient * field,
-        constraint_vars=("u", "coefficient"),
-        sampling=PointSampling(5, layout=SampleLayout((("x",),))),
+    term = _residual_term(
+        domain,
+        ("u", "coefficient"),
+        lambda field, coefficient: coefficient * field,
+        samples=5,
     )
-    solver = FunctionalSolver(functions=functions, constraints=constraint)
+    solver = phx.solver.FunctionalSolver(functions=functions, terms=term)
     params, non_trainable = solver.partition_functions()
     layout = discover_parameter_layout(
         functions,
@@ -211,8 +223,8 @@ def test_streamed_block_observations_match_dense_jacobian_oracle(approximation):
         exact_block_max_size=64,
         uncovered="error",
     )
-    terms = materialize_constraint_terms(
-        solver.constraints,
+    terms = materialize_frozen_terms(
+        solver.terms,
         solver.collocation,
         key=jr.key(9),
     )

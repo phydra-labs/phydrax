@@ -3,7 +3,7 @@
 #
 
 from collections.abc import Mapping, Sequence
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 
 import coordax as cx
 import equinox as eqx
@@ -23,7 +23,7 @@ from .._scalar import ScalarInterval
 from .._selection import Boundary, Fixed, FixedEnd, FixedStart, Interior, Selection
 from .._structure import _validate_label, NumPoints, SampleLayout
 from ._batch import GRAPH_ENTITY_INDEX_KEY, GRAPH_GRAPH_INDEX_KEY, GraphBatch
-from ._components import graph_component_kind
+from ._components import graph_component_kind, GraphComponentKind
 from ._dataset import (
     _component_indices_for_graph,
     _entity_payload,
@@ -36,6 +36,10 @@ from ._dataset import (
     GRAPH_SAMPLE_INDEX_KEY,
     GraphDatasetDomain,
 )
+
+
+if TYPE_CHECKING:
+    from .._function import DomainFunction
 
 
 GraphTrajectoryMeasure = Literal[
@@ -398,6 +402,24 @@ class GraphTrajectoryDatasetDomain(JointFactor):
     def size(self) -> int:
         """Number of graph trajectory cases."""
         return len(self.graphs)
+
+    def signal(
+        self,
+        values: ArrayLike | Sequence[ArrayLike],
+        /,
+        *,
+        component_kind: GraphComponentKind = "nodes",
+        interpolation: Literal["nearest", "linear"] = "nearest",
+    ) -> "DomainFunction":
+        """Expose graph-trajectory observations as an entity-aligned field."""
+        from ._observation import GraphTrajectorySignal
+
+        return GraphTrajectorySignal(
+            self,
+            values,
+            component_kind=component_kind,
+            interpolation=interpolation,
+        )
 
     @property
     def max_length(self) -> int:

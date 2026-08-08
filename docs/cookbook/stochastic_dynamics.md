@@ -2,7 +2,7 @@
 
 This page covers two complementary stochastic workflows:
 
-1. **learn an equation solution** with backward-Kolmogorov or Fokker--Planck residual constraints;
+1. **learn an equation solution** with backward-Kolmogorov or Fokker--Planck residual conditions;
 2. **simulate paths** after spatial semidiscretization with a finite-rank Wiener process and Diffrax.
 
 They solve different problems. A stochastic PINN represents an observable or density as a
@@ -56,22 +56,29 @@ diffusion = domain.Function("x", "t")(
     lambda x, t: jnp.asarray([[sigma_value]])
 )
 
-backward = phx.constraints.ContinuousKolmogorovConstraint(
+backward_condition = phx.conditions.stochastic.Kolmogorov(
     "u",
     domain.component(),
     drift=drift,
     diffusion=diffusion,
     evolution_var="t",
-    sampling=phx.domain.PointSampling(
+)
+backward_target = phx.integration.mean_over(backward_condition.on)
+backward_realization = phx.integration.materialize(
+    backward_target,
+    phx.domain.PointSampling(
         64,
         layout=phx.domain.SampleLayout((("x", "t"),)),
     ),
-    sampling_mode="fixed",
-    fixed_batch_key=jr.key(0),
+    key=jr.key(0),
+)
+backward = phx.terms.ResidualPenalty(
+    backward_condition,
+    phx.integration.fixed(backward_realization),
 )
 solver = phx.solver.FunctionalSolver(
     functions={"u": u},
-    constraints=[backward],
+    terms=(backward,),
 )
 assert solver.loss(key=jr.key(1)) < 1e-12
 ```
@@ -121,15 +128,21 @@ diffusion = state.Function("x")(
     lambda x: jnp.asarray([[sigma_value]])
 )
 
-stationary = phx.constraints.ContinuousFokkerPlanckConstraint(
+stationary_condition = phx.conditions.stochastic.FokkerPlanck(
     "p",
     state.component(),
     drift=drift,
     diffusion=diffusion,
     evolution_var=None,
-    sampling=phx.domain.PointSampling(
-        64,
-        layout=phx.domain.SampleLayout((("x",),)),
+)
+stationary = phx.terms.ResidualPenalty(
+    stationary_condition,
+    phx.integration.per_step(
+        phx.integration.mean_over(stationary_condition.on),
+        phx.domain.PointSampling(
+            64,
+            layout=phx.domain.SampleLayout((("x",),)),
+        ),
     ),
 )
 ```
@@ -160,55 +173,73 @@ diffusion = domain.Function("x", "t")(
     lambda x, t: jnp.asarray([[0.6]])
 )
 
-fokker_planck = phx.constraints.ContinuousFokkerPlanckConstraint(
+fokker_planck_condition = phx.conditions.stochastic.FokkerPlanck(
     "p",
     domain.component(),
     drift=drift,
     diffusion=diffusion,
     evolution_var="t",
-    sampling=phx.domain.PointSampling(
-        128,
-        layout=phx.domain.SampleLayout((("x", "t"),)),
+)
+fokker_planck = phx.terms.ResidualPenalty(
+    fokker_planck_condition,
+    phx.integration.per_step(
+        phx.integration.mean_over(fokker_planck_condition.on),
+        phx.domain.PointSampling(
+            128,
+            layout=phx.domain.SampleLayout((("x", "t"),)),
+        ),
     ),
 )
 
-# Partial integration retains the time quadrature weight. On [0, 1] with
-# equal time weights, target 1 / num_t is equivalent to integral p(x, t) dx = 1.
+# Partial integration leaves the time sites explicit. Multiplying both sides by
+# their equal product-rule weight preserves the target \(1/\mathtt{num\_t}\).
 num_x, num_t = 64, 16
-normalization = phx.constraints.ContinuousIntegralInteriorConstraint(
+normalization_condition = phx.conditions.Moment(
     "p",
-    domain,
-    lambda p: p,
-    sampling=phx.domain.PointSampling(
-        (num_x, num_t),
-        layout=phx.domain.SampleLayout((("x",), ("t",))),
+    domain.component(),
+    lambda p: p / num_t,
+    target=jnp.full((num_t,), 1.0 / num_t),
+)
+normalization = phx.terms.MomentPenalty(
+    normalization_condition,
+    phx.integration.per_step(
+        phx.integration.over(normalization_condition.on, axes="x"),
+        phx.domain.PointSampling(
+            (num_x, num_t),
+            layout=phx.domain.SampleLayout((("x",), ("t",))),
+        ),
     ),
-    over="x",
-    equal_to=jnp.full((num_t,), 1.0 / num_t),
 )
 
 normalizer = jnp.sqrt(jnp.pi) * jsp_special.erf(2.0)
-initial = phx.constraints.ContinuousInitialFunctionConstraint(
+initial_slice = domain.component({"t": phx.domain.FixedStart()})
+initial_condition = phx.conditions.Initial(
     "p",
-    domain,
-    func=lambda x: jnp.exp(-x[0] ** 2) / normalizer,
+    initial_slice,
+    target=lambda x: jnp.exp(-x[0] ** 2) / normalizer,
     evolution_var="t",
-    time_derivative_order=0,
-    sampling=phx.domain.PointSampling(
-        64,
-        layout=phx.domain.SampleLayout((("x",),)),
+    order=0,
+)
+initial = phx.terms.ResidualPenalty(
+    initial_condition,
+    phx.integration.per_step(
+        phx.integration.mean_over(initial_condition.on),
+        phx.domain.PointSampling(
+            64,
+            layout=phx.domain.SampleLayout((("x",),)),
+        ),
     ),
 )
 
 density_solver = phx.solver.FunctionalSolver(
     functions={"p": density},
-    constraints=[fokker_planck, normalization, initial],
+    terms=(fokker_planck, normalization, initial),
 )
 ```
 
 The positive activation, per-time normalization, and initial data are separate
 from the dynamics residual. Add absorbing, reflecting, or zero-flux boundary
-constraints when the truncated state domain requires them. This separation
+conditions when the truncated state domain requires them. This separation
 makes each failure diagnosable and still permits an unnormalized stationary
 eigenfunction when normalization is not part of the task.
 
@@ -261,10 +292,10 @@ particles = phx.stochastic.trajectory_state_time_samples(
     state_label="x",
     time_label="t",
 )
-score_objective = phx.objectives.ScoreMatchingObjective(
+score_term = phx.terms.ScoreMatchingTerm(
     "score",
     particles,
-    policy=phx.objectives.ScoreMatchingPolicy(
+    policy=phx.terms.ScoreMatchingPolicy(
         "implicit",
         num_probes=8,
         distribution="rademacher",
@@ -273,15 +304,14 @@ score_objective = phx.objectives.ScoreMatchingObjective(
 )
 score_solver = phx.solver.FunctionalSolver(
     functions={"score": score},
-    constraints=(),
-    objectives=(score_objective,),
+    terms=(score_term,),
 )
 score_solver = score_solver.solve(
     num_iter=2000,
     optim=optax.adam(1e-3),
     keep_best=False,
 )
-diagnostics = score_objective.diagnostics(
+diagnostics = score_term.diagnostics(
     score_solver.functions,
     key=jr.key(6),
 )
@@ -304,8 +334,8 @@ flow, transport, or reverse-time model and are not implied by score matching.
 
 The `implicit-score-matching` entry in
 `tools/high_dimensional_pde_benchmarks.py --suite methods` constructs
-`TrajectoryStateTimeSamples`, evaluates `ScoreMatchingObjective` on the analytic
-Ornstein--Uhlenbeck score, and compares the empirical Hyvärinen objective with its
+`TrajectoryStateTimeSamples`, evaluates `ScoreMatchingTerm` on the analytic
+Ornstein--Uhlenbeck score, and compares the empirical Hyvärinen term with its
 closed-form expectation. The record includes path-cluster standard error, score-field
 RMSE, divergence error, valid fraction, runtime, and particle working-set size.
 
@@ -435,10 +465,11 @@ U_h(x,t)\approx\sum_{k=1}^r a_k(t)\phi_k(x),
 
 derive the finite-dimensional drift and diffusion for
 `a = (a_1, ..., a_r)`, and define the density on a state domain such as
-`HyperRectangle(lower, upper)`. Then apply `ContinuousFokkerPlanckConstraint` with
-`state_var="x"` to that reduced coordinate. This is an ordinary finite-dimensional
-Fokker--Planck PINN whose state dimension is `r`, while reconstruction uses the same
-spectral modes as the semidiscrete solver.
+`HyperRectangle(lower, upper)`. Then apply
+`phx.conditions.stochastic.FokkerPlanck(..., state_var="x")` to that reduced
+coordinate. This is an ordinary finite-dimensional Fokker--Planck PINN whose
+state dimension is \(r\), while reconstruction uses the same spectral modes as
+the semidiscrete solver.
 
 This route is honest about dimensionality: it does not pretend to learn a probability
 density over thousands of nodal values.
@@ -455,5 +486,5 @@ density over thousands of nodal values.
   validate Stratonovich models against either corrected Itô dynamics or known moments.
 
 See [API → Differential operators](../api/operators/differential.md),
-[API → Continuous constraints](../api/constraints/continuous.md), and
+[API → Stochastic conditions](../api/conditions/stochastic.md), and
 [API → Differential equation integration](../api/solver/differential.md).

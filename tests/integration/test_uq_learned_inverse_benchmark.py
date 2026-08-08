@@ -20,6 +20,7 @@ import optax
 import pytest
 
 import phydrax as phx
+from phydrax._frozendict import frozendict
 
 
 _TRUE_SOURCE = 4.0
@@ -99,7 +100,9 @@ def _make_inverse_solver(
     observation_key=None,
 ):
     geometry = phx.domain.Interval1d(0.0, 1.0)
-    structure = phx.domain.SampleLayout((("x",),))
+    observation_layout = phx.domain.SampleLayout((("x",),)).canonicalize(
+        geometry.labels
+    )
 
     def model_factory(model_key):
         return phx.nn.MLP(
@@ -128,22 +131,36 @@ def _make_inverse_solver(
     def constant_source_residual(state_field):
         return phx.operators.grad(_derived_fields(state_field)["source"], var="x")
 
-    poisson = phx.constraints.ContinuousPointwiseInteriorConstraint(
+    poisson_condition = phx.conditions.Residual(
         "state",
-        geometry,
-        operator=poisson_residual,
-        sampling=phx.domain.PointSampling(16, layout=structure),
-        sampling_mode="fixed",
-        fixed_batch_key=jr.key(90),
-        weight=2.0,
+        geometry.component(),
+        poisson_residual,
     )
-    constant_source = phx.constraints.ContinuousPointwiseInteriorConstraint(
+    poisson_target = phx.integration.mean_over(poisson_condition.on)
+    poisson_realization = phx.integration.materialize(
+        poisson_target,
+        phx.integration.MonteCarloPlan(16),
+        key=jr.key(90),
+    )
+    poisson = phx.terms.ResidualPenalty(
+        poisson_condition,
+        phx.integration.fixed(poisson_realization),
+        scale=2.0,
+    )
+    constant_source_condition = phx.conditions.Residual(
         "state",
-        geometry,
-        operator=constant_source_residual,
-        sampling=phx.domain.PointSampling(16, layout=structure),
-        sampling_mode="fixed",
-        fixed_batch_key=jr.key(92),
+        geometry.component(),
+        constant_source_residual,
+    )
+    constant_source_target = phx.integration.mean_over(constant_source_condition.on)
+    constant_source_realization = phx.integration.materialize(
+        constant_source_target,
+        phx.integration.MonteCarloPlan(16),
+        key=jr.key(92),
+    )
+    constant_source = phx.terms.ResidualPenalty(
+        constant_source_condition,
+        phx.integration.fixed(constant_source_realization),
     )
 
     if sensor_x is None:
@@ -167,19 +184,35 @@ def _make_inverse_solver(
     def observed_field(x):
         return jnp.interp(x[0], sensor_x, observations)
 
-    data = phx.constraints.PointSetConstraint.from_points(
-        component=geometry.component(),
-        points={"x": sensor_x[:, None]},
-        residual=lambda functions: (
-            _derived_fields(functions["state"])["u"] - observed_field
+    observation_axis = observation_layout.axis_for("x")
+    assert observation_axis is not None
+    observation_points = phx.domain.PointBatch(
+        frozendict(
+            {
+                "x": cx.Field(
+                    sensor_x[:, None],
+                    dims=(observation_axis, None),
+                )
+            }
         ),
-        constraint_vars=("state",),
-        weight=20.0,
+        observation_layout,
     )
-    return phx.solver.FunctionalSolver(
-        functions={"state": state},
-        constraints=(poisson, constant_source, data),
+    data_condition = phx.conditions.Observation(
+        "state",
+        geometry.component(),
+        observed_field,
+        operator=lambda state: _derived_fields(state)["u"],
     )
+    data_realization = phx.integration.from_samples(
+        phx.integration.mean_over(data_condition.on),
+        observation_points,
+    )
+    data = phx.terms.ObservationPenalty(
+        data_condition,
+        phx.integration.fixed(data_realization),
+        scale=20.0,
+    )
+    return phx.solver.FunctionalSolver(functions={"state": state}, terms=(poisson, constant_source, data), )
 
 
 def _fit_staged(key, *, seed: int):

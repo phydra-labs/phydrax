@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 
 import coordax as cx
 import equinox as eqx
@@ -22,6 +22,10 @@ from ._factor_component import FactorComponent
 from ._measure import BaseMeasure, ExactMass
 from ._selection import Interior, Selection
 from ._structure import PointBatch, SampleLayout
+
+
+if TYPE_CHECKING:
+    from ._function import DomainFunction
 
 
 DATASET_INDEX_KEY = "__phydrax_dataset_index__"
@@ -126,6 +130,18 @@ class DatasetDomain(JointFactor):
         if self._measure_mode == "count":
             return jnp.asarray(float(self._size), dtype=float)
         return jnp.asarray(1.0, dtype=float)
+
+    def field(self, values: ArrayLike, /) -> "DomainFunction":
+        """Expose row-aligned target values as a non-trainable domain function."""
+        from ._observation import indexed_field
+
+        return indexed_field(
+            self,
+            values,
+            size=self.size,
+            index_key=DATASET_INDEX_KEY,
+            owner="DatasetDomain.field",
+        )
 
     def sample(
         self,

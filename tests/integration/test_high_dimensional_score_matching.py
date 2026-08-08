@@ -4,11 +4,11 @@ import jax.random as jr
 import optax
 
 import phydrax as phx
-from phydrax.objectives._score_matching import (
-    ScoreMatchingObjective,
-    ScoreMatchingPolicy,
-)
 from phydrax.stochastic._state_time import trajectory_state_time_samples
+from phydrax.terms._score_matching import (
+    ScoreMatchingPolicy,
+    ScoreMatchingTerm,
+)
 
 
 class _LinearTimeScore(eqx.Module):
@@ -43,16 +43,12 @@ def test_dimension_100_ornstein_uhlenbeck_score_improves_over_zero_field():
     )
     domain = space @ phx.domain.TimeInterval(0.0, 1.0)
     score = domain.Function("x", "t")(_LinearTimeScore(jnp.asarray(0.0)))
-    objective = ScoreMatchingObjective(
+    objective = ScoreMatchingTerm(
         "score",
         samples,
         policy=ScoreMatchingPolicy("implicit", num_probes=2),
     )
-    solver = phx.solver.FunctionalSolver(
-        functions={"score": score},
-        constraints=(),
-        objectives=(objective,),
-    )
+    solver = phx.solver.FunctionalSolver(functions={"score": score}, terms=(objective,), )
     trained = solver.solve(
         num_iter=100,
         optim=optax.adam(0.05),

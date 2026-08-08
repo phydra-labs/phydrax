@@ -114,21 +114,32 @@ def _groups(
         if overlap:
             raise ValueError(f"Product-plan labels occur more than once: {overlap!r}.")
         for label in labels:
-            if not isinstance(component.spec.selection_for(label), Interior):
-                raise ValueError(f"Product-plan label {label!r} must select Interior().")
+            selector = component.spec.selection_for(label)
+            if isinstance(selector, (FixedStart, FixedEnd, Fixed)):
+                raise ValueError(
+                    f"Product-plan label {label!r} must select a non-fixed component."
+                )
+            if isinstance(factor_plan, (FixedQuadraturePlan, SparseGridPlan)) and not (
+                isinstance(selector, Interior)
+            ):
+                raise ValueError(
+                    f"Deterministic product-plan label {label!r} must select Interior()."
+                )
         seen.update(labels)
         groups.append((labels, factor_plan))
     nonfixed = {
         label
         for label in component.domain.labels
-        if isinstance(component.spec.selection_for(label), Interior)
+        if not isinstance(
+            component.spec.selection_for(label), (FixedStart, FixedEnd, Fixed)
+        )
     }
     if seen != nonfixed:
         missing = tuple(sorted(nonfixed - seen))
         extra = tuple(sorted(seen - nonfixed))
         raise ValueError(
-            f"Product plans must cover every interior label exactly once; "
-            f"missing={missing!r}, extra={extra!r}."
+            "Product plans must cover every interior label and other non-fixed "
+            f"labels exactly once; missing={missing!r}, extra={extra!r}."
         )
     return tuple(groups)
 
@@ -180,11 +191,6 @@ def materialize_product(
         for labels, factor_plan in groups
         if isinstance(factor_plan, (MonteCarloPlan, QuasiMonteCarloPlan))
     )
-    if len(stochastic_groups) > 1:
-        raise ValueError(
-            "A product plan currently permits one independent stochastic axis group; "
-            "combine correlated variables in that group."
-        )
     unsupported = tuple(
         type(factor_plan).__name__
         for _, factor_plan in groups
@@ -221,12 +227,17 @@ def materialize_product(
         component.domain.labels, fixed_labels=fixed_labels
     )
     reduction_axes = axes_for_over(structure, base.axes)
-    integrated_stochastic = any(
-        structure.axis_for(labels[0]) in reduction_axes for labels, _ in stochastic_groups
-    )
+    stochastic_axes_list: list[str] = []
+    for labels, _ in stochastic_groups:
+        axis = structure.axis_for(labels[0])
+        if axis is None:
+            raise RuntimeError("Stochastic product factor has no axis.")
+        if axis in reduction_axes:
+            stochastic_axes_list.append(axis)
+    stochastic_axes = tuple(stochastic_axes_list)
+    integrated_stochastic = bool(stochastic_axes)
     replicas = _replicate_count(groups) if integrated_stochastic else 1
     batches: list[PointIntegrationBatch] = []
-    stochastic_axes: tuple[str, ...] = ()
     deterministic_axes: list[str] = []
     factor_plans = tuple(factor_plan for _, factor_plan in groups)
     for replica in range(replicas):
@@ -373,8 +384,6 @@ def materialize_product(
             weights_by_axis[axis] = cx.Field(
                 jnp.full((count,), group_mass / float(count)), dims=(axis,)
             )
-            if axis in reduction_axes:
-                stochastic_axes = (axis,)
         total_weight = cx.Field(jnp.asarray(1.0), dims=())
         target_mass = jnp.asarray(1.0)
         axis_names = structure.axis_names
@@ -576,6 +585,62 @@ def integrate_product(
             diagnostics=diagnostics,
             provenance=IntegrationProvenance("product", "component", "deterministic"),
         )
+    if len(realization.stochastic_axes) > 1:
+        estimates = tuple(
+            (
+                integrate_fixed_density(
+                    integrand,
+                    target,
+                    batch,
+                    key=jr.fold_in(key, index),
+                    kwargs=callback_kwargs,
+                )
+                if isinstance(target, DensityTarget)
+                else integrate_fixed_component(
+                    integrand,
+                    target,
+                    batch,
+                    key=jr.fold_in(key, index),
+                    kwargs=callback_kwargs,
+                )
+            )
+            for index, batch in enumerate(realization.batches)
+        )
+        values = jnp.stack(
+            tuple(jnp.asarray(estimate.value.data) for estimate in estimates)
+        )
+        if len(estimates) > 1:
+            value_data = jnp.mean(values, axis=0)
+            error = jnp.max(
+                jnp.std(values, axis=0, ddof=1) / jnp.sqrt(len(estimates))
+            )
+            error_kind = "randomized-qmc-replicate-error"
+        else:
+            value_data = estimates[0].value.data
+            error = None
+            error_kind = None
+        status = jnp.max(
+            jnp.stack(tuple(jnp.asarray(estimate.status) for estimate in estimates))
+        )
+        evaluations = sum(
+            int(batch.weights.data.size) for batch in realization.batches
+        )
+        diagnostics = ProductIntegrationDiagnostics(
+            status=status,
+            num_evaluations=jnp.asarray(evaluations, dtype=jnp.int32),
+            error_estimate=error,
+            factors=realization.factor_plans,
+        )
+        return IntegrationEstimate(
+            cx.Field(value_data, dims=estimates[0].value.dims),
+            status=status,
+            num_evaluations=evaluations,
+            error_estimate=error,
+            error_kind=error_kind,
+            diagnostics=diagnostics,
+            provenance=IntegrationProvenance("product", "component", "mixed"),
+        )
+
     stochastic_axis = realization.stochastic_axes[0]
     stochastic_plan = next(
         factor_plan

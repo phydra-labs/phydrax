@@ -32,9 +32,8 @@ from ..optim._kfac._blocks import (
 from ..optim._kfac._config import KFAC
 from ..optim._kfac._types import KFACMetrics, KFACState
 from ._functional_train import (
-    _active_train_constraints,
+    _active_train_terms,
     _collocation_data_metrics,
-    _constraint_label,
     _expanded_train_terms,
     _log_tensorboard_scalars,
     _metric_suffix,
@@ -42,13 +41,14 @@ from ._functional_train import (
     _refresh_collocation,
     _settle_collocation,
     _SupportsDataMetrics,
-    _train_constraint_sample_size,
+    _term_label,
+    _train_term_sample_size,
 )
 from ._kfac_layout import build_kfac_plan
 from ._kfac_problem import (
     frozen_loss,
     frozen_loss_and_flat_gradient,
-    materialize_constraint_terms,
+    materialize_frozen_terms,
     term_block_curvature_observations,
     validate_derivative_coverage,
 )
@@ -151,32 +151,28 @@ def _factor_condition_estimate(curvature, /, *, damping: float):
     return maximum
 
 
-def _term_losses(params, non_trainable, solver, terms, /, *, iter_):
+def _frozen_term_losses(params, non_trainable, solver, terms, /, *, iter_):
     functions = combine_trainable(params, non_trainable)
     enforced = (
-        functions
-        if solver.constraint_pipelines is None
-        else solver.constraint_pipelines.apply(functions)
+        functions if solver.enforcement is None else solver.enforcement.apply(functions)
     )
     values = []
     with derivative_runtime_context():
-        for term in terms:
-            data = term.constraint._quadratic_residual_data(
+        for frozen in terms:
+            data = frozen.term._quadratic_residual_data(
                 enforced,
-                key=term.key,
-                batch=term.batch,
-                batch_weight=term.batch_weight,
+                realization=frozen.realization,
                 iter_=iter_,
             )
-            values.append(float(term.scale) * jnp.asarray(data.loss).reshape(()))
+            values.append(float(frozen.scale) * jnp.asarray(data.loss).reshape(()))
     return tuple(values)
 
 
-def _constraint_losses(
+def _evaluation_term_losses(
     params,
     non_trainable,
     solver,
-    constraints,
+    terms,
     /,
     *,
     key,
@@ -184,47 +180,61 @@ def _constraint_losses(
 ):
     functions = combine_trainable(params, non_trainable)
     enforced = (
-        functions
-        if solver.constraint_pipelines is None
-        else solver.constraint_pipelines.apply(functions)
+        functions if solver.enforcement is None else solver.enforcement.apply(functions)
     )
-    keys = jr.split(key, len(constraints))
+    keys = jr.split(key, len(terms))
     values = []
     with derivative_runtime_context():
-        for constraint, constraint_key in zip(constraints, keys, strict=True):
-            value = constraint.loss(enforced, key=constraint_key, iter_=iter_)
+        for term, term_key in zip(terms, keys, strict=True):
+            value = term.loss(enforced, key=term_key, iter_=iter_)
             values.append(jnp.asarray(value, dtype=float).reshape(()))
     if values:
         return jnp.stack(values)
     return jnp.zeros((0,), dtype=float)
 
 
-def _constraint_data_metrics(
+def _term_data_metrics(
     params,
     non_trainable,
     solver,
-    constraints,
+    terms,
     /,
     *,
     key,
     iter_,
+    populations=None,
 ):
     functions = combine_trainable(params, non_trainable)
     enforced = (
-        functions
-        if solver.constraint_pipelines is None
-        else solver.constraint_pipelines.apply(functions)
+        functions if solver.enforcement is None else solver.enforcement.apply(functions)
     )
-    keys = jr.split(key, len(constraints))
+    keys = jr.split(key, len(terms))
+    term_populations = (
+        (None,) * len(terms) if populations is None else tuple(populations)
+    )
     metrics = []
     with derivative_runtime_context():
-        for constraint, constraint_key in zip(constraints, keys, strict=True):
-            if isinstance(constraint, _SupportsDataMetrics):
+        for term, population, term_key in zip(
+            terms,
+            term_populations,
+            keys,
+            strict=True,
+        ):
+            if isinstance(term, _SupportsDataMetrics):
+                metric_kwargs = {}
+                if population is not None:
+                    batch, local_weight = term.policy.loss_batch_and_weight(population)
+                    metric_kwargs["realization"] = term._adaptive_realization(
+                        batch,
+                        local_weight,
+                        key=term_key,
+                    )
                 metrics.append(
-                    constraint.data_metrics(
+                    term.data_metrics(
                         enforced,
-                        key=constraint_key,
+                        key=term_key,
                         iter_=iter_,
+                        **metric_kwargs,
                     )
                 )
             else:
@@ -242,15 +252,15 @@ def solve_kfac(
     jit: bool,
     keep_best: bool,
     log_every: int,
-    log_constraints: bool,
+    log_terms: bool,
     log_path: str | Path | None,
     tensorboard_log_dir: str | Path | None,
     tensorboard_every: int | None,
     tensorboard_flush_every: int,
     profile_adaptive: bool,
-    train_constraint_sample_size: int | None,
+    train_term_sample_size: int | None,
 ):
-    """Run Phydrax-native KFAC over frozen sampled functional terms."""
+    """Run Phydrax-native KFAC over frozen residual terms."""
 
     if int(num_iter) < 0:
         raise ValueError("num_iter must be nonnegative.")
@@ -262,34 +272,34 @@ def solve_kfac(
         raise ValueError("log_every must be >= 0.")
     if int(tensorboard_flush_every) <= 0:
         raise ValueError("tensorboard_flush_every must be positive.")
-    if self.objectives:
-        raise ValueError(
-            "KFAC does not support standalone objective terms; express nonnegative "
-            "quadratic residuals as FunctionalConstraint terms."
-        )
+    coverage_functions = (
+        self.functions
+        if self.enforcement is None
+        else self.enforcement.apply(self.functions)
+    )
+    validate_derivative_coverage(self.terms, coverage_functions)
     model_loss_labels = function_model_loss_labels(self.functions)
     if model_loss_labels:
         raise ValueError(
-            "KFAC does not support attached model losses; found "
-            f"{', '.join(model_loss_labels)}."
+            "KFAC does not support attached model losses because they do not provide "
+            f"residual roots; found {', '.join(model_loss_labels)}."
         )
 
     params, non_trainable = partition_trainable(self.functions)
-    validate_derivative_coverage(self.constraints, self.ansatz_functions())
     plan = build_kfac_plan(
         optim,
         self.functions,
         params,
-        num_constraints=len(self.constraints),
+        num_terms=len(self.terms),
     )
     state = plan.initialize(params)
-    constraint_sample_size = _train_constraint_sample_size(
-        train_constraint_sample_size,
-        num_constraints=len(self.constraints),
+    term_sample_size = _train_term_sample_size(
+        train_term_sample_size,
+        num_terms=len(self.terms),
     )
-    constraint_names = tuple(_constraint_label(term) for term in self.constraints)
-    eval_constraint_names = tuple(
-        _constraint_label(term) for term in self.eval_constraints
+    term_names = tuple(_term_label(term) for term in self.terms)
+    evaluation_term_names = tuple(
+        _term_label(term) for term in self.evaluation_terms
     )
     root_key = jr.key(int(seed))
     collocation = self.collocation
@@ -346,7 +356,7 @@ def solve_kfac(
                 break
             iteration_started = time.perf_counter()
             iteration = epoch + 1
-            constraint_iteration = jnp.asarray(iteration, dtype=float)
+            term_iteration = jnp.asarray(iteration, dtype=float)
             iteration_key = jr.fold_in(root_key, epoch)
             functions_snapshot = combine_trainable(params, non_trainable)
             refresh_started = time.perf_counter()
@@ -355,41 +365,37 @@ def solve_kfac(
                 functions_snapshot,
                 collocation,
                 key=jr.fold_in(iteration_key, 101),
-                iter_=constraint_iteration,
+                iter_=term_iteration,
             )
             if profile_adaptive:
                 jax.block_until_ready(collocation)
                 refresh_wall_time += time.perf_counter() - refresh_started
 
             if epoch == 0:
-                active_constraints = self.constraints
-                active_indices = tuple(range(len(self.constraints)))
-                constraint_scale = jnp.asarray(1.0)
+                active_terms = self.terms
+                active_indices = tuple(range(len(self.terms)))
+                term_scale = jnp.asarray(1.0)
             else:
-                active_constraints, active_indices, constraint_scale = (
-                    _active_train_constraints(
-                        self.constraints,
-                        sample_size=constraint_sample_size,
-                        key=jr.fold_in(iteration_key, 17),
-                    )
+                active_terms, active_indices, term_scale = _active_train_terms(
+                    self.terms,
+                    sample_size=term_sample_size,
+                    key=jr.fold_in(iteration_key, 17),
                 )
             active_collocation = tuple(collocation[index] for index in active_indices)
-            terms = materialize_constraint_terms(
-                active_constraints,
+            frozen_terms = materialize_frozen_terms(
+                active_terms,
                 active_collocation,
                 key=jr.fold_in(iteration_key, 31),
-                scale=float(constraint_scale),
+                scale=float(term_scale),
             )
-            objective_key = jr.fold_in(iteration_key, 211)
             optimizer_started = time.perf_counter()
             gradient_started = time.perf_counter()
             loss, gradient, unravel = frozen_loss_and_flat_gradient(
                 params,
                 non_trainable,
                 self,
-                terms,
-                objective_key=objective_key,
-                iter_=constraint_iteration,
+                frozen_terms,
+                iter_=term_iteration,
             )
             if profile_adaptive:
                 jax.block_until_ready((loss, gradient))
@@ -404,7 +410,7 @@ def solve_kfac(
             factor_updates = state.factor_updates
             factor_started = time.perf_counter()
             if refresh_factors:
-                factor_terms = tuple(replace(term, scale=1.0) for term in terms)
+                factor_terms = tuple(replace(term, scale=1.0) for term in frozen_terms)
                 flat_parameters, observations = term_block_curvature_observations(
                     params,
                     non_trainable,
@@ -413,7 +419,7 @@ def solve_kfac(
                     plan.layout,
                     approximation=optim.approximation,
                     chunk_size=optim.factor_chunk_size,
-                    iter_=constraint_iteration,
+                    iter_=term_iteration,
                 )
                 curvature = update_block_state_from_observations(
                     curvature,
@@ -455,9 +461,8 @@ def solve_kfac(
                     unravel(flat_candidate),
                     non_trainable,
                     self,
-                    terms,
-                    objective_key=objective_key,
-                    iter_=constraint_iteration,
+                    frozen_terms,
+                    iter_=term_iteration,
                 )
 
             line_search_started = time.perf_counter()
@@ -494,7 +499,7 @@ def solve_kfac(
             collocation = _record_collocation_training_evaluations(
                 self,
                 collocation,
-                constraint_indices=active_indices,
+                term_indices=active_indices,
             )
             completed = iteration
             if profile_adaptive:
@@ -525,33 +530,35 @@ def solve_kfac(
             console_step = int(log_every) > 0 and iteration % int(log_every) == 0
             tensorboard_step = (
                 tensorboard_writer is not None
+                and tensorboard_period is not None
                 and iteration % int(tensorboard_period) == 0
             )
             elapsed = time.perf_counter() - iteration_started
-            train_terms = jnp.zeros((len(self.constraints),), dtype=float)
-            train_data_metrics = tuple({} for _ in self.constraints)
-            eval_terms = jnp.zeros((len(self.eval_constraints),), dtype=float)
-            eval_data_metrics = tuple({} for _ in self.eval_constraints)
-            if log_constraints and (console_step or tensorboard_step):
-                active_terms = _term_losses(
+            train_terms = jnp.zeros((len(self.terms),), dtype=float)
+            train_data_metrics = tuple({} for _ in self.terms)
+            eval_terms = jnp.zeros((len(self.evaluation_terms),), dtype=float)
+            eval_data_metrics = tuple({} for _ in self.evaluation_terms)
+            if log_terms and (console_step or tensorboard_step):
+                active_values = _frozen_term_losses(
                     params,
                     non_trainable,
                     self,
-                    terms,
-                    iter_=constraint_iteration,
+                    frozen_terms,
+                    iter_=term_iteration,
                 )
                 train_terms = _expanded_train_terms(
-                    active_terms,
-                    active_constraint_indices=active_indices,
-                    num_constraints=len(self.constraints),
+                    active_values,
+                    active_term_indices=active_indices,
+                    num_terms=len(self.terms),
                 )
-                train_data_metrics = _constraint_data_metrics(
+                train_data_metrics = _term_data_metrics(
                     params,
                     non_trainable,
                     self,
-                    self.constraints,
+                    self.terms,
                     key=jr.fold_in(iteration_key, 401),
-                    iter_=constraint_iteration,
+                    iter_=term_iteration,
+                    populations=collocation,
                 )
                 collocation_metrics = _collocation_data_metrics(self, collocation)
                 train_data_metrics = tuple(
@@ -562,21 +569,21 @@ def solve_kfac(
                         strict=True,
                     )
                 )
-                eval_terms = _constraint_losses(
+                eval_terms = _evaluation_term_losses(
                     params,
                     non_trainable,
                     self,
-                    self.eval_constraints,
+                    self.evaluation_terms,
                     key=jr.fold_in(iteration_key, 402),
-                    iter_=constraint_iteration,
+                    iter_=term_iteration,
                 )
-                eval_data_metrics = _constraint_data_metrics(
+                eval_data_metrics = _term_data_metrics(
                     params,
                     non_trainable,
                     self,
-                    self.eval_constraints,
+                    self.evaluation_terms,
                     key=jr.fold_in(iteration_key, 403),
-                    iter_=constraint_iteration,
+                    iter_=term_iteration,
                 )
             if console_step:
                 print(
@@ -584,22 +591,22 @@ def solve_kfac(
                     f"best={best_loss:.6e} time={elapsed:.3f}s",
                     file=log_file,
                 )
-                if log_constraints:
-                    for constraint_index, (name, value) in enumerate(
-                        zip(constraint_names, train_terms, strict=True)
+                if log_terms:
+                    for term_index, (name, value) in enumerate(
+                        zip(term_names, train_terms, strict=True)
                     ):
-                        suffix = _metric_suffix(train_data_metrics[constraint_index])
+                        suffix = _metric_suffix(train_data_metrics[term_index])
                         print(
-                            f"  [train {constraint_index}] {name}: "
+                            f"  [train {term_index}] {name}: "
                             f"{float(value):.6e}{suffix}",
                             file=log_file,
                         )
-                    for constraint_index, (name, value) in enumerate(
-                        zip(eval_constraint_names, eval_terms, strict=True)
+                    for term_index, (name, value) in enumerate(
+                        zip(evaluation_term_names, eval_terms, strict=True)
                     ):
-                        suffix = _metric_suffix(eval_data_metrics[constraint_index])
+                        suffix = _metric_suffix(eval_data_metrics[term_index])
                         print(
-                            f"  [eval {constraint_index}] {name}: "
+                            f"  [eval {term_index}] {name}: "
                             f"{float(value):.6e}{suffix}",
                             file=log_file,
                         )
@@ -611,17 +618,15 @@ def solve_kfac(
                     best_loss=best_loss,
                     evaluation_loss=None,
                     iter_time_s=elapsed,
-                    train_constraint_names=constraint_names,
+                    train_term_names=term_names,
                     train_terms=train_terms,
                     train_data_metrics=train_data_metrics,
-                    train_objective_names=(),
-                    train_objective_terms=jnp.zeros((0,), dtype=float),
                     train_model_loss_names=(),
                     train_model_loss_terms=jnp.zeros((0,), dtype=float),
-                    eval_constraint_names=eval_constraint_names,
+                    evaluation_term_names=evaluation_term_names,
                     eval_terms=eval_terms,
                     eval_data_metrics=eval_data_metrics,
-                    log_constraints=log_constraints,
+                    log_terms=log_terms,
                 )
                 tensorboard_writer.scalar(
                     "optimizer/kfac/step_size", step_size, iteration

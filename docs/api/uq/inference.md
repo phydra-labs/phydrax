@@ -162,7 +162,7 @@ as independent observations.
 
 ---
 
-::: phydrax.uq.FixedConstraintLikelihood
+::: phydrax.uq.FixedSupervisedLikelihood
     options:
         members:
             - __init__

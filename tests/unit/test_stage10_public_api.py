@@ -79,7 +79,7 @@ PUBLIC_STAGE10 = {
         "CoupledFBSDEResult",
         "solve_coupled_fbsde_explicit",
     ),
-    phx.objectives: ("BSDEObjective",),
+    phx.terms: ("BSDETerm",),
 }
 
 

@@ -7,7 +7,6 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-from phydrax.constraints import RaggedTimeSeriesDataConstraint
 from phydrax.domain import (
     Interval1d,
     IrregularTrajectoryDatasetDomain,
@@ -23,6 +22,7 @@ from phydrax.nn.models.wrappers._axis_contraction import (
     AxisProductTerm,
     contract_axis_factors,
 )
+from phydrax.terms import RaggedTimeSeriesDataTerm
 
 
 def _as_scalar(x):
@@ -171,7 +171,7 @@ def test_irregular_ragged_constraint_uses_case_major_axis_batch():
         factor_inputs={"data": ("data",), "t": ("t",)},
     )
     u = domain.Model("data", "t")(model)
-    constraint = RaggedTimeSeriesDataConstraint(
+    constraint = RaggedTimeSeriesDataTerm(
         "u",
         domain.component(),
         values,

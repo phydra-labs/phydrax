@@ -7,7 +7,7 @@ import pytest
 import phydrax as phx
 from phydrax.equations._randomized_compile import (
     analyze_randomized_compilation,
-    compile_pde_randomized_objective,
+    compile_pde_randomized_term,
     RandomizedDifferentialPlan,
 )
 from phydrax.operators.differential._dimension_estimators import (
@@ -45,7 +45,7 @@ def _domain(dimension):
 
 
 def _compile(problem, domain, plan, *, num_points=32):
-    return compile_pde_randomized_objective(
+    return compile_pde_randomized_term(
         problem,
         "governing",
         plan,
@@ -102,11 +102,11 @@ def test_hutchinson_compilation_evaluates_laplacian_without_dense_hessian():
     )
     compiled = _compile(problem, domain, plan, num_points=12)
     function = domain.Function("x")(lambda x: jnp.dot(x, x))
-    batch = compiled.objective.sample(key=jr.key(3))
+    batch = compiled.term.sample(key=jr.key(3))
 
-    loss = compiled.objective.loss({"u": function}, batch=batch)
+    loss = compiled.term.loss({"u": function}, batch=batch)
     jitted = eqx.filter_jit(
-        lambda current: compiled.objective.loss({"u": current}, batch=batch)
+        lambda current: compiled.term.loss({"u": current}, batch=batch)
     )(function)
 
     assert compiled.report.supported
@@ -126,13 +126,13 @@ def test_randomized_compiler_preserves_parameter_gradients():
             trace_policy=phx.operators.StochasticTracePolicy(8),
         ),
     )
-    batch = compiled.objective.sample(key=jr.key(5))
+    batch = compiled.term.sample(key=jr.key(5))
 
     def loss(coefficient):
         function = domain.Function("x")(
             lambda x: coefficient * jnp.dot(x, x)
         )
-        return compiled.objective.loss({"u": function}, batch=batch)
+        return compiled.term.loss({"u": function}, batch=batch)
 
     coefficient = jnp.asarray(0.2)
     value, gradient = jax.value_and_grad(loss)(coefficient)
@@ -157,7 +157,7 @@ def test_dimension_compilation_runs_in_dimension_1000_with_independent_products(
     compiled = _compile(problem, domain, plan, num_points=2)
     function = domain.Function("x")(lambda x: jnp.dot(x, x))
 
-    diagnostics = compiled.objective.diagnostics({"u": function}, key=jr.key(7))
+    diagnostics = compiled.term.diagnostics({"u": function}, key=jr.key(7))
 
     assert diagnostics.num_realizations == 8
     assert diagnostics.finite

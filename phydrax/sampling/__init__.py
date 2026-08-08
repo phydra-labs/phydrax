@@ -20,9 +20,11 @@ from .._sampling import (
     resolve_design,
     SobolDesign,
 )
+from . import collocation
 
 
 __all__ = [
+    "collocation",
     "AntitheticDesign",
     "DESIGN_ALGORITHM_VERSION",
     "DesignCapabilities",

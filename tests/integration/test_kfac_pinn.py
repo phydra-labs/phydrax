@@ -6,10 +6,9 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-from phydrax.constraints import enforce_dirichlet, FunctionalConstraint
 from phydrax.domain import Boundary, PointSampling, SampleLayout
+from phydrax.enforcement import enforce_dirichlet
 from phydrax.operators.differential import laplacian, partial_n
-from phydrax.solver import FunctionalSolver, SingleFieldEnforcedConstraint
 
 
 def _model(domain, in_size, key):
@@ -25,24 +24,28 @@ def _model(domain, in_size, key):
     return domain.Model(*labels)(network)
 
 
-def _constraint(
+def _residual_term(
     component,
     operator,
-    constraint_vars,
+    fields,
     *,
     points,
     key,
-    weight=1.0,
+    scale=1.0,
 ):
-    return FunctionalConstraint.from_operator(
-        component=component,
-        operator=operator,
-        constraint_vars=constraint_vars,
-        sampling=PointSampling(points, layout=SampleLayout((component.domain.labels,))),
-        sampling_mode="fixed",
-        fixed_batch_key=key,
-        reduction="mean",
-        weight=weight,
+    condition = phx.conditions.Residual(fields, component, operator)
+    batch = component.sample(
+        PointSampling(points, layout=SampleLayout((component.domain.labels,))),
+        key=key,
+    )
+    realization = phx.integration.from_samples(
+        phx.integration.mean_over(condition.on),
+        batch,
+    )
+    return phx.terms.ResidualPenalty(
+        condition,
+        phx.integration.fixed(realization),
+        scale=scale,
     )
 
 
@@ -70,7 +73,7 @@ def test_kfac_trains_soft_poisson_pinn():
     def forcing(x):
         return (jnp.pi**2) * jnp.sin(jnp.pi * x[0])
 
-    interior = _constraint(
+    interior = _residual_term(
         domain.component(),
         lambda field: laplacian(field, var="x") + forcing,
         "u",
@@ -78,15 +81,18 @@ def test_kfac_trains_soft_poisson_pinn():
         key=jr.key(1),
     )
     boundary_component = domain.component({"x": Boundary()})
-    boundary = _constraint(
+    boundary = _residual_term(
         boundary_component,
         lambda field: field,
         "u",
         points=4,
         key=jr.key(2),
-        weight=5.0,
+        scale=5.0,
     )
-    solver = FunctionalSolver(functions={"u": u}, constraints=(interior, boundary))
+    solver = phx.solver.FunctionalSolver(
+        functions={"u": u},
+        terms=(interior, boundary),
+    )
 
     _train_and_assert_decrease(solver, seed=3)
 
@@ -95,29 +101,33 @@ def test_kfac_trains_hard_dirichlet_poisson_pinn():
     domain = phx.domain.Interval1d(-1.0, 1.0)
     raw = _model(domain, 1, jr.key(4))
     boundary_component = domain.component({"x": Boundary()})
-    hard = SingleFieldEnforcedConstraint(
-        "u",
-        boundary_component,
-        lambda field: enforce_dirichlet(
+    spec = phx.enforcement.EnforcementSpec(
+        phx.conditions.Dirichlet("u", boundary_component, target=0.0),
+        kind="custom",
+        transform=lambda field, _get_field: enforce_dirichlet(
             field,
             boundary_component,
             var="x",
             target=0.0,
         ),
     )
-    interior = _constraint(
+    interior = _residual_term(
         domain.component(),
         lambda field: laplacian(field, var="x") + 1.0,
         "u",
         points=5,
         key=jr.key(5),
     )
-    solver = FunctionalSolver(
+    enforcement = phx.enforcement.compile(
+        {"u": raw},
+        (spec,),
+        options=phx.enforcement.EnforcementOptions(num_reference=32),
+        key=jr.key(6),
+    )
+    solver = phx.solver.FunctionalSolver(
         functions={"u": raw},
-        constraints=interior,
-        constraint_terms=(hard,),
-        boundary_weight_num_reference=32,
-        boundary_weight_key=jr.key(6),
+        terms=interior,
+        enforcement=enforcement,
     )
 
     trained = _train_and_assert_decrease(solver, seed=7)
@@ -125,7 +135,7 @@ def test_kfac_trains_hard_dirichlet_poisson_pinn():
         PointSampling(4, layout=SampleLayout((("x",),))),
         key=jr.key(8),
     )
-    values = trained.ansatz_functions()["u"](boundary_batch).data
+    values = trained.enforcement.apply(trained.functions)["u"](boundary_batch).data
     assert jnp.allclose(values, 0.0, atol=1e-8)
 
 
@@ -139,7 +149,7 @@ def test_kfac_trains_heat_equation_pinn():
     def forcing(x, t):
         return (jnp.pi**2 - 1.0) * jnp.sin(jnp.pi * x[0]) * jnp.exp(-t)
 
-    residual = _constraint(
+    residual = _residual_term(
         domain.component(),
         lambda field: (
             partial_n(field, var="t", order=1) - laplacian(field, var="x") - forcing
@@ -148,7 +158,7 @@ def test_kfac_trains_heat_equation_pinn():
         points=4,
         key=jr.key(10),
     )
-    solver = FunctionalSolver(functions={"u": u}, constraints=residual)
+    solver = phx.solver.FunctionalSolver(functions={"u": u}, terms=residual)
 
     _train_and_assert_decrease(solver, seed=11)
 
@@ -163,7 +173,7 @@ def test_kfac_trains_nonlinear_burgers_pinn():
     def forcing(x, t):
         return 1.0 + x[0] + t
 
-    residual = _constraint(
+    residual = _residual_term(
         domain.component(),
         lambda field: (
             partial_n(field, var="t", order=1)
@@ -175,7 +185,7 @@ def test_kfac_trains_nonlinear_burgers_pinn():
         points=4,
         key=jr.key(13),
     )
-    solver = FunctionalSolver(functions={"u": u}, constraints=residual)
+    solver = phx.solver.FunctionalSolver(functions={"u": u}, terms=residual)
 
     _train_and_assert_decrease(solver, seed=14)
 
@@ -193,23 +203,23 @@ def test_kfac_trains_coupled_field_residuals():
     def second_forcing(x):
         return x[0] ** 2 - x[0]
 
-    first = _constraint(
+    first = _residual_term(
         domain.component(),
         lambda u_field, v_field: laplacian(u_field, var="x") + v_field - first_forcing,
         ("u", "v"),
         points=4,
         key=jr.key(17),
     )
-    second = _constraint(
+    second = _residual_term(
         domain.component(),
         lambda u_field, v_field: u_field - v_field - second_forcing,
         ("u", "v"),
         points=4,
         key=jr.key(18),
     )
-    solver = FunctionalSolver(
+    solver = phx.solver.FunctionalSolver(
         functions={"u": u, "v": v},
-        constraints=(first, second),
+        terms=(first, second),
     )
 
     _train_and_assert_decrease(solver, seed=19)
@@ -228,23 +238,23 @@ def test_kfac_trains_inverse_physical_scalar_block():
     def equation_target(x):
         return 2.0 * x[0]
 
-    state_data = _constraint(
+    state_data = _residual_term(
         domain.component(),
         lambda field: field - state_target,
         "u",
         points=5,
         key=jr.key(21),
     )
-    equation = _constraint(
+    equation = _residual_term(
         domain.component(),
         lambda field, parameter: parameter * field - equation_target,
         ("u", "coefficient"),
         points=5,
         key=jr.key(22),
     )
-    solver = FunctionalSolver(
+    solver = phx.solver.FunctionalSolver(
         functions={"u": u, "coefficient": coefficient},
-        constraints=(state_data, equation),
+        terms=(state_data, equation),
     )
     initial_coefficient = float(coefficient.func())
 

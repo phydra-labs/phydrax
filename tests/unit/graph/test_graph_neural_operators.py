@@ -111,7 +111,7 @@ def test_graph_kernel_integral_wraps_as_domain_graph_model():
     assert jnp.allclose(integral(batch).data, jnp.array([0.0, 0.0, 3.0]))
 
 
-def test_graph_diffusion_constraint_zero_for_constant_graph_time_field():
+def test_graph_diffusion_penalty_zero_for_constant_graph_time_field():
     domain = phx.domain.GraphTrajectoryDatasetDomain(
         _graphs(),
         jnp.array([3, 5], dtype=jnp.int32),
@@ -130,8 +130,11 @@ def test_graph_diffusion_constraint_zero_for_constant_graph_time_field():
     def residual(f):
         return domain.GraphModel(phx.graph.GraphDiffusion(), input_fn=f)
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(component=component,
-    operator=residual,
-    constraint_vars="u", sampling=phx.domain.PointSampling(2, layout=structure), )
+    condition = phx.conditions.Residual("u", component, residual)
+    source = phx.integration.per_step(
+        phx.integration.mean_over(component),
+        phx.domain.PointSampling(2, layout=structure),
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
 
-    assert constraint.loss({"u": u}, key=jr.key(0)) < 1e-12
+    assert term.loss({"u": u}, key=jr.key(0)) < 1e-12

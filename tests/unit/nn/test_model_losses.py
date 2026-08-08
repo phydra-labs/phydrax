@@ -10,18 +10,19 @@ import jax.random as jr
 import optax
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
-from phydrax.constraints import DiscreteInteriorDataConstraint
-from phydrax.constraints._pointset import points_batch_from_points
+from phydrax.conditions import Observation
 from phydrax.domain import Interval1d
+from phydrax.integration import fixed, from_samples, mean_over
 from phydrax.nn import add_model_loss, MLP, SeparableMLP
 from phydrax.nn.models.core._base import _AbstractBaseModel
 from phydrax.solver import FunctionalSolver
+from phydrax.terms import ObservationPenalty
 
 
 def _domain_model_solver(model) -> FunctionalSolver:
     domain = Interval1d(0.0, 1.0)
     u = domain.Model("x")(model)
-    return FunctionalSolver(functions={"u": u}, constraints=[])
+    return FunctionalSolver(functions={"u": u}, terms=[])
 
 
 def test_add_model_loss_contributes_to_solver_loss_without_constraints():
@@ -135,15 +136,16 @@ def test_model_loss_regularizes_domain_model_forward_weights():
         label="l2",
     )
     u = domain.Model("x")(model)
-    data = DiscreteInteriorDataConstraint(
-        "u",
-        domain,
-        points={"x": jnp.asarray([[1.0]])},
-        values=jnp.asarray([1.0]),
-        label="data",
+    component = domain.component()
+    batch = component.points({"x": jnp.asarray([[1.0]])})
+    target = domain.Function()(1.0)
+    observation = Observation("u", component, target, label="data")
+    data = ObservationPenalty(
+        observation,
+        fixed(from_samples(mean_over(component), batch)),
     )
     tx = optax.sgd(0.1)
-    solver = FunctionalSolver(functions={"u": u}, constraints=[data])
+    solver = FunctionalSolver(functions={"u": u}, terms=[data])
 
     trained = solver.solve(
         num_iter=1,
@@ -152,7 +154,7 @@ def test_model_loss_regularizes_domain_model_forward_weights():
         log_every=0,
     )
 
-    batch = points_batch_from_points(domain.component(), {"x": jnp.asarray([[1.0]])})
+    batch = component.points({"x": jnp.asarray([[1.0]])})
     pred = jnp.asarray(trained.functions["u"](batch).data).reshape(())
     assert jnp.allclose(pred, 0.8, atol=1e-6)
 
@@ -168,7 +170,7 @@ def test_model_loss_is_deduped_for_shared_model_aliases():
     u = domain.Model("x")(model)
     v = domain.Model("x")(model)
 
-    solver = FunctionalSolver(functions={"u": u, "v": v}, constraints=[])
+    solver = FunctionalSolver(functions={"u": u, "v": v}, terms=[])
 
     assert jnp.allclose(solver.loss(key=jr.key(0)), 2.0)
 

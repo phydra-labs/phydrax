@@ -8,7 +8,6 @@ import jax.numpy as jnp
 
 import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.constraints import enforce_dirichlet, FunctionalConstraint
 from phydrax.domain import (
     Boundary,
     FixedStart,
@@ -17,12 +16,12 @@ from phydrax.domain import (
     SampleLayout,
     TimeInterval,
 )
-from phydrax.operators.differential import dt
-from phydrax.solver import (
-    EnforcedConstraintPipelines,
-    EnforcedInteriorData,
-    SingleFieldEnforcedConstraint,
+from phydrax.enforcement import (
+    EnforcementProgram,
+    EnforcementSpec,
+    InteriorAnchors,
 )
+from phydrax.operators.differential import dt
 
 
 def _paired_batch(domain, xs, ts):
@@ -53,15 +52,11 @@ def test_mixed_constraints_transient():
     boundary_component = domain.component({"x": Boundary()})
     initial_component = domain.component({"t": FixedStart()})
 
-    boundary_constraint = SingleFieldEnforcedConstraint(
-        "u",
-        boundary_component,
-        lambda f: enforce_dirichlet(f, boundary_component, var="x", target=5.0),
+    boundary_constraint = EnforcementSpec(
+        phx.conditions.Dirichlet("u", boundary_component, target=5.0)
     )
-    initial_constraint = SingleFieldEnforcedConstraint(
-        "u",
-        initial_component,
-        lambda f: enforce_dirichlet(f, initial_component, var="t", target=2.0),
+    initial_constraint = EnforcementSpec(
+        phx.conditions.Initial("u", initial_component, target=2.0)
     )
 
     anchors = {
@@ -69,12 +64,12 @@ def test_mixed_constraints_transient():
         "t": jnp.array([0.6, 0.4], dtype=float),
     }
     anchor_values = jnp.array([3.0, 4.0], dtype=float)
-    interior = EnforcedInteriorData("u", points=anchors, values=anchor_values)
+    interior = InteriorAnchors("u", points=anchors, values=anchor_values)
 
-    pipelines = EnforcedConstraintPipelines.build(
+    pipelines = EnforcementProgram.build(
         functions={"u": u},
-        constraints=[boundary_constraint, initial_constraint],
-        interior_data=[interior],
+        specs=[boundary_constraint, initial_constraint],
+        interior=[interior],
         num_reference=256,
     )
     u_enforced = pipelines.apply({"u": u})["u"]
@@ -91,9 +86,18 @@ def test_mixed_constraints_transient():
     out = jnp.asarray(u_enforced(batch).data).reshape((-1,))
     assert jnp.allclose(out, anchor_values, atol=1e-3)
 
-    constraint = FunctionalConstraint.from_operator(component=domain.component(),
-    operator=lambda f: dt(f, var="t"),
-    constraint_vars="u", sampling=phx.domain.PointSampling(16, layout=SampleLayout((("x", "t"),))), reduction="mean",)
-    loss_fn = eqx.filter_jit(lambda: constraint.loss({"u": u_enforced}))
+    condition = phx.conditions.Residual(
+        "u",
+        domain.component(),
+        lambda f: dt(f, var="t"),
+    )
+    term = phx.terms.ResidualPenalty(
+        condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(condition.on),
+            phx.integration.MonteCarloPlan(16),
+        ),
+    )
+    loss_fn = eqx.filter_jit(lambda: term.loss({"u": u_enforced}))
     loss = loss_fn()
     assert jnp.isfinite(loss)

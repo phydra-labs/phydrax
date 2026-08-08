@@ -140,21 +140,25 @@ def test_metric_aware_fokker_planck_constraint_threads_metric_to_residual():
     density = domain.Function("x")(1.0)
     coordinate_drift = domain.Function("x")(lambda x: jnp.array([0.5 / x[0], 0.0]))
     covariance = domain.Function("x")(lambda x: metric.inverse(x))
-    constraint = phx.constraints.ContinuousFokkerPlanckConstraint(
+    condition = phx.conditions.stochastic.FokkerPlanck(
         "p",
         domain.component(),
         drift=coordinate_drift,
         evolution_var=None,
         covariance=covariance,
         metric=metric,
-        sampling=phx.domain.PointSampling(20, layout=phx.domain.SampleLayout((("x",),))),
-        sampling_mode="fixed",
-        fixed_batch_key=jr.key(5),
     )
-    solver = phx.solver.FunctionalSolver(
-        functions={"p": density},
-        constraints=(constraint,),
+    target = phx.integration.mean_over(condition.on)
+    realization = phx.integration.materialize(
+        target,
+        phx.integration.MonteCarloPlan(20),
+        key=jr.key(5),
     )
+    constraint = phx.terms.ResidualPenalty(
+        condition,
+        phx.integration.fixed(realization),
+    )
+    solver = phx.solver.FunctionalSolver(functions={"p": density}, terms=(constraint,), )
 
     assert solver.loss(key=jr.key(6)) < 1e-20
 
@@ -162,17 +166,21 @@ def test_metric_aware_fokker_planck_constraint_threads_metric_to_residual():
 def test_riemannian_residual_runs_through_functional_solver():
     domain, metric = _polar_problem()
     field = domain.Function("x")(lambda x: x[0] ** 2)
-    constraint = phx.constraints.ContinuousPointwiseInteriorConstraint(
+    condition = phx.conditions.Residual(
         "u",
-        domain,
-        operator=lambda u: phx.operators.laplace_beltrami(u, metric, var="x") - 4.0,
-        sampling=phx.domain.PointSampling(24, layout=phx.domain.SampleLayout((("x",),))),
-        sampling_mode="fixed",
-        fixed_batch_key=jr.key(3),
+        domain.component(),
+        lambda u: phx.operators.laplace_beltrami(u, metric, var="x") - 4.0,
     )
-    solver = phx.solver.FunctionalSolver(
-        functions={"u": field},
-        constraints=(constraint,),
+    target = phx.integration.mean_over(condition.on)
+    realization = phx.integration.materialize(
+        target,
+        phx.integration.MonteCarloPlan(24),
+        key=jr.key(3),
     )
+    constraint = phx.terms.ResidualPenalty(
+        condition,
+        phx.integration.fixed(realization),
+    )
+    solver = phx.solver.FunctionalSolver(functions={"u": field}, terms=(constraint,), )
 
     assert solver.loss(key=jr.key(4)) < 1e-20

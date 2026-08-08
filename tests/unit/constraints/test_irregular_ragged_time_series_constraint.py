@@ -6,9 +6,9 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-from phydrax.constraints import RaggedTimeSeriesDataConstraint, TrajectorySignal
 from phydrax.domain import IrregularTrajectoryDatasetDomain, SampleLayout
 from phydrax.operators.differential import partial_t
+from phydrax.terms import RaggedTimeSeriesDataTerm, TrajectorySignal
 
 
 def _make_domain_and_values(*, sampling="observation_uniform"):
@@ -40,7 +40,7 @@ def test_irregular_ragged_time_series_matches_exact_observations():
         y = data[0] + t
         return jnp.asarray([y, 2.0 * y])
 
-    constraint = RaggedTimeSeriesDataConstraint(
+    constraint = RaggedTimeSeriesDataTerm(
         "u",
         domain.component(),
         values,
@@ -65,7 +65,7 @@ def test_irregular_ragged_time_series_linear_interpolation():
         y = data[0] + t
         return jnp.asarray([y, 2.0 * y])
 
-    constraint = RaggedTimeSeriesDataConstraint(
+    constraint = RaggedTimeSeriesDataTerm(
         "u",
         domain.component(),
         values,

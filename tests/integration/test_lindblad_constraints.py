@@ -34,25 +34,24 @@ def test_lindblad_residual_runs_through_functional_solver():
             dtype=complex,
         )
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=time.component(),
-        operator=lambda density: phx.operators.lindblad_residual(
+    condition = phx.conditions.Residual(
+        "rho",
+        time.component(),
+        lambda density: phx.operators.lindblad_residual(
             density,
             hamiltonian,
             (collapse,),
         ),
-        constraint_vars="rho",
-        sampling=phx.domain.PointSampling(32, layout=phx.domain.SampleLayout((("t",),))),
-        reduction="mean",
     )
-    exact = phx.solver.FunctionalSolver(
-        functions={"rho": exact_density},
-        constraints=[constraint],
+    constraint = phx.terms.ResidualPenalty(
+        condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(condition.on),
+            phx.integration.MonteCarloPlan(32),
+        ),
     )
-    perturbed = phx.solver.FunctionalSolver(
-        functions={"rho": perturbed_density},
-        constraints=[constraint],
-    )
+    exact = phx.solver.FunctionalSolver(functions={"rho": exact_density}, terms=[constraint], )
+    perturbed = phx.solver.FunctionalSolver(functions={"rho": perturbed_density}, terms=[constraint], )
 
     loss = eqx.filter_jit(lambda solver, key: solver.loss(key=key))
     exact_loss = loss(exact, jr.key(0))

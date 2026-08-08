@@ -177,22 +177,22 @@ def test_kernel_function_runs_through_operator_constraint_solver():
         slicing=phx.operators.PathDiscretization(0.0, 0.5, num_steps=4),
         num_paths=8,
     )
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=endpoint_domain.component(),
-        operator=lambda kernel_field: phx.operators.laplacian(
+    condition = phx.conditions.Residual(
+        "kernel",
+        endpoint_domain.component(),
+        lambda kernel_field: phx.operators.laplacian(
             kernel_field,
             var="q1",
         ),
-        constraint_vars="kernel",
-        sampling=phx.domain.PointSampling(
-            4, layout=phx.domain.SampleLayout((("q0", "q1"),))
+    )
+    constraint = phx.terms.ResidualPenalty(
+        condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(condition.on),
+            phx.integration.MonteCarloPlan(4),
         ),
-        reduction="mean",
     )
-    solver = phx.solver.FunctionalSolver(
-        functions={"kernel": kernel},
-        constraints=[constraint],
-    )
+    solver = phx.solver.FunctionalSolver(functions={"kernel": kernel}, terms=[constraint], )
 
     loss = solver.loss(key=jr.key(5))
     assert jnp.isfinite(loss)

@@ -90,10 +90,7 @@ def test_semilinear_deep_picard_trains_global_time_field_and_removes_temporary_s
         num_time_steps=4,
         refresh_mode="fixed",
     )
-    solver = phx.solver.FunctionalSolver(
-        functions={"value": _function(_TimeCoefficient(jnp.asarray(0.0)))},
-        constraints=(),
-    )
+    solver = phx.solver.FunctionalSolver(functions={"value": _function(_TimeCoefficient(jnp.asarray(0.0)))}, terms=(), )
     times = jnp.linspace(0.0, 1.0, 9)
     states = jnp.zeros((9, 1))
 
@@ -116,7 +113,7 @@ def test_semilinear_deep_picard_trains_global_time_field_and_removes_temporary_s
     assert result.diagnostics.target_rmse[-1] < 2e-2
     assert result.diagnostics.terminal_rmse[-1] < 2e-2
     assert result.diagnostics.passed
-    assert result.solver.objectives == solver.objectives == ()
+    assert result.solver.terms == solver.terms == ()
     assert _coefficient(solver["value"]) == 0.0
 
 
@@ -149,10 +146,7 @@ def test_structured_source_context_uses_factor_hvps_and_trains_quadratic_case():
         antithetic=True,
         refresh_mode="fixed",
     )
-    solver = phx.solver.FunctionalSolver(
-        functions={"value": source_model},
-        constraints=(),
-    )
+    solver = phx.solver.FunctionalSolver(functions={"value": source_model}, terms=(), )
     times = jnp.linspace(0.0, 1.0, 7)
     states = jnp.linspace(-0.5, 0.5, 7)[:, None]
 
@@ -193,13 +187,10 @@ def test_deep_picard_martingale_targets_train_explicit_control():
         refresh_mode="fixed",
     )
     exact_value = _domain().Function("t", "x")(lambda time, state: jnp.asarray([state[0]]))
-    solver = phx.solver.FunctionalSolver(
-        functions={
-            "value": exact_value,
-            "control": _function(_ConstantControl(jnp.asarray(0.0))),
-        },
-        constraints=(),
-    )
+    solver = phx.solver.FunctionalSolver(functions={
+        "value": exact_value,
+        "control": _function(_ConstantControl(jnp.asarray(0.0))),
+    }, terms=(), )
     times = jnp.asarray([0.0, 0.25, 0.5, 0.75])
     states = jnp.asarray([[-0.4], [0.0], [0.2], [0.7]])
 

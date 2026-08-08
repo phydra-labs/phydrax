@@ -41,26 +41,33 @@ with \(g(x,y)=x^2+y^2\). The exact solution is \(u^\star(x,y)=x^2+y^2\).
     u = geom.Model("x")(model)
 
     layout = phx.domain.SampleLayout((("x",),))
+    interior = geom.component()
 
-    pde = phx.constraints.ContinuousPointwiseInteriorConstraint(
+    pde_condition = phx.conditions.Residual(
         "u",
-        geom,
-        operator=lambda f: phx.operators.laplacian(f, var="x") - 4.0,
-        sampling=phx.domain.PointSampling(64, layout=layout),
-        reduction="mean",
+        interior,
+        lambda f: phx.operators.laplacian(f, var="x") - 4.0,
+    )
+    pde = phx.terms.ResidualPenalty(
+        pde_condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(pde_condition.on),
+            phx.domain.PointSampling(64, layout=layout),
+        ),
     )
 
     boundary = geom.component({"x": phx.domain.Boundary()})
-    bc = phx.constraints.ContinuousDirichletBoundaryConstraint(
-        "u",
-        boundary,
-        target=g,
-        sampling=phx.domain.PointSampling(32, layout=layout),
-        weight=10.0,
-        reduction="mean",
+    boundary_condition = phx.conditions.Dirichlet("u", boundary, target=g)
+    bc = phx.terms.ResidualPenalty(
+        boundary_condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(boundary_condition.on),
+            phx.domain.PointSampling(32, layout=layout),
+        ),
+        scale=10.0,
     )
 
-    solver = phx.solver.FunctionalSolver(functions={"u": u}, constraints=[pde, bc])
+    solver = phx.solver.FunctionalSolver(functions={"u": u}, terms=(pde, bc))
     solver = solver.solve(num_iter=20, optim=optax.adam(1e-3), seed=0)
     ```
 
@@ -81,14 +88,15 @@ solver = solver.solve(
 ```
 
 KFAC requires pointwise flat `phydrax.nn.MLP` fields and nonnegative quadratic
-`FunctionalConstraint` residuals. It reuses each sampled interior and boundary batch
-through factor estimation and Armijo line search. For configuration, support boundaries,
-and diagnostics, see [Optimization](../api/optim.md#structured-residual-optimization-kfac).
+`phydrax.terms.ResidualPenalty` terms. It reuses each materialized interior and boundary
+integration realization through factor estimation and Armijo line search. For
+configuration, support boundaries, and diagnostics, see
+[Optimization](../api/optim.md#structured-residual-optimization-kfac).
 
 ## Enforced Dirichlet boundary (ansatz + interior residual)
 
-Instead of penalizing boundary mismatch, enforce \(u=g\) by construction using
-`enforce_dirichlet`, staged by an `EnforcedConstraintPipeline` (via `constraint_terms=...`).
+Instead of penalizing boundary mismatch, compile the typed Dirichlet condition
+into an exact ansatz with `phx.enforcement`.
 
 !!! example
     ```python
@@ -108,28 +116,41 @@ Instead of penalizing boundary mismatch, enforce \(u=g\) by construction using
         in_size=2, out_size="scalar", width_size=16, depth=2, scan=False, key=jr.key(0)
     )
     u = geom.Model("x")(model)
+    functions = {"u": u}
 
     layout = phx.domain.SampleLayout((("x",),))
-    pde = phx.constraints.ContinuousPointwiseInteriorConstraint(
+    interior = geom.component()
+    pde_condition = phx.conditions.Residual(
         "u",
-        geom,
-        operator=lambda f: phx.operators.laplacian(f, var="x") - 4.0,
-        sampling=phx.domain.PointSampling(64, layout=layout),
+        interior,
+        lambda f: phx.operators.laplacian(f, var="x") - 4.0,
+    )
+    pde = phx.terms.ResidualPenalty(
+        pde_condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(pde_condition.on),
+            phx.domain.PointSampling(64, layout=layout),
+        ),
     )
 
     boundary = geom.component({"x": phx.domain.Boundary()})
-    term = phx.solver.SingleFieldEnforcedConstraint(
-        "u",
-        boundary,
-        lambda f: phx.constraints.enforce_dirichlet(f, boundary, var="x", target=g),
+    boundary_condition = phx.conditions.Dirichlet("u", boundary, target=g)
+    program = phx.enforcement.compile(
+        functions,
+        (
+            phx.enforcement.EnforcementSpec(
+                boundary_condition,
+                options={"var": "x"},
+            ),
+        ),
+        options=phx.enforcement.EnforcementOptions(num_reference=128),
+        key=jr.key(1),
     )
 
     solver = phx.solver.FunctionalSolver(
-        functions={"u": u},
-        constraints=[pde],
-        constraint_terms=[term],
-        boundary_weight_num_reference=128,
-        boundary_weight_key=jr.key(1),
+        functions=functions,
+        terms=(pde,),
+        enforcement=program,
     )
     solver = solver.solve(num_iter=20, optim=optax.adam(1e-3), seed=0)
     ```

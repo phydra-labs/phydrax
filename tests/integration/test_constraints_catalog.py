@@ -4,63 +4,42 @@
 
 from __future__ import annotations
 
+import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-from phydrax.constraints import (
-    ContinuousConvectionBoundaryConstraint,
-    ContinuousDirichletBoundaryConstraint,
-    ContinuousElasticFoundationBoundaryConstraint,
-    ContinuousElasticSymmetryBoundaryConstraint,
-    ContinuousElectricSurfaceChargeBoundaryConstraint,
-    ContinuousHeatFluxBoundaryConstraint,
-    ContinuousImpedanceBoundaryConstraint,
-    ContinuousInitialConstraint,
-    ContinuousInterfaceNormalBContinuityConstraint,
-    ContinuousInterfaceNormalDJumpConstraint,
-    ContinuousInterfaceTangentialEContinuityConstraint,
-    ContinuousInterfaceTangentialHJumpConstraint,
-    ContinuousMagneticSurfaceCurrentBoundaryConstraint,
-    ContinuousNeumannBoundaryConstraint,
-    ContinuousNoPenetrationBoundaryConstraint,
-    ContinuousNormalDisplacementBoundaryConstraint,
-    ContinuousPECBoundaryConstraint,
-    ContinuousPMCBoundaryConstraint,
-    ContinuousRobinBoundaryConstraint,
-    ContinuousSlipWallBoundaryConstraint,
-    ContinuousSymmetryVelocityBoundaryConstraint,
-    ContinuousTractionBoundaryConstraint,
-    DiscreteConvectionBoundaryConstraint,
-    DiscreteDisplacementBoundaryConstraint,
-    DiscreteElectricSurfaceChargeBoundaryConstraint,
-    DiscreteHeatFluxBoundaryConstraint,
-    DiscreteInterfaceNormalBContinuityConstraint,
-    DiscreteInterfaceNormalDJumpConstraint,
-    DiscreteInterfaceTangentialEContinuityConstraint,
-    DiscreteInterfaceTangentialHJumpConstraint,
-    DiscreteMagneticSurfaceCurrentBoundaryConstraint,
-    DiscreteNoPenetrationBoundaryConstraint,
-    DiscreteNormalDisplacementBoundaryConstraint,
-    DiscretePECBoundaryConstraint,
-    DiscretePMCBoundaryConstraint,
-    DiscreteRobinBoundaryConstraint,
-    DiscreteTractionBoundaryConstraint,
-    DiscreteZeroNormalGradientVelocityBoundaryConstraint,
-)
-from phydrax.domain import (
-    Boundary,
-    FixedStart,
-    Interval1d,
-    SampleLayout,
-    TimeInterval,
-)
+from phydrax.domain import Boundary, FixedStart, Interval1d, SampleLayout, TimeInterval
 
 
-def _assert_zero_loss(constraint, functions, *, atol=1e-5):
+def _continuous_term(condition, num_samples):
+    source = phx.integration.per_step(
+        phx.integration.mean_over(condition.on),
+        phx.integration.MonteCarloPlan(num_samples),
+    )
+    return phx.terms.ResidualPenalty(condition, source)
+
+
+def _fixed_term(condition, points, structure):
+    layout = structure.canonicalize(condition.on.domain.labels)
+    axis_names = layout.axis_names
+    assert axis_names is not None
+    axis = axis_names[0]
+    batch = phx.domain.PointBatch(
+        {"x": cx.Field(jnp.asarray(points["x"], dtype=float), dims=(axis, None))},
+        layout,
+    )
+    realization = phx.integration.from_samples(
+        phx.integration.mean_over(condition.on),
+        batch,
+    )
+    return phx.terms.ResidualPenalty(condition, phx.integration.fixed(realization))
+
+
+def _assert_zero_loss(term, functions, *, atol=1e-5):
     key = jr.key(0)
-    loss_fn = eqx.filter_jit(lambda k: constraint.loss(functions, key=k))
+    loss_fn = eqx.filter_jit(lambda k: term.loss(functions, key=k))
     value = loss_fn(key)
     assert jnp.allclose(value, 0.0, atol=atol)
 
@@ -68,54 +47,36 @@ def _assert_zero_loss(constraint, functions, *, atol=1e-5):
 def test_functional_boundary_and_initial_constraints():
     geom = Interval1d(0.0, 1.0)
     component = geom.component({"x": Boundary()})
-    structure = SampleLayout((("x",),))
 
     @geom.Function("x")
     def u(x):
         return 0.0
 
     functions = {"u": u}
-    constraints = [
-        ContinuousDirichletBoundaryConstraint(
+    conditions = [
+        phx.conditions.Dirichlet("u", component, target=0.0),
+        phx.conditions.Neumann("u", component, target=0.0),
+        phx.conditions.Robin(
             "u",
             component,
+            dirichlet_coefficient=1.0,
+            neumann_coefficient=0.0,
             target=0.0,
-            sampling=phx.domain.PointSampling(8, layout=structure),
-        ),
-        ContinuousNeumannBoundaryConstraint(
-            "u",
-            component,
-            target=0.0,
-            sampling=phx.domain.PointSampling(8, layout=structure),
-        ),
-        ContinuousRobinBoundaryConstraint(
-            "u",
-            component,
-            dirichlet_coeff=1.0,
-            neumann_coeff=0.0,
-            target=0.0,
-            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
     ]
 
-    for constraint in constraints:
-        _assert_zero_loss(constraint, functions)
+    for condition in conditions:
+        _assert_zero_loss(_continuous_term(condition, 8), functions)
 
     domain = geom @ TimeInterval(0.0, 1.0)
     initial_component = domain.component({"t": FixedStart()})
-    init_structure = SampleLayout((("x",),))
 
     @domain.Function("x", "t")
     def u_xt(x, t):
         return 0.0
 
-    init_constraint = ContinuousInitialConstraint(
-        "u",
-        initial_component,
-        func=0.0,
-        sampling=phx.domain.PointSampling(8, layout=init_structure),
-    )
-    _assert_zero_loss(init_constraint, {"u": u_xt})
+    initial = phx.conditions.Initial("u", initial_component, target=0.0)
+    _assert_zero_loss(_continuous_term(initial, 8), {"u": u_xt})
 
 
 def test_cfd_constraints_continuous_and_discrete():
@@ -137,74 +98,40 @@ def test_cfd_constraints_continuous_and_discrete():
     wall_velocity = jnp.array([0.0, 0.0])
     inflow_velocity = jnp.array([0.0, 0.0])
 
-    continuous = [
-        ContinuousNeumannBoundaryConstraint(
-            "u",
-            component,
-            sampling=phx.domain.PointSampling(8, layout=structure),
-        ),
-        ContinuousDirichletBoundaryConstraint(
-            "p",
-            component,
-            target=0.0,
-            sampling=phx.domain.PointSampling(8, layout=structure),
-        ),
-        ContinuousDirichletBoundaryConstraint(
-            "u",
-            component,
-            target=inflow_velocity,
-            sampling=phx.domain.PointSampling(8, layout=structure),
-        ),
-        ContinuousNeumannBoundaryConstraint(
-            "p",
-            component,
-            sampling=phx.domain.PointSampling(8, layout=structure),
-        ),
-        ContinuousSymmetryVelocityBoundaryConstraint(
-            "u",
-            component,
-            sampling=phx.domain.PointSampling(8, layout=structure),
-        ),
-        ContinuousDirichletBoundaryConstraint(
-            "u",
-            component,
-            target=wall_velocity,
-            sampling=phx.domain.PointSampling(8, layout=structure),
-        ),
-        ContinuousNoPenetrationBoundaryConstraint(
+    continuous_conditions = [
+        phx.conditions.Neumann("u", component),
+        phx.conditions.Dirichlet("p", component, target=0.0),
+        phx.conditions.Dirichlet("u", component, target=inflow_velocity),
+        phx.conditions.Neumann("p", component),
+        phx.conditions.cfd.SymmetryVelocity("u", component),
+        phx.conditions.Dirichlet("u", component, target=wall_velocity),
+        phx.conditions.cfd.NoPenetration(
             "u",
             component,
             wall_velocity=wall_velocity,
-            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
-        ContinuousSlipWallBoundaryConstraint(
+        phx.conditions.cfd.SlipWall(
             "u",
             "p",
             component,
             viscosity=1.0,
-            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
     ]
 
-    for constraint in continuous:
-        _assert_zero_loss(constraint, functions)
+    for condition in continuous_conditions:
+        _assert_zero_loss(_continuous_term(condition, 8), functions)
 
     points = {"x": jnp.array([[-1.0, 0.0], [1.0, 0.0]], dtype=float)}
-    discrete = [
-        DiscreteNoPenetrationBoundaryConstraint(
+    discrete_conditions = [
+        phx.conditions.cfd.NoPenetration(
             "u",
             component,
-            points=points,
             wall_normal_velocity=0.0,
         ),
-        DiscreteZeroNormalGradientVelocityBoundaryConstraint(
-            "u",
-            component,
-            points=points,
-        ),
+        phx.conditions.cfd.ZeroNormalGradientVelocity("u", component),
     ]
-    for constraint in discrete:
-        _assert_zero_loss(constraint, functions)
+    for condition in discrete_conditions:
+        _assert_zero_loss(_fixed_term(condition, points, structure), functions)
 
 
 def test_solid_constraints_continuous_and_discrete():
@@ -221,73 +148,48 @@ def test_solid_constraints_continuous_and_discrete():
     functions = {"u": u}
     zeros_vec = jnp.array([0.0, 0.0])
 
-    continuous = [
-        ContinuousDirichletBoundaryConstraint(
-            "u",
-            component,
-            target=zeros_vec,
-            sampling=phx.domain.PointSampling(8, layout=structure),
-        ),
-        ContinuousTractionBoundaryConstraint(
+    continuous_conditions = [
+        phx.conditions.Dirichlet("u", component, target=zeros_vec),
+        phx.conditions.solids.Traction(
             "u",
             component,
             lambda_=1.0,
             mu=1.0,
             traction=zeros_vec,
-            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
-        ContinuousNormalDisplacementBoundaryConstraint(
-            "u",
-            component,
-            normal_displacement=0.0,
-            sampling=phx.domain.PointSampling(8, layout=structure),
-        ),
-        ContinuousElasticFoundationBoundaryConstraint(
+        phx.conditions.solids.NormalDisplacement("u", component, target=0.0),
+        phx.conditions.solids.ElasticFoundation(
             "u",
             component,
             lambda_=1.0,
             mu=1.0,
             stiffness=1.0,
             foundation_displacement=zeros_vec,
-            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
-        ContinuousElasticSymmetryBoundaryConstraint(
+        phx.conditions.solids.ElasticSymmetry(
             "u",
             component,
             lambda_=1.0,
             mu=1.0,
-            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
     ]
-    for constraint in continuous:
-        _assert_zero_loss(constraint, functions)
+    for condition in continuous_conditions:
+        _assert_zero_loss(_continuous_term(condition, 8), functions)
 
     points = {"x": jnp.array([[-1.0, 0.0], [1.0, 0.0]], dtype=float)}
-    disp_values = jnp.zeros((2, 2), dtype=float)
-    discrete = [
-        DiscreteDisplacementBoundaryConstraint(
+    discrete_conditions = [
+        phx.conditions.Dirichlet("u", component, target=zeros_vec),
+        phx.conditions.solids.Traction(
             "u",
             component,
-            points=points,
-            displacement_values=disp_values,
-        ),
-        DiscreteTractionBoundaryConstraint(
-            "u",
-            component,
-            points=points,
-            values=disp_values,
             lambda_=1.0,
             mu=1.0,
+            traction=zeros_vec,
         ),
-        DiscreteNormalDisplacementBoundaryConstraint(
-            "u",
-            component,
-            points=points,
-            values=jnp.zeros((2,), dtype=float),
-        ),
+        phx.conditions.solids.NormalDisplacement("u", component, target=0.0),
     ]
-    for constraint in discrete:
-        _assert_zero_loss(constraint, functions)
+    for condition in discrete_conditions:
+        _assert_zero_loss(_fixed_term(condition, points, structure), functions)
 
 
 def test_thermal_constraints_continuous_and_discrete():
@@ -301,54 +203,49 @@ def test_thermal_constraints_continuous_and_discrete():
 
     functions = {"T": temp}
 
-    continuous = [
-        ContinuousHeatFluxBoundaryConstraint(
+    continuous_conditions = [
+        phx.conditions.thermal.HeatFlux(
             "T",
             component,
-            k=1.0,
+            conductivity=1.0,
             flux=0.0,
-            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
-        ContinuousConvectionBoundaryConstraint(
+        phx.conditions.thermal.Convection(
             "T",
             component,
-            h=1.0,
-            k=1.0,
-            ambient_temp=0.0,
-            sampling=phx.domain.PointSampling(8, layout=structure),
+            heat_transfer_coefficient=1.0,
+            conductivity=1.0,
+            ambient_temperature=0.0,
         ),
     ]
-    for constraint in continuous:
-        _assert_zero_loss(constraint, functions)
+    for condition in continuous_conditions:
+        _assert_zero_loss(_continuous_term(condition, 8), functions)
 
     points = {"x": jnp.array([[0.0], [1.0]], dtype=float)}
-    discrete = [
-        DiscreteRobinBoundaryConstraint(
+    discrete_conditions = [
+        phx.conditions.Robin(
             "T",
             component,
-            points=points,
-            values=jnp.zeros((2,), dtype=float),
-            dirichlet_coeff=1.0,
-            neumann_coeff=0.0,
+            dirichlet_coefficient=1.0,
+            neumann_coefficient=0.0,
+            target=0.0,
         ),
-        DiscreteHeatFluxBoundaryConstraint(
+        phx.conditions.thermal.HeatFlux(
             "T",
             component,
-            points=points,
-            values=jnp.zeros((2,), dtype=float),
-            k=1.0,
+            conductivity=1.0,
+            flux=0.0,
         ),
-        DiscreteConvectionBoundaryConstraint(
+        phx.conditions.thermal.Convection(
             "T",
             component,
-            points=points,
-            ambient_values=jnp.zeros((2,), dtype=float),
-            h=1.0,
-            k=1.0,
+            heat_transfer_coefficient=1.0,
+            conductivity=1.0,
+            ambient_temperature=0.0,
         ),
     ]
-    for constraint in discrete:
-        _assert_zero_loss(constraint, functions)
+    for condition in discrete_conditions:
+        _assert_zero_loss(_fixed_term(condition, points, structure), functions)
 
 
 def test_thermal_constraints_use_physical_outward_flux_sign():
@@ -371,41 +268,44 @@ def test_thermal_constraints_use_physical_outward_flux_sign():
         return x[0] ** 2 + 2.0 * conductivity * x[0] / convection
 
     points = {"x": jnp.array([[0.0], [1.0]], dtype=float)}
-    constraints = [
-        ContinuousHeatFluxBoundaryConstraint(
+    continuous_conditions = [
+        phx.conditions.thermal.HeatFlux(
             "T",
             component,
-            k=conductivity,
+            conductivity=conductivity,
             flux=outward_flux,
-            sampling=phx.domain.PointSampling(8, layout=structure),
         ),
-        ContinuousConvectionBoundaryConstraint(
+        phx.conditions.thermal.Convection(
             "T",
             component,
-            h=convection,
-            k=conductivity,
-            ambient_temp=ambient_temperature,
-            sampling=phx.domain.PointSampling(8, layout=structure),
+            heat_transfer_coefficient=convection,
+            conductivity=conductivity,
+            ambient_temperature=ambient_temperature,
         ),
-        DiscreteHeatFluxBoundaryConstraint(
+    ]
+    discrete_conditions = [
+        phx.conditions.thermal.HeatFlux(
             "T",
             component,
-            points=points,
-            values=jnp.array([0.0, -2.0 * conductivity]),
-            k=conductivity,
+            conductivity=conductivity,
+            flux=outward_flux,
         ),
-        DiscreteConvectionBoundaryConstraint(
+        phx.conditions.thermal.Convection(
             "T",
             component,
-            points=points,
-            ambient_values=jnp.array([0.0, 1.0 + 2.0 * conductivity / convection]),
-            h=convection,
-            k=conductivity,
+            heat_transfer_coefficient=convection,
+            conductivity=conductivity,
+            ambient_temperature=ambient_temperature,
         ),
     ]
 
-    for constraint in constraints:
-        _assert_zero_loss(constraint, {"T": temperature})
+    for condition in continuous_conditions:
+        _assert_zero_loss(_continuous_term(condition, 8), {"T": temperature})
+    for condition in discrete_conditions:
+        _assert_zero_loss(
+            _fixed_term(condition, points, structure),
+            {"T": temperature},
+        )
 
 
 def test_em_constraints_continuous_and_discrete():
@@ -441,119 +341,102 @@ def test_em_constraints_continuous_and_discrete():
 
     functions = {"E": e, "H": h, "E1": e1, "E2": e2, "H1": h1, "H2": h2}
 
-    continuous = [
-        ContinuousPECBoundaryConstraint(
-            "E",
-            component,
-            sampling=phx.domain.PointSampling(6, layout=structure),
-        ),
-        ContinuousImpedanceBoundaryConstraint(
+    continuous_conditions = [
+        phx.conditions.electromagnetics.PEC("E", component),
+        phx.conditions.electromagnetics.Impedance(
             "H",
             "E",
             component,
             admittance=1.0,
-            sampling=phx.domain.PointSampling(6, layout=structure),
         ),
-        ContinuousPMCBoundaryConstraint(
-            "H",
-            component,
-            sampling=phx.domain.PointSampling(6, layout=structure),
-        ),
-        ContinuousElectricSurfaceChargeBoundaryConstraint(
+        phx.conditions.electromagnetics.PMC("H", component),
+        phx.conditions.electromagnetics.ElectricSurfaceCharge(
             "E",
             component,
-            epsilon=1.0,
+            permittivity=1.0,
             surface_charge=0.0,
-            sampling=phx.domain.PointSampling(6, layout=structure),
         ),
-        ContinuousMagneticSurfaceCurrentBoundaryConstraint(
+        phx.conditions.electromagnetics.MagneticSurfaceCurrent(
             "H",
             component,
             surface_current=0.0,
-            sampling=phx.domain.PointSampling(6, layout=structure),
         ),
-        ContinuousInterfaceTangentialEContinuityConstraint(
+        phx.conditions.electromagnetics.InterfaceTangentialEContinuity(
             "E1",
             "E2",
             component,
-            sampling=phx.domain.PointSampling(6, layout=structure),
         ),
-        ContinuousInterfaceNormalDJumpConstraint(
+        phx.conditions.electromagnetics.InterfaceNormalDJump(
             "E1",
             "E2",
             component,
-            epsilon1=1.0,
-            epsilon2=1.0,
+            permittivity_1=1.0,
+            permittivity_2=1.0,
             surface_charge=0.0,
-            sampling=phx.domain.PointSampling(6, layout=structure),
         ),
-        ContinuousInterfaceTangentialHJumpConstraint(
+        phx.conditions.electromagnetics.InterfaceTangentialHJump(
             "H1",
             "H2",
             component,
             surface_current=0.0,
-            sampling=phx.domain.PointSampling(6, layout=structure),
         ),
-        ContinuousInterfaceNormalBContinuityConstraint(
+        phx.conditions.electromagnetics.InterfaceNormalBContinuity(
             "H1",
             "H2",
             component,
-            mu1=1.0,
-            mu2=1.0,
-            sampling=phx.domain.PointSampling(6, layout=structure),
+            permeability_1=1.0,
+            permeability_2=1.0,
         ),
     ]
-    for constraint in continuous:
-        _assert_zero_loss(constraint, functions)
+    for condition in continuous_conditions:
+        _assert_zero_loss(_continuous_term(condition, 6), functions)
 
     points = {
-        "x": jnp.array([[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=float)
+        "x": jnp.array(
+            [[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            dtype=float,
+        )
     }
-    zeros_vec = jnp.zeros((3, 3), dtype=float)
-    zeros_scalar = jnp.zeros((3,), dtype=float)
-
-    discrete = [
-        DiscretePECBoundaryConstraint("E", component, points=points),
-        DiscretePMCBoundaryConstraint("H", component, points=points),
-        DiscreteElectricSurfaceChargeBoundaryConstraint(
+    discrete_conditions = [
+        phx.conditions.electromagnetics.PEC("E", component),
+        phx.conditions.electromagnetics.PMC("H", component),
+        phx.conditions.electromagnetics.ElectricSurfaceCharge(
             "E",
             component,
-            points=points,
-            surface_charge_values=zeros_scalar,
-            epsilon=1.0,
+            permittivity=1.0,
+            surface_charge=0.0,
         ),
-        DiscreteMagneticSurfaceCurrentBoundaryConstraint(
+        phx.conditions.electromagnetics.MagneticSurfaceCurrent(
             "H",
             component,
-            points=points,
-            surface_current_values=zeros_vec,
+            surface_current=jnp.zeros((3,)),
         ),
-        DiscreteInterfaceTangentialEContinuityConstraint(
-            "E",
+        phx.conditions.electromagnetics.InterfaceTangentialEContinuity(
+            "E1",
+            "E2",
             component,
-            points=points,
-            tangential_values=zeros_vec,
         ),
-        DiscreteInterfaceNormalDJumpConstraint(
-            "E",
+        phx.conditions.electromagnetics.InterfaceNormalDJump(
+            "E1",
+            "E2",
             component,
-            points=points,
-            values=zeros_scalar,
-            epsilon=1.0,
+            permittivity_1=1.0,
+            permittivity_2=1.0,
+            surface_charge=0.0,
         ),
-        DiscreteInterfaceTangentialHJumpConstraint(
-            "H",
+        phx.conditions.electromagnetics.InterfaceTangentialHJump(
+            "H1",
+            "H2",
             component,
-            points=points,
-            Ks_values=zeros_vec,
+            surface_current=jnp.zeros((3,)),
         ),
-        DiscreteInterfaceNormalBContinuityConstraint(
-            "H",
+        phx.conditions.electromagnetics.InterfaceNormalBContinuity(
+            "H1",
+            "H2",
             component,
-            points=points,
-            values=zeros_scalar,
-            mu=1.0,
+            permeability_1=1.0,
+            permeability_2=1.0,
         ),
     ]
-    for constraint in discrete:
-        _assert_zero_loss(constraint, functions)
+    for condition in discrete_conditions:
+        _assert_zero_loss(_fixed_term(condition, points, structure), functions)

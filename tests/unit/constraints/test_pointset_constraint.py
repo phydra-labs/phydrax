@@ -6,96 +6,75 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
-from phydrax.constraints import PointSetConstraint
+import phydrax as phx
+from phydrax.conditions import Residual
 from phydrax.domain import Interval1d
+from phydrax.terms import ResidualPenalty
+
+
+def _fixed_source(component, values):
+    batch = component.points(
+        {"x": jnp.asarray(values, dtype=float).reshape((-1, 1))}
+    )
+    realization = phx.integration.from_samples(
+        phx.integration.mean_over(component),
+        batch,
+    )
+    return phx.integration.fixed(realization)
 
 
 def test_pointset_penalty_mean_and_sum():
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
-
-    points = {"x": jnp.array([[0.0], [0.5], [1.0]], dtype=float)}
+    source = _fixed_source(component, [0.0, 0.5, 1.0])
     u = geom.Function()(0.0)
+    condition = Residual("u", component, lambda value: value - 1.0)
 
-    def residual(functions):
-        return functions["u"] - 1.0
-
-    c_mean = PointSetConstraint.from_points(
-        component=component,
-        points=points,
-        residual=residual,
-        reduction="mean",
-        weight=2.0,
-    )
-    loss_mean = c_mean.loss({"u": u}, key=jr.key(0))
+    mean_term = ResidualPenalty(condition, source, scale=2.0)
+    loss_mean = mean_term.loss({"u": u}, key=jr.key(0))
     assert jnp.allclose(loss_mean, 2.0)
 
-    c_sum = PointSetConstraint.from_points(
-        component=component,
-        points=points,
-        residual=residual,
-        reduction="sum",
-        weight=2.0,
-    )
-    loss_sum = c_sum.loss({"u": u}, key=jr.key(0))
+    sum_term = ResidualPenalty(condition, source, scale=6.0)
+    loss_sum = sum_term.loss({"u": u}, key=jr.key(0))
     assert jnp.allclose(loss_sum, 6.0)
 
 
 def test_pointset_domainfunction_weight_mean_and_sum():
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
-    points = {"x": jnp.array([[0.0], [0.5], [1.0]], dtype=float)}
+    source = _fixed_source(component, [0.0, 0.5, 1.0])
     u = geom.Function()(0.0)
 
     @geom.Function("x")
-    def w(x):
+    def density(x):
         xx = _x_values(x)
         return xx + 1.0
 
-    def residual(functions):
-        return functions["u"] - 1.0
-
-    c_mean = PointSetConstraint.from_points(
-        component=component,
-        points=points,
-        residual=residual,
-        reduction="mean",
-        weight=w,
-    )
-    loss_mean = c_mean.loss({"u": u}, key=jr.key(0))
+    condition = Residual("u", component, lambda value: value - 1.0)
+    mean_term = ResidualPenalty(condition, source, density=density)
+    loss_mean = mean_term.loss({"u": u}, key=jr.key(0))
     assert jnp.allclose(loss_mean, 1.5)
 
-    c_sum = PointSetConstraint.from_points(
-        component=component,
-        points=points,
-        residual=residual,
-        reduction="sum",
-        weight=w,
-    )
-    loss_sum = c_sum.loss({"u": u}, key=jr.key(0))
+    sum_term = ResidualPenalty(condition, source, scale=3.0, density=density)
+    loss_sum = sum_term.loss({"u": u}, key=jr.key(0))
     assert jnp.allclose(loss_sum, 4.5)
 
 
 def test_pointset_domainfunction_weight_must_be_scalar_per_point():
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
-    points = {"x": jnp.array([[0.0], [0.5], [1.0]], dtype=float)}
+    source = _fixed_source(component, [0.0, 0.5, 1.0])
     u = geom.Function()(0.0)
 
     @geom.Function("x")
-    def bad_w(x):
+    def bad_density(x):
         xx = _x_values(x)
         return jnp.stack((xx, xx + 1.0), axis=-1)
 
-    constraint = PointSetConstraint.from_points(
-        component=component,
-        points=points,
-        residual=lambda fns: fns["u"] - 1.0,
-        reduction="mean",
-        weight=bad_w,
-    )
-    with pytest.raises(ValueError, match="scalar per point"):
-        _ = constraint.loss({"u": u}, key=jr.key(0))
+    condition = Residual("u", component, lambda value: value - 1.0)
+    term = ResidualPenalty(condition, source, density=bad_density)
+    with pytest.raises(ValueError, match="scalar"):
+        _ = term.loss({"u": u}, key=jr.key(0))
 
 
 def _x_values(x):

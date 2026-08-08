@@ -61,7 +61,7 @@ def test_native_differential_pino_residual_holds_across_resolutions():
     domain = phx.domain.Interval1d(-1.0, 1.0)
     model = _QuadraticQueryOperator()
     function = domain.Model("x")(model)
-    constraint = phx.constraints.DifferentialPhysicsInformedOperatorConstraint(
+    constraint = phx.terms.DifferentialPhysicsInformedOperatorTerm(
         "u",
         (_batch(9), _batch(17)),
         domain,

@@ -100,7 +100,7 @@ def test_graph_trajectory_gradient_remaps_time_from_edges_to_nodes():
     assert jnp.allclose(grad(batch).data, jnp.array([1.0, 2.0]))
 
 
-def test_graph_trajectory_constraint_samples_fixed_start_edges():
+def test_graph_trajectory_residual_penalty_samples_fixed_start_edges():
     domain = _domain()
     component = domain.component(
         {"graph": phx.domain.EdgeSet([0]), "t": phx.domain.FixedStart()}
@@ -112,11 +112,16 @@ def test_graph_trajectory_constraint_samples_fixed_start_edges():
         del node, t
         return 2.0
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(component=component,
-    operator=phx.operators.graph_gradient,
-    constraint_vars="u", sampling=phx.domain.PointSampling(2, layout=structure), )
+    condition = phx.conditions.Residual(
+        "u", component, phx.operators.graph_gradient
+    )
+    source = phx.integration.per_step(
+        phx.integration.mean_over(component),
+        phx.domain.PointSampling(2, layout=structure),
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
 
-    assert constraint.loss({"u": u}, key=jr.key(0)) < 1e-12
+    assert term.loss({"u": u}, key=jr.key(0)) < 1e-12
 
 
 def test_graph_trajectory_graph_model_input_fn_uses_time_on_full_node_view():

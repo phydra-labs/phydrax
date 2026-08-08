@@ -111,23 +111,27 @@ def test_hyperrectangle_coord_separable_sampling():
     assert batch.coord_mask_by_label["x"].data.shape == (5, 7)
 
 
-def test_hyperrectangle_discrete_interior_data_constraint_with_stacked_points():
+def test_hyperrectangle_finite_observation_with_stacked_points():
     geom = phx.domain.HyperRectangle(lower=jnp.zeros((2,)), upper=jnp.ones((2,)))
+
+    @geom.Function("x")
+    def exact(x):
+        return x[0] + 2.0 * x[1]
 
     @geom.Function("x")
     def u(x):
         return x[0] + 2.0 * x[1]
 
     points = jnp.array([[0.1, 0.2], [0.4, 0.5], [0.8, 0.3]], dtype=float)
-    values = points[:, 0] + 2.0 * points[:, 1]
-    constraint = phx.constraints.DiscreteInteriorDataConstraint(
-        "u",
-        geom,
-        points=points,
-        values=values,
+    component = geom.component()
+    batch = component.points(points)
+    condition = phx.conditions.Observation("u", component, exact)
+    source = phx.integration.fixed(
+        phx.integration.from_samples(phx.integration.mean_over(component), batch)
     )
+    term = phx.terms.ObservationPenalty(condition, source)
 
-    loss = constraint.loss({"u": u}, key=jr.key(0))
+    loss = term.loss({"u": u}, key=jr.key(0))
     assert loss < 1e-10
 
 

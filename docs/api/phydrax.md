@@ -7,10 +7,12 @@ Top-level package namespace. Most functionality lives in subpackages:
   embedded geometry, and metric-aware stochastic calculus
 - `phydrax.data_utils`: CSV loading and array scaling helpers
 - `phydrax.operators`: differential/integral operators on `DomainFunction`s
-- `phydrax.constraints`: residual and data penalty terms
-- `phydrax.objectives`: raw signed scalar objectives and integral functionals
-- `phydrax.optim`: Phydrax-owned structured residual and bounded-search
-  optimization, plus compatibility boundaries for workflow adapters
+- `phydrax.conditions`: residual, moment, observation, and physical condition declarations
+- `phydrax.terms`: penalty terms and specialized numerical/data terms
+- `phydrax.integration`: integration targets, sources, reductions, and realizations
+- `phydrax.enforcement`: exact condition transforms and enforcement programs
+- `phydrax.optim`: structured residual KFAC and domain-neutral optimization
+  configurations consumed by bounded geometry and posterior workflows
 - `phydrax.nn`: neural network components and structured models
 - `phydrax.sparse`: JAX-native sparse relations, routing, reductions, and linear actions
 - `phydrax.solver`: functional solvers and direct ODE/SDE, jump, hybrid, and

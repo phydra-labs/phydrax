@@ -14,103 +14,59 @@ import optax
 from evosax.algorithms.distribution_based.base import DistributionBasedAlgorithm
 from jaxtyping import Array, Key
 
-from phydrax.domain import DomainFunction, EnforcementGateMethod
+from phydrax.domain import DomainFunction
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
-from .._objective import AbstractObjectiveTerm
 from .._strict import StrictModule
+from .._term import AbstractScalarTerm, evaluate
 from .._training import EvaluationParametersFn
-from ..constraints._base import AbstractConstraint
-from ..constraints._functional import FunctionalConstraint
+from ..enforcement import EnforcementProgram
+from ..integration import AdaptiveIntegration
 from ..operators.differential._runtime import derivative_runtime_context
 from ..optim._kfac._config import KFAC
-from ._enforced_constraint_pipeline import (
-    EnforcedConstraintPipelines,
-    EnforcedInteriorData,
-    MultiFieldEnforcedConstraint,
-    SingleFieldEnforcedConstraint,
-)
+from ..terms._residual import ResidualPenalty
 from ._model_losses import function_model_loss_values
 
 
-def _constraints_tuple(
-    value: AbstractConstraint | Sequence[AbstractConstraint],
+def _terms_tuple(
+    value: AbstractScalarTerm | Sequence[AbstractScalarTerm],
     /,
     *,
     name: str,
-) -> tuple[AbstractConstraint, ...]:
-    if isinstance(value, AbstractConstraint):
-        out = (value,)
-    else:
-        out = tuple(value)
-    bad = tuple(c for c in out if not isinstance(c, AbstractConstraint))
+) -> tuple[AbstractScalarTerm, ...]:
+    out = (value,) if isinstance(value, AbstractScalarTerm) else tuple(value)
+    bad = tuple(term for term in out if not isinstance(term, AbstractScalarTerm))
     if bad:
         raise TypeError(
-            f"All {name} must be instances of AbstractConstraint; got "
-            f"{tuple(type(c).__name__ for c in bad)!r}."
-        )
-    return out
-
-
-def _objectives_tuple(
-    value: AbstractObjectiveTerm | Sequence[AbstractObjectiveTerm],
-    /,
-) -> tuple[AbstractObjectiveTerm, ...]:
-    if isinstance(value, AbstractObjectiveTerm):
-        out = (value,)
-    else:
-        out = tuple(value)
-    bad = tuple(term for term in out if not isinstance(term, AbstractObjectiveTerm))
-    if bad:
-        raise TypeError(
-            "All objectives must be instances of AbstractObjectiveTerm; got "
+            f"All {name} must be scalar terms; got "
             f"{tuple(type(term).__name__ for term in bad)!r}."
         )
     return out
 
 
+def _adaptive_term(term: Any, /) -> ResidualPenalty:
+    if not isinstance(term, ResidualPenalty) or not isinstance(
+        term.source, AdaptiveIntegration
+    ):
+        raise TypeError(
+            "Adaptive collocation requires ResidualPenalty with an "
+            "AdaptiveIntegration source."
+        )
+    return term
+
+
 class FunctionalSolver(StrictModule):
-    r"""Assemble constraints, raw objectives, and model losses into a scalar functional.
+    """Optimize one ordered collection of real scalar terms over named fields.
 
-    A `FunctionalSolver` holds:
-
-    - a mapping of named fields (as `DomainFunction`s), e.g. $u_\theta$;
-    - a collection of constraints $\ell_i$ producing scalar penalties;
-    - optional raw signed objective terms $\mathcal F_j$;
-    - optional model-level losses attached to the trainable models;
-    - optional eval-only constraints for validation diagnostics.
-
-    The solver functional is
-
-    $$
-    \mathcal J = \sum_i \ell_i + \sum_j \mathcal F_j + \sum_k r_k.
-    $$
-
-    Optionally, *enforced constraint pipelines* can be applied to replace the raw fields
-    with ansatz functions that satisfy selected boundary/initial conditions exactly.
-
-    **Evaluation**
-
-    - `ansatz_functions()` applies any enforced pipelines and returns the effective field
-      mapping used by constraints.
-    - `loss(key=...)` splits the provided PRNG key into one subkey per constraint,
-      evaluates any attached model losses, and sums the resulting scalar losses.
-
-    **Training**
-
-    `solve(...)` optimizes trainable inexact-array leaves inside `functions` (via a
-    Phydrax-aware Equinox partition). Domains and fixed observed-data state remain
-    numeric/JAX-traceable but are excluded from gradients and optimizer updates.
-    The solver also passes an `iter_` counter through to constraint losses so that
-    constraints can implement schedules.
+    Penalties and signed objectives share the same term contract. A precompiled
+    `EnforcementProgram`, when supplied, is applied before every term evaluation.
     """
 
     functions: frozendict[str, DomainFunction]
-    constraints: tuple[AbstractConstraint, ...]
-    objectives: tuple[AbstractObjectiveTerm, ...]
-    eval_constraints: tuple[AbstractConstraint, ...]
-    constraint_pipelines: EnforcedConstraintPipelines | None
+    terms: tuple[AbstractScalarTerm, ...]
+    evaluation_terms: tuple[AbstractScalarTerm, ...]
+    enforcement: EnforcementProgram | None
     collocation: tuple[Any | None, ...]
     training_diagnostics: frozendict[str, Array]
 
@@ -118,102 +74,50 @@ class FunctionalSolver(StrictModule):
         self,
         *,
         functions: Mapping[str, DomainFunction],
-        constraints: AbstractConstraint | Sequence[AbstractConstraint],
-        eval_constraints: AbstractConstraint | Sequence[AbstractConstraint] = (),
-        objectives: AbstractObjectiveTerm | Sequence[AbstractObjectiveTerm] = (),
-        constraint_pipelines: EnforcedConstraintPipelines | None = None,
-        constraint_terms: Sequence[
-            SingleFieldEnforcedConstraint | MultiFieldEnforcedConstraint
-        ] = (),
-        interior_data_terms: Sequence[EnforcedInteriorData] = (),
-        evolution_var: str = "t",
-        include_identity_remainder: bool = True,
-        gate_method: EnforcementGateMethod = "auto",
-        gate_saturation_fraction: float = 0.5,
-        gate_linear_fraction: float = 0.5,
-        boundary_weight_num_reference: int = 500_000,
-        boundary_weight_sampler: str = "latin_hypercube",
-        boundary_weight_key: Key[Array, ""] = DOC_KEY0,
+        terms: AbstractScalarTerm | Sequence[AbstractScalarTerm],
+        evaluation_terms: AbstractScalarTerm | Sequence[AbstractScalarTerm] = (),
+        enforcement: EnforcementProgram | None = None,
         collocation_key: Key[Array, ""] = DOC_KEY0,
     ):
-        r"""Create a functional solver.
-
-        **Arguments:**
-
-        - `functions`: Mapping `{name: DomainFunction}` defining the fields.
-        - `constraints`: One or more `AbstractConstraint` instances.
-        - `objectives`: Optional raw scalar objective terms, including signed integral functionals.
-        - `eval_constraints`: Optional constraints evaluated only for logging/diagnostics.
-        - `constraint_pipelines`: Optional pre-built enforced constraint pipelines. If provided,
-          do not also pass `constraint_terms`/`interior_data_terms`.
-        - `constraint_terms`: Enforced constraint terms used to build `EnforcedConstraintPipelines`
-          (boundary/initial ansätze).
-        - `interior_data_terms`: Enforced interior data sources used to build `EnforcedConstraintPipelines`.
-        - `evolution_var`: Name of the time-like label used for initial staging (default `"t"`).
-        - `include_identity_remainder`: Boundary blending option for enforced pipelines.
-        - `gate_method`: Geometry enforcement-gate implementation. ``"auto"`` uses
-          a domain-specific exact gate when available and the compact certified-field
-          transform otherwise; ``"global_r_equivalence"`` selects the broad generic
-          transform explicitly.
-        - `gate_saturation_fraction`: Relative extent of compact geometry gates.
-        - `gate_linear_fraction`: Fraction of the compact gate extent retaining a
-          linear boundary profile.
-        - `boundary_weight_num_reference`: Number of reference samples used for boundary blending weights.
-        - `boundary_weight_sampler`: Sampler used to draw boundary blending references.
-        - `boundary_weight_key`: PRNG key used to draw boundary blending references.
-        """
+        """Create a solver from fields, scalar terms, and optional enforcement."""
         self.functions = frozendict(functions)
-        self.constraints = _constraints_tuple(constraints, name="constraints")
-        self.objectives = _objectives_tuple(objectives)
-        self.eval_constraints = _constraints_tuple(
-            eval_constraints,
-            name="eval_constraints",
+        self.terms = _terms_tuple(terms, name="terms")
+        self.evaluation_terms = _terms_tuple(
+            evaluation_terms,
+            name="evaluation_terms",
         )
-
-        if constraint_pipelines is not None and (constraint_terms or interior_data_terms):
+        adaptive_evaluation_terms = tuple(
+            term
+            for term in self.evaluation_terms
+            if isinstance(term, ResidualPenalty)
+            and isinstance(term.source, AdaptiveIntegration)
+        )
+        if adaptive_evaluation_terms:
             raise ValueError(
-                "Provide either constraint_pipelines=... or constraint_terms/interior_data_terms, not both."
+                "AdaptiveIntegration sources are only supported in training terms, "
+                "which own solver-managed collocation populations."
             )
 
-        if constraint_pipelines is None and (constraint_terms or interior_data_terms):
-            constraint_pipelines = EnforcedConstraintPipelines.build(
-                functions=self.functions,
-                constraints=constraint_terms,
-                interior_data=interior_data_terms,
-                evolution_var=str(evolution_var),
-                gate_method=gate_method,
-                include_identity_remainder=bool(include_identity_remainder),
-                gate_saturation_fraction=gate_saturation_fraction,
-                gate_linear_fraction=gate_linear_fraction,
-                num_reference=int(boundary_weight_num_reference),
-                sampler=str(boundary_weight_sampler),
-                key=boundary_weight_key,
-            )
-
-        self.constraint_pipelines = constraint_pipelines
-        collocation_keys = jr.split(collocation_key, len(self.constraints))
+        if enforcement is not None and not isinstance(enforcement, EnforcementProgram):
+            raise TypeError("enforcement must be an EnforcementProgram or None.")
+        self.enforcement = enforcement
+        collocation_keys = jr.split(collocation_key, len(self.terms))
         self.collocation = tuple(
             (
-                constraint.collocation_policy.initialize(constraint, key=constraint_key)
-                if isinstance(constraint, FunctionalConstraint)
-                and constraint.collocation_policy is not None
+                term.policy.initialize(term, key=term_key)
+                if isinstance(term, ResidualPenalty)
+                and isinstance(term.source, AdaptiveIntegration)
                 else None
             )
-            for constraint, constraint_key in zip(
-                self.constraints, collocation_keys, strict=True
-            )
+            for term, term_key in zip(self.terms, collocation_keys, strict=True)
         )
         self.training_diagnostics = frozendict()
 
     def ansatz_functions(self) -> frozendict[str, DomainFunction]:
-        r"""Return the current field mapping after applying enforced pipelines (if configured)."""
-        if self.constraint_pipelines is None:
+        r"""Return the current field mapping after applying enforcement (if configured)."""
+        if self.enforcement is None:
             return self.functions
-        return self.constraint_pipelines.apply(self.functions)
-
-    def enforced_functions(self) -> frozendict[str, DomainFunction]:
-        """Alias for `ansatz_functions()`."""
-        return self.ansatz_functions()
+        return self.enforcement.apply(self.functions)
 
     def __getitem__(self, var: str) -> DomainFunction:
         """Convenience accessor: return the (ansatz) field named `var`."""
@@ -224,7 +128,7 @@ class FunctionalSolver(StrictModule):
 
         This is a thin convenience wrapper around `phydrax.export.save_onnx`.
         It exports the inference function `self[var]`, not the solver, loss, or
-        constraints.
+        scalar terms.
         """
         from ..export import save_onnx
 
@@ -245,62 +149,45 @@ class FunctionalSolver(StrictModule):
         self,
         *,
         key: Key[Array, ""] = DOC_KEY0,
+        step: int | Array | None = None,
         **kwargs: Any,
     ) -> Array:
-        r"""Evaluate constraints, raw objectives, and attached model losses.
-
-        This:
-
-        1) applies enforced pipelines (if configured),
-        2) splits `key` across constraints and raw objectives,
-        3) sums every `loss(...)` value,
-        4) adds scalar model losses attached via `model.add_model_loss(...)` or
-           model `__loss__` hooks.
-
-        Additional keyword arguments are forwarded to constraints and objectives.
-        """
+        """Evaluate all scalar terms and model-attached losses."""
         functions = self.ansatz_functions()
-        num_terms = len(self.constraints) + len(self.objectives)
-        keys = jr.split(key, num_terms)
-        constraint_keys = keys[: len(self.constraints)]
-        objective_keys = keys[len(self.constraints) :]
+        keys = jr.split(key, len(self.terms))
         total = jnp.array(0.0, dtype=float)
         with derivative_runtime_context():
-            for c, population, k in zip(
-                self.constraints, self.collocation, constraint_keys, strict=True
+            for term, population, term_key in zip(
+                self.terms,
+                self.collocation,
+                keys,
+                strict=True,
             ):
+                term_kwargs = dict(kwargs)
                 if population is not None:
-                    if not isinstance(c, FunctionalConstraint):
-                        raise TypeError(
-                            "Adaptive collocation is only valid for FunctionalConstraint."
-                        )
-                    policy = c.collocation_policy
-                    if policy is None:
-                        raise ValueError(
-                            "Adaptive population requires a collocation policy."
-                        )
-                    batch, batch_weight = policy.loss_batch_and_weight(population)
-                    term = c.loss(
-                        functions,
-                        key=k,
-                        batch=batch,
-                        batch_weight=batch_weight,
-                        **kwargs,
+                    adaptive_term = _adaptive_term(term)
+                    batch, local_weight = adaptive_term.policy.loss_batch_and_weight(
+                        population
                     )
-                else:
-                    term = c.loss(functions, key=k, **kwargs)
-                total = total + term
-            for objective, objective_key in zip(
-                self.objectives, objective_keys, strict=True
-            ):
-                total = total + objective.loss(functions, key=objective_key, **kwargs)
-            iter_ = kwargs.get("iter_", None)
-            for term in function_model_loss_values(
+                    term_kwargs["realization"] = adaptive_term._adaptive_realization(
+                        batch,
+                        local_weight,
+                        key=term_key,
+                    )
+                total = total + evaluate(
+                    term,
+                    functions,
+                    key=term_key,
+                    step=step,
+                    **term_kwargs,
+                ).value
+            iter_ = step
+            for model_loss in function_model_loss_values(
                 self.functions,
-                key=jr.fold_in(key, num_terms),
+                key=jr.fold_in(key, len(self.terms)),
                 iter_=iter_,
             ):
-                total = total + term
+                total = total + model_loss
         return total
 
     def solve(
@@ -317,13 +204,13 @@ class FunctionalSolver(StrictModule):
         jit: bool = True,
         keep_best: bool = True,
         log_every: int = 1,
-        log_constraints: bool = True,
+        log_terms: bool = True,
         log_path: str | Path | None = None,
         tensorboard_log_dir: str | Path | None = None,
         tensorboard_every: int | None = None,
         tensorboard_flush_every: int = 10,
         profile_adaptive: bool = False,
-        train_constraint_sample_size: int | None = None,
+        train_term_sample_size: int | None = None,
     ) -> "FunctionalSolver":
         """Run the training loop and return an updated solver.
 
@@ -342,8 +229,8 @@ class FunctionalSolver(StrictModule):
           the returned solver. This supports optimizers such as Optax schedule-free
           transformations without changing the gradient/update parameter lifecycle.
 
-        During training, each constraint loss receives an `iter_` keyword argument (the
-        1-based iteration index as a JAX scalar) to enable schedules.
+        During training, each term receives the one-based iteration index as the
+        JAX scalar keyword `iter_`, enabling scheduled coefficients.
         If `SIGINT` or `SIGTERM` is received while the loop is active, the current
         loop exits gracefully and `solve(...)` returns the best/current solver state
         instead of terminating the calling program.
@@ -351,17 +238,16 @@ class FunctionalSolver(StrictModule):
         Logging:
 
         - If `log_every > 0`, prints a progress line every `log_every` iterations.
-        - If `log_constraints=True`, also prints the per-constraint loss breakdown.
+        - If `log_terms=True`, also prints the per-term loss breakdown.
         - If `log_path` is provided, logs are written to that file instead of stdout.
         - If `tensorboard_log_dir` is provided, scalar training logs are written as
           TensorBoard event files. `tensorboard_every` controls the event cadence
           and defaults to `log_every` when positive, otherwise every iteration.
         - If `profile_adaptive=True`, device-synchronized refresh and optimizer wall
           times are returned in `training_diagnostics`.
-        - `train_constraint_sample_size` optionally samples a fixed-size subset of
-          training constraints per optimizer step and rescales their losses to
-          keep an unbiased estimate of the full constraint sum. This can reduce
-          JIT compile time when many constraints have different static shapes.
+        - `train_term_sample_size` optionally samples a fixed-size subset of
+          stochastic training terms per optimizer step and rescales their values
+          to preserve an unbiased estimate of the complete term sum.
         """
         from ._functional_train import solve as _solve
 
@@ -380,13 +266,13 @@ class FunctionalSolver(StrictModule):
                 jit=jit,
                 keep_best=keep_best,
                 log_every=log_every,
-                log_constraints=log_constraints,
+                log_terms=log_terms,
                 log_path=log_path,
                 tensorboard_log_dir=tensorboard_log_dir,
                 tensorboard_every=tensorboard_every,
                 tensorboard_flush_every=tensorboard_flush_every,
                 profile_adaptive=profile_adaptive,
-                train_constraint_sample_size=train_constraint_sample_size,
+                train_term_sample_size=train_term_sample_size,
             )
 
         return _solve(
@@ -398,11 +284,11 @@ class FunctionalSolver(StrictModule):
             jit=jit,
             keep_best=keep_best,
             log_every=log_every,
-            log_constraints=log_constraints,
+            log_terms=log_terms,
             log_path=log_path,
             tensorboard_log_dir=tensorboard_log_dir,
             tensorboard_every=tensorboard_every,
             tensorboard_flush_every=tensorboard_flush_every,
             profile_adaptive=profile_adaptive,
-            train_constraint_sample_size=train_constraint_sample_size,
+            train_term_sample_size=train_term_sample_size,
         )

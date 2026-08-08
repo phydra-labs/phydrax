@@ -6,8 +6,8 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-from phydrax.constraints import RaggedTimeSeriesDataConstraint
 from phydrax.domain import SampleLayout, TrajectoryDatasetDomain
+from phydrax.terms import RaggedTimeSeriesDataTerm
 
 
 def _make_domain_and_values():
@@ -26,7 +26,7 @@ def test_ragged_time_series_data_constraint_matches_exact_observations():
     def exact(data, t):
         return data[0] + t
 
-    constraint = RaggedTimeSeriesDataConstraint(
+    constraint = RaggedTimeSeriesDataTerm(
         "u",
         domain.component(),
         values,
@@ -50,7 +50,7 @@ def test_ragged_time_series_data_constraint_linear_interpolation():
     def exact(data, t):
         return data[0] + t
 
-    constraint = RaggedTimeSeriesDataConstraint(
+    constraint = RaggedTimeSeriesDataTerm(
         "u",
         domain.component(),
         values,
@@ -72,7 +72,7 @@ def test_ragged_time_series_data_constraint_vector_targets():
         y = data[0] + t
         return jnp.asarray([y, 2.0 * y])
 
-    constraint = RaggedTimeSeriesDataConstraint(
+    constraint = RaggedTimeSeriesDataTerm(
         "u",
         domain.component(),
         values,
@@ -89,7 +89,7 @@ def test_ragged_time_series_data_constraint_vector_targets():
 def test_ragged_time_series_data_constraint_samples_only_case_subset():
     domain, values = _make_domain_and_values()
     allowed = jnp.asarray([1, 2], dtype=jnp.int32)
-    constraint = RaggedTimeSeriesDataConstraint(
+    constraint = RaggedTimeSeriesDataTerm(
         "u",
         domain.component(),
         values,
@@ -105,7 +105,7 @@ def test_ragged_time_series_data_constraint_samples_only_case_subset():
 def test_ragged_time_series_case_uniform_samples_only_case_subset():
     domain, values = _make_domain_and_values()
     allowed = jnp.asarray([2], dtype=jnp.int32)
-    constraint = RaggedTimeSeriesDataConstraint(
+    constraint = RaggedTimeSeriesDataTerm(
         "u",
         domain.component(),
         values,
@@ -126,7 +126,7 @@ def test_ragged_time_series_data_constraint_penalizes_wrong_function():
         del data, t
         return 0.0
 
-    constraint = RaggedTimeSeriesDataConstraint(
+    constraint = RaggedTimeSeriesDataTerm(
         "u",
         domain.component(),
         values,

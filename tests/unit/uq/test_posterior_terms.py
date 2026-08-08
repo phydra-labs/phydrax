@@ -117,7 +117,7 @@ def test_structured_gp_marginal_term_matches_direct_likelihood_and_gradients():
         malformed.log_prob(parameters)
 
 
-def test_fixed_constraint_likelihood_preserves_operator_and_ignores_training_weight():
+def test_fixed_supervised_likelihood_preserves_operator_and_ignores_training_weight():
     rows = jnp.linspace(0.0, 1.0, 6)[:, None]
     domain = phx.domain.DatasetDomain(rows)
 
@@ -127,7 +127,7 @@ def test_fixed_constraint_likelihood_preserves_operator_and_ignores_training_wei
 
     likelihood = phx.uq.GaussianLikelihood(0.1)
     target = 4.0 * rows[:, 0]
-    constraint = phx.constraints.SupervisedLikelihoodConstraint(
+    supervised = phx.terms.SupervisedLikelihoodTerm(
         "u",
         domain.component(),
         target,
@@ -138,8 +138,8 @@ def test_fixed_constraint_likelihood_preserves_operator_and_ignores_training_wei
         reduction="mean",
         label="flux_sensors",
     )
-    term = phx.uq.FixedConstraintLikelihood(
-        constraint,
+    term = phx.uq.FixedSupervisedLikelihood(
+        supervised,
         lambda coefficient: {"u": coefficient * base},
     )
 

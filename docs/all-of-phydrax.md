@@ -10,16 +10,15 @@ Phydrax is designed to make a single idea modular:
 > Define fields on labeled domains and minimize scalar **functionals** built from operators and
 > measures over domain components.
 
-A training functional may combine three distinct kinds of scalar term:
+A training functional combines nonnegative penalty terms and model-level losses:
 
 $$
-\mathcal J[u] = \sum_i \ell_i[u] + \sum_j \mathcal F_j[u] + \sum_k r_k(\theta).
+\mathcal J[u] = \sum_i \ell_i[u] + \sum_k r_k(\theta).
 $$
 
-Here $\ell_i$ are nonnegative residual/data constraint penalties, $\mathcal F_j$ are
-raw scalar functionals such as signed energies, and $r_k$ are model-level losses.
-Domain components and their induced measures provide the sampling and integration
-semantics for both constraints and raw integral objectives.
+Each \(\ell_i\) pairs a residual, moment, or observation condition with an
+explicit numerical integration source. Domain components and their induced
+measures define the semantics of those sources.
 
 ## The compositional contract
 
@@ -28,10 +27,10 @@ At a practical level, most workflows look like:
 1) choose a **domain** \(\Omega\) and a **component** \(\Omega_{\text{comp}}\subseteq\Omega\),  
 2) define one or more **fields** \(u_\theta:\Omega\to\mathbb{R}^m\) as `DomainFunction`s,  
 3) build **residual operators** \(r=\mathcal{N}(u_\theta,\dots)\) using `phydrax.operators`,  
-4) turn residuals into **constraint terms** \(\ell_i\), or define signed
-   **objective terms** \(\mathcal F_j\) such as energies,
-5) sum constraints, raw objectives, and optional model losses into
-   \(\mathcal J\) and optimize with `FunctionalSolver`.
+4) declare residual, moment, or observation **conditions**, then pair them with
+   explicit integration sources and **penalty terms**,
+5) sum terms and optional model losses into \(\mathcal J\) and optimize with
+   `FunctionalSolver`.
 
 Two design choices make this interoperable:
 
@@ -64,17 +63,19 @@ storage types. See [API → Operators → Interpolation](api/operators/interpola
 Differential operators support multiple backends (`backend="ad"|"jet"|"fd"|"basis"`) and autodiff modes
 (`mode="reverse"|"forward"`). For deeper math, see [Appendix → Differentiation modes](appendix/differentiation_modes.md).
 
-### Constraints: soft penalties vs enforced by construction
+### Conditions: soft penalties vs enforcement by construction
 
 Boundary/initial conditions can be handled in two ways:
 
-- **Soft**: add boundary/initial constraint terms (e.g. `ContinuousDirichletBoundaryConstraint`) to \(L\).
-- **Enforced**: build an ansatz \(\tilde u=\mathcal{H}(u)\) satisfying conditions exactly, then train on the remaining terms.
+- **Soft**: declare a boundary/initial condition, give it an integration source,
+  and add its penalty term to `terms`.
+- **Enforced**: build an ansatz \(\tilde u=\mathcal{H}(u)\) satisfying conditions
+  exactly, then train on the remaining terms.
 
 The enforced route is staged as boundary → initial → interior data. See:
 
-- [API → Constraints → Enforced constraint ansätze](api/constraints/enforced.md)
-- [API → Solver → Enforced constraint pipelines](api/solver/enforced_constraints.md)
+- [API reference](api/phydrax.md)
+- [API → Solver](api/solver/index.md)
 - [Appendix → Physics-Constrained Interpolation](appendix/physics_constrained_interpolation.md)
 
 ### Models: fields vs operators
@@ -219,36 +220,40 @@ with the analytic choice \(g(x,y)=x^2+y^2\) (so the exact solution is \(u^\star(
     u = geom.Model("x")(model)
 
     layout = phx.domain.SampleLayout((("x",),))
+    interior = geom.component()
 
     # Interior PDE residual: Δu - 4 = 0
-    pde = phx.constraints.ContinuousPointwiseInteriorConstraint(
-        "u",
-        geom,
-        operator=lambda f: phx.operators.laplacian(f, var="x") - 4.0,
-        sampling=phx.domain.PointSampling(64, layout=layout),
-        reduction="mean",
+    pde_condition = phx.conditions.Residual(
+        "u", interior, lambda u: phx.operators.laplacian(u, var="x") - 4.0
     )
+    pde_source = phx.integration.per_step(
+        phx.integration.mean_over(pde_condition.on),
+        phx.domain.PointSampling(64, layout=layout),
+    )
+    pde_term = phx.terms.ResidualPenalty(pde_condition, pde_source)
 
     # Soft Dirichlet boundary: u - g = 0 on ∂Ω
     boundary = geom.component({"x": phx.domain.Boundary()})
-    bc = phx.constraints.ContinuousDirichletBoundaryConstraint(
-        "u",
-        boundary,
-        target=g,
-        sampling=phx.domain.PointSampling(32, layout=layout),
-        weight=10.0,
-        reduction="mean",
+    boundary_condition = phx.conditions.Residual("u", boundary, lambda u: u - g)
+    boundary_source = phx.integration.per_step(
+        phx.integration.mean_over(boundary_condition.on),
+        phx.domain.PointSampling(32, layout=layout),
+    )
+    boundary_term = phx.terms.ResidualPenalty(
+        boundary_condition, boundary_source, scale=10.0
     )
 
-    solver = phx.solver.FunctionalSolver(functions={"u": u}, constraints=[pde, bc])
+    solver = phx.solver.FunctionalSolver(
+        functions={"u": u}, terms=[pde_term, boundary_term]
+    )
     solver = solver.solve(num_iter=20, optim=optax.adam(1e-3), seed=0)
     ```
 
 ### Enforced boundary conditions (replace penalties with an ansatz)
 
 Instead of penalizing boundary violations, you can enforce \(u=g\) **by construction** and train only on the interior
-PDE term. This is often numerically cleaner and makes the “functional over a domain” story composable: constraints are
-just extra terms, while enforcement is a map \(u\mapsto \tilde u\).
+PDE term. This is often numerically cleaner: terms are separate from enforcement,
+which maps \(u\mapsto\tilde u\).
 
 !!! example
     ```python
@@ -266,36 +271,39 @@ just extra terms, while enforcement is a map \(u\mapsto \tilde u\).
 
     model = phx.nn.MLP(in_size=2, out_size="scalar", width_size=16, depth=2, key=jr.key(0))
     u = geom.Model("x")(model)
+    functions = {"u": u}
 
     layout = phx.domain.SampleLayout((("x",),))
-    pde = phx.constraints.ContinuousPointwiseInteriorConstraint(
-        "u",
-        geom,
-        operator=lambda f: phx.operators.laplacian(f, var="x") - 4.0,
-        sampling=phx.domain.PointSampling(64, layout=layout),
+    interior = geom.component()
+    pde_condition = phx.conditions.Residual(
+        "u", interior, lambda u: phx.operators.laplacian(u, var="x") - 4.0
     )
+    pde_source = phx.integration.per_step(
+        phx.integration.mean_over(pde_condition.on),
+        phx.domain.PointSampling(64, layout=layout),
+    )
+    pde_term = phx.terms.ResidualPenalty(pde_condition, pde_source)
 
     boundary = geom.component({"x": phx.domain.Boundary()})
-    term = phx.solver.SingleFieldEnforcedConstraint(
-        "u",
-        boundary,
-        lambda f: phx.constraints.enforce_dirichlet(f, boundary, var="x", target=g),
+    boundary_condition = phx.conditions.Dirichlet("u", boundary, target=g)
+    program = phx.enforcement.compile(
+        functions,
+        [phx.enforcement.EnforcementSpec(boundary_condition)],
+        options=phx.enforcement.EnforcementOptions(num_reference=128),
+        key=jr.key(1),
     )
 
     solver = phx.solver.FunctionalSolver(
-        functions={"u": u},
-        constraints=[pde],
-        constraint_terms=[term],
-        boundary_weight_num_reference=128,
-        boundary_weight_key=jr.key(1),
+        functions=functions, terms=[pde_term], enforcement=program
     )
     solver = solver.solve(num_iter=20, optim=optax.adam(1e-3), seed=0)
     ```
 
 ### Adding data (anchors / sensors) is “just another term”
 
-Phydrax treats data-fit the same way as PDE residuals: as a constraint term on a domain component or point set.
-For scattered anchor data \(\{(x_i,y_i)\}\), use `DiscreteInteriorDataConstraint`:
+Phydrax treats data fit the same way as PDE residuals: an observation condition
+paired with an explicit finite integration source. For scattered anchor data
+\(\{(x_i,y_i)\}\), construct the point batch directly:
 
 ```python
 import jax.numpy as jnp
@@ -306,15 +314,15 @@ import phydrax as phx
 # - u is your trainable field
 
 anchors = jnp.array([[0.0, 0.0], [0.5, -0.5], [-0.25, 0.75]])
-values = jnp.sum(anchors**2, axis=1)  # pretend we observed u(x)=x^2+y^2
-
-data = phx.constraints.DiscreteInteriorDataConstraint(
-    "u",
-    geom,
-    points={"x": anchors},
-    values=values,
-    weight=1.0,
+interior = geom.component()
+batch = interior.points({"x": anchors})
+data_condition = phx.conditions.Observation("u", interior, g)
+data_source = phx.integration.fixed(
+    phx.integration.from_samples(
+        phx.integration.mean_over(data_condition.on), batch
+    )
 )
+data_term = phx.terms.ObservationPenalty(data_condition, data_source)
 ```
 
 ### Operator learning (dataset × coordinates)
@@ -325,40 +333,47 @@ DeepONet/FNO. See [API → Domain → Composition](api/domain/composition.md) an
 [API → NN → Architectures](api/nn/architectures.md).
 
 For row-indexed trajectories with a shared time step but different sequence
-lengths, use `TrajectoryDatasetDomain` and `RaggedTimeSeriesDataConstraint`. This
-keeps each sampled time tied to the dataset row that owns it while still allowing
-time residuals and other `DomainFunction` operators.
+lengths, use `TrajectoryDatasetDomain` and `TrajectoryCaseDataTerm`. This keeps
+each sampled time tied to the dataset row that owns it while still allowing time
+residuals and other `DomainFunction` operators.
 
 When a row has static covariates and observed ragged signals, keep those semantics
 separate: put the static covariates in the `TrajectoryDatasetDomain` input row,
 expose measured signals with `TrajectorySignal`, and supervise row-level targets
-with `TrajectoryCaseDataConstraint`. Observed trajectory signals and domain arrays
-are JAX-traceable fixed state, not solver parameters.
+with `TrajectoryCaseDataTerm`. Observed trajectory signals and domain arrays are
+JAX-traceable fixed state, not solver parameters.
 
-If trajectory data must be exact, use `enforce_ragged_time_series` to build a hard
-ansatz and train only the remaining physics constraints. Linear interpolation covers
-first-order time residuals; cubic-Hermite interpolation covers second-order time
-residuals and optional selected output components.
+If trajectory data must be exact, use the corresponding helper in
+`phx.enforcement` to build a hard ansatz and train only the remaining physics
+terms. Linear interpolation covers first-order time residuals; cubic-Hermite
+interpolation covers second-order time residuals and optional selected output
+components.
 
 ## Notation
 
 We use $x$ for spatial variables, $t$ for time, $q$ for configuration, $v$ for
 velocity, and $p$ for canonical momentum. $\mathcal J$ denotes the full optimized
-functional, $\mathcal F$ a raw scalar objective, $L(q,v,t)$ a Lagrangian density,
-$\mathcal S$ an action, and $H(q,p,t)$ a Hamiltonian.
+functional, $L(q,v,t)$ a Lagrangian density, \(\mathcal S\) an action, and
+$H(q,p,t)$ a Hamiltonian.
 
 ## By task: “what do I compose?”
 
 Below are the common SciML regimes expressed in Phydrax’s primitives.
 
 - **Forward PDE solve (PINN-style)**: interior residual + boundary/initial terms (soft or enforced).
-  Start at [Getting started](index.md) and then [Guides → Constraints](guides_constraints.md).
-- **Enforced BC/IC**: build ansätze with `enforce_dirichlet` / `enforce_initial` / etc., and stage them via solver pipelines.
-  See [API → Solver → Enforced constraint pipelines](api/solver/enforced_constraints.md).
-- **Data assimilation / hybrid physics-data**: add `DiscreteInteriorDataConstraint`, `DiscreteTimeDataConstraint`, `SupervisedDatasetConstraint`, `RaggedTimeSeriesDataConstraint`, or `TrajectoryCaseDataConstraint` alongside PDE residuals. Use `TrajectorySignal` for fixed measured forcings/covariates on ragged trajectory domains, and `eval_constraints` for held-out data diagnostics.
-  See [API → Constraints → Discrete](api/constraints/discrete.md).
+  Start at [Getting started](index.md) and continue with the conditions-and-terms guide.
+- **Enforced BC/IC**: declare `EnforcementSpec` values with `phx.enforcement`,
+  compile them into an `EnforcementProgram`, and pass that program to the solver.
+  See [API reference](api/phydrax.md).
+- **Data assimilation / hybrid physics-data**: pair `Observation` conditions
+  with finite sources and `ObservationPenalty` terms; use specialized
+  `SupervisedDatasetTerm`, `RaggedTimeSeriesDataTerm`, and
+  `TrajectoryCaseDataTerm` where their dataset semantics apply. Use
+  `TrajectorySignal` for fixed measured forcings/covariates on ragged trajectory
+  domains, and evaluate held-out terms for diagnostics.
+  See [API reference](api/phydrax.md).
 - **Inverse problems (unknown coefficients/parameters)**: represent unknowns as additional fields or domain parameters, and couple them in residual operators.
-  See [API → Domain → Functions](api/domain/functions.md) and [API → Constraints](api/constraints/index.md).
+  See [API → Domain → Functions](api/domain/functions.md) and [API reference](api/phydrax.md).
 - **Operator learning**: use `DatasetDomain` and structured models on \(\Omega_{\text{data}}\times\Omega_x\). The canonical `OperatorBatch` path supports independent source/query discretizations across DeepONet, graph, geometry-informed, transformer, and spectral families; validate architecture choices with the audited benchmark protocol.
   See [Operator-learning cookbook](cookbook/operator_learning.md) and [API → NN → Architectures](api/nn/architectures.md).
 - **Irregular-time sequence mixing**: use the single
@@ -378,7 +393,9 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   diagnose adjacent likelihood, direct-horizon likelihood, semigroup, cocycle,
   weak-generator, and nonlocal jump-generator contracts independently.
   See [API → UQ → Neural-operator uncertainty](api/uq/operator.md#process-consistent-operator-transitions).
-- **Integral / conservation laws**: build terms from `integral`/`mean` and use integral constraints (equality targets, flux balances, etc.).
+- **Integral / conservation laws**: declare a moment condition, choose
+  `mean_over(component)` or `over(component)`, and attach its source to a
+  `MomentPenalty` term.
   See [Guides → Integrals and measures](guides_integrals.md).
 - **ODEs, SDEs, Lévy/rough/memory equations, interacting particles, and
   semidiscrete SPDEs**: either learn a trajectory by enforcing
@@ -499,21 +516,22 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   `sqrt(det(g))` to component integration with `with_riemannian_measure`.
   See [API → Metrix](api/metrix/index.md).
 - **Stochastic PINNs, randomized residuals, and density equations**: use
-  `ContinuousKolmogorovConstraint` for stationary or backward equations and
-  `ContinuousFokkerPlanckConstraint` for stationary or forward density equations.
-  Exact factor-HVP contractions avoid dense Hessians. When exact coordinate sums are
-  still too expensive, raw Hutchinson probes or unbiased coordinate sampling expose
-  estimator uncertainty to signed U-statistic, independent-product, or biased
-  plug-in residual objectives. PDE-IR compilation statically rejects nonlinear
-  combinations that would bias randomized intermediates.
+  `phx.conditions.stochastic.Kolmogorov` for stationary or backward equations
+  and `phx.conditions.stochastic.FokkerPlanck` for stationary or forward density
+  equations, each paired with an explicit residual-penalty source. Exact
+  factor-HVP contractions avoid dense Hessians. When exact coordinate sums are
+  still too expensive, raw Hutchinson probes or unbiased coordinate sampling
+  expose estimator uncertainty to signed U-statistic, independent-product, or
+  biased plug-in residual estimators. PDE-IR compilation statically rejects
+  nonlinear combinations that would bias randomized intermediates.
 
   For high-dimensional density evolution with simulable particles,
-  `trajectory_state_time_samples` plus `ScoreMatchingObjective` learns
+  `trajectory_state_time_samples` plus `ScoreMatchingTerm` learns
   \(\nabla_x\log p_t(x)\) without representing or normalizing \(p_t\). This produces
   a score field, not a reconstructed density. Probability-flux boundaries, strong,
   weak, and mild SPDE solution concepts remain separate explicit contracts.
   See [Stochastic-dynamics cookbook](cookbook/stochastic_dynamics.md),
-  [API → Objectives](api/objectives.md), and
+  [API reference](api/phydrax.md), and
   [API → Operators → Differential](api/operators/differential.md).
 - **Uncertainty quantification**: use NUTS/HMC or Laplace for explicit posterior problems, ensembles for neural-model epistemic variation, Gaussian processes for model discrepancy, joint QMC for uncertain inputs, likelihoods/proper scores for observations, and conformal calibration for coverage.
   See [Guides → Uncertainty quantification](guides_uncertainty.md) and [API → Uncertainty quantification](api/uq/index.md).
@@ -526,8 +544,8 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   See [Guides → Quantum operators and dynamics](guides_quantum.md),
   [Cookbook → Composite systems and a Bell state](cookbook/quantum_composite.md), and
   [Cookbook → Open-system amplitude damping](cookbook/quantum_open_system.md).
-- **Ritz/energy minimization**: use `IntegralFunctional` for the raw signed energy,
-  with essential boundary conditions enforced in the ansatz.
+- **Ritz/energy minimization**: use an explicit integral source with the
+  appropriate term, with essential boundary conditions enforced in the ansatz.
   See [Cookbook → Mechanics and Deep Ritz](cookbook/mechanics.md).
 - **Stochastic path expectation**: use Euclidean bridge kernels for imaginary-time
   propagation or Feynman–Kac diffusion paths for terminal PDE and reliability quantities.
@@ -548,7 +566,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - [Euclidean path integrals and Feynman–Kac expectations](guides_path_integrals.md)
 - [Lagrangian and Hamiltonian mechanics](guides_mechanics.md)
 - [Quantum operators and dynamics](guides_quantum.md)
-- [Constraints and objectives](guides_constraints.md)
+- Conditions and terms
 - [Uncertainty quantification](guides_uncertainty.md)
 - [State-space models and transition adapters](api/stochastic/state_space.md)
 - [Controlled dynamics](cookbook/controlled_dynamics.md)
@@ -561,8 +579,10 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - `phydrax.sparse` for JAX-native relations, routing kernels, and sparse linear actions.
 - `phydrax.metrix` for charts, tensors, metrics, curvature, and stochastic geometry.
 - `phydrax.data_utils` for CSV loading, array scaling, and case-index splits.
-- `phydrax.constraints` for loss terms and enforced constraints.
-- `phydrax.objectives` for raw signed scalar objectives.
+- `phydrax.conditions` for residual, moment, observation, and physical conditions.
+- `phydrax.terms` for penalty and specialized numerical/data terms.
+- `phydrax.integration` for targets, sources, and reductions.
+- `phydrax.enforcement` for exact condition transforms.
 - `phydrax.operators` for PDE operators.
 - `phydrax.nn` for models, wrappers, and the generic diagonal state-space mixer.
 - `phydrax.stochastic` for process paths, trajectories, typed state-space

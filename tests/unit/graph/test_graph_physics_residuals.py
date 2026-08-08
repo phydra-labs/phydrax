@@ -106,11 +106,16 @@ def test_graph_heat_residual_zero_for_constant_implicit_step():
     def residual(next_fn, current_fn):
         return phx.operators.graph_heat_residual(next_fn, current_fn, dt=0.25)
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(component=nodes,
-    operator=residual,
-    constraint_vars=("u_next", "u_current"), sampling=phx.domain.PointSampling(3, layout=structure), )
+    condition = phx.conditions.Residual(
+        ("u_next", "u_current"), nodes, residual
+    )
+    source = phx.integration.per_step(
+        phx.integration.mean_over(nodes),
+        phx.domain.PointSampling(3, layout=structure),
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
 
-    assert constraint.loss({"u_next": u_next, "u_current": u_current}) < 1e-12
+    assert term.loss({"u_next": u_next, "u_current": u_current}) < 1e-12
 
 
 def test_graph_euler_residual_matches_explicit_rate():

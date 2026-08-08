@@ -23,16 +23,19 @@ def test_euler_lagrange_residual_runs_through_functional_solver():
     def trajectory(t):
         return jnp.asarray([jnp.cos(t)])
 
-    constraint = phx.constraints.ContinuousODEConstraint(
+    condition = phx.conditions.Residual(
         "q",
-        time,
+        time.component(),
         lambda q: phx.operators.euler_lagrange(q, lagrangian),
-        sampling=phx.domain.PointSampling(32, layout=phx.domain.SampleLayout((("t",),))),
     )
-    solver = phx.solver.FunctionalSolver(
-        functions={"q": trajectory},
-        constraints=[constraint],
+    constraint = phx.terms.ResidualPenalty(
+        condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(condition.on),
+            phx.integration.MonteCarloPlan(32),
+        ),
     )
+    solver = phx.solver.FunctionalSolver(functions={"q": trajectory}, terms=[constraint], )
 
     loss = eqx.filter_jit(lambda s, k: s.loss(key=k))(solver, jr.key(0))
     assert loss < 1e-18
@@ -56,15 +59,19 @@ def test_hamiltonian_residual_runs_through_multifield_constraint():
     def p(t):
         return jnp.asarray([-jnp.sin(t)])
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(component=time.component(),
-    operator=lambda q, p: phx.operators.canonical_hamiltonian_residual(
-        q, p, hamiltonian
-    ),
-    constraint_vars=("q", "p"), sampling=phx.domain.PointSampling(32, layout=phx.domain.SampleLayout((("t",),))), )
-    solver = phx.solver.FunctionalSolver(
-        functions={"q": q, "p": p},
-        constraints=[constraint],
+    condition = phx.conditions.Residual(
+        ("q", "p"),
+        time.component(),
+        lambda q, p: phx.operators.canonical_hamiltonian_residual(q, p, hamiltonian),
     )
+    constraint = phx.terms.ResidualPenalty(
+        condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(condition.on),
+            phx.integration.MonteCarloPlan(32),
+        ),
+    )
+    solver = phx.solver.FunctionalSolver(functions={"q": q, "p": p}, terms=[constraint], )
 
     loss = eqx.filter_jit(lambda s, k: s.loss(key=k))(solver, jr.key(1))
     assert loss < 1e-18

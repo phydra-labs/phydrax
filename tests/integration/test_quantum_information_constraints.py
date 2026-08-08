@@ -23,22 +23,21 @@ def test_infidelity_residual_runs_through_functional_solver():
         del t
         return jnp.asarray([1.0, -1.0], dtype=complex) / jnp.sqrt(2.0)
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(
-        component=time.component(),
-        operator=lambda state: 1.0 - phx.operators.state_fidelity(state, target),
-        constraint_vars="psi",
-        sampling=phx.domain.PointSampling(32, layout=phx.domain.SampleLayout((("t",),))),
-        reduction="mean",
+    condition = phx.conditions.Residual(
+        "psi",
+        time.component(),
+        lambda state: 1.0 - phx.operators.state_fidelity(state, target),
         label="target infidelity",
     )
-    exact = phx.solver.FunctionalSolver(
-        functions={"psi": exact_state},
-        constraints=[constraint],
+    constraint = phx.terms.ResidualPenalty(
+        condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(condition.on),
+            phx.integration.MonteCarloPlan(32),
+        ),
     )
-    orthogonal = phx.solver.FunctionalSolver(
-        functions={"psi": orthogonal_state},
-        constraints=[constraint],
-    )
+    exact = phx.solver.FunctionalSolver(functions={"psi": exact_state}, terms=[constraint], )
+    orthogonal = phx.solver.FunctionalSolver(functions={"psi": orthogonal_state}, terms=[constraint], )
 
     loss = eqx.filter_jit(lambda solver, key: solver.loss(key=key))
     exact_loss = loss(exact, jr.key(0))

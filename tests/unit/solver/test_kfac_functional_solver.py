@@ -11,16 +11,13 @@ import pytest
 
 import phydrax as phx
 import phydrax.solver._kfac_solver as kfac_solver
-from phydrax.constraints import FunctionalConstraint
-from phydrax.domain import PointSampling, SampleLayout
-from phydrax.solver import FunctionalSolver
 from phydrax.solver._kfac_solver import _quadratic_norm_and_clip
 
 
 def _linear_solver(
     *,
-    two_constraints=False,
-    objectives=(),
+    two_terms=False,
+    extra_terms=(),
     model_loss=False,
     collocation_policy=None,
 ):
@@ -48,30 +45,34 @@ def _linear_solver(
             label="weight-penalty",
         )
     u = domain.Model("x")(model)
-    sampling = PointSampling(8, layout=SampleLayout((("x",),)))
-    first = FunctionalConstraint.from_operator(
-        component=domain.component(),
-        operator=lambda field: field - 1.0,
-        constraint_vars="u",
-        sampling=sampling,
-        collocation_policy=collocation_policy,
-        label="target-one",
+    sampling = phx.domain.PointSampling(
+        8,
+        layout=phx.domain.SampleLayout((("x",),)),
     )
-    constraints = [first]
-    if two_constraints:
-        constraints.append(
-            FunctionalConstraint.from_operator(
-                component=domain.component(),
-                operator=lambda field: 0.5 * (field - 1.0),
-                constraint_vars="u",
-                sampling=sampling,
-                label="target-one-scaled",
+    component = domain.component()
+
+    def residual_term(operator, label, *, policy=None):
+        condition = phx.conditions.Residual("u", component, operator, label=label)
+        target = phx.integration.mean_over(condition.on)
+        source = (
+            phx.integration.per_step(target, phx.integration.MonteCarloPlan(8))
+            if policy is None
+            else phx.integration.adaptive(target, sampling, policy)
+        )
+        return phx.terms.ResidualPenalty(condition, source)
+
+    terms = [residual_term(lambda field: field - 1.0, "target-one", policy=collocation_policy)]
+    if two_terms:
+        terms.append(
+            residual_term(
+                lambda field: 0.5 * (field - 1.0),
+                "target-one-scaled",
             )
         )
-    return FunctionalSolver(
+    terms.extend(extra_terms)
+    return phx.solver.FunctionalSolver(
         functions={"u": u},
-        constraints=constraints,
-        objectives=objectives,
+        terms=terms,
     )
 
 
@@ -126,8 +127,8 @@ def test_kfac_quadratic_norm_clip_enforces_requested_bound():
     assert jnp.allclose(norm, 1.0)
 
 
-def test_kfac_factor_update_period_and_constraint_subsampling_are_supported():
-    trained = _linear_solver(two_constraints=True).solve(
+def test_kfac_factor_update_period_and_term_subsampling_are_supported():
+    trained = _linear_solver(two_terms=True).solve(
         num_iter=3,
         optim=phx.optim.kfac(
             damping=1e-2,
@@ -139,7 +140,7 @@ def test_kfac_factor_update_period_and_constraint_subsampling_are_supported():
         jit=False,
         keep_best=False,
         log_every=0,
-        train_constraint_sample_size=1,
+        train_term_sample_size=1,
     )
 
     assert trained.training_diagnostics["optimizer/kfac/factor_updates"] == 2
@@ -157,7 +158,7 @@ def test_kfac_rejects_negative_num_iter():
         _linear_solver().solve(num_iter=-1, optim=phx.optim.kfac())
 
 
-def test_kfac_supports_implicit_constraint_vars_and_jax_iteration_scalar():
+def test_kfac_supports_condition_fields_and_jax_iteration_scalar():
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = phx.nn.MLP(
         in_size=1,
@@ -174,25 +175,32 @@ def test_kfac_supports_implicit_constraint_vars_and_jax_iteration_scalar():
     def scheduled_weight(x, *, iter_):
         return jnp.ones_like(x[0]) + 0.0 * iter_.astype(float)
 
-    constraint = FunctionalConstraint(
-        component=domain.component(),
-        residual=lambda functions: functions["u"] - 1.0,
-        sampling=PointSampling(6, layout=SampleLayout((("x",),))),
-        weight=scheduled_weight,
+    condition = phx.conditions.Residual(
+        "u",
+        domain.component(),
+        lambda field: field - 1.0,
     )
-    trained = FunctionalSolver(
+    term = phx.terms.ResidualPenalty(
+        condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(condition.on),
+            phx.integration.MonteCarloPlan(6),
+        ),
+        density=scheduled_weight,
+    )
+    trained = phx.solver.FunctionalSolver(
         functions={"u": domain.Model("x")(model)},
-        constraints=constraint,
+        terms=term,
     ).solve(
         num_iter=1,
         optim=phx.optim.kfac(damping=1e-2),
         keep_best=False,
         log_every=0,
     )
-    assert jnp.isfinite(trained.loss(key=jr.key(27), iter_=jnp.asarray(1.0, dtype=float)))
+    assert jnp.isfinite(trained.loss(key=jr.key(27), step=jnp.asarray(1.0, dtype=float)))
 
 
-def test_kfac_logs_train_and_eval_constraints_to_console_and_tensorboard(
+def test_kfac_logs_train_and_evaluation_terms_to_console_and_tensorboard(
     monkeypatch,
     tmp_path,
 ):
@@ -217,10 +225,10 @@ def test_kfac_logs_train_and_eval_constraints_to_console_and_tensorboard(
 
     monkeypatch.setattr(kfac_solver, "TensorBoardLogger", RecordingTensorBoard)
     base = _linear_solver()
-    solver = FunctionalSolver(
+    solver = phx.solver.FunctionalSolver(
         functions=base.functions,
-        constraints=base.constraints,
-        eval_constraints=base.constraints,
+        terms=base.terms,
+        evaluation_terms=base.terms,
     )
     log_path = tmp_path / "kfac-diagnostics.log"
     solver.solve(
@@ -228,7 +236,7 @@ def test_kfac_logs_train_and_eval_constraints_to_console_and_tensorboard(
         optim=phx.optim.kfac(damping=1e-2),
         keep_best=False,
         log_every=1,
-        log_constraints=True,
+        log_terms=True,
         log_path=log_path,
         tensorboard_log_dir=tmp_path / "tensorboard",
         tensorboard_every=1,
@@ -237,8 +245,8 @@ def test_kfac_logs_train_and_eval_constraints_to_console_and_tensorboard(
     log_text = log_path.read_text()
     assert "[train 0] target-one:" in log_text
     assert "[eval 0] target-one:" in log_text
-    assert "train/constraints/000_target-one/loss" in scalar_tags
-    assert "eval/constraints/000_target-one/loss" in scalar_tags
+    assert "train/terms/000_target-one/value" in scalar_tags
+    assert "eval/terms/000_target-one/value" in scalar_tags
 
 
 def test_kfac_honors_training_signal_stop(monkeypatch, tmp_path):
@@ -267,17 +275,16 @@ def test_kfac_honors_training_signal_stop(monkeypatch, tmp_path):
     )
 
 
-def test_kfac_rejects_standalone_objectives_without_curvature_roots():
+def test_kfac_rejects_non_residual_training_terms_without_curvature_roots():
     domain = phx.domain.Interval1d(0.0, 1.0)
-    objective = phx.objectives.IntegralFunctional.from_operator(
+    signed_term = phx.terms.IntegralFunctional(
         target=phx.integration.over(domain.component()),
         plan=phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(4)),
-        operator=lambda field: field,
-        objective_vars="u",
+        integrand=lambda functions: functions["u"],
     )
 
-    with pytest.raises(ValueError, match="standalone objective"):
-        _linear_solver(objectives=(objective,)).solve(
+    with pytest.raises(TypeError, match="ResidualPenalty training terms only"):
+        _linear_solver(extra_terms=(signed_term,)).solve(
             num_iter=1,
             optim=phx.optim.kfac(),
             log_every=0,
@@ -326,7 +333,7 @@ def test_kfac_replays_seed_across_eager_and_requested_jit_modes():
 
 def test_kfac_refreshes_adaptive_collocation_before_frozen_step():
     solver = _linear_solver(
-        collocation_policy=phx.constraints.PeriodicCollocation(
+        collocation_policy=phx.sampling.collocation.PeriodicCollocation(
             refresh_every=1,
             sampler="uniform",
         )

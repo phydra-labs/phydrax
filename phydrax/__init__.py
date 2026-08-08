@@ -9,11 +9,12 @@ import jax
 jax.config.update("jax_enable_x64", True)
 
 from . import (
-    constraints,
+    conditions,
     control,
     coresets,
     data_utils,
     domain,
+    enforcement,
     equations,
     export,
     geometry,
@@ -21,27 +22,28 @@ from . import (
     integration,
     metrix,
     nn,
-    objectives,
     operators,
     optim,
     sampling,
     solver,
     sparse,
     stochastic,
+    terms,
     uq,
 )
 
 
 # Explicit re-exports for star import
 __all__ = [
+    "conditions",
     "control",
-    "constraints",
     "coresets",
+    "terms",
     "data_utils",
     "domain",
     "equations",
+    "enforcement",
     "export",
-    "objectives",
     "integration",
     "geometry",
     "graph",

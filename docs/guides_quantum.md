@@ -114,10 +114,11 @@ distance bounds but is not imposed implicitly; construct learned densities with
 `density_from_factor` when physicality must hold throughout training.
 
 Pure-state normalization is likewise assumed by `state_fidelity`. An infidelity such
-as `1.0 - state_fidelity(state, target)` is a real scalar `DomainFunction` and can be
-used directly as a residual or raw objective. A `FunctionalConstraint` squares that
-residual; use an `IntegralFunctional` when the unsquared infidelity itself is the
-intended signed objective.
+as `1.0 - state_fidelity(state, target)` is a real scalar `DomainFunction` and can
+define either a `Residual` condition or a raw objective. A `ResidualPenalty` evaluates
+the condition through an explicit integration source and squares its magnitude; use
+an `IntegralFunctional` when the unsquared infidelity itself is the intended signed
+objective.
 
 ## Composite Hilbert spaces
 
@@ -217,10 +218,11 @@ not make an arbitrary learned matrix field positive semidefinite; use
 `density_from_factor` when density physicality must hold pointwise. See the
 [open-system amplitude-damping recipe](cookbook/quantum_open_system.md).
 
-## Quantum residuals in constraints
+## Quantum residual penalties
 
-A complex residual belongs in a residual constraint, not in a raw signed objective.
-Sampled Phydrax constraints use the Hermitian squared Frobenius norm
+A complex residual belongs in a `Residual` condition evaluated by a
+`ResidualPenalty`, not in a raw signed objective. Sampled residual penalties use the
+Hermitian squared Frobenius norm
 
 $$
 \|r\|_F^2=\sum_i \overline{r_i}r_i,
@@ -244,19 +246,23 @@ H = time.Function()(0.5 * omega * sigma_z)
 def psi(t):
     return jnp.asarray([jnp.exp(-0.5j * omega * t), 0.0j])
 
-constraint = phx.constraints.FunctionalConstraint.from_operator(
-    component=time.component(),
-    operator=lambda state: phx.operators.schrodinger_residual(state, H),
-    constraint_vars="psi",
-    sampling=phx.domain.PointSampling(
+component = time.component()
+condition = phx.conditions.Residual(
+    "psi",
+    component,
+    lambda state: phx.operators.schrodinger_residual(state, H),
+)
+source = phx.integration.per_step(
+    phx.integration.mean_over(condition.on),
+    phx.domain.PointSampling(
         16,
         layout=phx.domain.SampleLayout((("t",),)),
     ),
-    reduction="mean",
 )
+term = phx.terms.ResidualPenalty(condition, source, scale=1.0)
 solver = phx.solver.FunctionalSolver(
     functions={"psi": psi},
-    constraints=[constraint],
+    terms=[term],
 )
 assert solver.loss(key=jr.key(0)) < 1e-20
 ```

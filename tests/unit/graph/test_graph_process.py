@@ -112,7 +112,7 @@ def test_graph_rollout_model_wraps_as_domain_function():
     assert jnp.allclose(out.data[2, :, 0], jnp.array([3.0, 4.0, 5.0]))
 
 
-def test_graph_rollout_model_participates_in_functional_constraint():
+def test_graph_rollout_model_participates_in_residual_penalty():
     domain = phx.domain.GraphDomain(_graph())
     nodes = domain.component({"graph": phx.domain.Nodes()})
     structure = phx.domain.SampleLayout((("graph",),))
@@ -129,12 +129,15 @@ def test_graph_rollout_model_participates_in_functional_constraint():
     def residual(pred):
         return pred - target
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(component=nodes,
-    operator=residual,
-    constraint_vars="pred", sampling=phx.domain.PointSampling(3, layout=structure), )
+    condition = phx.conditions.Residual("pred", nodes, residual)
+    source = phx.integration.per_step(
+        phx.integration.mean_over(nodes),
+        phx.domain.PointSampling(3, layout=structure),
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
     rollout_fn = domain.GraphRolloutModel(stepper, steps=2, input_fn=u)
 
-    assert constraint.loss({"pred": rollout_fn}) < 1e-12
+    assert term.loss({"pred": rollout_fn}) < 1e-12
 
 
 def test_graph_rollout_model_respects_node_subsets():
@@ -194,8 +197,11 @@ def test_graph_process_stepper_integrates_with_graph_trajectory_constraint():
     def residual(f):
         return domain.GraphModel(stepper, input_fn=f) - f
 
-    constraint = phx.constraints.FunctionalConstraint.from_operator(component=component,
-    operator=residual,
-    constraint_vars="u", sampling=phx.domain.PointSampling(2, layout=structure), )
+    condition = phx.conditions.Residual("u", component, residual)
+    source = phx.integration.per_step(
+        phx.integration.mean_over(component),
+        phx.domain.PointSampling(2, layout=structure),
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
 
-    assert constraint.loss({"u": u}, key=jr.key(0)) < 1e-12
+    assert term.loss({"u": u}, key=jr.key(0)) < 1e-12

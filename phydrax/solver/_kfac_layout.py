@@ -34,7 +34,7 @@ class KFACPlan:
 
     config: KFAC
     layout: ParameterLayout
-    num_constraints: int
+    num_terms: int
     dtype: object
 
     def initialize(self, parameters: PyTree[Any], /) -> KFACState:
@@ -45,7 +45,7 @@ class KFACPlan:
             step=jnp.asarray(0, dtype=jnp.int32),
             curvature=initialize_block_state(
                 self.layout,
-                num_terms=self.num_constraints,
+                num_terms=self.num_terms,
                 dtype=self.dtype,
             ),
             factor_updates=jnp.asarray(0, dtype=jnp.int32),
@@ -58,12 +58,12 @@ def build_kfac_plan(
     parameters: PyTree[Any],
     /,
     *,
-    num_constraints: int,
+    num_terms: int,
 ) -> KFACPlan:
     """Build a static KFAC plan from solver-owned model semantics."""
 
-    if int(num_constraints) <= 0:
-        raise ValueError("KFAC requires at least one FunctionalConstraint.")
+    if int(num_terms) <= 0:
+        raise ValueError("KFAC requires at least one ResidualPenalty term.")
     flat, _ = ravel_pytree(parameters)
     layout = discover_parameter_layout(
         functions,
@@ -74,7 +74,7 @@ def build_kfac_plan(
     return KFACPlan(
         config=config,
         layout=layout,
-        num_constraints=int(num_constraints),
+        num_terms=int(num_terms),
         dtype=flat.dtype,
     )
 

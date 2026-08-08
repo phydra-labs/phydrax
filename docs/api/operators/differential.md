@@ -270,16 +270,16 @@ importance probabilities when a few coordinates dominate.
 
 `RandomizedDifferentialPlan` lowers recognized scalar PDE-IR `laplacian` and
 `divergence` nodes to Hutchinson or coordinate-sampling realizations and returns a
-`RandomizedResidualObjective`. Static analysis runs first and reports the exact and
+`RandomizedResidualTerm`. Static analysis runs first and reports the exact and
 randomized node paths. It rejects nested randomized derivatives, nonlinear
 transformations or products that would bias the estimator, randomized denominators,
 unsupported integrals, and non-scalar equations. There is no silent biased fallback.
 Deterministic coefficient-only contractions remain exact when `prefer_exact=True`.
 `RandomizedDifferentialMethod` selects `"hutchinson"` or `"dimension"`;
 `RandomizedNodeCoupling` selects independent or common random numbers across
-recognized IR nodes. `CompiledRandomizedPDEObjective` packages the objective, static
-report, and source equation. `compile_randomized_pde_objective` is the equivalent
-noun-ordered entry point.
+recognized IR nodes. `CompiledRandomizedPDETerm` packages the term, static
+report, and source equation. `compile_pde_randomized_term` is the canonical
+compiler entry point.
 
 ::: phydrax.equations.RandomizedDifferentialPlan
 
@@ -289,7 +289,7 @@ noun-ordered entry point.
 
 ---
 
-::: phydrax.equations.CompiledRandomizedPDEObjective
+::: phydrax.equations.CompiledRandomizedPDETerm
 
 ---
 
@@ -297,7 +297,7 @@ noun-ordered entry point.
 
 ---
 
-::: phydrax.equations.compile_pde_randomized_objective
+::: phydrax.equations.compile_pde_randomized_term
 
 ## Riemannian differential operators
 

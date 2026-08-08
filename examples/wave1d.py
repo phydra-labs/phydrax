@@ -32,13 +32,13 @@ def _(mo):
         r"""
     # 1D Wave Equation in Phydrax
 
-    This notebook is a hands-on tutorial for a central Phydrax workflow:
+    This notebook demonstrates the four-layer Phydrax workflow:
 
-    1. Build a flexible neural field \(u_\theta\) from factorized latent branches.
-    2. Enforce boundary and initial constraints **by construction** using Phydrax's 
-        unique enforced constraint overlay pipeline.
-    3. Train with a **single PDE residual objective** rather than juggling many soft 
-        penalties using a **problem-optimal differentiation** configuration.
+    1. Declare the wave, boundary, and initial **conditions**.
+    2. Give the wave residual an explicit per-step integration source.
+    3. Reduce that residual to one scalar penalty.
+    4. Compile the boundary and initial conditions into exact field transforms,
+       then pass the term and enforcement program to `FunctionalSolver`.
 
     ---
 
@@ -48,7 +48,7 @@ def _(mo):
     u_{tt} - c^2 u_{xx} = 0,\qquad (x,t)\in[0,\pi]\times[0,2\pi],
     $$
 
-    with constraints
+    with conditions
 
     $$
     u(0,t)=u(\pi,t)=0,\qquad
@@ -79,7 +79,7 @@ def _(mo):
 def _(mo):
     mo.md(
         r"""
-    ## Why PCI overlays change the optimization problem
+    ## Why exact enforcement changes the optimization problem
 
     A traditional PINN-style objective often looks like
 
@@ -93,7 +93,7 @@ def _(mo):
 
     where tuning the \(\lambda\)'s becomes a balancing problem.
 
-    Phydrax's PCI pipeline instead constructs an enforced ansatz
+    Phydrax's enforcement compiler instead constructs an exact ansatz
 
     $$
     u_\theta = \mathcal{E}_{ic,1}\circ\mathcal{E}_{ic,0}\circ\mathcal{E}_{bc}[u_{\theta,\text{raw}}],
@@ -108,11 +108,11 @@ def _(mo):
     \right].
     $$
 
-    In short: PCI converts a multi-loss balancing act into a residual-focused solve on a
-    constrained function manifold. 
+    In short: exact enforcement converts a multi-loss balancing act into a
+    residual-focused solve on a condition-satisfying function manifold.
 
-    *A deeper mathematical dive into Phydrax's PCI pipeline can 
-    be found [here](https://phydra-labs.github.io/phydrax/appendix/physics_constrained_interpolation/).*
+    *A deeper mathematical treatment of the enforcement construction is
+    available [here](https://phydra-labs.github.io/phydrax/appendix/physics_constrained_interpolation/).*
     """
     )
     return
@@ -169,10 +169,9 @@ def _(mo):
                JVP-of-JVP gives the exact directional second derivative needed by PDE operators
                without constructing dense Hessian tensors.
 
-            4. **Great fit with coord-separable sampling.**  
-               In this notebook we sample \(x\)-axes and \(t\)-points in a structured way,
-               so derivative computation stays close to the branchwise geometry instead of
-               flattening everything into a monolithic dense-input path.
+            4. **Explicit numerical realization.**
+               The residual penalty integrates a normalized mean through a per-step
+               Monte Carlo source, keeping sampling policy separate from PDE semantics.
 
             Conceptually: this architecture is "low-dimensional coordinate geometry 
             + large latent algebra + contraction."
@@ -346,51 +345,56 @@ def _(jax, jnp, jr, phx):
         def ut0_target(x):
             return jnp.sin(x[0])
 
-        # PCI overlays: exact BC/IC enforcement by construction.
-        overlays = [
-            phx.solver.SingleFieldEnforcedConstraint(
-                "u",
-                boundary,
-                lambda f: phx.constraints.enforce_dirichlet(
-                    f, boundary, var="x", target=0.0
-                ),
-            ),
-            phx.solver.SingleFieldEnforcedConstraint(
-                "u",
-                initial,
-                lambda f: f,
-                time_derivative_order=0,
-                initial_target=u0_target,
-            ),
-            phx.solver.SingleFieldEnforcedConstraint(
-                "u",
-                initial,
-                lambda f: f,
-                time_derivative_order=1,
-                initial_target=ut0_target,
-            ),
-        ]
-
-        # Residual objective only: derivatives are computed with JVP engine.
-        structure_xt = phx.domain.SampleLayout((("x",), ("t",)))
-        residual = phx.constraints.ContinuousPointwiseInteriorConstraint(
+        # Exact boundary and initial conditions are compiled from semantics.
+        boundary_condition = phx.conditions.Dirichlet(
+            "u", boundary, target=0.0
+        )
+        initial_value = phx.conditions.Initial(
             "u",
-            domain,
-            operator=lambda f: (
-                phx.operators.dt_n(f, var="t", order=2, ad_engine="jvp")
-                - (float(c) ** 2) * phx.operators.laplacian(f, var="x", ad_engine="jvp")
+            initial,
+            target=u0_target,
+            evolution_var="t",
+        )
+        initial_velocity = phx.conditions.Initial(
+            "u",
+            initial,
+            target=ut0_target,
+            evolution_var="t",
+            order=1,
+        )
+        enforcement = (
+            phx.enforcement.EnforcementSpec(
+                boundary_condition,
+                options={"var": "x"},
             ),
-            num_points={"x": int(num_x_interior), "t": int(num_t_interior)},
-            structure=structure_xt,
-            reduction="mean",
+            phx.enforcement.EnforcementSpec(initial_value),
+            phx.enforcement.EnforcementSpec(initial_velocity),
+        )
+
+        # The residual condition is realized as a normalized scalar penalty.
+        residual = phx.conditions.Residual(
+            "u",
+            domain.component(),
+            lambda u: (
+                phx.operators.dt_n(u, var="t", order=2, ad_engine="jvp")
+                - (float(c) ** 2)
+                * phx.operators.laplacian(u, var="x", ad_engine="jvp")
+            ),
             label="wave_residual",
         )
+        source = phx.integration.per_step(
+            phx.integration.mean_over(residual.on),
+            phx.integration.MonteCarloPlan(
+                int(num_x_interior) * int(num_t_interior)
+            ),
+        )
+        penalty = phx.terms.ResidualPenalty(residual, source)
 
         return phx.solver.FunctionalSolver(
             functions={"u": u_raw},
-            constraints=[residual],
-            constraint_terms=overlays,
-            boundary_weight_key=key_bw,
+            terms=(penalty,),
+            enforcement=enforcement,
+            enforcement_key=key_bw,
         )
 
     return constraint_errors, evaluate_on_grid, make_solver

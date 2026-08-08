@@ -54,14 +54,14 @@ semilinear PDE residual.
 
 ::: phydrax.stochastic.bsde_diagnostics
 
-## Functional training objective
+## Functional training term
 
-`BSDEObjective` is an `AbstractObjectiveTerm` accepted by `FunctionalSolver`. Fixed
+`BSDETerm` is an `AbstractScalarTerm` accepted by `FunctionalSolver`. Fixed
 paths provide common-random-number optimization and deterministic replay. Resampled
 paths request a fresh batch through the problem's forward sampler. Value and explicit
 control models can be ordinary callables or labeled `DomainFunction` objects.
 
-::: phydrax.objectives.BSDEObjective
+::: phydrax.terms.BSDETerm
 
 ## Global-in-time Feynman--Kac regression
 
@@ -117,13 +117,13 @@ not counted as independent paths in reported standard errors.
 
 ::: phydrax.stochastic.feynman_kac_label_diagnostics
 
-`FeynmanKacRegressionObjective` applies `stop_gradient` to all generated targets and
+`FeynmanKacRegressionTerm` applies `stop_gradient` to all generated targets and
 performs weighted value regression, with an optional separately weighted control
 term. Its sample provider is invoked once per optimizer update by
 `FunctionalSolver`, outside the differentiated loss. Fixed labels therefore provide
 common-random-number replay; resampled labels provide a fresh Monte Carlo target.
 
-::: phydrax.objectives.FeynmanKacRegressionObjective
+::: phydrax.terms.FeynmanKacRegressionTerm
 
 ## Deep Picard iteration
 
@@ -166,7 +166,7 @@ measure.
 
 ## Deep BSDE terminal shooting
 
-`DeepBSDEShootingObjective` implements the canonical forward rollout
+`DeepBSDEShootingTerm` implements the canonical forward rollout
 
 $$
 Y_{i+1}=Y_i-f(t_i,X_i,Y_i,Z_i)\Delta t_i+Z_i\Delta W_i
@@ -178,21 +178,21 @@ a `Domain.Parameter` is the direct representation of one learned \(Y_0\).
 `deep_bsde_rollout` supports arbitrary declared output and noise event shapes and
 masks invalid paths before they can contaminate gradients.
 
-`solve_deep_bsde` appends the shooting objective temporarily, trains both functions,
-removes that temporary objective, and evaluates the result on a separately sampled or
+`solve_deep_bsde` appends the shooting term temporarily, trains both functions,
+removes that temporary term, and evaluates the result on a separately sampled or
 explicitly supplied validation batch. The returned object is a localized shooting
 solution, not a global value field. Use a state-dependent initial-value function only
 when intentionally amortizing over an initial-state distribution.
 
-::: phydrax.objectives.DeepBSDEShootingObjective
+::: phydrax.terms.DeepBSDEShootingTerm
 
 ---
 
-::: phydrax.objectives.deep_bsde_rollout
+::: phydrax.terms.deep_bsde_rollout
 
 ---
 
-::: phydrax.objectives.DeepBSDEShootingDiagnostics
+::: phydrax.terms.DeepBSDEShootingDiagnostics
 
 ---
 
@@ -225,11 +225,11 @@ temporal interpolation. `as_domain_function` exposes that interpolant through th
 normal labeled field API. A held-out one-step RMSE includes irreducible transition
 noise; it is a regression diagnostic, not by itself a global solution-error estimate.
 
-::: phydrax.objectives.deep_splitting_labels
+::: phydrax.terms.deep_splitting_labels
 
 ---
 
-::: phydrax.objectives.DeepSplittingRegressionObjective
+::: phydrax.terms.DeepSplittingRegressionTerm
 
 ---
 

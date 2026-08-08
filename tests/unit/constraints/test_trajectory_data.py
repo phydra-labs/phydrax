@@ -7,13 +7,12 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
-from phydrax.constraints import (
-    FunctionalConstraint,
-    TrajectoryCaseDataConstraint,
-    TrajectorySignal,
-)
 from phydrax.domain import SampleLayout, TrajectoryDatasetDomain
 from phydrax.operators.differential import partial_n, partial_t
+from phydrax.terms import (
+    TrajectoryCaseDataTerm,
+    TrajectorySignal,
+)
 
 
 def _make_problem():
@@ -90,7 +89,7 @@ def test_trajectory_signal_cubic_hermite_supports_second_time_derivative():
     assert jnp.allclose(pred, jnp.zeros_like(pred), atol=1e-10)
 
 
-def test_trajectory_case_data_constraint_supervises_case_only_vector_target():
+def test_trajectory_case_data_term_supervises_case_only_vector_target():
     domain, _values, _slopes, _structure = _make_problem()
     inputs = domain.inputs
     targets = jnp.stack(
@@ -101,7 +100,7 @@ def test_trajectory_case_data_constraint_supervises_case_only_vector_target():
     def theta(data):
         return jnp.asarray([data[0] + data[1], data[0] - data[1]])
 
-    constraint = TrajectoryCaseDataConstraint(
+    term = TrajectoryCaseDataTerm(
         "theta",
         domain.component(),
         targets,
@@ -109,14 +108,14 @@ def test_trajectory_case_data_constraint_supervises_case_only_vector_target():
         label="case_target",
     )
 
-    loss = constraint.loss({"theta": theta}, key=jr.key(3))
-    metrics = constraint.data_metrics({"theta": theta}, key=jr.key(3))
+    loss = term.loss({"theta": theta}, key=jr.key(3))
+    metrics = term.data_metrics({"theta": theta}, key=jr.key(3))
     assert jnp.allclose(loss, 0.0, atol=1e-12)
     assert jnp.allclose(metrics["data_accuracy"], 1.0)
     assert jnp.allclose(metrics["data_relative_l2_error"], 0.0)
 
 
-def test_trajectory_case_data_constraint_can_evaluate_at_case_end():
+def test_trajectory_case_data_term_can_evaluate_at_case_end():
     domain, _values, _slopes, _structure = _make_problem()
     inputs = domain.inputs
     targets = inputs[:, 0] + domain.end_times
@@ -125,7 +124,7 @@ def test_trajectory_case_data_constraint_can_evaluate_at_case_end():
     def final_value(data, t):
         return data[0] + t
 
-    constraint = TrajectoryCaseDataConstraint(
+    term = TrajectoryCaseDataTerm(
         "theta",
         domain.component(),
         targets,
@@ -133,16 +132,16 @@ def test_trajectory_case_data_constraint_can_evaluate_at_case_end():
         case_time="end",
     )
 
-    loss = constraint.loss({"theta": final_value}, key=jr.key(4))
+    loss = term.loss({"theta": final_value}, key=jr.key(4))
     assert jnp.allclose(loss, 0.0, atol=1e-12)
 
 
-def test_trajectory_case_data_constraint_samples_only_case_subset():
+def test_trajectory_case_data_term_samples_only_case_subset():
     domain, _values, _slopes, _structure = _make_problem()
     targets = domain.inputs[:, 0]
     allowed = jnp.asarray([0, 2], dtype=jnp.int32)
 
-    constraint = TrajectoryCaseDataConstraint(
+    term = TrajectoryCaseDataTerm(
         "theta",
         domain.component(),
         targets,
@@ -150,7 +149,7 @@ def test_trajectory_case_data_constraint_samples_only_case_subset():
         case_indices=allowed,
     )
 
-    batch = constraint.sample(key=jr.key(8))
+    batch = term.sample(key=jr.key(8))
     assert jnp.all(jnp.isin(batch.case_indices, allowed))
     assert jnp.allclose(batch.target, targets[batch.case_indices])
 
@@ -168,9 +167,17 @@ def test_physics_residual_can_use_fixed_trajectory_signal():
     def u(data, t):
         return data[0] + 2.0 * t
 
-    constraint = FunctionalConstraint.from_operator(component=domain.component(),
-    operator=lambda u_fn, s_fn: partial_t(u_fn, var="t") - partial_t(s_fn, var="t"),
-    constraint_vars=("u", "s"), sampling=phx.domain.PointSampling(16, layout=structure), reduction="mean",)
+    component = domain.component()
+    condition = phx.conditions.Residual(
+        ("u", "s"),
+        component,
+        lambda u_fn, s_fn: partial_t(u_fn, var="t") - partial_t(s_fn, var="t"),
+    )
+    source = phx.integration.per_step(
+        phx.integration.mean_over(component),
+        phx.domain.PointSampling(16, layout=structure),
+    )
+    term = phx.terms.ResidualPenalty(condition, source)
 
-    loss = constraint.loss({"u": u, "s": signal}, key=jr.key(5))
+    loss = term.loss({"u": u, "s": signal}, key=jr.key(5))
     assert jnp.allclose(loss, 0.0, atol=1e-12)

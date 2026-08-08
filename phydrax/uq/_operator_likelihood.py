@@ -16,6 +16,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import array_tree_fingerprint
+from .._likelihoods import AbstractLikelihood, GaussianLikelihood
 from .._strict import StrictModule
 from ..nn.models.core._operator import (
     FunctionSamples,
@@ -24,7 +25,6 @@ from ..nn.models.core._operator import (
     OperatorPrediction,
 )
 from ..nn.operator_training._loader import OperatorBatchLoader
-from ._likelihoods import AbstractLikelihood, GaussianLikelihood
 from ._minibatch_posterior import LikelihoodBatch
 from ._operator import (
     _broadcast_named,

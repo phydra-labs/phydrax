@@ -8,14 +8,14 @@ import jax.numpy as jnp
 
 import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.constraints import enforce_dirichlet, FunctionalConstraint
 from phydrax.domain import Boundary, Interval1d, PointBatch, SampleLayout
-from phydrax.operators.differential import grad
-from phydrax.solver import (
-    EnforcedConstraintPipelines,
-    EnforcedInteriorData,
-    SingleFieldEnforcedConstraint,
+from phydrax.enforcement import (
+    enforce_dirichlet,
+    EnforcementProgram,
+    EnforcementSpec,
+    InteriorAnchors,
 )
+from phydrax.operators.differential import grad
 
 
 def _batch(domain, xs):
@@ -42,25 +42,25 @@ def test_mixed_constraints_steady_state():
     )
     full_boundary = geom.component({"x": Boundary()})
 
-    left_constraint = SingleFieldEnforcedConstraint(
-        "u",
-        left_component,
-        lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
+    left_constraint = EnforcementSpec(
+        phx.conditions.Dirichlet("u", left_component, target=1.0),
+        kind="custom",
+        transform=lambda f, _: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
     )
-    right_constraint = SingleFieldEnforcedConstraint(
-        "u",
-        right_component,
-        lambda f: enforce_dirichlet(f, full_boundary, var="x", target=2.0),
+    right_constraint = EnforcementSpec(
+        phx.conditions.Dirichlet("u", right_component, target=2.0),
+        kind="custom",
+        transform=lambda f, _: enforce_dirichlet(f, full_boundary, var="x", target=2.0),
     )
 
     anchors = {"x": jnp.array([[0.25], [0.75]], dtype=float)}
     anchor_values = jnp.array([3.0, 4.0], dtype=float)
-    interior = EnforcedInteriorData("u", points=anchors, values=anchor_values)
+    interior = InteriorAnchors("u", points=anchors, values=anchor_values)
 
-    pipelines = EnforcedConstraintPipelines.build(
+    pipelines = EnforcementProgram.build(
         functions={"u": u},
-        constraints=[left_constraint, right_constraint],
-        interior_data=[interior],
+        specs=[left_constraint, right_constraint],
+        interior=[interior],
         num_reference=256,
     )
     u_enforced = pipelines.apply({"u": u})["u"]
@@ -74,9 +74,18 @@ def test_mixed_constraints_steady_state():
     out = jnp.asarray(u_enforced(batch).data).reshape((-1,))
     assert jnp.allclose(out, anchor_values, atol=1e-3)
 
-    constraint = FunctionalConstraint.from_operator(component=geom.component(),
-    operator=lambda f: grad(f, var="x"),
-    constraint_vars="u", sampling=phx.domain.PointSampling(16, layout=SampleLayout((("x",),))), reduction="mean",)
-    loss_fn = eqx.filter_jit(lambda: constraint.loss({"u": u_enforced}))
+    condition = phx.conditions.Residual(
+        "u",
+        geom.component(),
+        lambda f: grad(f, var="x"),
+    )
+    term = phx.terms.ResidualPenalty(
+        condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(condition.on),
+            phx.integration.MonteCarloPlan(16),
+        ),
+    )
+    loss_fn = eqx.filter_jit(lambda: term.loss({"u": u_enforced}))
     loss = loss_fn()
     assert jnp.isfinite(loss)

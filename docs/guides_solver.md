@@ -104,22 +104,21 @@ for the complete shape, replay, and result contract.
 A `FunctionalSolver` is a lightweight orchestrator that holds:
 
 - `functions`: a mapping `{name: DomainFunction}` of the current fields,
-- `constraints`: a list/tuple of constraint objects, each producing a scalar loss,
-- `objectives`: raw scalar terms such as signed integral energies,
+- `terms`: one ordered collection of training penalties and signed objectives,
+- `evaluation_terms`: optional held-out terms used only for diagnostics and logging,
 - model-level losses attached to models with `model.add_model_loss(...)` or a custom
-  model `__loss__` hook,
-- `eval_constraints`: optional constraints used only for diagnostics/logging,
-- optional `constraint_pipelines`: enforced-constraint pipelines that replace raw fields with ansatz
-  functions satisfying selected conditions exactly.
+  model `__loss__` hook, and
+- optional `enforcement`: a compiled `EnforcementProgram` that replaces raw fields
+  with ansatz functions satisfying selected conditions.
 
-The training functional is the sum of constraint losses, raw objective terms, and
-attached model losses:
+The training functional is the sum of training-term losses and attached model
+losses:
 
 $$
-\mathcal J = \sum_i \ell_i + \sum_j \mathcal F_j + \sum_k r_k.
+\mathcal J = \sum_i \ell_i + \sum_k r_k.
 $$
 
-`eval_constraints` are evaluated against the same current ansatz functions, but
+`evaluation_terms` are evaluated against the same current ansatz functions, but
 they do not contribute to `loss(...)`, gradients, optimizer state, or best-model
 selection. Use them for validation folds, held-out cases, or non-training
 diagnostics.
@@ -128,22 +127,21 @@ diagnostics.
 
 When you call `solver.loss(key=...)`:
 
-1) If enforced pipelines are configured, the current `functions` mapping is transformed into
-   *ansatz functions* via `solver.ansatz_functions()`.
-2) The provided PRNG key is split into independent subkeys for constraints, objectives,
-   and model losses.
-3) Each constraint loss and raw objective term is evaluated and summed.
+1) If an enforcement program is configured, it transforms the current `functions`
+   mapping into *ansatz functions* via `solver.ansatz_functions()`.
+2) The provided PRNG key is split into independent subkeys for terms and model losses.
+3) Each training term is evaluated and the scalar losses are summed.
 4) Model-level losses attached to the raw trainable models are evaluated and added.
 
-Additional keyword arguments are forwarded to each constraint and objective `.loss(...)`.
+Additional keyword arguments are forwarded to each term's `.loss(...)`.
 The `iter_` keyword, when present, is also forwarded to model losses.
 
 Raw objective terms may be negative. `IntegralFunctional` integrates its density
 without squaring it; use this for energy/Ritz minimization, not for a residual penalty.
 
-### Sampled objective materialization
+### Sampled term materialization
 
-Objectives derived from `AbstractSamplingObjectiveTerm` own two stages:
+Terms derived from `AbstractSamplingTerm` own two stages:
 
 1. `sample(key=...)` materializes an immutable batch of paths, labels, particles, or
    derivative probes;
@@ -156,9 +154,9 @@ This prevents differentiation through Monte Carlo target construction and preven
 an optimizer population from silently receiving different targets within one update.
 Evosax likewise materializes one batch per population update.
 
-Fixed sampled objectives return the same batch on every call and are the default for
-common-random-number comparisons. Resampled objectives receive deterministic fresh
-subkeys each update. Multiple sampled objectives receive distinct subkeys. Keep probe
+Fixed sampled terms return the same batch on every call and are the default for
+common-random-number comparisons. Resampled terms receive deterministic fresh
+subkeys each update. Multiple sampled terms receive distinct subkeys. Keep probe
 counts, path counts, and other batch-shape policy fields fixed during one JIT-compiled
 run.
 
@@ -216,23 +214,62 @@ class MyModel(eqx.Module):
 ```
 
 During `solve(...)`, model losses contribute to gradients, optimizer state, and
-best-model selection. When `log_constraints=True`, text logs print them as
+best-model selection. When `log_terms=True`, text logs print them as
 `[model i] ...`, and TensorBoard writes them under `train/model_losses/...`.
 
-## Enforced-constraint pipelines
+## Exact enforcement
 
-Enforced pipelines are optional, but common when you want to enforce boundary/initial conditions
-exactly by construction (rather than penalizing violations).
+Exact enforcement is optional, but common when boundary, initial, or interior
+conditions must hold by construction rather than through a penalty. Declare each
+hard condition as an `EnforcementSpec`, compile the specifications once, and pass
+the resulting `EnforcementProgram` to the solver:
 
-Pipelines are applied before any soft constraints are evaluated, so all residuals see the
-post-processed (enforced) fields.
+```python
+geom = phx.domain.Interval1d(-1.0, 1.0)
+u = geom.Function("x")(lambda x: x[0])
+functions = {"u": u}
 
-Geometry Dirichlet ansätze and pipeline preservation overlays use a dimensionless
-gate derived from the certified boundary field. `gate_method="auto"` selects an
-exact domain-specific profile for intervals and hyperrectangles and the compact
-field transform for general compiled geometry. Select
-`gate_method="global_r_equivalence"` explicitly for the broad generic transform;
-`gate_method="compact"` makes the default fallback explicit.
+component = geom.component()
+interior_condition = phx.conditions.Residual(
+    "u", component, lambda value: value
+)
+terms = (
+    phx.terms.ResidualPenalty(
+        interior_condition,
+        phx.integration.per_step(
+            phx.integration.mean_over(component),
+            phx.domain.PointSampling(16),
+        ),
+    ),
+)
+boundary = geom.component({"x": phx.domain.Boundary()})
+boundary_condition = phx.conditions.Dirichlet("u", boundary, target=0.0)
+specs = (phx.enforcement.EnforcementSpec(boundary_condition),)
+options = phx.enforcement.EnforcementOptions(gate_method="auto")
+program = phx.enforcement.compile(
+    functions,
+    specs,
+    options=options,
+    key=jr.key(0),
+)
+solver = phx.solver.FunctionalSolver(
+    functions=functions,
+    terms=terms,
+    enforcement=program,
+)
+```
+
+The program is applied before scalar terms are evaluated, so every residual and
+objective sees the same enforced fields. When there are no hard specifications
+or interior anchors, pass `enforcement=None` rather than compiling an empty
+program.
+
+Geometry Dirichlet ansätze and preservation overlays use a dimensionless gate
+derived from the certified boundary field. Set `gate_method` on
+`EnforcementOptions`: `"auto"` selects an exact domain-specific profile for
+intervals and hyperrectangles and the compact field transform for general
+compiled geometry, `"global_r_equivalence"` selects the broad generic
+transform, and `"compact"` makes the fallback explicit.
 `gate_saturation_fraction` and `gate_linear_fraction` configure only the compact
 transform.
 
@@ -244,15 +281,14 @@ near the boundary and bounds the interior amplitude. The factor gradient is the
 outward unit normal at regular boundary points and inherits the field
 certificate's piecewise regularity elsewhere.
 
-Boundary constraints whose operators contain spatial derivatives must declare
-that order on `SingleFieldEnforcedConstraint` or
-`MultiFieldEnforcedConstraint`. Set `max_derivative_order=0` for Dirichlet
-values and `max_derivative_order=1` for Neumann, Robin, Sommerfeld, or traction
-conditions. Later initial/data overlays are then multiplied by
-$\beta^{K+1}$, preserving boundary derivatives through order $K$.
+`EnforcementSpec` infers derivative requirements from standard Neumann, Robin,
+absorbing, and initial conditions. A custom transform must declare its
+`DerivativeRequirement` values explicitly. The compiler uses these orders when
+constructing later initial and interior overlays, preserving boundary
+derivatives through the declared order.
 
-See [API → Solver → Enforced constraint pipelines](api/solver/enforced_constraints.md) for the pipeline
-types and constructors.
+See [API → Solver → Exact enforcement](api/solver/enforcement.md) for
+the compiler, specification, anchor, and program APIs.
 
 ## Training (`solve(...)`)
 
@@ -315,28 +351,27 @@ This contract is available for Optax optimizers, not evosax algorithms.
 
 ### Iteration counter (`iter_`)
 
-During training, the current epoch index is passed to each constraint loss as `iter_` (as a JAX
-scalar), so constraints can implement schedules (annealing, curriculum weights, etc.).
+During training, the current epoch index is passed to each term's loss as `iter_`
+(as a JAX scalar), so terms can implement schedules such as annealed weights.
 
-### Adaptive collocation policies
+### Adaptive collocation sources
 
-Attach an adaptive policy with `collocation_policy=...` when constructing a
-`FunctionalConstraint`. `FunctionalSolver` initializes one immutable population per
-adaptive constraint, refreshes it before eligible optimizer steps, passes the explicit
-batch and estimator weight into the loss, and returns the updated population on the
-trained solver. Calling `solve(...)` again continues from that population.
-
-The unconditional default remains fixed scrambled Sobol sampling:
+Sampling policy belongs to the integration source, not to a condition.
+`phx.integration.adaptive(target, initial_plan, policy)` constructs an
+`AdaptiveIntegration` source. Use it with `ResidualPenalty`; the residual condition
+continues to describe only the fields, component, and operator:
 
 ```python
-sampling_mode = "fixed"
-sampler = "sobol_scrambled"
-collocation_policy = None
-```
+component = geom.component()
+condition = phx.conditions.Residual(
+    "u",
+    component,
+    lambda f: f,
+)
 
-Use `phx.constraints.RECOMMENDED_COLLOCATION_DEFAULTS` to inspect that contract.
-When adaptive refinement is explicitly requested, R3 is the supported general
-starting point. Support is declared by `COLLOCATION_POLICY_SUPPORT` and
+Use `phx.sampling.collocation.RECOMMENDED_COLLOCATION_DEFAULTS` to inspect that
+contract. When adaptive refinement is explicitly requested, R3 is the supported
+general starting point. Support is declared by `COLLOCATION_POLICY_SUPPORT` and
 `collocation_policy_support(...)`:
 
 - **Stable:** fixed scrambled Sobol, periodic replacement, R3, and periodic
@@ -349,29 +384,59 @@ For production-style adaptive runs, separate proposal generation from solver
 control with `controlled_collocation(...)`:
 
 ```python
-policy = phx.constraints.controlled_collocation(
-    phx.constraints.R3(
+policy = phx.sampling.collocation.controlled_collocation(
+    phx.sampling.collocation.R3(
         refresh_every=25,
         sampler="sobol_scrambled",
         min_replace_fraction=0.1,
         max_retain_fraction=0.9,
     ),
-    schedule=phx.constraints.RefreshSchedule(25),
-    monitor=phx.constraints.ResidualMonitor(sampler="sobol_scrambled"),
-    guard=phx.constraints.RefreshGuard(
+    schedule=phx.sampling.collocation.RefreshSchedule(25),
+    monitor=phx.sampling.collocation.ResidualMonitor(
+        sampler="sobol_scrambled"
+    ),
+    guard=phx.sampling.collocation.RefreshGuard(
         max_relative_regression=0.0,
         max_consecutive_rejections=2,
         suspension_steps=100,
     ),
-    budget=phx.constraints.AdaptationBudget(
+    budget=phx.sampling.collocation.AdaptationBudget(
         max_candidate_evaluations=100_000,
         max_monitor_evaluations=25_000,
     ),
-    anchors=phx.constraints.CoverageAnchors(0.25),
+    anchors=phx.sampling.collocation.CoverageAnchors(0.25),
 )
+source = phx.integration.adaptive(
+    phx.integration.mean_over(component),
+    phx.domain.PointSampling(2_048, design="sobol_scrambled"),
+    policy,
+)
+term = phx.terms.ResidualPenalty(condition, source)
+solver = phx.solver.FunctionalSolver(functions={"u": u}, terms=[term])
 ```
 
-The controller maintains three distinct populations:
+The initial plan is a `PointSampling` or `GridSampling` plan. R3, RAR-D, and
+periodic point replacement require a `PointSampling` plan with one integer sample
+count. Adaptive refinement is opt-in. For fixed collocation, use an ordinary
+per-step source and state the design directly:
+
+```python
+source = phx.integration.per_step(
+    phx.integration.mean_over(component),
+    phx.domain.PointSampling(2_048, design="sobol_scrambled"),
+)
+term = phx.terms.ResidualPenalty(condition, source)
+```
+
+`FunctionalSolver` detects training `ResidualPenalty` terms backed by
+`AdaptiveIntegration`. It initializes one immutable population per such term,
+refreshes eligible populations before optimizer updates, and materializes the
+current batch and its local active weights as an integration realization for loss
+evaluation. The trained solver retains those populations, so another `solve(...)`
+call continues from the same state. Adaptive sources are not allowed in
+`evaluation_terms`.
+
+Controlled collocation maintains three distinct populations:
 
 1. the mutable training population proposed by the wrapped policy,
 2. a fixed independent monitor population used for acceptance and rollback,
@@ -379,13 +444,12 @@ The controller maintains three distinct populations:
 
 A proposed population is evaluated on the next eligible control step. Monitor
 regression rejects and rolls it back; repeated rejection suspends adaptation for
-the configured cooldown. `FunctionalSolver.solve(...)` explicitly settles any
-proposal still pending after the final optimizer step, without admitting another
-proposal. Coverage anchors reserve a persistent low-discrepancy fraction of paired
-populations so residual concentration cannot consume all global coverage. Monitor
-budgets reserve the next validation evaluation before a proposal is admitted, so
-exhausting a candidate or monitor budget cannot leave the final population
-permanently unvalidated.
+the configured cooldown. `FunctionalSolver.solve(...)` settles any proposal still
+pending after the final optimizer step without admitting another proposal. Coverage
+anchors reserve a persistent low-discrepancy fraction of paired populations so
+residual concentration cannot consume all global coverage. Monitor budgets reserve
+the next validation evaluation before a proposal is admitted, so exhausting a
+candidate or monitor budget cannot leave the final population unvalidated.
 
 Use coreset collocation when an underresolved or localized residual repeatedly
 concentrates ordinary residual-only selection. Delay selection until the network
@@ -393,8 +457,8 @@ residual is informative, retain an explicit global-coverage stratum, and validat
 proposals independently:
 
 ```python
-policy = phx.constraints.controlled_collocation(
-    phx.constraints.CoresetCollocation(
+policy = phx.sampling.collocation.controlled_collocation(
+    phx.sampling.collocation.CoresetCollocation(
         refresh_every=25,
         start_at=100,
         sampler="halton_scrambled",
@@ -404,7 +468,7 @@ policy = phx.constraints.controlled_collocation(
         minimum_ess_fraction=0.5,
         max_fill_distance_ratio=3.0,
     ),
-    anchors=phx.constraints.CoverageAnchors(0.25),
+    anchors=phx.sampling.collocation.CoverageAnchors(0.25),
 )
 ```
 
@@ -445,21 +509,20 @@ the residual-weighted candidate distribution. Use an independent monitor: the
 method is not a low-budget default.
 
 For a fixed-capacity axis hierarchy, use `NestedDyadicAxisSpec(...)` with
-`initial_level=...` on every adaptive axis and attach
-`HierarchicalAxisCollocation(...)`. Inactive nodes remain in the static JAX shape but
-receive zero active weight; refreshes activate nested nodes without recompilation.
+`initial_level=...` on every adaptive axis and select
+`phx.sampling.collocation.HierarchicalAxisCollocation(...)`. Inactive nodes remain
+in the static JAX shape but receive zero active weight; refreshes activate nested
+nodes without recompilation. Hierarchical-axis proposals must be validation-gated:
+activation can improve solution-grid error while worsening the independently
+measured PDE residual.
 
-Hierarchical-axis proposals must be validation-gated. They can substantially
-improve solution-grid error while worsening the independently measured PDE
-residual, so activation alone is not sufficient evidence of improvement.
-
-When `log_constraints=True`, adaptive diagnostics are appended to each training
-term: refresh counters, point/logical/axis-node counts, effective sample size,
-active counts, and candidate evaluation counts. Compare methods at equal
-**residual evaluation** and **logical evaluation** budgets; equal retained point
-counts alone are not an equal-cost comparison. Controlled policies additionally
-report refresh attempts/accepts/rejections, monitor mean/RMS/maximum, suspension
-state, and cumulative candidate, monitor, and training residual-evaluation counts.
+When `log_terms=True`, adaptive diagnostics are appended to each training term:
+refresh counters, point/logical/axis-node counts, effective sample size, active
+counts, and candidate evaluation counts. Compare methods at equal **residual
+evaluation** and **logical evaluation** budgets; equal retained point counts alone
+are not an equal-cost comparison. Controlled policies additionally report refresh
+attempts/accepts/rejections, monitor mean/RMS/maximum, suspension state, and
+cumulative candidate, monitor, and training residual-evaluation counts.
 
 Set `profile_adaptive=True` on `solve(...)` only when measuring the eager refresh
 boundary. It device-synchronizes refresh and optimizer work and stores
@@ -473,11 +536,10 @@ because synchronization changes execution timing.
   (Line-search optimizers are not JIT-wrapped.)
 - If `keep_best=True`, the returned solver uses the best parameter set observed over all epochs
   (by objective value); otherwise it returns the final parameters.
-- `train_constraint_sample_size=k` samples `k` training constraints per Optax step
-  and rescales their losses to estimate the full constraint sum. This is useful
-  when many constraints have different static shapes, because JIT can compile
-  smaller per-subset steps instead of one large graph containing every
-  constraint.
+- `train_term_sample_size=k` samples `k` training terms per Optax step and
+  rescales their losses to estimate the complete term sum. This is useful when
+  terms have different static shapes, because JIT can compile smaller per-subset
+  steps instead of one large graph containing every term.
 
 ### Logging and TensorBoard
 
@@ -485,32 +547,30 @@ because synchronization changes execution timing.
 of those outputs.
 
 - `log_every`: console/file logging cadence. Use `0` to disable text progress logs.
-- `log_constraints`: include per-constraint and per-model-loss terms in text logs and TensorBoard.
+- `log_terms`: include per-term and per-model-loss values in text logs and TensorBoard.
 - `log_path`: write text logs to a file instead of stdout.
 - `tensorboard_log_dir`: write TensorBoard event files.
 - `tensorboard_every`: TensorBoard scalar cadence. By default it follows `log_every`
   when `log_every > 0`, otherwise it writes every iteration.
 
-For data-fit constraints created by `DiscreteInteriorDataConstraint`,
-`DiscreteTimeDataConstraint`, `SupervisedDatasetConstraint`,
-`RaggedTimeSeriesDataConstraint`, or `TrajectoryCaseDataConstraint`,
-per-constraint logs also include supervised-data diagnostics:
+For data-fit terms such as `SupervisedDatasetTerm`, `RaggedTimeSeriesDataTerm`,
+or `TrajectoryCaseDataTerm`, per-term logs also include supervised-data
+diagnostics:
 
 - `data_accuracy`: `1 - data_relative_l2_error`
 - `data_relative_l2_error`: prediction-target relative L2 error
 - `data_rmse`: root mean squared prediction-target error
 
 When ragged trajectory data is enforced with
-`enforce_ragged_time_series(...)`, the data is part of the ansatz rather than a
-loss term. In that case, train with physics constraints only and keep a
-`RaggedTimeSeriesDataConstraint` outside the solver if you want diagnostics. Use
+`phx.enforcement.enforce_ragged_time_series(...)`, the data is part of the ansatz
+rather than a loss term. Train with physics penalties only, and put a
+`RaggedTimeSeriesDataTerm` in `evaluation_terms` if diagnostics are required. Use
 `interpolation="cubic_hermite"` when the physics residual needs second time
 derivatives.
 
-TensorBoard writes aggregate training scalars under `train/...`, training
-constraint scalars under `train/constraints/...`, and eval-only constraint scalars
-under `eval/constraints/...`. The legacy `constraints/...` train tags are also
-emitted for existing dashboards.
+TensorBoard writes aggregate training scalars under `train/...`, training-term
+scalars under `train/terms/...`, and evaluation-only term scalars under
+`eval/terms/...`.
 
 ```text
 solver = solver.solve(
@@ -529,11 +589,11 @@ View the run with:
 tensorboard --logdir runs
 ```
 
-## Train/eval empirical constraints
+## Training and evaluation data terms
 
-Use index-scoped empirical constraints for held-out validation. For ordinary
-row-wise data, split the row indices and give training indices to `constraints`
-and validation indices to `eval_constraints`:
+Use index-scoped empirical terms for held-out validation. For ordinary row-wise
+data, split the row indices and pass the training term through `terms` and the
+validation term through `evaluation_terms`:
 
 ```python
 import jax.numpy as jnp
@@ -549,7 +609,7 @@ train_idx, val_idx = phx.data_utils.train_test_split_indices(
     key=jr.key(0),
 )
 
-train_data = phx.constraints.SupervisedDatasetConstraint(
+train_data = phx.terms.SupervisedDatasetTerm(
     "u",
     domain.component(),
     targets,
@@ -557,7 +617,7 @@ train_data = phx.constraints.SupervisedDatasetConstraint(
     indices=train_idx,
     label="train_data",
 )
-val_data = phx.constraints.SupervisedDatasetConstraint(
+val_data = phx.terms.SupervisedDatasetTerm(
     "u",
     domain.component(),
     targets,
@@ -568,8 +628,8 @@ val_data = phx.constraints.SupervisedDatasetConstraint(
 ```
 
 For ragged trajectories, use `case_indices=...` on
-`RaggedTimeSeriesDataConstraint` or `TrajectoryCaseDataConstraint`. The split is
-by dataset row, so all observations from a held-out trajectory remain held out.
+`RaggedTimeSeriesDataTerm` or `TrajectoryCaseDataTerm`. The split is by dataset
+row, so all observations from a held-out trajectory remain held out.
 
 ## Minimal example
 
@@ -592,39 +652,19 @@ model = phx.nn.MLP(
 u = geom.Model("x")(model)
 
 layout = phx.domain.SampleLayout((("x",),))
+component = geom.component()
 
-# A toy interior objective that encourages u(x) ≈ 0 in Ω (replace with a PDE operator in real use).
-constraint = phx.constraints.ContinuousPointwiseInteriorConstraint(
-    "u",
-    geom,
-    operator=lambda f: f,
-    sampling=phx.domain.PointSampling(128, layout=layout),
-    reduction="mean",
+# A toy residual that encourages u(x) ≈ 0 in Ω.
+condition = phx.conditions.Residual("u", component, lambda f: f)
+source = phx.integration.per_step(
+    phx.integration.mean_over(component),
+    phx.domain.PointSampling(128, layout=layout),
 )
+term = phx.terms.ResidualPenalty(condition, source)
 
-solver = phx.solver.FunctionalSolver(functions={"u": u}, constraints=[constraint])
+solver = phx.solver.FunctionalSolver(functions={"u": u}, terms=[term])
 loss0 = solver.loss(key=eqx.internal.doc_repr(jr.key(0), "jr.key(0)"))
 solver = solver.solve(num_iter=20, optim=optax.adam(1e-3), seed=0)
 loss1 = solver.loss(key=jr.key(1))
 print(loss0, loss1)
-```
-
-## Evosax example (gradient-free)
-
-`Open_ES` is an Evosax distribution-based algorithm, so it can optimize the
-trainable parameter PyTree managed by `FunctionalSolver`:
-
-```python
-import equinox as eqx
-from evosax import algorithms as evo_algos
-import phydrax as phx
-
-# Continuing from the minimal example above:
-# solver = phx.solver.FunctionalSolver(functions={"u": u}, constraints=[constraint])
-
-# evosax expects a "solution" PyTree matching the trainable parameter structure.
-params = solver.trainable_functions()
-algo = evo_algos.Open_ES(population_size=8, solution=params)
-
-solver = solver.solve(num_iter=20, optim=algo, seed=0)
 ```

@@ -8,7 +8,6 @@ import jax.numpy as jnp
 
 import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.constraints import enforce_dirichlet, enforce_neumann
 from phydrax.domain import (
     Boundary,
     FixedStart,
@@ -17,11 +16,12 @@ from phydrax.domain import (
     SampleLayout,
     TimeInterval,
 )
-from phydrax.solver import (
-    EnforcedConstraintPipelines,
-    FunctionalSolver,
-    SingleFieldEnforcedConstraint,
+from phydrax.enforcement import (
+    enforce_dirichlet,
+    EnforcementProgram,
+    EnforcementSpec,
 )
+from phydrax.solver import FunctionalSolver
 
 
 def _line_batch(domain, xs):
@@ -52,20 +52,20 @@ def test_boundary_subset_blend_matches_pieces():
     right_component = geom.component({"x": Boundary()}, where={"x": right_where})
     full_boundary = geom.component({"x": Boundary()})
 
-    left_constraint = SingleFieldEnforcedConstraint(
-        "u",
-        left_component,
-        lambda f: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
+    left_constraint = EnforcementSpec(
+        phx.conditions.Dirichlet("u", left_component, target=1.0),
+        kind="custom",
+        transform=lambda f, _: enforce_dirichlet(f, full_boundary, var="x", target=1.0),
     )
-    right_constraint = SingleFieldEnforcedConstraint(
-        "u",
-        right_component,
-        lambda f: enforce_dirichlet(f, full_boundary, var="x", target=2.0),
+    right_constraint = EnforcementSpec(
+        phx.conditions.Dirichlet("u", right_component, target=2.0),
+        kind="custom",
+        transform=lambda f, _: enforce_dirichlet(f, full_boundary, var="x", target=2.0),
     )
 
-    pipelines = EnforcedConstraintPipelines.build(
+    pipelines = EnforcementProgram.build(
         functions={"u": u},
-        constraints=[left_constraint, right_constraint],
+        specs=[left_constraint, right_constraint],
         num_reference=256,
     )
     u_enforced = pipelines.apply({"u": u})["u"]
@@ -92,25 +92,15 @@ def test_initial_overlay_boundary_gate_is_dimensionless_and_scale_invariant():
         def initial_target(x):
             return jnp.sin(jnp.pi * x[0] / length)
 
-        terms = [
-            SingleFieldEnforcedConstraint(
-                "u",
-                boundary,
-                lambda f, boundary=boundary: enforce_dirichlet(
-                    f, boundary, var="x", target=0.0
-                ),
-            ),
-            SingleFieldEnforcedConstraint(
-                "u",
-                initial,
-                lambda f: f,
-                time_derivative_order=0,
-                initial_target=initial_target,
+        specs = [
+            EnforcementSpec(phx.conditions.Dirichlet("u", boundary, target=0.0)),
+            EnforcementSpec(
+                phx.conditions.Initial("u", initial, target=initial_target, order=0)
             ),
         ]
-        pipelines = EnforcedConstraintPipelines.build(
+        pipelines = EnforcementProgram.build(
             functions={"u": u},
-            constraints=terms,
+            specs=specs,
             num_reference=64,
         )
         gate = pipelines.pipelines["u"].boundary_gate
@@ -143,30 +133,19 @@ def test_initial_overlay_gate_preserves_declared_normal_derivative():
     def incompatible_initial_target(x):
         return x[0]
 
-    terms = [
-        SingleFieldEnforcedConstraint(
-            "u",
-            boundary,
-            lambda f: enforce_neumann(
-                f,
-                boundary,
-                var="x",
-                target=0.0,
-                mode="forward",
-            ),
-            max_derivative_order=1,
+    specs = [
+        EnforcementSpec(
+            phx.conditions.Neumann("u", boundary, var="x", target=0.0, mode="forward")
         ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: f,
-            time_derivative_order=0,
-            initial_target=incompatible_initial_target,
+        EnforcementSpec(
+            phx.conditions.Initial(
+                "u", initial, target=incompatible_initial_target, order=0
+            )
         ),
     ]
-    pipelines = EnforcedConstraintPipelines.build(
+    pipelines = EnforcementProgram.build(
         functions={"u": u},
-        constraints=terms,
+        specs=specs,
         num_reference=64,
     )
     pipeline = pipelines.pipelines["u"]
@@ -198,32 +177,31 @@ def test_functional_solver_configures_cad_preservation_gate_extent():
     def initial_target(x):
         return (1.0 - x[0] ** 2) * (1.0 - x[1] ** 2)
 
-    terms = [
-        SingleFieldEnforcedConstraint(
-            "u",
-            boundary,
-            lambda f: enforce_dirichlet(f, boundary, var="x", target=0.0),
-        ),
-        SingleFieldEnforcedConstraint(
-            "u",
-            initial,
-            lambda f: f,
-            time_derivative_order=0,
-            initial_target=initial_target,
+    specs = [
+        EnforcementSpec(phx.conditions.Dirichlet("u", boundary, target=0.0)),
+        EnforcementSpec(
+            phx.conditions.Initial("u", initial, target=initial_target, order=0)
         ),
     ]
+    functions = {"u": u}
     values = []
     for saturation_fraction in (0.5, 0.2):
-        solver = FunctionalSolver(
-            functions={"u": u},
-            constraints=(),
-            constraint_terms=terms,
-            gate_method="compact",
-            gate_saturation_fraction=saturation_fraction,
-            boundary_weight_num_reference=64,
+        program = phx.enforcement.compile(
+            functions,
+            specs,
+            options=phx.enforcement.EnforcementOptions(
+                gate_method="compact",
+                gate_saturation_fraction=saturation_fraction,
+                num_reference=64,
+            ),
         )
-        assert solver.constraint_pipelines is not None
-        gate = solver.constraint_pipelines.pipelines["u"].boundary_gate
+        solver = FunctionalSolver(
+            functions=functions,
+            terms=(),
+            enforcement=program,
+        )
+        assert solver.enforcement is not None
+        gate = solver.enforcement.pipelines["u"].boundary_gate
         assert gate is not None
         values.append(gate.func(jnp.array([0.8, 0.0])))
 
