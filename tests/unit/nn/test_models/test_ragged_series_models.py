@@ -44,7 +44,7 @@ def test_ragged_series_model_returns_case_axis_field():
             axis=1,
         )
 
-    u = domain.Function("data")(phx.nn.RaggedSeriesModel(exact))
+    u = domain.Function("data")(phx.nn.models.RaggedSeriesModel(exact))
     out = u(_batch(domain), key=jr.key(0))
     axis = _batch(domain).structure.axis_for("data")
 
@@ -64,15 +64,15 @@ def test_masked_series_pooling_ignores_padded_tail_values():
         del key
         return x[:, 0]
 
-    model = phx.nn.MaskedSeriesPoolingModel(
+    model = phx.nn.models.MaskedSeriesPoolingModel(
         step_model=step_model,
         readout_model=readout_model,
         reduction="mean",
         include_time=False,
         include_static_in_readout=False,
     )
-    u_a = domain_a.Function("data")(phx.nn.RaggedSeriesModel(model))
-    u_b = domain_b.Function("data")(phx.nn.RaggedSeriesModel(model))
+    u_a = domain_a.Function("data")(phx.nn.models.RaggedSeriesModel(model))
+    u_b = domain_b.Function("data")(phx.nn.models.RaggedSeriesModel(model))
 
     out_a = u_a(_batch(domain_a), key=jr.key(1)).data
     out_b = u_b(_batch(domain_b), key=jr.key(1)).data
@@ -81,7 +81,7 @@ def test_masked_series_pooling_ignores_padded_tail_values():
 
 
 def test_masked_series_pooling_can_scale_sampled_sum():
-    payload = phx.nn.RaggedSeriesBatchInput(
+    payload = phx.nn.models.RaggedSeriesBatchInput(
         static=None,
         series=jnp.asarray([[[1.0], [3.0]]]),
         time=jnp.asarray([[0.0, 1.0]]),
@@ -99,14 +99,14 @@ def test_masked_series_pooling_can_scale_sampled_sum():
         del key
         return x[:, 0]
 
-    unscaled = phx.nn.MaskedSeriesPoolingModel(
+    unscaled = phx.nn.models.MaskedSeriesPoolingModel(
         step_model=step_model,
         readout_model=readout_model,
         reduction="sum",
         include_time=False,
         include_static_in_readout=False,
     )
-    scaled = phx.nn.MaskedSeriesPoolingModel(
+    scaled = phx.nn.models.MaskedSeriesPoolingModel(
         step_model=step_model,
         readout_model=readout_model,
         reduction="sum",
@@ -121,7 +121,7 @@ def test_masked_series_pooling_can_scale_sampled_sum():
 
 def test_masked_series_pooling_has_finite_parameter_gradients():
     domain = _domain()
-    payload = phx.nn.RaggedSeriesBatchInput(
+    payload = phx.nn.models.RaggedSeriesBatchInput(
         static=domain.input_rows(jnp.asarray([0, 1], dtype=jnp.int32))["static"],
         series=domain.input_rows(jnp.asarray([0, 1], dtype=jnp.int32))["series"],
         time=domain.input_rows(jnp.asarray([0, 1], dtype=jnp.int32))["time"],
@@ -129,15 +129,15 @@ def test_masked_series_pooling_has_finite_parameter_gradients():
         length=domain.input_rows(jnp.asarray([0, 1], dtype=jnp.int32))["length"],
     )
     key_step, key_readout = jr.split(jr.key(2))
-    model = phx.nn.MaskedSeriesPoolingModel(
-        step_model=phx.nn.MLP(
+    model = phx.nn.models.MaskedSeriesPoolingModel(
+        step_model=phx.nn.models.MLP(
             in_size=3,
             out_size=4,
             width_size=8,
             depth=1,
             key=key_step,
         ),
-        readout_model=phx.nn.MLP(
+        readout_model=phx.nn.models.MLP(
             in_size=6,
             out_size=2,
             width_size=8,

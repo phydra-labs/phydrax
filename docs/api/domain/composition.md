@@ -26,7 +26,7 @@ leaves share one leading dataset axis. It composes with physical factors through
 - `Domain.Model(...)` for models with a declared `ModelBinding`.
 
 Phydrax models expose their own input binding. A plain callable model must receive
-an explicit `phx.nn.ModelBinding`; evaluation does not inspect signatures or
+an explicit `phx.nn.models.ModelBinding`; evaluation does not inspect signatures or
 switch between flat, structured, pointwise, blockwise, or axis-batch execution
 implicitly.
 

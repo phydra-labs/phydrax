@@ -14,10 +14,10 @@ def _batch(
     coordinates,
     weights,
     mask=None,
-) -> phx.nn.OperatorBatch:
+) -> phx.nn.operator.OperatorBatch:
     nodes = jnp.asarray(coordinates, dtype=float)
     query_coordinates = jnp.broadcast_to(nodes[None, :, None], (cases, nodes.size, 1))
-    query = phx.nn.FunctionSamples(
+    query = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=query_coordinates,
         quadrature_weights=jnp.broadcast_to(
@@ -26,21 +26,21 @@ def _batch(
         ),
         mask=None if mask is None else jnp.asarray(mask, dtype=bool),
     )
-    source = phx.nn.FunctionSamples(
+    source = phx.nn.operator.FunctionSamples(
         values=jnp.zeros((cases, nodes.size)),
         coordinates=query_coordinates,
     )
-    return phx.nn.OperatorBatch(inputs={"forcing": source}, queries={"query": query}, case_axes=("case",),
+    return phx.nn.operator.OperatorBatch(inputs={"forcing": source}, queries={"query": query}, case_axes=("case",),
     case_shape=(cases,),)
 
 
 def _prediction(values, batch):
-    return phx.nn.OperatorPrediction.from_field(
+    return phx.nn.operator.OperatorPrediction.from_field(
         "output",
         jnp.asarray(values, dtype=float),
         "query",
         batch.require_single_query(),
-        spec=phx.nn.OperatorOutputSpec("scalar"),
+        spec=phx.nn.operator.OperatorOutputSpec("scalar"),
         case_axes=batch.case_axes,
         case_shape=batch.case_shape,
     )

@@ -9,9 +9,9 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from ...._doc import DOC_KEY0
+from ..._base import _AbstractBaseModel, _AbstractStructuredInputModel
+from ..._keys import EvalKey, split_eval_key
 from ..._utils import _get_size
-from ..core._base import _AbstractBaseModel, _AbstractStructuredInputModel
-from ..core._keys import EvalKey, split_eval_key
 
 
 class ConcatenatedModel(_AbstractStructuredInputModel):

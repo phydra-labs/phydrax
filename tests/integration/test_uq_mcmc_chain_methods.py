@@ -182,8 +182,8 @@ def test_vectorized_nuts_supports_dense_and_diagonal_mass_adaptation(chain_metho
 
 
 def test_nuts_and_hmc_sample_every_separable_mlp_final_layer_subtree():
-    model = phx.nn.inference_mode(
-        phx.nn.SeparableMLP(
+    model = phx.nn.layers.inference_mode(
+        phx.nn.models.SeparableMLP(
             in_size=2,
             out_size="scalar",
             latent_size=2,

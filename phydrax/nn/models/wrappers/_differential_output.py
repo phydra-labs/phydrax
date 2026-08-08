@@ -13,8 +13,8 @@ from jaxtyping import Array
 
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
-from ..core._base import _AbstractBaseModel
-from ..core._keys import EvalKey
+from ..._base import _AbstractBaseModel
+from ..._keys import EvalKey
 
 
 DifferentialTransform = Literal[

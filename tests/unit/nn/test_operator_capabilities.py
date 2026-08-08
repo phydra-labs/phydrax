@@ -12,17 +12,17 @@ import phydrax as phx
 def _grid_batch(*, size=5, periodic=True, mask=None):
     nodes = jnp.arange(size, dtype=float) / size
     axes = (
-        phx.nn.OperatorAxis("x", nodes, periodic=periodic),
-        phx.nn.OperatorAxis("y", nodes, periodic=periodic),
+        phx.nn.operator.OperatorAxis("x", nodes, periodic=periodic),
+        phx.nn.operator.OperatorAxis("y", nodes, periodic=periodic),
     )
-    source = phx.nn.FunctionSamples(
+    source = phx.nn.operator.FunctionSamples(
         values=jnp.ones((2, size, size)),
         axes=axes,
         mask=mask,
     )
-    return phx.nn.OperatorBatch(
+    return phx.nn.operator.OperatorBatch(
         inputs={"u": source},
-        queries={"query": phx.nn.FunctionSamples(values=None, axes=axes)},
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=axes)},
         case_axes=("case",),
     )
 
@@ -35,45 +35,45 @@ def _graph_batch(*, quadrature=True):
         n_node=jnp.asarray([3]),
         n_edge=jnp.asarray([3]),
     )
-    topology = phx.nn.OperatorTopology.from_graph(graph)
+    topology = phx.nn.operator.OperatorTopology.from_graph(graph)
     coordinates = jnp.arange(3.0)[:, None]
     weights = jnp.ones((3,)) if quadrature else None
-    source = phx.nn.FunctionSamples(
+    source = phx.nn.operator.FunctionSamples(
         values=jnp.ones((3,)),
         coordinates=coordinates,
         quadrature_weights=weights,
         topology=topology,
     )
-    query = phx.nn.FunctionSamples(
+    query = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=coordinates,
         quadrature_weights=weights,
         topology=topology,
     )
-    return phx.nn.OperatorBatch(inputs={"u": source}, queries={"query": query})
+    return phx.nn.operator.OperatorBatch(inputs={"u": source}, queries={"query": query})
 
 
 def test_every_registered_architecture_has_one_runtime_and_training_contract():
-    for name, status in phx.nn.OPERATOR_ARCHITECTURE_STATUSES.items():
+    for name, status in phx.nn.operator.OPERATOR_ARCHITECTURE_STATUSES.items():
         assert status.name == name
-        assert isinstance(status.capabilities, phx.nn.OperatorCapabilitySpec)
-        assert isinstance(status.training, phx.nn.OperatorTrainingRequirement)
+        assert isinstance(status.capabilities, phx.nn.operator.OperatorCapabilitySpec)
+        assert isinstance(status.training, phx.nn.operator.OperatorTrainingRequirement)
         assert status.recommendation_eligible is (status.tier == "stable")
 
 
 def test_configured_contract_preserves_registered_configuration_and_rejects_conflicts():
-    tfno = phx.nn.operator_architecture_contract("TFNO", configuration={"rank": 4})
+    tfno = phx.nn.operator.operator_architecture_contract("TFNO", configuration={"rank": 4})
     assert tfno.architecture == "FNO"
     assert tfno.configuration == (("factorization", "tucker"), ("rank", 4))
 
     with pytest.raises(ValueError, match="conflicts"):
-        phx.nn.operator_architecture_contract(
+        phx.nn.operator.operator_architecture_contract(
             "TFNO", configuration={"factorization": "dense"}
         )
 
 
 def test_model_instance_contract_tracks_capability_affecting_constructor_state():
-    fno = phx.nn.FNO(
+    fno = phx.nn.operator.architectures.FNO(
         n_modes=(3,),
         width=4,
         depth=1,
@@ -93,7 +93,7 @@ def test_model_instance_contract_tracks_capability_affecting_constructor_state()
 def test_capability_report_accepts_supported_fno_inputs():
     masked = jnp.ones((2, 5, 5), dtype=bool).at[0, 0, 0].set(False)
     batch = _grid_batch(periodic=False, mask=masked)
-    report = phx.nn.validate_operator_architecture("FNO", batch)
+    report = phx.nn.operator.validate_operator_architecture("FNO", batch)
 
     assert report.accepted
 
@@ -103,10 +103,10 @@ def test_capability_report_accepts_supported_fno_inputs():
     ("FNO", "CNO", "UNO", "Flower", "IFNO", "UPT"),
 )
 def test_grid_operator_contracts_accept_resolution_transfer_and_rollout(architecture):
-    report = phx.nn.validate_operator_architecture(
+    report = phx.nn.operator.validate_operator_architecture(
         architecture,
         _grid_batch(),
-        problem=phx.nn.OperatorProblemSpec(
+        problem=phx.nn.operator.OperatorProblemSpec(
             requires_resolution_transfer=True,
             rollout_steps=4,
         ),
@@ -116,16 +116,16 @@ def test_grid_operator_contracts_accept_resolution_transfer_and_rollout(architec
 
 
 def test_fixed_query_is_separate_from_source_query_structure():
-    variable_query_problem = phx.nn.OperatorProblemSpec(
+    variable_query_problem = phx.nn.operator.OperatorProblemSpec(
         source_query_relation="coincident",
         query_is_fixed=False,
     )
-    fno = phx.nn.validate_operator_architecture(
+    fno = phx.nn.operator.validate_operator_architecture(
         "FNO",
         _grid_batch(),
         problem=variable_query_problem,
     )
-    pod = phx.nn.validate_operator_architecture(
+    pod = phx.nn.operator.validate_operator_architecture(
         "PODDeepONet",
         _grid_batch(),
         problem=variable_query_problem,
@@ -137,11 +137,11 @@ def test_fixed_query_is_separate_from_source_query_structure():
 
 
 def test_graph_contract_requires_native_topology_and_physical_measure():
-    valid = phx.nn.validate_operator_architecture("GraphNeuralOperator", _graph_batch())
-    missing_measure = phx.nn.validate_operator_architecture(
+    valid = phx.nn.operator.validate_operator_architecture("GraphNeuralOperator", _graph_batch())
+    missing_measure = phx.nn.operator.validate_operator_architecture(
         "GraphNeuralOperator", _graph_batch(quadrature=False)
     )
-    coordinate_only = phx.nn.validate_operator_architecture(
+    coordinate_only = phx.nn.operator.validate_operator_architecture(
         "GraphNeuralOperator", _grid_batch()
     )
 
@@ -153,13 +153,13 @@ def test_graph_contract_requires_native_topology_and_physical_measure():
 
 def test_training_requirements_separate_task_specific_from_foundation_claims():
     batch = _grid_batch()
-    poseidon = phx.nn.validate_operator_architecture("Poseidon", batch)
+    poseidon = phx.nn.operator.validate_operator_architecture("Poseidon", batch)
     assert "MISSING_PRETRAINED_WEIGHTS" in poseidon.codes
 
-    pretrained = phx.nn.validate_operator_architecture(
+    pretrained = phx.nn.operator.validate_operator_architecture(
         "Poseidon",
         batch,
-        training_evidence=phx.nn.OperatorTrainingEvidence(
+        training_evidence=phx.nn.operator.OperatorTrainingEvidence(
             regime="pretrained_system",
             checkpoint_id="immutable-checkpoint",
             corpus_id="multi-pde-corpus",
@@ -167,12 +167,12 @@ def test_training_requirements_separate_task_specific_from_foundation_claims():
     )
     assert pretrained.accepted
 
-    in_context = phx.nn.validate_operator_architecture("InContextOperator", batch)
+    in_context = phx.nn.operator.validate_operator_architecture("InContextOperator", batch)
     assert "MISSING_TASK_DISTRIBUTION_TRAINING" in in_context.codes
-    trained = phx.nn.validate_operator_architecture(
+    trained = phx.nn.operator.validate_operator_architecture(
         "InContextOperator",
         batch,
-        training_evidence=phx.nn.OperatorTrainingEvidence(
+        training_evidence=phx.nn.operator.OperatorTrainingEvidence(
             regime="task_distribution",
             corpus_id="prompted-operator-distribution",
         ),

@@ -17,7 +17,7 @@ from phydrax.domain import BatchEvaluator, PointBatch
 from ...._callable import _ensure_special_kwonly_args
 from ...._doc import DOC_KEY0
 from ...._strict import StrictModule
-from ..core._keys import EvalKey, split_eval_key
+from ..._keys import EvalKey, split_eval_key
 
 
 MaskedSeriesReduction = Literal["mean", "sum"]

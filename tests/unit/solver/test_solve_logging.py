@@ -10,7 +10,7 @@ from tensorboard.backend.event_processing.event_accumulator import EventAccumula
 
 import phydrax as phx
 from phydrax.domain import DatasetDomain, HyperRectangle, PointSampling, TimeInterval
-from phydrax.nn import MLP
+from phydrax.nn.models import MLP
 from phydrax.solver import FunctionalSolver
 from phydrax.terms import SupervisedDatasetTerm
 

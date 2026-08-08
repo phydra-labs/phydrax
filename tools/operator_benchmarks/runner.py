@@ -13,8 +13,8 @@ import jax.random as jr
 import numpy as np
 
 from phydrax._trainable import combine_trainable, partition_trainable
-from phydrax.nn import (
-    fit_operator,
+from phydrax.nn.operator import (
+    AbstractOperatorModel,
     FunctionSamples,
     operator_architecture_contract,
     operator_conservation_error,
@@ -23,14 +23,16 @@ from phydrax.nn import (
     operator_spectral_loss,
     OperatorBatch,
     OperatorCaseProvenance,
-    OperatorDataset,
-    OperatorDTypePolicy,
     OperatorPrediction,
     OperatorTargetBatch,
+)
+from phydrax.nn.operator.training import (
+    fit_operator,
+    OperatorDataset,
+    OperatorDTypePolicy,
     OperatorValidationPolicy,
     SupervisedOperatorLoss,
 )
-from phydrax.nn.models.core._base import _AbstractOperatorModel
 
 from .scenarios import (
     _apply_square_group_action,
@@ -42,7 +44,7 @@ from .scenarios import (
 )
 
 
-class _BenchmarkFitOperator(_AbstractOperatorModel):
+class _BenchmarkFitOperator(AbstractOperatorModel):
     """Production-fitter adapter for callable benchmark-only baselines."""
 
     model: Callable[[OperatorBatch], jax.Array]
@@ -55,9 +57,7 @@ class _BenchmarkFitOperator(_AbstractOperatorModel):
         scenario: OperatorBenchmarkScenario,
     ):
         if isinstance(scenario.train_target, OperatorTargetBatch):
-            raise TypeError(
-                "Named benchmark targets require a native operator model."
-            )
+            raise TypeError("Named benchmark targets require a native operator model.")
         query = scenario.train_batch.require_single_query()
         prefix_rank = len(scenario.train_batch.case_shape) + len(query.sample_shape)
         trailing = tuple(
@@ -197,7 +197,7 @@ def _prediction_for_target(
     /,
 ) -> jax.Array | OperatorPrediction:
     if isinstance(target, OperatorTargetBatch):
-        if not isinstance(model, _AbstractOperatorModel):
+        if not isinstance(model, AbstractOperatorModel):
             raise TypeError(
                 "Named benchmark targets require an operator model with predict()."
             )
@@ -327,7 +327,7 @@ def _train_operator_with_trace(
     if float(minimum_delta) < 0.0 or float(relative_minimum_delta) < 0.0:
         raise ValueError("Convergence deltas must be non-negative.")
 
-    if not isinstance(model, _AbstractOperatorModel):
+    if not isinstance(model, AbstractOperatorModel):
         if not isinstance(model, eqx.Module):
             raise TypeError("Benchmark models must be Equinox modules.")
         model = _BenchmarkFitOperator(model, scenario)
@@ -740,12 +740,10 @@ def evaluate_operator(
     inference_seconds = (time.perf_counter() - started) / float(repeats)
     field_results = []
     per_case_metrics = []
-    for name, query_name, field_prediction, field_target in (
-        _field_arrays_from_prediction(
-            prediction,
-            evaluation.batch,
-            evaluation.target,
-        )
+    for name, query_name, field_prediction, field_target in _field_arrays_from_prediction(
+        prediction,
+        evaluation.batch,
+        evaluation.target,
     ):
         query = evaluation.batch.query(query_name)
         relative_per_case = operator_l2_loss(
@@ -819,9 +817,7 @@ def evaluate_operator(
     relative = max(field.relative_l2 for field in field_results)
     absolute = max(field.absolute_l2 for field in field_results)
     conservation = max(field.conservation_error for field in field_results)
-    maximum_absolute_error = max(
-        field.maximum_absolute_error for field in field_results
-    )
+    maximum_absolute_error = max(field.maximum_absolute_error for field in field_results)
     h1_values = tuple(field.h1 for field in field_results if field.h1 is not None)
     spectral_values = tuple(
         field.spectral for field in field_results if field.spectral is not None
@@ -832,9 +828,7 @@ def evaluate_operator(
         shift=evaluation.shift,
         rollout_steps=evaluation.rollout_steps,
         relative_l2=relative,
-        relative_l2_per_case=tuple(
-            float(value) for value in relative_per_case.tolist()
-        ),
+        relative_l2_per_case=tuple(float(value) for value in relative_per_case.tolist()),
         absolute_l2=absolute,
         h1=None if not h1_values else max(h1_values),
         spectral=None if not spectral_values else max(spectral_values),

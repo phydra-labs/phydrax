@@ -137,7 +137,7 @@ def test_hyperrectangle_finite_observation_with_stacked_points():
 
 def test_hyperrectangle_domain_model_gets_vector_points():
     geom = phx.domain.HyperRectangle(lower=jnp.zeros((6,)), upper=jnp.ones((6,)))
-    model = phx.nn.SeparableMLP(
+    model = phx.nn.models.SeparableMLP(
         in_size=6,
         out_size="scalar",
         latent_size=4,

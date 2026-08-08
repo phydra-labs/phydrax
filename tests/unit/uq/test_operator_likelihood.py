@@ -11,25 +11,25 @@ import pytest
 import phydrax as phx
 
 
-def _batch(*, quadrature_scale: float = 1.0) -> phx.nn.OperatorBatch:
+def _batch(*, quadrature_scale: float = 1.0) -> phx.nn.operator.OperatorBatch:
     coordinates = jnp.asarray(
         [
             [[0.0], [0.5], [1.0]],
             [[0.0], [0.5], [1.0]],
         ]
     )
-    query = phx.nn.FunctionSamples(
+    query = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=coordinates,
         quadrature_weights=quadrature_scale
         * jnp.asarray([[0.25, 0.5, 0.25], [0.25, 0.5, 0.25]]),
         mask=jnp.asarray([[True, True, False], [True, True, True]]),
     )
-    source = phx.nn.FunctionSamples(
+    source = phx.nn.operator.FunctionSamples(
         values=jnp.ones((2, 3)),
         coordinates=coordinates,
     )
-    return phx.nn.OperatorBatch(
+    return phx.nn.operator.OperatorBatch(
         inputs={"forcing": source},
         queries={"query": query},
         case_axes=("case",),
@@ -39,7 +39,7 @@ def _batch(*, quadrature_scale: float = 1.0) -> phx.nn.OperatorBatch:
 
 def _prediction(parameters, batch, spec):
     values = jnp.broadcast_to(parameters["level"], spec.expected_shape(batch))
-    return phx.nn.OperatorPrediction.from_field(
+    return phx.nn.operator.OperatorPrediction.from_field(
         "output",
         values,
         "query",
@@ -68,7 +68,7 @@ def _target_and_mask():
 
 def test_operator_likelihood_matches_manual_sum_and_is_jittable():
     batch = _batch()
-    spec = phx.nn.OperatorOutputSpec(2, component_names=("u", "v"))
+    spec = phx.nn.operator.OperatorOutputSpec(2, component_names=("u", "v"))
     target, observation_mask = _target_and_mask()
     scale = 0.5
     term = phx.uq.FixedOperatorObservationLikelihood(
@@ -105,7 +105,7 @@ def test_operator_likelihood_matches_manual_sum_and_is_jittable():
 
 def test_operator_likelihood_gradient_and_standardized_residual():
     batch = _batch()
-    spec = phx.nn.OperatorOutputSpec(2)
+    spec = phx.nn.operator.OperatorOutputSpec(2)
     target, observation_mask = _target_and_mask()
     scale = 0.75
     term = phx.uq.FixedOperatorObservationLikelihood(
@@ -139,7 +139,7 @@ def test_operator_likelihood_gradient_and_standardized_residual():
 def test_operator_likelihood_is_independent_of_quadrature_weights():
     first = _batch(quadrature_scale=1.0)
     second = _batch(quadrature_scale=17.0)
-    spec = phx.nn.OperatorOutputSpec(2)
+    spec = phx.nn.operator.OperatorOutputSpec(2)
     target, observation_mask = _target_and_mask()
 
     def make_term(batch):
@@ -163,7 +163,7 @@ def test_operator_likelihood_is_independent_of_quadrature_weights():
 
 def test_operator_likelihood_handles_nonfinite_values_by_observation_status():
     batch = _batch()
-    spec = phx.nn.OperatorOutputSpec(2)
+    spec = phx.nn.operator.OperatorOutputSpec(2)
     target, observation_mask = _target_and_mask()
     finite_term = phx.uq.FixedOperatorObservationLikelihood(
         lambda parameters: _prediction(parameters, batch, spec),
@@ -180,7 +180,7 @@ def test_operator_likelihood_handles_nonfinite_values_by_observation_status():
         prediction = _prediction(parameters, batch, spec)
         values = prediction.field("output").values.at[0, 0, 0].set(jnp.nan)
         values = values.at[0, 2, 0].set(jnp.nan)
-        return phx.nn.OperatorPrediction.from_field(
+        return phx.nn.operator.OperatorPrediction.from_field(
             "output",
             values,
             "query",
@@ -208,7 +208,7 @@ def test_operator_likelihood_handles_nonfinite_values_by_observation_status():
 
 def test_operator_likelihood_rejects_empty_cases_and_contract_mismatches():
     batch = _batch()
-    spec = phx.nn.OperatorOutputSpec(2)
+    spec = phx.nn.operator.OperatorOutputSpec(2)
     target, _ = _target_and_mask()
     empty_case_mask = jnp.ones_like(target, dtype=bool).at[1].set(False)
 
@@ -225,12 +225,12 @@ def test_operator_likelihood_rejects_empty_cases_and_contract_mismatches():
         )
 
     term = phx.uq.FixedOperatorObservationLikelihood(
-        lambda parameters: phx.nn.OperatorPrediction.from_field(
+        lambda parameters: phx.nn.operator.OperatorPrediction.from_field(
             "output",
             jnp.ones((2, 3)),
             "query",
             batch.require_single_query(),
-            spec=phx.nn.OperatorOutputSpec("scalar"),
+            spec=phx.nn.operator.OperatorOutputSpec("scalar"),
             case_axes=batch.case_axes,
             case_shape=batch.case_shape,
         ),
@@ -246,9 +246,9 @@ def test_operator_likelihood_rejects_empty_cases_and_contract_mismatches():
 
 
 def _operator_dataset(cases=5, resolution=4):
-    axis = phx.nn.OperatorAxis("x", jnp.linspace(0.0, 1.0, resolution))
+    axis = phx.nn.operator.OperatorAxis("x", jnp.linspace(0.0, 1.0, resolution))
     values = jnp.arange(cases, dtype=float)[:, None] + axis.nodes[None, :]
-    return phx.nn.operator_dataset_from_arrays(
+    return phx.nn.operator.training.operator_dataset_from_arrays(
         {"state": values},
         {"solution": 2.0 * values},
         source_axes={"state": (axis,)},
@@ -257,12 +257,12 @@ def _operator_dataset(cases=5, resolution=4):
 
 
 def _dynamic_prediction(parameter, batch):
-    return phx.nn.OperatorPrediction.from_field(
+    return phx.nn.operator.OperatorPrediction.from_field(
         "solution",
         parameter * batch.input("state").values,
         "query",
         batch.query("query"),
-        spec=phx.nn.OperatorOutputSpec(),
+        spec=phx.nn.operator.OperatorOutputSpec(),
         case_axes=batch.case_axes,
         case_shape=batch.case_shape,
     )
@@ -310,7 +310,7 @@ def test_dynamic_operator_likelihood_matches_fixed_full_batch_and_is_jittable():
 
 def test_operator_minibatch_source_is_complete_padded_and_content_addressed():
     dataset = _operator_dataset()
-    loader = phx.nn.OperatorBatchLoader(
+    loader = phx.nn.operator.training.OperatorBatchLoader(
         dataset,
         batch_size=2,
         shuffle=True,
@@ -337,7 +337,7 @@ def test_operator_minibatch_source_is_complete_padded_and_content_addressed():
     assert source.configuration()["loader_fingerprint"] == loader.fingerprint
 
     changed_seed = phx.uq.OperatorMinibatchSource(
-        phx.nn.OperatorBatchLoader(
+        phx.nn.operator.training.OperatorBatchLoader(
             dataset,
             batch_size=2,
             shuffle=True,
@@ -348,7 +348,7 @@ def test_operator_minibatch_source_is_complete_padded_and_content_addressed():
         field_name="solution",
     )
     changed_data = phx.uq.OperatorMinibatchSource(
-        phx.nn.OperatorBatchLoader(
+        phx.nn.operator.training.OperatorBatchLoader(
             _operator_dataset(cases=6),
             batch_size=2,
             shuffle=True,
@@ -366,7 +366,7 @@ def test_operator_minibatch_source_rejects_lossy_loader_policies():
     dataset = _operator_dataset()
     with pytest.raises(ValueError, match="drop_last=True"):
         phx.uq.OperatorMinibatchSource(
-            phx.nn.OperatorBatchLoader(
+            phx.nn.operator.training.OperatorBatchLoader(
                 dataset,
                 batch_size=2,
                 shuffle=True,
@@ -377,7 +377,7 @@ def test_operator_minibatch_source_rejects_lossy_loader_policies():
         )
     with pytest.raises(ValueError, match="shuffle=True"):
         phx.uq.OperatorMinibatchSource(
-            phx.nn.OperatorBatchLoader(
+            phx.nn.operator.training.OperatorBatchLoader(
                 dataset,
                 batch_size=2,
                 shuffle=False,
@@ -391,7 +391,7 @@ def test_operator_minibatch_source_rejects_lossy_loader_policies():
 def test_operator_sgmcmc_supports_selected_parameter_subspaces_and_predictions():
     dataset = _operator_dataset()
     source = phx.uq.OperatorMinibatchSource(
-        phx.nn.OperatorBatchLoader(
+        phx.nn.operator.training.OperatorBatchLoader(
             dataset,
             batch_size=2,
             shuffle=True,

@@ -16,14 +16,14 @@ from jaxtyping import Array
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from ..nn.models.core._base import _AbstractOperatorModel
-from ..nn.models.core._operator import (
+from ..nn.operator.data import (
     FunctionSamples,
     OperatorBatch,
     OperatorOutputSpec,
     OperatorPrediction,
 )
-from ..nn.operator_training._linearization import OperatorLinearization
+from ..nn.operator.protocols import OperatorModel
+from ..nn.operator.training import OperatorLinearization
 from ._covariance import AbstractCovariance
 from ._linearized import LinearizedPropagationResult, propagate_linearized_map
 from ._predictive import (
@@ -899,7 +899,7 @@ def propagate_operator_linearized(
 
 
 def sample_operator_predictive(
-    model: _AbstractOperatorModel,
+    model: OperatorModel,
     batch: OperatorBatch,
     /,
     *,
@@ -913,8 +913,8 @@ def sample_operator_predictive(
     valid_policy: ValidPolicy = "record",
 ) -> OperatorPredictiveField:
     """Evaluate one keyed operator repeatedly as coherent full-function draws."""
-    if not isinstance(model, _AbstractOperatorModel):
-        raise TypeError("model must implement the native neural-operator protocol.")
+    if not isinstance(model, OperatorModel):
+        raise TypeError("model must implement the neural-operator protocol.")
     if not isinstance(batch, OperatorBatch):
         raise TypeError("batch must be an OperatorBatch.")
     count = int(num_samples)
@@ -929,7 +929,7 @@ def sample_operator_predictive(
         selected = keys[start : min(start + chunk, count)]
         values = eqx.filter_vmap(
             lambda sample_key: (
-                model.predict(batch, key=sample_key).field(field_name).values
+                model.evaluate(batch, key=sample_key).field(field_name).values
             )
         )(selected)
         parts.append(jnp.asarray(values))

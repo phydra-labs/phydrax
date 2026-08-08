@@ -48,9 +48,9 @@ For this runnable example, we choose a simple analytic “operator” that maps 
     domain = data_dom @ geom
 
     latent = 32
-    branch = phx.nn.MLP(in_size=K, out_size=latent, width_size=64, depth=2, key=jr.key(1))
-    trunk = phx.nn.MLP(in_size=1, out_size=latent, width_size=64, depth=2, key=jr.key(2))
-    deeponet = phx.nn.DeepONet(branch=branch, trunk=trunk, coord_dim=1, latent_size=latent)
+    branch = phx.nn.models.MLP(in_size=K, out_size=latent, width_size=64, depth=2, key=jr.key(1))
+    trunk = phx.nn.models.MLP(in_size=1, out_size=latent, width_size=64, depth=2, key=jr.key(2))
+    deeponet = phx.nn.operator.architectures.DeepONet(branch=branch, trunk=trunk, coord_dim=1, latent_size=latent)
 
     # u_hat(data, x): predicted field on the x-axis for each dataset sample
     u_hat = domain.Model("data", "x")(deeponet)
@@ -108,38 +108,38 @@ must be kept distinct.
     query_x = jnp.linspace(0.0, 1.0, 64)[:, None]
     values = jnp.sin(jnp.pi * sensor_x[:, 0])
 
-    source = phx.nn.FunctionSamples(
+    source = phx.nn.operator.FunctionSamples(
         values=values,
         coordinates=sensor_x,
         quadrature_weights=sensor_w,
     )
-    query = phx.nn.FunctionSamples(values=None, coordinates=query_x)
-    batch = phx.nn.OperatorBatch(
+    query = phx.nn.operator.FunctionSamples(values=None, coordinates=query_x)
+    batch = phx.nn.operator.OperatorBatch(
         inputs={"forcing": source},
         queries={"query": query},
     )
 
     latent = 32
-    feature_model = phx.nn.MLP(
+    feature_model = phx.nn.models.MLP(
         in_size=2,  # value + source coordinate
         out_size=latent,
         width_size=64,
         depth=2,
         key=jr.key(0),
     )
-    branch = phx.nn.IntegralBranchEncoder(
+    branch = phx.nn.operator.architectures.IntegralBranchEncoder(
         feature_model=feature_model,
         latent_size=latent,
         coord_dim=1,
     )
-    trunk = phx.nn.MLP(
+    trunk = phx.nn.models.MLP(
         in_size=1,
         out_size=latent,
         width_size=64,
         depth=2,
         key=jr.key(1),
     )
-    model = phx.nn.DeepONet(
+    model = phx.nn.operator.architectures.DeepONet(
         branch={"forcing": branch},
         trunk=trunk,
         coord_dim=1,
@@ -178,16 +178,16 @@ nonlinear coordinate decoder. `slice_top_k=1` is the hard partition;
 ```python
 source_mask = jnp.array([True, True, True, True, False])
 query_mask = jnp.arange(query_x.shape[0]) < query_x.shape[0] - 1
-measured_batch = phx.nn.OperatorBatch(
+measured_batch = phx.nn.operator.OperatorBatch(
     inputs={
-        "forcing": phx.nn.FunctionSamples(
+        "forcing": phx.nn.operator.FunctionSamples(
             values=values,
             coordinates=sensor_x,
             quadrature_weights=sensor_w,
             mask=source_mask,
         )
     },
-    queries={"query": phx.nn.FunctionSamples(
+    queries={"query": phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=query_x,
         quadrature_weights=jnp.full((query_x.shape[0],), 1.0 / query_x.shape[0]),
@@ -195,7 +195,7 @@ measured_batch = phx.nn.OperatorBatch(
     )},
 )
 
-upt = phx.nn.UPT(
+upt = phx.nn.operator.architectures.UPT(
     in_channels="scalar",
     out_channels="scalar",
     coord_dim=1,
@@ -206,7 +206,7 @@ upt = phx.nn.UPT(
     source_key="forcing",
     key=jr.key(30),
 )
-transolver = phx.nn.Transolver(
+transolver = phx.nn.operator.architectures.Transolver(
     coord_dim=1,
     num_slices=4,
     width=8,
@@ -216,7 +216,7 @@ transolver = phx.nn.Transolver(
     source_key="forcing",
     key=jr.key(31),
 )
-transolver_pp = phx.nn.Transolver(
+transolver_pp = phx.nn.operator.architectures.Transolver(
     coord_dim=1,
     num_slices=4,
     width=8,
@@ -226,7 +226,7 @@ transolver_pp = phx.nn.Transolver(
     source_key="forcing",
     key=jr.key(32),
 )
-gnot = phx.nn.GNOT(
+gnot = phx.nn.operator.architectures.GNOT(
     in_channels={"forcing": "scalar"},
     out_channels="scalar",
     coord_dim=1,
@@ -240,7 +240,7 @@ gnot = phx.nn.GNOT(
     key=jr.key(33),
 )
 
-nomad_decoder = phx.nn.FiLMCoordinateDecoder(
+nomad_decoder = phx.nn.operator.architectures.FiLMCoordinateDecoder(
     latent_size=latent,
     coord_dim=1,
     out_size="scalar",
@@ -248,7 +248,7 @@ nomad_decoder = phx.nn.FiLMCoordinateDecoder(
     depth=2,
     key=jr.key(34),
 )
-nomad = phx.nn.CoordinateConditionedOperator(
+nomad = phx.nn.operator.architectures.CoordinateConditionedOperator(
     branch={"forcing": branch},
     decoder=nomad_decoder,
     coord_dim=1,
@@ -295,7 +295,7 @@ metadata remains outside the neural input.
 
 
 ```python
-pde_encoder = phx.nn.PDEConditionEncoder(
+pde_encoder = phx.nn.operator.architectures.PDEConditionEncoder(
     width=8,
     depth=1,
     key=jr.key(35),
@@ -308,7 +308,7 @@ field distribution, its base must emit three channel-last parameters at every
 query: mean, raw marginal scale, and one factor loading.
 
 ```python
-gaussian_base = phx.nn.UPT(
+gaussian_base = phx.nn.operator.architectures.UPT(
     in_channels="scalar",
     out_channels=3,
     coord_dim=1,
@@ -319,7 +319,7 @@ gaussian_base = phx.nn.UPT(
     source_key="forcing",
     key=jr.key(36),
 )
-gaussian_operator = phx.nn.GaussianFunctionOperator(
+gaussian_operator = phx.nn.operator.architectures.GaussianFunctionOperator(
     gaussian_base,
     out_channels="scalar",
     factor_rank=1,
@@ -341,7 +341,7 @@ for nonperiodic data.
     y = jnp.linspace(0.0, 1.0, ny, endpoint=False)
     coefficient = jr.normal(jr.key(2), (16, nx, ny, 2))
 
-    fno = phx.nn.FNO(
+    fno = phx.nn.operator.architectures.FNO(
         n_modes=(12, 16),
         in_channels=2,
         out_channels=1,
@@ -377,7 +377,7 @@ boundary padding: HOFNO rejects nonzero `domain_padding`.
     hofno_nodes = jnp.linspace(0.0, 1.0, 16, endpoint=False)
     hofno_source = jr.normal(jr.key(20), (2, 16, 16))
 
-    hofno = phx.nn.HOFNO(
+    hofno = phx.nn.operator.architectures.HOFNO(
         n_modes=(5, 5),
         width=8,
         depth=1,
@@ -415,41 +415,41 @@ the transform shape at construction. MWT is one-dimensional.
 
 ```python
 grid_nodes = jnp.linspace(0.0, 1.0, 8, endpoint=False)
-grid_axis = phx.nn.OperatorAxis(
+grid_axis = phx.nn.operator.OperatorAxis(
     "x",
     grid_nodes,
     quadrature_weights=jnp.full((8,), 1.0 / 8.0),
     periodic=True,
 )
-grid_samples = phx.nn.FunctionSamples(
+grid_samples = phx.nn.operator.FunctionSamples(
     values=jnp.sin(2.0 * jnp.pi * grid_nodes),
     axes=(grid_axis,),
     mask=jnp.ones((8,), dtype=bool),
 )
-grid_batch = phx.nn.OperatorBatch(
+grid_batch = phx.nn.operator.OperatorBatch(
     inputs={"state": grid_samples},
-    queries={"query": phx.nn.FunctionSamples(
+    queries={"query": phx.nn.operator.FunctionSamples(
         values=None,
         axes=(grid_axis,),
         mask=jnp.ones((8,), dtype=bool),
     )},
 )
 
-ifno = phx.nn.IFNO(
+ifno = phx.nn.operator.architectures.IFNO(
     n_modes=3,
     width=8,
     iterations=3,
     source_key="state",
     key=jr.key(40),
 )
-axial_fno = phx.nn.AxialFactorizedFNO(
+axial_fno = phx.nn.operator.architectures.AxialFactorizedFNO(
     n_modes=(3,),
     width=8,
     depth=1,
     source_key="state",
     key=jr.key(41),
 )
-wno = phx.nn.WaveletNeuralOperator(
+wno = phx.nn.operator.architectures.WaveletNeuralOperator(
     (8,),
     in_channels="scalar",
     out_channels="scalar",
@@ -459,7 +459,7 @@ wno = phx.nn.WaveletNeuralOperator(
     source_key="state",
     key=jr.key(42),
 )
-mwt = phx.nn.MultiwaveletOperator(
+mwt = phx.nn.operator.architectures.MultiwaveletOperator(
     8,
     in_channels="scalar",
     out_channels="scalar",
@@ -493,7 +493,7 @@ pretraining data, or evidence of foundation-model performance. DPOT corruption
 is a pretraining primitive, not a bundled pretraining pipeline.
 
 ```python
-poseidon = phx.nn.Poseidon(
+poseidon = phx.nn.operator.architectures.Poseidon(
     image_shape=(8, 8),
     patch_size=2,
     embed_dim=4,
@@ -503,7 +503,7 @@ poseidon = phx.nn.Poseidon(
     skip_depths=(0,),
     key=jr.key(44),
 )
-dpot = phx.nn.DPOT(
+dpot = phx.nn.operator.architectures.DPOT(
     image_shape=(8, 8),
     history_steps=3,
     forecast_steps=2,
@@ -517,7 +517,7 @@ dpot = phx.nn.DPOT(
     key=jr.key(45),
 )
 history = jnp.ones((8, 8, 3))
-corrupted_history = phx.nn.dpot_corrupt_history(
+corrupted_history = phx.nn.operator.architectures.dpot_corrupt_history(
     history,
     noise_scale=1e-3,
     key=jr.key(46),
@@ -537,7 +537,7 @@ that metadata.
 Stable Koopman evolution and Green kernels solve different geometry problems:
 
 ```python
-koopman = phx.nn.KoopmanTemporalOperator(
+koopman = phx.nn.operator.architectures.KoopmanTemporalOperator(
     spatial_ndim=1,
     latent_size=4,
     hidden_size=8,
@@ -547,7 +547,7 @@ koopman = phx.nn.KoopmanTemporalOperator(
     source_key="state",
     key=jr.key(47),
 )
-green = phx.nn.GreenKernelOperator(
+green = phx.nn.operator.architectures.GreenKernelOperator(
     coord_dim=1,
     forcing_channels="scalar",
     boundary_channels="scalar",
@@ -573,7 +573,7 @@ boundary condition.
 All of these roadmap entries remain explicit-use only:
 
 ```python
-assert phx.nn.operator_architecture_status("FNO").recommendation_eligible
+assert phx.nn.operator.operator_architecture_status("FNO").recommendation_eligible
 for architecture_name in (
     "IFNO",
     "WNO",
@@ -584,7 +584,7 @@ for architecture_name in (
     "KoopmanTemporalOperator",
     "GreenKernelOperator",
 ):
-    assert not phx.nn.operator_architecture_status(
+    assert not phx.nn.operator.operator_architecture_status(
         architecture_name
     ).recommendation_eligible
 ```
@@ -635,15 +635,15 @@ query_coordinates = jnp.stack((query_base, query_base + 0.5 * deformation[:10]))
 query_mask = jnp.array(
     [[True] * 10, [True] * 8 + [False, False]]
 )
-geometry_batch = phx.nn.OperatorBatch(
+geometry_batch = phx.nn.operator.OperatorBatch(
     inputs={
-        "forcing": phx.nn.FunctionSamples(
+        "forcing": phx.nn.operator.FunctionSamples(
             values=source_values,
             coordinates=source_coordinates,
             quadrature_weights=jnp.full((2, 12), 1.0 / 12.0),
         )
     },
-    queries={"query": phx.nn.FunctionSamples(
+    queries={"query": phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=query_coordinates,
         mask=query_mask,
@@ -651,7 +651,7 @@ geometry_batch = phx.nn.OperatorBatch(
     case_axes=("case",),
 )
 
-gino = phx.nn.GINO(
+gino = phx.nn.operator.architectures.GINO(
     in_channels="scalar",
     out_channels="scalar",
     coord_dim=2,
@@ -668,7 +668,7 @@ gino = phx.nn.GINO(
     source_key="forcing",
     key=jr.key(20),
 )
-geometry_flower = phx.nn.GeometryInformedFlower(
+geometry_flower = phx.nn.operator.architectures.GeometryInformedFlower(
     in_channels="scalar",
     out_channels="scalar",
     coord_dim=2,
@@ -688,7 +688,7 @@ geometry_flower = phx.nn.GeometryInformedFlower(
     key=jr.key(21),
 )
 
-rigno = phx.nn.RIGNO(
+rigno = phx.nn.operator.architectures.RIGNO(
     in_channels="scalar",
     out_channels="scalar",
     coord_dim=2,
@@ -705,7 +705,7 @@ rigno = phx.nn.RIGNO(
     source_key="forcing",
     key=jr.key(22),
 )
-gaot = phx.nn.GAOT(
+gaot = phx.nn.operator.architectures.GAOT(
     in_channels="scalar",
     out_channels="scalar",
     coord_dim=2,
@@ -777,26 +777,26 @@ domain_sdf = (
 )
 density = 1.0 + 0.2 * jnp.cos(3.0 * ring_angle)
 
-conservative_batch = phx.nn.OperatorBatch(
+conservative_batch = phx.nn.operator.OperatorBatch(
     inputs={
-        "density": phx.nn.FunctionSamples(
+        "density": phx.nn.operator.FunctionSamples(
             values=density,
             coordinates=ring_coordinates,
             quadrature_weights=ring_weights,
         ),
-        "domain_sdf": phx.nn.FunctionSamples(
+        "domain_sdf": phx.nn.operator.FunctionSamples(
             values=domain_sdf,
             coordinates=support_coordinates,
             quadrature_weights=jnp.full((64,), 4.0 / 64.0),
         ),
     },
-    queries={"query": phx.nn.FunctionSamples(
+    queries={"query": phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=ring_coordinates,
         quadrature_weights=ring_weights,
     )},
 )
-conservative_flower = phx.nn.GeometryInformedFlower(
+conservative_flower = phx.nn.operator.architectures.GeometryInformedFlower(
     in_channels="scalar",
     out_channels="scalar",
     coord_dim=2,
@@ -860,21 +860,21 @@ cochain_complex = phx.graph.triangle_mesh_to_cochain_complex(
     cochain_faces,
 )
 forcing_values = jnp.arange(8.0).reshape(2, 4)
-cochain_batch = phx.nn.OperatorBatch(
+cochain_batch = phx.nn.operator.OperatorBatch(
     inputs={
-        "forcing": phx.nn.function_samples_from_cochain(
+        "forcing": phx.nn.operator.function_samples_from_cochain(
             cochain_complex,
             0,
             values=forcing_values,
         )
     },
     queries={
-        "vertices": phx.nn.function_samples_from_cochain(
+        "vertices": phx.nn.operator.function_samples_from_cochain(
             cochain_complex,
             0,
             values=None,
         ),
-        "edges": phx.nn.function_samples_from_cochain(
+        "edges": phx.nn.operator.function_samples_from_cochain(
             cochain_complex,
             1,
             values=None,
@@ -894,37 +894,37 @@ one_form = phx.graph.CochainFieldSpec(
     sampling="cell_integral",
 )
 cochain_fields = (
-    phx.nn.OperatorFieldSpec(
+    phx.nn.operator.OperatorFieldSpec(
         "forcing",
         role="source",
         source_name="forcing",
         cochain=zero_form,
     ),
-    phx.nn.OperatorFieldSpec(
+    phx.nn.operator.OperatorFieldSpec(
         "pressure",
         role="target",
         query_name="vertices",
         cochain=zero_form,
     ),
-    phx.nn.OperatorFieldSpec(
+    phx.nn.operator.OperatorFieldSpec(
         "flux",
         role="target",
         query_name="edges",
         cochain=one_form,
     ),
 )
-cochain_task = phx.nn.OperatorTask(
+cochain_task = phx.nn.operator.OperatorTask(
     "mixed-darcy",
     fields=cochain_fields,
     queries=(
-        phx.nn.OperatorQuerySpec(
+        phx.nn.operator.OperatorQuerySpec(
             "vertices",
             geometry_kind="cell_complex",
             coordinate_components=("x", "y"),
             topology_site="cell",
             quadrature="physical_required",
         ),
-        phx.nn.OperatorQuerySpec(
+        phx.nn.operator.OperatorQuerySpec(
             "edges",
             geometry_kind="cell_complex",
             coordinate_components=("x", "y"),
@@ -932,13 +932,13 @@ cochain_task = phx.nn.OperatorTask(
             quadrature="physical_required",
         ),
     ),
-    problem=phx.nn.OperatorProblemSpec(
+    problem=phx.nn.operator.OperatorProblemSpec(
         source_query_relation="shared_topology",
         query_is_fixed=False,
         requires_resolution_transfer=True,
     ),
 )
-cochain_operator = phx.nn.CochainNeuralOperator(
+cochain_operator = phx.nn.operator.architectures.CochainNeuralOperator(
     cochain_fields,
     width=2,
     depth=1,
@@ -1002,19 +1002,19 @@ darcy_program = phx.graph.CochainResidualProgram(
     identity="cookbook.operator.mixed_darcy.v1",
 )
 residual_inputs = {
-    "pressure": phx.nn.CochainResidualInput("prediction", "pressure"),
-    "flux": phx.nn.CochainResidualInput("prediction", "flux"),
-    "forcing": phx.nn.CochainResidualInput("source", "forcing"),
+    "pressure": phx.nn.operator.training.CochainResidualInput("prediction", "pressure"),
+    "flux": phx.nn.operator.training.CochainResidualInput("prediction", "flux"),
+    "forcing": phx.nn.operator.training.CochainResidualInput("source", "forcing"),
 }
 physics_losses = (
-    phx.nn.CochainResidualLoss(
+    phx.nn.operator.training.CochainResidualLoss(
         name="constitutive",
         program=darcy_program,
         inputs=residual_inputs,
         output="constitutive",
         reduction="metric_mean",
     ),
-    phx.nn.CochainResidualLoss(
+    phx.nn.operator.training.CochainResidualLoss(
         name="mass",
         program=darcy_program,
         inputs=residual_inputs,
@@ -1022,15 +1022,15 @@ physics_losses = (
         reduction="metric_sum",
     ),
 )
-targetless = phx.nn.OperatorDataset(
+targetless = phx.nn.operator.training.OperatorDataset(
     cochain_batch,
-    phx.nn.OperatorTargetBatch.from_arrays({}, cochain_batch),
+    phx.nn.operator.OperatorTargetBatch.from_arrays({}, cochain_batch),
 )
-fit = phx.nn.fit_operator(
+fit = phx.nn.operator.training.fit_operator(
     cochain_operator,
     targetless,
     task=cochain_task,
-    training_evidence=phx.nn.OperatorTrainingEvidence("task_specific"),
+    training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
     loss_terms=physics_losses,
     normalization=None,
     batch_size=1,
@@ -1070,8 +1070,8 @@ available.
 
 ```python
 pod_modes = jnp.ones((query_x.shape[0], latent))
-pod = phx.nn.PODBasis(pod_modes, latent_size=latent)
-model = phx.nn.DeepONet(
+pod = phx.nn.operator.architectures.PODBasis(pod_modes, latent_size=latent)
+model = phx.nn.operator.architectures.DeepONet(
     branch={
         "initial": branch,
         "forcing": branch,
@@ -1082,7 +1082,7 @@ model = phx.nn.DeepONet(
     latent_size=latent,
     fusion="product",
 )
-multi_input_batch = phx.nn.OperatorBatch(
+multi_input_batch = phx.nn.operator.OperatorBatch(
     inputs={"initial": source, "forcing": source, "coefficient": source},
     queries={"query": query},
 )
@@ -1128,7 +1128,7 @@ differential operators therefore remain the single derivative implementation.
 For direct inspection:
 
 ```python
-context = phx.nn.bind_operator_context(model, fine_physics_batch)
+context = phx.nn.operator.adapters.bind_operator_context(model, fine_physics_batch)
 u_for_this_source = context.domain_function(geom, "x")
 laplacian_u = phx.operators.laplacian(u_for_this_source, var="x")
 ```
@@ -1142,40 +1142,40 @@ Fit normalization on the training partition only, then pass the same persisted
 policy to validation, inference, and checkpointing:
 
 ```python
-training_axis = phx.nn.OperatorAxis("x", jnp.linspace(0.0, 1.0, K))
+training_axis = phx.nn.operator.OperatorAxis("x", jnp.linspace(0.0, 1.0, K))
 training_values = coeffs
 training_targets = 2.0 * coeffs
-training_model = phx.nn.FNO(
+training_model = phx.nn.operator.architectures.FNO(
     width=8,
     depth=1,
     n_modes=(3,),
     key=jr.key(10),
 )
-dataset = phx.nn.operator_dataset_from_arrays(
+dataset = phx.nn.operator.training.operator_dataset_from_arrays(
     {"forcing": training_values},
     {"output": training_targets},
     source_axes={"forcing": (training_axis,)},
     query_axes=(training_axis,),
 )
-split = phx.nn.split_operator_dataset(
+split = phx.nn.operator.training.split_operator_dataset(
     dataset,
-    policy=phx.nn.OperatorSplitPolicy(seed=1729),
+    policy=phx.nn.operator.training.OperatorSplitPolicy(seed=1729),
 )
-normalization = phx.nn.fit_operator_normalization(
+normalization = phx.nn.operator.training.fit_operator_normalization(
     split.train.batch,
     split.train.targets,
 )
-normalization_path = phx.nn.save_operator_normalization(
+normalization_path = phx.nn.operator.training.save_operator_normalization(
     "/tmp/phydrax-operator-normalization.json",
     normalization,
 )
 
-dtype_policy = phx.nn.OperatorDTypePolicy(
+dtype_policy = phx.nn.operator.training.OperatorDTypePolicy(
     parameter_dtype="float32",
     compute_dtype="float32",
     reduction_dtype="float64",
 )
-loader = phx.nn.OperatorBatchLoader(
+loader = phx.nn.operator.training.OperatorBatchLoader(
     split.train,
     batch_size=16,
     seed=1729,
@@ -1217,7 +1217,7 @@ to measure overlap without mixing model accuracy into the data-plane result.
 `fit_operator` remains the production optimization owner:
 
 ```python
-fit_result = phx.nn.fit_operator(
+fit_result = phx.nn.operator.training.fit_operator(
     training_model,
     split.train,
     validation=split.validation,
@@ -1226,7 +1226,7 @@ fit_result = phx.nn.fit_operator(
     batch_size=16,
     normalization=normalization,
     dtype_policy=dtype_policy,
-    validation_policy=phx.nn.OperatorValidationPolicy(every=1),
+    validation_policy=phx.nn.operator.training.OperatorValidationPolicy(every=1),
     key=jr.key(11),
 )
 training_model = fit_result.execution_model
@@ -1278,8 +1278,8 @@ def boundary_envelope(coordinates, batch, *, key):
     return x * (1.0 - x)
 
 physics_latent = 8
-physics_branch = phx.nn.IntegralBranchEncoder(
-    feature_model=phx.nn.MLP(
+physics_branch = phx.nn.operator.architectures.IntegralBranchEncoder(
+    feature_model=phx.nn.models.MLP(
         in_size=2,
         out_size=physics_latent,
         width_size=16,
@@ -1289,9 +1289,9 @@ physics_branch = phx.nn.IntegralBranchEncoder(
     latent_size=physics_latent,
     coord_dim=1,
 )
-physics_base = phx.nn.DeepONet(
+physics_base = phx.nn.operator.architectures.DeepONet(
     branch={"forcing": physics_branch},
-    trunk=phx.nn.MLP(
+    trunk=phx.nn.models.MLP(
         in_size=1,
         out_size=physics_latent,
         width_size=16,
@@ -1302,60 +1302,60 @@ physics_base = phx.nn.DeepONet(
     latent_size=physics_latent,
 )
 
-output_pipeline = phx.nn.OperatorOutputPipeline(
-    phx.nn.HardConstraintTransform(
+output_pipeline = phx.nn.operator.training.OperatorOutputPipeline(
+    phx.nn.operator.training.HardConstraintTransform(
         "output",
         envelope_fn=boundary_envelope,
         identity="homogeneous-dirichlet-v1",
     ),
-    phx.nn.ConservationProjection(
+    phx.nn.operator.training.ConservationProjection(
         "output",
         source_name="forcing",
         correction_fn=boundary_envelope,
         identity="dirichlet-compatible-integral-v1",
     ),
 )
-physics_task = phx.nn.OperatorTask(
+physics_task = phx.nn.operator.OperatorTask(
     "constrained-independent-query",
     fields=(
-        phx.nn.OperatorFieldSpec(
+        phx.nn.operator.OperatorFieldSpec(
             "forcing",
             role="source",
             source_name="forcing",
         ),
-        phx.nn.OperatorFieldSpec(
+        phx.nn.operator.OperatorFieldSpec(
             "output",
             role="target",
             query_name="query",
         ),
     ),
     queries=(
-        phx.nn.OperatorQuerySpec(
+        phx.nn.operator.OperatorQuerySpec(
             "query",
             geometry_kind="point_cloud",
             coordinate_components=("x",),
             coordinate_dimensions=((),),
         ),
     ),
-    problem=phx.nn.OperatorProblemSpec(
+    problem=phx.nn.operator.OperatorProblemSpec(
         source_query_relation="independent",
         query_is_fixed=False,
     ),
 )
-physics_model = phx.nn.TrainedOperator(
+physics_model = phx.nn.operator.training.TrainedOperator(
     physics_base,
     physics_task,
-    training_evidence=phx.nn.OperatorTrainingEvidence("task_specific"),
+    training_evidence=phx.nn.operator.OperatorTrainingEvidence("task_specific"),
     output_pipeline=output_pipeline,
 )
 physics_prediction = physics_model.predict(measured_batch, key=jr.key(14))
 physics_values = physics_prediction.field("output").values
 
-source_total = phx.nn.operator_integral(
+source_total = phx.nn.operator.training.operator_integral(
     measured_batch.input("forcing").values,
     measured_batch.input("forcing"),
 )
-predicted_total = phx.nn.operator_integral(
+predicted_total = phx.nn.operator.training.operator_integral(
     physics_values,
     measured_batch.query("query"),
 )
@@ -1382,7 +1382,7 @@ actions. For a `TrainedOperator`, this is the derivative from physical source
 values to dimensionalized physical outputs:
 
 ```python
-linearization = phx.nn.linearize_operator(
+linearization = phx.nn.operator.training.linearize_operator(
     physics_model,
     measured_batch,
     "forcing",
@@ -1412,13 +1412,13 @@ Encoded operators can evaluate query sets in fixed-capacity chunks without
 re-encoding the source:
 
 ```python
-query_source = phx.nn.ArrayOperatorQuerySource(
+query_source = phx.nn.operator.training.ArrayOperatorQuerySource(
     measured_batch.query("query"),
     case_shape=measured_batch.case_shape,
     fingerprint="cookbook-query-v1",
 )
-prediction_sink = phx.nn.ArrayPredictionSink()
-streamed_prediction = phx.nn.decode_query_chunks(
+prediction_sink = phx.nn.operator.training.ArrayPredictionSink()
+streamed_prediction = phx.nn.operator.training.decode_query_chunks(
     nomad,
     measured_batch,
     query_source,
@@ -1446,9 +1446,10 @@ state per trial. Old checkpoint formats are rejected rather than migrated.
 
 `save_operator_artifact` stores the execution model, physical output pipeline and
 fingerprint, fixed-query geometry fingerprints, normalization, dtype, evidence,
-and optional exact-resume state as one verified contract. Only the current
-canonical representation is accepted. Development artifacts should be regenerated
-after representation changes rather than migrated.
+and optional exact-resume state as one verified contract. Portable recipes use
+versioned architecture and value registry identities rather than defining-module
+paths. Only the current canonical representation is accepted; regenerate
+development artifacts when that representation changes.
 
 ## Generalized Flower transport
 
@@ -1461,31 +1462,31 @@ import jax
 import jax.numpy as jnp
 import phydrax as phx
 
-source_axis = phx.nn.OperatorAxis(
+source_axis = phx.nn.operator.OperatorAxis(
     "x",
     jnp.arange(16) / 16,
     quadrature_weights=jnp.full((16,), 1 / 16),
     periodic=True,
 )
-query_axis = phx.nn.OperatorAxis(
+query_axis = phx.nn.operator.OperatorAxis(
     "x",
     jnp.arange(24) / 24,
     quadrature_weights=jnp.full((24,), 1 / 24),
     periodic=True,
 )
 source_values = jnp.sin(2 * jnp.pi * source_axis.nodes)
-batch = phx.nn.OperatorBatch(
+batch = phx.nn.operator.OperatorBatch(
     inputs={
-        "state": phx.nn.FunctionSamples(
+        "state": phx.nn.operator.FunctionSamples(
             values=source_values,
             axes=(source_axis,),
         )
     },
     queries={
-        "query": phx.nn.FunctionSamples(values=None, axes=(query_axis,))
+        "query": phx.nn.operator.FunctionSamples(values=None, axes=(query_axis,))
     },
 )
-flower = phx.nn.Flower(
+flower = phx.nn.operator.architectures.Flower(
     in_channels="scalar",
     out_channels="scalar",
     spatial_ndim=1,

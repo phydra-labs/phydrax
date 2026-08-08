@@ -10,7 +10,7 @@ import phydrax as phx
 
 
 def _axis(size=8):
-    return phx.nn.OperatorAxis(
+    return phx.nn.operator.OperatorAxis(
         "x",
         jnp.arange(size, dtype=float) / size,
         quadrature_weights=jnp.full((size,), 1.0 / size),
@@ -23,10 +23,10 @@ def _conditioned_batch(values, conditions, *, query_mask=None):
     conditions = jnp.asarray(conditions)
     case_axes = ("case",) if values.ndim == 2 else ()
     axis = _axis(values.shape[-1])
-    return phx.nn.OperatorBatch(inputs={
-        "state": phx.nn.FunctionSamples(values=values, axes=(axis,)),
-        "shift": phx.nn.FunctionSamples(values=conditions),
-    }, queries={"query": phx.nn.FunctionSamples(
+    return phx.nn.operator.OperatorBatch(inputs={
+        "state": phx.nn.operator.FunctionSamples(values=values, axes=(axis,)),
+        "shift": phx.nn.operator.FunctionSamples(values=conditions),
+    }, queries={"query": phx.nn.operator.FunctionSamples(
         values=None,
         axes=(axis,),
         mask=query_mask,
@@ -34,7 +34,7 @@ def _conditioned_batch(values, conditions, *, query_mask=None):
 
 
 def _conditioned_flower(key):
-    return phx.nn.Flower(
+    return phx.nn.operator.architectures.Flower(
         in_channels="scalar",
         out_channels="scalar",
         spatial_ndim=1,
@@ -108,7 +108,7 @@ def test_flower_scalar_case_count_equal_to_grid_size_is_not_a_channel_axis():
     size = 8
     nodes = jnp.arange(size, dtype=float) / size
     values = jr.normal(jr.key(3), (size, size))
-    model = phx.nn.Flower(
+    model = phx.nn.operator.architectures.Flower(
         in_channels="scalar",
         out_channels="scalar",
         spatial_ndim=1,
@@ -127,9 +127,9 @@ def test_flower_scalar_case_count_equal_to_grid_size_is_not_a_channel_axis():
         tuple(model((values[index], nodes)) for index in range(size))
     )
     axis = _axis(size)
-    batch = phx.nn.OperatorBatch(inputs={
-        "state": phx.nn.FunctionSamples(values=values, axes=(axis,)),
-    }, queries={"query": phx.nn.FunctionSamples(values=None, axes=(axis,))}, case_axes=("case",),)
+    batch = phx.nn.operator.OperatorBatch(inputs={
+        "state": phx.nn.operator.FunctionSamples(values=values, axes=(axis,)),
+    }, queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,))}, case_axes=("case",),)
     structured = model(batch)
 
     assert direct.shape == (size, size)

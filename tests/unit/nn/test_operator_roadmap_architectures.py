@@ -12,7 +12,7 @@ import phydrax as phx
 
 
 def _axis(name, size, *, periodic=False):
-    return phx.nn.OperatorAxis(
+    return phx.nn.operator.OperatorAxis(
         name,
         jnp.linspace(0.0, 1.0, size, endpoint=not periodic),
         quadrature_weights=jnp.full((size,), 1.0 / size),
@@ -42,14 +42,14 @@ def test_ifno_shared_iteration_diagnostics_jit_and_query_mask():
     query_mask = jnp.array(
         [[True, True, False, True, True, True], [True, False, True, True, True, True]]
     )
-    batch = phx.nn.OperatorBatch(
-        inputs={"state": phx.nn.FunctionSamples(values=values, axes=(axis,))},
+    batch = phx.nn.operator.OperatorBatch(
+        inputs={"state": phx.nn.operator.FunctionSamples(values=values, axes=(axis,))},
         queries={
-            "query": phx.nn.FunctionSamples(values=None, axes=(axis,), mask=query_mask)
+            "query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,), mask=query_mask)
         },
         case_axes=("case",),
     )
-    model = phx.nn.IFNO(
+    model = phx.nn.operator.architectures.IFNO(
         n_modes=(3,),
         width=4,
         iterations=3,
@@ -57,7 +57,7 @@ def test_ifno_shared_iteration_diagnostics_jit_and_query_mask():
         source_key="state",
         key=jr.key(1),
     )
-    more_iterations = phx.nn.IFNO(
+    more_iterations = phx.nn.operator.architectures.IFNO(
         n_modes=(3,),
         width=4,
         iterations=7,
@@ -89,7 +89,7 @@ def test_axial_factorized_fno_has_finite_output_and_input_gradient():
     x = jnp.linspace(0.0, 1.0, 5, endpoint=False)
     y = jnp.linspace(0.0, 1.0, 4, endpoint=False)
     values = jnp.sin(2.0 * jnp.pi * x[:, None]) * jnp.cos(2.0 * jnp.pi * y[None, :])
-    model = phx.nn.AxialFactorizedFNO(
+    model = phx.nn.operator.architectures.AxialFactorizedFNO(
         n_modes=(3, 2),
         width=4,
         depth=1,
@@ -114,20 +114,20 @@ def _transolver_batch():
     source_mask = jnp.array([[True, False, False, False], [False, False, True, False]])
     source_weights = jnp.array([[0.3, 4.0, 5.0, 6.0], [7.0, 8.0, 0.65, 9.0]])
     query_mask = jnp.array([[True, False, True], [False, True, True]])
-    source = phx.nn.FunctionSamples(
+    source = phx.nn.operator.FunctionSamples(
         values=values,
         coordinates=coordinates,
         quadrature_weights=source_weights,
         mask=source_mask,
     )
-    query = phx.nn.FunctionSamples(
+    query = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=jnp.array([[0.1], [0.5], [0.9]]),
         quadrature_weights=jnp.array([0.2, 0.3, 0.5]),
         mask=query_mask,
     )
     return (
-        phx.nn.OperatorBatch(
+        phx.nn.operator.OperatorBatch(
             inputs={"state": source},
             queries={"query": query},
             case_axes=("case",),
@@ -151,8 +151,8 @@ def test_transolver_hard_and_overlapping_slices_preserve_measure_and_masks():
         attention_execution="dense",
         key=jr.key(3),
     )
-    hard = phx.nn.Transolver(slice_top_k=1, **common)
-    overlapping = phx.nn.Transolver(slice_top_k=2, **common)
+    hard = phx.nn.operator.architectures.Transolver(slice_top_k=1, **common)
+    overlapping = phx.nn.operator.architectures.Transolver(slice_top_k=2, **common)
 
     hard_state = hard.encode_inputs(batch)
     overlapping_state = overlapping.encode_inputs(batch)
@@ -173,7 +173,7 @@ def test_transolver_hard_and_overlapping_slices_preserve_measure_and_masks():
 
 
 def _gnot_batch(*, reverse=False, velocity_scale=1.0, forcing_scale=1.0):
-    velocity = phx.nn.FunctionSamples(
+    velocity = phx.nn.operator.FunctionSamples(
         values=velocity_scale
         * jnp.array(
             [
@@ -185,7 +185,7 @@ def _gnot_batch(*, reverse=False, velocity_scale=1.0, forcing_scale=1.0):
         quadrature_weights=jnp.array([0.2, 0.5, 0.3]),
         mask=jnp.array([[True, True, False], [True, False, True]]),
     )
-    forcing = phx.nn.FunctionSamples(
+    forcing = phx.nn.operator.FunctionSamples(
         values=forcing_scale * jnp.array([[0.2, 0.4, -0.7, 0.1], [-0.3, 0.6, 0.2, 0.8]]),
         coordinates=jnp.array([[0.1], [0.3], [0.6], [0.95]]),
         quadrature_weights=jnp.array([0.1, 0.2, 0.3, 0.4]),
@@ -196,10 +196,10 @@ def _gnot_batch(*, reverse=False, velocity_scale=1.0, forcing_scale=1.0):
         else {"forcing": forcing, "velocity": velocity}
     )
     query_mask = jnp.array([[True, False, True], [True, True, False]])
-    return phx.nn.OperatorBatch(
+    return phx.nn.operator.OperatorBatch(
         inputs=inputs,
         queries={
-            "query": phx.nn.FunctionSamples(
+            "query": phx.nn.operator.FunctionSamples(
                 values=None,
                 coordinates=jnp.array([[0.05], [0.5], [0.85]]),
                 quadrature_weights=jnp.array([0.25, 0.5, 0.25]),
@@ -222,8 +222,8 @@ def test_gnot_named_source_order_is_deterministic_and_heterogeneous_branches_fus
         attention_execution="dense",
         key=jr.key(4),
     )
-    first = phx.nn.GNOT(in_channels={"velocity": 2, "forcing": "scalar"}, **settings)
-    reordered = phx.nn.GNOT(in_channels={"forcing": "scalar", "velocity": 2}, **settings)
+    first = phx.nn.operator.architectures.GNOT(in_channels={"velocity": 2, "forcing": "scalar"}, **settings)
+    reordered = phx.nn.operator.architectures.GNOT(in_channels={"forcing": "scalar", "velocity": 2}, **settings)
     batch = _gnot_batch()
     reversed_batch = _gnot_batch(reverse=True)
     output = first(batch)
@@ -239,16 +239,16 @@ def test_gnot_named_source_order_is_deterministic_and_heterogeneous_branches_fus
 
 def _koopman_batch():
     x = _axis("x", 4)
-    time = phx.nn.OperatorAxis("time", jnp.array([0.0, 0.17, 0.61]))
+    time = phx.nn.operator.OperatorAxis("time", jnp.array([0.0, 0.17, 0.61]))
     values = jnp.stack((jnp.sin(jnp.pi * x.nodes), jnp.cos(jnp.pi * x.nodes)))
     query_mask = (
         jnp.ones((2, 4, 3), dtype=bool).at[0, 1, 1].set(False).at[1, 3, 2].set(False)
     )
     return (
-        phx.nn.OperatorBatch(
-            inputs={"state": phx.nn.FunctionSamples(values=values, axes=(x,))},
+        phx.nn.operator.OperatorBatch(
+            inputs={"state": phx.nn.operator.FunctionSamples(values=values, axes=(x,))},
             queries={
-                "query": phx.nn.FunctionSamples(
+                "query": phx.nn.operator.FunctionSamples(
                     values=None, axes=(x, time), mask=query_mask
                 )
             },
@@ -260,7 +260,7 @@ def _koopman_batch():
 
 @pytest.mark.parametrize("evolution", ("continuous", "discrete"))
 def test_koopman_stability_semigroup_and_irregular_time_queries(evolution):
-    model = phx.nn.KoopmanTemporalOperator(
+    model = phx.nn.operator.architectures.KoopmanTemporalOperator(
         spatial_ndim=1,
         latent_size=3,
         hidden_size=5,
@@ -295,21 +295,21 @@ def test_koopman_stability_semigroup_and_irregular_time_queries(evolution):
 def _green_batch(
     *, forcing_weights=True, boundary_weights=True, forcing_scale=1.0, boundary_scale=1.0
 ):
-    forcing = phx.nn.FunctionSamples(
+    forcing = phx.nn.operator.FunctionSamples(
         values=forcing_scale * jnp.array([[1.0, -0.5, 0.25], [-0.2, 0.7, 0.4]]),
         coordinates=jnp.array([[0.1], [0.5], [0.9]]),
         quadrature_weights=(jnp.array([0.2, 0.5, 0.3]) if forcing_weights else None),
     )
-    boundary = phx.nn.FunctionSamples(
+    boundary = phx.nn.operator.FunctionSamples(
         values=boundary_scale * jnp.array([[0.6, -0.1], [-0.4, 0.9]]),
         coordinates=jnp.array([[0.0], [1.0]]),
         quadrature_weights=(jnp.array([0.5, 0.5]) if boundary_weights else None),
     )
     query_mask = jnp.array([[True, False, True], [True, True, False]])
-    return phx.nn.OperatorBatch(
+    return phx.nn.operator.OperatorBatch(
         inputs={"forcing": forcing, "boundary": boundary},
         queries={
-            "query": phx.nn.FunctionSamples(
+            "query": phx.nn.operator.FunctionSamples(
                 values=None,
                 coordinates=jnp.array([[0.2], [0.55], [0.8]]),
                 mask=query_mask,
@@ -320,7 +320,7 @@ def _green_batch(
 
 
 def test_green_kernel_requires_physical_measures_and_uses_both_branches():
-    model = phx.nn.GreenKernelOperator(
+    model = phx.nn.operator.architectures.GreenKernelOperator(
         coord_dim=1,
         width=4,
         depth=1,
@@ -348,20 +348,20 @@ def _poseidon_batch(values, time):
     query_mask = (
         jnp.ones((2, 4, 4), dtype=bool).at[0, 1, 2].set(False).at[1, 3, 0].set(False)
     )
-    return phx.nn.OperatorBatch(
+    return phx.nn.operator.OperatorBatch(
         inputs={
-            "state": phx.nn.FunctionSamples(values=values, axes=axes),
-            "time": phx.nn.FunctionSamples(values=time),
+            "state": phx.nn.operator.FunctionSamples(values=values, axes=axes),
+            "time": phx.nn.operator.FunctionSamples(values=time),
         },
         queries={
-            "query": phx.nn.FunctionSamples(values=None, axes=axes, mask=query_mask)
+            "query": phx.nn.operator.FunctionSamples(values=None, axes=axes, mask=query_mask)
         },
         case_axes=("case",),
     )
 
 
 def test_poseidon_eager_jit_gradient_time_conditioning_and_mask():
-    model = phx.nn.Poseidon(
+    model = phx.nn.operator.architectures.Poseidon(
         image_shape=(4, 4),
         patch_size=(2, 2),
         embed_dim=4,
@@ -393,8 +393,8 @@ def test_poseidon_eager_jit_gradient_time_conditioning_and_mask():
 
 def _dpot_batch(history):
     axes = (_axis("x", 4), _axis("y", 4))
-    history_axis = phx.nn.OperatorAxis("history_time", jnp.array([-1.0, 0.0]))
-    forecast_axis = phx.nn.OperatorAxis("forecast_time", jnp.array([0.4]))
+    history_axis = phx.nn.operator.OperatorAxis("history_time", jnp.array([-1.0, 0.0]))
+    forecast_axis = phx.nn.operator.OperatorAxis("forecast_time", jnp.array([0.4]))
     source_mask = (
         jnp.ones((2, 4, 4, 2), dtype=bool)
         .at[0, 1, 2, 0]
@@ -409,16 +409,16 @@ def _dpot_batch(history):
         .at[1, 2, 3, 0]
         .set(False)
     )
-    return phx.nn.OperatorBatch(
+    return phx.nn.operator.OperatorBatch(
         inputs={
-            "history": phx.nn.FunctionSamples(
+            "history": phx.nn.operator.FunctionSamples(
                 values=history,
                 axes=axes + (history_axis,),
                 mask=source_mask,
             )
         },
         queries={
-            "query": phx.nn.FunctionSamples(
+            "query": phx.nn.operator.FunctionSamples(
                 values=None,
                 axes=axes + (forecast_axis,),
                 mask=query_mask,
@@ -429,7 +429,7 @@ def _dpot_batch(history):
 
 
 def test_dpot_eager_jit_gradient_and_corrupt_batch_contract():
-    model = phx.nn.DPOT(
+    model = phx.nn.operator.architectures.DPOT(
         image_shape=(4, 4),
         history_steps=2,
         forecast_steps=1,
@@ -452,7 +452,7 @@ def test_dpot_eager_jit_gradient_and_corrupt_batch_contract():
     corrupted_batch = model.corrupt_batch(batch, noise_scale=0.1, key=corruption_key)
     corrupted = corrupted_batch.input("history").values
     source_mask = batch.input("history").mask_array(case_shape=batch.case_shape)
-    expected = phx.nn.dpot_corrupt_history(
+    expected = phx.nn.operator.architectures.dpot_corrupt_history(
         history,
         noise_scale=0.1,
         key=corruption_key,
@@ -472,7 +472,7 @@ def test_dpot_eager_jit_gradient_and_corrupt_batch_contract():
 
 
 def _attention(kernel="softmax", execution="dense", *, key=jr.key(12)):
-    return phx.nn.MeasureAwareAttention(
+    return phx.nn.layers.MeasureAwareAttention(
         source_channels=4,
         query_channels=3,
         out_channels=5,

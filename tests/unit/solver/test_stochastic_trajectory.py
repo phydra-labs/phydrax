@@ -41,16 +41,16 @@ def test_stochastic_transition_view_preserves_paths_masks_and_split_provenance()
     assert jnp.all(transitions.valid.reshape((-1,))[sampled])
 
     discretized_axis = phx.domain.UniformAxisSpec(3).materialize(0.0, 1.0)
-    axis = phx.nn.OperatorAxis.from_discretization("x", discretized_axis)
+    axis = phx.nn.operator.OperatorAxis.from_discretization("x", discretized_axis)
     dataset = transitions.operator_dataset(
         source_axes=(axis,),
         source_time_name="source_time",
     )
-    split = phx.nn.split_operator_dataset(
+    split = phx.nn.operator.training.split_operator_dataset(
         dataset,
         train_fraction=0.5,
         validation_fraction=0.25,
-        policy=phx.nn.OperatorSplitPolicy(group_by=("trajectory",), seed=3),
+        policy=phx.nn.operator.training.OperatorSplitPolicy(group_by=("trajectory",), seed=3),
     )
     trajectory_groups = [
         {record.identities["trajectory"] for record in partition.provenance}

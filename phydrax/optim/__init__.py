@@ -4,6 +4,7 @@
 
 """Phydrax-owned optimization algorithms and workflow configurations."""
 
+from .._model import KFACAffineBlock, KFACLayoutProvider
 from ._differential_evolution import DifferentialEvolutionSearch
 from ._kfac._config import kfac
 from ._quadratic_program import (
@@ -22,6 +23,8 @@ from ._quadratic_program import (
 
 __all__ = [
     "DifferentialEvolutionSearch",
+    "KFACAffineBlock",
+    "KFACLayoutProvider",
     "QP_INFEASIBLE",
     "QP_MAX_ITERATIONS",
     "QP_NONFINITE",

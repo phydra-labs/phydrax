@@ -13,12 +13,12 @@ from phydrax._trainable import partition_trainable
 
 
 def _model(*, scan=False, per_input=False):
-    return phx.nn.KAN(
+    return phx.nn.models.KAN(
         in_size=2,
         out_size="scalar",
         width_size=4,
         depth=4,
-        edge_basis=phx.nn.BSplineEdgeBasis(
+        edge_basis=phx.nn.models.BSplineEdgeBasis(
             degree=3,
             num_intervals=4,
             per_input=per_input,
@@ -38,7 +38,7 @@ def test_refinement_is_exact_pure_and_allocates_only_selected_edges():
     model = _model(per_input=True)
     evaluation = jax.random.uniform(jax.random.key(1), (48, 2), minval=-1.0, maxval=1.0)
     original_knots = np.asarray(model.layers[0].edge_basis.grid.grids[0].knots).copy()
-    adapted, report = phx.nn.refine_kan_edges(
+    adapted, report = phx.nn.models.refine_kan_edges(
         model,
         {
             (0, 0, 0): jnp.asarray([0.0, 3.0, 1.0, 0.0]),
@@ -71,12 +71,12 @@ def test_refinement_is_exact_pure_and_allocates_only_selected_edges():
 
 def test_exact_coarsening_undoes_inserted_capacity_with_certificate():
     model = _model()
-    refined, _ = phx.nn.refine_kan_edges(
+    refined, _ = phx.nn.models.refine_kan_edges(
         model,
         {(0, 0, 0): jnp.asarray([0.0, 1.0, 0.0, 0.0])},
         budget=1,
     )
-    coarsened, report = phx.nn.coarsen_kan_edges(
+    coarsened, report = phx.nn.models.coarsen_kan_edges(
         refined,
         {(0, 0, 0): 1.0e-10},
         budget=1,
@@ -103,7 +103,7 @@ def test_identical_hidden_block_layouts_preserve_scan_and_gradients():
         (layer_index, 0, 0): jnp.asarray([0.0, 1.0, 0.0, 0.0])
         for layer_index in repeated_layers
     }
-    adapted, report = phx.nn.refine_kan_edges(
+    adapted, report = phx.nn.models.refine_kan_edges(
         model,
         indicators,
         budget=len(indicators),
@@ -127,13 +127,13 @@ def test_identical_hidden_block_layouts_preserve_scan_and_gradients():
 def test_capacity_adaptation_validation_and_tolerance_are_explicit():
     model = _model()
     with pytest.raises(ValueError, match="one value per positive span"):
-        phx.nn.refine_kan_edges(
+        phx.nn.models.refine_kan_edges(
             model,
             {(0, 0, 0): jnp.ones(3)},
             budget=1,
         )
     with pytest.raises(ValueError, match="nonnegative"):
-        phx.nn.refine_kan_edges(
+        phx.nn.models.refine_kan_edges(
             model,
             {(0, 0, 0): jnp.asarray([0.0, -1.0, 0.0, 0.0])},
             budget=1,
@@ -143,7 +143,7 @@ def test_capacity_adaptation_validation_and_tolerance_are_explicit():
         model,
         jax.random.normal(jax.random.key(3), model.layers[0].coeffs.shape),
     )
-    unchanged, report = phx.nn.coarsen_kan_edges(
+    unchanged, report = phx.nn.models.coarsen_kan_edges(
         noncoarse,
         {(0, 0, 0): 0.0},
         budget=1,

@@ -65,7 +65,7 @@ capacity padding. The supported modes are exactly `"zero-order-hold"` and
 `"linear"`; zero-order hold is right-continuous at an interior knot, and linear
 interpolation includes both support endpoints.
 
-`BSplineStateSpaceInput` reuses `phydrax.nn.BSplineGrid` for its fixed knot grid
+`BSplineStateSpaceInput` reuses `phydrax.nn.models.BSplineGrid` for its fixed knot grid
 and stores the case-indexed coefficients separately. Its support is the grid's
 closed active interval. For both sampled and B-spline inputs,
 `breakpoints(t0, t1, case_index)` returns fixed-capacity times plus a Boolean

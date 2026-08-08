@@ -189,7 +189,7 @@ y_nodes = jnp.linspace(-1.0, 1.0, 8, endpoint=False)
 x_period = 2.0
 y_period = 2.0
 
-sampled = phx.nn.sample_fourier_grid(
+sampled = phx.nn.layers.sample_fourier_grid(
     values,       # batch_shape + source_shape + (channels,)
     coordinates,  # batch_shape + query_shape + (spatial_ndim,)
     spatial_ndim=2,
@@ -202,7 +202,7 @@ increasing, endpoint-excluded uniform node vector and one positive period per
 spatial dimension:
 
 ```python
-sampled = phx.nn.sample_fourier_grid(
+sampled = phx.nn.layers.sample_fourier_grid(
     values,
     sensor_coordinates,
     spatial_ndim=2,
@@ -215,7 +215,7 @@ Queries are wrapped periodically. Consequently the support result is all true
 after finite-input and axis validation:
 
 ```python
-sampled, support = phx.nn.sample_fourier_grid(
+sampled, support = phx.nn.layers.sample_fourier_grid(
     values,
     sensor_coordinates,
     spatial_ndim=2,
@@ -230,7 +230,7 @@ or three-dimensional point evaluation to NUFFTAX Type 2 and requires an
 explicit approximation tolerance:
 
 ```python
-sampled = phx.nn.sample_fourier_grid(
+sampled = phx.nn.layers.sample_fourier_grid(
     values,
     sensor_coordinates,
     spatial_ndim=2,

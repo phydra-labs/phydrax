@@ -14,7 +14,8 @@ from phydrax.domain import (
     Interval1d,
     SampleLayout,
 )
-from phydrax.nn.models import DeepONet, FNO, MLP, SeparableMLP
+from phydrax.nn.models import MLP, SeparableMLP
+from phydrax.nn.operator.architectures import DeepONet, FNO
 from phydrax.operators.differential import laplacian
 
 
@@ -194,7 +195,7 @@ def test_domain_model_explicit_binding_supports_plain_callable_blockwise_input()
     with pytest.raises(TypeError, match="Plain callable models require"):
         domain.Model("data", "x")(plain_callable)
 
-    binding = phx.nn.ModelBinding.blockwise(
+    binding = phx.domain.ModelBinding.blockwise(
         "structured",
         pass_key=True,
         pass_iter=True,
@@ -312,15 +313,15 @@ def test_domain_model_rejects_binding_override_for_phydrax_model():
     domain = DatasetDomain(data) @ Interval1d(0.0, 1.0)
     model = MLP(in_size=3, out_size=1, width_size=8, depth=2, key=jr.key(0))
 
-    override = phx.nn.ModelBinding.pointwise("structured")
+    override = phx.domain.ModelBinding.pointwise("structured")
     with pytest.raises(ValueError, match="caller overrides"):
         domain.Model("data", "x", binding=override)(model)
 
 
-def test_domain_model_axis_binding_requires_phydrax_model():
+def test_domain_model_axis_binding_requires_axis_model_evaluator():
     data = jnp.ones((3, 2), dtype=float)
     domain = DatasetDomain(data) @ Interval1d(0.0, 1.0)
-    binding = phx.nn.ModelBinding.axis()
+    binding = phx.domain.ModelBinding.axis()
 
     with pytest.raises(TypeError, match="Axis-batch model bindings require"):
         domain.Model("data", "x", binding=binding)(lambda x: x)

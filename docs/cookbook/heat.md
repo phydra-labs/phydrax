@@ -44,7 +44,7 @@ Let \(x\in[0,1]\), \(t\in[0,T]\). In Phydrax:
     def u0(x):
         return jnp.sin(jnp.pi * x[0])
 
-    model = phx.nn.MLP(in_size=2, out_size="scalar", width_size=16, depth=2, key=jr.key(0))
+    model = phx.nn.models.MLP(in_size=2, out_size="scalar", width_size=16, depth=2, key=jr.key(0))
     u = domain.Model("x", "t")(model)
 
     layout_xt = phx.domain.SampleLayout((("x", "t"),))

@@ -18,13 +18,13 @@ from jaxtyping import Array, ArrayLike, PyTree
 from .._fingerprint import array_tree_fingerprint
 from .._likelihoods import AbstractLikelihood, GaussianLikelihood
 from .._strict import StrictModule
-from ..nn.models.core._operator import (
+from ..nn.operator.data import (
     FunctionSamples,
     OperatorBatch,
     OperatorOutputSpec,
     OperatorPrediction,
 )
-from ..nn.operator_training._loader import OperatorBatchLoader
+from ..nn.operator.training import OperatorBatchLoader
 from ._minibatch_posterior import LikelihoodBatch
 from ._operator import (
     _broadcast_named,

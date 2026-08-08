@@ -9,7 +9,7 @@ Ordinary callables are wrapped by `PointwiseEvaluator`. `FunctionBinding`
 declares whether the callable consumes the keyword-only randomness key.
 Grid-native, graph-native, or otherwise structured execution implements
 `BatchEvaluator.__call_batch__`. Model execution uses the corresponding
-`phx.nn.ModelBinding`; no hidden call keyword changes evaluator mode.
+`phx.nn.models.ModelBinding`; no hidden call keyword changes evaluator mode.
 
 ::: phydrax.domain.DomainFunction
     options:

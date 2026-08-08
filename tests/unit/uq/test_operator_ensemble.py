@@ -9,10 +9,10 @@ import pytest
 from jaxtyping import Array
 
 import phydrax as phx
-from phydrax.nn.models.core._base import _AbstractOperatorModel
+from phydrax.nn.operator import AbstractOperatorModel
 
 
-class _KeyedOperator(_AbstractOperatorModel):
+class _KeyedOperator(AbstractOperatorModel):
     in_size: str = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
     scale: Array
@@ -24,7 +24,7 @@ class _KeyedOperator(_AbstractOperatorModel):
 
     @property
     def operator_contract(self):
-        return phx.nn.operator_architecture_contract("DeepONet")
+        return phx.nn.operator.operator_architecture_contract("DeepONet")
 
     def __call_operator_batch__(self, batch, /, *, key=None):
         coordinates = batch.require_single_query().coordinates_array(
@@ -34,30 +34,30 @@ class _KeyedOperator(_AbstractOperatorModel):
         return self.scale * coordinates[..., 0] + noise
 
     def __call__(self, x, /, *, key=None):
-        if not isinstance(x, phx.nn.OperatorBatch):
+        if not isinstance(x, phx.nn.operator.OperatorBatch):
             raise TypeError("_KeyedOperator requires an OperatorBatch.")
         return self.__call_operator_batch__(x, key=key)
 
 
-def _point_batch(*, shift: float = 0.0) -> phx.nn.OperatorBatch:
+def _point_batch(*, shift: float = 0.0) -> phx.nn.operator.OperatorBatch:
     coordinates = jnp.asarray(
         [
             [[0.0], [0.5], [1.0]],
             [[0.0], [0.5], [1.0]],
         ]
     )
-    query = phx.nn.FunctionSamples(
+    query = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=coordinates + shift,
         quadrature_weights=jnp.asarray([[0.25, 0.5, 0.25], [0.25, 0.5, 0.25]]),
         mask=jnp.asarray([[True, True, False], [True, True, True]]),
     )
-    source = phx.nn.FunctionSamples(
+    source = phx.nn.operator.FunctionSamples(
         values=jnp.ones((2, 3)),
         coordinates=coordinates,
         mask=jnp.asarray([[True, True, False], [True, True, True]]),
     )
-    return phx.nn.OperatorBatch(
+    return phx.nn.operator.OperatorBatch(
         inputs={"forcing": source},
         queries={"query": query},
         case_axes=("case",),
@@ -65,15 +65,15 @@ def _point_batch(*, shift: float = 0.0) -> phx.nn.OperatorBatch:
     )
 
 
-def _tensor_batch() -> phx.nn.OperatorBatch:
-    axis = phx.nn.OperatorAxis(
+def _tensor_batch() -> phx.nn.operator.OperatorBatch:
+    axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, 8),
         periodic=True,
     )
-    source = phx.nn.FunctionSamples(values=jnp.ones((2, 8)), axes=(axis,))
-    query = phx.nn.FunctionSamples(values=None, axes=(axis,))
-    return phx.nn.OperatorBatch(
+    source = phx.nn.operator.FunctionSamples(values=jnp.ones((2, 8)), axes=(axis,))
+    query = phx.nn.operator.FunctionSamples(values=None, axes=(axis,))
+    return phx.nn.operator.OperatorBatch(
         inputs={"forcing": source},
         queries={"query": query},
         case_axes=("case",),
@@ -197,7 +197,7 @@ def test_keyed_operator_sampling_is_reproducible_and_chunk_invariant():
 
 
 def test_operator_ensemble_preserves_crossed_input_sample_axis():
-    stacked = phx.nn.stack_operator_batches(
+    stacked = phx.nn.operator.stack_operator_batches(
         (_point_batch(), _point_batch()),
         case_axis="input_draw",
     )
@@ -229,7 +229,7 @@ def test_operator_ensemble_preserves_crossed_input_sample_axis():
 
 
 def test_stochastic_prediction_rejects_draw_dependent_query_geometry():
-    stacked = phx.nn.stack_operator_batches(
+    stacked = phx.nn.operator.stack_operator_batches(
         (_point_batch(), _point_batch(shift=0.1)),
         case_axis="input_draw",
     )
@@ -248,7 +248,7 @@ def test_stochastic_prediction_rejects_draw_dependent_query_geometry():
 
 def test_fno_mc_dropout_and_inference_mode_operator_sampling():
     batch = _tensor_batch()
-    model = phx.nn.FNO(
+    model = phx.nn.operator.architectures.FNO(
         n_modes=(3,),
         width=6,
         depth=2,
@@ -264,7 +264,7 @@ def test_fno_mc_dropout_and_inference_mode_operator_sampling():
         query_name="query",
     )
     deterministic = phx.uq.sample_operator_predictive(
-        phx.nn.inference_mode(model),
+        phx.nn.layers.inference_mode(model),
         batch,
         num_samples=3,
         key=jr.key(18),

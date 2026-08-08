@@ -8,7 +8,7 @@ Trainable nonlinearities.
     - `Stan` is a self-scalable tanh: $\operatorname{tanh}(x)\,(1+\beta x)$.
     - `AdaptiveActivation` wraps $\sigma$ as $x\mapsto\sigma(ax)$.
 
-::: phydrax.nn.Stan
+::: phydrax.nn.activations.Stan
     options:
         members:
             - __init__
@@ -16,7 +16,7 @@ Trainable nonlinearities.
 
 ---
 
-::: phydrax.nn.AdaptiveActivation
+::: phydrax.nn.activations.AdaptiveActivation
     options:
         members:
             - __init__

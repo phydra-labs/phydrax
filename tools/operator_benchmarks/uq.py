@@ -15,7 +15,7 @@ import numpy as np
 import polars as pl
 
 import phydrax as phx
-from phydrax.nn.models.core._base import _AbstractOperatorModel
+from phydrax.nn.operator import AbstractOperatorModel
 
 from .matrix import benchmark_metadata, BenchmarkRunMetadata
 from .models import compatible_architectures, OperatorArchitecture
@@ -111,7 +111,7 @@ def run_operator_uq_benchmark(
     minimum_delta: float = 0.0,
     fit_projection_laplace: bool = True,
     posterior_samples: int = 32,
-) -> tuple[tuple[_AbstractOperatorModel, ...], OperatorUQBenchmarkResult]:
+) -> tuple[tuple[AbstractOperatorModel, ...], OperatorUQBenchmarkResult]:
     """Train an independent deep ensemble and evaluate operator-aware UQ."""
     if scenario.validation is None:
         raise ValueError("Operator UQ benchmarks require a disjoint calibration split.")
@@ -125,7 +125,7 @@ def run_operator_uq_benchmark(
     if not selected.trainable:
         raise ValueError("Operator UQ benchmark architectures must be trainable.")
     if any(
-        isinstance(target, phx.nn.OperatorTargetBatch)
+        isinstance(target, phx.nn.operator.OperatorTargetBatch)
         for target in (
             scenario.train_target,
             scenario.validation.target,
@@ -136,7 +136,7 @@ def run_operator_uq_benchmark(
             "Operator UQ benchmarks currently require one anonymous array target."
         )
 
-    trained_members: list[_AbstractOperatorModel] = []
+    trained_members: list[AbstractOperatorModel] = []
     training_steps: list[int] = []
     initial_losses: list[float] = []
     final_losses: list[float] = []
@@ -144,7 +144,7 @@ def run_operator_uq_benchmark(
     training_seconds = 0.0
     for seed in seeds:
         model = selected.build(scenario, seed)
-        if not isinstance(model, _AbstractOperatorModel):
+        if not isinstance(model, AbstractOperatorModel):
             raise TypeError(
                 "Operator UQ benchmarks require native geometry-aware operator models."
             )
@@ -182,7 +182,7 @@ def run_operator_uq_benchmark(
 
     calibration = scenario.validation
     calibration_target = calibration.target
-    if isinstance(calibration_target, phx.nn.OperatorTargetBatch):
+    if isinstance(calibration_target, phx.nn.operator.OperatorTargetBatch):
         raise TypeError(
             "Operator UQ benchmarks currently require one anonymous array target."
         )
@@ -371,7 +371,7 @@ def _select_architecture(
 
 def _evaluate_operator_uq(
     ensemble: phx.uq.HomogeneousFunctionEnsemble,
-    members: tuple[_AbstractOperatorModel, ...],
+    members: tuple[AbstractOperatorModel, ...],
     calibrator: phx.uq.OperatorFunctionalConformal,
     evaluation: OperatorBenchmarkEvaluation,
     /,
@@ -380,7 +380,7 @@ def _evaluate_operator_uq(
     repeats: int,
 ) -> OperatorUQEvaluationResult:
     target = evaluation.target
-    if isinstance(target, phx.nn.OperatorTargetBatch):
+    if isinstance(target, phx.nn.operator.OperatorTargetBatch):
         raise TypeError(
             "Operator UQ benchmarks currently require one anonymous array target."
         )
@@ -402,12 +402,12 @@ def _evaluate_operator_uq(
     center = prediction.mean()
     center_field = center.field("output")
     standard_deviation = prediction.std()
-    if not isinstance(standard_deviation, phx.nn.OperatorPrediction):
+    if not isinstance(standard_deviation, phx.nn.operator.OperatorPrediction):
         raise TypeError(
             "Benchmark epistemic reduction retained an unexpected sample axis."
         )
     interval = calibrator.interval(center)
-    relative_l2 = phx.nn.operator_l2_loss(
+    relative_l2 = phx.nn.operator.operator_l2_loss(
         center_field.values,
         target,
         evaluation.batch.require_single_query(),
@@ -415,7 +415,7 @@ def _evaluate_operator_uq(
     )
     if evaluation.batch.require_single_query().axes:
         h1 = float(
-            phx.nn.operator_h1_loss(
+            phx.nn.operator.operator_h1_loss(
                 center_field.values,
                 target,
                 evaluation.batch.require_single_query(),
@@ -450,9 +450,7 @@ def _evaluate_operator_uq(
     valid = prediction.predictive.valid
     total_draw_count = len(members)
     valid_draw_count = (
-        total_draw_count
-        if valid is None
-        else int(np.sum(np.asarray(valid.data)))
+        total_draw_count if valid is None else int(np.sum(np.asarray(valid.data)))
     )
     confidence_lower = None
     confidence_upper = None
@@ -491,7 +489,7 @@ def _evaluate_operator_uq(
 
 def _predict_ensemble_evaluation(
     ensemble: phx.uq.HomogeneousFunctionEnsemble,
-    members: tuple[_AbstractOperatorModel, ...],
+    members: tuple[AbstractOperatorModel, ...],
     evaluation: OperatorBenchmarkEvaluation,
     /,
     *,
@@ -540,7 +538,7 @@ def _predict_ensemble_evaluation(
 
 
 def _fit_final_projection_laplace(
-    model: _AbstractOperatorModel,
+    model: AbstractOperatorModel,
     calibration: OperatorBenchmarkEvaluation,
     /,
     *,
@@ -612,10 +610,11 @@ def _fit_final_projection_laplace(
         query_name=calibration.batch.single_query_name(),
     )
     output_variance = operator_predictive.epistemic_variance()
-    if not isinstance(output_variance, phx.nn.OperatorPrediction):
+    if not isinstance(output_variance, phx.nn.operator.OperatorPrediction):
         raise TypeError("Laplace output variance retained an unexpected sample axis.")
     geometry_preserved = (
-        operator_predictive.query.sample_shape == calibration.batch.require_single_query().sample_shape
+        operator_predictive.query.sample_shape
+        == calibration.batch.require_single_query().sample_shape
         and operator_predictive.case_axes == calibration.batch.case_axes
         and operator_predictive.predictive.samples.data.shape[0] == num_samples
     )
@@ -653,7 +652,7 @@ def _physical_mean(values, batch, output_spec) -> jax.Array:
 
 
 def _observation_scale(
-    center: phx.nn.OperatorPrediction,
+    center: phx.nn.operator.OperatorPrediction,
     target,
     /,
 ) -> float:

@@ -14,7 +14,7 @@ from jaxtyping import ArrayLike
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from ..integration import WeightedSampleTarget
+from ..integration._targets import WeightedSampleTarget
 from ._integration import _trajectory_arrays
 from ._trajectory import StochasticTrajectory
 

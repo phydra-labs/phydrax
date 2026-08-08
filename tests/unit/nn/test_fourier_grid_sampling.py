@@ -8,11 +8,11 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def test_fourier_grid_sampler_is_reexported_consistently():
-    assert phx.nn.sample_fourier_grid is phx.nn.models.sample_fourier_grid
-    assert phx.nn.sample_fourier_grid is phx.nn.models.layers.sample_fourier_grid
-    assert "sample_fourier_grid" in phx.nn.__all__
-    assert "FourierEvaluationMethod" in phx.nn.__all__
+def test_fourier_grid_sampler_is_owned_by_layer_namespace():
+    assert "sample_fourier_grid" in phx.nn.layers.__all__
+    assert "FourierEvaluationMethod" in phx.nn.layers.__all__
+    assert "sample_fourier_grid" not in vars(phx.nn.models)
+    assert "sample_fourier_grid" not in vars(phx.nn)
 
 
 def test_fourier_grid_sampler_uses_normalized_periodic_coordinates():
@@ -27,7 +27,7 @@ def test_fourier_grid_sampler_uses_normalized_periodic_coordinates():
     )
     query = jnp.asarray([[-0.73], [0.16], [1.27]])
 
-    output, support = phx.nn.sample_fourier_grid(
+    output, support = phx.nn.layers.sample_fourier_grid(
         values,
         query,
         spatial_ndim=1,
@@ -68,14 +68,14 @@ def test_fourier_grid_sampler_supports_physical_nodes_batches_and_nufft():
         ]
     )
 
-    direct = phx.nn.sample_fourier_grid(
+    direct = phx.nn.layers.sample_fourier_grid(
         values,
         query,
         spatial_ndim=1,
         axis_nodes=(nodes,),
         periods=(period,),
     )
-    approximate = phx.nn.sample_fourier_grid(
+    approximate = phx.nn.layers.sample_fourier_grid(
         values,
         query,
         spatial_ndim=1,
@@ -105,7 +105,7 @@ def test_public_spectral_resample_evaluates_shifted_uniform_grid():
     )
     target = offset + jnp.arange(target_size, dtype=float) / target_size
 
-    output = phx.nn.spectral_resample(
+    output = phx.nn.operator.architectures.spectral_resample(
         values,
         (target_size,),
         phase_offsets=(offset,),
@@ -129,7 +129,7 @@ def test_fourier_grid_sampler_is_jittable_and_differentiable_in_queries():
 
     def total(points):
         return jnp.sum(
-            phx.nn.sample_fourier_grid(
+            phx.nn.layers.sample_fourier_grid(
                 values,
                 points,
                 spatial_ndim=1,

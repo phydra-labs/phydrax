@@ -29,14 +29,14 @@ def test_rectilinear_sampling_identity_and_periodic_cell_translation(spatial_sha
     values = values.reshape(spatial_shape + (2,))
     boundary = ("periodic",) * dimensions
 
-    identity = phx.nn.sample_rectilinear_grid(
+    identity = phx.nn.layers.sample_rectilinear_grid(
         values,
         coordinates,
         spatial_ndim=dimensions,
         boundary=boundary,
         axis_nodes=nodes,
     )
-    translated = phx.nn.sample_rectilinear_grid(
+    translated = phx.nn.layers.sample_rectilinear_grid(
         values,
         coordinates + jnp.array([2.0 / size for size in spatial_shape]),
         spatial_ndim=dimensions,
@@ -85,7 +85,7 @@ def test_rectilinear_sampling_identity_and_periodic_cell_translation(spatial_sha
     ),
 )
 def test_rectilinear_boundary_modes(boundary, coordinates, fill_value, expected, support):
-    sampled, actual_support = phx.nn.sample_rectilinear_grid(
+    sampled, actual_support = phx.nn.layers.sample_rectilinear_grid(
         jnp.arange(4.0)[:, None],
         jnp.asarray(coordinates)[:, None],
         spatial_ndim=1,
@@ -101,9 +101,9 @@ def test_rectilinear_boundary_modes(boundary, coordinates, fill_value, expected,
 def test_nonuniform_rectilinear_nodes_are_affine_exact_eager_and_jit():
     physical_x = jnp.array([2.0, 3.0, 6.0, 10.0])
     physical_y = jnp.array([-4.0, -1.0, 0.5, 5.0, 8.0])
-    x = phx.nn.normalized_axis_nodes(physical_x, periodic=False)
-    y = phx.nn.normalized_axis_nodes(physical_y, periodic=False)
-    periodic = phx.nn.normalized_axis_nodes(
+    x = phx.nn.layers.normalized_axis_nodes(physical_x, periodic=False)
+    y = phx.nn.layers.normalized_axis_nodes(physical_y, periodic=False)
+    periodic = phx.nn.layers.normalized_axis_nodes(
         jnp.array([0.0, 1.0, 3.0, 6.0]),
         periodic=True,
         period=8.0,
@@ -112,7 +112,7 @@ def test_nonuniform_rectilinear_nodes_are_affine_exact_eager_and_jit():
     query = jnp.array([[-0.8, -0.7], [-0.1, 0.2], [0.75, 0.9]])
 
     def evaluate(field, coordinates, x_nodes, y_nodes):
-        return phx.nn.sample_rectilinear_grid(
+        return phx.nn.layers.sample_rectilinear_grid(
             field,
             coordinates,
             spatial_ndim=2,
@@ -131,7 +131,7 @@ def test_nonuniform_rectilinear_nodes_are_affine_exact_eager_and_jit():
 
 
 def test_rectilinear_sampling_promotes_integral_inputs_before_interpolation():
-    result = phx.nn.sample_rectilinear_grid(
+    result = phx.nn.layers.sample_rectilinear_grid(
         jnp.array([0, 2])[:, None],
         jnp.array([[0.0]]),
         spatial_ndim=1,
@@ -155,7 +155,7 @@ def test_masked_nan_corners_follow_nonreject_mask_semantics(
     expected,
     expected_support,
 ):
-    sampled, support = phx.nn.sample_rectilinear_grid(
+    sampled, support = phx.nn.layers.sample_rectilinear_grid(
         jnp.array([1.0, jnp.nan, 5.0])[:, None],
         jnp.array([[-0.5]]),
         spatial_ndim=1,
@@ -176,7 +176,7 @@ def test_reject_mask_mode_rejects_holes_even_when_payload_is_nan():
         eqx.EquinoxRuntimeError,
         match="reject mode does not permit source holes",
     ):
-        result = phx.nn.sample_rectilinear_grid(
+        result = phx.nn.layers.sample_rectilinear_grid(
             jnp.array([1.0, jnp.nan, 5.0])[:, None],
             jnp.array([[-0.5]]),
             spatial_ndim=1,
@@ -194,7 +194,7 @@ def test_affine_warp_jacobian_and_determinant_are_exact_on_nonuniform_nodes():
     gradient = jnp.array([[0.2, -0.1], [0.3, 0.4]])
     displacement = oe.contract("...j,ij->...i", coordinates, gradient)
 
-    jacobian = phx.nn.warp_jacobian(
+    jacobian = phx.nn.layers.warp_jacobian(
         displacement,
         boundary=("clamp", "clamp"),
         axis_nodes=(x, y),
@@ -224,7 +224,7 @@ def test_vector_covector_and_rank_two_tensor_transformation_laws(variance, compo
     displacement = coordinates * (scales - 1.0)
     values = jnp.broadcast_to(components, (4, 5) + components.shape)
 
-    transformed = phx.nn.warp_field(
+    transformed = phx.nn.layers.warp_field(
         values,
         displacement,
         boundary=("clamp", "clamp"),
@@ -247,7 +247,7 @@ def test_periodic_density_remap_preserves_discrete_total_mass():
     density = jnp.ones((size,))
     displacement = (0.05 * jnp.sin(jnp.pi * x))[..., None]
 
-    remapped, diagnostics = phx.nn.conservative_remap(
+    remapped, diagnostics = phx.nn.layers.conservative_remap(
         density,
         displacement,
         boundary=("periodic",),
@@ -277,16 +277,16 @@ def test_manifold_projection_retraction_and_masked_nan_payloads():
             [3.0, 0.5, -2.0],
         ]
     )
-    tangent = phx.nn.sphere_tangent_projection(points, ambient)
-    retracted = phx.nn.sphere_retraction(points, 0.2 * tangent)
+    tangent = phx.nn.layers.sphere_tangent_projection(points, ambient)
+    retracted = phx.nn.layers.sphere_retraction(points, 0.2 * tangent)
 
-    layer = phx.nn.ManifoldMultiheadWarp(
+    layer = phx.nn.layers.ManifoldMultiheadWarp(
         ambient_dim=3,
         in_channels=2,
         out_channels=2,
         num_heads=1,
-        tangent_projection=phx.nn.sphere_tangent_projection,
-        retraction=phx.nn.sphere_retraction,
+        tangent_projection=phx.nn.layers.sphere_tangent_projection,
+        retraction=phx.nn.layers.sphere_retraction,
         kernel_scale=0.5,
         key=jr.key(10),
     )
@@ -317,7 +317,7 @@ def test_manifold_projection_retraction_and_masked_nan_payloads():
 
 
 def test_probabilistic_warp_mean_and_sample_routes_are_coherent_and_differentiable():
-    layer = phx.nn.ProbabilisticMultiheadWarp(
+    layer = phx.nn.layers.ProbabilisticMultiheadWarp(
         spatial_ndim=1,
         in_channels=2,
         out_channels=2,

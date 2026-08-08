@@ -18,7 +18,7 @@ import jax.random as jr
 import phydrax as phx
 
 x = jnp.linspace(0.0, 1.0, 8, endpoint=False)
-axis = phx.nn.OperatorAxis(
+axis = phx.nn.operator.OperatorAxis(
     "x",
     x,
     quadrature_weights=jnp.ones_like(x) / x.size,
@@ -26,9 +26,9 @@ axis = phx.nn.OperatorAxis(
 )
 case = jnp.arange(12, dtype=float)[:, None]
 source_values = jnp.sin(2.0 * jnp.pi * x[None, :] + 0.13 * case)
-source = phx.nn.FunctionSamples(values=source_values, axes=(axis,))
-query = phx.nn.FunctionSamples(values=None, axes=(axis,))
-full_batch = phx.nn.OperatorBatch(
+source = phx.nn.operator.FunctionSamples(values=source_values, axes=(axis,))
+query = phx.nn.operator.FunctionSamples(values=None, axes=(axis,))
+full_batch = phx.nn.operator.OperatorBatch(
     inputs={"state": source},
     queries={"query": query},
     case_axes=("case",),
@@ -39,7 +39,7 @@ calibration_target = 0.8 * source_values[:6]
 test_target = 0.8 * source_values[6:]
 
 members = tuple(
-    phx.nn.FNO(n_modes=(3,), width=4, depth=1, key=key)
+    phx.nn.operator.architectures.FNO(n_modes=(3,), width=4, depth=1, key=key)
     for key in jr.split(jr.key(0), 3)
 )
 ensemble = phx.uq.HomogeneousFunctionEnsemble.from_members(
@@ -132,7 +132,7 @@ channel-wise and shared across the spatial grid; DeepONet branch and trunk netwo
 receive folded keys. Chunking changes memory use, not the sample/key mapping.
 
 ```python
-stochastic_model = phx.nn.FNO(
+stochastic_model = phx.nn.operator.architectures.FNO(
     width=4,
     depth=1,
     n_modes=(3,),
@@ -151,7 +151,7 @@ dropout_prediction = phx.uq.sample_operator_predictive(
 assert dropout_prediction.predictive.samples.data.shape == (4, 6, 8)
 ```
 
-Use `phx.nn.inference_mode(stochastic_model)` for deterministic deployment. MC
+Use `phx.nn.layers.inference_mode(stochastic_model)` for deterministic deployment. MC
 dropout yields a useful epistemic proxy only when dropout training and calibration
 match its use; repeated stochastic evaluations alone do not make a Bayesian
 posterior.
@@ -166,11 +166,11 @@ unmatched coordinates are undefined.
 
 ```python
 offsets = jnp.asarray([-0.1, 0.0, 0.1])[:, None, None]
-uncertain_source = phx.nn.FunctionSamples(
+uncertain_source = phx.nn.operator.FunctionSamples(
     values=test_batch.input("state").values[None, ...] + offsets,
     axes=(axis,),
 )
-uncertain_batch = phx.nn.OperatorBatch(
+uncertain_batch = phx.nn.operator.OperatorBatch(
     inputs={"state": uncertain_source},
     queries={"query": query},
     case_axes=("forcing_draw", "case"),
@@ -228,7 +228,7 @@ Use these architecture-specific defaults:
 One PRNG key passed to `sample_operator_predictive` identifies one complete
 field draw, including every graph or transformer dropout decision. Chunking may
 change memory use but must not change key-to-draw identity. Call
-`phx.nn.inference_mode` before deterministic evaluation and before defining a
+`phx.nn.layers.inference_mode` before deterministic evaluation and before defining a
 posterior density.
 
 An ensemble conditioned on one observed geometry estimates weight uncertainty,
@@ -241,7 +241,7 @@ cases; it does not become a geometry-extrapolation guarantee.
 ### 4b. Propagate local source covariance without flattening the field
 
 ```python
-operator_linearization = phx.nn.linearize_operator(
+operator_linearization = phx.nn.operator.training.linearize_operator(
     members[0],
     test_batch,
     "state",
@@ -288,7 +288,7 @@ posterior_target = 0.8 * baseline.field("output").values
 
 def scaled_prediction(parameters):
     field = baseline.field("output")
-    return phx.nn.OperatorPrediction.from_field(
+    return phx.nn.operator.OperatorPrediction.from_field(
         "output",
         parameters["scale"] * field.values,
         field.query_name,
@@ -364,13 +364,13 @@ When the number of physical cases makes full-data transitions prohibitive, adapt
 likelihood factor per complete case:
 
 ```python
-posterior_dataset = phx.nn.operator_dataset_from_arrays(
+posterior_dataset = phx.nn.operator.training.operator_dataset_from_arrays(
     {"state": source_values[6:]},
     {"output": posterior_target},
     source_axes={"state": (axis,)},
     query_axes=(axis,),
 )
-loader = phx.nn.OperatorBatchLoader(
+loader = phx.nn.operator.training.OperatorBatchLoader(
     posterior_dataset,
     batch_size=2,
     shuffle=True,
@@ -387,7 +387,7 @@ operator_source = phx.uq.OperatorMinibatchSource(
 def dynamic_scaled_prediction(parameters, batch):
     base = members[0].predict(batch)
     field = base.field("output")
-    return phx.nn.OperatorPrediction.from_field(
+    return phx.nn.operator.OperatorPrediction.from_field(
         "output",
         parameters["scale"] * field.values,
         field.query_name,

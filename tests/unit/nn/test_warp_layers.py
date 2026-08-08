@@ -9,7 +9,7 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
-from phydrax.nn.models.layers._warp import (
+from phydrax.nn.layers._warp import (
     _normalized_lattice,
     _sample_regular_grid_linear,
 )
@@ -24,7 +24,7 @@ def _configured_warp(
     displacement=None,
     fill_value=0.0,
 ):
-    layer = phx.nn.MultiheadWarp(
+    layer = phx.nn.layers.MultiheadWarp(
         spatial_ndim=spatial_ndim,
         in_channels=channels,
         out_channels=channels,
@@ -168,7 +168,7 @@ def test_multihead_warp_heads_and_mixed_boundaries_remain_independent():
 
 @pytest.mark.parametrize("dtype", (jnp.float32, jnp.float64))
 def test_multihead_warp_eager_jit_and_value_parameter_gradients_are_finite(dtype):
-    layer = phx.nn.MultiheadWarp(
+    layer = phx.nn.layers.MultiheadWarp(
         spatial_ndim=2,
         in_channels=3,
         out_channels=4,
@@ -200,7 +200,7 @@ def test_multihead_warp_eager_jit_and_value_parameter_gradients_are_finite(dtype
 
 def test_multihead_warp_validation_rejects_ambiguous_or_unsupported_contracts():
     with pytest.raises(ValueError, match="one, two, or three"):
-        phx.nn.MultiheadWarp(
+        phx.nn.layers.MultiheadWarp(
             spatial_ndim=4,
             in_channels=1,
             out_channels=1,
@@ -208,7 +208,7 @@ def test_multihead_warp_validation_rejects_ambiguous_or_unsupported_contracts():
             boundary="periodic",
         )
     with pytest.raises(ValueError, match="divisible by num_heads"):
-        phx.nn.MultiheadWarp(
+        phx.nn.layers.MultiheadWarp(
             spatial_ndim=1,
             in_channels=1,
             out_channels=3,
@@ -216,7 +216,7 @@ def test_multihead_warp_validation_rejects_ambiguous_or_unsupported_contracts():
             boundary="periodic",
         )
     with pytest.raises(ValueError, match="one mode per spatial axis"):
-        phx.nn.MultiheadWarp(
+        phx.nn.layers.MultiheadWarp(
             spatial_ndim=2,
             in_channels=1,
             out_channels=2,
@@ -224,7 +224,7 @@ def test_multihead_warp_validation_rejects_ambiguous_or_unsupported_contracts():
             boundary=("periodic",),
         )
     with pytest.raises(ValueError, match="boundary modes"):
-        phx.nn.MultiheadWarp(
+        phx.nn.layers.MultiheadWarp(
             spatial_ndim=1,
             in_channels=1,
             out_channels=1,
@@ -250,8 +250,8 @@ def test_multihead_warp_conditioning_preserves_unconditioned_path_and_case_isola
         boundary="periodic",
         key=jr.key(4),
     )
-    unconditioned = phx.nn.MultiheadWarp(**settings)
-    conditioned = phx.nn.MultiheadWarp(conditioning_size=3, **settings)
+    unconditioned = phx.nn.layers.MultiheadWarp(**settings)
+    conditioned = phx.nn.layers.MultiheadWarp(conditioning_size=3, **settings)
     zero_conditioned = eqx.tree_at(
         lambda item: item.displacement_condition.weight,
         conditioned,
@@ -290,7 +290,7 @@ def test_multihead_warp_conditioning_preserves_unconditioned_path_and_case_isola
 
 def test_multihead_warp_conditioning_contract_is_explicit():
     with pytest.raises(ValueError, match="conditioning_size must be non-negative"):
-        phx.nn.MultiheadWarp(
+        phx.nn.layers.MultiheadWarp(
             spatial_ndim=1,
             in_channels=1,
             out_channels=1,
@@ -301,7 +301,7 @@ def test_multihead_warp_conditioning_contract_is_explicit():
 
     values = jnp.ones((8, 1))
     plain = _configured_warp()
-    conditioned = phx.nn.MultiheadWarp(
+    conditioned = phx.nn.layers.MultiheadWarp(
         spatial_ndim=1,
         in_channels=1,
         out_channels=1,

@@ -13,7 +13,7 @@ import phydrax as phx
 from phydrax._trainable import partition_trainable
 from phydrax.domain import DomainFunction, Interval1d, TrajectoryDatasetDomain
 from phydrax.enforcement import enforce_ragged_time_series
-from phydrax.nn import MLP
+from phydrax.nn.models import MLP
 from phydrax.terms import TrajectorySignal
 
 

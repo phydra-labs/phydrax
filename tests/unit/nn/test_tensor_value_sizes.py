@@ -6,7 +6,8 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
-from phydrax.nn.models import Linear, MLP, RandomFourierFeatureEmbeddings
+from phydrax.nn.layers import Linear, RandomFourierFeatureEmbeddings
+from phydrax.nn.models import MLP
 
 
 def test_linear_tensor_in_tensor_out_shapes():

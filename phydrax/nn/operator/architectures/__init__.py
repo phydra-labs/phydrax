@@ -1,0 +1,254 @@
+#
+# Copyright © 2026 PHYDRA, Inc. All rights reserved.
+#
+
+"""Neural-operator architecture implementations."""
+
+from ...._model import (
+    OperatorArchitectureCodec,
+    register_operator_architecture_codec,
+)
+from .attention._codano import CoDABlock, CoDANO, CoDAOperatorState
+from .attention._dpot import DPOT, dpot_corrupt_history
+from .attention._gaot import GAOT
+from .attention._gnot import GNOT
+from .attention._in_context import (
+    InContextOperator,
+    InContextOperatorState,
+    OperatorPromptState,
+)
+from .attention._poseidon import Poseidon
+from .attention._transolver import Transolver
+from .attention._upt import ABUPT, LatentTokenBlock, LatentTokenProcessor, UPT
+from .conditioning._deeponet import (
+    DeepONet,
+    FixedBranchEncoder,
+    IntegralBranchEncoder,
+    PODBasis,
+)
+from .conditioning._equation_conditioning import (
+    attach_pde_condition,
+    PDEConditionEncoder,
+)
+from .conditioning._nonlinear_decoder import (
+    CoordinateConditionedOperator,
+    CoordinateDecoderState,
+    FiLMCoordinateDecoder,
+)
+from .conditioning._pde_conditioned import (
+    PDEConditionedInput,
+    PDEConditionedOperator,
+)
+from .dynamics._diagonal_state_space_mixer import DiagonalStateSpaceMixer
+from .dynamics._flower import (
+    Flower,
+    FlowerDiagnostics,
+    FlowerQueryMode,
+    FlowerTransitionMode,
+)
+from .dynamics._koopman import KoopmanTemporalOperator
+from .geometric._cochain_neural_operator import (
+    CochainNeuralOperator,
+    TopologicalCochainBlock,
+    TopologicalRouteConfig,
+)
+from .geometric._equivariant_geometry import (
+    EqGINO,
+    EquivariantGeometryOperator,
+    EquivariantIntegralLayer,
+    o3_gated_activation,
+    O3PointwiseLinear,
+    O3Representation,
+    RadialBasis,
+    RadialMap,
+)
+from .geometric._geometry_informed_flower import GeometryInformedFlower
+from .geometric._geometry_operator import GeometryOperatorDiagnostics
+from .geometric._gino import GINO
+from .geometric._green_kernel import GreenKernelOperator
+from .geometric._local_operator import (
+    LocalDifferentialOperator,
+    LocalGlobalOperator,
+    LocalIntegralOperator,
+)
+from .geometric._native_graph import NativeGraphOperator
+from .geometric._rigno import RIGNO
+from .probabilistic._flowjax_operator import (
+    conditional_coupling_flow_operator,
+    ConditionalFlowFunctionOperator,
+    FlowJAXOperatorDistribution,
+    OperatorBatchConditioner,
+)
+from .probabilistic._probabilistic_operator import (
+    gaussian_operator_nll,
+    GaussianFunctionOperator,
+)
+from .spectral._cno import AntiAliasedConvND, CNO, UNO
+from .spectral._fno import (
+    AxialFactorizedFNO,
+    FNO,
+    IFNO,
+    IFNOConvergence,
+    MultiScaleSpectralConvND,
+    spectral_resample,
+    SpectralConvND,
+)
+from .spectral._hofno import HOFNO
+from .spectral._laplace import LaplaceTemporalOperator
+from .spectral._manifold_spectral import (
+    ManifoldSpectralConv,
+    ManifoldSpectralOperator,
+    SpectralDiscretization,
+)
+from .spectral._sfno import (
+    SFNO,
+    SphericalSpectralConv,
+    SphericalTransformPlan,
+)
+from .spectral._wavelet import (
+    AlpertMultiwaveletTransform,
+    MultiresolutionTransform,
+    MultiwaveletOperator,
+    MultiwaveletSpectralConv1D,
+    WaveletNeuralOperator,
+    WaveletSpectralConvND,
+)
+
+
+_PORTABLE_ARCHITECTURES = (
+    ("ABUPT", ABUPT),
+    ("AxialFactorizedFNO", AxialFactorizedFNO),
+    ("CNO", CNO),
+    ("CochainNeuralOperator", CochainNeuralOperator),
+    ("CoDANO", CoDANO),
+    ("ConditionalFlowFunctionOperator", ConditionalFlowFunctionOperator),
+    ("CoordinateConditionedOperator", CoordinateConditionedOperator),
+    ("DeepONet", DeepONet),
+    ("DPOT", DPOT),
+    ("DiagonalStateSpaceMixer", DiagonalStateSpaceMixer),
+    ("EquivariantGeometryOperator", EquivariantGeometryOperator),
+    ("Flower", Flower),
+    ("FNO", FNO),
+    ("GAOT", GAOT),
+    ("GaussianFunctionOperator", GaussianFunctionOperator),
+    ("GeometryInformedFlower", GeometryInformedFlower),
+    ("GINO", GINO),
+    ("GNOT", GNOT),
+    ("GreenKernelOperator", GreenKernelOperator),
+    ("HOFNO", HOFNO),
+    ("IFNO", IFNO),
+    ("InContextOperator", InContextOperator),
+    ("KoopmanTemporalOperator", KoopmanTemporalOperator),
+    ("LaplaceTemporalOperator", LaplaceTemporalOperator),
+    ("LocalDifferentialOperator", LocalDifferentialOperator),
+    ("LocalGlobalOperator", LocalGlobalOperator),
+    ("LocalIntegralOperator", LocalIntegralOperator),
+    ("ManifoldSpectralOperator", ManifoldSpectralOperator),
+    ("MultiwaveletOperator", MultiwaveletOperator),
+    ("NativeGraphOperator", NativeGraphOperator),
+    ("PDEConditionedOperator", PDEConditionedOperator),
+    ("Poseidon", Poseidon),
+    ("RIGNO", RIGNO),
+    ("SFNO", SFNO),
+    ("Transolver", Transolver),
+    ("UNO", UNO),
+    ("UPT", UPT),
+    ("WaveletNeuralOperator", WaveletNeuralOperator),
+)
+
+for _architecture_name, _architecture_type in _PORTABLE_ARCHITECTURES:
+    register_operator_architecture_codec(
+        OperatorArchitectureCodec(
+            f"phydrax.operator.architecture:{_architecture_name}@1",
+            _architecture_type,
+        )
+    )
+
+del _architecture_name, _architecture_type
+
+
+__all__ = [
+    "AntiAliasedConvND",
+    "CNO",
+    "UNO",
+    "CochainNeuralOperator",
+    "TopologicalCochainBlock",
+    "TopologicalRouteConfig",
+    "CoDABlock",
+    "CoDANO",
+    "CoDAOperatorState",
+    "DeepONet",
+    "FixedBranchEncoder",
+    "IntegralBranchEncoder",
+    "PODBasis",
+    "DPOT",
+    "DiagonalStateSpaceMixer",
+    "dpot_corrupt_history",
+    "attach_pde_condition",
+    "PDEConditionEncoder",
+    "EqGINO",
+    "EquivariantGeometryOperator",
+    "EquivariantIntegralLayer",
+    "o3_gated_activation",
+    "O3PointwiseLinear",
+    "O3Representation",
+    "RadialBasis",
+    "RadialMap",
+    "Flower",
+    "FlowerDiagnostics",
+    "FlowerQueryMode",
+    "FlowerTransitionMode",
+    "conditional_coupling_flow_operator",
+    "ConditionalFlowFunctionOperator",
+    "FlowJAXOperatorDistribution",
+    "OperatorBatchConditioner",
+    "AxialFactorizedFNO",
+    "FNO",
+    "IFNO",
+    "IFNOConvergence",
+    "MultiScaleSpectralConvND",
+    "spectral_resample",
+    "SpectralConvND",
+    "GAOT",
+    "GeometryInformedFlower",
+    "GeometryOperatorDiagnostics",
+    "GINO",
+    "GNOT",
+    "GreenKernelOperator",
+    "HOFNO",
+    "InContextOperator",
+    "InContextOperatorState",
+    "OperatorPromptState",
+    "KoopmanTemporalOperator",
+    "LaplaceTemporalOperator",
+    "LocalDifferentialOperator",
+    "LocalGlobalOperator",
+    "LocalIntegralOperator",
+    "ManifoldSpectralConv",
+    "ManifoldSpectralOperator",
+    "SpectralDiscretization",
+    "NativeGraphOperator",
+    "CoordinateConditionedOperator",
+    "CoordinateDecoderState",
+    "FiLMCoordinateDecoder",
+    "PDEConditionedInput",
+    "PDEConditionedOperator",
+    "Poseidon",
+    "gaussian_operator_nll",
+    "GaussianFunctionOperator",
+    "RIGNO",
+    "SFNO",
+    "SphericalSpectralConv",
+    "SphericalTransformPlan",
+    "Transolver",
+    "ABUPT",
+    "LatentTokenBlock",
+    "LatentTokenProcessor",
+    "UPT",
+    "AlpertMultiwaveletTransform",
+    "MultiresolutionTransform",
+    "MultiwaveletOperator",
+    "MultiwaveletSpectralConv1D",
+    "WaveletNeuralOperator",
+    "WaveletSpectralConvND",
+]

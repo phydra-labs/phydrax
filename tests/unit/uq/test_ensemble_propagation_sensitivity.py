@@ -14,7 +14,7 @@ from phydrax._trainable import partition_trainable
 
 
 def _small_mlp(key, *, width=6):
-    return phx.nn.MLP(
+    return phx.nn.models.MLP(
         in_size=2,
         out_size=1,
         width_size=width,

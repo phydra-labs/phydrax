@@ -11,7 +11,7 @@ import optax
 import phydrax as phx
 import phydrax.solver._functional_train as functional_train
 from phydrax.domain import HyperRectangle
-from phydrax.nn import MLP
+from phydrax.nn.models import MLP
 from phydrax.solver import FunctionalSolver
 
 

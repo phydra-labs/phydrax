@@ -29,7 +29,7 @@ def _model(*, key=jr.key(0), **overrides):
         "source_key": "u",
     }
     options.update(overrides)
-    return phx.nn.GeometryInformedFlower(**options, key=key)
+    return phx.nn.operator.architectures.GeometryInformedFlower(**options, key=key)
 
 
 def _point_batch(*, cases=0, condition=None, query_weights=None, query_mask=None):
@@ -43,18 +43,18 @@ def _point_batch(*, cases=0, condition=None, query_weights=None, query_mask=None
         values = jnp.broadcast_to(values[None, :], (cases, 8))
         source_weights = jnp.broadcast_to(source_weights[None, :], (cases, 8))
         inputs = {
-            "u": phx.nn.FunctionSamples(
+            "u": phx.nn.operator.FunctionSamples(
                 values=values,
                 coordinates=coordinates,
                 quadrature_weights=source_weights,
             )
         }
         if condition is not None:
-            inputs["dt"] = phx.nn.FunctionSamples(values=condition)
-        return phx.nn.OperatorBatch(
+            inputs["dt"] = phx.nn.operator.FunctionSamples(values=condition)
+        return phx.nn.operator.OperatorBatch(
             inputs=inputs,
             queries={
-                "query": phx.nn.FunctionSamples(
+                "query": phx.nn.operator.FunctionSamples(
                     values=None,
                     coordinates=query_coordinates,
                     quadrature_weights=query_weights,
@@ -63,16 +63,16 @@ def _point_batch(*, cases=0, condition=None, query_weights=None, query_mask=None
             },
             case_axes=("case",),
         )
-    return phx.nn.OperatorBatch(
+    return phx.nn.operator.OperatorBatch(
         inputs={
-            "u": phx.nn.FunctionSamples(
+            "u": phx.nn.operator.FunctionSamples(
                 values=values,
                 coordinates=nodes[:, None],
                 quadrature_weights=source_weights,
             )
         },
         queries={
-            "query": phx.nn.FunctionSamples(
+            "query": phx.nn.operator.FunctionSamples(
                 values=None,
                 coordinates=query_nodes[:, None],
                 quadrature_weights=query_weights,
@@ -107,21 +107,21 @@ def test_geometry_informed_flower_projects_explicit_hard_latent_support(support_
     sdf = jnp.abs(nodes - 0.5) - 0.3
     expected_mask = sdf < 0.0
     support_values = expected_mask.astype(float) if support_kind == "occupancy" else sdf
-    batch = phx.nn.OperatorBatch(
+    batch = phx.nn.operator.OperatorBatch(
         inputs={
-            "u": phx.nn.FunctionSamples(
+            "u": phx.nn.operator.FunctionSamples(
                 values=jnp.sin(2.0 * jnp.pi * nodes),
                 coordinates=nodes[:, None],
                 quadrature_weights=jnp.full((8,), 1.0 / 8.0),
                 mask=expected_mask,
             ),
-            "support": phx.nn.FunctionSamples(
+            "support": phx.nn.operator.FunctionSamples(
                 values=support_values,
                 coordinates=nodes[:, None],
             ),
         },
         queries={
-            "query": phx.nn.FunctionSamples(
+            "query": phx.nn.operator.FunctionSamples(
                 values=None,
                 coordinates=nodes[expected_mask, None],
             )
@@ -141,27 +141,27 @@ def test_geometry_informed_flower_projects_explicit_hard_latent_support(support_
     assert jnp.all(jnp.isfinite(output))
     assert jnp.array_equal(diagnostics.latent_mask, expected_mask)
     assert jnp.allclose(diagnostics.latent_support, support_values)
-    assert isinstance(diagnostics.processor, phx.nn.FlowerDiagnostics)
+    assert isinstance(diagnostics.processor, phx.nn.operator.architectures.FlowerDiagnostics)
     assert len(diagnostics.processor.blocks) == 3
 
 
 def test_latent_inverse_distance_support_reproduces_constant_fields_far_away():
     nodes = (jnp.arange(8, dtype=float) + 0.5) / 8.0
     support_coordinates = (100.0 + jnp.arange(8, dtype=float))[:, None]
-    batch = phx.nn.OperatorBatch(
+    batch = phx.nn.operator.OperatorBatch(
         inputs={
-            "u": phx.nn.FunctionSamples(
+            "u": phx.nn.operator.FunctionSamples(
                 values=jnp.sin(2.0 * jnp.pi * nodes),
                 coordinates=nodes[:, None],
                 quadrature_weights=jnp.full((8,), 1.0 / 8.0),
             ),
-            "support": phx.nn.FunctionSamples(
+            "support": phx.nn.operator.FunctionSamples(
                 values=jnp.full((8,), 0.25),
                 coordinates=support_coordinates,
             ),
         },
         queries={
-            "query": phx.nn.FunctionSamples(
+            "query": phx.nn.operator.FunctionSamples(
                 values=None,
                 coordinates=nodes[:, None],
             )
@@ -195,8 +195,8 @@ def test_geometry_informed_flower_propagates_case_conditions_and_diagnostics():
 
     assert output.shape == (2, 5)
     assert jnp.max(jnp.abs(output[0] - output[1])) > 1e-8
-    assert isinstance(diagnostics, phx.nn.GeometryOperatorDiagnostics)
-    assert isinstance(diagnostics.processor, phx.nn.FlowerDiagnostics)
+    assert isinstance(diagnostics, phx.nn.operator.architectures.GeometryOperatorDiagnostics)
+    assert isinstance(diagnostics.processor, phx.nn.operator.architectures.FlowerDiagnostics)
     assert diagnostics.processor.level_shapes == ((8,),)
     assert jnp.allclose(model(batch), output)
 

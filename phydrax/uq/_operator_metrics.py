@@ -11,7 +11,7 @@ import jax.numpy as jnp
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
-from ..nn.models.core._operator import OperatorOutputSpec, OperatorPrediction
+from ..nn.operator.data import OperatorOutputSpec, OperatorPrediction
 from ._metrics import energy_distance, energy_score, ensemble_crps
 from ._operator import (
     _expected_output_shape,

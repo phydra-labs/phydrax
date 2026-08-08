@@ -379,7 +379,7 @@ class RandomFieldSample(StrictModule):
 
     def operator_case_provenance(self):
         """Return one leakage-safe operator provenance record per latent draw."""
-        from ..nn.operator_training._dataset import OperatorCaseProvenance
+        from ..nn.operator import OperatorCaseProvenance
 
         return tuple(
             OperatorCaseProvenance(

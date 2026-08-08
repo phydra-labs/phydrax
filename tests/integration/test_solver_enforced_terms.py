@@ -23,8 +23,8 @@ from phydrax.domain import (
     TimeInterval,
 )
 from phydrax.enforcement import EnforcementSpec, InteriorAnchors
+from phydrax.nn._base import _AbstractBaseModel
 from phydrax.nn.models import LatentContractionModel
-from phydrax.nn.models.core._base import _AbstractBaseModel
 from phydrax.operators.differential import dt, dt_n, laplacian
 from phydrax.operators.differential._hooks import get_derivative_rule
 from phydrax.solver import FunctionalSolver
@@ -58,8 +58,12 @@ def test_functional_solver_builds_enforced_pipeline_terms():
     boundary_component = domain.component({"x": Boundary()})
     initial_component = domain.component({"t": FixedStart()})
 
-    boundary_constraint = EnforcementSpec(phx.conditions.Dirichlet("u", boundary_component, target=5.0))
-    initial_constraint = EnforcementSpec(phx.conditions.Initial("u", initial_component, target=2.0))
+    boundary_constraint = EnforcementSpec(
+        phx.conditions.Dirichlet("u", boundary_component, target=5.0)
+    )
+    initial_constraint = EnforcementSpec(
+        phx.conditions.Initial("u", initial_component, target=2.0)
+    )
 
     anchors = {
         "x": jnp.array([[0.25], [0.75]], dtype=float),
@@ -250,7 +254,9 @@ def test_enforced_initial_overlay_boundary_compatible_preserves_all_orders():
         EnforcementSpec(phx.conditions.Dirichlet("u", boundary, target=0.0)),
         EnforcementSpec(phx.conditions.Initial("u", initial, target=u0_target, order=0)),
         EnforcementSpec(phx.conditions.Initial("u", initial, target=ut0_target, order=1)),
-        EnforcementSpec(phx.conditions.Initial("u", initial, target=utt0_target, order=2)),
+        EnforcementSpec(
+            phx.conditions.Initial("u", initial, target=utt0_target, order=2)
+        ),
     ]
 
     functions = {"u": u_raw}

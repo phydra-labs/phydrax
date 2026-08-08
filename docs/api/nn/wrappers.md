@@ -38,7 +38,7 @@ mlp = eqx.nn.MLP(
 )
 
 # Declare value shapes: 2×2 -> 3×2 (both flatten to lengths 4 and 6 internally).
-model = phx.nn.EquinoxModel(mlp, in_size=(2, 2), out_size=(3, 2))
+model = phx.nn.models.EquinoxModel(mlp, in_size=(2, 2), out_size=(3, 2))
 
 x = jnp.zeros((2, 2))
 y = model(x, key=key)
@@ -57,7 +57,7 @@ import phydrax as phx
 key = jr.key(0)
 
 drop = eqx.nn.Dropout(p=0.1)
-model = phx.nn.EquinoxModel(drop, in_size=4, out_size=4, layout="passthrough")
+model = phx.nn.models.EquinoxModel(drop, in_size=4, out_size=4, layout="passthrough")
 
 x = jnp.zeros((4,))
 y = model(x, key=key, inference=True)
@@ -78,7 +78,7 @@ def stack_pair(inp, *, key=None):
     a, b = inp
     return jnp.stack([a, b])
 
-model = phx.nn.EquinoxStructuredModel(stack_pair, in_size=2, out_size=2, layout="passthrough")
+model = phx.nn.models.EquinoxStructuredModel(stack_pair, in_size=2, out_size=2, layout="passthrough")
 y = model((1.0, 2.0), key=key)
 assert y.shape == (2,)
 ```
@@ -95,7 +95,7 @@ import phydrax as phx
 key = jr.key(0)
 
 lin = eqx.nn.Linear(in_features=5, out_features=4, key=key)
-model = phx.nn.EquinoxStructuredModel(lin, in_size=5, out_size=4, layout="value")
+model = phx.nn.models.EquinoxStructuredModel(lin, in_size=5, out_size=4, layout="value")
 
 x = (jnp.ones((2,)), jnp.ones((3,)))
 y = model(x, key=key)
@@ -106,7 +106,7 @@ assert y.shape == (4,)
     - These wrappers are pointwise by default; use `jax.vmap` for batching.
     - `iter_=` is accepted for interface compatibility but is not forwarded to the wrapped callable.
 
-::: phydrax.nn.EquinoxModel
+::: phydrax.nn.models.EquinoxModel
     options:
         members:
             - __init__
@@ -114,7 +114,7 @@ assert y.shape == (4,)
 
 ---
 
-::: phydrax.nn.EquinoxStructuredModel
+::: phydrax.nn.models.EquinoxStructuredModel
     options:
         members:
             - __init__
@@ -166,15 +166,15 @@ domain = phx.domain.RaggedSeriesDatasetDomain(
 
 key_step, key_readout = jr.split(jr.key(0))
 
-encoder = phx.nn.MaskedSeriesPoolingModel(
-    step_model=phx.nn.MLP(
+encoder = phx.nn.models.MaskedSeriesPoolingModel(
+    step_model=phx.nn.models.MLP(
         in_size=5,
         out_size=16,
         width_size=32,
         depth=2,
         key=key_step,
     ),
-    readout_model=phx.nn.MLP(
+    readout_model=phx.nn.models.MLP(
         in_size=18,
         out_size=2,
         width_size=32,
@@ -183,7 +183,7 @@ encoder = phx.nn.MaskedSeriesPoolingModel(
     ),
 )
 
-u = domain.Function("data")(phx.nn.RaggedSeriesModel(encoder))
+u = domain.Function("data")(phx.nn.models.RaggedSeriesModel(encoder))
 ```
 
 The `step_model` input size should match the flattened series channel count plus
@@ -196,11 +196,11 @@ For sampled ragged-series training with `reduction="sum"`, set
 `sample_scale`. This estimates a full-series sum from a fixed-width sampled view.
 Mean pooling does not need this correction.
 
-::: phydrax.nn.RaggedSeriesBatchInput
+::: phydrax.nn.models.RaggedSeriesBatchInput
 
 ---
 
-::: phydrax.nn.RaggedSeriesModel
+::: phydrax.nn.models.RaggedSeriesModel
     options:
         members:
             - __init__
@@ -208,7 +208,7 @@ Mean pooling does not need this correction.
 
 ---
 
-::: phydrax.nn.MaskedSeriesPoolingModel
+::: phydrax.nn.models.MaskedSeriesPoolingModel
     options:
         members:
             - __init__
@@ -225,14 +225,14 @@ Mean pooling does not need this correction.
 import jax.random as jr
 import phydrax as phx
 
-branch = phx.nn.Sequential(
+branch = phx.nn.models.Sequential(
     (
-        phx.nn.RandomFourierFeatureEmbeddings(
+        phx.nn.layers.RandomFourierFeatureEmbeddings(
             in_size="scalar",
             out_size=64,
             key=jr.key(0),
         ),
-        phx.nn.MLP(
+        phx.nn.models.MLP(
             in_size=64,
             out_size=16,
             width_size=64,
@@ -243,7 +243,7 @@ branch = phx.nn.Sequential(
 )
 ```
 
-::: phydrax.nn.Sequential
+::: phydrax.nn.models.Sequential
     options:
         members:
             - __init__
@@ -251,7 +251,7 @@ branch = phx.nn.Sequential(
 
 ---
 
-::: phydrax.nn.MagnitudeDirectionModel
+::: phydrax.nn.models.MagnitudeDirectionModel
     options:
         members:
             - __init__
@@ -259,7 +259,7 @@ branch = phx.nn.Sequential(
 
 ---
 
-::: phydrax.nn.ComplexOutputModel
+::: phydrax.nn.models.ComplexOutputModel
     options:
         members:
             - __init__

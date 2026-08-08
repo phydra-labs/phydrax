@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
-from phydrax.nn import ModifiedMLP, SeparableModifiedMLP
+from phydrax.nn.models import ModifiedMLP, SeparableModifiedMLP
 
 
 @pytest.mark.parametrize(

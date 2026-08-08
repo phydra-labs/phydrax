@@ -25,7 +25,7 @@ Models that exploit product-domain structure via low-rank factorization.
       evaluation keys for stochastic children, but propagate `None` without creating
       PRNG operations.
 
-::: phydrax.nn.Separable
+::: phydrax.nn.models.Separable
     options:
         members:
             - __init__
@@ -33,14 +33,14 @@ Models that exploit product-domain structure via low-rank factorization.
 
 ---
 
-::: phydrax.nn.SeparableMLP
+::: phydrax.nn.models.SeparableMLP
     options:
         members:
             - __init__
             - __call__
 
 ---
-::: phydrax.nn.SeparableModifiedMLP
+::: phydrax.nn.models.SeparableModifiedMLP
     options:
         members:
             - __init__
@@ -49,7 +49,7 @@ Models that exploit product-domain structure via low-rank factorization.
 ---
 
 
-::: phydrax.nn.SeparableKAN
+::: phydrax.nn.models.SeparableKAN
     options:
         members:
             - __init__
@@ -60,7 +60,7 @@ per-layer basis schedules retain the same scan compatibility as `KAN`.
 
 ---
 
-::: phydrax.nn.SeparableFeynmaNN
+::: phydrax.nn.models.SeparableFeynmaNN
     options:
         members:
             - __init__
@@ -68,7 +68,7 @@ per-layer basis schedules retain the same scan compatibility as `KAN`.
 
 ---
 
-::: phydrax.nn.LatentContractionModel
+::: phydrax.nn.models.LatentContractionModel
     options:
         members:
             - __init__
@@ -76,14 +76,14 @@ per-layer basis schedules retain the same scan compatibility as `KAN`.
 
 ---
 
-::: phydrax.nn.LatentExecutionPolicy
+::: phydrax.nn.models.LatentExecutionPolicy
     options:
         members:
             - __init__
 
 ---
 
-::: phydrax.nn.ConcatenatedModel
+::: phydrax.nn.models.ConcatenatedModel
     options:
         members:
             - __init__

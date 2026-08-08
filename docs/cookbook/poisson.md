@@ -35,7 +35,7 @@ with \(g(x,y)=x^2+y^2\). The exact solution is \(u^\star(x,y)=x^2+y^2\).
     def g(x):
         return x[0] ** 2 + x[1] ** 2
 
-    model = phx.nn.MLP(
+    model = phx.nn.models.MLP(
         in_size=2, out_size="scalar", width_size=16, depth=2, scan=False, key=jr.key(0)
     )
     u = geom.Model("x")(model)
@@ -87,10 +87,10 @@ solver = solver.solve(
 )
 ```
 
-KFAC requires pointwise flat `phydrax.nn.MLP` fields and nonnegative quadratic
-`phydrax.terms.ResidualPenalty` terms. It reuses each materialized interior and boundary
-integration realization through factor estimation and Armijo line search. For
-configuration, support boundaries, and diagnostics, see
+KFAC requires pointwise flat `phydrax.nn.models.MLP` fields and nonnegative
+quadratic `phydrax.terms.ResidualPenalty` terms. It reuses each materialized
+interior and boundary integration realization through factor estimation and Armijo
+line search. For configuration, support boundaries, and diagnostics, see
 [Optimization](../api/optim.md#structured-residual-optimization-kfac).
 
 ## Enforced Dirichlet boundary (ansatz + interior residual)
@@ -112,7 +112,7 @@ into an exact ansatz with `phx.enforcement`.
     def g(x):
         return x[0] ** 2 + x[1] ** 2
 
-    model = phx.nn.MLP(
+    model = phx.nn.models.MLP(
         in_size=2, out_size="scalar", width_size=16, depth=2, scan=False, key=jr.key(0)
     )
     u = geom.Model("x")(model)
@@ -172,7 +172,7 @@ tuple plus its interior mask.
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
-    model = phx.nn.SeparableMLP(
+    model = phx.nn.models.SeparableMLP(
         in_size=2,
         out_size="scalar",
         latent_size=16,

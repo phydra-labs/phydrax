@@ -13,8 +13,8 @@ from phydrax.domain import (
     SampleLayout,
     TimeInterval,
 )
+from phydrax.nn._base import _AbstractBaseModel
 from phydrax.nn.models import LatentContractionModel
-from phydrax.nn.models.core._base import _AbstractBaseModel
 from phydrax.nn.models.wrappers._axis_contraction import (
     AxisContractionPlan,
     AxisFactor,

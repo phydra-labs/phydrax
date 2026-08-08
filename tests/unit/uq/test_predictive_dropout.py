@@ -61,7 +61,7 @@ def test_predictive_conditional_variance_broadcasts_over_valid_sample_axis():
 
 
 def test_feature_dropout_is_function_locked_and_requires_key():
-    layer = phx.nn.Dropout(32, p=0.5, mode="feature")
+    layer = phx.nn.layers.Dropout(32, p=0.5, mode="feature")
     values = jnp.ones((7, 32))
 
     with pytest.raises(ValueError, match="explicit evaluation key"):
@@ -82,10 +82,10 @@ def test_mlp_dropout_scan_matches_unrolled_and_inference_is_deterministic():
         dropout=0.25,
         key=jr.key(2),
     )
-    unrolled = phx.nn.MLP(**kwargs)
-    scanned = phx.nn.MLP(**kwargs, scan=True)
+    unrolled = phx.nn.models.MLP(**kwargs)
+    scanned = phx.nn.models.MLP(**kwargs, scan=True)
     x = jnp.asarray([0.2, -0.3])
 
     assert jnp.allclose(unrolled(x, key=jr.key(3)), scanned(x, key=jr.key(3)))
-    deterministic = phx.nn.inference_mode(unrolled)
+    deterministic = phx.nn.layers.inference_mode(unrolled)
     assert jnp.array_equal(deterministic(x), deterministic(x))

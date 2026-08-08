@@ -12,7 +12,7 @@ import jax.numpy as jnp
 from jaxtyping import ArrayLike
 
 from .._strict import StrictModule
-from ..nn.models.core._operator import OperatorPrediction
+from ..nn.operator.data import OperatorPrediction
 from ._conformal import FunctionalConformal
 from ._operator import (
     _output_mask,

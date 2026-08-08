@@ -23,7 +23,7 @@ def _layout(functions, *, exact_block_max_size=64, uncovered="error"):
 
 def test_parameter_layout_discovers_ordinary_affine_bias_blocks():
     domain = phx.domain.Interval1d(0.0, 1.0)
-    model = phx.nn.MLP(
+    model = phx.nn.models.MLP(
         in_size=1,
         out_size="scalar",
         hidden_sizes=(3,),
@@ -45,7 +45,7 @@ def test_parameter_layout_discovers_learned_skip_projection():
     domain = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
-    model = phx.nn.MLP(
+    model = phx.nn.models.MLP(
         in_size=2,
         out_size="scalar",
         hidden_sizes=(4,),
@@ -65,7 +65,7 @@ def test_parameter_layout_excludes_geometry_and_uses_exact_uncovered_block():
     domain = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
-    model = phx.nn.MLP(
+    model = phx.nn.models.MLP(
         in_size=2,
         out_size="scalar",
         hidden_sizes=(),
@@ -86,7 +86,7 @@ def test_parameter_layout_excludes_geometry_and_uses_exact_uncovered_block():
 
 def test_parameter_layout_uses_explicit_diagonal_fallback_above_threshold():
     domain = phx.domain.Interval1d(0.0, 1.0)
-    model = phx.nn.MLP(
+    model = phx.nn.models.MLP(
         in_size=1,
         out_size="scalar",
         hidden_sizes=(),
@@ -106,7 +106,7 @@ def test_parameter_layout_uses_explicit_diagonal_fallback_above_threshold():
 
 def test_parameter_layout_rejects_shared_affine_parameters():
     domain = phx.domain.Interval1d(0.0, 1.0)
-    model = phx.nn.MLP(
+    model = phx.nn.models.MLP(
         in_size=2,
         out_size=2,
         hidden_sizes=(2,),
@@ -125,7 +125,7 @@ def test_parameter_layout_rejects_shared_affine_parameters():
 
 def test_parameter_layout_rejects_complex_uncovered_parameters():
     domain = phx.domain.Interval1d(0.0, 1.0)
-    model = phx.nn.MLP(
+    model = phx.nn.models.MLP(
         in_size=1,
         out_size="scalar",
         hidden_sizes=(),
@@ -143,7 +143,7 @@ def test_parameter_layout_rejects_complex_uncovered_parameters():
 
 def test_parameter_layout_rejects_random_weight_factorization():
     domain = phx.domain.Interval1d(0.0, 1.0)
-    model = phx.nn.MLP(
+    model = phx.nn.models.MLP(
         in_size=1,
         out_size="scalar",
         hidden_sizes=(3,),

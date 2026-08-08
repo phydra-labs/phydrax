@@ -39,9 +39,9 @@ def _point_batch(
         source_mask = jnp.ones((4,), dtype=bool)
     if query_mask is None:
         query_mask = jnp.ones((query_coordinates.shape[0],), dtype=bool)
-    return phx.nn.OperatorBatch(
+    return phx.nn.operator.OperatorBatch(
         inputs={
-            source_name: phx.nn.FunctionSamples(
+            source_name: phx.nn.operator.FunctionSamples(
                 values=jnp.asarray(values),
                 coordinates=source_coordinates,
                 quadrature_weights=jnp.full((4,), 0.25),
@@ -49,7 +49,7 @@ def _point_batch(
             )
         },
         queries={
-            "query": phx.nn.FunctionSamples(
+            "query": phx.nn.operator.FunctionSamples(
                 values=None,
                 coordinates=query_coordinates,
                 mask=query_mask,
@@ -61,9 +61,9 @@ def _point_batch(
 def _case_point_batch(values):
     source_mask = jnp.array([[True, True, True, False], [True, True, False, False]])
     query_mask = jnp.array([[True, True, False], [True, False, False]])
-    return phx.nn.OperatorBatch(
+    return phx.nn.operator.OperatorBatch(
         inputs={
-            "u": phx.nn.FunctionSamples(
+            "u": phx.nn.operator.FunctionSamples(
                 values=jnp.asarray(values),
                 coordinates=jnp.array([[0.0], [0.3], [0.7], [1.0]]),
                 quadrature_weights=jnp.full((4,), 0.25),
@@ -71,7 +71,7 @@ def _case_point_batch(values):
             )
         },
         queries={
-            "query": phx.nn.FunctionSamples(
+            "query": phx.nn.operator.FunctionSamples(
                 values=None,
                 coordinates=jnp.array([[0.1], [0.5], [0.9]]),
                 mask=query_mask,
@@ -83,7 +83,7 @@ def _case_point_batch(values):
 
 def _grid_batch(values, *, query_mask=None, source_name="state"):
     points = jnp.linspace(0.0, 1.0, 8, endpoint=False)
-    axis = phx.nn.OperatorAxis(
+    axis = phx.nn.operator.OperatorAxis(
         "x",
         points,
         quadrature_weights=jnp.full((8,), 1.0 / 8.0),
@@ -91,16 +91,16 @@ def _grid_batch(values, *, query_mask=None, source_name="state"):
     )
     if query_mask is None:
         query_mask = jnp.ones((8,), dtype=bool)
-    return phx.nn.OperatorBatch(
+    return phx.nn.operator.OperatorBatch(
         inputs={
-            source_name: phx.nn.FunctionSamples(
+            source_name: phx.nn.operator.FunctionSamples(
                 values=jnp.asarray(values),
                 axes=(axis,),
                 mask=jnp.ones((8,), dtype=bool),
             )
         },
         queries={
-            "query": phx.nn.FunctionSamples(
+            "query": phx.nn.operator.FunctionSamples(
                 values=None,
                 axes=(axis,),
                 mask=query_mask,
@@ -121,8 +121,8 @@ def masked_point_batch():
 def test_coordinate_conditioned_operator_film_decode_is_masked_jittable_and_finite(
     masked_point_batch,
 ):
-    branch = phx.nn.IntegralBranchEncoder(
-        feature_model=phx.nn.MLP(
+    branch = phx.nn.operator.architectures.IntegralBranchEncoder(
+        feature_model=phx.nn.models.MLP(
             in_size=2,
             out_size=4,
             width_size=8,
@@ -132,7 +132,7 @@ def test_coordinate_conditioned_operator_film_decode_is_masked_jittable_and_fini
         latent_size=4,
         coord_dim=1,
     )
-    decoder = phx.nn.FiLMCoordinateDecoder(
+    decoder = phx.nn.operator.architectures.FiLMCoordinateDecoder(
         latent_size=4,
         coord_dim=1,
         out_size="scalar",
@@ -140,7 +140,7 @@ def test_coordinate_conditioned_operator_film_decode_is_masked_jittable_and_fini
         depth=2,
         key=jr.key(1),
     )
-    model = phx.nn.CoordinateConditionedOperator(
+    model = phx.nn.operator.architectures.CoordinateConditionedOperator(
         branch={"u": branch},
         decoder=decoder,
         coord_dim=1,
@@ -172,10 +172,10 @@ def test_wavelet_operators_reconstruct_and_execute_scalar_and_channel_fields():
     channel_values = jnp.stack((scalar_values, jnp.cos(scalar_values)), axis=-1)
     query_mask = jnp.array([True, True, True, True, True, True, True, False])
 
-    wavelet = phx.nn.MultiresolutionTransform(
+    wavelet = phx.nn.operator.architectures.MultiresolutionTransform(
         (8,), levels=2, wavelet="db2", boundary="periodic"
     )
-    multiwavelet = phx.nn.AlpertMultiwaveletTransform(
+    multiwavelet = phx.nn.operator.architectures.AlpertMultiwaveletTransform(
         8, order=2, levels=2, boundary="periodic"
     )
     assert jnp.allclose(
@@ -191,7 +191,7 @@ def test_wavelet_operators_reconstruct_and_execute_scalar_and_channel_fields():
         atol=1e-5,
     )
 
-    wno = phx.nn.WaveletNeuralOperator(
+    wno = phx.nn.operator.architectures.WaveletNeuralOperator(
         (8,),
         in_channels=2,
         out_channels=2,
@@ -202,7 +202,7 @@ def test_wavelet_operators_reconstruct_and_execute_scalar_and_channel_fields():
         source_key="state",
         key=jr.key(2),
     )
-    mwt = phx.nn.MultiwaveletOperator(
+    mwt = phx.nn.operator.architectures.MultiwaveletOperator(
         8,
         in_channels="scalar",
         out_channels="scalar",
@@ -242,27 +242,27 @@ def test_manifold_spectral_operator_runs_valid_small_laplacian_plan():
             [-1.0, 0.0, -1.0, 2.0],
         ]
     )
-    plan = phx.nn.SpectralDiscretization.from_stiffness(
+    plan = phx.nn.operator.architectures.SpectralDiscretization.from_stiffness(
         laplacian, np.ones((4,)), n_modes=4, basis_id="cycle-4"
     )
     coordinates = jnp.array([[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0]])
-    batch = phx.nn.OperatorBatch(
+    batch = phx.nn.operator.OperatorBatch(
         inputs={
-            "u": phx.nn.FunctionSamples(
+            "u": phx.nn.operator.FunctionSamples(
                 values=jnp.array([1.0, 0.0, -1.0, 0.0]),
                 coordinates=coordinates,
                 mask=jnp.array([True, True, True, False]),
             )
         },
         queries={
-            "query": phx.nn.FunctionSamples(
+            "query": phx.nn.operator.FunctionSamples(
                 values=None,
                 coordinates=coordinates,
                 mask=jnp.array([True, True, False, False]),
             )
         },
     )
-    model = phx.nn.ManifoldSpectralOperator(
+    model = phx.nn.operator.architectures.ManifoldSpectralOperator(
         plan,
         width=4,
         depth=1,
@@ -293,7 +293,7 @@ def test_stiffness_plan_rejects_negative_semidefinite_operator():
     )
 
     with pytest.raises(ValueError, match="positive semidefinite"):
-        phx.nn.SpectralDiscretization.from_stiffness(
+        phx.nn.operator.architectures.SpectralDiscretization.from_stiffness(
             differential_laplacian,
             np.ones((4,)),
             n_modes=4,
@@ -302,7 +302,7 @@ def test_stiffness_plan_rejects_negative_semidefinite_operator():
 
 def test_triangle_mesh_plan_preserves_sparse_sphere_eigenspace_multiplicities():
     mesh = trimesh.creation.icosphere(subdivisions=3, radius=1.0)
-    plan = phx.nn.SpectralDiscretization.from_triangle_mesh(
+    plan = phx.nn.operator.architectures.SpectralDiscretization.from_triangle_mesh(
         np.asarray(mesh.vertices),
         np.asarray(mesh.faces),
         n_modes=9,
@@ -329,7 +329,7 @@ def test_upt_and_abupt_preserve_case_and_source_query_masks():
     changed_batch = _case_point_batch(changed_padding)
     expected_query_mask = batch.query("query").mask_array(case_shape=(2,))
 
-    upt = phx.nn.UPT(
+    upt = phx.nn.operator.architectures.UPT(
         in_channels="scalar",
         out_channels="scalar",
         coord_dim=1,
@@ -352,19 +352,19 @@ def test_upt_and_abupt_preserve_case_and_source_query_masks():
     assert jnp.allclose(upt_output, upt(changed_batch))
     assert jnp.allclose(upt_compiled, upt_output)
 
-    graph = phx.nn.OperatorBranchGraph(
+    graph = phx.nn.operator.OperatorBranchGraph(
         (
-            phx.nn.OperatorBranchSpec(
+            phx.nn.operator.OperatorBranchSpec(
                 "field",
                 role="both",
                 geometry_kind="point_cloud",
                 source_name="u",
-                output_spec=phx.nn.OperatorOutputSpec("scalar"),
+                output_spec=phx.nn.operator.OperatorOutputSpec("scalar"),
                 query_name="query",
             ),
         )
     )
-    abupt = phx.nn.ABUPT(
+    abupt = phx.nn.operator.architectures.ABUPT(
         graph,
         input_channels={"field": "scalar"},
         coord_dims={"field": 1},
@@ -399,48 +399,48 @@ def test_upt_and_abupt_preserve_case_and_source_query_masks():
 
 def test_abupt_predicts_named_fields_on_distinct_queries():
     source_coordinates = jnp.linspace(0.0, 1.0, 4)[:, None]
-    batch = phx.nn.OperatorBatch(
+    batch = phx.nn.operator.OperatorBatch(
         inputs={
-            "u": phx.nn.FunctionSamples(
+            "u": phx.nn.operator.FunctionSamples(
                 values=jnp.linspace(-1.0, 1.0, 4),
                 coordinates=source_coordinates,
             )
         },
         queries={
-            "spatial": phx.nn.FunctionSamples(
+            "spatial": phx.nn.operator.FunctionSamples(
                 values=None,
                 coordinates=jnp.linspace(0.0, 1.0, 3)[:, None],
             ),
-            "sensors": phx.nn.FunctionSamples(
+            "sensors": phx.nn.operator.FunctionSamples(
                 values=None,
                 coordinates=jnp.asarray([[0.25], [0.75]]),
             ),
         },
     )
-    graph = phx.nn.OperatorBranchGraph(
+    graph = phx.nn.operator.OperatorBranchGraph(
         (
-            phx.nn.OperatorBranchSpec(
+            phx.nn.operator.OperatorBranchSpec(
                 "state",
                 role="both",
                 geometry_kind="point_cloud",
                 source_name="u",
                 query_name="spatial",
-                output_spec=phx.nn.OperatorOutputSpec("scalar"),
+                output_spec=phx.nn.operator.OperatorOutputSpec("scalar"),
             ),
-            phx.nn.OperatorBranchSpec(
+            phx.nn.operator.OperatorBranchSpec(
                 "flux",
                 role="both",
                 geometry_kind="point_cloud",
                 source_name="u",
                 query_name="sensors",
-                output_spec=phx.nn.OperatorOutputSpec(
+                output_spec=phx.nn.operator.OperatorOutputSpec(
                     2,
                     component_names=("x", "y"),
                 ),
             ),
         )
     )
-    model = phx.nn.ABUPT(
+    model = phx.nn.operator.architectures.ABUPT(
         graph,
         input_channels={"state": "scalar", "flux": "scalar"},
         coord_dims={"state": 1, "flux": 1},
@@ -463,15 +463,15 @@ def test_abupt_predicts_named_fields_on_distinct_queries():
 def test_codano_executes_heterogeneous_typed_fields_and_exact_query_mask():
     coordinates = jnp.array([[0.0], [0.3], [0.7], [1.0]])
     query_mask = jnp.array([True, True, True, False])
-    batch = phx.nn.OperatorBatch(
+    batch = phx.nn.operator.OperatorBatch(
         inputs={
-            "pressure": phx.nn.FunctionSamples(
+            "pressure": phx.nn.operator.FunctionSamples(
                 values=jnp.array([1.0, 0.5, -0.5, -1.0]),
                 coordinates=coordinates,
                 quadrature_weights=jnp.full((4,), 0.25),
                 mask=jnp.array([True, True, True, False]),
             ),
-            "velocity": phx.nn.FunctionSamples(
+            "velocity": phx.nn.operator.FunctionSamples(
                 values=jnp.array([[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0]]),
                 coordinates=coordinates,
                 quadrature_weights=jnp.full((4,), 0.25),
@@ -479,7 +479,7 @@ def test_codano_executes_heterogeneous_typed_fields_and_exact_query_mask():
             ),
         },
         queries={
-            "query": phx.nn.FunctionSamples(
+            "query": phx.nn.operator.FunctionSamples(
                 values=None,
                 coordinates=coordinates,
                 mask=query_mask,
@@ -487,8 +487,8 @@ def test_codano_executes_heterogeneous_typed_fields_and_exact_query_mask():
         },
     )
     fields = (
-        phx.nn.OperatorFieldSpec("pressure", channels="scalar", role="source", scale=2.0),
-        phx.nn.OperatorFieldSpec(
+        phx.nn.operator.OperatorFieldSpec("pressure", channels="scalar", role="source", scale=2.0),
+        phx.nn.operator.OperatorFieldSpec(
             "velocity",
             channels=2,
             role="both",
@@ -497,7 +497,7 @@ def test_codano_executes_heterogeneous_typed_fields_and_exact_query_mask():
             scale=(2.0, 3.0),
         ),
     )
-    model = phx.nn.CoDANO(
+    model = phx.nn.operator.architectures.CoDANO(
         fields,
         (4,),
         n_modes=2,
@@ -527,8 +527,8 @@ def test_codano_executes_heterogeneous_typed_fields_and_exact_query_mask():
 
 
 def test_eqgino_is_rotation_and_reflection_equivariant():
-    representation = phx.nn.O3Representation(vectors=1)
-    model = phx.nn.EqGINO(
+    representation = phx.nn.operator.architectures.O3Representation(vectors=1)
+    model = phx.nn.operator.architectures.EqGINO(
         representation,
         representation,
         radius=3.0,
@@ -548,9 +548,9 @@ def test_eqgino_is_rotation_and_reflection_equivariant():
     query_mask = jnp.array([True, True, False])
 
     def batch_for(coordinates, values, queries):
-        return phx.nn.OperatorBatch(
+        return phx.nn.operator.OperatorBatch(
             inputs={
-                "field": phx.nn.FunctionSamples(
+                "field": phx.nn.operator.FunctionSamples(
                     values=values,
                     coordinates=coordinates,
                     quadrature_weights=jnp.full((4,), 0.25),
@@ -558,7 +558,7 @@ def test_eqgino_is_rotation_and_reflection_equivariant():
                 )
             },
             queries={
-                "query": phx.nn.FunctionSamples(
+                "query": phx.nn.operator.FunctionSamples(
                     values=None,
                     coordinates=queries,
                     mask=query_mask,
@@ -601,19 +601,19 @@ def test_in_context_operator_prompt_mask_and_permutation_are_semantic():
     second_batch = _point_batch(jnp.array([1.0, 0.7, 0.3, 0.0]))
     masked_batch = _point_batch(jnp.full((4,), 2.0))
     changed_masked_batch = _point_batch(jnp.full((4,), 9000.0))
-    first = phx.nn.OperatorSupervisedExample(first_batch, jnp.array([0.1, 0.5, 0.9]))
-    second = phx.nn.OperatorSupervisedExample(second_batch, jnp.array([-0.1, -0.5, -0.9]))
-    masked = phx.nn.OperatorSupervisedExample(masked_batch, jnp.full((3,), 3.0))
-    changed_masked = phx.nn.OperatorSupervisedExample(
+    first = phx.nn.operator.OperatorSupervisedExample(first_batch, jnp.array([0.1, 0.5, 0.9]))
+    second = phx.nn.operator.OperatorSupervisedExample(second_batch, jnp.array([-0.1, -0.5, -0.9]))
+    masked = phx.nn.operator.OperatorSupervisedExample(masked_batch, jnp.full((3,), 3.0))
+    changed_masked = phx.nn.operator.OperatorSupervisedExample(
         changed_masked_batch, jnp.full((3,), -8000.0)
     )
-    prompt = phx.nn.OperatorPrompt(
+    prompt = phx.nn.operator.OperatorPrompt(
         (first, second, masked), mask=jnp.array([True, True, False])
     )
-    changed_prompt = phx.nn.OperatorPrompt(
+    changed_prompt = phx.nn.operator.OperatorPrompt(
         (first, second, changed_masked), mask=jnp.array([True, True, False])
     )
-    model = phx.nn.InContextOperator(
+    model = phx.nn.operator.architectures.InContextOperator(
         in_channels="scalar",
         out_channels="scalar",
         coord_dim=1,
@@ -626,11 +626,11 @@ def test_in_context_operator_prompt_mask_and_permutation_are_semantic():
         key=jr.key(9),
     )
 
-    prompted = phx.nn.PromptedOperatorBatch(query_batch, prompt)
+    prompted = phx.nn.operator.PromptedOperatorBatch(query_batch, prompt)
     reference = model(prompted)
-    permuted = model(phx.nn.PromptedOperatorBatch(query_batch, prompt.permute((2, 0, 1))))
+    permuted = model(phx.nn.operator.PromptedOperatorBatch(query_batch, prompt.permute((2, 0, 1))))
     changed_masked_output = model(
-        phx.nn.PromptedOperatorBatch(query_batch, changed_prompt)
+        phx.nn.operator.PromptedOperatorBatch(query_batch, changed_prompt)
     )
     compiled = eqx.filter_jit(lambda item, data: item(data))(model, prompted)
     prompt_state = model.encode_prompt(prompt)
@@ -654,7 +654,7 @@ def test_gaussian_function_operator_has_coherent_shape_sampling_and_masked_nll()
     values = jnp.sin(2.0 * jnp.pi * jnp.arange(8) / 8.0)
     query_mask = jnp.array([True, True, True, True, True, True, True, False])
     batch = _grid_batch(values, query_mask=query_mask)
-    base = phx.nn.FNO(
+    base = phx.nn.operator.architectures.FNO(
         n_modes=(3,),
         in_channels="scalar",
         out_channels=3,
@@ -664,15 +664,15 @@ def test_gaussian_function_operator_has_coherent_shape_sampling_and_masked_nll()
         source_key="state",
         key=jr.key(10),
     )
-    model = phx.nn.GaussianFunctionOperator(
+    model = phx.nn.operator.architectures.GaussianFunctionOperator(
         base, out_channels="scalar", factor_rank=1, min_scale=1e-3
     )
 
     distribution = model.distribution(batch)
     samples = model.sample(batch, num_samples=3, key=jr.key(11))
-    nll = phx.nn.gaussian_operator_nll(model, batch, distribution.mean, reduction="none")
+    nll = phx.nn.operator.architectures.gaussian_operator_nll(model, batch, distribution.mean, reduction="none")
     changed_target = distribution.mean.at[-1].set(1e9)
-    changed_nll = phx.nn.gaussian_operator_nll(
+    changed_nll = phx.nn.operator.architectures.gaussian_operator_nll(
         model, batch, changed_target, reduction="none"
     )
     covariance = distribution.dense_covariance()
@@ -697,7 +697,7 @@ def test_gaussian_function_operator_has_coherent_shape_sampling_and_masked_nll()
     assert jnp.allclose(compiled_mean, distribution.mean)
     _assert_finite_model_gradient(
         model,
-        lambda item: phx.nn.gaussian_operator_nll(
+        lambda item: phx.nn.operator.architectures.gaussian_operator_nll(
             item, batch, distribution.mean, reduction="mean"
         ),
     )
@@ -719,7 +719,7 @@ def test_pde_condition_encoder_respects_semantic_hash_and_attaches_case_conditio
     tokens_a = phx.equations.tokenize_pde_ir(equivalent_a)
     tokens_b = phx.equations.tokenize_pde_ir(equivalent_b)
     tokens_changed = phx.equations.tokenize_pde_ir(changed)
-    encoder = phx.nn.PDEConditionEncoder(
+    encoder = phx.nn.operator.architectures.PDEConditionEncoder(
         width=4,
         depth=1,
         dimension_rank=0,
@@ -731,7 +731,7 @@ def test_pde_condition_encoder_respects_semantic_hash_and_attaches_case_conditio
     encoded_changed = encoder(tokens_changed)
     compiled = eqx.filter_jit(lambda item, tokens: item(tokens))(encoder, tokens_a)
     batch = _case_point_batch(jnp.array([[0.0, 0.5, 1.0, 2.0], [1.0, 0.5, 0.0, -1.0]]))
-    conditioned = phx.nn.attach_pde_condition(batch, tokens_a, encoder)
+    conditioned = phx.nn.operator.architectures.attach_pde_condition(batch, tokens_a, encoder)
     condition = conditioned.input("equation")
 
     assert equivalent_a.canonical_hash == equivalent_b.canonical_hash
@@ -998,7 +998,7 @@ def test_pde_condition_encoder_distinguishes_execution_semantics():
             _semantic_problem(nondimensionalization=(("x", 2.0),)),
         ),
     )
-    encoder = phx.nn.PDEConditionEncoder(
+    encoder = phx.nn.operator.architectures.PDEConditionEncoder(
         width=16,
         depth=2,
         dimension_rank=0,
@@ -1047,7 +1047,7 @@ def test_pde_condition_encoder_is_alpha_renaming_invariant():
     )
     original_tokens = phx.equations.tokenize_pde_ir(original)
     renamed_tokens = phx.equations.tokenize_pde_ir(renamed)
-    encoder = phx.nn.PDEConditionEncoder(
+    encoder = phx.nn.operator.architectures.PDEConditionEncoder(
         width=16,
         depth=2,
         dimension_rank=0,
@@ -1091,7 +1091,7 @@ def test_arbitrary_pde_metadata_stays_outside_neural_semantics():
     second = _semantic_problem(metadata=(("provenance", "experiment-b"),))
     first_tokens = phx.equations.tokenize_pde_ir(first)
     second_tokens = phx.equations.tokenize_pde_ir(second)
-    encoder = phx.nn.PDEConditionEncoder(
+    encoder = phx.nn.operator.architectures.PDEConditionEncoder(
         width=8,
         depth=1,
         dimension_rank=0,

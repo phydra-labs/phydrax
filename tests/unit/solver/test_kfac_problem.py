@@ -52,7 +52,7 @@ def _residual_term(domain, fields, operator, *, samples, density=None):
 def test_type_two_residual_curvature_is_nonzero_at_zero_residual():
     domain = phx.domain.Interval1d(0.0, 1.0)
     model = _zero_model(
-        phx.nn.MLP(
+        phx.nn.models.MLP(
             in_size=1,
             out_size="scalar",
             hidden_sizes=(),
@@ -91,7 +91,7 @@ def test_type_two_residual_curvature_is_nonzero_at_zero_residual():
 
 def test_frozen_loss_uses_nonnegative_quadratic_coefficients():
     domain = phx.domain.Interval1d(0.0, 1.0)
-    model = phx.nn.MLP(
+    model = phx.nn.models.MLP(
         in_size=1,
         out_size="scalar",
         hidden_sizes=(),
@@ -142,7 +142,7 @@ def test_frozen_loss_uses_nonnegative_quadratic_coefficients():
 
 def test_hard_enforced_ansatz_has_finite_residual_curvature():
     domain = phx.domain.Interval1d(0.0, 1.0)
-    model = phx.nn.MLP(
+    model = phx.nn.models.MLP(
         in_size=1,
         out_size="scalar",
         hidden_sizes=(3,),
@@ -198,7 +198,7 @@ def test_hard_enforced_ansatz_has_finite_residual_curvature():
 @pytest.mark.parametrize("approximation", ("expand", "reduce"))
 def test_streamed_block_observations_match_dense_jacobian_oracle(approximation):
     domain = phx.domain.Interval1d(0.0, 1.0)
-    model = phx.nn.MLP(
+    model = phx.nn.models.MLP(
         in_size=1,
         out_size="scalar",
         hidden_sizes=(3,),

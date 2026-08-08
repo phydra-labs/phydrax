@@ -18,6 +18,16 @@ def _identity(*args: Any, **kwargs: Any) -> Any:
     return args
 
 
+def _tuple(item: Any, /) -> tuple[Any, ...] | None:
+    if item is None:
+        return None
+    if isinstance(item, str):
+        return (item,)
+    if isinstance(item, Sequence):
+        return tuple(item)
+    return (item,)
+
+
 def _get_value_shape(size: SizeLike) -> tuple[int, ...]:
     """Convert a value-size specification to a trailing value shape.
 

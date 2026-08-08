@@ -44,6 +44,7 @@ term evaluation.
     ```
 """
 
+from .._model import SpectralDiscretizationProvider
 from ._collocation import (
     assemble_stochastic_collocation,
     COLLOCATION_NONFINITE,
@@ -501,6 +502,7 @@ __all__ = [
     "SpatialNoiseApproximation",
     "SpatialNoiseBasis",
     "SpectralSpatialDiscretization",
+    "SpectralDiscretizationProvider",
     "SpectralMatrixRepresentation",
     "SpectralCoefficientStateTransfer",
     "PolynomialBSDERegressionBasis",

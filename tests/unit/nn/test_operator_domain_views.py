@@ -31,7 +31,7 @@ def _points_batch():
 
 def test_points_domain_view_round_trips_named_prediction_fields():
     batch, case_axis, sample_axis = _points_batch()
-    view = phx.nn.operator_domain_view_from_points(
+    view = phx.nn.operator.operator_domain_view_from_points(
         batch,
         inputs={"source": "u"},
         queries={"state": "x"},
@@ -40,12 +40,12 @@ def test_points_domain_view_round_trips_named_prediction_fields():
         case_axes=(case_axis,),
     )
     values = 2.0 * view.batch.input("source").values
-    prediction = phx.nn.OperatorPrediction.from_field(
+    prediction = phx.nn.operator.OperatorPrediction.from_field(
         "solution",
         values,
         "state",
         view.batch.query("state"),
-        spec=phx.nn.OperatorOutputSpec("scalar"),
+        spec=phx.nn.operator.OperatorOutputSpec("scalar"),
         case_axes=view.batch.case_axes,
         case_shape=view.batch.case_shape,
     )
@@ -69,15 +69,15 @@ def test_points_domain_model_dispatches_shared_query_geometry_end_to_end():
         key=jr.key(2),
     )
     latent = 4
-    model = phx.nn.DeepONet(
-        branch=phx.nn.MLP(
+    model = phx.nn.operator.architectures.DeepONet(
+        branch=phx.nn.models.MLP(
             in_size=4,
             out_size=latent,
             width_size=6,
             depth=1,
             key=jr.key(3),
         ),
-        trunk=phx.nn.MLP(
+        trunk=phx.nn.models.MLP(
             in_size="scalar",
             out_size=latent,
             width_size=6,
@@ -112,18 +112,18 @@ def test_coord_separable_domain_view_preserves_axes_and_restores_output():
         ),
         key=jr.key(0),
     )
-    view = phx.nn.operator_domain_view_from_grid(
+    view = phx.nn.operator.operator_domain_view_from_grid(
         sampled,
         inputs={"source": "data"},
         queries={"query": ("x",)},
     )
     output = jnp.ones(view.batch.case_shape + view.batch.query("query").sample_shape)
-    prediction = phx.nn.OperatorPrediction.from_field(
+    prediction = phx.nn.operator.OperatorPrediction.from_field(
         "solution",
         output,
         "query",
         view.batch.query("query"),
-        spec=phx.nn.OperatorOutputSpec("scalar"),
+        spec=phx.nn.operator.OperatorOutputSpec("scalar"),
         case_axes=view.batch.case_axes,
         case_shape=view.batch.case_shape,
     )
@@ -154,7 +154,7 @@ def test_graph_domain_view_pads_graph_cases_and_restores_ragged_entity_axis():
         jnp.asarray([0, 1]),
         component=phx.domain.Nodes(),
     )
-    view = phx.nn.operator_domain_view_from_graph(
+    view = phx.nn.operator.operator_domain_view_from_graph(
         sampled,
         inputs={"source": "graph"},
     )
@@ -171,7 +171,7 @@ def test_graph_domain_view_pads_graph_cases_and_restores_ragged_entity_axis():
     assert restored.dims == (sampled.structure.axis_for("graph"),)
     assert jnp.array_equal(restored.data, jnp.asarray([0.0, 1.0, 3.0, 4.0, 5.0]))
 
-    model = phx.nn.NativeGraphOperator(
+    model = phx.nn.operator.architectures.NativeGraphOperator(
         lambda graph: graph,
         in_size="scalar",
         out_size="scalar",
@@ -199,7 +199,7 @@ def test_simplicial_domain_view_retains_cell_site_and_graph_node_entity():
         jnp.asarray([0]),
         component=phx.domain.NodeSet(complex_graph.face_cells),
     )
-    view = phx.nn.operator_domain_view_from_simplicial(
+    view = phx.nn.operator.operator_domain_view_from_simplicial(
         sampled,
         inputs={"source": "cell"},
         site="face",
@@ -222,10 +222,10 @@ def test_ragged_series_domain_view_preserves_masks_weights_and_model_dispatch():
         label="series",
     )
     sampled = domain.points_from_indices(jnp.asarray([0, 1, 2]))
-    view = phx.nn.operator_domain_view_from_ragged_series(sampled, "series")
+    view = phx.nn.operator.operator_domain_view_from_ragged_series(sampled, "series")
     latent = 4
-    branch = phx.nn.IntegralBranchEncoder(
-        feature_model=phx.nn.MLP(
+    branch = phx.nn.operator.architectures.IntegralBranchEncoder(
+        feature_model=phx.nn.models.MLP(
             in_size=3,
             out_size=latent,
             width_size=6,
@@ -236,9 +236,9 @@ def test_ragged_series_domain_view_preserves_masks_weights_and_model_dispatch():
         value_channels=2,
         coord_dim=1,
     )
-    model = phx.nn.DeepONet(
+    model = phx.nn.operator.architectures.DeepONet(
         branch=branch,
-        trunk=phx.nn.MLP(
+        trunk=phx.nn.models.MLP(
             in_size="scalar",
             out_size=latent,
             width_size=6,
@@ -280,15 +280,15 @@ def test_trajectory_domain_views_group_cases_and_restore_observation_order():
         jnp.asarray([3, 3]),
     )
     latent = 3
-    model = phx.nn.DeepONet(
-        branch=phx.nn.MLP(
+    model = phx.nn.operator.architectures.DeepONet(
+        branch=phx.nn.models.MLP(
             in_size=2,
             out_size=latent,
             width_size=5,
             depth=1,
             key=jr.key(7),
         ),
-        trunk=phx.nn.MLP(
+        trunk=phx.nn.models.MLP(
             in_size="scalar",
             out_size=latent,
             width_size=5,
@@ -308,7 +308,7 @@ def test_trajectory_domain_views_group_cases_and_restore_observation_order():
             times,
             time_indices=time_indices,
         )
-        view = phx.nn.operator_domain_view_from_trajectory(
+        view = phx.nn.operator.operator_domain_view_from_trajectory(
             sampled,
             inputs={"data": "data"},
             query_label="t",
@@ -345,12 +345,12 @@ def test_graph_trajectory_domain_view_includes_time_in_query_geometry():
         component=component,
         structure=phx.domain.SampleLayout((("graph", "t"),)),
     )
-    view = phx.nn.operator_domain_view_from_graph(
+    view = phx.nn.operator.operator_domain_view_from_graph(
         sampled,
         inputs={"graph": "graph"},
         query_labels=("t",),
     )
-    model = phx.nn.NativeGraphOperator(
+    model = phx.nn.operator.architectures.NativeGraphOperator(
         lambda graph: graph,
         in_size="scalar",
         out_size="scalar",
@@ -369,13 +369,13 @@ def test_graph_trajectory_domain_view_includes_time_in_query_geometry():
 
 def test_operator_domain_preflight_rejects_unsupported_geometry_before_execution():
     batch, case_axis, _ = _points_batch()
-    view = phx.nn.operator_domain_view_from_points(
+    view = phx.nn.operator.operator_domain_view_from_points(
         batch,
         inputs={"u": "u"},
         queries={"query": "x"},
         case_axes=(case_axis,),
     )
-    model = phx.nn.FNO(
+    model = phx.nn.operator.architectures.FNO(
         in_channels="scalar",
         out_channels="scalar",
         width=4,

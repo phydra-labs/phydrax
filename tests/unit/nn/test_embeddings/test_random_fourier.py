@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
-from phydrax.nn import (
+from phydrax.nn.layers import (
     ExplicitFourierFeatureEmbeddings,
     HybridFourierFeatureEmbeddings,
     MultiscaleFourierFeatureEmbeddings,
@@ -340,9 +340,9 @@ class TestExplicitFourierFeatureEmbeddings:
             phases=jnp.array([0.3]),
         )
 
-        grads = eqx.filter_grad(
-            lambda model: jnp.sum(model(jnp.array([0.4, 0.7])))
-        )(embeddings)
+        grads = eqx.filter_grad(lambda model: jnp.sum(model(jnp.array([0.4, 0.7]))))(
+            embeddings
+        )
 
         assert jnp.allclose(grads.embedding_matrix, 0.0)
         assert jnp.allclose(grads.phases, 0.0)
@@ -421,9 +421,9 @@ class TestTrainableFourierFeatureEmbeddings:
             initial_wavevectors=jnp.array([[1.0, 0.0], [0.0, 2.0]]),
         )
 
-        grads = eqx.filter_grad(
-            lambda model: jnp.sum(model(jnp.array([0.4, 0.7])))
-        )(embeddings)
+        grads = eqx.filter_grad(lambda model: jnp.sum(model(jnp.array([0.4, 0.7]))))(
+            embeddings
+        )
 
         assert embeddings.trainable is True
         assert not jnp.allclose(grads.embedding_matrix, 0.0)

@@ -9,7 +9,7 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
-from phydrax.nn.models.architectures._hofno import (
+from phydrax.nn.operator.architectures.spectral._hofno import (
     _dealiased_spectral_resample,
     _ProjectedProductFourierMixer,
 )
@@ -37,8 +37,8 @@ def _identity_quadratic_mixer(aliasing):
 
 def _grid_batch(*, periodic=True, mask=None):
     nodes = jnp.arange(8, dtype=float) / 8.0
-    axis = phx.nn.OperatorAxis("x", nodes, basis="fourier", periodic=periodic)
-    source = phx.nn.FunctionSamples(
+    axis = phx.nn.operator.OperatorAxis("x", nodes, basis="fourier", periodic=periodic)
+    source = phx.nn.operator.FunctionSamples(
         values=jnp.stack(
             (
                 jnp.sin(2.0 * jnp.pi * nodes),
@@ -48,9 +48,9 @@ def _grid_batch(*, periodic=True, mask=None):
         axes=(axis,),
         mask=mask,
     )
-    return phx.nn.OperatorBatch(
+    return phx.nn.operator.OperatorBatch(
         inputs={"source": source},
-        queries={"query": phx.nn.FunctionSamples(values=None, axes=(axis,))},
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,))},
         case_axes=("case",),
     )
 
@@ -82,7 +82,7 @@ def test_hofno_has_finite_nd_output_and_parameter_gradients(ndim):
     size = 6
     nodes = jnp.arange(size, dtype=float) / size
     values = jr.normal(jr.key(10 + ndim), (size,) * ndim)
-    model = phx.nn.HOFNO(
+    model = phx.nn.operator.architectures.HOFNO(
         n_modes=(2,) * ndim,
         width=3,
         depth=1,
@@ -113,8 +113,8 @@ def test_hofno_scan_matches_loop_under_jit():
         ffn_expansion=2,
         key=jr.key(9),
     )
-    loop = phx.nn.HOFNO(**options, scan=False)
-    scanned = phx.nn.HOFNO(**options, scan=True)
+    loop = phx.nn.operator.architectures.HOFNO(**options, scan=False)
+    scanned = phx.nn.operator.architectures.HOFNO(**options, scan=True)
     execute = eqx.filter_jit(lambda model, field, axis: model((field, axis, axis)))
 
     assert jnp.allclose(
@@ -126,7 +126,7 @@ def test_hofno_scan_matches_loop_under_jit():
 
 
 def test_hofno_runtime_and_registry_enforce_periodic_all_valid_contract():
-    model = phx.nn.HOFNO(
+    model = phx.nn.operator.architectures.HOFNO(
         n_modes=(3,),
         width=4,
         depth=1,
@@ -136,7 +136,9 @@ def test_hofno_runtime_and_registry_enforce_periodic_all_valid_contract():
         key=jr.key(4),
     )
     output = model(_grid_batch())
-    status = phx.nn.operator_architecture_status("higher order Fourier neural operator")
+    status = phx.nn.operator.operator_architecture_status(
+        "higher order Fourier neural operator"
+    )
     configuration = dict(model.operator_contract.configuration)
 
     assert output.shape == (2, 8)
@@ -149,7 +151,7 @@ def test_hofno_runtime_and_registry_enforce_periodic_all_valid_contract():
     assert configuration["aliasing"] == "dealiased"
 
     nonperiodic = _grid_batch(periodic=False)
-    report = phx.nn.validate_operator_architecture("HOFNO", nonperiodic)
+    report = phx.nn.operator.validate_operator_architecture("HOFNO", nonperiodic)
     assert "NONPERIODIC_AXIS" in report.codes
     with pytest.raises(ValueError, match="requires periodic"):
         model(nonperiodic)
@@ -158,4 +160,6 @@ def test_hofno_runtime_and_registry_enforce_periodic_all_valid_contract():
     with pytest.raises(eqx.EquinoxRuntimeError, match="all-valid source masks"):
         model(_grid_batch(mask=mask))
     with pytest.raises(ValueError, match="requires domain_padding=0"):
-        phx.nn.HOFNO(n_modes=(3,), domain_padding=0.1, key=jr.key(5))
+        phx.nn.operator.architectures.HOFNO(
+            n_modes=(3,), domain_padding=0.1, key=jr.key(5)
+        )

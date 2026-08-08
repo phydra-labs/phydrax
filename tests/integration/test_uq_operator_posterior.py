@@ -8,31 +8,31 @@ import jax.random as jr
 import phydrax as phx
 
 
-def _batch() -> phx.nn.OperatorBatch:
+def _batch() -> phx.nn.operator.OperatorBatch:
     coordinates = jnp.asarray([[[0.0], [0.5], [1.0]]])
-    query = phx.nn.FunctionSamples(
+    query = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=coordinates,
         mask=jnp.asarray([[True, True, False]]),
     )
-    source = phx.nn.FunctionSamples(
+    source = phx.nn.operator.FunctionSamples(
         values=jnp.ones((1, 3)),
         coordinates=coordinates,
     )
-    return phx.nn.OperatorBatch(inputs={"forcing": source}, queries={"query": query}, case_axes=("case",),
+    return phx.nn.operator.OperatorBatch(inputs={"forcing": source}, queries={"query": query}, case_axes=("case",),
     case_shape=(1,),)
 
 
 def test_operator_map_laplace_and_geometry_reattachment_match_gaussian_reference():
     batch = _batch()
-    spec = phx.nn.OperatorOutputSpec("scalar")
+    spec = phx.nn.operator.OperatorOutputSpec("scalar")
     target = jnp.asarray([[1.0, 2.0, jnp.nan]])
     observation_scale = 0.5
     prior_scale = 2.0
 
     def operator_prediction(parameters):
         values = jnp.broadcast_to(parameters["level"], spec.expected_shape(batch))
-        return phx.nn.OperatorPrediction.from_field(
+        return phx.nn.operator.OperatorPrediction.from_field(
             "output",
             values,
             batch.single_query_name(),

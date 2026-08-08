@@ -49,7 +49,7 @@ def test_benchmark_runner_trains_and_reports_cross_resolution_metrics():
         test_resolution=12,
         num_cases=2,
     )
-    model = phx.nn.FNO(
+    model = phx.nn.operator.architectures.FNO(
         width=4,
         depth=1,
         n_modes=(3,),
@@ -82,7 +82,7 @@ def test_benchmark_runner_records_validation_plateau_early_stopping():
         ),
         seed=4,
     )
-    model = phx.nn.FNO(
+    model = phx.nn.operator.architectures.FNO(
         width=4,
         depth=1,
         n_modes=(3,),
@@ -116,7 +116,7 @@ def test_benchmark_runner_resumes_model_optimizer_and_curve_exactly(tmp_path):
     )
 
     def construct():
-        return phx.nn.FNO(
+        return phx.nn.operator.architectures.FNO(
             width=4,
             depth=1,
             n_modes=(3,),
@@ -319,7 +319,7 @@ def _aggregate(architecture, relative_l2, inference_seconds):
 def test_external_candidate_requires_audit_and_uniform_benchmark_superiority(tmp_path):
     checkpoint = tmp_path / "candidate.bin"
     checkpoint.write_bytes(b"candidate-weights")
-    checkpoint_digest = phx.nn.checkpoint_sha256(checkpoint)
+    checkpoint_digest = phx.nn.operator.adapters.checkpoint_sha256(checkpoint)
     candidate = ExternalOperatorCandidate(
         name="candidate",
         source_uri="https://example.test/source",
@@ -346,7 +346,7 @@ def test_external_candidate_requires_audit_and_uniform_benchmark_superiority(tmp
     )
     assert not unverified.integrated
     assert "checkpoint artifact" in " ".join(unverified.reasons)
-    manifest = phx.nn.OperatorCheckpointManifest(
+    manifest = phx.nn.operator.adapters.OperatorCheckpointManifest(
         architecture="candidate",
         model_version="1.0.0",
         source_uri=candidate.source_uri,

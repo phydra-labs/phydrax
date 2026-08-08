@@ -92,7 +92,7 @@ zero step; a search whose every candidate is nonfinite raises an error. Set
 | Supported | Notes |
 |---|---|
 | `FunctionalSolver` with one or more `phydrax.terms.ResidualPenalty` terms | Every training term must expose nonnegative quadratic residual roots. |
-| Pointwise flat `phydrax.nn.MLP` fields | Scalar or tensor outputs; scanned execution, ordinary skip connections, and learned skip projections are supported. |
+| Pointwise flat `phydrax.nn.models.MLP` fields | Scalar or tensor outputs; scanned execution, ordinary skip connections, and learned skip projections are supported. |
 | Soft and hard-enforced PINNs | Hard ansätze remain in the differentiated residual graph. |
 | Coupled fields and inverse scalar parameters | Small parameters outside affine MLP blocks use one exact dense block up to `exact_block_max_size`. |
 | Mean and integral reductions | Component masks, quadrature masses, global weights, pointwise weights, and adaptive batch weights are preserved. |

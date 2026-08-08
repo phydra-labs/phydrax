@@ -16,8 +16,8 @@ from phydrax.domain import (
     TimeInterval,
 )
 from phydrax.integration import from_samples, over
+from phydrax.nn._base import _AbstractBaseModel
 from phydrax.nn.models import LatentContractionModel
-from phydrax.nn.models.core._base import _AbstractBaseModel
 from phydrax.operators.differential import partial_t, partial_x, partial_y
 from phydrax.operators.integral import integral
 

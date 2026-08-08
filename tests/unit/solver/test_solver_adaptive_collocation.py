@@ -9,7 +9,7 @@ import optax
 import phydrax as phx
 from phydrax.conditions import Residual
 from phydrax.domain import Interval1d, SampleLayout
-from phydrax.nn import MLP
+from phydrax.nn.models import MLP
 from phydrax.sampling.collocation import (
     controlled_collocation,
     ControlledCollocationPopulation,

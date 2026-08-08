@@ -48,12 +48,12 @@ def _benchmark(
     }
 
 
-def _parameter_count(model: phx.nn.KAN) -> int:
+def _parameter_count(model: phx.nn.models.KAN) -> int:
     trainable, _ = partition_trainable(model)
     return sum(int(leaf.size) for leaf in jax.tree.leaves(trainable))
 
 
-def _basis_matrix(grid: phx.nn.BSplineGrid, query: jax.Array) -> jax.Array:
+def _basis_matrix(grid: phx.nn.models.BSplineGrid, query: jax.Array) -> jax.Array:
 
     stencil = bspline_stencil(
         grid.knots,
@@ -70,7 +70,7 @@ def _basis_matrix(grid: phx.nn.BSplineGrid, query: jax.Array) -> jax.Array:
 
 
 def _fit_relative_error(
-    grid: phx.nn.BSplineGrid,
+    grid: phx.nn.models.BSplineGrid,
     target: Callable[[jax.Array], jax.Array],
 ) -> float:
     fitting_points = jnp.linspace(-1.0, 1.0, 2048)
@@ -84,7 +84,7 @@ def _fit_relative_error(
 
 
 def _adaptation_quality_records() -> dict[str, dict[str, float | int]]:
-    basis = phx.nn.BSplineEdgeBasis(degree=3, num_intervals=8)
+    basis = phx.nn.models.BSplineEdgeBasis(degree=3, num_intervals=8)
     uniform_grid = basis.grid
     profiles = {
         "boundary_layer": (
@@ -108,7 +108,7 @@ def _adaptation_quality_records() -> dict[str, dict[str, float | int]]:
     }
     records: dict[str, dict[str, float | int]] = {}
     for name, (calibration, target) in profiles.items():
-        model = phx.nn.KAN(
+        model = phx.nn.models.KAN(
             in_size="scalar",
             out_size="scalar",
             hidden_sizes=(),
@@ -118,10 +118,10 @@ def _adaptation_quality_records() -> dict[str, dict[str, float | int]]:
             key=jr.key(102),
         )
         started = time.perf_counter()
-        adapted, report = phx.nn.adapt_kan_grids(
+        adapted, report = phx.nn.models.adapt_kan_grids(
             model,
             calibration,
-            plan=phx.nn.KANGridAdaptationPlan(
+            plan=phx.nn.models.KANGridAdaptationPlan(
                 blend=0.05,
                 minimum_span=1.0e-3,
             ),
@@ -142,7 +142,7 @@ def _adaptation_quality_records() -> dict[str, dict[str, float | int]]:
 
 
 def _sampled_fit_relative_error(
-    grid: phx.nn.BSplineGrid,
+    grid: phx.nn.models.BSplineGrid,
     target: Callable[[jax.Array], jax.Array],
     fitting_points: jax.Array,
     evaluation_points: jax.Array,
@@ -156,8 +156,8 @@ def _sampled_fit_relative_error(
 
 
 def _per_input_grid_record(repeats: int) -> dict[str, Any]:
-    basis = phx.nn.BSplineEdgeBasis(degree=3, num_intervals=8)
-    model = phx.nn.KAN(
+    basis = phx.nn.models.BSplineEdgeBasis(degree=3, num_intervals=8)
+    model = phx.nn.models.KAN(
         in_size=2,
         out_size="scalar",
         hidden_sizes=(),
@@ -184,15 +184,15 @@ def _per_input_grid_record(repeats: int) -> dict[str, Any]:
         lambda values: jnp.sin(34.0 * (values + 0.67)),
         lambda values: jnp.cos(31.0 * (values - 0.59)),
     )
-    shared, _ = phx.nn.adapt_kan_grids(
+    shared, _ = phx.nn.models.adapt_kan_grids(
         model,
         fitting,
-        plan=phx.nn.KANGridAdaptationPlan(blend=0.0),
+        plan=phx.nn.models.KANGridAdaptationPlan(blend=0.0),
     )
-    per_input, _ = phx.nn.adapt_kan_grids(
+    per_input, _ = phx.nn.models.adapt_kan_grids(
         model,
         fitting,
-        plan=phx.nn.KANGridAdaptationPlan(blend=0.0, per_input=True),
+        plan=phx.nn.models.KANGridAdaptationPlan(blend=0.0, per_input=True),
     )
     shared_grid = shared.layers[0].edge_basis.grid
     grid_bank = per_input.layers[0].edge_basis.grid
@@ -264,11 +264,11 @@ def _trainable_grid_record() -> dict[str, float | int | bool]:
     num_intervals = 8
     calibration = jnp.linspace(-1.0, 1.0, 1024)
     target = lambda values: jnp.exp(-(((values - 0.2) / 0.065) ** 2))
-    model = phx.nn.KAN(
+    model = phx.nn.models.KAN(
         in_size="scalar",
         out_size="scalar",
         hidden_sizes=(),
-        edge_basis=phx.nn.BSplineEdgeBasis(
+        edge_basis=phx.nn.models.BSplineEdgeBasis(
             degree=degree,
             num_intervals=num_intervals,
         ),
@@ -276,13 +276,13 @@ def _trainable_grid_record() -> dict[str, float | int | bool]:
         skip_connection=False,
         key=jr.key(120),
     )
-    adapted, _ = phx.nn.adapt_kan_grids(
+    adapted, _ = phx.nn.models.adapt_kan_grids(
         model,
         calibration,
-        plan=phx.nn.KANGridAdaptationPlan(blend=0.0),
+        plan=phx.nn.models.KANGridAdaptationPlan(blend=0.0),
     )
     fixed_grid = adapted.layers[0].edge_basis.grid
-    trainable_grid = phx.nn.TrainableBSplineGrid.from_grid(
+    trainable_grid = phx.nn.models.TrainableBSplineGrid.from_grid(
         fixed_grid,
         minimum_span=2.0e-3,
     )
@@ -347,8 +347,8 @@ def _trainable_grid_record() -> dict[str, float | int | bool]:
 def _rational_edge_records() -> dict[str, Any]:
     fitting = jnp.linspace(-1.0, 1.0, 2048)
     evaluation = jnp.linspace(-1.0, 1.0, 8192)
-    rational_grid = phx.nn.BSplineGrid.open_uniform(3, 3)
-    rational_basis = phx.nn.RationalBSplineEdgeBasis(grid=rational_grid)
+    rational_grid = phx.nn.models.BSplineGrid.open_uniform(3, 3)
+    rational_basis = phx.nn.models.RationalBSplineEdgeBasis(grid=rational_grid)
     polynomial_plan = phx.operators.BSplineInterpolationPlan(
         degree=3,
         num_intervals=8,
@@ -396,7 +396,7 @@ def _rational_edge_records() -> dict[str, Any]:
         ).coefficients
         centered_log_weights = jnp.log(denominator_coefficients)
         centered_log_weights = centered_log_weights - jnp.mean(centered_log_weights)
-        parameters = phx.nn.RationalBSplineEdgeParameters(
+        parameters = phx.nn.models.RationalBSplineEdgeParameters(
             (numerator_coefficients / denominator_coefficients)[None, None, :],
             jnp.arctanh(centered_log_weights / rational_basis.maximum_log_weight)[
                 None, None, :
@@ -429,9 +429,9 @@ def _rational_edge_records() -> dict[str, Any]:
 def _adaptive_capacity_records(repeats: int) -> dict[str, Any]:
     fitting = jnp.linspace(-1.0, 1.0, 2048)
     evaluation = jnp.linspace(-1.0, 1.0, 8192)
-    fixed_grid = phx.nn.BSplineGrid.open_uniform(3, 3)
-    fine_grid = phx.nn.BSplineGrid.open_uniform(3, 16)
-    coarse_grid = phx.nn.BSplineGrid.open_uniform(3, 1)
+    fixed_grid = phx.nn.models.BSplineGrid.open_uniform(3, 3)
+    fine_grid = phx.nn.models.BSplineGrid.open_uniform(3, 16)
+    coarse_grid = phx.nn.models.BSplineGrid.open_uniform(3, 1)
     targets = [
         lambda values: jnp.sin(22.0 * values),
         lambda values: jnp.cos(19.0 * values),
@@ -442,7 +442,7 @@ def _adaptive_capacity_records(repeats: int) -> dict[str, Any]:
     ]
 
     def fit_residual(
-        grid: phx.nn.BSplineGrid,
+        grid: phx.nn.models.BSplineGrid,
         target: Callable[[jax.Array], jax.Array],
     ) -> tuple[jax.Array, jax.Array]:
         coefficients = jnp.linalg.lstsq(
@@ -476,16 +476,16 @@ def _adaptive_capacity_records(repeats: int) -> dict[str, Any]:
         + (len(targets) - 2) * coarse_grid.coefficient_count
     )
 
-    model = phx.nn.KAN(
+    model = phx.nn.models.KAN(
         in_size=8,
         out_size=8,
         hidden_sizes=(),
-        edge_basis=phx.nn.BSplineEdgeBasis(grid=fixed_grid),
+        edge_basis=phx.nn.models.BSplineEdgeBasis(grid=fixed_grid),
         skip_connection=False,
         scan=True,
         key=jr.key(160),
     )
-    adapted, report = phx.nn.refine_kan_edges(
+    adapted, report = phx.nn.models.refine_kan_edges(
         model,
         {(0, 0, 0): jnp.asarray([0.0, 1.0, 0.0])},
         budget=1,
@@ -540,10 +540,10 @@ def main() -> None:
     arguments = _parse().parse_args()
     coefficient_count = 11
     bases = {
-        "orthogonal_degree_10": phx.nn.OrthogonalPolynomialEdgeBasis(
+        "orthogonal_degree_10": phx.nn.models.OrthogonalPolynomialEdgeBasis(
             degree=coefficient_count - 1
         ),
-        "bspline_degree_3_intervals_8": phx.nn.BSplineEdgeBasis(
+        "bspline_degree_3_intervals_8": phx.nn.models.BSplineEdgeBasis(
             degree=3,
             num_intervals=coefficient_count - 3,
         ),
@@ -552,7 +552,7 @@ def main() -> None:
     records: dict[str, Any] = {}
 
     for name, basis in bases.items():
-        model = phx.nn.KAN(
+        model = phx.nn.models.KAN(
             in_size=8,
             out_size=8,
             width_size=arguments.width,
@@ -567,7 +567,7 @@ def main() -> None:
             "coefficient_count_per_edge": basis.coefficient_count,
             "active_coefficients_per_query": (
                 basis.degree + 1
-                if isinstance(basis, phx.nn.BSplineEdgeBasis)
+                if isinstance(basis, phx.nn.models.BSplineEdgeBasis)
                 else basis.coefficient_count
             ),
             "parameter_count": _parameter_count(model),

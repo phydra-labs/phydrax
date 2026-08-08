@@ -6,7 +6,8 @@ import jax.numpy as jnp
 import jax.random as jr
 import pytest
 
-from phydrax.nn.models import MLP, RandomFourierFeatureEmbeddings, Sequential
+from phydrax.nn.layers import RandomFourierFeatureEmbeddings
+from phydrax.nn.models import MLP, Sequential
 
 
 def test_sequential_requires_at_least_one_model():

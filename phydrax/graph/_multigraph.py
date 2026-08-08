@@ -6,6 +6,7 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 
+from .._model import register_artifact_value
 from ._geometry import QueryGraph
 from ._graph import ensure_graph
 from ._ir import GraphIR
@@ -92,6 +93,7 @@ class QueryGraphOperator(eqx.Module):
     input_key: str = eqx.field(static=True)
 
     source_measure_key: str | None = eqx.field(static=True)
+
     def __init__(
         self,
         query: QueryGraph,
@@ -110,7 +112,9 @@ class QueryGraphOperator(eqx.Module):
         self.query = query
         self.source_key = source_key
         self.source_indices = (
-            None if source_indices is None else jnp.asarray(source_indices, dtype=jnp.int32)
+            None
+            if source_indices is None
+            else jnp.asarray(source_indices, dtype=jnp.int32)
         )
         self.input_key = str(input_key)
         self.source_measure_key = source_measure_key
@@ -268,6 +272,12 @@ class RegionalGraphProcessor(eqx.Module):
         return graph.replace(nodes=nodes, validate=False)
 
 
+register_artifact_value(
+    "phydrax.graph.model:RegionalGraphProcessor@1",
+    RegionalGraphProcessor,
+)
+
+
 class GraphEncodeProcessDecode(eqx.Module):
     """Compose source-to-latent transfer, latent processing, and latent-to-target transfer."""
 
@@ -292,7 +302,9 @@ class GraphEncodeProcessDecode(eqx.Module):
         if self.processor is not None:
             latent = self.processor(latent)
             if not isinstance(latent, GraphIR):
-                raise TypeError("GraphEncodeProcessDecode processor must return a GraphIR.")
+                raise TypeError(
+                    "GraphEncodeProcessDecode processor must return a GraphIR."
+                )
         return self.decoder(latent)
 
 

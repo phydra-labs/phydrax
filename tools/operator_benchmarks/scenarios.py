@@ -14,7 +14,7 @@ from phydrax.graph import (
     compute_harmonic_subspace,
     triangle_mesh_to_cochain_complex,
 )
-from phydrax.nn import (
+from phydrax.nn.operator import (
     function_samples_from_cochain,
     FunctionSamples,
     OperatorAxis,

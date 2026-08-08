@@ -253,7 +253,7 @@ def test_population_evaluation_preserves_case_and_coefficient_axes():
 
 def test_bspline_search_improves_objective_and_emits_a_local_control_seed():
     problem, _ = _quadratic_problem(num_steps=4)
-    grid = phx.nn.BSplineGrid(
+    grid = phx.nn.models.BSplineGrid(
         jnp.asarray([0.0, 0.0, 0.5, 1.0, 1.0]),
         1,
     )

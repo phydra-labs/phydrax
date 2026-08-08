@@ -105,7 +105,7 @@ def _make_inverse_solver(
     )
 
     def model_factory(model_key):
-        return phx.nn.MLP(
+        return phx.nn.models.MLP(
             in_size=1,
             out_size=2,
             width_size=6,
@@ -323,7 +323,7 @@ def test_learned_inverse_poisson_uq_comparison_benchmark(record_property):
     prior_fit = _fit_ensemble(jr.key(103), randomized_prior=True)
 
     deterministic_fields = _derived_fields(
-        phx.nn.inference_mode(deterministic_solver)["state"]
+        phx.nn.layers.inference_mode(deterministic_solver)["state"]
     )
     deterministic_center = deterministic_fields["u"](points).data
     deterministic_source = deterministic_fields["source"](points).data
@@ -572,7 +572,7 @@ def _evaluate_stress_trial(trial_index: int):
     )
 
     deterministic_fields = _derived_fields(
-        phx.nn.inference_mode(deterministic_solver)["state"]
+        phx.nn.layers.inference_mode(deterministic_solver)["state"]
     )
     deterministic_center = deterministic_fields["u"](points).data
     deterministic_source = deterministic_fields["source"](points).data
@@ -970,7 +970,7 @@ def _evaluate_misspecification_trial(trial_index: int):
     )
 
     deterministic_fields = _misspecified_fields(
-        phx.nn.inference_mode(deterministic_solver)["state"]
+        phx.nn.layers.inference_mode(deterministic_solver)["state"]
     )
     deterministic_center = deterministic_fields["u"](points).data
     deterministic_source = deterministic_fields["source"](points).data

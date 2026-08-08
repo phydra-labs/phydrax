@@ -8,21 +8,21 @@ import pytest
 import phydrax as phx
 
 
-def _tensor_batch(*, cases: int = 2) -> phx.nn.OperatorBatch:
-    axis = phx.nn.OperatorAxis(
+def _tensor_batch(*, cases: int = 2) -> phx.nn.operator.OperatorBatch:
+    axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, 3),
         quadrature_weights=jnp.asarray([0.25, 0.5, 0.25]),
     )
-    source = phx.nn.FunctionSamples(
+    source = phx.nn.operator.FunctionSamples(
         values=jnp.arange(cases * 3, dtype=float).reshape(cases, 3),
         axes=(axis,),
     )
-    query = phx.nn.FunctionSamples(values=None, axes=(axis,))
-    return phx.nn.OperatorBatch(inputs={"source": source}, queries={"query": query}, case_axes=("case",),)
+    query = phx.nn.operator.FunctionSamples(values=None, axes=(axis,))
+    return phx.nn.operator.OperatorBatch(inputs={"source": source}, queries={"query": query}, case_axes=("case",),)
 
 
-def _point_batch(*, shifted: float = 0.0) -> phx.nn.OperatorBatch:
+def _point_batch(*, shifted: float = 0.0) -> phx.nn.operator.OperatorBatch:
     coordinates = (
         jnp.asarray(
             [
@@ -34,51 +34,51 @@ def _point_batch(*, shifted: float = 0.0) -> phx.nn.OperatorBatch:
     )
     mask = jnp.asarray([[True, True, False], [True, True, True]])
     weights = jnp.asarray([[0.5, 0.5, 0.0], [0.25, 0.5, 0.25]])
-    source = phx.nn.FunctionSamples(
+    source = phx.nn.operator.FunctionSamples(
         values=jnp.ones((2, 3)),
         coordinates=coordinates,
         quadrature_weights=weights,
         mask=mask,
     )
-    query = phx.nn.FunctionSamples(
+    query = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=coordinates,
         quadrature_weights=weights,
         mask=mask,
     )
-    return phx.nn.OperatorBatch(inputs={"source": source}, queries={"query": query}, case_axes=("case",),)
+    return phx.nn.operator.OperatorBatch(inputs={"source": source}, queries={"query": query}, case_axes=("case",),)
 
 
 def _multi_output_prediction():
-    spatial = phx.nn.FunctionSamples(
+    spatial = phx.nn.operator.FunctionSamples(
         values=None,
-        axes=(phx.nn.OperatorAxis("x", jnp.linspace(0.0, 1.0, 3)),),
+        axes=(phx.nn.operator.OperatorAxis("x", jnp.linspace(0.0, 1.0, 3)),),
     )
-    sensors = phx.nn.FunctionSamples(
+    sensors = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=jnp.asarray([[0.2], [0.8]]),
     )
-    source = phx.nn.FunctionSamples(
+    source = phx.nn.operator.FunctionSamples(
         values=jnp.ones((2, 3)),
         axes=spatial.axes,
     )
-    batch = phx.nn.OperatorBatch(
+    batch = phx.nn.operator.OperatorBatch(
         inputs={"source": source},
         queries={"spatial": spatial, "sensors": sensors},
         case_axes=("draw",),
         case_shape=(2,),
     )
-    prediction = phx.nn.OperatorPrediction(
+    prediction = phx.nn.operator.OperatorPrediction(
         {
-            "state": phx.nn.OperatorFieldBatch(
+            "state": phx.nn.operator.OperatorFieldBatch(
                 jnp.arange(6.0).reshape(2, 3),
                 query_name="spatial",
-                spec=phx.nn.OperatorOutputSpec("scalar"),
+                spec=phx.nn.operator.OperatorOutputSpec("scalar"),
             ),
-            "flux": phx.nn.OperatorFieldBatch(
+            "flux": phx.nn.operator.OperatorFieldBatch(
                 jnp.arange(8.0).reshape(2, 2, 2),
                 query_name="sensors",
-                spec=phx.nn.OperatorOutputSpec(
+                spec=phx.nn.operator.OperatorOutputSpec(
                     2,
                     component_names=("x", "y"),
                 ),
@@ -133,7 +133,7 @@ def test_operator_predictive_tensor_geometry_and_statistics():
     prediction = phx.uq.operator_predictive_from_samples(
         values,
         batch,
-        phx.nn.OperatorOutputSpec("scalar"),
+        phx.nn.operator.OperatorOutputSpec("scalar"),
         sample_axes=(phx.uq.SampleAxis("draw", "epistemic"),),
         field_name="output",
         query_name="query",
@@ -173,7 +173,7 @@ def test_operator_predictive_tensor_geometry_and_statistics():
 
 def test_operator_predictive_masks_padding_and_records_valid_draws():
     batch = _point_batch()
-    spec = phx.nn.OperatorOutputSpec(2, component_names=("u", "v"))
+    spec = phx.nn.operator.OperatorOutputSpec(2, component_names=("u", "v"))
     values = jnp.ones((3, 2, 3, 2))
     values = values.at[:, 0, 2, :].set(jnp.nan)
     values = values.at[1, 1, 1, 0].set(jnp.nan)
@@ -218,17 +218,17 @@ def test_operator_predictive_masks_padding_and_records_valid_draws():
 def test_operator_input_predictive_collapses_common_query_geometry():
     first = _point_batch()
     second = _point_batch()
-    stacked = phx.nn.stack_operator_batches(
+    stacked = phx.nn.operator.stack_operator_batches(
         (first, second),
         case_axis="input_draw",
     )
     values = jnp.stack((jnp.ones((2, 3)), 3.0 * jnp.ones((2, 3))))
-    deterministic = phx.nn.OperatorPrediction.from_field(
+    deterministic = phx.nn.operator.OperatorPrediction.from_field(
         "output",
         values,
         "query",
         stacked.require_single_query(),
-        spec=phx.nn.OperatorOutputSpec("scalar"),
+        spec=phx.nn.operator.OperatorOutputSpec("scalar"),
         case_axes=stacked.case_axes,
         case_shape=stacked.case_shape,
     )
@@ -257,16 +257,16 @@ def test_operator_input_predictive_collapses_common_query_geometry():
 
 
 def test_operator_input_predictive_rejects_varying_output_queries():
-    stacked = phx.nn.stack_operator_batches(
+    stacked = phx.nn.operator.stack_operator_batches(
         (_point_batch(), _point_batch(shifted=0.1)),
         case_axis="input_draw",
     )
-    deterministic = phx.nn.OperatorPrediction.from_field(
+    deterministic = phx.nn.operator.OperatorPrediction.from_field(
         "output",
         jnp.ones((2, 2, 3)),
         "query",
         stacked.require_single_query(),
-        spec=phx.nn.OperatorOutputSpec("scalar"),
+        spec=phx.nn.operator.OperatorOutputSpec("scalar"),
         case_axes=stacked.case_axes,
         case_shape=stacked.case_shape,
     )
@@ -280,14 +280,14 @@ def test_operator_input_predictive_rejects_varying_output_queries():
 
 
 def test_operator_prediction_field_rejects_dimension_collisions():
-    axis = phx.nn.OperatorAxis("case", jnp.linspace(0.0, 1.0, 3))
-    query = phx.nn.FunctionSamples(values=None, axes=(axis,))
-    prediction = phx.nn.OperatorPrediction.from_field(
+    axis = phx.nn.operator.OperatorAxis("case", jnp.linspace(0.0, 1.0, 3))
+    query = phx.nn.operator.FunctionSamples(values=None, axes=(axis,))
+    prediction = phx.nn.operator.OperatorPrediction.from_field(
         "output",
         jnp.ones((2, 3)),
         "query",
         query,
-        spec=phx.nn.OperatorOutputSpec("scalar"),
+        spec=phx.nn.operator.OperatorOutputSpec("scalar"),
         case_axes=("case",),
         case_shape=(2,),
     )
@@ -302,7 +302,7 @@ def test_operator_predictive_rejects_complex_physical_outputs():
         phx.uq.operator_predictive_from_samples(
             jnp.ones((2, 2, 3), dtype=complex),
             batch,
-            phx.nn.OperatorOutputSpec("scalar"),
+            phx.nn.operator.OperatorOutputSpec("scalar"),
             sample_axes=(phx.uq.SampleAxis("draw", "epistemic"),),
             field_name="output",
             query_name="query",

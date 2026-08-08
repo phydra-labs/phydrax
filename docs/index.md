@@ -84,7 +84,7 @@ def g(x):
     return x[0] ** 2 + x[1] ** 2
 
 # Trainable field u_theta(x)
-model = phx.nn.MLP(
+model = phx.nn.models.MLP(
     in_size=2,
     out_size="scalar",
     width_size=16,

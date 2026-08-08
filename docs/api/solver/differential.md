@@ -205,8 +205,8 @@ capacity, and throw policy. `ControlledDifferentialSolution.valid`,
 
 ### Neural CDE loss, training, and exact resume
 
-`NeuralCDEVectorField` adapts a callable such as `phydrax.nn.MLP` or
-`phydrax.nn.KAN`. The model consumes a flattened physical state and must return
+`NeuralCDEVectorField` adapts a callable such as `phydrax.nn.models.MLP` or
+`phydrax.nn.models.KAN`. The model consumes a flattened physical state and must return
 exactly `prod(state_shape) * control_dimension` coefficients; the adapter
 restores `state_shape + (control_dimension,)`.
 
@@ -665,7 +665,7 @@ product mode. `laplacian_matrix()` remains an explicit diagnostic for small
 systems; ordinary integration and low-rank spectral noise do not use it.
 
 `SpectralSpatialDiscretization` wraps an existing
-`phydrax.nn.SpectralDiscretization`. It reuses that plan's analysis, synthesis,
+`phydrax.nn.operator.architectures.SpectralDiscretization`. It reuses that plan's analysis, synthesis,
 eigenvalues, quadrature, degeneracy ordering, and `basis_id`; it does not define
 a second manifold eigenbasis convention.
 

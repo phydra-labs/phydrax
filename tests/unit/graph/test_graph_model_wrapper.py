@@ -42,12 +42,16 @@ def _mapping_graph() -> phx.graph.GraphIR:
 
 def _batch(domain):
     component = domain.component({"graph": phx.domain.Nodes()})
-    return component.sample(phx.domain.PointSampling(3, layout=phx.domain.SampleLayout((("graph",),))))
+    return component.sample(
+        phx.domain.PointSampling(3, layout=phx.domain.SampleLayout((("graph",),)))
+    )
 
 
 def _boundary_batch(domain):
     component = domain.component({"graph": phx.domain.BoundaryNodes([0, 2])})
-    return component.sample(phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),))))
+    return component.sample(
+        phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),)))
+    )
 
 
 def test_graph_model_wrapper_returns_node_field():
@@ -57,7 +61,7 @@ def test_graph_model_wrapper_returns_node_field():
     wrapped = phx.domain.DomainFunction(
         domain=domain,
         deps=("graph",),
-        func=phx.nn.GraphModel(model),
+        func=phx.domain.graph.GraphModel(model),
     )
 
     out = wrapped(batch)
@@ -71,7 +75,7 @@ def test_graph_model_wrapper_restricts_output_to_node_set():
     wrapped = phx.domain.DomainFunction(
         domain=domain,
         deps=("graph",),
-        func=phx.nn.GraphModel(model),
+        func=phx.domain.graph.GraphModel(model),
     )
 
     out = wrapped(batch)
@@ -90,7 +94,7 @@ def test_graph_model_wrapper_input_fn_uses_full_node_view_for_node_sets():
     wrapped = phx.domain.DomainFunction(
         domain=domain,
         deps=("graph",),
-        func=phx.nn.GraphModel(model, input_fn=input_fn),
+        func=phx.domain.graph.GraphModel(model, input_fn=input_fn),
     )
 
     out = wrapped(batch)

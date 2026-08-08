@@ -42,6 +42,7 @@ from ._dataset import (
     GraphDatasetMeasureMode,
 )
 from ._domain import GraphDomain
+from ._model import GraphModel, GraphModelOutput, GraphRolloutModel
 from ._trajectory import (
     graph_trajectory_default_quadrature_total_weight,
     GRAPH_TRAJECTORY_TIME_INDEX_KEY,
@@ -75,6 +76,9 @@ __all__ = [
     "Edges",
     "Globals",
     "GraphBatch",
+    "GraphModel",
+    "GraphModelOutput",
+    "GraphRolloutModel",
     "GraphDatasetDomain",
     "GraphDatasetMeasureMode",
     "GraphDomain",

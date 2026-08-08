@@ -184,7 +184,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import phydrax as phx
 
-model = phx.nn.MLP(
+model = phx.nn.models.MLP(
     in_size=2,
     out_size="scalar",
     width_size=32,
@@ -643,7 +643,7 @@ import phydrax as phx
 geom = phx.domain.Interval1d(0.0, 1.0)
 
 # Trainable scalar field u_theta(x)
-model = phx.nn.MLP(
+model = phx.nn.models.MLP(
     in_size=1,
     out_size="scalar",
     width_size=16,

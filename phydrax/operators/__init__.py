@@ -33,6 +33,7 @@ structure across dense and coord-separable batches.
     ```
 """
 
+from .._model import StructuredDerivativeProvider
 from . import (
     delay,
     differential,
@@ -266,6 +267,7 @@ __all__ = [
     "path_integral",
     # composition exports
     "pullback",
+    "StructuredDerivativeProvider",
     # delay exports
     "delay_operator",
     # differential exports

@@ -283,7 +283,7 @@ class GraphDomain(JointFactor):
         """
         from phydrax.domain import DomainFunction
 
-        from ...nn import GraphModel
+        from ._model import GraphModel
 
         return DomainFunction(
             domain=self,
@@ -324,7 +324,7 @@ class GraphDomain(JointFactor):
         """
         from phydrax.domain import DomainFunction
 
-        from ...nn import GraphRolloutModel
+        from ._model import GraphRolloutModel
 
         return DomainFunction(
             domain=self,

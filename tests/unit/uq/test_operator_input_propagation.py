@@ -8,10 +8,10 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
-from phydrax.nn.models.core._base import _AbstractOperatorModel
+from phydrax.nn.operator import AbstractOperatorModel
 
 
-class _MaskedSourceMeanOperator(_AbstractOperatorModel):
+class _MaskedSourceMeanOperator(AbstractOperatorModel):
     in_size: str = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
@@ -21,7 +21,7 @@ class _MaskedSourceMeanOperator(_AbstractOperatorModel):
 
     @property
     def operator_contract(self):
-        return phx.nn.operator_architecture_contract("DeepONet")
+        return phx.nn.operator.operator_architecture_contract("DeepONet")
 
     def __call_operator_batch__(self, batch, /, *, key=None):
         del key
@@ -38,19 +38,19 @@ class _MaskedSourceMeanOperator(_AbstractOperatorModel):
         )
 
     def __call__(self, x, /, *, key=None):
-        if not isinstance(x, phx.nn.OperatorBatch):
+        if not isinstance(x, phx.nn.operator.OperatorBatch):
             raise TypeError("_MaskedSourceMeanOperator requires an OperatorBatch.")
         return self.__call_operator_batch__(x, key=key)
 
 
-def _batch(value: float, *, source_points: int) -> phx.nn.OperatorBatch:
+def _batch(value: float, *, source_points: int) -> phx.nn.operator.OperatorBatch:
     query_coordinates = jnp.asarray(
         [
             [[0.0], [0.5], [1.0]],
             [[0.0], [0.5], [1.0]],
         ]
     )
-    query = phx.nn.FunctionSamples(
+    query = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=query_coordinates,
         mask=jnp.asarray([[True, True, False], [True, True, True]]),
@@ -59,11 +59,11 @@ def _batch(value: float, *, source_points: int) -> phx.nn.OperatorBatch:
         jnp.linspace(0.0, 1.0, source_points)[None, :, None],
         (2, source_points, 1),
     )
-    source = phx.nn.FunctionSamples(
+    source = phx.nn.operator.FunctionSamples(
         values=jnp.full((2, source_points), value),
         coordinates=source_coordinates,
     )
-    return phx.nn.OperatorBatch(
+    return phx.nn.operator.OperatorBatch(
         inputs={"forcing": source},
         queries={"query": query},
         case_axes=("case",),
@@ -74,7 +74,7 @@ def _batch(value: float, *, source_points: int) -> phx.nn.OperatorBatch:
 def test_input_function_prediction_matches_explicit_ragged_draw_loop():
     model = _MaskedSourceMeanOperator()
     batches = (_batch(1.0, source_points=2), _batch(3.0, source_points=4))
-    stacked = phx.nn.stack_operator_batches(batches, case_axis="input_draw")
+    stacked = phx.nn.operator.stack_operator_batches(batches, case_axis="input_draw")
 
     prediction = phx.uq.operator_input_predictive(
         model.predict(stacked),
@@ -103,27 +103,27 @@ def test_input_function_prediction_matches_explicit_ragged_draw_loop():
     )
 
 
-def _weighted_batch(value: float, *, source_points: int) -> phx.nn.OperatorBatch:
-    query_axis = phx.nn.OperatorAxis(
+def _weighted_batch(value: float, *, source_points: int) -> phx.nn.operator.OperatorBatch:
+    query_axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, 3),
         quadrature_weights=jnp.asarray([0.25, 0.5, 0.25]),
     )
-    source_axis = phx.nn.OperatorAxis(
+    source_axis = phx.nn.operator.OperatorAxis(
         "x",
         jnp.linspace(0.0, 1.0, source_points),
         quadrature_weights=jnp.full((source_points,), 1.0 / source_points),
     )
-    query = phx.nn.FunctionSamples(
+    query = phx.nn.operator.FunctionSamples(
         values=None,
         axes=(query_axis,),
         mask=jnp.asarray([[True, True, False], [True, True, True]]),
     )
-    source = phx.nn.FunctionSamples(
+    source = phx.nn.operator.FunctionSamples(
         values=jnp.full((2, source_points), value),
         axes=(source_axis,),
     )
-    return phx.nn.OperatorBatch(
+    return phx.nn.operator.OperatorBatch(
         inputs={"forcing": source},
         queries={"query": query},
         case_axes=("case",),
@@ -133,7 +133,7 @@ def _weighted_batch(value: float, *, source_points: int) -> phx.nn.OperatorBatch
 
 def test_operator_linearized_covariance_preserves_geometry_and_masks():
     batch = _batch(2.0, source_points=4)
-    linearization = phx.nn.linearize_operator(
+    linearization = phx.nn.operator.training.linearize_operator(
         _MaskedSourceMeanOperator(),
         batch,
         "forcing",
@@ -162,7 +162,7 @@ def test_operator_linearized_covariance_preserves_geometry_and_masks():
 
 
 def test_operator_hilbert_covariance_requires_measure_and_stays_operator_valued():
-    unweighted = phx.nn.linearize_operator(
+    unweighted = phx.nn.operator.training.linearize_operator(
         _MaskedSourceMeanOperator(),
         _batch(1.0, source_points=4),
         "forcing",
@@ -175,7 +175,7 @@ def test_operator_hilbert_covariance_requires_measure_and_stays_operator_valued(
             geometry="hilbert",
         )
 
-    weighted = phx.nn.linearize_operator(
+    weighted = phx.nn.operator.training.linearize_operator(
         _MaskedSourceMeanOperator(),
         _weighted_batch(1.0, source_points=4),
         "forcing",

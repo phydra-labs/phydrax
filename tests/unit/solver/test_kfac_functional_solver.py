@@ -22,7 +22,7 @@ def _linear_solver(
     collocation_policy=None,
 ):
     domain = phx.domain.Interval1d(0.0, 1.0)
-    model = phx.nn.MLP(
+    model = phx.nn.models.MLP(
         in_size=1,
         out_size="scalar",
         hidden_sizes=(),
@@ -160,7 +160,7 @@ def test_kfac_rejects_negative_num_iter():
 
 def test_kfac_supports_condition_fields_and_jax_iteration_scalar():
     domain = phx.domain.Interval1d(0.0, 1.0)
-    model = phx.nn.MLP(
+    model = phx.nn.models.MLP(
         in_size=1,
         out_size="scalar",
         hidden_sizes=(),

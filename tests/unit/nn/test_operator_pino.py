@@ -6,10 +6,10 @@ import equinox as eqx
 import jax.numpy as jnp
 
 import phydrax as phx
-from phydrax.nn.models.core._base import _AbstractOperatorModel
+from phydrax.nn.operator import AbstractOperatorModel
 
 
-class _QuadraticQueryOperator(_AbstractOperatorModel):
+class _QuadraticQueryOperator(AbstractOperatorModel):
     in_size: int = eqx.field(static=True)
     out_size: str = eqx.field(static=True)
 
@@ -25,20 +25,20 @@ class _QuadraticQueryOperator(_AbstractOperatorModel):
         return coordinates[..., 0] ** 2
 
     def __call__(self, x, *, key=None):
-        if not isinstance(x, phx.nn.OperatorBatch):
+        if not isinstance(x, phx.nn.operator.OperatorBatch):
             raise TypeError("_QuadraticQueryOperator requires an OperatorBatch.")
         return self.__call_operator_batch__(x, key=key)
 
 
 def _batch(resolution):
-    axis = phx.nn.OperatorAxis("x", jnp.linspace(-1.0, 1.0, resolution))
-    source = phx.nn.FunctionSamples(
+    axis = phx.nn.operator.OperatorAxis("x", jnp.linspace(-1.0, 1.0, resolution))
+    source = phx.nn.operator.FunctionSamples(
         values=jnp.ones((2, resolution)),
         axes=(axis,),
     )
-    return phx.nn.OperatorBatch(
+    return phx.nn.operator.OperatorBatch(
         inputs={"forcing": source},
-        queries={"query": phx.nn.FunctionSamples(values=None, axes=(axis,))},
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,))},
         case_axes=("case",),
         case_shape=(2,),
     )
@@ -46,7 +46,7 @@ def _batch(resolution):
 
 def test_operator_context_is_coordinate_aware_and_differentiable():
     model = _QuadraticQueryOperator()
-    context = phx.nn.bind_operator_context(model, _batch(9))
+    context = phx.nn.operator.adapters.bind_operator_context(model, _batch(9))
     values = context(jnp.asarray([[-0.4], [0.2], [0.7]]))
     assert values.shape == (2, 3)
     assert jnp.allclose(values, jnp.asarray([0.16, 0.04, 0.49])[None, :])

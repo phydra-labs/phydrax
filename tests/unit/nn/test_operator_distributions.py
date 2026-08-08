@@ -9,7 +9,7 @@ import phydrax as phx
 
 def _batch(*, cases=2, size=6, masked=False):
     nodes = jnp.linspace(0.0, 1.0, size, endpoint=False)
-    axis = phx.nn.OperatorAxis(
+    axis = phx.nn.operator.OperatorAxis(
         "x",
         nodes,
         quadrature_weights=jnp.full((size,), 1.0 / size),
@@ -21,9 +21,9 @@ def _batch(*, cases=2, size=6, masked=False):
     mask = None
     if masked:
         mask = jnp.arange(size) < size - 1
-    return phx.nn.OperatorBatch(
-        inputs={"state": phx.nn.FunctionSamples(values=values, axes=(axis,))},
-        queries={"query": phx.nn.FunctionSamples(values=None, axes=(axis,), mask=mask)},
+    return phx.nn.operator.OperatorBatch(
+        inputs={"state": phx.nn.operator.FunctionSamples(values=values, axes=(axis,))},
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,), mask=mask)},
         case_axes=("case",),
     )
 
@@ -41,12 +41,12 @@ def test_gaussian_distribution_matches_dense_log_density_and_masks_samples():
         axis=-1,
     )
     factors = jnp.broadcast_to(factors, (2, 6, 2))
-    distribution = phx.nn.GaussianOperatorDistribution(
+    distribution = phx.nn.operator.GaussianOperatorDistribution(
         mean=mean,
         scale=scale,
         factors=factors,
         query=query,
-        output_spec=phx.nn.OperatorOutputSpec("scalar"),
+        output_spec=phx.nn.operator.OperatorOutputSpec("scalar"),
         case_axes=batch.case_axes,
         case_shape=batch.case_shape,
         uncertainty_source="process",
@@ -63,7 +63,7 @@ def test_gaussian_distribution_matches_dense_log_density_and_masks_samples():
     )(target, mean, covariance)
     samples = distribution.sample(jr.key(1), (3, 4))
 
-    assert isinstance(distribution, phx.nn.AbstractOperatorDistribution)
+    assert isinstance(distribution, phx.nn.operator.AbstractOperatorDistribution)
     assert distribution.event_shape == (6,)
     assert distribution.rank == 2
     assert distribution.uncertainty_source == "process"
@@ -78,7 +78,7 @@ def test_gaussian_distribution_matches_dense_log_density_and_masks_samples():
 
 def test_fixed_scale_gaussian_operator_has_coherent_process_distribution_and_gradient():
     batch = _batch()
-    base = phx.nn.FNO(
+    base = phx.nn.operator.architectures.FNO(
         n_modes=(2,),
         in_channels="scalar",
         out_channels=3,
@@ -88,7 +88,7 @@ def test_fixed_scale_gaussian_operator_has_coherent_process_distribution_and_gra
         source_key="state",
         key=jr.key(3),
     )
-    model = phx.nn.GaussianFunctionOperator(
+    model = phx.nn.operator.architectures.GaussianFunctionOperator(
         base,
         out_channels="scalar",
         factor_rank=2,
@@ -100,15 +100,15 @@ def test_fixed_scale_gaussian_operator_has_coherent_process_distribution_and_gra
     distribution = model.distribution(batch)
     samples = model.sample(batch, num_samples=5, key=jr.key(4))
     target = jnp.zeros((2, 6))
-    loss = phx.nn.operator_distribution_nll(model, batch, target)
+    loss = phx.nn.operator.training.operator_distribution_nll(model, batch, target)
     gradients = eqx.filter_grad(
-        lambda candidate: phx.nn.operator_distribution_nll(candidate, batch, target)
+        lambda candidate: phx.nn.operator.training.operator_distribution_nll(candidate, batch, target)
     )(model)
     leaves = tuple(
         leaf for leaf in jax.tree_util.tree_leaves(gradients) if eqx.is_array(leaf)
     )
 
-    assert isinstance(model, phx.nn.AbstractProbabilisticOperatorModel)
+    assert isinstance(model, phx.nn.operator.AbstractProbabilisticOperatorModel)
     assert jnp.array_equal(distribution.scale, jnp.full((2, 6), 0.07))
     assert distribution.factors.shape == (2, 6, 2)
     assert distribution.uncertainty_source == "process"
@@ -125,7 +125,7 @@ def test_fixed_scale_gaussian_operator_has_coherent_process_distribution_and_gra
 
 
 def test_gaussian_operator_parameter_contract_distinguishes_fixed_and_learned_scale():
-    fixed_base = phx.nn.FNO(
+    fixed_base = phx.nn.operator.architectures.FNO(
         n_modes=(2,),
         in_channels="scalar",
         out_channels=2,
@@ -135,25 +135,25 @@ def test_gaussian_operator_parameter_contract_distinguishes_fixed_and_learned_sc
         source_key="state",
         key=jr.key(10),
     )
-    phx.nn.GaussianFunctionOperator(
+    phx.nn.operator.architectures.GaussianFunctionOperator(
         fixed_base,
         factor_rank=1,
         scale_mode="fixed",
     )
     with pytest.raises(ValueError, match="must emit 3"):
-        phx.nn.GaussianFunctionOperator(
+        phx.nn.operator.architectures.GaussianFunctionOperator(
             fixed_base,
             factor_rank=1,
             scale_mode="learned",
         )
     with pytest.raises(ValueError, match="scale_mode"):
-        phx.nn.GaussianFunctionOperator(
+        phx.nn.operator.architectures.GaussianFunctionOperator(
             fixed_base,
             factor_rank=1,
             scale_mode="invalid",
         )
     with pytest.raises(ValueError, match="finite"):
-        phx.nn.GaussianFunctionOperator(
+        phx.nn.operator.architectures.GaussianFunctionOperator(
             fixed_base,
             factor_rank=1,
             scale_mode="fixed",

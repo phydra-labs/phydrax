@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Callable
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 import coordax as cx
 import jax
@@ -14,6 +14,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, Key
 
 from .._doc import DOC_KEY0
+from .._model import AxisModelEvaluator, ModelBinding
 from .._strict import StrictModule
 from ._evaluation import (
     BatchEvaluator,
@@ -21,10 +22,6 @@ from ._evaluation import (
     evaluate_pointwise_callable,
     try_blockwise_evaluation,
 )
-
-
-if TYPE_CHECKING:
-    from ..nn.models.core._binding import ModelBinding
 
 
 class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
@@ -42,20 +39,13 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
         deps: tuple[str, ...],
         binding: ModelBinding,
     ):
-        from ..nn.models.core._base import _AbstractBaseModel
-        from ..nn.models.core._binding import ModelBinding
-        from ..nn.models.core._loss import ModelWithLoss
 
         if not callable(model):
             raise TypeError("Domain models must be callable.")
         if not isinstance(binding, ModelBinding):
             raise TypeError("Domain models require an explicit ModelBinding.")
-        if binding.batch_mode == "axis" and not isinstance(
-            model, (_AbstractBaseModel, ModelWithLoss)
-        ):
-            raise TypeError(
-                "Axis-batch model bindings require a Phydrax model implementation."
-            )
+        if binding.batch_mode == "axis" and not isinstance(model, AxisModelEvaluator):
+            raise TypeError("Axis-batch model bindings require an AxisModelEvaluator.")
         self.raw_model = model
         self.domain_labels = tuple(domain_labels)
         self.deps = tuple(deps)
@@ -145,14 +135,7 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
         iter_=None,
         **kwargs: Any,
     ):
-        from ..nn.models.core._base import _AbstractBaseModel
-        from ..nn.models.core._loss import ModelWithLoss
-
-        if isinstance(self.raw_model, ModelWithLoss):
-            return self.raw_model.__call_axis_batch__(
-                batch, deps, key=key, iter_=iter_, **kwargs
-            )
-        if isinstance(self.raw_model, _AbstractBaseModel):
+        if isinstance(self.raw_model, AxisModelEvaluator):
             return self.raw_model.__call_axis_batch__(
                 batch, deps, key=key, iter_=iter_, **kwargs
             )

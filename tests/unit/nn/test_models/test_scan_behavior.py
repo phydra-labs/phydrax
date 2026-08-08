@@ -9,11 +9,11 @@ import jax.tree_util as jtu
 
 from phydrax.nn.models import (
     FeynmaNN,
-    FNO,
     KAN,
     MLP,
     OrthogonalPolynomialEdgeBasis,
 )
+from phydrax.nn.operator.architectures import FNO
 
 
 def _num_params(model) -> int:

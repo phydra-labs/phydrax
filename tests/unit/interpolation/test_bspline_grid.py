@@ -29,7 +29,7 @@ def test_open_uniform_grid_preserves_kan_grid_contract():
     assert np.allclose(np.asarray(grid.breakpoints), np.linspace(-1.0, 1.0, 9))
     assert np.count_nonzero(np.asarray(grid.knots) == -1.0) == 4
     assert np.count_nonzero(np.asarray(grid.knots) == 1.0) == 4
-    assert phx.nn.BSplineGrid is BSplineGrid
+    assert phx.nn.models.BSplineGrid is BSplineGrid
 
 
 def test_homogeneous_grid_bank_matches_independent_grid_evaluation():
@@ -68,7 +68,7 @@ def test_homogeneous_grid_bank_matches_independent_grid_evaluation():
 
     assert bank.num_grids == 2
     assert bank.coefficient_count == 7
-    assert phx.nn.BSplineGridBank is BSplineGridBank
+    assert phx.nn.models.BSplineGridBank is BSplineGridBank
     assert np.allclose(np.asarray(actual), np.asarray(expected), atol=2e-12)
     assert np.all(
         np.isfinite(
@@ -189,7 +189,7 @@ def test_kan_basis_accepts_an_explicit_nonuniform_grid():
         jnp.asarray([-1.0, -1.0, -1.0, -0.7, -0.15, 0.55, 1.0, 1.0, 1.0]),
         2,
     )
-    basis = phx.nn.BSplineEdgeBasis(grid=grid, regularization_order=1)
+    basis = phx.nn.models.BSplineEdgeBasis(grid=grid, regularization_order=1)
     coefficients = basis.initialize_coefficients(
         1, 1, "identity", jnp.asarray([0, 0], dtype=jnp.uint32)
     )
@@ -229,7 +229,7 @@ def test_grid_constructor_validation():
     with pytest.raises(ValueError, match="finite and increasing"):
         BSplineGrid.open_uniform(3, 4, interval=(1.0, 1.0))
     with pytest.raises(ValueError, match="cannot be combined"):
-        phx.nn.BSplineEdgeBasis(
+        phx.nn.models.BSplineEdgeBasis(
             grid=BSplineGrid.open_uniform(3, 4),
             num_intervals=4,
         )

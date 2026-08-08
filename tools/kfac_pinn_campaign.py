@@ -43,7 +43,7 @@ OPTIMIZERS = ("kfac-expand", "kfac-reduce", "adam", "lbfgs", "exact-ggn")
 
 
 def _network(domain, *, in_size, width, depth, key):
-    model = phx.nn.MLP(
+    model = phx.nn.models.MLP(
         in_size=in_size,
         out_size="scalar",
         hidden_sizes=(int(width),) * int(depth),

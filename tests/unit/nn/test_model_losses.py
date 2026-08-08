@@ -13,8 +13,8 @@ from tensorboard.backend.event_processing.event_accumulator import EventAccumula
 from phydrax.conditions import Observation
 from phydrax.domain import Interval1d
 from phydrax.integration import fixed, from_samples, mean_over
-from phydrax.nn import add_model_loss, MLP, SeparableMLP
-from phydrax.nn.models.core._base import _AbstractBaseModel
+from phydrax.nn._base import _AbstractBaseModel
+from phydrax.nn.models import add_model_loss, MLP, SeparableMLP
 from phydrax.solver import FunctionalSolver
 from phydrax.terms import ObservationPenalty
 
