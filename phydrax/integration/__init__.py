@@ -12,6 +12,11 @@ from ._batches import (
     SeparableIntegrationBatch,
     WeightedSampleBatch,
 )
+from ._compression import (
+    compress,
+    CompressedIntegrationDiagnostics,
+    MeasureCompressionDiagnostics,
+)
 from ._estimates import (
     AdaptivePartition,
     AdaptiveQuadratureDiagnostics,
@@ -139,6 +144,7 @@ __all__ = [
     "AntitheticDiagnostics",
     "CellQuadraturePlan",
     "ClenshawCurtisRule",
+    "CompressedIntegrationDiagnostics",
     "ComponentTarget",
     "ControlVariateEstimator",
     "DensityTarget",
@@ -155,6 +161,7 @@ __all__ = [
     "IntegrationBatch",
     "IntegrationEstimate",
     "IntegrationPlan",
+    "MeasureCompressionDiagnostics",
     "IntegrationProvenance",
     "IntegrationStatus",
     "IntegrationRealization",
@@ -205,6 +212,7 @@ __all__ = [
     "TanhSinhRule",
     "WeightedSampleBatch",
     "WeightedSampleTarget",
+    "compress",
     "discrete",
     "density",
     "from_samples",

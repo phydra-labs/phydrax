@@ -70,12 +70,41 @@ _KEY_UNSET = object()
 
 
 class IntegrationRealization(StrictModule):
-    """A target, plan, and reusable materialized execution realization."""
+    """A target, plan, reusable batch, execution key, and optional compression."""
 
     target: Any
     plan: Any
     batch: Any
     key: Any
+    compression: Any | None = None
+
+def _attach_compression(
+    estimate: IntegrationEstimate,
+    realization: IntegrationRealization,
+    /,
+) -> IntegrationEstimate:
+    if realization.compression is None:
+        return estimate
+    from ._compression import CompressedIntegrationDiagnostics
+    from ._estimates import IntegrationProvenance
+
+    return IntegrationEstimate(
+        estimate.value,
+        status=estimate.status,
+        num_evaluations=estimate.num_evaluations,
+        error_estimate=None,
+        error_kind=None,
+        diagnostics=CompressedIntegrationDiagnostics(
+            realization.compression,
+            estimate.diagnostics,
+        ),
+        provenance=IntegrationProvenance(
+            "compressed",
+            estimate.provenance.target,
+            estimate.provenance.realization,
+        ),
+    )
+
 
 
 def _base_target(target: Any, /) -> Any:
@@ -281,9 +310,10 @@ def reduce(
     plan = realization.plan
     key = DOC_KEY0 if realization.key is None else realization.key
     if isinstance(target, WeightedSampleTarget):
-        return integrate_weighted_samples(
+        estimate = integrate_weighted_samples(
             integrand, target, realization.batch, key=key, kwargs=kwargs
         )
+        return _attach_compression(estimate, realization)
     if isinstance(target, DiscreteMeasureTarget):
         return integrate_discrete_measure(
             integrand, target, realization.batch, key=key, kwargs=kwargs

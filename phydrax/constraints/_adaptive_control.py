@@ -10,6 +10,7 @@ from types import MappingProxyType
 from typing import Any, Literal, TYPE_CHECKING
 
 import coordax as cx
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -27,6 +28,7 @@ from ._adaptive import (
     CollocationPolicy,
     CollocationPopulation,
 )
+from ._adaptive_coreset import CoresetCollocationPolicy
 from ._adaptive_separable import HierarchicalAxisPolicy, SeparableCollocationPolicy
 
 
@@ -73,6 +75,11 @@ COLLOCATION_POLICY_SUPPORT: Mapping[str, CollocationPolicySupport] = MappingProx
         "rar_d": CollocationPolicySupport(
             "rar_d", "conditional", "Oscillatory or distributed residual structure."
         ),
+        "coreset": CollocationPolicySupport(
+            "coreset",
+            "conditional",
+            "Residual importance with kernel-diverse paired support.",
+        ),
         "periodic_separable": CollocationPolicySupport(
             "periodic_separable", "stable", "Coordinate-separable models."
         ),
@@ -98,6 +105,8 @@ def collocation_policy_support(
         return collocation_policy_support(policy.base_policy)
     elif isinstance(policy, CollocationPolicy):
         name = policy.algorithm
+    elif isinstance(policy, CoresetCollocationPolicy):
+        name = "coreset"
     elif isinstance(policy, HierarchicalAxisPolicy):
         name = "hierarchical_axes"
     elif isinstance(policy, SeparableCollocationPolicy):
@@ -360,11 +369,13 @@ class ControlledCollocationPolicy(AbstractCollocationPolicy):
     ):
         if isinstance(base_policy, ControlledCollocationPolicy):
             raise TypeError("ControlledCollocationPolicy cannot wrap another controller.")
-        schedule = (
-            RefreshSchedule(base_policy.refresh_every)
-            if schedule is None
-            else schedule
-        )
+        if schedule is None:
+            start_at = (
+                base_policy.start_at
+                if isinstance(base_policy, CoresetCollocationPolicy)
+                else 1
+            )
+            schedule = RefreshSchedule(base_policy.refresh_every, start_at=start_at)
         self.base_policy = base_policy
         self.schedule = schedule
         self.monitor = ResidualMonitor() if monitor is None else monitor
@@ -830,13 +841,11 @@ def _inject_collocation_anchors(
         age_data.at[:count].set(reference_age[:count] + 1),
         dims=population.age.dims,
     )
-    return CollocationPopulation(
-        anchored_batch,
-        active=active,
-        age=age,
-        refresh_count=population.refresh_count,
-        last_refresh=population.last_refresh,
-    )
+    anchored = eqx.tree_at(lambda state: state.batch, population, anchored_batch)
+    anchored = eqx.tree_at(lambda state: state.age, anchored, age)
+    if active is not None:
+        anchored = eqx.tree_at(lambda state: state.active, anchored, active)
+    return anchored
 
 
 def _take_first_rows(batch: PointBatch, count: int, /) -> PointBatch:

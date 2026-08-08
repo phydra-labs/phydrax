@@ -1079,6 +1079,30 @@ Pass `initial_positions` with one leading chain axis when chains must begin at
 different represented modes; `initial_position` retains the replicated-start
 convenience. The two arguments are mutually exclusive.
 
+### Chain-preserving posterior thinning
+
+Thin a completed, convergence-checked MCMC result only as explicit post-processing:
+
+```python
+posterior_coreset = phx.uq.thin_posterior(
+    posterior_draws,
+    phx.uq.SteinThinning(200),
+    key=jr.key(11),
+)
+prediction = posterior_coreset.predict(
+    jnp.linspace(0.0, 1.0, 65),
+    batch_size=64,
+)
+```
+
+`SteinThinning` evaluates the exact transformed-posterior score and greedily minimizes
+an inverse-multiquadric kernel Stein discrepancy inside each chain. The result keeps
+separate chain and retained-draw axes, original chain/draw indices, source convergence
+diagnostics, constrained and unconstrained samples, and the ordinary posterior
+prediction methods. It never recomputes R-hat or effective sample size on the selected
+draws. This is output compression for repeated predictions or storage, not a sampler
+transition and not evidence that an unconverged source chain has converged.
+
 
 Long MCMC runs can checkpoint after a fixed number of completed draws per chain:
 pass `checkpoint_path`, `checkpoint_every`, and a stable caller-owned
@@ -1533,6 +1557,32 @@ matrix-vector product. Factor construction is intended to be amortized over repe
 evaluations. Hyperparameters passed to `factor(...)` are fixed: use
 `log_marginal_likelihood(...)` when amplitude, length scale, or noise remains an
 inferred parameter.
+
+For a fixed sparse-GP kernel geometry, randomized pivoted Cholesky can choose inducing
+inputs from the observed design:
+
+```python
+observation_points = jnp.linspace(0.0, 1.0, 65)[:, None]
+inducing = phx.uq.select_inducing_points(
+    observation_points,
+    32,
+    key=jr.key(12),
+    kernel=phx.coresets.RadialKernel("matern32", length_scale=0.25),
+)
+factor = phx.uq.SparseGaussianProcessFactor(
+    observation_points,
+    inducing.points,
+    amplitude=0.03,
+    length_scale=0.25,
+    noise_scale=0.005,
+    kernel="matern32",
+)
+```
+
+`InducingPointSelection.diagnostics` reports initial and residual kernel trace and the
+explained fraction. Reuse the selection only while its point geometry and kernel scale
+remain fixed; it does not optimize predictive likelihood and does not replace model
+validation.
 
 Conditioned samples are coherent functions over all query points. Latent GP
 variation is an epistemic sample axis; independent measurement noise remains

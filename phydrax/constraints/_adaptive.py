@@ -103,6 +103,7 @@ class CollocationPopulation(StrictModule):
     age: cx.Field
     refresh_count: Array
     last_refresh: Array
+    diagnostics: Any | None
 
     def __init__(
         self,
@@ -112,6 +113,7 @@ class CollocationPopulation(StrictModule):
         age: cx.Field | None = None,
         refresh_count: int | Array = 0,
         last_refresh: int | Array = 0,
+        diagnostics: Any | None = None,
     ):
         axis, n = _single_axis_and_size(batch)
         if active is not None:
@@ -125,6 +127,7 @@ class CollocationPopulation(StrictModule):
         self.age = age
         self.refresh_count = jnp.asarray(refresh_count, dtype=jnp.int32)
         self.last_refresh = jnp.asarray(last_refresh, dtype=jnp.int32)
+        self.diagnostics = diagnostics
 
     def loss_weight(self) -> cx.Field | None:
         return self.active

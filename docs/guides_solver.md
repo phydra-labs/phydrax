@@ -341,7 +341,8 @@ starting point. Support is declared by `COLLOCATION_POLICY_SUPPORT` and
 
 - **Stable:** fixed scrambled Sobol, periodic replacement, R3, and periodic
   separable sampling.
-- **Conditional:** RAR-D for sufficiently resolved oscillatory residuals and
+- **Conditional:** coreset collocation for residual-weighted, diversity-preserving
+  paired points; RAR-D for sufficiently resolved oscillatory residuals; and
   hierarchical-axis refinement for nested coordinate-separable discretizations.
 
 For production-style adaptive runs, separate proposal generation from solver
@@ -386,11 +387,55 @@ budgets reserve the next validation evaluation before a proposal is admitted, so
 exhausting a candidate or monitor budget cannot leave the final population
 permanently unvalidated.
 
+Use coreset collocation when an underresolved or localized residual repeatedly
+concentrates ordinary residual-only selection. Delay selection until the network
+residual is informative, retain an explicit global-coverage stratum, and validate
+proposals independently:
+
+```python
+policy = phx.constraints.controlled_collocation(
+    phx.constraints.CoresetCollocation(
+        refresh_every=25,
+        start_at=100,
+        sampler="halton_scrambled",
+        candidate_multiplier=8,
+        exponent=0.5,
+        uniform_fraction=0.5,
+        minimum_ess_fraction=0.5,
+        max_fill_distance_ratio=3.0,
+    ),
+    anchors=phx.constraints.CoverageAnchors(0.25),
+)
+```
+
+Each refresh scores `candidate_multiplier × retained_count` points. `exponent=0.5`
+turns the usual squared pointwise residual into residual-magnitude importance. The
+score distribution is normalized before mixing it with the uniform distribution, so
+`uniform_fraction` is dimensionless and does not depend on PDE units. If the mixture
+would have less than `minimum_ess_fraction × candidate_count` effective samples, the
+policy increases the effective uniform fraction and reports the adjustment.
+
+Candidate coordinates are range-normalized on every refresh. With `kernel=None` (the
+default), the radial-kernel length scale is the median nonzero pairwise distance of a
+bounded candidate subsample. Pass an explicit `phx.coresets.RadialKernel(...)` to
+override that scale in normalized-coordinate units. The fill-distance guard rejects a
+proposal whose normalized candidate fill distance exceeds
+`max_fill_distance_ratio` times that of the current population. Selection validity,
+acceptance, MMD, requested and effective mixture fractions, importance ESS, resolved
+kernel scale, fill distances, guard activation, candidate count, and kernel-evaluation
+count are all exposed through solver data metrics.
+
+The policy uses the ordinary `ControlledCollocationPolicy` monitor, rollback, budget,
+and `CoverageAnchors` contracts. Its residual-derived sampling measure intentionally
+changes the effective training distribution, so keep it conditional and compare it
+against fixed low-discrepancy collocation on an untouched monitor and the physical
+quantity of interest.
+
 Choose the population representation first:
 
 | Representation | Policies | Budget unit | Appropriate support |
 | --- | --- | --- | --- |
-| `PointBatch` | `PeriodicCollocation`, `R3`, `RARD` | retained points and residual candidate evaluations | General pointwise PINNs |
+| `PointBatch` | `PeriodicCollocation`, `R3`, `RARD`, `CoresetCollocation` | retained points and residual candidate evaluations | General pointwise PINNs |
 | `GridBatch` | `PeriodicSeparableCollocation`, `HierarchicalAxisCollocation` | axis nodes **and** implied logical evaluations | Separable models and nested axis-aligned structure |
 
 `RARD` is retained for oscillatory or distributed residual structure when the
