@@ -37,7 +37,14 @@ from ._laplax_backend import StructuredLaplaceResult
 from ._map import MAPResult
 from ._map_search import MAPSearchResult
 from ._mcmc import MCMCResult
-from ._particle import ParticleFilterResult
+from ._particle import (
+    ParticleBackwardSimulationResult,
+    ParticleBackwardSmootherResult,
+    ParticleFilterResult,
+    ParticleFisherInformationResult,
+    ParticleFisherScoreResult,
+    ParticleSmootherResult,
+)
 from ._pathfinder import PathfinderResult
 from ._sgmcmc import SGMCMCResult
 from ._sgmcmc_diagnostics import SGMCMCMixingReport
@@ -281,7 +288,149 @@ def _adapt_result(result, arrays, fields, trees):
             result.filter_result, arrays, fields, prefix="filter."
         )
         metadata["smoother_execution_method"] = result.execution_method
+        metadata["smoother_covariance_form"] = result.covariance_form
         return "kalman_smoother", metadata, ()
+
+    if isinstance(result, ParticleSmootherResult):
+        for name, value in (
+            ("particles", result.particles),
+            ("log_weights", result.log_weights),
+            ("means", result.means),
+            ("lineage_indices", result.lineage_indices),
+            ("horizons", result.horizons),
+            ("step_valid", result.step_valid),
+            ("valid", result.valid),
+            ("status", result.status),
+            ("times", result.times),
+        ):
+            _put_field(fields, arrays, name, value)
+        metadata = _put_particle_filter_result(
+            result.filter_result, arrays, fields, prefix="filter."
+        )
+        metadata.update(
+            {
+                "smoother_method_id": result.method_id,
+                "ancestry_gradient": result.ancestry_gradient,
+            }
+        )
+        return "particle_smoother", metadata, ("filter_result.problem",)
+
+    if isinstance(result, ParticleBackwardSmootherResult):
+        for name, value in (
+            ("particles", result.particles),
+            ("log_weights", result.log_weights),
+            ("means", result.means),
+            ("backward_log_probabilities", result.backward_log_probabilities),
+            ("pair_log_weights", result.pair_log_weights),
+            ("step_valid", result.step_valid),
+            ("valid", result.valid),
+            ("status", result.status),
+            ("times", result.times),
+        ):
+            _put_field(fields, arrays, name, value)
+        metadata = _put_particle_filter_result(
+            result.filter_result, arrays, fields, prefix="filter."
+        )
+        metadata.update(
+            {
+                "smoother_method_id": result.method_id,
+                "process_id": result.process_id,
+                "approximation_id": result.approximation_id,
+            }
+        )
+        return "particle_backward_smoother", metadata, ("filter_result.problem",)
+
+    if isinstance(result, ParticleBackwardSimulationResult):
+        _put_field(fields, arrays, "paths", result.paths)
+        _put_field(fields, arrays, "particle_indices", result.particle_indices)
+        _put_field(fields, arrays, "step_valid", result.step_valid)
+        _put_field(fields, arrays, "valid", result.valid)
+        smoother = result.smoother
+        for name, value in (
+            ("smoother.log_weights", smoother.log_weights),
+            (
+                "smoother.backward_log_probabilities",
+                smoother.backward_log_probabilities,
+            ),
+            ("smoother.pair_log_weights", smoother.pair_log_weights),
+        ):
+            _put_field(fields, arrays, name, value)
+        metadata = _put_particle_filter_result(
+            smoother.filter_result, arrays, fields, prefix="filter."
+        )
+        metadata.update(
+            {
+                "simulation_method_id": result.method_id,
+                "smoother_method_id": smoother.method_id,
+                "sample_shape": list(result.sample_shape),
+                "ancestry_gradient": result.ancestry_gradient,
+                "process_id": smoother.process_id,
+                "approximation_id": smoother.approximation_id,
+            }
+        )
+        return (
+            "particle_backward_simulation",
+            metadata,
+            ("smoother.filter_result.problem",),
+        )
+
+    if isinstance(result, ParticleFisherScoreResult):
+        _put_field(fields, arrays, "flat_score", result.flat_score)
+        _put_field(fields, arrays, "case_scores", result.case_scores)
+        _put_field(fields, arrays, "valid", result.valid)
+        _put_flat_inexact_tree(
+            trees,
+            arrays,
+            "transition_score",
+            result.transition_score,
+            expected_size=result.parameter_size,
+        )
+        metadata = {
+            "method_id": result.method_id,
+            "parameter_size": result.parameter_size,
+            "process_id": result.process_id,
+            "approximation_id": result.approximation_id,
+            "model_id": result.model_id,
+            "problem_id": result.problem_id,
+            "sequence_id": result.sequence_id,
+            "input_id": result.input_id,
+            "case_shape": list(result.smoother.case_shape),
+            "case_axes": list(result.smoother.case_axes),
+            "case_ids": list(result.smoother.case_ids),
+        }
+        return (
+            "particle_fisher_score",
+            metadata,
+            ("transition_score", "smoother"),
+        )
+
+    if isinstance(result, ParticleFisherInformationResult):
+        _put_field(fields, arrays, "information", result.information)
+        _put_field(fields, arrays, "case_scores", result.case_scores)
+        _put_field(fields, arrays, "valid", result.valid)
+        _put_flat_inexact_tree(
+            trees,
+            arrays,
+            "transition_score",
+            result.score_result.transition_score,
+            expected_size=result.parameter_size,
+        )
+        score = result.score_result
+        metadata = {
+            "method_id": result.method_id,
+            "score_method_id": score.method_id,
+            "parameter_size": result.parameter_size,
+            "process_id": score.process_id,
+            "approximation_id": score.approximation_id,
+            "model_id": score.model_id,
+            "problem_id": score.problem_id,
+            "sequence_id": score.sequence_id,
+            "input_id": score.input_id,
+            "case_shape": list(score.smoother.case_shape),
+            "case_axes": list(score.smoother.case_axes),
+            "case_ids": list(score.smoother.case_ids),
+        }
+        return "particle_fisher_information", metadata, ("score_result",)
 
     if isinstance(result, ParticleFilterResult):
         metadata = _put_particle_filter_result(result, arrays, fields, prefix="")
@@ -836,8 +985,10 @@ def _put_kalman_filter_result(result, arrays, fields, *, prefix):
         "model_id": result.model_id,
         "problem_id": result.problem_id,
         "sequence_id": result.sequence_id,
+        "input_id": result.input_id,
         "covariance_regularization": result.covariance_regularization,
         "execution_method": result.execution_method,
+        "covariance_form": result.covariance_form,
         "final_step_index": result.final_state.step_index,
     }
 
@@ -877,6 +1028,7 @@ def _put_particle_filter_result(result, arrays, fields, *, prefix):
         "model_id": result.model_id,
         "problem_id": result.problem_id,
         "sequence_id": result.sequence_id,
+        "input_id": result.input_id,
         "resampling_method": result.resampling_method,
         "resampling_policy": result.resampling_policy,
         "resampling_threshold": result.resampling_threshold,
@@ -919,6 +1071,7 @@ def _put_ensemble_filter_result(result, arrays, fields, *, prefix):
         "model_id": result.model_id,
         "problem_id": result.problem_id,
         "sequence_id": result.sequence_id,
+        "input_id": result.input_id,
         "inflation": result.inflation,
         "covariance_regularization": result.covariance_regularization,
         "final_step_index": result.final_state.step_index,
@@ -1025,6 +1178,46 @@ def _put_array_leaves(trees, arrays, name, tree):
         names.append(array_name)
     if names:
         trees[name] = {"paths": paths, "arrays": names}
+
+
+def _put_flat_inexact_tree(
+    trees,
+    arrays,
+    name,
+    tree,
+    *,
+    expected_size,
+):
+    paths = []
+    names = []
+    leaf_shapes = []
+    flat_slices = []
+    offset = 0
+    for path, leaf in jax.tree_util.tree_flatten_with_path(tree)[0]:
+        if not eqx.is_inexact_array(leaf):
+            continue
+        array_name = f"tree/{name}/{len(names):06d}"
+        array = _portable_array(leaf)
+        size = int(array.size)
+        arrays[array_name] = array
+        paths.append(jax.tree_util.keystr(path) or "<root>")
+        names.append(array_name)
+        leaf_shapes.append(list(array.shape))
+        flat_slices.append([offset, offset + size])
+        offset += size
+    if not names:
+        raise ValueError(f"Result inexact array tree {name!r} has no leaves.")
+    if offset != int(expected_size):
+        raise ValueError(
+            f"Result inexact array tree {name!r} has size {offset}, "
+            f"expected {expected_size}."
+        )
+    trees[name] = {
+        "paths": paths,
+        "arrays": names,
+        "leaf_shapes": leaf_shapes,
+        "flat_slices": flat_slices,
+    }
 
 
 def _portable_array(value):

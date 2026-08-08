@@ -1409,10 +1409,18 @@ def solve_jump_differential(
             raise ValueError("Wiener and Poisson supports must match.")
         if wiener_realization.noise_shape != differential.noise_shape:
             raise ValueError("Wiener and differential noise shapes must match.")
-        if dt0 is None:
-            raise ValueError("Stochastic hybrid integration requires dt0.")
-        resolved_dt0 = jnp.asarray(dt0, dtype=float)
-        if bool(jnp.abs(resolved_dt0) <= wiener_realization.tolerance):
+        selected_controller = (
+            dfx.ConstantStepSize() if stepsize_controller is None else stepsize_controller
+        )
+        if dt0 is None and not isinstance(selected_controller, dfx.StepTo):
+            raise ValueError(
+                "Stochastic hybrid integration requires dt0 unless every step "
+                "is declared with diffrax.StepTo."
+            )
+        resolved_dt0 = None if dt0 is None else jnp.asarray(dt0, dtype=float)
+        if resolved_dt0 is not None and bool(
+            jnp.abs(resolved_dt0) <= wiener_realization.tolerance
+        ):
             raise ValueError("Wiener tolerance must be smaller than dt0.")
         selected_solver = (
             dfx.Euler()
@@ -1420,9 +1428,6 @@ def solve_jump_differential(
             else dfx.EulerHeun()
             if solver is None
             else solver
-        )
-        selected_controller = (
-            dfx.ConstantStepSize() if stepsize_controller is None else stepsize_controller
         )
         path_keys = wiener_realization.path_keys.reshape(
             (path_count,) + tuple(wiener_realization.root_key.shape)

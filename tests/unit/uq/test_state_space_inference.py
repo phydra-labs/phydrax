@@ -111,9 +111,14 @@ def test_exact_finite_state_likelihood_matches_enumerated_mixture():
     problem = _finite_problem()
     result = phx.uq.exact_state_space_log_likelihood(problem)
     transition_mass = jnp.asarray([jnp.exp(-1.0), 1.0 - jnp.exp(-1.0)])
+    context = phx.stochastic.StateSpaceStepContext.empty(args=problem.args)
     observation_log_mass = jax.vmap(
         lambda state: problem.model.observation.log_prob(
-            jnp.asarray([1.0]), state, jnp.asarray(1.0), jnp.asarray([True])
+            jnp.asarray([1.0]),
+            state,
+            jnp.asarray(1.0),
+            jnp.asarray([True]),
+            context,
         )
     )(problem.model.prior.states)
     expected = jax.scipy.special.logsumexp(

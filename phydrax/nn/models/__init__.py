@@ -15,6 +15,7 @@ from .architectures._deeponet import (
     IntegralBranchEncoder,
     PODBasis,
 )
+from .architectures._diagonal_state_space_mixer import DiagonalStateSpaceMixer
 from .architectures._dpot import DPOT, dpot_corrupt_history
 from .architectures._equation_conditioning import (
     attach_pde_condition,
@@ -354,6 +355,7 @@ __all__ = [
     "IFNOConvergence",
     "GNOT",
     "GreenKernelOperator",
+    "DiagonalStateSpaceMixer",
     "KoopmanTemporalOperator",
     "Transolver",
     "AxialOperatorAttention",

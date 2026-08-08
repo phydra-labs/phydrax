@@ -22,6 +22,7 @@ from ..stochastic._state_space import (
     LinearGaussianTransitionKernel,
     state_space_key,
     StateSpaceProblem,
+    StateSpaceStepContext,
     TransitionSample,
 )
 from ._particle import (
@@ -69,6 +70,7 @@ class AbstractParticleProposal(StrictModule):
         t1: ArrayLike,
         observation: ArrayLike,
         mask: ArrayLike,
+        context: StateSpaceStepContext,
         /,
     ) -> ParticleProposalSample:
         raise NotImplementedError
@@ -82,6 +84,7 @@ class AbstractParticleProposal(StrictModule):
         t1: ArrayLike,
         observation: ArrayLike,
         mask: ArrayLike,
+        context: StateSpaceStepContext,
         /,
     ) -> Array:
         raise NotImplementedError
@@ -109,11 +112,12 @@ class BootstrapParticleProposal(AbstractParticleProposal):
         t1,
         observation,
         mask,
+        context,
         /,
     ) -> ParticleProposalSample:
         del observation, mask
         _validate_problem_shape(problem, self.state_shape)
-        sample = problem.model.transition.sample(key, previous_state, t0, t1)
+        sample = problem.model.transition.sample(key, previous_state, t0, t1, context)
         valid = jnp.all(sample.valid) & jnp.all(sample.status == 0)
         return ParticleProposalSample(
             values=sample.values,
@@ -133,9 +137,10 @@ class BootstrapParticleProposal(AbstractParticleProposal):
         t1,
         observation,
         mask,
+        context,
         /,
     ) -> Array:
-        del previous_state, t0, t1, observation, mask
+        del previous_state, t0, t1, observation, mask, context
         _validate_problem_shape(problem, self.state_shape)
         return jnp.zeros(())
 
@@ -144,9 +149,10 @@ class CallableGuidedParticleProposal(AbstractParticleProposal):
     """User-defined normalized proposal with Phydrax-computed density correction.
 
     ``sample`` receives ``(key, problem, previous_state, t0, t1,
-    observation, mask)``. ``log_prob`` receives the same arguments after the key,
-    prefixed by ``next_state``. An optional ``lookahead`` receives the arguments
-    of :meth:`lookahead_log_weight`. All log densities must be normalized.
+    observation, mask, context)``. ``log_prob`` receives the same arguments
+    after the key, prefixed by ``next_state``. An optional ``lookahead`` receives
+    the arguments of :meth:`lookahead_log_weight`. All log densities must be
+    normalized.
     """
 
     sample_fn: Callable[..., ArrayLike | TransitionSample] = eqx.field(static=True)
@@ -189,6 +195,7 @@ class CallableGuidedParticleProposal(AbstractParticleProposal):
         t1,
         observation,
         mask,
+        context,
         /,
     ) -> ParticleProposalSample:
         _validate_problem_shape(problem, self.state_shape)
@@ -196,7 +203,9 @@ class CallableGuidedParticleProposal(AbstractParticleProposal):
             raise ValueError(
                 "A guided proposal requires a transition with a normalized log density."
             )
-        raw = self.sample_fn(key, problem, previous_state, t0, t1, observation, mask)
+        raw = self.sample_fn(
+            key, problem, previous_state, t0, t1, observation, mask, context
+        )
         if isinstance(raw, TransitionSample):
             values = raw.values
             sample_valid = jnp.all(raw.valid) & jnp.all(raw.status == 0)
@@ -215,10 +224,11 @@ class CallableGuidedParticleProposal(AbstractParticleProposal):
                 t1,
                 observation,
                 mask,
+                context,
             )
         ).reshape(())
         target_log_prob = jnp.asarray(
-            problem.model.transition.log_prob(values, previous, t0, t1)
+            problem.model.transition.log_prob(values, previous, t0, t1, context)
         ).reshape(())
         correction = target_log_prob - proposal_log_prob
         valid = (
@@ -246,13 +256,22 @@ class CallableGuidedParticleProposal(AbstractParticleProposal):
         t1,
         observation,
         mask,
+        context,
         /,
     ) -> Array:
         _validate_problem_shape(problem, self.state_shape)
         if self.lookahead_fn is None:
             return jnp.zeros(())
         return jnp.asarray(
-            self.lookahead_fn(problem, previous_state, t0, t1, observation, mask)
+            self.lookahead_fn(
+                problem,
+                previous_state,
+                t0,
+                t1,
+                observation,
+                mask,
+                context,
+            )
         ).reshape(())
 
 
@@ -278,10 +297,11 @@ class LinearGaussianGuidedParticleProposal(AbstractParticleProposal):
         t1,
         observation,
         mask,
+        context,
         /,
     ) -> ParticleProposalSample:
         mean, covariance, lookahead, valid = _linear_gaussian_condition(
-            problem, previous_state, t0, t1, observation, mask
+            problem, previous_state, t0, t1, observation, mask, context
         )
         eigenvalues, eigenvectors = jnp.linalg.eigh(covariance)
         factor = eigenvectors * jnp.sqrt(jnp.maximum(eigenvalues, 0.0))[None, :]
@@ -289,7 +309,7 @@ class LinearGaussianGuidedParticleProposal(AbstractParticleProposal):
         values = flat_draw.reshape(self.state_shape)
         proposal_log_prob = _gaussian_log_prob(flat_draw, mean, covariance)
         target_log_prob = jnp.asarray(
-            problem.model.transition.log_prob(values, previous_state, t0, t1)
+            problem.model.transition.log_prob(values, previous_state, t0, t1, context)
         ).reshape(())
         correction = target_log_prob - proposal_log_prob
         valid = (
@@ -317,10 +337,11 @@ class LinearGaussianGuidedParticleProposal(AbstractParticleProposal):
         t1,
         observation,
         mask,
+        context,
         /,
     ) -> Array:
         _, _, lookahead, valid = _linear_gaussian_condition(
-            problem, previous_state, t0, t1, observation, mask
+            problem, previous_state, t0, t1, observation, mask, context
         )
         return jnp.where(valid, lookahead, -jnp.inf)
 
@@ -421,6 +442,7 @@ def _linear_gaussian_condition(
     t1: ArrayLike,
     observation_value: ArrayLike,
     mask_value: ArrayLike,
+    context: StateSpaceStepContext,
     /,
 ) -> tuple[Array, Array, Array, Array]:
     transition = problem.model.transition
@@ -435,11 +457,12 @@ def _linear_gaussian_condition(
     state_size = prod(problem.model.state_shape)
     observation_size = prod(problem.model.observation_shape)
     previous = jnp.asarray(previous_state).reshape((state_size,))
-    transition_matrix, transition_offset, process_covariance = transition.parameters(
-        t0, t1
-    )
+    transition_parameters = transition.parameters(t0, t1, context)
+    transition_matrix = transition_parameters.transition
+    transition_offset = transition_parameters.offset
+    process_covariance = transition_parameters.covariance
     observation_matrix, observation_offset, observation_covariance = (
-        observation.parameters(t1)
+        observation.parameters(t1, context)
     )
     transition_mean = transition_matrix @ previous + transition_offset
     values = jnp.asarray(observation_value).reshape((observation_size,))
@@ -657,6 +680,7 @@ def guided_particle_filter(
             value = flat_values[case_index, index]
             mask = flat_masks[case_index, index]
             start = times[case_index]
+            context = problem.step_context(case_index, index)
             end = flat_times[case_index, index]
             lookahead = jnp.stack(
                 [
@@ -667,6 +691,7 @@ def guided_particle_filter(
                         end,
                         value,
                         mask,
+                        context,
                     )
                     for particle_index in range(count)
                 ]
@@ -709,6 +734,7 @@ def guided_particle_filter(
                         end,
                         value,
                         mask,
+                        context,
                     )
                 )
             predicted = jnp.stack([sample.values for sample in proposals])
@@ -719,7 +745,11 @@ def guided_particle_filter(
             observation_log_weights = jnp.stack(
                 [
                     problem.model.observation.log_prob(
-                        value, predicted[particle_index], end, mask
+                        value,
+                        predicted[particle_index],
+                        end,
+                        mask,
+                        context,
                     )
                     for particle_index in range(count)
                 ]

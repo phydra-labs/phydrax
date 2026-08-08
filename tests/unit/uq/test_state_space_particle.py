@@ -114,6 +114,51 @@ def test_bootstrap_filter_matches_linear_gaussian_marginals():
     assert phx.uq.particle_filter_diagnostics(particles).passed
 
 
+def test_bootstrap_filter_propagates_sampled_inputs_without_changing_noise_stream():
+    base = _problem()
+    input_signal = phx.stochastic.SampledStateSpaceInput(
+        jnp.asarray([0.0, 0.5, 1.0]),
+        jnp.asarray([[0.0], [1.0], [2.0]]),
+        interpolation="linear",
+        input_id="particle-input",
+    )
+
+    def input_driven_sample(key, state, t0, t1, context):
+        sample = base.model.transition.sample(key, state, t0, t1, context)
+        return sample.values + context.transition_end_input
+
+    driven_transition = phx.stochastic.CallableTransitionKernel(
+        input_driven_sample,
+        state_shape=(1,),
+        process_id=base.model.transition.process_id,
+        approximation_id="input-driven",
+    )
+    driven_problem = phx.stochastic.StateSpaceProblem(
+        phx.stochastic.StateSpaceModel(
+            base.model.prior,
+            driven_transition,
+            base.model.observation,
+            model_id=base.model.model_id,
+        ),
+        base.observations,
+        initial_time=base.initial_time,
+        input_signal=input_signal,
+        problem_id=base.problem_id,
+    )
+
+    baseline = phx.uq.bootstrap_particle_filter(
+        jr.key(21), base, num_particles=8, resampling_policy="never"
+    )
+    driven = phx.uq.bootstrap_particle_filter(
+        jr.key(21), driven_problem, num_particles=8, resampling_policy="never"
+    )
+
+    assert jnp.allclose(
+        driven.predicted_particles - baseline.predicted_particles,
+        jnp.asarray([1.0, 3.0])[:, None, None],
+    )
+
+
 def test_genealogy_backward_smoothing_and_predictive_conversion():
     result = phx.uq.bootstrap_particle_filter(
         jr.key(11),
@@ -182,9 +227,9 @@ def test_particle_checkpoint_resumes_exactly_and_rejects_wrong_settings(tmp_path
 def test_particle_filter_reports_all_invalid_likelihoods():
     base = _problem()
     invalid_observation = phx.stochastic.CallableObservationModel(
-        lambda state, time: jnp.zeros((1,)),
-        lambda value, state, time, mask: jnp.asarray(-jnp.inf),
-        lambda key, state, time, sample_shape: jnp.zeros(sample_shape + (1,)),
+        lambda state, time, context: jnp.zeros((1,)),
+        lambda value, state, time, mask, context: jnp.asarray(-jnp.inf),
+        lambda key, state, time, sample_shape, context: jnp.zeros(sample_shape + (1,)),
         state_shape=(1,),
         observation_shape=(1,),
         observation_id="invalid",
@@ -242,9 +287,9 @@ def test_particle_posterior_measure_matches_weighted_filtering_marginals():
 def test_particle_posterior_measure_masks_failed_filtering_steps():
     base = _problem()
     invalid_observation = phx.stochastic.CallableObservationModel(
-        lambda state, time: jnp.zeros((1,)),
-        lambda value, state, time, mask: jnp.asarray(-jnp.inf),
-        lambda key, state, time, sample_shape: jnp.zeros(sample_shape + (1,)),
+        lambda state, time, context: jnp.zeros((1,)),
+        lambda value, state, time, mask, context: jnp.asarray(-jnp.inf),
+        lambda key, state, time, sample_shape, context: jnp.zeros(sample_shape + (1,)),
         state_shape=(1,),
         observation_shape=(1,),
         observation_id="integration-invalid",

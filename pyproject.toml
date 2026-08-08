@@ -53,6 +53,7 @@ dependencies = [
     "tinygp>=0.3.1,<0.4",
     "trimesh[easy]>=4.11.1",
     "optimistix>=0.1.0",
+    "qpax>=0.1.4",
 ]
 
 [project.optional-dependencies]

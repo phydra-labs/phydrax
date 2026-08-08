@@ -2,9 +2,12 @@
 
 ## Getting started
 
-Phydrax is a scientific machine learning toolkit for PDEs, constraints, and domain-aware models, built on [JAX](https://github.com/jax-ml/jax) + [Equinox](https://github.com/patrick-kidger/equinox).
-It provides composable building blocks for geometry, operators, and training pipelines, with
-an emphasis on software modularity and interoperability.
+Phydrax is a scientific machine learning toolkit for PDEs, constraints,
+domain-aware models, stochastic inference, differential equations, and control,
+built on [JAX](https://github.com/jax-ml/jax) +
+[Equinox](https://github.com/patrick-kidger/equinox). Its components expose
+physical axes, masks, validity/status, stable identifiers, and numerical
+provenance rather than hiding those distinctions behind one solver interface.
 
 ## Unifying view: minimize functionals over domains
 
@@ -45,9 +48,21 @@ Most workflows are composing a few primitives:
   realizations, and estimates carry method-valid diagnostics and provenance.
 - **Interpolation**: reusable anisotropic Smolyak surrogates preserve labeled
   domains, array-valued outputs, and JAX differentiation.
-- **Stochastic processes**: reproducible process realizations, trajectories,
-  martingales, state-space models, BSDEs, Feynman--Kac regression, and finite-rank
-  spatial noise.
+- **Stochastic processes and inference**: reproducible processes and
+  trajectories, state-space models, Gaussian factors and nonlinear moment
+  transforms, continuous-discrete inference, finite-state and particle
+  filtering/smoothing, structural components, BSDEs, and finite-rank spatial
+  noise.
+- **Differential-equation solvers**: deterministic and stochastic integration,
+  differentiable driving paths and CDEs, Neural CDE training, probabilistic
+  numerical ODEs, and flow/map Lyapunov spectra.
+- **Control and optimization**: typed finite-horizon problems, parameterized
+  controls, sampled costs/constraints, linearization, frequency response,
+  Lyapunov/Riccati equations, Gramians, LQR/iLQR, compiled QPs, multiple shooting,
+  bounded initialization search, and receding-horizon MPC.
+- **Sequence mixing**: `DiagonalStateSpaceMixer` is one generic diagonal
+  continuous-time layer for irregular masked schedules, not a family of branded
+  mixer classes.
 - **Constraints**: scalar loss terms built from residuals on components.
 - **Objectives**: raw scalar terms, including signed integral energies for Ritz minimization.
 - **Model losses**: optional parameter-space penalties attached directly to models.
@@ -145,7 +160,8 @@ Otherwise, Phydrax will default to the cpu version.
 uv add phydrax
 ```
 
-No special builds or containers. Batteries-included, ready to go.
+The core install requires no special build or container. Optional integrations
+are installed explicitly when needed.
 
 ## Documentation
 
@@ -173,6 +189,50 @@ neural-operator rollouts. See the
 [uncertainty guide](docs/guides_uncertainty.md),
 [neural-operator uncertainty API](docs/api/uq/operator.md), and
 [differential solver API](docs/api/solver/differential.md).
+
+State-space inference includes rank-aware `GaussianFactor` operations, declared
+nonlinear Gaussian transforms, continuous-discrete filtering and smoothing,
+covariance-form and square-root Kalman paths, exact finite-state completion,
+particle and ensemble smoothers, Rao--Blackwellized filtering, and compiled
+structural components. Results keep physical cases, schedules and masks,
+ancestry, IDs, validity/status, and approximation/regularization/backend
+provenance explicit. Nonlinear transforms remain approximations; dense paths
+enforce dimension guards; invalid covariance inputs are not silently repaired.
+Square-root Kalman filtering is sequential only, and particle ancestry is
+nondifferentiable. See the
+[filtering cookbook](docs/cookbook/filtering.md),
+[state-space API](docs/api/stochastic/state_space.md), and
+[inference API](docs/api/uq/inference.md).
+
+Controlled-dynamics support includes explicit causal or offline differentiable
+driving paths, Diffrax-backed CDE integration, Neural CDE training, probabilistic
+numerical ODE solutions, and flow/map Lyapunov spectra. A probabilistic ODE
+solution quantifies numerical integration uncertainty; it is not a posterior
+over an unknown physical model. See the
+[controlled-dynamics cookbook](docs/cookbook/controlled_dynamics.md) and
+[differential solver API](docs/api/solver/differential.md).
+
+Control support includes linear and differential dynamics, control
+parameterizations, sampled costs and constraints, linearization, Lyapunov and
+Riccati equations, Gramians, frequency response, LQR/iLQR, dense multiple
+shooting, compiled linear-control QPs, and receding-horizon MPC. Sampled
+nonlinear constraints are not continuous-time certificates; iLQR and multiple
+shooting accept one physical case; bounded coefficient search is not globally
+optimal; dense guards and solver status are explicit rather than hidden behind
+fallback or repair. See the [control cookbook](docs/cookbook/control.md),
+[control API](docs/api/control.md), and [QP API](docs/api/optim.md).
+
+Sensitivity utilities add score/Fisher actions and empirical
+controllability/observability directions. Stationary linear-Gaussian state,
+output, and cross spectra reuse diagnosed control resolvents and reject unstable,
+singular, non-Hermitian, or non-positive-semidefinite inputs instead of clipping
+or repairing them.
+
+QPax 0.1.4 is a core runtime dependency and is integrated through its implicit
+backend. The Phydrax dense solver remains the default; select QPax explicitly with
+`method="qpax-implicit"`. QP results preserve primal/dual residuals, regularization,
+validity/status, and backend provenance, and neither backend is used as a hidden
+fallback.
 
 High-dimensional PDE support is structure-aware rather than a claim that one generic
 PINN removes the curse of dimensionality. Semilinear parabolic equations can use

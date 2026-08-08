@@ -175,6 +175,18 @@ def _capabilities_for(name: str, architecture: str, /) -> OperatorCapabilitySpec
             output_representations=representations,
             resolution_transfer=True,
         )
+    if architecture == "DiagonalStateSpaceMixer":
+        return OperatorCapabilitySpec(
+            source_geometries=("tensor_grid", "point_cloud"),
+            query_geometries=("tensor_grid", "point_cloud"),
+            spatial_dimensions=(1,),
+            source_query_relations=("coincident",),
+            axis_requirement="none",
+            quadrature="unused",
+            masks="supported",
+            topology="unused",
+            resolution_transfer=False,
+        )
     if architecture == "LaplaceTemporalOperator":
         return OperatorCapabilitySpec(
             source_geometries=("tensor_grid", "point_cloud"),
@@ -615,6 +627,14 @@ _OPERATOR_ARCHITECTURE_STATUSES = {
         "Heterogeneous source encoders, measure-aware cross-attention, and learned "
         "source gates have focused checks; broad multiphysics validation remains pending.",
     ),
+    "DiagonalStateSpaceMixer": _status(
+        "DiagonalStateSpaceMixer",
+        "DiagonalStateSpaceMixer",
+        "research",
+        "Stable conjugate poles, exact irregular-time input integration, masked "
+        "ragged schedules, and equivalent recurrent, dense, and associative "
+        "execution have focused checks; broad sequence benchmarks remain pending.",
+    ),
     "KoopmanTemporalOperator": _status(
         "KoopmanTemporalOperator",
         "KoopmanTemporalOperator",
@@ -911,6 +931,16 @@ def operator_instance_contract(model: Any, /) -> ConfiguredOperatorContract:
         "NativeGraphOperator": "GraphNeuralOperator",
     }.get(model_type, model_type)
     configuration: tuple[tuple[str, object], ...] = ()
+    if model_type == "DiagonalStateSpaceMixer":
+        configuration = (
+            ("state_size", model.state_size),
+            ("input_integration", model.input_integration),
+            ("execution", model.execution),
+            ("discretization", model.discretization),
+            ("approximation", model.approximation),
+            ("source_key", model.source_key),
+            ("method_id", model.method_id),
+        )
     if model_type in ("FNO", "AxialFactorizedFNO", "IFNO"):
         configuration = (
             ("n_modes", model.n_modes),

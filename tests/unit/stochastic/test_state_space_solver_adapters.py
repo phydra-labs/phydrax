@@ -17,27 +17,30 @@ class _AdditiveFieldOperator(eqx.Module):
 
 def test_differential_transition_adapts_ode_and_sde_solvers():
     ode = phx.stochastic.DifferentialTransitionKernel(
-        lambda time, state, args: state,
+        lambda time, state, context: state * context.args,
         state_shape=(1,),
         process_id="exponential",
     )
-    ode_sample = ode.sample(jr.key(0), jnp.asarray([1.0]), 0.0, 1.0)
+    context = phx.stochastic.StateSpaceStepContext.empty(args=1.0)
+    ode_sample = ode.sample(jr.key(0), jnp.asarray([1.0]), 0.0, 1.0, context)
     wiener_term = phx.solver.WienerTerm(
         "w",
-        lambda time, state, args: jnp.ones(state.shape + (1,)),
+        lambda time, state, context: (
+            jnp.ones(state.shape + (1,)) + 0.0 * context.step_index
+        ),
         (1,),
         structure="additive",
     )
     sde = phx.stochastic.DifferentialTransitionKernel(
-        lambda time, state, args: jnp.zeros_like(state),
+        lambda time, state, context: jnp.zeros_like(state) * context.args,
         state_shape=(1,),
         process_id="brownian",
         wiener_terms=(wiener_term,),
         dt0=0.01,
         wiener_tolerance=1e-4,
     )
-    first = sde.sample(jr.key(1), jnp.asarray([0.0]), 0.0, 0.1)
-    replay = sde.sample(jr.key(1), jnp.asarray([0.0]), 0.0, 0.1)
+    first = sde.sample(jr.key(1), jnp.asarray([0.0]), 0.0, 0.1, context)
+    replay = sde.sample(jr.key(1), jnp.asarray([0.0]), 0.0, 0.1, context)
 
     assert ode_sample.valid
     assert jnp.allclose(ode_sample.values, jnp.exp(1.0), rtol=1e-5)
@@ -47,21 +50,24 @@ def test_differential_transition_adapts_ode_and_sde_solvers():
 
 def test_jump_and_hybrid_transition_adapters_preserve_solver_status():
     process = phx.stochastic.JumpProcess(
-        lambda time, state, args: jnp.asarray([1.0]),
-        lambda state, channel, mark, args: state + jnp.asarray([1.0]),
+        lambda time, state, context: jnp.asarray([1.0]) + 0.0 * context.step_index,
+        lambda state, channel, mark, context: (
+            state + jnp.asarray([1.0]) + 0.0 * context.step_index
+        ),
         state_shape=(1,),
         num_channels=1,
         process_id="counting",
     )
     jump = phx.stochastic.JumpTransitionKernel(process, max_events_per_channel=16)
     hybrid = phx.stochastic.JumpDifferentialTransitionKernel(
-        lambda time, state, args: jnp.ones_like(state),
+        lambda time, state, context: jnp.ones_like(state) + 0.0 * context.step_index,
         process,
         state_shape=(1,),
         max_events_per_channel=16,
     )
-    jump_sample = jump.sample(jr.key(2), jnp.asarray([0.0]), 0.0, 1.0)
-    hybrid_sample = hybrid.sample(jr.key(3), jnp.asarray([0.0]), 0.0, 1.0)
+    context = phx.stochastic.StateSpaceStepContext.empty()
+    jump_sample = jump.sample(jr.key(2), jnp.asarray([0.0]), 0.0, 1.0, context)
+    hybrid_sample = hybrid.sample(jr.key(3), jnp.asarray([0.0]), 0.0, 1.0, context)
 
     assert jump_sample.valid
     assert hybrid_sample.valid
@@ -72,10 +78,10 @@ def test_jump_and_hybrid_transition_adapters_preserve_solver_status():
 
 def test_finite_state_transition_has_exact_normalized_mass_and_filters():
     process = phx.stochastic.JumpProcess(
-        lambda time, state, args: jnp.where(
+        lambda time, state, context: jnp.where(
             state[0] < 2, jnp.asarray([1.0]), jnp.asarray([0.0])
         ),
-        lambda state, channel, mark, args: jnp.minimum(state + 1, 2),
+        lambda state, channel, mark, context: jnp.minimum(state + 1, 2),
         state_shape=(1,),
         num_channels=1,
         process_id="finite-birth",
@@ -83,9 +89,13 @@ def test_finite_state_transition_has_exact_normalized_mass_and_filters():
     states = jnp.asarray([[0], [1], [2]])
     generator = phx.solver.finite_state_generator(process, states)
     transition = phx.stochastic.FiniteStateTransitionKernel(generator)
+    context = phx.stochastic.StateSpaceStepContext.empty()
     probabilities = jnp.exp(
         jnp.stack(
-            [transition.log_prob(state, jnp.asarray([0]), 0.0, 1.0) for state in states]
+            [
+                transition.log_prob(state, jnp.asarray([0]), 0.0, 1.0, context)
+                for state in states
+            ]
         )
     )
     prior = phx.stochastic.CategoricalStatePrior(
@@ -148,7 +158,9 @@ def test_operator_pathwise_transition_filters_complete_fields():
     )
     transition = phx.stochastic.PathwiseTransitionKernel(
         law,
-        lambda key, t0, t1: jnp.sqrt(t1 - t0) * jr.normal(key, (4,)),
+        lambda key, t0, t1, context: (
+            jnp.sqrt(t1 - t0) * jr.normal(key, (4,)) + 0.0 * context.step_index
+        ),
     )
     prior = phx.stochastic.GaussianStatePrior(
         jnp.zeros((4,)), jnp.eye(4), state_shape=(4,), prior_id="field-prior"

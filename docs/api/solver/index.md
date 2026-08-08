@@ -1,15 +1,17 @@
 # Solver
 
 Phydrax has two separate solver paths: functional minimization for physics/data
-objectives and direct finite-dimensional ODE/SDE, finite-activity jump,
-hybrid jump-differential, or semidiscrete SPDE integration through Diffrax.
+objectives and direct finite-dimensional ODE/SDE, differentiable controlled,
+probabilistic ODE, Lyapunov, finite-activity jump, hybrid jump-differential, or
+semidiscrete SPDE integration.
 
 For a conceptual overview (loss evaluation, enforced pipelines, training loop behavior), see
 [Guides → Solvers and training](../../guides_solver.md).
 
 - [Differential equation integration](differential.md) defines reproducible ODE/SDE,
-  finite-activity jump and hybrid trajectories, finite-rank semidiscrete SPDEs,
-  and process ensembles.
+  differentiable CDE and neural-CDE training, probabilistic ODE filtering,
+  finite-time Lyapunov spectra, finite-activity jump and hybrid trajectories,
+  finite-rank semidiscrete SPDEs, and process ensembles.
 - [Delay and functional differential equations](delay.md) defines causal method-of-steps,
   stochastic/geometric/rough/jump histories, functional/distributed/state-dependent/
   neutral delays, bounded and infinite memory, convolution, Caputo integration, and
@@ -23,6 +25,16 @@ For a conceptual overview (loss evaluation, enforced pipelines, training loop be
     - Use `FunctionalSolver` to sum constraint losses and attached model losses.
     - Use enforced constraint pipelines to enforce conditions by construction (no penalty term).
     - Use `DifferentialProblem` plus `solve_diffrax` for numerical ODE/SDE trajectories.
+    - Use `AbstractDifferentiableDrivingPath` plus `solve_diffrax_cde` for smooth
+      first-level controls; rough controls and their second level belong to
+      `solve_rough_differential`.
+    - Use `NeuralCDETrainingData` and `train_neural_cde` for masked irregular
+      physical-time training with exact optimizer/batch resume.
+    - Use `solve_probabilistic_ode` for a deterministic Euclidean ODE posterior
+      with separately attributed numerical, process, observation, initial, and
+      parameter covariance.
+    - Use `lyapunov_spectrum_map` or `lyapunov_spectrum_flow` for finite-time
+      periodic-QR spectra and resumable tangent checkpoints.
     - Use `solve_diffrax_ensemble` with a global `WienerRealization` for coupled process draws.
     - Use `DelayDifferentialProblem` plus `solve_diffrax_delay` for causal delay IVPs.
     - Use `solve_rough_delay` for geometric rough paths with delayed state.

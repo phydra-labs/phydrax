@@ -166,6 +166,130 @@ bounded eight-point run.
 
 ::: phydrax.optim.kfac
 
+## Convex quadratic programs
+
+`QuadraticProgram` represents the batched canonical convex program
+`minₓ 0.5 xᵀQx + qᵀx` subject to `Ax = b` and `Gx ≤ h`. Pass `Q` and `q` as
+`quadratic` and `linear`; the equality and inequality arrays are optional. A
+missing constraint family becomes a zero-row array rather than a different
+representation. All inputs broadcast over a common `batch_shape`, and the
+primal, dual, slack, diagnostic, validity, and status arrays preserve those
+batch axes.
+
+Convexity is a caller precondition: the symmetric part of `Q` must be positive
+semidefinite. The solver does not project or repair `Q`, add hidden jitter, or
+replace a failed method with another one. `regularization` is the only
+regularization control and is recorded in the result. There is no public
+warm-start argument, elastic repair, or backend fallback.
+
+!!! example
+    ```python
+    import jax.numpy as jnp
+    import phydrax as phx
+
+    problem = phx.optim.QuadraticProgram(
+        jnp.asarray([[2.0, 0.0], [0.0, 2.0]]),
+        jnp.asarray([-2.0, -5.0]),
+        equality_matrix=jnp.asarray([[1.0, 1.0]]),
+        equality_rhs=jnp.asarray([2.0]),
+        inequality_matrix=jnp.asarray([[-1.0, 0.0], [0.0, -1.0]]),
+        inequality_rhs=jnp.asarray([0.0, 0.0]),
+    )
+    result = phx.optim.solve_quadratic_program(problem)
+    assert result.successful
+
+    # Use the primal-only API when the solution belongs in a differentiated graph.
+    differentiable_x = phx.optim.solve_quadratic_program_primal(
+        problem,
+        method="dense-active-set",
+    )
+    ```
+
+### Methods, differentiation, and dense guard
+
+`solve_quadratic_program` returns the complete audited result. Its default
+`method="dense-primal-dual"` uses the Phydrax dense primal-dual implementation.
+`method="qpax-implicit"` selects the required QPax 0.1.4 runtime dependency
+explicitly and records that backend. If its call fails, Phydrax does not silently
+run the dense solver.
+The public `QPMethod` type is
+`Literal["dense-primal-dual", "qpax-implicit"]`; the primal-only
+`QPDifferentiableMethod` type is
+`Literal["dense-active-set", "qpax-implicit"]`.
+
+`solve_quadratic_program_primal` is the differentiable, primal-only surface.
+Its default `method="dense-active-set"` custom VJP differentiates the locally
+fixed active KKT system. An inequality is active only when its slack is at most
+`active_set_tolerance` and its multiplier is greater than that tolerance.
+These derivatives are local to that selected active set and are not
+differentiable through an active-set change; an invalid forward solution
+produces NaN data gradients rather than a fabricated sensitivity.
+
+The only QPax differentiation route is `method="qpax-implicit"`, which calls
+QPax's public implicit custom-VJP primal API. QPax explicit differentiation is
+not accepted. The full-result and primal-only APIs share `tolerance`,
+`max_iterations`, `regularization`, and `max_dense_dimension`. `step_fraction`
+configures only the native dense solver. QPax 0.1.4 hard-codes a 0.99
+fraction-to-boundary step and exposes no equivalent option, so QPax calls reject any
+non-default public `step_fraction` request instead of silently ignoring it. The
+primal-only API additionally exposes `active_set_tolerance`.
+
+Both backends are subject to the same dense-system guard. For `n` primal
+variables, `m` equalities, and `p` inequalities, the guarded dimension is
+`n + m + 2p`; it must not exceed `max_dense_dimension`, whose default is 512.
+This is a rejection boundary, not a request to approximate or switch methods.
+
+### Result and KKT audit
+
+`QuadraticProgramResult` keeps `primal`, `equality_dual`,
+`inequality_dual`, and `inequality_slack` separately. For `Gx ≤ h`, both the
+slack and inequality multiplier are nonnegative, the slack equation is
+`Gx + slack - h = 0`, and complementarity is
+`slack * inequality_dual = 0`.
+
+The result reports the original objective and the complete audit:
+
+- `stationarity_residual` and `dual_residual_norm` use the original `Q`;
+- `solver_stationarity_residual` and `solver_dual_residual_norm` include the
+  requested `regularization * primal`;
+- `equality_residual`, `inequality_residual`, and
+  `inequality_violation` preserve their full constraint axes;
+- `complementarity_residual`, `complementarity_gap`,
+  `primal_residual_norm`, and `kkt_residual_norm` expose the remaining KKT
+  checks;
+- `iterations` and `backend_converged` preserve the backend report, while
+  Phydrax independently derives `valid` and `status` from finite inputs and
+  outputs, multiplier/slack signs, feasibility, complementarity, and the
+  regularized solver KKT norm;
+- `method`, `backend`, `regularization`, `tolerance`, and `max_iterations`
+  retain the numerical provenance.
+
+Status is an integer array with public constants `QP_SUCCESS`,
+`QP_MAX_ITERATIONS`, `QP_INFEASIBLE`, and `QP_NONFINITE`.
+`result.successful` is the batch-shaped boolean success predicate. A backend
+convergence flag alone is not promoted to success when the independent KKT
+audit fails.
+
+::: phydrax.optim.QuadraticProgram
+    options:
+        members:
+            - __init__
+
+---
+
+::: phydrax.optim.QuadraticProgramResult
+    options:
+        members:
+            - successful
+
+---
+
+::: phydrax.optim.solve_quadratic_program
+
+---
+
+::: phydrax.optim.solve_quadratic_program_primal
+
 ## Bounded global search: differential evolution
 
 `DifferentialEvolutionSearch` configures a fixed-dimensional, bounded population

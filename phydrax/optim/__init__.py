@@ -6,6 +6,31 @@
 
 from ._differential_evolution import DifferentialEvolutionSearch
 from ._kfac._config import kfac
+from ._quadratic_program import (
+    QP_INFEASIBLE,
+    QP_MAX_ITERATIONS,
+    QP_NONFINITE,
+    QP_SUCCESS,
+    QPDifferentiableMethod,
+    QPMethod,
+    QuadraticProgram,
+    QuadraticProgramResult,
+    solve_quadratic_program,
+    solve_quadratic_program_primal,
+)
 
 
-__all__ = ["DifferentialEvolutionSearch", "kfac"]
+__all__ = [
+    "DifferentialEvolutionSearch",
+    "QP_INFEASIBLE",
+    "QP_MAX_ITERATIONS",
+    "QP_NONFINITE",
+    "QP_SUCCESS",
+    "QPDifferentiableMethod",
+    "QPMethod",
+    "QuadraticProgram",
+    "QuadraticProgramResult",
+    "kfac",
+    "solve_quadratic_program",
+    "solve_quadratic_program_primal",
+]

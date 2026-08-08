@@ -271,6 +271,116 @@ inputs have zero derivative.
 
 ---
 
+## Diagonal state-space mixer
+
+`DiagonalStateSpaceMixer` is Phydrax's sole generic state-space sequence mixer.
+It is one public class with explicit integration and execution policies, not a
+collection of architecture-name aliases or hidden method substitutions. Its
+stable `method_id` records the selected exact integration/execution policy.
+
+Each of the `state_size` stored complex modes represents an implicit conjugate
+pair, so the equivalent real state-space order is `2 * state_size`. A stored
+pole is `-(softplus(raw_decay) + min_decay) + i * frequency`; its real part is
+therefore strictly negative by parameterization, without clipping or
+post-update repair. Conjugate-paired input and output maps guarantee real
+outputs. `continuous_poles()` returns both members of every pair, while
+`decay_rates()` exposes the positive rates.
+
+The mixer consumes samples at physical, nondecreasing time nodes. Its state at
+the first node is `initial_state`, or zero when none is supplied. Every later
+state uses exact continuous-time diagonal discretization for that interval, so
+irregular and repeated time steps are represented directly:
+
+- `input_integration="zoh"` holds the left-endpoint input over the interval;
+- `input_integration="linear"` exactly integrates the endpoint linear
+  interpolant;
+- `discretize(delta_time)` returns the exact diagonal transition and its
+  left/right input coefficients.
+
+The model records `discretization="exact"` and `approximation="none"`. These
+fields describe the continuous-to-discrete step; they do not claim that a
+learned finite-dimensional state model exactly represents an unknown physical
+system.
+
+!!! example
+    ```python
+    import jax
+    import jax.numpy as jnp
+    import phydrax as phx
+
+    times = jnp.asarray([0.0, 0.15, 0.6, 1.0])
+    values = jnp.sin(times)
+    valid = jnp.asarray([True, True, True, False])
+
+    mixer = phx.nn.DiagonalStateSpaceMixer(
+        in_channels="scalar",
+        out_channels="scalar",
+        state_size=16,
+        input_integration="linear",
+        execution="associative",
+        key=jax.random.key(0),
+    )
+    mixed = mixer(values, times, mask=valid)
+    recurrent = mixer.recurrent(values, times, mask=valid)
+    assert jnp.allclose(mixed, recurrent)
+    assert mixed[-1] == 0.0
+    ```
+
+Raw calls accept `mixer(values, times, ...)`, `(values, times)`, or
+`(values, times, mask)`. Scalar samples have shape
+`case_shape + (sequence_length,)`; multichannel samples have shape
+`case_shape + (sequence_length, in_channels)`. Shared or case-specific times
+and masks retain the same physical case axes. A mask must describe a valid
+prefix: invalid suffix nodes neither advance the state nor produce output.
+Interior holes and invalid-to-valid transitions are rejected rather than
+filled, interpolated, or repaired.
+
+### Execution and dense reference
+
+`execution="recurrent"` applies the exact affine interval transitions with a
+`jax.lax.scan` whose work is linear in sequence length. `"associative"` composes the
+same transitions with `jax.lax.associative_scan`; it changes the evaluation
+schedule, not the discretization or model. Either policy can be selected at
+construction or overridden for a call. The two routes have the same
+mathematical transition semantics, subject to ordinary floating-point
+reassociation.
+
+`direct_convolution(...)` is a dense analytic reference over the same
+variable-step transitions, masks, and initial state. It is not a scalable
+fallback. It rejects a sequence longer than `max_direct_length` (2048 by
+default) and directs the caller to recurrent or associative execution.
+
+### `OperatorBatch` semantics and limitations
+
+The mixer also accepts a typed `OperatorBatch`, preserving its named physical
+case axes, time coordinates, source mask, and query mask. It requires exactly
+one one-dimensional temporal source selected by `source_key` (or the batch's
+only source), exactly one query, and coincident source/query sample shapes and
+physical time nodes. Every valid query node must have a valid source node.
+
+This is intentionally a sequence mixer, not a source-to-arbitrary-query
+operator: arbitrary source/query resampling, multiple query sets, multidimensional
+sample grids, and non-prefix source masks are unsupported. A query mask may select
+only valid coincident source nodes. `OperatorBatch` supplies times and masks, so
+raw sequence overrides and a custom initial state are rejected on that call path.
+The source/query checks do not silently alter
+coordinates, masks, or IDs.
+
+::: phydrax.nn.DiagonalStateSpaceMixer
+    options:
+        members:
+            - __init__
+            - __call__
+            - method_id
+            - decay_rates
+            - continuous_poles
+            - discretize
+            - recurrent
+            - associative
+            - direct_convolution
+
+---
+
 ## Neural operators
 
 PhydraX neural operators consume a canonical `OperatorBatch`, not an unlabelled

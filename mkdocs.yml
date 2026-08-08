@@ -96,6 +96,8 @@ nav:
         - Heat equation (space–time): "cookbook/heat.md"
         - Stochastic dynamics (PINNs and SPDEs): "cookbook/stochastic_dynamics.md"
         - Filtering and smoothing: "cookbook/filtering.md"
+        - Controlled dynamics: "cookbook/controlled_dynamics.md"
+        - Control workflows: "cookbook/control.md"
         - Backward stochastic equations: "cookbook/bsde.md"
         - Physics-informed graph residuals: "cookbook/graph_physics.md"
         - Inverse + hybrid physics–data: "cookbook/inverse_and_data.md"
@@ -188,6 +190,7 @@ nav:
             - Martingales and stopping: "api/stochastic/martingales.md"
             - Backward stochastic equations: "api/stochastic/bsde.md"
         - Optimization: "api/optim.md"
+        - Control: "api/control.md"
         - Solver:
             - Overview: "api/solver/index.md"
             - Differential equations: "api/solver/differential.md"

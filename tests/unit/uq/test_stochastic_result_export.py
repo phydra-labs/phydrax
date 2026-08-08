@@ -123,3 +123,120 @@ def test_bsde_evaluation_has_portable_residual_and_provenance_archive(tmp_path):
         archive.array("paths.wiener_increments"),
         np.asarray(evaluation.paths.wiener_increments),
     )
+
+
+def _physical_case_state_space_problem():
+    case_shape = (2, 2)
+    observations = phx.stochastic.ObservationSequence(
+        jnp.broadcast_to(jnp.asarray([0.5, 1.0]), case_shape + (2,)),
+        jnp.linspace(-0.5, 1.0, 8).reshape(case_shape + (2, 1)),
+        case_axes=("site", "replicate"),
+        case_shape=case_shape,
+        case_ids=(
+            "site-a/replicate-1",
+            "site-a/replicate-2",
+            "site-b/replicate-1",
+            "site-b/replicate-2",
+        ),
+        sequence_id="physical-export-sequence",
+    )
+    prior = phx.stochastic.GaussianStatePrior(
+        jnp.zeros(case_shape + (1,)),
+        jnp.asarray([[0.7]]),
+        state_shape=(1,),
+        prior_id="physical-export-prior",
+    )
+    transition = phx.stochastic.LinearGaussianTransitionKernel(
+        jnp.asarray([[0.8]]),
+        jnp.asarray([[0.3]]),
+        state_shape=(1,),
+        offset=jnp.asarray([0.1]),
+        process_id="physical-export-process",
+        approximation_id="physical-export-transition",
+    )
+    observation = phx.stochastic.LinearGaussianObservationModel(
+        jnp.asarray([[1.0]]),
+        jnp.asarray([[0.2]]),
+        state_shape=(1,),
+        observation_shape=(1,),
+    )
+    return phx.stochastic.StateSpaceProblem(
+        phx.stochastic.StateSpaceModel(
+            prior, transition, observation, model_id="physical-export-model"
+        ),
+        observations,
+        initial_time=0.0,
+        problem_id="physical-export-problem",
+    )
+
+
+def test_particle_fisher_archives_map_physical_cases_and_score_coordinates(
+    tmp_path,
+):
+    problem = _physical_case_state_space_problem()
+    filtered = phx.uq.bootstrap_particle_filter(
+        jr.key(72),
+        problem,
+        num_particles=2,
+        resampling_policy="never",
+    )
+    smoother = phx.uq.particle_backward_smoother(filtered)
+    score = phx.uq.particle_fisher_score(smoother)
+    fisher = phx.uq.particle_fisher_information(smoother)
+
+    for index, (result, source_score, kind) in enumerate(
+        (
+            (score, score, "particle_fisher_score"),
+            (fisher, fisher.score_result, "particle_fisher_information"),
+        )
+    ):
+        destination = phx.uq.export_result(
+            result, tmp_path / f"particle-fisher-{index}.phxresult"
+        )
+        archive = phx.uq.read_result_archive(destination)
+
+        assert archive.kind == kind
+        assert archive.metadata["case_shape"] == [2, 2]
+        assert archive.metadata["case_axes"] == ["site", "replicate"]
+        assert archive.metadata["case_ids"] == [
+            "site-a/replicate-1",
+            "site-a/replicate-2",
+            "site-b/replicate-1",
+            "site-b/replicate-2",
+        ]
+        case_mapping = tuple(
+            zip(
+                np.ndindex(tuple(archive.metadata["case_shape"])),
+                archive.metadata["case_ids"],
+                strict=True,
+            )
+        )
+        assert case_mapping[0] == ((0, 0), "site-a/replicate-1")
+        assert case_mapping[-1] == ((1, 1), "site-b/replicate-2")
+        assert archive.array("case_scores").shape == (
+            2,
+            2,
+            source_score.parameter_size,
+        )
+
+        specification = archive.trees["transition_score"]
+        paths = specification["paths"]
+        leaf_shapes = specification["leaf_shapes"]
+        flat_slices = specification["flat_slices"]
+        tree = archive.tree("transition_score")
+        assert list(tree) == paths
+        assert len(paths) == len(leaf_shapes) == len(flat_slices)
+
+        reconstructed_leaves = []
+        expected_start = 0
+        for path, shape, flat_slice in zip(paths, leaf_shapes, flat_slices, strict=True):
+            start, stop = flat_slice
+            leaf = tree[path]
+            assert start == expected_start
+            assert list(leaf.shape) == shape
+            assert stop - start == leaf.size
+            reconstructed_leaves.append(leaf.reshape(-1))
+            expected_start = stop
+        reconstructed_score = np.concatenate(reconstructed_leaves)
+        assert expected_start == source_score.parameter_size
+        assert np.allclose(reconstructed_score, np.asarray(source_score.flat_score))

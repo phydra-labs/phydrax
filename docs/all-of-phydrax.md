@@ -84,6 +84,15 @@ The enforced route is staged as boundary → initial → interior data. See:
   the domain becomes \(\Omega_{\text{data}}\times\Omega_x\times\cdots\). See [API → Domain → Composition](api/domain/composition.md)
   and [API → NN → Architectures](api/nn/architectures.md).
 
+### Irregular sequences: one generic diagonal state-space mixer
+
+`phydrax.nn.DiagonalStateSpaceMixer` is the generic diagonal continuous-time
+state-space sequence layer. It supports zero-order-hold or linear input
+integration on irregular, masked schedules and recurrent or associative
+execution. It is one configurable class, not a collection of branded mixer
+architectures. Inputs, times, and masks retain their physical axes; model
+capability metadata records its research status and declared approximation.
+
 ### Uncertainty: stochastic functions, processes, inputs, and observations
 
 `phydrax.uq` keeps epistemic, uncertain-input, observation, stochastic-process,
@@ -95,6 +104,10 @@ errors-in-variables likelihoods account jointly for uncertain predictors and
 observations. Probability domains, static random fields, and joint QMC propagate
 full uncertain-input distributions. Global Wiener, Poisson-clock, composite, and
 coefficient-process realizations provide replayable process paths.
+State-space inference binds each physical case and schedule step to one canonical
+`StateSpaceStepContext`. `SampledStateSpaceInput` and `BSplineStateSpaceInput`
+provide case-indexed exogenous signals with explicit support, breakpoint masks,
+and stable input provenance rather than untyped callback payloads.
 Complete-field Gaussian or conditional-flow operators define transition
 marginals; typed Wiener/jump operator adapters define pathwise or composite
 process transitions without pretending that independent marginal draws share
@@ -102,6 +115,59 @@ a path. Process diagnostics, calibration reports, shift matrices, and
 retention gates keep raw results, statistical uncertainty, and provenance
 explicit. See
 [Guides → Uncertainty quantification](guides_uncertainty.md).
+
+Gaussian inference uses `GaussianFactor` rather than silently converting every
+covariance to a dense matrix. Rank, factor method, regularization, validity, and
+status remain explicit through conditioning, nonlinear moment transforms, and
+continuous-discrete filtering and smoothing. First-order, scaled-unscented,
+spherical-radial, and Gauss--Hermite transforms are declared approximations; they
+do not make nonlinear continuous-discrete inference exact. Dense-only paths
+enforce dimension guards, and covariance inputs are never silently repaired.
+
+The completed state-space surface also includes square-root sequential Kalman
+filtering/smoothing, exact finite-state backward smoothing, Viterbi paths and
+expected statistics, particle backward/full smoothing, ensemble smoothing,
+Rao--Blackwellized filtering, and structural model compilation. Physical cases,
+schedule masks, state/process ancestry, stable IDs, validity/status, and
+input/method/backend provenance remain present in results. Square-root Kalman
+execution does not support the parallel method. Discrete particle ancestry and
+resampling choices are nondifferentiable.
+
+### Controlled dynamics, estimation, and optimization
+
+Differentiable driving-path classes and `solve_diffrax_cde` cover controlled
+differential equations; `NeuralCDEVectorField` and `train_neural_cde` provide the
+corresponding learned vector-field workflow. Path interpolation is explicit, so
+causal, offline, piecewise-linear, and B-spline approximations are not conflated.
+`solve_probabilistic_ode` returns calibrated Gaussian numerical uncertainty with
+declared factorization, update, status, validity, and method provenance; it is a
+probabilistic numerical ODE solver, not posterior uncertainty about an unknown
+physical model.
+
+`phydrax.control` composes typed time grids, control parameterizations, dynamics,
+costs, and sampled constraints into trajectories with stable control,
+discretization, approximation, method, and backend IDs. It includes
+linearization and frequency response, Lyapunov/Riccati equations, Gramians,
+finite- and infinite-horizon LQR, iLQR, dense multiple shooting, linear-control
+QP compilation, and receding-horizon MPC. Sampled nonlinear path constraints
+report feasibility only at the sampled sites and are not continuous-time
+certificates. iLQR and multiple shooting solve one physical case per call.
+Coefficient search is bounded initialization, not a globally optimal solver.
+Dense algorithms enforce dimension guards; no failed solve is hidden by a
+fallback, projection, covariance repair, or undeclared regularization.
+
+Canonical QPs live in `phydrax.optim`. The built-in dense primal-dual path and
+dense active-set differentiation preserve primal/dual residuals, status,
+regularization, and backend provenance. QPax 0.1.4 is a core runtime dependency
+integrated only through its implicit backend; its availability does not introduce
+an automatic fallback or make all QP solution maps differentiable.
+
+Lyapunov spectra for flows and maps, control-theoretic Gramian actions, implicit
+Lyapunov/Riccati sensitivities, state-space score/Fisher actions, empirical
+controllability/observability directions, and stationary linear-Gaussian spectra
+share diagnosed validity and method provenance. Stationary spectra require a
+stable nonsingular resolvent and positive-semidefinite supplied spectra; inputs
+are rejected rather than clipped or repaired.
 
 ### Geometry: Euclidean coordinates vs metric-aware calculus
 
@@ -295,6 +361,12 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   See [API → Domain → Functions](api/domain/functions.md) and [API → Constraints](api/constraints/index.md).
 - **Operator learning**: use `DatasetDomain` and structured models on \(\Omega_{\text{data}}\times\Omega_x\). The canonical `OperatorBatch` path supports independent source/query discretizations across DeepONet, graph, geometry-informed, transformer, and spectral families; validate architecture choices with the audited benchmark protocol.
   See [Operator-learning cookbook](cookbook/operator_learning.md) and [API → NN → Architectures](api/nn/architectures.md).
+- **Irregular-time sequence mixing**: use the single
+  `DiagonalStateSpaceMixer` class for stable diagonal continuous-time dynamics
+  with masked schedules, exact zero-order-hold or linear input integration, and
+  recurrent or associative execution. It is a research-status generic layer,
+  not several method-branded architectures.
+  See [API → NN → Architectures](api/nn/architectures.md).
 - **Stochastic neural operators**: declare state, duration, optional source-time,
   typed drivers, query, and output roles with `OperatorTransitionSpec`. Adapt a
   process-valued probabilistic operator with `OperatorMarginalTransition`, an
@@ -323,6 +395,18 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   Diffrax backend. Stochastic collocation provides a separate deterministic
   quadrature path for finite-dimensional random inputs.
   See [API → Solver → Differential equations](api/solver/differential.md).
+- **Controlled differential equations and Neural CDEs**: select an explicit
+  differentiable driving path, integrate with `solve_diffrax_cde`, or train a
+  `NeuralCDEVectorField` with `train_neural_cde`. Offline cubic interpolation is
+  noncausal; causal backward-Hermite, piecewise-linear, fixed B-spline, and
+  callable paths declare distinct interpolation and derivative contracts.
+  See [Controlled-dynamics cookbook](cookbook/controlled_dynamics.md) and
+  [API → Solver → Differential equations](api/solver/differential.md).
+- **Probabilistic numerical ODEs**: use `solve_probabilistic_ode` when numerical
+  integration uncertainty is part of the result contract. Gaussian factors,
+  calibration, step status, masks, and method/factorization provenance stay
+  explicit. This numerical uncertainty is not a physical-model posterior.
+  See [API → Solver → Differential equations](api/solver/differential.md).
 - **Coupled estimation and rare events**: declare refinement axes and
   coarse/fine transfers in a `StochasticHierarchy`, run paired levels with one
   realization, and allocate multilevel Monte Carlo work from measured
@@ -339,17 +423,55 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   finite-activity jump compensators. Statistical reports use realization
   independence clusters rather than treating coupled paths as independent.
   See [API → Stochastic → Martingales](api/stochastic/martingales.md).
+- **Optimal control, QPs, and MPC**: compose `ControlProblem` from a typed grid,
+  dynamics, parameterization, costs, and sampled constraints; use LQR/iLQR,
+  compiled linear-control QPs, bounded coefficient search, dense multiple
+  shooting, or receding-horizon MPC according to the problem structure. Results
+  retain case/control axes, validity and backend status, plus control,
+  discretization, approximation, method, and backend IDs. Nonlinear sampled
+  constraints are not between-sample certificates; iLQR and multiple shooting
+  are single-case; bounded search is not globally optimal. Dense paths enforce
+  guards and never hide failure behind a repair or fallback.
+  See [Control cookbook](cookbook/control.md), [API → Control](api/control.md),
+  and [API → Optimization](api/optim.md).
+- **Linear systems, sensitivities, and spectra**: linearize dynamics; solve
+  Lyapunov and Riccati equations; compute LQR policies, Gramian actions, frequency
+  responses, flow/map Lyapunov spectra, state-space score/Fisher actions, and
+  stationary linear-Gaussian spectra. Each path reports its stability,
+  singularity, validity/status, regularization, and method/backend provenance.
+  Dense dimension guards and explicit stability/positive-semidefinite
+  requirements apply; no hidden clipping or repair is performed.
+  See [API → Control](api/control.md), [API → UQ → Global sensitivity](api/uq/sensitivity.md),
+  and [API → Solver → Differential equations](api/solver/differential.md).
 - **Filtering and smoothing**: compose a state prior, transition kernel,
-  observation model, and masked schedule in `StateSpaceProblem`. Exact
-  finite-state and linear-Gaussian marginal likelihoods avoid latent-path
-  sampling. Bootstrap, guided, and Rao--Blackwellized particle filters,
-  conditional SMC, fixed-lag and fixed-interval smoothers, particle Gibbs,
-  particle marginal Metropolis--Hastings, and the high-dimensional ensemble
-  transform filter all preserve the same status, ancestry, and process
-  provenance contracts. Identifiability reports separate observation rank from
-  posterior contraction.
-  See [Filtering cookbook](cookbook/filtering.md) and
-  [API → UQ → Filtering](api/uq/filtering.md).
+  observation model, masked schedule, and optional typed exogenous signal in
+  `StateSpaceProblem`. Every transition and observation receives one
+  context-last `StateSpaceStepContext`; sampled and B-spline inputs preserve
+  endpoint values, breakpoint masks, internal-time evaluation, support, and
+  `input_id`.
+
+  Linear-Gaussian paths include sequential or parallel covariance-form Kalman
+  filtering, sequential square-root filtering, and matching RTS smoothing.
+  Square-root execution does not support the parallel method. Exact finite-state
+  inference includes backward smoothing, Viterbi paths, transition counts, and
+  expected sufficient statistics. Particle, ensemble, Rao--Blackwellized, and
+  conditional-SMC paths include fixed-lag/full/backward smoothers and posterior
+  simulation or MCMC where declared. Particle ancestry and resampling remain
+  discrete and nondifferentiable.
+
+  `GaussianFactor`, conditional moments, declared nonlinear Gaussian transforms,
+  and continuous-discrete Gaussian filtering/smoothing preserve rank,
+  approximation, regularization, validity/status, physical cases, schedule
+  masks, stable IDs, and solver/backend provenance. Dense guards apply.
+  Nonlinear moment propagation and sampled continuous-discrete observations are
+  approximations, not exact inference, and no invalid covariance is silently
+  repaired. Structural local-level, trend, seasonal, autoregressive, regression,
+  deterministic-transition, and process-noise components compile into the same
+  state-space contract.
+  See [Filtering cookbook](cookbook/filtering.md),
+  [API → Stochastic → State-space models](api/stochastic/state_space.md),
+  [API → UQ → Filtering](api/uq/filtering.md), and
+  [API → UQ → Inference and ensembles](api/uq/inference.md).
 - **Backward stochastic equations and semilinear high-dimensional PDEs**:
   evaluate terminal, local, and global BSDE residuals with explicit or
   autodifferentiated controls; fit one time-conditioned field from trajectory-node
@@ -410,9 +532,10 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - **Stochastic path expectation**: use Euclidean bridge kernels for imaginary-time
   propagation or Feynman–Kac diffusion paths for terminal PDE and reliability quantities.
   See [Euclidean path integrals and Feynman–Kac expectations](guides_path_integrals.md).
-- **Cookbook recipes**: end-to-end patterns for Poisson, deterministic and
-  stochastic heat/reaction--diffusion, stochastic PINNs, inverse+data, operator
-  learning, mechanics, and quantum dynamics.
+- **Cookbook recipes**: end-to-end patterns for field and operator learning,
+  stochastic dynamics, filtering and smoothing, controlled differential
+  equations, probabilistic inference, optimal control, QPs/MPC, mechanics, and
+  quantum dynamics.
   Start at [Cookbook → Overview](cookbook/index.md).
 
 ## Where to go next
@@ -427,6 +550,10 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - [Quantum operators and dynamics](guides_quantum.md)
 - [Constraints and objectives](guides_constraints.md)
 - [Uncertainty quantification](guides_uncertainty.md)
+- [State-space models and transition adapters](api/stochastic/state_space.md)
+- [Controlled dynamics](cookbook/controlled_dynamics.md)
+- [Control workflows](cookbook/control.md)
+- [Control API](api/control.md)
 - [Solvers and training](guides_solver.md)
 - [API reference](api/phydrax.md)
 - `phydrax.domain` for geometry, time, and sampling.
@@ -437,8 +564,13 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - `phydrax.constraints` for loss terms and enforced constraints.
 - `phydrax.objectives` for raw signed scalar objectives.
 - `phydrax.operators` for PDE operators.
-- `phydrax.nn` for models and wrappers.
-- `phydrax.stochastic` for Wiener and Poisson paths, composite realizations,
-  stochastic trajectories, random fields, coefficient processes, coupling, and
-  path/marginal transition contracts.
-- `phydrax.solver` for training and evaluation loops.
+- `phydrax.nn` for models, wrappers, and the generic diagonal state-space mixer.
+- `phydrax.stochastic` for process paths, trajectories, typed state-space
+  problems and inputs, transition kernels, and structural model compilation.
+- `phydrax.uq` for Gaussian factors and transforms, filtering/smoothing,
+  state-space estimation, sensitivities, and stochastic spectra.
+- `phydrax.optim` for canonical QPs and the native implicit QPax backend.
+- `phydrax.control` for finite-horizon control, linear systems, LQR/iLQR,
+  multiple shooting, compiled QPs, and MPC.
+- `phydrax.solver` for training, differential equations, controlled dynamics,
+  probabilistic ODEs, and Lyapunov spectra.

@@ -215,6 +215,229 @@ likelihood exactly rather than defining a second stochastic objective.
 ---
 
 
+## State-space completion and estimation
+
+### Exact finite-state completion
+
+`exact_state_space_log_likelihood(..., method="finite-state")` returns an
+`ExactStateSpaceLikelihood` whose `backend` is the `FiniteStateFilterResult` consumed
+below. Exact completion requires a `CategoricalStatePrior` aligned with a closed
+`FiniteStateTransitionKernel`; it never substitutes another backend or repairs a
+failed transition.
+
+`finite_state_backward_smoother` returns fixed-interval state marginals and
+`transition_probabilities[..., step, i, j]`, the posterior mass from state `i` at the
+physical interval's start to state `j` at its endpoint. Step zero starts at
+`problem.initial_time`. A padded interval has exactly zero transition mass and
+contributes zero to counts and sufficient statistics. An observation channel masked
+by `observation_mask` contributes no emission likelihood, while `step_valid` excludes
+the entire padded schedule entry. Physical case axes and IDs are never pooled.
+
+`finite_state_viterbi` returns the maximum joint path, including the state before the
+first observation. A zero prior or transition probability is exact negative infinity,
+not an epsilon floor; deterministic ties choose the lowest state index.
+`finite_state_expected_transition_counts` sums adjacent-pair posterior mass per case
+and over cases. `finite_state_expected_sufficient_statistics` evaluates
+`statistic(previous_state, state, t0, t1, context)` for each state pair, with the
+canonical context in the final positional slot, and preserves an arbitrary
+shape-stable PyTree at per-step, per-case, and total reductions.
+
+Every result retains `step_valid`, algorithm `valid` and `status`, and its source
+result. The finite-state records also retain `input_id`; model, problem, sequence,
+process, approximation, execution, case-ID, and case-shape provenance remains
+reachable through the nested filter result. Inspect validity before reducing:
+padding is inactive capacity, not a successful inferred transition.
+
+::: phydrax.uq.exact_state_space_log_likelihood
+
+---
+
+::: phydrax.uq.ExactStateSpaceLikelihood
+
+---
+
+::: phydrax.uq.FiniteStateFilterResult
+
+---
+
+::: phydrax.uq.finite_state_backward_smoother
+
+---
+
+::: phydrax.uq.FiniteStateSmootherResult
+
+---
+
+::: phydrax.uq.finite_state_viterbi
+
+---
+
+::: phydrax.uq.FiniteStateViterbiResult
+
+---
+
+::: phydrax.uq.finite_state_expected_transition_counts
+
+---
+
+::: phydrax.uq.FiniteStateTransitionCountResult
+
+---
+
+::: phydrax.uq.finite_state_expected_sufficient_statistics
+
+---
+
+::: phydrax.uq.FiniteStateSufficientStatisticsResult
+
+### Full particle smoothing and transition information
+
+`full_particle_smoother` traces the complete realized resampling genealogy from each
+case's last active step. It needs no transition density, but its empirical full-interval
+marginals can exhibit genealogical collapse. `fixed_lag_particle_smoother` instead
+conditions through at most the declared number of future steps; it is a bounded-lag
+genealogical approximation, not a full smoother.
+
+`particle_backward_smoother` is the density-based full FFBSm alternative. It requires
+the transition kernel to expose a normalized `log_prob`; a sampler-only transition is
+rejected rather than approximated by a hidden density. It stores normalized backward
+kernels and adjacent-particle pair weights. `particle_backward_simulation` uses those
+kernels to draw coherent FFBSi paths and retains the sampled particle indices.
+Semantic keys include the physical case ID, step, and sample member, so changes to an
+unrelated case do not renumber a path.
+
+All three full-result families preserve physical case axes and IDs, schedule masks and
+padding, per-step validity/status, model/problem/sequence/input IDs, and method
+provenance. Density-based results additionally retain transition `process_id` and
+`approximation_id`; genealogical results retain resampling method and policy. Padded
+path slots remain invalid rather than becoming observations. Discrete genealogy and
+sampled particle indices are nondifferentiable and explicitly use
+`ancestry_gradient="stop"`; Phydrax does not provide a hidden differentiable ancestry
+surrogate.
+
+`particle_fisher_score` differentiates the stored normalized transition log density
+under stop-gradient FFBSm pair weights. It estimates the transition contribution only,
+not prior or observation scores, and returns both the transition-parameter PyTree and
+flat physical-case scores. `particle_fisher_information` averages the outer products
+of valid physical-case score vectors. Both retain the source smoother and its
+process, approximation, model, problem, sequence, and input provenance. These are
+particle approximations, not exact observed information.
+
+::: phydrax.uq.full_particle_smoother
+
+---
+
+::: phydrax.uq.ParticleSmootherResult
+
+---
+
+::: phydrax.uq.fixed_lag_particle_smoother
+
+---
+
+::: phydrax.uq.FixedLagParticleSmootherResult
+
+---
+
+::: phydrax.uq.particle_backward_smoother
+
+---
+
+::: phydrax.uq.ParticleBackwardSmootherResult
+
+---
+
+::: phydrax.uq.particle_backward_simulation
+
+---
+
+::: phydrax.uq.ParticleBackwardSimulationResult
+
+---
+
+::: phydrax.uq.particle_fisher_score
+
+---
+
+::: phydrax.uq.ParticleFisherScoreResult
+
+---
+
+::: phydrax.uq.particle_fisher_information
+
+---
+
+::: phydrax.uq.ParticleFisherInformationResult
+
+### Multi-experiment state-space estimation
+
+`StateSpaceExperiment` binds one parameterized problem builder to a named experiment
+and an explicit physical case contract. Every evaluation must reproduce the declared
+`case_axes`, `case_shape`, and unique `case_ids`. Its exact path selects Kalman or
+finite-state likelihood explicitly; a custom particle, guided-particle, or ensemble
+likelihood must carry a non-exact `likelihood_id`. Custom likelihoods default to
+`transform_safe=False`, so local MAP, global-then-local MAP, and Laplace reject them
+before tracing. Set `transform_safe=True` only when the callback and retained backend
+are JAX-transform-safe; this is an explicit caller assertion, not an inferred fallback.
+Derivative-free global MAP and direct likelihood evaluation remain available otherwise.
+There is no silent backend fallback.
+
+`MultiExperimentStateSpaceLikelihood` evaluates each experiment independently, sums
+all physical-case log likelihoods, and returns both the flattened per-case vector and
+each untouched `ExperimentStateSpaceLikelihood`. Native schedule padding, observation
+masks, validity, status, case layout, backend diagnostics, and `input_id` therefore
+remain attached to the experiment that produced them. Each record also names the
+likelihood and resolved temporal method, approximation, model/problem/sequence IDs,
+model and observation discretizations, and any covariance regularization. Experiment
+IDs qualify case IDs, so differently shaped experiments compose without treating a
+padded slot as data or colliding identities.
+
+`StateSpaceEstimation` places that likelihood into one `PosteriorProblem`; the
+parameter prior and bijector Jacobian are added once, while each experiment likelihood
+is added once. Its local/global MAP, Laplace, and sampler methods reuse the existing
+algorithm results and attach likelihood diagnostics at the selected reference point.
+Global initialization remains bounded stochastic search and is not a guarantee of a
+global optimum. Failures and approximation provenance are returned, not repaired.
+
+::: phydrax.uq.StateSpaceExperiment
+
+---
+
+::: phydrax.uq.ExperimentStateSpaceLikelihood
+
+---
+
+::: phydrax.uq.MultiExperimentStateSpaceLikelihood
+
+---
+
+::: phydrax.uq.MultiExperimentStateSpaceLikelihoodResult
+
+---
+
+::: phydrax.uq.StateSpaceEstimation
+
+---
+
+::: phydrax.uq.StateSpaceMAPWorkflowResult
+
+---
+
+::: phydrax.uq.StateSpaceLaplaceWorkflowResult
+
+---
+
+The exported composition typing contracts are
+`ApproximateStateSpaceLikelihoodResult`, `StateSpaceLikelihoodBackend`,
+`StateSpaceLikelihoodFunction`, and `StateSpaceSampler`.
+
+::: phydrax.uq.ApproximateStateSpaceLikelihoodResult
+
+---
+
+
+::: phydrax.uq.StateSpaceSamplingWorkflowResult
+
 ## MAP estimation
 
 `search_map` performs bounded stochastic global initialization in unconstrained

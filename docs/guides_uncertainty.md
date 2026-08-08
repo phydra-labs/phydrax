@@ -1033,9 +1033,9 @@ and draw axes instead of silently pooling chains.
 posterior_draws = phx.uq.sample_nuts(
     posterior,
     key=jr.key(10),
-    num_chains=4,
-    num_warmup=1000,
-    num_samples=1000,
+    num_chains=2,
+    num_warmup=20,
+    num_samples=8,
     target_acceptance_rate=0.9,
     chain_method="vectorized",
 )
@@ -1050,8 +1050,11 @@ report = posterior_draws.convergence_report(
     min_bulk_ess=400,
     min_tail_ess=400,
 )
-report.raise_for_failure()
 ```
+
+The counts above are executable smoke settings. Increase warmup and retained draws
+until independent chains pass the declared release thresholds before interpreting
+posterior summaries.
 
 `chain_method="sequential"` is the conservative low-compilation-memory path.
 `"vectorized"` compiles one batched transition and synchronizes chains after every
@@ -1185,10 +1188,10 @@ sgld = phx.uq.sample_sgld(
     minibatch_source,
     key=jr.key(20),
     step_size=1e-4,
-    num_chains=4,
-    num_burnin=1000,
-    num_samples=2000,
-    steps_per_sample=2,
+    num_chains=2,
+    num_burnin=1,
+    num_samples=4,
+    steps_per_sample=1,
     control_variate=control,
     chain_method="vectorized",
 )
@@ -1198,10 +1201,10 @@ sgnht = phx.uq.sample_sgnht(
     key=jr.key(21),
     step_size=5e-4,
     diffusion=0.01,
-    num_chains=4,
-    num_burnin=1000,
-    num_samples=2000,
-    steps_per_sample=2,
+    num_chains=2,
+    num_burnin=1,
+    num_samples=4,
+    steps_per_sample=1,
     control_variate=control,
     chain_method="vectorized",
 )
@@ -1211,8 +1214,10 @@ mixing = sgld.mixing_report(
     min_bulk_ess=200,
     min_tail_ess=200,
 )
-mixing.raise_for_failure()
 ```
+
+The counts above exercise the sampler contracts only. They are too small for a
+mixing or discretization-bias claim.
 
 Both samplers preserve separate chain/draw axes, nested PyTrees, constrained
 physical samples, source configuration and fingerprint, deterministic keys,
@@ -1246,29 +1251,41 @@ It is not a mode-discovery algorithm and does not estimate evidence.
 
 ```python
 flow_config = phx.uq.FlowNUTSConfig(
-    num_adaptation_rounds=4,
-    num_local_adaptation_steps=100,
-    num_global_adaptation_steps=20,
-    num_local_steps=3,
+    num_adaptation_rounds=1,
+    num_local_adaptation_steps=4,
+    num_global_adaptation_steps=2,
+    num_stabilization_steps=1,
+    num_local_steps=1,
     num_global_steps=1,
-    history_capacity_per_chain=1000,
-    flow_layers=6,
-    max_epochs=100,
+    history_capacity_per_chain=4,
+    history_thinning=1,
+    flow_layers=1,
+    num_knots=4,
+    nn_width=8,
+    nn_depth=1,
+    max_epochs=2,
+    max_patience=2,
+    batch_size=2,
+    validation_fraction=0.25,
 )
 flow_draws = phx.uq.sample_flow_nuts(
     posterior,
     key=jr.key(11),
-    num_chains=4,
-    num_warmup=1000,
-    num_samples=1000,
+    num_chains=2,
+    num_warmup=20,
+    num_samples=8,
     initial_positions={
-        "source": jnp.asarray([-3.0, -1.0, 1.0, 3.0]),
+        "source": jnp.asarray([-3.0, 3.0]),
     },
     target_acceptance_rate=0.9,
+    max_num_doublings=5,
     config=flow_config,
     chain_method="vectorized",
 )
 ```
+
+The compact counts above exercise adaptation and production end to end; they are not
+sufficient for convergence or mode-occupancy claims.
 
 All kernels act in flattened unconstrained coordinates. During adaptation, local
 NUTS transitions populate a fixed-capacity, chain-stratified reservoir; the flow is

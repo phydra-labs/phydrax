@@ -1,15 +1,15 @@
 # Cookbook
 
-This section contains end-to-end “recipes” that all follow the same core pattern:
+This section contains end-to-end recipes built from Phydrax's public APIs.
+Field-learning recipes share a core pattern: choose labeled domains and
+components, define `DomainFunction` fields, build residual operators, reduce
+sampled constraints, and optimize the resulting functional with
+`FunctionalSolver`. Inference, differential-equation, and control recipes instead
+use their typed problem, signal, trajectory, and result contracts directly.
 
-1) choose a labeled **domain** \(\Omega\) and one or more **components** \(\Omega_i\subseteq\Omega\),  
-2) define **fields** as `DomainFunction`s on \(\Omega\),  
-3) build **residual operators** \(r=\mathcal{N}(u,\dots)\),  
-4) turn residuals into **constraint terms** by sampling + reduction,  
-5) assemble a `FunctionalSolver` and optimize.
-
-The goal is to show how Phydrax unifies “SciML modes” (PINNs, inverse problems, hybrid physics–data, operator learning)
-via the same mathematical contract: minimize functionals over domains.
+The examples keep physical case and time axes, schedule or sample masks, stable
+identifiers, validity/status, and method/backend provenance visible where those
+contracts provide them.
 
 !!! info
     The cookbook examples are meant to demonstrate **basic workflows/recipes structurally**. Real workloads typically
@@ -48,6 +48,8 @@ Differential operators support multiple backends (`backend="ad"|"jet"|"fd"|"basi
 - [Heat equation (space–time, initial conditions, optional sensors)](heat.md)
 - [Stochastic dynamics (PINNs, SDEs, and semidiscrete SPDEs)](stochastic_dynamics.md)
 - [Filtering and smoothing stochastic state](filtering.md)
+- [Controlled dynamics (driving paths, CDE integration, and Neural CDEs)](controlled_dynamics.md)
+- [Control workflows (finite-horizon control, QPs, and MPC)](control.md)
 - [Backward stochastic equations and semilinear PDEs](bsde.md)
 - [Physics-informed graph residuals](graph_physics.md)
 - [Inverse problems + hybrid physics–data](inverse_and_data.md)

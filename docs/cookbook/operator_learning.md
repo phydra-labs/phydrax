@@ -30,6 +30,7 @@ For this runnable example, we choose a simple analytic “operator” that maps 
 
 !!! example
     ```python
+    import jax
     import jax.numpy as jnp
     import jax.random as jr
     import optax
@@ -595,6 +596,11 @@ cases. Coordinates have shape `case_shape + sample_shape + (coord_dim,)`;
 quadrature and masks have `case_shape + sample_shape`. The following batch has
 two independently deformed source clouds and two independent query clouds.
 
+This executable survey evaluates several unrelated one-shot programs under
+`jax.disable_jit()` so documentation validation does not spend most of its time
+compiling throwaway shapes. Remove that scope for repeated training or deployment
+calls and compile the stable model/batch signature instead.
+
 ```python
 base = jnp.stack(
     jnp.meshgrid(
@@ -718,12 +724,13 @@ gaot = phx.nn.GAOT(
     key=jr.key(23),
 )
 
-geometry_predictions = {
-    "gino": gino(geometry_batch),
-    "geometry_flower": geometry_flower(geometry_batch),
-    "rigno": rigno(geometry_batch),
-    "gaot": gaot(geometry_batch),
-}
+with jax.disable_jit():
+    geometry_predictions = {
+        "gino": gino(geometry_batch),
+        "geometry_flower": geometry_flower(geometry_batch),
+        "rigno": rigno(geometry_batch),
+        "gaot": gaot(geometry_batch),
+    }
 assert all(prediction.shape == (2, 10) for prediction in geometry_predictions.values())
 assert all(
     jnp.allclose(prediction[1, 8:], 0.0)
@@ -810,9 +817,10 @@ conservative_flower = phx.nn.GeometryInformedFlower(
     conservation_source_key="density",
     key=jr.key(24),
 )
-conservative_prediction, conservative_diagnostics = (
-    conservative_flower.evaluate_with_diagnostics(conservative_batch)
-)
+with jax.disable_jit():
+    conservative_prediction, conservative_diagnostics = (
+        conservative_flower.evaluate_with_diagnostics(conservative_batch)
+    )
 assert conservative_diagnostics.latent_mask is not None
 assert jnp.allclose(
     jnp.sum(conservative_prediction * ring_weights),

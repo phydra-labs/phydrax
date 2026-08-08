@@ -1,8 +1,9 @@
 # Uncertainty quantification
 
 This recipe covers independently initialized ensembles, proper scoring, split
-conformal calibration, uncertain-input propagation, explicit Bayesian physical
-parameters, MAP/NUTS/flow-assisted NUTS/Laplace/Pathfinder inference,
+conformal calibration, uncertain-input propagation, singular covariance-factor
+Gaussian moments, global and matrix-free local sensitivity, explicit Bayesian
+physical parameters, MAP/NUTS/flow-assisted NUTS/Laplace/Pathfinder inference,
 fixed-step SGLD/SGNHT for factorized data, and scalable Gaussian-process model
 discrepancy.
 
@@ -177,6 +178,67 @@ sensitivity = phx.uq.sobol_indices(
 `first_order` measures each input's main effect. `total_order` also includes all
 interactions involving that input. Validate the estimator on a reference problem such
 as Ishigami before using a new expensive forward workflow.
+
+### 6a. Transform singular Gaussian moments explicitly
+
+Represent covariance by its factor directions. Here the two-dimensional input has
+rank one; the transform uses that rank and does not invent a second direction:
+
+```python
+nonlinear_input_factor = phx.uq.GaussianFactor(
+    jnp.asarray([[0.2], [0.0]]),
+    factor_id="rank-one-coefficient",
+)
+nonlinear_moments = phx.uq.spherical_radial_cubature(
+    lambda value: jnp.asarray(
+        [value[0] ** 2, jnp.sin(value[0] + value[1])]
+    ),
+    jnp.asarray([0.5, -0.1]),
+    nonlinear_input_factor,
+    regularization=1e-8,
+)
+
+assert nonlinear_input_factor.numerical_rank == 1
+assert nonlinear_moments.method_id == "spherical-radial-cubature"
+assert nonlinear_moments.regularization == 1e-8
+```
+
+The returned factor, `Cov[input, output]`, status, validity, method ID, and point count
+make the approximation auditable. The requested output regularization is the only
+added diagonal term. Invalid factors or nonfinite evaluations are reported; they do
+not trigger covariance clipping, jitter, or a different transform. Use the guarded
+unscented or Gauss--Hermite alternatives only when their dense-dimension or tensor
+point limits fit the problem.
+
+### 6b. Apply local curvature in one direction
+
+Use a Gauss--Newton action when an optimizer or diagnostic needs `JᵀJ v`, not a dense
+Jacobian or Hessian:
+
+```python
+local_parameters = jnp.asarray([1.0])
+local_direction = jnp.asarray([1.0])
+local_target = jnp.asarray([0.8, 2.1, 3.2])
+
+def local_residual(value):
+    return value[0] * jnp.asarray([1.0, 2.0, 3.0]) - local_target
+
+local_curvature = phx.uq.gauss_newton_action(
+    local_residual,
+    local_parameters,
+    local_direction,
+    regularization=1e-3,
+)
+
+assert local_curvature.method_id == "jax_jvp_vjp"
+assert local_curvature.regularization == 1e-3
+```
+
+The action uses one JVP and one transpose-VJP and records validity, status, operator,
+method, approximation, and explicit regularization. Empirical observability and
+controllability directions subsequently materialize a guarded dense action matrix;
+experiment-design objectives likewise materialize action callables up to their
+declared `max_dimension`. Neither API silently changes backend.
 
 ## 7. Infer a physical parameter with global/local MAP, NUTS, and Laplace
 
@@ -387,10 +449,10 @@ sgld = phx.uq.sample_sgld(
     source,
     key=jr.key(30),
     step_size=1e-4,
-    num_chains=4,
-    num_burnin=1000,
-    num_samples=2000,
-    steps_per_sample=2,
+    num_chains=2,
+    num_burnin=1,
+    num_samples=4,
+    steps_per_sample=1,
     control_variate=control,
 )
 sgld_refined = phx.uq.sample_sgld(
@@ -398,10 +460,10 @@ sgld_refined = phx.uq.sample_sgld(
     source,
     key=jr.key(31),
     step_size=5e-5,
-    num_chains=4,
-    num_burnin=1000,
-    num_samples=2000,
-    steps_per_sample=2,
+    num_chains=2,
+    num_burnin=1,
+    num_samples=4,
+    steps_per_sample=1,
     control_variate=control,
 )
 sgnht = phx.uq.sample_sgnht(
@@ -410,10 +472,10 @@ sgnht = phx.uq.sample_sgnht(
     key=jr.key(32),
     step_size=5e-4,
     diffusion=0.01,
-    num_chains=4,
-    num_burnin=1000,
-    num_samples=2000,
-    steps_per_sample=2,
+    num_chains=2,
+    num_burnin=1,
+    num_samples=4,
+    steps_per_sample=1,
     control_variate=control,
 )
 ```
@@ -433,14 +495,15 @@ mixing = sgld_refined.mixing_report(
     min_bulk_ess=200,
     min_tail_ess=200,
 )
-mixing.raise_for_failure()
 ```
 
-Report `step_sensitivity`, reference moment/predictive discrepancies, stochastic
-gradient variance, throughput, memory, batch definition, and every fixed-step
-setting. SGLD and SGNHT are unadjusted approximations: there is no Metropolis
-correction or automatic step-size adaptation. Prefer exact NUTS or Laplace whenever
-full-data inference is feasible.
+The counts above are executable smoke settings, not an inference recommendation.
+For production, increase burn-in and retained draws until independent chains pass
+declared convergence thresholds. Report `step_sensitivity`, reference
+moment/predictive discrepancies, stochastic-gradient variance, throughput, memory,
+batch definition, and every fixed-step setting. SGLD and SGNHT are unadjusted
+approximations: there is no Metropolis correction or automatic step-size adaptation.
+Prefer exact NUTS or Laplace whenever full-data inference is feasible.
 
 For neural operators, use `OperatorBatchObservationLikelihood` with
 `OperatorMinibatchSource`; one complete physical case is one factor. Query points,
@@ -455,7 +518,7 @@ Pathfinder is a fast local approximation selected along an L-BFGS path:
 pathfinder = phx.uq.fit_pathfinder(
     posterior_problem,
     key=jr.key(8),
-    num_samples=512,
+    num_samples=64,
 )
 pathfinder_prediction = pathfinder.predict(posterior_query)
 ```
@@ -476,28 +539,41 @@ multimodal_problem = phx.uq.PosteriorProblem(
     ),
 )
 flow_config = phx.uq.FlowNUTSConfig(
-    num_adaptation_rounds=3,
-    num_local_adaptation_steps=80,
-    num_global_adaptation_steps=20,
-    num_local_steps=2,
+    num_adaptation_rounds=1,
+    num_local_adaptation_steps=4,
+    num_global_adaptation_steps=2,
+    num_stabilization_steps=1,
+    num_local_steps=1,
     num_global_steps=1,
-    history_capacity_per_chain=256,
-    max_epochs=60,
+    history_capacity_per_chain=4,
+    history_thinning=1,
+    flow_layers=1,
+    num_knots=4,
+    nn_width=8,
+    nn_depth=1,
+    max_epochs=2,
+    max_patience=2,
+    batch_size=2,
+    validation_fraction=0.25,
 )
 flow_nuts = phx.uq.sample_flow_nuts(
     multimodal_problem,
     key=jr.key(9),
-    num_chains=4,
-    num_warmup=500,
-    num_samples=1000,
-    initial_positions=jnp.asarray([-2.0, -1.8, 1.8, 2.0]),
+    num_chains=2,
+    num_warmup=20,
+    num_samples=8,
+    initial_positions=jnp.asarray([-2.0, 2.0]),
     target_acceptance_rate=0.9,
+    max_num_doublings=5,
     config=flow_config,
     chain_method="vectorized",
 )
-assert flow_nuts.diagnostics.max_rhat < 1.05
-assert jnp.mean(flow_nuts.global_acceptance_rate) > 0.0
+assert flow_nuts.log_density.shape == (2, 8)
+assert flow_nuts.global_acceptance_rate.shape == (2, 8)
 ```
+
+The counts above exercise the end-to-end contract; they are too small for convergence
+or mode-occupancy claims.
 
 The flow is trained only during adaptation. Every global transition uses the exact
 asymmetric independence Metropolis--Hastings correction, and the frozen production
