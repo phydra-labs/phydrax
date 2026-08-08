@@ -1089,7 +1089,7 @@ Thin a completed, convergence-checked MCMC result only as explicit post-processi
 ```python
 posterior_coreset = phx.uq.thin_posterior(
     posterior_draws,
-    phx.uq.SteinThinning(200),
+    phx.uq.SteinThinning(4),
     key=jr.key(11),
 )
 prediction = posterior_coreset.predict(
@@ -1097,6 +1097,9 @@ prediction = posterior_coreset.predict(
     batch_size=64,
 )
 ```
+
+The executable smoke example retains four of its eight draws per chain. A
+production run may retain 200 only after sampling more than 200 draws per chain.
 
 `SteinThinning` evaluates the exact transformed-posterior score and greedily minimizes
 an inverse-multiquadric kernel Stein discrepancy inside each chain. The result keeps

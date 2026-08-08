@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
+from jax import core as jax_core
 from jaxtyping import Array
 
 from phydrax.coresets import (
@@ -116,7 +117,7 @@ def _matrix_leaf(value: Any, axis: str | int, count: int, /) -> Array | None:
                 return None
             position = axis
         data = jnp.moveaxis(jnp.asarray(value.data, dtype=float), position, 0)
-    elif isinstance(value, (jax.Array, jax.core.Tracer)):
+    elif isinstance(value, (jax.Array, jax_core.Tracer)):
         data = jnp.asarray(value, dtype=float)
         position = axis if isinstance(axis, int) else 0
         if data.ndim == 0 or position >= data.ndim or data.shape[position] != count:
@@ -132,7 +133,7 @@ def _matrix_leaf(value: Any, axis: str | int, count: int, /) -> Array | None:
 def _feature_matrix(value: Any, axis: str | int, count: int, /) -> Array:
     if isinstance(value, cx.Field):
         leaves = (value,)
-    elif isinstance(value, (jax.Array, jax.core.Tracer)):
+    elif isinstance(value, (jax.Array, jax_core.Tracer)):
         leaves = (value,)
     else:
         leaves = tuple(
@@ -160,7 +161,7 @@ def _take_samples(value: Any, axis: str | int, indices: Array, /) -> Any:
                     return leaf
                 position = axis
             return cx.Field(jnp.take(leaf.data, indices, axis=position), dims=leaf.dims)
-        if isinstance(leaf, (jax.Array, jax.core.Tracer)):
+        if isinstance(leaf, (jax.Array, jax_core.Tracer)):
             position = axis if isinstance(axis, int) else 0
             if leaf.ndim == 0 or position >= leaf.ndim:
                 return leaf

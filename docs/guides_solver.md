@@ -368,6 +368,7 @@ condition = phx.conditions.Residual(
     component,
     lambda f: f,
 )
+```
 
 Use `phx.sampling.collocation.RECOMMENDED_COLLOCATION_DEFAULTS` to inspect that
 contract. When adaptive refinement is explicitly requested, R3 is the supported

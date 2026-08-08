@@ -349,14 +349,15 @@ def _native_solution(
     if problem.stochastic:
         if realization is None or path_key is None or path_sign is None:
             raise ValueError("Stochastic problems require a WienerRealization.")
-        if dt0 is None and not isinstance(stepsize_controller, dfx.StepTo):
-            raise ValueError(
-                "Stochastic Diffrax solves require explicit dt0 unless the "
-                "controller declares every step with diffrax.StepTo."
-            )
         start, end = _validated_realization_interval(problem, realization)
         resolved_dt0 = None if dt0 is None else jnp.asarray(dt0)
-        if isinstance(stepsize_controller, dfx.ConstantStepSize):
+        if resolved_dt0 is None:
+            if not isinstance(stepsize_controller, dfx.StepTo):
+                raise ValueError(
+                    "Stochastic Diffrax solves require explicit dt0 unless the "
+                    "controller declares every step with diffrax.StepTo."
+                )
+        elif isinstance(stepsize_controller, dfx.ConstantStepSize):
             resolved_dt0 = eqx.error_if(
                 resolved_dt0,
                 jnp.abs(resolved_dt0) <= realization.tolerance,
