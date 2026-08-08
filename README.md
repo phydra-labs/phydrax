@@ -48,6 +48,9 @@ Most workflows are composing a few primitives:
   realizations, and estimates carry method-valid diagnostics and provenance.
 - **Interpolation**: reusable anisotropic Smolyak surrogates preserve labeled
   domains, array-valued outputs, and JAX differentiation.
+- **Positive-definite kernels**: one covariance-safe PyTree algebra serves Gaussian
+  processes, coresets, inducing-point selection, learned input transforms, and
+  finite-feature inference.
 - **Stochastic processes and inference**: reproducible processes and
   trajectories, state-space models, Gaussian factors and nonlinear moment
   transforms, continuous-discrete inference, finite-state and particle

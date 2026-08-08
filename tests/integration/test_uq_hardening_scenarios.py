@@ -192,6 +192,20 @@ def test_repeated_omitted_physics_discrepancy_improves_predictions_and_scores():
     fixed_gp_coverage = []
     joint_parameter_gp_correlations = []
     observation_likelihood = phx.uq.GaussianLikelihood(observation_scale)
+    def gp_state(amplitude, length_scale, noise_scale):
+        return phx.uq.GaussianProcessLikelihoodState(
+            kernel=phx.kernels.AmplitudeKernel(
+                phx.kernels.Matern32Kernel(length_scale=length_scale),
+                amplitude,
+            ),
+            noise_scale=noise_scale,
+        )
+
+    fixed_state = gp_state(
+        fixed_amplitude,
+        fixed_length_scale,
+        observation_scale,
+    )
 
     for repeat in range(6):
         observations = truth(observation_x) + observation_scale * jr.normal(
@@ -201,7 +215,6 @@ def test_repeated_omitted_physics_discrepancy_improves_predictions_and_scores():
         discrepancy = phx.uq.ExactGaussianProcessDiscrepancy(
             observation_x,
             observations,
-            kernel="matern32",
         )
         physical_space = phx.uq.ParameterSpace(
             {"parameter": jnp.asarray(1.0)},
@@ -220,9 +233,7 @@ def test_repeated_omitted_physics_discrepancy_improves_predictions_and_scores():
             physical_space,
             lambda parameters: discrepancy.log_marginal_likelihood(
                 parameters["parameter"] * observation_x,
-                amplitude=fixed_amplitude,
-                length_scale=fixed_length_scale,
-                noise_scale=observation_scale,
+                state=fixed_state,
             ),
         )
         joint_space = phx.uq.ParameterSpace(
@@ -249,9 +260,11 @@ def test_repeated_omitted_physics_discrepancy_improves_predictions_and_scores():
             joint_space,
             lambda parameters: discrepancy.log_marginal_likelihood(
                 parameters["parameter"] * observation_x,
-                amplitude=parameters["amplitude"],
-                length_scale=parameters["length_scale"],
-                noise_scale=parameters["noise_scale"],
+                state=gp_state(
+                    parameters["amplitude"],
+                    parameters["length_scale"],
+                    parameters["noise_scale"],
+                ),
             ),
         )
 
@@ -270,16 +283,16 @@ def test_repeated_omitted_physics_discrepancy_improves_predictions_and_scores():
         fixed_condition = discrepancy.condition(
             fixed_parameter * observation_x,
             test_x,
-            amplitude=fixed_amplitude,
-            length_scale=fixed_length_scale,
-            noise_scale=observation_scale,
+            state=fixed_state,
         )
         joint_condition = discrepancy.condition(
             joint_parameters["parameter"] * observation_x,
             test_x,
-            amplitude=joint_parameters["amplitude"],
-            length_scale=joint_parameters["length_scale"],
-            noise_scale=joint_parameters["noise_scale"],
+            state=gp_state(
+                joint_parameters["amplitude"],
+                joint_parameters["length_scale"],
+                joint_parameters["noise_scale"],
+            ),
         )
         target = truth(test_x)
         no_mean = no_parameter * test_x

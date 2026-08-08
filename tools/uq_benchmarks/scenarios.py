@@ -11,6 +11,7 @@ from statistics import median
 from typing import Any
 
 import coordax as cx
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -1112,12 +1113,21 @@ def misspecified_pde_discrepancy(
     def joint_physical_mean(parameters):
         return physical(parameters["parameter"], observation_x)
 
-    def joint_hyperparameters(parameters):
-        return {
-            "amplitude": parameters["amplitude"],
-            "length_scale": parameters["length_scale"],
-            "noise_scale": parameters["noise_scale"],
-        }
+    def gp_state(amplitude, length_scale, noise_scale):
+        return phx.uq.GaussianProcessLikelihoodState(
+            kernel=phx.kernels.AmplitudeKernel(
+                phx.kernels.Matern32Kernel(length_scale=length_scale),
+                amplitude,
+            ),
+            noise_scale=noise_scale,
+        )
+
+    def joint_state(parameters):
+        return gp_state(
+            parameters["amplitude"],
+            parameters["length_scale"],
+            parameters["noise_scale"],
+        )
 
     cold, compile_seconds, execute = _jit_timings(
         truth,
@@ -1154,23 +1164,22 @@ def misspecified_pde_discrepancy(
     exact_condition_stage_seconds = []
     fitc_condition_stage_seconds = []
     likelihood = phx.uq.GaussianLikelihood(observation_scale)
+    fixed_state = gp_state(
+        fixed_amplitude,
+        fixed_length_scale,
+        observation_scale,
+    )
     exact_factor, exact_factor_build_seconds = _timed_call(
         lambda: phx.uq.ExactGaussianProcessFactor(
             observation_x,
-            amplitude=fixed_amplitude,
-            length_scale=fixed_length_scale,
-            noise_scale=observation_scale,
-            kernel="matern32",
+            state=fixed_state,
         )
     )
     sparse_factor, fitc_factor_build_seconds = _timed_call(
         lambda: phx.uq.SparseGaussianProcessFactor(
             observation_x,
             inducing_x,
-            amplitude=fixed_amplitude,
-            length_scale=fixed_length_scale,
-            noise_scale=observation_scale,
-            kernel="matern32",
+            state=fixed_state,
         )
     )
     exact_conditioner, exact_conditioner_build_seconds = _timed_call(
@@ -1189,13 +1198,11 @@ def misspecified_pde_discrepancy(
         exact_gp = phx.uq.ExactGaussianProcessDiscrepancy(
             observation_x,
             observations,
-            kernel="matern32",
         )
         sparse_gp = phx.uq.SparseGaussianProcessDiscrepancy(
             observation_x,
             observations,
             inducing_x,
-            kernel="matern32",
         )
         physical_space = phx.uq.ParameterSpace(
             {"parameter": jnp.asarray(1.0)},
@@ -1247,7 +1254,7 @@ def misspecified_pde_discrepancy(
                 phx.uq.GaussianProcessMarginalLikelihood(
                     exact_gp,
                     joint_physical_mean,
-                    hyperparameters=joint_hyperparameters,
+                    state=joint_state,
                     label="joint_gp_discrepancy",
                 )
             ],
@@ -1506,15 +1513,18 @@ def correlated_vector_discrepancy(
     configuration: BenchmarkConfiguration,
     seed: int,
 ) -> ScenarioResult:
-    """Validate coherent correlated-output GP discrepancy and multivariate scoring."""
+    """Validate heterotopic correlated-output GP discrepancy and scoring."""
     started = time.perf_counter()
     root_key = jr.key(seed)
     observation_x = jnp.linspace(0.0, 1.0, 18)
     query_x = jnp.linspace(0.0, 1.0, 31)
+    output_names = ("velocity", "pressure")
     output_covariance = jnp.asarray([[1.0, -0.75], [-0.75, 1.0]])
     amplitude = 0.15
     length_scale = 0.25
     noise_scale = jnp.asarray([0.01, 0.015])
+    observation_mask = jnp.ones((observation_x.size, 2), dtype=bool)
+    observation_mask = observation_mask.at[1::3, 1].set(False).at[2::4, 0].set(False)
 
     def base(locations):
         return jnp.stack([locations, 2.0 * locations], axis=1)
@@ -1525,12 +1535,30 @@ def correlated_vector_discrepancy(
 
     observation_base = base(observation_x)
     observations = observation_base + discrepancy(observation_x)
-    model = phx.uq.MultiOutputGaussianProcessDiscrepancy(
+    model = phx.uq.MultiOutputGaussianProcessDiscrepancy.from_dense(
         observation_x,
         observations,
-        output_covariance=output_covariance,
-        output_names=("velocity", "pressure"),
-        kernel="exp_squared",
+        output_names=output_names,
+        mask=observation_mask,
+    )
+    coregionalization = phx.uq.Coregionalization(
+        jnp.linalg.cholesky(output_covariance),
+        jnp.zeros((2,)),
+        output_names=output_names,
+    )
+    state = phx.uq.MultiOutputGaussianProcessLikelihoodState(
+        kernel=phx.uq.IntrinsicCoregionalizationKernel(
+            phx.kernels.AmplitudeKernel(
+                phx.kernels.SquaredExponentialKernel(length_scale=length_scale),
+                amplitude,
+            ),
+            coregionalization,
+        ),
+        noise_scale=noise_scale,
+    )
+    query_design = phx.uq.MultiOutputDesign.from_dense(
+        query_x,
+        output_names=output_names,
     )
     cold, compile_seconds, execute = _jit_timings(
         base,
@@ -1540,12 +1568,8 @@ def correlated_vector_discrepancy(
     condition, condition_seconds = _timed_call(
         lambda: model.condition(
             observation_base,
-            query_x,
-            amplitude=amplitude,
-            length_scale=length_scale,
-            noise_scale=noise_scale,
-            point_dim="x",
-            output_dim="field",
+            query_design,
+            state=state,
         )
     )
     sample_count = min(configuration.posterior_prediction_samples, 1_024)
@@ -1553,12 +1577,12 @@ def correlated_vector_discrepancy(
         lambda: condition.sample(
             jr.fold_in(root_key, 1),
             num_samples=sample_count,
-        )
+        ).reshape((sample_count, query_x.size, 2))
     )
     query_base = base(query_x)
     target = query_base + discrepancy(query_x)
     predictive_samples = query_base + discrepancy_samples
-    predictive_mean = query_base + condition.mean
+    predictive_mean = query_base + condition.dense_mean()
     mean_rmse = jnp.sqrt(jnp.mean((predictive_mean - target) ** 2))
     midpoint = query_x.size // 2 + 1
     first_index = 2 * midpoint
@@ -1577,7 +1601,7 @@ def correlated_vector_discrepancy(
     upper_90 = jnp.quantile(predictive_samples, 0.95, axis=0)
     lower_95 = jnp.quantile(predictive_samples, 0.025, axis=0)
     upper_95 = jnp.quantile(predictive_samples, 0.975, axis=0)
-    predictive_scale = jnp.sqrt(condition.variance + noise_scale[None, :] ** 2)
+    predictive_scale = jnp.sqrt(condition.dense_variance() + noise_scale[None, :] ** 2)
     calibration = _calibration_statistics(
         mean=predictive_mean,
         scale=predictive_scale,
@@ -1617,6 +1641,12 @@ def correlated_vector_discrepancy(
             "calibration",
             minimum=0.0,
         ),
+        "heterotopic_observation_fraction": metric(
+            jnp.mean(observation_mask),
+            "diagnostic",
+            minimum=0.5,
+            maximum=0.95,
+        ),
         "condition_seconds": metric(condition_seconds, "performance", unit="s"),
         "sampling_seconds": metric(sampling_seconds, "performance", unit="s"),
         **_calibration_metrics(calibration, num_cases=configuration.calibration_cases),
@@ -1638,7 +1668,321 @@ def correlated_vector_discrepancy(
             "output_names": list(condition.output_names),
             "declared_output_covariance": output_covariance.tolist(),
             "num_prediction_samples": sample_count,
+            "observation_mask": observation_mask.tolist(),
             "calibration_cases": configuration.calibration_cases,
+        },
+    )
+
+
+def operator_conditioned_inverse_pde(
+    configuration: BenchmarkConfiguration,
+    seed: int,
+) -> ScenarioResult:
+    """Infer an elliptic coefficient through value and operator observations."""
+    started = time.perf_counter()
+    value_points = jnp.linspace(0.0, 1.0, 8)
+    operator_points = jnp.linspace(0.05, 0.95, 10)
+    query_points = jnp.linspace(0.0, 1.0, 41)
+    true_diffusion = 1.7
+    wrong_diffusion = jnp.asarray(1.0)
+
+    def field(points):
+        return jnp.sin(jnp.pi * points)
+
+    forcing = true_diffusion * jnp.pi**2 * field(operator_points)
+    value = phx.uq.value_functional(1)
+    laplacian = phx.uq.laplacian_functional(1)
+    state = phx.uq.FunctionalGaussianProcessLikelihoodState(
+        kernel=phx.kernels.AmplitudeKernel(
+            phx.kernels.SquaredExponentialKernel(length_scale=0.25),
+            1.0,
+        ),
+        noise_scale=jnp.asarray([0.005, 0.02]),
+    )
+
+    def discrepancy(diffusion):
+        return phx.uq.FunctionalGaussianProcessDiscrepancy(
+            (
+                phx.uq.FunctionalObservationBlock(
+                    value_points,
+                    value,
+                    name="field-values",
+                ),
+                phx.uq.FunctionalObservationBlock(
+                    operator_points,
+                    -diffusion * laplacian,
+                    name="elliptic-operator",
+                ),
+            ),
+            (field(value_points), forcing),
+        )
+
+    zero_mean = (
+        jnp.zeros_like(value_points),
+        jnp.zeros_like(operator_points),
+    )
+
+    def log_likelihood(diffusion):
+        return discrepancy(diffusion).log_marginal_likelihood(
+            zero_mean,
+            state=state,
+        )
+
+    cold, compile_seconds, execute = _jit_timings(
+        log_likelihood,
+        jnp.asarray(true_diffusion),
+        repetitions=configuration.jit_warm_repetitions,
+    )
+    candidates = jnp.linspace(0.7, 2.7, 41)
+    scores = jax.vmap(log_likelihood)(candidates)
+    selected_diffusion = candidates[jnp.argmax(scores)]
+    query_design = phx.uq.FunctionalDesign.from_points(
+        query_points,
+        value,
+        name="query-values",
+    )
+    condition, condition_seconds = _timed_call(
+        lambda: discrepancy(selected_diffusion).condition(
+            zero_mean,
+            query_design,
+            state=state,
+        )
+    )
+    field_rmse = jnp.sqrt(jnp.mean((condition.mean - field(query_points)) ** 2))
+    score_margin = log_likelihood(true_diffusion) - log_likelihood(wrong_diffusion)
+    wrong_gradient = jax.grad(log_likelihood)(wrong_diffusion)
+    metrics = {
+        "diffusion_absolute_error": metric(
+            jnp.abs(selected_diffusion - true_diffusion),
+            "accuracy",
+            maximum=0.051,
+        ),
+        "field_reconstruction_rmse": metric(
+            field_rmse,
+            "accuracy",
+            maximum=1.0e-3,
+        ),
+        "true_wrong_log_likelihood_margin": metric(
+            score_margin,
+            "diagnostic",
+            minimum=1.0,
+        ),
+        "wrong_diffusion_gradient": metric(
+            wrong_gradient,
+            "diagnostic",
+            minimum=0.0,
+        ),
+        "minimum_query_variance": metric(
+            jnp.min(condition.variance),
+            "diagnostic",
+            minimum=0.0,
+        ),
+        "condition_seconds": metric(condition_seconds, "performance", unit="s"),
+        **_performance_metrics(
+            wall_seconds=time.perf_counter() - started,
+            cold_seconds=cold,
+            compile_seconds=compile_seconds,
+            execution_seconds=execute,
+            sample_memory_bytes=condition.covariance.nbytes,
+        ),
+    }
+    return ScenarioResult(
+        name="operator_conditioned_inverse_pde",
+        description=operator_conditioned_inverse_pde.__doc__ or "",
+        seed=seed,
+        metrics=metrics,
+        metadata={
+            "profile": configuration.profile,
+            "true_diffusion": true_diffusion,
+            "selected_diffusion": float(selected_diffusion),
+            "num_value_observations": int(value_points.size),
+            "num_operator_observations": int(operator_points.size),
+            "operator": "-diffusion * Laplacian",
+        },
+    )
+
+
+class _BenchmarkFeatureMap(eqx.Module):
+    weight: jax.Array
+    bias: jax.Array
+
+    def __call__(self, point):
+        return jnp.tanh(self.weight @ point + self.bias)
+
+
+def deep_kernel_likelihood_timing(
+    configuration: BenchmarkConfiguration,
+    seed: int,
+) -> ScenarioResult:
+    """Measure learned-feature gradients and fixed-factor likelihood reuse."""
+    started = time.perf_counter()
+    num_observations = 48 if configuration.profile == "smoke" else 128
+    coordinate = jnp.linspace(-1.0, 1.0, num_observations)
+    points = jnp.stack((coordinate, coordinate**2), axis=1)
+    observations = 0.7 * coordinate + 0.12 * jnp.sin(3.0 * coordinate)
+    physical_mean = 0.7 * coordinate
+    model = phx.uq.ExactGaussianProcessDiscrepancy(points, observations)
+    weight_key, bias_key = jr.split(jr.key(seed))
+    feature_map = _BenchmarkFeatureMap(
+        0.5 * jr.normal(weight_key, (4, 2)),
+        0.1 * jr.normal(bias_key, (4,)),
+    )
+
+    def deep_state(candidate):
+        return phx.uq.GaussianProcessLikelihoodState(
+            kernel=phx.kernels.AmplitudeKernel(
+                phx.kernels.InputTransformedKernel(
+                    phx.kernels.SquaredExponentialKernel(length_scale=jnp.ones((4,))),
+                    candidate,
+                    transform_id="benchmark-learned-features",
+                    max_derivative_order=None,
+                ),
+                0.2,
+            ),
+            noise_scale=0.02,
+        )
+
+    def deep_objective(candidate):
+        return model.log_marginal_likelihood(
+            physical_mean,
+            state=deep_state(candidate),
+        )
+
+    def stationary_objective(log_length_scale):
+        state = phx.uq.GaussianProcessLikelihoodState(
+            kernel=phx.kernels.AmplitudeKernel(
+                phx.kernels.SquaredExponentialKernel(
+                    length_scale=jnp.exp(log_length_scale)
+                ),
+                0.2,
+            ),
+            noise_scale=0.02,
+        )
+        return model.log_marginal_likelihood(physical_mean, state=state)
+
+    fixed_state = deep_state(feature_map)
+    factor, factor_build_seconds = _timed_call(lambda: model.factor(state=fixed_state))
+    deep_rebuild_timing = _jit_timings(
+        lambda mean: model.log_marginal_likelihood(mean, state=fixed_state),
+        physical_mean,
+        repetitions=configuration.jit_warm_repetitions,
+    )
+    deep_reuse_timing = _jit_timings(
+        lambda mean: factor.log_probability(model.residual(mean)),
+        physical_mean,
+        repetitions=configuration.jit_warm_repetitions,
+    )
+    deep_gradient_timing = _jit_timings(
+        jax.value_and_grad(deep_objective),
+        feature_map,
+        repetitions=configuration.jit_warm_repetitions,
+    )
+    stationary_gradient_timing = _jit_timings(
+        jax.value_and_grad(stationary_objective),
+        jnp.log(jnp.asarray([0.4, 0.4])),
+        repetitions=configuration.jit_warm_repetitions,
+    )
+    deep_value, deep_gradient = jax.value_and_grad(deep_objective)(feature_map)
+    gradient_leaves = jax.tree.leaves(deep_gradient)
+    gradient_norm = jnp.sqrt(sum(jnp.vdot(leaf, leaf) for leaf in gradient_leaves))
+    query_coordinate = jnp.linspace(-0.95, 0.95, 33)
+    query = jnp.stack((query_coordinate, query_coordinate**2), axis=1)
+    condition, condition_seconds = _timed_call(
+        lambda: model.condition(
+            physical_mean,
+            query,
+            state=fixed_state,
+            output_dim="query",
+        )
+    )
+    condition_finite = jnp.all(
+        jnp.isfinite(condition.mean)
+        & jnp.isfinite(condition.variance)
+        & (condition.variance >= 0.0)
+    )
+    metrics = {
+        "wall_seconds": metric(
+            time.perf_counter() - started,
+            "performance",
+            unit="s",
+        ),
+        "deep_kernel_factor_build_seconds": metric(
+            factor_build_seconds,
+            "performance",
+            unit="s",
+        ),
+        "deep_kernel_rebuild_compile_seconds": metric(
+            deep_rebuild_timing[1],
+            "performance",
+            unit="s",
+        ),
+        "deep_kernel_rebuild_warm_seconds": metric(
+            deep_rebuild_timing[2],
+            "performance",
+            unit="s",
+        ),
+        "deep_kernel_reuse_warm_seconds": metric(
+            deep_reuse_timing[2],
+            "performance",
+            unit="s",
+        ),
+        "deep_kernel_factor_reuse_speedup": metric(
+            deep_rebuild_timing[2] / deep_reuse_timing[2],
+            "performance",
+            description="Warm learned-feature likelihood speedup from factor reuse.",
+        ),
+        "deep_kernel_gradient_compile_seconds": metric(
+            deep_gradient_timing[1],
+            "performance",
+            unit="s",
+        ),
+        "deep_kernel_gradient_warm_seconds": metric(
+            deep_gradient_timing[2],
+            "performance",
+            unit="s",
+        ),
+        "stationary_gradient_warm_seconds": metric(
+            stationary_gradient_timing[2],
+            "performance",
+            unit="s",
+        ),
+        "deep_stationary_gradient_time_ratio": metric(
+            deep_gradient_timing[2] / stationary_gradient_timing[2],
+            "performance",
+        ),
+        "condition_seconds": metric(condition_seconds, "performance", unit="s"),
+        "deep_log_likelihood": metric(deep_value, "diagnostic"),
+        "feature_gradient_norm": metric(
+            gradient_norm,
+            "diagnostic",
+            minimum=1.0e-12,
+        ),
+        "finite_condition": metric(
+            condition_finite,
+            "diagnostic",
+            minimum=1.0,
+            maximum=1.0,
+        ),
+        "minimum_query_variance": metric(
+            jnp.min(condition.variance),
+            "diagnostic",
+            minimum=0.0,
+        ),
+    }
+    return ScenarioResult(
+        name="deep_kernel_likelihood_timing",
+        description=deep_kernel_likelihood_timing.__doc__ or "",
+        seed=seed,
+        metrics=metrics,
+        metadata={
+            "profile": configuration.profile,
+            "num_observations": num_observations,
+            "input_dimension": 2,
+            "feature_dimension": 4,
+            "feature_parameter_count": sum(
+                int(leaf.size) for leaf in jax.tree.leaves(feature_map)
+            ),
+            "factor_storage_elements": factor.factor_storage_elements,
         },
     )
 
@@ -1723,19 +2067,13 @@ def stochastic_gradient_regression(
     design = jnp.stack((jnp.ones_like(inputs), inputs), axis=1)
     true_position = jnp.asarray([0.4, -0.7])
     observation_scale = 0.6
-    observations = (
-        design @ true_position
-        + observation_scale * jr.normal(observation_key, (num_factors,))
+    observations = design @ true_position + observation_scale * jr.normal(
+        observation_key, (num_factors,)
     )
     prior_scale = 2.0
-    precision = (
-        jnp.eye(2) / prior_scale**2
-        + design.T @ design / observation_scale**2
-    )
+    precision = jnp.eye(2) / prior_scale**2 + design.T @ design / observation_scale**2
     analytic_covariance = jnp.linalg.inv(precision)
-    analytic_mean = analytic_covariance @ (
-        design.T @ observations / observation_scale**2
-    )
+    analytic_mean = analytic_covariance @ (design.T @ observations / observation_scale**2)
     analytic_scale = jnp.sqrt(jnp.diag(analytic_covariance))
 
     def position_from_vector(vector):
@@ -1756,9 +2094,7 @@ def stochastic_gradient_regression(
         position_from_vector(jnp.zeros((2,))),
         priors={
             "offset": phx.uq.Normal(0.0, prior_scale),
-            "nested": {
-                "positive_rate": phx.uq.LogNormal(0.0, prior_scale)
-            },
+            "nested": {"positive_rate": phx.uq.LogNormal(0.0, prior_scale)},
         },
         bijectors={
             "offset": phx.uq.IdentityBijector(),
@@ -1774,16 +2110,11 @@ def stochastic_gradient_regression(
     def likelihood_factors(parameters, batch):
         vector = vector_from_physical(parameters)
         prediction = vector[0] + vector[1] * batch.data["input"]
-        return -0.5 * (
-            (batch.data["target"] - prediction) / observation_scale
-        ) ** 2
+        return -0.5 * ((batch.data["target"] - prediction) / observation_scale) ** 2
 
     def full_log_likelihood(parameters):
         vector = vector_from_physical(parameters)
-        return jnp.sum(
-            -0.5
-            * ((observations - design @ vector) / observation_scale) ** 2
-        )
+        return jnp.sum(-0.5 * ((observations - design @ vector) / observation_scale) ** 2)
 
     problem = phx.uq.MinibatchPosteriorProblem(
         parameter_space,
@@ -1806,9 +2137,9 @@ def stochastic_gradient_regression(
     )
     first_batch = next(source.epoch(0))
     cold, compile_seconds, execute = _jit_timings(
-        lambda position, batch: jax.value_and_grad(
-            problem.log_density_estimate
-        )(position, batch),
+        lambda position, batch: jax.value_and_grad(problem.log_density_estimate)(
+            position, batch
+        ),
         problem.initial_position,
         first_batch,
         repetitions=configuration.jit_warm_repetitions,
@@ -1920,9 +2251,7 @@ def stochastic_gradient_regression(
         return jnp.stack(
             (
                 result.unconstrained_samples["offset"].reshape(-1),
-                result.unconstrained_samples["nested"][
-                    "positive_rate"
-                ].reshape(-1),
+                result.unconstrained_samples["nested"]["positive_rate"].reshape(-1),
             ),
             axis=1,
         )
@@ -1934,13 +2263,9 @@ def stochastic_gradient_regression(
         "sgnht": sample_matrix(sgnht),
         "nuts": sample_matrix(nuts),
     }
-    sample_means = {
-        name: jnp.mean(values, axis=0)
-        for name, values in matrices.items()
-    }
+    sample_means = {name: jnp.mean(values, axis=0) for name, values in matrices.items()}
     sample_covariances = {
-        name: jnp.cov(values, rowvar=False)
-        for name, values in matrices.items()
+        name: jnp.cov(values, rowvar=False) for name, values in matrices.items()
     }
 
     max_rhat, min_ess = _convergence_limits(configuration)
@@ -2046,14 +2371,10 @@ def stochastic_gradient_regression(
     covariance_norm = jnp.linalg.norm(analytic_covariance)
     for name, values in matrices.items():
         mean_error = jnp.sqrt(
-            jnp.mean(
-                ((sample_means[name] - analytic_mean) / analytic_scale) ** 2
-            )
+            jnp.mean(((sample_means[name] - analytic_mean) / analytic_scale) ** 2)
         )
         covariance_error = (
-            jnp.linalg.norm(
-                sample_covariances[name] - analytic_covariance
-            )
+            jnp.linalg.norm(sample_covariances[name] - analytic_covariance)
             / covariance_norm
         )
         prediction_mean = prediction_design @ sample_means[name]
@@ -2075,24 +2396,12 @@ def stochastic_gradient_regression(
             maximum=covariance_gate,
         )
         metrics[f"{name}_predictive_mean_rmse"] = metric(
-            jnp.sqrt(
-                jnp.mean(
-                    (prediction_mean - analytic_prediction_mean) ** 2
-                )
-            ),
+            jnp.sqrt(jnp.mean((prediction_mean - analytic_prediction_mean) ** 2)),
             "accuracy",
             maximum=0.08,
         )
         metrics[f"{name}_predictive_variance_relative_rmse"] = metric(
-            jnp.sqrt(
-                jnp.mean(
-                    (
-                        prediction_variance
-                        - analytic_prediction_variance
-                    )
-                    ** 2
-                )
-            )
+            jnp.sqrt(jnp.mean((prediction_variance - analytic_prediction_variance) ** 2))
             / jnp.mean(analytic_prediction_variance),
             "accuracy",
             maximum=0.8,
@@ -2141,18 +2450,13 @@ def stochastic_gradient_regression(
         )
 
     ordinary_gradients = jnp.stack(
-        [
-            gradient_vector(ordinary_gradient(probe, batch))
-            for batch in epoch_batches
-        ]
+        [gradient_vector(ordinary_gradient(probe, batch)) for batch in epoch_batches]
     )
     controlled_gradients = jnp.stack(
         [
             gradient_vector(
                 jax.tree_util.tree_map(
-                    lambda full, current, at_center: (
-                        full + current - at_center
-                    ),
+                    lambda full, current, at_center: full + current - at_center,
                     control.full_gradient,
                     ordinary_gradient(probe, batch),
                     ordinary_gradient(control.center, batch),
@@ -2164,8 +2468,7 @@ def stochastic_gradient_regression(
     ordinary_variance = jnp.sum(jnp.var(ordinary_gradients, axis=0))
     controlled_variance = jnp.sum(jnp.var(controlled_gradients, axis=0))
     metrics["control_variate_gradient_variance_reduction"] = metric(
-        ordinary_variance
-        / jnp.maximum(controlled_variance, jnp.finfo(float).eps),
+        ordinary_variance / jnp.maximum(controlled_variance, jnp.finfo(float).eps),
         "diagnostic",
         minimum=10.0,
     )
@@ -2175,10 +2478,7 @@ def stochastic_gradient_regression(
         "diagnostic",
     )
     metrics["step_halving_covariance_discrepancy"] = metric(
-        jnp.linalg.norm(
-            sample_covariances["sgld"]
-            - sample_covariances["sgld_refined"]
-        )
+        jnp.linalg.norm(sample_covariances["sgld"] - sample_covariances["sgld_refined"])
         / covariance_norm,
         "diagnostic",
     )
@@ -2196,34 +2496,21 @@ def stochastic_gradient_regression(
         maximum=1.0e-8,
     )
     laplace_order = jnp.asarray([1, 0])
-    laplace_covariance = laplace.covariance[
-        jnp.ix_(laplace_order, laplace_order)
-    ]
+    laplace_covariance = laplace.covariance[jnp.ix_(laplace_order, laplace_order)]
     metrics["laplace_covariance_relative_error"] = metric(
-        jnp.linalg.norm(laplace_covariance - analytic_covariance)
-        / covariance_norm,
+        jnp.linalg.norm(laplace_covariance - analytic_covariance) / covariance_norm,
         "accuracy",
         maximum=1.0e-8,
     )
     ensemble_mean = jnp.mean(ensemble_predictions, axis=0)
     ensemble_variance = jnp.var(ensemble_predictions, axis=0)
     metrics["deep_ensemble_predictive_mean_rmse"] = metric(
-        jnp.sqrt(
-            jnp.mean((ensemble_mean - analytic_prediction_mean) ** 2)
-        ),
+        jnp.sqrt(jnp.mean((ensemble_mean - analytic_prediction_mean) ** 2)),
         "accuracy",
         maximum=0.2,
     )
     metrics["deep_ensemble_predictive_variance_relative_rmse"] = metric(
-        jnp.sqrt(
-            jnp.mean(
-                (
-                    ensemble_variance
-                    - analytic_prediction_variance
-                )
-                ** 2
-            )
-        )
+        jnp.sqrt(jnp.mean((ensemble_variance - analytic_prediction_variance) ** 2))
         / jnp.mean(analytic_prediction_variance),
         "accuracy",
     )
@@ -2296,9 +2583,7 @@ def linearized_uncertainty_propagation(
         phx.uq.DiagonalCovariance(affine_variance),
         phx.uq.DenseCovariance(affine_covariance),
         phx.uq.FactorCovariance(jnp.diag(jnp.sqrt(affine_variance))),
-        phx.uq.CovarianceOperator(
-            lambda vector: affine_covariance @ vector
-        ),
+        phx.uq.CovarianceOperator(lambda vector: affine_covariance @ vector),
     )
     affine_results = tuple(
         phx.uq.propagate_linearized(
@@ -2318,15 +2603,12 @@ def linearized_uncertainty_propagation(
         num_probes=configuration.linearized_hutchinson_probes,
         batch_size=min(configuration.linearized_hutchinson_probes, 128),
     )
-    affine_hutchinson_error = (
-        jnp.linalg.norm(affine_hutchinson.variance - jnp.diag(affine_expected))
-        / jnp.linalg.norm(jnp.diag(affine_expected))
-    )
+    affine_hutchinson_error = jnp.linalg.norm(
+        affine_hutchinson.variance - jnp.diag(affine_expected)
+    ) / jnp.linalg.norm(jnp.diag(affine_expected))
 
     common_effect = phx.uq.propagate_linearized(
-        lambda value: jnp.asarray(
-            [value[0] + value[2], value[1] + value[2]]
-        ),
+        lambda value: jnp.asarray([value[0] + value[2], value[1] + value[2]]),
         jnp.zeros(3),
         phx.uq.DiagonalCovariance(jnp.asarray([1.0, 1.0, 9.0])),
     )
@@ -2376,9 +2658,7 @@ def linearized_uncertainty_propagation(
                 / jnp.linalg.norm(qmc_covariance)
             )
         )
-        nonlinear_mean_errors.append(
-            float(jnp.linalg.norm(linearized.mean - qmc_mean))
-        )
+        nonlinear_mean_errors.append(float(jnp.linalg.norm(linearized.mean - qmc_mean)))
 
     true_slope = 2.0
     input_scale = 0.5
@@ -2402,10 +2682,9 @@ def linearized_uncertainty_propagation(
     )
     slope_grid = jnp.linspace(0.5, 3.0, 1_024)
     eiv_log_likelihood = jax.vmap(measurement_term.log_prob)(slope_grid)
+
     def latent_log_likelihood(slope):
-        effective_scale = jnp.sqrt(
-            observation_scale**2 + slope**2 * input_scale**2
-        )
+        effective_scale = jnp.sqrt(observation_scale**2 + slope**2 * input_scale**2)
         residual = measured_targets - slope * measured_inputs
         return jnp.sum(
             -0.5 * (residual / effective_scale) ** 2
@@ -2415,16 +2694,11 @@ def linearized_uncertainty_propagation(
     latent_reference_log_likelihood = jax.vmap(latent_log_likelihood)(slope_grid)
     prior_log_density = -0.5 * (slope_grid / 3.0) ** 2
     eiv_weights = jax.nn.softmax(eiv_log_likelihood + prior_log_density)
-    latent_weights = jax.nn.softmax(
-        latent_reference_log_likelihood + prior_log_density
-    )
+    latent_weights = jax.nn.softmax(latent_reference_log_likelihood + prior_log_density)
     ordinary_log_likelihood = jnp.sum(
         -0.5
         * (
-            (
-                measured_targets[None, :]
-                - slope_grid[:, None] * measured_inputs[None, :]
-            )
+            (measured_targets[None, :] - slope_grid[:, None] * measured_inputs[None, :])
             / observation_scale
         )
         ** 2,
@@ -2454,44 +2728,34 @@ def linearized_uncertainty_propagation(
     )
     propagated_factors = output_matrix @ factors.T
     expected_variance = jnp.sum(propagated_factors**2, axis=1)
-    observed_variance = low_rank.exact_variance(
-        batch_size=max(1, factor_rank // 2)
-    )
+    observed_variance = low_rank.exact_variance(batch_size=max(1, factor_rank // 2))
     operator_low_rank = phx.uq.propagate_linearized(
         lambda value: output_matrix @ value,
         jnp.zeros(input_dimension),
-        phx.uq.CovarianceOperator(
-            lambda vector: factors.T @ (factors @ vector)
-        ),
+        phx.uq.CovarianceOperator(lambda vector: factors.T @ (factors @ vector)),
     )
     output_probe = jr.normal(probe_key, (output_dimension,))
-    expected_action = propagated_factors @ (
-        propagated_factors.T @ output_probe
-    )
+    expected_action = propagated_factors @ (propagated_factors.T @ output_probe)
     observed_action = operator_low_rank.covariance_vector_product(output_probe)
-    low_rank_variance_error = (
-        jnp.linalg.norm(observed_variance - expected_variance)
-        / jnp.linalg.norm(expected_variance)
-    )
-    low_rank_action_error = (
-        jnp.linalg.norm(observed_action - expected_action)
-        / jnp.linalg.norm(expected_action)
-    )
+    low_rank_variance_error = jnp.linalg.norm(
+        observed_variance - expected_variance
+    ) / jnp.linalg.norm(expected_variance)
+    low_rank_action_error = jnp.linalg.norm(
+        observed_action - expected_action
+    ) / jnp.linalg.norm(expected_action)
     hutchinson = operator_low_rank.estimate_variance(
         jr.fold_in(root_key, 2),
         num_probes=configuration.linearized_hutchinson_probes,
         batch_size=min(configuration.linearized_hutchinson_probes, 64),
     )
-    low_rank_hutchinson_error = (
-        jnp.linalg.norm(hutchinson.variance - expected_variance)
-        / jnp.linalg.norm(expected_variance)
-    )
-    low_rank_hutchinson_normalized_error = (
-        jnp.linalg.norm(hutchinson.variance - expected_variance)
-        / jnp.maximum(
-            jnp.linalg.norm(hutchinson.standard_error),
-            jnp.finfo(float).eps,
-        )
+    low_rank_hutchinson_error = jnp.linalg.norm(
+        hutchinson.variance - expected_variance
+    ) / jnp.linalg.norm(expected_variance)
+    low_rank_hutchinson_normalized_error = jnp.linalg.norm(
+        hutchinson.variance - expected_variance
+    ) / jnp.maximum(
+        jnp.linalg.norm(hutchinson.standard_error),
+        jnp.finfo(float).eps,
     )
     cold, compile_seconds, execute = _jit_timings(
         lambda vector: operator_low_rank.covariance_vector_product(vector),
@@ -2499,9 +2763,7 @@ def linearized_uncertainty_propagation(
         repetitions=configuration.jit_warm_repetitions,
     )
     represented_memory = int(factors.nbytes)
-    dense_output_memory = (
-        output_dimension * output_dimension * jnp.dtype(float).itemsize
-    )
+    dense_output_memory = output_dimension * output_dimension * jnp.dtype(float).itemsize
 
     metrics = {
         "affine_representation_relative_error": metric(
@@ -2529,11 +2791,7 @@ def linearized_uncertainty_propagation(
             "diagnostic",
         ),
         "eiv_latent_log_likelihood_max_error": metric(
-            jnp.max(
-                jnp.abs(
-                    eiv_log_likelihood - latent_reference_log_likelihood
-                )
-            ),
+            jnp.max(jnp.abs(eiv_log_likelihood - latent_reference_log_likelihood)),
             "accuracy",
             maximum=1.0e-8,
         ),
@@ -2629,7 +2887,9 @@ SCENARIOS: dict[str, Scenario] = {
     "neural_selected_subspace": neural_selected_subspace,
     "multimodal_tempered_inference": multimodal_tempered_inference,
     "misspecified_pde_discrepancy": misspecified_pde_discrepancy,
+    "operator_conditioned_inverse_pde": operator_conditioned_inverse_pde,
     "correlated_vector_discrepancy": correlated_vector_discrepancy,
+    "deep_kernel_likelihood_timing": deep_kernel_likelihood_timing,
     "flow_assisted_multimodal": flow_assisted_multimodal,
     "stochastic_gradient_regression": stochastic_gradient_regression,
     "linearized_uncertainty_propagation": linearized_uncertainty_propagation,

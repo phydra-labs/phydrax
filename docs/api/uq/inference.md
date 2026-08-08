@@ -773,7 +773,18 @@ auxiliary randomness.
 
 ::: phydrax.uq.CheckpointCorruptionError
 
-## Model discrepancy
+## Gaussian-process discrepancy
+
+Scalar GP models separate observations from the covariance/noise state. A
+`GaussianProcessLikelihoodState` contains one shared `phydrax.kernels` expression,
+observation-noise scale, and numerical factorization jitter. Pass a state explicitly
+to likelihood, factorization, and conditioning calls. Fixed states can be factored
+once; a state callback on `GaussianProcessMarginalLikelihood` keeps kernel and noise
+parameters differentiable posterior leaves.
+
+::: phydrax.uq.GaussianProcessLikelihoodState
+
+---
 
 ::: phydrax.uq.ExactGaussianProcessDiscrepancy
     options:
@@ -797,36 +808,13 @@ auxiliary randomness.
 
 ---
 
-::: phydrax.uq.GaussianProcessConditioner
+::: phydrax.uq.FiniteFeatureGaussianProcessFactor
     options:
         members:
+            - factor_storage_elements
+            - log_probability
+            - conditioner
             - condition
-
----
-
-::: phydrax.uq.GaussianProcessCondition
-    options:
-        members:
-            - sample
-            - predictive_field
-
----
-
-::: phydrax.uq.MultiOutputGaussianProcessDiscrepancy
-    options:
-        members:
-            - __init__
-            - residual
-            - log_marginal_likelihood
-            - condition
-
----
-
-::: phydrax.uq.MultiOutputGaussianProcessCondition
-    options:
-        members:
-            - sample
-            - predictive_field
 
 ---
 
@@ -840,7 +828,6 @@ auxiliary randomness.
             - log_marginal_likelihood
             - condition
 
-
 ---
 
 ::: phydrax.uq.SparseGaussianProcessFactor
@@ -852,15 +839,152 @@ auxiliary randomness.
             - conditioner
             - condition
 
+---
+
+::: phydrax.uq.GaussianProcessConditioner
+    options:
+        members:
+            - condition
 
 ---
+
+::: phydrax.uq.GaussianProcessCondition
+    options:
+        members:
+            - sample
+            - predictive_field
+
+### Correlated outputs
+
+`MultiOutputDesign` stores one flat row per observed point/channel pair. Construct it
+from dense values with an explicit mask for heterotopic data. Output covariance is
+represented only through PSD-preserving `Coregionalization` factors. ICM uses one
+spatial kernel; LMC combines multiple spatial kernels and coregionalizations.
+
+::: phydrax.uq.MultiOutputDesign
+    options:
+        members:
+            - from_dense
+            - flatten
+            - dense
+
+---
+
+::: phydrax.uq.Coregionalization
+
+---
+
+::: phydrax.uq.AbstractMultiOutputKernel
+
+---
+
+::: phydrax.uq.IntrinsicCoregionalizationKernel
+
+---
+
+::: phydrax.uq.LinearModelCoregionalizationKernel
+
+---
+
+::: phydrax.uq.MultiOutputGaussianProcessLikelihoodState
+
+---
+
+::: phydrax.uq.MultiOutputGaussianProcessDiscrepancy
+    options:
+        members:
+            - __init__
+            - from_dense
+            - residual
+            - log_marginal_likelihood
+            - condition
+
+---
+
+::: phydrax.uq.MultiOutputGaussianProcessCondition
+    options:
+        members:
+            - dense_mean
+            - dense_variance
+            - sample
+            - predictive_field
+
+### Linear-functional observations
+
+Functional GP designs mix value, partial-derivative, directional-derivative, and
+Laplacian blocks in one covariance system. Operator coefficients may be dynamic JAX
+values. The shared spatial kernel's derivative certificate is checked against every
+block. Supplying `inducing_design` on the likelihood state selects interdomain FITC;
+omitting it selects exact inference.
+
+::: phydrax.uq.LinearDifferentialFunctional
+
+---
+
+::: phydrax.uq.FunctionalObservationBlock
+
+---
+
+::: phydrax.uq.FunctionalDesign
+    options:
+        members:
+            - from_points
+            - flatten
+            - split
+
+---
+
+::: phydrax.uq.value_functional
+
+---
+
+::: phydrax.uq.partial_derivative_functional
+
+---
+
+::: phydrax.uq.directional_derivative_functional
+
+---
+
+::: phydrax.uq.laplacian_functional
+
+---
+
+::: phydrax.uq.functional_kernel_matrix
+
+---
+
+::: phydrax.uq.functional_kernel_diagonal
+
+---
+
+::: phydrax.uq.FunctionalGaussianProcessLikelihoodState
+
+---
+
+::: phydrax.uq.FunctionalGaussianProcessDiscrepancy
+    options:
+        members:
+            - residual
+            - log_marginal_likelihood
+            - condition
+
+---
+
+::: phydrax.uq.FunctionalGaussianProcessCondition
+    options:
+        members:
+            - split_mean
+            - split_variance
+            - sample
+
+### Inducing-point selection
 
 ::: phydrax.uq.select_inducing_points
 
 ---
 
 ::: phydrax.uq.InducingPointSelection
-
 ### Identifiability gates
 
 ::: phydrax.uq.discrepancy_identifiability_report

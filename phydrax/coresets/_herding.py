@@ -9,8 +9,13 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from phydrax.kernels import (
+    AbstractPositiveDefiniteKernel,
+    SquaredExponentialKernel,
+)
+
 from .._strict import StrictModule
-from ._kernels import _weighted_kernel_mean, _weighted_kernel_sum, RadialKernel
+from ._kernel_reductions import _weighted_kernel_mean, _weighted_kernel_sum
 from ._types import CoresetSelection, KernelHerdingDiagnostics
 from ._weights import log_weights_from_normalized, normalized_weights
 
@@ -18,7 +23,7 @@ from ._weights import log_weights_from_normalized, normalized_weights
 class KernelHerding(StrictModule):
     """Fixed-size greedy minimization of weighted empirical MMD."""
 
-    kernel: RadialKernel
+    kernel: AbstractPositiveDefiniteKernel
     num_points: int = eqx.field(static=True)
     block_size: int = eqx.field(static=True)
     unique: bool = eqx.field(static=True)
@@ -28,7 +33,7 @@ class KernelHerding(StrictModule):
         num_points: int,
         /,
         *,
-        kernel: RadialKernel | None = None,
+        kernel: AbstractPositiveDefiniteKernel | None = None,
         block_size: int = 256,
         unique: bool = True,
     ):
@@ -38,10 +43,10 @@ class KernelHerding(StrictModule):
             raise ValueError("KernelHerding num_points must be positive.")
         if block <= 0:
             raise ValueError("KernelHerding block_size must be positive.")
-        if kernel is not None and not isinstance(kernel, RadialKernel):
-            raise TypeError("kernel must be a RadialKernel or None.")
+        if kernel is not None and not isinstance(kernel, AbstractPositiveDefiniteKernel):
+            raise TypeError("kernel must be an AbstractPositiveDefiniteKernel or None.")
         self.num_points = count
-        self.kernel = RadialKernel() if kernel is None else kernel
+        self.kernel = SquaredExponentialKernel() if kernel is None else kernel
         self.block_size = block
         self.unique = bool(unique)
 
@@ -53,7 +58,7 @@ def _mmd_from_weights(
     comparison_weights: Array,
     /,
     *,
-    kernel: RadialKernel,
+    kernel: AbstractPositiveDefiniteKernel,
     block_size: int,
 ) -> Array:
     source_self = _weighted_kernel_sum(
@@ -93,7 +98,7 @@ def weighted_mmd(
     comparison_log_weights: Array | None = None,
     source_mask: Array | None = None,
     comparison_mask: Array | None = None,
-    kernel: RadialKernel | None = None,
+    kernel: AbstractPositiveDefiniteKernel | None = None,
     block_size: int = 256,
 ) -> Array:
     """Compute blockwise MMD between two finite nonnegative measures."""
@@ -120,9 +125,9 @@ def weighted_mmd(
         mask=comparison_mask,
         rows_valid=comparison_rows,
     )
-    kernel_ = RadialKernel() if kernel is None else kernel
-    if not isinstance(kernel_, RadialKernel):
-        raise TypeError("kernel must be a RadialKernel or None.")
+    kernel_ = SquaredExponentialKernel() if kernel is None else kernel
+    if not isinstance(kernel_, AbstractPositiveDefiniteKernel):
+        raise TypeError("kernel must be an AbstractPositiveDefiniteKernel or None.")
     value = _mmd_from_weights(
         jnp.nan_to_num(source),
         source_weights,
@@ -187,7 +192,7 @@ def kernel_herd(
         valid_choice = input_valid & jnp.any(eligible)
         indices = indices.at[iteration].set(candidate)
         output_mask = output_mask.at[iteration].set(valid_choice)
-        update = method.kernel(safe_points, safe_points[candidate])
+        update = method.kernel.matrix(safe_points, safe_points[candidate][None, :])[:, 0]
         penalty = penalty + jnp.where(valid_choice, update, 0.0)
         selected = selected.at[candidate].set(selected[candidate] | valid_choice)
         return indices, output_mask, penalty, selected
@@ -225,7 +230,7 @@ def kernel_herd(
         source_points=source_points,
         capacity=capacity,
         coordinate_size=coordinate_size,
-        kernel=method.kernel.name,
+        kernel_id=method.kernel.kernel_id,
     )
     return CoresetSelection(
         indices,

@@ -108,23 +108,26 @@ def test_structured_gp_problems_reuse_compiled_map_executable():
     def physical_mean(parameters):
         return parameters["coefficient"] * points
 
-    def hyperparameters(parameters):
-        return {
-            "amplitude": parameters["amplitude"],
-            "length_scale": parameters["length_scale"],
-            "noise_scale": parameters["noise_scale"],
-        }
+    def state(parameters):
+        return phx.uq.GaussianProcessLikelihoodState(
+            kernel=phx.kernels.AmplitudeKernel(
+                phx.kernels.Matern32Kernel(
+                    length_scale=parameters["length_scale"],
+                ),
+                parameters["amplitude"],
+            ),
+            noise_scale=parameters["noise_scale"],
+        )
 
     def problem(observations):
         discrepancy = phx.uq.ExactGaussianProcessDiscrepancy(
             points,
             observations,
-            kernel="matern32",
         )
         term = phx.uq.GaussianProcessMarginalLikelihood(
             discrepancy,
             physical_mean,
-            hyperparameters=hyperparameters,
+            state=state,
         )
         space = phx.uq.ParameterSpace(
             {

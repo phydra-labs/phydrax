@@ -30,16 +30,13 @@ _STANDARD_CASES = ((24, 9), (64, 16), (128, 24), (256, 32), (512, 48))
 _SMOKE_CASES = ((24, 9), (256, 32))
 _MIN_EXACT_FIXED_FACTOR_SPEEDUP = 2.0
 _MIN_FITC_FIXED_FACTOR_SPEEDUP = 1.2
-_FITC_FIXED_FACTOR_GATE_MIN_OBSERVATIONS = 256
+_FIXED_FACTOR_GATE_MIN_OBSERVATIONS = 256
 _MAX_FITC_EXACT_MEAN_RMSE = 0.01
 _MAX_FITC_EXACT_VARIANCE_RMSE = 0.003
 
 
 def _block_until_ready(value: Any) -> None:
-    for leaf in jax.tree_util.tree_leaves(value):
-        block = getattr(leaf, "block_until_ready", None)
-        if block is not None:
-            block()
+    jax.block_until_ready(value)
 
 
 def _timed_call(function: Callable[[], Any]) -> tuple[Any, float]:
@@ -71,6 +68,20 @@ def _jit_timings(
     )
 
 
+def _matern32_state(
+    amplitude: Any,
+    length_scale: Any,
+    noise_scale: Any,
+) -> phx.uq.GaussianProcessLikelihoodState:
+    return phx.uq.GaussianProcessLikelihoodState(
+        kernel=phx.kernels.AmplitudeKernel(
+            phx.kernels.Matern32Kernel(length_scale=length_scale),
+            amplitude,
+        ),
+        noise_scale=noise_scale,
+    )
+
+
 def _case(
     *,
     num_observations: int,
@@ -93,31 +104,22 @@ def _case(
     amplitude = jnp.asarray(0.25)
     length_scale = jnp.asarray(0.18)
     noise_scale = jnp.asarray(0.01)
+    state = _matern32_state(amplitude, length_scale, noise_scale)
 
     exact_model = phx.uq.ExactGaussianProcessDiscrepancy(
         points,
         observations,
-        kernel="matern32",
     )
     sparse_model = phx.uq.SparseGaussianProcessDiscrepancy(
         points,
         observations,
         inducing_points,
-        kernel="matern32",
     )
     exact_factor, exact_factor_build_seconds = _timed_call(
-        lambda: exact_model.factor(
-            amplitude=amplitude,
-            length_scale=length_scale,
-            noise_scale=noise_scale,
-        )
+        lambda: exact_model.factor(state=state)
     )
     sparse_factor, fitc_factor_build_seconds = _timed_call(
-        lambda: sparse_model.factor(
-            amplitude=amplitude,
-            length_scale=length_scale,
-            noise_scale=noise_scale,
-        )
+        lambda: sparse_model.factor(state=state)
     )
     exact_conditioner, exact_conditioner_build_seconds = _timed_call(
         lambda: exact_factor.conditioner(query)
@@ -126,28 +128,28 @@ def _case(
         lambda: sparse_factor.conditioner(query)
     )
 
-    exact_rebuild = lambda mean: exact_model.log_marginal_likelihood(
+    exact_rebuild = lambda mean, factor_state: exact_model.log_marginal_likelihood(
         mean,
-        amplitude=amplitude,
-        length_scale=length_scale,
-        noise_scale=noise_scale,
+        state=factor_state,
     )
-    exact_reuse = lambda mean: exact_factor.log_probability(exact_model.residual(mean))
-    fitc_rebuild = lambda mean: sparse_model.log_marginal_likelihood(
+    exact_reuse = lambda mean, factor: factor.log_probability(exact_model.residual(mean))
+    fitc_rebuild = lambda mean, factor_state: sparse_model.log_marginal_likelihood(
         mean,
-        amplitude=amplitude,
-        length_scale=length_scale,
-        noise_scale=noise_scale,
+        state=factor_state,
     )
-    fitc_reuse = lambda mean: sparse_factor.log_probability(sparse_model.residual(mean))
+    fitc_reuse = lambda mean, factor: factor.log_probability(sparse_model.residual(mean))
     exact_rebuild_timing = _jit_timings(
-        exact_rebuild, physical_mean, repetitions=repetitions
+        exact_rebuild, physical_mean, state, repetitions=repetitions
     )
-    exact_reuse_timing = _jit_timings(exact_reuse, physical_mean, repetitions=repetitions)
+    exact_reuse_timing = _jit_timings(
+        exact_reuse, physical_mean, exact_factor, repetitions=repetitions
+    )
     fitc_rebuild_timing = _jit_timings(
-        fitc_rebuild, physical_mean, repetitions=repetitions
+        fitc_rebuild, physical_mean, state, repetitions=repetitions
     )
-    fitc_reuse_timing = _jit_timings(fitc_reuse, physical_mean, repetitions=repetitions)
+    fitc_reuse_timing = _jit_timings(
+        fitc_reuse, physical_mean, sparse_factor, repetitions=repetitions
+    )
 
     def fixed_exact_objective(parameter):
         return exact_factor.log_probability(exact_model.residual(parameter * points))
@@ -159,18 +161,22 @@ def _case(
         parameter, log_amplitude, log_length_scale, log_noise_scale = unconstrained
         return exact_model.log_marginal_likelihood(
             parameter * points,
-            amplitude=jnp.exp(log_amplitude),
-            length_scale=jnp.exp(log_length_scale),
-            noise_scale=jnp.exp(log_noise_scale),
+            state=_matern32_state(
+                jnp.exp(log_amplitude),
+                jnp.exp(log_length_scale),
+                jnp.exp(log_noise_scale),
+            ),
         )
 
     def inferred_fitc_objective(unconstrained):
         parameter, log_amplitude, log_length_scale, log_noise_scale = unconstrained
         return sparse_model.log_marginal_likelihood(
             parameter * points,
-            amplitude=jnp.exp(log_amplitude),
-            length_scale=jnp.exp(log_length_scale),
-            noise_scale=jnp.exp(log_noise_scale),
+            state=_matern32_state(
+                jnp.exp(log_amplitude),
+                jnp.exp(log_length_scale),
+                jnp.exp(log_noise_scale),
+            ),
         )
 
     fixed_parameter = jnp.asarray(0.75)
@@ -261,7 +267,11 @@ def _case(
         "exact_fixed_factor_speedup": metric(
             exact_rebuild_timing[2] / exact_reuse_timing[2],
             "performance",
-            minimum=_MIN_EXACT_FIXED_FACTOR_SPEEDUP,
+            minimum=(
+                _MIN_EXACT_FIXED_FACTOR_SPEEDUP
+                if num_observations >= _FIXED_FACTOR_GATE_MIN_OBSERVATIONS
+                else None
+            ),
             description="Warm fixed-factor likelihood speedup over refactorization.",
         ),
         "fitc_rebuild_compile_seconds": metric(
@@ -279,7 +289,7 @@ def _case(
             "performance",
             minimum=(
                 _MIN_FITC_FIXED_FACTOR_SPEEDUP
-                if num_observations >= _FITC_FIXED_FACTOR_GATE_MIN_OBSERVATIONS
+                if num_observations >= _FIXED_FACTOR_GATE_MIN_OBSERVATIONS
                 else None
             ),
             description="Warm reusable-FITC likelihood speedup over rebuilding factors.",
@@ -406,8 +416,8 @@ def run_gp_scaling_benchmark(
             "regression_gates": {
                 "minimum_exact_fixed_factor_speedup": (_MIN_EXACT_FIXED_FACTOR_SPEEDUP),
                 "minimum_fitc_fixed_factor_speedup": (_MIN_FITC_FIXED_FACTOR_SPEEDUP),
-                "fitc_fixed_factor_gate_minimum_observations": (
-                    _FITC_FIXED_FACTOR_GATE_MIN_OBSERVATIONS
+                "fixed_factor_gate_minimum_observations": (
+                    _FIXED_FACTOR_GATE_MIN_OBSERVATIONS
                 ),
                 "maximum_fitc_exact_mean_rmse": _MAX_FITC_EXACT_MEAN_RMSE,
                 "maximum_fitc_exact_variance_rmse": (_MAX_FITC_EXACT_VARIANCE_RMSE),

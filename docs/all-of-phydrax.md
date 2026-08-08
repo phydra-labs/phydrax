@@ -100,7 +100,10 @@ capability metadata records its research status and declared approximation.
 `phydrax.uq` keeps epistemic, uncertain-input, observation, stochastic-process,
 and numerical axes explicit in named `PredictiveField` results. NUTS/HMC, Laplace
 approximation, deep ensembles, and Gaussian-process discrepancy models produce
-coherent epistemic draws. Matrix-free JVP/VJP propagation transports diagonal,
+coherent epistemic draws. Scalar exact/FITC, correlated heterotopic outputs, and
+linear-functional value/PDE observations share the covariance-safe
+`phydrax.kernels` PyTree algebra; learned feature maps and kernel hyperparameters
+remain differentiable leaves. Matrix-free JVP/VJP propagation transports diagonal,
 dense, low-rank, or operator-valued covariance through scientific maps; normalized
 errors-in-variables likelihoods account jointly for uncertain predictors and
 observations. Probability domains, static random fields, and joint QMC propagate
@@ -534,8 +537,15 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   See [Stochastic-dynamics cookbook](cookbook/stochastic_dynamics.md),
   [API reference](api/phydrax.md), and
   [API → Operators → Differential](api/operators/differential.md).
-- **Uncertainty quantification**: use NUTS/HMC or Laplace for explicit posterior problems, ensembles for neural-model epistemic variation, Gaussian processes for model discrepancy, joint QMC for uncertain inputs, likelihoods/proper scores for observations, and conformal calibration for coverage.
-  See [Guides → Uncertainty quantification](guides_uncertainty.md) and [API → Uncertainty quantification](api/uq/index.md).
+- **Uncertainty quantification**: use NUTS/HMC or Laplace for explicit posterior
+  problems, ensembles for neural-model epistemic variation, scalar or correlated
+  Gaussian processes for model discrepancy, linear-functional GPs for operator
+  observations, joint QMC for uncertain inputs, proper likelihoods/scores for
+  observations, and conformal calibration for coverage. Use FITC only after dense
+  scaling is measured.
+  See [Guides → Uncertainty quantification](guides_uncertainty.md),
+  [API → Positive-definite kernels](api/kernels.md), and
+  [API → Uncertainty quantification](api/uq/index.md).
 - **Lagrangian/Hamiltonian mechanics**: build Euler–Lagrange, canonical Hamiltonian,
   Poisson-bracket, or Hamilton–Jacobi operators on labeled state spaces.
   See [Guides → Lagrangian and Hamiltonian mechanics](guides_mechanics.md).
@@ -563,6 +573,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - [Domains and sampling](guides_domain.md)
 - [Differential operators](guides_differential.md)
 - [Metrix: differentiable geometry](api/metrix/index.md)
+- [Positive-definite kernels](api/kernels.md)
 - [Integrals and measures](guides_integrals.md)
 - [Euclidean path integrals and Feynman–Kac expectations](guides_path_integrals.md)
 - [Lagrangian and Hamiltonian mechanics](guides_mechanics.md)
@@ -588,6 +599,8 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - `phydrax.nn` for models, wrappers, and the generic diagonal state-space mixer.
 - `phydrax.stochastic` for process paths, trajectories, typed state-space
   problems and inputs, transition kernels, and structural model compilation.
+- `phydrax.kernels` for covariance-safe stationary, algebraic, transformed, and
+  finite-feature kernels shared by GP and coreset methods.
 - `phydrax.uq` for Gaussian factors and transforms, filtering/smoothing,
   state-space estimation, sensitivities, and stochastic spectra.
 - `phydrax.optim` for canonical QPs and the native implicit QPax backend.

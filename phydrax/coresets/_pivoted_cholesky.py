@@ -10,9 +10,13 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
 
+from phydrax.kernels import (
+    AbstractPositiveDefiniteKernel,
+    SquaredExponentialKernel,
+)
+
 from .._doc import DOC_KEY0
 from .._strict import StrictModule
-from ._kernels import RadialKernel
 from ._types import CoresetSelection, PivotedCholeskyDiagnostics
 from ._weights import log_weights_from_normalized
 
@@ -20,7 +24,7 @@ from ._weights import log_weights_from_normalized
 class RandomizedPivotedCholesky(StrictModule):
     """Residual-diagonal randomized pivoting for kernel column selection."""
 
-    kernel: RadialKernel
+    kernel: AbstractPositiveDefiniteKernel
     num_points: int = eqx.field(static=True)
 
     def __init__(
@@ -28,15 +32,15 @@ class RandomizedPivotedCholesky(StrictModule):
         num_points: int,
         /,
         *,
-        kernel: RadialKernel | None = None,
+        kernel: AbstractPositiveDefiniteKernel | None = None,
     ):
         count = int(num_points)
         if count <= 0:
             raise ValueError("num_points must be positive.")
-        if kernel is not None and not isinstance(kernel, RadialKernel):
-            raise TypeError("kernel must be a RadialKernel or None.")
+        if kernel is not None and not isinstance(kernel, AbstractPositiveDefiniteKernel):
+            raise TypeError("kernel must be an AbstractPositiveDefiniteKernel or None.")
         self.num_points = count
-        self.kernel = RadialKernel() if kernel is None else kernel
+        self.kernel = SquaredExponentialKernel() if kernel is None else kernel
 
 
 def randomized_pivoted_cholesky(
@@ -60,7 +64,7 @@ def randomized_pivoted_cholesky(
     rows_valid = jnp.all(jnp.isfinite(values), axis=1)
     input_valid = jnp.all(rows_valid)
     safe_points = jnp.nan_to_num(values)
-    diagonal = method.kernel(safe_points, safe_points)
+    diagonal = method.kernel.diagonal(safe_points)
     diagonal = jnp.where(rows_valid, jnp.maximum(diagonal, 0.0), 0.0)
     initial_trace = jnp.sum(diagonal)
     capacity = method.num_points
@@ -91,7 +95,9 @@ def randomized_pivoted_cholesky(
             jr.choice(jr.fold_in(key, iteration), source_points, p=probabilities),
             dtype=jnp.int32,
         )
-        kernel_column = method.kernel(safe_points, safe_points[pivot])
+        kernel_column = method.kernel.matrix(safe_points, safe_points[pivot][None, :])[
+            :, 0
+        ]
         previous = factors @ factors[pivot]
         pivot_residual = jnp.maximum(residual[pivot], tolerance)
         column = (kernel_column - previous) / jnp.sqrt(pivot_residual)
@@ -133,7 +139,7 @@ def randomized_pivoted_cholesky(
         explained_trace_fraction=explained,
         source_points=source_points,
         capacity=capacity,
-        kernel=method.kernel.name,
+        kernel_id=method.kernel.kernel_id,
     )
     return CoresetSelection(
         indices,

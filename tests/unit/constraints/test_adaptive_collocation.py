@@ -164,7 +164,7 @@ def test_coreset_importance_is_invariant_to_residual_units():
         candidate_multiplier=4,
         uniform_fraction=0.25,
         minimum_ess_fraction=0.25,
-        kernel=phx.coresets.RadialKernel(length_scale=0.2),
+        kernel=phx.kernels.SquaredExponentialKernel(length_scale=0.2),
         max_fill_distance_ratio=10.0,
         block_size=8,
     )
@@ -261,7 +261,7 @@ def test_coreset_fill_distance_guard_retains_the_current_population():
         uniform_fraction=0.0,
         minimum_ess_fraction=0.01,
         max_fill_distance_ratio=1.0,
-        kernel=phx.coresets.RadialKernel(length_scale=0.01),
+        kernel=phx.kernels.SquaredExponentialKernel(length_scale=0.01),
         block_size=16,
     )
     _domain, constraint, functions = _interval_term(

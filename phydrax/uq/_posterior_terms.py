@@ -22,10 +22,12 @@ if TYPE_CHECKING:
     from ..domain import DomainFunction
     from ..terms._likelihood import SupervisedLikelihoodTerm
     from ..terms._supervised_dataset import SupervisedDatasetBatch
-    from ._discrepancy import (
+    from ._gp_scalar import (
         ExactGaussianProcessDiscrepancy,
         SparseGaussianProcessDiscrepancy,
     )
+
+from ._gp_likelihood import GaussianProcessLikelihoodState
 
 
 class AbstractPosteriorTerm(StrictModule):
@@ -152,8 +154,8 @@ class GaussianProcessMarginalLikelihood(AbstractPosteriorTerm):
     physical_mean_fn: Callable[[PyTree[Any]], ArrayLike | cx.Field] = eqx.field(
         static=True
     )
-    hyperparameters_fn: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.Field]] = (
-        eqx.field(static=True)
+    state_fn: Callable[[PyTree[Any]], GaussianProcessLikelihoodState] = eqx.field(
+        static=True
     )
 
     def __init__(
@@ -162,10 +164,10 @@ class GaussianProcessMarginalLikelihood(AbstractPosteriorTerm):
         physical_mean: Callable[[PyTree[Any]], ArrayLike | cx.Field],
         /,
         *,
-        hyperparameters: Callable[[PyTree[Any]], Mapping[str, ArrayLike | cx.Field]],
+        state: Callable[[PyTree[Any]], GaussianProcessLikelihoodState],
         label: str = "gp_discrepancy",
     ):
-        from ._discrepancy import (
+        from ._gp_scalar import (
             ExactGaussianProcessDiscrepancy,
             SparseGaussianProcessDiscrepancy,
         )
@@ -179,27 +181,23 @@ class GaussianProcessMarginalLikelihood(AbstractPosteriorTerm):
             )
         if not callable(physical_mean):
             raise TypeError("physical_mean must be callable.")
-        if not callable(hyperparameters):
-            raise TypeError("hyperparameters must be callable.")
+        if not callable(state):
+            raise TypeError("state must be callable.")
         self.discrepancy = discrepancy
         self.physical_mean_fn = physical_mean
-        self.hyperparameters_fn = hyperparameters
+        self.state_fn = state
         self.label = _label(label)
 
     def per_case_log_prob(self, parameters: PyTree[Any], /) -> Array:
         physical_mean = _field_data(self.physical_mean_fn(parameters))
-        hyperparameters = _likelihood_parameters(self.hyperparameters_fn, parameters)
-        required = {"amplitude", "length_scale", "noise_scale"}
-        if set(hyperparameters) != required:
-            raise ValueError(
-                "GP hyperparameters callback must return exactly amplitude, "
-                "length_scale, and noise_scale."
+        state = self.state_fn(parameters)
+        if not isinstance(state, GaussianProcessLikelihoodState):
+            raise TypeError(
+                "GP state callback must return a GaussianProcessLikelihoodState."
             )
         value = self.discrepancy.log_marginal_likelihood(
             physical_mean,
-            amplitude=hyperparameters["amplitude"],
-            length_scale=hyperparameters["length_scale"],
-            noise_scale=hyperparameters["noise_scale"],
+            state=state,
         )
         return jnp.asarray(value, dtype=float).reshape((1,))
 

@@ -62,7 +62,7 @@ def test_weighted_mmd_matches_dense_kernel_evaluation():
     source_weights = jnp.arange(1.0, 18.0)
     source_weights = source_weights / jnp.sum(source_weights)
     comparison_weights = jnp.asarray([0.2, 0.3, 0.5])
-    kernel = phx.coresets.RadialKernel("matern32", length_scale=0.4)
+    kernel = phx.kernels.Matern32Kernel(length_scale=0.4)
 
     actual = phx.coresets.weighted_mmd(
         source,
@@ -72,9 +72,9 @@ def test_weighted_mmd_matches_dense_kernel_evaluation():
         kernel=kernel,
         block_size=4,
     )
-    source_gram = phx.coresets.kernel_matrix(kernel, source, source)
-    comparison_gram = phx.coresets.kernel_matrix(kernel, comparison, comparison)
-    cross_gram = phx.coresets.kernel_matrix(kernel, source, comparison)
+    source_gram = kernel.matrix(source, source)
+    comparison_gram = kernel.matrix(comparison, comparison)
+    cross_gram = kernel.matrix(source, comparison)
     expected_squared = (
         source_weights @ source_gram @ source_weights
         + comparison_weights @ comparison_gram @ comparison_weights
@@ -116,7 +116,7 @@ def test_randomized_pivoted_cholesky_is_keyed_and_reduces_trace():
     points = jnp.linspace(0.0, 1.0, 48)[:, None]
     method = phx.coresets.RandomizedPivotedCholesky(
         10,
-        kernel=phx.coresets.RadialKernel(length_scale=0.15),
+        kernel=phx.kernels.SquaredExponentialKernel(length_scale=0.15),
     )
     first = phx.coresets.randomized_pivoted_cholesky(
         points,

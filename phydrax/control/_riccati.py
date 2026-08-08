@@ -12,6 +12,7 @@ from functools import partial
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
@@ -85,6 +86,19 @@ class AlgebraicRiccatiResult(StrictModule):
     status: Array
 
 
+def _error_if(
+    value: Array,
+    predicate: Array,
+    message: str,
+    /,
+) -> Array:
+    if isinstance(predicate, jax_core.Tracer):
+        return eqx.error_if(value, predicate, message)
+    if bool(predicate):
+        raise eqx.EquinoxRuntimeError(message)
+    return value
+
+
 def _matrix(value: ArrayLike, name: str, /) -> Array:
     result = jnp.asarray(value)
     if result.ndim < 2 or result.shape[-2] != result.shape[-1]:
@@ -95,7 +109,7 @@ def _matrix(value: ArrayLike, name: str, /) -> Array:
         raise TypeError(f"{name} must be real-valued.")
     if not jnp.issubdtype(result.dtype, jnp.inexact):
         result = result.astype(float)
-    return eqx.error_if(
+    return _error_if(
         result,
         jnp.any(~jnp.isfinite(result)),
         f"{name} must contain only finite values.",
@@ -110,7 +124,7 @@ def _require_shape(value: ArrayLike, shape: tuple[int, ...], name: str, /) -> Ar
         raise TypeError(f"{name} must be real-valued.")
     if not jnp.issubdtype(result.dtype, jnp.inexact):
         result = result.astype(float)
-    return eqx.error_if(
+    return _error_if(
         result,
         jnp.any(~jnp.isfinite(result)),
         f"{name} must contain only finite values.",
@@ -124,7 +138,7 @@ def _require_symmetric(
     /,
 ) -> Array:
     asymmetry = jnp.max(jnp.abs(value - jnp.swapaxes(value, -1, -2)))
-    return eqx.error_if(
+    return _error_if(
         value,
         asymmetry > tolerance,
         f"{name} must be symmetric within cost_tolerance.",
@@ -139,7 +153,7 @@ def _require_positive_semidefinite(
 ) -> Array:
     value = _require_symmetric(value, name, tolerance)
     minimum = jnp.min(jnp.linalg.eigvalsh(value))
-    return eqx.error_if(
+    return _error_if(
         value,
         minimum < -tolerance,
         f"{name} must be positive semidefinite; indefinite costs are unsupported.",
@@ -154,7 +168,7 @@ def _require_positive_definite(
 ) -> Array:
     value = _require_symmetric(value, name, tolerance)
     minimum = jnp.min(jnp.linalg.eigvalsh(value))
-    return eqx.error_if(
+    return _error_if(
         value,
         minimum <= tolerance,
         f"{name} must be positive definite; singular control costs are unsupported.",
@@ -183,7 +197,7 @@ def _validate_are_inputs(
         raise TypeError("b must be real-valued.")
     if not jnp.issubdtype(b_.dtype, jnp.inexact):
         b_ = b_.astype(float)
-    b_ = eqx.error_if(b_, jnp.any(~jnp.isfinite(b_)), "b must be finite.")
+    b_ = _error_if(b_, jnp.any(~jnp.isfinite(b_)), "b must be finite.")
     m = int(b_.shape[-1])
     q_ = _require_shape(q, case_shape + (n, n), "q")
     r_ = _require_shape(r, case_shape + (m, m), "r")

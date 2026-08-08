@@ -260,8 +260,8 @@ def moment_recombine(
         jnp.where(selected_mask, selected_weights, jnp.inf),
         initial=jnp.inf,
     )
-    output_valid = input_valid & (active_points > 0) & jnp.all(
-        jnp.isfinite(selected_weights)
+    output_valid = (
+        input_valid & (active_points > 0) & jnp.all(jnp.isfinite(selected_weights))
     )
     selected_mask = selected_mask & output_valid
     selected_weights = jnp.where(selected_mask, selected_weights, 0.0)

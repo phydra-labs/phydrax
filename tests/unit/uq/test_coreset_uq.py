@@ -68,9 +68,13 @@ def test_pivoted_cholesky_selection_builds_a_sparse_gp_factor():
     factor = phx.uq.SparseGaussianProcessFactor(
         points,
         selection.points,
-        amplitude=0.2,
-        length_scale=0.4,
-        noise_scale=0.01,
+        state=phx.uq.GaussianProcessLikelihoodState(
+            kernel=phx.kernels.AmplitudeKernel(
+                phx.kernels.Matern32Kernel(length_scale=0.4),
+                0.2,
+            ),
+            noise_scale=0.01,
+        ),
     )
 
     assert selection.points.shape == (12, 2)

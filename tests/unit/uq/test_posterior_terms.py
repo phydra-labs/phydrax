@@ -77,18 +77,21 @@ def test_structured_gp_marginal_term_matches_direct_likelihood_and_gradients():
     discrepancy = phx.uq.ExactGaussianProcessDiscrepancy(
         points,
         observations,
-        kernel="matern32",
     )
     physical_mean = lambda parameters: parameters["coefficient"] * points
-    hyperparameters = lambda parameters: {
-        "amplitude": parameters["amplitude"],
-        "length_scale": parameters["length_scale"],
-        "noise_scale": parameters["noise_scale"],
-    }
+    state = lambda parameters: phx.uq.GaussianProcessLikelihoodState(
+        kernel=phx.kernels.AmplitudeKernel(
+            phx.kernels.Matern32Kernel(
+                length_scale=parameters["length_scale"],
+            ),
+            parameters["amplitude"],
+        ),
+        noise_scale=parameters["noise_scale"],
+    )
     term = phx.uq.GaussianProcessMarginalLikelihood(
         discrepancy,
         physical_mean,
-        hyperparameters=hyperparameters,
+        state=state,
         label="model_discrepancy",
     )
     parameters = {
@@ -99,7 +102,7 @@ def test_structured_gp_marginal_term_matches_direct_likelihood_and_gradients():
     }
     expected = discrepancy.log_marginal_likelihood(
         physical_mean(parameters),
-        **hyperparameters(parameters),
+        state=state(parameters),
     )
 
     assert term.label == "model_discrepancy"
@@ -111,9 +114,9 @@ def test_structured_gp_marginal_term_matches_direct_likelihood_and_gradients():
     malformed = phx.uq.GaussianProcessMarginalLikelihood(
         discrepancy,
         physical_mean,
-        hyperparameters=lambda _: {"amplitude": 0.25},
+        state=lambda _: {"amplitude": 0.25},
     )
-    with pytest.raises(ValueError, match="must return exactly"):
+    with pytest.raises(TypeError, match="GaussianProcessLikelihoodState"):
         malformed.log_prob(parameters)
 
 
