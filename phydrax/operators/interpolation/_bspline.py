@@ -20,6 +20,7 @@ from phydrax.domain import DomainFunction, PointBatch, SampleLayout
 from ..._doc import DOC_KEY0
 from ..._frozendict import frozendict
 from ..._interpolation import BoundsMode, bspline_evaluate, bspline_stencil, BSplineGrid
+from ..._numerics import solve_weighted_least_squares
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
@@ -527,17 +528,24 @@ def fit_bspline(
             raise ValueError(
                 "B-spline fitting system is underdetermined or rank deficient."
             )
-        coefficients_flat = (
-            jnp.linalg.lstsq(system, right_hand_side, rcond=plan_.rcond)[0]
-            if constraint_matrix.shape[0] == 0
-            else _constrained_lstsq(
+        if constraint_matrix.shape[0] == 0:
+            regression = solve_weighted_least_squares(
+                system,
+                right_hand_side,
+                rcond=plan_.rcond,
+                min_samples=grid_.coefficient_count,
+            )
+            if not bool(regression.valid):
+                raise ValueError("B-spline least-squares solve failed.")
+            coefficients_flat = regression.coefficients
+        else:
+            coefficients_flat = _constrained_lstsq(
                 system,
                 right_hand_side,
                 constraint_matrix,
                 constraint_values,
                 plan_.rcond,
             )
-        )
 
     fitted = basis @ coefficients_flat
     weighted_residual = jnp.sqrt(weights_)[:, None] * (fitted - observations)

@@ -18,6 +18,7 @@ from phydrax.control import (
     solve_continuous_are,
     solve_discrete_are,
 )
+from tests._control_systems import make_discrete_control_dynamics
 
 
 def _policy_rollout(a, b, c, policy, initial_state):
@@ -242,7 +243,7 @@ def test_affine_time_varying_riccati_matches_full_kkt_block_solve():
     qf = jnp.diag(jnp.array([2.0, 0.7]))
     qf_linear = jnp.array([-1.5, 0.3])
     x0 = jnp.array([0.4, -0.2])
-    time_grid = phx.control.ControlTimeGrid(
+    time_grid = phx.dynamics.TimeGrid(
         jnp.array([0.0, 0.3, 0.7, 1.0]), time_id="affine-kkt-grid"
     )
     result = finite_horizon_lqr(
@@ -272,7 +273,7 @@ def test_affine_time_varying_riccati_matches_full_kkt_block_solve():
 
 def test_affine_tracking_feedback_rolls_out_through_control_foundation():
     horizon = 8
-    time_grid = phx.control.ControlTimeGrid(
+    time_grid = phx.dynamics.TimeGrid(
         jnp.linspace(0.0, 1.0, horizon + 1), time_id="lqr-rollout-grid"
     )
     a = jnp.ones((horizon, 1, 1))
@@ -291,7 +292,7 @@ def test_affine_tracking_feedback_rolls_out_through_control_foundation():
         time_grid=time_grid,
         policy_id="tracking-policy",
     )
-    dynamics = phx.control.DiscreteControlDynamics(
+    dynamics = make_discrete_control_dynamics(
         lambda time, state, control, args: state + control,
         state_shape=(1,),
         control_shape=(1,),

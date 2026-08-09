@@ -59,9 +59,14 @@ Most workflows are composing a few primitives:
   transforms, continuous-discrete inference, finite-state and particle
   filtering/smoothing, structural components, BSDEs, and finite-rank spatial
   noise.
-- **Differential-equation solvers**: deterministic and stochastic integration,
-  differentiable driving paths and CDEs, Neural CDE training, probabilistic
-  numerical ODEs, and flow/map Lyapunov spectra.
+- **Differential-equation solvers**: deterministic, stochastic, delay/memory,
+  rough, jump/hybrid, semidiscrete, differentiable-control, and probabilistic
+  numerical integration.
+- **Dynamical systems, identification, and chaos**: typed flows/maps and
+  pathwise evolution, mask-safe trajectory data, DMD/EDMD, strong/discrete/
+  integral/weak and implicit SINDy, PDE-FIND, periodic orbits, continuation,
+  Floquet/Lyapunov/covariant analysis, recurrence and statistical chaos
+  diagnostics, explicit uncertainty aggregation, and a shadowing solver boundary.
 - **Control and optimization**: typed finite-horizon problems, parameterized
   controls, sampled costs/constraints, linearization, frequency response,
   Lyapunov/Riccati equations, Gramians, LQR/iLQR, compiled QPs, multiple shooting,
@@ -232,11 +237,25 @@ nondifferentiable. See the
 [state-space API](docs/api/stochastic/state_space.md), and
 [inference API](docs/api/uq/inference.md).
 
+Dynamical-systems support separates local flow/map laws, numerical evolution,
+masked trajectory data, identification, and analysis. Canonical adapters preserve
+solver, control, stochastic, delay/memory, rough, and semidiscrete masks and
+provenance. Sparse identification includes DMD/EDMD, multiple SINDy formulations,
+selection/ensembles, exact coefficient structure, implicit SINDy, and PDE-FIND.
+Nonlinear analysis includes sections, periodic orbits, Floquet spectra,
+continuation and bifurcation indicators, finite-time Lyapunov spectra, covariant
+directions, finite-size growth, recurrence, modified 0--1 and correlation-
+dimension diagnostics, surrogates, and explicit uncertainty axes. Dense paths
+retain hard guards; bifurcation and chaos results retain finite-resolution and
+convergence evidence rather than claiming automatic certificates. See the
+[nonlinear-dynamics cookbook](docs/cookbook/nonlinear_dynamics.md) and
+[dynamics API](docs/api/dynamics.md).
+
 Controlled-dynamics support includes explicit causal or offline differentiable
-driving paths, Diffrax-backed CDE integration, Neural CDE training, probabilistic
-numerical ODE solutions, and flow/map Lyapunov spectra. A probabilistic ODE
-solution quantifies numerical integration uncertainty; it is not a posterior
-over an unknown physical model. See the
+driving paths, Diffrax-backed CDE integration, Neural CDE training, and
+probabilistic numerical ODE solutions. A probabilistic ODE solution quantifies
+numerical integration uncertainty; it is not a posterior over an unknown
+physical model. See the
 [controlled-dynamics cookbook](docs/cookbook/controlled_dynamics.md) and
 [differential solver API](docs/api/solver/differential.md).
 

@@ -11,14 +11,14 @@ import pytest
 from phydrax._interpolation import BSplineGrid
 from phydrax.control import (
     BSplineControlParameterization,
-    ControlTimeGrid,
     PiecewiseConstantControlParameterization,
     PiecewiseLinearControlParameterization,
 )
+from phydrax.dynamics import TimeGrid
 
 
 def test_piecewise_parameterizations_use_physical_time_and_exact_shapes():
-    time_grid = ControlTimeGrid(
+    time_grid = TimeGrid(
         jnp.asarray([0.0, 0.5, 1.0]),
         time_id="physical-time",
     )

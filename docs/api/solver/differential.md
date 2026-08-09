@@ -331,71 +331,13 @@ than restart or reinterpret a checkpoint.
 
 ::: phydrax.solver.solve_probabilistic_ode
 
-## Lyapunov spectra
+## Tangent and Lyapunov analysis
 
-`lyapunov_spectrum_map` and `lyapunov_spectrum_flow` implement the public
-`LyapunovSpectrumMethod` value `"periodic_qr"`. They propagate a thin tangent
-basis, periodically QR-factor it, and accumulate logarithmic stretch only
-after burn-in. `leading_k=None` requests the full state dimension; a smaller
-rank computes only the leading finite-time exponents.
-
-For a map, `map_fn(state, args)` advances one physical iterate and
-`tangent_action(state, vector, args)` optionally supplies a matrix-free
-Jacobian action. Without it, JAX JVP supplies that action. `qr_interval`,
-`burn_in`, and `accumulation_interval` are iterate counts, and accumulation
-must be a positive multiple of QR cadence.
-
-For a flow, callbacks retain the state-space context-last signatures
-`drift(time, state, args)` and
-`tangent_action(time, state, vector, args)`. The implementation uses explicit
-fixed-step RK4 for both state and tangent basis, not Diffrax and not an
-adaptive method. `step_size`, QR cadence, burn-in, accumulation cadence, and
-problem duration must align at integer step counts. The result records
-`discretization_id="fixed_rk4_dt=..."`; changing the step changes the
-finite-time approximation.
-
-QR occurs at the configured cadence and also exactly at the burn boundary and
-the end of a call, so no trailing tangent stretch is lost. The accumulation
-history is emitted at `accumulation_interval` and at the end. A too-short call
-can therefore return `LYAPUNOV_INSUFFICIENT_ACCUMULATION`. Other explicit
-status codes are `LYAPUNOV_SUCCESS`, `LYAPUNOV_NONFINITE_TANGENT`, and
-`LYAPUNOV_SINGULAR_TANGENT`; `valid` and `status` are never repaired.
-
-`LyapunovSpectrumCheckpoint` contains the physical state, orthonormal basis,
-accumulated log stretch and time, current time, step and interval counters,
-validity/status, state/rank metadata, cadence, burn-in, and exact system,
-tangent, backend, and discretization provenance. Resume reuses all of it.
-System kind and ID, cadence, burn-in, accumulation cadence, tangent method,
-backend, discretization, and rank must match; a flow continuation's
-`DifferentialProblem.t0` must equal `checkpoint.current_time`. Supplying a new
-initial basis on resume is rejected.
-
-`LyapunovSpectrumResult` carries the final exponents, finite-time history and
-physical accumulation times, last-history convergence drift, final state,
-checkpoint, validity/status, and complete method provenance. Its
-`kaplan_yorke_dimension` is valid only for a finite, valid full spectrum.
-`kaplan_yorke_dimension(exponents)` is also public for a non-empty rank-one
-array containing an explicitly supplied complete spectrum. A `leading_k`
-truncation cannot certify the Kaplan--Yorke dimension and is marked invalid
-rather than extrapolated.
-
-::: phydrax.solver.LyapunovSpectrumCheckpoint
-
----
-
-::: phydrax.solver.LyapunovSpectrumResult
-
----
-
-::: phydrax.solver.kaplan_yorke_dimension
-
----
-
-::: phydrax.solver.lyapunov_spectrum_map
-
----
-
-::: phydrax.solver.lyapunov_spectrum_flow
+Finite-time Lyapunov spectra consume the shared `phydrax.dynamics` flow/map
+evolution contract rather than a solver-specific problem. The implementation,
+checkpoint/result contracts, periodic-QR cadence, fixed-step flow
+discretization, and Kaplan--Yorke validity rules are documented under
+[API → Dynamical systems, identification, and chaos](../dynamics.md#lyapunov-covariant-finite-size-and-recurrence-diagnostics).
 
 ## Geometric ODE and Stratonovich solve
 

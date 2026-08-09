@@ -151,6 +151,7 @@ from ._driving_path import (
     OfflineCubicDrivingPath,
     PiecewiseLinearDrivingPath,
 )
+from ._dynamics_evolution import DiffraxEvolution
 from ._fbsde import (
     CoupledFBSDEProblem,
     CoupledFBSDEResult,
@@ -209,18 +210,6 @@ from ._levy import (
     LevySDEVectorField,
     LevySmallJumpApproximation,
     solve_levy_sde,
-)
-from ._lyapunov_spectrum import (
-    kaplan_yorke_dimension,
-    LYAPUNOV_INSUFFICIENT_ACCUMULATION,
-    LYAPUNOV_NONFINITE_TANGENT,
-    LYAPUNOV_SINGULAR_TANGENT,
-    lyapunov_spectrum_flow,
-    lyapunov_spectrum_map,
-    LYAPUNOV_SUCCESS,
-    LyapunovSpectrumCheckpoint,
-    LyapunovSpectrumMethod,
-    LyapunovSpectrumResult,
 )
 from ._matrix_functions import (
     matrix_exponential_action,
@@ -405,6 +394,7 @@ __all__ = [
     "DifferentialInterpretation",
     "DifferentialProblem",
     "DifferentialSolution",
+    "DiffraxEvolution",
     "DifferentialVectorField",
     "FixedBSplineDrivingPath",
     "FunctionalCollocationPlan",
@@ -433,13 +423,6 @@ __all__ = [
     "LevySDESolverDiagnostics",
     "LevySDEVectorField",
     "LevySmallJumpApproximation",
-    "LYAPUNOV_INSUFFICIENT_ACCUMULATION",
-    "LYAPUNOV_NONFINITE_TANGENT",
-    "LYAPUNOV_SINGULAR_TANGENT",
-    "LYAPUNOV_SUCCESS",
-    "LyapunovSpectrumCheckpoint",
-    "LyapunovSpectrumMethod",
-    "LyapunovSpectrumResult",
     "PROBABILISTIC_ODE_NONFINITE",
     "PROBABILISTIC_ODE_STEP_LIMIT_REACHED",
     "PROBABILISTIC_ODE_STIFF",
@@ -512,7 +495,6 @@ __all__ = [
     "PolynomialBSDERegressionBasis",
     "predict_bsde_least_squares_control",
     "predict_bsde_least_squares_value",
-    "kaplan_yorke_dimension",
     "predict_reflected_path_dependent_control",
     "predict_reflected_path_dependent_value",
     "reflected_path_dependent_bsde_diagnostics",
@@ -536,8 +518,6 @@ __all__ = [
     "VolterraFreeTerm",
     "VolterraKernel",
     "VolterraVectorField",
-    "lyapunov_spectrum_flow",
-    "lyapunov_spectrum_map",
     "semidiscretize_reaction_diffusion",
     "coupled_strong_error",
     "exact_modal_stochastic_convolution",

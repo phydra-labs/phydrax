@@ -14,13 +14,14 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..dynamics import TimeGrid
 from ._parameterization import (
     _case_shape,
     _coefficient_array,
     _query,
     AbstractControlParameterization,
 )
-from ._problem import _identifier, ControlTimeGrid
+from ._problem import _identifier
 from ._riccati import (
     _require_positive_definite,
     _require_positive_semidefinite,
@@ -44,7 +45,7 @@ class AffineFeedbackPolicy(AbstractControlParameterization):
 
     feedback_gain: Array
     feedforward: Array
-    time_grid: ControlTimeGrid | None
+    time_grid: TimeGrid | None
     state_shape: tuple[int, ...] = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
     finite_horizon: bool = eqx.field(static=True)
@@ -55,7 +56,7 @@ class AffineFeedbackPolicy(AbstractControlParameterization):
         feedforward: ArrayLike,
         /,
         *,
-        time_grid: ControlTimeGrid | None,
+        time_grid: TimeGrid | None,
         state_size: int,
         case_shape: Sequence[int] = (),
         policy_id: str,
@@ -68,8 +69,8 @@ class AffineFeedbackPolicy(AbstractControlParameterization):
         bias = jnp.asarray(feedforward)
         finite = time_grid is not None
         if finite:
-            if not isinstance(time_grid, ControlTimeGrid):
-                raise TypeError("time_grid must be a ControlTimeGrid or None.")
+            if not isinstance(time_grid, TimeGrid):
+                raise TypeError("time_grid must be a TimeGrid or None.")
             horizon = time_grid.num_steps
             if gain.ndim < 3:
                 raise ValueError("Finite feedback gains must include a time axis.")
@@ -192,7 +193,7 @@ class QuadraticValueFunction(StrictModule):
     matrices: Array
     linear: Array
     constants: Array
-    time_grid: ControlTimeGrid | None
+    time_grid: TimeGrid | None
     state_shape: tuple[int, ...] = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
     finite_horizon: bool = eqx.field(static=True)
@@ -204,7 +205,7 @@ class QuadraticValueFunction(StrictModule):
         constants: ArrayLike,
         /,
         *,
-        time_grid: ControlTimeGrid | None,
+        time_grid: TimeGrid | None,
         case_shape: Sequence[int] = (),
     ):
         cases = _case_shape(case_shape)
@@ -464,7 +465,7 @@ def finite_horizon_lqr(
     stage_constants: ArrayLike | None = None,
     terminal_linear: ArrayLike | None = None,
     terminal_constant: ArrayLike = 0.0,
-    time_grid: ControlTimeGrid | None = None,
+    time_grid: TimeGrid | None = None,
     policy_id: str = "lqr:finite-horizon",
     tolerance: float = 1e-9,
     cost_tolerance: float = 1e-10,
@@ -507,11 +508,11 @@ def finite_horizon_lqr(
         terminal_constant_,
     ) = values
     if time_grid is None:
-        time_grid = ControlTimeGrid(
+        time_grid = TimeGrid(
             jnp.arange(horizon + 1, dtype=a.dtype), time_id=f"{policy_id}:time"
         )
-    elif not isinstance(time_grid, ControlTimeGrid):
-        raise TypeError("time_grid must be a ControlTimeGrid or None.")
+    elif not isinstance(time_grid, TimeGrid):
+        raise TypeError("time_grid must be a TimeGrid or None.")
     if time_grid.num_steps != horizon:
         raise ValueError(
             f"time_grid must contain {horizon + 1} times for this LQR horizon."

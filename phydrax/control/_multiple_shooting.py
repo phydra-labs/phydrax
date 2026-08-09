@@ -505,7 +505,12 @@ def _segment_state(
     time0 = problem.time_grid.times[segment]
     time1 = problem.time_grid.times[segment + 1]
     if isinstance(dynamics, DiscreteControlDynamics):
-        next_state = jnp.asarray(dynamics.transition(time0, state, control, problem.args))
+        next_state = dynamics.system.evaluate(
+            time0,
+            state,
+            problem.args,
+            inputs=control,
+        )
         if tuple(next_state.shape) != problem.state_shape:
             raise ValueError(
                 "DiscreteControlDynamics transition returned the wrong state shape."
@@ -516,7 +521,7 @@ def _segment_state(
         raise TypeError("Unsupported control dynamics type.")
 
     def controlled_field(time: Array, current: Array, args: Any) -> Array:
-        value = jnp.asarray(dynamics.vector_field(time, current, control, args))
+        value = dynamics.system.evaluate(time, current, args, inputs=control)
         if tuple(value.shape) != problem.state_shape:
             raise ValueError(
                 "DifferentialControlDynamics vector_field returned the wrong state shape."
@@ -563,7 +568,7 @@ def _segment_state_and_validity(
     time1 = problem.time_grid.times[segment + 1]
 
     def controlled_field(time: Array, current: Array, args: Any) -> Array:
-        value = jnp.asarray(dynamics.vector_field(time, current, control, args))
+        value = dynamics.system.evaluate(time, current, args, inputs=control)
         if tuple(value.shape) != problem.state_shape:
             raise ValueError(
                 "DifferentialControlDynamics vector_field returned the wrong state shape."

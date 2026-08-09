@@ -18,9 +18,7 @@ from ._cost import (
 )
 from ._dynamics import (
     DifferentialControlDynamics,
-    DifferentialControlVectorField,
     DiscreteControlDynamics,
-    DiscreteTransition,
 )
 from ._frequency import (
     continuous_transfer_function,
@@ -126,7 +124,7 @@ from ._parameterization import (
     PiecewiseConstantControlParameterization,
     PiecewiseLinearControlParameterization,
 )
-from ._problem import ControlProblem, ControlTimeGrid
+from ._problem import ControlProblem
 from ._qp_compiler import (
     compile_linear_quadratic_control,
     decode_linear_control_solution,
@@ -184,7 +182,6 @@ __all__ = [
     "ControlProblem",
     "ControlResult",
     "ControlSearchResult",
-    "ControlTimeGrid",
     "ControlTrajectory",
     "DifferentialControlFlow",
     "DifferentialFlowStep",
@@ -222,9 +219,7 @@ __all__ = [
     "MultipleShootingLinearization",
     "MultipleShootingResult",
     "DifferentialControlDynamics",
-    "DifferentialControlVectorField",
     "DiscreteControlDynamics",
-    "DiscreteTransition",
     "PathConstraint",
     "PiecewiseConstantControlParameterization",
     "PiecewiseLinearControlParameterization",

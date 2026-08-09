@@ -20,8 +20,9 @@ repair infeasible iterates, change methods after failure, or hide a fallback.
 
 ## Shared axes, callbacks, and provenance
 
-A `ControlTimeGrid` contains a strictly increasing physical axis with `num_times =
-num_steps + 1`. For `case_shape`, `state_shape`, and `control_shape`, the foundation uses:
+A shared `phydrax.dynamics.TimeGrid` contains a strictly increasing physical axis with
+`num_times = num_steps + 1`. For `case_shape`, `state_shape`, and `control_shape`, the
+foundation uses:
 
 - states: `case_shape + (num_times,) + state_shape`;
 - controls: `case_shape + (num_steps,) + control_shape`;
@@ -52,7 +53,7 @@ The stable foundation status codes are:
 
 ### Time, problem, trajectory, and result
 
-::: phydrax.control.ControlTimeGrid
+::: phydrax.dynamics.TimeGrid
 
 ::: phydrax.control.ControlProblem
 

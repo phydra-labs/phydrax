@@ -97,6 +97,7 @@ nav:
         - Stochastic dynamics (PINNs and SPDEs): "cookbook/stochastic_dynamics.md"
         - Filtering and smoothing: "cookbook/filtering.md"
         - Controlled dynamics: "cookbook/controlled_dynamics.md"
+        - Nonlinear dynamics, identification, and chaos: "cookbook/nonlinear_dynamics.md"
         - Control workflows: "cookbook/control.md"
         - Backward stochastic equations: "cookbook/bsde.md"
         - Physics-informed graph residuals: "cookbook/graph_physics.md"
@@ -223,6 +224,7 @@ nav:
             - Martingales and stopping: "api/stochastic/martingales.md"
             - Backward stochastic equations: "api/stochastic/bsde.md"
         - Optimization: "api/optim.md"
+        - Dynamical systems, identification, and chaos: "api/dynamics.md"
         - Control: "api/control.md"
         - Solver:
             - Overview: "api/solver/index.md"

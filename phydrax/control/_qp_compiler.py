@@ -14,6 +14,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..dynamics import TimeGrid
 from ..optim._quadratic_program import (
     QP_INFEASIBLE,
     QP_SUCCESS,
@@ -23,7 +24,7 @@ from ..optim._quadratic_program import (
     solve_quadratic_program,
 )
 from ._parameterization import PiecewiseConstantControlParameterization
-from ._problem import _identifier, ControlTimeGrid
+from ._problem import _identifier
 from ._trajectory import (
     CONTROL_DYNAMICS_FAILED,
     CONTROL_INFEASIBLE,
@@ -129,7 +130,7 @@ class LinearQuadraticControlProblem(StrictModule):
     terminal_equality_rhs: Array | None
     terminal_inequality_matrix: Array | None
     terminal_inequality_rhs: Array | None
-    time_grid: ControlTimeGrid
+    time_grid: TimeGrid
     case_shape: tuple[int, ...] = eqx.field(static=True)
     horizon: int = eqx.field(static=True)
     state_size: int = eqx.field(static=True)
@@ -172,7 +173,7 @@ class LinearQuadraticControlProblem(StrictModule):
         terminal_equality_rhs: ArrayLike | None = None,
         terminal_inequality_matrix: ArrayLike | None = None,
         terminal_inequality_rhs: ArrayLike | None = None,
-        time_grid: ControlTimeGrid | None = None,
+        time_grid: TimeGrid | None = None,
         problem_id: str = "control:linear-quadratic",
         dynamics_id: str = "control:dynamics:affine-discrete",
     ):
@@ -402,12 +403,12 @@ class LinearQuadraticControlProblem(StrictModule):
         )
 
         if time_grid is None:
-            time_grid = ControlTimeGrid(
+            time_grid = TimeGrid(
                 jnp.arange(horizon + 1, dtype=dtype),
                 time_id=f"{problem_id}:time",
             )
-        elif not isinstance(time_grid, ControlTimeGrid):
-            raise TypeError("time_grid must be a ControlTimeGrid or None.")
+        elif not isinstance(time_grid, TimeGrid):
+            raise TypeError("time_grid must be a TimeGrid or None.")
         if time_grid.num_steps != horizon:
             raise ValueError(
                 f"time_grid must contain {horizon + 1} times for this horizon."

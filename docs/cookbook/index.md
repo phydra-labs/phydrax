@@ -49,6 +49,7 @@ Differential operators support multiple backends (`backend="ad"|"jet"|"fd"|"basi
 - [Stochastic dynamics (PINNs, SDEs, and semidiscrete SPDEs)](stochastic_dynamics.md)
 - [Filtering and smoothing stochastic state](filtering.md)
 - [Controlled dynamics (driving paths, CDE integration, and Neural CDEs)](controlled_dynamics.md)
+- [Nonlinear dynamics, system identification, and chaos](nonlinear_dynamics.md)
 - [Control workflows (finite-horizon control, QPs, and MPC)](control.md)
 - [Backward stochastic equations and semilinear PDEs](bsde.md)
 - [Physics-informed graph residuals](graph_physics.md)
