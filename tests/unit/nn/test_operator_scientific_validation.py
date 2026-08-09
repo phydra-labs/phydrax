@@ -478,36 +478,24 @@ def test_laplace_recurrence_is_stable_and_differentiable_for_long_sequences():
     assert jnp.max(jnp.abs(output)) < 2.0
 
 
-def _sphere_axes(n_theta, n_phi):
-    theta = phx.nn.operator.OperatorAxis(
-        "theta",
-        jnp.linspace(0.0, jnp.pi, n_theta),
-        basis="sphere",
+def _degree_filter(gains, *, sampling="mw", execution="recursive"):
+    plan = phx.nn.operator.architectures.SphericalHarmonicPlan(
+        len(gains),
+        sampling=sampling,
+        execution=execution,
     )
-    phi = phx.nn.operator.OperatorAxis(
-        "phi",
-        jnp.linspace(0.0, 2.0 * jnp.pi, n_phi, endpoint=False),
-        quadrature_weights=jnp.full((n_phi,), 2.0 * jnp.pi / n_phi),
-        basis="fourier",
-        periodic=True,
-    )
-    return theta, phi
-
-
-def _degree_filter(gains, n_theta=48, n_phi=64):
-    axes = _sphere_axes(n_theta, n_phi)
     layer = phx.nn.operator.architectures.SphericalSpectralConv(
+        plan,
         in_channels=1,
         out_channels=1,
-        max_degree=len(gains),
         key=jr.key(0),
     )
     weight = jnp.asarray(gains, dtype=float)[:, None, None]
-    return eqx.tree_at(lambda item: item.weight, layer, weight), axes
+    return eqx.tree_at(lambda item: item.weight, layer, weight), plan
 
 
-def _harmonic(degree, order, axes, max_degree):
-    theta, phi = jnp.meshgrid(axes[0].nodes, axes[1].nodes, indexing="ij")
+def _harmonic(degree, order, plan):
+    theta, phi = jnp.meshgrid(plan.theta, plan.phi, indexing="ij")
     degrees = jnp.array([degree], dtype=jnp.int32)
     orders = jnp.array([order], dtype=jnp.int32)
     flattened = jax.vmap(
@@ -516,44 +504,43 @@ def _harmonic(degree, order, axes, max_degree):
             orders,
             colatitude,
             longitude,
-            n_max=max_degree,
+            n_max=plan.bandlimit - 1,
         )
     )(theta.reshape((-1,)), phi.reshape((-1,)))
     return flattened[..., 0].reshape(theta.shape)
 
 
-def test_spherical_constant_mode_has_quadrature_convergence():
-    def error(n_theta):
-        layer, axes = _degree_filter((1.0, 0.0, 0.0), n_theta, 2 * n_theta)
-        values = jnp.ones((n_theta, 2 * n_theta, 1))
-        return jnp.linalg.norm(layer(values, axes)[..., 0] - 1.0) / jnp.sqrt(values.size)
-
-    assert error(65) < 0.3 * error(17)
-    assert error(65) < 5e-4
+@pytest.mark.parametrize("sampling", ("mw", "mwss", "dh", "gl"))
+def test_spherical_constant_mode_is_exact_on_sampling_theorems(sampling):
+    layer, plan = _degree_filter((1.0, 0.0, 0.0, 0.0), sampling=sampling)
+    values = jnp.ones((*plan.sample_shape, 1))
+    error = jnp.linalg.norm(layer(values, plan)[..., 0] - 1.0) / jnp.sqrt(values.size)
+    assert error < 1e-11
 
 
 def test_spherical_filter_applies_one_gain_per_harmonic_degree():
-    layer, axes = _degree_filter((0.0, 0.0, 1.7, 0.0), 65, 96)
-    mode = jnp.real(_harmonic(2, 1, axes, 3))
-    output = layer(mode[..., None], axes)[..., 0]
+    layer, plan = _degree_filter((0.0, 0.0, 1.7, 0.0))
+    mode = jnp.real(_harmonic(2, 1, plan))
+    output = layer(mode[..., None], plan)[..., 0]
     relative_error = jnp.linalg.norm(output - 1.7 * mode) / jnp.linalg.norm(mode)
-    assert relative_error < 1e-3
+    assert relative_error < 1e-11
 
 
 def test_spherical_operator_is_equivariant_to_longitude_rotations():
-    layer, axes = _degree_filter((0.8, -0.3, 1.2, 0.4), 33, 48)
+    layer, plan = _degree_filter((0.8, -0.3, 1.2, 0.4))
     values = (
-        jnp.real(_harmonic(1, 1, axes, 3)) + 0.3 * jnp.real(_harmonic(3, -2, axes, 3))
+        jnp.real(_harmonic(1, 1, plan))
+        + 0.3 * jnp.real(_harmonic(3, -2, plan))
     )[..., None]
-    shift = 7
-    expected = jnp.roll(layer(values, axes), shift, axis=1)
-    actual = layer(jnp.roll(values, shift, axis=1), axes)
-    assert jnp.allclose(actual, expected, rtol=1e-10, atol=1e-10)
+    shift = 2
+    expected = jnp.roll(layer(values, plan), shift, axis=1)
+    actual = layer(jnp.roll(values, shift, axis=1), plan)
+    assert jnp.allclose(actual, expected, rtol=1e-11, atol=1e-11)
 
 
 def test_spherical_degree_filter_is_equivariant_to_arbitrary_rotation():
-    layer, axes = _degree_filter((0.0, 0.0, 1.7, 0.0), 65, 96)
-    theta, phi = jnp.meshgrid(axes[0].nodes, axes[1].nodes, indexing="ij")
+    layer, plan = _degree_filter((0.0, 0.0, 1.7, 0.0))
+    theta, phi = jnp.meshgrid(plan.theta, plan.phi, indexing="ij")
     points = jnp.stack(
         (
             jnp.sin(theta) * jnp.cos(phi),
@@ -580,11 +567,11 @@ def test_spherical_degree_filter_is_equivariant_to_arbitrary_rotation():
     rotated = oe.contract("...i,ij->...j", points, rotation_z @ rotation_y)
     x, y, z = rotated[..., 0], rotated[..., 1], rotated[..., 2]
     degree_two_field = x * y + 0.3 * (y**2 - z**2)
-    output = layer(degree_two_field[..., None], axes)[..., 0]
+    output = layer(degree_two_field[..., None], plan)[..., 0]
     relative_error = jnp.linalg.norm(output - 1.7 * degree_two_field) / jnp.linalg.norm(
         degree_two_field
     )
-    assert relative_error < 2e-3
+    assert relative_error < 1e-11
 
 
 def _attention_samples(weights, mask=None):
@@ -807,11 +794,13 @@ def test_basis_transform_plan_reuses_exact_projection_matrices():
     assert jnp.allclose(actual, expected, rtol=1e-12, atol=1e-12)
 
 
-def test_spherical_transform_plan_reuses_basis_and_quadrature():
-    layer, axes = _degree_filter((0.8, -0.3, 1.2, 0.4), 25, 36)
-    values = jr.normal(jr.key(40), (25, 36, 1))
-    plan = layer.plan(axes)
-    assert isinstance(plan, phx.nn.operator.architectures.SphericalTransformPlan)
-    expected = layer(values, axes)
-    actual = eqx.filter_jit(lambda x: layer(x, axes, plan=plan))(values)
-    assert jnp.allclose(actual, expected, rtol=1e-12, atol=1e-12)
+def test_spherical_execution_plans_are_interchangeable_and_jittable():
+    layer, recursive = _degree_filter((0.8, -0.3, 1.2, 0.4))
+    precomputed = phx.nn.operator.architectures.SphericalHarmonicPlan(
+        4, execution="precomputed"
+    )
+    values = jr.normal(jr.key(40), (*recursive.sample_shape, 1))
+    expected = layer(values, recursive)
+    actual = eqx.filter_jit(lambda x: layer(x, precomputed))(values)
+    assert recursive.fingerprint == precomputed.fingerprint
+    assert jnp.allclose(actual, expected, rtol=1e-11, atol=1e-11)

@@ -1,220 +1,87 @@
 #
-#  Copyright © 2026 PHYDRA, Inc. All rights reserved.
+# Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
 from __future__ import annotations
 
 from typing import Literal
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
 import opt_einsum as oe
-from jax.scipy.special import sph_harm_y
 from jaxtyping import Array, Key
 
 from phydrax._doc import DOC_KEY0
+from phydrax._spectral._spherical import SphericalHarmonicPlan
 from phydrax._strict import StrictModule
-from phydrax._trainable import NonTrainableState
-from phydrax.nn._keys import EvalKey
+from phydrax.nn._keys import EvalKey, fold_in_eval_key
 from phydrax.nn._utils import _get_size
 from phydrax.nn.layers._linear import Linear
-from phydrax.nn.operator.data import OperatorAxis, OperatorBatch
+from phydrax.nn.operator.data import FunctionSamples, OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
 
-def _trapezoid(nodes: Array, /, *, periodic: bool = False) -> Array:
-    if int(nodes.shape[0]) == 1:
-        return jnp.ones_like(nodes)
-    if periodic:
-        return jnp.full_like(nodes, jnp.mean(jnp.diff(nodes)))
-    return jnp.concatenate(
-        (
-            (0.5 * (nodes[1] - nodes[0]))[None],
-            0.5 * (nodes[2:] - nodes[:-2]),
-            (0.5 * (nodes[-1] - nodes[-2]))[None],
-        )
-    )
-
-
-def _sphere_basis(
-    theta: Array,
-    phi: Array,
-    degree: Array,
-    order: Array,
-    max_degree: int,
-    /,
-) -> Array:
-    theta_grid, phi_grid = jnp.meshgrid(theta, phi, indexing="ij")
-    theta_flat = theta_grid.reshape((-1,))
-    phi_flat = phi_grid.reshape((-1,))
-    return jax.vmap(
-        lambda colatitude, longitude: sph_harm_y(
-            degree,
-            order,
-            colatitude,
-            longitude,
-            n_max=max_degree - 1,
-        )
-    )(theta_flat, phi_flat)
-
-
-class SphericalTransformPlan(StrictModule, NonTrainableState):
-    """Reusable spherical-harmonic basis and quadrature for one grid."""
-
-    basis: Array
-    weights: Array
-    sample_shape: tuple[int, int]
-    max_degree: int
-
-    def __init__(
-        self,
-        basis: Array,
-        weights: Array,
-        sample_shape: tuple[int, int],
-        max_degree: int,
-        /,
-    ):
-        self.basis = jnp.asarray(basis)
-        self.weights = jnp.asarray(weights)
-        self.sample_shape = (int(sample_shape[0]), int(sample_shape[1]))
-        self.max_degree = int(max_degree)
-
-
 class SphericalSpectralConv(StrictModule):
-    """Rotation-equivariant spherical-harmonic convolution on the two-sphere."""
+    """Scalar SO(3)-equivariant channel mixing in an S2FFT coefficient basis."""
 
-    in_channels: int
-    out_channels: int
-    max_degree: int
-    degree: Array
-    order: Array
     weight: Array
-    theta_weights_include_sine: bool
+    in_channels: int = eqx.field(static=True)
+    out_channels: int = eqx.field(static=True)
+    bandlimit: int = eqx.field(static=True)
+    transform_fingerprint: str = eqx.field(static=True)
 
     def __init__(
         self,
+        plan: SphericalHarmonicPlan,
+        /,
         *,
         in_channels: int,
         out_channels: int,
-        max_degree: int,
-        theta_weights_include_sine: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
     ):
-        self.in_channels = int(in_channels)
-        self.out_channels = int(out_channels)
-        self.max_degree = int(max_degree)
-        self.theta_weights_include_sine = bool(theta_weights_include_sine)
-        if self.in_channels <= 0 or self.out_channels <= 0 or self.max_degree <= 0:
-            raise ValueError("channels and max_degree must be positive.")
-        degrees = []
-        orders = []
-        for degree in range(self.max_degree):
-            for order in range(-degree, degree + 1):
-                degrees.append(degree)
-                orders.append(order)
-        self.degree = jnp.asarray(degrees, dtype=jnp.int32)
-        self.order = jnp.asarray(orders, dtype=jnp.int32)
-        # Sharing one real channel map across all orders m at fixed degree l is the
-        # Schur form required for scalar SO(3)-equivariance and preserves real fields.
+        if not isinstance(plan, SphericalHarmonicPlan):
+            raise TypeError("plan must be a SphericalHarmonicPlan.")
+        in_size = int(in_channels)
+        out_size = int(out_channels)
+        if min(in_size, out_size) <= 0:
+            raise ValueError("Spherical spectral channels must be positive.")
+        self.in_channels = in_size
+        self.out_channels = out_size
+        self.bandlimit = plan.bandlimit
+        self.transform_fingerprint = plan.fingerprint
         self.weight = jr.normal(
             key,
-            shape=(self.max_degree, self.in_channels, self.out_channels),
-        ) / jnp.sqrt(float(self.in_channels))
-
-    def _weights(
-        self,
-        theta_axis: OperatorAxis,
-        phi_axis: OperatorAxis,
-        sample_weights: Array | None,
-        /,
-    ) -> Array:
-        if sample_weights is not None:
-            weights = jnp.asarray(sample_weights, dtype=float)
-            if weights.shape[-2:] == (theta_axis.size, phi_axis.size):
-                return weights.reshape(weights.shape[:-2] + (-1,))
-            if weights.shape[-1:] == (theta_axis.size * phi_axis.size,):
-                return weights
-            raise ValueError("Spherical sample weights do not match the spherical grid.")
-        theta_weight = (
-            _trapezoid(theta_axis.nodes)
-            if theta_axis.quadrature_weights is None
-            else theta_axis.quadrature_weights
-        )
-        if not self.theta_weights_include_sine:
-            theta_weight = theta_weight * jnp.sin(theta_axis.nodes)
-        phi_weight = (
-            _trapezoid(phi_axis.nodes, periodic=phi_axis.periodic)
-            if phi_axis.quadrature_weights is None
-            else phi_axis.quadrature_weights
-        )
-        return jnp.multiply.outer(theta_weight, phi_weight).reshape((-1,))
-
-    def plan(
-        self,
-        axes: tuple[OperatorAxis, OperatorAxis],
-        /,
-        *,
-        sample_weights: Array | None = None,
-    ) -> SphericalTransformPlan:
-        """Precompute the basis and quadrature for repeated evaluations."""
-        theta_axis, phi_axis = axes
-        basis = _sphere_basis(
-            theta_axis.nodes,
-            phi_axis.nodes,
-            self.degree,
-            self.order,
-            self.max_degree,
-        )
-        weights = self._weights(theta_axis, phi_axis, sample_weights)
-        return SphericalTransformPlan(
-            basis,
-            weights,
-            (theta_axis.size, phi_axis.size),
-            self.max_degree,
-        )
+            shape=(plan.bandlimit, in_size, out_size),
+        ) / jnp.sqrt(float(in_size))
 
     def __call__(
         self,
         values: Array,
-        axes: tuple[OperatorAxis, OperatorAxis],
+        plan: SphericalHarmonicPlan,
         /,
-        *,
-        sample_weights: Array | None = None,
-        plan: SphericalTransformPlan | None = None,
     ) -> Array:
-        theta_axis, phi_axis = axes
         array = jnp.asarray(values)
-        sample_shape = (theta_axis.size, phi_axis.size)
-        if array.ndim < 3 or tuple(array.shape[-3:-1]) != sample_shape:
-            raise ValueError(
-                "SphericalSpectralConv expects (..., n_theta, n_phi, channels)."
-            )
-        if int(array.shape[-1]) != self.in_channels:
-            raise ValueError(f"Expected {self.in_channels} input channels.")
-        transform = (
-            self.plan(axes, sample_weights=sample_weights) if plan is None else plan
-        )
+        if plan.fingerprint != self.transform_fingerprint:
+            raise ValueError("Spherical layer and transform plan do not match.")
         if (
-            transform.sample_shape != sample_shape
-            or transform.max_degree != self.max_degree
+            array.ndim < 3
+            or tuple(int(size) for size in array.shape[-3:-1]) != plan.sample_shape
+            or int(array.shape[-1]) != self.in_channels
         ):
             raise ValueError(
-                "Spherical transform plan does not match this layer or grid."
+                "SphericalSpectralConv expects "
+                f"(..., {plan.sample_shape[0]}, {plan.sample_shape[1]}, "
+                f"{self.in_channels}) input."
             )
-        basis = transform.basis
-        weights = transform.weights
-        flattened = array.reshape(array.shape[:-3] + (-1, self.in_channels))
-        coefficients = oe.contract(
-            "nm,...ni,...n->...mi",
-            jnp.conj(basis),
-            flattened,
-            weights,
+        coefficients = plan.analysis(array)
+        transformed = oe.contract(
+            "...lmi,lio->...lmo",
+            coefficients,
+            self.weight,
         )
-        mode_weight = self.weight[self.degree]
-        output_coefficients = oe.contract("...mi,mio->...mo", coefficients, mode_weight)
-        output = oe.contract("nm,...mo->...no", basis, output_coefficients).real
-        return output.reshape(array.shape[:-3] + sample_shape + (self.out_channels,))
+        return plan.synthesis(transformed)
 
 
 class _SFNOBlock(StrictModule):
@@ -223,18 +90,17 @@ class _SFNOBlock(StrictModule):
 
     def __init__(
         self,
+        plan: SphericalHarmonicPlan,
+        /,
         *,
         channels: int,
-        max_degree: int,
-        theta_weights_include_sine: bool,
         key: Key[Array, ""],
     ):
         spectral_key, pointwise_key = jr.split(key)
         self.spectral = SphericalSpectralConv(
+            plan,
             in_channels=channels,
             out_channels=channels,
-            max_degree=max_degree,
-            theta_weights_include_sine=theta_weights_include_sine,
             key=spectral_key,
         )
         self.pointwise = Linear(
@@ -247,30 +113,58 @@ class _SFNOBlock(StrictModule):
     def __call__(
         self,
         values: Array,
-        axes: tuple[OperatorAxis, OperatorAxis],
+        plan: SphericalHarmonicPlan,
         /,
         *,
-        sample_weights: Array | None,
-        plan: SphericalTransformPlan | None = None,
+        key: EvalKey,
     ) -> Array:
-        hidden = self.spectral(
-            values,
-            axes,
-            sample_weights=sample_weights,
-            plan=plan,
-        ) + self.pointwise(values)
+        hidden = self.spectral(values, plan) + self.pointwise(values, key=key)
         return (values + jax.nn.gelu(hidden)) / jnp.sqrt(2.0)
 
 
+def _validate_axis(
+    axis: OperatorAxis,
+    expected_nodes: Array,
+    expected_weights: Array,
+    /,
+    *,
+    name: str,
+    periodic: bool,
+    token: Array,
+) -> Array:
+    if axis.size != int(expected_nodes.size):
+        raise ValueError(f"SFNO {name} axis has the wrong sample count.")
+    if axis.periodic != periodic:
+        raise ValueError(f"SFNO {name} axis periodicity does not match its sampling.")
+    token = eqx.error_if(
+        token,
+        ~jnp.allclose(axis.nodes, expected_nodes, rtol=1e-12, atol=1e-12),
+        f"SFNO {name} nodes do not match the S2FFT sampling theorem.",
+    )
+    if axis.quadrature_weights is not None:
+        token = eqx.error_if(
+            token,
+            ~jnp.allclose(
+                axis.quadrature_weights,
+                expected_weights,
+                rtol=1e-10,
+                atol=1e-12,
+            ),
+            f"SFNO {name} quadrature does not match the S2FFT plan.",
+        )
+    return token
+
+
 class SFNO(AbstractOperatorModel):
-    """Spherical Fourier Neural Operator using true spherical harmonics."""
+    """Spin-zero real spherical Fourier neural operator on an exact S2FFT grid."""
 
     operator_architecture = "SFNO"
 
+    plan: SphericalHarmonicPlan
     in_size: int | Literal["scalar"]
     out_size: int | Literal["scalar"]
     width: int
-    max_degree: int
+    depth: int
     source_key: str | None
     lift: Linear
     blocks: tuple[_SFNOBlock, ...]
@@ -278,24 +172,29 @@ class SFNO(AbstractOperatorModel):
 
     def __init__(
         self,
+        plan: SphericalHarmonicPlan,
+        /,
         *,
         in_channels: int | Literal["scalar"] = "scalar",
         out_channels: int | Literal["scalar"] = "scalar",
         width: int = 32,
         depth: int = 4,
-        max_degree: int = 12,
-        theta_weights_include_sine: bool = False,
         source_key: str | None = None,
         key: Key[Array, ""] = DOC_KEY0,
     ):
+        if not isinstance(plan, SphericalHarmonicPlan):
+            raise TypeError("plan must be a SphericalHarmonicPlan.")
+        if plan.spin != 0 or not plan.reality:
+            raise ValueError("SFNO currently requires a real spin-zero transform plan.")
+        self.plan = plan
         self.in_size = in_channels
         self.out_size = out_channels
         self.width = int(width)
-        self.max_degree = int(max_degree)
+        self.depth = int(depth)
         self.source_key = source_key
-        if self.width <= 0 or int(depth) <= 0 or self.max_degree <= 0:
-            raise ValueError("width, depth, and max_degree must be positive.")
-        keys = jr.split(key, int(depth) + 2)
+        if min(self.width, self.depth) <= 0:
+            raise ValueError("width and depth must be positive.")
+        keys = jr.split(key, self.depth + 2)
         self.lift = Linear(
             in_size=_get_size(in_channels),
             out_size=self.width,
@@ -304,9 +203,8 @@ class SFNO(AbstractOperatorModel):
         )
         self.blocks = tuple(
             _SFNOBlock(
+                plan,
                 channels=self.width,
-                max_degree=self.max_degree,
-                theta_weights_include_sine=theta_weights_include_sine,
                 key=block_key,
             )
             for block_key in keys[1:-1]
@@ -318,91 +216,104 @@ class SFNO(AbstractOperatorModel):
             key=keys[-1],
         )
 
-    def _evaluate(
+    def _source(self, batch: OperatorBatch, /) -> FunctionSamples:
+        if self.source_key is not None:
+            return batch.input(self.source_key)
+        if len(batch.inputs) != 1:
+            raise ValueError("SFNO requires source_key for multiple inputs.")
+        return next(iter(batch.inputs.values()))
+
+    def _validate_grid(
         self,
-        values: Array,
-        axes: tuple[OperatorAxis, OperatorAxis],
+        source: FunctionSamples,
+        query: FunctionSamples,
+        token: Array,
         /,
-        *,
-        sample_weights: Array | None,
     ) -> Array:
-        array = jnp.asarray(values)
-        sample_shape = (axes[0].size, axes[1].size)
-        if array.ndim >= 2 and tuple(array.shape[-2:]) == sample_shape:
-            if _get_size(self.in_size) != 1:
-                raise ValueError("Multichannel SFNO input requires a channel axis.")
-            array = array[..., None]
-        elif array.ndim <= 2 or tuple(array.shape[-3:-1]) != sample_shape:
-            raise ValueError("SFNO values do not match the spherical grid shape.")
-        if int(array.shape[-1]) != _get_size(self.in_size):
-            raise ValueError(f"Expected {_get_size(self.in_size)} input channels.")
-        hidden = self.lift(array)
-        plan = self.blocks[0].spectral.plan(
-            axes,
-            sample_weights=sample_weights,
-        )
-        for block in self.blocks:
-            hidden = block(
-                hidden,
-                axes,
-                sample_weights=sample_weights,
-                plan=plan,
+        if not source.axes or not query.axes:
+            raise ValueError("SFNO requires tensor-product colatitude/longitude axes.")
+        if len(source.axes) != 2 or len(query.axes) != 2:
+            raise ValueError("SFNO requires exactly two spherical axes.")
+        if source.sample_shape != self.plan.sample_shape:
+            raise ValueError("SFNO source shape does not match its transform plan.")
+        if query.sample_shape != self.plan.sample_shape:
+            raise ValueError("SFNO query shape does not match its transform plan.")
+        if source.axis_names != query.axis_names:
+            raise ValueError("SFNO source and query axis names must match.")
+        for axes in (source.axes, query.axes):
+            token = _validate_axis(
+                axes[0],
+                self.plan.theta,
+                self.plan.theta_quadrature_weights,
+                name="colatitude",
+                periodic=False,
+                token=token,
             )
-        output = self.projection(hidden)
-        if self.out_size == "scalar":
-            return output[..., 0]
-        return output
+            token = _validate_axis(
+                axes[1],
+                self.plan.phi,
+                self.plan.phi_quadrature_weights,
+                name="longitude",
+                periodic=True,
+                token=token,
+            )
+        return token
 
     def __call_operator_batch__(
         self,
         batch: OperatorBatch,
         /,
         *,
-        key: EvalKey = None,
+        key: EvalKey = DOC_KEY0,
     ) -> Array:
-        del key
-        if self.source_key is not None:
-            source = batch.input(self.source_key)
-        elif len(batch.inputs) == 1:
-            source = next(iter(batch.inputs.values()))
-        else:
-            raise ValueError("source_key is required for multiple operator inputs.")
-        axes = source.axes or batch.require_single_query().axes
-        if len(axes) != 2 or source.values is None:
-            raise ValueError("SFNO requires colatitude and longitude grid axes.")
-        if (
-            source.axes
-            and source.sample_shape != batch.require_single_query().sample_shape
-        ):
-            raise ValueError("SFNO requires coincident source and query grids.")
-        weights = source.weights(case_shape=batch.case_shape)
-        return self._evaluate(
-            jnp.asarray(source.values),
-            (axes[0], axes[1]),
-            sample_weights=weights,
+        source = self._source(batch)
+        query = batch.require_single_query()
+        if source.values is None:
+            raise ValueError("SFNO source values cannot be None.")
+        values = jnp.asarray(source.values)
+        values = self._validate_grid(source, query, values)
+        values = eqx.error_if(
+            values,
+            ~jnp.all(source.mask_array(case_shape=batch.case_shape)),
+            "SFNO does not support masked spherical samples.",
         )
+        values = eqx.error_if(
+            values,
+            ~jnp.all(query.mask_array(case_shape=batch.case_shape)),
+            "SFNO does not support masked spherical queries.",
+        )
+        scalar_shape = batch.case_shape + self.plan.sample_shape
+        if tuple(int(size) for size in values.shape) == scalar_shape:
+            if _get_size(self.in_size) != 1:
+                raise ValueError("Multichannel SFNO input requires a channel axis.")
+            values = values[..., None]
+        else:
+            expected = scalar_shape + (_get_size(self.in_size),)
+            if tuple(int(size) for size in values.shape) != expected:
+                raise ValueError(f"SFNO source values must have shape {expected}.")
+        hidden = self.lift(values, key=fold_in_eval_key(key, 0))
+        for index, block in enumerate(self.blocks):
+            hidden = block(
+                hidden,
+                self.plan,
+                key=fold_in_eval_key(key, index + 1),
+            )
+        output = self.projection(
+            hidden,
+            key=fold_in_eval_key(key, self.depth + 1),
+        )
+        return output[..., 0] if self.out_size == "scalar" else output
 
     def __call__(
         self,
-        x: Array | tuple[Array, ...] | OperatorBatch,
+        x: OperatorBatch,
         /,
         *,
-        key: EvalKey = None,
+        key: EvalKey = DOC_KEY0,
     ) -> Array:
-        del key
-        if isinstance(x, OperatorBatch):
-            return self.__call_operator_batch__(x)
-        if not isinstance(x, tuple) or len(x) != 3:
-            raise ValueError("SFNO requires (values, colatitude_axis, longitude_axis).")
-        axes = (
-            OperatorAxis("theta", jnp.asarray(x[1])),
-            OperatorAxis("phi", jnp.asarray(x[2]), periodic=True),
-        )
-        return self._evaluate(jnp.asarray(x[0]), axes, sample_weights=None)
+        if not isinstance(x, OperatorBatch):
+            raise TypeError("SFNO requires an OperatorBatch.")
+        return self.__call_operator_batch__(x, key=key)
 
 
-__all__ = [
-    "SFNO",
-    "SphericalSpectralConv",
-    "SphericalTransformPlan",
-]
+__all__ = ["SFNO", "SphericalHarmonicPlan", "SphericalSpectralConv"]

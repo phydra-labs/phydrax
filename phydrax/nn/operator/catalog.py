@@ -80,8 +80,15 @@ def _capabilities_for(name: str, architecture: str, /) -> OperatorCapabilitySpec
                 "point_cloud",
                 "graph",
                 "simplicial",
+                "sphere",
             ),
-            query_geometries=("tensor_grid", "point_cloud", "graph", "simplicial"),
+            query_geometries=(
+                "tensor_grid",
+                "point_cloud",
+                "graph",
+                "simplicial",
+                "sphere",
+            ),
             spatial_dimensions=(1, 2, 3),
             source_query_relations=("coincident", "independent"),
             requires_fixed_query=name == "PODDeepONet",
@@ -121,14 +128,14 @@ def _capabilities_for(name: str, architecture: str, /) -> OperatorCapabilitySpec
         )
     if architecture == "SFNO":
         return OperatorCapabilitySpec(
-            source_geometries=("sphere", "tensor_grid"),
-            query_geometries=("sphere", "tensor_grid"),
+            source_geometries=("sphere",),
+            query_geometries=("sphere",),
             spatial_dimensions=(2,),
             source_query_relations=("coincident",),
             quadrature="physical_required",
-            masks="supported",
+            masks="all_valid_only",
             topology="unused",
-            resolution_transfer=True,
+            resolution_transfer=False,
         )
     if architecture == "ManifoldSpectralOperator":
         return OperatorCapabilitySpec(
@@ -269,8 +276,6 @@ def _capabilities_for(name: str, architecture: str, /) -> OperatorCapabilitySpec
         "Flower",
         "IFNO",
         "AxialFactorizedFNO",
-        "WaveletNeuralOperator",
-        "MultiwaveletOperator",
         "Poseidon",
         "DPOT",
     ):
@@ -285,6 +290,30 @@ def _capabilities_for(name: str, architecture: str, /) -> OperatorCapabilitySpec
             topology="unused",
             resolution_transfer=architecture in ("Flower", "IFNO", "Poseidon"),
             autoregressive_rollout=architecture in ("Flower", "IFNO", "DPOT", "Poseidon"),
+        )
+    if architecture == "WaveletNeuralOperator":
+        return OperatorCapabilitySpec(
+            source_geometries=("tensor_grid",),
+            query_geometries=("tensor_grid",),
+            spatial_dimensions=(1, 2, 3),
+            source_query_relations=("coincident",),
+            axis_requirement="uniform",
+            quadrature="unused",
+            masks="supported",
+            topology="unused",
+            resolution_transfer=True,
+        )
+    if architecture == "MultiwaveletOperator":
+        return OperatorCapabilitySpec(
+            source_geometries=("tensor_grid",),
+            query_geometries=("tensor_grid",),
+            spatial_dimensions=(1,),
+            source_query_relations=("coincident",),
+            axis_requirement="uniform",
+            quadrature="unused",
+            masks="supported",
+            topology="unused",
+            resolution_transfer=True,
         )
     if architecture == "ConditionalFlowFunctionOperator":
         return OperatorCapabilitySpec(

@@ -83,7 +83,7 @@ def test_normalized_spatial_measure_and_mask_use_physical_quadrature_mass():
 
 
 def test_spectral_spatial_measure_reduces_precomputed_fields_without_coordinates():
-    plan = phx.nn.operator.architectures.SpectralDiscretization.from_eigenpairs(
+    plan = phx._spectral.SpectralDiscretization.from_eigenpairs(
         jnp.asarray([0.0, 1.0, 4.0]),
         jnp.eye(3),
         jnp.asarray([0.2, 0.3, 0.5]),

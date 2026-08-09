@@ -246,6 +246,8 @@ from ._spectral import (
     GraphLaplacianNormalization,
     GraphLaplacianOperator,
     GraphPolynomialFilter,
+    spectral_discretization_from_graph,
+    spectral_discretization_from_triangle_mesh,
 )
 from ._typed import (
     edge_type_ids,
@@ -357,6 +359,8 @@ __all__ = [
     "GraphLaplacianNormalization",
     "graph_adjacency_apply",
     "graph_laplacian_apply",
+    "spectral_discretization_from_graph",
+    "spectral_discretization_from_triangle_mesh",
     "CochainBoundaryKind",
     "GraphEdgeSemantics",
     "CochainCellOrientation",

@@ -426,10 +426,11 @@ same global Brownian paths, even when a time horizon is split across solves. Cha
 the root key changes paths; changing the grid, rank, spectrum, or modes changes
 `noise_id`.
 
-`TensorGridDiscretization` also supports periodic finite differences, sine bases with
-homogeneous Dirichlet semantics, cosine bases with homogeneous Neumann semantics, and
-multidimensional tensor grids. `SpectralSpatialDiscretization` reuses a precomputed
-manifold `phydrax.nn.operator.architectures.SpectralDiscretization` without changing its eigenbasis convention.
+`TensorGridDiscretization` also supports periodic finite differences, sine bases
+with homogeneous Dirichlet semantics, cosine bases with homogeneous Neumann
+semantics, and multidimensional tensor grids. `SpectralSpatialDiscretization`
+reuses a precomputed manifold `phydrax._spectral.SpectralDiscretization`
+directly, without a provider or a second eigenbasis convention.
 
 ## Stochastic Allen--Cahn
 

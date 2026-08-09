@@ -19,7 +19,7 @@ from ._group_average import GroupAveragedOperator
 
 register_operator_architecture_codec(
     OperatorArchitectureCodec(
-        "phydrax.operator.architecture:ExternalOperatorAdapter@1",
+        "phydrax.operator.architecture:ExternalOperatorAdapter",
         ExternalOperatorAdapter,
     )
 )

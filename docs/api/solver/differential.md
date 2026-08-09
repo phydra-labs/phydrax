@@ -607,9 +607,10 @@ product mode. `laplacian_matrix()` remains an explicit diagnostic for small
 systems; ordinary integration and low-rank spectral noise do not use it.
 
 `SpectralSpatialDiscretization` wraps an existing
-`phydrax.nn.operator.architectures.SpectralDiscretization`. It reuses that plan's analysis, synthesis,
-eigenvalues, quadrature, degeneracy ordering, and `basis_id`; it does not define
-a second manifold eigenbasis convention.
+`phydrax._spectral.SpectralDiscretization` directly. It reuses that plan's
+analysis, synthesis, eigenvalues, quadrature, degeneracy ordering, and
+`basis_id`; it does not introduce a provider or a second manifold eigenbasis
+convention.
 
 ::: phydrax.solver.AbstractSpatialDiscretization
 

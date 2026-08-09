@@ -541,20 +541,38 @@ def test_cno_family_handles_odd_grids_and_native_batches(model_name):
     assert jnp.all(jnp.isfinite(output))
 
 
-def test_sfno_is_finite_and_resolution_independent_in_parameter_count():
-    theta = jnp.linspace(0.1, jnp.pi - 0.1, 6)
-    phi = jnp.linspace(0.0, 2.0 * jnp.pi, 9, endpoint=False)
+def test_sfno_is_finite_on_its_exact_s2fft_sampling():
+    plan = phx.nn.operator.architectures.SphericalHarmonicPlan(3)
+    axes = (
+        phx.nn.operator.OperatorAxis(
+            "theta",
+            plan.theta,
+            quadrature_weights=plan.theta_quadrature_weights,
+        ),
+        phx.nn.operator.OperatorAxis(
+            "phi",
+            plan.phi,
+            quadrature_weights=plan.phi_quadrature_weights,
+            periodic=True,
+        ),
+    )
+    batch = phx.nn.operator.OperatorBatch(
+        inputs={
+            "field": phx.nn.operator.FunctionSamples(
+                values=jnp.ones((2, *plan.sample_shape)),
+                axes=axes,
+            )
+        },
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=axes)},
+        case_axes=("case",),
+    )
     model = phx.nn.operator.architectures.SFNO(
-        width=4, depth=2, max_degree=3, key=jr.key(0)
+        plan, width=4, depth=2, source_key="field", key=jr.key(0)
     )
     count = _parameter_count(model)
-    output = model((jnp.ones((2, 6, 9)), theta, phi))
-    theta_fine = jnp.linspace(0.1, jnp.pi - 0.1, 8)
-    phi_fine = jnp.linspace(0.0, 2.0 * jnp.pi, 12, endpoint=False)
-    fine = model((jnp.ones((2, 8, 12)), theta_fine, phi_fine))
-    assert output.shape == (2, 6, 9)
-    assert fine.shape == (2, 8, 12)
-    assert jnp.all(jnp.isfinite(fine))
+    output = model(batch)
+    assert output.shape == (2, *plan.sample_shape)
+    assert jnp.all(jnp.isfinite(output))
     assert _parameter_count(model) == count
 
 

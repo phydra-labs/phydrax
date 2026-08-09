@@ -420,11 +420,11 @@ def test_portable_operator_artifact_round_trips_inference_and_training_state(tmp
     assert manifest.format == "phydrax-operator-artifact"
     assert manifest.version == 3
     assert (
-        manifest.execution_model_architecture_id == "phydrax.operator.architecture:FNO@1"
+        manifest.execution_model_architecture_id == "phydrax.operator.architecture:FNO"
     )
     recipe = json.dumps(manifest.execution_model_recipe, sort_keys=True)
     assert "phydrax.nn." not in recipe
-    assert "phydrax.operator.architecture:FNO@1" in recipe
+    assert "phydrax.operator.architecture:FNO" in recipe
     assert "phydrax.artifact:Linear@1" in recipe
 
     restored = phx.nn.operator.training.load_trained_operator(destination)
@@ -438,6 +438,146 @@ def test_portable_operator_artifact_round_trips_inference_and_training_state(tmp
     )
     assert int(resume.state["step"]) == 7
     assert resume.metadata == {"epoch": 2}
+
+
+def test_wavelet_operator_artifacts_round_trip_without_model_templates(tmp_path):
+    models = (
+        phx.nn.operator.architectures.WaveletNeuralOperator(
+            1,
+            in_channels="scalar",
+            out_channels="scalar",
+            levels=2,
+            wavelet="db2",
+            width=4,
+            depth=1,
+            source_key="u",
+            key=jr.key(31),
+        ),
+        phx.nn.operator.architectures.MultiwaveletOperator(
+            in_channels="scalar",
+            out_channels="scalar",
+            order=2,
+            levels=2,
+            width=4,
+            depth=1,
+            source_key="u",
+            key=jr.key(32),
+        ),
+    )
+    batch = _batch()
+
+    for model in models:
+        trained = phx.nn.operator.training.TrainedOperator(
+            model,
+            _task(),
+            training_evidence=phx.nn.operator.OperatorTrainingEvidence(
+                regime="task_specific"
+            ),
+            output_field_map={"output": "solution"},
+        )
+        expected = trained.predict(batch).field("solution").values
+        destination = phx.nn.operator.training.save_operator_artifact(
+            tmp_path / type(model).__name__,
+            trained,
+        )
+
+        restored = phx.nn.operator.training.load_trained_operator(destination)
+        actual = restored.predict(batch).field("solution").values
+        manifest = phx.nn.operator.training.load_operator_artifact_manifest(
+            destination
+        )
+
+        assert manifest.execution_model_architecture_id == (
+            f"phydrax.operator.architecture:{type(model).__name__}"
+        )
+        assert jnp.allclose(actual, expected)
+
+
+def test_sfno_artifact_round_trips_s2fft_plan_without_model_template(tmp_path):
+    plan = phx.nn.operator.architectures.SphericalHarmonicPlan(3)
+    axes = (
+        phx.nn.operator.OperatorAxis(
+            "theta",
+            plan.theta,
+            quadrature_weights=plan.theta_quadrature_weights,
+            basis="sphere",
+        ),
+        phx.nn.operator.OperatorAxis(
+            "phi",
+            plan.phi,
+            quadrature_weights=plan.phi_quadrature_weights,
+            basis="fourier",
+            periodic=True,
+        ),
+    )
+    batch = phx.nn.operator.OperatorBatch(
+        inputs={
+            "u": phx.nn.operator.FunctionSamples(
+                values=jnp.cos(plan.theta)[:, None] * jnp.ones((1, plan.phi.size)),
+                axes=axes,
+            )
+        },
+        queries={
+            "solution-query": phx.nn.operator.FunctionSamples(values=None, axes=axes)
+        },
+    )
+    task = phx.nn.operator.OperatorTask(
+        "spherical-map",
+        dimension_basis=(),
+        fields=(
+            phx.nn.operator.OperatorFieldSpec(
+                "input",
+                role="source",
+                source_name="u",
+                physical_dimension=(),
+            ),
+            phx.nn.operator.OperatorFieldSpec(
+                "solution",
+                role="target",
+                query_name="solution-query",
+                physical_dimension=(),
+            ),
+        ),
+        queries=(
+            phx.nn.operator.OperatorQuerySpec(
+                "solution-query",
+                geometry_kind="sphere",
+                coordinate_components=("theta", "phi"),
+                quadrature="physical_required",
+                fixed_geometry=True,
+            ),
+        ),
+        problem=phx.nn.operator.OperatorProblemSpec(
+            source_query_relation="coincident",
+            query_is_fixed=True,
+        ),
+    )
+    model = phx.nn.operator.architectures.SFNO(
+        plan,
+        width=4,
+        depth=1,
+        source_key="u",
+        key=jr.key(33),
+    )
+    trained = phx.nn.operator.training.TrainedOperator(
+        model,
+        task,
+        training_evidence=phx.nn.operator.OperatorTrainingEvidence(
+            regime="task_specific"
+        ),
+        output_field_map={"output": "solution"},
+        fixed_query_fingerprints={
+            "solution-query": batch.query("solution-query").geometry_fingerprint()
+        },
+    )
+    expected = trained.predict(batch).field("solution").values
+
+    destination = phx.nn.operator.training.save_operator_artifact(tmp_path, trained)
+    restored = phx.nn.operator.training.load_trained_operator(destination)
+    actual = restored.predict(batch).field("solution").values
+
+    assert restored.execution_model.plan.fingerprint == plan.fingerprint
+    assert jnp.allclose(actual, expected)
 
 
 def test_portable_operator_artifact_loads_in_fresh_process(tmp_path):
@@ -490,7 +630,7 @@ print(
     )
     payload = json.loads(completed.stdout.strip().splitlines()[-1])
 
-    assert payload["architecture_id"] == "phydrax.operator.architecture:FNO@1"
+    assert payload["architecture_id"] == "phydrax.operator.architecture:FNO"
     assert jnp.allclose(jnp.asarray(payload["values"]), expected)
 
 

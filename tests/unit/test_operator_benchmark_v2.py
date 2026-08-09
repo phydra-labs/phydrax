@@ -16,6 +16,7 @@ from tools.operator_benchmarks import (
     audit_scenario_difficulty,
     BenchmarkComparisonRecord,
     compatible_architectures,
+    evaluate_operator,
     ExternalCandidateAudit,
     ExternalOperatorCandidate,
     FamilyParityEvidence,
@@ -830,8 +831,8 @@ def test_multistep_targets_are_nonidentity_and_spherical_degrees_attenuate():
     dt = 0.2
     target_steps = 5
     spherical = spherical_diffusion_scenario(
-        theta_points=16,
-        phi_points=32,
+        bandlimit=16,
+        sampling="mw",
         num_cases=6,
         diffusivity=diffusivity,
         dt=dt,
@@ -1130,10 +1131,8 @@ def test_v2_registry_includes_specialized_families_and_fixed_pod_basis(quick_lad
         architecture.name: architecture
         for architecture in compatible_architectures(spherical, quick=True)
     }
-    assert {"fno", "tfno", "cno", "sfno", "pod_linear_rom"} <= set(
-        spherical_architectures
-    )
-    assert "uno" not in spherical_architectures
+    assert {"sfno", "pod_linear_rom"} <= set(spherical_architectures)
+    assert {"fno", "tfno", "cno", "uno"}.isdisjoint(spherical_architectures)
     sfno = spherical_architectures["sfno"].build(spherical, 0)
     assert sfno(spherical.train_batch).shape == spherical.train_target.shape
 
@@ -1145,6 +1144,37 @@ def test_v2_registry_includes_specialized_families_and_fixed_pod_basis(quick_lad
         for leaf in jax.tree_util.tree_leaves(pod)
         if isinstance(leaf, jax.Array)
     )
+
+
+def test_wavelet_benchmarks_reuse_models_across_resolutions():
+    scenario = split_operator_scenario(
+        periodic_burgers_scenario(
+            train_resolution=17,
+            test_resolution=29,
+            num_cases=6,
+            maximum_frequency=2,
+            seed=91,
+        ),
+        seed=1729,
+    )
+    architectures = {
+        architecture.name: architecture
+        for architecture in compatible_architectures(scenario, quick=True)
+    }
+    assert {"wavelet", "multiwavelet"} <= set(architectures)
+    source_shape = scenario.train_batch.input("state").sample_shape
+    transfer = next(
+        evaluation
+        for evaluation in scenario.evaluations
+        if evaluation.batch.input("state").sample_shape != source_shape
+    )
+
+    for name in ("wavelet", "multiwavelet"):
+        model = architectures[name].build(scenario, 0)
+        assert model(scenario.train_batch).shape == scenario.train_target.shape
+        assert model(transfer.batch).shape == transfer.target.shape
+        evaluation = evaluate_operator(model, transfer, repeats=1)
+        assert evaluation.relative_l2 >= 0.0
 
 
 @pytest.mark.parametrize("comparison", ["capacity", "compute"])

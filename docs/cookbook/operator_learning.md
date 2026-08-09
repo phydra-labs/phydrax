@@ -450,21 +450,23 @@ axial_fno = phx.nn.operator.architectures.AxialFactorizedFNO(
     key=jr.key(41),
 )
 wno = phx.nn.operator.architectures.WaveletNeuralOperator(
-    (8,),
+    1,
     in_channels="scalar",
     out_channels="scalar",
     levels=2,
+    wavelet="db2",
+    boundary="periodization",
     width=8,
     depth=1,
     source_key="state",
     key=jr.key(42),
 )
 mwt = phx.nn.operator.architectures.MultiwaveletOperator(
-    8,
     in_channels="scalar",
     out_channels="scalar",
     order=2,
     levels=2,
+    boundary="periodization",
     width=8,
     depth=1,
     source_key="state",
@@ -482,10 +484,39 @@ assert all(prediction.shape == (8,) for prediction in fixed_grid_predictions)
 assert ifno_convergence.iterations == 3
 ```
 
+WNO and MWT own shape-independent numerical transforms. The same trained object
+can be called on another compatible uniform coincident grid without rebuilding
+its learned layers. New array shapes may trigger ordinary JAX recompilation.
+
 `ManifoldSpectralOperator` takes a precomputed
-`SpectralDiscretization`; an optional target plan must use an aligned Laplace
-eigenbasis. It is a planned cross-discretization, not an arbitrary-coordinate
-query path.
+`phydrax._spectral.SpectralDiscretization`; an optional target plan must use an
+aligned Laplace eigenbasis. Build a mesh plan directly with
+`phx.graph.spectral_discretization_from_triangle_mesh(mesh, n_modes=...)`.
+There is no provider wrapper. A target plan is a declared cross-discretization,
+not an arbitrary-coordinate query path.
+
+SFNO similarly receives a prepared exact spherical sampling plan rather than
+inferring a transform from arbitrary nodes:
+
+```python
+sphere_plan = phx.nn.operator.architectures.SphericalHarmonicPlan(
+    16,
+    sampling="mw",
+    execution="recursive",
+)
+sfno = phx.nn.operator.architectures.SFNO(
+    sphere_plan,
+    width=16,
+    depth=2,
+    source_key="state",
+    key=jr.key(44),
+)
+```
+
+Construct the colatitude and longitude `OperatorAxis` objects from
+`sphere_plan.theta`, `sphere_plan.phi`, and their corresponding quadrature
+weights. SFNO rejects shifted nodes, missing samples, masks containing invalid
+sites, and grids from a different sampling theorem.
 
 For coincident irregular-time sequences, choose the state contract explicitly.
 `DiagonalStateSpaceMixer` is input-independent; `SelectiveStateSpaceMixer`
@@ -1617,11 +1648,12 @@ below is unchanged.
 Comparator inclusion is compatibility-gated, not automatic. FNO and IFNO can
 participate on aligned uniform coincident grids but do not provide arbitrary
 independent-query decoding. CNO and UNO additionally require compatible grid
-hierarchies and divisibility. Wavelet operators require their constructor-fixed
-shape and aligned nodes (and the selected variant must support the scenario
-dimension). Consequently, FNO/IFNO/CNO/UNO/Wavelet results should appear only
-for levels whose shape and grid semantics satisfy those existing contracts;
-absence from an incompatible resolution-transfer level is not a failed run.
+hierarchies and divisibility. WNO and MWT can reuse a model across compatible
+sample counts, but transformed-axis count, uniform coincident geometry, level
+depth, filter or polynomial order, and boundary rules remain fixed.
+Consequently, FNO/IFNO/CNO/UNO/Wavelet results should appear only for levels
+whose grid semantics satisfy those contracts; absence from an incompatible
+level is not a failed run.
 
 Run a broad shortlist with Pareto reporting before committing decision-profile
 compute:

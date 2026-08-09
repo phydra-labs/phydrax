@@ -14,12 +14,12 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 from phydrax._doc import DOC_KEY0
+from phydrax._spectral._fourier import fourier_resample as spectral_resample
 from phydrax._strict import StrictModule
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
 from phydrax.nn.layers._linear import Linear
 from phydrax.nn.layers._measure_convolution import _AbstractMeasureNormalizedConvND
-from phydrax.nn.operator.architectures.spectral._fno import spectral_resample
 from phydrax.nn.operator.data import OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 

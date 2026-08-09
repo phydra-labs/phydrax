@@ -922,24 +922,38 @@ tensor-grid and coincident source/query requirements. Axial factorization lowers
 the multidimensional transform cost but omits simultaneous cross-axis spectral
 mixing within one transform.
 
-`WaveletNeuralOperator` (WNO) uses an exactly reconstructing multiresolution
-filter bank on one fixed tensor shape. `MultiwaveletOperator` (MWT) is the
-one-dimensional Alpert polynomial variant. They require identical source and
-query tensor axes and are not arbitrary-point decoders; the constructor's
-`spatial_shape` or `num_points` is part of the model contract.
+`WaveletNeuralOperator` (WNO) owns a shape-independent
+`DiscreteWaveletTransform`. Its constructor fixes the number of transformed
+axes, wavelet families, decomposition depth, boundary rules, and learned
+subband topology—not the current sample counts. The same WNO object can execute
+on multiple compatible uniform coincident grids; JAX may compile once for each
+new array shape. `MultiwaveletOperator` (MWT) applies the same principle to a
+strictly one-dimensional Alpert polynomial transform. It pads the current point
+count to the required dyadic cell multiple and crops exactly during synthesis.
+Neither architecture is an arbitrary-point decoder: source and query axes must
+remain identical, uniform, and coincident.
 
-`ManifoldSpectralOperator` projects through a supplied Laplace eigenbasis.
-Source and optional target `SpectralDiscretization` plans must represent a
-fixed/aligned manifold basis. A target plan permits a pre-aligned
-cross-discretization, not arbitrary query coordinates or independently
-remeshed manifolds with unresolved eigenbasis alignment.
+Both transforms return `MultiresolutionCoefficients`: one coarsest scaling array,
+then detail levels ordered coarsest to finest. Tensor-wavelet detail bands use
+lexicographic low/high labels with the all-low band omitted. Reconstruction
+metadata travels with the coefficient PyTree, and synthesis rejects coefficients
+from a different plan. Boundary names are exact: `"periodization"` is critically
+sampled circular extension, `"symmetric"` is symmetric reflection, and `"zero"`
+is zero extension.
+
+`ManifoldSpectralOperator` projects through a supplied
+`phydrax._spectral.SpectralDiscretization`. Source and optional target plans must
+represent a fixed, aligned Laplace eigenbasis. A target plan permits a pre-aligned
+cross-discretization, not arbitrary query coordinates or independently remeshed
+manifolds with unresolved eigenbasis alignment.
 
 `SpectralDiscretization.from_stiffness(K, M, ...)` uses the finite-element
 convention \(K\succeq0\), \(M\succ0\) and solves \(K v=\lambda M v\).
-`from_triangle_mesh(...)` assembles cotangent stiffness and lumped mass as
-sparse matrices and computes only the requested low modes for large meshes;
-small or nearly full spectra use a dense solve. Repeated eigenvalues are grouped
-as one eigenspace for basis-gauge-safe spectral mixing.
+`phx.graph.spectral_discretization_from_triangle_mesh(mesh, ...)` assembles
+cotangent stiffness and lumped mass directly from a `TriangleMesh`; no provider
+wrapper is required. Large sparse problems compute only the requested low modes,
+while small or nearly full spectra use a dense solve. Repeated eigenvalues are
+grouped as one eigenspace for basis-gauge-safe spectral mixing.
 
 ::: phydrax.nn.operator.architectures.IFNO
     options:
@@ -976,9 +990,36 @@ as one eigenspace for basis-gauge-safe spectral mixing.
             - __init__
             - __call__
 
+
 ---
 
-::: phydrax.nn.operator.architectures.SpectralDiscretization
+::: phydrax._spectral.DiscreteWaveletTransform
+    options:
+        members:
+            - __init__
+            - analysis
+            - synthesis
+            - detail_labels
+
+---
+
+::: phydrax._spectral.AlpertMultiwaveletTransform
+    options:
+        members:
+            - __init__
+            - analysis
+            - synthesis
+
+---
+
+::: phydrax._spectral.MultiresolutionCoefficients
+    options:
+        members:
+            - levels
+            - with_bands
+---
+
+::: phydrax._spectral.SpectralDiscretization
 
 ---
 
@@ -1067,9 +1108,14 @@ the same substrate.
 
 `CNO` uses oversampled nonlinearities and band-limited resampling to prevent
 ordinary CNN aliasing. `UNO` adds a U-shaped multiresolution topology over the
-same representation-aware blocks. `SFNO` uses true spherical harmonics, shares
-weights by spherical degree, and is not a planar FFT over an equirectangular
-image.
+same representation-aware blocks. `SFNO` uses an explicit
+`SphericalHarmonicPlan` backed by S2FFT, shares one channel map across every
+order of a spherical-harmonic degree, and is not a planar FFT over an
+equirectangular image. The plan fixes bandlimit, exact sampling theorem
+(`"mw"`, `"mwss"`, `"dh"`, or `"gl"`), spin, and real/complex convention.
+Current SFNO models require real spin-zero fields, exact plan nodes and
+quadrature, and all-valid samples; they do not claim arbitrary spherical grids
+or resolution transfer.
 
 Every CNO convolution consumes source observation masks and non-negative physical
 quadrature through `MeasureNormalizedConvND`. The learned signed kernel appears
@@ -1102,6 +1148,15 @@ zero-valued observations.
             - __init__
             - __call__
 
+
+---
+
+::: phydrax.nn.operator.architectures.SphericalHarmonicPlan
+    options:
+        members:
+            - __init__
+            - analysis
+            - synthesis
 ---
 
 #### Finite-group Cartesian tensor fields
@@ -1860,8 +1915,8 @@ The benchmark harness enforces the same source/query protocol across families.
 | `FNO`, `TFNO` | Uniform tensor grid | No; source/query coincide | Periodic or padded translation-dominated fields and zero-shot regular-grid resolution transfer; FFT geometry and retained-mode bias remain |
 | `HOFNO` | Uniform periodic tensor grid | No; source/query coincide | Explicit degree-controlled projected products with optional spectral de-aliasing; all-valid scalar/generic-channel fields only, and the experimental tier is not recommendation-eligible |
 | `IFNO` / `AxialFactorizedFNO` | Uniform tensor grid | No | Shared-weight fixed-point iteration or sequential axis transforms; diagnostics do not early-stop IFNO, and axial transforms omit simultaneous cross-axis mixing |
-| `WaveletNeuralOperator` / `MultiwaveletOperator` | Constructor-fixed tensor grid; MWT is 1D | No | Multiresolution or polynomial subbands; exact shape and aligned nodes are fixed by the transform |
-| `ManifoldSpectralOperator` | Fixed/aligned manifold eigenbasis | Target plan only | Intrinsic spectral processing across pre-aligned discretizations; not an arbitrary-query or independently remeshed-manifold model |
+| `WaveletNeuralOperator` / `MultiwaveletOperator` | Uniform coincident tensor grids; MWT is 1D | No | One model can process multiple compatible sample counts; transformed-axis count, levels, filters, boundary rules, and learned subband topology remain fixed |
+| `ManifoldSpectralOperator` | Fixed/aligned manifold eigenbasis | Target plan only | Intrinsic spectral processing across pre-aligned discretizations; reuse the numerical plan directly, not through a provider, and do not infer alignment across remeshed manifolds |
 | `BasisSpectralConvND` | Separable nonuniform tensor grid | No | Boundary-adapted sine/cosine/Legendre expansions; dense transforms and separable grids only |
 | `CNO` / `UNO` | Uniform tensor grid | No | Alias-controlled or multiscale grid fields; convolutional geometry, hierarchy, and divisibility constraints |
 | `LatticeEquivariantCNO` | Periodic coincident tensor grid with a declared finite signed-permutation group | No | Exact finite-group tensor equivariance on equal lattice extents; centered odd kernels, typed channels, and no continuous-group or arbitrary-grid claim |
@@ -1874,7 +1929,7 @@ The benchmark harness enforces the same source/query protocol across families.
 | `DiagonalStateSpaceMixer` / `SelectiveStateSpaceMixer` | Coincident monotone time samples | No | Exact irregular-time affine recurrence; the selective variant adds input-dependent step/injection/readout maps, packed resets, and extrapolation diagnostics without arbitrary-query decoding |
 | `LinearRecurrentOperator` | Coincident ordered samples | No | Stable complex-diagonal sample-index recurrence with packed masks; coordinates establish order but do not parameterize continuous-time dynamics |
 | `WeightSpaceOperator` | Ordered observations plus coordinate queries | Yes | Stable diagonal evolution in an explicit real root-model parameter subspace; root evaluation cost and the selected finite-dimensional subspace remain bottlenecks |
-| `SFNO` | Colatitude–longitude sphere | No | Rotation-equivariant spherical fields; spherical tensor grid only |
+| `SFNO` | One exact S2FFT colatitude–longitude sampling theorem | No | Degree-shared rotation-equivariant filtering for real spin-zero fields; fixed bandlimit and plan, all-valid masks, and no arbitrary-grid or resolution-transfer claim |
 | `GINO`, `RIGNO`, `GAOT` | Meshes and point clouds | Yes | Geometry-dependent PDEs; graph/latent construction, physical measure, and transfer discretization remain |
 | `GeometryInformedFlower` | Weighted point clouds or rasterized irregular domains | Yes | Geometry transfer around a masked multiscale Flower processor; ambient point neighborhoods do not encode mesh connectivity or intrinsic geodesics |
 | `EqGINO` | 3D point geometry with O(3) representations | Yes | Equivariant scalar/vector/tensor fields; finite radius and declared representation content constrain the map |
@@ -1955,10 +2010,11 @@ remain small and promotion-ineligible.
 
 Comparator coverage remains honest. FNO and IFNO are eligible only on aligned
 uniform coincident grids and are not independent-query decoders. CNO and UNO
-also require compatible hierarchy and divisibility. Wavelet operators require
-constructor-fixed aligned shapes and a supported spatial dimension. Therefore
-no FNO/IFNO/CNO/UNO/Wavelet comparator is implied for a resolution-transfer
-level whose shape or grid semantics violate its existing contract.
+also require compatible hierarchy and divisibility. WNO and MWT may reuse one
+model across compatible resolution levels, but their transformed-axis count,
+uniform coincident geometry, level depth, filter or polynomial order, and
+boundary semantics remain fixed. Therefore no FNO/IFNO/CNO/UNO/Wavelet
+comparator is implied for a level whose grid semantics violate its contract.
 
 Every generated population uses a deterministic seed and independent multimode
 coefficients. Resolution and geometry shifts reuse the same physical

@@ -94,23 +94,15 @@ from .spectral._fno import (
 from .spectral._hofno import HOFNO
 from .spectral._laplace import LaplaceTemporalOperator
 from .spectral._manifold_spectral import (
-    ManifoldSpectralConv,
     ManifoldSpectralOperator,
     SpectralDiscretization,
 )
 from .spectral._sfno import (
     SFNO,
+    SphericalHarmonicPlan,
     SphericalSpectralConv,
-    SphericalTransformPlan,
 )
-from .spectral._wavelet import (
-    AlpertMultiwaveletTransform,
-    MultiresolutionTransform,
-    MultiwaveletOperator,
-    MultiwaveletSpectralConv1D,
-    WaveletNeuralOperator,
-    WaveletSpectralConvND,
-)
+from .spectral._wavelet import MultiwaveletOperator, WaveletNeuralOperator
 
 
 _PORTABLE_ARCHITECTURES = (
@@ -159,7 +151,7 @@ _PORTABLE_ARCHITECTURES = (
 for _architecture_name, _architecture_type in _PORTABLE_ARCHITECTURES:
     register_operator_architecture_codec(
         OperatorArchitectureCodec(
-            f"phydrax.operator.architecture:{_architecture_name}@1",
+            f"phydrax.operator.architecture:{_architecture_name}",
             _architecture_type,
         )
     )
@@ -220,7 +212,6 @@ __all__ = [
     "LocalGlobalOperator",
     "LinearRecurrentOperator",
     "LocalIntegralOperator",
-    "ManifoldSpectralConv",
     "ManifoldSpectralOperator",
     "SpectralDiscretization",
     "NativeGraphOperator",
@@ -238,16 +229,12 @@ __all__ = [
     "SFNO",
     "WeightSpaceOperator",
     "SphericalSpectralConv",
-    "SphericalTransformPlan",
+    "SphericalHarmonicPlan",
     "Transolver",
     "ABUPT",
     "LatentTokenBlock",
     "LatentTokenProcessor",
     "UPT",
-    "AlpertMultiwaveletTransform",
-    "MultiresolutionTransform",
     "MultiwaveletOperator",
-    "MultiwaveletSpectralConv1D",
     "WaveletNeuralOperator",
-    "WaveletSpectralConvND",
 ]

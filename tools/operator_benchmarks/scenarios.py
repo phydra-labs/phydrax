@@ -25,6 +25,7 @@ from phydrax.nn.operator import (
     OperatorTargetBatch,
     OperatorTask,
 )
+from phydrax.nn.operator.architectures import SphericalHarmonicPlan
 
 
 SquareSymmetryGroup = Literal["p4", "p4m"]
@@ -4137,8 +4138,8 @@ def graph_diffusion_scenario(
 
 def spherical_diffusion_scenario(
     *,
-    theta_points: int = 12,
-    phi_points: int = 24,
+    bandlimit: int = 12,
+    sampling: str = "mw",
     num_cases: int = 6,
     diffusivity: float = 0.02,
     dt: float = 0.1,
@@ -4146,35 +4147,28 @@ def spherical_diffusion_scenario(
     maximum_degree: int = 3,
     seed: int = 0,
 ) -> OperatorBenchmarkScenario:
-    if int(theta_points) < 3 or int(phi_points) < 4:
-        raise ValueError("Spherical grids require at least 3 x 4 points.")
+    if int(bandlimit) <= 1:
+        raise ValueError("Spherical bandlimit must exceed one.")
     if float(diffusivity) <= 0.0 or float(dt) <= 0.0:
         raise ValueError("Spherical diffusivity and dt must be positive.")
     if int(target_steps) <= 0:
         raise ValueError("target_steps must be positive.")
     if int(maximum_degree) <= 0:
         raise ValueError("maximum_degree must be positive.")
-    resolved_degree = min(
-        int(maximum_degree),
-        int(theta_points) - 1,
-        (int(phi_points) - 1) // 2,
-    )
-    theta = jnp.linspace(0.0, jnp.pi, theta_points)
-    phi = jnp.linspace(0.0, 2.0 * jnp.pi, phi_points, endpoint=False)
-    theta_step = jnp.pi / (theta_points - 1)
-    theta_weights = jnp.sin(theta) * theta_step
-    theta_weights = theta_weights.at[jnp.asarray([0, theta_points - 1])].multiply(0.5)
-    phi_weights = jnp.full((phi_points,), 2.0 * jnp.pi / phi_points)
+    plan = SphericalHarmonicPlan(int(bandlimit), sampling=sampling)
+    resolved_degree = min(int(maximum_degree), plan.bandlimit - 1)
+    theta = plan.theta
+    phi = plan.phi
     theta_axis = OperatorAxis(
         "theta",
         theta,
-        quadrature_weights=theta_weights,
-        basis="legendre",
+        quadrature_weights=plan.theta_quadrature_weights,
+        basis="sphere",
     )
     phi_axis = OperatorAxis(
         "phi",
         phi,
-        quadrature_weights=phi_weights,
+        quadrature_weights=plan.phi_quadrature_weights,
         basis="fourier",
         periodic=True,
     )
@@ -4280,7 +4274,7 @@ def spherical_diffusion_scenario(
         reference_evidence=ReferenceSolverEvidence(
             method="analytic multi-degree spherical-harmonic diffusion",
             verification="analytic",
-            resolutions=(int(theta_points), int(phi_points)),
+            resolutions=plan.sample_shape,
             relative_error=0.0,
             tolerance=0.0,
         ),
@@ -4295,6 +4289,9 @@ def spherical_diffusion_scenario(
             ("target_steps", str(int(target_steps))),
             ("maximum_degree", str(int(maximum_degree))),
             ("resolved_degree", str(int(resolved_degree))),
+            ("bandlimit", str(plan.bandlimit)),
+            ("sampling", plan.sampling),
+            ("sensor_shift_policy", "disabled"),
             ("population_seed", str(int(seed))),
         ),
     )
