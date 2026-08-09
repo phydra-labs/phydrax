@@ -144,6 +144,7 @@ class RiemannianConjugateGradient(AbstractRiemannianLineSearchOptimizer):
         )
         restarted = (
             (state.step == 0)
+            | (~state.line_search_accepted)
             | (~jnp.isfinite(directional))
             | (directional >= descent_bound)
         )
@@ -179,6 +180,14 @@ class RiemannianConjugateGradient(AbstractRiemannianLineSearchOptimizer):
             result.parameters,
             direction,
         )
+        retained_direction = jax.tree.map(
+            lambda transported: jnp.where(
+                result.accepted,
+                transported,
+                jnp.zeros_like(transported),
+            ),
+            transported_direction,
+        )
         transported_residual = self.parameter_geometry.maximum_tangent_residual(
             result.parameters, transported_direction
         )
@@ -206,11 +215,12 @@ class RiemannianConjugateGradient(AbstractRiemannianLineSearchOptimizer):
             line_search_accepted=result.accepted,
             line_search_reduction=jnp.asarray(value) - result.value,
             conjugacy_beta=beta,
+            restarted=restarted,
         )
         return result.parameters, RiemannianConjugateGradientState(
             step=state.step + jnp.asarray(1, dtype=state.step.dtype),
             previous_gradient=transported_gradient,
-            previous_direction=transported_direction,
+            previous_direction=retained_direction,
             beta=beta,
             line_search_evaluations=result.evaluations,
             line_search_accepted=result.accepted,
@@ -237,6 +247,7 @@ class RiemannianLBFGSState(eqx.Module):
     line_search_evaluations: Array
     line_search_accepted: Array
     pair_accepted: Array
+    restarted: Array
     metrics: RiemannianStepMetrics
 
 
@@ -308,6 +319,7 @@ class RiemannianLBFGS(AbstractRiemannianLineSearchOptimizer):
             line_search_evaluations=jnp.asarray(0, dtype=jnp.int32),
             line_search_accepted=jnp.asarray(False),
             pair_accepted=jnp.asarray(False),
+            restarted=jnp.asarray(False),
             metrics=RiemannianStepMetrics(zero, zero, jnp.asarray(1.0), zero, zero),
         )
 
@@ -483,10 +495,38 @@ class RiemannianLBFGS(AbstractRiemannianLineSearchOptimizer):
         transported_s, transported_y = self._transport_history(
             state, parameters, tangent_step, destination
         )
+        transported_s = jax.tree.map(
+            lambda proposed, original: jnp.where(
+                result.accepted,
+                proposed,
+                original,
+            ),
+            transported_s,
+            state.s_history,
+        )
+        transported_y = jax.tree.map(
+            lambda proposed, original: jnp.where(
+                result.accepted,
+                proposed,
+                original,
+            ),
+            transported_y,
+            state.y_history,
+        )
         transported_rho, transported_active = self._history_coefficients(
             destination,
             transported_s,
             transported_y,
+            state.active,
+        )
+        transported_rho = jnp.where(
+            result.accepted,
+            transported_rho,
+            state.rho,
+        )
+        transported_active = jnp.where(
+            result.accepted,
+            transported_active,
             state.active,
         )
         transported_gradient = self.parameter_geometry.transport(
@@ -579,6 +619,8 @@ class RiemannianLBFGS(AbstractRiemannianLineSearchOptimizer):
             line_search_accepted=result.accepted,
             line_search_reduction=jnp.asarray(value) - result.value,
             history_pair_count=count,
+            restarted=restart,
+            pair_accepted=pair_accepted,
         )
         return destination, RiemannianLBFGSState(
             step=state.step + jnp.asarray(1, dtype=state.step.dtype),
@@ -591,6 +633,7 @@ class RiemannianLBFGS(AbstractRiemannianLineSearchOptimizer):
             line_search_evaluations=result.evaluations,
             line_search_accepted=result.accepted,
             pair_accepted=pair_accepted,
+            restarted=restart,
             metrics=metrics,
         )
 

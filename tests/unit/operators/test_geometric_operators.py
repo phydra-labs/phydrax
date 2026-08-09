@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -88,6 +89,44 @@ def test_domain_differential_forms_share_continuous_exterior_calculus():
     )
     with pytest.raises(ValueError, match="charts must match"):
         phx.operators.domain_codifferential(form, mismatched_metric)
+
+def test_domain_signed_codifferential_matches_pointwise_form_calculus():
+    domain = phx.domain.HyperRectangle([-1.0] * 4, [1.0] * 4, label="x")
+    chart = phx.metrix.CoordinateChart("minkowski_forms", ("t", "x", "y", "z"))
+    metric = phx.metrix.minkowski_metric(chart)
+
+    @domain.Function("x")
+    def scalar(x):
+        return -(x[0] ** 2) + jnp.sum(x[1:] ** 2)
+
+    @domain.Function("x")
+    def covector_coefficients(x):
+        return x
+
+    scalar_form = phx.operators.domain_differential_form(
+        scalar,
+        chart=chart,
+        degree=0,
+        var="x",
+    )
+    covector = phx.operators.domain_differential_form(
+        covector_coefficients,
+        chart=chart,
+        degree=1,
+        var="x",
+    )
+    laplacian = phx.operators.domain_hodge_laplacian(scalar_form, metric)
+    codifferential = phx.operators.domain_codifferential(covector, metric)
+    point = jnp.array([0.2, -0.3, 0.1, 0.4])
+
+    assert laplacian.coefficients.deps == ("x",)
+    assert codifferential.coefficients.deps == ("x",)
+    assert jnp.allclose(laplacian.coefficients.func(point), jnp.array([-8.0]))
+    assert jnp.allclose(codifferential.coefficients.func(point), jnp.array([-2.0]))
+    assert jnp.allclose(
+        jax.jit(lambda q: laplacian.coefficients.func(q))(point),
+        jnp.array([-8.0]),
+    )
 
 
 def test_declared_poisson_structure_drives_domain_bracket_and_flow():

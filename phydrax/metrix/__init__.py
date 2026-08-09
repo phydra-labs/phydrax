@@ -4,6 +4,24 @@
 
 """Differentiable coordinate, Riemannian, and signed geometry for Phydrax."""
 
+from ._adm import (
+    ADMDecomposition,
+    ADMParameterization,
+    ADMValidationReport,
+    decompose_adm_metric,
+    parameterized_adm_metric,
+    validate_adm_decomposition,
+)
+from ._adm_geometry import (
+    adm_constraint_residuals,
+    adm_extrinsic_curvature,
+    adm_hamiltonian_constraint,
+    adm_momentum_constraint,
+    adm_normal_covector,
+    adm_normal_vector,
+    adm_spacetime_projector,
+    ADMConstraintResiduals,
+)
 from ._chart import ChartTransition, CoordinateChart
 from ._classical_manifold import (
     HyperboloidManifold,
@@ -183,6 +201,10 @@ from ._validation import MetricValidationReport, validate_metric
 
 
 __all__ = [
+    "ADMConstraintResiduals",
+    "ADMDecomposition",
+    "ADMParameterization",
+    "ADMValidationReport",
     "AbstractAffineConnection",
     "AbstractRiemannianManifold",
     "AbstractSemiRiemannianMetric",
@@ -233,6 +255,13 @@ __all__ = [
     "VECTOR_TENSOR",
     "VolumeDensity",
     "adm_metric",
+    "adm_constraint_residuals",
+    "adm_extrinsic_curvature",
+    "adm_hamiltonian_constraint",
+    "adm_momentum_constraint",
+    "adm_normal_covector",
+    "adm_normal_vector",
+    "adm_spacetime_projector",
     "apply_cotangent_map",
     "brownian_generator",
     "causal_character",
@@ -244,6 +273,7 @@ __all__ = [
     "connection_ricci_tensor",
     "connection_riemann_tensor",
     "contract_indices",
+    "decompose_adm_metric",
     "coordinate_stratonovich_to_ito_drift",
     "coordinate_to_covariant_drift",
     "covariant_derivative",
@@ -273,6 +303,7 @@ __all__ = [
     "pullback_covector",
     "pullback_density",
     "pullback_lorentzian_metric",
+    "parameterized_adm_metric",
     "product_laplacian_eigenbasis",
     "pullback_metric",
     "pullback_semi_riemannian_metric",
@@ -287,6 +318,7 @@ __all__ = [
     "semi_riemannian_gradient",
     "tangent_projector_from_normal",
     "tensor_norm_squared",
+    "validate_adm_decomposition",
     "validate_lorentzian_metric",
     "validate_manifold",
     "validate_metric",

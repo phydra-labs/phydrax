@@ -87,6 +87,8 @@ point coordinates or replace domain admissibility rules.
 - [Differentiable maps](maps.md)
 - [Metrics and metric jets](metrics.md)
 - [Signed metrics](signed_metrics.md)
+  The [inverse spacetime workflow](../../cookbook/relativity_inverse.md) combines
+  safe ADM parameterization, curvature observations, and functional optimization.
 - [Connections and intrinsic operators](connections.md)
 - [General affine connections](affine_connections.md)
 - [Curvature](curvature.md)

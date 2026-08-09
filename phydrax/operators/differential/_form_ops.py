@@ -14,7 +14,11 @@ from jaxtyping import Array
 from phydrax.domain import AbstractGeometry, DomainFunction
 
 from ..._strict import StrictModule
-from ...metrix import AbstractSemiRiemannianMetric, CoordinateChart, RiemannianMetric
+from ...metrix import (
+    AbstractSemiRiemannianMetric,
+    CoordinateChart,
+    LorentzianMetric,
+)
 from ._domain_ops import _factor_and_dim, _resolve_var, grad
 
 
@@ -118,6 +122,25 @@ class DomainDifferentialForm(StrictModule):
     @property
     def coefficient_count(self) -> int:
         return comb(self.chart.dimension, self.degree)
+
+
+class DomainMaxwellResiduals(StrictModule):
+    """Covariant Maxwell field strength and its two form-valued residuals."""
+
+    field_strength: DomainDifferentialForm
+    homogeneous: DomainDifferentialForm
+    inhomogeneous: DomainDifferentialForm
+
+    def __init__(
+        self,
+        field_strength: DomainDifferentialForm,
+        homogeneous: DomainDifferentialForm,
+        inhomogeneous: DomainDifferentialForm,
+        /,
+    ):
+        self.field_strength = field_strength
+        self.homogeneous = homogeneous
+        self.inhomogeneous = inhomogeneous
 
 
 class _DomainWedgeCallable(StrictModule):
@@ -554,6 +577,25 @@ def _add_domain_forms(
     )
 
 
+def _scale_domain_form(
+    form: DomainDifferentialForm,
+    scale: float,
+    /,
+) -> DomainDifferentialForm:
+    coefficients = DomainFunction(
+        domain=form.coefficients.domain,
+        deps=form.coefficients.deps,
+        func=_ScaleCallable(form.coefficients, scale),
+        metadata=form.coefficients.metadata,
+    )
+    return DomainDifferentialForm(
+        coefficients,
+        chart=form.chart,
+        degree=form.degree,
+        var=form.var,
+    )
+
+
 def domain_lie_derivative(
     vector: DomainFunction,
     form: DomainDifferentialForm,
@@ -608,15 +650,15 @@ def domain_hodge_star(
 
 def domain_codifferential(
     form: DomainDifferentialForm,
-    metric: RiemannianMetric,
+    metric: AbstractSemiRiemannianMetric,
     /,
     *,
     orientation: int = 1,
 ) -> DomainDifferentialForm:
     if not isinstance(form, DomainDifferentialForm):
         raise TypeError("domain_codifferential requires a DomainDifferentialForm.")
-    if not isinstance(metric, RiemannianMetric):
-        raise TypeError("domain_codifferential requires a RiemannianMetric.")
+    if not isinstance(metric, AbstractSemiRiemannianMetric):
+        raise TypeError("domain_codifferential requires a nondegenerate metric.")
     if not form.chart.compatible_with(metric.chart):
         raise ValueError("Domain form and metric charts must match.")
     if orientation not in (-1, 1):
@@ -634,7 +676,12 @@ def domain_codifferential(
     first = domain_hodge_star(form, metric, orientation=orientation)
     derivative = domain_exterior_derivative(first)
     result = domain_hodge_star(derivative, metric, orientation=orientation)
-    sign = -1 if (form.chart.dimension * (form.degree + 1) + 1) % 2 else 1
+    exponent = (
+        form.chart.dimension * (form.degree + 1)
+        + metric.signature.index
+        + 1
+    )
+    sign = -1 if exponent % 2 else 1
     coefficients = DomainFunction(
         domain=result.coefficients.domain,
         deps=result.coefficients.deps,
@@ -651,15 +698,15 @@ def domain_codifferential(
 
 def domain_hodge_laplacian(
     form: DomainDifferentialForm,
-    metric: RiemannianMetric,
+    metric: AbstractSemiRiemannianMetric,
     /,
     *,
     orientation: int = 1,
 ) -> DomainDifferentialForm:
     if not isinstance(form, DomainDifferentialForm):
         raise TypeError("domain_hodge_laplacian requires a DomainDifferentialForm.")
-    if not isinstance(metric, RiemannianMetric):
-        raise TypeError("domain_hodge_laplacian requires a RiemannianMetric.")
+    if not isinstance(metric, AbstractSemiRiemannianMetric):
+        raise TypeError("domain_hodge_laplacian requires a nondegenerate metric.")
     if not form.chart.compatible_with(metric.chart):
         raise ValueError("Domain form and metric charts must match.")
     if orientation not in (-1, 1):
@@ -681,12 +728,68 @@ def domain_hodge_laplacian(
     return _add_domain_forms(first, second)
 
 
+def domain_maxwell_residuals(
+    field_strength: DomainDifferentialForm,
+    metric: LorentzianMetric,
+    /,
+    *,
+    electric_current: DomainDifferentialForm | None = None,
+    magnetic_current: DomainDifferentialForm | None = None,
+    orientation: int = 1,
+) -> DomainMaxwellResiduals:
+    r"""Compose ``dF - M`` and ``delta F + J_flat`` on four-dimensional spacetime."""
+    if not isinstance(field_strength, DomainDifferentialForm):
+        raise TypeError(
+            "domain_maxwell_residuals requires a DomainDifferentialForm."
+        )
+    if field_strength.chart.dimension != 4 or field_strength.degree != 2:
+        raise ValueError(
+            "Maxwell field strength must be a degree-2 form on a "
+            "four-dimensional chart."
+        )
+    if not isinstance(metric, LorentzianMetric):
+        raise TypeError("domain_maxwell_residuals requires a LorentzianMetric.")
+    if not field_strength.chart.compatible_with(metric.chart):
+        raise ValueError("Maxwell field strength and metric charts must match.")
+    if electric_current is not None:
+        if not isinstance(electric_current, DomainDifferentialForm):
+            raise TypeError("electric_current must be a DomainDifferentialForm.")
+        if electric_current.degree != 1:
+            raise ValueError("electric_current must be a degree-1 covector form.")
+    if magnetic_current is not None:
+        if not isinstance(magnetic_current, DomainDifferentialForm):
+            raise TypeError("magnetic_current must be a DomainDifferentialForm.")
+        if magnetic_current.degree != 3:
+            raise ValueError("magnetic_current must be a degree-3 form.")
+
+    homogeneous = domain_exterior_derivative(field_strength)
+    if magnetic_current is not None:
+        homogeneous = _add_domain_forms(
+            homogeneous,
+            _scale_domain_form(magnetic_current, -1.0),
+        )
+    inhomogeneous = domain_codifferential(
+        field_strength,
+        metric,
+        orientation=orientation,
+    )
+    if electric_current is not None:
+        inhomogeneous = _add_domain_forms(inhomogeneous, electric_current)
+    return DomainMaxwellResiduals(
+        field_strength,
+        homogeneous,
+        inhomogeneous,
+    )
+
+
 __all__ = [
+    "DomainMaxwellResiduals",
     "DomainDifferentialForm",
     "domain_codifferential",
     "domain_differential_form",
     "domain_exterior_derivative",
     "domain_hodge_laplacian",
+    "domain_maxwell_residuals",
     "domain_hodge_star",
     "domain_interior_product",
     "domain_lie_derivative",

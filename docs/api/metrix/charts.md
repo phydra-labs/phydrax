@@ -86,6 +86,11 @@ The canonical constants are `SCALAR_TENSOR`, `VECTOR_TENSOR`,
 
 ## Index operations and contractions
 
+Raising, lowering, and metric self-contraction accept every nondegenerate metric
+signature. Despite its historical name, `tensor_norm_squared` is a self-contraction:
+it can be negative or zero for a nonzero tensor under a signed metric and must not be
+used as a positive norm in optimization or probabilistic code.
+
 ::: phydrax.metrix.raise_index
 
 ---

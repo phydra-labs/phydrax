@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from math import comb
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -52,6 +54,116 @@ def test_lorentzian_metric_causality_wave_operator_and_curvature():
         )
     )
 
+
+def test_signed_tensor_and_levi_civita_operations_are_signature_independent():
+    chart = phx.metrix.CoordinateChart("minkowski", ("t", "x", "y", "z"))
+    metric = phx.metrix.minkowski_metric(chart)
+    point = jnp.array([0.2, -0.3, 0.1, 0.4])
+    vector = jnp.array([2.0, 3.0, -1.0, 4.0])
+
+    lowered = phx.metrix.lower_index(
+        vector,
+        metric,
+        point,
+        tensor_type=phx.metrix.VECTOR_TENSOR,
+    )
+    raised = phx.metrix.raise_index(
+        lowered,
+        metric,
+        point,
+        tensor_type=phx.metrix.COVECTOR_TENSOR,
+    )
+
+    assert jnp.array_equal(lowered, jnp.array([-2.0, 3.0, -1.0, 4.0]))
+    assert jnp.array_equal(raised, vector)
+    assert jnp.allclose(phx.metrix.inner_product(vector, vector, metric, point), 22.0)
+    assert jnp.allclose(
+        phx.metrix.tensor_norm_squared(
+            jnp.array([2.0, 0.0, 0.0, 0.0]),
+            metric,
+            phx.metrix.VECTOR_TENSOR,
+            point,
+        ),
+        -4.0,
+    )
+
+    scalar = lambda q: q[0] ** 2 + 2.0 * q[1] ** 2
+    assert jnp.allclose(
+        phx.metrix.covariant_hessian(scalar, metric, point),
+        jnp.diag(jnp.array([2.0, 4.0, 0.0, 0.0])),
+    )
+    assert jnp.allclose(
+        phx.metrix.divergence(lambda q: q, metric, point),
+        4.0,
+    )
+    assert jnp.allclose(
+        phx.metrix.covariant_derivative(
+            lambda q: metric(q),
+            metric,
+            phx.metrix.TensorType(("covariant", "covariant")),
+            point,
+        ),
+        0.0,
+    )
+
+
+def test_signed_codifferential_and_hodge_square_obey_index_signs():
+    chart = phx.metrix.CoordinateChart("minkowski_forms", ("t", "x", "y", "z"))
+    metric = phx.metrix.minkowski_metric(chart)
+    point = jnp.array([0.2, -0.3, 0.1, 0.4])
+
+    for degree in range(chart.dimension + 1):
+        coefficient_count = comb(chart.dimension, degree)
+        coefficients = jnp.arange(1, coefficient_count + 1, dtype=point.dtype)
+        form = phx.metrix.DifferentialForm(
+            lambda q, values=coefficients: values,
+            chart=chart,
+            degree=degree,
+        )
+        expected_sign = (
+            -1
+            if (degree * (chart.dimension - degree) + metric.signature.index) % 2
+            else 1
+        )
+        assert jnp.allclose(
+            phx.metrix.hodge_star(
+                phx.metrix.hodge_star(form, metric),
+                metric,
+            )(point),
+            expected_sign * coefficients,
+        )
+
+    covector = phx.metrix.DifferentialForm(
+        lambda q: q,
+        chart=chart,
+        degree=1,
+    )
+    scalar = phx.metrix.DifferentialForm(
+        lambda q: -(q[0] ** 2) + jnp.sum(q[1:] ** 2),
+        chart=chart,
+        degree=0,
+    )
+    two_form = phx.metrix.DifferentialForm(
+        lambda q: jnp.array(
+            [q[0] * q[1], q[0] * q[2], q[0] * q[3], q[1], q[2], q[3]]
+        ),
+        chart=chart,
+        degree=2,
+    )
+
+    assert jnp.allclose(phx.metrix.codifferential(covector, metric)(point), -2.0)
+    assert jnp.allclose(
+        phx.metrix.hodge_laplacian(scalar, metric)(point),
+        jnp.array([-8.0]),
+    )
+    assert jnp.allclose(
+        phx.metrix.codifferential(
+            phx.metrix.codifferential(two_form, metric),
+            metric,
+        )(point),
+        jnp.array([0.0]),
+        atol=1e-10,
+    )
 
 def test_signed_metric_constructors_validate_declared_signatures():
     chart = phx.metrix.CoordinateChart(

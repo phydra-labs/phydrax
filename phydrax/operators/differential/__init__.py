@@ -63,8 +63,10 @@ from ._form_ops import (
     domain_hodge_star,
     domain_interior_product,
     domain_lie_derivative,
+    domain_maxwell_residuals,
     domain_wedge,
     DomainDifferentialForm,
+    DomainMaxwellResiduals,
 )
 from ._fractional_ops import (
     fractional_derivative_gl_mc,
@@ -79,7 +81,16 @@ from ._riemannian_ops import (
     riemannian_div_tensor,
     riemannian_grad,
 )
-from ._semi_riemannian_ops import intrinsic_dalembertian, semi_riemannian_grad
+from ._semi_riemannian_ops import (
+    as_lorentzian_metric_field,
+    domain_einstein_tensor,
+    domain_ricci_tensor,
+    domain_riemann_tensor,
+    domain_scalar_curvature,
+    intrinsic_dalembertian,
+    lorentzian_metric_from_field,
+    semi_riemannian_grad,
+)
 from ._stochastic_estimators import (
     directional_stratonovich_correction,
     estimate_kolmogorov_generator,
@@ -203,15 +214,23 @@ __all__ = [
     "caputo_time_fractional",
     "caputo_time_fractional_dw",
     "DomainDifferentialForm",
+    "as_lorentzian_metric_field",
+    "domain_einstein_tensor",
+    "domain_ricci_tensor",
+    "domain_riemann_tensor",
+    "domain_scalar_curvature",
     "domain_codifferential",
     "domain_differential_form",
     "domain_exterior_derivative",
     "domain_hodge_laplacian",
+    "DomainMaxwellResiduals",
     "domain_hodge_star",
     "domain_interior_product",
     "domain_lie_derivative",
+    "domain_maxwell_residuals",
     "domain_wedge",
     "intrinsic_dalembertian",
+    "lorentzian_metric_from_field",
     "semi_riemannian_grad",
     "horizontal_grad",
     "sub_laplacian",

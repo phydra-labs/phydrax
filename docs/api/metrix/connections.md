@@ -1,7 +1,7 @@
 # Connections and intrinsic operators
 
 `LeviCivitaConnection` derives the unique torsion-free, metric-compatible
-connection from a `RiemannianMetric`. Its coefficient convention is
+connection from any `AbstractSemiRiemannianMetric`. Its coefficient convention is
 `coefficients[..., k, i, j] = Γᵏᵢⱼ`.
 
 ::: phydrax.metrix.LeviCivitaConnection
@@ -15,6 +15,11 @@ connection from a `RiemannianMetric`. Its coefficient convention is
 
 The low-level Metrix operators accept a pointwise callable, a metric, and one
 coordinate point or a leading batch of points.
+
+`covariant_hessian`, `divergence`, and `covariant_derivative` are
+signature-independent because they delegate to the metric's Levi--Civita connection.
+`gradient` and `laplace_beltrami` retain their positive-definite contract; use
+`semi_riemannian_gradient` or `dalembertian` for their signed counterparts.
 
 ::: phydrax.metrix.gradient
 

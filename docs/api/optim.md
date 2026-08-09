@@ -15,9 +15,10 @@ explicit adapter for that optimizer family.
 
 `ParameterGeometry` binds complete trainable PyTree leaves to explicit
 `AbstractRiemannianManifold` instances and can assign each selected leaf a positive
-static product-metric weight. Fixed-step SGD and momentum, frozen-objective Armijo
-search, Riemannian conjugate gradient, and Riemannian L-BFGS all share this geometry.
-Unselected inexact-array leaves retain ordinary Euclidean updates.
+static product-metric weight. Fixed-step SGD, transported momentum, intrinsic
+Adam/AMSGrad, frozen-objective Armijo search, Riemannian conjugate gradient, and
+Riemannian L-BFGS all share this geometry. Unselected inexact-array leaves retain
+ordinary Euclidean geometry.
 
 !!! example
     ```python
@@ -66,6 +67,13 @@ SPD, or another geometry from shape or initial value.
 The product metric is the sum of declared leaf metrics. Global gradient clipping uses
 one scale for this norm; it does not clip each leaf independently.
 
+Adaptive moments follow the same product decomposition. A selected leaf stores one
+scalar second moment per independent leading-axis point, never one value per ambient
+matrix or vector coordinate. An unselected Euclidean leaf is one whole factor and
+therefore has one scalar moment. To request ordinary pointwise Euclidean Adam explicitly,
+bind that leaf to `EuclideanManifold(())`; its array axes then become leading product
+axes, with one scalar factor per element.
+
 ### Algorithms
 
 `riemannian_sgd` performs metric gradient conversion, optional global clipping, and one
@@ -76,6 +84,13 @@ gradient descent.
 current point, determines the retraction step, and is transported to the destination
 tangent space after every update. It is not ambient momentum followed by projection
 only at output.
+
+`riemannian_adam` transports its full tangent first moment after every retraction. Its
+nonnegative second moment is the declared factor's weighted metric squared norm, with
+standard exponential decay and bias correction. The resulting denominator scales the
+whole tangent factor uniformly, so Stiefel columns, SPD matrices, and other represented
+manifold points are never divided coordinatewise. Set `amsgrad=True` to use the running
+maximum of each factor moment.
 
 `riemannian_conjugate_gradient` implements Polak--Ribière+ directions. Previous
 gradients and directions are transported to every accepted point; the method restarts
@@ -88,12 +103,15 @@ backtracking and return search counts and reduction diagnostics in optimizer sta
 
 The fixed-step optimizers accept a positive scalar learning rate or a callable schedule
 receiving the zero-based JAX step scalar. A scheduled value may be zero, but must remain
-finite and nonnegative. Nonfinite metric gradient norms fail explicitly.
+finite and nonnegative. Nonfinite metric gradient norms fail explicitly. Riemannian Adam
+also accepts first- and second-moment decays in `[0, 1)`, a positive denominator
+`epsilon`, and optional AMSGrad.
 
-Arbitrary Optax transform composition is intentionally unsupported. Coordinatewise
-adaptive moments, ambient weight decay, and momentum without transport are not
-invariant under changes of manifold coordinates. `evaluation_parameters` is also
-rejected because an ambient evaluation transform need not preserve membership.
+Arbitrary Optax transform composition is intentionally unsupported. Ambient
+coordinatewise moments on a non-Euclidean factor, ambient weight decay, and momentum
+without transport are not invariant under changes of representation.
+`evaluation_parameters` is also rejected because an ambient evaluation transform need
+not preserve membership.
 
 ### Supported surface
 
@@ -103,7 +121,7 @@ rejected because an ambient evaluation transform need not preserve membership.
 | Sphere, hyperbolic, simplex, Stiefel, Grassmann, oblique, fixed-rank, SO(n), affine-invariant SPD(n) | See [Array manifolds](metrix/manifolds.md) for exact metric and transport semantics. |
 | Leading products/batches | Geometry dimensions are trailing; all leading axes are preserved. |
 | `FunctionalSolver` terms and model losses | Existing term evaluation, sampling, adaptive collocation, enforcement, and best-parameter logic are reused. |
-| Eager and JIT execution | The fixed-step update is JAX-transformable. |
+| Eager and JIT execution | SGD, momentum, Adam/AMSGrad, and the line-search update kernels are JAX-transformable. |
 
 | Rejected | Reason |
 |---|---|
@@ -111,14 +129,15 @@ rejected because an ambient evaluation transform need not preserve membership.
 | Selected complex leaves | The current built-ins have real manifold contracts. |
 | Subarray selection | It would introduce overlapping ownership and scatter semantics. Split the parameter into explicit leaves. |
 | Arbitrary Optax chaining | Generic transform ordering does not preserve tangent-state semantics. |
-| Manifold KFAC or Adam | No invariant contract is currently implemented. |
+| Manifold KFAC | No invariant curvature-factor contract is currently implemented. |
 
 ### Diagnostics and benchmark
 
 Console and TensorBoard output include Riemannian gradient, tangent-step, and momentum
-norms; clipping, constraint, tangent, and transport residuals; and Armijo evaluation,
-acceptance, reduction, conjugacy, and active-history diagnostics. Returned
-`training_diagnostics` additionally records the number of selected manifold leaves.
+norms; clipping, constraint, tangent, and transport residuals; adaptive denominator
+bounds; and Armijo evaluation, acceptance, reduction, conjugacy, and active-history
+diagnostics. Returned `training_diagnostics` additionally records the number of selected
+manifold leaves.
 
 Run the invariant-aware smoke benchmark with:
 
@@ -147,6 +166,10 @@ mixed-PyTree constraint diagnostics without comparisons to external libraries.
 ---
 
 ::: phydrax.optim.riemannian_momentum
+
+---
+
+::: phydrax.optim.riemannian_adam
 
 ---
 

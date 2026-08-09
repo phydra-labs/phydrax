@@ -15,7 +15,7 @@ from jaxtyping import Array, ArrayLike
 from .._strict import StrictModule
 from ._chart import CoordinateChart
 from ._map import DifferentiableMap
-from ._metric import AbstractSemiRiemannianMetric, RiemannianMetric
+from ._metric import AbstractSemiRiemannianMetric
 from ._utils import _pointwise_array
 
 
@@ -470,16 +470,16 @@ def hodge_star(
 
 def codifferential(
     form: DifferentialForm,
-    metric: RiemannianMetric,
+    metric: AbstractSemiRiemannianMetric,
     /,
     *,
     orientation: int = 1,
 ) -> DifferentialForm:
-    """Return the Riemannian codifferential under the declared orientation."""
+    """Return the metric codifferential under the declared orientation."""
     if not isinstance(form, DifferentialForm):
         raise TypeError("codifferential requires a DifferentialForm.")
-    if not isinstance(metric, RiemannianMetric):
-        raise TypeError("codifferential requires a RiemannianMetric.")
+    if not isinstance(metric, AbstractSemiRiemannianMetric):
+        raise TypeError("codifferential requires a nondegenerate metric.")
     _require_same_chart(form.chart, metric.chart)
     if orientation not in (-1, 1):
         raise ValueError("orientation must be +1 or -1.")
@@ -492,7 +492,12 @@ def codifferential(
     first = hodge_star(form, metric, orientation=orientation)
     derivative = exterior_derivative(first)
     result = hodge_star(derivative, metric, orientation=orientation)
-    sign = -1 if (form.chart.dimension * (form.degree + 1) + 1) % 2 else 1
+    exponent = (
+        form.chart.dimension * (form.degree + 1)
+        + metric.signature.index
+        + 1
+    )
+    sign = -1 if exponent % 2 else 1
     return DifferentialForm(
         _ScaledFormCoefficient(result, sign),
         chart=form.chart,
@@ -502,16 +507,16 @@ def codifferential(
 
 def hodge_laplacian(
     form: DifferentialForm,
-    metric: RiemannianMetric,
+    metric: AbstractSemiRiemannianMetric,
     /,
     *,
     orientation: int = 1,
 ) -> DifferentialForm:
-    """Return ``d δ form + δ d form``."""
+    """Return ``d δ form + δ d form`` for a nondegenerate metric."""
     if not isinstance(form, DifferentialForm):
         raise TypeError("hodge_laplacian requires a DifferentialForm.")
-    if not isinstance(metric, RiemannianMetric):
-        raise TypeError("hodge_laplacian requires a RiemannianMetric.")
+    if not isinstance(metric, AbstractSemiRiemannianMetric):
+        raise TypeError("hodge_laplacian requires a nondegenerate metric.")
     _require_same_chart(form.chart, metric.chart)
     if orientation not in (-1, 1):
         raise ValueError("orientation must be +1 or -1.")

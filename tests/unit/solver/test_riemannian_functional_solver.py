@@ -31,7 +31,7 @@ def _geometric_solver():
     )
 
 
-def _optimizer(solver, *, momentum=False):
+def _optimizer(solver, *, momentum=False, adaptive=False):
     parameters = solver.trainable_functions()
     direction_path = next(
         path
@@ -42,6 +42,14 @@ def _optimizer(solver, *, momentum=False):
         parameters,
         {direction_path: phx.metrix.SphereManifold(3)},
     )
+    if adaptive:
+        return phx.optim.riemannian_adam(
+            geometry,
+            learning_rate=lambda step: 0.12 / jnp.sqrt(step + 1.0),
+            first_moment_decay=0.8,
+            second_moment_decay=0.9,
+            amsgrad=True,
+        )
     if momentum:
         return phx.optim.riemannian_momentum(
             geometry,
@@ -102,6 +110,32 @@ def test_functional_solver_accepts_transported_momentum():
     assert jnp.abs(offset - 0.5) < 0.01
     assert trained.training_diagnostics["optimizer/riemannian/momentum_norm"] > 0.0
 
+def test_functional_solver_accepts_intrinsic_adaptive_moments(tmp_path):
+    solver = _geometric_solver()
+    log_path = tmp_path / "training.log"
+    initial_loss = solver.loss()
+    trained = solver.solve(
+        num_iter=100,
+        optim=_optimizer(solver, adaptive=True),
+        keep_best=False,
+        jit=True,
+        log_every=100,
+        log_path=log_path,
+    )
+    direction, offset = _values(trained)
+    diagnostics = trained.training_diagnostics
+
+    assert trained.loss() < initial_loss
+    assert direction[1] > 0.99
+    assert jnp.allclose(jnp.linalg.norm(direction), 1.0, atol=1e-10)
+    assert jnp.abs(offset - 0.5) < 0.15
+    assert diagnostics["optimizer/riemannian/adaptive_denominator_minimum"] > 0.0
+    assert (
+        diagnostics["optimizer/riemannian/adaptive_denominator_maximum"]
+        >= diagnostics["optimizer/riemannian/adaptive_denominator_minimum"]
+    )
+    assert "adaptive_denom=[" in log_path.read_text()
+
 
 @pytest.mark.parametrize("optimizer_name", ("conjugate_gradient", "lbfgs"))
 def test_functional_solver_supports_frozen_objective_line_search(optimizer_name):
@@ -128,6 +162,8 @@ def test_functional_solver_supports_frozen_objective_line_search(optimizer_name)
     assert diagnostics["optimizer/riemannian/line_search_evaluations"] >= 1
     assert diagnostics["optimizer/riemannian/line_search_accepted"].dtype == jnp.bool_
     assert diagnostics["optimizer/riemannian/line_search_reduction"] >= 0.0
+    assert diagnostics["optimizer/riemannian/restarted"].dtype == jnp.bool_
+    assert diagnostics["optimizer/riemannian/pair_accepted"].dtype == jnp.bool_
 
 
 def test_riemannian_solver_logging_and_tensorboard_diagnostics(tmp_path):
@@ -160,6 +196,10 @@ def test_riemannian_solver_logging_and_tensorboard_diagnostics(tmp_path):
     assert "optimizer/riemannian/tangent_residual" in scalar_tags
     assert "optimizer/riemannian/line_search_evaluations" in scalar_tags
     assert "optimizer/riemannian/line_search_reduction" in scalar_tags
+    assert "optimizer/riemannian/restarted" in scalar_tags
+    assert "optimizer/riemannian/pair_accepted" in scalar_tags
+    assert "optimizer/riemannian/adaptive_denominator_minimum" in scalar_tags
+    assert "optimizer/riemannian/adaptive_denominator_maximum" in scalar_tags
 
 
 def test_riemannian_solver_rejects_ambient_evaluation_parameters():

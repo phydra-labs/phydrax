@@ -258,6 +258,98 @@ class ParameterGeometry(StrictModule):
         squared = self.inner(parameters, tangent, tangent)
         return jnp.sqrt(jnp.maximum(squared, 0.0))
 
+    def _factor_shape(
+        self,
+        shape: tuple[int, ...],
+        manifold: AbstractRiemannianManifold | None,
+        /,
+    ) -> tuple[int, ...]:
+        if manifold is None:
+            return ()
+        rank = len(manifold.point_shape)
+        return shape[:-rank] if rank else shape
+
+    def _factor_moment_zeros(self, parameters: PyTree[Any], /) -> PyTree[Array]:
+        """Return scalar moment storage for each independent geometry factor."""
+        points = self._validated_leaves(parameters, "Parameters")
+        moments = [
+            jnp.zeros(
+                self._factor_shape(point.shape, manifold),
+                dtype=point.dtype,
+            )
+            for point, manifold in zip(points, self.manifolds, strict=True)
+        ]
+        return self.tree_definition.unflatten(moments)
+
+    def _factor_squared_norms(
+        self,
+        parameters: PyTree[Any],
+        tangents: PyTree[Any],
+        /,
+    ) -> PyTree[Array]:
+        """Return weighted squared norms without choosing ambient coordinates."""
+        points = self._validated_leaves(parameters, "Parameters")
+        vectors = self._validated_leaves(tangents, "Tangents")
+        outputs: list[Array] = []
+        for point, vector, manifold, weight in zip(
+            points,
+            vectors,
+            self.manifolds,
+            self.weights,
+            strict=True,
+        ):
+            if manifold is None:
+                squared = _real_tree_inner(vector, vector)
+            else:
+                factor_shape = self._factor_shape(point.shape, manifold)
+                if factor_shape:
+                    flattened_points = point.reshape((-1,) + manifold.point_shape)
+                    flattened_vectors = vector.reshape((-1,) + manifold.point_shape)
+                    squared = jax.vmap(
+                        lambda point_, vector_: manifold.inner(
+                            point_,
+                            vector_,
+                            vector_,
+                        )
+                    )(flattened_points, flattened_vectors).reshape(factor_shape)
+                else:
+                    squared = manifold.inner(point, vector, vector)
+            weighted = jnp.asarray(weight, dtype=point.dtype) * jnp.real(squared)
+            outputs.append(jnp.maximum(weighted, 0.0))
+        return self.tree_definition.unflatten(outputs)
+
+    def _scale_tangent_factors(
+        self,
+        tangent: PyTree[Any],
+        factors: PyTree[Any],
+        /,
+    ) -> PyTree[Array]:
+        """Scale each tangent by one broadcastable intrinsic-factor scalar."""
+        vectors = self._validated_leaves(tangent, "Tangent")
+        factor_leaves, factor_definition = jax.tree_util.tree_flatten(factors)
+        if factor_definition != self.tree_definition:
+            raise ValueError("Factors have an incompatible PyTree structure.")
+        outputs: list[Array] = []
+        for path, vector, factor, shape, manifold in zip(
+            self.paths,
+            vectors,
+            factor_leaves,
+            self.shapes,
+            self.manifolds,
+            strict=True,
+        ):
+            factor_array = jnp.asarray(factor)
+            expected = self._factor_shape(shape, manifold)
+            if factor_array.shape != expected:
+                raise ValueError(
+                    f"Factor leaf {path} must have shape {expected}, "
+                    f"got {factor_array.shape}."
+                )
+            rank = 0 if manifold is None else len(manifold.point_shape)
+            broadcast = factor_array.reshape(expected + (1,) * rank)
+            outputs.append(vector * broadcast)
+        return self.tree_definition.unflatten(outputs)
+
     def project_tangent(
         self,
         parameters: PyTree[Any],

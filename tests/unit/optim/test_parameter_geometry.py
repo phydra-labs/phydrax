@@ -104,6 +104,49 @@ def test_parameter_geometry_supports_leading_manifold_product_axes():
     assert destination["directions"].shape == (3, 3)
 
 
+def test_parameter_geometry_factor_moments_follow_product_axes_and_weights():
+    parameters = {
+        "directions": jnp.array(
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        ),
+        "offset": jnp.array([2.0, -1.0]),
+    }
+    geometry = phx.optim.ParameterGeometry.from_leaf_paths(
+        parameters,
+        {
+            "['directions']": phx.metrix.SphereManifold(3),
+            "['offset']": phx.metrix.EuclideanManifold(()),
+        },
+        weights={"['directions']": 2.0},
+    )
+    tangent = {
+        "directions": jnp.array(
+            [[0.0, 3.0, 4.0], [5.0, 0.0, 12.0]],
+        ),
+        "offset": jnp.array([3.0, 4.0]),
+    }
+
+    moments = geometry._factor_squared_norms(parameters, tangent)
+    zeros = geometry._factor_moment_zeros(parameters)
+    scaled = geometry._scale_tangent_factors(
+        tangent,
+        {
+            "directions": jnp.array([0.5, 2.0]),
+            "offset": jnp.array([2.0, 3.0]),
+        },
+    )
+
+    assert moments["directions"].shape == (2,)
+    assert jnp.allclose(moments["directions"], jnp.array([50.0, 338.0]))
+    assert jnp.array_equal(moments["offset"], jnp.array([9.0, 16.0]))
+    assert zeros["directions"].shape == (2,)
+    assert zeros["offset"].shape == (2,)
+    assert jnp.array_equal(
+        scaled["directions"],
+        jnp.array([[0.0, 1.5, 2.0], [10.0, 0.0, 24.0]]),
+    )
+    assert jnp.array_equal(scaled["offset"], jnp.array([6.0, 12.0]))
+
 def test_parameter_geometry_rejects_invalid_bindings_and_reuse():
     parameters = _mixed_parameters()
 

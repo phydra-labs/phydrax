@@ -38,6 +38,10 @@ class RiemannianStepMetrics(StrictModule):
     line_search_reduction: Array
     conjugacy_beta: Array
     history_pair_count: Array
+    restarted: Array
+    pair_accepted: Array
+    adaptive_denominator_minimum: Array
+    adaptive_denominator_maximum: Array
 
     def __init__(
         self,
@@ -56,6 +60,10 @@ class RiemannianStepMetrics(StrictModule):
         line_search_reduction: Array | None = None,
         conjugacy_beta: Array | None = None,
         history_pair_count: Array | None = None,
+        restarted: Array | None = None,
+        pair_accepted: Array | None = None,
+        adaptive_denominator_minimum: Array | None = None,
+        adaptive_denominator_maximum: Array | None = None,
     ):
         zero = jnp.zeros_like(jnp.asarray(gradient_norm))
         self.learning_rate = learning_rate
@@ -91,6 +99,26 @@ class RiemannianStepMetrics(StrictModule):
             jnp.asarray(0, dtype=jnp.int32)
             if history_pair_count is None
             else jnp.asarray(history_pair_count, dtype=jnp.int32)
+        )
+        self.restarted = (
+            jnp.asarray(False)
+            if restarted is None
+            else jnp.asarray(restarted, dtype=bool)
+        )
+        self.pair_accepted = (
+            jnp.asarray(False)
+            if pair_accepted is None
+            else jnp.asarray(pair_accepted, dtype=bool)
+        )
+        self.adaptive_denominator_minimum = (
+            zero
+            if adaptive_denominator_minimum is None
+            else adaptive_denominator_minimum
+        )
+        self.adaptive_denominator_maximum = (
+            zero
+            if adaptive_denominator_maximum is None
+            else adaptive_denominator_maximum
         )
 
 
