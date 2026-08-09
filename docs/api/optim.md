@@ -11,6 +11,155 @@ Phydrax does not mirror upstream Optax, Evosax, or Optimistix APIs. Import those
 from their native packages. A workflow accepts an external optimizer only when it has an
 explicit adapter for that optimizer family.
 
+## Riemannian optimization
+
+`ParameterGeometry` binds complete trainable PyTree leaves to explicit
+`AbstractRiemannianManifold` instances and can assign each selected leaf a positive
+static product-metric weight. Fixed-step SGD and momentum, frozen-objective Armijo
+search, Riemannian conjugate gradient, and Riemannian L-BFGS all share this geometry.
+Unselected inexact-array leaves retain ordinary Euclidean updates.
+
+!!! example
+    ```python
+    import phydrax as phx
+
+    def train_riemannian(solver):
+        parameters = solver.trainable_functions()
+        paths = phx.optim.ParameterGeometry.array_leaf_paths(parameters)
+        orthogonal_path = next(path for path in paths if "weight" in path)
+
+        geometry = phx.optim.ParameterGeometry.from_leaf_paths(
+            parameters,
+            {
+                orthogonal_path: phx.metrix.StiefelManifold(32, 8),
+            },
+        )
+        optimizer = phx.optim.riemannian_sgd(
+            geometry,
+            learning_rate=1e-2,
+            max_gradient_norm=1.0,
+        )
+        return solver.solve(
+            num_iter=1_000,
+            optim=optimizer,
+            keep_best=False,
+        )
+    ```
+
+### Parameter PyTree binding
+
+Paths use the deterministic `jax.tree_util.keystr` representation returned by
+`ParameterGeometry.array_leaf_paths`. A binding records the complete trainable tree
+definition, every leaf shape, and every dtype. Reusing it with a different structure
+fails before the objective is evaluated.
+
+Selected leaves must:
+
+- be real floating-point JAX arrays;
+- have the manifold's `point_shape` as their trailing shape;
+- satisfy manifold membership at construction.
+
+Leading axes are a product of independent points. Selection currently applies to a
+whole trainable leaf, not a slice inside a leaf. Phydrax does not infer Stiefel, SO,
+SPD, or another geometry from shape or initial value.
+
+The product metric is the sum of declared leaf metrics. Global gradient clipping uses
+one scale for this norm; it does not clip each leaf independently.
+
+### Algorithms
+
+`riemannian_sgd` performs metric gradient conversion, optional global clipping, and one
+retraction per selected leaf. On Euclidean leaves it is exactly ordinary fixed-step
+gradient descent.
+
+`riemannian_momentum` implements heavy-ball momentum. The momentum is tangent at the
+current point, determines the retraction step, and is transported to the destination
+tangent space after every update. It is not ambient momentum followed by projection
+only at output.
+
+`riemannian_conjugate_gradient` implements Polak--Ribière+ directions. Previous
+gradients and directions are transported to every accepted point; the method restarts
+when conjugacy no longer defines descent.
+
+`riemannian_lbfgs` stores transported tangent-space secant pairs in bounded,
+static-shape history. Pairs with nonfinite or insufficient curvature are rejected.
+Both line-search methods evaluate one frozen objective closure through Armijo
+backtracking and return search counts and reduction diagnostics in optimizer state.
+
+The fixed-step optimizers accept a positive scalar learning rate or a callable schedule
+receiving the zero-based JAX step scalar. A scheduled value may be zero, but must remain
+finite and nonnegative. Nonfinite metric gradient norms fail explicitly.
+
+Arbitrary Optax transform composition is intentionally unsupported. Coordinatewise
+adaptive moments, ambient weight decay, and momentum without transport are not
+invariant under changes of manifold coordinates. `evaluation_parameters` is also
+rejected because an ambient evaluation transform need not preserve membership.
+
+### Supported surface
+
+| Supported | Notes |
+|---|---|
+| Mixed trainable PyTrees | Selected leaves use manifold updates; all other inexact leaves are Euclidean. |
+| Sphere, hyperbolic, simplex, Stiefel, Grassmann, oblique, fixed-rank, SO(n), affine-invariant SPD(n) | See [Array manifolds](metrix/manifolds.md) for exact metric and transport semantics. |
+| Leading products/batches | Geometry dimensions are trailing; all leading axes are preserved. |
+| `FunctionalSolver` terms and model losses | Existing term evaluation, sampling, adaptive collocation, enforcement, and best-parameter logic are reused. |
+| Eager and JIT execution | The fixed-step update is JAX-transformable. |
+
+| Rejected | Reason |
+|---|---|
+| Automatic manifold discovery | Shapes do not determine intended geometry or metric. |
+| Selected complex leaves | The current built-ins have real manifold contracts. |
+| Subarray selection | It would introduce overlapping ownership and scatter semantics. Split the parameter into explicit leaves. |
+| Arbitrary Optax chaining | Generic transform ordering does not preserve tangent-state semantics. |
+| Manifold KFAC or Adam | No invariant contract is currently implemented. |
+
+### Diagnostics and benchmark
+
+Console and TensorBoard output include Riemannian gradient, tangent-step, and momentum
+norms; clipping, constraint, tangent, and transport residuals; and Armijo evaluation,
+acceptance, reduction, conjugacy, and active-history diagnostics. Returned
+`training_diagnostics` additionally records the number of selected manifold leaves.
+
+Run the invariant-aware smoke benchmark with:
+
+```bash
+python -m tools.riemannian_optim_benchmarks --smoke
+```
+
+It reports compile-plus-first and steady update times, explicit transport timings,
+output bytes, objective progress, Armijo behavior, and sphere, Stiefel, SO, SPD, and
+mixed-PyTree constraint diagnostics without comparisons to external libraries.
+
+::: phydrax.optim.ParameterGeometry
+    options:
+        members:
+            - from_leaf_paths
+            - array_leaf_paths
+            - validate
+            - contains
+            - constraint_residuals
+            - maximum_constraint_residual
+
+---
+
+::: phydrax.optim.riemannian_sgd
+
+---
+
+::: phydrax.optim.riemannian_momentum
+
+---
+
+::: phydrax.optim.ArmijoLineSearch
+
+---
+
+::: phydrax.optim.riemannian_conjugate_gradient
+
+---
+
+::: phydrax.optim.riemannian_lbfgs
+
 ## Structured residual optimization: KFAC
 
 `phydrax.optim.kfac(...)` constructs the Phydrax-native structured optimizer used by
@@ -332,6 +481,7 @@ bypassing their domain contract.
 |---|---:|---:|---:|
 | Optax transformations | Yes | Yes | No |
 | `phydrax.optim.kfac` | Yes | No | No |
+| Phydrax Riemannian optimizers | Yes | No | No |
 | `DifferentialEvolutionSearch` | No | No | Yes, through semantic adapters |
 | Optimistix solvers | No direct adapter yet | No direct adapter yet | No |
 

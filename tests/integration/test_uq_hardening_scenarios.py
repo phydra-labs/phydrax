@@ -192,6 +192,7 @@ def test_repeated_omitted_physics_discrepancy_improves_predictions_and_scores():
     fixed_gp_coverage = []
     joint_parameter_gp_correlations = []
     observation_likelihood = phx.uq.GaussianLikelihood(observation_scale)
+
     def gp_state(amplitude, length_scale, noise_scale):
         return phx.uq.GaussianProcessLikelihoodState(
             kernel=phx.kernels.AmplitudeKernel(
@@ -319,7 +320,9 @@ def test_repeated_omitted_physics_discrepancy_improves_predictions_and_scores():
         no_discrepancy_parameters.append(no_parameter)
         fixed_gp_parameters.append(fixed_parameter)
         joint_gp_parameters.append(joint_parameters["parameter"])
-        paths = phx.uq.ParameterSubspace.array_leaf_paths(joint_mode.parameters)
+        paths = phx.nn.parameters.ParameterSubspace.array_leaf_paths(
+            joint_mode.parameters
+        )
         parameter_index = paths.index("['parameter']")
         gp_indices = tuple(
             index for index, path in enumerate(paths) if path != "['parameter']"

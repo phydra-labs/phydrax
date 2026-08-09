@@ -25,6 +25,7 @@ from ..enforcement import EnforcementProgram
 from ..integration import AdaptiveIntegration
 from ..operators.differential._runtime import derivative_runtime_context
 from ..optim._kfac._config import KFAC
+from ..optim._riemannian import AbstractRiemannianOptimizer
 from ..terms._residual import ResidualPenalty
 from ._model_losses import function_model_loss_values
 
@@ -174,13 +175,16 @@ class FunctionalSolver(StrictModule):
                         local_weight,
                         key=term_key,
                     )
-                total = total + evaluate(
-                    term,
-                    functions,
-                    key=term_key,
-                    step=step,
-                    **term_kwargs,
-                ).value
+                total = (
+                    total
+                    + evaluate(
+                        term,
+                        functions,
+                        key=term_key,
+                        step=step,
+                        **term_kwargs,
+                    ).value
+                )
             iter_ = step
             for model_loss in function_model_loss_values(
                 self.functions,
@@ -198,6 +202,7 @@ class FunctionalSolver(StrictModule):
         | optax.GradientTransformationExtraArgs
         | DistributionBasedAlgorithm
         | KFAC
+        | AbstractRiemannianOptimizer
         | None = None,
         evaluation_parameters: EvaluationParametersFn | None = None,
         seed: int = 0,
@@ -220,14 +225,16 @@ class FunctionalSolver(StrictModule):
         - Standard and extra-argument Optax transformations are accepted.
         - `phydrax.optim.kfac(...)` configurations are accepted and receive frozen
           sampled residual terms from this solver.
+        - Phydrax Riemannian optimizers are accepted and update explicitly selected
+          trainable leaves through their declared metrics and retractions.
         - Evosax distribution-based algorithms are accepted.
         - Evosax population-based algorithms require an explicit search-space contract
           and are therefore rejected; bounded geometry design uses
           `DesignConstraintSystem.search(...)`.
-        - `evaluation_parameters`, when provided, maps optimizer state and raw training
-          parameters to the parameter view used for diagnostics, model selection, and
-          the returned solver. This supports optimizers such as Optax schedule-free
-          transformations without changing the gradient/update parameter lifecycle.
+        - `evaluation_parameters`, when provided, maps Optax optimizer state and raw
+          training parameters to the parameter view used for diagnostics, model
+          selection, and the returned solver. Riemannian optimizers reject ambient
+          evaluation transforms because they need not preserve manifold membership.
 
         During training, each term receives the one-based iteration index as the
         JAX scalar keyword `iter_`, enabling scheduled coefficients.

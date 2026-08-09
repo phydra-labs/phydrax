@@ -15,6 +15,7 @@ from ...graph import CochainFieldSpec
 from .._utils import _get_size
 from .capabilities import OperatorFieldRepresentation
 from .data import OperatorOutputSpec
+from .representations import TensorFieldLayout
 
 
 OperatorFieldRole = Literal["source", "target", "both"]
@@ -35,6 +36,7 @@ class OperatorFieldSpec(StrictModule):
     scale: tuple[float, ...]
     offset: tuple[float, ...]
     cochain: CochainFieldSpec | None
+    tensor_layout: TensorFieldLayout | None
     required: bool
 
     def __init__(
@@ -53,6 +55,7 @@ class OperatorFieldSpec(StrictModule):
         scale: float | Sequence[float] = 1.0,
         offset: float | Sequence[float] = 0.0,
         cochain: CochainFieldSpec | None = None,
+        tensor_layout: TensorFieldLayout | None = None,
         required: bool = True,
     ):
         resolved_name = str(name)
@@ -62,9 +65,13 @@ class OperatorFieldSpec(StrictModule):
             raise ValueError("Operator field role must be 'source', 'target', or 'both'.")
         channel_count = _get_size(channels)
         resolved_representation: OperatorFieldRepresentation = (
-            "scalar"
-            if representation is None and channels == "scalar"
-            else ("generic_channels" if representation is None else representation)
+            "tensor"
+            if representation is None and tensor_layout is not None
+            else (
+                "scalar"
+                if representation is None and channels == "scalar"
+                else ("generic_channels" if representation is None else representation)
+            )
         )
         if resolved_representation not in (
             "generic_channels",
@@ -100,6 +107,18 @@ class OperatorFieldSpec(StrictModule):
         offsets = channel_values(offset, "offset")
         if any(value <= 0.0 for value in scales):
             raise ValueError("Field scales must be strictly positive.")
+        if tensor_layout is not None:
+            if not isinstance(tensor_layout, TensorFieldLayout):
+                raise TypeError("tensor_layout must be a TensorFieldLayout or None.")
+            if resolved_representation != "tensor":
+                raise ValueError(
+                    "Structured tensor layouts require representation='tensor'."
+                )
+            if tensor_layout.channel_count != channel_count:
+                raise ValueError(
+                    "Tensor layout width must equal the declared field channel count."
+                )
+            tensor_layout.validate_affine_normalization(scales, offsets)
         if cochain is not None and not isinstance(cochain, CochainFieldSpec):
             raise TypeError("cochain must be a CochainFieldSpec or None.")
         if (
@@ -139,6 +158,7 @@ class OperatorFieldSpec(StrictModule):
         self.scale = scales
         self.offset = offsets
         self.cochain = cochain
+        self.tensor_layout = tensor_layout
         self.required = bool(required)
 
     @property
@@ -202,6 +222,9 @@ class OperatorFieldSpec(StrictModule):
             "scale": list(self.scale),
             "offset": list(self.offset),
             "cochain": None if self.cochain is None else self.cochain.to_dict(),
+            "tensor_layout": (
+                None if self.tensor_layout is None else self.tensor_layout.to_dict()
+            ),
             "required": self.required,
         }
 
@@ -233,6 +256,11 @@ class OperatorFieldSpec(StrictModule):
                 None
                 if value.get("cochain") is None
                 else CochainFieldSpec.from_dict(value["cochain"])
+            ),
+            tensor_layout=(
+                None
+                if value.get("tensor_layout") is None
+                else TensorFieldLayout.from_dict(value["tensor_layout"])
             ),
             required=bool(value.get("required", True)),
         )

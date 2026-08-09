@@ -466,3 +466,60 @@ operator on a general curved surface.
 ---
 
 ::: phydrax.operators.navier_stokes_divergence
+
+## Geometric differential operators
+
+These operators require the minimal geometric structure that determines them.
+`intrinsic_dalembertian` accepts only a Lorentzian metric. `horizontal_grad` and
+`sub_laplacian` accept a horizontal cometric. Differential-form operations carry
+explicit chart, degree, and orientation semantics.
+
+::: phydrax.operators.intrinsic_dalembertian
+
+---
+
+::: phydrax.operators.semi_riemannian_grad
+
+---
+
+::: phydrax.operators.horizontal_grad
+
+---
+
+::: phydrax.operators.sub_laplacian
+
+---
+
+::: phydrax.operators.DomainDifferentialForm
+
+---
+
+::: phydrax.operators.domain_differential_form
+
+---
+
+::: phydrax.operators.domain_exterior_derivative
+
+---
+
+::: phydrax.operators.domain_wedge
+
+---
+
+::: phydrax.operators.domain_interior_product
+
+---
+
+::: phydrax.operators.domain_lie_derivative
+
+---
+
+::: phydrax.operators.domain_hodge_star
+
+---
+
+::: phydrax.operators.domain_codifferential
+
+---
+
+::: phydrax.operators.domain_hodge_laplacian

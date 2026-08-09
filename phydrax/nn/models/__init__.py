@@ -3,6 +3,7 @@
 from ..._model import ModelBinding
 from .._loss import add_model_loss, ModelWithLoss
 from . import wrappers
+from ._constitutive import DeformationGradientMinors, PolyconvexPotential
 from ._feynmann import FeynmaNN
 from ._flowjax_process import (
     conditional_coupling_flow_process,
@@ -11,6 +12,7 @@ from ._flowjax_process import (
     LatentFlowJAXCoefficientProcess,
     StateTimeProcessConditioner,
 )
+from ._input_convex import InputConvexNetwork, PartiallyInputConvexNetwork
 from ._kan import KAN, KANEdgeBlock
 from ._kan_adaptation import (
     adapt_kan_grids,
@@ -32,12 +34,25 @@ from ._kan_capacity import (
     KANCapacityAdaptationReport,
     refine_kan_edges,
 )
+from ._linear_recurrent import LinearRecurrentModel
 from ._mlp import MLP
 from ._modified_mlp import ModifiedMLP
+from ._piratenet import PirateNet
+from ._port_hamiltonian import PortHamiltonianVectorField
+from ._recurrent import (
+    BidirectionalRecurrentSequenceModel,
+    RecurrentSequenceModel,
+)
+from ._selective_sequence import SelectiveSequenceModel
 from ._separable_feynmann import SeparableFeynmaNN
 from ._separable_kan import SeparableKAN
 from ._separable_mlp import SeparableMLP
 from ._separable_modified_mlp import SeparableModifiedMLP
+from ._siren import SIREN
+from ._weight_space_recurrent import (
+    FunctionalStateDecoder,
+    WeightSpaceRecurrentModel,
+)
 from .wrappers import (
     ComplexOutputModel,
     ConcatenatedModel,
@@ -62,7 +77,9 @@ __all__ = [
     "BSplineEdgeBasis",
     "BSplineGrid",
     "BSplineGridBank",
+    "BidirectionalRecurrentSequenceModel",
     "ComplexOutputModel",
+    "DeformationGradientMinors",
     "ConcatenatedModel",
     "DifferentialFieldDecoder",
     "DifferentialNormalization",
@@ -70,7 +87,9 @@ __all__ = [
     "EquinoxStructuredModel",
     "FeynmaNN",
     "FlowJAXProcessDistribution",
+    "FunctionalStateDecoder",
     "IdentityCoefficientTransition",
+    "InputConvexNetwork",
     "KAN",
     "KANCapacityAdaptationReport",
     "KANEdgeBlock",
@@ -80,25 +99,34 @@ __all__ = [
     "LatentExecutionPolicy",
     "LatentFlowJAXCoefficientProcess",
     "LinearDifferentialTransform",
+    "LinearRecurrentModel",
     "MLP",
     "MagnitudeDirectionModel",
     "MaskedSeriesPoolingModel",
     "ModelWithLoss",
     "ModifiedMLP",
     "ModelBinding",
+    "PirateNet",
+    "PartiallyInputConvexNetwork",
+    "PolyconvexPotential",
+    "PortHamiltonianVectorField",
     "OrthogonalPolynomialEdgeBasis",
     "RaggedSeriesBatchInput",
     "RaggedSeriesModel",
     "RationalBSplineEdgeBasis",
     "RationalBSplineEdgeParameters",
+    "RecurrentSequenceModel",
+    "SelectiveSequenceModel",
     "Separable",
     "SeparableFeynmaNN",
     "SeparableKAN",
     "SeparableMLP",
     "SeparableModifiedMLP",
+    "SIREN",
     "Sequential",
     "StateTimeProcessConditioner",
     "TrainableBSplineGrid",
+    "WeightSpaceRecurrentModel",
     "adapt_kan_grids",
     "add_model_loss",
     "coarsen_kan_edges",

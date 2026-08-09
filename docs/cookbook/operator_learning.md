@@ -487,6 +487,43 @@ assert ifno_convergence.iterations == 3
 eigenbasis. It is a planned cross-discretization, not an arbitrary-coordinate
 query path.
 
+For coincident irregular-time sequences, choose the state contract explicitly.
+`DiagonalStateSpaceMixer` is input-independent; `SelectiveStateSpaceMixer`
+learns input-dependent positive time scaling, injection, and readout while
+remaining affine in latent state:
+
+```python
+times = jnp.asarray([0.0, 0.1, 0.35, 0.0, 0.8])
+signal = jnp.sin(times)
+valid = jnp.asarray([True, True, True, True, True])
+reset = jnp.asarray([False, False, False, True, False])
+
+selective = phx.nn.operator.architectures.SelectiveStateSpaceMixer(
+    state_size=16,
+    input_integration="linear",
+    execution="associative",
+    training_delta_range=(0.05, 0.4),
+    key=jr.key(44),
+)
+prediction, step_diagnostics = selective.evaluate_with_diagnostics(
+    signal,
+    times,
+    mask=valid,
+    reset=reset,
+)
+assert step_diagnostics.segment_count == 2
+```
+
+A valid node after padding must declare `reset=True`; padding alone preserves
+state and emits zero. The `OperatorBatch` path is coincident and does not infer
+resets. Use the reported out-of-range interval fraction as extrapolation
+evidence, not as an accuracy guarantee.
+
+CNO consumes observation masks and physical quadrature in every convolution.
+Keep missingness separate from a genuinely zero field value. Under full uniform
+support the normalized route equals ordinary convolution; under sensor dropout
+it renormalizes by observed non-negative measure.
+
 Poseidon/scOT and DPOT are native architecture implementations initialized from
 the supplied key. PhydraX does not bundle pretrained weights, large-scale
 pretraining data, or evidence of foundation-model performance. DPOT corruption
@@ -1669,11 +1706,14 @@ uv run python -m tools.operator_benchmarks --v2 \
   --commit-identity <immutable-revision> --resume
 ```
 
-Do not combine raw corruption and missing-sensor robustness. Every ladder
-contains separate `sensor_corruption` and mask-aware `sensor_dropout`
-evaluations. To measure whether the missingness mask is useful during training,
-run a second artifact set with `--train-sensor-dropout 0.2`; never overwrite the
-unaugmented run.
+Do not combine raw corruption and missing-sensor robustness.
+`sensor_corruption` zeroes values without changing their observation mask.
+The full standard benchmark reports nested 10%, 30%, and 50% mask-aware
+`sensor_dropout` evaluations; quick mode retains one 30% smoke point. To measure
+whether missingness-aware training is useful, run a separate artifact set with
+`--train-sensor-dropout 0.2`; never overwrite the unaugmented run. The
+`irregular_causal_relaxation_scenario` separately probes nonuniform physical
+steps, step-range extrapolation, and ragged schedules for temporal mixers.
 
 Capacity matching chooses from the architecture-specific size grid. A requested
 target outside the common feasible parameter interval fails before training;

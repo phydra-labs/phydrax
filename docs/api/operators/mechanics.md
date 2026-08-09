@@ -20,6 +20,10 @@ examples, and the distinction between residual, energy, and action formulations.
 
 ::: phydrax.operators.canonical_hamiltonian_residual
 
+::: phydrax.operators.canonical_poisson_bracket
+
+::: phydrax.operators.hamiltonian_vector_field
+
 ::: phydrax.operators.poisson_bracket
 
 ::: phydrax.operators.hamilton_jacobi_residual

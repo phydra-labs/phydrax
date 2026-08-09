@@ -2,7 +2,6 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -119,22 +118,20 @@ def test_ggn_requires_an_explicit_normalized_residual_contract():
         )
 
 
-def test_named_and_last_layer_parameter_subspaces_select_exact_array_leaves():
+def test_named_parameter_subspace_selects_exact_array_leaves():
     model = {
         "encoder": {"weight": jnp.ones((2, 2)), "bias": jnp.zeros(2)},
         "head": {"weight": jnp.ones((1, 2)), "bias": jnp.zeros(1)},
         "label": "fixed",
     }
-    paths = phx.uq.ParameterSubspace.array_leaf_paths(model)
-    named = phx.uq.ParameterSubspace.from_leaf_paths(model, [paths[1], paths[3]])
-    last = phx.uq.ParameterSubspace.last_layer(model)
+    paths = phx.nn.parameters.ParameterSubspace.array_leaf_paths(model)
+    named = phx.nn.parameters.ParameterSubspace.from_leaf_paths(
+        model, [paths[1], paths[3]]
+    )
 
     assert named.leaf_paths == (paths[1], paths[3])
-    assert last.leaf_paths == paths[-2:]
-    assert last.total_dimension == 3
-    assert eqx.is_array(last.reconstruct(last.initial)["head"]["weight"])
     with pytest.raises(ValueError, match="Unknown parameter leaf paths"):
-        phx.uq.ParameterSubspace.from_leaf_paths(model, ["['missing']"])
+        phx.nn.parameters.ParameterSubspace.from_leaf_paths(model, ["['missing']"])
 
 
 def test_parameter_subspace_selects_disjoint_branched_subtrees_by_exact_path():
@@ -155,7 +152,7 @@ def test_parameter_subspace_selects_disjoint_branched_subtrees_by_exact_path():
         ),
         "head_aux": jnp.ones(1),
     }
-    subspace = phx.uq.ParameterSubspace.from_subtree_paths(
+    subspace = phx.nn.parameters.ParameterSubspace.from_subtree_paths(
         model,
         [
             "['branches'][0]['head']",
@@ -174,14 +171,14 @@ def test_parameter_subspace_selects_disjoint_branched_subtrees_by_exact_path():
     assert "['head_aux']" not in subspace.leaf_paths
 
     with pytest.raises(ValueError, match="Unknown parameter subtree paths"):
-        phx.uq.ParameterSubspace.from_subtree_paths(
+        phx.nn.parameters.ParameterSubspace.from_subtree_paths(
             model,
             ["['branches'][0]['hea']"],
         )
     with pytest.raises(ValueError, match="disjoint"):
-        phx.uq.ParameterSubspace.from_subtree_paths(
+        phx.nn.parameters.ParameterSubspace.from_subtree_paths(
             model,
             ["['branches'][0]", "['branches'][0]['head']"],
         )
     with pytest.raises(ValueError, match="distinct, non-empty"):
-        phx.uq.ParameterSubspace.from_subtree_paths(model, [])
+        phx.nn.parameters.ParameterSubspace.from_subtree_paths(model, [])

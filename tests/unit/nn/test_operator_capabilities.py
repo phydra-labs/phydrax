@@ -9,11 +9,16 @@ import pytest
 import phydrax as phx
 
 
-def _grid_batch(*, size=5, periodic=True, mask=None):
+def _grid_batch(*, size=5, periodic=True, mask=None, physical_quadrature=True):
     nodes = jnp.arange(size, dtype=float) / size
+    weights = jnp.ones(size) if physical_quadrature else None
     axes = (
-        phx.nn.operator.OperatorAxis("x", nodes, periodic=periodic),
-        phx.nn.operator.OperatorAxis("y", nodes, periodic=periodic),
+        phx.nn.operator.OperatorAxis(
+            "x", nodes, quadrature_weights=weights, periodic=periodic
+        ),
+        phx.nn.operator.OperatorAxis(
+            "y", nodes, quadrature_weights=weights, periodic=periodic
+        ),
     )
     source = phx.nn.operator.FunctionSamples(
         values=jnp.ones((2, size, size)),
@@ -62,7 +67,9 @@ def test_every_registered_architecture_has_one_runtime_and_training_contract():
 
 
 def test_configured_contract_preserves_registered_configuration_and_rejects_conflicts():
-    tfno = phx.nn.operator.operator_architecture_contract("TFNO", configuration={"rank": 4})
+    tfno = phx.nn.operator.operator_architecture_contract(
+        "TFNO", configuration={"rank": 4}
+    )
     assert tfno.architecture == "FNO"
     assert tfno.configuration == (("factorization", "tucker"), ("rank", 4))
 
@@ -115,6 +122,23 @@ def test_grid_operator_contracts_accept_resolution_transfer_and_rollout(architec
     assert report.accepted
 
 
+def test_cno_and_uno_declare_their_actual_measure_and_mask_support():
+    masked = jnp.ones((2, 5, 5), dtype=bool).at[0, 2, 3].set(False)
+    cno_masked = phx.nn.operator.validate_operator_architecture(
+        "CNO", _grid_batch(mask=masked)
+    )
+    cno_missing_measure = phx.nn.operator.validate_operator_architecture(
+        "CNO", _grid_batch(physical_quadrature=False)
+    )
+    uno_masked = phx.nn.operator.validate_operator_architecture(
+        "UNO", _grid_batch(mask=masked)
+    )
+
+    assert cno_masked.accepted
+    assert "MISSING_PHYSICAL_QUADRATURE" in cno_missing_measure.codes
+    assert "MASKED_INPUT_UNSUPPORTED" in uno_masked.codes
+
+
 def test_fixed_query_is_separate_from_source_query_structure():
     variable_query_problem = phx.nn.operator.OperatorProblemSpec(
         source_query_relation="coincident",
@@ -137,7 +161,9 @@ def test_fixed_query_is_separate_from_source_query_structure():
 
 
 def test_graph_contract_requires_native_topology_and_physical_measure():
-    valid = phx.nn.operator.validate_operator_architecture("GraphNeuralOperator", _graph_batch())
+    valid = phx.nn.operator.validate_operator_architecture(
+        "GraphNeuralOperator", _graph_batch()
+    )
     missing_measure = phx.nn.operator.validate_operator_architecture(
         "GraphNeuralOperator", _graph_batch(quadrature=False)
     )
@@ -167,7 +193,9 @@ def test_training_requirements_separate_task_specific_from_foundation_claims():
     )
     assert pretrained.accepted
 
-    in_context = phx.nn.operator.validate_operator_architecture("InContextOperator", batch)
+    in_context = phx.nn.operator.validate_operator_architecture(
+        "InContextOperator", batch
+    )
     assert "MISSING_TASK_DISTRIBUTION_TRAINING" in in_context.codes
     trained = phx.nn.operator.validate_operator_architecture(
         "InContextOperator",

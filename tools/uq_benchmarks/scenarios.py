@@ -523,7 +523,7 @@ def neural_selected_subspace(
             "weight": jnp.asarray([0.7, -1.0, 0.45, 0.8]),
         },
     }
-    subspace = phx.uq.ParameterSubspace.last_layer(model, num_leaves=2)
+    subspace = phx.nn.parameters.ParameterSubspace.last_layer(model, num_leaves=2)
 
     def full_forward(full_model, locations):
         hidden = jnp.tanh(
@@ -1332,7 +1332,9 @@ def misspecified_pde_discrepancy(
                 & (target <= fixed_mean + interval_radius)
             )
         )
-        paths = phx.uq.ParameterSubspace.array_leaf_paths(joint_mode.parameters)
+        paths = phx.nn.parameters.ParameterSubspace.array_leaf_paths(
+            joint_mode.parameters
+        )
         parameter_index = paths.index("['parameter']")
         gp_indices = jnp.asarray(
             [index for index, path in enumerate(paths) if path != "['parameter']"]

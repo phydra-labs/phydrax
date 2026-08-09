@@ -144,10 +144,18 @@ nav:
         - Metrix:
             - Overview: "api/metrix/index.md"
             - Charts and tensors: "api/metrix/charts.md"
+            - Differentiable maps: "api/metrix/maps.md"
             - Metrics and metric jets: "api/metrix/metrics.md"
+            - Signed metrics: "api/metrix/signed_metrics.md"
             - Connections and intrinsic operators: "api/metrix/connections.md"
+            - General affine connections: "api/metrix/affine_connections.md"
             - Curvature: "api/metrix/curvature.md"
+            - Differential forms: "api/metrix/forms.md"
             - Embedded geometry: "api/metrix/embedded.md"
+            - Array manifolds: "api/metrix/manifolds.md"
+            - Lie groups: "api/metrix/lie_groups.md"
+            - Symplectic and Poisson geometry: "api/metrix/symplectic_poisson.md"
+            - Sub-Riemannian geometry: "api/metrix/subriemannian.md"
             - Stochastic geometry: "api/metrix/stochastic.md"
             - Array state geometry: "api/metrix/state_geometry.md"
         - Data utilities:
@@ -182,6 +190,7 @@ nav:
         - Neural networks:
             - Overview: "api/nn/index.md"
             - Layers: "api/nn/layers.md"
+            - Parameters: "api/nn/parameters.md"
             - Architectures: "api/nn/architectures.md"
             - Structured: "api/nn/structured.md"
             - Wrappers: "api/nn/wrappers.md"
@@ -200,6 +209,7 @@ nav:
             - Delay and functional differential equations: "api/solver/delay.md"
             - Functional solver: "api/solver/functional_solver.md"
             - Exact enforcement: "api/solver/enforcement.md"
+            - Geometry-preserving solvers: "api/solver/geometric.md"
         - Uncertainty quantification:
             - Overview: "api/uq/index.md"
             - Predictive results: "api/uq/predictive.md"

@@ -139,8 +139,7 @@ def test_euclidean_geometric_euler_agrees_with_ordinary_euler():
     assert ordinary.solver_id == "solver:diffrax:Euler"
     assert ordinary.resolved_method == "Euler"
     assert (
-        phx.solver.solver_state_geometry(phx.solver.GeometricEuler(geometry))
-        is geometry
+        phx.solver.solver_state_geometry(phx.solver.GeometricEuler(geometry)) is geometry
     )
     with pytest.raises(TypeError, match="geometric-solver contract"):
         phx.solver.solver_state_geometry(dfx.Euler())
@@ -163,9 +162,7 @@ def test_rkmk_so_dense_output_jit_gradient_and_convergence():
     endpoint, dense = eqx.filter_jit(terminal)(jnp.asarray(0.7), 0.1)
     _assert_so(endpoint)
     _assert_so(dense)
-    derivative = jax.grad(lambda rate: terminal(rate, 0.05)[0][1, 0])(
-        jnp.asarray(0.7)
-    )
+    derivative = jax.grad(lambda rate: terminal(rate, 0.05)[0][1, 0])(jnp.asarray(0.7))
     assert jnp.allclose(
         derivative,
         1.5 * jnp.cos(1.5 * 0.7),
@@ -234,7 +231,9 @@ def test_commutator_free_requires_shared_trivialization_and_spd_dense_rkmk():
     _assert_so(solution.evaluate(jnp.linspace(0.0, 1.0, 21)))
     assert solution.solver_id == solver.solver_id
     assert solution.resolved_method == solver.resolved_method
-    assert phx.solver.solver_state_geometry(solver).geometry_id == problem.state_geometry_id
+    assert (
+        phx.solver.solver_state_geometry(solver).geometry_id == problem.state_geometry_id
+    )
 
     spd_problem = _spd_problem()
     with pytest.raises(ValueError, match="shared-trivialization"):
@@ -249,6 +248,50 @@ def test_commutator_free_requires_shared_trivialization_and_spd_dense_rkmk():
     spd_dense = spd_solution.evaluate(jnp.linspace(0.0, 1.0, 21))
     assert jnp.all(jnp.linalg.eigvalsh(spd_solution.states) > 0.0)
     assert jnp.all(jnp.linalg.eigvalsh(spd_dense) > 0.0)
+
+
+def test_commutator_free_midpoint_has_second_order_on_noncommuting_so3_flow():
+    geometry = phx.metrix.SpecialOrthogonalStateGeometry(3)
+    first = jnp.array([[0.0, -0.7, 0.2], [0.7, 0.0, -0.3], [-0.2, 0.3, 0.0]])
+    second = jnp.array([[0.0, 0.1, -0.4], [-0.1, 0.0, 0.6], [0.4, -0.6, 0.0]])
+
+    def vector_field(time, state, args):
+        del args
+        return state @ (first + time * second)
+
+    def terminal(step_size):
+        problem = phx.solver.DifferentialProblem(
+            vector_field,
+            jnp.eye(3),
+            t0=0.0,
+            t1=1.0,
+            state_geometry=geometry,
+        )
+        return phx.solver.solve_diffrax(
+            problem,
+            save_times=jnp.asarray([1.0]),
+            solver=phx.solver.CommutatorFreeSolver(geometry),
+            dt0=step_size,
+        ).states[-1]
+
+    reference = phx.solver.solve_diffrax(
+        phx.solver.DifferentialProblem(
+            vector_field,
+            jnp.eye(3),
+            t0=0.0,
+            t1=1.0,
+        ),
+        save_times=jnp.asarray([1.0]),
+        rtol=1e-11,
+        atol=1e-13,
+    ).states[-1]
+    coarse = terminal(0.2)
+    fine = terminal(0.1)
+
+    _assert_so(jnp.stack((coarse, fine)))
+    coarse_error = jnp.linalg.norm(coarse - reference)
+    fine_error = jnp.linalg.norm(fine - reference)
+    assert coarse_error / fine_error > 3.5
 
 
 def test_geometric_event_uses_on_manifold_interpolation():

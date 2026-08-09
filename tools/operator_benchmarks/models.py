@@ -306,6 +306,7 @@ _BENCHMARK_CAPABILITY_ARCHITECTURES = {
     "fno": "FNO",
     "fno_p4_augmented": "FNO",
     "tfno": "TFNO",
+    "lattice_equivariant_cno": "LatticeEquivariantCNO",
     "cno": "CNO",
     "uno": "UNO",
     "sfno": "SFNO",
@@ -317,6 +318,8 @@ _BENCHMARK_CAPABILITY_ARCHITECTURES = {
     "flower_multilevel": "Flower",
     "flower_resolution_consistent": "Flower",
     "laplace": "LaplaceTemporalOperator",
+    "linear_recurrent": "LinearRecurrentOperator",
+    "selective_state_space": "SelectiveStateSpaceMixer",
 }
 
 
@@ -382,6 +385,8 @@ def _operator_problem_spec(
 def _operator_field_specs(
     scenario: OperatorBenchmarkScenario,
     /,
+    *,
+    structured_tensors: bool = False,
 ) -> tuple[phx.nn.operator.OperatorFieldSpec, ...]:
     if scenario.task is not None:
         return scenario.task.fields
@@ -392,13 +397,39 @@ def _operator_field_specs(
     target_representation = (
         "scalar" if symmetry is None else symmetry.target_representation
     )
+
+    def field_layout(name: str, representation: str):
+        if not structured_tensors:
+            return None
+        tensor_type = phx.nn.operator.representations.TensorType(
+            (),
+            parity=-1 if representation == "pseudoscalar" else 1,
+            dimension=2,
+        )
+        return phx.nn.operator.representations.TensorFieldLayout(
+            (
+                phx.nn.operator.representations.TensorFieldBlock(
+                    name,
+                    tensor_type,
+                ),
+            )
+        )
+
+    def field_representation(representation: str) -> str:
+        return "tensor" if structured_tensors else representation
+
     return (
         *(
             phx.nn.operator.OperatorFieldSpec(
                 name,
                 role="source",
                 source_name=name,
-                representation=source_representations.get(name, "scalar"),
+                representation=field_representation(
+                    source_representations.get(name, "scalar")
+                ),
+                tensor_layout=field_layout(
+                    name, source_representations.get(name, "scalar")
+                ),
             )
             for name in scenario.train_batch.inputs
         ),
@@ -406,7 +437,8 @@ def _operator_field_specs(
             "solution",
             role="target",
             query_name="query",
-            representation=target_representation,
+            representation=field_representation(target_representation),
+            tensor_layout=field_layout("solution", target_representation),
         ),
     )
 
@@ -433,14 +465,24 @@ def _architecture_capability_reports(
         *(() if scenario.validation is None else (scenario.validation.batch,)),
         *(evaluation.batch for evaluation in scenario.evaluations),
     )
+    contract = phx.nn.operator.operator_architecture_contract(
+        capability_name,
+        configuration=configuration,
+    )
+    fields = _operator_field_specs(
+        scenario,
+        structured_tensors=contract.capabilities.requires_structured_tensors,
+    )
     return tuple(
         phx.nn.operator.validate_operator_architecture(
             capability_name,
             batch,
             configuration=configuration,
             problem=problem,
-            fields=_operator_field_specs(scenario),
-            training_evidence=phx.nn.operator.OperatorTrainingEvidence(regime="task_specific"),
+            fields=fields,
+            training_evidence=phx.nn.operator.OperatorTrainingEvidence(
+                regime="task_specific"
+            ),
         )
         for batch in batches
     )
@@ -616,7 +658,9 @@ def _deeponet_factory(*, pod: bool, quick: bool):
                     depth=2,
                     key=next(keys),
                 )
-                branches[name] = phx.nn.operator.architectures.FixedBranchEncoder(branch_model, latent)
+                branches[name] = phx.nn.operator.architectures.FixedBranchEncoder(
+                    branch_model, latent
+                )
         query_dim = _coordinate_dimension(batch.require_single_query())
         if pod:
             target = jnp.asarray(scenario.train_target).reshape(
@@ -842,6 +886,116 @@ def _cno_factory(*, uno: bool, quick: bool):
     return build
 
 
+def _square_tensor_layout(
+    name: str,
+    representation: Literal["scalar", "pseudoscalar"],
+    /,
+    *,
+    multiplicity: int = 1,
+) -> phx.nn.operator.representations.TensorFieldLayout:
+    tensor_type = phx.nn.operator.representations.TensorType(
+        (),
+        parity=-1 if representation == "pseudoscalar" else 1,
+        dimension=2,
+    )
+    return phx.nn.operator.representations.TensorFieldLayout(
+        (
+            phx.nn.operator.representations.TensorFieldBlock(
+                name,
+                tensor_type,
+                multiplicity=multiplicity,
+            ),
+        )
+    )
+
+
+def _lattice_equivariant_cno_factory(*, quick: bool):
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+        if scenario.symmetry is None or scenario.symmetry.group is None:
+            raise ValueError(
+                "LatticeEquivariantCNO requires declared exact square-group symmetry."
+            )
+        name, _ = _primary_source(scenario)
+        source_representations = dict(scenario.symmetry.source_representations)
+        source_representation = source_representations[name]
+        target_representation = scenario.symmetry.target_representation
+        width = max(2, min(16, round((4 if quick else 8) * size_scale)))
+        group = (
+            phx.nn.operator.representations.FiniteOrthogonalGroup.c4()
+            if scenario.symmetry.group == "p4"
+            else phx.nn.operator.representations.FiniteOrthogonalGroup.d4()
+        )
+        return phx.nn.operator.architectures.LatticeEquivariantCNO(
+            group,
+            _square_tensor_layout(name, source_representation),
+            _square_tensor_layout("solution", target_representation),
+            hidden_layout=_square_tensor_layout(
+                "hidden",
+                source_representation,
+                multiplicity=width,
+            ),
+            width=width,
+            depth=1 if quick else 4,
+            kernel_size=3,
+            activation="tanh",
+            source_key=name,
+            squeeze_scalar_output=True,
+            key=jr.key(seed),
+        )
+
+    return build
+
+
+def _lattice_equivariant_cno_configuration(*, quick: bool):
+    def configuration(
+        scenario: OperatorBenchmarkScenario,
+        size_scale: float,
+    ) -> tuple[tuple[str, str], ...]:
+        if scenario.symmetry is None or scenario.symmetry.group is None:
+            raise ValueError(
+                "LatticeEquivariantCNO requires declared exact square-group symmetry."
+            )
+        return (
+            (
+                "symmetry_group",
+                "C4" if scenario.symmetry.group == "p4" else "D4",
+            ),
+            (
+                "width",
+                str(max(2, min(16, round((4 if quick else 8) * size_scale)))),
+            ),
+            ("depth", str(1 if quick else 4)),
+            ("kernel_size", "3"),
+            ("activation", "tanh"),
+            ("squeeze_scalar_output", "True"),
+        )
+
+    return configuration
+
+
+def _lattice_equivariant_cno_compatible(
+    scenario: OperatorBenchmarkScenario,
+    /,
+) -> bool:
+    symmetry = scenario.symmetry
+    if (
+        symmetry is None
+        or symmetry.group not in ("p4", "p4m")
+        or not _periodic_tensor_grid_compatible(scenario)
+        or len(scenario.train_batch.inputs) != 1
+    ):
+        return False
+    name, source = _primary_source(scenario)
+    source_representations = dict(symmetry.source_representations)
+    return (
+        len(source.sample_shape) == 2
+        and _sample_channels(source, scenario.train_batch.case_shape) == 1
+        and _target_channels(scenario) == 1
+        and source_representations.get(name) in ("scalar", "pseudoscalar")
+        and symmetry.target_representation in ("scalar", "pseudoscalar")
+    )
+
+
 def _wavelet_factory(*, quick: bool):
     def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
         name, source = _primary_source(scenario)
@@ -992,6 +1146,100 @@ def _laplace_factory(*, quick: bool):
         )
 
     return build
+
+
+def _linear_recurrent_factory(*, quick: bool):
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+        name, source = _primary_source(scenario)
+        channels = _sample_channels(source, scenario.train_batch.case_shape)
+        output_channels = _target_channels(scenario)
+        time_axis = source.axes[0].name if source.axes else "time"
+        return phx.nn.operator.architectures.LinearRecurrentOperator(
+            in_channels="scalar" if channels == 1 else channels,
+            out_channels="scalar" if output_channels == 1 else output_channels,
+            state_size=max(4, round((8 if quick else 64) * size_scale)),
+            execution="associative",
+            time_axis=time_axis,
+            source_key=name,
+            key=jr.key(seed),
+        )
+
+    return build
+
+
+def _linear_recurrent_configuration(*, quick: bool):
+    def configuration(
+        scenario: OperatorBenchmarkScenario,
+        size_scale: float,
+    ) -> tuple[tuple[str, str], ...]:
+        return (
+            ("state_size", str(max(4, round((8 if quick else 64) * size_scale)))),
+            ("execution", "associative"),
+            ("time_semantics", "ordered_samples"),
+        )
+
+    return configuration
+
+
+def _training_delta_range(
+    scenario: OperatorBenchmarkScenario,
+) -> tuple[float, float]:
+    metadata = dict(scenario.metadata)
+    if "minimum_training_step" in metadata and "maximum_training_step" in metadata:
+        return (
+            float(metadata["minimum_training_step"]),
+            float(metadata["maximum_training_step"]),
+        )
+    _, source = _primary_source(scenario)
+    coordinates = source.coordinates_array(case_shape=scenario.train_batch.case_shape)
+    if int(coordinates.shape[-1]) != 1:
+        raise ValueError(
+            "Temporal state-space benchmarks require scalar time coordinates."
+        )
+    times = coordinates[..., 0]
+    mask = source.mask_array(case_shape=scenario.train_batch.case_shape)
+    continuation = mask[..., :-1] & mask[..., 1:]
+    delta = times[..., 1:] - times[..., :-1]
+    lower = jnp.min(jnp.where(continuation, delta, jnp.inf))
+    upper = jnp.max(jnp.where(continuation, delta, -jnp.inf))
+    return float(lower), float(upper)
+
+
+def _selective_state_space_factory(*, quick: bool):
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+        name, source = _primary_source(scenario)
+        channels = _sample_channels(source, scenario.train_batch.case_shape)
+        output_channels = _target_channels(scenario)
+        time_axis = source.axes[0].name if source.axes else "time"
+        return phx.nn.operator.architectures.SelectiveStateSpaceMixer(
+            in_channels="scalar" if channels == 1 else channels,
+            out_channels="scalar" if output_channels == 1 else output_channels,
+            state_size=max(4, round((8 if quick else 64) * size_scale)),
+            input_integration="linear",
+            execution="associative",
+            time_axis=time_axis,
+            source_key=name,
+            training_delta_range=_training_delta_range(scenario),
+            key=jr.key(seed),
+        )
+
+    return build
+
+
+def _selective_state_space_configuration(*, quick: bool):
+    def configuration(
+        scenario: OperatorBenchmarkScenario, size_scale: float
+    ) -> tuple[tuple[str, str], ...]:
+        lower, upper = _training_delta_range(scenario)
+        return (
+            ("state_size", str(max(4, round((8 if quick else 64) * size_scale)))),
+            ("input_integration", "linear"),
+            ("execution", "associative"),
+            ("minimum_training_step", str(lower)),
+            ("maximum_training_step", str(upper)),
+        )
+
+    return configuration
 
 
 def _sample_channels(
@@ -2273,6 +2521,20 @@ def compatible_architectures(
                 )
             )
     if _coincident_tensor_grid_compatible(scenario):
+        if _lattice_equivariant_cno_compatible(scenario):
+            candidates.append(
+                OperatorArchitecture(
+                    "lattice_equivariant_cno",
+                    "lattice_equivariant",
+                    _lattice_equivariant_cno_factory(quick=quick),
+                    True,
+                    normalization="none",
+                    promotion_scope="specialized",
+                    configuration_factory=_lattice_equivariant_cno_configuration(
+                        quick=quick
+                    ),
+                )
+            )
         candidates.append(
             OperatorArchitecture(
                 "ifno",
@@ -2480,6 +2742,31 @@ def compatible_architectures(
                 promotion_scope="specialized",
             )
         )
+        if _coincident(scenario):
+            candidates.append(
+                OperatorArchitecture(
+                    "linear_recurrent",
+                    "linear_recurrent",
+                    _linear_recurrent_factory(quick=quick),
+                    True,
+                    normalization="sourcewise",
+                    promotion_scope="specialized",
+                    configuration_factory=_linear_recurrent_configuration(quick=quick),
+                )
+            )
+            candidates.append(
+                OperatorArchitecture(
+                    "selective_state_space",
+                    "selective_state_space",
+                    _selective_state_space_factory(quick=quick),
+                    True,
+                    normalization="sourcewise",
+                    promotion_scope="specialized",
+                    configuration_factory=_selective_state_space_configuration(
+                        quick=quick
+                    ),
+                )
+            )
     return tuple(
         architecture
         for architecture in candidates

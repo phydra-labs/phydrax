@@ -99,9 +99,10 @@ attention and feed-forward dropout. One root PRNG key denotes one coherent
 whole-function draw. Use `phydrax.nn.layers.inference_mode` before deterministic
 deployment or posterior-density construction.
 
-Weight-space inference should target an explicit `ParameterSubspace`. Useful
-small choices include a GINO output projection, a RIGNO decoder/readout, or a
-GAOT output projection. Never use global leaf order as a proxy for “last layer”
+Weight-space inference should target an explicit
+`phydrax.nn.parameters.ParameterSubspace`. Useful small choices include a GINO
+output projection, a RIGNO decoder/readout, or a GAOT output projection. Never
+use global leaf order as a proxy for “last layer”
 in an encode–process–decode model. A geometry ensemble captures parameter
 uncertainty conditional on its observed mesh; uncertain domain shapes belong in
 the input-sample axes instead.

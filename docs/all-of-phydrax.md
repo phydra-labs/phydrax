@@ -85,15 +85,22 @@ The enforced route is staged as boundary → initial → interior data. See:
   the domain becomes \(\Omega_{\text{data}}\times\Omega_x\times\cdots\). See [API → Domain → Composition](api/domain/composition.md)
   and [API → NN → Architectures](api/nn/architectures.md).
 
-### Irregular sequences: one generic diagonal state-space mixer
+Trainable coordinates and their physical geometry are separate. Reusable
+positivity, interval, symmetry, stability, orthogonality, and positive-definite
+maps live in `phydrax.nn.parameters`; raw arrays remain optimizer leaves and
+physical values are constructed on demand. The same package owns explicit
+model-PyTree selection through `ParameterSubspace`.
 
-`phydrax.nn.operator.architectures.DiagonalStateSpaceMixer` is the generic
-diagonal continuous-time
-state-space sequence layer. It supports zero-order-hold or linear input
-integration on irregular, masked schedules and recurrent or associative
-execution. It is one configurable class, not a collection of branded mixer
-architectures. Inputs, times, and masks retain their physical axes; model
-capability metadata records its research status and declared approximation.
+### Irregular sequences: invariant affine recurrence
+
+`phydrax.nn.operator.architectures.DiagonalStateSpaceMixer` is the
+input-independent diagonal continuous-time baseline.
+`SelectiveStateSpaceMixer` adds input-dependent positive step scaling, injection,
+and readout while preserving an affine latent recurrence. Both use exact
+zero-order-hold or linear interval integration on physical schedules and share
+serial/associative execution semantics. The selective model additionally accepts
+declared packed-segment resets and reports extrapolation diagnostics. Capability
+metadata records both implementations as research status.
 
 ### Uncertainty: stochastic functions, processes, inputs, and observations
 
@@ -176,13 +183,20 @@ are rejected rather than clipped or repaired.
 
 ### Geometry: Euclidean coordinates vs metric-aware calculus
 
-`phydrax.metrix` supplies explicit charts, tensor transformation laws,
-positive-definite metric fields, Levi-Civita operators, curvature, embedded
-charts, and metric-aware stochastic generators. Use it when a PDE, PINN, or
-operator is posed in curvilinear coordinates or on a parameterized manifold.
-Bounds, seams, sampling, and admissibility remain domain concerns; metric volume
-can be attached to a component with `with_riemannian_measure`. See
+`phydrax.metrix` supplies charts and differentiable maps; tensors and compressed
+differential forms; positive and signed metrics; affine connections and curvature;
+Lie groups; symplectic, Poisson, and horizontal structures; and metric-aware
+stochastic kernels. Positive norms, Lorentzian wave operators, Poisson brackets, and
+sub-Laplacians remain distinct named operations rather than overloads with hidden
+defaults. Bounds, seams, sampling, and admissibility remain domain concerns. See
 [API → Metrix](api/metrix/index.md).
+
+For trainable arrays on spheres, hyperbolic spaces, probability simplices, matrix
+manifolds, SO(n), or SPD(n), `ParameterGeometry` binds exact PyTree leaf paths to
+declared metrics. Weighted product metrics, Riemannian SGD and momentum, conjugate
+gradient, and L-BFGS update those leaves through tangent conversion, retraction, and
+transport while ordinary leaves remain Euclidean.
+See [API → Optimization](api/optim.md#riemannian-optimization).
 
 ## A first real PDE example: Poisson on a square
 
@@ -380,11 +394,12 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   See [API → Domain → Functions](api/domain/functions.md) and [API reference](api/phydrax.md).
 - **Operator learning**: use `DatasetDomain` and structured models on \(\Omega_{\text{data}}\times\Omega_x\). The canonical `OperatorBatch` path supports independent source/query discretizations across DeepONet, graph, geometry-informed, transformer, and spectral families; validate architecture choices with the audited benchmark protocol.
   See [Operator-learning cookbook](cookbook/operator_learning.md) and [API → NN → Architectures](api/nn/architectures.md).
-- **Irregular-time sequence mixing**: use the single
-  `DiagonalStateSpaceMixer` class for stable diagonal continuous-time dynamics
-  with masked schedules, exact zero-order-hold or linear input integration, and
-  recurrent or associative execution. It is a research-status generic layer,
-  not several method-branded architectures.
+- **Irregular-time sequence mixing**: use `DiagonalStateSpaceMixer` for an
+  input-independent stable diagonal continuous-time baseline, or
+  `SelectiveStateSpaceMixer` when input-dependent step, injection, and readout
+  maps are justified. Both preserve exact zero-order-hold or linear interval
+  integration and serial/associative parity; the selective route also exposes
+  reset-aware packed segments and time-step extrapolation diagnostics.
   See [API → NN → Architectures](api/nn/architectures.md).
 - **Stochastic neural operators**: declare state, duration, optional source-time,
   typed drivers, query, and output roles with `OperatorTransitionSpec`. Adapt a

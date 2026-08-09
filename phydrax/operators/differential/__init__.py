@@ -55,6 +55,17 @@ from ._domain_ops import (
     viscous_stress,
     von_mises_stress,
 )
+from ._form_ops import (
+    domain_codifferential,
+    domain_differential_form,
+    domain_exterior_derivative,
+    domain_hodge_laplacian,
+    domain_hodge_star,
+    domain_interior_product,
+    domain_lie_derivative,
+    domain_wedge,
+    DomainDifferentialForm,
+)
 from ._fractional_ops import (
     fractional_derivative_gl_mc,
     fractional_laplacian,
@@ -68,6 +79,7 @@ from ._riemannian_ops import (
     riemannian_div_tensor,
     riemannian_grad,
 )
+from ._semi_riemannian_ops import intrinsic_dalembertian, semi_riemannian_grad
 from ._stochastic_estimators import (
     directional_stratonovich_correction,
     estimate_kolmogorov_generator,
@@ -89,6 +101,7 @@ from ._stochastic_ops import (
     StochasticInterpretation,
     stratonovich_to_ito_drift,
 )
+from ._sub_riemannian_ops import horizontal_grad, sub_laplacian
 from ._surface_ops import (
     ambient_surface_hessian_trace,
     laplace_beltrami,
@@ -189,4 +202,17 @@ __all__ = [
     "riesz_fractional_derivative_gl_mc",
     "caputo_time_fractional",
     "caputo_time_fractional_dw",
+    "DomainDifferentialForm",
+    "domain_codifferential",
+    "domain_differential_form",
+    "domain_exterior_derivative",
+    "domain_hodge_laplacian",
+    "domain_hodge_star",
+    "domain_interior_product",
+    "domain_lie_derivative",
+    "domain_wedge",
+    "intrinsic_dalembertian",
+    "semi_riemannian_grad",
+    "horizontal_grad",
+    "sub_laplacian",
 ]

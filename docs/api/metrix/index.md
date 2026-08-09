@@ -1,16 +1,17 @@
 # Metrix
 
-`phydrax.metrix` is Phydrax's differentiable geometry layer. It represents local
-coordinates, tensor transformation laws, positive-definite metric fields,
-Levi-Civita calculus, curvature, embedded charts, metric-aware stochastic
-operators, and retraction geometry for array-valued states as ordinary JAX
-programs.
+`phydrax.metrix` is Phydrax's differentiable geometry layer. It represents charts,
+differentiable maps, tensors and forms, positive and signed metrics, affine
+connections, curvature, Lie groups, symplectic and Poisson structures, horizontal
+cometrics, and array manifolds as ordinary JAX programs.
 
 Metrix is intentionally below the domain and solver layers:
 
 ```text
-charts and tensors → metrics and jets → connection → intrinsic operators
-                   → curvature       → embedded/stochastic geometry
+charts and maps → tensors/forms → metric or cometric structure → named operators
+                → affine connections and curvature
+                → Lie-group / symplectic / Poisson structure
+                → array manifolds and state geometry
 ```
 
 A chart describes an ordered local coordinate representation, not a physical
@@ -18,9 +19,10 @@ region. Bounds, boundaries, periodicity, sampling, and measures remain domain
 concerns. This separation lets one metric serve direct array calculations,
 `DomainFunction` residuals, PINNs, operator models, and stochastic generators.
 
-Array state geometry likewise describes membership, tangent projection, and
-retraction for a solver state. It does not introduce another domain or metric
-hierarchy.
+Array manifolds describe metrics, tangent updates, retractions, and optimizer-state
+transport for selected parameter leaves. Array state geometry instead describes
+membership, local updates, and pullbacks for a differential-equation solver state.
+Neither introduces another domain hierarchy.
 
 ## Conventions
 
@@ -78,9 +80,28 @@ point coordinates or replace domain admissibility rules.
 ## Public areas
 
 - [Charts and tensors](charts.md)
+- [Differentiable maps](maps.md)
 - [Metrics and metric jets](metrics.md)
+- [Signed metrics](signed_metrics.md)
 - [Connections and intrinsic operators](connections.md)
+- [General affine connections](affine_connections.md)
 - [Curvature](curvature.md)
+- [Differential forms](forms.md)
 - [Embedded geometry](embedded.md)
+- [Array manifolds](manifolds.md)
+- [Lie groups](lie_groups.md)
+- [Symplectic and Poisson geometry](symplectic_poisson.md)
+- [Sub-Riemannian geometry](subriemannian.md)
 - [Stochastic geometry](stochastic.md)
 - [Array state geometry](state_geometry.md)
+
+## Benchmark
+
+Run representative metric-jet, form, Poisson, Lorentzian, and horizontal kernels with:
+
+```bash
+python -m tools.geometric_benchmarks --smoke
+```
+
+The report separates compilation-plus-first-call time from steady execution time and
+records output bytes, batch size, and coordinate dimension.
