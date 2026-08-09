@@ -363,6 +363,12 @@ space. Every filter has streaming and batch execution, status-aware
 diagnostics, predictive conversion, and pickle-free compatible checkpoints.
 Complete histories can be exported as portable results.
 
+`optimal_transport_ensemble_transform` is a separate deterministic equal-weight
+barycentric transform for normalized weighted particle arrays. It preserves leading
+physical case axes and reports the coupling and mean error. It is not wired into
+categorical particle-filter resampling because stochastic ancestry and genealogy are
+part of that filter contract.
+
 See the [filtering cookbook](cookbook/filtering.md),
 [state-space API](api/stochastic/state_space.md), and
 [filtering API](api/uq/filtering.md).
@@ -719,6 +725,15 @@ Use `operator_ensemble_energy_distance` for two process ensembles. It applies th
 query mask and either physical quadrature or a declared uniform measure. Continue to
 report marginal CRPS and calibration separately: distributional proximity,
 pointwise calibration, and simultaneous field coverage are different contracts.
+
+`operator_ensemble_sinkhorn_divergence` provides a regularized whole-field transport
+discrepancy with all three convergence records.
+`operator_ensemble_sliced_wasserstein` is the finite-projection alternative and
+retains projection provenance. Both preserve physical case axes and apply the declared
+query measure before treating each function as one event.
+`SinkhornDistributionalSemigroupObjective` uses the first metric for direct versus
+independently composed process laws; it retains the same marginal-law versus pathwise
+cocycle distinction as the energy-distance objective.
 
 ### Likelihood, calibration, and scores
 

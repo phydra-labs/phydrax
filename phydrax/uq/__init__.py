@@ -297,6 +297,16 @@ from ._operator_metrics import (
     operator_interval_coverage,
     operator_interval_width,
 )
+from ._transport_metrics import (
+    operator_ensemble_sinkhorn_divergence,
+    operator_ensemble_sliced_wasserstein,
+    predictive_sinkhorn_divergence,
+    PredictiveTransportMetricResult,
+)
+from ._transport_resampling import (
+    optimal_transport_ensemble_transform,
+    OptimalTransportEnsembleTransformResult,
+)
 from ._particle import (
     bootstrap_particle_filter,
     effective_sample_size,
@@ -828,6 +838,12 @@ __all__ = [
     "operator_ensemble_crps",
     "operator_interval_coverage",
     "operator_interval_width",
+    "operator_ensemble_sinkhorn_divergence",
+    "operator_ensemble_sliced_wasserstein",
+    "predictive_sinkhorn_divergence",
+    "PredictiveTransportMetricResult",
+    "optimal_transport_ensemble_transform",
+    "OptimalTransportEnsembleTransformResult",
     "FixedOperatorObservationLikelihood",
     "OperatorBatchObservationLikelihood",
     "OperatorLikelihoodData",

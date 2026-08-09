@@ -46,6 +46,9 @@ Most workflows are composing a few primitives:
   and quantum matrix operators.
 - **Integration**: explicit targets define measures, plans define numerical
   realizations, and estimates carry method-valid diagnostics and provenance.
+- **Optimal transport**: integration measures lower into balanced finite transport
+  problems with explicit mass, ground geometry, stabilized Sinkhorn diagnostics,
+  matrix-free plan actions, exact/sliced Wasserstein distances, and soft order.
 - **Interpolation**: reusable anisotropic Smolyak surrogates preserve labeled
   domains, array-valued outputs, and JAX differentiation.
 - **Positive-definite kernels**: one covariance-safe PyTree algebra serves Gaussian
@@ -206,6 +209,14 @@ neural-operator rollouts. See the
 [uncertainty guide](docs/guides_uncertainty.md),
 [neural-operator uncertainty API](docs/api/uq/operator.md), and
 [differential solver API](docs/api/solver/differential.md).
+
+Native optimal transport covers balanced finite measures, dense and blockwise
+log-domain Sinkhorn, debiased divergence, exact one-dimensional and sliced
+Wasserstein distances, differentiable ordering, whole-field predictive metrics,
+functional terms, semigroup consistency, and deterministic particle transforms.
+See the [transport guide](docs/guides_transport.md),
+[cookbook](docs/cookbook/optimal_transport.md), and
+[API](docs/api/transport/index.md).
 
 State-space inference includes rank-aware `GaussianFactor` operations, declared
 nonlinear Gaussian transforms, continuous-discrete filtering and smoothing,

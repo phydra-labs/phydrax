@@ -87,6 +87,29 @@ reconstruction is a separate problem.
 
 ::: phydrax.terms.ScoreMatchingDiagnostics
 
+## Transport functionals
+
+Transport terms compare complete physical measures or empirical events instead of
+reducing pointwise discrepancies first. Sinkhorn terms retain native convergence
+diagnostics and reject a failed solve. Prepared references reuse only the fixed target
+self term. Sliced terms retain their projection design; soft quantile functionals are
+regularized order objectives, not exact sample quantiles.
+
+::: phydrax.terms.SpatialSinkhornDivergenceTerm
+
+---
+
+::: phydrax.terms.EmpiricalSinkhornDivergenceTerm
+
+---
+
+::: phydrax.terms.SlicedWassersteinTerm
+
+---
+
+::: phydrax.terms.SoftQuantileFunctional
+
+
 ## Supporting contracts
 
 `BatchSampler` and `ResidualEvaluator` are the callable protocols used by randomized

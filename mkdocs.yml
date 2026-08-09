@@ -104,6 +104,7 @@ nav:
         - Operator learning (DatasetDomain): "cookbook/operator_learning.md"
         - Uncertainty quantification: "cookbook/uncertainty_quantification.md"
         - Neural-operator uncertainty: "cookbook/operator_uncertainty.md"
+        - Optimal transport: "cookbook/optimal_transport.md"
         - Mechanics and Deep Ritz: "cookbook/mechanics.md"
         - Two-level quantum dynamics: "cookbook/quantum_two_level.md"
         - Composite systems and a Bell state: "cookbook/quantum_composite.md"
@@ -116,6 +117,7 @@ nav:
         - Conditions, terms, and enforcement: "guides_conditions.md"
         - Solvers and training: "guides_solver.md"
         - Uncertainty quantification: "guides_uncertainty.md"
+        - Optimal transport: "guides_transport.md"
         - Lagrangian and Hamiltonian mechanics: "guides_mechanics.md"
         - Quantum operators and dynamics: "guides_quantum.md"
     - Examples:
@@ -123,6 +125,12 @@ nav:
     - API:
         - Overview: "api/phydrax.md"
         - Integration: "api/integration.md"
+        - Optimal transport:
+            - Overview: "api/transport/index.md"
+            - Ground costs: "api/transport/costs.md"
+            - Sinkhorn and divergence: "api/transport/sinkhorn.md"
+            - Exact and sliced distances: "api/transport/distances.md"
+            - Differentiable ordering: "api/transport/soft.md"
         - Positive-definite kernels: "api/kernels.md"
         - Geometry substrate: "api/geometry.md"
         - Domains:

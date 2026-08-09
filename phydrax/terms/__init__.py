@@ -83,6 +83,12 @@ from ._score_matching import (
     ScoreSampleProvider,
 )
 from ._supervised_dataset import SupervisedDatasetBatch, SupervisedDatasetTerm
+from ._transport import (
+    EmpiricalSinkhornDivergenceTerm,
+    SlicedWassersteinTerm,
+    SoftQuantileFunctional,
+    SpatialSinkhornDivergenceTerm,
+)
 from ._trajectory_data import (
     TrajectoryCaseDataBatch,
     TrajectoryCaseDataTerm,
@@ -110,6 +116,7 @@ __all__ = [
     "DeepSplittingRegressionDiagnostics",
     "DeepSplittingRegressionTerm",
     "DifferentialPhysicsInformedOperatorTerm",
+    "EmpiricalSinkhornDivergenceTerm",
     "FeynmanKacRegressionDiagnostics",
     "FeynmanKacRegressionTerm",
     "GraphSupervisedTerm",
@@ -142,6 +149,9 @@ __all__ = [
     "ScoreMatchingPolicy",
     "ScoreMatchingSamplingMode",
     "ScoreMatchingTerm",
+    "SlicedWassersteinTerm",
+    "SoftQuantileFunctional",
+    "SpatialSinkhornDivergenceTerm",
     "ScoreSampleProvider",
     "SupervisedDatasetBatch",
     "SupervisedDatasetTerm",

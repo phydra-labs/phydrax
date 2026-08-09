@@ -9,9 +9,11 @@ from dataclasses import dataclass
 from math import isfinite
 from typing import Any, cast, Literal
 
+import equinox as eqx
 import jax.numpy as jnp
-from jaxtyping import Array, Key
+from jaxtyping import Array
 
+from ....transport import AbstractGroundCost, Sinkhorn
 from ..._keys import (
     EvalKey,
     fold_in_eval_key,
@@ -218,100 +220,20 @@ class DistributionalSemigroupObjective:
         *,
         key: EvalKey = None,
     ) -> Array:
-        if not isinstance(model, AbstractProbabilisticOperatorModel):
-            raise TypeError(
-                "DistributionalSemigroupObjective requires a probabilistic operator."
-            )
-        if key is None:
-            raise ValueError("DistributionalSemigroupObjective requires a PRNG key.")
-        first_duration = _duration(dt1, batch, name="dt1")
-        second_duration = _duration(dt2, batch, name="dt2")
-        direct_batch = _require_batch(
-            condition(batch, first_duration + second_duration),
+        direct_predictive, composed_predictive = _distributional_predictives(
+            model,
             batch,
-            owner="condition",
+            dt1,
+            dt2,
+            condition,
+            advance,
+            num_samples=self.num_samples,
+            key_mode=self.key_mode,
+            key=key,
+            owner="DistributionalSemigroupObjective",
         )
-        first_batch = _require_batch(
-            condition(batch, first_duration),
-            batch,
-            owner="condition",
-        )
-        key_count = 4 + 2 * int(self.num_samples)
-        if self.key_mode == "split":
-            keys = tuple(split_eval_key(key, key_count))
-        else:
-            keys = tuple(fold_in_eval_key(key, site) for site in range(key_count))
-        if any(value is None for value in keys):
-            raise AssertionError(
-                "Distributional semigroup keys unexpectedly resolved to None."
-            )
-        resolved_keys = tuple(cast(Key[Array, ""], value) for value in keys)
-
-        direct_distribution = model.distribution(direct_batch, key=resolved_keys[0])
-        first_distribution = model.distribution(first_batch, key=resolved_keys[2])
-        if (
-            direct_distribution.uncertainty_source != "process"
-            or first_distribution.uncertainty_source != "process"
-        ):
-            raise ValueError(
-                "Distributional semigroup objectives require process distributions."
-            )
-        direct_samples = direct_distribution.sample(
-            resolved_keys[1],
-            (int(self.num_samples),),
-        )
-        first_samples = first_distribution.sample(
-            resolved_keys[3],
-            (int(self.num_samples),),
-        )
-        composed: list[Array] = []
-        for index in range(int(self.num_samples)):
-            advanced_batch = _require_batch(
-                advance(first_batch, first_samples[index]),
-                batch,
-                owner="advance",
-            )
-            second_batch = _require_batch(
-                condition(advanced_batch, second_duration),
-                batch,
-                owner="condition",
-            )
-            second_distribution = model.distribution(
-                second_batch,
-                key=resolved_keys[4 + 2 * index],
-            )
-            if second_distribution.uncertainty_source != "process":
-                raise ValueError(
-                    "Composed transition distributions must use process uncertainty."
-                )
-            composed.append(
-                second_distribution.sample(
-                    resolved_keys[5 + 2 * index],
-                    (1,),
-                )[0]
-            )
-        composed_samples = jnp.stack(tuple(composed), axis=0)
-
-        from ....uq._operator import operator_predictive_from_samples
         from ....uq._operator_metrics import operator_ensemble_energy_distance
-        from ....uq._predictive import SampleAxis
 
-        direct_predictive = operator_predictive_from_samples(
-            direct_samples,
-            direct_batch,
-            direct_distribution.output_spec,
-            sample_axes=(SampleAxis("__phydra_semigroup_direct", "process"),),
-            field_name="output",
-            query_name=direct_batch.single_query_name(),
-        )
-        composed_predictive = operator_predictive_from_samples(
-            composed_samples,
-            direct_batch,
-            direct_distribution.output_spec,
-            sample_axes=(SampleAxis("__phydra_semigroup_composed", "process"),),
-            field_name="output",
-            query_name=direct_batch.single_query_name(),
-        )
         distance = operator_ensemble_energy_distance(
             direct_predictive,
             composed_predictive,
@@ -321,6 +243,190 @@ class DistributionalSemigroupObjective:
             reduction=self.reduction,
         )
         return jnp.asarray(self.weight, dtype=distance.dtype) * distance
+
+
+def _distributional_predictives(
+    model: AbstractProbabilisticOperatorModel,
+    batch: OperatorBatch,
+    dt1: Any,
+    dt2: Any,
+    condition: Callable[[OperatorBatch, Array], OperatorBatch],
+    advance: Callable[[OperatorBatch, Array], OperatorBatch],
+    /,
+    *,
+    num_samples: int,
+    key_mode: SemigroupKeyMode,
+    key: EvalKey,
+    owner: str,
+):
+    if not isinstance(model, AbstractProbabilisticOperatorModel):
+        raise TypeError(f"{owner} requires a probabilistic operator.")
+    if key is None:
+        raise ValueError(f"{owner} requires a PRNG key.")
+    first_duration = _duration(dt1, batch, name="dt1")
+    second_duration = _duration(dt2, batch, name="dt2")
+    direct_batch = _require_batch(
+        condition(batch, first_duration + second_duration),
+        batch,
+        owner="condition",
+    )
+    first_batch = _require_batch(
+        condition(batch, first_duration),
+        batch,
+        owner="condition",
+    )
+    key_count = 4 + 2 * int(num_samples)
+    if key_mode == "split":
+        keys = tuple(split_eval_key(key, key_count))
+    else:
+        keys = tuple(fold_in_eval_key(key, site) for site in range(key_count))
+    if any(value is None for value in keys):
+        raise AssertionError("Distributional semigroup keys unexpectedly resolved to None.")
+    resolved_keys = tuple(cast(Array, value) for value in keys)
+
+    direct_distribution = model.distribution(direct_batch, key=resolved_keys[0])
+    first_distribution = model.distribution(first_batch, key=resolved_keys[2])
+    if (
+        direct_distribution.uncertainty_source != "process"
+        or first_distribution.uncertainty_source != "process"
+    ):
+        raise ValueError(
+            "Distributional semigroup objectives require process distributions."
+        )
+    direct_samples = direct_distribution.sample(
+        resolved_keys[1],
+        (int(num_samples),),
+    )
+    first_samples = first_distribution.sample(
+        resolved_keys[3],
+        (int(num_samples),),
+    )
+    composed: list[Array] = []
+    for index in range(int(num_samples)):
+        advanced_batch = _require_batch(
+            advance(first_batch, first_samples[index]),
+            batch,
+            owner="advance",
+        )
+        second_batch = _require_batch(
+            condition(advanced_batch, second_duration),
+            batch,
+            owner="condition",
+        )
+        second_distribution = model.distribution(
+            second_batch,
+            key=resolved_keys[4 + 2 * index],
+        )
+        if second_distribution.uncertainty_source != "process":
+            raise ValueError(
+                "Composed transition distributions must use process uncertainty."
+            )
+        composed.append(
+            second_distribution.sample(
+                resolved_keys[5 + 2 * index],
+                (1,),
+            )[0]
+        )
+    composed_samples = jnp.stack(tuple(composed), axis=0)
+
+    from ....uq._operator import operator_predictive_from_samples
+    from ....uq._predictive import SampleAxis
+
+    direct_predictive = operator_predictive_from_samples(
+        direct_samples,
+        direct_batch,
+        direct_distribution.output_spec,
+        sample_axes=(SampleAxis("__phydra_semigroup_direct", "process"),),
+        field_name="output",
+        query_name=direct_batch.single_query_name(),
+    )
+    composed_predictive = operator_predictive_from_samples(
+        composed_samples,
+        direct_batch,
+        direct_distribution.output_spec,
+        sample_axes=(SampleAxis("__phydra_semigroup_composed", "process"),),
+        field_name="output",
+        query_name=direct_batch.single_query_name(),
+    )
+    return direct_predictive, composed_predictive
+
+
+@dataclass(frozen=True)
+class SinkhornDistributionalSemigroupObjective:
+    """Sinkhorn divergence between direct and independently composed process laws."""
+
+    num_samples: int = 16
+    measure: Literal["quadrature", "uniform"] = "quadrature"
+    reduction: SemigroupReduction = "mean"
+    weight: float = 1.0
+    key_mode: SemigroupKeyMode = "fold_in"
+    epsilon: float = 0.5
+    cost: AbstractGroundCost | None = None
+    solver: Sinkhorn | None = None
+
+    def __post_init__(self):
+        if int(self.num_samples) < 2:
+            raise ValueError("num_samples must be at least two.")
+        if self.measure not in ("quadrature", "uniform"):
+            raise ValueError("measure must be 'quadrature' or 'uniform'.")
+        if self.reduction not in ("mean", "sum"):
+            raise ValueError("reduction must be 'mean' or 'sum'.")
+        if not isfinite(float(self.weight)) or float(self.weight) < 0.0:
+            raise ValueError("weight must be finite and nonnegative.")
+        if self.key_mode not in ("fold_in", "split"):
+            raise ValueError("key_mode must be 'fold_in' or 'split'.")
+        if not isfinite(float(self.epsilon)) or float(self.epsilon) <= 0.0:
+            raise ValueError("epsilon must be finite and positive.")
+        if self.cost is not None and not isinstance(self.cost, AbstractGroundCost):
+            raise TypeError("cost must be an AbstractGroundCost or None.")
+        if self.solver is not None and not isinstance(self.solver, Sinkhorn):
+            raise TypeError("solver must be a Sinkhorn solver or None.")
+
+    def __call__(
+        self,
+        model: AbstractProbabilisticOperatorModel,
+        batch: OperatorBatch,
+        dt1: Any,
+        dt2: Any,
+        condition: Callable[[OperatorBatch, Array], OperatorBatch],
+        advance: Callable[[OperatorBatch, Array], OperatorBatch],
+        /,
+        *,
+        key: EvalKey = None,
+    ) -> Array:
+        direct_predictive, composed_predictive = _distributional_predictives(
+            model,
+            batch,
+            dt1,
+            dt2,
+            condition,
+            advance,
+            num_samples=self.num_samples,
+            key_mode=self.key_mode,
+            key=key,
+            owner="SinkhornDistributionalSemigroupObjective",
+        )
+        from ....uq._transport_metrics import (
+            operator_ensemble_sinkhorn_divergence,
+        )
+
+        result = operator_ensemble_sinkhorn_divergence(
+            direct_predictive,
+            composed_predictive,
+            measure=self.measure,
+            reduction=self.reduction,
+            cost=self.cost,
+            solver=self.solver,
+            epsilon=self.epsilon,
+        )
+        if result.transport is None:
+            raise AssertionError("Sinkhorn semigroup metric omitted transport diagnostics.")
+        value = eqx.error_if(
+            result.value,
+            jnp.any(~result.transport.converged),
+            "Sinkhorn distributional semigroup transport did not converge.",
+        )
+        return jnp.asarray(self.weight, dtype=value.dtype) * value
 
 
 def conditioned_distributional_semigroup_loss(
@@ -353,6 +459,38 @@ def conditioned_distributional_semigroup_loss(
     )(model, batch, dt1, dt2, condition, advance, key=key)
 
 
+def conditioned_sinkhorn_semigroup_loss(
+    model: AbstractProbabilisticOperatorModel,
+    batch: OperatorBatch,
+    dt1: Any,
+    dt2: Any,
+    condition: Callable[[OperatorBatch, Array], OperatorBatch],
+    advance: Callable[[OperatorBatch, Array], OperatorBatch],
+    /,
+    *,
+    num_samples: int = 16,
+    measure: Literal["quadrature", "uniform"] = "quadrature",
+    reduction: SemigroupReduction = "mean",
+    weight: float = 1.0,
+    key_mode: SemigroupKeyMode = "fold_in",
+    epsilon: float = 0.5,
+    cost: AbstractGroundCost | None = None,
+    solver: Sinkhorn | None = None,
+    key: EvalKey = None,
+) -> Array:
+    """Evaluate Sinkhorn distributional conditioned semigroup consistency."""
+    return SinkhornDistributionalSemigroupObjective(
+        num_samples=num_samples,
+        measure=measure,
+        reduction=reduction,
+        weight=weight,
+        key_mode=key_mode,
+        epsilon=epsilon,
+        cost=cost,
+        solver=solver,
+    )(model, batch, dt1, dt2, condition, advance, key=key)
+
+
 def conditioned_semigroup_consistency_loss(
     model: Callable,
     batch: OperatorBatch,
@@ -378,8 +516,10 @@ def conditioned_semigroup_consistency_loss(
 __all__ = [
     "ConditionedSemigroupObjective",
     "DistributionalSemigroupObjective",
+    "SinkhornDistributionalSemigroupObjective",
     "SemigroupKeyMode",
     "SemigroupReduction",
     "conditioned_semigroup_consistency_loss",
     "conditioned_distributional_semigroup_loss",
+    "conditioned_sinkhorn_semigroup_loss",
 ]
