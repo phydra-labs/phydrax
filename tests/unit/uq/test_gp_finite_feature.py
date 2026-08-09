@@ -105,7 +105,7 @@ def test_exact_discrepancy_uses_weight_space_with_dense_numerical_parity():
     assert jnp.all(jnp.isfinite(gradient))
 
 
-def test_structured_factor_gate_is_conservative_for_wrapped_kernels():
+def test_structured_factor_resolves_wrapped_finite_features():
     points = jnp.linspace(-1.0, 1.0, 10)
     kernel = phx.kernels.FiniteFeatureKernel(
         _feature_map,
@@ -118,4 +118,34 @@ def test_structured_factor_gate_is_conservative_for_wrapped_kernels():
     )
     model = phx.uq.ExactGaussianProcessDiscrepancy(points, jnp.zeros_like(points))
 
-    assert isinstance(model.factor(state=state), phx.uq.ExactGaussianProcessFactor)
+    factor = model.factor(state=state)
+
+    assert isinstance(factor, phx.uq.FiniteFeatureGaussianProcessFactor)
+    expected = 0.5 * kernel.features(points)
+    assert jnp.allclose(factor.features, expected)
+    assert jnp.allclose(
+        factor.log_probability(jnp.zeros_like(points)),
+        phx.uq.ExactGaussianProcessFactor(points, state=state).log_probability(
+            jnp.zeros_like(points)
+        ),
+    )
+
+
+def test_automatic_feature_factor_requires_rank_below_observation_count():
+    points = jnp.linspace(-1.0, 1.0, 4)
+    observations = jnp.zeros_like(points)
+    model = phx.uq.ExactGaussianProcessDiscrepancy(points, observations)
+
+    equal_rank = phx.kernels.FiniteFeatureKernel(
+        _feature_map,
+        jnp.eye(4),
+        feature_map_id="equal-rank",
+    )
+    larger_rank = phx.kernels.FiniteFeatureKernel(
+        _feature_map,
+        jnp.pad(jnp.eye(4), ((0, 0), (0, 2))),
+        feature_map_id="larger-rank",
+    )
+    for kernel in (equal_rank, larger_rank):
+        state = phx.uq.GaussianProcessLikelihoodState(kernel=kernel, noise_scale=0.1)
+        assert isinstance(model.factor(state=state), phx.uq.ExactGaussianProcessFactor)

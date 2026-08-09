@@ -782,6 +782,15 @@ to likelihood, factorization, and conditioning calls. Fixed states can be factor
 once; a state callback on `GaussianProcessMarginalLikelihood` keeps kernel and noise
 parameters differentiable posterior leaves.
 
+If the kernel exposes the `AbstractFiniteFeatureKernel` capability and its rank is
+strictly smaller than the observation count, `ExactGaussianProcessDiscrepancy.factor`
+selects `FiniteFeatureGaussianProcessFactor` automatically. Supported amplitudes,
+finite sums, and input transforms preserve that capability. Products and general
+scales remain on the conservative dense path unless they declare an exact feature
+factorization. Equal or larger feature rank also uses the dense path. Both paths
+implement the same declared covariance and expose comparable log-probability,
+conditioning, and storage diagnostics.
+
 ::: phydrax.uq.GaussianProcessLikelihoodState
 
 ---

@@ -1618,10 +1618,61 @@ actual derivative support; functional GP observations use the propagated certifi
 instead of assuming every learned feature map is twice differentiable.
 
 `FiniteFeatureKernel` represents whitened features explicitly. Scalar exact GP
-factorization detects it and uses the finite feature space rather than assembling a
-dense observation Cholesky. This is an exact Woodbury/determinant-lemma route for the
-declared finite-rank covariance, not an inducing-point approximation. See
-[API → Positive-definite kernels](api/kernels.md).
+factorization uses exact finite weight space when the declared feature rank is
+strictly smaller than the observation count; at equal or larger rank it keeps the
+dense observation Cholesky. The weight-space path is an exact
+Woodbury/determinant-lemma route for the declared finite-rank covariance, not an
+inducing-point approximation. See [API → Positive-definite kernels](api/kernels.md).
+
+#### Graph and geometric spectral discrepancy
+
+For a reciprocal weighted `GraphIR`, the complete graph-to-posterior path remains
+inside the same kernel and GP contracts:
+
+```python
+complex_ir = phx.graph.graph_to_cochain_complex(
+    graph,
+    edge_weight_key="conductance",
+)
+spectrum = phx.graph.cochain_laplacian_eigenbasis(
+    complex_ir,
+    0,
+    num_modes=31,
+)
+kernel = phx.kernels.AmplitudeKernel(
+    phx.kernels.SpectralFeatureKernel(
+        spectrum,
+        phx.kernels.MaternSpectralMultiplier(0.4, 1.5),
+    ),
+    0.2,
+)
+entities = complex_ir.cell_entities(0)
+discrepancy = phx.uq.ExactGaussianProcessDiscrepancy(
+    observed_entities,
+    observations,
+)
+state = phx.uq.GaussianProcessLikelihoodState(kernel=kernel, noise_scale=0.01)
+factor = discrepancy.factor(state=state)
+conditioned = factor.condition(discrepancy.residual(model_values), entities)
+```
+
+Spectrum construction is host preprocessing. The resulting eigenbasis is immutable
+nontrainable state with topology, metric, boundary, entity-order, and approximation
+provenance. The Matérn parameters remain differentiable JAX leaves. Normalized
+spectral kernels use one probability-measure average marginal variance; they do not
+force a spatially varying diagonal to one. Hodge-sector kernels apply the same
+machinery independently to harmonic, exact, and coexact cochains.
+
+Hyperbolic and SPD random-feature kernels also implement the finite-feature
+capability, but their approximation diagnostics are explicit. Their fixed
+Helgason or horospherical features importance-sample the relative
+Harish-Chandra Plancherel density times a Matérn spectral law with a
+multivariate-Cauchy proposal. Hold one `NoncompactFeatureProposal` fixed while
+optimizing hyperparameters, inspect its effective sample size and unbiased Monte
+Carlo standard error, and call `resample` only as a deliberate outer-loop operation.
+The standard error is infinite for singleton proposals and whenever Matérn
+smoothness is at most `0.25`, where the Cauchy importance estimator has infinite
+variance.
 
 ### FITC and inducing-point selection
 

@@ -38,6 +38,10 @@ Neither introduces another domain hierarchy.
   by construction.
 - Public kernels support eager execution, `jax.jit`, batching, and differentiation
   through array-valued metric parameters.
+- Discrete Laplacian eigenfunctions are orthonormal under their declared probability
+  measure. Their basis, measure, entity IDs, topology/metric/boundary provenance, and
+  exact-versus-certified-tail status are immutable nontrainable state; only consuming
+  multiplier parameters train.
 
 ## Polar-coordinate PDE residual
 
@@ -94,6 +98,29 @@ point coordinates or replace domain admissibility rules.
 - [Sub-Riemannian geometry](subriemannian.md)
 - [Stochastic geometry](stochastic.md)
 - [Array state geometry](state_geometry.md)
+
+## Laplacian spectra
+
+`DiscreteLaplacianEigenbasis` is the geometry-to-kernel spectral contract. It stores
+one canonical entity ordering, a nonnegative spectrum, a measure-orthonormal basis,
+and a construction report. `product_laplacian_eigenbasis` selects the lowest
+eigenvalue sums from compact factors without materializing their full Cartesian
+product. `SphereLaplacianLevels` stores analytic eigenvalues and multiplicities
+without choosing a spherical-harmonic basis.
+
+::: phydrax.metrix.LaplacianEigenbasisReport
+
+---
+
+::: phydrax.metrix.DiscreteLaplacianEigenbasis
+
+---
+
+::: phydrax.metrix.product_laplacian_eigenbasis
+
+---
+
+::: phydrax.metrix.SphereLaplacianLevels
 
 ## Benchmark
 

@@ -10,6 +10,7 @@ from ._classical_manifold import (
     PoincareBallManifold,
     ProbabilitySimplexManifold,
 )
+from ._compact_spectrum import SphereLaplacianLevels
 from ._connection import (
     AbstractAffineConnection,
     CallableAffineConnection,
@@ -106,6 +107,7 @@ from ._operators import (
     gradient,
     laplace_beltrami,
 )
+from ._product_spectrum import product_laplacian_eigenbasis
 from ._semi_riemannian import (
     causal_character,
     CausalCharacter,
@@ -119,6 +121,7 @@ from ._signed_validation import (
     validate_lorentzian_metric,
     validate_semi_riemannian_metric,
 )
+from ._spectrum import DiscreteLaplacianEigenbasis, LaplacianEigenbasisReport
 from ._state_geometry import (
     AbstractStateGeometry,
     EmbeddedStateGeometry,
@@ -193,6 +196,7 @@ __all__ = [
     "DENSITY_TENSOR",
     "DifferentiableMap",
     "EmbeddedChart",
+    "DiscreteLaplacianEigenbasis",
     "EmbeddedStateGeometry",
     "EuclideanManifold",
     "EuclideanStateGeometry",
@@ -201,6 +205,7 @@ __all__ = [
     "ObliqueManifold",
     "HyperboloidManifold",
     "LeviCivitaConnection",
+    "LaplacianEigenbasisReport",
     "LocalRetraction",
     "LorentzianConvention",
     "LorentzianMetric",
@@ -217,6 +222,7 @@ __all__ = [
     "SignedMetricValidationReport",
     "SpecialOrthogonalManifold",
     "SpecialOrthogonalStateGeometry",
+    "SphereLaplacianLevels",
     "SphereManifold",
     "StateGeometryValidationReport",
     "StiefelManifold",
@@ -267,6 +273,7 @@ __all__ = [
     "pullback_covector",
     "pullback_density",
     "pullback_lorentzian_metric",
+    "product_laplacian_eigenbasis",
     "pullback_metric",
     "pullback_semi_riemannian_metric",
     "pushforward_vector",

@@ -11,7 +11,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from phydrax.kernels import FiniteFeatureKernel
+from phydrax.kernels import kernel_feature_rank, kernel_features
 
 from .._strict import StrictModule
 from ._gp_backend import (
@@ -118,15 +118,16 @@ class FiniteFeatureGaussianProcessFactor(StrictModule):
     ):
         points = _validated_factor_points(observation_points)
         _require_state(state)
-        if not isinstance(state.kernel, FiniteFeatureKernel):
+        if kernel_feature_rank(state.kernel) is None:
             raise TypeError(
-                "FiniteFeatureGaussianProcessFactor requires a FiniteFeatureKernel."
+                "FiniteFeatureGaussianProcessFactor requires an exact "
+                "finite-feature kernel representation."
             )
         noise = _observation_noise(
             state.noise_scale,
             count=int(points.shape[0]),
         )
-        features = state.kernel.features(points)
+        features = kernel_features(state.kernel, points)
         diagonal = noise * noise + state.jitter
         self.observation_points = points
         self.features = features
@@ -166,11 +167,8 @@ class FiniteFeatureGaussianProcessFactor(StrictModule):
         output_dim: str | None = "point",
     ) -> GaussianProcessConditioner:
         """Precompute exact weight-space conditioning geometry."""
-        kernel = self.state.kernel
-        if not isinstance(kernel, FiniteFeatureKernel):
-            raise TypeError("Finite-feature factor state has an incompatible kernel.")
         query_data = _field_data(query_points)
-        query_features = kernel.features(query_data)
+        query_features = kernel_features(self.state.kernel, query_data)
         projection, covariance, variance = low_rank_gp_conditioner(
             query_features,
             jnp.zeros((query_features.shape[0],), dtype=query_features.dtype),
@@ -329,9 +327,10 @@ class ExactGaussianProcessDiscrepancy(StrictModule):
         *,
         state: GaussianProcessLikelihoodState,
     ) -> ExactGaussianProcessFactor | FiniteFeatureGaussianProcessFactor:
-        """Use exact weight space whenever the kernel exposes finite features."""
+        """Use exact weight space when feature rank is below observation count."""
         _require_state(state)
-        if isinstance(state.kernel, FiniteFeatureKernel):
+        rank = kernel_feature_rank(state.kernel)
+        if rank is not None and rank < int(self.observation_points.shape[0]):
             return FiniteFeatureGaussianProcessFactor(
                 self.observation_points,
                 state=state,
