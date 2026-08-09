@@ -10,6 +10,7 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from jax import core as jax_core
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, ArrayLike, PyTree
 
@@ -17,6 +18,14 @@ from .._strict import StrictModule
 
 
 CovarianceRepresentation = Literal["diagonal", "dense", "factor", "operator"]
+def _validated_array(value: Array, predicate: Array, message: str, /) -> Array:
+    if isinstance(predicate, jax_core.Tracer):
+        return eqx.error_if(value, predicate, message)
+    if bool(predicate):
+        raise ValueError(message)
+    return value
+
+
 
 
 class AbstractCovariance(StrictModule):
@@ -33,14 +42,21 @@ class DiagonalCovariance(AbstractCovariance):
         leaves = jax.tree_util.tree_leaves(arrays)
         if not leaves or any(not eqx.is_inexact_array(leaf) for leaf in leaves):
             raise TypeError("Diagonal covariance must contain inexact array leaves.")
+        validated_leaves = []
         for leaf in leaves:
             if jnp.issubdtype(leaf.dtype, jnp.complexfloating):
                 raise TypeError("Diagonal covariance variances must be real-valued.")
-            if bool(jnp.any(~jnp.isfinite(leaf))) or bool(jnp.any(leaf < 0.0)):
-                raise ValueError(
-                    "Diagonal covariance variances must be finite and nonnegative."
+            validated_leaves.append(
+                _validated_array(
+                    leaf,
+                    jnp.any(~jnp.isfinite(leaf)) | jnp.any(leaf < 0.0),
+                    "Diagonal covariance variances must be finite and nonnegative.",
                 )
-        self.variance = arrays
+            )
+        self.variance = jax.tree_util.tree_unflatten(
+            jax.tree_util.tree_structure(arrays),
+            validated_leaves,
+        )
 
 
 class DenseCovariance(AbstractCovariance):
@@ -54,16 +70,25 @@ class DenseCovariance(AbstractCovariance):
             raise TypeError("Dense covariance must be an inexact array.")
         if value.ndim != 2 or value.shape[0] == 0 or value.shape[0] != value.shape[1]:
             raise ValueError("Dense covariance must be a non-empty square matrix.")
-        if bool(jnp.any(~jnp.isfinite(value))):
-            raise ValueError("Dense covariance must be finite.")
+        value = _validated_array(
+            value,
+            jnp.any(~jnp.isfinite(value)),
+            "Dense covariance must be finite.",
+        )
         tolerance = _matrix_tolerance(value)
         hermitian_error = jnp.max(jnp.abs(value - jnp.conj(value.T)))
-        if bool(hermitian_error > tolerance):
-            raise ValueError("Dense covariance must be Hermitian within tolerance.")
+        value = _validated_array(
+            value,
+            hermitian_error > tolerance,
+            "Dense covariance must be Hermitian within tolerance.",
+        )
         hermitian = 0.5 * (value + jnp.conj(value.T))
         eigenvalues = jnp.linalg.eigvalsh(hermitian)
-        if bool(jnp.min(eigenvalues) < -tolerance):
-            raise ValueError("Dense covariance must be positive semidefinite.")
+        hermitian = _validated_array(
+            hermitian,
+            jnp.min(eigenvalues) < -tolerance,
+            "Dense covariance must be positive semidefinite.",
+        )
         self.matrix = hermitian
 
 
@@ -85,9 +110,18 @@ class FactorCovariance(AbstractCovariance):
             raise ValueError(
                 "Covariance-factor leaves must share one positive leading rank axis."
             )
-        if any(bool(jnp.any(~jnp.isfinite(leaf))) for leaf in leaves):
-            raise ValueError("Covariance factors must be finite.")
-        self.factors = arrays
+        validated_leaves = [
+            _validated_array(
+                leaf,
+                jnp.any(~jnp.isfinite(leaf)),
+                "Covariance factors must be finite.",
+            )
+            for leaf in leaves
+        ]
+        self.factors = jax.tree_util.tree_unflatten(
+            jax.tree_util.tree_structure(arrays),
+            validated_leaves,
+        )
         self.rank = rank
 
 

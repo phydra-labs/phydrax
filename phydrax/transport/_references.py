@@ -5,13 +5,21 @@
 from __future__ import annotations
 
 from .._strict import StrictModule
-from ..integration._targets import DiscreteMeasureTarget, WeightedSampleTarget
+from ..integration._api import IntegrationRealization
+from ..integration._targets import (
+    DensityTarget,
+    DiscreteMeasureTarget,
+    WeightedSampleTarget,
+)
 from ._costs import AbstractGroundCost
 from ._divergence import SinkhornDivergenceResult
 from ._measure import _FiniteTransportMeasure, EventEncoder, lower_transport_measure
 from ._problem import DiscreteTransportProblem
-from ._results import require_converged, SinkhornResult
-from ._sinkhorn import Sinkhorn
+from ._results import (
+    AbstractBalancedTransportPlan,
+    AbstractBalancedTransportSolver,
+    require_converged,
+)
 
 
 class PreparedSinkhornReference(StrictModule):
@@ -19,25 +27,30 @@ class PreparedSinkhornReference(StrictModule):
 
     target: _FiniteTransportMeasure
     cost: AbstractGroundCost
-    solver: Sinkhorn
-    target_self: SinkhornResult
+    solver: AbstractBalancedTransportSolver
+    target_self: AbstractBalancedTransportPlan
     mass_tolerance: float
 
 
 def prepare_sinkhorn_reference(
-    target: DiscreteMeasureTarget | WeightedSampleTarget,
+    target: (
+        DiscreteMeasureTarget
+        | WeightedSampleTarget
+        | DensityTarget
+        | IntegrationRealization
+    ),
     /,
     *,
     cost: AbstractGroundCost,
-    solver: Sinkhorn,
+    solver: AbstractBalancedTransportSolver,
     encoder: EventEncoder | None = None,
     mass_tolerance: float = 1e-8,
 ) -> PreparedSinkhornReference:
     """Prepare an immutable target self-term for repeated Sinkhorn divergence."""
     if not isinstance(cost, AbstractGroundCost):
         raise TypeError("Prepared references require an AbstractGroundCost.")
-    if not isinstance(solver, Sinkhorn):
-        raise TypeError("solver must be a Sinkhorn solver.")
+    if not isinstance(solver, AbstractBalancedTransportSolver):
+        raise TypeError("solver must implement the balanced transport solver contract.")
     target_measure = lower_transport_measure(
         target,
         encoder=encoder,
@@ -60,7 +73,12 @@ def prepare_sinkhorn_reference(
 
 
 def sinkhorn_divergence_against(
-    source: DiscreteMeasureTarget | WeightedSampleTarget,
+    source: (
+        DiscreteMeasureTarget
+        | WeightedSampleTarget
+        | DensityTarget
+        | IntegrationRealization
+    ),
     reference: PreparedSinkhornReference,
     /,
     *,
@@ -89,9 +107,9 @@ def sinkhorn_divergence_against(
     cross = reference.solver(cross_problem)
     source_self = reference.solver(source_self_problem)
     value = (
-        cross.regularized_cost
-        - 0.5 * source_self.regularized_cost
-        - 0.5 * reference.target_self.regularized_cost
+        cross.regularized_objective()
+        - 0.5 * source_self.regularized_objective()
+        - 0.5 * reference.target_self.regularized_objective()
     )
     return SinkhornDivergenceResult(
         value=value,

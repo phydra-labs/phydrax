@@ -9,10 +9,10 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from .._strict import StrictModule
 from ._blocks import column_logsumexp, coupling_statistics, row_logsumexp
 from ._problem import DiscreteTransportProblem
 from ._results import (
+    AbstractBalancedTransportSolver,
     SinkhornDiagnostics,
     SinkhornResult,
     TransportProvenance,
@@ -20,7 +20,7 @@ from ._results import (
 from ._status import TransportStatus
 
 
-class Sinkhorn(StrictModule):
+class Sinkhorn(AbstractBalancedTransportSolver):
     """Stabilized log-domain solver for balanced entropic transport."""
 
     epsilon: Array

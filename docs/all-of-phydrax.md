@@ -174,16 +174,16 @@ resampling choices are nondifferentiable.
 
 ### Optimal transport: geometry between finite measures
 
-`phydrax.transport` lowers integration-native discrete or weighted targets into one
-balanced finite-measure problem with explicit physical mass, active support, event
-encoding, ground cost, and provenance. Stabilized dense and blockwise Sinkhorn return
-potentials, objective components, residuals, status, and matrix-free plan actions.
-Debiased Sinkhorn divergence, exact one-dimensional and sliced Wasserstein distances,
-soft order operations, prepared references, whole-field UQ metrics, scalar terms,
-distributional semigroup losses, and deterministic particle transforms reuse that
-substrate. Unequal mass is rejected rather than silently normalized; unbalanced and
-quadratic transport are intentionally outside the current contract. See
-[Guides → Optimal transport](guides_transport.md).
+`phydrax.transport` lowers integration-native finite targets and explicit realizations
+while retaining physical mass, active support, event encoding, ground cost, and
+provenance. Stabilized dense and blockwise balanced and unbalanced Sinkhorn solvers
+return potentials, objective components, residuals, status, and matrix-free plan
+actions. The unbalanced family declares independent source and target marginal KL
+penalties and represents transported-mass collapse explicitly instead of silently
+normalizing unequal mass. Debiased divergences, exact and sliced Wasserstein distances,
+soft order operations, prepared references, spatial/intensity UQ metrics, scalar
+terms, distributional semigroup losses, and deterministic particle transforms reuse
+the native substrate. See [Guides → Optimal transport](guides_transport.md).
 
 ### Dynamical systems, identification, nonlinear analysis, and chaos
 

@@ -90,18 +90,25 @@ reconstruction is a separate problem.
 ## Transport functionals
 
 Transport terms compare complete physical measures or empirical events instead of
-reducing pointwise discrepancies first. Sinkhorn divergence terms retain native
-convergence diagnostics and reject a failed solve. Prepared references reuse only the
-fixed target self term. Sliced terms retain their projection design.
+reducing pointwise discrepancies first. Balanced Sinkhorn terms retain native
+convergence diagnostics and reject a failed solve. The unbalanced spatial term is
+reserved for physical intensity or count measures with meaningful unequal mass and
+also rejects transported-mass collapse. Prepared references reuse only the fixed
+target self term. Sliced terms retain their projection design.
 
 `SoftQuantileFunctional` is a regularized order objective, not an exact sample-quantile
 penalty. Its diagnostics expose the effective solver epsilon and mark exact `q=0` and
 `q=1` endpoints. Interior squared penalties inherit the finite Sinkhorn map's
 regularity. Exact endpoints are only almost-everywhere differentiable, and absolute
-discrepancy has a kink at zero residual. A supplied `Sinkhorn` overrides the convenience
-`epsilon`; convenience diagnostics do not retain complete solver evidence.
+discrepancy has a kink at zero residual. A supplied balanced transport solver overrides
+the convenience `epsilon`; convenience diagnostics do not retain complete solver
+evidence.
 
 ::: phydrax.terms.SpatialSinkhornDivergenceTerm
+
+---
+
+::: phydrax.terms.SpatialUnbalancedSinkhornDivergenceTerm
 
 ---
 

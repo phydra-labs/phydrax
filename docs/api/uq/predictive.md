@@ -42,6 +42,15 @@ equal-weight barycentric ensemble and retains the coupling and mean error.
 
 ---
 
+`spatial_unbalanced_sinkhorn_divergence` is the separate unequal-mass path for
+physical spatial or intensity measures. It is not applied to normalized empirical
+predictive laws automatically.
+
+::: phydrax.uq.spatial_unbalanced_sinkhorn_divergence
+
+---
+
+
 ::: phydrax.uq.OptimalTransportEnsembleTransformResult
 
 ---

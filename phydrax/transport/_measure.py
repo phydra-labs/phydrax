@@ -13,9 +13,22 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 from jaxtyping import Array
 
+from .._doc import DOC_KEY0
 from .._numerics import log_normalize
 from .._strict import StrictModule
-from ..integration._targets import DiscreteMeasureTarget, WeightedSampleTarget
+from ..domain import DomainFunction
+from ..integration._api import IntegrationRealization
+from ..integration._batches import (
+    MappedIntegrationBatch,
+    PointIntegrationBatch,
+    SeparableIntegrationBatch,
+    WeightedSampleBatch,
+)
+from ..integration._targets import (
+    DensityTarget,
+    DiscreteMeasureTarget,
+    WeightedSampleTarget,
+)
 
 
 EventEncoder = Callable[[Any], Array | cx.Field]
@@ -94,21 +107,217 @@ class _FiniteTransportMeasure(StrictModule):
 
 
 def lower_transport_measure(
-    target: DiscreteMeasureTarget | WeightedSampleTarget,
+    target: (
+        DiscreteMeasureTarget
+        | WeightedSampleTarget
+        | DensityTarget
+        | IntegrationRealization
+    ),
     /,
     *,
     encoder: EventEncoder | None,
     name: str,
 ) -> _FiniteTransportMeasure:
-    """Lower a supported PhydraX measure to one unbatched finite measure."""
+    """Lower a supported PhydraX measure or materialized realization."""
     if isinstance(target, DiscreteMeasureTarget):
         return _lower_discrete(target, encoder=encoder, name=name)
     if isinstance(target, WeightedSampleTarget):
         return _lower_weighted(target, encoder=encoder, name=name)
+    if isinstance(target, DensityTarget):
+        return _lower_density(target, encoder=encoder, name=name)
+    if isinstance(target, IntegrationRealization):
+        return _lower_realization(target, encoder=encoder, name=name)
     raise TypeError(
-        f"{name} must be a DiscreteMeasureTarget or WeightedSampleTarget; "
+        f"{name} must be a DiscreteMeasureTarget, WeightedSampleTarget, "
+        "DensityTarget, or IntegrationRealization; "
         f"got {type(target).__name__}."
     )
+
+
+def _lower_density(
+    target: DensityTarget,
+    /,
+    *,
+    encoder: EventEncoder | None,
+    name: str,
+    key: Any = DOC_KEY0,
+) -> _FiniteTransportMeasure:
+    base = target.base
+    if not isinstance(base, (DiscreteMeasureTarget, WeightedSampleTarget)):
+        raise TypeError(
+            f"{name} DensityTarget requires an IntegrationRealization unless its "
+            "base is already a finite discrete or weighted-sample target."
+        )
+    base_measure = (
+        _lower_discrete(base, encoder=encoder, name=name)
+        if isinstance(base, DiscreteMeasureTarget)
+        else _lower_weighted(base, encoder=encoder, name=name)
+    )
+    density_points = (
+        base.points if isinstance(base, DiscreteMeasureTarget) else base.samples
+    )
+    if isinstance(target.log_density, DomainFunction):
+        raw_density = target.log_density(density_points, key=key)
+    elif callable(target.log_density):
+        raw_density = target.log_density(density_points)
+    else:
+        raw_density = target.log_density
+    log_density = _density_log_values(raw_density, base, name=name)
+    physical_weights = base_measure.physical_weights * jnp.exp(log_density)
+    probabilities, mass, active = _linear_probabilities_and_mass(
+        physical_weights,
+        base_measure.active,
+        normalized=target.normalized,
+        target_mass=None,
+        name=name,
+    )
+    return _FiniteTransportMeasure(
+        base_measure.points,
+        probabilities,
+        mass,
+        active,
+        event_shape=base_measure.event_shape,
+        normalized=target.normalized,
+        provenance=f"density:{base_measure.provenance}",
+    )
+
+
+def _density_log_values(
+    value: Any,
+    base: DiscreteMeasureTarget | WeightedSampleTarget,
+    /,
+    *,
+    name: str,
+) -> Array:
+    if isinstance(base, DiscreteMeasureTarget):
+        weights = _discrete_weight_field(base)
+        axes = base.axes
+    elif isinstance(base.log_weights, cx.Field):
+        weights = base.log_weights
+        axes = cast(tuple[str, ...], base.sample_axes)
+    else:
+        weights_array = jnp.asarray(base.log_weights)
+        values = jnp.asarray(value.data if isinstance(value, cx.Field) else value)
+        values = jnp.broadcast_to(values, weights_array.shape)
+        positions = cast(tuple[int, ...], base.sample_axes)
+        return jnp.transpose(
+            values,
+            positions
+            + tuple(index for index in range(values.ndim) if index not in positions),
+        ).reshape((-1,))
+    if isinstance(value, cx.Field):
+        density = value.broadcast_like(weights)
+        values = jnp.asarray(density.data)
+    else:
+        values = jnp.broadcast_to(jnp.asarray(value), weights.shape)
+    positions = tuple(weights.dims.index(axis) for axis in axes)
+    canonical = jnp.transpose(
+        values,
+        positions
+        + tuple(index for index in range(values.ndim) if index not in positions),
+    )
+    if canonical.size != prod(int(weights.named_shape[axis]) for axis in axes):
+        raise ValueError(f"{name} log density must be scalar-valued per transport atom.")
+    return canonical.reshape((-1,))
+
+
+def _lower_realization(
+    realization: IntegrationRealization,
+    /,
+    *,
+    encoder: EventEncoder | None,
+    name: str,
+) -> _FiniteTransportMeasure:
+    batch = realization.batch
+    if not isinstance(
+        batch,
+        (
+            PointIntegrationBatch,
+            SeparableIntegrationBatch,
+            MappedIntegrationBatch,
+            WeightedSampleBatch,
+        ),
+    ):
+        raise TypeError(
+            f"{name} IntegrationRealization must contain one finite point, "
+            "separable, mapped, or weighted-sample batch."
+        )
+    density = (
+        realization.target if isinstance(realization.target, DensityTarget) else None
+    )
+    contract = density.base if density is not None else realization.target
+    normalized = bool(contract.normalized)
+    target_mass = (
+        batch.target_mass
+        if isinstance(contract, (DiscreteMeasureTarget, WeightedSampleTarget))
+        or not normalized
+        else None
+    )
+    if isinstance(batch, PointIntegrationBatch):
+        target = DiscreteMeasureTarget(
+            batch.points,
+            batch.weights,
+            axes=batch.axes,
+            mask=batch.mask,
+            normalized=normalized,
+            target_mass=target_mass,
+            provenance=batch.provenance,
+        )
+    elif isinstance(batch, SeparableIntegrationBatch):
+        target = DiscreteMeasureTarget(
+            batch.points,
+            batch.total_weight(),
+            axes=batch.axes,
+            mask=batch.mask,
+            normalized=normalized,
+            target_mass=target_mass,
+            provenance=batch.provenance,
+        )
+    elif isinstance(batch, MappedIntegrationBatch):
+        target = DiscreteMeasureTarget(
+            batch.points,
+            cx.Field(batch.weights, dims=(batch.axis,)),
+            axes=batch.axis,
+            mask=cx.Field(batch.mask, dims=(batch.axis,)),
+            normalized=normalized,
+            target_mass=target_mass,
+            provenance=batch.provenance,
+        )
+    elif isinstance(batch, WeightedSampleBatch):
+        target = WeightedSampleTarget(
+            batch.samples,
+            batch.log_weights,
+            normalized=normalized,
+            target_mass=target_mass,
+            independent=batch.independent,
+            ancestry=batch.ancestry_ids,
+            support_valid=batch.support_valid,
+            stratum_ids=batch.stratum_ids,
+            pair_ids=batch.pair_ids,
+            replicate_ids=batch.replicate_ids,
+            mask=batch.mask,
+            sample_axes=batch.sample_axes,
+            provenance=batch.provenance,
+        )
+    else:
+        raise TypeError(
+            f"{name} IntegrationRealization must contain one finite point, "
+            "separable, mapped, or weighted-sample batch."
+        )
+    if density is not None:
+        return _lower_density(
+            DensityTarget(
+                target,
+                density.log_density,
+                normalized=density.normalized,
+            ),
+            encoder=encoder,
+            name=name,
+            key=DOC_KEY0 if realization.key is None else realization.key,
+        )
+    if isinstance(target, DiscreteMeasureTarget):
+        return _lower_discrete(target, encoder=encoder, name=name)
+    return _lower_weighted(target, encoder=encoder, name=name)
 
 
 def _lower_discrete(

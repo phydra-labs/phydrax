@@ -3,8 +3,8 @@
 #
 
 from __future__ import annotations
-from typing import Literal
 
+from typing import Literal
 
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
@@ -19,19 +19,17 @@ from ._operator import (
     OperatorPredictiveField,
 )
 from ._operator_event import (
-    Measure,
-    OperatorReduction,
     case_count as _case_count,
     event_weights as _energy_weights,
+    Measure,
     measure_weights as _measure_weights,
     operator_target_values as _operator_target_values,
+    OperatorReduction,
     reduce_cases as _reduce_cases,
     require_predictive as _require_predictive,
     sample_case_event as _sample_case_event,
     weighted_case_mean as _weighted_case_mean,
 )
-
-
 
 
 def operator_ensemble_crps(

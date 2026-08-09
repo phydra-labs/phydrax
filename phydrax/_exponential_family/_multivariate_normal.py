@@ -7,6 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
 from ._contracts import (
@@ -19,6 +20,14 @@ from ._contracts import (
     StatisticBatch,
 )
 from ._symmetric_coordinates import smat, svec, symmetric_packed_dimension
+
+
+def _error_if(value: Array, predicate: Array, message: str, /) -> Array:
+    if isinstance(predicate, jax_core.Tracer):
+        return eqx.error_if(value, predicate, message)
+    if bool(predicate):
+        raise eqx.EquinoxRuntimeError(message)
+    return value
 
 
 class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
@@ -73,9 +82,19 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
         dtype = jnp.result_type(location_array, covariance_array, 0.0)
         location_array = location_array.astype(dtype)
         covariance_array = covariance_array.astype(dtype)
+        location_array = _error_if(
+            location_array,
+            jnp.any(~jnp.isfinite(location_array)),
+            "location must contain only finite values.",
+        )
+        covariance_array = _error_if(
+            covariance_array,
+            jnp.any(~jnp.isfinite(covariance_array)),
+            "covariance must contain only finite values.",
+        )
         symmetry_scale = jnp.max(jnp.abs(covariance_array), axis=(-2, -1))
         symmetry_tolerance = 64.0 * jnp.finfo(dtype).eps * symmetry_scale[..., None, None]
-        covariance_array = eqx.error_if(
+        covariance_array = _error_if(
             covariance_array,
             jnp.any(
                 jnp.abs(covariance_array - jnp.swapaxes(covariance_array, -1, -2))

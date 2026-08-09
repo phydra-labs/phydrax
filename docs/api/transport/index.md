@@ -1,17 +1,17 @@
 # Optimal transport
 
-`phydrax.transport` is the native finite-measure transport subsystem. It consumes
-`phydrax.integration.DiscreteMeasureTarget` and `WeightedSampleTarget` objects rather
-than introducing a second measure hierarchy. Coordinate axes, event structure,
-masks, support validity, physical mass, normalization, and provenance remain explicit
-through lowering, solving, and plan application.
+`phydrax.transport` is the native transport subsystem. It consumes
+`phydrax.integration.DiscreteMeasureTarget`, `WeightedSampleTarget`, `DensityTarget`,
+and explicit `IntegrationRealization` objects rather than introducing a second
+measure hierarchy. Coordinate axes, event structure, masks, support validity,
+physical mass, normalization, approximation, and provenance remain explicit through
+problem construction, solving, and result use.
 
-The first release covers balanced finite-mass transport with equal source and target
-mass, stabilized entropic Sinkhorn solves, debiased Sinkhorn divergence, exact
-one-dimensional Wasserstein distance, sliced Wasserstein distance, and differentiable
-order operators. It does not silently normalize unequal physical masses and does not
-implement unbalanced transport, Gromov--Wasserstein, barycenter solvers, or low-rank
-transport.
+The native families use distinct problem, solver, result, diagnostic, and provenance
+contracts. Exact and positive-feature balanced Sinkhorn, unbalanced finite Sinkhorn,
+fixed- and free-support barycenters, semidiscrete density-to-support transport,
+one-dimensional and sliced distances, and differentiable order operators do not
+silently normalize physical masses or erase numerical approximation.
 
 ## Basic workflow
 
@@ -57,7 +57,8 @@ needed.
 - `normalized=True` defines a probability measure. Input weights are normalized over
   active atoms, while the represented physical mass is one.
 - `normalized=False` preserves the supplied physical mass. Balanced transport requires
-  source and target masses to agree within `mass_tolerance`.
+  equal source and target mass; unbalanced transport retains both masses and requires
+  explicit source and target KL marginal penalties.
 - Zero-weight and masked atoms remain represented but are inert. Positive-infinite and
   NaN weights, active non-finite coordinates, empty active support, and mismatched
   event encodings are rejected.
@@ -97,6 +98,11 @@ call `require_converged` and fail rather than optimize through an invalid solve.
 
 - [Ground costs](costs.md)
 - [Sinkhorn solving and divergence](sinkhorn.md)
+- [Positive-feature scalable balanced transport](scalable.md)
+- [Unbalanced Sinkhorn and unequal physical mass](unbalanced.md)
+- [Fixed- and free-support barycenters](barycenters.md)
+- [Semidiscrete transport and quantization](semidiscrete.md)
+- [Finite-state Schrödinger bridges](dynamic.md)
 - [Exact and sliced distances](distances.md)
 - [Differentiable ordering](soft.md)
 - [Guide: transport semantics and method choice](../../guides_transport.md)

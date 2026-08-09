@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import importlib.metadata
-import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -21,7 +20,6 @@ from .._array_archive import (
     read_array_archive,
     write_array_archive,
 )
-
 from .._fingerprint import array_tree_fingerprint, array_tree_signature
 from ._posterior import PosteriorProblem
 

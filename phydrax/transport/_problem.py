@@ -12,7 +12,12 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from .._strict import StrictModule
-from ..integration._targets import DiscreteMeasureTarget, WeightedSampleTarget
+from ..integration._api import IntegrationRealization
+from ..integration._targets import (
+    DensityTarget,
+    DiscreteMeasureTarget,
+    WeightedSampleTarget,
+)
 from ._costs import AbstractGroundCost, GroundCost, PrecomputedCost
 from ._measure import _FiniteTransportMeasure, EventEncoder, lower_transport_measure
 
@@ -116,8 +121,10 @@ class DiscreteTransportProblem(StrictModule):
 
     def cost_at(self, source_indices: Array, target_indices: Array, /) -> Array:
         """Evaluate costs on two index arrays with broadcast-compatible shapes."""
-        source_indices_ = jnp.asarray(source_indices, dtype=jnp.int32)
-        target_indices_ = jnp.asarray(target_indices, dtype=jnp.int32)
+        source_indices_, target_indices_ = jnp.broadcast_arrays(
+            jnp.asarray(source_indices, dtype=jnp.int32),
+            jnp.asarray(target_indices, dtype=jnp.int32),
+        )
         if isinstance(self.cost, PrecomputedCost):
             return self.cost.values[source_indices_, target_indices_]
         source_points = self.source.points[source_indices_]
@@ -125,12 +132,22 @@ class DiscreteTransportProblem(StrictModule):
         flat_source = source_points.reshape((-1, source_points.shape[-1]))
         flat_target = target_points.reshape((-1, target_points.shape[-1]))
         values = jax.vmap(self.cost.pairwise)(flat_source, flat_target)
-        return values.reshape(jnp.broadcast_shapes(source_indices_.shape, target_indices_.shape))
+        return values.reshape(source_indices_.shape)
 
 
 def discrete_problem(
-    source: DiscreteMeasureTarget | WeightedSampleTarget,
-    target: DiscreteMeasureTarget | WeightedSampleTarget,
+    source: (
+        DiscreteMeasureTarget
+        | WeightedSampleTarget
+        | DensityTarget
+        | IntegrationRealization
+    ),
+    target: (
+        DiscreteMeasureTarget
+        | WeightedSampleTarget
+        | DensityTarget
+        | IntegrationRealization
+    ),
     /,
     *,
     cost: GroundCost,

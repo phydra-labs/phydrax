@@ -62,10 +62,12 @@ def terminal_cost(
 
 
 dynamics = phx.control.DiscreteControlDynamics(
-    transition,
-    state_shape=(1,),
-    control_shape=(1,),
-    dynamics_id="scalar-integrator",
+    phx.dynamics.DiscreteSystem(
+        transition,
+        state_layout=phx.dynamics.StateLayout((1,)),
+        input_layout=phx.dynamics.InputLayout((1,), roles="control"),
+        system_id="scalar-integrator",
+    )
 )
 problem = phx.control.ControlProblem(
     dynamics,

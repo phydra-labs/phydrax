@@ -16,7 +16,11 @@ from jaxtyping import Array, ArrayLike
 from ._costs import SquaredEuclideanCost
 from ._measure import _FiniteTransportMeasure
 from ._problem import DiscreteTransportProblem
-from ._results import require_converged, SinkhornResult
+from ._results import (
+    AbstractBalancedTransportPlan,
+    AbstractBalancedTransportSolver,
+    require_converged,
+)
 from ._sinkhorn import Sinkhorn
 from ._univariate import _probabilities
 
@@ -32,14 +36,15 @@ def soft_order_transport(
     target_weights: ArrayLike | None = None,
     num_targets: int | None = None,
     epsilon: float = 0.1,
-    solver: Sinkhorn | None = None,
-) -> SinkhornResult:
+    solver: AbstractBalancedTransportSolver | None = None,
+) -> AbstractBalancedTransportPlan:
     """Fit a soft monotone coupling in canonical dimensionless order coordinates.
 
     Source values are weighted-centered, weighted-standardized, and mapped through
     a sigmoid before transport. Consequently, ``epsilon`` is dimensionless and
     specific to this order geometry; it is not expressed in the units of ``values``.
-    A supplied ``solver`` owns the effective epsilon and other solve settings.
+    A supplied balanced transport solver owns the effective epsilon and other solve
+    settings.
     """
     source_values = _vector(values, name="values")
     count = source_values.shape[0]
@@ -96,7 +101,7 @@ def soft_sort(
     weights: Value | None = None,
     axis: int | str = -1,
     epsilon: float = 0.1,
-    solver: Sinkhorn | None = None,
+    solver: AbstractBalancedTransportSolver | None = None,
 ) -> Array | cx.Field:
     """Return ascending values from the canonical soft-order coupling."""
     data, position, dims = _data_axis(values, axis=axis, name="values")
@@ -122,7 +127,7 @@ def soft_rank(
     weights: Value | None = None,
     axis: int | str = -1,
     epsilon: float = 0.1,
-    solver: Sinkhorn | None = None,
+    solver: AbstractBalancedTransportSolver | None = None,
 ) -> Array | cx.Field:
     """Return zero-based ascending barycentric ranks along one axis."""
     data, position, dims = _data_axis(values, axis=axis, name="values")
@@ -151,7 +156,7 @@ def soft_sort_by(
     weights: Value | None = None,
     axis: int | str = -1,
     epsilon: float = 0.1,
-    solver: Sinkhorn | None = None,
+    solver: AbstractBalancedTransportSolver | None = None,
 ) -> Array | cx.Field:
     """Differentiably reorder a same-shaped payload by a scalar criterion."""
     criterion_data, position, dims = _data_axis(
@@ -197,7 +202,7 @@ def soft_topk_mask(
     weights: Value | None = None,
     axis: int | str = -1,
     epsilon: float = 0.1,
-    solver: Sinkhorn | None = None,
+    solver: AbstractBalancedTransportSolver | None = None,
 ) -> Array | cx.Field:
     """Return membership in the largest ``k`` equal-probability target bins.
 
@@ -243,7 +248,7 @@ def soft_topk_values(
     weights: Value | None = None,
     axis: int | str = -1,
     epsilon: float = 0.1,
-    solver: Sinkhorn | None = None,
+    solver: AbstractBalancedTransportSolver | None = None,
 ) -> Array | cx.Field:
     """Return differentiable ascending values in the largest ``k`` bins."""
     data, position, dims = _data_axis(values, axis=axis, name="values")
@@ -272,7 +277,7 @@ def soft_quantile(
     weights: Value | None = None,
     axis: int | str = -1,
     epsilon: float = 0.1,
-    solver: Sinkhorn | None = None,
+    solver: AbstractBalancedTransportSolver | None = None,
     quantile_dim: str = "quantile",
 ) -> Array | cx.Field:
     """Return relaxed weighted quantiles, with exact hard endpoints.
@@ -346,7 +351,7 @@ def soft_quantile_normalize(
     reference_weights: ArrayLike | None = None,
     axis: int | str = -1,
     epsilon: float = 0.1,
-    solver: Sinkhorn | None = None,
+    solver: AbstractBalancedTransportSolver | None = None,
 ) -> Array | cx.Field:
     """Differentiably map values to the ordered empirical reference law."""
     data, position, dims = _data_axis(values, axis=axis, name="values")
@@ -382,7 +387,7 @@ def soft_quantize(
     weights: Value | None = None,
     axis: int | str = -1,
     epsilon: float = 0.1,
-    solver: Sinkhorn | None = None,
+    solver: AbstractBalancedTransportSolver | None = None,
 ) -> Array | cx.Field:
     """Differentiably quantize values through learned ordered barycentric levels."""
     data, position, dims = _data_axis(values, axis=axis, name="values")
@@ -406,10 +411,14 @@ def soft_quantize(
     return _restore(output, dims)
 
 
-def _soft_solver(epsilon: float, solver: Sinkhorn | None, /) -> Sinkhorn:
+def _soft_solver(
+    epsilon: float, solver: AbstractBalancedTransportSolver | None, /
+) -> AbstractBalancedTransportSolver:
     if solver is not None:
-        if not isinstance(solver, Sinkhorn):
-            raise TypeError("solver must be a Sinkhorn solver or None.")
+        if not isinstance(solver, AbstractBalancedTransportSolver):
+            raise TypeError(
+                "solver must implement the balanced transport solver contract or be None."
+            )
         return solver
     value = float(epsilon)
     if not math.isfinite(value) or value <= 0.0:

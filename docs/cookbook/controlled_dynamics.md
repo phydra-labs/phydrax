@@ -119,7 +119,7 @@ flow = phx.dynamics.ContinuousSystem(
     state_layout=layout,
     system_id="scalar-decay",
 )
-evolution = phx.dynamics.DiffraxEvolution(flow, rtol=1e-9, atol=1e-11)
+evolution = phx.solver.DiffraxEvolution(flow, rtol=1e-9, atol=1e-11)
 lyapunov_grid = phx.dynamics.TimeGrid(
     jnp.linspace(0.0, 2.0, 201),
     time_id="scalar-decay-analysis",

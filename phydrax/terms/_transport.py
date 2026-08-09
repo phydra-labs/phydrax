@@ -19,9 +19,11 @@ from .._term import AbstractEvaluatedScalarTerm, TermEvaluation
 from ..domain import DomainFunction
 from ..integration import DiscreteMeasureTarget, weighted, WeightedSampleTarget
 from ..transport import (
+    AbstractBalancedTransportSolver,
+    FixedSupportBarycenterProblem,
     PreparedSinkhornReference,
-    Sinkhorn,
     sinkhorn_divergence_against,
+    SinkhornBarycenter,
     sliced_wasserstein_distance,
     soft_quantile,
 )
@@ -191,6 +193,72 @@ class EmpiricalSinkhornDivergenceTerm(AbstractEvaluatedScalarTerm):
         return self.term_evaluation(functions, key=key, **kwargs).value
 
 
+class BarycenterObjectiveTerm(AbstractEvaluatedScalarTerm):
+    """Composable scalar objective for a model-built finite barycenter problem."""
+
+    objective_vars: tuple[str, ...]
+    problem_builder: Callable[
+        [Mapping[str, DomainFunction]], FixedSupportBarycenterProblem
+    ]
+    solver: SinkhornBarycenter
+    weight: Array
+    label: str | None = eqx.field(static=True)
+
+    def __init__(
+        self,
+        problem_builder: Callable[
+            [Mapping[str, DomainFunction]], FixedSupportBarycenterProblem
+        ],
+        solver: SinkhornBarycenter,
+        /,
+        *,
+        objective_vars: Sequence[str] | None = None,
+        weight: ArrayLike = 1.0,
+        label: str | None = None,
+    ):
+        if not callable(problem_builder):
+            raise TypeError("problem_builder must be callable.")
+        if not isinstance(solver, SinkhornBarycenter):
+            raise TypeError("solver must be a SinkhornBarycenter.")
+        self.objective_vars = () if objective_vars is None else tuple(objective_vars)
+        self.problem_builder = problem_builder
+        self.solver = solver
+        self.weight = _scalar_weight(weight)
+        self.label = None if label is None else str(label)
+
+    def term_evaluation(
+        self,
+        functions: Mapping[str, DomainFunction],
+        /,
+        *,
+        key: Array = DOC_KEY0,
+        **kwargs: Any,
+    ) -> TermEvaluation:
+        del key, kwargs
+        problem = self.problem_builder(functions)
+        if not isinstance(problem, FixedSupportBarycenterProblem):
+            raise TypeError(
+                "problem_builder must return a FixedSupportBarycenterProblem."
+            )
+        result = self.solver(problem)
+        value = eqx.error_if(
+            result.objective,
+            ~result.converged,
+            "BarycenterObjectiveTerm transport did not converge.",
+        )
+        return TermEvaluation(self.weight * value, diagnostics=result)
+
+    def loss(
+        self,
+        functions: Mapping[str, DomainFunction],
+        /,
+        *,
+        key: Array = DOC_KEY0,
+        **kwargs: Any,
+    ) -> Array:
+        return self.term_evaluation(functions, key=key, **kwargs).value
+
+
 class SlicedWassersteinTerm(AbstractEvaluatedScalarTerm):
     """Sliced Wasserstein discrepancy between model and reference event samples."""
 
@@ -278,7 +346,7 @@ class SoftQuantileFunctional(AbstractEvaluatedScalarTerm):
     weights: Provider | None
     q: Array
     target_quantiles: Array
-    solver: Sinkhorn | None
+    solver: AbstractBalancedTransportSolver | None
     weight: Array
     axis: int | str = eqx.field(static=True)
     epsilon: float = eqx.field(static=True)
@@ -295,7 +363,7 @@ class SoftQuantileFunctional(AbstractEvaluatedScalarTerm):
         weights: Provider | None = None,
         axis: int | str = -1,
         epsilon: float = 0.1,
-        solver: Sinkhorn | None = None,
+        solver: AbstractBalancedTransportSolver | None = None,
         discrepancy: Literal["squared", "absolute"] = "squared",
         objective_vars: Sequence[str] | None = None,
         weight: ArrayLike = 1.0,
@@ -395,6 +463,7 @@ def _scalar_weight(value: ArrayLike, /) -> Array:
 
 
 __all__ = [
+    "BarycenterObjectiveTerm",
     "EmpiricalSinkhornDivergenceTerm",
     "SlicedWassersteinTerm",
     "SoftQuantileFunctional",

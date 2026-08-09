@@ -34,8 +34,8 @@ squared Euclidean cost. This makes squared distance equal the chosen discrete L2
 Balanced transport requires equal source and target physical mass. `discrete_problem`
 checks that invariant and does not repair a mismatch by normalization. Normalize
 explicitly only when the scientific question is about shape conditional on unit mass.
-If unequal mass is meaningful, the current balanced solver is not the right model;
-unbalanced transport is not provided by this release.
+When unequal mass is itself scientific signal, use `unbalanced_problem` with explicit
+source and target KL penalties; never catch a balanced mass error and retry silently.
 
 Masks, zero weights, and support-validity arrays remove atoms without changing the
 static array shape. Active non-finite coordinates and invalid weights are errors. A
@@ -75,6 +75,9 @@ affine changes. Never infer the same normalization for physical transport proble
 | Scalable comparison of vector-event laws | `sliced_wasserstein_distance` | Finite-projection estimator |
 | Smooth multivariate discrepancy | `sinkhorn_divergence` | Entropically regularized and iterative |
 | Finite regularized coupling or barycentric action | `Sinkhorn(problem)` | Balanced mass only |
+| Aggregate several finite laws on declared support | `SinkhornBarycenter(problem)` | Common physical mass and strict measure weights |
+| Locally optimize barycenter support | `FreeSupportBarycenter(inner_solver)` | Quadratic barycentric costs and explicit initialization |
+| Unequal-mass spatial or intensity discrepancy | `unbalanced_sinkhorn_divergence` | Requires explicit source/target KL penalties |
 | Differentiable sort/rank/quantile/top-k | soft-order functions | Relaxations, not hard order |
 | Fast unweighted relaxed sort/rank | `fast_soft_sort`, `fast_soft_rank` | No weights, coupling, or solver diagnostics |
 
@@ -96,10 +99,38 @@ rank-base contracts differ.
 Sliced Wasserstein stores normalized projections. Supply explicit projections when
 replay, common random numbers, or deterministic gradient comparison matters.
 
+For unbalanced transport, PhydraX minimizes transport cost plus entropy KL relative
+to the physical product measure and two independently weighted marginal KL terms.
+The divergence performs cross, source-self, and target-self solves and adds the mass
+correction required by that convention. Use
+`spatial_unbalanced_sinkhorn_divergence` or
+`SpatialUnbalancedSinkhornDivergenceTerm` only when total intensity, count, or spatial
+mass is meaningful. Ordinary empirical predictive laws remain normalized.
+
 ## 5. Configure Sinkhorn deliberately
 
 ```python
+import coordax as cx
+import jax.numpy as jnp
 import phydrax as phx
+
+source = phx.integration.discrete(
+    jnp.asarray([[0.0], [1.0], [2.0]]),
+    cx.Field(jnp.asarray([1.0, 2.0, 1.0]), dims=("atom",)),
+    axes="atom",
+    normalized=True,
+)
+target = phx.integration.discrete(
+    jnp.asarray([[0.5], [1.5]]),
+    cx.Field(jnp.asarray([1.0, 1.0]), dims=("atom",)),
+    axes="atom",
+    normalized=True,
+)
+problem = phx.transport.discrete_problem(
+    source,
+    target,
+    cost=phx.transport.SquaredEuclideanCost(),
+)
 
 solver = phx.transport.Sinkhorn(
     0.2,
@@ -122,8 +153,8 @@ solver = phx.transport.Sinkhorn(
   `early_stop=True` permits short-circuiting.
 - `store_history=True` retains residuals for each check. Leave it off in large repeated
   training loops unless the trace is needed.
-- `block_size=None` uses dense reductions. A positive block size streams cost and plan
-  blocks for solving, statistics, and actions.
+- `block_size=None` uses dense reductions. A positive block size evaluates compiled
+  cost and plan blocks without retaining the complete pairwise matrix.
 
 Dense and blockwise modes solve the same discrete problem. Blockwise mode bounds
 working memory but increases loop overhead; choose it when the source-by-target matrix
@@ -197,6 +228,8 @@ never treated as physical cases.
 
 - `SpatialSinkhornDivergenceTerm` compares a model-built finite physical measure with a
   prepared reference.
+- `SpatialUnbalancedSinkhornDivergenceTerm` compares unequal-mass physical intensity
+  measures and rejects nonconvergence or transported-mass collapse.
 - `EmpiricalSinkhornDivergenceTerm` compares a model-generated empirical law with a
   prepared reference.
 - `SlicedWassersteinTerm` provides a projection-based whole-event discrepancy.
@@ -230,25 +263,150 @@ source and transformed means, their error, and the native coupling. This is a
 deterministic ensemble transform, not categorical resampling and not an automatic
 replacement for particle-filter genealogy contracts.
 
+### Continuous density to optimized finite support
+
+`SemidiscreteTransportProblem` binds a `DensityTarget`, its already-materialized
+`IntegrationRealization`, and a finite target. `SemidiscreteSinkhorn` integrates the
+soft c-transform and target marginal on that same realization at every dual update.
+This prevents an integration rule or random sample batch from becoming an undisclosed
+empirical source measure. Reusing the problem is exact replay of the numerical
+experiment and gives common random numbers to support gradients.
+
+Transport convergence and integration success are independent. Inspect
+`result.diagnostics` for the target marginal solve and
+`result.integration_diagnostics` for integration status, error estimate, evaluation
+count, and provenance. A result remains marked as a fixed-realization approximation
+even if the target marginal solve converges. Normalized density mass is one;
+unnormalized density mass is estimated explicitly and must match the physical atom
+weights.
+
+`SemidiscreteQuantizer` turns target locations into a sensor, particle, or collocation
+design objective and delegates updates to Optax. Supply a smooth
+`support_transform` for domain constraints—for an interval, an affine sigmoid map is
+typical. This composes the constraint with differentiation and never clips or repairs
+an optimizer update. The outer optimization rejects nonconverged integration or
+transport before consuming the objective.
+
+### Finite-law barycentric aggregation
+
+Use `fixed_support_barycenter_problem` when several finite predictive, posterior, or
+ensemble laws have a meaningful Wasserstein aggregate on a scientifically declared
+support. All inputs must have common physical mass; `measure_weights` express the
+aggregation question and must be strictly positive and already sum to one.
+`SinkhornBarycenter` pads unequal atom counts behind explicit masks, and dense and
+blockwise reductions solve the same finite problem. The result keeps every
+measure-to-barycenter coupling and per-measure objective rather than returning only an
+average point cloud.
+
+Use `FreeSupportBarycenter` only when support locations themselves are part of the
+scientific optimization. The problem support is the explicit initialization. The
+outer coupling-weighted coordinate update is valid only for squared or weighted
+squared Euclidean costs, produces a local optimum, and retains every inner solve.
+Support collapse is a terminal diagnostic, not an invitation to merge or jitter atoms
+silently.
+
+The UQ aggregation helpers return both a `DiscreteMeasureTarget` and native transport
+results. `BarycenterObjectiveTerm` is appropriate only when the scalar weighted
+aggregate of entropic transport objectives is the intended training quantity. It
+rejects nonconverged solves.
+
+## Approximate scalable balanced transport
+
+`PositiveFeatureSinkhorn` is a distinct approximate backend for
+`SquaredEuclideanCost`. It never changes the declared finite measure problem:
+physical mass, masks, atom order, and event encoding remain those of
+`DiscreteTransportProblem`. Instead it replaces
+`exp(-cost / epsilon)` with replayable nonnegative Gaussian features and performs
+matrix-free scaling and plan actions in feature rank.
+
+```python
+import jax.random as jr
+
+features = phx.transport.GaussianPositiveFeatures(
+    jr.key(0),
+    512,
+    num_probes=64,
+    probe_tolerance=0.2,
+)
+solver = phx.transport.PositiveFeatureSinkhorn(
+    0.2,
+    features,
+    max_iterations=500,
+    tolerance=1e-7,
+)
+result = solver(problem, exact_ground_cost=True)
+```
+
+The key, requested rank, probe pairs, exact and approximate probe values, relative
+errors, and zero-row counts live in `result.approximation`. The solve is not
+converged when feature construction is non-finite, a positive-mass kernel row is
+zero, or the declared probe tolerance fails. Increasing rank changes the numerical
+problem; it is approximation evidence, not an invisible implementation setting.
+
+`result.regularized_cost` is the entropic objective of the represented surrogate
+kernel. When `exact_ground_cost=True`, `result.exact_transport_cost` additionally
+evaluates the computed plan against the exact ground cost in compiled blocks. It does
+not turn the surrogate solve into an exact solve. `dense_plan()` is the only API here
+that explicitly forms the full plan; plan actions remain factorized.
+
+Dense and blockwise exact Sinkhorn are two executions of the same kernel. Blockwise
+execution is compiled bounded-working-memory evaluation, not host-callback,
+out-of-core, or Python streaming. Positive features are approximate and record that
+fact in `TransportProvenance.approximation`; the common balanced plan contract lets
+divergence, UQ metrics, transport terms, the semigroup objective, and the particle
+transform retain that provenance while rejecting nonconvergence.
+
+## Exact finite-state dynamic transport
+
+A Schrödinger bridge controls an entire Markov path law, not only a coupling at one
+time. Use `phx.transport.dynamic.SchrodingerBridgeProblem` when all states are
+enumerated, both endpoint measures use the same ordered support, and the reference
+`AbstractTransitionKernel` provides normalized transition log probabilities on that
+support. Supply the physical time grid and an explicit `StateSpaceStepContext`;
+sampler-only transitions are intentionally rejected.
+
+The log-IPF solver retains forward and backward potentials. Its Doob transform is an
+ordinary `AbstractTransitionKernel`, so state-space inference can consume it without a
+parallel stochastic API. The endpoint targets still carry physical mass, masks, case
+axes, and provenance. Each case is solved independently. `result.marginal_probabilities`
+is a probability path law, while `result.marginal_weights()` restores physical mass.
+
+Use `BridgeInferenceAdapter` for a categorical initial-prior plus controlled-transition
+view, `TerminalDistributionControlAdapter` for the exact path-KL control cost and
+physical terminal residual, and `bridge_path_law_diagnostics` for empirical path-law
+checks. All three reject a nonconverged result. Keyed path sampling folds in case,
+member, and step identities; replay is exact and a larger one-dimensional sample count
+preserves the existing prefix.
+
+This exact family does not approximate diffusion or particle bridges and does not
+learn a transport map. An unreachable positive endpoint receives
+`TransportStatus.INFEASIBLE_SUPPORT`; it is never clipped, normalized away, or
+repaired.
+
 ## 10. Capability boundary
 
-The native subsystem intentionally omits unbalanced Sinkhorn, automatic
-balanced-to-unbalanced fallback, low-rank transport, epsilon schedules, acceleration,
-Gromov--Wasserstein, fused GW, barycenters, semi-discrete solvers, exact general
+The native subsystem intentionally omits automatic balanced-to-unbalanced fallback,
+epsilon schedules, acceleration, Gromov--Wasserstein, fused GW, exact general
 multidimensional assignment, Gaussian-mixture OT, and neural transport maps. Add one
-of these only for a concrete Phydrax scientific contract; do not mirror another OT
+of these only for a concrete PhydraX scientific contract; do not mirror another OT
 package's class hierarchy.
 
 ## 11. Benchmark the relevant regime
 
-Five deterministic JSON harnesses separate core, soft-order, fast unweighted order,
-scientific transport, and quantile-objective paths:
+Ten deterministic JSON harnesses separate core, scalable, unbalanced, barycenter,
+semidiscrete, dynamic, soft-order, fast unweighted order, scientific transport, and
+quantile-objective paths:
 
 ```bash
 python -m tools.transport_benchmarks --smoke
+python -m tools.positive_feature_transport_benchmarks --smoke
 python -m tools.soft_transport_benchmarks --smoke
 python -m tools.fast_order_benchmarks --smoke
 python -m tools.transport_scientific_benchmarks --smoke
+python -m tools.unbalanced_transport_benchmarks --smoke
+python -m tools.transport_barycenter_benchmarks --smoke
+python -m tools.semidiscrete_transport_benchmarks --smoke
+python -m tools.schrodinger_bridge_benchmarks --smoke
 python -m tools.soft_quantile_objective_benchmarks --smoke
 ```
 
@@ -261,3 +419,15 @@ regularization parameters are interchangeable. The scientific harness exercises
 nonuniform spatial density, whole-field operator ensembles, and the particle
 transform. The quantile-objective harness compares terminal hard-tail and physical
 metrics across several deterministic training workloads.
+
+The positive-feature harness reports rank, probe and small-problem approximation
+errors, compile and steady runtimes, plan-action cost, explicit memory fields, and
+gradient timing and finiteness. The unbalanced harness reports physical source and
+target mass, transported mass, marginal KL terms, divergence components, status, and
+balanced-limit evidence. The barycenter harness reports fixed and free-support
+objectives, marginal residuals, inner and outer iterations, execution mode, gradients,
+and result memory. The semidiscrete harness separately reports the fixed integration
+size and provenance, dual residuals, integration and transport statuses, replay
+equality, support-gradient cost, and result memory. The Schrödinger bridge harness
+reports exact solve and keyed-sampling timings, endpoint residual, path KL, empirical
+marginal residual, convergence, and reference-process provenance.

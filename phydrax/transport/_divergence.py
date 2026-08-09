@@ -9,17 +9,16 @@ from jaxtyping import Array
 from .._strict import StrictModule
 from ._costs import PrecomputedCost
 from ._problem import DiscreteTransportProblem
-from ._results import SinkhornResult
-from ._sinkhorn import Sinkhorn
+from ._results import AbstractBalancedTransportPlan, AbstractBalancedTransportSolver
 
 
 class SinkhornDivergenceResult(StrictModule):
     """Debiased Sinkhorn divergence with all three native solves retained."""
 
     value: Array
-    cross: SinkhornResult
-    source_self: SinkhornResult
-    target_self: SinkhornResult
+    cross: AbstractBalancedTransportPlan
+    source_self: AbstractBalancedTransportPlan
+    target_self: AbstractBalancedTransportPlan
 
     @property
     def converged(self) -> Array:
@@ -28,7 +27,7 @@ class SinkhornDivergenceResult(StrictModule):
 
 def sinkhorn_divergence(
     problem: DiscreteTransportProblem,
-    solver: Sinkhorn,
+    solver: AbstractBalancedTransportSolver,
     /,
     *,
     source_self_cost: PrecomputedCost | None = None,
@@ -37,8 +36,8 @@ def sinkhorn_divergence(
     """Compute the native debiased Sinkhorn divergence for one problem."""
     if not isinstance(problem, DiscreteTransportProblem):
         raise TypeError("problem must be a DiscreteTransportProblem.")
-    if not isinstance(solver, Sinkhorn):
-        raise TypeError("solver must be a Sinkhorn solver.")
+    if not isinstance(solver, AbstractBalancedTransportSolver):
+        raise TypeError("solver must implement the balanced transport solver contract.")
     if isinstance(problem.cost, PrecomputedCost):
         if source_self_cost is None or target_self_cost is None:
             raise ValueError(
@@ -70,9 +69,9 @@ def sinkhorn_divergence(
     source_self = solver(source_self_problem)
     target_self = solver(target_self_problem)
     value = (
-        cross.regularized_cost
-        - 0.5 * source_self.regularized_cost
-        - 0.5 * target_self.regularized_cost
+        cross.regularized_objective()
+        - 0.5 * source_self.regularized_objective()
+        - 0.5 * target_self.regularized_objective()
     )
     return SinkhornDivergenceResult(
         value=value,

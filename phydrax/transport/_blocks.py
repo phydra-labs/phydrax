@@ -8,10 +8,15 @@ from typing import Literal
 
 import jax
 import jax.numpy as jnp
-from jax.scipy.special import logsumexp
 from jaxtyping import Array
 
-from ._costs import PrecomputedCost
+from ._geometry import (
+    block_count as _block_count,
+    column_logsumexp as _geometry_column_logsumexp,
+    cost_block as _geometry_cost_block,
+    indices as _indices,
+    row_logsumexp as _geometry_row_logsumexp,
+)
 from ._problem import DiscreteTransportProblem
 
 
@@ -26,52 +31,15 @@ def row_logsumexp(
     *,
     block_size: int | None,
 ) -> Array:
-    """Compute row-wise log-sum-exp of ``log_values - cost / epsilon``."""
-    values = jnp.asarray(log_values)
-    source_count, target_count = problem.shape
-    if values.shape != (target_count,):
-        raise ValueError("row_logsumexp values must match target atom count.")
-    if block_size is None:
-        return logsumexp(
-            values[None, :] - problem.cost_matrix() / epsilon,
-            axis=1,
-        )
-    size = int(block_size)
-    source_blocks = _block_count(source_count, size)
-    target_blocks = _block_count(target_count, size)
-    output = jnp.full((source_blocks * size,), -jnp.inf, dtype=values.dtype)
-
-    def source_body(source_block, result):
-        source_start = source_block * size
-        source_indices, source_valid = _indices(source_start, size, source_count)
-        accumulator = jnp.full((size,), -jnp.inf, dtype=values.dtype)
-
-        def target_body(target_block, current):
-            target_start = target_block * size
-            target_indices, target_valid = _indices(
-                target_start, size, target_count
-            )
-            costs = _cost_block(problem, source_indices, target_indices)
-            block_values = jnp.take(values, target_indices, axis=0)
-            terms = block_values[None, :] - costs / epsilon
-            terms = jnp.where(
-                source_valid[:, None] & target_valid[None, :],
-                terms,
-                -jnp.inf,
-            )
-            return jnp.logaddexp(current, logsumexp(terms, axis=1))
-
-        accumulator = jax.lax.fori_loop(
-            0,
-            target_blocks,
-            target_body,
-            accumulator,
-        )
-        accumulator = jnp.where(source_valid, accumulator, -jnp.inf)
-        return jax.lax.dynamic_update_slice(result, accumulator, (source_start,))
-
-    output = jax.lax.fori_loop(0, source_blocks, source_body, output)
-    return output[:source_count]
+    """Compute row-wise log-sum-exp through the shared finite-cost geometry."""
+    return _geometry_row_logsumexp(
+        problem.cost,
+        problem.source.points,
+        problem.target.points,
+        log_values,
+        epsilon,
+        block_size=block_size,
+    )
 
 
 def column_logsumexp(
@@ -82,52 +50,15 @@ def column_logsumexp(
     *,
     block_size: int | None,
 ) -> Array:
-    """Compute column-wise log-sum-exp of ``log_values - cost / epsilon``."""
-    values = jnp.asarray(log_values)
-    source_count, target_count = problem.shape
-    if values.shape != (source_count,):
-        raise ValueError("column_logsumexp values must match source atom count.")
-    if block_size is None:
-        return logsumexp(
-            values[:, None] - problem.cost_matrix() / epsilon,
-            axis=0,
-        )
-    size = int(block_size)
-    source_blocks = _block_count(source_count, size)
-    target_blocks = _block_count(target_count, size)
-    output = jnp.full((target_blocks * size,), -jnp.inf, dtype=values.dtype)
-
-    def target_body(target_block, result):
-        target_start = target_block * size
-        target_indices, target_valid = _indices(target_start, size, target_count)
-        accumulator = jnp.full((size,), -jnp.inf, dtype=values.dtype)
-
-        def source_body(source_block, current):
-            source_start = source_block * size
-            source_indices, source_valid = _indices(
-                source_start, size, source_count
-            )
-            costs = _cost_block(problem, source_indices, target_indices)
-            block_values = jnp.take(values, source_indices, axis=0)
-            terms = block_values[:, None] - costs / epsilon
-            terms = jnp.where(
-                source_valid[:, None] & target_valid[None, :],
-                terms,
-                -jnp.inf,
-            )
-            return jnp.logaddexp(current, logsumexp(terms, axis=0))
-
-        accumulator = jax.lax.fori_loop(
-            0,
-            source_blocks,
-            source_body,
-            accumulator,
-        )
-        accumulator = jnp.where(target_valid, accumulator, -jnp.inf)
-        return jax.lax.dynamic_update_slice(result, accumulator, (target_start,))
-
-    output = jax.lax.fori_loop(0, target_blocks, target_body, output)
-    return output[:target_count]
+    """Compute column-wise log-sum-exp through the shared finite-cost geometry."""
+    return _geometry_column_logsumexp(
+        problem.cost,
+        problem.source.points,
+        problem.target.points,
+        log_values,
+        epsilon,
+        block_size=block_size,
+    )
 
 
 def coupling_statistics(
@@ -489,21 +420,13 @@ def _cost_block(
     target_indices: Array,
     /,
 ) -> Array:
-    if isinstance(problem.cost, PrecomputedCost):
-        return problem.cost.values[source_indices[:, None], target_indices[None, :]]
-    return problem.cost.matrix(
-        problem.source.points[source_indices],
-        problem.target.points[target_indices],
+    return _geometry_cost_block(
+        problem.cost,
+        problem.source.points,
+        problem.target.points,
+        source_indices,
+        target_indices,
     )
-
-
-def _indices(start: Array, size: int, count: int, /) -> tuple[Array, Array]:
-    raw = start + jnp.arange(size, dtype=jnp.int32)
-    return jnp.minimum(raw, count - 1), raw < count
-
-
-def _block_count(count: int, block_size: int, /) -> int:
-    return (int(count) + int(block_size) - 1) // int(block_size)
 
 
 def _safe_log(values: Array, /) -> Array:

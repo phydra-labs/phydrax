@@ -18,7 +18,7 @@ from .._frozendict import frozendict
 from .._model import FrozenModel
 from .._strict import StrictModule
 from ..nn._base import _AbstractBaseModel
-from ..nn._keys import split_eval_key
+from ..nn._keys import EvalKey, split_eval_key
 from ..nn.operator.data import OperatorBatch
 from ..nn.operator.protocols import OperatorModel
 from ._operator import operator_predictive_from_samples, OperatorPredictiveField

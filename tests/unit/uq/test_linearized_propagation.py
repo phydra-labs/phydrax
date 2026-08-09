@@ -203,6 +203,20 @@ def test_covariance_representations_reject_invalid_declarations(factory):
         factory()
 
 
+def test_covariance_representations_can_be_declared_under_jit():
+    diagonal, dense, factor = jax.jit(
+        lambda variance, matrix, factors: (
+            phx.uq.DiagonalCovariance(variance),
+            phx.uq.DenseCovariance(matrix),
+            phx.uq.FactorCovariance(factors),
+        )
+    )(jnp.asarray([0.25, 0.5]), jnp.eye(2), jnp.eye(2))
+
+    assert jnp.array_equal(diagonal.variance, jnp.asarray([0.25, 0.5]))
+    assert jnp.array_equal(dense.matrix, jnp.eye(2))
+    assert jnp.array_equal(factor.factors, jnp.eye(2))
+
+
 def test_linearized_propagation_rejects_shape_and_materialization_mismatches():
     with pytest.raises(ValueError, match="shape must match"):
         phx.uq.propagate_linearized(

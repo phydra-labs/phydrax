@@ -2,6 +2,21 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from . import dynamic
+from ._barycenters import (
+    BarycenterDiagnostics,
+    BarycenterProblemProvenance,
+    BarycenterProvenance,
+    BarycenterResult,
+    fixed_support_barycenter_problem,
+    FixedSupportBarycenterProblem,
+    FreeSupportBarycenter,
+    FreeSupportBarycenterDiagnostics,
+    FreeSupportBarycenterProvenance,
+    FreeSupportBarycenterResult,
+    require_barycenter_converged,
+    SinkhornBarycenter,
+)
 from ._costs import (
     AbstractGroundCost,
     PeriodicSquaredEuclideanCost,
@@ -22,10 +37,33 @@ from ._references import (
     sinkhorn_divergence_against,
 )
 from ._results import (
+    AbstractBalancedTransportPlan,
+    AbstractBalancedTransportSolver,
     require_converged,
     SinkhornDiagnostics,
     SinkhornResult,
     TransportProvenance,
+)
+from ._scalable import (
+    GaussianPositiveFeatures,
+    KernelApproximationStatus,
+    PositiveFeatureSinkhorn,
+    PositiveFeatureSinkhornResult,
+    PositiveKernelApproximationDiagnostics,
+    PositiveKernelFactors,
+)
+from ._semidiscrete import (
+    semidiscrete_problem,
+    SemidiscreteIntegrationDiagnostics,
+    SemidiscreteProblemProvenance,
+    SemidiscreteQuantizationDiagnostics,
+    SemidiscreteQuantizationResult,
+    SemidiscreteQuantizer,
+    SemidiscreteSinkhorn,
+    SemidiscreteTransportDiagnostics,
+    SemidiscreteTransportProblem,
+    SemidiscreteTransportProvenance,
+    SemidiscreteTransportResult,
 )
 from ._sinkhorn import Sinkhorn
 from ._sliced import sliced_wasserstein_distance, SlicedWassersteinResult
@@ -41,15 +79,93 @@ from ._soft import (
     soft_topk_values,
 )
 from ._status import status_message, TransportStatus
+from ._unbalanced_divergence import (
+    unbalanced_sinkhorn_divergence,
+    UnbalancedSinkhornDivergenceResult,
+)
+from ._unbalanced_problem import unbalanced_problem, UnbalancedTransportProblem
+from ._unbalanced_references import (
+    prepare_unbalanced_sinkhorn_reference,
+    PreparedUnbalancedSinkhornReference,
+    unbalanced_sinkhorn_divergence_against,
+)
+from ._unbalanced_results import (
+    require_unbalanced_converged,
+    UnbalancedSinkhornDiagnostics,
+    UnbalancedSinkhornResult,
+)
+from ._unbalanced_sinkhorn import UnbalancedSinkhorn
 from ._univariate import wasserstein_distance_1d
+from .dynamic import (
+    bridge_path_law_diagnostics,
+    bridge_path_log_prob,
+    BridgeInferenceAdapter,
+    BridgePathLawDiagnostics,
+    BridgePathSample,
+    BridgeProblemProvenance,
+    BridgeProvenance,
+    ControlledTransitionKernel,
+    FiniteBridgeTarget,
+    reference_path_log_prob,
+    require_converged_bridge,
+    sample_bridge,
+    sample_bridge_paths,
+    sample_bridge_state_indices,
+    SchrodingerBridgeDiagnostics,
+    SchrodingerBridgeProblem,
+    SchrodingerBridgeResult,
+    SchrodingerBridgeSolver,
+    solve_schrodinger_bridge,
+    TerminalDistributionControlAdapter,
+)
 
 
 __all__ = [
+    "AbstractBalancedTransportPlan",
+    "AbstractBalancedTransportSolver",
     "AbstractGroundCost",
+    "BarycenterDiagnostics",
+    "BarycenterProblemProvenance",
+    "BarycenterProvenance",
+    "BarycenterResult",
+    "BridgeInferenceAdapter",
+    "BridgePathLawDiagnostics",
+    "BridgePathSample",
+    "BridgeProblemProvenance",
+    "BridgeProvenance",
+    "ControlledTransitionKernel",
     "DiscreteTransportProblem",
+    "FixedSupportBarycenterProblem",
+    "FreeSupportBarycenter",
+    "FreeSupportBarycenterDiagnostics",
+    "FreeSupportBarycenterProvenance",
+    "FreeSupportBarycenterResult",
+    "FiniteBridgeTarget",
+    "GaussianPositiveFeatures",
+    "KernelApproximationStatus",
     "PeriodicSquaredEuclideanCost",
     "PrecomputedCost",
     "PreparedSinkhornReference",
+    "PreparedUnbalancedSinkhornReference",
+    "PositiveFeatureSinkhorn",
+    "PositiveFeatureSinkhornResult",
+    "PositiveKernelApproximationDiagnostics",
+    "PositiveKernelFactors",
+    "SemidiscreteIntegrationDiagnostics",
+    "SemidiscreteProblemProvenance",
+    "SemidiscreteQuantizationDiagnostics",
+    "SemidiscreteQuantizationResult",
+    "SemidiscreteQuantizer",
+    "SemidiscreteSinkhorn",
+    "SemidiscreteTransportDiagnostics",
+    "SemidiscreteTransportProblem",
+    "SemidiscreteTransportProvenance",
+    "SemidiscreteTransportResult",
+    "SchrodingerBridgeDiagnostics",
+    "SchrodingerBridgeProblem",
+    "SchrodingerBridgeResult",
+    "SchrodingerBridgeSolver",
+    "SinkhornBarycenter",
     "Sinkhorn",
     "SinkhornDiagnostics",
     "SinkhornDivergenceResult",
@@ -59,10 +175,21 @@ __all__ = [
     "TransportProblemProvenance",
     "TransportProvenance",
     "TransportStatus",
+    "UnbalancedSinkhorn",
+    "UnbalancedSinkhornDiagnostics",
+    "UnbalancedSinkhornDivergenceResult",
+    "UnbalancedSinkhornResult",
+    "UnbalancedTransportProblem",
     "WeightedSquaredEuclideanCost",
+    "TerminalDistributionControlAdapter",
+    "fixed_support_barycenter_problem",
+    "bridge_path_law_diagnostics",
+    "bridge_path_log_prob",
     "discrete_problem",
+    "dynamic",
     "fast_soft_rank",
     "fast_soft_sort",
+    "semidiscrete_problem",
     "sliced_wasserstein_distance",
     "soft_order_transport",
     "soft_quantile",
@@ -74,9 +201,21 @@ __all__ = [
     "soft_topk_mask",
     "soft_topk_values",
     "prepare_sinkhorn_reference",
+    "prepare_unbalanced_sinkhorn_reference",
     "require_converged",
+    "require_barycenter_converged",
+    "require_unbalanced_converged",
+    "reference_path_log_prob",
+    "require_converged_bridge",
     "sinkhorn_divergence",
     "sinkhorn_divergence_against",
+    "sample_bridge",
+    "sample_bridge_paths",
+    "sample_bridge_state_indices",
+    "solve_schrodinger_bridge",
+    "unbalanced_problem",
+    "unbalanced_sinkhorn_divergence",
+    "unbalanced_sinkhorn_divergence_against",
     "status_message",
     "wasserstein_distance_1d",
 ]

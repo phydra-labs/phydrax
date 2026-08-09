@@ -318,6 +318,69 @@ opaque particle state. Its observation callback may return
 noise in factor space.
 
 ```python
+rb_nonlinear_prior = phx.stochastic.CategoricalStatePrior(
+    jnp.asarray([[0], [1]]),
+    jnp.asarray([0.5, 0.5]),
+    prior_id="motion-regime-prior",
+)
+
+def sample_motion_regime(key, regime, t0, t1, context):
+    del t0, t1, context
+    switches = jr.bernoulli(key, 0.1)
+    return jnp.where(switches, 1 - regime, regime)
+
+def motion_regime_log_prob(next_regime, regime, t0, t1, context):
+    del t0, t1, context
+    stays = jnp.all(next_regime == regime)
+    switches = jnp.all(next_regime == 1 - regime)
+    return jnp.where(
+        stays,
+        jnp.log(0.9),
+        jnp.where(switches, jnp.log(0.1), -jnp.inf),
+    )
+
+rb_nonlinear_transition = phx.stochastic.CallableTransitionKernel(
+    sample_motion_regime,
+    state_shape=(1,),
+    process_id="switching-motion-regime",
+    approximation_id="exact-two-state-transition",
+    log_prob_fn=motion_regime_log_prob,
+)
+
+def initial_linear_state(regime, args):
+    del args
+    return (0.25 * regime.astype(float), jnp.asarray([[1.0]]))
+
+def conditional_linear_transition(previous_regime, regime, t0, t1, context):
+    del previous_regime, t0, t1, context
+    drift = jnp.where(regime == 0, -0.05, 0.15)
+    return jnp.asarray([[1.0]]), drift, jnp.asarray([[0.05]])
+
+def conditional_observation(regime, time, context):
+    del regime, time, context
+    return (
+        jnp.asarray([[1.0]]),
+        jnp.zeros(1),
+        phx.uq.DiagonalCovariance(jnp.asarray([0.1])),
+    )
+
+rb_model = phx.uq.RaoBlackwellizedStateSpaceModel(
+    rb_nonlinear_prior,
+    rb_nonlinear_transition,
+    initial_linear_state,
+    conditional_linear_transition,
+    conditional_observation,
+    linear_state_shape=(1,),
+    observation_shape=(1,),
+    model_id="switching-position-model",
+)
+rb_problem = phx.uq.RaoBlackwellizedStateSpaceProblem(
+    rb_model,
+    observations,
+    initial_time=0.0,
+    problem_id="switching-position-filtering",
+)
+
 rb_filtered = phx.uq.rao_blackwellized_particle_filter(
     jr.key(20),
     rb_problem,
