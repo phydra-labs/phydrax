@@ -10,6 +10,7 @@ from ._costs import (
     WeightedSquaredEuclideanCost,
 )
 from ._divergence import sinkhorn_divergence, SinkhornDivergenceResult
+from ._fast_order import fast_soft_rank, fast_soft_sort
 from ._problem import (
     discrete_problem,
     DiscreteTransportProblem,
@@ -60,6 +61,8 @@ __all__ = [
     "TransportStatus",
     "WeightedSquaredEuclideanCost",
     "discrete_problem",
+    "fast_soft_rank",
+    "fast_soft_sort",
     "sliced_wasserstein_distance",
     "soft_order_transport",
     "soft_quantile",

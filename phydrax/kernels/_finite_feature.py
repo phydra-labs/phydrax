@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 from jaxtyping import Array, ArrayLike
 
-from ._base import _as_point, _as_points, AbstractPositiveDefiniteKernel
+from ._base import _as_inputs, _as_point, _as_points, AbstractPositiveDefiniteKernel
 
 
 class AbstractFiniteFeatureKernel(AbstractPositiveDefiniteKernel):
@@ -184,8 +184,12 @@ def kernel_features(
             axis=-1,
         )
     elif isinstance(kernel, InputTransformedKernel):
-        point_design = _as_points(points, name="points")
-        transformed = jax.vmap(kernel._transform_point)(point_design)
+        point_design = _as_inputs(
+            points,
+            input_ndim=kernel.input_ndim,
+            name="points",
+        )
+        transformed = jax.vmap(kernel._transform_input)(point_design)
         features = kernel_features(kernel.kernel, transformed)
     else:
         raise TypeError(f"{kernel.kernel_id} has no exact finite-feature representation.")

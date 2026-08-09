@@ -34,7 +34,13 @@ def soft_order_transport(
     epsilon: float = 0.1,
     solver: Sinkhorn | None = None,
 ) -> SinkhornResult:
-    """Fit one soft monotone coupling from values to ordered mass bins."""
+    """Fit a soft monotone coupling in canonical dimensionless order coordinates.
+
+    Source values are weighted-centered, weighted-standardized, and mapped through
+    a sigmoid before transport. Consequently, ``epsilon`` is dimensionless and
+    specific to this order geometry; it is not expressed in the units of ``values``.
+    A supplied ``solver`` owns the effective epsilon and other solve settings.
+    """
     source_values = _vector(values, name="values")
     count = source_values.shape[0]
     targets = count if num_targets is None else int(num_targets)
@@ -52,7 +58,7 @@ def soft_order_transport(
         name="target_weights",
         dtype=source_values.dtype,
     )
-    source_locations = _squash(source_values, source_probabilities)
+    source_locations = _canonical_order_locations(source_values, source_probabilities)
     target_locations = (
         jnp.cumsum(target_probabilities) - 0.5 * target_probabilities
     )
@@ -63,7 +69,7 @@ def soft_order_transport(
         source_probabilities > 0.0,
         event_shape=(),
         normalized=True,
-        provenance="soft-order-source",
+        provenance="soft-order-source:weighted-standardize-sigmoid",
     )
     target_measure = _FiniteTransportMeasure(
         target_locations[:, None],
@@ -72,7 +78,7 @@ def soft_order_transport(
         target_probabilities > 0.0,
         event_shape=(),
         normalized=True,
-        provenance="soft-order-target",
+        provenance="soft-order-target:probability-midpoints",
     )
     problem = DiscreteTransportProblem(
         source_measure,
@@ -92,7 +98,7 @@ def soft_sort(
     epsilon: float = 0.1,
     solver: Sinkhorn | None = None,
 ) -> Array | cx.Field:
-    """Differentiably sort values along one array axis or named field dimension."""
+    """Return ascending values from the canonical soft-order coupling."""
     data, position, dims = _data_axis(values, axis=axis, name="values")
     weight_data = _weight_data(weights, data, position, dims=dims)
     configured = _soft_solver(epsilon, solver)
@@ -118,7 +124,7 @@ def soft_rank(
     epsilon: float = 0.1,
     solver: Sinkhorn | None = None,
 ) -> Array | cx.Field:
-    """Return zero-based differentiable ranks along one axis."""
+    """Return zero-based ascending barycentric ranks along one axis."""
     data, position, dims = _data_axis(values, axis=axis, name="values")
     weight_data = _weight_data(weights, data, position, dims=dims)
     configured = _soft_solver(epsilon, solver)
@@ -193,7 +199,12 @@ def soft_topk_mask(
     epsilon: float = 0.1,
     solver: Sinkhorn | None = None,
 ) -> Array | cx.Field:
-    """Return differentiable membership in the largest ``k`` ordered bins."""
+    """Return membership in the largest ``k`` equal-probability target bins.
+
+    With uniform source weights the memberships sum to ``k``. More generally,
+    coupling conservation fixes their source-probability-weighted mean to
+    ``k / axis_size``.
+    """
     data, position, dims = _data_axis(values, axis=axis, name="values")
     count = data.shape[position]
     selected = int(k)
@@ -264,7 +275,12 @@ def soft_quantile(
     solver: Sinkhorn | None = None,
     quantile_dim: str = "quantile",
 ) -> Array | cx.Field:
-    """Return differentiable weighted quantiles in caller-specified order."""
+    """Return relaxed weighted quantiles, with exact hard endpoints.
+
+    Interior quantiles interpolate the soft sorted values. ``q=0`` and ``q=1``
+    instead return the exact active sample minimum and maximum, so endpoint
+    derivatives are only almost-everywhere defined.
+    """
     data, position, dims = _data_axis(values, axis=axis, name="values")
     quantiles = jnp.asarray(q, dtype=data.dtype)
     quantiles = eqx.error_if(
@@ -408,7 +424,8 @@ def _soft_solver(epsilon: float, solver: Sinkhorn | None, /) -> Sinkhorn:
     )
 
 
-def _squash(values: Array, probabilities: Array, /) -> Array:
+def _canonical_order_locations(values: Array, probabilities: Array, /) -> Array:
+    """Embed scalar values in weighted, dimensionless order coordinates."""
     center = jnp.sum(probabilities * values)
     variance = jnp.sum(probabilities * (values - center) ** 2)
     scale = jnp.sqrt(variance + jnp.finfo(values.dtype).eps)

@@ -80,6 +80,16 @@ Sharp CSG preserves exact set membership but generally yields a nonsmooth level-
 field at operation seams. Blend CSG provides a smooth approximate zero set and
 reports that weaker contract through its field certificate.
 
+Blend width is a geometry approximation parameter, not an optimizer guarantee.
+A fixed positive width solves a different geometric problem. If blend CSG is used
+for continuation, schedule it outside the geometry and solver abstractions, finish
+against the sharp geometry, and report terminal sharp-field metrics. Phydrax does
+not couple a continuation policy to either abstraction.
+
+`python -m tools.geometric_benchmarks --csg-continuation --smoke` compares
+sharp, fixed-width blend, and width-annealed training while evaluating all terminal
+scientific metrics on the sharp geometry.
+
 ## Simplicial geometry
 
 `TriangleMesh` and `SegmentMesh` own canonical validated arrays and topology.

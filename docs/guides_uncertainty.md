@@ -1652,6 +1652,14 @@ For a reciprocal weighted `GraphIR`, the complete graph-to-posterior path remain
 inside the same kernel and GP contracts:
 
 ```python
+graph = phx.graph.GraphIR(
+    nodes=jnp.arange(3, dtype=float)[:, None],
+    edges={"conductance": jnp.asarray([1.0, 1.0, 2.0, 2.0])},
+    senders=jnp.asarray([0, 1, 1, 2], dtype=jnp.int32),
+    receivers=jnp.asarray([1, 0, 2, 1], dtype=jnp.int32),
+    n_node=jnp.asarray([3], dtype=jnp.int32),
+    n_edge=jnp.asarray([4], dtype=jnp.int32),
+)
 complex_ir = phx.graph.graph_to_cochain_complex(
     graph,
     edge_weight_key="conductance",
@@ -1659,7 +1667,7 @@ complex_ir = phx.graph.graph_to_cochain_complex(
 spectrum = phx.graph.cochain_laplacian_eigenbasis(
     complex_ir,
     0,
-    num_modes=31,
+    num_modes=3,
 )
 kernel = phx.kernels.AmplitudeKernel(
     phx.kernels.SpectralFeatureKernel(
@@ -1669,6 +1677,9 @@ kernel = phx.kernels.AmplitudeKernel(
     0.2,
 )
 entities = complex_ir.cell_entities(0)
+observed_entities = entities[:2]
+observations = jnp.asarray([0.1, -0.1])
+model_values = jnp.zeros_like(observations)
 discrepancy = phx.uq.ExactGaussianProcessDiscrepancy(
     observed_entities,
     observations,

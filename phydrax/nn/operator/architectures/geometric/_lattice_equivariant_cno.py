@@ -104,10 +104,15 @@ class _LatticeEquivariantBlock(StrictModule):
         /,
         *,
         activation: LatticeActivation,
+        use_bias: bool,
         key: Key[Array, ""],
     ):
         first_key, second_key = jr.split(key)
-        self.first = LatticeEquivariantConvND(basis, key=first_key)
+        self.first = LatticeEquivariantConvND(
+            basis,
+            use_bias=use_bias,
+            key=first_key,
+        )
         self.normalization = TensorRMSNorm(basis.output_layout)
         self.activation = TensorNormActivation(
             basis.output_layout,
@@ -213,6 +218,9 @@ class LatticeEquivariantCNO(AbstractOperatorModel):
             raise TypeError("hidden_layout must be a TensorFieldLayout or None.")
         if hidden_layout.dimension != group.dimension:
             raise ValueError("Hidden tensor layout and group dimensions must agree.")
+        use_hidden_bias = any(
+            block.tensor_type.is_scalar for block in hidden_layout.blocks
+        )
         if squeeze_scalar_output and output_layout.channel_count != 1:
             raise ValueError("squeeze_scalar_output requires exactly one output channel.")
 
@@ -238,11 +246,16 @@ class LatticeEquivariantCNO(AbstractOperatorModel):
             max_construction_bytes=max_basis_construction_bytes,
         )
         keys = jr.split(key, resolved_depth + 2)
-        self.lift = LatticeEquivariantConvND(lift_basis, key=keys[0])
+        self.lift = LatticeEquivariantConvND(
+            lift_basis,
+            use_bias=use_hidden_bias,
+            key=keys[0],
+        )
         self.blocks = tuple(
             _LatticeEquivariantBlock(
                 hidden_basis,
                 activation=activation,
+                use_bias=use_hidden_bias,
                 key=block_key,
             )
             for block_key in keys[1:-1]
