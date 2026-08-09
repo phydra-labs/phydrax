@@ -1,1 +1,33 @@
+PHYDRAX
+Copyright © 2026 PHYDRA, Inc. All rights reserved.
 Licensed by PHYDRA, Inc. under the Phydra Non-Production License (PNPL).
+
+This distribution includes adapted numerical methods and implementation ideas
+from the following open-source projects:
+
+JAX
+Copyright 2018 The JAX Authors
+Licensed under the Apache License, Version 2.0.
+The Faddeeva and Dawson implementations are adapted from JAX special-function kernels.
+See LICENSES/JAX-APACHE-2.0.txt.
+
+Numerax
+Copyright (c) 2025 Juehang Qin
+Licensed under the MIT License.
+The real-order modified Bessel implementation is adapted from Numerax 1.4.0
+(commit cce2ba7c1db1f7ab937065730016e53f704e312d).
+See LICENSES/NUMERAX-MIT.txt.
+
+SciPy XSF
+Copyright (c) 2001-2002 Enthought, Inc. 2003-2024, SciPy Developers.
+Licensed under the BSD 3-Clause License.
+The Airy and cylindrical Bessel asymptotic methods are adapted from SciPy XSF.
+See LICENSES/SCIPY-XSF-BSD-3-CLAUSE.txt.
+
+Cephes Math Library
+Cephes Math Library Release 2.8:  June, 2000
+Copyright 1984, 1995, 2000 by Stephen L. Moshier
+Licensed under the BSD 3-Clause License.
+The translated jv/yv kernels are adapted from Cephes sources bundled by
+SciPy XSF.
+See LICENSES/CEPHES-BSD-3-CLAUSE.txt.

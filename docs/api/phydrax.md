@@ -12,6 +12,7 @@ Top-level package namespace. Most functionality lives in subpackages:
 - `phydrax.integration`: integration targets, sources, reductions, and realizations
 - `phydrax.kernels`: composable positive-definite covariance functions shared by
   Gaussian-process and coreset algorithms
+- `phydrax.special`: JAX-native named special functions and integral primitives
 - `phydrax.enforcement`: exact condition transforms and enforcement programs
 - `phydrax.optim`: structured residual KFAC and domain-neutral optimization
   configurations consumed by bounded geometry and posterior workflows

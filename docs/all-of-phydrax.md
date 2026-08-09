@@ -575,6 +575,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - [Metrix: differentiable geometry](api/metrix/index.md)
 - [Positive-definite kernels](api/kernels.md)
 - [Integrals and measures](guides_integrals.md)
+- [Special functions and named integrals](guides_special_functions.md)
 - [Euclidean path integrals and Feynman–Kac expectations](guides_path_integrals.md)
 - [Lagrangian and Hamiltonian mechanics](guides_mechanics.md)
 - [Quantum operators and dynamics](guides_quantum.md)
@@ -594,6 +595,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - `phydrax.conditions` for residual, moment, observation, and physical conditions.
 - `phydrax.terms` for penalty and specialized numerical/data terms.
 - `phydrax.integration` for targets, sources, and reductions.
+- `phydrax.special` for JAX-native named special functions and integral primitives.
 - `phydrax.enforcement` for exact condition transforms.
 - `phydrax.operators` for PDE operators.
 - `phydrax.nn` for models, wrappers, and the generic diagonal state-space mixer.
