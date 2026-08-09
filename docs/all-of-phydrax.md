@@ -109,9 +109,11 @@ and numerical axes explicit in named `PredictiveField` results. NUTS/HMC, Laplac
 approximation, deep ensembles, and Gaussian-process discrepancy models produce
 coherent epistemic draws. Scalar exact/FITC, correlated heterotopic outputs, and
 linear-functional value/PDE observations share the covariance-safe
-`phydrax.kernels` PyTree algebra; learned feature maps and kernel hyperparameters
-remain differentiable leaves. Matrix-free JVP/VJP propagation transports diagonal,
-dense, low-rank, or operator-valued covariance through scientific maps; normalized
+`phydrax.kernels` PyTree algebra. Exact scalar GP inference automatically selects
+weight space for a lower-rank finite-feature kernel; learned feature maps and
+kernel hyperparameters remain differentiable leaves. Matrix-free JVP/VJP propagation
+transports diagonal, dense, low-rank, or operator-valued covariance through
+scientific maps; normalized
 errors-in-variables likelihoods account jointly for uncertain predictors and
 observations. Probability domains, static random fields, and joint QMC propagate
 full uncertain-input distributions. Global Wiener, Poisson-clock, composite, and
@@ -185,8 +187,10 @@ are rejected rather than clipped or repaired.
 
 `phydrax.metrix` supplies charts and differentiable maps; tensors and compressed
 differential forms; positive and signed metrics; affine connections and curvature;
-Lie groups; symplectic, Poisson, and horizontal structures; and metric-aware
-stochastic kernels. Positive norms, Lorentzian wave operators, Poisson brackets, and
+Lie groups; symplectic, Poisson, and horizontal structures; metric-aware stochastic
+kernels; and immutable, measure-orthonormal Laplacian spectra. Graph and cochain
+constructors bind those spectra to explicit topology, metric, boundary, and entity
+provenance. Positive norms, Lorentzian wave operators, Poisson brackets, and
 sub-Laplacians remain distinct named operations rather than overloads with hidden
 defaults. Bounds, seams, sampling, and admissibility remain domain concerns. See
 [API → Metrix](api/metrix/index.md).
@@ -616,8 +620,9 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - `phydrax.nn` for models, wrappers, and the generic diagonal state-space mixer.
 - `phydrax.stochastic` for process paths, trajectories, typed state-space
   problems and inputs, transition kernels, and structural model compilation.
-- `phydrax.kernels` for covariance-safe stationary, algebraic, transformed, and
-  finite-feature kernels shared by GP and coreset methods.
+- `phydrax.kernels` for covariance-safe stationary, algebraic, transformed,
+  finite-feature, graph/Hodge spectral, compact, combinatorial, and fixed-noise
+  noncompact kernels shared by GP and coreset methods.
 - `phydrax.uq` for Gaussian factors and transforms, filtering/smoothing,
   state-space estimation, sensitivities, and stochastic spectra.
 - `phydrax.optim` for canonical QPs and the native implicit QPax backend.

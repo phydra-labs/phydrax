@@ -61,12 +61,14 @@ Declare the transform's actual derivative support; `None` means no finite limit 
 `0` means value observations only. `AffineInputTransform.from_points` provides
 explicit coordinate standardization without changing the kernel's public contract.
 
-`FiniteFeatureKernel` represents a covariance through whitened real features. If
-`feature_map(x)` is `phi(x)` and `feature_factor` is `F`, the evaluated feature is
-`phi(x) @ F`. `from_precision_cholesky` constructs that factor from a declared
-triangular precision Cholesky factor. Scalar exact GP inference recognizes this
-finite-feature structure and factors in feature space when it is cheaper than a
-dense observation-space factorization.
+`AbstractFiniteFeatureKernel` is the capability contract for covariances with
+whitened real features. `FiniteFeatureKernel` is its callable-map implementation:
+if `feature_map(x)` is `phi(x)` and `feature_factor` is `F`, the evaluated feature
+is `phi(x) @ F`. `from_precision_cholesky` constructs that factor from a declared
+triangular precision Cholesky factor. `kernel_features` resolves the same
+capability through supported kernel algebra. Scalar exact GP inference uses it
+automatically when the declared feature rank is smaller than the observation
+count; otherwise it retains the dense observation-space path.
 
 ## Base interfaces
 
@@ -157,3 +159,173 @@ dense observation-space factorization.
             - pairwise
             - matrix
             - diagonal
+
+
+## Finite-feature capability
+
+::: phydrax.kernels.AbstractFiniteFeatureKernel
+    options:
+        members:
+            - features
+            - feature_rank
+
+---
+
+::: phydrax.kernels.kernel_feature_rank
+
+---
+
+::: phydrax.kernels.kernel_features
+
+## Laplacian spectral kernels
+
+`SpectralFeatureKernel` combines an immutable, measure-orthonormal
+`DiscreteLaplacianEigenbasis` with a nonnegative spectral multiplier. Normalized
+evaluation divides by the declared probability-measure average marginal variance,
+not by each point's diagonal. Heat and Matérn multipliers keep geometry,
+normalization, and covariance law separate. A finite basis therefore gives exact
+weight-space GP inference for that declared truncated covariance.
+
+The geometric spectral construction follows the functional-calculus perspective
+described in [*The GeometricKernels Package: Heat and Matérn Kernels for Geometric
+Learning on Manifolds, Meshes, and Graphs*](https://www.jmlr.org/papers/v26/24-1185.html).
+Phydrax owns its metric/cochain IR, eigensolver provenance, feature algebra, and GP
+integration directly; there is no runtime `geometric-kernels` dependency.
+
+::: phydrax.kernels.AbstractSpectralMultiplier
+
+---
+
+::: phydrax.kernels.HeatSpectralMultiplier
+
+---
+
+::: phydrax.kernels.MaternSpectralMultiplier
+
+---
+
+::: phydrax.kernels.SpectralFeatureKernel
+
+## Compact and combinatorial spaces
+
+Sphere kernels use analytic addition-theorem expansions. SO, SU, Stiefel, and
+Grassmann kernels use finite nonnegative tensor-character expansions of normalized
+ambient similarities; they are covariance-safe homogeneous-space kernels, not
+geodesic-distance exponentials or claims of a complete irreducible spectrum.
+Hamming and hypercube kernels use stable Krawtchouk recurrences and
+multiplicity-aware spectral weights. All constructors validate membership and
+preserve JAX differentiation through multiplier hyperparameters.
+Tolerance-close sphere points are radially canonicalized before addition-theorem
+evaluation. Matrix and frame validators retain their accepted ambient values, so
+their `diagonal(...)` methods report the actual self-covariance; `normalize=True`
+normalizes coefficient mass and gives unit diagonal on exact manifold points rather
+than asserting it for tolerance-close inputs.
+
+::: phydrax.kernels.SphereSpectralKernel
+
+---
+
+::: phydrax.kernels.SpecialOrthogonalCharacterKernel
+
+---
+
+::: phydrax.kernels.SpecialUnitaryCharacterKernel
+
+---
+
+::: phydrax.kernels.StiefelSpectralKernel
+
+---
+
+::: phydrax.kernels.GrassmannSpectralKernel
+
+---
+
+::: phydrax.kernels.HammingSpectralKernel
+
+---
+
+::: phydrax.kernels.HypercubeSpectralKernel
+
+## Hodge and operator-valued covariances
+
+`CochainHodgeSpectralKernel` composes harmonic, exact, and coexact scalar
+covariances with independent nonnegative amplitudes. Projected tangent and
+differential-form kernels instead return covariance blocks in an ambient
+coordinate representation. Projectors act at both endpoints, so the resulting
+blocks satisfy the declared tangent constraints and remain positive semidefinite.
+
+::: phydrax.kernels.CochainHodgeSpectralKernel
+
+---
+
+::: phydrax.kernels.AbstractOperatorValuedKernel
+
+---
+
+::: phydrax.kernels.ProjectedTangentKernel
+
+---
+
+::: phydrax.kernels.ProjectedDifferentialFormKernel
+
+---
+
+::: phydrax.kernels.sphere_tangent_projector
+
+---
+
+::: phydrax.kernels.sphere_tangent_kernel
+
+---
+
+::: phydrax.kernels.sphere_differential_form_kernel
+
+## Noncompact fixed-noise features
+
+Hyperbolic and SPD kernels use fixed Helgason or horospherical plane waves and
+explicit, immutable multivariate-Cauchy importance proposals. Target weights
+combine Matérn functional calculus at the shifted symmetric-space Laplacian
+eigenvalues with the relative Harish-Chandra Plancherel density. A
+convention-dependent global spectral-measure constant is left to
+`AmplitudeKernel`.
+
+Sampling is never parameter-dependent inside traced evaluation: optimize the
+smooth kernel hyperparameters against fixed noise, inspect effective sample size
+and the unbiased Monte Carlo standard error, then resample only through an explicit
+method call. The Cauchy importance estimator has finite variance only for Matérn
+smoothness greater than `0.25`; diagnostics report an infinite standard error at or
+below that boundary and for singleton proposals, and reject zero-total-weight
+samples. Factory-generated proposal IDs content-hash the fixed arrays, geometry,
+and proposal scale and support reproducible prefix-rank convergence studies.
+
+::: phydrax.kernels.NoncompactFeatureProposal
+
+---
+
+::: phydrax.kernels.ImportanceFeatureDiagnostics
+
+---
+
+::: phydrax.kernels.hyperbolic_feature_proposal
+
+---
+
+::: phydrax.kernels.HyperbolicRandomFeatureKernel
+
+---
+
+::: phydrax.kernels.spd_feature_proposal
+
+---
+
+::: phydrax.kernels.SPDRandomFeatureKernel
+
+## Benchmark
+
+Run the graph-spectrum, finite-feature, dense-parity, storage, and conditioning
+smoke workflow with:
+
+```bash
+python -m tools.spectral_kernel_benchmarks --smoke
+```

@@ -14,8 +14,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import scipy.sparse as sp
-from jaxtyping import Array
-from scipy.sparse.linalg import eigsh
+from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -27,6 +26,7 @@ CochainBoundaryKind: TypeAlias = Literal["absolute", "relative"]
 CochainSide: TypeAlias = Literal["primal", "dual"]
 CochainCellOrientation: TypeAlias = Literal["invariant", "signed"]
 CochainSampling: TypeAlias = Literal["point_value", "cell_average", "cell_integral"]
+GraphEdgeSemantics: TypeAlias = Literal["reciprocal", "undirected_once"]
 
 
 class CochainFieldSpec(StrictModule):
@@ -658,6 +658,157 @@ class CochainComplexIR(StrictModule, NonTrainableState):
                 )
 
 
+def _graph_edge_weight(
+    graph: GraphIR,
+    edge_weight_key: str | None,
+    /,
+) -> np.ndarray:
+    count = 0 if graph.senders is None else int(graph.senders.shape[0])
+    if edge_weight_key is None:
+        if graph.edges is None:
+            return np.ones((count,), dtype=float)
+        if isinstance(graph.edges, Mapping):
+            raise ValueError(
+                "edge_weight_key is required when GraphIR.edges is a mapping."
+            )
+        payload = graph.edges
+    else:
+        if not isinstance(edge_weight_key, str) or not edge_weight_key:
+            raise ValueError("edge_weight_key must be a nonempty string or None.")
+        if not isinstance(graph.edges, Mapping) or edge_weight_key not in graph.edges:
+            raise ValueError(f"GraphIR.edges has no {edge_weight_key!r} payload.")
+        payload = graph.edges[edge_weight_key]
+    weight = _host_array("graph edge weights", payload, dtype=float)
+    if weight.shape != (count,):
+        raise ValueError(f"Graph edge weights must have shape ({count},).")
+    return weight
+
+
+def _graph_node_measure(
+    node_measure: Literal["uniform", "degree"] | ArrayLike,
+    node_count: int,
+    senders: np.ndarray,
+    receivers: np.ndarray,
+    conductances: np.ndarray,
+    /,
+) -> np.ndarray:
+    if isinstance(node_measure, str):
+        if node_measure == "uniform":
+            measure = np.ones((node_count,), dtype=float)
+        elif node_measure == "degree":
+            measure = np.zeros((node_count,), dtype=float)
+            np.add.at(measure, senders, conductances)
+            np.add.at(measure, receivers, conductances)
+        else:
+            raise ValueError("node_measure must be 'uniform', 'degree', or an array.")
+    else:
+        measure = _host_array("node_measure", node_measure, dtype=float)
+    if measure.shape != (node_count,):
+        raise ValueError(f"node_measure must have shape ({node_count},).")
+    if np.any(measure <= 0.0):
+        raise ValueError("node_measure must be strictly positive.")
+    return measure
+
+
+def graph_to_cochain_complex(
+    graph: GraphIR,
+    /,
+    *,
+    edge_weight_key: str | None = None,
+    node_measure: Literal["uniform", "degree"] | ArrayLike = "uniform",
+    edge_semantics: GraphEdgeSemantics = "reciprocal",
+    reciprocal_rtol: float = 1e-8,
+    reciprocal_atol: float = 1e-12,
+) -> CochainComplexIR:
+    """Convert one unpadded graph into a canonical metric one-complex."""
+    if not isinstance(graph, GraphIR):
+        raise TypeError("graph_to_cochain_complex requires a GraphIR.")
+    graph.validate()
+    if graph.num_graphs != 1:
+        raise ValueError("Graph-to-cochain conversion requires exactly one graph.")
+    if graph.node_mask is not None or graph.graph_mask is not None:
+        raise ValueError("Padded node or graph masks are not supported.")
+    if edge_semantics not in ("reciprocal", "undirected_once"):
+        raise ValueError("edge_semantics must be 'reciprocal' or 'undirected_once'.")
+    if float(reciprocal_rtol) < 0.0 or float(reciprocal_atol) < 0.0:
+        raise ValueError("Reciprocal tolerances must be nonnegative.")
+    node_count = graph.num_nodes
+    if node_count <= 0:
+        raise ValueError("Graph-to-cochain conversion requires at least one node.")
+    if graph.senders is None or graph.receivers is None:
+        senders = np.zeros((0,), dtype=np.int32)
+        receivers = np.zeros((0,), dtype=np.int32)
+    else:
+        senders = np.asarray(graph.senders, dtype=np.int32)
+        receivers = np.asarray(graph.receivers, dtype=np.int32)
+    weights = _graph_edge_weight(graph, edge_weight_key)
+    if graph.edge_mask is not None:
+        valid = np.asarray(graph.edge_mask, dtype=bool)
+        if valid.shape != senders.shape:
+            raise ValueError("edge_mask must align with stored graph edges.")
+        senders = senders[valid]
+        receivers = receivers[valid]
+        weights = weights[valid]
+    if np.any(senders == receivers):
+        raise ValueError("Self-loops do not define one-dimensional cochain cells.")
+    if np.any(weights <= 0.0):
+        raise ValueError("Graph conductances must be finite and strictly positive.")
+
+    oriented: dict[tuple[int, int], float] = {}
+    for source, target, weight in zip(senders, receivers, weights, strict=True):
+        pair = (int(source), int(target))
+        oriented[pair] = oriented.get(pair, 0.0) + float(weight)
+    canonical: dict[tuple[int, int], float] = {}
+    if edge_semantics == "reciprocal":
+        for (source, target), forward in oriented.items():
+            reverse_pair = (target, source)
+            if reverse_pair not in oriented:
+                raise ValueError("Reciprocal edge semantics require every reverse edge.")
+            reverse = oriented[reverse_pair]
+            if not np.isclose(
+                forward,
+                reverse,
+                rtol=float(reciprocal_rtol),
+                atol=float(reciprocal_atol),
+            ):
+                raise ValueError("Reciprocal aggregate conductances are inconsistent.")
+            pair = (min(source, target), max(source, target))
+            canonical[pair] = 0.5 * (forward + reverse)
+    else:
+        for (source, target), weight in oriented.items():
+            pair = (min(source, target), max(source, target))
+            canonical[pair] = canonical.get(pair, 0.0) + weight
+
+    ordered = tuple(sorted(canonical))
+    edge_count = len(ordered)
+    canonical_senders = np.asarray([pair[0] for pair in ordered], dtype=np.int32)
+    canonical_receivers = np.asarray([pair[1] for pair in ordered], dtype=np.int32)
+    conductances = np.asarray([canonical[pair] for pair in ordered], dtype=float)
+    measure = _graph_node_measure(
+        node_measure,
+        node_count,
+        canonical_senders,
+        canonical_receivers,
+        conductances,
+    )
+    if edge_count == 0:
+        return CochainComplexIR((node_count,), (), (measure,))
+    edge_ids = np.repeat(np.arange(edge_count, dtype=np.int32), 2)
+    incidence = CochainIncidence(
+        1,
+        node_count,
+        edge_count,
+        np.stack((canonical_senders, canonical_receivers), axis=1).reshape((-1,)),
+        edge_ids,
+        np.tile(np.asarray((-1.0, 1.0)), edge_count),
+    )
+    return CochainComplexIR(
+        (node_count, edge_count),
+        (incidence,),
+        (measure, conductances),
+    )
+
+
 def cochain_complex_from_incidences(
     cell_counts: Sequence[int],
     incidences: Sequence[CochainIncidence | Any],
@@ -808,123 +959,6 @@ def triangle_mesh_to_cochain_complex(
     )
 
 
-def _restricted_boundary_matrix(
-    complex_ir: CochainComplexIR,
-    degree: int,
-    policy: CochainBoundaryPolicy,
-    /,
-) -> sp.csr_matrix:
-    boundary = complex_ir.incidences[degree - 1].scipy_matrix()
-    if policy.kind == "absolute":
-        return boundary
-    lower_active = np.asarray(complex_ir.active_mask(degree - 1, policy))
-    upper_active = np.asarray(complex_ir.active_mask(degree, policy))
-    return boundary[lower_active][:, upper_active].tocsr()
-
-
-def compute_harmonic_subspace(
-    complex_ir: CochainComplexIR,
-    /,
-    *,
-    boundary_policy: CochainBoundaryKind = "absolute",
-    max_modes: int = 8,
-    tolerance: float = 1e-9,
-    dense_threshold: int = 256,
-) -> HarmonicSubspace:
-    """Precompute exact metric harmonic bases without target-dependent information."""
-    if not isinstance(complex_ir, CochainComplexIR):
-        raise TypeError("compute_harmonic_subspace requires a CochainComplexIR.")
-    policy = CochainBoundaryPolicy(boundary_policy)
-    if int(max_modes) < 0:
-        raise ValueError("max_modes must be non-negative.")
-    if float(tolerance) <= 0.0:
-        raise ValueError("tolerance must be positive.")
-    bases: list[Array] = []
-    eigenvalues: list[Array] = []
-    ranks: list[int] = []
-    for degree, count in enumerate(complex_ir.cell_counts):
-        active = np.asarray(complex_ir.active_mask(degree, policy), dtype=bool)
-        active_count = int(np.sum(active))
-        metric = np.asarray(complex_ir.hodge_stars[degree])[active]
-        inverse_sqrt = sp.diags(1.0 / np.sqrt(metric))
-        sqrt_metric = sp.diags(np.sqrt(metric))
-        laplacian = sp.csr_matrix((active_count, active_count), dtype=float)
-        if degree > 0:
-            boundary = _restricted_boundary_matrix(complex_ir, degree, policy)
-            transformed = (
-                sqrt_metric
-                @ boundary.T
-                @ sp.diags(
-                    1.0
-                    / np.sqrt(
-                        np.asarray(complex_ir.hodge_stars[degree - 1])[
-                            np.asarray(
-                                complex_ir.active_mask(degree - 1, policy), dtype=bool
-                            )
-                        ]
-                    )
-                )
-            )
-            laplacian = laplacian + transformed @ transformed.T
-        if degree < complex_ir.max_degree:
-            boundary = _restricted_boundary_matrix(complex_ir, degree + 1, policy)
-            transformed = (
-                sp.diags(
-                    np.sqrt(
-                        np.asarray(complex_ir.hodge_stars[degree + 1])[
-                            np.asarray(
-                                complex_ir.active_mask(degree + 1, policy), dtype=bool
-                            )
-                        ]
-                    )
-                )
-                @ boundary.T
-                @ inverse_sqrt
-            )
-            laplacian = laplacian + transformed.T @ transformed
-        laplacian = 0.5 * (laplacian + laplacian.T)
-        scale = max(1.0, float(np.max(np.abs(laplacian.data), initial=0.0)))
-        threshold = float(tolerance) * scale
-        if active_count == 0:
-            values = np.zeros((0,), dtype=float)
-            vectors = np.zeros((0, 0), dtype=float)
-        elif active_count <= int(dense_threshold) or active_count <= int(max_modes) + 1:
-            values, vectors = np.linalg.eigh(laplacian.toarray())
-        else:
-            requested = min(active_count - 1, int(max_modes) + 1)
-            values, vectors = eigsh(laplacian, k=requested, which="SM", tol=tolerance)
-            order = np.argsort(values, kind="stable")
-            values = values[order]
-            vectors = vectors[:, order]
-        rank = int(np.sum(np.abs(values) <= threshold))
-        if rank > int(max_modes) or (
-            values.size and rank == values.size and values.size < active_count
-        ):
-            raise ValueError(
-                "Harmonic nullspace exceeds max_modes or is not separated from nonzero modes."
-            )
-        physical_active = np.asarray(inverse_sqrt @ vectors[:, :rank])
-        physical = np.zeros((count, int(max_modes)), dtype=float)
-        if rank:
-            physical[np.flatnonzero(active), :rank] = physical_active
-            gram = physical_active.T @ (metric[:, None] * physical_active)
-            if not np.allclose(gram, np.eye(rank), rtol=1e-7, atol=1e-9):
-                raise ValueError("Computed harmonic basis is not metric orthonormal.")
-        stored_values = np.full((int(max_modes),), np.inf, dtype=float)
-        stored_values[: min(values.size, int(max_modes))] = values[: int(max_modes)]
-        bases.append(jnp.asarray(physical))
-        eigenvalues.append(jnp.asarray(stored_values))
-        ranks.append(rank)
-    return HarmonicSubspace(
-        bases,
-        eigenvalues,
-        ranks,
-        max_modes=int(max_modes),
-        boundary_policy=policy.kind,
-        complex_fingerprint=complex_ir.fingerprint,
-    )
-
-
 def reorient_cochain(
     values: Any,
     orientation_signs: Any,
@@ -1009,11 +1043,12 @@ __all__ = [
     "CochainBoundaryKind",
     "CochainBoundaryPolicy",
     "CochainComplexIR",
+    "GraphEdgeSemantics",
     "CochainIncidence",
     "HarmonicSubspace",
     "cochain_complex_from_incidences",
     "cochain_complex_from_simplicial",
-    "compute_harmonic_subspace",
+    "graph_to_cochain_complex",
     "reorient_cochain",
     "reorient_cochain_complex",
     "triangle_mesh_to_cochain_complex",

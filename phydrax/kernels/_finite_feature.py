@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from abc import abstractmethod
 from collections.abc import Callable
 
 import equinox as eqx
@@ -15,7 +16,22 @@ from jaxtyping import Array, ArrayLike
 from ._base import _as_point, _as_points, AbstractPositiveDefiniteKernel
 
 
-class FiniteFeatureKernel(AbstractPositiveDefiniteKernel):
+class AbstractFiniteFeatureKernel(AbstractPositiveDefiniteKernel):
+    """Positive-definite kernel with an explicit finite real feature map."""
+
+    @abstractmethod
+    def features(self, points: ArrayLike, /) -> Array:
+        """Evaluate whitened features with shape ``(point, rank)``."""
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def feature_rank(self) -> int:
+        """Return the static number of whitened features."""
+        raise NotImplementedError
+
+
+class FiniteFeatureKernel(AbstractFiniteFeatureKernel):
     """Finite-rank kernel represented by whitened real feature vectors."""
 
     feature_map: Callable[[Array], Array]
@@ -113,6 +129,10 @@ class FiniteFeatureKernel(AbstractPositiveDefiniteKernel):
         return feature @ self.feature_factor
 
     @property
+    def feature_rank(self) -> int:
+        return int(self.feature_factor.shape[1])
+
+    @property
     def max_derivative_order(self) -> int | None:
         return self.feature_derivative_order
 
@@ -125,4 +145,58 @@ class FiniteFeatureKernel(AbstractPositiveDefiniteKernel):
         return f"FiniteFeatureKernel[{self.feature_map_id}]"
 
 
-__all__ = ["FiniteFeatureKernel"]
+def kernel_feature_rank(kernel: AbstractPositiveDefiniteKernel, /) -> int | None:
+    """Return the exact composed feature rank, or ``None`` when unavailable."""
+    from ._algebra import AmplitudeKernel, SumKernel
+    from ._transforms import InputTransformedKernel
+
+    if isinstance(kernel, AbstractFiniteFeatureKernel):
+        return kernel.feature_rank
+    if isinstance(kernel, (AmplitudeKernel, InputTransformedKernel)):
+        return kernel_feature_rank(kernel.kernel)
+    if isinstance(kernel, SumKernel):
+        ranks = tuple(kernel_feature_rank(child) for child in kernel.kernels)
+        if any(rank is None for rank in ranks):
+            return None
+        return sum(int(rank) for rank in ranks if rank is not None)
+    return None
+
+
+def kernel_features(
+    kernel: AbstractPositiveDefiniteKernel,
+    points: ArrayLike,
+    /,
+) -> Array:
+    """Evaluate exact composed features or reject an unsupported kernel tree."""
+    from ._algebra import AmplitudeKernel, SumKernel
+    from ._transforms import InputTransformedKernel
+
+    rank = kernel_feature_rank(kernel)
+    if rank is None:
+        raise TypeError(f"{kernel.kernel_id} has no exact finite-feature representation.")
+    if isinstance(kernel, AbstractFiniteFeatureKernel):
+        features = kernel.features(points)
+    elif isinstance(kernel, AmplitudeKernel):
+        features = kernel.amplitude * kernel_features(kernel.kernel, points)
+    elif isinstance(kernel, SumKernel):
+        features = jnp.concatenate(
+            tuple(kernel_features(child, points) for child in kernel.kernels),
+            axis=-1,
+        )
+    elif isinstance(kernel, InputTransformedKernel):
+        point_design = _as_points(points, name="points")
+        transformed = jax.vmap(kernel._transform_point)(point_design)
+        features = kernel_features(kernel.kernel, transformed)
+    else:
+        raise TypeError(f"{kernel.kernel_id} has no exact finite-feature representation.")
+    if features.ndim != 2 or int(features.shape[1]) != rank:
+        raise ValueError("Composed kernel features do not match their declared rank.")
+    return features
+
+
+__all__ = [
+    "AbstractFiniteFeatureKernel",
+    "FiniteFeatureKernel",
+    "kernel_feature_rank",
+    "kernel_features",
+]

@@ -222,6 +222,12 @@ operator's active subcomplex. `reorient_cochain_complex` changes the oriented
 cell basis without changing the represented physical complex; use
 `reorient_cochain` to transform signed coefficient arrays consistently.
 
+`graph_to_cochain_complex` is the canonical graph-to-DEC bridge. Its explicit
+`GraphEdgeSemantics` distinguishes reciprocal directed storage from an
+undirected-once edge list, resolves parallel conductances deterministically, and
+rejects ambiguous asymmetric or padded inputs. It creates a degree-one cochain
+complex with the requested node probability measure.
+
 ::: phydrax.graph.CochainComplexIR
 
 ---
@@ -243,6 +249,10 @@ cell basis without changing the represented physical complex; use
 ---
 
 ::: phydrax.graph.reorient_cochain_complex
+
+---
+
+::: phydrax.graph.graph_to_cochain_complex
 
 ---
 
@@ -331,10 +341,33 @@ masks exclude padding; optional segment weights compose graph-time quadrature.
 
 ---
 
-## Spectral graph operators
+## Spectral graph and cochain operators
 
-Sparse polynomial and Chebyshev filters provide a scalable spectral graph
-operator path without dense eigendecompositions.
+`cochain_laplacian_eigenbasis` assembles the symmetric metric form of a complete,
+lower, or upper Hodge Laplacian and returns a
+`phydrax.metrix.DiscreteLaplacianEigenbasis`. Dense solves certify exact spectra or
+truncated tails from the full eigenspectrum. Sparse solves retain one Ritz lookahead
+to reject an observed cut through a degenerate eigenspace, but mark
+`report.tail_certified = False`: the lookahead is not a certified lower bound on
+the omitted spectrum. Product-spectrum construction therefore accepts truncated
+factors only when their tails were certified by a dense solve. Absolute and relative
+boundary policies select different active subcomplexes.
+`cochain_hodge_sector_spectra` separates the harmonic, exact, and coexact sectors
+for compositional cochain covariances.
+
+
+::: phydrax.graph.CochainHodgeSectorSpectra
+
+---
+
+::: phydrax.graph.cochain_laplacian_eigenbasis
+
+---
+
+::: phydrax.graph.cochain_hodge_sector_spectra
+
+Sparse polynomial and Chebyshev filters provide the complementary scalable path
+that applies a spectral graph operator without an eigendecomposition.
 
 ::: phydrax.graph.graph_adjacency_apply
 
