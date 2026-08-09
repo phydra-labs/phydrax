@@ -261,6 +261,101 @@ def test_approximate_experiment_composes_without_discarding_particle_diagnostics
         jnp.sum(diagnostic.per_case_log_likelihood)
     )
 
+def test_bellman_and_rao_blackwellized_likelihood_backends_retain_diagnostics():
+    _, template = _templates()
+    bellman_experiment = phx.uq.StateSpaceExperiment(
+        lambda parameters: eqx.tree_at(
+            lambda problem: problem.model.observation.offset,
+            template,
+            parameters["offset"],
+        ),
+        experiment_id="bellman",
+        case_axes=(),
+        case_shape=(),
+        case_ids=("single",),
+        likelihood=phx.uq.StateSpaceLaplaceLikelihood(),
+        likelihood_id="bellman-pseudo",
+    )
+
+    nonlinear_prior = phx.stochastic.CategoricalStatePrior(
+        jnp.asarray([[0]]), jnp.asarray([1.0]), prior_id="estimation-mode-prior"
+    )
+    nonlinear_transition = phx.stochastic.CallableTransitionKernel(
+        lambda key, state, t0, t1, context: state,
+        state_shape=(1,),
+        process_id="estimation-mode",
+        approximation_id="constant-mode",
+    )
+    rb_model = phx.uq.RaoBlackwellizedStateSpaceModel(
+        nonlinear_prior,
+        nonlinear_transition,
+        lambda mode, args: (jnp.asarray([args["offset"]]), jnp.eye(1)),
+        lambda previous_mode, mode, t0, t1, context: (
+            jnp.eye(1),
+            jnp.zeros(1),
+            jnp.asarray([[0.15]]),
+        ),
+        lambda mode, time, context: (
+            jnp.eye(1),
+            jnp.zeros(1),
+            jnp.asarray([[0.25]]),
+        ),
+        linear_state_shape=(1,),
+        observation_shape=(1,),
+        model_id="estimation-rb-model",
+    )
+
+    def rb_problem(parameters):
+        return phx.uq.RaoBlackwellizedStateSpaceProblem(
+            rb_model,
+            template.observations,
+            initial_time=0.0,
+            problem_id="estimation-rb-problem",
+            args={"offset": parameters["offset"]},
+        )
+
+    rb_experiment = phx.uq.StateSpaceExperiment(
+        rb_problem,
+        experiment_id="rao-blackwellized",
+        case_axes=(),
+        case_shape=(),
+        case_ids=("single",),
+        likelihood=phx.uq.RaoBlackwellizedFilterLikelihood(
+            jr.key(18),
+            num_particles=4,
+            resampling_policy="never",
+        ),
+        likelihood_id="rao-blackwellized-4",
+    )
+    parameters = {"offset": jnp.asarray(0.1)}
+    bellman = bellman_experiment.evaluate(parameters)
+    rao = rb_experiment.evaluate(parameters)
+
+    assert isinstance(bellman.backend, phx.uq.BellmanFilterResult)
+    assert bellman.method == "bellman-pseudo"
+    assert bellman.curvature_damping == 0.0
+    assert jnp.allclose(
+        bellman.per_case_log_likelihood,
+        bellman.backend.cumulative_pseudo_log_likelihood[..., -1],
+    )
+    assert isinstance(rao.backend, phx.uq.RaoBlackwellizedFilterResult)
+    assert rao.method == "rao-blackwellized-particle"
+    assert rao.problem is rao.backend.problem
+    assert jnp.allclose(
+        rao.per_case_log_likelihood,
+        rao.backend.cumulative_log_likelihood[..., -1],
+    )
+
+    exact_only = phx.uq.StateSpaceExperiment(
+        rb_problem,
+        experiment_id="rao-without-backend",
+        case_axes=(),
+        case_shape=(),
+        case_ids=("single",),
+    )
+    with pytest.raises(TypeError, match="requires a custom likelihood"):
+        exact_only.evaluate(parameters)
+
 
 @pytest.mark.parametrize(
     "workflow",

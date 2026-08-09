@@ -19,6 +19,7 @@ import jax.scipy as jsp
 import optax
 
 import phydrax as phx
+from phydrax.uq._conditional_moments import _condition_affine_gaussian_diagonal
 
 from .configuration import BenchmarkConfiguration
 from .report import Metric, metric, ScenarioResult
@@ -2883,6 +2884,486 @@ def linearized_uncertainty_propagation(
     )
 
 
+def dynamic_factor_stochastic_volatility(
+    configuration: BenchmarkConfiguration,
+    seed: int,
+) -> ScenarioResult:
+    """Compare generic Bellman, bootstrap, and conditionally linear DFSV inference."""
+    started = time.perf_counter()
+    root_key = jr.key(seed)
+    (
+        loading_key,
+        initial_key,
+        transition_key,
+        observation_key,
+        particle_key,
+        rb_key,
+        smoother_key,
+    ) = jr.split(root_key, 7)
+    assets = configuration.dfsv_assets
+    steps = configuration.dfsv_steps
+    factors = configuration.dfsv_factors
+    particles = configuration.dfsv_particles
+    smoother_paths = configuration.dfsv_smoother_paths
+    factor_persistence = jnp.linspace(0.65, 0.8, factors)
+    volatility_persistence = jnp.linspace(0.88, 0.95, factors)
+    volatility_mean = jnp.linspace(-2.2, -1.7, factors)
+    volatility_innovation_variance = jnp.linspace(0.025, 0.045, factors)
+    idiosyncratic_variance = jnp.linspace(0.12, 0.2, assets)
+    loadings = jr.normal(loading_key, (assets, factors)) / jnp.sqrt(factors)
+    stationary_volatility_variance = volatility_innovation_variance / (
+        1.0 - volatility_persistence**2
+    )
+    stationary_factor_variance = jnp.exp(volatility_mean) / (
+        1.0 - factor_persistence**2
+    )
+
+    initial_factor_key, initial_volatility_key = jr.split(initial_key)
+    factor = jnp.sqrt(stationary_factor_variance) * jr.normal(
+        initial_factor_key, (factors,)
+    )
+    volatility = volatility_mean + jnp.sqrt(
+        stationary_volatility_variance
+    ) * jr.normal(initial_volatility_key, (factors,))
+    true_factors = []
+    true_volatilities = []
+    observations = []
+    transition_keys = jr.split(transition_key, steps)
+    observation_keys = jr.split(observation_key, steps)
+    for step in range(steps):
+        volatility_noise_key, factor_noise_key = jr.split(transition_keys[step])
+        volatility = volatility_mean + volatility_persistence * (
+            volatility - volatility_mean
+        ) + jnp.sqrt(volatility_innovation_variance) * jr.normal(
+            volatility_noise_key, (factors,)
+        )
+        factor = factor_persistence * factor + jnp.exp(
+            0.5 * volatility
+        ) * jr.normal(factor_noise_key, (factors,))
+        observation = loadings @ factor + jnp.sqrt(
+            idiosyncratic_variance
+        ) * jr.normal(observation_keys[step], (assets,))
+        true_factors.append(factor)
+        true_volatilities.append(volatility)
+        observations.append(observation)
+    true_factors_array = jnp.stack(true_factors)
+    true_volatilities_array = jnp.stack(true_volatilities)
+    observation_array = jnp.stack(observations)
+    schedule = phx.stochastic.ObservationSequence(
+        jnp.arange(1, steps + 1, dtype=float),
+        observation_array,
+        case_ids=("dfsv",),
+        sequence_id=f"dfsv-{configuration.profile}",
+    )
+    joint_mean = jnp.concatenate((jnp.zeros(factors), volatility_mean))
+    joint_covariance = jnp.diag(
+        jnp.concatenate(
+            (stationary_factor_variance, stationary_volatility_variance)
+        )
+    )
+
+    def joint_sample(key, state, t0, t1, context):
+        del t0, t1, context
+        factor_key, volatility_key = jr.split(key)
+        previous_factor = state[:factors]
+        previous_volatility = state[factors:]
+        next_volatility = volatility_mean + volatility_persistence * (
+            previous_volatility - volatility_mean
+        ) + jnp.sqrt(volatility_innovation_variance) * jr.normal(
+            volatility_key, (factors,)
+        )
+        next_factor = factor_persistence * previous_factor + jnp.exp(
+            0.5 * next_volatility
+        ) * jr.normal(factor_key, (factors,))
+        return jnp.concatenate((next_factor, next_volatility))
+
+    def diagonal_gaussian_log_prob(value, mean, variance):
+        residual = value - mean
+        return -0.5 * jnp.sum(
+            residual**2 / variance + jnp.log(2.0 * jnp.pi * variance)
+        )
+
+    def joint_log_prob(next_state, state, t0, t1, context):
+        del t0, t1, context
+        previous_factor = state[:factors]
+        previous_volatility = state[factors:]
+        next_factor = next_state[:factors]
+        next_volatility = next_state[factors:]
+        volatility_location = volatility_mean + volatility_persistence * (
+            previous_volatility - volatility_mean
+        )
+        factor_location = factor_persistence * previous_factor
+        return diagonal_gaussian_log_prob(
+            next_volatility,
+            volatility_location,
+            volatility_innovation_variance,
+        ) + diagonal_gaussian_log_prob(
+            next_factor, factor_location, jnp.exp(next_volatility)
+        )
+
+    def observation_log_prob(value, state, time, mask, context):
+        del time, context
+        residual = value - loadings @ state[:factors]
+        terms = -0.5 * (
+            residual**2 / idiosyncratic_variance
+            + jnp.log(2.0 * jnp.pi * idiosyncratic_variance)
+        )
+        return jnp.sum(jnp.where(mask, terms, 0.0))
+
+    joint_transition = phx.stochastic.CallableTransitionKernel(
+        joint_sample,
+        state_shape=(2 * factors,),
+        process_id="dfsv-joint",
+        approximation_id="exact-dfsv-transition",
+        log_prob_fn=joint_log_prob,
+    )
+    joint_observation = phx.stochastic.CallableObservationModel(
+        lambda state, time, context: loadings @ state[:factors],
+        observation_log_prob,
+        lambda key, state, time, sample_shape, context: (
+            loadings @ state[:factors]
+            + jnp.sqrt(idiosyncratic_variance)
+            * jr.normal(key, sample_shape + (assets,))
+        ),
+        state_shape=(2 * factors,),
+        observation_shape=(assets,),
+        observation_id="dfsv-returns",
+    )
+    joint_problem = phx.stochastic.StateSpaceProblem(
+        phx.stochastic.StateSpaceModel(
+            phx.stochastic.GaussianStatePrior(
+                joint_mean,
+                joint_covariance,
+                state_shape=(2 * factors,),
+                prior_id="dfsv-joint-prior",
+            ),
+            joint_transition,
+            joint_observation,
+            model_id="dfsv-joint-model",
+        ),
+        schedule,
+        initial_time=0.0,
+        problem_id="dfsv-joint-problem",
+    )
+
+    bellman, bellman_seconds = _timed_call(
+        lambda: phx.uq.bellman_filter(
+            joint_problem,
+            method="optimization",
+            curvature_damping=1.0e-6,
+            optimizer_max_steps=64,
+            max_dimension=max(64, 2 * factors),
+        )
+    )
+    particle_filter, particle_seconds = _timed_call(
+        lambda: phx.uq.bootstrap_particle_filter(
+            particle_key,
+            joint_problem,
+            num_particles=particles,
+            resampling_policy="ess",
+        )
+    )
+
+    def volatility_sample(key, state, t0, t1, context):
+        del t0, t1, context
+        return volatility_mean + volatility_persistence * (
+            state - volatility_mean
+        ) + jnp.sqrt(volatility_innovation_variance) * jr.normal(
+            key, (factors,)
+        )
+
+    def volatility_log_prob(next_state, state, t0, t1, context):
+        del t0, t1, context
+        location = volatility_mean + volatility_persistence * (
+            state - volatility_mean
+        )
+        return diagonal_gaussian_log_prob(
+            next_state, location, volatility_innovation_variance
+        )
+
+    diagonal_observation_noise = phx.uq.DiagonalCovariance(
+        idiosyncratic_variance
+    )
+    rb_model = phx.uq.RaoBlackwellizedStateSpaceModel(
+        phx.stochastic.GaussianStatePrior(
+            volatility_mean,
+            jnp.diag(stationary_volatility_variance),
+            state_shape=(factors,),
+            prior_id="dfsv-volatility-prior",
+        ),
+        phx.stochastic.CallableTransitionKernel(
+            volatility_sample,
+            state_shape=(factors,),
+            process_id="dfsv-volatility",
+            approximation_id="exact-dfsv-volatility",
+            log_prob_fn=volatility_log_prob,
+        ),
+        lambda nonlinear, args: (
+            jnp.zeros(factors),
+            jnp.diag(stationary_factor_variance),
+        ),
+        lambda previous, nonlinear, t0, t1, context: (
+            jnp.diag(factor_persistence),
+            jnp.zeros(factors),
+            jnp.diag(jnp.exp(nonlinear)),
+        ),
+        lambda nonlinear, time, context: (
+            loadings,
+            jnp.zeros(assets),
+            diagonal_observation_noise,
+        ),
+        linear_state_shape=(factors,),
+        observation_shape=(assets,),
+        model_id="dfsv-conditionally-linear-model",
+    )
+    rb_problem = phx.uq.RaoBlackwellizedStateSpaceProblem(
+        rb_model,
+        schedule,
+        initial_time=0.0,
+        problem_id="dfsv-conditionally-linear-problem",
+    )
+    rb_filter, rb_seconds = _timed_call(
+        lambda: phx.uq.rao_blackwellized_particle_filter(
+            rb_key,
+            rb_problem,
+            num_particles=particles,
+            resampling_policy="ess",
+        )
+    )
+    rb_smoother, smoother_seconds = _timed_call(
+        lambda: phx.uq.rao_blackwellized_particle_smoother(
+            smoother_key,
+            rb_filter,
+            sample_shape=(smoother_paths,),
+        )
+    )
+
+    particle_weights = jnp.exp(particle_filter.log_weights)
+    particle_mean = jnp.sum(
+        particle_weights[..., None] * particle_filter.particles, axis=-2
+    )
+    rb_weights = jnp.exp(rb_filter.log_weights)
+    rb_factor_mean = jnp.sum(
+        rb_weights[..., None] * rb_filter.linear_means, axis=-2
+    )
+    rb_volatility_mean = jnp.sum(
+        rb_weights[..., None] * rb_filter.nonlinear_particles, axis=-2
+    )
+    smoothed_factor_mean = jnp.mean(rb_smoother.linear_means, axis=0)
+    smoothed_volatility_mean = jnp.mean(
+        rb_smoother.backward_simulation.nonlinear_paths, axis=0
+    )
+
+    def rmse(estimate, truth):
+        return jnp.sqrt(jnp.mean((estimate - truth) ** 2))
+
+    micro_mean = jnp.zeros(factors)
+    micro_covariance = jnp.diag(stationary_factor_variance)
+    micro_value = observation_array[0]
+    micro_mask = jnp.ones(assets, dtype=bool)
+
+    def diagonal_condition(mean, covariance, value):
+        return _condition_affine_gaussian_diagonal(
+            mean,
+            covariance,
+            loadings,
+            jnp.zeros(assets),
+            idiosyncratic_variance,
+            value,
+            micro_mask,
+        )[:3]
+
+    def dense_condition(mean, covariance, value):
+        innovation = value - loadings @ mean
+        innovation_covariance = (
+            loadings @ covariance @ loadings.T
+            + jnp.diag(idiosyncratic_variance)
+        )
+        scale = jnp.linalg.cholesky(innovation_covariance)
+        gain = jnp.linalg.solve(
+            innovation_covariance, loadings @ covariance
+        ).T
+        posterior_mean = mean + gain @ innovation
+        posterior_covariance = covariance - gain @ loadings @ covariance
+        solved = jax.scipy.linalg.solve_triangular(
+            scale, innovation[:, None], lower=True
+        )[:, 0]
+        log_likelihood = -0.5 * (
+            jnp.sum(solved**2)
+            + 2.0 * jnp.sum(jnp.log(jnp.diag(scale)))
+            + assets * jnp.log(2.0 * jnp.pi)
+        )
+        return posterior_mean, posterior_covariance, log_likelihood
+
+    diagonal_output = diagonal_condition(
+        micro_mean, micro_covariance, micro_value
+    )
+    dense_output = dense_condition(micro_mean, micro_covariance, micro_value)
+    _, _, diagonal_execute = _jit_timings(
+        diagonal_condition,
+        micro_mean,
+        micro_covariance,
+        micro_value,
+        repetitions=configuration.jit_warm_repetitions,
+    )
+    _, _, dense_execute = _jit_timings(
+        dense_condition,
+        micro_mean,
+        micro_covariance,
+        micro_value,
+        repetitions=configuration.jit_warm_repetitions,
+    )
+    conditional_error = max(
+        float(jnp.max(jnp.abs(left - right)))
+        for left, right in zip(diagonal_output, dense_output, strict=True)
+    )
+
+    def array_bytes(value):
+        return sum(
+            int(leaf.size * leaf.dtype.itemsize)
+            for leaf in jax.tree_util.tree_leaves(value)
+            if eqx.is_array(leaf)
+        )
+
+    def status_counts(values):
+        codes = tuple(
+            int(value) for value in jax.device_get(values).reshape(-1).tolist()
+        )
+        return {str(code): codes.count(code) for code in sorted(set(codes))}
+
+    metrics = {
+        "bellman_factor_rmse": metric(
+            rmse(bellman.filtered_modes[..., :factors], true_factors_array),
+            "diagnostic",
+        ),
+        "bellman_log_volatility_rmse": metric(
+            rmse(
+                bellman.filtered_modes[..., factors:],
+                true_volatilities_array,
+            ),
+            "diagnostic",
+        ),
+        "particle_factor_rmse": metric(
+            rmse(particle_mean[..., :factors], true_factors_array),
+            "diagnostic",
+        ),
+        "particle_log_volatility_rmse": metric(
+            rmse(particle_mean[..., factors:], true_volatilities_array),
+            "diagnostic",
+        ),
+        "rb_factor_rmse": metric(
+            rmse(rb_factor_mean, true_factors_array), "diagnostic"
+        ),
+        "rb_log_volatility_rmse": metric(
+            rmse(rb_volatility_mean, true_volatilities_array), "diagnostic"
+        ),
+        "rb_smoothed_factor_rmse": metric(
+            rmse(smoothed_factor_mean, true_factors_array), "diagnostic"
+        ),
+        "rb_smoothed_log_volatility_rmse": metric(
+            rmse(smoothed_volatility_mean, true_volatilities_array),
+            "diagnostic",
+        ),
+        "bellman_pseudo_log_likelihood": metric(
+            bellman.final_state.pseudo_log_likelihood, "diagnostic"
+        ),
+        "particle_log_likelihood": metric(
+            particle_filter.final_state.log_likelihood, "diagnostic"
+        ),
+        "rb_log_likelihood": metric(
+            rb_filter.final_state.log_likelihood, "diagnostic"
+        ),
+        "particle_mean_effective_sample_size": metric(
+            jnp.mean(particle_filter.effective_sample_sizes), "diagnostic"
+        ),
+        "rb_mean_effective_sample_size": metric(
+            jnp.mean(rb_filter.effective_sample_sizes), "diagnostic"
+        ),
+        "bellman_valid_fraction": metric(
+            jnp.mean(bellman.valid), "convergence", minimum=1.0
+        ),
+        "particle_valid_fraction": metric(
+            jnp.mean(particle_filter.valid), "convergence", minimum=1.0
+        ),
+        "rb_valid_fraction": metric(
+            jnp.mean(rb_filter.valid), "convergence", minimum=1.0
+        ),
+        "rb_smoother_valid_fraction": metric(
+            jnp.mean(rb_smoother.valid), "convergence", minimum=1.0
+        ),
+        "bellman_pseudo_likelihood_valid_fraction": metric(
+            jnp.mean(bellman.pseudo_likelihood_valid),
+            "convergence",
+            minimum=1.0,
+        ),
+        "bellman_successful_step_count": metric(
+            jnp.sum(bellman.valid), "diagnostic"
+        ),
+        "particle_successful_step_count": metric(
+            jnp.sum(particle_filter.valid), "diagnostic"
+        ),
+        "rb_successful_step_count": metric(
+            jnp.sum(rb_filter.valid), "diagnostic"
+        ),
+        "rb_smoother_successful_step_count": metric(
+            jnp.sum(rb_smoother.valid), "diagnostic"
+        ),
+        "particle_resampling_count": metric(
+            jnp.sum(particle_filter.resampled), "diagnostic"
+        ),
+        "rb_resampling_count": metric(
+            jnp.sum(rb_filter.resampled), "diagnostic"
+        ),
+        "conditional_diagonal_dense_max_error": metric(
+            conditional_error, "accuracy", maximum=1.0e-10
+        ),
+        "conditional_diagonal_speedup": metric(
+            dense_execute / diagonal_execute, "diagnostic"
+        ),
+        "bellman_seconds": metric(bellman_seconds, "performance", unit="s"),
+        "particle_seconds": metric(particle_seconds, "performance", unit="s"),
+        "rb_filter_seconds": metric(rb_seconds, "performance", unit="s"),
+        "rb_smoother_seconds": metric(smoother_seconds, "performance", unit="s"),
+        "bellman_result_memory_bytes": metric(
+            array_bytes(bellman), "performance", unit="byte"
+        ),
+        "particle_result_memory_bytes": metric(
+            array_bytes(particle_filter), "performance", unit="byte"
+        ),
+        "rb_filter_result_memory_bytes": metric(
+            array_bytes(rb_filter), "performance", unit="byte"
+        ),
+        "rb_smoother_result_memory_bytes": metric(
+            array_bytes(rb_smoother), "performance", unit="byte"
+        ),
+        "wall_seconds": metric(
+            time.perf_counter() - started, "performance", unit="s"
+        ),
+    }
+    return ScenarioResult(
+        name="dynamic_factor_stochastic_volatility",
+        description=dynamic_factor_stochastic_volatility.__doc__ or "",
+        seed=seed,
+        metrics=metrics,
+        metadata={
+            "profile": configuration.profile,
+            "assets": assets,
+            "steps": steps,
+            "factors": factors,
+            "particles": particles,
+            "smoother_paths": smoother_paths,
+            "bellman_curvature_damping": bellman.curvature_damping,
+            "bellman_status_counts": status_counts(bellman.status),
+            "particle_status_counts": status_counts(particle_filter.status),
+            "rb_filter_status_counts": status_counts(rb_filter.status),
+            "rb_smoother_status_counts": status_counts(rb_smoother.status),
+            "diagonal_observation_noise": True,
+            "conditional_dense_execute_seconds": dense_execute,
+            "conditional_diagonal_execute_seconds": diagonal_execute,
+        },
+    )
+
+
 SCENARIOS: dict[str, Scenario] = {
     "elliptic_coefficient_inverse": elliptic_coefficient_inverse,
     "nonlinear_transformed_ode": nonlinear_transformed_ode,
@@ -2895,6 +3376,7 @@ SCENARIOS: dict[str, Scenario] = {
     "flow_assisted_multimodal": flow_assisted_multimodal,
     "stochastic_gradient_regression": stochastic_gradient_regression,
     "linearized_uncertainty_propagation": linearized_uncertainty_propagation,
+    "dynamic_factor_stochastic_volatility": dynamic_factor_stochastic_volatility,
 }
 
 

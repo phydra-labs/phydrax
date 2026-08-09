@@ -20,6 +20,7 @@ import numpy as np
 
 from ..stochastic._bsde import BSDEEvaluation
 from ..stochastic._jump_bsde import JumpBSDEEvaluation
+from ._bellman import BellmanFilterResult, BellmanSmootherResult
 from ._checkpoint import (
     _json_value,
     _read_array_archive,
@@ -46,6 +47,11 @@ from ._particle import (
     ParticleSmootherResult,
 )
 from ._pathfinder import PathfinderResult
+from ._rao_blackwellized import RaoBlackwellizedFilterResult
+from ._rao_blackwellized_smoothing import (
+    RaoBlackwellizedBackwardSimulationResult,
+    RaoBlackwellizedSmootherResult,
+)
 from ._sgmcmc import SGMCMCResult
 from ._sgmcmc_diagnostics import SGMCMCMixingReport
 from ._smc import TemperedSMCResult
@@ -272,6 +278,25 @@ def decode_parameter_name(name: str, /) -> str:
 
 
 def _adapt_result(result, arrays, fields, trees):
+    if isinstance(result, BellmanFilterResult):
+        metadata = _put_bellman_filter_result(result, arrays, fields, prefix="")
+        return "bellman_filter", metadata, ("problem",)
+
+    if isinstance(result, BellmanSmootherResult):
+        for name, value in (
+            ("modes", result.modes),
+            ("covariances", result.covariances),
+            ("gains", result.gains),
+            ("lag_one_covariances", result.lag_one_covariances),
+            ("valid", result.valid),
+        ):
+            _put_field(fields, arrays, name, value)
+        metadata = _put_bellman_filter_result(
+            result.filter_result, arrays, fields, prefix="filter."
+        )
+        metadata["smoother_method_id"] = result.method_id
+        return "bellman_smoother", metadata, ("filter_result.problem",)
+
     if isinstance(result, KalmanFilterResult):
         metadata = _put_kalman_filter_result(result, arrays, fields, prefix="")
         return "kalman_filter", metadata, ()
@@ -372,6 +397,83 @@ def _adapt_result(result, arrays, fields, trees):
             "particle_backward_simulation",
             metadata,
             ("smoother.filter_result.problem",),
+        )
+
+    if isinstance(result, RaoBlackwellizedFilterResult):
+        metadata = _put_rao_blackwellized_filter_result(
+            result, arrays, fields, prefix=""
+        )
+        return "rao_blackwellized_filter", metadata, ("problem",)
+
+    if isinstance(result, RaoBlackwellizedBackwardSimulationResult):
+        for name, value in (
+            ("initial_nonlinear_states", result.initial_nonlinear_states),
+            ("nonlinear_paths", result.nonlinear_paths),
+            ("particle_indices", result.particle_indices),
+            ("step_valid", result.step_valid),
+            ("valid", result.valid),
+        ):
+            _put_field(fields, arrays, name, value)
+        metadata = _put_rao_blackwellized_filter_result(
+            result.filter_result, arrays, fields, prefix="filter."
+        )
+        metadata.update(
+            {
+                "simulation_method_id": result.method_id,
+                "sample_shape": list(result.sample_shape),
+                "ancestry_gradient": result.ancestry_gradient,
+                "process_id": result.process_id,
+                "approximation_id": result.approximation_id,
+            }
+        )
+        return (
+            "rao_blackwellized_backward_simulation",
+            metadata,
+            ("filter_result.problem",),
+        )
+
+    if isinstance(result, RaoBlackwellizedSmootherResult):
+        for name, value in (
+            ("linear_means", result.linear_means),
+            ("linear_covariances", result.linear_covariances),
+            ("gains", result.gains),
+            ("lag_one_covariances", result.lag_one_covariances),
+            ("valid", result.valid),
+            ("status", result.status),
+            (
+                "backward.initial_nonlinear_states",
+                result.backward_simulation.initial_nonlinear_states,
+            ),
+            (
+                "backward.nonlinear_paths",
+                result.backward_simulation.nonlinear_paths,
+            ),
+            (
+                "backward.particle_indices",
+                result.backward_simulation.particle_indices,
+            ),
+        ):
+            _put_field(fields, arrays, name, value)
+        metadata = _put_rao_blackwellized_filter_result(
+            result.backward_simulation.filter_result,
+            arrays,
+            fields,
+            prefix="filter.",
+        )
+        metadata.update(
+            {
+                "smoother_method_id": result.method_id,
+                "simulation_method_id": result.backward_simulation.method_id,
+                "sample_shape": list(result.sample_shape),
+                "ancestry_gradient": result.ancestry_gradient,
+                "process_id": result.process_id,
+                "approximation_id": result.approximation_id,
+            }
+        )
+        return (
+            "rao_blackwellized_smoother",
+            metadata,
+            ("backward_simulation.filter_result.problem",),
         )
 
     if isinstance(result, ParticleFisherScoreResult):
@@ -948,6 +1050,159 @@ def _adapt_result(result, arrays, fields, trees):
         "Unsupported UQ result type for export: "
         f"{type(result).__module__}.{type(result).__qualname__}."
     )
+
+
+def _put_bellman_filter_result(result, arrays, fields, *, prefix):
+    for name, value in (
+        ("revised_previous_modes", result.revised_previous_modes),
+        ("predicted_modes", result.predicted_modes),
+        ("predicted_information", result.predicted_information),
+        ("predicted_covariances", result.predicted_covariances),
+        ("filtered_modes", result.filtered_modes),
+        ("filtered_information", result.filtered_information),
+        ("filtered_covariances", result.filtered_covariances),
+        ("transition_matrices", result.transition_matrices),
+        ("prediction_objectives", result.prediction_objectives),
+        ("update_objectives", result.update_objectives),
+        ("prediction_gradient_norms", result.prediction_gradient_norms),
+        ("update_gradient_norms", result.update_gradient_norms),
+        ("prediction_iterations", result.prediction_iterations),
+        ("update_iterations", result.update_iterations),
+        ("prediction_converged", result.prediction_converged),
+        ("update_converged", result.update_converged),
+        (
+            "predicted_raw_minimum_eigenvalues",
+            result.predicted_raw_minimum_eigenvalues,
+        ),
+        (
+            "filtered_raw_minimum_eigenvalues",
+            result.filtered_raw_minimum_eigenvalues,
+        ),
+        (
+            "information_gain_minimum_eigenvalues",
+            result.information_gain_minimum_eigenvalues,
+        ),
+        ("observation_log_prob", result.observation_log_prob),
+        ("realized_kl_penalties", result.realized_kl_penalties),
+        (
+            "incremental_pseudo_log_likelihood",
+            result.incremental_pseudo_log_likelihood,
+        ),
+        (
+            "cumulative_pseudo_log_likelihood",
+            result.cumulative_pseudo_log_likelihood,
+        ),
+        ("observed_counts", result.observed_counts),
+        ("step_valid", result.step_valid),
+        ("mode_valid", result.mode_valid),
+        ("pseudo_likelihood_valid", result.pseudo_likelihood_valid),
+        ("valid", result.valid),
+        ("status", result.status),
+        ("times", result.times),
+        ("final_state.mode", result.final_state.mode),
+        ("final_state.information", result.final_state.information),
+        ("final_state.covariance", result.final_state.covariance),
+        ("final_state.time", result.final_state.time),
+        (
+            "final_state.pseudo_log_likelihood",
+            result.final_state.pseudo_log_likelihood,
+        ),
+        ("final_state.mode_valid", result.final_state.mode_valid),
+        (
+            "final_state.pseudo_likelihood_valid",
+            result.final_state.pseudo_likelihood_valid,
+        ),
+        ("final_state.status", result.final_state.status),
+    ):
+        _put_field(fields, arrays, prefix + name, value)
+    return {
+        "state_shape": list(result.state_shape),
+        "observation_shape": list(result.observation_shape),
+        "case_shape": list(result.case_shape),
+        "case_axes": list(result.case_axes),
+        "case_ids": list(result.case_ids),
+        "model_id": result.model_id,
+        "problem_id": result.problem_id,
+        "sequence_id": result.sequence_id,
+        "input_id": result.input_id,
+        "execution_method": result.execution_method,
+        "curvature_method": result.curvature_method,
+        "curvature_damping": result.curvature_damping,
+        "optimizer_rtol": result.optimizer_rtol,
+        "optimizer_atol": result.optimizer_atol,
+        "optimizer_max_steps": result.optimizer_max_steps,
+        "max_dimension": result.max_dimension,
+        "final_step_index": result.final_state.step_index,
+    }
+
+
+def _put_rao_blackwellized_filter_result(result, arrays, fields, *, prefix):
+    for name, value in (
+        ("initial_nonlinear_particles", result.initial_nonlinear_particles),
+        ("initial_linear_means", result.initial_linear_means),
+        ("initial_linear_covariances", result.initial_linear_covariances),
+        ("initial_log_weights", result.initial_log_weights),
+        (
+            "predicted_nonlinear_particles",
+            result.predicted_nonlinear_particles,
+        ),
+        ("predicted_linear_means", result.predicted_linear_means),
+        (
+            "predicted_linear_covariances",
+            result.predicted_linear_covariances,
+        ),
+        ("posterior_linear_means", result.posterior_linear_means),
+        (
+            "posterior_linear_covariances",
+            result.posterior_linear_covariances,
+        ),
+        ("posterior_log_weights", result.posterior_log_weights),
+        ("nonlinear_particles", result.nonlinear_particles),
+        ("linear_means", result.linear_means),
+        ("linear_covariances", result.linear_covariances),
+        ("log_weights", result.log_weights),
+        ("ancestor_indices", result.ancestor_indices),
+        ("transition_valid", result.transition_valid),
+        ("effective_sample_sizes", result.effective_sample_sizes),
+        ("resampled", result.resampled),
+        ("incremental_log_likelihood", result.incremental_log_likelihood),
+        ("cumulative_log_likelihood", result.cumulative_log_likelihood),
+        ("step_valid", result.step_valid),
+        ("valid", result.valid),
+        ("status", result.status),
+        ("times", result.times),
+        ("final_state.nonlinear_particles", result.final_state.nonlinear_particles),
+        ("final_state.linear_means", result.final_state.linear_means),
+        ("final_state.linear_covariances", result.final_state.linear_covariances),
+        ("final_state.log_weights", result.final_state.log_weights),
+        ("final_state.time", result.final_state.time),
+        ("final_state.log_likelihood", result.final_state.log_likelihood),
+        ("final_state.valid", result.final_state.valid),
+        ("final_state.status", result.final_state.status),
+        ("final_state.root_key", jr.key_data(result.final_state.root_key)),
+    ):
+        _put_field(fields, arrays, prefix + name, value)
+    problem = result.problem
+    return {
+        "nonlinear_state_shape": list(result.nonlinear_state_shape),
+        "linear_state_shape": list(result.linear_state_shape),
+        "observation_shape": list(result.observation_shape),
+        "case_shape": list(result.case_shape),
+        "case_axes": list(result.case_axes),
+        "case_ids": list(result.case_ids),
+        "num_particles": result.num_particles,
+        "model_id": problem.model.model_id,
+        "problem_id": problem.problem_id,
+        "sequence_id": problem.observations.sequence_id,
+        "input_id": (
+            None if problem.input_signal is None else problem.input_signal.input_id
+        ),
+        "resampling_method": result.resampling_method,
+        "resampling_policy": result.resampling_policy,
+        "resampling_threshold": result.resampling_threshold,
+        "process_id": problem.model.nonlinear_transition.process_id,
+        "approximation_id": problem.model.nonlinear_transition.approximation_id,
+    }
 
 
 def _put_kalman_filter_result(result, arrays, fields, *, prefix):
