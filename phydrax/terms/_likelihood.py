@@ -110,7 +110,6 @@ class SupervisedLikelihoodTerm(AbstractSamplingTerm):
             raise TypeError("Likelihood term domain is not a DatasetDomain.")
         return domain
 
-
     def sample(self, *, key: Key[Array, ""] = DOC_KEY0) -> Any:
         indices = sample_case_indices(
             size=self.domain.size,
@@ -151,7 +150,7 @@ class SupervisedLikelihoodTerm(AbstractSamplingTerm):
         **kwargs: Any,
     ) -> Array:
         """Return unreduced per-case observation log probabilities for a fixed batch."""
-        location, target = _align_observations(
+        location, target = self.likelihood.align_observations(
             self._location(functions, batch, key=key, **kwargs),
             batch.target,
         )
@@ -160,7 +159,9 @@ class SupervisedLikelihoodTerm(AbstractSamplingTerm):
             raw_scale_field = functions[self.scale_var](batch.points, key=key, **kwargs)
             if not isinstance(raw_scale_field, cx.Field):
                 raise TypeError("Likelihood scale must evaluate to a coordax.Field.")
-            raw_scale, _ = _align_observations(jnp.asarray(raw_scale_field.data), target)
+            raw_scale, _ = self.likelihood.align_observations(
+                jnp.asarray(raw_scale_field.data), target
+            )
             parameters["raw_scale"] = raw_scale
         log_prob = jnp.asarray(
             self.likelihood.log_prob(location, target, **parameters), dtype=float
@@ -213,31 +214,6 @@ class SupervisedLikelihoodTerm(AbstractSamplingTerm):
         else:
             reduced = jnp.sum(per_case)
         return self.weight * jnp.asarray(reduced, dtype=float).reshape(())
-
-
-def _align_observations(prediction: ArrayLike, target: ArrayLike) -> tuple[Array, Array]:
-    prediction_array = jnp.asarray(prediction, dtype=float)
-    target_array = jnp.asarray(target, dtype=float)
-    if prediction_array.shape == target_array.shape:
-        return prediction_array, target_array
-    if (
-        prediction_array.ndim == 2
-        and target_array.ndim == 1
-        and prediction_array.shape[1] == 1
-    ):
-        prediction_array = prediction_array[:, 0]
-    elif (
-        target_array.ndim == 2
-        and prediction_array.ndim == 1
-        and target_array.shape[1] == 1
-    ):
-        target_array = target_array[:, 0]
-    if prediction_array.shape != target_array.shape:
-        raise ValueError(
-            "Likelihood prediction and target shapes are incompatible: "
-            f"prediction={prediction_array.shape}, target={target_array.shape}."
-        )
-    return prediction_array, target_array
 
 
 __all__ = ["SupervisedLikelihoodTerm"]

@@ -96,9 +96,10 @@ spd = phx.nn.parameters.PositiveDefiniteTransform()(raw)
 `ParameterSubspace` partitions selected inexact array leaves from a frozen complement and reconstructs the original model topology exactly. It also records deterministic leaf paths, shapes, exact dtypes, and total dimension. `pack()` and `unpack()` provide the canonical vector coordinate system; `reconstruct_vector()` rebuilds a complete model directly from that vector. Use exact leaf paths or named subtree paths for branched architectures. `last_layer(...)` means the globally final array leaves in deterministic PyTree order; it is not architecture-aware and does not select one output head per branch.
 
 ```python
+model = positive_layer
 subspace = phx.nn.parameters.ParameterSubspace.from_subtree_paths(
     model,
-    (".projection",),
+    (".weight",),
 )
 selected = subspace.initial
 vector = subspace.pack()

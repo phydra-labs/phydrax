@@ -33,7 +33,7 @@ def masked_softmax(
     mask: ArrayLike | None = None,
     axis: int = -1,
 ) -> Array:
-    """Stable softmax returning zeros, rather than NaNs, for empty masks."""
+    """Stable softmax that returns zeros for an entirely masked slice."""
     values = _real_values(logits, name="logits")
     if mask is not None:
         values = jnp.where(jnp.asarray(mask, dtype=bool), values, -jnp.inf)
@@ -77,7 +77,7 @@ def gumbel_softmax(
     temperature: ArrayLike,
     axis: int = -1,
 ) -> Array:
-    """Sample a differentiable categorical relaxation without hardening it."""
+    """Sample a relaxed categorical probability vector without hardening."""
     values = _real_values(logits, name="logits")
     uniform = jax.random.uniform(
         key,
@@ -102,6 +102,11 @@ def soft_ranks(
     axis: int = -1,
     descending: bool = False,
 ) -> Array:
+    """Return one-based pairwise-logistic ranks.
+
+    Ranks are ascending by default and descending when requested. Equal values
+    receive equal ranks; an all-equal axis receives its one-based midpoint rank.
+    """
     array = _real_values(values, name="values")
     moved = jnp.moveaxis(array, axis, -1)
     difference = moved[..., :, None] - moved[..., None, :]
@@ -121,7 +126,11 @@ def soft_topk_weights(
     gate_temperature: ArrayLike | None = None,
     axis: int = -1,
 ) -> Array:
-    """Continuous top-k memberships derived from smooth descending ranks."""
+    """Return logistic memberships derived from one-based descending soft ranks.
+
+    Values lie in ``[0, 1]`` but do not generally sum to ``k``. This is a
+    membership surrogate, not a cardinality-preserving transport mask.
+    """
     values = _real_values(scores, name="scores")
     count = int(k)
     if count <= 0 or count > values.shape[axis]:

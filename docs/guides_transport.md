@@ -60,6 +60,13 @@ A custom cost subclasses `AbstractGroundCost` and implements a JAX-transformable
 A precomputed matrix supports only dense execution because arbitrary blocks cannot be
 reconstructed from coordinates.
 
+Differentiable ordering is a declared exception to raw-coordinate scaling. Before
+constructing its squared ground cost, `soft_order_transport` weighted-centers and
+weighted-standardizes scalar candidates, then maps them through a sigmoid to a unit
+order interval. Its `epsilon` is therefore dimensionless in canonical order geometry.
+That convention is appropriate only because hard order is invariant under positive
+affine changes. Never infer the same normalization for physical transport problems.
+
 ## 4. Choose the transport quantity
 
 | Question | Native method | Important limitation |
@@ -72,11 +79,22 @@ reconstructed from coordinates.
 | Locally optimize barycenter support | `FreeSupportBarycenter(inner_solver)` | Quadratic barycentric costs and explicit initialization |
 | Unequal-mass spatial or intensity discrepancy | `unbalanced_sinkhorn_divergence` | Requires explicit source/target KL penalties |
 | Differentiable sort/rank/quantile/top-k | soft-order functions | Relaxations, not hard order |
+| Fast unweighted relaxed sort/rank | `fast_soft_sort`, `fast_soft_rank` | No weights, coupling, or solver diagnostics |
 
 The regularized Sinkhorn objective contains self-interaction bias. Use
 `sinkhorn_divergence` for a discrepancy expected to vanish on identical measures. Use
 the raw `SinkhornResult` when the coupling, transport component, regularization
 component, or barycentric action is the actual object of interest.
+
+For unweighted sorted values or ranks at moderate and large cardinality,
+`phydrax.transport.fast_soft_sort` and `fast_soft_rank` use a PAV permutahedron
+relaxation with linear temporary state. Pairwise logistic `phydrax.ml.soft_ranks` is
+still the lighter rank-only primitive for small ML losses. Use Sinkhorn soft order
+when empirical weights, zero-mass atoms, reusable barycentric actions, or one shared
+monotone coupling matter. Use hard order for exact reporting, calibration guarantees,
+and other guarantee-bearing statistics. These methods are not hidden behind one
+`method=` switch because their weighting, regularization, convergence, output, and
+rank-base contracts differ.
 
 Sliced Wasserstein stores normalized projections. Supply explicit projections when
 replay, common random numbers, or deterministic gradient comparison matters.
@@ -215,11 +233,17 @@ never treated as physical cases.
 - `EmpiricalSinkhornDivergenceTerm` compares a model-generated empirical law with a
   prepared reference.
 - `SlicedWassersteinTerm` provides a projection-based whole-event discrepancy.
-- `SoftQuantileFunctional` penalizes regularized empirical quantiles.
+- `SoftQuantileFunctional` penalizes regularized empirical quantiles. Its diagnostics
+  contain transformed quantiles, targets, residuals, an exact-endpoint mask, and the
+  effective epsilon. A supplied solver owns that epsilon.
 
-Each is an evaluated scalar term and retains method diagnostics in `TermEvaluation`.
-The model-facing provider or measure builder determines which functions are objective
-variables; no implicit domain sampling is introduced.
+Each is an evaluated scalar term and retains method-appropriate diagnostics in
+`TermEvaluation`. Quantile convenience diagnostics are intentionally not a retained
+batch of complete `SinkhornResult` objects. Interior squared quantile penalties can be
+smooth where the finite solve is regular; exact endpoints are only almost-everywhere
+differentiable, and absolute discrepancy has a kink at zero residual. The model-facing
+provider or measure builder determines which functions are objective variables; no
+implicit domain sampling is introduced.
 
 ### Distributional semigroup consistency
 
@@ -369,27 +393,41 @@ package's class hierarchy.
 
 ## 11. Benchmark the relevant regime
 
-Deterministic JSON harnesses separate core, scalable, soft-order, and scientific paths:
+Ten deterministic JSON harnesses separate core, scalable, unbalanced, barycenter,
+semidiscrete, dynamic, soft-order, fast unweighted order, scientific transport, and
+quantile-objective paths:
 
 ```bash
 python -m tools.transport_benchmarks --smoke
 python -m tools.positive_feature_transport_benchmarks --smoke
 python -m tools.soft_transport_benchmarks --smoke
+python -m tools.fast_order_benchmarks --smoke
 python -m tools.transport_scientific_benchmarks --smoke
+python -m tools.unbalanced_transport_benchmarks --smoke
+python -m tools.transport_barycenter_benchmarks --smoke
 python -m tools.semidiscrete_transport_benchmarks --smoke
 python -m tools.schrodinger_bridge_benchmarks --smoke
+python -m tools.soft_quantile_objective_benchmarks --smoke
 ```
 
 The core harness reports compile-plus-first, steady solve, plan application, backward
-execution, convergence, and result bytes for dense and blockwise modes. The soft
-harness reports approximation, order, range, and gradient evidence. The scientific
-harness exercises nonuniform spatial density, whole-field operator ensembles, and the
-particle transform. The positive-feature harness reports rank, probe and small-problem
-approximation errors, compile and steady runtimes, plan-action cost, explicit memory
-fields, and gradient timing and finiteness.
-The semidiscrete harness separately reports the fixed integration size and provenance,
-dual residuals, integration and transport statuses, replay equality, support-gradient
-cost, and result memory.
-The Schrödinger bridge harness reports exact solve and keyed-sampling timings,
-endpoint residual, path KL, empirical marginal residual, convergence, and reference
-process provenance as JSON.
+execution, convergence, and result bytes for dense and blockwise modes. The general
+soft-order harness reports approximation, order, range, coupling, and gradient
+evidence. The fast-order harness compares Sinkhorn and PAV compile, execution, memory,
+approximation, equivariance, and derivative evidence without pretending their
+regularization parameters are interchangeable. The scientific harness exercises
+nonuniform spatial density, whole-field operator ensembles, and the particle
+transform. The quantile-objective harness compares terminal hard-tail and physical
+metrics across several deterministic training workloads.
+
+The positive-feature harness reports rank, probe and small-problem approximation
+errors, compile and steady runtimes, plan-action cost, explicit memory fields, and
+gradient timing and finiteness. The unbalanced harness reports physical source and
+target mass, transported mass, marginal KL terms, divergence components, status, and
+balanced-limit evidence. The barycenter harness reports fixed and free-support
+objectives, marginal residuals, inner and outer iterations, execution mode, gradients,
+and result memory. The semidiscrete harness separately reports the fixed integration
+size and provenance, dual residuals, integration and transport statuses, replay
+equality, support-gradient cost, and result memory. The Schrödinger bridge harness
+reports exact solve and keyed-sampling timings, endpoint residual, path KL, empirical
+marginal residual, convergence, and reference-process provenance.

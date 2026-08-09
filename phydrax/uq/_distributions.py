@@ -12,11 +12,23 @@ import jax.random as jr
 import jax.scipy as jsp
 from jaxtyping import Array, ArrayLike
 
-from .._strict import StrictModule
+from .._probability import AbstractProbabilityLaw
 
 
-class AbstractDistribution(StrictModule):
+class AbstractDistribution(AbstractProbabilityLaw):
     """Minimal scalar distribution protocol for native uncertain inputs."""
+
+    @property
+    def event_shape(self) -> tuple[int, ...]:
+        return ()
+
+    @property
+    def batch_shape(self) -> tuple[int, ...]:
+        return ()
+
+    @property
+    def density_measure_kind(self) -> Literal["lebesgue"]:
+        return "lebesgue"
 
     @abstractmethod
     def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
@@ -68,6 +80,10 @@ class Uniform(AbstractDistribution):
             raise ValueError("Uniform low must be less than high.")
         self.low = low_array
         self.high = high_array
+
+    @property
+    def density_measure_kind(self) -> Literal["lebesgue"]:
+        return "lebesgue"
 
     def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
         return jr.uniform(
@@ -130,6 +146,10 @@ class Normal(AbstractDistribution):
         self.location = location_array
         self.scale = scale_array
 
+    @property
+    def density_measure_kind(self) -> Literal["lebesgue"]:
+        return "lebesgue"
+
     def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
         return self.location + self.scale * jr.normal(
             key, shape=tuple(sample_shape), dtype=self.location.dtype
@@ -184,6 +204,10 @@ class LogNormal(AbstractDistribution):
             raise ValueError("LogNormal scale must be finite and positive.")
         self.location = location_array
         self.scale = scale_array
+
+    @property
+    def density_measure_kind(self) -> Literal["lebesgue"]:
+        return "lebesgue"
 
     def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
         normal = self.location + self.scale * jr.normal(
@@ -278,6 +302,10 @@ class EmpiricalDistribution(AbstractDistribution):
         order = jnp.argsort(values_array)
         self.values = values_array[order]
         self.probabilities = probability_array[order]
+
+    @property
+    def density_measure_kind(self) -> Literal["counting"]:
+        return "counting"
 
     def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
         indices = jr.choice(

@@ -86,7 +86,7 @@ class FixedObservationLikelihood(AbstractPosteriorTerm):
         self.label = _label(label)
 
     def per_case_log_prob(self, parameters: PyTree[Any], /) -> Array:
-        prediction, target = _align_observations(
+        prediction, target = self.likelihood.align_observations(
             _field_data(self.predict_fn(parameters)),
             self.target,
         )
@@ -309,19 +309,6 @@ def _reduce_cases(values: Array, case_count: int, /, *, label: str) -> Array:
     return values.reshape((case_count, -1)).sum(axis=1)
 
 
-def _align_observations(prediction: Array, target: Array) -> tuple[Array, Array]:
-    if prediction.shape == target.shape:
-        return prediction, target
-    if prediction.ndim == 2 and target.ndim == 1 and int(prediction.shape[1]) == 1:
-        prediction = prediction[:, 0]
-    elif target.ndim == 2 and prediction.ndim == 1 and int(target.shape[1]) == 1:
-        target = target[:, 0]
-    if prediction.shape != target.shape:
-        raise ValueError(
-            "Fixed likelihood prediction and target shapes are incompatible: "
-            f"prediction={prediction.shape}, target={target.shape}."
-        )
-    return prediction, target
 
 
 __all__ = [

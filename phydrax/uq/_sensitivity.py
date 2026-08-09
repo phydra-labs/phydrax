@@ -14,6 +14,10 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, PyTree
 
+from .._exponential_family import (
+    AbstractExponentialFamily,
+    NaturalCoordinates,
+)
 from .._frozendict import frozendict
 from .._sampling import get_sampler
 from .._strict import StrictModule
@@ -767,6 +771,128 @@ def fisher_information_action(
     )
 
 
+def exponential_family_fisher_action(
+    family: AbstractExponentialFamily,
+    natural: NaturalCoordinates,
+    direction: ArrayLike,
+    /,
+    *,
+    regularization: float = 0.0,
+    method_id: str = "jax_jvp_mean_map",
+) -> SensitivityActionResult:
+    """Apply an exact family Fisher action as the JVP of the mean map."""
+    if not isinstance(family, AbstractExponentialFamily):
+        raise TypeError("family must implement AbstractExponentialFamily.")
+    if not isinstance(natural, NaturalCoordinates):
+        raise TypeError("natural must be NaturalCoordinates.")
+    if not method_id:
+        raise ValueError("method_id must be non-empty.")
+    penalty = _validate_regularization(regularization)
+    vector = jnp.asarray(direction)
+    if vector.shape != natural.values.shape:
+        raise ValueError("direction must match the natural-coordinate shape.")
+    domain = family.natural_domain(natural)
+    action = family.fisher_action(natural, vector) + penalty * vector
+    inputs_finite = jnp.all(jnp.isfinite(natural.values)) & jnp.all(jnp.isfinite(vector))
+    action_finite = jnp.all(jnp.isfinite(action))
+    domain_valid = jnp.all(domain.valid)
+    valid = inputs_finite & domain_valid & action_finite
+    status = jnp.where(
+        ~inputs_finite,
+        SENSITIVITY_NONFINITE,
+        jnp.where(
+            ~domain_valid,
+            SENSITIVITY_INVALID_INFORMATION,
+            jnp.where(
+                action_finite,
+                SENSITIVITY_SUCCESS,
+                SENSITIVITY_NONFINITE,
+            ),
+        ),
+    )
+    return SensitivityActionResult(
+        action,
+        valid=valid,
+        status=status,
+        operator_id="fisher_information",
+        method_id=method_id,
+        approximation="exact_exponential_family",
+        regularization=penalty,
+        num_samples=None,
+    )
+
+
+def exponential_family_parameter_fisher_action(
+    family: AbstractExponentialFamily,
+    natural_fn: Callable[[PyTree[Array]], NaturalCoordinates | ArrayLike],
+    parameters: PyTree[Array],
+    vector: PyTree[Array],
+    /,
+    *,
+    regularization: float = 0.0,
+    method_id: str = "jax_jvp_family_pullback",
+) -> SensitivityActionResult:
+    """Apply ``Jηᵀ F(η) Jη`` without dense Jacobian or Fisher materialization."""
+    if not isinstance(family, AbstractExponentialFamily):
+        raise TypeError("family must implement AbstractExponentialFamily.")
+    if not callable(natural_fn):
+        raise TypeError("natural_fn must be callable.")
+    if not method_id:
+        raise ValueError("method_id must be non-empty.")
+    penalty = _validate_regularization(regularization)
+
+    def natural_values_fn(values):
+        coordinates = natural_fn(values)
+        if isinstance(coordinates, NaturalCoordinates):
+            family.natural_domain(coordinates)
+            return coordinates.values
+        return family.natural(coordinates).values
+
+    natural_values, linearized = jax.linearize(natural_values_fn, parameters)
+    natural = family.natural(natural_values)
+    natural_direction = linearized(vector)
+    family_direction = family.fisher_action(natural, natural_direction)
+    action = jax.linear_transpose(linearized, parameters)(family_direction)[0]
+    action = jax.tree_util.tree_map(
+        lambda value, direction_value: value + penalty * direction_value,
+        action,
+        vector,
+    )
+    domain = family.natural_domain(natural)
+    inputs_finite = (
+        _tree_all_finite(parameters)
+        & _tree_all_finite(vector)
+        & jnp.all(jnp.isfinite(natural_values))
+        & jnp.all(jnp.isfinite(natural_direction))
+    )
+    action_finite = _tree_all_finite(action)
+    domain_valid = jnp.all(domain.valid)
+    valid = inputs_finite & domain_valid & action_finite
+    status = jnp.where(
+        ~inputs_finite,
+        SENSITIVITY_NONFINITE,
+        jnp.where(
+            ~domain_valid,
+            SENSITIVITY_INVALID_INFORMATION,
+            jnp.where(
+                action_finite,
+                SENSITIVITY_SUCCESS,
+                SENSITIVITY_NONFINITE,
+            ),
+        ),
+    )
+    return SensitivityActionResult(
+        action,
+        valid=valid,
+        status=status,
+        operator_id="fisher_information_pullback",
+        method_id=method_id,
+        approximation="exact_exponential_family",
+        regularization=penalty,
+        num_samples=None,
+    )
+
+
 def gauss_newton_action(
     residual_fn: Callable[[PyTree[Array]], PyTree[Array]],
     parameters: PyTree[Array],
@@ -1053,6 +1179,8 @@ __all__ = [
     "empirical_controllability_directions",
     "empirical_observability_directions",
     "experiment_design_objective",
+    "exponential_family_fisher_action",
+    "exponential_family_parameter_fisher_action",
     "fisher_information_action",
     "fixed_noise_pathwise_gradient",
     "gauss_newton_action",

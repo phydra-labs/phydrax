@@ -29,6 +29,15 @@ Variance, score, mutual-information, recursive, sequential, and model-based
 selectors return exact selected indices. Continuous sparse gates are a separately
 named relaxation.
 
+`ContinuousSparseGateRecipe` keeps `temperature` and `sparsity` as differentiable
+scalar array leaves. Its fit gradients with respect to features, targets, sample
+weights, and those hyperparameters are conditional, not globally smooth. The scorer
+must be differentiable at the supplied batch; masks and positive effective mass must
+remain fixed; normalized scores need a nonzero range with stable minimum and maximum
+identities. The default absolute-correlation scorer also requires nonzero covariance
+and variance. Equal-score and zero-variance inputs remain finite, but do not strengthen
+that derivative claim. A later hard threshold is a disconnected exact model.
+
 ::: phydrax.ml.feature_selection
     options:
         filters: ["!^_"]

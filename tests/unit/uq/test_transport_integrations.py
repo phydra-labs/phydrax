@@ -260,6 +260,18 @@ def test_transport_functional_terms_return_scalar_values_and_native_diagnostics(
     assert jnp.allclose(sliced_evaluation.value, 1.0)
     assert jnp.allclose(quantile_evaluation.value, 0.0, atol=1e-28)
     assert quantile_evaluation.diagnostics["quantiles"].shape == (3,)
+    assert jnp.array_equal(
+        quantile_evaluation.diagnostics["endpoint_mask"],
+        jnp.asarray([True, False, True]),
+    )
+    assert jnp.allclose(quantile_evaluation.diagnostics["effective_epsilon"], 0.2)
+    assert set(quantile_evaluation.diagnostics) == {
+        "effective_epsilon",
+        "endpoint_mask",
+        "quantiles",
+        "target_quantiles",
+        "residuals",
+    }
 
 
 def test_transport_terms_reject_nonconverged_training_solves():
@@ -278,6 +290,97 @@ def test_transport_terms_reject_nonconverged_training_solves():
     source = _measure([[4.0], [8.0]], [0.9, 0.1], provenance="source")
     term = phx.terms.SpatialSinkhornDivergenceTerm(lambda _: source, reference)
 
+    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="did not converge"):
+        evaluation = term.term_evaluation({})
+        jax.block_until_ready(evaluation.value)
+
+
+def test_soft_quantile_functional_reports_regularity_and_solver_precedence():
+    values = jnp.asarray([-2.0, -0.3, 1.4, 3.0])
+    quantile_levels = jnp.asarray([0.0, 0.35, 1.0])
+    solver = phx.transport.Sinkhorn(
+        0.35,
+        max_iterations=300,
+        tolerance=1e-7,
+        check_every=5,
+    )
+    estimates = phx.transport.soft_quantile(
+        values,
+        quantile_levels,
+        solver=solver,
+    )
+    residuals = jnp.asarray([1.0, -2.0, 0.5])
+    targets = estimates - residuals
+    squared = phx.terms.SoftQuantileFunctional(
+        values,
+        quantile_levels,
+        targets,
+        epsilon=0.1,
+        solver=solver,
+        discrepancy="squared",
+    ).term_evaluation({})
+    absolute = phx.terms.SoftQuantileFunctional(
+        values,
+        quantile_levels,
+        targets,
+        epsilon=0.1,
+        solver=solver,
+        discrepancy="absolute",
+    ).term_evaluation({})
+
+    assert jnp.allclose(squared.value, jnp.mean(residuals**2))
+    assert jnp.allclose(absolute.value, jnp.mean(jnp.abs(residuals)))
+    assert jnp.array_equal(
+        squared.diagnostics["endpoint_mask"],
+        jnp.asarray([True, False, True]),
+    )
+    assert jnp.array_equal(
+        squared.diagnostics["effective_epsilon"],
+        solver.epsilon,
+    )
+    assert jnp.array_equal(
+        squared.diagnostics["quantiles"][jnp.asarray([0, 2])],
+        jnp.asarray([jnp.min(values), jnp.max(values)]),
+    )
+
+
+def test_soft_quantile_functional_has_finite_interior_gradient_and_validates_epsilon():
+    term = phx.terms.SoftQuantileFunctional(
+        lambda functions: functions["values"],
+        jnp.asarray([0.25, 0.75]),
+        jnp.asarray([-0.5, 1.0]),
+        epsilon=0.2,
+    )
+    values = jnp.asarray([-2.0, -0.2, 0.8, 2.5])
+    gradient = jax.grad(lambda candidate: term.loss({"values": candidate}))(values)
+    assert jnp.all(jnp.isfinite(gradient))
+    assert jnp.linalg.norm(gradient) > 0.0
+    assert not jnp.any(term.term_evaluation({"values": values}).diagnostics["endpoint_mask"])
+
+    for invalid in (0.0, -0.1, jnp.nan, jnp.inf):
+        with pytest.raises(ValueError, match="epsilon must be finite and positive"):
+            phx.terms.SoftQuantileFunctional(
+                values,
+                0.5,
+                0.0,
+                epsilon=invalid,
+            )
+
+
+def test_soft_quantile_functional_rejects_a_nonconverged_solver():
+    solver = phx.transport.Sinkhorn(
+        0.02,
+        max_iterations=1,
+        tolerance=1e-14,
+        check_every=1,
+    )
+    term = phx.terms.SoftQuantileFunctional(
+        jnp.asarray([-3.0, -0.1, 2.0, 9.0]),
+        0.8,
+        1.0,
+        weights=jnp.asarray([0.7, 0.1, 0.1, 0.1]),
+        solver=solver,
+    )
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="did not converge"):
         evaluation = term.term_evaluation({})
         jax.block_until_ready(evaluation.value)

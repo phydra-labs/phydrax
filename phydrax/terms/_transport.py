@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
@@ -333,7 +334,12 @@ class SlicedWassersteinTerm(AbstractEvaluatedScalarTerm):
 
 
 class SoftQuantileFunctional(AbstractEvaluatedScalarTerm):
-    """Differentiable scalar penalty on one or more empirical quantiles."""
+    """Penalty on relaxed empirical quantiles with exact hard endpoints.
+
+    Interior quantiles inherit the regularity of the soft-order solve. Exact
+    endpoints are only almost-everywhere differentiable, and absolute discrepancy
+    additionally has a kink at zero residual.
+    """
 
     objective_vars: tuple[str, ...]
     values: Provider
@@ -376,7 +382,10 @@ class SoftQuantileFunctional(AbstractEvaluatedScalarTerm):
         self.solver = solver
         self.weight = _scalar_weight(weight)
         self.axis = axis
-        self.epsilon = float(epsilon)
+        epsilon_ = float(epsilon)
+        if not math.isfinite(epsilon_) or epsilon_ <= 0.0:
+            raise ValueError("epsilon must be finite and positive.")
+        self.epsilon = epsilon_
         self.discrepancy = mode
         self.label = None if label is None else str(label)
 
@@ -405,7 +414,15 @@ class SoftQuantileFunctional(AbstractEvaluatedScalarTerm):
                 "target_quantiles must describe a scalar empirical law."
             )
         penalty = residual**2 if self.discrepancy == "squared" else jnp.abs(residual)
+        effective_epsilon = (
+            self.solver.epsilon
+            if self.solver is not None
+            else jnp.asarray(self.epsilon, dtype=estimate_data.dtype)
+        )
+        endpoint_mask = (self.q == 0.0) | (self.q == 1.0)
         diagnostics = {
+            "effective_epsilon": jnp.asarray(effective_epsilon),
+            "endpoint_mask": endpoint_mask,
             "quantiles": jnp.asarray(estimate_data),
             "target_quantiles": self.target_quantiles,
             "residuals": residual,

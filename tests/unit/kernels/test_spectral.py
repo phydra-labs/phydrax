@@ -112,7 +112,7 @@ def test_spectral_kernel_rejects_nonintegral_nonfinite_and_out_of_range_ids():
     ):
         with pytest.raises(Exception, match="in-range integers"):
             kernel.features(invalid)
-    with pytest.raises(Exception, match="finite coordinates"):
+    with pytest.raises(Exception, match="finite values"):
         kernel.features(jnp.asarray([jnp.inf]))
     with pytest.raises(ValueError, match="one spectral entity"):
         kernel.pairwise(jnp.asarray([0, 1]), 0)

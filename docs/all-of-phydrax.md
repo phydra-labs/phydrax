@@ -136,6 +136,12 @@ errors-in-variables likelihoods account jointly for uncertain predictors and
 observations. Probability domains, static random fields, and joint QMC propagate
 full uncertain-input distributions. Global Wiener, Poisson-clock, composite, and
 coefficient-process realizations provide replayable process paths.
+
+Regular Bernoulli, Poisson, exponential-rate, and Normal families expose typed natural
+and mean coordinates, normalized laws, weighted sufficient-statistic projection, and
+exact matrix-free Fisher pullbacks. Boundary maximum-likelihood estimates and invalid
+support or weight inputs remain explicit statuses rather than clipped parameters.
+
 State-space inference binds each physical case and schedule step to one canonical
 `StateSpaceStepContext`. `SampledStateSpaceInput` and `BSplineStateSpaceInput`
 provide case-indexed exogenous signals with explicit support, breakpoint masks,

@@ -136,7 +136,7 @@ class LikelihoodObservationModel(AbstractObservationModel):
         values = jax.vmap(
             lambda sample_key: self.likelihood.sample(sample_key, location, **parameters)
         )(keys)
-        return values.reshape(shape + location.shape)
+        return values.reshape(shape + tuple(values.shape[1:]))
 
 
 __all__ = ["LikelihoodObservationModel"]

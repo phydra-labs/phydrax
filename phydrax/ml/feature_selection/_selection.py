@@ -188,6 +188,15 @@ def _correlation_scores(batch: MLBatch) -> Array:
     return jnp.where(total > 0.0, jnp.abs(covariance) / scale, -jnp.inf)
 
 
+def _gate_hyperparameter(value: Any, name: str, /) -> Array:
+    scalar = jnp.asarray(value)
+    if scalar.ndim != 0:
+        raise ValueError(f"{name} must be a scalar.")
+    if jnp.issubdtype(scalar.dtype, jnp.complexfloating):
+        raise TypeError(f"{name} must be real-valued.")
+    return scalar.astype(jnp.result_type(scalar.dtype, float))
+
+
 def _selection(scores: Array, eligible: Array, capacity: int) -> ExactSelection:
     if capacity <= 0 or capacity > scores.shape[0]:
         raise ValueError("Selection capacity must be in [1, feature_count].")
@@ -641,22 +650,30 @@ class ModelBasedSelectionRecipe(AbstractRecipe):
 
 
 class ContinuousSparseGateRecipe(AbstractRecipe):
-    temperature: float = eqx.field(static=True)
-    sparsity: float = eqx.field(static=True)
+    temperature: Array
+    sparsity: Array
     scorer: Callable[[MLBatch], Array] = eqx.field(static=True)
 
     def __init__(
         self,
         /,
         *,
-        temperature: float = 0.1,
-        sparsity: float = 0.5,
+        temperature: Any = 0.1,
+        sparsity: Any = 0.5,
         scorer: Callable[[MLBatch], Array] | None = None,
     ):
-        if float(temperature) <= 0.0 or not 0.0 <= float(sparsity) <= 1.0:
-            raise ValueError("temperature must be positive and sparsity in [0, 1].")
-        self.temperature = float(temperature)
-        self.sparsity = float(sparsity)
+        temperature_ = _gate_hyperparameter(temperature, "temperature")
+        sparsity_ = _gate_hyperparameter(sparsity, "sparsity")
+        self.temperature = eqx.error_if(
+            temperature_,
+            ~jnp.isfinite(temperature_) | (temperature_ <= 0.0),
+            "temperature must be finite and positive.",
+        )
+        self.sparsity = eqx.error_if(
+            sparsity_,
+            ~jnp.isfinite(sparsity_) | (sparsity_ < 0.0) | (sparsity_ > 1.0),
+            "sparsity must be finite and lie in [0, 1].",
+        )
         self.scorer = _correlation_scores if scorer is None else scorer
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
@@ -688,12 +705,16 @@ class ContinuousSparseGateRecipe(AbstractRecipe):
             status=status,
             method="continuous-sparse-gates",
             gradient_contract=GradientContract(
-                fit_features="smooth",
-                fit_targets="smooth",
-                fit_hyperparameters="smooth",
+                fit_features="conditional",
+                fit_targets="conditional",
+                fit_weights="conditional",
+                fit_hyperparameters="conditional",
                 fit_mode="relaxed",
                 conditions=(
-                    "The configured score function must itself be differentiable.",
+                    "The configured scorer must be differentiable at the supplied batch.",
+                    "Feature and target masks must remain fixed with positive effective mass.",
+                    "Score normalization requires a nonzero finite range and stable extrema.",
+                    "Absolute correlation requires nonzero covariance and variance.",
                 ),
             ),
         )

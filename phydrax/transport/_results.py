@@ -196,14 +196,16 @@ class SinkhornResult(AbstractBalancedTransportPlan):
         applied = self.apply_source_to_target(values)
         weights = self.problem.target_weights
         denominator = weights.reshape((weights.shape[0],) + (1,) * (applied.ndim - 1))
-        return jnp.where(denominator > 0.0, applied / denominator, 0.0)
+        safe_denominator = jnp.where(denominator > 0.0, denominator, 1.0)
+        return jnp.where(denominator > 0.0, applied / safe_denominator, 0.0)
 
     def barycentric_target_to_source(self, values: ArrayLike, /) -> Array:
         """Return source-conditioned barycenters of target payloads."""
         applied = self.apply_target_to_source(values)
         weights = self.problem.source_weights
         denominator = weights.reshape((weights.shape[0],) + (1,) * (applied.ndim - 1))
-        return jnp.where(denominator > 0.0, applied / denominator, 0.0)
+        safe_denominator = jnp.where(denominator > 0.0, denominator, 1.0)
+        return jnp.where(denominator > 0.0, applied / safe_denominator, 0.0)
 
     def dense_plan(self) -> Array:
         """Explicitly materialize the complete physical transport matrix."""

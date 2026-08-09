@@ -9,13 +9,20 @@ import numpy as np
 import pytest
 
 from phydrax.uq import (
+    BernoulliFamily,
     empirical_controllability_directions,
     empirical_observability_directions,
     experiment_design_objective,
+    exponential_family_fisher_action,
+    EXPONENTIAL_FAMILY_OUTSIDE_NATURAL_DOMAIN,
+    exponential_family_parameter_fisher_action,
+    ExponentialRateFamily,
     fisher_information_action,
     fixed_noise_pathwise_gradient,
     gauss_newton_action,
     likelihood_ratio_gradient,
+    NormalFamily,
+    PoissonFamily,
     resampling_score_gradient,
 )
 
@@ -127,6 +134,93 @@ def test_matrix_free_actions_are_jit_compatible():
         )
     )(scores, vector)
     np.testing.assert_allclose(action, scores.T @ scores @ vector / 3.0, atol=2e-15)
+
+
+def test_exact_exponential_family_fisher_actions_match_dense_hessians():
+    cases = (
+        (BernoulliFamily(), jnp.asarray([0.3])),
+        (PoissonFamily(), jnp.asarray([jnp.log(1.7)])),
+        (ExponentialRateFamily(), jnp.asarray([-1.4])),
+        (NormalFamily(), jnp.asarray([0.2, -0.7])),
+    )
+    for family, natural_values in cases:
+        direction = jnp.linspace(0.2, 0.8, family.signature.dimension)
+        natural = family.natural(natural_values)
+        result = exponential_family_fisher_action(
+            family,
+            natural,
+            direction,
+            regularization=0.07,
+        )
+        hessian = jax.hessian(
+            lambda values: family.log_normalizer(family.natural(values))
+        )(natural_values)
+        expected = hessian @ direction + 0.07 * direction
+        np.testing.assert_allclose(result.action, expected, rtol=2e-12, atol=2e-12)
+        assert bool(result.valid)
+        assert result.operator_id == "fisher_information"
+        assert result.approximation == "exact_exponential_family"
+
+
+def test_parameter_space_family_fisher_pullback_matches_dense_product_and_jit():
+    family = PoissonFamily()
+    matrix = jnp.asarray([[1.0, -0.4, 0.2], [0.3, 0.7, -0.5]])
+    offset = jnp.asarray([-0.2, 0.4])
+    parameters = jnp.asarray([0.1, -0.3, 0.5])
+    direction = jnp.asarray([0.6, -0.2, 0.9])
+    natural_fn = lambda values: (matrix @ values + offset)[..., None]
+    result = exponential_family_parameter_fisher_action(
+        family,
+        natural_fn,
+        parameters,
+        direction,
+        regularization=0.03,
+    )
+    natural_values = matrix @ parameters + offset
+    expected = (
+        matrix.T @ (jnp.exp(natural_values) * (matrix @ direction)) + 0.03 * direction
+    )
+    compiled = jax.jit(
+        lambda values, vector: (
+            exponential_family_parameter_fisher_action(
+                family,
+                natural_fn,
+                values,
+                vector,
+            ).action
+        )
+    )(parameters, direction)
+
+    np.testing.assert_allclose(result.action, expected, rtol=2e-12, atol=2e-12)
+    np.testing.assert_allclose(
+        compiled,
+        matrix.T @ (jnp.exp(natural_values) * (matrix @ direction)),
+        rtol=2e-12,
+        atol=2e-12,
+    )
+    assert bool(result.valid)
+    assert result.operator_id == "fisher_information_pullback"
+
+
+def test_exact_family_fisher_reports_invalid_and_nonfinite_coordinates():
+    family = ExponentialRateFamily()
+    invalid = exponential_family_fisher_action(
+        family,
+        family.natural(jnp.asarray([0.0])),
+        jnp.asarray([1.0]),
+    )
+    nonfinite = exponential_family_fisher_action(
+        family,
+        family.natural(jnp.asarray([jnp.nan])),
+        jnp.asarray([1.0]),
+    )
+    assert not bool(invalid.valid)
+    assert int(invalid.status) == 2
+    assert int(family.natural_domain(family.natural(jnp.asarray([0.0]))).status) == (
+        EXPONENTIAL_FAMILY_OUTSIDE_NATURAL_DOMAIN
+    )
+    assert not bool(nonfinite.valid)
+    assert int(nonfinite.status) == 1
 
 
 def test_empirical_directions_match_dense_observability_and_controllability():
