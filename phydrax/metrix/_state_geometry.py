@@ -185,9 +185,7 @@ class LocalRetraction(StrictModule):
         vector = jnp.asarray(tangent)
         _same_shape(local, self.base_point, "Local retraction coordinates")
         _same_shape(vector, self.base_point, "Retraction tangent")
-        velocity = jnp.asarray(
-            self.geometry.pullback(self.base_point, local, vector)
-        )
+        velocity = jnp.asarray(self.geometry.pullback(self.base_point, local, vector))
         _same_shape(velocity, self.base_point, "Local retraction pullback")
         return velocity
 
@@ -201,6 +199,7 @@ class EuclideanStateGeometry(AbstractStateGeometry):
 
     supports_exact_pullback: bool = eqx.field(static=True)
     supports_commutator_free: bool = eqx.field(static=True)
+
     def __init__(
         self,
         *,
@@ -339,9 +338,7 @@ class EmbeddedStateGeometry(AbstractStateGeometry):
         /,
     ) -> Array:
         state_array = jnp.asarray(state)
-        projected = jnp.asarray(
-            self.tangent_projection(state_array, jnp.asarray(vector))
-        )
+        projected = jnp.asarray(self.tangent_projection(state_array, jnp.asarray(vector)))
         _same_shape(projected, state_array, "Embedded tangent projection")
         return projected
 
@@ -406,9 +403,7 @@ class EmbeddedStateGeometry(AbstractStateGeometry):
             raise ValueError(
                 "Embedded pullback requires an explicit retraction_pullback callable."
             )
-        velocity = jnp.asarray(
-            self.retraction_pullback(state_array, local, vector)
-        )
+        velocity = jnp.asarray(self.retraction_pullback(state_array, local, vector))
         _same_shape(velocity, state_array, "Embedded retraction pullback")
         return velocity
 
@@ -621,6 +616,7 @@ def _matrix_map(function: Callable[[Array], Array], value: Array, /) -> Array:
 def _matrix_exponential(value: Array, /) -> Array:
     return _matrix_map(jsp.linalg.expm, value)
 
+
 def _symmetric_matrix_logarithm_primal(value: Array, /) -> Array:
     eigenvalues, eigenvectors = jnp.linalg.eigh(_symmetric(value))
     safe = jnp.maximum(eigenvalues, jnp.finfo(value.dtype).tiny)
@@ -659,11 +655,8 @@ def _symmetric_matrix_logarithm_jvp(primals, tangents):
         divided_difference,
     )
     transformed = _transpose(eigenvectors) @ _symmetric(tangent) @ eigenvectors
-    derivative = eigenvectors @ (coefficient * transformed) @ _transpose(
-        eigenvectors
-    )
+    derivative = eigenvectors @ (coefficient * transformed) @ _transpose(eigenvectors)
     return _symmetric_matrix_logarithm_primal(value), _symmetric(derivative)
-
 
 
 def _principal_local_so_logarithm(value: Array, /) -> Array:
@@ -683,7 +676,6 @@ def _principal_local_so_logarithm(value: Array, /) -> Array:
         term = term @ square
         series = series + term / denominator
     return _skew(2.0 * series)
-
 
 
 class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
@@ -732,11 +724,7 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
         )
         determinant = jnp.linalg.det(matrix)
         finite = jnp.all(jnp.isfinite(matrix), axis=(-2, -1))
-        return jnp.all(
-            finite
-            & (orthogonality <= self.tolerance)
-            & (determinant > 0.0)
-        )
+        return jnp.all(finite & (orthogonality <= self.tolerance) & (determinant > 0.0))
 
     def project_tangent(
         self,
@@ -829,11 +817,7 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
             identity = jnp.eye(self.dimension, dtype=matrix.dtype)
             right_factor = self._increment(local) + identity
             relative_velocity = _transpose(matrix) @ vector
-            left_factor = (
-                2.0
-                * (identity - 0.5 * local)
-                @ relative_velocity
-            )
+            left_factor = 2.0 * (identity - 0.5 * local) @ relative_velocity
             velocity = jnp.linalg.solve(
                 _transpose(right_factor),
                 _transpose(left_factor),
@@ -846,10 +830,7 @@ class SpecialOrthogonalStateGeometry(AbstractStateGeometry):
                 (local,),
                 (_skew(local_velocity),),
             )
-            return (
-                self.to_local(point, ambient_velocity)
-                + _symmetric(local_velocity)
-            )
+            return self.to_local(point, ambient_velocity) + _symmetric(local_velocity)
 
         tolerance = 1e-10 if matrix.dtype == jnp.dtype(jnp.float64) else 1e-5
         restart = 8
@@ -962,9 +943,7 @@ class SymmetricPositiveDefiniteStateGeometry(AbstractStateGeometry):
         /,
     ) -> Array:
         left_solved = jnp.linalg.solve(factor, value)
-        return _transpose(
-            jnp.linalg.solve(factor, _transpose(left_solved))
-        )
+        return _transpose(jnp.linalg.solve(factor, _transpose(left_solved)))
 
     def contains(self, state: ArrayLike, /) -> Array:
         matrix = _matrix_shape(state, self.dimension, "SPD(n) state")
@@ -975,9 +954,7 @@ class SymmetricPositiveDefiniteStateGeometry(AbstractStateGeometry):
         minimum = jnp.min(jnp.linalg.eigvalsh(_symmetric(matrix)), axis=-1)
         finite = jnp.all(jnp.isfinite(matrix), axis=(-2, -1))
         return jnp.all(
-            finite
-            & (symmetry_error <= self.tolerance)
-            & (minimum > self.tolerance)
+            finite & (symmetry_error <= self.tolerance) & (minimum > self.tolerance)
         )
 
     def project_tangent(

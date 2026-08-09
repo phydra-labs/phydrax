@@ -151,7 +151,7 @@ def p(t):
 
 flow = phx.operators.canonical_hamiltonian_vector_field(H)
 residual = phx.operators.canonical_hamiltonian_residual(q, p, H)
-self_bracket = phx.operators.poisson_bracket(H, H)
+self_bracket = phx.operators.canonical_poisson_bracket(H, H)
 assert jnp.allclose(
     flow.func(jnp.asarray([0.2]), jnp.asarray([0.3])),
     jnp.asarray([0.3, -0.2]),

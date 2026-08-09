@@ -177,8 +177,10 @@ from ._geometric import (
     GeometricEuler,
     GeometricLocalInterpolation,
     RKMK,
+    SeparableHamiltonianVectorField,
     solver_state_geometry,
     SRKMK,
+    StormerVerlet,
 )
 from ._integration import spatial_measure
 from ._jump import (
@@ -466,7 +468,9 @@ __all__ = [
     "least_squares_bsde_diagnostics",
     "LeastSquaresBSDEDiagnostics",
     "RKMK",
+    "SeparableHamiltonianVectorField",
     "SRKMK",
+    "StormerVerlet",
     "solver_state_geometry",
     "LeastSquaresBSDEResult",
     "ParticleVectorField",

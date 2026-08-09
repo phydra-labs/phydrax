@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
-from ._connection import LeviCivitaConnection
+from ._connection import AbstractAffineConnection, LeviCivitaConnection
 from ._metric import RiemannianMetric
 from ._tensor import TensorType
 from ._utils import _pointwise_array
@@ -43,7 +43,8 @@ def gradient(
     /,
 ) -> Array:
     """Riemannian gradient of a pointwise scalar field."""
-
+    if not isinstance(metric, RiemannianMetric):
+        raise TypeError("gradient requires a RiemannianMetric.")
     return _pointwise_array(
         lambda point: _gradient_point(field, metric, point),
         coordinates,
@@ -51,18 +52,35 @@ def gradient(
     )
 
 
-def _covariant_hessian_point(
+def _connection_hessian_point(
     field: Callable[[Array], Array],
-    metric: RiemannianMetric,
+    connection: AbstractAffineConnection,
     coordinates: Array,
     /,
 ) -> Array:
     _scalar_value(field, coordinates)
     differential = jax.jacfwd(field)(coordinates)
     second = jax.jacfwd(jax.jacfwd(field))(coordinates)
-    coefficients = LeviCivitaConnection(metric).coefficients(coordinates)
-    correction = oe.contract("kij,k->ij", coefficients, differential)
+    correction = oe.contract(
+        "kij,k->ij", connection.coefficients(coordinates), differential
+    )
     return second - correction
+
+
+def connection_covariant_hessian(
+    field: Callable[[Array], Array],
+    connection: AbstractAffineConnection,
+    coordinates: ArrayLike,
+    /,
+) -> Array:
+    """Covariant Hessian induced by an explicit affine connection."""
+    if not isinstance(connection, AbstractAffineConnection):
+        raise TypeError("connection must be an AbstractAffineConnection.")
+    return _pointwise_array(
+        lambda point: _connection_hessian_point(field, connection, point),
+        coordinates,
+        connection.chart.dimension,
+    )
 
 
 def covariant_hessian(
@@ -72,12 +90,9 @@ def covariant_hessian(
     /,
 ) -> Array:
     """Covariant Hessian ``∇_i∇_j field`` of a scalar field."""
-
-    return _pointwise_array(
-        lambda point: _covariant_hessian_point(field, metric, point),
-        coordinates,
-        metric.chart.dimension,
-    )
+    if not isinstance(metric, RiemannianMetric):
+        raise TypeError("covariant_hessian requires a RiemannianMetric.")
+    return connection_covariant_hessian(field, LeviCivitaConnection(metric), coordinates)
 
 
 def laplace_beltrami(
@@ -86,31 +101,49 @@ def laplace_beltrami(
     coordinates: ArrayLike,
     /,
 ) -> Array:
-    """Metric trace of the covariant Hessian of a scalar field."""
+    """Metric trace of the Riemannian covariant Hessian."""
+    if not isinstance(metric, RiemannianMetric):
+        raise TypeError("laplace_beltrami requires a RiemannianMetric.")
 
-    def _point(point: Array) -> Array:
-        hessian = _covariant_hessian_point(field, metric, point)
+    def pointwise(point: Array) -> Array:
+        hessian = _connection_hessian_point(field, LeviCivitaConnection(metric), point)
         return oe.contract("ij,ij->", metric.inverse(point), hessian)
 
-    return _pointwise_array(_point, coordinates, metric.chart.dimension)
+    return _pointwise_array(pointwise, coordinates, metric.chart.dimension)
 
 
-def _divergence_point(
+def _connection_divergence_point(
     field: Callable[[Array], Array],
-    metric: RiemannianMetric,
+    connection: AbstractAffineConnection,
     coordinates: Array,
     /,
 ) -> Array:
     values = jnp.asarray(field(coordinates))
-    dimension = metric.chart.dimension
+    dimension = connection.chart.dimension
     if values.shape != (dimension,):
         raise ValueError(
             f"Divergence requires a pointwise vector shape {(dimension,)}; "
             f"got {values.shape}."
         )
     derivative = jax.jacfwd(field)(coordinates)
-    coefficients = LeviCivitaConnection(metric).coefficients(coordinates)
+    coefficients = connection.coefficients(coordinates)
     return jnp.trace(derivative) + oe.contract("iik,k->", coefficients, values)
+
+
+def connection_divergence(
+    field: Callable[[Array], Array],
+    connection: AbstractAffineConnection,
+    coordinates: ArrayLike,
+    /,
+) -> Array:
+    """Trace the covariant derivative of a vector under an affine connection."""
+    if not isinstance(connection, AbstractAffineConnection):
+        raise TypeError("connection must be an AbstractAffineConnection.")
+    return _pointwise_array(
+        lambda point: _connection_divergence_point(field, connection, point),
+        coordinates,
+        connection.chart.dimension,
+    )
 
 
 def divergence(
@@ -120,23 +153,20 @@ def divergence(
     /,
 ) -> Array:
     """Riemannian divergence of a contravariant vector field."""
-
-    return _pointwise_array(
-        lambda point: _divergence_point(field, metric, point),
-        coordinates,
-        metric.chart.dimension,
-    )
+    if not isinstance(metric, RiemannianMetric):
+        raise TypeError("divergence requires a RiemannianMetric.")
+    return connection_divergence(field, LeviCivitaConnection(metric), coordinates)
 
 
-def _covariant_derivative_point(
+def _affine_covariant_derivative_point(
     field: Callable[[Array], Array],
-    metric: RiemannianMetric,
+    connection: AbstractAffineConnection,
     tensor_type: TensorType,
     coordinates: Array,
     /,
 ) -> Array:
     values = jnp.asarray(field(coordinates))
-    dimension = metric.chart.dimension
+    dimension = connection.chart.dimension
     expected = (dimension,) * tensor_type.rank
     if values.shape != expected:
         raise ValueError(
@@ -146,7 +176,7 @@ def _covariant_derivative_point(
     derivative = jax.jacfwd(field)(coordinates)
     if tensor_type.rank == 0:
         return derivative
-    coefficients = LeviCivitaConnection(metric).coefficients(coordinates)
+    coefficients = connection.coefficients(coordinates)
     letters = tuple(letter for letter in ascii_lowercase if letter not in ("x", "y"))[
         : tensor_type.rank
     ]
@@ -171,6 +201,25 @@ def _covariant_derivative_point(
     return result
 
 
+def affine_covariant_derivative(
+    field: Callable[[Array], Array],
+    connection: AbstractAffineConnection,
+    tensor_type: TensorType,
+    coordinates: ArrayLike,
+    /,
+) -> Array:
+    """Covariantly differentiate a tensor using an explicit affine connection."""
+    if not isinstance(connection, AbstractAffineConnection):
+        raise TypeError("connection must be an AbstractAffineConnection.")
+    return _pointwise_array(
+        lambda point: _affine_covariant_derivative_point(
+            field, connection, tensor_type, point
+        ),
+        coordinates,
+        connection.chart.dimension,
+    )
+
+
 def covariant_derivative(
     field: Callable[[Array], Array],
     metric: RiemannianMetric,
@@ -178,15 +227,24 @@ def covariant_derivative(
     coordinates: ArrayLike,
     /,
 ) -> Array:
-    """Covariant derivative with its new covariant derivative axis appended last."""
-
-    return _pointwise_array(
-        lambda point: _covariant_derivative_point(
-            field,
-            metric,
-            tensor_type,
-            point,
-        ),
+    """Riemannian covariant derivative with derivative axis appended last."""
+    if not isinstance(metric, RiemannianMetric):
+        raise TypeError("covariant_derivative requires a RiemannianMetric.")
+    return affine_covariant_derivative(
+        field,
+        LeviCivitaConnection(metric),
+        tensor_type,
         coordinates,
-        metric.chart.dimension,
     )
+
+
+__all__ = [
+    "affine_covariant_derivative",
+    "connection_covariant_hessian",
+    "connection_divergence",
+    "covariant_derivative",
+    "covariant_hessian",
+    "divergence",
+    "gradient",
+    "laplace_beltrami",
+]

@@ -60,10 +60,18 @@ def test_canonical_poisson_brackets():
 
     point_q = jnp.asarray([0.2, -0.4])
     point_p = jnp.asarray([0.7, 0.1])
-    assert jnp.allclose(phx.operators.poisson_bracket(q0, p0).func(point_q, point_p), 1.0)
-    assert jnp.allclose(phx.operators.poisson_bracket(q0, p1).func(point_q, point_p), 0.0)
-    assert jnp.allclose(phx.operators.poisson_bracket(q0, q1).func(point_q), 0.0)
-    assert jnp.allclose(phx.operators.poisson_bracket(p0, p1).func(point_p), 0.0)
+    assert jnp.allclose(
+        phx.operators.canonical_poisson_bracket(q0, p0).func(point_q, point_p), 1.0
+    )
+    assert jnp.allclose(
+        phx.operators.canonical_poisson_bracket(q0, p1).func(point_q, point_p), 0.0
+    )
+    assert jnp.allclose(
+        phx.operators.canonical_poisson_bracket(q0, q1).func(point_q), 0.0
+    )
+    assert jnp.allclose(
+        phx.operators.canonical_poisson_bracket(p0, p1).func(point_p), 0.0
+    )
 
 
 def test_hamiltonian_self_bracket_is_zero():
@@ -75,7 +83,7 @@ def test_hamiltonian_self_bracket_is_zero():
     def hamiltonian(q, p):
         return jnp.exp(q[0]) + p[0] ** 4
 
-    bracket = phx.operators.poisson_bracket(hamiltonian, hamiltonian)
+    bracket = phx.operators.canonical_poisson_bracket(hamiltonian, hamiltonian)
     assert jnp.allclose(
         bracket.func(jnp.asarray([0.2]), jnp.asarray([-0.3])),
         0.0,

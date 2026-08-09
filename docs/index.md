@@ -29,9 +29,9 @@ Most workflows are composing a few primitives:
 
 - **Domain**: a labeled product space \(\Omega=\Omega_x\times\Omega_t\times\cdots\).
 - **Component**: a subset like interior/boundary/initial slice where a term lives.
-- **Metrix**: explicit coordinate charts, tensor laws, Riemannian metrics,
-  connections, curvature, embedded geometry, and metric-aware stochastic
-  operators.
+- **Metrix**: explicit charts and maps, tensor and form laws, positive and signed
+  metrics, affine connections and curvature, Lie/Poisson/horizontal structures,
+  and array manifolds for constrained optimization and geometric integration.
 - **DomainFunction**: a real- or complex-valued field
   \(u:\Omega\to\mathbb{R}^m\) or \(\mathbb{C}^m\) with explicit label dependencies.
 - **Operators**: maps \(u\mapsto r\) such as differential, integral, mechanics,
@@ -41,7 +41,7 @@ Most workflows are composing a few primitives:
 - **Conditions**: typed residual, moment, and observation declarations on components.
 - **Terms**: nonnegative penalties that turn conditions into trainable scalar terms.
 - **Model losses**: optional parameter-space penalties attached directly to models.
-- **FunctionalSolver**: sums `terms` and model losses into a differentiable scalar functional and runs optimization.
+- **FunctionalSolver**: sums terms and model losses into a differentiable scalar functional and runs Optax, structured KFAC, Evosax, or explicit product-manifold optimization.
 
 Optional (but central in many PDE problems):
 

@@ -260,6 +260,28 @@ cell basis without changing the represented physical complex; use
 
 ::: phydrax.graph.cochain_harmonic_projection
 
+### Continuous differential forms to cochains
+
+`ContinuousCochainBridge` requires one oriented parameterization and quadrature rule
+for every represented cell degree. Cell coordinates alone are not treated as enough
+information to integrate a form. `validate_stokes_bridge` checks the primary commuting
+law: integrating the smooth exterior derivative equals applying the discrete exterior
+derivative to the integrated cochain.
+
+::: phydrax.graph.OrientedCellParameterization
+
+---
+
+::: phydrax.graph.ContinuousCochainBridge
+
+---
+
+::: phydrax.graph.integrate_form_to_cochain
+
+---
+
+::: phydrax.graph.validate_stokes_bridge
+
 ---
 
 ### Typed cochain fields and domain-level DEC
