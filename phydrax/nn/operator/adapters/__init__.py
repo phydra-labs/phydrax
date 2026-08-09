@@ -14,6 +14,7 @@ from ._external import (
     save_operator_manifest,
     verify_operator_checkpoint,
 )
+from ._group_average import GroupAveragedOperator
 
 
 register_operator_architecture_codec(
@@ -25,6 +26,7 @@ register_operator_architecture_codec(
 
 
 __all__ = [
+    "GroupAveragedOperator",
     "ExternalOperatorAdapter",
     "OperatorCheckpointManifest",
     "OperatorContextModel",

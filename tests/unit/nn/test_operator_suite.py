@@ -73,9 +73,13 @@ def _parameter_count(model):
 def test_operator_architecture_status_is_deeply_immutable():
     status = phx.nn.operator.operator_architecture_status("FNO")
     assert (
-        phx.nn.operator.operator_architecture_status is phx.nn.operator.operator_architecture_status
+        phx.nn.operator.operator_architecture_status
+        is phx.nn.operator.operator_architecture_status
     )
-    assert phx.nn.operator.OperatorArchitectureStatus is phx.nn.operator.OperatorArchitectureStatus
+    assert (
+        phx.nn.operator.OperatorArchitectureStatus
+        is phx.nn.operator.OperatorArchitectureStatus
+    )
     with pytest.raises(FrozenInstanceError):
         status.tier = "research"
     with pytest.raises(TypeError):
@@ -162,6 +166,7 @@ def test_operator_architecture_tiers_and_recommendation_eligibility_are_exact():
             "Poseidon",
             "DPOT",
             "DiagonalStateSpaceMixer",
+            "SelectiveStateSpaceMixer",
             "Transolver",
             "TransolverPlusPlus",
             "GNOT",
@@ -173,7 +178,9 @@ def test_operator_architecture_tiers_and_recommendation_eligibility_are_exact():
         *expected_tiers.values()
     )
     for tier, names in expected_tiers.items():
-        statuses = {name: phx.nn.operator.operator_architecture_status(name) for name in names}
+        statuses = {
+            name: phx.nn.operator.operator_architecture_status(name) for name in names
+        }
         assert all(status.tier == tier for status in statuses.values())
         assert all(
             status.recommendation_eligible == (tier == "stable")
@@ -191,7 +198,9 @@ def test_tfno_is_an_fno_tucker_configuration_not_an_architecture_class():
 
 
 def test_mionet_is_a_deeponet_configuration():
-    status = phx.nn.operator.operator_architecture_status("multiple-input operator network")
+    status = phx.nn.operator.operator_architecture_status(
+        "multiple-input operator network"
+    )
     assert status.architecture == "DeepONet"
     assert status.configuration == (("branch", "mapping"), ("fusion", "product"))
 
@@ -241,10 +250,14 @@ def test_operator_metrics_are_per_case_and_quadrature_aware():
     query = phx.nn.operator.FunctionSamples(values=None, axes=(axis,))
     prediction = jnp.array([[1.0, 0.0, 0.0], [0.0, 0.0, 2.0]])
     target = jnp.zeros_like(prediction)
-    per_case = phx.nn.operator.operator_l2_loss(prediction, target, query, reduction="none")
+    per_case = phx.nn.operator.operator_l2_loss(
+        prediction, target, query, reduction="none"
+    )
     assert jnp.allclose(per_case, jnp.array([jnp.sqrt(0.1), 2.0 * jnp.sqrt(0.7)]))
     assert jnp.allclose(
-        phx.nn.operator.operator_conservation_error(prediction, target, query, reduction="none"),
+        phx.nn.operator.operator_conservation_error(
+            prediction, target, query, reduction="none"
+        ),
         jnp.array([0.1, 1.4]),
     )
 
@@ -416,21 +429,29 @@ def test_mionet_product_fusion_and_pod_decode():
     )
     batch = phx.nn.operator.OperatorBatch(
         inputs={
-            "a": phx.nn.operator.FunctionSamples(values=jnp.ones((3, 6)), axes=(sensor_axis,)),
+            "a": phx.nn.operator.FunctionSamples(
+                values=jnp.ones((3, 6)), axes=(sensor_axis,)
+            ),
             "b": phx.nn.operator.FunctionSamples(
                 values=2.0 * jnp.ones((3, 6)), axes=(sensor_axis,)
             ),
         },
-        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(query_axis,))},
+        queries={
+            "query": phx.nn.operator.FunctionSamples(values=None, axes=(query_axis,))
+        },
         case_axes=("case",),
     )
     assert model(batch).shape == (3, 5)
 
 
 def test_deeponet_chunked_and_unchunked_queries_agree():
-    branch = phx.nn.models.MLP(in_size=4, out_size=5, width_size=8, depth=2, key=jr.key(0))
+    branch = phx.nn.models.MLP(
+        in_size=4, out_size=5, width_size=8, depth=2, key=jr.key(0)
+    )
     trunk = phx.nn.models.MLP(in_size=1, out_size=5, width_size=8, depth=2, key=jr.key(1))
-    full = phx.nn.operator.architectures.DeepONet(branch=branch, trunk=trunk, coord_dim=1, latent_size=5)
+    full = phx.nn.operator.architectures.DeepONet(
+        branch=branch, trunk=trunk, coord_dim=1, latent_size=5
+    )
     chunked = phx.nn.operator.architectures.DeepONet(
         branch=branch,
         trunk=trunk,
@@ -457,16 +478,22 @@ def test_laplace_operator_has_stable_poles_real_output_and_strict_causality():
     source_axis = phx.nn.operator.OperatorAxis("t", jnp.array([0.0, 0.2, 0.5, 0.8, 1.0]))
     query_axis = phx.nn.operator.OperatorAxis("t_query", jnp.array([0.05, 0.15]))
     values = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
-    model = phx.nn.operator.architectures.LaplaceTemporalOperator(num_poles=5, key=jr.key(0))
+    model = phx.nn.operator.architectures.LaplaceTemporalOperator(
+        num_poles=5, key=jr.key(0)
+    )
 
     def evaluate(source_values):
         return model(
             phx.nn.operator.OperatorBatch(
                 inputs={
-                    "u": phx.nn.operator.FunctionSamples(values=source_values, axes=(source_axis,))
+                    "u": phx.nn.operator.FunctionSamples(
+                        values=source_values, axes=(source_axis,)
+                    )
                 },
                 queries={
-                    "query": phx.nn.operator.FunctionSamples(values=None, axes=(query_axis,))
+                    "query": phx.nn.operator.FunctionSamples(
+                        values=None, axes=(query_axis,)
+                    )
                 },
             )
         )
@@ -502,9 +529,13 @@ def test_cno_family_handles_odd_grids_and_native_batches(model_name):
     y_axis = jnp.linspace(0.0, 1.0, 17)
     values = jr.normal(jr.key(0), (2, 15, 17))
     if model_name == "cno":
-        model = phx.nn.operator.architectures.CNO(spatial_ndim=2, width=4, depth=2, key=jr.key(1))
+        model = phx.nn.operator.architectures.CNO(
+            spatial_ndim=2, width=4, depth=2, key=jr.key(1)
+        )
     else:
-        model = phx.nn.operator.architectures.UNO(spatial_ndim=2, widths=(4, 6, 8), key=jr.key(1))
+        model = phx.nn.operator.architectures.UNO(
+            spatial_ndim=2, widths=(4, 6, 8), key=jr.key(1)
+        )
     output = model((values, x_axis, y_axis))
     assert output.shape == values.shape
     assert jnp.all(jnp.isfinite(output))
@@ -513,7 +544,9 @@ def test_cno_family_handles_odd_grids_and_native_batches(model_name):
 def test_sfno_is_finite_and_resolution_independent_in_parameter_count():
     theta = jnp.linspace(0.1, jnp.pi - 0.1, 6)
     phi = jnp.linspace(0.0, 2.0 * jnp.pi, 9, endpoint=False)
-    model = phx.nn.operator.architectures.SFNO(width=4, depth=2, max_degree=3, key=jr.key(0))
+    model = phx.nn.operator.architectures.SFNO(
+        width=4, depth=2, max_degree=3, key=jr.key(0)
+    )
     count = _parameter_count(model)
     output = model((jnp.ones((2, 6, 9)), theta, phi))
     theta_fine = jnp.linspace(0.1, jnp.pi - 0.1, 8)
@@ -528,12 +561,12 @@ def test_sfno_is_finite_and_resolution_independent_in_parameter_count():
 def test_operator_constraints_compose_data_and_physics_losses():
     axis = _axis(8)
     batch = _grid_batch(jnp.ones((2, 8)), (axis,), source="data", case_axes=("case",))
-    model = phx.nn.operator.architectures.FNO(width=4, depth=1, n_modes=(3,), key=jr.key(0))
+    model = phx.nn.operator.architectures.FNO(
+        width=4, depth=1, n_modes=(3,), key=jr.key(0)
+    )
     domain = phx.domain.DatasetDomain(jnp.ones((2, 8))) @ phx.domain.Interval1d(0.0, 1.0)
     function = domain.Model("data", "x")(model)
-    data = phx.terms.OperatorDatasetTerm(
-        "u", batch, jnp.zeros((2, 8)), relative=False
-    )
+    data = phx.terms.OperatorDatasetTerm("u", batch, jnp.zeros((2, 8)), relative=False)
     physics = phx.terms.PhysicsInformedOperatorTerm(
         "u", batch, lambda prediction, _: prediction
     )

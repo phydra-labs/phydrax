@@ -15,7 +15,7 @@
 
 ---
 
-::: phydrax.uq.ParameterSubspace
+::: phydrax.nn.parameters.ParameterSubspace
     options:
         members:
             - __init__

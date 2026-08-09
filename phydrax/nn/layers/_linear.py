@@ -5,7 +5,6 @@
 from collections.abc import Callable
 from typing import Literal
 
-import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, Key
@@ -22,6 +21,7 @@ from .._utils import (
     _identity,
     SizeLike,
 )
+from ..parameters import AbstractParameterTransform
 
 
 _key = DOC_KEY0
@@ -45,14 +45,14 @@ class Linear(_AbstractBaseModel):
     y=\phi\!\left(\operatorname{diag}(e^s)\,Vx + b\right).
     $$
 
-    If `enforce_positive_weights=True`, weights are constrained via
-    $W=\operatorname{softplus}(W_\text{raw})$.
+    A shape-preserving `weight_transform` may map raw trainable weights to
+    physically constrained effective weights at evaluation time.
     """
 
     weight: Array  # In RWF mode, this stores V (unscaled weights)
     bias: Array | None
     activation: Callable
-    enforce_positive_weights: bool
+    weight_transform: AbstractParameterTransform | None
 
     # Random Weight Factorization (RWF) params
     random_weight_factorization: bool
@@ -75,7 +75,7 @@ class Linear(_AbstractBaseModel):
         use_random_weight_factorization: bool | None = None,
         use_bias: bool = True,
         bias_init_lim: float = 1.0,
-        enforce_positive_weights: bool = False,
+        weight_transform: AbstractParameterTransform | None = None,
         key: Key[Array, ""] = _key,
     ):
         # Initialise the weight matrix and (optionally) RWF scales and bias
@@ -115,6 +115,17 @@ class Linear(_AbstractBaseModel):
             self.rwf_log_scales = mu + sigma * jr.normal(skey, shape=(out_size_,))
         else:
             self.rwf_log_scales = None
+        if weight_transform is not None:
+            if not isinstance(weight_transform, AbstractParameterTransform):
+                raise TypeError(
+                    "weight_transform must be an AbstractParameterTransform or None."
+                )
+            if not weight_transform.preserves_shape:
+                raise ValueError("Linear requires a shape-preserving weight transform.")
+            if self.random_weight_factorization:
+                raise ValueError(
+                    "weight_transform and random weight factorization are mutually exclusive."
+                )
 
         if use_bias:
             self.bias = jr.uniform(
@@ -135,7 +146,7 @@ class Linear(_AbstractBaseModel):
         else:
             act = activation
         self.activation = act
-        self.enforce_positive_weights = enforce_positive_weights
+        self.weight_transform = weight_transform
 
     def __call__(
         self,
@@ -161,11 +172,12 @@ class Linear(_AbstractBaseModel):
                 leading_shape = x_arr.shape
                 x_flat = x_arr.reshape(leading_shape + (1,))
 
-        # Apply the linear transformation (optionally enforce positive weights)
-        w = self.weight
-        if self.enforce_positive_weights:
-            # Use softplus to enforce positivity with smooth gradients
-            w = jax.nn.softplus(w)
+        # Map raw weights into their physical parameter space when requested.
+        w = (
+            self.weight
+            if self.weight_transform is None
+            else self.weight_transform(self.weight)
+        )
         # Support both vector input (in,) and batched input (..., in).
         # Weight is shaped (out, in); contract over the last dim of x.
         x_flat = contract("oi,...i->...o", w, x_flat)

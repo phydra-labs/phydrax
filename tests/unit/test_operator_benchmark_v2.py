@@ -1130,9 +1130,10 @@ def test_v2_registry_includes_specialized_families_and_fixed_pod_basis(quick_lad
         architecture.name: architecture
         for architecture in compatible_architectures(spherical, quick=True)
     }
-    assert {"fno", "tfno", "cno", "uno", "sfno", "pod_linear_rom"} <= set(
+    assert {"fno", "tfno", "cno", "sfno", "pod_linear_rom"} <= set(
         spherical_architectures
     )
+    assert "uno" not in spherical_architectures
     sfno = spherical_architectures["sfno"].build(spherical, 0)
     assert sfno(spherical.train_batch).shape == spherical.train_target.shape
 
@@ -1761,9 +1762,15 @@ def test_square_symmetry_contracts_preserve_fno_baselines_and_augmentation():
     broken_names = {
         architecture.name for architecture in compatible_architectures(broken, quick=True)
     }
-    assert {"fno", "fno_p4_augmented"} <= set(d4_architectures)
-    assert {"fno", "fno_p4_augmented"} <= set(c4_architectures)
+    expected_symmetry_models = {
+        "fno",
+        "fno_p4_augmented",
+        "lattice_equivariant_cno",
+    }
+    assert expected_symmetry_models <= set(d4_architectures)
+    assert expected_symmetry_models <= set(c4_architectures)
     assert "fno_p4_augmented" not in broken_names
+    assert "lattice_equivariant_cno" not in broken_names
 
     augmented = d4_architectures["fno_p4_augmented"].training_scenario(d4)
     assert augmented.train_batch.case_shape == (12,)
@@ -1781,6 +1788,12 @@ def test_square_symmetry_contracts_preserve_fno_baselines_and_augmentation():
     )(d4.train_batch)
     assert output.shape == d4.train_target.shape
     assert jnp.all(jnp.isfinite(output))
+    equivariant_output = d4_architectures["lattice_equivariant_cno"].build(
+        d4,
+        seed=0,
+    )(d4.train_batch)
+    assert equivariant_output.shape == d4.train_target.shape
+    assert jnp.all(jnp.isfinite(equivariant_output))
 
 
 def test_scenario_checksum_includes_structured_symmetry_contract():
@@ -1863,14 +1876,19 @@ def test_symmetry_benchmark_records_fno_defects_and_durable_artifact(tmp_path):
             quick=True,
             profile="smoke",
         ),
-        architecture_names=("fno", "fno_p4_augmented"),
+        architecture_names=(
+            "fno",
+            "fno_p4_augmented",
+            "lattice_equivariant_cno",
+        ),
         difficulty="easy",
     )
     records = {record.architecture: record for record in result.symmetry_results}
 
     assert result.symmetry_audits[0].passed
     assert records["fno"].worst_equivariance_defect > 1e-4
-    assert len(result.sample_efficiency) == 2
+    assert records["lattice_equivariant_cno"].worst_equivariance_defect < 1e-10
+    assert len(result.sample_efficiency) == 3
     assert all(
         curve.sample_fractions == (2 / 3, 1.0)
         and jnp.isfinite(curve.area_under_sample_error_curve)
@@ -1885,6 +1903,7 @@ def test_symmetry_benchmark_records_fno_defects_and_durable_artifact(tmp_path):
     assert set(symmetry_frame["architecture"]) == {
         "fno",
         "fno_p4_augmented",
+        "lattice_equivariant_cno",
     }
     sample_path = next(
         path for path in paths if path.name == "operator_sample_efficiency_v2.parquet"
@@ -1892,11 +1911,12 @@ def test_symmetry_benchmark_records_fno_defects_and_durable_artifact(tmp_path):
     assert set(pl.read_parquet(sample_path)["architecture"]) == {
         "fno",
         "fno_p4_augmented",
+        "lattice_equivariant_cno",
     }
     assert all(path.name != "operator_symmetry_decisions_v2.parquet" for path in paths)
     payload = json.loads(paths[0].read_text(encoding="utf-8"))
     assert payload["symmetry_audits"][0]["passed"]
-    assert len(payload["symmetry_results"]) == 2
+    assert len(payload["symmetry_results"]) == 3
     assert "symmetry_decisions" not in payload
 
 

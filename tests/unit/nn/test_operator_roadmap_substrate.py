@@ -48,11 +48,18 @@ from phydrax.terms import ResidualPenalty
 
 def test_operator_training_substrate_has_explicit_namespace_ownership():
     training_exports = set(phx.nn.operator.training.__all__)
-    assert set(phx.nn.__all__) == {"activations", "layers", "models", "operator"}
+    assert set(phx.nn.__all__) == {
+        "activations",
+        "layers",
+        "models",
+        "operator",
+        "parameters",
+    }
     assert {"MLP", "SeparableMLP"} <= set(vars(phx.nn.models))
     assert {"Linear", "MeasureAwareAttention", "RandomFourierFeatureEmbeddings"} <= set(
         vars(phx.nn.layers)
     )
+    assert {"ParameterSubspace", "PositiveTransform"} <= set(vars(phx.nn.parameters))
     assert {"FNO", "DeepONet"} <= set(vars(phx.nn.operator.architectures))
     assert {"AbstractOperatorModel", "OperatorModel"} <= set(vars(phx.nn.operator))
     assert {"OperatorAttention", "BasisSpectralConvND"} <= set(

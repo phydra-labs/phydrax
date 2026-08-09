@@ -47,25 +47,23 @@ from .dynamics._flower import (
     FlowerTransitionMode,
 )
 from .dynamics._koopman import KoopmanTemporalOperator
+from .dynamics._linear_recurrent_operator import LinearRecurrentOperator
+from .dynamics._selective_state_space_mixer import (
+    SelectiveStateSpaceDiagnostics,
+    SelectiveStateSpaceMixer,
+)
+from .dynamics._weight_space import WeightSpaceOperator
 from .geometric._cochain_neural_operator import (
     CochainNeuralOperator,
     TopologicalCochainBlock,
     TopologicalRouteConfig,
 )
-from .geometric._equivariant_geometry import (
-    EqGINO,
-    EquivariantGeometryOperator,
-    EquivariantIntegralLayer,
-    o3_gated_activation,
-    O3PointwiseLinear,
-    O3Representation,
-    RadialBasis,
-    RadialMap,
-)
+from .geometric._equivariant_geometry import EqGINO, EquivariantGeometryOperator
 from .geometric._geometry_informed_flower import GeometryInformedFlower
 from .geometric._geometry_operator import GeometryOperatorDiagnostics
 from .geometric._gino import GINO
 from .geometric._green_kernel import GreenKernelOperator
+from .geometric._lattice_equivariant_cno import LatticeEquivariantCNO
 from .geometric._local_operator import (
     LocalDifferentialOperator,
     LocalGlobalOperator,
@@ -139,6 +137,7 @@ _PORTABLE_ARCHITECTURES = (
     ("IFNO", IFNO),
     ("InContextOperator", InContextOperator),
     ("KoopmanTemporalOperator", KoopmanTemporalOperator),
+    ("LatticeEquivariantCNO", LatticeEquivariantCNO),
     ("LaplaceTemporalOperator", LaplaceTemporalOperator),
     ("LocalDifferentialOperator", LocalDifferentialOperator),
     ("LocalGlobalOperator", LocalGlobalOperator),
@@ -149,6 +148,7 @@ _PORTABLE_ARCHITECTURES = (
     ("PDEConditionedOperator", PDEConditionedOperator),
     ("Poseidon", Poseidon),
     ("RIGNO", RIGNO),
+    ("SelectiveStateSpaceMixer", SelectiveStateSpaceMixer),
     ("SFNO", SFNO),
     ("Transolver", Transolver),
     ("UNO", UNO),
@@ -188,12 +188,6 @@ __all__ = [
     "PDEConditionEncoder",
     "EqGINO",
     "EquivariantGeometryOperator",
-    "EquivariantIntegralLayer",
-    "o3_gated_activation",
-    "O3PointwiseLinear",
-    "O3Representation",
-    "RadialBasis",
-    "RadialMap",
     "Flower",
     "FlowerDiagnostics",
     "FlowerQueryMode",
@@ -221,8 +215,10 @@ __all__ = [
     "OperatorPromptState",
     "KoopmanTemporalOperator",
     "LaplaceTemporalOperator",
+    "LatticeEquivariantCNO",
     "LocalDifferentialOperator",
     "LocalGlobalOperator",
+    "LinearRecurrentOperator",
     "LocalIntegralOperator",
     "ManifoldSpectralConv",
     "ManifoldSpectralOperator",
@@ -237,7 +233,10 @@ __all__ = [
     "gaussian_operator_nll",
     "GaussianFunctionOperator",
     "RIGNO",
+    "SelectiveStateSpaceDiagnostics",
+    "SelectiveStateSpaceMixer",
     "SFNO",
+    "WeightSpaceOperator",
     "SphericalSpectralConv",
     "SphericalTransformPlan",
     "Transolver",

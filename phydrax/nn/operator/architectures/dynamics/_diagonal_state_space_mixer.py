@@ -16,6 +16,15 @@ from jaxtyping import Array, Key
 from phydrax._doc import DOC_KEY0
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
+from phydrax.nn.layers import (
+    AffineRecurrence,
+    RecurrentBatch,
+    run_affine_recurrence,
+)
+from phydrax.nn.layers._physical_sequence import (
+    normalize_physical_schedule,
+    stable_exponential_phi,
+)
 from phydrax.nn.operator.data import FunctionSamples, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
 
@@ -223,23 +232,7 @@ class DiagonalStateSpaceMixer(AbstractOperatorModel):
 
     @staticmethod
     def _phi_functions(z: Array, /) -> tuple[Array, Array]:
-        """Evaluate ``(exp(z)-1)/z`` and ``(exp(z)-1-z)/z²`` stably."""
-        real_dtype = jnp.real(z).dtype
-        threshold = jnp.sqrt(jnp.asarray(jnp.finfo(real_dtype).eps, dtype=real_dtype))
-        small = jnp.abs(z) < threshold
-        safe_z = jnp.where(small, jnp.ones_like(z), z)
-        phi_one_quotient = jnp.expm1(safe_z) / safe_z
-        phi_two_quotient = (phi_one_quotient - 1.0) / safe_z
-        series_z = jnp.where(small, z, jnp.zeros_like(z))
-        z2 = series_z * series_z
-        z3 = z2 * series_z
-        z4 = z3 * series_z
-        phi_one_series = 1.0 + series_z / 2.0 + z2 / 6.0 + z3 / 24.0 + z4 / 120.0
-        phi_two_series = 0.5 + series_z / 6.0 + z2 / 24.0 + z3 / 120.0 + z4 / 720.0
-        return (
-            jnp.where(small, phi_one_series, phi_one_quotient),
-            jnp.where(small, phi_two_series, phi_two_quotient),
-        )
+        return stable_exponential_phi(z)
 
     def discretize(self, delta_time: Array | float, /) -> tuple[Array, Array, Array]:
         """Return exact diagonal transition and left/right input coefficients."""
@@ -301,52 +294,21 @@ class DiagonalStateSpaceMixer(AbstractOperatorModel):
                 "inputs must have shape case_shape + (sequence_length, in_channels)."
             )
         case_shape = tuple(int(size) for size in values.shape[:-2])
-        if time_values.shape == (sequence_length,):
-            time_values = jnp.broadcast_to(time_values, case_shape + (sequence_length,))
-        elif tuple(int(size) for size in time_values.shape) != case_shape + (
-            sequence_length,
-        ):
-            raise ValueError("times must be shared or have shape case_shape + (length,).")
-
-        if mask is None:
-            valid = jnp.ones(case_shape + (sequence_length,), dtype=bool)
-        else:
-            valid = jnp.asarray(mask, dtype=bool)
-            if valid.shape == (sequence_length,):
-                valid = jnp.broadcast_to(valid, case_shape + (sequence_length,))
-            elif tuple(int(size) for size in valid.shape) != case_shape + (
-                sequence_length,
-            ):
-                raise ValueError(
-                    "mask must be shared or have shape case_shape + (length,)."
-                )
-
         compute_dtype = jnp.result_type(
             values.dtype, time_values.dtype, self.raw_decay.dtype
         )
         if not jnp.issubdtype(compute_dtype, jnp.floating):
             compute_dtype = self.raw_decay.dtype
         values = values.astype(compute_dtype)
-        time_values = time_values.astype(compute_dtype)
-        time_values = eqx.error_if(
+        time_values, valid, _, _ = normalize_physical_schedule(
             time_values,
-            jnp.any(valid & ~jnp.isfinite(time_values)),
-            "Valid time nodes must be finite.",
+            case_shape=case_shape,
+            sequence_length=sequence_length,
+            mask=mask,
+            reset=None,
+            dtype=compute_dtype,
+            require_prefix=True,
         )
-        if sequence_length > 1:
-            nonprefix = (~valid[..., :-1]) & valid[..., 1:]
-            time_values = eqx.error_if(
-                time_values,
-                jnp.any(nonprefix),
-                "mask must describe a valid prefix of each ragged schedule.",
-            )
-            valid_intervals = valid[..., :-1] & valid[..., 1:]
-            decreasing = (time_values[..., 1:] < time_values[..., :-1]) & valid_intervals
-            time_values = eqx.error_if(
-                time_values,
-                jnp.any(decreasing),
-                "Valid time nodes must be non-decreasing.",
-            )
         values = jnp.where(valid[..., None], values, jnp.zeros_like(values))
 
         complex_dtype = jnp.result_type(compute_dtype, jnp.complex64)
@@ -383,6 +345,31 @@ class DiagonalStateSpaceMixer(AbstractOperatorModel):
         injection = jnp.where(active[..., None], injection, jnp.zeros_like(injection))
         return transition, injection
 
+    def _state_trajectory(
+        self,
+        values: Array,
+        times: Array,
+        valid: Array,
+        initial_state: Array,
+        /,
+        *,
+        execution: Literal["serial", "associative"],
+    ) -> Array:
+        if int(values.shape[-2]) == 1:
+            return initial_state[..., None, :]
+        transition, injection = self._affine_steps(values, times, valid)
+        active = valid[..., :-1] & valid[..., 1:]
+        recurrence = AffineRecurrence(
+            jnp.zeros((self.state_size,), dtype=initial_state.dtype)
+        )
+        result = run_affine_recurrence(
+            recurrence,
+            RecurrentBatch((transition, injection), active),
+            initial_state=initial_state,
+            execution=execution,
+        )
+        return jnp.concatenate((initial_state[..., None, :], result.states), axis=-2)
+
     def _readout(self, states: Array, values: Array, valid: Array, /) -> Array:
         output_matrix = self._output_matrix(states.dtype)
         dynamic = 2.0 * jnp.real(jnp.einsum("om,...tm->...to", output_matrix, states))
@@ -404,22 +391,12 @@ class DiagonalStateSpaceMixer(AbstractOperatorModel):
         mask: Array | None = None,
         initial_state: Array | None = None,
     ) -> Array:
-        """Mix a sequence with a linear-memory recurrent scan."""
+        """Mix a sequence through the shared serial affine recurrence."""
         values, time_values, valid, state0 = self._prepare_sequence(
             inputs, times, mask, initial_state
         )
-        transition, injection = self._affine_steps(values, time_values, valid)
-        scan_transition = jnp.moveaxis(transition, -2, 0)
-        scan_injection = jnp.moveaxis(injection, -2, 0)
-
-        def step(state: Array, operands: tuple[Array, Array]):
-            multiplier, addition = operands
-            next_state = multiplier * state + addition
-            return next_state, next_state
-
-        _, scanned = jax.lax.scan(step, state0, (scan_transition, scan_injection))
-        states = jnp.concatenate(
-            (state0[..., None, :], jnp.moveaxis(scanned, 0, -2)), axis=-2
+        states = self._state_trajectory(
+            values, time_values, valid, state0, execution="serial"
         )
         return self._readout(states, values, valid)
 
@@ -432,32 +409,12 @@ class DiagonalStateSpaceMixer(AbstractOperatorModel):
         mask: Array | None = None,
         initial_state: Array | None = None,
     ) -> Array:
-        """Mix a sequence by associative composition of exact affine steps."""
+        """Mix a sequence through shared associative affine composition."""
         values, time_values, valid, state0 = self._prepare_sequence(
             inputs, times, mask, initial_state
         )
-        if int(values.shape[-2]) == 1:
-            return self._readout(state0[..., None, :], values, valid)
-        transition, injection = self._affine_steps(values, time_values, valid)
-        scan_transition = jnp.moveaxis(transition, -2, 0)
-        scan_injection = jnp.moveaxis(injection, -2, 0)
-
-        def compose(
-            earlier: tuple[Array, Array], later: tuple[Array, Array]
-        ) -> tuple[Array, Array]:
-            earlier_multiplier, earlier_addition = earlier
-            later_multiplier, later_addition = later
-            return (
-                later_multiplier * earlier_multiplier,
-                later_multiplier * earlier_addition + later_addition,
-            )
-
-        prefix_multiplier, prefix_addition = jax.lax.associative_scan(
-            compose, (scan_transition, scan_injection), axis=0
-        )
-        scanned = prefix_multiplier * state0[None, ...] + prefix_addition
-        states = jnp.concatenate(
-            (state0[..., None, :], jnp.moveaxis(scanned, 0, -2)), axis=-2
+        states = self._state_trajectory(
+            values, time_values, valid, state0, execution="associative"
         )
         return self._readout(states, values, valid)
 

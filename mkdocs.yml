@@ -188,6 +188,7 @@ nav:
         - Neural networks:
             - Overview: "api/nn/index.md"
             - Layers: "api/nn/layers.md"
+            - Parameters: "api/nn/parameters.md"
             - Architectures: "api/nn/architectures.md"
             - Structured: "api/nn/structured.md"
             - Wrappers: "api/nn/wrappers.md"

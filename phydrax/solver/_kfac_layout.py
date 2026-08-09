@@ -79,13 +79,14 @@ def build_kfac_plan(
 
 
 def _validate_affine_block(block: KFACAffineBlock, /, *, name: str) -> None:
-    if block.random_weight_factorization:
+    if block.parameterization == "rwf":
         raise ValueError(
-            f"KFAC does not support random weight factorization; disable rwf for {name}."
+            f"KFAC requires direct affine parameters; disable rwf for {name}."
         )
-    if block.enforce_positive_weights:
+    if block.parameterization != "direct":
         raise ValueError(
-            f"KFAC does not support positive-weight reparameterization in {name}."
+            "KFAC supports only direct affine parameters; "
+            f"{name} uses {block.parameterization!r} parameterization."
         )
     if jnp.iscomplexobj(block.weight) or (
         block.bias is not None and jnp.iscomplexobj(block.bias)

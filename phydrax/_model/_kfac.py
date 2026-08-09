@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import abc
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,8 +16,7 @@ class KFACAffineBlock:
     name: str
     weight: Any
     bias: Any | None
-    random_weight_factorization: bool = False
-    enforce_positive_weights: bool = False
+    parameterization: Literal["direct", "rwf", "transformed"] = "direct"
 
 
 class KFACLayoutProvider(abc.ABC):

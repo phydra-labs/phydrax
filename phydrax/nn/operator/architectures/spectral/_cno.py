@@ -18,6 +18,7 @@ from phydrax._strict import StrictModule
 from phydrax.nn._keys import EvalKey
 from phydrax.nn._utils import _get_size
 from phydrax.nn.layers._linear import Linear
+from phydrax.nn.layers._measure_convolution import _AbstractMeasureNormalizedConvND
 from phydrax.nn.operator.architectures.spectral._fno import spectral_resample
 from phydrax.nn.operator.data import OperatorAxis, OperatorBatch
 from phydrax.nn.operator.engine import AbstractOperatorModel
@@ -81,15 +82,9 @@ def _operator_source(batch: OperatorBatch, source_key: str | None, /):
     return next(iter(batch.inputs.values()))
 
 
-class AntiAliasedConvND(StrictModule):
-    """Channels-last N-D convolution with alias-free oversampled activation."""
+class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
+    """Measure-aware channels-last convolution with oversampled activation."""
 
-    weight: Array
-    bias: Array
-    in_channels: int
-    out_channels: int
-    spatial_ndim: int
-    kernel_size: tuple[int, ...]
     activation: CNOActivation | None
     oversample_factor: int
 
@@ -104,25 +99,24 @@ class AntiAliasedConvND(StrictModule):
         oversample_factor: int = 2,
         key: Key[Array, ""] = DOC_KEY0,
     ):
-        self.spatial_ndim = int(spatial_ndim)
-        self.in_channels = int(in_channels)
-        self.out_channels = int(out_channels)
-        if isinstance(kernel_size, int):
-            self.kernel_size = (int(kernel_size),) * self.spatial_ndim
-        else:
-            self.kernel_size = tuple(int(size) for size in kernel_size)
+        super().__init__(
+            spatial_ndim=spatial_ndim,
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            padding="SAME",
+            use_bias=True,
+            key=key,
+        )
+        if any(size % 2 == 0 for size in self.kernel_size):
+            raise ValueError("kernel_size must contain positive odd sizes per axis.")
         self.activation = activation
         self.oversample_factor = int(oversample_factor)
-        if self.spatial_ndim not in (1, 2, 3):
-            raise ValueError("AntiAliasedConvND supports one, two, or three dimensions.")
-        if len(self.kernel_size) != self.spatial_ndim or any(
-            size <= 0 or size % 2 == 0 for size in self.kernel_size
-        ):
-            raise ValueError("kernel_size must contain positive odd sizes per axis.")
-        if self.in_channels <= 0 or self.out_channels <= 0:
-            raise ValueError("in_channels and out_channels must be positive.")
         if self.oversample_factor < 1:
             raise ValueError("oversample_factor must be at least one.")
+
+        # Preserve CNO's existing initialization while changing only its measure
+        # semantics.
         weight_key, _ = jr.split(key)
         scale = 1.0 / jnp.sqrt(float(prod(self.kernel_size) * self.in_channels))
         self.weight = scale * jr.normal(
@@ -131,38 +125,36 @@ class AntiAliasedConvND(StrictModule):
         )
         self.bias = jnp.zeros((self.out_channels,), dtype=float)
 
-    def _convolve(self, values: Array, /) -> Array:
-        spatial = {1: "W", 2: "HW", 3: "DHW"}[self.spatial_ndim]
-        array = jnp.asarray(values)
-        spatial_shape = tuple(
-            int(size) for size in array.shape[-self.spatial_ndim - 1 : -1]
+    def __call__(
+        self,
+        values: Array,
+        /,
+        *,
+        source_mask: Array | None = None,
+        target_mask: Array | None = None,
+        quadrature: Array | None = None,
+    ) -> Array:
+        output = super().__call__(
+            values,
+            source_mask=source_mask,
+            target_mask=target_mask,
+            quadrature=quadrature,
         )
-        case_shape = tuple(int(size) for size in array.shape[: -self.spatial_ndim - 1])
-        batched = array.reshape(
-            (prod(case_shape) if case_shape else 1,) + spatial_shape + (self.in_channels,)
-        )
-        output = jax.lax.conv_general_dilated(
-            batched,
-            self.weight,
-            window_strides=(1,) * self.spatial_ndim,
-            padding="SAME",
-            dimension_numbers=(f"N{spatial}C", f"{spatial}IO", f"N{spatial}C"),
-        )
-        return (output + self.bias).reshape(
-            case_shape + spatial_shape + (self.out_channels,)
-        )
-
-    def __call__(self, values: Array, /) -> Array:
-        output = self._convolve(values)
-        if self.activation is None:
-            return output
-        shape = tuple(int(size) for size in output.shape[-self.spatial_ndim - 1 : -1])
-        if self.oversample_factor == 1:
-            return _activate(self.activation, output)
-        fine_shape = tuple(self.oversample_factor * size for size in shape)
-        fine = spectral_resample(output, fine_shape)
-        activated = _activate(self.activation, fine)
-        return spectral_resample(activated, shape)
+        if self.activation is not None:
+            shape = tuple(int(size) for size in output.shape[-self.spatial_ndim - 1 : -1])
+            if self.oversample_factor == 1:
+                output = _activate(self.activation, output)
+            else:
+                fine_shape = tuple(self.oversample_factor * size for size in shape)
+                fine = spectral_resample(output, fine_shape)
+                output = spectral_resample(_activate(self.activation, fine), shape)
+        if target_mask is not None:
+            output = jnp.where(
+                jnp.asarray(target_mask, dtype=bool)[..., None],
+                output,
+                jnp.zeros_like(output),
+            )
+        return output
 
 
 class _CNOBlock(StrictModule):
@@ -211,9 +203,37 @@ class _CNOBlock(StrictModule):
             )
         )
 
-    def __call__(self, values: Array, /) -> Array:
+    def __call__(
+        self,
+        values: Array,
+        /,
+        *,
+        source_mask: Array | None = None,
+        target_mask: Array | None = None,
+        source_quadrature: Array | None = None,
+        target_quadrature: Array | None = None,
+    ) -> Array:
         residual = values if self.skip is None else self.skip(values)
-        return (residual + self.second(self.first(values))) / jnp.sqrt(2.0)
+        first = self.first(
+            values,
+            source_mask=source_mask,
+            target_mask=target_mask,
+            quadrature=source_quadrature,
+        )
+        branch = self.second(
+            first,
+            source_mask=target_mask,
+            target_mask=target_mask,
+            quadrature=target_quadrature,
+        )
+        output = (residual + branch) / jnp.sqrt(2.0)
+        if target_mask is not None:
+            output = jnp.where(
+                jnp.asarray(target_mask, dtype=bool)[..., None],
+                output,
+                jnp.zeros_like(output),
+            )
+        return output
 
 
 class CNO(AbstractOperatorModel):
@@ -280,18 +300,56 @@ class CNO(AbstractOperatorModel):
             key=keys[-1],
         )
 
-    def _evaluate(self, values: Array, axes: tuple[OperatorAxis, ...], /) -> Array:
+    def _evaluate(
+        self,
+        values: Array,
+        axes: tuple[OperatorAxis, ...],
+        /,
+        *,
+        source_mask: Array | None = None,
+        target_mask: Array | None = None,
+        source_quadrature: Array | None = None,
+        target_quadrature: Array | None = None,
+    ) -> Array:
         if len(axes) != self.spatial_ndim:
             raise ValueError(f"CNO expects {self.spatial_ndim} spatial axes.")
         array, case_shape = _prepare_grid_values(values, axes, _get_size(self.in_size))
+        if source_mask is not None:
+            array = jnp.where(
+                jnp.asarray(source_mask, dtype=bool)[..., None],
+                array,
+                jnp.zeros_like(array),
+            )
         if self.coordinate_embedding:
             array = jnp.concatenate(
                 (array, _coordinate_features(axes, case_shape)), axis=-1
             )
         hidden = self.lift(array)
+        if source_mask is not None:
+            hidden = jnp.where(
+                jnp.asarray(source_mask, dtype=bool)[..., None],
+                hidden,
+                jnp.zeros_like(hidden),
+            )
+        current_mask = source_mask
+        current_quadrature = source_quadrature
         for block in self.blocks:
-            hidden = block(hidden)
+            hidden = block(
+                hidden,
+                source_mask=current_mask,
+                target_mask=target_mask,
+                source_quadrature=current_quadrature,
+                target_quadrature=target_quadrature,
+            )
+            current_mask = target_mask
+            current_quadrature = target_quadrature
         output = self.projection(hidden)
+        if target_mask is not None:
+            output = jnp.where(
+                jnp.asarray(target_mask, dtype=bool)[..., None],
+                output,
+                jnp.zeros_like(output),
+            )
         if self.out_size == "scalar":
             return output[..., 0]
         return output
@@ -305,15 +363,20 @@ class CNO(AbstractOperatorModel):
     ) -> Array:
         del key
         source = _operator_source(batch, self.source_key)
-        axes = source.axes or batch.require_single_query().axes
+        query = batch.require_single_query()
+        axes = source.axes or query.axes
         if not axes or source.values is None:
             raise ValueError("CNO requires tensor-grid source values and query axes.")
-        if (
-            source.axes
-            and source.sample_shape != batch.require_single_query().sample_shape
-        ):
+        if source.axes and source.sample_shape != query.sample_shape:
             raise ValueError("CNO requires coincident source and query grids.")
-        return self._evaluate(jnp.asarray(source.values), axes)
+        return self._evaluate(
+            jnp.asarray(source.values),
+            axes,
+            source_mask=source.mask_array(case_shape=batch.case_shape),
+            target_mask=query.mask_array(case_shape=batch.case_shape),
+            source_quadrature=source.quadrature(case_shape=batch.case_shape),
+            target_quadrature=query.quadrature(case_shape=batch.case_shape),
+        )
 
     def __call__(
         self,

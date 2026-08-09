@@ -65,7 +65,7 @@ def test_parameter_subspace_reconstructs_only_explicitly_selected_leaves():
         "feature": {"weight": jnp.arange(6.0).reshape(2, 3)},
         "last": {"bias": jnp.asarray([0.5]), "weight": jnp.ones((3, 1))},
     }
-    subspace = phx.uq.ParameterSubspace(
+    subspace = phx.nn.parameters.ParameterSubspace(
         tree,
         {
             "feature": {"weight": False},

@@ -728,11 +728,12 @@ physical cases, and sum-reduces all observed query/channel log densities. It doe
 insert quadrature weights: a continuum training norm and a finite-dimensional
 observation density are different mathematical objects.
 
-For neural weights, select exact subtrees with `ParameterSubspace`. Examples include
-an FNO projection, selected spectral blocks, every DeepONet branch/trunk output head,
-a local-operator decoder, or a graph readout. Never use a hard-coded global
-“last layer” count for branched models. Disable dropout before evaluating a posterior
-density.
+For neural weights, select exact subtrees with
+`phx.nn.parameters.ParameterSubspace`. Examples include an FNO projection,
+selected spectral blocks, every DeepONet branch/trunk output head, a
+local-operator decoder, or a graph readout. Never use a hard-coded global
+“last layer” count for branched models. Disable dropout before evaluating a
+posterior density.
 
 `OperatorFunctionalConformal` calibrates complete physical source/output cases. Its
 maximum score yields simultaneous field bands. Its quadrature-weighted L2 score
@@ -851,11 +852,12 @@ $$
 $$
 
 The Jacobian term is mandatory. Use `ExpBijector` for positive parameters and
-`SigmoidIntervalBijector` for bounded parameters. `ParameterSubspace` explicitly
-partitions a model PyTree into sampled leaves and a frozen complement.
-`from_leaf_paths(...)` selects exact array leaves. `last_layer(...)` is deliberately
-generic: it selects the globally final array leaves in deterministic PyTree order;
-it does not inspect model architecture or select one final layer per branch.
+`SigmoidIntervalBijector` for bounded parameters.
+`phx.nn.parameters.ParameterSubspace` explicitly partitions a model PyTree into
+sampled leaves and a frozen complement. `from_leaf_paths(...)` selects exact
+array leaves. `last_layer(...)` is deliberately generic: it selects the globally
+final array leaves in deterministic PyTree order; it does not inspect model
+architecture or select one final layer per branch.
 
 For a `SeparableMLP`, there is one internal MLP per input factor and no single
 shared affine output head. Select every factor's final layer explicitly with
@@ -876,7 +878,7 @@ final_layer_paths = tuple(
     f".model.models[{index}].layers[{len(factor.layers) - 1}]"
     for index, factor in enumerate(separable.model.models)
 )
-separable_subspace = phx.uq.ParameterSubspace.from_subtree_paths(
+separable_subspace = phx.nn.parameters.ParameterSubspace.from_subtree_paths(
     separable,
     final_layer_paths,
 )

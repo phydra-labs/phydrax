@@ -175,7 +175,20 @@ def _capabilities_for(name: str, architecture: str, /) -> OperatorCapabilitySpec
             output_representations=representations,
             resolution_transfer=True,
         )
-    if architecture == "DiagonalStateSpaceMixer":
+    if architecture == "LinearRecurrentOperator":
+        return OperatorCapabilitySpec(
+            source_geometries=("tensor_grid", "point_cloud"),
+            query_geometries=("tensor_grid", "point_cloud"),
+            spatial_dimensions=(1,),
+            source_query_relations=("coincident",),
+            axis_requirement="none",
+            quadrature="unused",
+            masks="supported",
+            topology="unused",
+            resolution_transfer=True,
+            autoregressive_rollout=True,
+        )
+    if architecture in ("DiagonalStateSpaceMixer", "SelectiveStateSpaceMixer"):
         return OperatorCapabilitySpec(
             source_geometries=("tensor_grid", "point_cloud"),
             query_geometries=("tensor_grid", "point_cloud"),
@@ -186,6 +199,18 @@ def _capabilities_for(name: str, architecture: str, /) -> OperatorCapabilitySpec
             masks="supported",
             topology="unused",
             resolution_transfer=False,
+        )
+    if architecture == "WeightSpaceOperator":
+        return OperatorCapabilitySpec(
+            source_geometries=("tensor_grid", "point_cloud"),
+            query_geometries=("tensor_grid", "point_cloud"),
+            spatial_dimensions=(1, 2, 3),
+            source_query_relations=("independent",),
+            axis_requirement="none",
+            quadrature="unused",
+            masks="supported",
+            topology="unused",
+            resolution_transfer=True,
         )
     if architecture == "LaplaceTemporalOperator":
         return OperatorCapabilitySpec(
@@ -198,9 +223,49 @@ def _capabilities_for(name: str, architecture: str, /) -> OperatorCapabilitySpec
             topology="unused",
             resolution_transfer=True,
         )
+    if architecture == "LatticeEquivariantCNO":
+        return OperatorCapabilitySpec(
+            source_geometries=("tensor_grid",),
+            query_geometries=("tensor_grid",),
+            spatial_dimensions=(2, 3),
+            source_query_relations=("coincident",),
+            axis_requirement="periodic_square",
+            quadrature="physical_required",
+            masks="supported",
+            topology="unused",
+            input_representations=("tensor",),
+            output_representations=("tensor",),
+            symmetry_groups=("C4", "D4", "cube_rotations", "cube_orthogonal"),
+            resolution_transfer=True,
+            requires_structured_tensors=True,
+        )
+    if architecture == "CNO":
+        return OperatorCapabilitySpec(
+            source_geometries=("tensor_grid",),
+            query_geometries=("tensor_grid",),
+            spatial_dimensions=(1, 2, 3),
+            source_query_relations=("coincident",),
+            axis_requirement="uniform",
+            quadrature="physical_required",
+            masks="supported",
+            topology="unused",
+            resolution_transfer=True,
+            autoregressive_rollout=True,
+        )
+    if architecture == "UNO":
+        return OperatorCapabilitySpec(
+            source_geometries=("tensor_grid",),
+            query_geometries=("tensor_grid",),
+            spatial_dimensions=(1, 2, 3),
+            source_query_relations=("coincident",),
+            axis_requirement="uniform",
+            quadrature="unused",
+            masks="unsupported",
+            topology="unused",
+            resolution_transfer=True,
+            autoregressive_rollout=True,
+        )
     if architecture in (
-        "CNO",
-        "UNO",
         "Flower",
         "IFNO",
         "AxialFactorizedFNO",
@@ -218,23 +283,8 @@ def _capabilities_for(name: str, architecture: str, /) -> OperatorCapabilitySpec
             quadrature="optional",
             masks="supported",
             topology="unused",
-            resolution_transfer=architecture
-            in (
-                "CNO",
-                "UNO",
-                "Flower",
-                "IFNO",
-                "Poseidon",
-            ),
-            autoregressive_rollout=architecture
-            in (
-                "CNO",
-                "UNO",
-                "Flower",
-                "IFNO",
-                "DPOT",
-                "Poseidon",
-            ),
+            resolution_transfer=architecture in ("Flower", "IFNO", "Poseidon"),
+            autoregressive_rollout=architecture in ("Flower", "IFNO", "DPOT", "Poseidon"),
         )
     if architecture == "ConditionalFlowFunctionOperator":
         return OperatorCapabilitySpec(
@@ -417,6 +467,13 @@ _OPERATOR_ARCHITECTURE_STATUSES = {
         "Multiscale measure-aware graph attention, patchwise transformer execution, "
         "and arbitrary-query decoding are regression tested; family parity and "
         "decision-grade benchmark evidence remain pending.",
+    ),
+    "LatticeEquivariantCNO": _status(
+        "LatticeEquivariantCNO",
+        "LatticeEquivariantCNO",
+        "research",
+        "Finite-group tensor actions and Reynolds-projected lattice kernels have "
+        "exact equivariance checks; broad scientific benchmarks remain pending.",
     ),
     "CNO": _status(
         "CNO",
@@ -635,6 +692,31 @@ _OPERATOR_ARCHITECTURE_STATUSES = {
         "ragged schedules, and equivalent recurrent, dense, and associative "
         "execution have focused checks; broad sequence benchmarks remain pending.",
     ),
+    "LinearRecurrentOperator": _status(
+        "LinearRecurrentOperator",
+        "LinearRecurrentOperator",
+        "experimental",
+        "Stable complex-diagonal recurrence, packed masking, reset isolation, "
+        "serial/associative parity, and coincident ordered-sequence adaptation "
+        "have focused checks; broad temporal benchmarks remain pending.",
+    ),
+    "SelectiveStateSpaceMixer": _status(
+        "SelectiveStateSpaceMixer",
+        "SelectiveStateSpaceMixer",
+        "research",
+        "Input-dependent step scaling, injection, and readout preserve an affine "
+        "latent recurrence with exact irregular-time integration, reset-aware packed "
+        "segments, serial/associative parity, and extrapolation diagnostics; broad "
+        "sequence benchmarks remain pending.",
+    ),
+    "WeightSpaceOperator": _status(
+        "WeightSpaceOperator",
+        "WeightSpaceOperator",
+        "research",
+        "Selected root-model parameters evolve through a stable diagonal recurrence "
+        "and reconstruct coordinate functions without a dense parameter-space "
+        "transition; broad sequence benchmarks remain pending.",
+    ),
     "KoopmanTemporalOperator": _status(
         "KoopmanTemporalOperator",
         "KoopmanTemporalOperator",
@@ -791,6 +873,15 @@ def operator_architecture_contract(
     status = operator_architecture_status(name)
     configured = _configured_values(status, configuration)
     capabilities = status.capabilities
+    configured_group = dict(configured).get("symmetry_group")
+    if configured_group is not None and capabilities.symmetry_groups:
+        group_name = str(configured_group)
+        if group_name not in capabilities.symmetry_groups:
+            raise ValueError(
+                f"Configured symmetry group {group_name!r} is not supported by "
+                f"{status.architecture!r}."
+            )
+        capabilities = replace(capabilities, symmetry_groups=(group_name,))
     return ConfiguredOperatorContract(
         architecture=status.architecture,
         configuration=configured,
