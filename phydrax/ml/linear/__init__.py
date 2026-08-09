@@ -1,0 +1,116 @@
+#
+# Copyright © 2026 PHYDRA, Inc. All rights reserved.
+#
+
+"""Native immutable differentiable linear and generalized-linear estimators."""
+
+from ._base import (
+    GeneralizedLinearModel,
+    LinearRegressorModel,
+    LinearScoreClassifierModel,
+    LogisticClassifierModel,
+    MultinomialLogisticModel,
+)
+from ._glm import (
+    GammaModel,
+    GammaRegressorRecipe,
+    LogisticRegressionRecipe,
+    MultinomialLogisticRegressionRecipe,
+    PoissonModel,
+    PoissonRegressorRecipe,
+    TweedieModel,
+    TweedieRegressorRecipe,
+)
+from ._least_squares import (
+    OLSModel,
+    OLSRecipe,
+    RidgeModel,
+    RidgeRecipe,
+    TikhonovModel,
+    TikhonovRecipe,
+)
+from ._online import (
+    OnlineClassifierModel,
+    PassiveAggressiveClassifierModel,
+    PassiveAggressiveClassifierRecipe,
+    PassiveAggressiveRegressorModel,
+    PassiveAggressiveRegressorRecipe,
+    PerceptronModel,
+    PerceptronRecipe,
+    SGDClassifierModel,
+    SGDClassifierRecipe,
+    SGDRegressorModel,
+    SGDRegressorRecipe,
+)
+from ._robust import (
+    HuberModel,
+    HuberRegressorRecipe,
+    QuantileModel,
+    QuantileRegressorRecipe,
+    RANSACModel,
+    RANSACRegressorRecipe,
+    RobustDiagnostics,
+    TheilSenModel,
+    TheilSenRegressorRecipe,
+)
+from ._sparse import (
+    ElasticNetModel,
+    ElasticNetRecipe,
+    GroupLassoModel,
+    GroupLassoRecipe,
+    LassoModel,
+    LassoRecipe,
+    SparseGroupLassoModel,
+    SparseGroupLassoRecipe,
+)
+
+
+__all__ = [
+    "ElasticNetRecipe",
+    "ElasticNetModel",
+    "GammaModel",
+    "GammaRegressorRecipe",
+    "GeneralizedLinearModel",
+    "GroupLassoRecipe",
+    "GroupLassoModel",
+    "HuberModel",
+    "HuberRegressorRecipe",
+    "LassoRecipe",
+    "LassoModel",
+    "LinearRegressorModel",
+    "LinearScoreClassifierModel",
+    "LogisticClassifierModel",
+    "LogisticRegressionRecipe",
+    "MultinomialLogisticModel",
+    "MultinomialLogisticRegressionRecipe",
+    "OLSRecipe",
+    "OLSModel",
+    "OnlineClassifierModel",
+    "PassiveAggressiveClassifierRecipe",
+    "PassiveAggressiveClassifierModel",
+    "PassiveAggressiveRegressorRecipe",
+    "PassiveAggressiveRegressorModel",
+    "PerceptronRecipe",
+    "PerceptronModel",
+    "PoissonModel",
+    "PoissonRegressorRecipe",
+    "QuantileModel",
+    "QuantileRegressorRecipe",
+    "RANSACModel",
+    "RANSACRegressorRecipe",
+    "RidgeRecipe",
+    "RidgeModel",
+    "RobustDiagnostics",
+    "SGDClassifierRecipe",
+    "SGDClassifierModel",
+    "SGDRegressorRecipe",
+    "SGDRegressorModel",
+    "SparseGroupLassoRecipe",
+    "SparseGroupLassoModel",
+    "TheilSenModel",
+    "TheilSenRegressorRecipe",
+    "TikhonovRecipe",
+    "TikhonovModel",
+    "TweedieModel",
+    "TweedieRegressorRecipe",
+]

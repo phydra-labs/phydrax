@@ -45,6 +45,10 @@ Most workflows are composing a few primitives:
 - **Terms**: nonnegative penalties that turn conditions into trainable scalar terms.
 - **Model losses**: optional parameter-space penalties attached directly to models.
 - **FunctionalSolver**: sums terms and model losses into a differentiable scalar functional and runs Optax, structured KFAC, Evosax, or explicit product-manifold optimization.
+- **Native ML**: immutable JAX recipes for preprocessing, linear/probabilistic
+  supervision, decomposition, kernels, neighbors, covariance, clustering,
+  manifolds, trees, ensembles, selection, metrics, artifacts, and audited
+  fitted-model conversion. Fits return numerical and derivative contracts.
 
 Optional (but central in many PDE problems):
 

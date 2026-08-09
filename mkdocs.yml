@@ -101,6 +101,7 @@ nav:
         - Backward stochastic equations: "cookbook/bsde.md"
         - Physics-informed graph residuals: "cookbook/graph_physics.md"
         - Inverse + hybrid physics–data: "cookbook/inverse_and_data.md"
+        - Native ML scientific workflow: "cookbook/native_ml.md"
         - Operator learning (DatasetDomain): "cookbook/operator_learning.md"
         - Uncertainty quantification: "cookbook/uncertainty_quantification.md"
         - Neural-operator uncertainty: "cookbook/operator_uncertainty.md"
@@ -119,6 +120,7 @@ nav:
         - Solvers and training: "guides_solver.md"
         - Uncertainty quantification: "guides_uncertainty.md"
         - Optimal transport: "guides_transport.md"
+        - Native machine learning: "guides/ml.md"
         - Lagrangian and Hamiltonian mechanics: "guides_mechanics.md"
         - Quantum operators and dynamics: "guides_quantum.md"
     - Examples:
@@ -134,6 +136,16 @@ nav:
             - Differentiable ordering: "api/transport/soft.md"
         - Positive-definite kernels: "api/kernels.md"
         - Special functions: "api/special.md"
+        - Machine learning:
+            - Overview: "api/ml/index.md"
+            - Core contracts: "api/ml/core.md"
+            - Preprocessing and composition: "api/ml/workflows.md"
+            - Linear and probabilistic supervision: "api/ml/supervised.md"
+            - Kernels and neighbors: "api/ml/kernels_neighbors.md"
+            - Decomposition and unsupervised learning: "api/ml/unsupervised.md"
+            - Trees, ensembles, and selection: "api/ml/trees_ensembles_selection.md"
+            - Metrics and inspection: "api/ml/metrics_inspection.md"
+            - Artifacts, conversion, and export: "api/ml/interop.md"
         - Geometry substrate: "api/geometry.md"
         - Domains:
             - Overview: "api/domain/index.md"
@@ -233,5 +245,6 @@ nav:
     - Appendix:
         - Overview: "appendix/index.md"
         - Differentiation modes: "appendix/differentiation_modes.md"
+        - ML differentiation contracts: "appendix/ml_differentiability.md"
         - Physics-Constrained Interpolation: "appendix/physics_constrained_interpolation.md"
         - Surely You're Joking!: "appendix/surely_youre_joking.md"

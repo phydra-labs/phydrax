@@ -15,10 +15,10 @@ import jax.numpy as jnp
 import jax.random as jr
 
 from .._frozendict import frozendict
+from .._model import FrozenModel
 from .._strict import StrictModule
-from .._trainable import NonTrainableState
 from ..nn._base import _AbstractBaseModel
-from ..nn._keys import EvalKey, split_eval_key
+from ..nn._keys import split_eval_key
 from ..nn.operator.data import OperatorBatch
 from ..nn.operator.protocols import OperatorModel
 from ._operator import operator_predictive_from_samples, OperatorPredictiveField
@@ -356,20 +356,6 @@ class HeterogeneousFunctionEnsemble(StrictModule):
         )
 
 
-class FrozenModel(_AbstractBaseModel, NonTrainableState):
-    """Callable wrapper that keeps an entire model outside trainable partitions."""
-
-    model: Any
-    in_size: int | tuple[int, ...] | Literal["scalar"]
-    out_size: int | tuple[int, ...] | Literal["scalar"]
-
-    def __init__(self, model: _AbstractBaseModel):
-        self.model = model
-        self.in_size = model.in_size
-        self.out_size = model.out_size
-
-    def __call__(self, x, /, *, key: EvalKey = None):
-        return self.model(x, key=key)
 
 
 class RandomizedPriorModel(_AbstractBaseModel):

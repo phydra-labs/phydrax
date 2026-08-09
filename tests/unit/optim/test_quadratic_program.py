@@ -270,6 +270,19 @@ def test_active_set_gradients_match_piecewise_analytic_sensitivities():
         atol=1e-7,
     )
 
+    def duplicate_active_solution(linear):
+        problem = phx.optim.QuadraticProgram(
+            jnp.ones((1, 1)),
+            linear,
+            inequality_matrix=jnp.array([[-1.0], [-1.0]]),
+            inequality_rhs=jnp.zeros(2),
+        )
+        return phx.optim.solve_quadratic_program_primal(problem)
+
+    duplicate_jacobian = jax.jacrev(duplicate_active_solution)(jnp.array([2.0]))
+    assert jnp.all(jnp.isfinite(duplicate_jacobian))
+    np.testing.assert_allclose(duplicate_jacobian, jnp.zeros((1, 1)), atol=1e-7)
+
     def equality_solution(rhs):
         problem = phx.optim.QuadraticProgram(
             jnp.eye(2),

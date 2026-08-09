@@ -966,10 +966,13 @@ def _active_set_adjoint_single(
             [constraint, -jnp.diag(inactive_diagonal)],
         ]
     )
-    adjoint = jnp.linalg.solve(
+    # Degenerate active sets may contain dependent rows even when the primal
+    # sensitivity is unique; select the consistent minimum-norm adjoint.
+    adjoint = jnp.linalg.lstsq(
         kkt.T,
         jnp.concatenate((cotangent, jnp.zeros_like(inactive_diagonal))),
-    )
+        rcond=None,
+    )[0]
     primal_adjoint = adjoint[:variables]
     constraint_adjoint = adjoint[variables:]
     equality_adjoint = constraint_adjoint[:equalities]

@@ -143,6 +143,14 @@ from ._gaussian_factor import (
     solve_triangular_rank_aware,
 )
 from ._gp_condition import GaussianProcessCondition, GaussianProcessConditioner
+from ._gp_classification import (
+    BernoulliGaussianProcessLikelihood,
+    BernoulliGaussianProcessPosterior,
+    CategoricalGaussianProcessLikelihood,
+    CategoricalGaussianProcessPosterior,
+    condition_bernoulli_gaussian_process,
+    condition_categorical_gaussian_process,
+)
 from ._gp_functional import (
     directional_derivative_functional,
     functional_kernel_diagonal,
@@ -927,6 +935,12 @@ __all__ = [
     "ExactGaussianProcessDiscrepancy",
     "ExactGaussianProcessFactor",
     "FiniteFeatureGaussianProcessFactor",
+    "BernoulliGaussianProcessLikelihood",
+    "BernoulliGaussianProcessPosterior",
+    "CategoricalGaussianProcessLikelihood",
+    "CategoricalGaussianProcessPosterior",
+    "condition_bernoulli_gaussian_process",
+    "condition_categorical_gaussian_process",
     "directional_derivative_functional",
     "FunctionalDesign",
     "FunctionalGaussianProcessCondition",
