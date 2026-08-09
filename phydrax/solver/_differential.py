@@ -19,6 +19,7 @@ from .._strict import StrictModule
 from .._uncertainty import UncertaintySource, validate_uncertainty_source
 from ..metrix import AbstractStateGeometry
 from ..stochastic import WienerRealization
+from ._solution_validation import validate_solution_arrays
 
 
 DifferentialInterpretation: TypeAlias = Literal["ito", "stratonovich"]
@@ -238,28 +239,19 @@ class DifferentialSolution(StrictModule):
         solver_id: str | None = None,
         resolved_method: str | None = None,
     ):
-        samples = tuple(int(size) for size in sample_shape)
-        if any(size <= 0 for size in samples):
-            raise ValueError("DifferentialSolution sample dimensions must be positive.")
-        times_array = jnp.asarray(times)
-        states_array = jnp.asarray(states)
-        valid_array = jnp.asarray(valid, dtype=bool)
-        if times_array.ndim != len(samples) + 1:
-            raise ValueError(
-                "DifferentialSolution times must have shape sample_shape + (num_times,)."
-            )
-        if times_array.shape[: len(samples)] != samples:
-            raise ValueError("DifferentialSolution times do not match sample_shape.")
-        trajectory_shape = samples + (int(times_array.shape[-1]),)
-        if states_array.shape[: len(trajectory_shape)] != trajectory_shape:
-            raise ValueError(
-                "DifferentialSolution states must begin with sample_shape + (num_times,)."
-            )
-        if valid_array.shape != trajectory_shape:
-            raise ValueError(
-                f"DifferentialSolution valid must have shape {trajectory_shape}; "
-                f"got {valid_array.shape}."
-            )
+        arrays = validate_solution_arrays(
+            times,
+            states,
+            valid,
+            sample_shape=sample_shape,
+            state_shape=None,
+            time_layout="per_path",
+            owner="DifferentialSolution",
+        )
+        samples = arrays.sample_shape
+        times_array = arrays.times
+        states_array = arrays.states
+        valid_array = arrays.valid
         if not isinstance(solver_name, str) or not solver_name:
             raise ValueError("DifferentialSolution solver_name must be non-empty.")
         resolved_solver_id = (

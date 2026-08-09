@@ -6,20 +6,17 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import coordax as cx
 import jax
 import jax.numpy as jnp
-import jax.random as jr
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
-from phydrax._doc import DOC_KEY0
 from phydrax._trainable import combine_trainable
 from phydrax.domain import DomainFunction
 from phydrax.integration import IntegrationRealization
-from phydrax.integration._execution import resolve_integration
 from phydrax.operators.differential._runtime import derivative_runtime_context
 from phydrax.terms import ResidualPenalty
 
@@ -28,6 +25,7 @@ from ..optim._kfac._blocks import (
     BlockCurvatureObservation,
     estimate_kron_factors_from_chunks,
 )
+from ._functional_objective import _PreparedObjective
 from ._kfac_derivative_requests import trace_derivative_requests
 from ._kfac_layout import ParameterLayout
 
@@ -42,43 +40,31 @@ class FrozenResidualTerm:
 
 
 def materialize_frozen_terms(
-    terms: Sequence[Any],
-    collocation: Sequence[Any | None],
+    prepared: _PreparedObjective,
     /,
-    *,
-    key: Array = DOC_KEY0,
-    scale: float = 1.0,
 ) -> tuple[FrozenResidualTerm, ...]:
-    """Freeze one integration realization for every active training term."""
-
-    keys = jr.split(key, len(terms))
+    """Lower one prepared objective to KFAC residual-root realizations."""
     frozen: list[FrozenResidualTerm] = []
-    for term, population, term_key in zip(
-        terms,
-        collocation,
-        keys,
-        strict=True,
-    ):
-        realization_key = term_key
+    for prepared_term in prepared.terms:
+        term = prepared_term.term
         if not isinstance(term, ResidualPenalty):
             raise TypeError(
                 "KFAC supports ResidualPenalty training terms only; "
                 f"got {type(term).__name__}."
             )
-        if population is None:
-            realization = resolve_integration(term.source, key=realization_key)
-        else:
-            batch, local_weight = term.policy.loss_batch_and_weight(population)
-            realization = term._adaptive_realization(
-                batch,
-                local_weight,
-                key=realization_key,
+        if prepared_term.payload_kind != "realization" or not isinstance(
+            prepared_term.payload,
+            IntegrationRealization,
+        ):
+            raise TypeError(
+                "KFAC residual terms require a prepared IntegrationRealization."
             )
+        realization = prepared_term.payload
         frozen.append(
             FrozenResidualTerm(
                 term=term,
                 realization=realization,
-                scale=float(scale),
+                scale=float(prepared.selection.scale),
             )
         )
     return tuple(frozen)
@@ -206,7 +192,7 @@ def term_block_curvature_observations(
     layout: ParameterLayout,
     /,
     *,
-    approximation: str,
+    approximation: Literal["expand", "reduce"],
     chunk_size: int,
     iter_: Array | int | None,
 ) -> tuple[Array, tuple[BlockCurvatureObservation, ...]]:

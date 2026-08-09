@@ -48,6 +48,16 @@ def _residual_term(domain, fields, operator, *, samples, density=None):
         density=density,
     )
 
+def _materialize_terms(solver, *, key):
+    prepared = solver.objective.prepare_training(
+        range(len(solver.terms)),
+        scale=1.0,
+        evaluation_key=key,
+        sampling_key=key,
+        iteration=1,
+    )
+    return materialize_frozen_terms(prepared)
+
 
 def test_type_two_residual_curvature_is_nonzero_at_zero_residual():
     domain = phx.domain.Interval1d(0.0, 1.0)
@@ -64,11 +74,7 @@ def test_type_two_residual_curvature_is_nonzero_at_zero_residual():
     term = _residual_term(domain, "u", lambda field: field, samples=7)
     solver = phx.solver.FunctionalSolver(functions={"u": u}, terms=term)
     params, non_trainable = solver.partition_functions()
-    terms = materialize_frozen_terms(
-        solver.terms,
-        solver.collocation,
-        key=jr.key(5),
-    )
+    terms = _materialize_terms(solver, key=jr.key(5))
     flat, jacobians, _ = term_residual_jacobians(
         params,
         non_trainable,
@@ -115,11 +121,7 @@ def test_frozen_loss_uses_nonnegative_quadratic_coefficients():
         terms=term,
     )
     params, non_trainable = solver.partition_functions()
-    terms = materialize_frozen_terms(
-        solver.terms,
-        solver.collocation,
-        key=jr.key(34),
-    )
+    terms = _materialize_terms(solver, key=jr.key(34))
     loss, gradient, _ = frozen_loss_and_flat_gradient(
         params,
         non_trainable,
@@ -178,11 +180,7 @@ def test_hard_enforced_ansatz_has_finite_residual_curvature():
         solver.terms,
         solver.enforcement.apply(solver.functions),
     )
-    terms = materialize_frozen_terms(
-        solver.terms,
-        solver.collocation,
-        key=jr.key(7),
-    )
+    terms = _materialize_terms(solver, key=jr.key(7))
     _, jacobians, _ = term_residual_jacobians(
         params,
         non_trainable,
@@ -223,11 +221,7 @@ def test_streamed_block_observations_match_dense_jacobian_oracle(approximation):
         exact_block_max_size=64,
         uncovered="error",
     )
-    terms = materialize_frozen_terms(
-        solver.terms,
-        solver.collocation,
-        key=jr.key(9),
-    )
+    terms = _materialize_terms(solver, key=jr.key(9))
     flat, jacobians, _ = term_residual_jacobians(
         params,
         non_trainable,

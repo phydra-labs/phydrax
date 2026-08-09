@@ -104,6 +104,13 @@ def test_hybrid_ode_jump_solution_replays_and_is_independent_of_save_partition()
         fine.events.times[fine.events.valid],
         atol=1e-12,
     )
+    trajectory = coarse.to_stochastic_trajectory(
+        realization_axes=("path",),
+        state_axes=("state",),
+    )
+    assert jnp.array_equal(trajectory.states, coarse.states)
+    assert trajectory.realizations == (realization,)
+    assert trajectory.metadata["solver_name"] == coarse.solver_name
 
 
 def test_state_dependent_hazard_localizes_known_integrated_intensity_events():

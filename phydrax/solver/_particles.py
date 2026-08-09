@@ -22,6 +22,7 @@ from ..stochastic import (
     StochasticTrajectory,
     WienerRealization,
 )
+from ..stochastic._trajectory import _TrajectoryRecord
 from ._memory import _solution_valid, _time_grid, _wiener_increments
 
 
@@ -330,20 +331,23 @@ class InteractingParticleSolution(StrictModule):
             source = next(iter(components.values()))
         else:
             source = CompositeStochasticRealization(components)
-        return StochasticTrajectory(
+        record = _TrajectoryRecord(
             self.times,
             self.particles,
-            valid=jnp.all(self.valid, axis=-1),
-            realization_axes=axes,
+            state_shape=(self.num_particles,) + self.state_shape,
             realization_shape=self.sample_shape,
-            state_axes=("particle",) + physical_state_axes,
+            valid=jnp.all(self.valid, axis=-1),
             realizations=(source,),
+            solver_name=self.solver_name,
+            uncertainty_source="process",
             metadata={
                 **dict(self.metadata),
-                "solver_name": self.solver_name,
                 "particle_coupling": "empirical-mean-field",
-                "uncertainty_source": "process",
             },
+        )
+        return record.to_stochastic_trajectory(
+            realization_axes=axes,
+            state_axes=("particle",) + physical_state_axes,
         )
 
 

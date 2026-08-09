@@ -27,6 +27,9 @@ four-layer model and integration-source choices, see
       Riemannian optimizers, Evosax distribution-based algorithms, and the structured
       `phydrax.optim.kfac(...)` optimizer. Population-based Evosax algorithms require
       a separate finite search-space contract and are rejected.
+    - Optimizer choice changes the update backend, not objective semantics. All
+      backends consume the same run controls and prepared objective lifecycle;
+      `num_iter=0` is a no-op and negative values are rejected before dispatch.
     - `solve(..., evaluation_parameters=...)` keeps optimizer updates on raw
       training parameters while using the optimizer-prescribed view for diagnostics,
       selection, and returned functions.
@@ -35,12 +38,16 @@ four-layer model and integration-source choices, see
       `evaluation_parameters` transforms that could leave the manifold.
     - `solve(..., train_term_sample_size=k)` trains on an unbiased fixed-size
       subset of training terms per optimizer step.
+    - Every optimizer update prepares one immutable objective realization. Sampled
+      batches, per-step integration realizations, adaptive weights, evaluation
+      keys, and the iteration value are reused by every candidate evaluation and
+      by term diagnostics for that update.
     - `solve(..., log_terms=True)` logs the training and evaluation term breakdown;
       `tensorboard_log_dir` enables TensorBoard scalar logs.
-    - KFAC accepts only `ResidualPenalty` training and evaluation terms with a
-      nonnegative quadratic residual reduction. It freezes every active term's
-      sampled batch, adaptive weight, evaluation key, and iteration value across
-      the gradient, curvature update, and line search; see
+    - KFAC accepts only `ResidualPenalty` training terms with a nonnegative
+      quadratic residual reduction. It lowers the same prepared objective used by
+      the other adapters to residual blocks, then reuses it across the gradient,
+      curvature update, and line search; see
       [Optimization](../optim.md#structured-residual-optimization-kfac).
     - `save_onnx("u", ...)` exports one named ansatz function for deployment.
     - Data terms report data-fit diagnostics alongside their scalar values.

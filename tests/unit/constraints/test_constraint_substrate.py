@@ -14,6 +14,7 @@ from phydrax.integration import (
     IntegrationProvenance,
     IntegrationStatus,
 )
+from phydrax.sampling.collocation import R3
 from phydrax.terms._integrated import checked_estimate_field
 
 
@@ -71,6 +72,22 @@ def test_residual_and_moment_penalties_have_distinct_ordering_semantics():
     assert jnp.allclose(
         nonzero_penalty.loss({"u": field}, key=jr.key(3)), 0.25**2, atol=1e-12
     )
+def test_moment_penalty_rejects_solver_managed_adaptive_integration():
+    _, component, _, target, _ = _interval_problem()
+    condition = phx.conditions.Moment("u", component, lambda u: u, target=0.5)
+    source = phx.integration.adaptive(
+        target,
+        phx.domain.PointSampling(
+            16,
+            layout=phx.domain.SampleLayout((("x",),)),
+        ),
+        R3(refresh_every=1, sampler="uniform"),
+    )
+
+    with pytest.raises(TypeError, match="requires ResidualPenalty"):
+        phx.terms.MomentPenalty(condition, source)
+
+
 
 
 def test_observation_penalty_uses_the_same_explicit_integration_source_contract():

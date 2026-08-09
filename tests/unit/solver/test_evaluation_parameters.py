@@ -30,6 +30,17 @@ def _scalar_solver(initial: float, *, target: float = 0.0, integrand=None):
 def _parameter_value(solver):
     return jnp.asarray(solver["u"].func()).reshape(())
 
+def test_public_solve_rejects_negative_iterations_before_optimizer_dispatch():
+    with pytest.raises(ValueError, match="num_iter must be non-negative"):
+        _scalar_solver(1.0).solve(num_iter=-1, optim=object())
+
+
+def test_public_zero_iteration_solve_returns_original_solver():
+    solver = _scalar_solver(1.0)
+
+    assert solver.solve(num_iter=0, optim=object()) is solver
+
+
 
 def test_standard_optimizer_best_score_keeps_its_preupdate_parameters():
     base_optimizer = optax.sgd(1.0)

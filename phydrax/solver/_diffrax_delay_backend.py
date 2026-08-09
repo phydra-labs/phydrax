@@ -51,9 +51,10 @@ from ._delay_plan import (
     resolve_delay_solver,
     stage_time_extent,
 )
-from ._diffrax_backend import _save_times, _valid_values
+from ._diffrax_backend import _valid_values
 from ._geometric import AbstractGeometricSolver, SRKMK
 from ._memory import MemoryEquationSolution
+from ._save_schedule import validate_save_times
 
 
 class _DelayValidation(eqx.Module):
@@ -1111,7 +1112,7 @@ def solve_diffrax_delay(
     )
     stage_time_extent = execution_plan.stage_time_extent
 
-    times = _save_times(problem.t0, problem.t1, save_times)
+    times = validate_save_times(problem.t0, problem.t1, save_times)
     initial_computed_derivative = (
         problem.initial_right_derivative
         if problem.neutral

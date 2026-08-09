@@ -43,7 +43,6 @@ from ._delay_plan import (
 )
 from ._diffrax_backend import (
     _realized_wiener_path,
-    _save_times,
     _validated_realization_interval,
 )
 from ._diffrax_delay_backend import (
@@ -69,6 +68,7 @@ from ._diffrax_delay_stochastic import (
 )
 from ._geometric import AbstractGeometricSolver, SRKMK
 from ._memory import MemoryEquationSolution
+from ._save_schedule import validate_save_times
 
 
 class SegmentedDelayResult(str, Enum):
@@ -1151,7 +1151,7 @@ def solve_diffrax_delay_segmented(
                 "history is visibility-capped at its root."
             )
     start_time = solve_start if continuation is None else continuation.time
-    times = _save_times(start_time, solve_end, save_times)
+    times = validate_save_times(start_time, solve_end, save_times)
     states = jnp.zeros(
         (int(times.size),) + problem.state_shape, dtype=problem.initial_state.dtype
     )

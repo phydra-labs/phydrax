@@ -43,7 +43,6 @@ from ._delay_plan import (
 from ._diffrax_backend import (
     _realized_wiener_path,
     _reshape_native_sample_shape,
-    _save_times,
     _valid_values,
     _validated_realization_interval,
     _validated_stochastic_solver,
@@ -59,6 +58,7 @@ from ._diffrax_delay_backend import (
 )
 from ._geometric import AbstractGeometricSolver, SRKMK
 from ._memory import MemoryEquationSolution
+from ._save_schedule import validate_save_times
 
 
 class _OrdinaryStochasticContract(eqx.Module):
@@ -801,7 +801,7 @@ def _solve_diffrax_delay_stochastic(
             "Certified stochastic delay solvers require diffrax.ConstantStepSize."
         )
 
-    times = _save_times(problem.t0, problem.t1, save_times)
+    times = validate_save_times(problem.t0, problem.t1, save_times)
     step = jnp.asarray(dt0)
     if step.shape != () or jnp.iscomplexobj(step):
         raise ValueError("dt0 must be a real scalar.")

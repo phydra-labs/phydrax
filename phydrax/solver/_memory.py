@@ -16,6 +16,8 @@ from jaxtyping import Array, ArrayLike
 from .._frozendict import frozendict
 from .._strict import StrictModule
 from ..stochastic import StochasticTrajectory, WienerRealization
+from ..stochastic._trajectory import _TrajectoryRecord
+from ._solution_validation import validate_solution_arrays
 
 
 VolterraVectorField: TypeAlias = Callable[[Array, Array, Any], ArrayLike]
@@ -333,17 +335,20 @@ class MemoryEquationSolution(StrictModule):
     ):
         if realization is not None and not isinstance(realization, WienerRealization):
             raise TypeError("realization must be a WienerRealization or None.")
-        time_values = jnp.asarray(times, dtype=float)
-        state_values = jnp.asarray(states)
-        valid_values = jnp.asarray(valid, dtype=bool)
         sample_shape = () if realization is None else realization.sample_shape
-        shape = tuple(int(size) for size in state_shape)
-        expected_states = sample_shape + (int(time_values.size),) + shape
-        expected_valid = sample_shape + (int(time_values.size),)
-        if time_values.ndim != 1 or int(time_values.size) <= 0:
-            raise ValueError("times must be a non-empty rank-1 array.")
-        if state_values.shape != expected_states or valid_values.shape != expected_valid:
-            raise ValueError("Memory-equation output does not align with declared axes.")
+        arrays = validate_solution_arrays(
+            times,
+            states,
+            valid,
+            sample_shape=sample_shape,
+            state_shape=state_shape,
+            time_layout="shared",
+            owner="MemoryEquationSolution",
+        )
+        time_values = arrays.times
+        state_values = arrays.states
+        valid_values = arrays.valid
+        shape = arrays.state_shape
         if not isinstance(solver_name, str) or not solver_name:
             raise ValueError("solver_name must be non-empty.")
         resolved_solver_id = f"solver:{solver_name}" if solver_id is None else solver_id
@@ -419,21 +424,22 @@ class MemoryEquationSolution(StrictModule):
             if state_axes is None
             else tuple(state_axes)
         )
-        return StochasticTrajectory(
+        record = _TrajectoryRecord(
             self.times,
             self.states,
-            valid=self.valid,
-            realization_axes=axes,
+            state_shape=self.state_shape,
             realization_shape=self.sample_shape,
-            state_axes=resolved_state_axes,
+            valid=self.valid,
             realizations=(self.realization,),
-            metadata={
-                **dict(self.metadata),
-                "solver_name": self.solver_name,
-                "solver_id": self.solver_id,
-                "resolved_method": self.resolved_method,
-                "uncertainty_source": "process",
-            },
+            solver_name=self.solver_name,
+            solver_id=self.solver_id,
+            resolved_method=self.resolved_method,
+            uncertainty_source="process",
+            metadata=self.metadata,
+        )
+        return record.to_stochastic_trajectory(
+            realization_axes=axes,
+            state_axes=resolved_state_axes,
         )
 
 

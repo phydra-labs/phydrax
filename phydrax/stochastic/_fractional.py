@@ -592,7 +592,7 @@ class FractionalGaussianRealization(StrictModule):
         realization_axes: Sequence[str] | None = None,
         state_axis: str = "component",
     ):
-        from ._trajectory import StochasticTrajectory
+        from ._trajectory import _TrajectoryRecord
 
         axes = (
             tuple(f"path_{index}" for index in range(len(self.sample_shape)))
@@ -601,21 +601,24 @@ class FractionalGaussianRealization(StrictModule):
         )
         values = self.values
         valid = jnp.all(jnp.isfinite(values), axis=-1)
-        return StochasticTrajectory(
+        record = _TrajectoryRecord(
             self.grid,
             values,
-            valid=valid,
-            realization_axes=axes,
+            state_shape=(int(values.shape[-1]),),
             realization_shape=self.sample_shape,
-            state_axes=(state_axis,),
+            valid=valid,
             realizations=(self,),
+            uncertainty_source="process",
             metadata={
                 "process_id": self.process.process_id,
                 "hurst": self.process.hurst,
                 "sampling_method": self.sampling_method,
                 "sampling_provenance": self.sampling_provenance,
-                "uncertainty_source": "process",
             },
+        )
+        return record.to_stochastic_trajectory(
+            realization_axes=axes,
+            state_axes=(state_axis,),
         )
 
 

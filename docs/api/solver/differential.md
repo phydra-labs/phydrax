@@ -921,10 +921,20 @@ the `WienerRealization`, geometry ID, and named Wiener-term slices preserve the
 integration and stochastic provenance needed to reproduce or couple a path
 ensemble.
 
-`to_stochastic_trajectory` preserves physical-case and realization axes instead
-of flattening them. `StochasticTrajectory` retains validity, path/coupling,
-parameter, discretization, basis, and approximation provenance. Its transition
-views can be adapted directly to leakage-aware operator datasets.
+Finite-step differential, memory, rough, Lévy, and jump result types validate one
+explicit sample/time/state axis contract when they are constructed. Shared-grid
+results use `times.shape == (num_times,)`, while `DifferentialSolution` retains a
+time array per realization with shape `sample_shape + (num_times,)`. In both
+layouts, `states` begins with `sample_shape + (num_times,)`, ends with
+`state_shape`, and `valid` has shape `sample_shape + (num_times,)`. Shape or rank
+mismatches are rejected before a partially valid result can be stored.
+
+Every direct result adapter constructs `StochasticTrajectory` through the same
+axis-explicit conversion contract. Physical-case and realization axes are
+preserved rather than flattened, while family-specific process, solver,
+geometry, discretization, and approximation provenance is retained.
+Transition views can therefore be adapted directly to leakage-aware operator
+datasets without reconstructing axis meaning from array shapes.
 
 ::: phydrax.solver.DifferentialSolution
     options:

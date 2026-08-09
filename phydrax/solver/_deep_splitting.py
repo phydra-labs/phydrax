@@ -366,10 +366,10 @@ def solve_deep_splitting(
             label=f"deep-splitting-{index}",
         )
         initial_solver = working if warm_start else solver
-        temporary = eqx.tree_at(
-            lambda value: (value.terms, value.collocation),
-            initial_solver,
-            (initial_solver.terms + (objective,), initial_solver.collocation + (None,)),
+        base_term_count = len(initial_solver.terms)
+        temporary = initial_solver._append_training_terms(
+            objective,
+            key=jr.fold_in(root_key, 3000 + index),
         )
         trained = temporary.solve(
             num_iter=inner_steps,
@@ -379,11 +379,7 @@ def solve_deep_splitting(
             keep_best=keep_best,
             log_every=log_every,
         )
-        trained = eqx.tree_at(
-            lambda value: (value.terms, value.collocation),
-            trained,
-            (trained.terms[:-1], trained.collocation[:-1]),
-        )
+        trained = trained._retain_training_prefix(base_term_count)
         learned_slice = trained.ansatz_functions()[value_name]
         validation_labels = deep_splitting_labels(
             problem,

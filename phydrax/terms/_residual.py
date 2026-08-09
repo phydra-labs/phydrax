@@ -42,12 +42,16 @@ from ..integration import (
     SeparableIntegrationBatch,
     WeightedSampleBatch,
 )
-from ..integration._execution import _validate_caller_target, resolve_integration
 from ..integration._fixed import _as_domain_function, _component_reduction_weights
 from ..integration._lowering import sum_over
 from ..sampling.collocation._adaptive import AbstractCollocationPolicy
 from ._data_metrics import supervised_data_metrics
-from ._integrated import checked_estimate_field, validate_condition_source
+from ._integrated import (
+    checked_estimate_field,
+    prepare_term_realization,
+    resolve_term_realization,
+    validate_condition_source,
+)
 
 
 _SOURCE_TYPES = (
@@ -57,23 +61,6 @@ _SOURCE_TYPES = (
     AdaptiveIntegration,
 )
 
-def _resolve_quadratic_realization(
-    source: IntegrationSource,
-    /,
-    *,
-    key: Key[Array, ""] = DOC_KEY0,
-    realization: IntegrationRealization | None,
-) -> IntegrationRealization:
-    if realization is None:
-        return resolve_integration(source, key=key)
-    if not isinstance(realization, IntegrationRealization):
-        raise TypeError("realization must be an IntegrationRealization.")
-    if isinstance(source, FixedIntegration):
-        source_target = source.realization.target
-    else:
-        source_target = source.target
-    _validate_caller_target(source_target, realization)
-    return realization
 
 
 
@@ -535,7 +522,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         realization: IntegrationRealization | None = None,
         **kwargs: Any,
     ) -> TermEvaluation:
-        resolved = resolve_integration(
+        resolved = resolve_term_realization(
             self.source,
             key=key,
             realization=realization,
@@ -563,10 +550,14 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         **kwargs: Any,
     ) -> _QuadraticResidualData:
         """Return residual fields and their exact nonnegative reduction coefficients."""
-        resolved = _resolve_quadratic_realization(
+        resolved = resolve_term_realization(
             self.source,
             key=key,
-            realization=realization,
+            realization=(
+                None
+                if realization is None
+                else prepare_term_realization(realization)
+            ),
         )
         target = resolved.target
         if not isinstance(target, (ComponentTarget, DensityTarget)):
@@ -688,7 +679,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
         condition = self.condition
         if not isinstance(condition, Observation):
             return {}
-        resolved = resolve_integration(
+        resolved = resolve_term_realization(
             self.source,
             key=key,
             realization=realization,

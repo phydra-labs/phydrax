@@ -579,10 +579,10 @@ def solve_deep_picard(
             terminal_weight=terminal_weight,
             label=f"deep-picard-{outer + 1}",
         )
-        temporary = eqx.tree_at(
-            lambda value: (value.terms, value.collocation),
-            current,
-            (current.terms + (objective,), current.collocation + (None,)),
+        base_term_count = len(current.terms)
+        temporary = current._append_training_terms(
+            objective,
+            key=jr.fold_in(root_key, 3000 + outer),
         )
         trained = temporary.solve(
             num_iter=inner_steps,
@@ -592,11 +592,7 @@ def solve_deep_picard(
             keep_best=keep_best,
             log_every=log_every,
         )
-        current = eqx.tree_at(
-            lambda value: (value.terms, value.collocation),
-            trained,
-            (trained.terms[:-1], trained.collocation[:-1]),
-        )
+        current = trained._retain_training_prefix(base_term_count)
         validation_labels = _iteration_labels(
             problem,
             sampling_plan,

@@ -23,15 +23,17 @@ from ..integration import (
     PerStepIntegration,
     reduce,
 )
-from ..integration._execution import resolve_integration
-from ._integrated import checked_estimate_field, validate_condition_source
+from ._integrated import (
+    checked_estimate_field,
+    resolve_term_realization,
+    validate_condition_source,
+)
 
 
 _SOURCE_TYPES = (
     PerStepIntegration,
     FixedIntegration,
     CallerIntegration,
-    AdaptiveIntegration,
 )
 
 
@@ -56,6 +58,11 @@ class MomentPenalty(AbstractEvaluatedScalarTerm):
     ):
         if not isinstance(condition, AbstractMomentCondition):
             raise TypeError("MomentPenalty requires an AbstractMomentCondition.")
+        if isinstance(source, AdaptiveIntegration):
+            raise TypeError(
+                "MomentPenalty does not support AdaptiveIntegration; "
+                "solver-managed adaptive collocation requires ResidualPenalty."
+            )
         if not isinstance(source, _SOURCE_TYPES):
             raise TypeError("MomentPenalty requires a typed IntegrationSource.")
         validate_condition_source(condition.on, source)
@@ -81,7 +88,7 @@ class MomentPenalty(AbstractEvaluatedScalarTerm):
         realization: IntegrationRealization | None = None,
         **kwargs: Any,
     ) -> TermEvaluation:
-        resolved = resolve_integration(
+        resolved = resolve_term_realization(
             self.source,
             key=key,
             realization=realization,
