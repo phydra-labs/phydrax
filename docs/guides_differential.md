@@ -333,6 +333,14 @@ records the source knots, `times` records the integration knots, and
 The public `tensor_exponential`, `chen_multiply`, `tensor_logarithm`, and
 `PrimitiveBasis` operations expose the same algebra for diagnostics.
 
+These control objects retain interval provenance and solver semantics. For
+statistical path features, streaming updates, ragged padding, or path kernels,
+use the lighter-weight `path_signature`, `SignatureFeatures`,
+`SignatureRecurrentCell`, and `SignaturePDEKernel` APIs instead. They share the
+same tensor exponential, Chen product, tensor logarithm, and standard-bracket
+Lyndon basis, but they do not manufacture rough-control provenance. See
+[Signatures and path kernels](api/stochastic/signatures.md).
+
 Define dynamics with the state-shaped convention
 `(time, state, args) -> state.shape + (driver_dimension,)`:
 

@@ -477,6 +477,7 @@ def run_affine_recurrence(
 
 __all__ = [
     "AbstractRecurrentCell",
+    "AbstractRecurrentOutputCell",
     "AffineRecurrence",
     "RecurrentBatch",
     "RecurrentResult",

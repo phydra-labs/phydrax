@@ -12,7 +12,7 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from .._strict import StrictModule
-from ..integration import DiscreteMeasureTarget, WeightedSampleTarget
+from ..integration._targets import DiscreteMeasureTarget, WeightedSampleTarget
 from ._costs import AbstractGroundCost, GroundCost, PrecomputedCost
 from ._measure import _FiniteTransportMeasure, EventEncoder, lower_transport_measure
 

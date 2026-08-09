@@ -104,15 +104,22 @@ def weighted_mmd(
     """Compute blockwise MMD between two finite nonnegative measures."""
     source = jnp.asarray(source_points, dtype=float)
     comparison = jnp.asarray(comparison_points, dtype=float)
-    if source.ndim != 2 or comparison.ndim != 2:
-        raise ValueError("MMD point arrays must be two-dimensional.")
-    if source.shape[1] != comparison.shape[1]:
-        raise ValueError("MMD point arrays must have equal coordinate size.")
+    kernel_ = SquaredExponentialKernel() if kernel is None else kernel
+    if not isinstance(kernel_, AbstractPositiveDefiniteKernel):
+        raise TypeError("kernel must be an AbstractPositiveDefiniteKernel or None.")
+    expected_rank = kernel_.input_ndim + 1
+    if source.ndim != expected_rank or comparison.ndim != expected_rank:
+        raise ValueError(
+            "MMD inputs must have one design axis followed by "
+            f"{kernel_.input_ndim} kernel input axes."
+        )
+    source_rows = jnp.all(jnp.isfinite(source), axis=tuple(range(1, source.ndim)))
+    comparison_rows = jnp.all(
+        jnp.isfinite(comparison), axis=tuple(range(1, comparison.ndim))
+    )
     block = int(block_size)
     if block <= 0:
         raise ValueError("block_size must be positive.")
-    source_rows = jnp.all(jnp.isfinite(source), axis=1)
-    comparison_rows = jnp.all(jnp.isfinite(comparison), axis=1)
     source_weights, _, source_valid, _ = normalized_weights(
         int(source.shape[0]),
         log_weights=source_log_weights,
@@ -125,9 +132,6 @@ def weighted_mmd(
         mask=comparison_mask,
         rows_valid=comparison_rows,
     )
-    kernel_ = SquaredExponentialKernel() if kernel is None else kernel
-    if not isinstance(kernel_, AbstractPositiveDefiniteKernel):
-        raise TypeError("kernel must be an AbstractPositiveDefiniteKernel or None.")
     value = _mmd_from_weights(
         jnp.nan_to_num(source),
         source_weights,
@@ -151,14 +155,19 @@ def kernel_herd(
     if not isinstance(method, KernelHerding):
         raise TypeError("method must be a KernelHerding.")
     values = jnp.asarray(points, dtype=float)
-    if values.ndim != 2:
-        raise ValueError("points must have shape (source_points, coordinate_size).")
-    source_points, coordinate_size = values.shape
+    expected_rank = method.kernel.input_ndim + 1
+    if values.ndim != expected_rank:
+        raise ValueError(
+            "points must have one source axis followed by "
+            f"{method.kernel.input_ndim} kernel input axes."
+        )
+    source_points = int(values.shape[0])
+    input_shape = tuple(int(size) for size in values.shape[1:])
     if source_points < 1:
         raise ValueError("Kernel herding requires at least one source point.")
     if method.unique and method.num_points > source_points:
         raise ValueError("Unique kernel herding cannot select more points than supplied.")
-    rows_valid = jnp.all(jnp.isfinite(values), axis=1)
+    rows_valid = jnp.all(jnp.isfinite(values), axis=tuple(range(1, values.ndim)))
     weights, active_source, input_valid, log_source_mass = normalized_weights(
         source_points,
         log_weights=log_weights,
@@ -192,7 +201,9 @@ def kernel_herd(
         valid_choice = input_valid & jnp.any(eligible)
         indices = indices.at[iteration].set(candidate)
         output_mask = output_mask.at[iteration].set(valid_choice)
-        update = method.kernel.matrix(safe_points, safe_points[candidate][None, :])[:, 0]
+        update = method.kernel.matrix(safe_points, safe_points[candidate][None, ...])[
+            :, 0
+        ]
         penalty = penalty + jnp.where(valid_choice, update, 0.0)
         selected = selected.at[candidate].set(selected[candidate] | valid_choice)
         return indices, output_mask, penalty, selected
@@ -229,7 +240,7 @@ def kernel_herd(
         log_source_mass=log_source_mass,
         source_points=source_points,
         capacity=capacity,
-        coordinate_size=coordinate_size,
+        input_shape=input_shape,
         kernel_id=method.kernel.kernel_id,
     )
     return CoresetSelection(

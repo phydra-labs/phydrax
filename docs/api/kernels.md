@@ -9,12 +9,16 @@ feature maps, and transform parameters remain visible to JAX transformations.
 
 Every kernel implements three explicit operations:
 
-- `pairwise(left, right)` evaluates two coordinate vectors;
-- `matrix(left, right)` evaluates a Gram or cross-Gram matrix;
+- `pairwise(left, right)` evaluates two individual kernel inputs;
+- `matrix(left, right)` evaluates a Gram or cross-Gram matrix over a leading
+  design axis;
 - `diagonal(points)` evaluates only the Gram diagonal.
 
-A one-dimensional design may be passed as a vector. General designs have shape
-`(point, coordinate)`. Kernels also expose `max_derivative_order`,
+`input_ndim` declares the number of trailing axes that form one kernel input.
+Point kernels use `input_ndim == 1`; path kernels use `input_ndim == 2`.
+Accordingly, a path-kernel design has shape `(path, knot, channel)`. A
+one-dimensional design-vector convenience remains available only for point
+kernels in scalar GP APIs. Kernels also expose `max_derivative_order`,
 `is_unit_diagonal`, and a diagnostic `kernel_id`. The ID records a stable method
 identity; it is not a serialization or reconstruction format.
 
@@ -55,11 +59,14 @@ observations use this certificate to reject unsupported differential covariance
 blocks before inference.
 
 `InputTransformedKernel` pulls a positive-definite kernel back through one
-pointwise deterministic transform. Its transform may itself be an Equinox module,
-which gives a deep kernel whose feature parameters are differentiable PyTree leaves.
-Declare the transform's actual derivative support; `None` means no finite limit and
-`0` means value observations only. `AffineInputTransform.from_points` provides
-explicit coordinate standardization without changing the kernel's public contract.
+deterministic transform per kernel input. `input_ndim` declares the input rank
+before transformation, so a complete path can be mapped to one feature vector
+without flattening its design axis. The transform may itself be an Equinox
+module, which gives a deep kernel whose feature parameters are differentiable
+PyTree leaves. Declare the transform's actual derivative support; `None` means
+no finite limit and `0` means value observations only.
+`AffineInputTransform.from_points` remains a pointwise coordinate
+standardization utility.
 
 `AbstractFiniteFeatureKernel` is the capability contract for covariances with
 whitened real features. `FiniteFeatureKernel` is its callable-map implementation:
@@ -78,6 +85,7 @@ count; otherwise it retains the dense observation-space path.
             - pairwise
             - matrix
             - diagonal
+            - input_ndim
             - max_derivative_order
             - is_unit_diagonal
             - kernel_id
@@ -106,6 +114,28 @@ count; otherwise it retains the dense observation-space path.
 
 ::: phydrax.kernels.InverseMultiquadricKernel
 
+## Linear and path kernels
+
+`LinearKernel` evaluates ordinary inner products with specialized matrix and
+diagonal operations. `NormalizedKernel` divides any strictly
+positive-diagonal child kernel by the geometric mean of its self-covariances;
+invalid child diagonals are errors rather than clipped values.
+
+`SignaturePDEKernel` is a structured-input kernel with `input_ndim == 2`.
+At `polynomial_order=m`, its monomial Goursat recurrence exactly evaluates the
+inner product of signatures truncated through tensor level `m`. It avoids
+materializing exponentially growing tensor features and remains
+positive-definite at every finite order. See
+[Signatures and path kernels](stochastic/signatures.md) for path conventions,
+ragged padding, exact-feature alternatives, and numerical guidance.
+
+::: phydrax.kernels.LinearKernel
+
+---
+
+::: phydrax.kernels.SignaturePDEKernel
+
+
 ## Algebra
 
 ::: phydrax.kernels.SumKernel
@@ -128,6 +158,10 @@ count; otherwise it retains the dense observation-space path.
             - pairwise
             - matrix
             - diagonal
+
+---
+
+::: phydrax.kernels.NormalizedKernel
 
 ## Input and feature transforms
 

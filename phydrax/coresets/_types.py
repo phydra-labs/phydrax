@@ -89,7 +89,7 @@ class KernelHerdingDiagnostics(StrictModule):
     log_source_mass: Array
     source_points: int = eqx.field(static=True)
     capacity: int = eqx.field(static=True)
-    coordinate_size: int = eqx.field(static=True)
+    input_shape: tuple[int, ...] = eqx.field(static=True)
     kernel_id: str = eqx.field(static=True)
 
 

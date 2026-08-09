@@ -165,3 +165,26 @@ parameter vector; it never materializes a dense parameter-by-parameter matrix.
 ---
 
 ::: phydrax.nn.layers.inference_mode
+
+## Recurrent execution
+
+`RecurrentBatch` is the canonical packed-sequence contract. Every input leaf
+begins with `case_shape + (sequence_length,)`; `valid`, `reset`, and optional
+physical `time` arrays use exactly that shape. Invalid padding preserves state
+and emits zero output. A valid reset restarts from the cell's canonical state
+before evaluating that step. `run_recurrent` returns the post-step state and
+output trajectories together with streaming-ready final values.
+
+::: phydrax.nn.layers.AbstractRecurrentCell
+
+---
+
+::: phydrax.nn.layers.RecurrentBatch
+
+---
+
+::: phydrax.nn.layers.RecurrentResult
+
+---
+
+::: phydrax.nn.layers.run_recurrent

@@ -16,7 +16,7 @@ from .._strict import StrictModule
 
 
 class AbstractPositiveDefiniteKernel(StrictModule):
-    """Real scalar positive-definite kernel over coordinate vectors."""
+    """Real scalar positive-definite kernel over declared array inputs."""
 
     @abstractmethod
     def pairwise(self, left: ArrayLike, right: ArrayLike, /) -> Array:
@@ -32,6 +32,11 @@ class AbstractPositiveDefiniteKernel(StrictModule):
     def diagonal(self, points: ArrayLike, /) -> Array:
         """Evaluate the Gram diagonal without materializing the Gram matrix."""
         raise NotImplementedError
+
+    @property
+    def input_ndim(self) -> int:
+        """Number of trailing axes forming one kernel input."""
+        return 1
 
     @property
     @abstractmethod
@@ -75,7 +80,11 @@ class AbstractUnitDiagonalKernel(AbstractPositiveDefiniteKernel):
     """Positive-definite correlation kernel with an exact unit diagonal."""
 
     def diagonal(self, points: ArrayLike, /) -> Array:
-        point_design = _as_points(points, name="points")
+        point_design = _as_inputs(
+            points,
+            input_ndim=self.input_ndim,
+            name="points",
+        )
         return jnp.ones((point_design.shape[0],), dtype=point_design.dtype)
 
     @property
@@ -98,32 +107,61 @@ def _pairwise_matrix(
     )(left_points)
 
 
-def _as_point(value: ArrayLike, /, *, name: str) -> Array:
-    point = jnp.asarray(value, dtype=float)
-    if point.ndim == 0:
-        point = point.reshape((1,))
-    if point.ndim != 1 or point.shape[0] == 0:
-        raise ValueError(f"{name} must be a nonempty coordinate vector.")
+def _as_input(
+    value: ArrayLike,
+    /,
+    *,
+    input_ndim: int,
+    name: str,
+) -> Array:
+    rank = int(input_ndim)
+    if rank <= 0:
+        raise ValueError("input_ndim must be positive.")
+    sample = jnp.asarray(value, dtype=float)
+    if rank == 1 and sample.ndim == 0:
+        sample = sample.reshape((1,))
+    if sample.ndim != rank or any(int(size) <= 0 for size in sample.shape):
+        raise ValueError(
+            f"{name} must have {rank} nonempty input axes; got shape {sample.shape}."
+        )
     return eqx.error_if(
-        point,
-        jnp.any(~jnp.isfinite(point)),
-        f"{name} must contain only finite coordinates.",
+        sample,
+        jnp.any(~jnp.isfinite(sample)),
+        f"{name} must contain only finite values.",
     )
+
+
+def _as_inputs(
+    value: ArrayLike,
+    /,
+    *,
+    input_ndim: int,
+    name: str,
+) -> Array:
+    rank = int(input_ndim)
+    if rank <= 0:
+        raise ValueError("input_ndim must be positive.")
+    samples = jnp.asarray(value, dtype=float)
+    if rank == 1 and samples.ndim == 1:
+        samples = samples[:, None]
+    if samples.ndim != rank + 1 or any(int(size) <= 0 for size in samples.shape):
+        raise ValueError(
+            f"{name} must have one design axis followed by {rank} nonempty "
+            f"input axes; got shape {samples.shape}."
+        )
+    return eqx.error_if(
+        samples,
+        jnp.any(~jnp.isfinite(samples)),
+        f"{name} must contain only finite values.",
+    )
+
+
+def _as_point(value: ArrayLike, /, *, name: str) -> Array:
+    return _as_input(value, input_ndim=1, name=name)
 
 
 def _as_points(value: ArrayLike, /, *, name: str) -> Array:
-    points = jnp.asarray(value, dtype=float)
-    if points.ndim == 1:
-        points = points[:, None]
-    if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] == 0:
-        raise ValueError(
-            f"{name} must have shape (point, coordinate) with nonempty axes."
-        )
-    return eqx.error_if(
-        points,
-        jnp.any(~jnp.isfinite(points)),
-        f"{name} must contain only finite coordinates.",
-    )
+    return _as_inputs(value, input_ndim=1, name=name)
 
 
 __all__ = ["AbstractPositiveDefiniteKernel", "AbstractUnitDiagonalKernel"]

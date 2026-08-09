@@ -218,6 +218,7 @@ nav:
             - Activations: "api/nn/activations.md"
         - Stochastic processes:
             - Overview: "api/stochastic/index.md"
+            - Signatures and path kernels: "api/stochastic/signatures.md"
             - State-space models: "api/stochastic/state_space.md"
             - Martingales and stopping: "api/stochastic/martingales.md"
             - Backward stochastic equations: "api/stochastic/bsde.md"

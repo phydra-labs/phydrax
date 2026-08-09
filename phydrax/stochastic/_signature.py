@@ -53,13 +53,49 @@ def _signature_shape(signature: Sequence[ArrayLike], /) -> tuple[tuple[Array, ..
     return levels, dimension
 
 
-def _tensor_product(left: Array, right: Array, left_degree: int, right_degree: int) -> Array:
+def _tensor_product(
+    left: Array, right: Array, left_degree: int, right_degree: int
+) -> Array:
     batch_shape = left.shape[:-left_degree]
     if right.shape[:-right_degree] != batch_shape:
         raise ValueError("Tensor factors must have matching batch shapes.")
     return left.reshape(
         batch_shape + left.shape[-left_degree:] + (1,) * right_degree
     ) * right.reshape(batch_shape + (1,) * left_degree + right.shape[-right_degree:])
+
+
+def _signature_identity(
+    batch_shape: tuple[int, ...],
+    dimension: int,
+    depth: int,
+    dtype,
+    /,
+) -> tuple[Array, ...]:
+    return tuple(
+        jnp.zeros(batch_shape + (dimension,) * degree, dtype=dtype)
+        for degree in range(1, depth + 1)
+    )
+
+
+def _chen_multiply_increment(
+    signature: tuple[Array, ...],
+    increment: Array,
+    /,
+) -> tuple[Array, ...]:
+    """Multiply a validated signature by one straight-segment signature."""
+    straight = tensor_exponential(increment, len(signature))
+    result: list[Array] = []
+    for degree in range(1, len(signature) + 1):
+        level = signature[degree - 1] + straight[degree - 1]
+        for split in range(1, degree):
+            level = level + _tensor_product(
+                signature[split - 1],
+                straight[degree - split - 1],
+                split,
+                degree - split,
+            )
+        result.append(level)
+    return tuple(result)
 
 
 def tensor_exponential(increment: ArrayLike, depth: int, /) -> tuple[Array, ...]:
@@ -70,9 +106,7 @@ def tensor_exponential(increment: ArrayLike, depth: int, /) -> tuple[Array, ...]
         raise ValueError("increment must end in a non-empty driver axis.")
     levels: list[Array] = [value]
     for degree in range(2, resolved_depth + 1):
-        levels.append(
-            _tensor_product(levels[-1], value, degree - 1, 1) / float(degree)
-        )
+        levels.append(_tensor_product(levels[-1], value, degree - 1, 1) / float(degree))
     return tuple(levels)
 
 
@@ -123,32 +157,55 @@ def tensor_logarithm(signature: Sequence[ArrayLike], /) -> tuple[Array, ...]:
     for exponent in range(1, len(levels) + 1):
         coefficient = (1.0 if exponent % 2 else -1.0) / float(exponent)
         result = tuple(
-            accumulated + coefficient * term
-            for accumulated, term in zip(result, power)
+            accumulated + coefficient * term for accumulated, term in zip(result, power)
         )
         power = _nonunital_product(power, levels)
     return result
 
 
-def piecewise_linear_signature(increments: ArrayLike, depth: int, /) -> tuple[Array, ...]:
-    """Aggregate straight-segment tensor exponentials along the penultimate axis."""
+def piecewise_linear_signature(
+    increments: ArrayLike,
+    depth: int,
+    /,
+    *,
+    stream: bool = False,
+) -> tuple[Array, ...]:
+    """Aggregate straight-segment signatures along the penultimate axis.
+
+    Streaming output retains the signature after each supplied increment. The
+    empty signature is not included because increments do not declare an
+    initial knot.
+    """
     values = _inexact_array(increments)
     resolved_depth = _validate_depth(depth)
-    if values.ndim < 2 or int(values.shape[-2]) <= 0 or int(values.shape[-1]) <= 0:
+    if values.ndim < 2 or int(values.shape[-1]) <= 0:
         raise ValueError(
             "increments must have shape batch_shape + (num_segments, dimension)."
         )
     dimension = int(values.shape[-1])
-    batch_shape = values.shape[:-2]
-    initial = tuple(
-        jnp.zeros(batch_shape + (dimension,) * degree, dtype=values.dtype)
-        for degree in range(1, resolved_depth + 1)
+    batch_shape = tuple(int(size) for size in values.shape[:-2])
+    initial = _signature_identity(
+        batch_shape,
+        dimension,
+        resolved_depth,
+        values.dtype,
     )
+    scan_values = jnp.moveaxis(values, -2, 0)
 
-    def combine(carry, increment):
-        return chen_multiply(carry, tensor_exponential(increment, resolved_depth)), None
+    if stream:
 
-    return jax.lax.scan(combine, initial, jnp.moveaxis(values, -2, 0))[0]
+        def combine_stream(carry, increment):
+            updated = _chen_multiply_increment(carry, increment)
+            return updated, updated
+
+        _, history = jax.lax.scan(combine_stream, initial, scan_values)
+        sequence_axis = len(batch_shape)
+        return tuple(jnp.moveaxis(level, 0, sequence_axis) for level in history)
+
+    def combine_terminal(carry, increment):
+        return _chen_multiply_increment(carry, increment), None
+
+    return jax.lax.scan(combine_terminal, initial, scan_values)[0]
 
 
 def _is_lyndon(word: Word, /) -> bool:
@@ -190,9 +247,7 @@ class PrimitiveBasis(StrictModule):
     conversion_inverses: tuple[tuple[tuple[float, ...], ...], ...] = eqx.field(
         static=True
     )
-    expansion_matrices: tuple[tuple[tuple[float, ...], ...], ...] = eqx.field(
-        static=True
-    )
+    expansion_matrices: tuple[tuple[tuple[float, ...], ...], ...] = eqx.field(static=True)
 
     def __init__(self, dimension: int, depth: int, /):
         resolved_dimension = int(dimension)
@@ -215,9 +270,7 @@ class PrimitiveBasis(StrictModule):
                 expansions.append({word: 1})
                 continue
             split = next(
-                index
-                for index in range(1, len(word))
-                if word[index:] in lyndon_set
+                index for index in range(1, len(word)) if word[index:] in lyndon_set
             )
             left_word = word[:split]
             right_word = word[split:]
@@ -242,10 +295,7 @@ class PrimitiveBasis(StrictModule):
             if indices:
                 restricted = np.asarray(
                     [
-                        [
-                            expansions[column].get(words[row], 0)
-                            for column in indices
-                        ]
+                        [expansions[column].get(words[row], 0) for column in indices]
                         for row in indices
                     ],
                     dtype=float,
@@ -280,13 +330,17 @@ class PrimitiveBasis(StrictModule):
         """Convert tensor-log word coefficients to standard Lyndon coefficients."""
         levels, dimension = _signature_shape(tensor_log)
         if dimension != self.dimension or len(levels) != self.depth:
-            raise ValueError("Tensor log must match the primitive basis depth and dimension.")
+            raise ValueError(
+                "Tensor log must match the primitive basis depth and dimension."
+            )
         coefficients: list[Array] = []
         for degree, indices in enumerate(self.degree_indices, start=1):
             if not indices:
                 continue
             selected = jnp.stack(
-                tuple(levels[degree - 1][(...,) + self.words[index]] for index in indices),
+                tuple(
+                    levels[degree - 1][(...,) + self.words[index]] for index in indices
+                ),
                 axis=-1,
             )
             inverse = jnp.asarray(
@@ -303,14 +357,10 @@ class PrimitiveBasis(StrictModule):
         levels: list[Array] = []
         for degree, indices in enumerate(self.degree_indices, start=1):
             selected = values[..., jnp.asarray(indices)]
-            matrix = jnp.asarray(
-                self.expansion_matrices[degree - 1], dtype=values.dtype
-            )
+            matrix = jnp.asarray(self.expansion_matrices[degree - 1], dtype=values.dtype)
             flattened = jnp.einsum("wi,...i->...w", matrix, selected)
             levels.append(
-                flattened.reshape(
-                    values.shape[:-1] + (self.dimension,) * degree
-                )
+                flattened.reshape(values.shape[:-1] + (self.dimension,) * degree)
             )
         return tuple(levels)
 
@@ -430,10 +480,9 @@ class LogSignatureControl(AbstractRoughControl):
             raise ValueError(
                 "values must have shape sample_shape + (num_times, dimension)."
             )
-        if (
-            path_values.shape[: len(samples)] != samples
-            or path_values.shape[len(samples)] != int(nodes.size)
-        ):
+        if path_values.shape[: len(samples)] != samples or path_values.shape[
+            len(samples)
+        ] != int(nodes.size):
             raise ValueError("values must align with sample_shape and fine times.")
         source_dimension = int(path_values.shape[-1])
         if source_dimension <= 0 or bool(jnp.any(~jnp.isfinite(path_values))):
@@ -497,9 +546,7 @@ class LogSignatureControl(AbstractRoughControl):
             lifted_values = path_values
         increments = jnp.diff(lifted_values, axis=len(samples))
         interval_signatures = tuple(
-            piecewise_linear_signature(
-                increments[..., left:right, :], resolved_depth
-            )
+            piecewise_linear_signature(increments[..., left:right, :], resolved_depth)
             for left, right in pairwise(indices)
         )
         step_axis = len(samples)

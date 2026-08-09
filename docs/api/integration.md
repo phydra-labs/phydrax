@@ -8,6 +8,7 @@ Integration separates the mathematical measure from its numerical realization:
   method-valid error evidence.
 
 ```python
+import jax.numpy as jnp
 import phydrax as phx
 
 x = phx.domain.ScalarInterval(-1.0, 2.0, label="x")
@@ -55,6 +56,38 @@ measures, and composed space/time/stochastic reductions.
 ::: phydrax.integration.compress
 
 ## Measure compression
+
+`weighted_mmd`, `kernel_herd`, randomized pivoted Cholesky, and
+`select_inducing_points` preserve every trailing axis declared by
+`kernel.input_ndim`. Point designs therefore remain `(point, coordinate)`,
+while a signature-kernel empirical measure is `(path, knot, channel)`.
+Blockwise reductions slice only the leading measure axis. They never flatten a
+path or infer ragged lengths; canonicalize padded suffixes first with
+`phydrax.stochastic.repeat_last_path_padding`.
+
+```python
+observed_time = jnp.linspace(0.0, 1.0, 5)
+observed_path = jnp.stack((observed_time, observed_time**2), axis=-1)
+observed_paths = jnp.stack((observed_path, -observed_path, 0.5 * observed_path))
+simulated_time = jnp.linspace(0.0, 1.0, 6)
+simulated_path = jnp.stack((simulated_time, simulated_time**2), axis=-1)
+simulated_paths = jnp.stack(
+    (simulated_path, -simulated_path, 0.5 * simulated_path, 1.5 * simulated_path)
+)
+path_kernel = phx.kernels.SignaturePDEKernel(
+    phx.kernels.LinearKernel(),
+    polynomial_order=5,
+)
+distance = phx.coresets.weighted_mmd(
+    observed_paths,
+    simulated_paths,
+    kernel=path_kernel,
+)
+selection = phx.coresets.kernel_herd(
+    simulated_paths,
+    phx.coresets.KernelHerding(3, kernel=path_kernel),
+)
+```
 
 ::: phydrax.coresets.MomentRecombination
 

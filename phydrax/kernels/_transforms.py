@@ -12,16 +12,23 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
-from ._base import _as_point, _as_points, AbstractPositiveDefiniteKernel
+from ._base import (
+    _as_input,
+    _as_inputs,
+    _as_point,
+    _as_points,
+    AbstractPositiveDefiniteKernel,
+)
 
 
 class InputTransformedKernel(AbstractPositiveDefiniteKernel):
-    """Positive-definite pullback through a deterministic pointwise feature map."""
+    """Positive-definite pullback through a deterministic input transform."""
 
     kernel: AbstractPositiveDefiniteKernel
     transform_function: Callable[[Array], Array]
     transform_id: str = eqx.field(static=True)
     transform_derivative_order: int | None = eqx.field(static=True)
+    _input_ndim: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -31,6 +38,7 @@ class InputTransformedKernel(AbstractPositiveDefiniteKernel):
         *,
         transform_id: str,
         max_derivative_order: int | None = 0,
+        input_ndim: int = 1,
     ):
         if not isinstance(kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("kernel must be a positive-definite kernel.")
@@ -40,35 +48,47 @@ class InputTransformedKernel(AbstractPositiveDefiniteKernel):
             raise ValueError("transform_id must be a nonempty string.")
         if max_derivative_order is not None and int(max_derivative_order) < 0:
             raise ValueError("max_derivative_order must be nonnegative or None.")
+        resolved_input_ndim = int(input_ndim)
+        if resolved_input_ndim <= 0:
+            raise ValueError("input_ndim must be positive.")
         self.kernel = kernel
         self.transform_function = transform_function
         self.transform_id = transform_id
         self.transform_derivative_order = (
             None if max_derivative_order is None else int(max_derivative_order)
         )
+        self._input_ndim = resolved_input_ndim
 
     def pairwise(self, left: ArrayLike, right: ArrayLike, /) -> Array:
-        left_point = _as_point(left, name="left")
-        right_point = _as_point(right, name="right")
+        left_input = _as_input(left, input_ndim=self.input_ndim, name="left")
+        right_input = _as_input(right, input_ndim=self.input_ndim, name="right")
         return self.kernel.pairwise(
-            self._transform_point(left_point),
-            self._transform_point(right_point),
+            self._transform_input(left_input),
+            self._transform_input(right_input),
         )
 
     def matrix(self, left: ArrayLike, right: ArrayLike, /) -> Array:
-        left_points = _as_points(left, name="left")
-        right_points = _as_points(right, name="right")
-        left_features = jax.vmap(self._transform_point)(left_points)
-        right_features = jax.vmap(self._transform_point)(right_points)
+        left_inputs = _as_inputs(left, input_ndim=self.input_ndim, name="left")
+        right_inputs = _as_inputs(right, input_ndim=self.input_ndim, name="right")
+        left_features = jax.vmap(self._transform_input)(left_inputs)
+        right_features = jax.vmap(self._transform_input)(right_inputs)
         return self.kernel.matrix(left_features, right_features)
 
     def diagonal(self, points: ArrayLike, /) -> Array:
-        point_design = _as_points(points, name="points")
-        features = jax.vmap(self._transform_point)(point_design)
+        inputs = _as_inputs(points, input_ndim=self.input_ndim, name="points")
+        features = jax.vmap(self._transform_input)(inputs)
         return self.kernel.diagonal(features)
 
-    def _transform_point(self, point: Array, /) -> Array:
-        return _as_point(self.transform_function(point), name="transformed point")
+    def _transform_input(self, value: Array, /) -> Array:
+        return _as_input(
+            self.transform_function(value),
+            input_ndim=self.kernel.input_ndim,
+            name="transformed input",
+        )
+
+    @property
+    def input_ndim(self) -> int:
+        return self._input_ndim
 
     @property
     def max_derivative_order(self) -> int | None:

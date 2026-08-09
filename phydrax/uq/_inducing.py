@@ -30,8 +30,10 @@ class InducingPointSelection(StrictModule):
     def __init__(self, points: Array, indices: Array, diagnostics: Any, /):
         points_ = jnp.asarray(points, dtype=float)
         indices_ = jnp.asarray(indices, dtype=jnp.int32)
-        if points_.ndim != 2:
-            raise ValueError("Selected inducing points must be two-dimensional.")
+        if points_.ndim < 2:
+            raise ValueError(
+                "Selected inducing inputs need one design axis and input axes."
+            )
         if indices_.shape != (points_.shape[0],):
             raise ValueError("Inducing indices must match the selected point count.")
         self.points = points_
@@ -54,15 +56,20 @@ def select_inducing_points(
         else observation_points
     )
     points = jnp.asarray(raw, dtype=float)
-    if points.ndim == 1:
+    method = RandomizedPivotedCholesky(num_points, kernel=kernel)
+    if method.kernel.input_ndim == 1 and points.ndim == 1:
         points = points[:, None]
-    if points.ndim != 2:
-        raise ValueError("observation_points must have shape (num_points, coordinates).")
+    expected_rank = method.kernel.input_ndim + 1
+    if points.ndim != expected_rank:
+        raise ValueError(
+            "observation_points must have one design axis followed by "
+            f"{method.kernel.input_ndim} kernel input axes."
+        )
     if bool(jnp.any(~jnp.isfinite(points))):
         raise ValueError("observation_points must be finite.")
     selection = randomized_pivoted_cholesky(
         points,
-        RandomizedPivotedCholesky(num_points, kernel=kernel),
+        method,
         key=key,
     )
     if not bool(selection.diagnostics.valid):

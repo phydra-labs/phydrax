@@ -142,3 +142,94 @@ def test_randomized_pivoted_cholesky_rejects_oversized_selection():
             jnp.ones((3, 1)),
             phx.coresets.RandomizedPivotedCholesky(4),
         )
+
+
+def test_structured_path_mmd_matches_dense_kernel_evaluation():
+    source = jnp.cumsum(jr.normal(jr.key(12), (7, 4, 2)), axis=1)
+    comparison = jnp.cumsum(jr.normal(jr.key(13), (3, 6, 2)), axis=1)
+    source_weights = jnp.arange(1.0, 8.0)
+    source_weights = source_weights / jnp.sum(source_weights)
+    comparison_weights = jnp.asarray([0.2, 0.3, 0.5])
+    kernel = phx.kernels.SignaturePDEKernel(
+        phx.kernels.LinearKernel(),
+        polynomial_order=4,
+        pair_block_size=3,
+    )
+
+    actual = phx.coresets.weighted_mmd(
+        source,
+        comparison,
+        source_log_weights=jnp.log(source_weights),
+        comparison_log_weights=jnp.log(comparison_weights),
+        kernel=kernel,
+        block_size=3,
+    )
+    expected_squared = (
+        source_weights @ kernel.matrix(source, source) @ source_weights
+        + comparison_weights @ kernel.matrix(comparison, comparison) @ comparison_weights
+        - 2.0 * source_weights @ kernel.matrix(source, comparison) @ comparison_weights
+    )
+
+    assert jnp.allclose(
+        actual,
+        jnp.sqrt(jnp.maximum(expected_squared, 0.0)),
+        rtol=2e-11,
+        atol=2e-11,
+    )
+
+
+def test_kernel_herding_selects_structured_paths_without_flattening():
+    paths = jnp.cumsum(jr.normal(jr.key(21), (9, 5, 2)) * 0.2, axis=1)
+    kernel = phx.kernels.SignaturePDEKernel(
+        phx.kernels.LinearKernel(),
+        polynomial_order=4,
+        pair_block_size=4,
+    )
+    selection = phx.coresets.kernel_herd(
+        paths,
+        phx.coresets.KernelHerding(
+            4,
+            kernel=kernel,
+            block_size=3,
+        ),
+    )
+
+    assert bool(selection.diagnostics.valid)
+    assert selection.diagnostics.input_shape == (5, 2)
+    assert jnp.unique(selection.indices).shape == (4,)
+    assert paths[selection.indices].shape == (4, 5, 2)
+    assert jnp.isfinite(selection.diagnostics.mmd)
+
+
+def test_pivoted_cholesky_selects_structured_path_inputs():
+    paths = jnp.cumsum(jr.normal(jr.key(27), (8, 5, 2)) * 0.3, axis=1)
+    kernel = phx.kernels.SignaturePDEKernel(
+        phx.kernels.LinearKernel(),
+        polynomial_order=5,
+        pair_block_size=4,
+    )
+    selection = phx.coresets.randomized_pivoted_cholesky(
+        paths,
+        phx.coresets.RandomizedPivotedCholesky(4, kernel=kernel),
+        key=jr.key(4),
+    )
+
+    assert bool(selection.diagnostics.valid)
+    assert jnp.unique(selection.indices).shape == (4,)
+    assert paths[selection.indices].shape == (4, 5, 2)
+    assert selection.diagnostics.residual_trace < selection.diagnostics.initial_trace
+
+
+def test_structured_coresets_validate_kernel_input_rank():
+    path_kernel = phx.kernels.SignaturePDEKernel(phx.kernels.LinearKernel())
+    with pytest.raises(ValueError, match="2 kernel input axes"):
+        phx.coresets.weighted_mmd(
+            jnp.ones((3, 2)),
+            jnp.ones((3, 2)),
+            kernel=path_kernel,
+        )
+    with pytest.raises(ValueError, match="2 kernel input axes"):
+        phx.coresets.kernel_herd(
+            jnp.ones((3, 2)),
+            phx.coresets.KernelHerding(2, kernel=path_kernel),
+        )

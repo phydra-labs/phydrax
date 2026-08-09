@@ -184,6 +184,16 @@ from ._signature import (
     tensor_exponential,
     tensor_logarithm,
 )
+from ._signature_features import (
+    flatten_signature,
+    LogSignatureFeatures,
+    path_logsignature,
+    path_signature,
+    repeat_last_path_padding,
+    SignatureFeatures,
+    time_augment_path,
+)
+from ._signature_recurrent import SignatureRecurrentCell, SignatureRecurrentState
 from ._solution import (
     SPDEFormulation,
     SPDENoiseRegularization,
@@ -388,6 +398,15 @@ __all__ = [
     "GaussianFieldDiagnostics",
     "GeometricRoughPath",
     "LogSignatureControl",
+    "LogSignatureFeatures",
+    "SignatureFeatures",
+    "SignatureRecurrentCell",
+    "SignatureRecurrentState",
+    "flatten_signature",
+    "path_logsignature",
+    "path_signature",
+    "repeat_last_path_padding",
+    "time_augment_path",
     "piecewise_linear_signature",
     "PrimitiveBasis",
     "tensor_exponential",

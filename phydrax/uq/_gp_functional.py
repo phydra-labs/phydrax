@@ -374,6 +374,8 @@ class FunctionalGaussianProcessLikelihoodState(StrictModule):
     ):
         if not isinstance(kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("kernel must be a positive-definite kernel.")
+        if kernel.input_ndim != 1:
+            raise ValueError("Functional GP kernels must have input_ndim == 1.")
         noise = jnp.asarray(noise_scale, dtype=float)
         if noise.ndim > 1 or (noise.ndim == 1 and noise.shape[0] <= 0):
             raise ValueError("noise_scale must be scalar or a nonempty vector.")
@@ -606,6 +608,8 @@ def functional_kernel_matrix(
     """Assemble covariance between two ordered functional designs."""
     if not isinstance(kernel, AbstractPositiveDefiniteKernel):
         raise TypeError("kernel must be a positive-definite kernel.")
+    if kernel.input_ndim != 1:
+        raise ValueError("Functional GP kernels must have input_ndim == 1.")
     _validate_design_pair(left, right)
     rows = tuple(
         jnp.concatenate(
@@ -628,6 +632,8 @@ def functional_kernel_diagonal(
     """Assemble functional prior variances without a dense covariance matrix."""
     if not isinstance(kernel, AbstractPositiveDefiniteKernel):
         raise TypeError("kernel must be a positive-definite kernel.")
+    if kernel.input_ndim != 1:
+        raise ValueError("Functional GP kernels must have input_ndim == 1.")
     if not isinstance(design, FunctionalDesign):
         raise TypeError("design must be a FunctionalDesign.")
     values = []
