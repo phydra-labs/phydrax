@@ -11,6 +11,11 @@ The same execution path supports fixed and adaptive quadrature, Monte Carlo,
 randomized quasi-Monte Carlo, importance sampling, sparse grids, mapped cells, and
 mixed product plans.
 
+For named analytic primitives such as Dawson's integral, the Faddeeva function,
+and Voigt profiles, use [`phydrax.special`](guides_special_functions.md). Those
+functions own fixed approximation and differentiation contracts; they do not run
+through integration targets or quadrature plans.
+
 ## Targets define the mathematical quantity
 
 A plan never decides whether an integral is normalized. The target does.

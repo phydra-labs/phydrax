@@ -112,6 +112,7 @@ nav:
         - Domains and sampling: "guides_domain.md"
         - Differential operators: "guides_differential.md"
         - Integrals and measures: "guides_integrals.md"
+        - Special functions and named integrals: "guides_special_functions.md"
         - Euclidean path integrals and Feynman–Kac: "guides_path_integrals.md"
         - Conditions, terms, and enforcement: "guides_conditions.md"
         - Solvers and training: "guides_solver.md"
@@ -124,6 +125,7 @@ nav:
         - Overview: "api/phydrax.md"
         - Integration: "api/integration.md"
         - Positive-definite kernels: "api/kernels.md"
+        - Special functions: "api/special.md"
         - Geometry substrate: "api/geometry.md"
         - Domains:
             - Overview: "api/domain/index.md"
