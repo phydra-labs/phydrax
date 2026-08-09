@@ -1,0 +1,71 @@
+{
+  "configuration": {
+    "dimension": 256,
+    "leading_k": 8,
+    "num_steps": 64,
+    "repeats": 3,
+    "seed": 0,
+    "sparse_samples": 2048
+  },
+  "environment": {
+    "backend": "cpu",
+    "device_kind": "cpu",
+    "jax_version": "0.9.1",
+    "machine": "arm64",
+    "python_version": "3.12.8",
+    "system": "Darwin",
+    "system_release": "24.6.0",
+    "x64_enabled": true
+  },
+  "matrix_free_analysis": {
+    "covariant_directions": {
+      "converged": true,
+      "maximum_backward_convergence_drift": 6.578075820391734e-08,
+      "maximum_covariance_error": 0.0,
+      "mean_ms": 1084.7850140000144,
+      "standard_deviation_ms": 295.3593404991431,
+      "status": 0,
+      "stored_frame_count": 17,
+      "tangent_evaluations": 512,
+      "valid": true,
+      "working_set_bytes": 167963
+    },
+    "dense_jacobian_materialized": false,
+    "dimension": 256,
+    "leading_k": 8,
+    "num_steps": 64,
+    "passed": true,
+    "problem_id": "high-dimensional-diagonal-map",
+    "spectrum": {
+      "maximum_exponent_error": 2.220446049250313e-16,
+      "mean_ms": 400.9243886666809,
+      "standard_deviation_ms": 59.21957591116406,
+      "status": 0,
+      "valid": true,
+      "working_set_bytes": 21079
+    },
+    "tangent_method": "jax-jvp:declared-transition"
+  },
+  "passed": true,
+  "sparse_recovery": {
+    "features": 10,
+    "maximum_coefficient_error": 2.842170943040401e-14,
+    "mean_ms": 1379.888277999953,
+    "outputs": 3,
+    "passed": true,
+    "problem_id": "lorenz-exact-strong-sindy",
+    "relative_residual": 7.531514070139188e-16,
+    "samples": 2048,
+    "standard_deviation_ms": 228.55666135352163,
+    "status": [
+      0,
+      0,
+      0
+    ],
+    "support_precision": 1.0,
+    "support_recall": 1.0,
+    "support_size": 7,
+    "valid": true,
+    "working_set_bytes": 469071
+  }
+}

@@ -39,8 +39,9 @@ For a conceptual overview (loss evaluation, exact enforcement, training loop beh
     - Use `solve_probabilistic_ode` for a deterministic Euclidean ODE posterior
       with separately attributed numerical, process, observation, initial, and
       parameter covariance.
-    - Use `lyapunov_spectrum_map` or `lyapunov_spectrum_flow` for finite-time
-      periodic-QR spectra and resumable tangent checkpoints.
+    - Use `phydrax.dynamics.analysis.finite_time_lyapunov_spectrum` with a
+      differentiable flow/map evolution for periodic-QR spectra and resumable
+      tangent checkpoints.
     - Use `solve_diffrax_ensemble` with a global `WienerRealization` for coupled process draws.
     - Use `DelayDifferentialProblem` plus `solve_diffrax_delay` for causal delay IVPs.
     - Use `solve_rough_delay` for geometric rough paths with delayed state.

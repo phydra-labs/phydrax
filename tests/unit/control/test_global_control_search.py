@@ -9,12 +9,16 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from tests._control_systems import (
+    make_differential_control_dynamics,
+    make_discrete_control_dynamics,
+)
 
 
 def _quadratic_problem(*, initial_state=None, num_steps=2):
     times = jnp.linspace(0.0, 1.0, num_steps + 1)
-    time_grid = phx.control.ControlTimeGrid(times, time_id=f"search-time-{num_steps}")
-    dynamics = phx.control.DiscreteControlDynamics(
+    time_grid = phx.dynamics.TimeGrid(times, time_id=f"search-time-{num_steps}")
+    dynamics = make_discrete_control_dynamics(
         lambda time, state, control, args: state + control,
         state_shape=(1,),
         control_shape=(1,),
@@ -161,11 +165,11 @@ def test_coefficient_layout_and_bounds_are_strict_and_never_repaired():
 
 
 def test_invalid_candidates_are_counted_without_hiding_valid_rollouts():
-    times = phx.control.ControlTimeGrid(
+    times = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 1.0]),
         time_id="invalid-search-time",
     )
-    dynamics = phx.control.DiscreteControlDynamics(
+    dynamics = make_discrete_control_dynamics(
         lambda time, state, control, args: state + control,
         state_shape=(1,),
         control_shape=(1,),
@@ -305,10 +309,10 @@ def test_bspline_search_improves_objective_and_emits_a_local_control_seed():
 
 
 def test_differential_search_rollouts_respect_piecewise_constant_jumps():
-    grid = phx.control.ControlTimeGrid(
+    grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 1.0, 2.5]), time_id="search-control-jump"
     )
-    dynamics = phx.control.DifferentialControlDynamics(
+    dynamics = make_differential_control_dynamics(
         lambda time, state, control, args: control,
         state_shape=(1,),
         control_shape=(1,),

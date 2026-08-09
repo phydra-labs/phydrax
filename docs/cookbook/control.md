@@ -16,7 +16,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 horizon = 6
-time_grid = phx.control.ControlTimeGrid(
+time_grid = phx.dynamics.TimeGrid(
     jnp.arange(horizon + 1, dtype=float),
     time_id="integrator-time",
 )

@@ -19,9 +19,16 @@ Top-level package namespace. Most functionality lives in subpackages:
 - `phydrax.optim`: structured residual KFAC and domain-neutral optimization
   configurations consumed by bounded geometry and posterior workflows
 - `phydrax.nn`: neural network components and structured models
+- `phydrax.ml`: case-aware native machine-learning batches, fitted models,
+  workflows, model selection, metrics, inspection, and artifact interoperability
 - `phydrax.sparse`: JAX-native sparse relations, routing, reductions, and linear actions
 - `phydrax.solver`: functional solvers and direct ODE/SDE, jump, hybrid, and
   semidiscrete SPDE integration
+- `phydrax.dynamics`: typed continuous/map systems, evolution and trajectory
+  contracts, DMD/EDMD, sparse equation discovery, continuation, and nonlinear
+  dynamics/chaos analysis
+- `phydrax.control`: finite-horizon control contracts, linear-system analysis,
+  trajectory optimization, compiled QPs, and MPC
 - `phydrax.stochastic`: global Wiener/Poisson/composite realizations, random
   fields, process laws, and explicit path coupling
 - `phydrax.uq`: posterior inference, uncertainty propagation, calibration, filtering,

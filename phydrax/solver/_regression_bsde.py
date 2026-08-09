@@ -16,6 +16,10 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
+from .._numerics import (
+    normalize_least_squares_design,
+    solve_normalized_least_squares,
+)
 from .._strict import StrictModule
 from ..stochastic._bsde import BSDEPathBatch, BSDEProblem
 
@@ -218,44 +222,21 @@ def _normalise_design(
     standardize: bool,
     rcond: float,
 ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
-    finite = jnp.all(jnp.isfinite(design), axis=-1)
-    resolved_mask = jnp.asarray(mask, dtype=bool) & finite
-    weights = resolved_mask.astype(design.dtype)
-    count = jnp.sum(weights)
-    denominator = jnp.maximum(count, 1.0)
-    raw_mean = (
-        jnp.sum(jnp.where(resolved_mask[:, None], design, 0.0), axis=0) / denominator
+    normalized = normalize_least_squares_design(
+        design,
+        mask=mask,
+        center=standardize,
+        scale=standardize,
+        rcond=rcond,
     )
-    centered = design - raw_mean
-    variance = (
-        jnp.sum(jnp.where(resolved_mask[:, None], centered**2, 0.0), axis=0) / denominator
-    )
-    varying = variance > jnp.finfo(design.dtype).eps
-    if standardize:
-        mean = jnp.where(varying, raw_mean, 0.0)
-        scale = jnp.where(varying, jnp.sqrt(variance), 1.0)
-    else:
-        mean = jnp.zeros_like(raw_mean)
-        scale = jnp.ones_like(raw_mean)
-    normalized = (design - mean) / scale
-    masked = jnp.where(resolved_mask[:, None], normalized, 0.0)
-    singular_values = jnp.linalg.svd(masked, compute_uv=False)
-    largest = jnp.max(singular_values, initial=0.0)
-    threshold = largest * rcond
-    rank = jnp.sum(singular_values > threshold).astype(jnp.int32)
-    smallest = jnp.min(
-        jnp.where(singular_values > threshold, singular_values, jnp.inf),
-        initial=jnp.inf,
-    )
-    condition = jnp.where(rank == design.shape[1], largest / smallest, jnp.inf)
     return (
-        normalized,
-        mean,
-        scale,
-        resolved_mask,
-        count.astype(jnp.int32),
-        rank,
-        condition,
+        normalized.values,
+        normalized.offset,
+        normalized.scale,
+        normalized.valid_rows,
+        normalized.sample_count,
+        normalized.rank,
+        normalized.condition_number,
     )
 
 
@@ -269,45 +250,26 @@ def _regress(
     rcond: float,
     min_samples: int,
 ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
-    target_finite = jnp.all(jnp.isfinite(target), axis=-1)
-    mask = base_mask & target_finite
-    weights = mask.astype(normalized_design.dtype)
-    count = jnp.sum(weights)
-    denominator = jnp.maximum(count, 1.0)
-    design = jnp.where(mask[:, None], normalized_design, 0.0)
-    response = jnp.where(mask[:, None], target, 0.0)
-    gram = design.T @ design / denominator
-    rhs = design.T @ response / denominator
-    if ridge > 0.0:
-        coefficients = jnp.linalg.solve(
-            gram + ridge * jnp.eye(gram.shape[0], dtype=gram.dtype), rhs
-        )
-    else:
-        coefficients = jnp.linalg.pinv(gram, rtol=rcond) @ rhs
-    prediction = normalized_design @ coefficients
-    residual = target - prediction
-    adjusted_moment = (
-        design.T @ jnp.where(mask[:, None], residual, 0.0) / denominator
-        - ridge * coefficients
+    design = normalize_least_squares_design(
+        normalized_design,
+        mask=base_mask,
+        rcond=rcond,
     )
-    normal_error = jnp.max(jnp.abs(adjusted_moment), initial=0.0)
-    singular_values = jnp.linalg.svd(design, compute_uv=False)
-    largest = jnp.max(singular_values, initial=0.0)
-    rank = jnp.sum(singular_values > largest * rcond)
-    valid = (
-        (count >= min_samples)
-        & (rank > 0)
-        & jnp.all(jnp.isfinite(coefficients))
-        & ((ridge > 0.0) | (rank == normalized_design.shape[1]))
+    result = solve_normalized_least_squares(
+        design,
+        target,
+        ridge=ridge,
+        rcond=rcond,
+        min_samples=min_samples,
     )
     return (
-        coefficients,
-        prediction,
-        residual,
-        mask,
-        count.astype(jnp.int32),
-        normal_error,
-        valid,
+        result.coefficients,
+        result.prediction,
+        result.residual,
+        result.valid_rows,
+        result.sample_count,
+        result.normal_equation_error,
+        result.valid,
     )
 
 

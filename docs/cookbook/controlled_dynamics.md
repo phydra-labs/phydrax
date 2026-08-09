@@ -113,13 +113,25 @@ posterior = phx.solver.solve_probabilistic_ode(
     parameter_covariance=jnp.asarray([[1e-4]]),
 )
 
-spectrum = phx.solver.lyapunov_spectrum_flow(
-    ode,
-    step_size=0.01,
-    qr_interval=0.1,
-    burn_in=0.2,
-    accumulation_interval=0.5,
+layout = phx.dynamics.StateLayout((1,), component_names=("state",))
+flow = phx.dynamics.ContinuousSystem(
+    decay,
+    state_layout=layout,
     system_id="scalar-decay",
+)
+evolution = phx.dynamics.DiffraxEvolution(flow, rtol=1e-9, atol=1e-11)
+lyapunov_grid = phx.dynamics.TimeGrid(
+    jnp.linspace(0.0, 2.0, 201),
+    time_id="scalar-decay-analysis",
+)
+spectrum = phx.dynamics.analysis.finite_time_lyapunov_spectrum(
+    evolution,
+    jnp.asarray([1.0]),
+    lyapunov_grid,
+    args=jnp.asarray(-0.4),
+    qr_interval=10,
+    burn_in=20,
+    accumulation_interval=50,
 )
 
 assert bool(posterior.successful)
@@ -138,6 +150,12 @@ assert bool(spectrum.kaplan_yorke_valid)
 
 Adaptation performs a uniform pilot pass and redistributes the fixed `num_steps`; it is not a variable-capacity fallback. Quasi-MLE calibration rescales only the numerical integrated-Wiener covariance. The other four source covariances retain their declared meaning and can be applied independently with `posterior.covariance_matvec(..., source=...)`. Dense covariance materialization remains guarded by `max_dense_dimension`; selecting block-diagonal factorization is an explicit approximation, never an automatic repair.
 
-The Lyapunov flow uses fixed-step RK4 for the state and tangent basis. QR cadence, burn-in, accumulation cadence, and duration must be integer multiples of `step_size`. Its checkpoint contains the state, basis, stretch totals, counters, validity/status, and exact system, tangent, backend, and discretization IDs. Resume requires all of that provenance to match. Kaplan–Yorke dimension is valid only for a finite, valid full spectrum; a leading-only estimate is marked noncertifying.
+The Lyapunov result records the chosen evolution backend, discretization, grid, tangent
+method, cadence, burn-in, checkpoint, validity, and status. Resume requires matching
+provenance. Kaplan–Yorke dimension is valid only for a finite, valid full spectrum; a
+leading-only estimate is marked noncertifying.
 
-See [API → Differential equation integration](../api/solver/differential.md) for every path, neural-CDE, probabilistic ODE, and Lyapunov symbol and its full result contract.
+See [API → Differential equation integration](../api/solver/differential.md) for every
+path, neural-CDE, and probabilistic ODE symbol. See
+[API → Dynamical systems, identification, and chaos](../api/dynamics.md) for tangent and
+Lyapunov analysis.

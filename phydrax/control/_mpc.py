@@ -13,6 +13,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..dynamics import TimeGrid
 from ..optim._quadratic_program import (
     QP_INFEASIBLE,
     QP_NONFINITE,
@@ -21,7 +22,7 @@ from ..optim._quadratic_program import (
     QuadraticProgramResult,
 )
 from ._parameterization import PiecewiseConstantControlParameterization
-from ._problem import _identifier, ControlTimeGrid
+from ._problem import _identifier
 from ._qp_compiler import (
     LinearControlQPSolution,
     LinearQuadraticControlProblem,
@@ -330,7 +331,7 @@ class RecedingHorizonMPC(StrictModule):
         terminal_inequality_rhs = (
             specification.terminal_inequality_rhs if apply_terminal else None
         )
-        local_time_grid = ControlTimeGrid(
+        local_time_grid = TimeGrid(
             specification.time_grid.times[stage : end + 1],
             time_id=f"{specification.time_grid.time_id}:mpc:{stage}:{end}",
         )

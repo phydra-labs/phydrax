@@ -8,14 +8,16 @@ import numpy as np
 
 from phydrax.control import (
     continuous_transfer_function,
-    DifferentialControlDynamics,
     discrete_transfer_function,
-    DiscreteControlDynamics,
     frequency_response,
     FREQUENCY_SINGULAR,
     FREQUENCY_UNSTABLE,
     linearize_differential_dynamics,
     linearize_discrete_dynamics,
+)
+from tests._control_systems import (
+    make_differential_control_dynamics,
+    make_discrete_control_dynamics,
 )
 
 
@@ -29,7 +31,7 @@ def test_nonlinear_input_output_linearization_has_affine_offsets():
         del t, args
         return jnp.array([x[0] + u[0] ** 2, x[1] * u[0]])
 
-    dynamics = DifferentialControlDynamics(
+    dynamics = make_differential_control_dynamics(
         vector_field,
         state_shape=(2,),
         control_shape=(1,),
@@ -61,7 +63,7 @@ def test_discrete_linearization_preserves_batched_operating_points():
     def transition(t, x, u, args):
         return jnp.array([x[0] ** 2 + args * u[0] + t])
 
-    dynamics = DiscreteControlDynamics(
+    dynamics = make_discrete_control_dynamics(
         transition,
         state_shape=(1,),
         control_shape=(1,),
@@ -84,7 +86,7 @@ def test_discrete_linearization_preserves_batched_operating_points():
 
 
 def test_linearization_marks_nonfinite_operating_time_invalid():
-    dynamics = DifferentialControlDynamics(
+    dynamics = make_differential_control_dynamics(
         lambda time, state, control, args: jnp.ones((1,)),
         state_shape=(1,),
         control_shape=(1,),
@@ -102,7 +104,7 @@ def test_linearization_marks_nonfinite_operating_time_invalid():
 
 
 def test_scalar_state_and_control_linearization_preserves_case_axes():
-    discrete = DiscreteControlDynamics(
+    discrete = make_discrete_control_dynamics(
         lambda time, state, control, args: state**2 + 3.0 * control + time,
         state_shape=(),
         control_shape=(),
@@ -126,7 +128,7 @@ def test_scalar_state_and_control_linearization_preserves_case_axes():
     np.testing.assert_allclose(result.control_matrix[:, 0, 0], 3.0)
     assert bool(jnp.all(result.valid))
 
-    differential = DifferentialControlDynamics(
+    differential = make_differential_control_dynamics(
         lambda time, state, control, args: state * control,
         state_shape=(),
         control_shape=(),

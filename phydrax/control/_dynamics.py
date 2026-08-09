@@ -4,8 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from typing import Any, TypeAlias
+from typing import Any
 
 import diffrax as dfx
 import equinox as eqx
@@ -14,16 +13,11 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..dynamics import ContinuousSystem, DiscreteSystem, TimeGrid
 from ..solver import DifferentialProblem, solve_diffrax
 from ._parameterization import AbstractControlParameterization
-from ._problem import _identifier, _shape, ControlTimeGrid
+from ._problem import _identifier
 from ._trajectory import CONTROL_DYNAMICS_FAILED, CONTROL_SUCCESS, ControlTrajectory
-
-
-DiscreteTransition: TypeAlias = Callable[[Array, Array, Array, Any], ArrayLike]
-DifferentialControlVectorField: TypeAlias = Callable[
-    [Array, Array, Array, Any], ArrayLike
-]
 
 
 def _case_and_state(
@@ -65,7 +59,7 @@ def _event_where(
 
 
 def _batched_transition(
-    transition: DiscreteTransition,
+    system: DiscreteSystem,
     time: Array,
     states: Array,
     controls: Array,
@@ -82,12 +76,7 @@ def _batched_transition(
     flat_controls = controls.reshape((count,) + control_shape)
 
     def apply(state: Array, control: Array) -> Array:
-        value = jnp.asarray(transition(time, state, control, args))
-        if tuple(value.shape) != state_shape:
-            raise ValueError(
-                "Discrete control transition must return one state_shape per case."
-            )
-        return value
+        return system.evaluate(time, state, args, inputs=control)
 
     return jax.vmap(apply)(flat_states, flat_controls).reshape(case_shape + state_shape)
 
@@ -95,33 +84,39 @@ def _batched_transition(
 class DiscreteControlDynamics(StrictModule):
     """Explicit discrete transition applied independently over declared cases."""
 
-    transition: DiscreteTransition
-    state_shape: tuple[int, ...] = eqx.field(static=True)
-    control_shape: tuple[int, ...] = eqx.field(static=True)
-    dynamics_id: str = eqx.field(static=True)
+    system: DiscreteSystem
     method_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        transition: DiscreteTransition,
+        system: DiscreteSystem,
         /,
         *,
-        state_shape: Sequence[int],
-        control_shape: Sequence[int],
-        dynamics_id: str,
         method_id: str = "explicit-discrete-transition",
     ):
-        if not callable(transition):
-            raise TypeError("DiscreteControlDynamics transition must be callable.")
-        self.transition = transition
-        self.state_shape = _shape(state_shape, "state_shape")
-        self.control_shape = _shape(control_shape, "control_shape")
-        self.dynamics_id = _identifier(dynamics_id, "dynamics_id")
+        if not isinstance(system, DiscreteSystem):
+            raise TypeError("DiscreteControlDynamics system must be a DiscreteSystem.")
+        if system.input_layout is None:
+            raise ValueError("DiscreteControlDynamics requires a system with inputs.")
+        self.system = system
         self.method_id = _identifier(method_id, "method_id")
+
+    @property
+    def state_shape(self) -> tuple[int, ...]:
+        return self.system.state_layout.shape
+
+    @property
+    def control_shape(self) -> tuple[int, ...]:
+        assert self.system.input_layout is not None
+        return self.system.input_layout.shape
+
+    @property
+    def dynamics_id(self) -> str:
+        return self.system.system_id
 
     def rollout(
         self,
-        time_grid: ControlTimeGrid,
+        time_grid: TimeGrid,
         initial_state: ArrayLike,
         parameterization: AbstractControlParameterization,
         coefficients: ArrayLike,
@@ -130,8 +125,8 @@ class DiscreteControlDynamics(StrictModule):
         args: Any = None,
         problem_id: str,
     ) -> ControlTrajectory:
-        if not isinstance(time_grid, ControlTimeGrid):
-            raise TypeError("time_grid must be a ControlTimeGrid.")
+        if not isinstance(time_grid, TimeGrid):
+            raise TypeError("time_grid must be a TimeGrid.")
         if not isinstance(parameterization, AbstractControlParameterization):
             raise TypeError(
                 "parameterization must implement AbstractControlParameterization."
@@ -176,7 +171,7 @@ class DiscreteControlDynamics(StrictModule):
                 self.control_shape,
             )
             candidate_state = _batched_transition(
-                self.transition,
+                self.system,
                 time,
                 safe_current,
                 safe_control,
@@ -249,33 +244,41 @@ class DiscreteControlDynamics(StrictModule):
 class DifferentialControlDynamics(StrictModule):
     """Controlled vector field lowered to the canonical differential solver path."""
 
-    vector_field: DifferentialControlVectorField
-    state_shape: tuple[int, ...] = eqx.field(static=True)
-    control_shape: tuple[int, ...] = eqx.field(static=True)
-    dynamics_id: str = eqx.field(static=True)
+    system: ContinuousSystem
     method_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        vector_field: DifferentialControlVectorField,
+        system: ContinuousSystem,
         /,
         *,
-        state_shape: Sequence[int],
-        control_shape: Sequence[int],
-        dynamics_id: str,
         method_id: str = "canonical-differential-problem",
     ):
-        if not callable(vector_field):
-            raise TypeError("DifferentialControlDynamics vector_field must be callable.")
-        self.vector_field = vector_field
-        self.state_shape = _shape(state_shape, "state_shape")
-        self.control_shape = _shape(control_shape, "control_shape")
-        self.dynamics_id = _identifier(dynamics_id, "dynamics_id")
+        if not isinstance(system, ContinuousSystem):
+            raise TypeError(
+                "DifferentialControlDynamics system must be a ContinuousSystem."
+            )
+        if system.input_layout is None:
+            raise ValueError("DifferentialControlDynamics requires a system with inputs.")
+        self.system = system
         self.method_id = _identifier(method_id, "method_id")
+
+    @property
+    def state_shape(self) -> tuple[int, ...]:
+        return self.system.state_layout.shape
+
+    @property
+    def control_shape(self) -> tuple[int, ...]:
+        assert self.system.input_layout is not None
+        return self.system.input_layout.shape
+
+    @property
+    def dynamics_id(self) -> str:
+        return self.system.system_id
 
     def rollout(
         self,
-        time_grid: ControlTimeGrid,
+        time_grid: TimeGrid,
         initial_state: ArrayLike,
         parameterization: AbstractControlParameterization,
         coefficients: ArrayLike,
@@ -293,8 +296,8 @@ class DifferentialControlDynamics(StrictModule):
         max_steps: int | None = 4096,
         throw: bool = False,
     ) -> ControlTrajectory:
-        if not isinstance(time_grid, ControlTimeGrid):
-            raise TypeError("time_grid must be a ControlTimeGrid.")
+        if not isinstance(time_grid, TimeGrid):
+            raise TypeError("time_grid must be a TimeGrid.")
         if not isinstance(parameterization, AbstractControlParameterization):
             raise TypeError(
                 "parameterization must implement AbstractControlParameterization."
@@ -361,19 +364,12 @@ class DifferentialControlDynamics(StrictModule):
                     jnp.zeros_like(control),
                     self.control_shape,
                 )
-                candidate = jnp.asarray(
-                    self.vector_field(
-                        time,
-                        safe_current,
-                        safe_control,
-                        field_args,
-                    )
+                candidate = self.system.evaluate(
+                    time,
+                    safe_current,
+                    field_args,
+                    inputs=safe_control,
                 )
-                if tuple(candidate.shape) != self.state_shape:
-                    raise ValueError(
-                        "Differential control vector_field must return one "
-                        "state_shape per case."
-                    )
                 field_valid = current_finite & control_finite
                 return _event_where(
                     field_valid,
@@ -514,7 +510,5 @@ class DifferentialControlDynamics(StrictModule):
 
 __all__ = [
     "DifferentialControlDynamics",
-    "DifferentialControlVectorField",
     "DiscreteControlDynamics",
-    "DiscreteTransition",
 ]

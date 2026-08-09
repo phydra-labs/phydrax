@@ -137,14 +137,14 @@ def _linearize(
     flat_states = states.reshape((case_count, state_size))
     flat_controls = controls.reshape((case_count, control_size))
     flat_times = times.reshape((case_count,))
-    function = dynamics.transition if system_type == "discrete" else dynamics.vector_field
+    system = dynamics.system
 
     def evaluate_dynamics(t, flat_state, flat_control):
-        value = function(
+        value = system.evaluate(
             t,
             flat_state.reshape(state_shape),
-            flat_control.reshape(control_shape),
             args,
+            inputs=flat_control.reshape(control_shape),
         )
         array = _inexact(value)
         if array.shape != state_shape:

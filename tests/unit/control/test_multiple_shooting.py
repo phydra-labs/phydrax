@@ -9,14 +9,18 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from tests._control_systems import (
+    make_differential_control_dynamics,
+    make_discrete_control_dynamics,
+)
 
 
 def _linear_problem(*, num_steps=2, path_constraints=(), terminal_constraints=()):
-    grid = phx.control.ControlTimeGrid(
+    grid = phx.dynamics.TimeGrid(
         jnp.arange(num_steps + 1, dtype=float),
         time_id=f"multiple-shooting-linear-{num_steps}",
     )
-    dynamics = phx.control.DiscreteControlDynamics(
+    dynamics = make_discrete_control_dynamics(
         lambda time, state, control, args: state + control,
         state_shape=(1,),
         control_shape=(1,),
@@ -117,10 +121,10 @@ def test_exact_boundary_continuity_path_and_terminal_defect_accounting():
 
 
 def test_nonlinear_constrained_problem_converges_without_projection_or_repair():
-    grid = phx.control.ControlTimeGrid(
+    grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 1.0, 2.0]), time_id="multiple-shooting-nonlinear"
     )
-    dynamics = phx.control.DiscreteControlDynamics(
+    dynamics = make_discrete_control_dynamics(
         lambda time, state, control, args: state + control + 0.1 * control**2,
         state_shape=(1,),
         control_shape=(1,),
@@ -155,10 +159,10 @@ def test_nonlinear_constrained_problem_converges_without_projection_or_repair():
 
 
 def test_rejected_merit_line_search_is_explicit():
-    grid = phx.control.ControlTimeGrid(
+    grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 1.0]), time_id="multiple-shooting-rejected-line"
     )
-    dynamics = phx.control.DiscreteControlDynamics(
+    dynamics = make_discrete_control_dynamics(
         lambda time, state, control, args: state + control,
         state_shape=(1,),
         control_shape=(1,),
@@ -206,10 +210,10 @@ def test_infeasible_dense_qp_status_is_propagated():
 
 
 def test_concave_qp_model_at_stationary_maximum_is_rejected():
-    grid = phx.control.ControlTimeGrid(
+    grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 1.0]), time_id="multiple-shooting-concave"
     )
-    dynamics = phx.control.DiscreteControlDynamics(
+    dynamics = make_discrete_control_dynamics(
         lambda time, state, control, args: state,
         state_shape=(1,),
         control_shape=(1,),
@@ -238,10 +242,10 @@ def test_concave_qp_model_at_stationary_maximum_is_rejected():
 
 
 def test_differential_segments_use_canonical_solver_and_report_failed_integration():
-    grid = phx.control.ControlTimeGrid(
+    grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 0.5, 1.0]), time_id="multiple-shooting-ode"
     )
-    dynamics = phx.control.DifferentialControlDynamics(
+    dynamics = make_differential_control_dynamics(
         lambda time, state, control, args: control,
         state_shape=(1,),
         control_shape=(1,),
@@ -281,10 +285,10 @@ def test_differential_segments_use_canonical_solver_and_report_failed_integratio
 
 
 def test_differential_rollout_audit_matches_segments_at_control_jumps():
-    grid = phx.control.ControlTimeGrid(
+    grid = phx.dynamics.TimeGrid(
         jnp.asarray([0.0, 1.0, 2.5]), time_id="multiple-shooting-control-jump"
     )
-    dynamics = phx.control.DifferentialControlDynamics(
+    dynamics = make_differential_control_dynamics(
         lambda time, state, control, args: control,
         state_shape=(1,),
         control_shape=(1,),

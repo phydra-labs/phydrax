@@ -12,9 +12,10 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..dynamics import TimeGrid
 from ._constraints import SampledControlFeasibility
 from ._cost import SampledControlLoss
-from ._problem import _identifier, ControlTimeGrid
+from ._problem import _identifier
 
 
 CONTROL_SUCCESS = 0
@@ -26,7 +27,7 @@ CONTROL_INFEASIBLE = 3
 class ControlTrajectory(StrictModule):
     """State and applied-control history with explicit case and physical axes."""
 
-    time_grid: ControlTimeGrid
+    time_grid: TimeGrid
     states: Array
     controls: Array
     valid: Array
@@ -46,7 +47,7 @@ class ControlTrajectory(StrictModule):
     def __init__(
         self,
         *,
-        time_grid: ControlTimeGrid,
+        time_grid: TimeGrid,
         states: ArrayLike,
         controls: ArrayLike,
         valid: ArrayLike,
@@ -63,8 +64,8 @@ class ControlTrajectory(StrictModule):
         discretization_id: str,
         approximation_id: str,
     ):
-        if not isinstance(time_grid, ControlTimeGrid):
-            raise TypeError("ControlTrajectory time_grid must be a ControlTimeGrid.")
+        if not isinstance(time_grid, TimeGrid):
+            raise TypeError("ControlTrajectory time_grid must be a TimeGrid.")
         cases = tuple(int(size) for size in case_shape)
         states_shape = tuple(int(size) for size in state_shape)
         controls_shape = tuple(int(size) for size in control_shape)

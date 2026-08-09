@@ -18,7 +18,8 @@ from .._interpolation import (
     ProjectionMethod,
 )
 from .._strict import StrictModule
-from ._problem import _identifier, _shape, ControlTimeGrid
+from ..dynamics import TimeGrid
+from ._problem import _identifier, _shape
 
 
 def _coefficient_array(
@@ -89,18 +90,18 @@ class AbstractControlParameterization(StrictModule):
 class PiecewiseConstantControlParameterization(AbstractControlParameterization):
     """Left-endpoint-held interval controls on a fixed physical time grid."""
 
-    time_grid: ControlTimeGrid
+    time_grid: TimeGrid
 
     def __init__(
         self,
-        time_grid: ControlTimeGrid,
+        time_grid: TimeGrid,
         control_shape: Sequence[int],
         /,
         *,
         parameterization_id: str,
     ):
-        if not isinstance(time_grid, ControlTimeGrid):
-            raise TypeError("time_grid must be a ControlTimeGrid.")
+        if not isinstance(time_grid, TimeGrid):
+            raise TypeError("time_grid must be a TimeGrid.")
         shape = _shape(control_shape, "control_shape")
         self.time_grid = time_grid
         self.control_shape = shape
@@ -146,18 +147,18 @@ class PiecewiseConstantControlParameterization(AbstractControlParameterization):
 class PiecewiseLinearControlParameterization(AbstractControlParameterization):
     """Continuous nodal controls linearly interpolated in physical time."""
 
-    time_grid: ControlTimeGrid
+    time_grid: TimeGrid
 
     def __init__(
         self,
-        time_grid: ControlTimeGrid,
+        time_grid: TimeGrid,
         control_shape: Sequence[int],
         /,
         *,
         parameterization_id: str,
     ):
-        if not isinstance(time_grid, ControlTimeGrid):
-            raise TypeError("time_grid must be a ControlTimeGrid.")
+        if not isinstance(time_grid, TimeGrid):
+            raise TypeError("time_grid must be a TimeGrid.")
         shape = _shape(control_shape, "control_shape")
         self.time_grid = time_grid
         self.control_shape = shape

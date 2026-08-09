@@ -14,34 +14,36 @@ from phydrax.control import (
     CONTROL_INFEASIBLE,
     CONTROL_SUCCESS,
     ControlProblem,
-    ControlTimeGrid,
-    DifferentialControlDynamics,
-    DiscreteControlDynamics,
     PiecewiseConstantControlParameterization,
     PiecewiseLinearControlParameterization,
+)
+from phydrax.dynamics import TimeGrid
+from tests._control_systems import (
+    make_differential_control_dynamics,
+    make_discrete_control_dynamics,
 )
 
 
 def _grid():
-    return ControlTimeGrid(jnp.asarray([0.0, 0.5, 1.0]), time_id="time:grid")
+    return TimeGrid(jnp.asarray([0.0, 0.5, 1.0]), time_id="time:grid")
 
 
 def test_control_foundation_constructor_guards_are_explicit():
     with pytest.raises(ValueError, match="at least two"):
-        ControlTimeGrid(jnp.asarray([0.0]), time_id="short")
+        TimeGrid(jnp.asarray([0.0]), time_id="short")
     with pytest.raises(ValueError, match="strictly increasing"):
-        ControlTimeGrid(jnp.asarray([0.0, 0.0, 1.0]), time_id="repeated")
+        TimeGrid(jnp.asarray([0.0, 0.0, 1.0]), time_id="repeated")
     with pytest.raises(ValueError, match="non-empty"):
-        ControlTimeGrid(jnp.asarray([0.0, 1.0]), time_id="")
+        TimeGrid(jnp.asarray([0.0, 1.0]), time_id="")
     with pytest.raises(TypeError, match="callable"):
-        DiscreteControlDynamics(
+        make_discrete_control_dynamics(
             3,
             state_shape=(1,),
             control_shape=(1,),
             dynamics_id="bad",
         )
 
-    dynamics = DiscreteControlDynamics(
+    dynamics = make_discrete_control_dynamics(
         lambda time, state, control, args: state + control,
         state_shape=(2,),
         control_shape=(1,),
@@ -58,7 +60,7 @@ def test_control_foundation_constructor_guards_are_explicit():
 
 def test_discrete_rollout_preserves_case_time_axes_and_gradients():
     grid = _grid()
-    dynamics = DiscreteControlDynamics(
+    dynamics = make_discrete_control_dynamics(
         lambda time, state, control, args: state + control,
         state_shape=(1,),
         control_shape=(1,),
@@ -110,7 +112,7 @@ def test_discrete_rollout_preserves_case_time_axes_and_gradients():
 
 def test_discrete_rollout_masks_failed_feedback_policy_cases():
     grid = _grid()
-    dynamics = DiscreteControlDynamics(
+    dynamics = make_discrete_control_dynamics(
         lambda time, state, control, args: jnp.full_like(state, jnp.nan),
         state_shape=(1,),
         control_shape=(1,),
@@ -140,7 +142,7 @@ def test_discrete_rollout_masks_failed_feedback_policy_cases():
 
 def test_sampled_loss_and_sampled_feasibility_remain_distinct():
     grid = _grid()
-    dynamics = DiscreteControlDynamics(
+    dynamics = make_discrete_control_dynamics(
         lambda time, state, control, args: state + control,
         state_shape=(1,),
         control_shape=(1,),
@@ -173,7 +175,7 @@ def test_sampled_loss_and_sampled_feasibility_remain_distinct():
 
 def test_differential_rollout_is_differentiable_and_propagates_backend_failure():
     grid = _grid()
-    dynamics = DifferentialControlDynamics(
+    dynamics = make_differential_control_dynamics(
         lambda time, state, control, args: control,
         state_shape=(1,),
         control_shape=(1,),
@@ -246,7 +248,7 @@ def test_differential_rollout_is_differentiable_and_propagates_backend_failure()
 
 def test_differential_failed_feedback_reconstruction_masks_invalid_states():
     grid = _grid()
-    dynamics = DifferentialControlDynamics(
+    dynamics = make_differential_control_dynamics(
         lambda time, state, control, args: -state + control,
         state_shape=(1,),
         control_shape=(1,),
@@ -290,7 +292,7 @@ def test_differential_rollout_solves_declared_cases_independently():
             jnp.zeros_like(state),
         )
 
-    dynamics = DifferentialControlDynamics(
+    dynamics = make_differential_control_dynamics(
         vector_field,
         state_shape=(1,),
         control_shape=(1,),

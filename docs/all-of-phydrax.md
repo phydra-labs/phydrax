@@ -179,6 +179,37 @@ substrate. Unequal mass is rejected rather than silently normalized; unbalanced 
 quadratic transport are intentionally outside the current contract. See
 [Guides → Optimal transport](guides_transport.md).
 
+### Dynamical systems, identification, nonlinear analysis, and chaos
+
+`phydrax.dynamics` separates local system laws, pathwise numerical evolution,
+masked trajectory data, identification, and nonlinear analysis. `StateLayout`
+retains physical shape, labels, and state geometry; `ContinuousSystem` and
+`DiscreteSystem` retain optional typed inputs; `TimeGrid` and `IterationGrid`
+keep physical-time and map-iteration normalization distinct. Solver, control,
+stochastic, memory/delay, rough, and canonical evolution outputs enter the same
+`TrajectoryData` contract through explicit adapters without losing masks, reset
+boundaries, case/realization axes, or provenance.
+
+Identification includes mask-safe DMD/DMDc and EDMD; strong, discrete, integral,
+and weak SINDy; polynomial, Fourier, tensor-product, transformed, symmetry, and
+custom feature libraries; STLSQ, SR3, temporally embargoed selection, and
+ensembles; exact coefficient groups and equalities; implicit SINDy; and
+structured-grid PDE-FIND. Coefficients are returned in named physical feature
+coordinates. Ambient map conversion rejects non-Euclidean states unless a
+geometry-aware identification method is declared.
+
+Nonlinear analysis includes section crossings and return maps, multiple-shooting
+periodic orbits, dense or matrix-free monodromy/Floquet analysis, natural and
+pseudo-arclength continuation with flow/map/Floquet bifurcation indicators,
+resumable finite-time Lyapunov spectra, covariant or adjoint directions,
+finite-size growth, RQA, the modified 0--1 test, correlation dimension,
+surrogate significance, explicit uncertainty-source aggregation, and a
+matrix-free shadowing-candidate boundary. Bifurcation flags and statistical
+diagnostics are finite-resolution evidence, not automatic certificates.
+
+See [Nonlinear-dynamics cookbook](cookbook/nonlinear_dynamics.md) and
+[API → Dynamical systems, identification, and chaos](api/dynamics.md).
+
 ### Controlled dynamics, estimation, and optimization
 
 Differentiable driving-path classes and `solve_diffrax_cde` cover controlled
@@ -467,6 +498,27 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   Diffrax backend. Stochastic collocation provides a separate deterministic
   quadrature path for finite-dimensional random inputs.
   See [API → Solver → Differential equations](api/solver/differential.md).
+- **System identification and equation discovery**: normalize canonical
+  evolution, differential/delay/memory/rough, controlled, or stochastic output
+  as `TrajectoryData`; preserve sample/transition masks and reset boundaries;
+  then choose DMD/EDMD, a strong/discrete/integral/weak SINDy formulation,
+  structured or implicit sparse regression, or structured-grid PDE-FIND.
+  Results retain design rank, conditioning, residuals, convergence history,
+  physical coefficient names, source IDs, and all rejected selection or
+  ensemble evidence.
+  See [Nonlinear-dynamics cookbook](cookbook/nonlinear_dynamics.md) and
+  [API → Dynamical systems, identification, and chaos](api/dynamics.md).
+- **Nonlinear dynamics and chaos**: evolve one declared flow or map; extract
+  sections and return maps; solve periodic orbits and Floquet spectra; continue
+  equilibrium or orbit residuals through folds; or evaluate Lyapunov spectra,
+  covariant directions, finite-size growth, recurrence statistics, the 0--1
+  test, correlation dimension, and surrogate significance. Every path records
+  its grid, estimator assumptions, masks, fit/Theiler/burn-in windows, RNG, and
+  numerical convergence evidence. Aggregate initial-condition, parameter,
+  path-noise, and numerical cases only through explicitly named uncertainty
+  axes.
+  See [Nonlinear-dynamics cookbook](cookbook/nonlinear_dynamics.md) and
+  [API → Dynamical systems, identification, and chaos](api/dynamics.md).
 - **Controlled differential equations and Neural CDEs**: select an explicit
   differentiable driving path, integrate with `solve_diffrax_cde`, or train a
   `NeuralCDEVectorField` with `train_neural_cde`. Offline cubic interpolation is
@@ -633,6 +685,8 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - Conditions and terms
 - [Uncertainty quantification](guides_uncertainty.md)
 - [State-space models and transition adapters](api/stochastic/state_space.md)
+- [Dynamical systems, identification, and chaos](api/dynamics.md)
+- [Nonlinear dynamics and chaos cookbook](cookbook/nonlinear_dynamics.md)
 - [Controlled dynamics](cookbook/controlled_dynamics.md)
 - [Control workflows](cookbook/control.md)
 - [Control API](api/control.md)
@@ -650,6 +704,9 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - `phydrax.enforcement` for exact condition transforms.
 - `phydrax.operators` for PDE operators.
 - `phydrax.nn` for models, wrappers, and the generic diagonal state-space mixer.
+- `phydrax.dynamics` for typed flow/map laws, pathwise evolution, trajectory
+  data, DMD/EDMD, SINDy/PDE-FIND, continuation, periodic-orbit and chaos
+  analysis, uncertainty aggregation, and the shadowing solver boundary.
 - `phydrax.stochastic` for process paths, trajectories, typed state-space
   problems and inputs, transition kernels, exact signature and log-signature
   features, and structural model compilation.
@@ -661,5 +718,5 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - `phydrax.optim` for canonical QPs and the native implicit QPax backend.
 - `phydrax.control` for finite-horizon control, linear systems, LQR/iLQR,
   multiple shooting, compiled QPs, and MPC.
-- `phydrax.solver` for training, differential equations, controlled dynamics,
-  probabilistic ODEs, and Lyapunov spectra.
+- `phydrax.solver` for training, differential, delay/memory, rough, stochastic,
+  controlled, probabilistic, and geometry-preserving equation solvers.

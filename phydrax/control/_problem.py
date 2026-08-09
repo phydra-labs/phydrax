@@ -9,10 +9,10 @@ from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
 import jax.numpy as jnp
-import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..dynamics import TimeGrid
 from ._constraints import PathConstraint, TerminalConstraint
 from ._cost import RunningCost, TerminalCost
 
@@ -36,54 +36,11 @@ def _shape(value: Sequence[int], name: str, /) -> tuple[int, ...]:
     return shape
 
 
-class ControlTimeGrid(StrictModule):
-    """A shared, physical control-time axis with stable identity."""
-
-    times: Array
-    time_id: str = eqx.field(static=True)
-
-    def __init__(self, times: ArrayLike, /, *, time_id: str):
-        values = jnp.asarray(times)
-        if values.ndim != 1 or int(values.shape[0]) < 2:
-            raise ValueError(
-                "ControlTimeGrid times must be rank one with at least two entries."
-            )
-        if jnp.issubdtype(values.dtype, jnp.complexfloating):
-            raise TypeError("ControlTimeGrid times must be real-valued.")
-        host = np.asarray(values, dtype=float)
-        if not np.all(np.isfinite(host)):
-            raise ValueError("ControlTimeGrid times must be finite.")
-        if np.any(np.diff(host) <= 0.0):
-            raise ValueError("ControlTimeGrid times must be strictly increasing.")
-        self.times = values.astype(jnp.result_type(values, float))
-        self.time_id = _identifier(time_id, "ControlTimeGrid time_id")
-
-    @property
-    def num_times(self) -> int:
-        return int(self.times.shape[0])
-
-    @property
-    def num_steps(self) -> int:
-        return self.num_times - 1
-
-    @property
-    def durations(self) -> Array:
-        return jnp.diff(self.times)
-
-    @property
-    def t0(self) -> Array:
-        return self.times[0]
-
-    @property
-    def t1(self) -> Array:
-        return self.times[-1]
-
-
 class ControlProblem(StrictModule):
     """Finite-horizon control problem with explicit physical and case axes."""
 
     dynamics: DiscreteControlDynamics | DifferentialControlDynamics
-    time_grid: ControlTimeGrid
+    time_grid: TimeGrid
     initial_state: Array
     running_cost: RunningCost | None
     terminal_cost: TerminalCost | None
@@ -98,7 +55,7 @@ class ControlProblem(StrictModule):
     def __init__(
         self,
         dynamics: DiscreteControlDynamics | DifferentialControlDynamics,
-        time_grid: ControlTimeGrid,
+        time_grid: TimeGrid,
         initial_state: ArrayLike,
         /,
         *,
@@ -118,8 +75,8 @@ class ControlProblem(StrictModule):
                 "ControlProblem dynamics must be DiscreteControlDynamics or "
                 "DifferentialControlDynamics."
             )
-        if not isinstance(time_grid, ControlTimeGrid):
-            raise TypeError("ControlProblem time_grid must be a ControlTimeGrid.")
+        if not isinstance(time_grid, TimeGrid):
+            raise TypeError("ControlProblem time_grid must be a TimeGrid.")
         state = jnp.asarray(initial_state)
         state_shape = dynamics.state_shape
         if state.ndim < len(state_shape) or (
@@ -218,4 +175,4 @@ class ControlProblem(StrictModule):
         )
 
 
-__all__ = ["ControlProblem", "ControlTimeGrid"]
+__all__ = ["ControlProblem"]

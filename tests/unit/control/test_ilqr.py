@@ -9,12 +9,14 @@ import pytest
 
 import phydrax as phx
 from phydrax.control import (
-    DifferentialControlDynamics,
     DifferentialControlFlow,
-    DiscreteControlDynamics,
     finite_horizon_lqr,
     ILQRStatus,
     solve_ilqr,
+)
+from tests._control_systems import (
+    make_differential_control_dynamics,
+    make_discrete_control_dynamics,
 )
 
 
@@ -30,8 +32,8 @@ def _problem(
     problem_id,
     args=None,
 ):
-    grid = phx.control.ControlTimeGrid(times, time_id=f"{problem_id}:time")
-    dynamics = DiscreteControlDynamics(
+    grid = phx.dynamics.TimeGrid(times, time_id=f"{problem_id}:time")
+    dynamics = make_discrete_control_dynamics(
         transition,
         state_shape=state_shape,
         control_shape=control_shape,
@@ -318,10 +320,10 @@ def test_ilqr_rejects_non_positive_definite_backward_pass_without_fallback():
 
 
 def test_differential_ilqr_requires_selected_flow_and_propagates_failed_integration():
-    grid = phx.control.ControlTimeGrid(
+    grid = phx.dynamics.TimeGrid(
         jnp.array([0.0, 0.5, 1.0, 1.5]), time_id="failed-flow-time"
     )
-    dynamics = DifferentialControlDynamics(
+    dynamics = make_differential_control_dynamics(
         lambda time, state, control, args: -state + control,
         state_shape=(1,),
         control_shape=(1,),

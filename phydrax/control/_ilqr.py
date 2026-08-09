@@ -19,11 +19,12 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..dynamics import TimeGrid
 from ._constraints import evaluate_sampled_feasibility
 from ._cost import evaluate_sampled_cost
 from ._dynamics import DifferentialControlDynamics, DiscreteControlDynamics
 from ._parameterization import AbstractControlParameterization
-from ._problem import _identifier, ControlProblem, ControlTimeGrid
+from ._problem import _identifier, ControlProblem
 from ._trajectory import (
     CONTROL_DYNAMICS_FAILED,
     CONTROL_SUCCESS,
@@ -84,7 +85,7 @@ class ILQRPolicy(AbstractControlParameterization):
     performed.
     """
 
-    time_grid: ControlTimeGrid
+    time_grid: TimeGrid
     nominal_states: Array
     nominal_controls: Array
     feedback: Array
@@ -92,7 +93,7 @@ class ILQRPolicy(AbstractControlParameterization):
 
     def __init__(
         self,
-        time_grid: ControlTimeGrid,
+        time_grid: TimeGrid,
         nominal_states: ArrayLike,
         nominal_controls: ArrayLike,
         feedback: ArrayLike,
@@ -102,8 +103,8 @@ class ILQRPolicy(AbstractControlParameterization):
         control_shape: tuple[int, ...],
         policy_id: str,
     ):
-        if not isinstance(time_grid, ControlTimeGrid):
-            raise TypeError("ILQRPolicy time_grid must be a ControlTimeGrid.")
+        if not isinstance(time_grid, TimeGrid):
+            raise TypeError("ILQRPolicy time_grid must be a TimeGrid.")
         states = jnp.asarray(nominal_states)
         controls = jnp.asarray(nominal_controls)
         gains = jnp.asarray(feedback)
@@ -354,7 +355,12 @@ def _flow_map(
 
         def discrete_step(t0: Array, t1: Array, state: Array, control: Array) -> Array:
             del t1
-            return jnp.asarray(dynamics.transition(t0, state, control, problem.args))
+            return dynamics.system.evaluate(
+                t0,
+                state,
+                problem.args,
+                inputs=control,
+            )
 
         return discrete_step, problem.time_grid.time_id, "backend:jax:discrete-flow-jvp"
 
