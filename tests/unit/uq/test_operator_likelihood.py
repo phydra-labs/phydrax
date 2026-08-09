@@ -402,7 +402,7 @@ def test_operator_sgmcmc_supports_selected_parameter_subspaces_and_predictions()
         field_name="solution",
     )
     model = {"frozen": jnp.asarray(11.0), "weight": jnp.asarray(1.8)}
-    subspace = phx.uq.ParameterSubspace.from_leaf_paths(model, ("['weight']",))
+    subspace = phx.nn.parameters.ParameterSubspace.from_leaf_paths(model, ("['weight']",))
     parameter_space = phx.uq.ParameterSpace(
         subspace.initial,
         priors={"frozen": None, "weight": phx.uq.Normal(0.0, 3.0)},

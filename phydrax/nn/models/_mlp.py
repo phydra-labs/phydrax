@@ -240,8 +240,13 @@ class MLP(_AbstractBaseModel, KFACLayoutProvider):
                 name=f"layers/{index}",
                 weight=layer.weight,
                 bias=layer.bias,
-                random_weight_factorization=layer.random_weight_factorization,
-                enforce_positive_weights=layer.enforce_positive_weights,
+                parameterization=(
+                    "rwf"
+                    if layer.random_weight_factorization
+                    else "transformed"
+                    if layer.weight_transform is not None
+                    else "direct"
+                ),
             )
             for index, layer in enumerate(self.layers)
         )
@@ -253,8 +258,13 @@ class MLP(_AbstractBaseModel, KFACLayoutProvider):
                 name="residual_projection",
                 weight=residual.weight,
                 bias=residual.bias,
-                random_weight_factorization=residual.random_weight_factorization,
-                enforce_positive_weights=residual.enforce_positive_weights,
+                parameterization=(
+                    "rwf"
+                    if residual.random_weight_factorization
+                    else "transformed"
+                    if residual.weight_transform is not None
+                    else "direct"
+                ),
             ),
         )
 

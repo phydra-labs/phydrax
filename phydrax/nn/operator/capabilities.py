@@ -87,6 +87,7 @@ OperatorCompatibilityCode: TypeAlias = Literal[
     "UNSUPPORTED_OUTPUT_REPRESENTATION",
     "COCHAIN_SEMANTICS_REQUIRED",
     "COCHAIN_SEMANTICS_UNSUPPORTED",
+    "STRUCTURED_TENSOR_REQUIRED",
     "UNSUPPORTED_COCHAIN_SIDE",
     "COCHAIN_DEGREE_MISMATCH",
     "COCHAIN_TOPOLOGY_MISMATCH",
@@ -134,6 +135,7 @@ class OperatorCapabilitySpec:
     encode_once_decode_many: bool = False
     multiple_queries: bool = False
     autoregressive_rollout: bool = False
+    requires_structured_tensors: bool = False
 
     def __post_init__(self):
         if not self.source_geometries or not self.query_geometries:
@@ -685,6 +687,14 @@ def validate_operator_contract(
 
     cochain_fingerprints: set[str] = set()
     for field in supplied:
+        if capability.requires_structured_tensors and field.tensor_layout is None:
+            issues.append(
+                _issue(
+                    "STRUCTURED_TENSOR_REQUIRED",
+                    "configured architecture requires an explicit tensor field layout",
+                    field.name,
+                )
+            )
         cochain = field.cochain
         if capability.cochains == "required" and cochain is None:
             issues.append(

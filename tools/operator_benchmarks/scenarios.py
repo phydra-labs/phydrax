@@ -2395,6 +2395,180 @@ def causal_relaxation_scenario(
     )
 
 
+def irregular_causal_relaxation_scenario(
+    *,
+    points: int = 32,
+    num_cases: int = 6,
+    final_time: float = 2.0,
+    decay_rate: float = 0.7,
+    maximum_frequency: float = 3.0,
+    modes: int = 4,
+    extrapolation_factor: float = 1.5,
+    seed: int = 0,
+) -> OperatorBenchmarkScenario:
+    """Coincident irregular-time causal operator with ragged and step-shift probes."""
+    point_count = int(points)
+    case_count = int(num_cases)
+    if point_count < 4 or case_count <= 0:
+        raise ValueError("points must be at least four and num_cases must be positive.")
+    if (
+        float(final_time) <= 0.0
+        or float(decay_rate) <= 0.0
+        or float(maximum_frequency) <= 0.0
+    ):
+        raise ValueError(
+            "final_time, decay_rate, and maximum_frequency must be positive."
+        )
+    if int(modes) <= 0 or float(extrapolation_factor) <= 1.0:
+        raise ValueError(
+            "modes must be positive and extrapolation_factor must exceed one."
+        )
+
+    resolved_modes = min(int(modes), (point_count - 1) // 2)
+    frequencies = jnp.arange(1, resolved_modes + 1, dtype=float) / float(final_time)
+    coefficient_key, train_key, shifted_key = jr.split(jr.key(seed), 3)
+    coefficients = jr.normal(coefficient_key, (case_count, resolved_modes, 2)) / jnp.sqrt(
+        float(resolved_modes)
+    )
+    response_balancing = jnp.sqrt(
+        float(decay_rate) ** 2 + (2.0 * jnp.pi * frequencies) ** 2
+    )
+    coefficients = (
+        coefficients * (response_balancing / response_balancing[0])[None, :, None]
+    )
+
+    def schedule(key, horizon, dispersion):
+        gaps = jnp.exp(float(dispersion) * jr.normal(key, (case_count, point_count - 1)))
+        cumulative = jnp.concatenate(
+            (jnp.zeros((case_count, 1)), jnp.cumsum(gaps, axis=-1)), axis=-1
+        )
+        return float(horizon) * cumulative / cumulative[:, -1:]
+
+    def forcing(times):
+        phase = 2.0 * jnp.pi * frequencies[None, :, None] * times[:, None, :]
+        basis = jnp.stack((jnp.sin(phase), jnp.cos(phase)), axis=-1)
+        return oe.contract("cmk,cmtk->ct", coefficients, basis)
+
+    def response(times):
+        omega = 2.0 * jnp.pi * frequencies[None, :, None]
+        time = times[:, None, :]
+        transient = jnp.exp(-float(decay_rate) * time)
+        kernel = (jnp.exp(1j * omega * time) - transient) / (
+            float(decay_rate) + 1j * omega
+        )
+        return oe.contract(
+            "cm,cmt->ct", coefficients[..., 0], jnp.imag(kernel)
+        ) + oe.contract("cm,cmt->ct", coefficients[..., 1], jnp.real(kernel))
+
+    def batch(times, *, mask=None):
+        valid = (
+            jnp.ones(times.shape, dtype=bool)
+            if mask is None
+            else jnp.asarray(mask, dtype=bool)
+        )
+        coordinates = jnp.where(valid, times, 0.0)[..., None]
+        source = FunctionSamples(
+            values=jnp.where(valid, forcing(times), 0.0),
+            coordinates=coordinates,
+            mask=valid,
+        )
+        query = FunctionSamples(values=None, coordinates=coordinates, mask=valid)
+        return OperatorBatch(
+            inputs={"forcing": source},
+            queries={"query": query},
+            case_axes=("case",),
+            case_shape=(case_count,),
+        )
+
+    train_times = schedule(train_key, final_time, 0.45)
+    shifted_times = schedule(shifted_key, final_time * float(extrapolation_factor), 1.0)
+    minimum_length = max(2, point_count // 2)
+    lengths = point_count - (
+        jnp.arange(case_count) % max(1, point_count - minimum_length)
+    )
+    ragged_mask = jnp.arange(point_count)[None, :] < lengths[:, None]
+    train_delta = train_times[:, 1:] - train_times[:, :-1]
+    case_ids = _case_ids("irregular_causal_relaxation", case_count)
+    return OperatorBenchmarkScenario(
+        "irregular_causal_relaxation_1d",
+        batch(train_times),
+        response(train_times),
+        (
+            OperatorBenchmarkEvaluation(
+                "irregular_step_extrapolation",
+                batch(shifted_times),
+                response(shifted_times),
+                shift="temporal_step_extrapolation",
+                case_ids=case_ids,
+            ),
+            OperatorBenchmarkEvaluation(
+                "ragged_schedule",
+                batch(train_times, mask=ragged_mask),
+                jnp.where(ragged_mask, response(train_times), 0.0),
+                shift="ragged_schedule",
+                case_ids=case_ids,
+            ),
+        ),
+        case_ids=case_ids,
+        seed=int(seed),
+        provenance=_generated_provenance("irregular_causal_relaxation_scenario"),
+        dimensional_parameters=(
+            OperatorParameterRange(
+                "decay_rate",
+                float(decay_rate),
+                float(decay_rate),
+                "T^-1",
+                "log",
+            ),
+            OperatorParameterRange(
+                "forcing_frequency",
+                1.0 / float(final_time),
+                float(maximum_frequency),
+                "T^-1",
+            ),
+            OperatorParameterRange(
+                "final_time",
+                float(final_time),
+                float(final_time) * float(extrapolation_factor),
+                "T",
+            ),
+        ),
+        nondimensional_parameters=(
+            OperatorParameterRange(
+                "decay_time",
+                float(decay_rate) * float(final_time),
+                float(decay_rate) * float(final_time) * float(extrapolation_factor),
+                "1",
+                "log",
+            ),
+        ),
+        reference_evidence=ReferenceSolverEvidence(
+            method="closed-form exponential convolution",
+            verification="analytic",
+            resolutions=(point_count,),
+            relative_error=0.0,
+            tolerance=0.0,
+        ),
+        regimes=(
+            "causal_transient",
+            "nonperiodic_time",
+            "coincident_query",
+            "irregular_time",
+            "ragged_schedule",
+            "temporal_step_extrapolation",
+        ),
+        ladder="temporal_irregularity",
+        metadata=(
+            ("final_time", str(float(final_time))),
+            ("decay_rate", str(float(decay_rate))),
+            ("minimum_training_step", str(float(jnp.min(train_delta)))),
+            ("maximum_training_step", str(float(jnp.max(train_delta)))),
+            ("extrapolation_factor", str(float(extrapolation_factor))),
+            ("population_seed", str(int(seed))),
+        ),
+    )
+
+
 def beam_transient_scenario(
     *,
     spatial_points: int = 20,
@@ -4863,6 +5037,52 @@ def add_sensor_dropout_shift(
     return replace(scenario, evaluations=scenario.evaluations + (shifted,))
 
 
+def add_sensor_dropout_ladder(
+    scenario: OperatorBenchmarkScenario,
+    /,
+    *,
+    drop_fractions: tuple[float, ...] = (0.1, 0.3, 0.5),
+    seed: int = 0,
+) -> OperatorBenchmarkScenario:
+    """Append deterministic mask-density evaluations from one reference split."""
+    fractions = tuple(float(value) for value in drop_fractions)
+    if (
+        not fractions
+        or len(set(fractions)) != len(fractions)
+        or any(not 0.0 <= value < 1.0 for value in fractions)
+    ):
+        raise ValueError("drop_fractions must contain unique values in [0, 1).")
+    reference = scenario.evaluations[0]
+    evaluations = []
+    for fraction in fractions:
+        dropout_batch = _sensor_dropout_batch(
+            reference.batch,
+            drop_fraction=fraction,
+            seed=int(seed),
+            mask_aware=True,
+        )
+        percentage = f"{100.0 * fraction:g}".replace(".", "p")
+        evaluations.append(
+            replace(
+                reference,
+                name=f"sensor_dropout_{percentage}pct",
+                batch=dropout_batch,
+                shift="sensor_dropout",
+            )
+        )
+    return replace(
+        scenario,
+        evaluations=scenario.evaluations + tuple(evaluations),
+        metadata=scenario.metadata
+        + (
+            (
+                "sensor_dropout_ladder",
+                ",".join(str(value) for value in fractions),
+            ),
+        ),
+    )
+
+
 def add_training_sensor_dropout(
     scenario: OperatorBenchmarkScenario,
     /,
@@ -4939,10 +5159,10 @@ def standard_operator_benchmarks(
             standard_deviation=0.02,
             seed=100 + index,
         )
-        scenario = add_sensor_dropout_shift(
+        scenario = add_sensor_dropout_ladder(
             scenario,
-            drop_fraction=0.2,
-            seed=200 + index,
+            drop_fractions=(0.3,) if quick else (0.1, 0.3, 0.5),
+            seed=200 + 3 * index,
         )
         shifted.append(scenario)
     return tuple(shifted)
@@ -4954,6 +5174,7 @@ __all__ = [
     "add_input_noise_shift",
     "augment_square_group_training",
     "add_sensor_corruption_shift",
+    "add_sensor_dropout_ladder",
     "add_sensor_dropout_shift",
     "add_training_sensor_dropout",
     "beam_transient_scenario",
@@ -4966,6 +5187,7 @@ __all__ = [
     "graph_diffusion_scenario",
     "green_function_scenario",
     "irregular_poisson_scenario",
+    "irregular_causal_relaxation_scenario",
     "multi_input_diffusion_scenario",
     "navier_stokes_scenario",
     "periodic_burgers_scenario",

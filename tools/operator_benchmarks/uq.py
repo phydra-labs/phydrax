@@ -546,7 +546,9 @@ def _fit_final_projection_laplace(
     num_samples: int,
     key,
 ) -> OperatorUQLaplaceResult:
-    subspace = phx.uq.ParameterSubspace.from_subtree_paths(model, (".projection",))
+    subspace = phx.nn.parameters.ParameterSubspace.from_subtree_paths(
+        model, (".projection",)
+    )
     initial = subspace.initial
     prior_scale = 1.0
     initial_leaves = tuple(jax.tree_util.tree_leaves(initial))

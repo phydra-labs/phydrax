@@ -487,7 +487,9 @@ def test_codano_executes_heterogeneous_typed_fields_and_exact_query_mask():
         },
     )
     fields = (
-        phx.nn.operator.OperatorFieldSpec("pressure", channels="scalar", role="source", scale=2.0),
+        phx.nn.operator.OperatorFieldSpec(
+            "pressure", channels="scalar", role="source", scale=2.0
+        ),
         phx.nn.operator.OperatorFieldSpec(
             "velocity",
             channels=2,
@@ -527,7 +529,7 @@ def test_codano_executes_heterogeneous_typed_fields_and_exact_query_mask():
 
 
 def test_eqgino_is_rotation_and_reflection_equivariant():
-    representation = phx.nn.operator.architectures.O3Representation(vectors=1)
+    representation = phx.nn.operator.representations.O3Representation(vectors=1)
     model = phx.nn.operator.architectures.EqGINO(
         representation,
         representation,
@@ -601,8 +603,12 @@ def test_in_context_operator_prompt_mask_and_permutation_are_semantic():
     second_batch = _point_batch(jnp.array([1.0, 0.7, 0.3, 0.0]))
     masked_batch = _point_batch(jnp.full((4,), 2.0))
     changed_masked_batch = _point_batch(jnp.full((4,), 9000.0))
-    first = phx.nn.operator.OperatorSupervisedExample(first_batch, jnp.array([0.1, 0.5, 0.9]))
-    second = phx.nn.operator.OperatorSupervisedExample(second_batch, jnp.array([-0.1, -0.5, -0.9]))
+    first = phx.nn.operator.OperatorSupervisedExample(
+        first_batch, jnp.array([0.1, 0.5, 0.9])
+    )
+    second = phx.nn.operator.OperatorSupervisedExample(
+        second_batch, jnp.array([-0.1, -0.5, -0.9])
+    )
     masked = phx.nn.operator.OperatorSupervisedExample(masked_batch, jnp.full((3,), 3.0))
     changed_masked = phx.nn.operator.OperatorSupervisedExample(
         changed_masked_batch, jnp.full((3,), -8000.0)
@@ -628,7 +634,9 @@ def test_in_context_operator_prompt_mask_and_permutation_are_semantic():
 
     prompted = phx.nn.operator.PromptedOperatorBatch(query_batch, prompt)
     reference = model(prompted)
-    permuted = model(phx.nn.operator.PromptedOperatorBatch(query_batch, prompt.permute((2, 0, 1))))
+    permuted = model(
+        phx.nn.operator.PromptedOperatorBatch(query_batch, prompt.permute((2, 0, 1)))
+    )
     changed_masked_output = model(
         phx.nn.operator.PromptedOperatorBatch(query_batch, changed_prompt)
     )
@@ -670,7 +678,9 @@ def test_gaussian_function_operator_has_coherent_shape_sampling_and_masked_nll()
 
     distribution = model.distribution(batch)
     samples = model.sample(batch, num_samples=3, key=jr.key(11))
-    nll = phx.nn.operator.architectures.gaussian_operator_nll(model, batch, distribution.mean, reduction="none")
+    nll = phx.nn.operator.architectures.gaussian_operator_nll(
+        model, batch, distribution.mean, reduction="none"
+    )
     changed_target = distribution.mean.at[-1].set(1e9)
     changed_nll = phx.nn.operator.architectures.gaussian_operator_nll(
         model, batch, changed_target, reduction="none"
@@ -731,7 +741,9 @@ def test_pde_condition_encoder_respects_semantic_hash_and_attaches_case_conditio
     encoded_changed = encoder(tokens_changed)
     compiled = eqx.filter_jit(lambda item, tokens: item(tokens))(encoder, tokens_a)
     batch = _case_point_batch(jnp.array([[0.0, 0.5, 1.0, 2.0], [1.0, 0.5, 0.0, -1.0]]))
-    conditioned = phx.nn.operator.architectures.attach_pde_condition(batch, tokens_a, encoder)
+    conditioned = phx.nn.operator.architectures.attach_pde_condition(
+        batch, tokens_a, encoder
+    )
     condition = conditioned.input("equation")
 
     assert equivalent_a.canonical_hash == equivalent_b.canonical_hash

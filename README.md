@@ -63,12 +63,15 @@ Most workflows are composing a few primitives:
   controls, sampled costs/constraints, linearization, frequency response,
   Lyapunov/Riccati equations, Gramians, LQR/iLQR, compiled QPs, multiple shooting,
   bounded initialization search, and receding-horizon MPC.
-- **Sequence mixing**: `DiagonalStateSpaceMixer` is one generic diagonal
-  continuous-time layer for irregular masked schedules, not a family of branded
-  mixer classes.
+- **Sequence mixing**: `DiagonalStateSpaceMixer` is the input-independent
+  continuous-time baseline; `SelectiveStateSpaceMixer` adds input-dependent
+  step, injection, and readout maps while preserving exact irregular-time
+  affine recurrence and serial/associative parity.
 - **Constraints**: scalar loss terms built from residuals on components.
 - **Objectives**: raw scalar terms, including signed integral energies for Ritz minimization.
 - **Model losses**: optional parameter-space penalties attached directly to models.
+- **Parameter geometry**: `phx.nn.parameters` maps raw optimizer coordinates to
+  constrained physical values and selects explicit model PyTree subspaces.
 - **FunctionalSolver**: sums constraints, raw objectives, and model losses into a differentiable scalar functional and runs optimization.
 
 Optional (but central in many PDE problems):

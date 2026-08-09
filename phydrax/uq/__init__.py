@@ -351,7 +351,6 @@ from ._posterior import (
     ExpBijector,
     IdentityBijector,
     ParameterSpace,
-    ParameterSubspace,
     PosteriorProblem,
     SigmoidIntervalBijector,
 )
@@ -845,7 +844,6 @@ __all__ = [
     "IdentityBijector",
     "SigmoidIntervalBijector",
     "ParameterSpace",
-    "ParameterSubspace",
     "PosteriorProblem",
     "diagnose_posterior",
     "PosteriorCapabilities",

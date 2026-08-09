@@ -28,6 +28,193 @@ Common end-to-end model families (dense, separable, basis-edge, and complex-valu
             - __init__
             - __call__
 
+## Residual and sinusoidal coordinate networks
+
+`PirateNet` builds an optional Fourier embedding followed by residual blocks
+whose trainable gates start at `alpha=0`. The initialized network therefore
+follows its shallow encoder/readout path exactly; deeper branch parameters become
+active as the gates move away from zero. This identity-start contract is explicit
+and must be considered when inspecting branch gradients at initialization.
+
+::: phydrax.nn.models.PirateNet
+    options:
+        members:
+            - __init__
+            - __call__
+
+---
+
+`SIREN` is not an `MLP` with a sine callable substituted for its activation.
+Every hidden stage is a `SineLayer` with frequency-aware first/hidden
+initialization, followed by a separately initialized affine readout.
+
+::: phydrax.nn.models.SIREN
+    options:
+        members:
+            - __init__
+            - __call__
+
+`python -m tools.pinn_model_benchmarks` provides the capacity-controlled
+pointwise comparison against `MLP` and `ModifiedMLP`. Its manufactured suite
+contains Poisson, Helmholtz, and nonlinear stationary Allen–Cahn equations and
+records residual/boundary losses, derivative statistics, relative L2/H1 error,
+compile and execution time, parameter counts, and available peak memory.
+
+---
+
+## Convex potentials and port-Hamiltonian dynamics
+
+`InputConvexNetwork` returns one scalar potential whose Hessian with respect to
+the input is positive semidefinite by construction. Hidden-to-hidden and final
+hidden weights use a positive parameter transform, and the supported activations
+are convex and nondecreasing. `PartiallyInputConvexNetwork` accepts
+`(context, convex_input)` and preserves convexity only in its second argument for
+each fixed context.
+
+::: phydrax.nn.models.InputConvexNetwork
+    options:
+        members:
+            - __init__
+            - __call__
+            - gradient
+            - hessian
+
+---
+
+::: phydrax.nn.models.PartiallyInputConvexNetwork
+    options:
+        members:
+            - __init__
+            - __call__
+            - convex_gradient
+            - convex_hessian
+
+---
+
+`PortHamiltonianVectorField` evaluates a vector field rather than integrating
+time. Its interconnection matrix is exactly skew-symmetric, its optional
+dissipation matrix is positive definite by parameterization, and its energy is
+a scalar model. An optional control dimension adds a learned linear control map
+and changes the input contract to `(state, control)`.
+
+::: phydrax.nn.models.PortHamiltonianVectorField
+    options:
+        members:
+            - __init__
+            - __call__
+            - interconnection_matrix
+            - dissipation_matrix
+            - energy_gradient
+            - energy_rate
+            - dissipation_rate
+
+---
+## Recurrent sequence models
+
+All finite-dimensional recurrent models consume `phydrax.nn.layers.RecurrentBatch`.
+This keeps padding, packed resets, case axes, physical time, and streaming
+continuation independent of a particular cell family.
+
+`RecurrentSequenceModel` wraps any `AbstractRecurrentCell`;
+`BidirectionalRecurrentSequenceModel` reverses each valid reset-delimited segment
+rather than the padded container. `LinearRecurrentModel` exposes serial or
+associative execution of stable complex-diagonal `LinearRecurrentUnit` modes.
+`SelectiveSequenceModel` stacks input-selective state-space blocks while retaining
+the same recurrence and continuation contract.
+
+::: phydrax.nn.models.RecurrentSequenceModel
+    options:
+        members:
+            - __init__
+            - evaluate_with_state
+            - __call__
+
+---
+
+::: phydrax.nn.models.BidirectionalRecurrentSequenceModel
+    options:
+        members:
+            - __init__
+            - __call__
+
+---
+
+::: phydrax.nn.models.LinearRecurrentModel
+    options:
+        members:
+            - __init__
+            - evaluate_with_state
+            - __call__
+
+---
+
+::: phydrax.nn.models.SelectiveSequenceModel
+    options:
+        members:
+            - __init__
+            - evaluate_with_state
+            - __call__
+
+### Recurrent weight-space functions
+
+`WeightSpaceRecurrentModel` evolves only an explicit real
+`ParameterSubspace` of a callable root model. A diagonal stable recurrence acts
+on its canonical packed vector; `FunctionalStateDecoder` reconstructs the root
+model at each state and evaluates it on coordinates. The frozen complement is
+preserved exactly, and no dense parameter-space transition is allocated.
+
+::: phydrax.nn.models.FunctionalStateDecoder
+    options:
+        members:
+            - __init__
+            - reconstruct
+            - __call__
+
+---
+
+::: phydrax.nn.models.WeightSpaceRecurrentModel
+    options:
+        members:
+            - __init__
+            - parameter_trajectory
+            - evaluate_final
+            - __call__
+
+---
+
+## Polyconvex constitutive potentials
+
+`DeformationGradientMinors` constructs polynomial `F`, `cof(F)`, and `det(F)`
+coordinates in two or three dimensions without matrix inversion.
+`PolyconvexPotential` composes those minors with an `InputConvexNetwork`; the
+stored energy is therefore convex in the lifted minors and polyconvex in `F` by
+construction.
+
+Polyconvexity alone does not imply frame indifference, material symmetry,
+coercivity, orientation preservation, a stress-free reference, or agreement
+with data. Those remain explicit constitutive-model responsibilities.
+
+::: phydrax.nn.models.DeformationGradientMinors
+    options:
+        members:
+            - __init__
+            - cofactor
+            - determinant
+            - __call__
+
+---
+
+::: phydrax.nn.models.PolyconvexPotential
+    options:
+        members:
+            - __init__
+            - lifted_energy
+            - first_piola_stress
+            - material_tangent
+            - __call__
+
+---
+
 ---
 
 
@@ -380,6 +567,75 @@ coordinates, masks, or IDs.
             - direct_convolution
 
 ---
+## Selective state-space mixer
+
+`SelectiveStateSpaceMixer` keeps the latent transition affine in state while
+making its positive time scale, input injection gate, and readout gate depend on
+the observed input. It therefore reuses the same serial and associative affine
+recurrence substrate as the diagonal baseline rather than introducing a second
+execution convention.
+
+Physical schedules are mandatory. `input_integration="zoh"` or `"linear"`
+selects exact interval integration for the corresponding input interpolant.
+Raw sequence calls may provide `reset=True` at a valid node to begin a new packed
+segment from the declared initial state. Padding preserves state and emits zero;
+a valid node after padding must declare a reset. The `OperatorBatch` path remains
+coincident-source/query and does not infer segment resets.
+
+`training_delta_range=(minimum, maximum)` records the physical interval range
+used during fitting. `evaluate_with_diagnostics(...)` reports observed physical
+and learned effective step ranges, interval and segment counts, and the fraction
+of continuation intervals outside that range. These are diagnostics, not
+automatic clipping or a guarantee of extrapolation accuracy.
+
+::: phydrax.nn.operator.architectures.SelectiveStateSpaceMixer
+    options:
+        members:
+            - __init__
+            - __call__
+            - method_id
+            - decay_rates
+            - recurrent
+            - associative
+            - evaluate_with_diagnostics
+
+---
+
+::: phydrax.nn.operator.architectures.SelectiveStateSpaceDiagnostics
+
+---
+## Recurrent operator adapters
+
+`LinearRecurrentOperator` adapts a stable `LinearRecurrentUnit` to one named
+ordered `OperatorBatch` source. It requires coincident source/query samples:
+coordinates establish ordering only, not a continuous-time invariance claim.
+Serial and associative evaluation implement the same recurrence, while masks
+retain the canonical valid-prefix semantics.
+
+`WeightSpaceOperator` consumes an ordered observation history, evolves one
+declared `ParameterSubspace` of a callable coordinate model, and decodes the final
+parameter state on an independent query set. This separates observation-time
+order from query geometry, but the selected finite-dimensional root-model
+subspace remains an explicit approximation.
+
+::: phydrax.nn.operator.architectures.LinearRecurrentOperator
+    options:
+        members:
+            - __init__
+            - __call__
+
+---
+
+::: phydrax.nn.operator.architectures.WeightSpaceOperator
+    options:
+        members:
+            - __init__
+            - evaluate_trajectory
+            - __call__
+
+---
+
+
 
 ## Neural operators
 
@@ -815,6 +1071,15 @@ same representation-aware blocks. `SFNO` uses true spherical harmonics, shares
 weights by spherical degree, and is not a planar FFT over an equirectangular
 image.
 
+Every CNO convolution consumes source observation masks and non-negative physical
+quadrature through `MeasureNormalizedConvND`. The learned signed kernel appears
+only in the numerator; a separate all-ones stencil measures observed support.
+Uniform full support is therefore exactly the ordinary convolution path, while
+missing sensors are renormalized without treating a learned signed denominator
+as physical measure. Invalid query nodes are restored to zero after every block.
+Geometry masks and quadrature are distinct inputs and are never inferred from
+zero-valued observations.
+
 ::: phydrax.nn.operator.architectures.CNO
     options:
         members:
@@ -836,6 +1101,86 @@ image.
         members:
             - __init__
             - __call__
+
+---
+
+#### Finite-group Cartesian tensor fields
+
+`TensorType` declares rank, covariant/contravariant indices, spatial dimension,
+and ordinary or pseudo parity. `TensorFieldLayout` packs named repeated tensor
+blocks into one channel axis and rejects affine normalizations that would break
+the declared action. `FiniteOrthogonalGroup` validates identity, inverses,
+closure, and multiplication at construction; lattice field actions additionally
+require signed-permutation spatial transforms.
+
+`InvariantFilterBasis` Reynolds-projects centered odd lattice stencils into the
+exact intertwiner subspace between two layouts. `LatticeEquivariantConvND`,
+`TensorPointwiseLinear`, `TensorRMSNorm`, and `TensorNormActivation` preserve that
+typed action. `LatticeEquivariantCNO` composes these layers on periodic,
+coincident, equal-sized lattice axes. It is an exact finite-group lattice model,
+not a claim of continuous rotational equivariance or arbitrary-grid decoding.
+
+`GroupAveragedOperator` is the simple reference equivariantization for an
+existing lattice callable and costs one model evaluation per group element.
+`InvariantBasisTransferPlan` supports only declared scalar or pseudoscalar
+cross-dimensional embeddings and rejects a projected kernel whose discarded
+relative residual exceeds the configured tolerance.
+
+::: phydrax.nn.operator.representations.TensorType
+
+---
+
+::: phydrax.nn.operator.representations.TensorFieldBlock
+
+---
+
+::: phydrax.nn.operator.representations.TensorFieldLayout
+
+---
+
+::: phydrax.nn.operator.representations.FiniteOrthogonalGroup
+
+---
+
+::: phydrax.nn.operator.layers.InvariantFilterBasis
+
+---
+
+::: phydrax.nn.operator.layers.LatticeEquivariantConvND
+
+---
+
+::: phydrax.nn.operator.layers.TensorPointwiseLinear
+
+---
+
+::: phydrax.nn.operator.layers.TensorRMSNorm
+
+---
+
+::: phydrax.nn.operator.layers.TensorNormActivation
+
+---
+
+::: phydrax.nn.operator.architectures.LatticeEquivariantCNO
+    options:
+        members:
+            - __init__
+            - __call__
+
+---
+
+::: phydrax.nn.operator.adapters.GroupAveragedOperator
+
+---
+
+::: phydrax.nn.operator.layers.InvariantBasisTransferPlan
+    options:
+        members:
+            - __init__
+            - embed_kernel
+            - transfer
+
 
 ### Geometry operators
 
@@ -1466,8 +1811,8 @@ every PDE:
 | Tier | Exact registry entries | Recommendation eligible |
 | --- | --- | --- |
 | Stable | `FNO`, `TFNO`, `DeepONet`, `MIONet`, `PODDeepONet` | Yes |
-| Experimental | `HOFNO`, `CNO`, `GraphNeuralOperator`, `SFNO`, `LocalDifferentialOperator`, `LocalGlobalOperator`, `LocalIntegralOperator`, `OperatorAttention`, `SliceAttention`, `AxialOperatorAttention`, `CodomainAttention`, `IFNO`, `AxialFactorizedFNO`, `ConditionalFlowFunctionOperator` | No |
-| Research | `Flower`, `UNO`, `LaplaceTemporalOperator`, `GINO`, `GeometryInformedFlower`, `RIGNO`, `GAOT`, `WaveletNeuralOperator`, `MultiwaveletOperator`, `ManifoldSpectralOperator`, `CoordinateConditionedOperator`, `UPT`, `CochainNeuralOperator`, `ABUPT`, `CoDANO`, `EqGINO`, `InContextOperator`, `GaussianFunctionOperator`, `Poseidon`, `DPOT`, `Transolver`, `TransolverPlusPlus`, `GNOT`, `KoopmanTemporalOperator`, `GreenKernelOperator` | No |
+| Experimental | `HOFNO`, `CNO`, `GraphNeuralOperator`, `SFNO`, `LocalDifferentialOperator`, `LocalGlobalOperator`, `LocalIntegralOperator`, `OperatorAttention`, `SliceAttention`, `AxialOperatorAttention`, `CodomainAttention`, `IFNO`, `AxialFactorizedFNO`, `ConditionalFlowFunctionOperator`, `LinearRecurrentOperator` | No |
+| Research | `Flower`, `UNO`, `DiagonalStateSpaceMixer`, `SelectiveStateSpaceMixer`, `WeightSpaceOperator`, `LatticeEquivariantCNO`, `LaplaceTemporalOperator`, `GINO`, `GeometryInformedFlower`, `RIGNO`, `GAOT`, `WaveletNeuralOperator`, `MultiwaveletOperator`, `ManifoldSpectralOperator`, `CoordinateConditionedOperator`, `UPT`, `CochainNeuralOperator`, `ABUPT`, `CoDANO`, `EqGINO`, `InContextOperator`, `GaussianFunctionOperator`, `Poseidon`, `DPOT`, `Transolver`, `TransolverPlusPlus`, `GNOT`, `KoopmanTemporalOperator`, `GreenKernelOperator` | No |
 
 TFNO is `FNO(factorization="tucker")`. MIONet is a product-fusion `DeepONet`
 with a mapping of branch encoders. POD-DeepONet is a `DeepONet` with a fixed
@@ -1519,12 +1864,16 @@ The benchmark harness enforces the same source/query protocol across families.
 | `ManifoldSpectralOperator` | Fixed/aligned manifold eigenbasis | Target plan only | Intrinsic spectral processing across pre-aligned discretizations; not an arbitrary-query or independently remeshed-manifold model |
 | `BasisSpectralConvND` | Separable nonuniform tensor grid | No | Boundary-adapted sine/cosine/Legendre expansions; dense transforms and separable grids only |
 | `CNO` / `UNO` | Uniform tensor grid | No | Alias-controlled or multiscale grid fields; convolutional geometry, hierarchy, and divisibility constraints |
+| `LatticeEquivariantCNO` | Periodic coincident tensor grid with a declared finite signed-permutation group | No | Exact finite-group tensor equivariance on equal lattice extents; centered odd kernels, typed channels, and no continuous-group or arbitrary-grid claim |
 | `DeepONet`, `MIONet`, `PODDeepONet` | Fixed/variable sensors or point clouds | Yes; POD uses its fixed output basis | Function-to-point and multiple-input maps; finite branch–trunk rank, while POD cannot leave its fitted span |
 | `GraphNeuralOperator` | Graph or point geometry | Yes | GraphIR message passing and source-to-query transfer; graph construction and receptive field are part of the model |
 | `CochainNeuralOperator` | Typed primal/dual cochains on one metric cell complex | Resolution transfer on a compatible complex relation | Mixed-degree differential forms with exact sparse DEC routes and optional harmonic projection; requires oriented incidence, valid Hodge stars, and declared field semantics |
 | `LocalDifferentialOperator`, `LocalIntegralOperator`, `LocalGlobalOperator` | Coordinates on grids or point clouds | Yes | Local closures and kernels with dimensional radii; finite neighborhoods and sampling quality limit them |
 | `OperatorAttention`, `SliceAttention`, `AxialOperatorAttention`, `CodomainAttention` | Weighted point sets or tensor axes | Cross-attention can use separate queries | Layer primitives rather than complete roadmap models; quadratic, slice, axial, or field-factorization bottlenecks remain |
 | `LaplaceTemporalOperator` | Monotone nonperiodic time samples | Yes in time | Stable causal transients within a pole–residue model class |
+| `DiagonalStateSpaceMixer` / `SelectiveStateSpaceMixer` | Coincident monotone time samples | No | Exact irregular-time affine recurrence; the selective variant adds input-dependent step/injection/readout maps, packed resets, and extrapolation diagnostics without arbitrary-query decoding |
+| `LinearRecurrentOperator` | Coincident ordered samples | No | Stable complex-diagonal sample-index recurrence with packed masks; coordinates establish order but do not parameterize continuous-time dynamics |
+| `WeightSpaceOperator` | Ordered observations plus coordinate queries | Yes | Stable diagonal evolution in an explicit real root-model parameter subspace; root evaluation cost and the selected finite-dimensional subspace remain bottlenecks |
 | `SFNO` | Colatitude–longitude sphere | No | Rotation-equivariant spherical fields; spherical tensor grid only |
 | `GINO`, `RIGNO`, `GAOT` | Meshes and point clouds | Yes | Geometry-dependent PDEs; graph/latent construction, physical measure, and transfer discretization remain |
 | `GeometryInformedFlower` | Weighted point clouds or rasterized irregular domains | Yes | Geometry transfer around a masked multiscale Flower processor; ambient point neighborhoods do not encode mesh connectivity or intrinsic geodesics |
@@ -1639,6 +1988,14 @@ Raw sensor corruption and missing sensors are different evaluations.
 `sensor_dropout` zeroes the same kind of values and marks them missing.
 `--train-sensor-dropout` creates a separate deterministic mask-augmented
 training run while leaving validation and test data untouched.
+
+The standard full benchmark expands missing-sensor evaluation into a nested
+10%, 30%, and 50% dropout ladder generated from one random ordering; quick mode
+keeps one 30% smoke point. `irregular_causal_relaxation_scenario` provides
+case-specific nonuniform time schedules, a longer and more irregular step-range
+shift, and a ragged prefix probe. The `selective_state_space` configuration
+records its fitted physical step range and uses associative execution. Neither
+configuration is promotion evidence by itself.
 
 Three comparison modes are available:
 
@@ -1797,9 +2154,12 @@ it is not an architecture-aware selector.
 | MIONet configuration | Deep ensemble | Every coefficient-producing branch head, trunk head, fusion mixer, and bias | Product fusion makes the joint head posterior nonlinear |
 | POD-DeepONet | Deep ensemble or branch-head posterior | Coefficient-producing branch head and bias | No uncertainty method recovers output modes absent from the fixed POD span |
 | `CNO` / `UNO` | Deep ensemble; configured dropout | Final decoder/readout | Grid and multiresolution assumptions still govern shifted predictions |
+| `LatticeEquivariantCNO` | Deep ensemble | Invariant-basis coefficients or final equivariant projection | Arbitrary channel-wise posteriors can leave the finite-group intertwiner subspace |
 | Local operators | Deep ensemble | Final local/global decoder or selected kernel parameters | Neighborhood radius and sampling-density shift are model-form risks |
 | Operator attention / Transolver | Deep ensemble | Final value/readout projections first | Full attention posteriors are expensive; slice bottlenecks remain |
 | `LaplaceTemporalOperator` | Deep ensemble | Stable pole/residue parameter subset with constraints preserved | Do not break conjugate pairing or negative-real-part stability |
+| Recurrent and selective sequence operators | Deep ensemble | Stable mode, injection, or readout parameters selected explicitly | Preserve radius/decay parameterizations and packed reset semantics |
+| `WeightSpaceOperator` | Deep ensemble first | Recurrence parameters or a separately justified root-model subspace | Do not conflate recurrent parameter state with epistemic posterior samples |
 | `SFNO` | Deep ensemble | Selected harmonic-degree gains or final projection | Parameterization must preserve rotation equivariance |
 | Graph geometry pipelines | Heterogeneous or homogeneous ensemble | Final graph decoder/readout | Query graph and source measures remain part of the predictive contract |
 | External adapters | Ensemble only after manifest validation | Framework-specific, explicitly mapped leaves | Schema, normalization, provenance, and checkpoint identity must match |

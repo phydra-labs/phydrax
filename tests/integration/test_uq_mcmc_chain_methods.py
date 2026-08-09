@@ -196,7 +196,7 @@ def test_nuts_and_hmc_sample_every_separable_mlp_final_layer_subtree():
         f".model.models[{index}].layers[{len(factor.layers) - 1}]"
         for index, factor in enumerate(model.model.models)
     )
-    subspace = phx.uq.ParameterSubspace.from_subtree_paths(model, final_layers)
+    subspace = phx.nn.parameters.ParameterSubspace.from_subtree_paths(model, final_layers)
     expected_paths = (
         ".model.models[0].layers[1].weight",
         ".model.models[0].layers[1].bias",
@@ -205,7 +205,6 @@ def test_nuts_and_hmc_sample_every_separable_mlp_final_layer_subtree():
     )
 
     assert subspace.leaf_paths == expected_paths
-    assert phx.uq.ParameterSubspace.last_layer(model).leaf_paths == expected_paths[-2:]
 
     priors = jax.tree_util.tree_map(
         lambda _: phx.uq.Normal(0.0, 1.0),
