@@ -8,6 +8,7 @@ import optax
 from jaxtyping import Array, Key
 
 import phydrax as phx
+import phydrax.solver._functional_objective as functional_objective
 
 
 class _NestedSampledObjective(phx.terms.AbstractSamplingTerm):
@@ -63,6 +64,49 @@ def test_optax_materializes_each_sampled_objective_once_per_update():
 
     assert len(sampled_keys) == 4
     assert len(set(sampled_keys)) == 4
+
+def test_optax_materializes_each_integration_realization_once_per_update(
+    monkeypatch,
+):
+    domain = phx.domain.Interval1d(0.0, 1.0)
+    component = domain.component()
+    condition = phx.conditions.Residual("u", component, lambda value: value)
+    source = phx.integration.per_step(
+        phx.integration.mean_over(component),
+        phx.domain.PointSampling(
+            8,
+            layout=phx.domain.SampleLayout((("x",),)),
+        ),
+    )
+    solver = phx.solver.FunctionalSolver(
+        functions={"u": domain.Parameter(1.0)},
+        terms=(phx.terms.ResidualPenalty(condition, source),),
+    )
+    materialization_keys = []
+    resolve_integration = functional_objective.resolve_integration
+
+    def record_materialization(source_, /, **kwargs):
+        materialization_keys.append(
+            tuple(np.asarray(jr.key_data(kwargs["key"]), dtype=np.uint32).tolist())
+        )
+        return resolve_integration(source_, **kwargs)
+
+    monkeypatch.setattr(
+        functional_objective,
+        "resolve_integration",
+        record_materialization,
+    )
+
+    solver.solve(
+        num_iter=3,
+        optim=optax.sgd(0.1),
+        jit=True,
+        keep_best=True,
+        log_every=0,
+    )
+
+    assert len(materialization_keys) == 3
+    assert len(set(materialization_keys)) == 3
 
 
 def test_selection_reuses_the_optimizer_update_batch():

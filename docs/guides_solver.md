@@ -317,8 +317,18 @@ shape.
 `optim=` can be:
 
 - an Optax `GradientTransformation` (standard first-order optimizers),
-- an Optax `GradientTransformationExtraArgs` (line-search style optimizers), or
-- an Evosax distribution-based algorithm.
+- an Optax `GradientTransformationExtraArgs` (line-search style optimizers),
+- a Phydrax Riemannian optimizer,
+- an Evosax distribution-based algorithm, or
+- `phx.optim.kfac(...)` for supported quadratic residual objectives.
+
+Optimizer selection changes only the numerical update backend. Every backend
+receives the same run controls, objective state, prepared-evaluation contract,
+reporting lifecycle, and final state replacement. Consequently, adaptive
+collocation refreshes, stochastic payload reuse, term/data metrics, and
+interruption handling do not depend on the optimizer family. `num_iter` is
+validated before dispatch for every backend; zero is a no-op and negative values
+are rejected.
 
 Evosax population-based algorithms are not accepted by `FunctionalSolver`. They
 require an explicit initial population, finite search bounds, and selection semantics
@@ -353,6 +363,23 @@ This contract is available for Optax optimizers, not evosax algorithms.
 
 During training, the current epoch index is passed to each term's loss as `iter_`
 (as a JAX scalar), so terms can implement schedules such as annealed weights.
+
+### Prepared objective lifecycle
+
+Every optimizer update first prepares one immutable objective realization. This
+step selects the active training terms, samples explicit sampling terms,
+materializes per-step integration sources, binds adaptive-collocation batches and
+local weights, and assigns the evaluation keys and iteration value. Gradient
+evaluation, line search, Riemannian candidate comparison, Evosax population
+evaluation, and KFAC residual lowering consume that prepared object rather than
+sampling independently.
+
+Term values and data diagnostics are evaluated from the same prepared payload.
+This keeps stochastic reporting consistent with the objective that produced the
+update and prevents line-search or population size from changing the number of
+random realizations. Adaptive populations remain persistent solver state and are
+refreshed before preparation, recorded after an accepted optimizer update, and
+settled once at run termination.
 
 ### Adaptive collocation sources
 

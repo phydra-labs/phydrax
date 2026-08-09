@@ -22,6 +22,8 @@ from ..stochastic import (
     FractionalGaussianRealization,
     StochasticTrajectory,
 )
+from ..stochastic._trajectory import _TrajectoryRecord
+from ._solution_validation import validate_solution_arrays
 
 
 RoughVectorFields: TypeAlias = Callable[[Array, Array, Any], ArrayLike]
@@ -335,18 +337,21 @@ class RoughDifferentialSolution(StrictModule):
             raise TypeError("control must be an AbstractRoughControl.")
         if not isinstance(solver, AbstractRoughSolver):
             raise TypeError("solver must be an AbstractRoughSolver.")
-        time_values = jnp.asarray(times, dtype=float)
-        state_values = jnp.asarray(states)
-        valid_values = jnp.asarray(valid, dtype=bool)
+        arrays = validate_solution_arrays(
+            times,
+            states,
+            valid,
+            sample_shape=control.sample_shape,
+            state_shape=state_shape,
+            time_layout="shared",
+            owner="RoughDifferentialSolution",
+        )
+        time_values = arrays.times
+        state_values = arrays.states
+        valid_values = arrays.valid
+        shape = arrays.state_shape
         status_values = jnp.asarray(statuses, dtype=jnp.int32)
-        shape = tuple(int(size) for size in state_shape)
-        expected_states = control.sample_shape + (int(time_values.size),) + shape
-        expected_valid = control.sample_shape + (int(time_values.size),)
         expected_statuses = control.sample_shape + (control.num_steps,)
-        if time_values.ndim != 1 or int(time_values.size) <= 0:
-            raise ValueError("times must be a non-empty rank-1 array.")
-        if state_values.shape != expected_states or valid_values.shape != expected_valid:
-            raise ValueError("RDE states and validity do not align with declared axes.")
         if status_values.shape != expected_statuses:
             raise ValueError("RDE interval statuses do not align with the control.")
         resolved_statistics = {
@@ -398,23 +403,26 @@ class RoughDifferentialSolution(StrictModule):
             if state_axes is None
             else tuple(state_axes)
         )
-        return StochasticTrajectory(
+        record = _TrajectoryRecord(
             self.times,
             self.states,
-            valid=self.valid,
-            realization_axes=axes,
+            state_shape=self.state_shape,
             realization_shape=self.sample_shape,
-            state_axes=resolved_state_axes,
+            valid=self.valid,
             realizations=(self.control.realization,),
             approximation_id=self.control.control_id,
+            solver_name=self.solver_name,
+            solver_id=self.solver_id,
+            state_geometry_id=self.state_geometry_id,
+            uncertainty_source="process",
             metadata={
                 **dict(self.metadata),
-                "solver_name": self.solver_name,
-                "solver_id": self.solver_id,
-                "state_geometry_id": self.state_geometry_id,
                 "rough_control_id": self.control.control_id,
-                "uncertainty_source": "process",
             },
+        )
+        return record.to_stochastic_trajectory(
+            realization_axes=axes,
+            state_axes=resolved_state_axes,
         )
 
 

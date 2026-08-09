@@ -82,6 +82,21 @@ class IntegrationRealization(StrictModule):
     batch: Any
     key: Any
     compression: Any | None = None
+    def __init__(
+        self,
+        target: Any,
+        plan: Any,
+        batch: Any,
+        key: Any,
+        compression: Any | None = None,
+        /,
+    ):
+        self.target = target
+        self.plan = plan
+        self.batch = batch
+        self.key = key
+        self.compression = compression
+
 
 def _attach_compression(
     estimate: IntegrationEstimate,

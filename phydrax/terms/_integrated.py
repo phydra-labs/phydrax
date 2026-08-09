@@ -6,6 +6,7 @@ import coordax as cx
 import equinox as eqx
 import jax.numpy as jnp
 
+from .._strict import StrictModule
 from ..integration import (
     AdaptiveIntegration,
     CallerIntegration,
@@ -13,10 +14,42 @@ from ..integration import (
     DensityTarget,
     FixedIntegration,
     IntegrationEstimate,
+    IntegrationRealization,
     IntegrationStatus,
     PerStepIntegration,
 )
+from ..integration._execution import resolve_integration
 
+
+class _PreparedIntegrationRealization(StrictModule):
+    """Internal marker for a realization frozen by objective preparation."""
+
+    realization: IntegrationRealization
+    def __init__(self, realization: IntegrationRealization, /):
+        self.realization = realization
+
+
+
+def prepare_term_realization(
+    realization: IntegrationRealization,
+    /,
+) -> _PreparedIntegrationRealization:
+    if not isinstance(realization, IntegrationRealization):
+        raise TypeError("realization must be an IntegrationRealization.")
+    return _PreparedIntegrationRealization(realization)
+
+
+def resolve_term_realization(
+    source,
+    /,
+    *,
+    key,
+    realization: IntegrationRealization | _PreparedIntegrationRealization | None,
+) -> IntegrationRealization:
+    """Resolve public source semantics plus solver-prepared realizations."""
+    if not isinstance(realization, _PreparedIntegrationRealization):
+        return resolve_integration(source, key=key, realization=realization)
+    return realization.realization
 
 def checked_estimate_field(estimate: IntegrationEstimate, /) -> cx.Field:
     """Return one estimate field after convergence validation."""
@@ -53,4 +86,9 @@ def validate_condition_source(on, source, /) -> None:
         )
 
 
-__all__ = ["checked_estimate_field", "validate_condition_source"]
+__all__ = [
+    "checked_estimate_field",
+    "prepare_term_realization",
+    "resolve_term_realization",
+    "validate_condition_source",
+]

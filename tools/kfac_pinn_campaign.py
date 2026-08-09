@@ -271,11 +271,14 @@ def _solve_exact_ggn(solver, *, steps, seed, damping=1e-3):
     for step in range(int(steps)):
         step_started = time.perf_counter()
         key = jr.fold_in(jr.key(seed), step)
-        terms = materialize_frozen_terms(
-            solver.terms,
-            solver.collocation,
-            key=key,
+        prepared = solver.objective.prepare_training(
+            range(len(solver.terms)),
+            scale=1.0,
+            evaluation_key=key,
+            sampling_key=key,
+            iteration=step + 1,
         )
+        terms = materialize_frozen_terms(prepared)
         loss, gradient, unravel = frozen_loss_and_flat_gradient(
             params,
             non_trainable,

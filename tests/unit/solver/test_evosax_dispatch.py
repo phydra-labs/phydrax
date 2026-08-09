@@ -9,7 +9,7 @@ import pytest
 from evosax.algorithms import DifferentialEvolution, Open_ES
 
 from phydrax.solver import FunctionalSolver
-from phydrax.solver._functional_train import solve
+from phydrax.solver._functional_backend import FunctionalSolveConfig, solve
 
 
 _DUMMY_SOLVER = cast(FunctionalSolver, object())
@@ -25,12 +25,20 @@ def test_population_based_evosax_is_rejected_with_search_space_guidance():
         NotImplementedError,
         match=r"initial population.*DesignConstraintSystem\.search",
     ):
-        solve(_DUMMY_SOLVER, num_iter=1, optim=algorithm)
+        solve(
+            _DUMMY_SOLVER,
+            optim=algorithm,
+            config=FunctionalSolveConfig(num_iter=1),
+        )
 
 
 def test_unrelated_optimizer_object_is_rejected_before_training():
     with pytest.raises(TypeError, match="Optax transformation"):
-        solve(_DUMMY_SOLVER, num_iter=1, optim=object())
+        solve(
+            _DUMMY_SOLVER,
+            optim=object(),
+            config=FunctionalSolveConfig(num_iter=1),
+        )
 
 
 def test_evaluation_parameters_remains_optax_only_for_evosax():
@@ -42,7 +50,9 @@ def test_evaluation_parameters_remains_optax_only_for_evosax():
     with pytest.raises(ValueError, match="only for Optax"):
         solve(
             _DUMMY_SOLVER,
-            num_iter=1,
             optim=algorithm,
-            evaluation_parameters=lambda state, parameters: parameters,
+            config=FunctionalSolveConfig(
+                num_iter=1,
+                evaluation_parameters=lambda state, parameters: parameters,
+            ),
         )

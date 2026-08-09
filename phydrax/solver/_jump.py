@@ -33,7 +33,9 @@ from ..stochastic import (
     StochasticTrajectory,
     WienerRealization,
 )
+from ..stochastic._trajectory import _TrajectoryRecord
 from ._differential import DifferentialProblem
+from ._solution_validation import validate_solution_arrays
 
 
 JumpAlgorithm: TypeAlias = Literal["next_reaction", "direct_ssa"]
@@ -450,15 +452,19 @@ class JumpSolution(StrictModule):
             raise TypeError("realization must be a PoissonClockRealization.")
         if algorithm not in ("next_reaction", "direct_ssa"):
             raise ValueError("Unknown jump algorithm.")
-        shape = tuple(int(size) for size in state_shape)
-        time_values = jnp.asarray(times, dtype=float)
-        state_values = jnp.asarray(states)
-        expected = realization.sample_shape + (time_values.shape[0],) + shape
-        if time_values.ndim != 1 or state_values.shape != expected:
-            raise ValueError("JumpSolution states do not align with times and axes.")
-        valid_values = jnp.asarray(valid, dtype=bool)
-        if valid_values.shape != realization.sample_shape + (time_values.shape[0],):
-            raise ValueError("JumpSolution valid has incompatible shape.")
+        arrays = validate_solution_arrays(
+            times,
+            states,
+            valid,
+            sample_shape=realization.sample_shape,
+            state_shape=state_shape,
+            time_layout="shared",
+            owner="JumpSolution",
+        )
+        shape = arrays.state_shape
+        time_values = arrays.times
+        state_values = arrays.states
+        valid_values = arrays.valid
         if events.batch_shape != realization.sample_shape:
             raise ValueError("Event and realization batch shapes must match.")
         self.times = time_values
@@ -493,20 +499,23 @@ class JumpSolution(StrictModule):
             if state_axes is None
             else tuple(state_axes)
         )
-        return StochasticTrajectory(
+        record = _TrajectoryRecord(
             self.times,
             self.states,
-            valid=self.valid,
-            realization_axes=resolved_realization_axes,
+            state_shape=self.state_shape,
             realization_shape=self.realization.sample_shape,
-            state_axes=resolved_state_axes,
+            valid=self.valid,
             realizations=(self.realization,),
+            uncertainty_source="process",
             metadata={
                 **dict(self.metadata),
                 "process_id": self.realization.process_id,
                 "jump_algorithm": self.algorithm,
-                "uncertainty_source": "process",
             },
+        )
+        return record.to_stochastic_trajectory(
+            realization_axes=resolved_realization_axes,
+            state_axes=resolved_state_axes,
         )
 
 
@@ -813,15 +822,19 @@ class JumpDifferentialSolution(StrictModule):
         solver_name: str,
         metadata: Mapping[str, Any] | None = None,
     ):
-        shape = tuple(int(size) for size in state_shape)
-        time_values = jnp.asarray(times, dtype=float)
-        state_values = jnp.asarray(states)
-        expected = realization.sample_shape + (time_values.shape[0],) + shape
-        if time_values.ndim != 1 or state_values.shape != expected:
-            raise ValueError("Hybrid solution states do not align with declared axes.")
-        valid_values = jnp.asarray(valid, dtype=bool)
-        if valid_values.shape != realization.sample_shape + time_values.shape:
-            raise ValueError("Hybrid solution validity has incompatible shape.")
+        arrays = validate_solution_arrays(
+            times,
+            states,
+            valid,
+            sample_shape=realization.sample_shape,
+            state_shape=state_shape,
+            time_layout="shared",
+            owner="JumpDifferentialSolution",
+        )
+        shape = arrays.state_shape
+        time_values = arrays.times
+        state_values = arrays.states
+        valid_values = arrays.valid
         if events.batch_shape != realization.sample_shape:
             raise ValueError("Hybrid event and realization batch shapes must match.")
         if not isinstance(solver_name, str) or not solver_name:
@@ -858,19 +871,20 @@ class JumpDifferentialSolution(StrictModule):
             if state_axes is None
             else tuple(state_axes)
         )
-        return StochasticTrajectory(
+        record = _TrajectoryRecord(
             self.times,
             self.states,
-            valid=self.valid,
-            realization_axes=resolved_realization_axes,
+            state_shape=self.state_shape,
             realization_shape=self.realization.sample_shape,
-            state_axes=resolved_state_axes,
+            valid=self.valid,
             realizations=(self.realization,),
-            metadata={
-                **dict(self.metadata),
-                "solver_name": self.solver_name,
-                "uncertainty_source": "process",
-            },
+            solver_name=self.solver_name,
+            uncertainty_source="process",
+            metadata=self.metadata,
+        )
+        return record.to_stochastic_trajectory(
+            realization_axes=resolved_realization_axes,
+            state_axes=resolved_state_axes,
         )
 
 

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import prod
 from typing import Any, Literal
 
@@ -77,6 +77,158 @@ class StochasticDriverSegmentReference:
             )
         if not float(self.target_time) > float(self.source_time):
             raise ValueError("A driver segment requires target_time > source_time.")
+
+
+@dataclass(frozen=True, slots=True)
+class _TrajectoryRecord:
+    """Internal axis-explicit record shared by saved solver results."""
+
+    times: ArrayLike
+    states: ArrayLike
+    state_shape: tuple[int, ...]
+    realization_shape: tuple[int, ...] = ()
+    valid: ArrayLike | None = None
+    realizations: tuple[StochasticRealization | None, ...] | None = None
+    case_shape: tuple[int, ...] = ()
+    case_ids: tuple[str, ...] | None = None
+    parameter_ids: tuple[str | None, ...] | None = None
+    discretization_id: str | None = None
+    basis_id: str | None = None
+    approximation_id: str | None = None
+    solver_name: str | None = None
+    solver_id: str | None = None
+    resolved_method: str | None = None
+    state_geometry_id: str | None = None
+    uncertainty_source: str | None = None
+    metadata: Mapping[str, Any] | None = None
+
+    def __post_init__(self):
+        cases = tuple(int(size) for size in self.case_shape)
+        realizations = tuple(int(size) for size in self.realization_shape)
+        state = tuple(int(size) for size in self.state_shape)
+        if any(size <= 0 for size in cases + realizations + state):
+            raise ValueError("Trajectory record dimensions must be positive.")
+        values = jnp.asarray(self.states)
+        leading = cases + realizations
+        expected_rank = len(leading) + 1 + len(state)
+        if values.ndim != expected_rank:
+            raise ValueError(
+                "Trajectory record states must have rank "
+                "case + realization + time + state."
+            )
+        if tuple(values.shape[: len(leading)]) != leading:
+            raise ValueError(
+                f"Trajectory record states must begin with shape {leading}."
+            )
+        if tuple(values.shape[len(leading) + 1 :]) != state:
+            raise ValueError(
+                f"Trajectory record states must end with state shape {state}."
+            )
+        num_times = int(values.shape[len(leading)])
+        times = _broadcast_time_array(
+            self.times,
+            leading_shape=leading,
+            num_times=num_times,
+            name="times",
+        )
+        valid = (
+            None
+            if self.valid is None
+            else _broadcast_time_array(
+                jnp.asarray(self.valid, dtype=bool),
+                leading_shape=leading,
+                num_times=num_times,
+                name="valid",
+            )
+        )
+        object.__setattr__(self, "times", times)
+        object.__setattr__(self, "states", values)
+        object.__setattr__(self, "valid", valid)
+        object.__setattr__(self, "case_shape", cases)
+        object.__setattr__(self, "realization_shape", realizations)
+        object.__setattr__(self, "state_shape", state)
+        if self.realizations is not None:
+            object.__setattr__(self, "realizations", tuple(self.realizations))
+
+    def prepend(self, initial_time: ArrayLike, initial_state: ArrayLike, /):
+        """Return a record with one finite initial state prepended."""
+        leading = self.case_shape + self.realization_shape
+        initial = jnp.asarray(initial_state)
+        expected = leading + self.state_shape
+        if initial.shape == self.state_shape:
+            initial = jnp.broadcast_to(initial, expected)
+        if initial.shape != expected:
+            raise ValueError(
+                f"initial_state must have shape {expected} or {self.state_shape}; "
+                f"got {initial.shape}."
+            )
+        saved_times = jnp.asarray(self.times)
+        saved_states = jnp.asarray(self.states)
+        initial_times = jnp.broadcast_to(jnp.asarray(initial_time), leading)[..., None]
+        if bool(jnp.any(initial_times[..., 0] >= saved_times[..., 0])):
+            raise ValueError("initial_time must precede the first saved solution time.")
+        time_axis = len(leading)
+        states = jnp.concatenate(
+            (jnp.expand_dims(initial, axis=time_axis), saved_states),
+            axis=time_axis,
+        )
+        initial_valid = jnp.all(
+            jnp.isfinite(initial),
+            axis=tuple(range(len(leading), initial.ndim)),
+        )[..., None]
+        valid = (
+            jnp.all(
+                jnp.isfinite(saved_states),
+                axis=tuple(range(time_axis + 1, saved_states.ndim)),
+            )
+            if self.valid is None
+            else self.valid
+        )
+        return replace(
+            self,
+            times=jnp.concatenate((initial_times, saved_times), axis=-1),
+            states=states,
+            valid=jnp.concatenate((initial_valid, valid), axis=-1),
+        )
+
+    def to_stochastic_trajectory(
+        self,
+        /,
+        *,
+        case_axes: Sequence[str] = (),
+        realization_axes: Sequence[str] = (),
+        time_axis: str = "time",
+        state_axes: Sequence[str] = ("state",),
+    ) -> "StochasticTrajectory":
+        """Lower the canonical saved-result record to the public trajectory."""
+        metadata = {} if self.metadata is None else dict(self.metadata)
+        for name, value in (
+            ("solver_name", self.solver_name),
+            ("solver_id", self.solver_id),
+            ("resolved_method", self.resolved_method),
+            ("state_geometry_id", self.state_geometry_id),
+            ("uncertainty_source", self.uncertainty_source),
+        ):
+            if value is not None:
+                metadata[name] = value
+        return StochasticTrajectory(
+            self.times,
+            self.states,
+            valid=self.valid,
+            case_axes=case_axes,
+            case_shape=self.case_shape,
+            realization_axes=realization_axes,
+            realization_shape=self.realization_shape,
+            time_axis=time_axis,
+            state_axes=state_axes,
+            realizations=self.realizations,
+            case_ids=self.case_ids,
+            parameter_ids=self.parameter_ids,
+            discretization_id=self.discretization_id,
+            basis_id=self.basis_id,
+            approximation_id=self.approximation_id,
+            metadata=metadata,
+        )
 
 
 class StochasticTrajectory(StrictModule):
@@ -364,56 +516,38 @@ class StochasticTrajectory(StrictModule):
             if realization_axes is None
             else tuple(realization_axes)
         )
-        states = solution.states
-        times = solution.times
-        valid = solution.valid
-        if initial_state is not None:
-            if initial_time is None:
-                if solution.realization is None:
-                    raise ValueError(
-                        "initial_time is required when a deterministic solution is prepended."
-                    )
-                t0 = solution.realization.support[0]
-            else:
-                t0 = initial_time
-            initial = jnp.asarray(initial_state)
-            expected = sample_shape + tuple(states.shape[len(sample_shape) + 1 :])
-            if initial.shape == expected[len(sample_shape) :]:
-                initial = jnp.broadcast_to(initial, expected)
-            if initial.shape != expected:
-                raise ValueError(
-                    f"initial_state must have shape {expected} or {expected[len(sample_shape) :]}; "
-                    f"got {initial.shape}."
-                )
-            initial_times = jnp.broadcast_to(jnp.asarray(t0), sample_shape)[..., None]
-            if bool(jnp.any(initial_times[..., 0] >= times[..., 0])):
-                raise ValueError(
-                    "initial_time must precede the first saved solution time."
-                )
-            states = jnp.concatenate(
-                (jnp.expand_dims(initial, axis=len(sample_shape)), states),
-                axis=len(sample_shape),
-            )
-            times = jnp.concatenate((initial_times, times), axis=-1)
-            initial_valid = jnp.all(
-                jnp.isfinite(initial),
-                axis=tuple(range(len(sample_shape), initial.ndim)),
-            )[..., None]
-            valid = jnp.concatenate((initial_valid, valid), axis=-1)
-        return cls(
-            times,
-            states,
-            valid=valid,
-            realization_axes=axes,
+        record = _TrajectoryRecord(
+            solution.times,
+            solution.states,
+            state_shape=tuple(solution.states.shape[len(sample_shape) + 1 :]),
             realization_shape=sample_shape,
-            state_axes=state_axes,
+            valid=solution.valid,
             realizations=(solution.realization,),
             case_ids=(case_id,),
             parameter_ids=(parameter_id,),
             discretization_id=discretization_id,
             basis_id=basis_id,
             approximation_id=approximation_id,
+            solver_name=solution.solver_name,
+            solver_id=solution.solver_id,
+            resolved_method=solution.resolved_method,
+            state_geometry_id=solution.state_geometry_id,
+            uncertainty_source=(
+                "process" if solution.realization is not None else "deterministic"
+            ),
             metadata=metadata,
+        )
+        if initial_state is not None:
+            if initial_time is None:
+                if solution.realization is None:
+                    raise ValueError(
+                        "initial_time is required when a deterministic solution is prepended."
+                    )
+                initial_time = solution.realization.support[0]
+            record = record.prepend(initial_time, initial_state)
+        return record.to_stochastic_trajectory(
+            realization_axes=axes,
+            state_axes=state_axes,
         )
 
     @classmethod

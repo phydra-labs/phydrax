@@ -154,7 +154,7 @@ def test_kfac_num_iter_zero_preserves_solver():
 
 
 def test_kfac_rejects_negative_num_iter():
-    with pytest.raises(ValueError, match="num_iter must be nonnegative"):
+    with pytest.raises(ValueError, match="num_iter must be non-negative"):
         _linear_solver().solve(num_iter=-1, optim=phx.optim.kfac())
 
 

@@ -17,7 +17,7 @@ from .._frozendict import frozendict
 from .._strict import StrictModule
 from ..uq._gaussian_factor import gaussian_factor_from_covariance, GaussianFactor
 from ._differential import DifferentialProblem
-from ._diffrax_backend import _save_times
+from ._save_schedule import validate_save_times
 
 
 ProbabilisticODEUpdate: TypeAlias = Literal["ek0", "ek1"]
@@ -1345,7 +1345,7 @@ def solve_probabilistic_ode(
     selected = ProbabilisticODEMethod() if method is None else method
     if not isinstance(selected, ProbabilisticODEMethod):
         raise TypeError("method must be a ProbabilisticODEMethod or None.")
-    requested_times = _save_times(problem.t0, problem.t1, save_times)
+    requested_times = validate_save_times(problem.t0, problem.t1, save_times)
     state = jnp.asarray(problem.initial_state)
     if not jnp.issubdtype(state.dtype, jnp.inexact):
         state = state.astype(float)

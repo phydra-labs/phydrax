@@ -18,9 +18,9 @@ from ..stochastic import JUMP_SUCCESS, JumpEventBatch, WienerRealization
 from ._delay import DelayDifferentialProblem, DelayHistory, DelayValues, DerivativeDelay
 from ._delay_history import DelayHistoryView
 from ._delay_segmented import DelaySegmentArchive
-from ._diffrax_backend import _save_times
 from ._diffrax_delay_backend import _DelayVectorField, solve_diffrax_delay
 from ._memory import MemoryEquationSolution
+from ._save_schedule import validate_save_times
 
 
 DelayJumpMap: TypeAlias = Callable[
@@ -261,7 +261,7 @@ def solve_jump_delay(
     if realization is not None and realization.sample_shape:
         raise ValueError("Jump-delay Wiener realizations must contain one path.")
     base = problem.delay_problem
-    requested_times = _save_times(base.t0, base.t1, save_times)
+    requested_times = validate_save_times(base.t0, base.t1, save_times)
     event_times, event_channels = _validated_schedule(problem, events)
     event_count = int(event_times.size)
     pre_states = jnp.zeros(

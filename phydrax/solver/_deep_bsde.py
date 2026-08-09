@@ -80,10 +80,10 @@ def solve_deep_bsde(
         fixed_paths_key=jr.fold_in(root_key, 100),
         label="deep-bsde-shooting",
     )
-    temporary = eqx.tree_at(
-        lambda value: (value.terms, value.collocation),
-        solver,
-        (solver.terms + (objective,), solver.collocation + (None,)),
+    base_term_count = len(solver.terms)
+    temporary = solver._append_training_terms(
+        objective,
+        key=jr.fold_in(root_key, 101),
     )
     trained = temporary.solve(
         num_iter=steps,
@@ -93,11 +93,7 @@ def solve_deep_bsde(
         keep_best=keep_best,
         log_every=log_every,
     )
-    trained = eqx.tree_at(
-        lambda value: (value.terms, value.collocation),
-        trained,
-        (trained.terms[:-1], trained.collocation[:-1]),
-    )
+    trained = trained._retain_training_prefix(base_term_count)
     paths = (
         problem.sample(jr.fold_in(root_key, 200))
         if validation_paths is None

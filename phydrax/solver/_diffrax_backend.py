@@ -16,6 +16,7 @@ from jaxtyping import Array, ArrayLike
 from ..stochastic import WienerRealization
 from ._differential import DifferentialProblem, DifferentialSolution
 from ._geometric import AbstractGeometricSolver, RKMK, SRKMK
+from ._save_schedule import validate_save_times
 
 
 class _StochasticProblemContract(Protocol):
@@ -106,31 +107,6 @@ class _VectorizedDenseInterpolation(eqx.Module):
         return values.reshape(self.sample_shape + query.shape + values.shape[2:])
 
 
-def _save_times(
-    t0: ArrayLike,
-    t1: ArrayLike,
-    values: ArrayLike,
-    /,
-) -> Array:
-    times = jnp.asarray(values, dtype=float)
-    if times.ndim != 1 or int(times.shape[0]) <= 0:
-        raise ValueError("save_times must be a non-empty rank-1 array.")
-    times = eqx.error_if(
-        times,
-        ~jnp.all(jnp.isfinite(times)),
-        "save_times must be finite.",
-    )
-    if int(times.shape[0]) > 1:
-        times = eqx.error_if(
-            times,
-            ~jnp.all(jnp.diff(times) > 0.0),
-            "save_times must be strictly increasing.",
-        )
-    return eqx.error_if(
-        times,
-        (times[0] < t0) | (times[-1] > t1),
-        "save_times must lie within the problem time interval.",
-    )
 
 
 def _levy_area(kind: str, /) -> type:
@@ -468,7 +444,7 @@ def solve_diffrax(
     elif realization is not None:
         raise ValueError("Deterministic problems do not accept a WienerRealization.")
 
-    times = _save_times(problem.t0, problem.t1, save_times)
+    times = validate_save_times(problem.t0, problem.t1, save_times)
     selected_solver = _resolved_solver(problem, solver)
     _validated_state_geometry_solver(problem, selected_solver)
     if isinstance(selected_solver, AbstractGeometricSolver) and dt0 is None:
@@ -549,7 +525,7 @@ def solve_diffrax_ensemble(
         )
     if not isinstance(dense, bool):
         raise TypeError("dense must be a bool.")
-    times = _save_times(problem.t0, problem.t1, save_times)
+    times = validate_save_times(problem.t0, problem.t1, save_times)
     selected_solver = _resolved_solver(problem, solver)
     _validated_state_geometry_solver(problem, selected_solver)
     _validated_stochastic_solver(problem, selected_solver, realization)

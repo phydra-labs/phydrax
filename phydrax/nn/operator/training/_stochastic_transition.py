@@ -34,7 +34,7 @@ from ....stochastic._realization import (
     CompositeStochasticRealization,
     StochasticRealization,
 )
-from ....stochastic._trajectory import StochasticTrajectory
+from ....stochastic._trajectory import _TrajectoryRecord, StochasticTrajectory
 from ....stochastic._wiener import WienerRealization
 from ..data import FunctionSamples, OperatorBatch, OperatorOutputSpec
 from ..distribution import (
@@ -1146,22 +1146,28 @@ def _trajectory_from_steps(
         if discretization_id is None
         else str(discretization_id)
     )
-    return StochasticTrajectory(
+    resolved_state_axes = _resolved_state_axes(law, state_axes)
+    record = _TrajectoryRecord(
         times,
         states,
-        case_axes=batch.case_axes,
+        state_shape=tuple(states.shape[-len(resolved_state_axes) :]),
         case_shape=batch.case_shape,
-        realization_axes=realization_axes,
         realization_shape=realization_shape,
-        state_axes=_resolved_state_axes(law, state_axes),
-        realizations=(driver,) * case_count
-        if driver is not None
-        else (None,) * case_count,
+        realizations=(
+            (driver,) * case_count
+            if driver is not None
+            else (None,) * case_count
+        ),
         case_ids=cases,
         parameter_ids=parameters,
         discretization_id=resolved_discretization,
         approximation_id=law.process_id,
         metadata=metadata,
+    )
+    return record.to_stochastic_trajectory(
+        case_axes=batch.case_axes,
+        realization_axes=realization_axes,
+        state_axes=resolved_state_axes,
     )
 
 

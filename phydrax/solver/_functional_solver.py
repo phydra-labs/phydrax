@@ -8,8 +8,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-import jax.numpy as jnp
-import jax.random as jr
+import equinox as eqx
 import optax
 from evosax.algorithms.distribution_based.base import DistributionBasedAlgorithm
 from jaxtyping import Array, Key
@@ -19,42 +18,15 @@ from phydrax.domain import DomainFunction
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from .._term import AbstractScalarTerm, evaluate
+from .._term import AbstractScalarTerm
 from .._training import EvaluationParametersFn
 from ..enforcement import EnforcementProgram
-from ..integration import AdaptiveIntegration
-from ..operators.differential._runtime import derivative_runtime_context
 from ..optim._kfac._config import KFAC
 from ..optim._riemannian import AbstractRiemannianOptimizer
-from ..terms._residual import ResidualPenalty
-from ._model_losses import function_model_loss_values
-
-
-def _terms_tuple(
-    value: AbstractScalarTerm | Sequence[AbstractScalarTerm],
-    /,
-    *,
-    name: str,
-) -> tuple[AbstractScalarTerm, ...]:
-    out = (value,) if isinstance(value, AbstractScalarTerm) else tuple(value)
-    bad = tuple(term for term in out if not isinstance(term, AbstractScalarTerm))
-    if bad:
-        raise TypeError(
-            f"All {name} must be scalar terms; got "
-            f"{tuple(type(term).__name__ for term in bad)!r}."
-        )
-    return out
-
-
-def _adaptive_term(term: Any, /) -> ResidualPenalty:
-    if not isinstance(term, ResidualPenalty) or not isinstance(
-        term.source, AdaptiveIntegration
-    ):
-        raise TypeError(
-            "Adaptive collocation requires ResidualPenalty with an "
-            "AdaptiveIntegration source."
-        )
-    return term
+from ._functional_objective import (
+    _FunctionalObjective,
+    evaluate_prepared_objective,
+)
 
 
 class FunctionalSolver(StrictModule):
@@ -65,10 +37,7 @@ class FunctionalSolver(StrictModule):
     """
 
     functions: frozendict[str, DomainFunction]
-    terms: tuple[AbstractScalarTerm, ...]
-    evaluation_terms: tuple[AbstractScalarTerm, ...]
-    enforcement: EnforcementProgram | None
-    collocation: tuple[Any | None, ...]
+    objective: _FunctionalObjective
     training_diagnostics: frozendict[str, Array]
 
     def __init__(
@@ -82,37 +51,55 @@ class FunctionalSolver(StrictModule):
     ):
         """Create a solver from fields, scalar terms, and optional enforcement."""
         self.functions = frozendict(functions)
-        self.terms = _terms_tuple(terms, name="terms")
-        self.evaluation_terms = _terms_tuple(
-            evaluation_terms,
-            name="evaluation_terms",
-        )
-        adaptive_evaluation_terms = tuple(
-            term
-            for term in self.evaluation_terms
-            if isinstance(term, ResidualPenalty)
-            and isinstance(term.source, AdaptiveIntegration)
-        )
-        if adaptive_evaluation_terms:
-            raise ValueError(
-                "AdaptiveIntegration sources are only supported in training terms, "
-                "which own solver-managed collocation populations."
-            )
-
-        if enforcement is not None and not isinstance(enforcement, EnforcementProgram):
-            raise TypeError("enforcement must be an EnforcementProgram or None.")
-        self.enforcement = enforcement
-        collocation_keys = jr.split(collocation_key, len(self.terms))
-        self.collocation = tuple(
-            (
-                term.policy.initialize(term, key=term_key)
-                if isinstance(term, ResidualPenalty)
-                and isinstance(term.source, AdaptiveIntegration)
-                else None
-            )
-            for term, term_key in zip(self.terms, collocation_keys, strict=True)
+        self.objective = _FunctionalObjective(
+            terms=terms,
+            evaluation_terms=evaluation_terms,
+            enforcement=enforcement,
+            collocation_key=collocation_key,
         )
         self.training_diagnostics = frozendict()
+    @property
+    def terms(self) -> tuple[AbstractScalarTerm, ...]:
+        """Return the ordered training terms."""
+        return self.objective.terms
+
+    @property
+    def evaluation_terms(self) -> tuple[AbstractScalarTerm, ...]:
+        """Return the ordered diagnostic-only terms."""
+        return self.objective.evaluation_terms
+
+    @property
+    def enforcement(self) -> EnforcementProgram | None:
+        """Return the optional exact-enforcement program."""
+        return self.objective.enforcement
+
+    @property
+    def collocation(self) -> tuple[Any | None, ...]:
+        """Return the population aligned with each training term."""
+        return self.objective.populations
+
+    def _with_collocation(
+        self,
+        collocation: Sequence[Any | None],
+        /,
+    ) -> "FunctionalSolver":
+        objective = self.objective.with_populations(collocation)
+        return eqx.tree_at(lambda solver: solver.objective, self, objective)
+
+    def _append_training_terms(
+        self,
+        terms: AbstractScalarTerm | Sequence[AbstractScalarTerm],
+        /,
+        *,
+        key: Key[Array, ""],
+    ) -> "FunctionalSolver":
+        objective = self.objective.append_training_terms(terms, key=key)
+        return eqx.tree_at(lambda solver: solver.objective, self, objective)
+
+    def _retain_training_prefix(self, count: int, /) -> "FunctionalSolver":
+        objective = self.objective.retain_training_prefix(count)
+        return eqx.tree_at(lambda solver: solver.objective, self, objective)
+
 
     def ansatz_functions(self) -> frozendict[str, DomainFunction]:
         r"""Return the current field mapping after applying enforcement (if configured)."""
@@ -154,45 +141,15 @@ class FunctionalSolver(StrictModule):
         **kwargs: Any,
     ) -> Array:
         """Evaluate all scalar terms and model-attached losses."""
-        functions = self.ansatz_functions()
-        keys = jr.split(key, len(self.terms))
-        total = jnp.array(0.0, dtype=float)
-        with derivative_runtime_context():
-            for term, population, term_key in zip(
-                self.terms,
-                self.collocation,
-                keys,
-                strict=True,
-            ):
-                term_kwargs = dict(kwargs)
-                if population is not None:
-                    adaptive_term = _adaptive_term(term)
-                    batch, local_weight = adaptive_term.policy.loss_batch_and_weight(
-                        population
-                    )
-                    term_kwargs["realization"] = adaptive_term._adaptive_realization(
-                        batch,
-                        local_weight,
-                        key=term_key,
-                    )
-                total = (
-                    total
-                    + evaluate(
-                        term,
-                        functions,
-                        key=term_key,
-                        step=step,
-                        **term_kwargs,
-                    ).value
-                )
-            iter_ = step
-            for model_loss in function_model_loss_values(
-                self.functions,
-                key=jr.fold_in(key, len(self.terms)),
-                iter_=iter_,
-            ):
-                total = total + model_loss
-        return total
+        prepared = self.objective.prepare_training(
+            range(len(self.terms)),
+            scale=1.0,
+            evaluation_key=key,
+            sampling_key=key,
+            iteration=step,
+            evaluation_kwargs=kwargs,
+        )
+        return evaluate_prepared_objective(prepared, self.functions).total
 
     def solve(
         self,
@@ -256,36 +213,18 @@ class FunctionalSolver(StrictModule):
           stochastic training terms per optimizer step and rescales their values
           to preserve an unbiased estimate of the complete term sum.
         """
-        from ._functional_train import solve as _solve
+        num_iter = int(num_iter)
+        if num_iter < 0:
+            raise ValueError("num_iter must be non-negative.")
+        if num_iter == 0:
+            return self
 
-        if optim is None:
-            optim = optax.rprop(1e-3)
+        from ._functional_backend import solve as _solve
+        from ._functional_run import FunctionalSolveConfig
 
-        if isinstance(optim, KFAC):
-            from ._kfac_solver import solve_kfac
-
-            return solve_kfac(
-                self,
-                num_iter=num_iter,
-                optim=optim,
-                evaluation_parameters=evaluation_parameters,
-                seed=seed,
-                jit=jit,
-                keep_best=keep_best,
-                log_every=log_every,
-                log_terms=log_terms,
-                log_path=log_path,
-                tensorboard_log_dir=tensorboard_log_dir,
-                tensorboard_every=tensorboard_every,
-                tensorboard_flush_every=tensorboard_flush_every,
-                profile_adaptive=profile_adaptive,
-                train_term_sample_size=train_term_sample_size,
-            )
-
-        return _solve(
-            self,
+        optimizer = optax.rprop(1e-3) if optim is None else optim
+        config = FunctionalSolveConfig(
             num_iter=num_iter,
-            optim=optim,
             evaluation_parameters=evaluation_parameters,
             seed=seed,
             jit=jit,
@@ -299,3 +238,4 @@ class FunctionalSolver(StrictModule):
             profile_adaptive=profile_adaptive,
             train_term_sample_size=train_term_sample_size,
         )
+        return _solve(self, optim=optimizer, config=config)

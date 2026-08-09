@@ -17,7 +17,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike, Key
 
 from .._strict import AbstractAttribute, StrictModule
-from ._trajectory import StochasticTrajectory
+from ._trajectory import _TrajectoryRecord, StochasticTrajectory
 from ._wiener import WienerRealization
 
 
@@ -582,21 +582,24 @@ class LatentGaussianCoefficientProcess(
             if state_axes is None
             else tuple(state_axes)
         )
-        return StochasticTrajectory(
+        record = _TrajectoryRecord(
             query,
             states,
-            realization_axes=realization_names,
+            state_shape=self.state_shape,
             realization_shape=sample_shape,
-            state_axes=state_names,
             realizations=(realization.driver,),
             case_ids=(f"process:{self.process_id}",),
             parameter_ids=(self.process_id,),
             approximation_id=self.process_id,
+            uncertainty_source="process",
             metadata={
                 "process_id": self.process_id,
                 "process_realization_id": realization.realization_id,
-                "uncertainty_source": "process",
             },
+        )
+        return record.to_stochastic_trajectory(
+            realization_axes=realization_names,
+            state_axes=state_names,
         )
 
 

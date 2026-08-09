@@ -143,6 +143,14 @@ def test_exact_jump_solvers_replay_and_recover_poisson_moments():
     assert jnp.abs(jnp.var(direct.events.counts) - 2.0) < 0.12
     assert jnp.array_equal(next_reaction.states[..., -1, 0], next_reaction.events.counts)
     assert jnp.array_equal(direct.states[..., -1, 0], direct.events.counts)
+    trajectory = next_reaction.to_stochastic_trajectory(
+        realization_axes=("path",),
+        state_axes=("count",),
+    )
+    assert jnp.array_equal(trajectory.states, next_reaction.states)
+    assert trajectory.realizations == (realization,)
+    assert trajectory.metadata["process_id"] == process.process_id
+    assert trajectory.metadata["jump_algorithm"] == "next_reaction"
 
 
 def test_marked_compound_poisson_records_marks_and_post_states():

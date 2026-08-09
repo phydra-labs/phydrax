@@ -121,13 +121,17 @@ selection = phx.coresets.kernel_herd(
 
 Scalar penalties make realization ownership explicit:
 
-- `per_step(target, plan)` materializes a fresh realization for each term
-  evaluation;
+- `per_step(target, plan)` materializes a fresh realization when a term
+  evaluation is prepared;
 - `fixed(realization)` reuses one materialized realization;
 - `caller(target)` requires the evaluation caller to supply a compatible
   realization;
 - `adaptive(target, initial_plan, policy)` delegates collocation refresh to
   `FunctionalSolver`.
+
+Within one `FunctionalSolver` update, preparation occurs once per active term.
+The resulting realization is reused across gradient, line-search, population,
+curvature, and term-diagnostic evaluations for that update.
 
 Use `mean_over(condition.on)` for normalized pointwise residual means and
 `over(condition.on)` for physical or counting-measure integrals.

@@ -9,7 +9,7 @@ import jax.random as jr
 import optax
 
 import phydrax as phx
-import phydrax.solver._functional_train as functional_train
+import phydrax.solver._functional_gradient as functional_gradient
 from phydrax.domain import HyperRectangle
 from phydrax.nn.models import MLP
 from phydrax.solver import FunctionalSolver
@@ -42,7 +42,7 @@ def _make_solver(seed: int = 0) -> FunctionalSolver:
 
 def test_training_signal_guard_records_sigint_and_restores_handler():
     previous = signal.getsignal(signal.SIGINT)
-    with functional_train._TrainingSignalGuard() as guard:
+    with functional_gradient._TrainingSignalGuard() as guard:
         signal.raise_signal(signal.SIGINT)
         assert guard.stop_requested
         assert guard.signal_name == "SIGINT"
@@ -69,7 +69,7 @@ def test_optax_solve_returns_after_signal_stop_request(monkeypatch, tmp_path):
             return self.calls >= 2
 
     guard = StopAfterFirstStep()
-    monkeypatch.setattr(functional_train, "_TrainingSignalGuard", lambda: guard)
+    monkeypatch.setattr(functional_gradient, "_TrainingSignalGuard", lambda: guard)
 
     log_path = tmp_path / "train.log"
     trained = _make_solver().solve(
