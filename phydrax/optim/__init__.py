@@ -22,6 +22,7 @@ from ._quadratic_program import (
 from ._riemannian import (
     ArmijoLineSearch,
     ParameterGeometry,
+    riemannian_adam,
     riemannian_conjugate_gradient,
     riemannian_lbfgs,
     riemannian_momentum,
@@ -44,6 +45,7 @@ __all__ = [
     "QuadraticProgram",
     "QuadraticProgramResult",
     "kfac",
+    "riemannian_adam",
     "riemannian_conjugate_gradient",
     "riemannian_lbfgs",
     "riemannian_momentum",

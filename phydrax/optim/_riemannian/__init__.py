@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from ._adaptive import riemannian_adam, RiemannianAdam, RiemannianAdamState
 from ._advanced import (
     AbstractRiemannianLineSearchOptimizer,
     riemannian_conjugate_gradient,
@@ -31,6 +32,8 @@ __all__ = [
     "ArmijoResult",
     "AbstractRiemannianOptimizer",
     "ParameterGeometry",
+    "RiemannianAdam",
+    "RiemannianAdamState",
     "RiemannianMomentum",
     "RiemannianMomentumState",
     "RiemannianSGD",
@@ -40,6 +43,7 @@ __all__ = [
     "RiemannianLBFGS",
     "RiemannianLBFGSState",
     "RiemannianStepMetrics",
+    "riemannian_adam",
     "riemannian_momentum",
     "riemannian_sgd",
     "armijo_backtracking",

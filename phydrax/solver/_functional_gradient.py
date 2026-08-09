@@ -489,11 +489,21 @@ def solve_gradient(
                         )
                         if (
                             _opt_riemannian is not None
-                            and _opt_riemannian.optimizer_id == "riemannian-momentum"
+                            and _opt_riemannian.optimizer_id
+                            in ("riemannian-momentum", "riemannian-adam")
                         ):
                             optimizer_suffix += (
                                 " momentum="
                                 f"{float(riemannian_step_metrics.momentum_norm):.6e}"
+                            )
+                        if (
+                            _opt_riemannian is not None
+                            and _opt_riemannian.optimizer_id == "riemannian-adam"
+                        ):
+                            optimizer_suffix += (
+                                " adaptive_denom=["
+                                f"{float(riemannian_step_metrics.adaptive_denominator_minimum):.6e},"
+                                f"{float(riemannian_step_metrics.adaptive_denominator_maximum):.6e}]"
                             )
                         if (
                             _opt_riemannian is not None
@@ -511,6 +521,21 @@ def solve_gradient(
                                 " reduction="
                                 f"{float(riemannian_step_metrics.line_search_reduction):.6e}"
                             )
+                            if (
+                                _opt_riemannian.optimizer_id
+                                == "riemannian-conjugate-gradient"
+                            ):
+                                optimizer_suffix += (
+                                    " restarted="
+                                    f"{int(riemannian_step_metrics.restarted)}"
+                                )
+                            if _opt_riemannian.optimizer_id == "riemannian-lbfgs":
+                                optimizer_suffix += (
+                                    " restarted="
+                                    f"{int(riemannian_step_metrics.restarted)}"
+                                    " pair_accepted="
+                                    f"{int(riemannian_step_metrics.pair_accepted)}"
+                                )
                     print(
                         f"[phydrax][{optimizer_label}] iter {step}/{int(num_iter)} "
                         f"loss={loss_f:.6e}{evaluation_suffix} "
@@ -636,6 +661,16 @@ def solve_gradient(
                             step,
                         )
                         tb_writer.scalar(
+                            "optimizer/riemannian/restarted",
+                            riemannian_step_metrics.restarted,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/riemannian/pair_accepted",
+                            riemannian_step_metrics.pair_accepted,
+                            step,
+                        )
+                        tb_writer.scalar(
                             "optimizer/riemannian/tangent_residual",
                             riemannian_step_metrics.tangent_residual,
                             step,
@@ -648,6 +683,16 @@ def solve_gradient(
                         tb_writer.scalar(
                             "optimizer/riemannian/transport_metric_distortion",
                             riemannian_step_metrics.transport_metric_distortion,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/riemannian/adaptive_denominator_minimum",
+                            riemannian_step_metrics.adaptive_denominator_minimum,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/riemannian/adaptive_denominator_maximum",
+                            riemannian_step_metrics.adaptive_denominator_maximum,
                             step,
                         )
                     if step % tb_flush_every_ == 0:
@@ -714,6 +759,14 @@ def solve_gradient(
                 "optimizer/riemannian/conjugacy_beta": (final_metrics.conjugacy_beta),
                 "optimizer/riemannian/history_pair_count": (
                     final_metrics.history_pair_count
+                ),
+                "optimizer/riemannian/restarted": final_metrics.restarted,
+                "optimizer/riemannian/pair_accepted": final_metrics.pair_accepted,
+                "optimizer/riemannian/adaptive_denominator_minimum": (
+                    final_metrics.adaptive_denominator_minimum
+                ),
+                "optimizer/riemannian/adaptive_denominator_maximum": (
+                    final_metrics.adaptive_denominator_maximum
                 ),
             }
         functions = combine_trainable(chosen, non_trainable)

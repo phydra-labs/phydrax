@@ -68,6 +68,7 @@ def test_riemannian_conjugate_gradient_uses_armijo_and_converges_on_sphere():
     assert bool(metrics.line_search_accepted) == bool(state.line_search_accepted)
     assert metrics.line_search_reduction >= 0.0
     assert metrics.conjugacy_beta == state.beta
+    assert bool(metrics.restarted) == bool(state.restarted)
 
 
 def test_riemannian_lbfgs_transports_bounded_history_and_converges_on_sphere():
@@ -84,6 +85,8 @@ def test_riemannian_lbfgs_transports_bounded_history_and_converges_on_sphere():
     assert bool(metrics.line_search_accepted) == bool(state.line_search_accepted)
     assert metrics.line_search_reduction >= 0.0
     assert metrics.history_pair_count == state.count
+    assert bool(metrics.restarted) == bool(state.restarted)
+    assert bool(metrics.pair_accepted) == bool(state.pair_accepted)
     for index in range(4):
         if bool(state.active[index]):
             s_value = jax.tree.map(lambda leaf: leaf[index], state.s_history)
@@ -137,3 +140,81 @@ def test_armijo_rejects_a_nonfinite_frozen_objective_value():
             value=jnp.asarray(jnp.nan),
             value_fn=lambda candidate: jnp.sum(candidate**2),
         )
+
+
+def test_rejected_conjugate_gradient_step_preserves_point_and_forces_restart():
+    point = jnp.array([1.0, 0.0, 0.0])
+    geometry = phx.optim.ParameterGeometry.from_leaf_paths(
+        point,
+        {"<root>": phx.metrix.SphereManifold(3)},
+    )
+    optimizer = phx.optim.riemannian_conjugate_gradient(
+        geometry,
+        line_search=phx.optim.ArmijoLineSearch(maximum_steps=1),
+    )
+    state = optimizer.init(point)
+
+    updated, state = optimizer.update(
+        jnp.array([0.0, 1.0, 0.0]),
+        state,
+        point,
+        value=jnp.asarray(0.0),
+        value_fn=lambda candidate: jnp.asarray(1.0),
+    )
+
+    assert jnp.array_equal(updated, point)
+    assert not bool(state.line_search_accepted)
+    assert bool(state.restarted)
+    assert jnp.array_equal(state.previous_direction, jnp.zeros_like(point))
+
+    _, next_state = optimizer.update(
+        jnp.array([0.0, 1.0, 0.0]),
+        state,
+        point,
+        value=jnp.asarray(0.0),
+        value_fn=lambda candidate: jnp.asarray(1.0),
+    )
+    assert bool(next_state.restarted)
+
+
+def test_rejected_lbfgs_step_preserves_point_and_active_history():
+    target = jnp.array([0.0, 1.0, 0.0])
+    point = jnp.array([1.0, 0.0, 0.0])
+    geometry = phx.optim.ParameterGeometry.from_leaf_paths(
+        point,
+        {"<root>": phx.metrix.SphereManifold(3)},
+    )
+    optimizer = phx.optim.riemannian_lbfgs(
+        geometry,
+        history_size=3,
+        line_search=phx.optim.ArmijoLineSearch(maximum_steps=1),
+    )
+    objective = lambda candidate: 1.0 - jnp.dot(candidate, target)
+    value, gradient = jax.value_and_grad(objective)(point)
+    point, state = optimizer.update(
+        gradient,
+        optimizer.init(point),
+        point,
+        value=value,
+        value_fn=objective,
+    )
+    history_before = state.s_history
+    gradient_history_before = state.y_history
+    rho_before = state.rho
+    active_before = state.active
+
+    updated, rejected = optimizer.update(
+        jnp.array([0.0, 0.0, 1.0]),
+        state,
+        point,
+        value=jnp.asarray(0.0),
+        value_fn=lambda candidate: jnp.asarray(1.0),
+    )
+
+    assert jnp.array_equal(updated, point)
+    assert not bool(rejected.line_search_accepted)
+    assert not bool(rejected.pair_accepted)
+    assert jnp.array_equal(rejected.s_history, history_before)
+    assert jnp.array_equal(rejected.y_history, gradient_history_before)
+    assert jnp.array_equal(rejected.rho, rho_before)
+    assert jnp.array_equal(rejected.active, active_before)
