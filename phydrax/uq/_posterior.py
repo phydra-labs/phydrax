@@ -14,8 +14,8 @@ import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array, ArrayLike, PyTree
 
+from .._probability import AbstractProbabilityLaw
 from .._strict import StrictModule
-from ._distributions import AbstractDistribution
 
 
 class AbstractBijector(StrictModule):
@@ -33,8 +33,24 @@ class AbstractBijector(StrictModule):
     def forward_log_det_jacobian(self, value: ArrayLike, /) -> Array:
         raise NotImplementedError
 
+    @abstractmethod
+    def forward_shape(self, raw_shape: tuple[int, ...], /) -> tuple[int, ...]:
+        raise NotImplementedError
 
-class IdentityBijector(AbstractBijector):
+    @abstractmethod
+    def inverse_shape(self, physical_shape: tuple[int, ...], /) -> tuple[int, ...]:
+        raise NotImplementedError
+
+
+class _AbstractShapePreservingBijector(AbstractBijector):
+    def forward_shape(self, raw_shape: tuple[int, ...], /) -> tuple[int, ...]:
+        return tuple(int(size) for size in raw_shape)
+
+    def inverse_shape(self, physical_shape: tuple[int, ...], /) -> tuple[int, ...]:
+        return tuple(int(size) for size in physical_shape)
+
+
+class IdentityBijector(_AbstractShapePreservingBijector):
     """Identity map for unconstrained real parameters."""
 
     def forward(self, value: ArrayLike, /) -> Array:
@@ -47,7 +63,7 @@ class IdentityBijector(AbstractBijector):
         return jnp.zeros_like(jnp.asarray(value), dtype=float)
 
 
-class ExpBijector(AbstractBijector):
+class ExpBijector(_AbstractShapePreservingBijector):
     """Exponential map from the real line to positive values."""
 
     def forward(self, value: ArrayLike, /) -> Array:
@@ -63,7 +79,7 @@ class ExpBijector(AbstractBijector):
         return jnp.asarray(value, dtype=float)
 
 
-class SigmoidIntervalBijector(AbstractBijector):
+class SigmoidIntervalBijector(_AbstractShapePreservingBijector):
     """Logistic map from the real line to an open finite interval."""
 
     lower: Array
@@ -101,16 +117,83 @@ class SigmoidIntervalBijector(AbstractBijector):
         )
 
 
+class SimplexBijector(AbstractBijector):
+    """Additive-log-ratio map to a simplex with the last category as reference."""
+
+    num_categories: int = eqx.field(static=True)
+
+    def __init__(self, num_categories: int):
+        categories = int(num_categories)
+        if categories < 2:
+            raise ValueError("num_categories must be at least two.")
+        self.num_categories = categories
+
+    def forward_shape(self, raw_shape: tuple[int, ...], /) -> tuple[int, ...]:
+        shape = tuple(int(size) for size in raw_shape)
+        expected = self.num_categories - 1
+        if not shape or shape[-1] != expected:
+            raise ValueError(f"Simplex raw shape must end in {expected}; got {shape}.")
+        return shape[:-1] + (self.num_categories,)
+
+    def inverse_shape(self, physical_shape: tuple[int, ...], /) -> tuple[int, ...]:
+        shape = tuple(int(size) for size in physical_shape)
+        if not shape or shape[-1] != self.num_categories:
+            raise ValueError(
+                f"Simplex physical shape must end in {self.num_categories}; got {shape}."
+            )
+        return shape[:-1] + (self.num_categories - 1,)
+
+    def forward(self, value: ArrayLike, /) -> Array:
+        raw = jnp.asarray(value)
+        if jnp.issubdtype(raw.dtype, jnp.complexfloating):
+            raise TypeError("Simplex coordinates must be real-valued.")
+        if raw.ndim == 0 or int(raw.shape[-1]) != self.num_categories - 1:
+            raise ValueError(
+                "Simplex coordinates have an incompatible trailing dimension."
+            )
+        raw = raw.astype(jnp.result_type(raw, 0.0))
+        logits = jnp.concatenate((raw, jnp.zeros_like(raw[..., :1])), axis=-1)
+        return jax.nn.softmax(logits, axis=-1)
+
+    def inverse(self, value: ArrayLike, /) -> Array:
+        physical = jnp.asarray(value)
+        if jnp.issubdtype(physical.dtype, jnp.complexfloating):
+            raise TypeError("Simplex values must be real-valued.")
+        if physical.ndim == 0 or int(physical.shape[-1]) != self.num_categories:
+            raise ValueError("Simplex values have an incompatible trailing dimension.")
+        physical = physical.astype(jnp.result_type(physical, 0.0))
+        tolerance = 64.0 * jnp.finfo(physical.dtype).eps * self.num_categories
+        invalid = (
+            jnp.any(~jnp.isfinite(physical))
+            | jnp.any(physical <= 0.0)
+            | jnp.any(jnp.abs(jnp.sum(physical, axis=-1) - 1.0) > tolerance)
+        )
+        checked = eqx.error_if(
+            physical,
+            invalid,
+            "SimplexBijector inverse requires a strictly positive unit-sum simplex.",
+        )
+        return jnp.log(checked[..., :-1]) - jnp.log(checked[..., -1, None])
+
+    def forward_log_det_jacobian(self, value: ArrayLike, /) -> Array:
+        physical = self.forward(value)
+        return jnp.sum(jnp.log(physical), axis=-1) + 0.5 * jnp.log(
+            jnp.asarray(self.num_categories, dtype=physical.dtype)
+        )
+
+
 _BIJECTOR_LEAF = lambda value: isinstance(value, AbstractBijector)
-_PRIOR_LEAF = lambda value: isinstance(value, AbstractDistribution)
+_PRIOR_LEAF = lambda value: isinstance(value, AbstractProbabilityLaw)
 
 
 class ParameterSpace(StrictModule):
     """Unconstrained posterior coordinates, priors, and physical transformations."""
 
     initial: PyTree[Any]
-    priors: PyTree[AbstractDistribution] | None
+    priors: PyTree[AbstractProbabilityLaw] | None
     bijectors: PyTree[AbstractBijector]
+    raw_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    physical_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     custom_log_prior: Callable[[PyTree[Any]], ArrayLike] | None = eqx.field(static=True)
 
     def __init__(
@@ -118,7 +201,7 @@ class ParameterSpace(StrictModule):
         initial: PyTree[Any],
         /,
         *,
-        priors: PyTree[AbstractDistribution] | None = None,
+        priors: PyTree[AbstractProbabilityLaw] | None = None,
         bijectors: PyTree[AbstractBijector] | None = None,
         log_prior: Callable[[PyTree[Any]], ArrayLike] | None = None,
     ):
@@ -150,11 +233,36 @@ class ParameterSpace(StrictModule):
             raise ValueError(
                 "initial and bijectors must have identical PyTree structure."
             )
-        if any(
-            not isinstance(value, AbstractBijector)
-            for value in jax.tree_util.tree_leaves(bijector_tree, is_leaf=_BIJECTOR_LEAF)
-        ):
+        bijector_leaves = jax.tree_util.tree_leaves(bijector_tree, is_leaf=_BIJECTOR_LEAF)
+        if any(not isinstance(value, AbstractBijector) for value in bijector_leaves):
             raise TypeError("Every bijectors leaf must implement AbstractBijector.")
+
+        initial_leaves = jax.tree_util.tree_leaves(initial)
+        raw_shapes = tuple(tuple(jnp.asarray(value).shape) for value in initial_leaves)
+        physical_shapes = tuple(
+            bijector.forward_shape(raw_shape)
+            for bijector, raw_shape in zip(bijector_leaves, raw_shapes, strict=True)
+        )
+        for bijector, raw_shape, physical_shape in zip(
+            bijector_leaves, raw_shapes, physical_shapes, strict=True
+        ):
+            if bijector.inverse_shape(physical_shape) != raw_shape:
+                raise ValueError("Bijector forward and inverse shapes are inconsistent.")
+        initial_physical = jax.tree_util.tree_map(
+            lambda bijector, value: bijector.forward(value),
+            bijector_tree,
+            initial,
+            is_leaf=_BIJECTOR_LEAF,
+        )
+        for physical, expected_shape in zip(
+            jax.tree_util.tree_leaves(initial_physical),
+            physical_shapes,
+            strict=True,
+        ):
+            if tuple(jnp.asarray(physical).shape) != expected_shape:
+                raise ValueError(
+                    "Bijector forward output does not match its declared physical shape."
+                )
 
         if priors is not None:
             prior_structure = jax.tree_util.tree_structure(priors, is_leaf=_PRIOR_LEAF)
@@ -162,40 +270,59 @@ class ParameterSpace(StrictModule):
                 raise ValueError(
                     "initial and priors must have identical PyTree structure."
                 )
+            prior_leaves = jax.tree_util.tree_leaves(priors, is_leaf=_PRIOR_LEAF)
             if any(
-                not isinstance(value, AbstractDistribution)
-                for value in jax.tree_util.tree_leaves(priors, is_leaf=_PRIOR_LEAF)
+                not isinstance(value, AbstractProbabilityLaw) for value in prior_leaves
             ):
-                raise TypeError("Every priors leaf must implement AbstractDistribution.")
+                raise TypeError(
+                    "Every priors leaf must implement AbstractProbabilityLaw."
+                )
+            for physical_shape, prior in zip(physical_shapes, prior_leaves, strict=True):
+                prior_shape = tuple(prior.batch_shape) + tuple(prior.event_shape)
+                if prior_shape and prior_shape != physical_shape:
+                    raise ValueError(
+                        "Each shaped prior must have batch_shape + event_shape equal "
+                        "to its physical parameter leaf shape."
+                    )
 
         self.initial = initial
         self.priors = priors
         self.bijectors = bijector_tree
+        self.raw_shapes = raw_shapes
+        self.physical_shapes = physical_shapes
         self.custom_log_prior = log_prior
 
     def constrain(self, position: PyTree[Any], /) -> PyTree[Any]:
         """Map an unconstrained position to physical parameter values."""
-        self._validate_position_structure(position)
-        return jax.tree_util.tree_map(
+        self._validate_position(position, self.raw_shapes, owner="Unconstrained position")
+        physical = jax.tree_util.tree_map(
             lambda bijector, value: bijector.forward(value),
             self.bijectors,
             position,
             is_leaf=_BIJECTOR_LEAF,
         )
+        self._validate_position(
+            physical, self.physical_shapes, owner="Constrained position"
+        )
+        return physical
 
     def unconstrain(self, physical: PyTree[Any], /) -> PyTree[Any]:
         """Map physical parameter values back to unconstrained coordinates."""
-        self._validate_position_structure(physical)
-        return jax.tree_util.tree_map(
+        self._validate_position(
+            physical, self.physical_shapes, owner="Constrained position"
+        )
+        position = jax.tree_util.tree_map(
             lambda bijector, value: bijector.inverse(value),
             self.bijectors,
             physical,
             is_leaf=_BIJECTOR_LEAF,
         )
+        self._validate_position(position, self.raw_shapes, owner="Unconstrained position")
+        return position
 
     def log_abs_det_jacobian(self, position: PyTree[Any], /) -> Array:
         """Return the summed forward log-absolute-determinant Jacobian."""
-        self._validate_position_structure(position)
+        self._validate_position(position, self.raw_shapes, owner="Unconstrained position")
         terms = jax.tree_util.tree_map(
             lambda bijector, value: jnp.sum(bijector.forward_log_det_jacobian(value)),
             self.bijectors,
@@ -206,7 +333,9 @@ class ParameterSpace(StrictModule):
 
     def log_prior(self, physical: PyTree[Any], /) -> Array:
         """Evaluate the declared physical-space prior density."""
-        self._validate_position_structure(physical)
+        self._validate_position(
+            physical, self.physical_shapes, owner="Constrained position"
+        )
         if self.custom_log_prior is not None:
             value = jnp.asarray(self.custom_log_prior(physical), dtype=float)
             if value.ndim != 0:
@@ -240,31 +369,60 @@ class ParameterSpace(StrictModule):
         if count <= 0:
             raise ValueError("num_samples must be positive.")
         if self.priors is None:
-            raise ValueError("Prior sampling requires explicit distribution priors.")
+            raise ValueError("Prior sampling requires explicit probability-law priors.")
         initial_leaves, treedef = jax.tree_util.tree_flatten(self.initial)
         prior_leaves = jax.tree_util.tree_leaves(
             self.priors,
             is_leaf=_PRIOR_LEAF,
         )
         keys = jr.split(key, len(initial_leaves))
+
+        def draw(sample_key, prior, physical_shape):
+            prior_shape = tuple(prior.batch_shape) + tuple(prior.event_shape)
+            sample_shape = (count,) if prior_shape else (count,) + physical_shape
+            samples = prior.sample(sample_key, sample_shape=sample_shape)
+            expected_shape = (count,) + physical_shape
+            if samples.shape != expected_shape:
+                raise ValueError(
+                    "Prior sampling returned shape "
+                    f"{samples.shape}; expected {expected_shape}."
+                )
+            return samples
+
         physical = treedef.unflatten(
-            prior.sample(
-                sample_key,
-                sample_shape=(count,) + tuple(initial.shape),
-            )
-            for sample_key, prior, initial in zip(
+            draw(sample_key, prior, physical_shape)
+            for sample_key, prior, physical_shape in zip(
                 keys,
                 prior_leaves,
-                initial_leaves,
+                self.physical_shapes,
+                strict=True,
             )
         )
         return physical if constrained else self.unconstrain(physical)
 
-    def _validate_position_structure(self, position: PyTree[Any]) -> None:
+    def _validate_position(
+        self,
+        position: PyTree[Any],
+        expected_shapes: tuple[tuple[int, ...], ...],
+        /,
+        *,
+        owner: str,
+    ) -> None:
         if jax.tree_util.tree_structure(position) != jax.tree_util.tree_structure(
             self.initial
         ):
-            raise ValueError("Posterior position has incompatible PyTree structure.")
+            raise ValueError(f"{owner} has incompatible PyTree structure.")
+        leaves = jax.tree_util.tree_leaves(position)
+        for leaf, expected_shape in zip(leaves, expected_shapes, strict=True):
+            actual_shape = tuple(jnp.asarray(leaf).shape)
+            if expected_shape and (
+                len(actual_shape) < len(expected_shape)
+                or actual_shape[-len(expected_shape) :] != expected_shape
+            ):
+                raise ValueError(
+                    f"{owner} leaf has trailing shape {actual_shape}; "
+                    f"expected {expected_shape}."
+                )
 
 
 class PosteriorProblem(StrictModule):
@@ -425,4 +583,5 @@ __all__ = [
     "ParameterSpace",
     "PosteriorProblem",
     "SigmoidIntervalBijector",
+    "SimplexBijector",
 ]

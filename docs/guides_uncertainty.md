@@ -803,6 +803,116 @@ width. `GaussianScaleCalibrator.fit` estimates one positive multiplier by the
 closed-form held-out Gaussian-NLL optimum. It calibrates scale under a Gaussian
 likelihood; it does not provide a finite-sample coverage guarantee.
 
+## Exponential-family laws, geometry, and conjugacy
+
+Phydrax keeps natural coordinates, expected sufficient statistics, and realized
+sufficient statistics as distinct semantic objects. Their arrays reserve the final
+axis for the intrinsic family dimension. Static signatures prevent accidental
+operations between equal-shaped coordinates from different families or reference
+measures.
+
+The scalar families are `BernoulliFamily`, `PoissonFamily`,
+`ExponentialRateFamily`, and `NormalFamily`. Structured families add:
+
+- `CategoricalFamily(K)`: `K - 1` last-category-reference log odds.
+- `GammaFamily`: full shape-rate geometry with sufficient statistics
+  `(log(x), x)`.
+- `MultivariateNormalFamily(d)`: exact dense Gaussian geometry in an orthonormal
+  symmetric matrix chart.
+- `DirichletFamily(K)`: concentration geometry relative to intrinsic simplex
+  Hausdorff measure.
+
+For scalar Bernoulli-logit and Poisson-log-rate models, use the family kernel through
+the ordinary observation-likelihood protocol:
+
+```python
+count_likelihood = phx.uq.ScalarNaturalExponentialFamilyLikelihood(
+    phx.uq.PoissonFamily()
+)
+log_rate = jnp.asarray([0.0, jnp.log(2.0), jnp.log(3.0)])
+counts = jnp.asarray([0.0, 1.0, 4.0])
+count_log_probability = count_likelihood.log_prob(log_rate, counts)
+```
+
+The model output above is the natural parameter itself. Apply an explicit link first
+if a model emits a probability, rate, location, or scale. Pass
+`CategoricalFamily(K)` to `CategoricalExponentialFamilyLikelihood` and declare
+`prediction_coordinates="full_logits"` for full categorical logits or `"natural"`
+for identified `K - 1` coordinates.
+
+Weighted sample clouds and ensembles project onto a family by averaging sufficient
+statistics with stable normalized log weights:
+
+```python
+projection = phx.uq.project_exponential_family(
+    phx.uq.GammaFamily(),
+    jnp.asarray([0.3, 0.7, 1.8, 3.2]),
+    log_weights=jnp.asarray([-0.7, 0.2, 0.8, -0.1]),
+)
+```
+
+`ExponentialFamilyProjectionAccumulator` supports exact chunk merging without
+reinterpreting frequency weights as importance weights. Diagnostics retain effective
+sample size, maximum normalized weight, entropy, and log-weight range.
+`fit_exponential_family` accepts ordinary nonnegative statistical weights.
+
+Boundary maximum-likelihood estimates remain explicit. Phydrax does not add
+pseudocounts, clip coordinates, or jitter a covariance. Invalid observations,
+nonfinite weights, zero total weight, exterior means, regular-family boundaries, and
+failed Gamma or Dirichlet numerical inversion have separate statuses.
+
+Simplex posterior leaves require different raw and physical shapes:
+
+```python
+simplex_family = phx.uq.DirichletFamily(3)
+simplex_space = phx.uq.ParameterSpace(
+    jnp.zeros(2),
+    priors=simplex_family.law_from_concentration(jnp.asarray([1.0, 2.0, 3.0])),
+    bijectors=phx.uq.SimplexBijector(3),
+)
+physical_composition = simplex_space.constrain(jnp.asarray([0.2, -0.4]))
+```
+
+The additive-log-ratio map includes its Hausdorff volume factor. This is a true
+`2 -> 3` shape change, not a shape-preserving transform with an implicit redundant
+component.
+
+Use explicit conjugate pairs for online or conditionally conjugate scientific
+updates:
+
+```python
+rate_update = phx.uq.GammaPoissonConjugacy(2.0, 1.5).update(
+    jnp.asarray([0, 2, 3]),
+    exposure=jnp.asarray([1.0, 0.5, 2.0]),
+)
+composition_update = phx.uq.DirichletCategoricalConjugacy(
+    jnp.asarray([1.0, 1.0, 1.0])
+).update(jnp.asarray([0, 2, 1, 2, 2]))
+```
+
+Both pairs expose mergeable statistics, exact evidence, and posterior predictive
+operations. They do not imply that arbitrary exponential families are conjugate.
+
+Exact information geometry remains matrix-free:
+
+```python
+family = phx.uq.MultivariateNormalFamily(3)
+natural = family.natural_from_location_covariance(jnp.zeros(3), jnp.eye(3))
+direction = jnp.ones(family.signature.dimension)
+fisher_direction = phx.uq.exponential_family_fisher_action(
+    family,
+    natural,
+    direction,
+)
+```
+
+For a parameter-to-natural map, use
+`exponential_family_parameter_fisher_action` to apply `Jηᵀ F(η) Jη` by JVP and
+transpose pullback. Neither operation materializes or inverts a dense Fisher matrix.
+See the [exponential-family API](api/uq/exponential_families.md) for coordinate,
+measure, solver, posterior-prior, and status semantics.
+
+
 ## Uncertain predictors and normalized measurement error
 
 When both a measured predictor \(x_i\) and response \(y_i\) are uncertain, an

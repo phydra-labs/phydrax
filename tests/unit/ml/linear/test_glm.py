@@ -5,8 +5,10 @@
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
+import phydrax as phx
 from phydrax.ml import (
     ML_INFEASIBLE,
     ML_NONCONVERGED,
@@ -66,6 +68,44 @@ def _assert_model_gradients(model, point):
     assert jnp.all(jnp.isfinite(input_gradient))
     assert jnp.all(jnp.isfinite(coefficient_gradient))
     assert jnp.all(jnp.isfinite(intercept_gradient))
+
+
+@pytest.mark.parametrize("dtype", (jnp.float32, jnp.float64))
+def test_bernoulli_and_poisson_family_kernels_match_glm_score_equations(dtype):
+    scores = jnp.asarray([[-1.4, 0.2], [0.8, 2.1]], dtype=dtype)
+    binary = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=dtype)
+    counts = jnp.asarray([[0.0, 2.0], [3.0, 1.0]], dtype=dtype)
+    bernoulli = phx.uq.BernoulliFamily()
+    poisson = phx.uq.PoissonFamily()
+    bernoulli_natural = bernoulli.natural(scores[..., None])
+    poisson_natural = poisson.natural(scores[..., None])
+
+    np_bernoulli_loss = jax.nn.softplus(scores) - binary * scores
+    np_poisson_loss = jnp.exp(scores) - counts * scores
+    np.testing.assert_allclose(
+        bernoulli.canonical_loss(bernoulli_natural, binary),
+        np_bernoulli_loss,
+        rtol=3e-7,
+        atol=3e-7,
+    )
+    np.testing.assert_allclose(
+        bernoulli.canonical_score(bernoulli_natural, binary)[..., 0],
+        jax.nn.sigmoid(scores) - binary,
+        rtol=3e-7,
+        atol=3e-7,
+    )
+    np.testing.assert_allclose(
+        poisson.canonical_loss(poisson_natural, counts),
+        np_poisson_loss,
+        rtol=3e-7,
+        atol=3e-7,
+    )
+    np.testing.assert_allclose(
+        poisson.canonical_score(poisson_natural, counts)[..., 0],
+        jnp.exp(scores) - counts,
+        rtol=3e-7,
+        atol=3e-7,
+    )
 
 
 def test_one_step_glm_updates_match_weighted_score_equations():

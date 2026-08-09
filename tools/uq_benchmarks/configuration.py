@@ -29,6 +29,8 @@ class BenchmarkConfiguration:
     calibration_cases: int
     gp_repeats: int
     jit_warm_repetitions: int
+    exponential_family_samples: int
+    exponential_family_repetitions: int
     linearized_input_dimension: int
     linearized_output_dimension: int
     linearized_factor_rank: int
@@ -67,6 +69,8 @@ PROFILES: dict[ProfileName, BenchmarkConfiguration] = {
         calibration_cases=256,
         gp_repeats=5,
         jit_warm_repetitions=3,
+        exponential_family_samples=16_384,
+        exponential_family_repetitions=3,
         linearized_input_dimension=16,
         linearized_output_dimension=1_024,
         linearized_factor_rank=4,
@@ -100,6 +104,8 @@ PROFILES: dict[ProfileName, BenchmarkConfiguration] = {
         sgmcmc_steps_per_sample=2,
         gp_repeats=12,
         jit_warm_repetitions=10,
+        exponential_family_samples=131_072,
+        exponential_family_repetitions=10,
         linearized_input_dimension=32,
         linearized_output_dimension=4_096,
         linearized_factor_rank=8,

@@ -120,10 +120,11 @@ def test_stochastic_gradient_benchmark_controls_are_profiled_and_registered():
     smoke = runner.get_configuration("smoke")
     standard = runner.get_configuration("standard")
 
-    assert tuple(runner.SCENARIOS)[-3:] == (
+    assert tuple(runner.SCENARIOS)[-4:] == (
         "stochastic_gradient_regression",
         "linearized_uncertainty_propagation",
         "dynamic_factor_stochastic_volatility",
+        "exponential_family_geometry",
     )
     assert smoke.sgmcmc_burnin > 0
     assert smoke.sgmcmc_draws > 0
@@ -136,23 +137,15 @@ def test_stochastic_gradient_benchmark_controls_are_profiled_and_registered():
     assert 0 < smoke.linearized_factor_rank <= smoke.linearized_input_dimension
     assert smoke.linearized_hutchinson_probes > 1
     assert smoke.linearized_qmc_samples > 0
-    assert (
-        standard.linearized_input_dimension
-        >= smoke.linearized_input_dimension
-    )
-    assert (
-        standard.linearized_output_dimension
-        >= smoke.linearized_output_dimension
-    )
-    assert (
-        standard.linearized_factor_rank
-        >= smoke.linearized_factor_rank
-    )
-    assert (
-        standard.linearized_hutchinson_probes
-        >= smoke.linearized_hutchinson_probes
-    )
+    assert standard.linearized_input_dimension >= smoke.linearized_input_dimension
+    assert standard.linearized_output_dimension >= smoke.linearized_output_dimension
+    assert standard.linearized_factor_rank >= smoke.linearized_factor_rank
+    assert standard.linearized_hutchinson_probes >= smoke.linearized_hutchinson_probes
     assert standard.linearized_qmc_samples >= smoke.linearized_qmc_samples
+    assert smoke.exponential_family_samples > 0
+    assert smoke.exponential_family_repetitions > 0
+    assert standard.exponential_family_samples >= smoke.exponential_family_samples
+    assert standard.exponential_family_repetitions >= smoke.exponential_family_repetitions
     assert smoke.dfsv_assets > smoke.dfsv_factors > 0
     assert smoke.dfsv_steps > 0
     assert smoke.dfsv_particles > 0
@@ -162,4 +155,3 @@ def test_stochastic_gradient_benchmark_controls_are_profiled_and_registered():
     assert standard.dfsv_factors >= smoke.dfsv_factors
     assert standard.dfsv_particles >= smoke.dfsv_particles
     assert standard.dfsv_smoother_paths >= smoke.dfsv_smoother_paths
-

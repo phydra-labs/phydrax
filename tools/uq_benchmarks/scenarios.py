@@ -2914,17 +2914,15 @@ def dynamic_factor_stochastic_volatility(
     stationary_volatility_variance = volatility_innovation_variance / (
         1.0 - volatility_persistence**2
     )
-    stationary_factor_variance = jnp.exp(volatility_mean) / (
-        1.0 - factor_persistence**2
-    )
+    stationary_factor_variance = jnp.exp(volatility_mean) / (1.0 - factor_persistence**2)
 
     initial_factor_key, initial_volatility_key = jr.split(initial_key)
     factor = jnp.sqrt(stationary_factor_variance) * jr.normal(
         initial_factor_key, (factors,)
     )
-    volatility = volatility_mean + jnp.sqrt(
-        stationary_volatility_variance
-    ) * jr.normal(initial_volatility_key, (factors,))
+    volatility = volatility_mean + jnp.sqrt(stationary_volatility_variance) * jr.normal(
+        initial_volatility_key, (factors,)
+    )
     true_factors = []
     true_volatilities = []
     observations = []
@@ -2932,17 +2930,18 @@ def dynamic_factor_stochastic_volatility(
     observation_keys = jr.split(observation_key, steps)
     for step in range(steps):
         volatility_noise_key, factor_noise_key = jr.split(transition_keys[step])
-        volatility = volatility_mean + volatility_persistence * (
-            volatility - volatility_mean
-        ) + jnp.sqrt(volatility_innovation_variance) * jr.normal(
-            volatility_noise_key, (factors,)
+        volatility = (
+            volatility_mean
+            + volatility_persistence * (volatility - volatility_mean)
+            + jnp.sqrt(volatility_innovation_variance)
+            * jr.normal(volatility_noise_key, (factors,))
         )
-        factor = factor_persistence * factor + jnp.exp(
-            0.5 * volatility
-        ) * jr.normal(factor_noise_key, (factors,))
-        observation = loadings @ factor + jnp.sqrt(
-            idiosyncratic_variance
-        ) * jr.normal(observation_keys[step], (assets,))
+        factor = factor_persistence * factor + jnp.exp(0.5 * volatility) * jr.normal(
+            factor_noise_key, (factors,)
+        )
+        observation = loadings @ factor + jnp.sqrt(idiosyncratic_variance) * jr.normal(
+            observation_keys[step], (assets,)
+        )
         true_factors.append(factor)
         true_volatilities.append(volatility)
         observations.append(observation)
@@ -2957,9 +2956,7 @@ def dynamic_factor_stochastic_volatility(
     )
     joint_mean = jnp.concatenate((jnp.zeros(factors), volatility_mean))
     joint_covariance = jnp.diag(
-        jnp.concatenate(
-            (stationary_factor_variance, stationary_volatility_variance)
-        )
+        jnp.concatenate((stationary_factor_variance, stationary_volatility_variance))
     )
 
     def joint_sample(key, state, t0, t1, context):
@@ -2967,10 +2964,11 @@ def dynamic_factor_stochastic_volatility(
         factor_key, volatility_key = jr.split(key)
         previous_factor = state[:factors]
         previous_volatility = state[factors:]
-        next_volatility = volatility_mean + volatility_persistence * (
-            previous_volatility - volatility_mean
-        ) + jnp.sqrt(volatility_innovation_variance) * jr.normal(
-            volatility_key, (factors,)
+        next_volatility = (
+            volatility_mean
+            + volatility_persistence * (previous_volatility - volatility_mean)
+            + jnp.sqrt(volatility_innovation_variance)
+            * jr.normal(volatility_key, (factors,))
         )
         next_factor = factor_persistence * previous_factor + jnp.exp(
             0.5 * next_volatility
@@ -2979,9 +2977,7 @@ def dynamic_factor_stochastic_volatility(
 
     def diagonal_gaussian_log_prob(value, mean, variance):
         residual = value - mean
-        return -0.5 * jnp.sum(
-            residual**2 / variance + jnp.log(2.0 * jnp.pi * variance)
-        )
+        return -0.5 * jnp.sum(residual**2 / variance + jnp.log(2.0 * jnp.pi * variance))
 
     def joint_log_prob(next_state, state, t0, t1, context):
         del t0, t1, context
@@ -3022,8 +3018,7 @@ def dynamic_factor_stochastic_volatility(
         observation_log_prob,
         lambda key, state, time, sample_shape, context: (
             loadings @ state[:factors]
-            + jnp.sqrt(idiosyncratic_variance)
-            * jr.normal(key, sample_shape + (assets,))
+            + jnp.sqrt(idiosyncratic_variance) * jr.normal(key, sample_shape + (assets,))
         ),
         state_shape=(2 * factors,),
         observation_shape=(assets,),
@@ -3066,24 +3061,20 @@ def dynamic_factor_stochastic_volatility(
 
     def volatility_sample(key, state, t0, t1, context):
         del t0, t1, context
-        return volatility_mean + volatility_persistence * (
-            state - volatility_mean
-        ) + jnp.sqrt(volatility_innovation_variance) * jr.normal(
-            key, (factors,)
+        return (
+            volatility_mean
+            + volatility_persistence * (state - volatility_mean)
+            + jnp.sqrt(volatility_innovation_variance) * jr.normal(key, (factors,))
         )
 
     def volatility_log_prob(next_state, state, t0, t1, context):
         del t0, t1, context
-        location = volatility_mean + volatility_persistence * (
-            state - volatility_mean
-        )
+        location = volatility_mean + volatility_persistence * (state - volatility_mean)
         return diagonal_gaussian_log_prob(
             next_state, location, volatility_innovation_variance
         )
 
-    diagonal_observation_noise = phx.uq.DiagonalCovariance(
-        idiosyncratic_variance
-    )
+    diagonal_observation_noise = phx.uq.DiagonalCovariance(idiosyncratic_variance)
     rb_model = phx.uq.RaoBlackwellizedStateSpaceModel(
         phx.stochastic.GaussianStatePrior(
             volatility_mean,
@@ -3143,9 +3134,7 @@ def dynamic_factor_stochastic_volatility(
         particle_weights[..., None] * particle_filter.particles, axis=-2
     )
     rb_weights = jnp.exp(rb_filter.log_weights)
-    rb_factor_mean = jnp.sum(
-        rb_weights[..., None] * rb_filter.linear_means, axis=-2
-    )
+    rb_factor_mean = jnp.sum(rb_weights[..., None] * rb_filter.linear_means, axis=-2)
     rb_volatility_mean = jnp.sum(
         rb_weights[..., None] * rb_filter.nonlinear_particles, axis=-2
     )
@@ -3175,14 +3164,11 @@ def dynamic_factor_stochastic_volatility(
 
     def dense_condition(mean, covariance, value):
         innovation = value - loadings @ mean
-        innovation_covariance = (
-            loadings @ covariance @ loadings.T
-            + jnp.diag(idiosyncratic_variance)
+        innovation_covariance = loadings @ covariance @ loadings.T + jnp.diag(
+            idiosyncratic_variance
         )
         scale = jnp.linalg.cholesky(innovation_covariance)
-        gain = jnp.linalg.solve(
-            innovation_covariance, loadings @ covariance
-        ).T
+        gain = jnp.linalg.solve(innovation_covariance, loadings @ covariance).T
         posterior_mean = mean + gain @ innovation
         posterior_covariance = covariance - gain @ loadings @ covariance
         solved = jax.scipy.linalg.solve_triangular(
@@ -3195,9 +3181,7 @@ def dynamic_factor_stochastic_volatility(
         )
         return posterior_mean, posterior_covariance, log_likelihood
 
-    diagonal_output = diagonal_condition(
-        micro_mean, micro_covariance, micro_value
-    )
+    diagonal_output = diagonal_condition(micro_mean, micro_covariance, micro_value)
     dense_output = dense_condition(micro_mean, micro_covariance, micro_value)
     _, _, diagonal_execute = _jit_timings(
         diagonal_condition,
@@ -3226,9 +3210,7 @@ def dynamic_factor_stochastic_volatility(
         )
 
     def status_counts(values):
-        codes = tuple(
-            int(value) for value in jax.device_get(values).reshape(-1).tolist()
-        )
+        codes = tuple(int(value) for value in jax.device_get(values).reshape(-1).tolist())
         return {str(code): codes.count(code) for code in sorted(set(codes))}
 
     metrics = {
@@ -3251,9 +3233,7 @@ def dynamic_factor_stochastic_volatility(
             rmse(particle_mean[..., factors:], true_volatilities_array),
             "diagnostic",
         ),
-        "rb_factor_rmse": metric(
-            rmse(rb_factor_mean, true_factors_array), "diagnostic"
-        ),
+        "rb_factor_rmse": metric(rmse(rb_factor_mean, true_factors_array), "diagnostic"),
         "rb_log_volatility_rmse": metric(
             rmse(rb_volatility_mean, true_volatilities_array), "diagnostic"
         ),
@@ -3270,9 +3250,7 @@ def dynamic_factor_stochastic_volatility(
         "particle_log_likelihood": metric(
             particle_filter.final_state.log_likelihood, "diagnostic"
         ),
-        "rb_log_likelihood": metric(
-            rb_filter.final_state.log_likelihood, "diagnostic"
-        ),
+        "rb_log_likelihood": metric(rb_filter.final_state.log_likelihood, "diagnostic"),
         "particle_mean_effective_sample_size": metric(
             jnp.mean(particle_filter.effective_sample_sizes), "diagnostic"
         ),
@@ -3296,24 +3274,18 @@ def dynamic_factor_stochastic_volatility(
             "convergence",
             minimum=1.0,
         ),
-        "bellman_successful_step_count": metric(
-            jnp.sum(bellman.valid), "diagnostic"
-        ),
+        "bellman_successful_step_count": metric(jnp.sum(bellman.valid), "diagnostic"),
         "particle_successful_step_count": metric(
             jnp.sum(particle_filter.valid), "diagnostic"
         ),
-        "rb_successful_step_count": metric(
-            jnp.sum(rb_filter.valid), "diagnostic"
-        ),
+        "rb_successful_step_count": metric(jnp.sum(rb_filter.valid), "diagnostic"),
         "rb_smoother_successful_step_count": metric(
             jnp.sum(rb_smoother.valid), "diagnostic"
         ),
         "particle_resampling_count": metric(
             jnp.sum(particle_filter.resampled), "diagnostic"
         ),
-        "rb_resampling_count": metric(
-            jnp.sum(rb_filter.resampled), "diagnostic"
-        ),
+        "rb_resampling_count": metric(jnp.sum(rb_filter.resampled), "diagnostic"),
         "conditional_diagonal_dense_max_error": metric(
             conditional_error, "accuracy", maximum=1.0e-10
         ),
@@ -3336,9 +3308,7 @@ def dynamic_factor_stochastic_volatility(
         "rb_smoother_result_memory_bytes": metric(
             array_bytes(rb_smoother), "performance", unit="byte"
         ),
-        "wall_seconds": metric(
-            time.perf_counter() - started, "performance", unit="s"
-        ),
+        "wall_seconds": metric(time.perf_counter() - started, "performance", unit="s"),
     }
     return ScenarioResult(
         name="dynamic_factor_stochastic_volatility",
@@ -3364,6 +3334,520 @@ def dynamic_factor_stochastic_volatility(
     )
 
 
+def exponential_family_geometry(
+    configuration: BenchmarkConfiguration,
+    seed: int,
+) -> ScenarioResult:
+    """Benchmark scalar, structured, simplex, conjugate, and Fisher kernels."""
+    started = time.perf_counter()
+    sample_count = int(configuration.exponential_family_samples)
+    repetitions = int(configuration.exponential_family_repetitions)
+    keys = jr.split(jr.key(seed), 14)
+    bernoulli_family = phx.uq.BernoulliFamily()
+    poisson_family = phx.uq.PoissonFamily()
+    bernoulli_natural = 0.6 * jr.normal(keys[0], (sample_count,))
+    bernoulli_targets = jr.bernoulli(keys[1], jax.nn.sigmoid(bernoulli_natural)).astype(
+        float
+    )
+    poisson_natural = 0.3 + 0.4 * jr.normal(keys[2], (sample_count,))
+    poisson_targets = jr.poisson(keys[3], jnp.exp(poisson_natural)).astype(float)
+
+    def bernoulli_log_prob(natural, targets):
+        return bernoulli_family.log_prob(
+            bernoulli_family.natural(natural[..., None]), targets
+        )
+
+    def poisson_log_prob(natural, targets):
+        return poisson_family.log_prob(
+            poisson_family.natural(natural[..., None]), targets
+        )
+
+    bernoulli_cold, bernoulli_compile, bernoulli_execute = _jit_timings(
+        bernoulli_log_prob,
+        bernoulli_natural,
+        bernoulli_targets,
+        repetitions=repetitions,
+    )
+    poisson_cold, poisson_compile, poisson_execute = _jit_timings(
+        poisson_log_prob,
+        poisson_natural,
+        poisson_targets,
+        repetitions=repetitions,
+    )
+    bernoulli_values = bernoulli_log_prob(bernoulli_natural, bernoulli_targets)
+    poisson_values = poisson_log_prob(poisson_natural, poisson_targets)
+    direct_bernoulli = bernoulli_targets * jax.nn.log_sigmoid(bernoulli_natural) + (
+        1.0 - bernoulli_targets
+    ) * jax.nn.log_sigmoid(-bernoulli_natural)
+    direct_poisson = (
+        poisson_targets * poisson_natural
+        - jnp.exp(poisson_natural)
+        - jsp.special.gammaln(poisson_targets + 1.0)
+    )
+    bernoulli_coordinates = bernoulli_family.natural(bernoulli_natural[..., None])
+    poisson_coordinates = poisson_family.natural(poisson_natural[..., None])
+    bernoulli_loss = bernoulli_family.canonical_loss(
+        bernoulli_coordinates, bernoulli_targets
+    )
+    poisson_loss = poisson_family.canonical_loss(poisson_coordinates, poisson_targets)
+    bernoulli_score = bernoulli_family.canonical_score(
+        bernoulli_coordinates, bernoulli_targets
+    )[..., 0]
+    poisson_score = poisson_family.canonical_score(poisson_coordinates, poisson_targets)[
+        ..., 0
+    ]
+
+    projection_log_weights = 0.7 * jr.normal(keys[4], (sample_count,))
+    one_shot, one_shot_seconds = _timed_call(
+        lambda: phx.uq.project_exponential_family(
+            bernoulli_family,
+            bernoulli_targets,
+            log_weights=projection_log_weights,
+        )
+    )
+    midpoint = sample_count // 2
+
+    def merged_projection():
+        left = phx.uq.ExponentialFamilyProjectionAccumulator.from_log_weights(
+            bernoulli_family,
+            bernoulli_targets[:midpoint],
+            projection_log_weights[:midpoint],
+        )
+        right = phx.uq.ExponentialFamilyProjectionAccumulator.from_log_weights(
+            bernoulli_family,
+            bernoulli_targets[midpoint:],
+            projection_log_weights[midpoint:],
+        )
+        return left.merge(right).finalize()
+
+    merged, merged_seconds = _timed_call(merged_projection)
+    direct_projection_mean = jnp.sum(
+        jax.nn.softmax(projection_log_weights) * bernoulli_targets
+    )
+
+    normal_family = phx.uq.NormalFamily()
+    normal_natural = jnp.asarray([0.2, -0.7])
+    normal_direction = jnp.asarray([0.4, -0.3])
+
+    def family_fisher(natural, direction):
+        return phx.uq.exponential_family_fisher_action(
+            normal_family,
+            normal_family.natural(natural),
+            direction,
+        ).action
+
+    fisher_cold, fisher_compile, fisher_execute = _jit_timings(
+        family_fisher,
+        normal_natural,
+        normal_direction,
+        repetitions=repetitions,
+    )
+    fisher_action = family_fisher(normal_natural, normal_direction)
+    dense_fisher_action = (
+        jax.hessian(
+            lambda values: normal_family.log_normalizer(normal_family.natural(values))
+        )(normal_natural)
+        @ normal_direction
+    )
+
+    parameter_dimension = int(configuration.linearized_input_dimension)
+    natural_dimension = 4 * parameter_dimension
+    design = jr.normal(keys[5], (natural_dimension, parameter_dimension)) / jnp.sqrt(
+        parameter_dimension
+    )
+    parameters = 0.2 * jr.normal(keys[6], (parameter_dimension,))
+    parameter_direction = jr.normal(keys[7], (parameter_dimension,))
+
+    def natural_fn(values):
+        return (design @ values - 0.2)[..., None]
+
+    def parameter_fisher(values, direction):
+        return phx.uq.exponential_family_parameter_fisher_action(
+            poisson_family,
+            natural_fn,
+            values,
+            direction,
+        ).action
+
+    parameter_cold, parameter_compile, parameter_execute = _jit_timings(
+        parameter_fisher,
+        parameters,
+        parameter_direction,
+        repetitions=repetitions,
+    )
+    parameter_action = parameter_fisher(parameters, parameter_direction)
+    rates = jnp.exp(design @ parameters - 0.2)
+    direct_parameter_action = design.T @ (rates * (design @ parameter_direction))
+
+    structured_count = min(sample_count, 2_048)
+    categorical_family = phx.uq.CategoricalFamily(5)
+    categorical_logits = 0.7 * jr.normal(keys[8], (structured_count, 5))
+    categorical_targets = jr.categorical(keys[9], categorical_logits).astype(float)
+
+    def categorical_log_prob(logits, targets):
+        return categorical_family.log_prob(
+            categorical_family.natural_from_logits(logits), targets
+        )
+
+    categorical_cold, categorical_compile, categorical_execute = _jit_timings(
+        categorical_log_prob,
+        categorical_logits,
+        categorical_targets,
+        repetitions=repetitions,
+    )
+    categorical_values = categorical_log_prob(categorical_logits, categorical_targets)
+    direct_categorical = jnp.take_along_axis(
+        jax.nn.log_softmax(categorical_logits, axis=-1),
+        categorical_targets.astype(jnp.int32)[..., None],
+        axis=-1,
+    )[..., 0]
+
+    gamma_family = phx.uq.GammaFamily()
+    gamma_shapes = 0.2 + jnp.exp(0.6 * jr.normal(keys[10], (structured_count,)))
+    gamma_rates = 0.2 + jnp.exp(0.5 * jr.normal(keys[11], (structured_count,)))
+    gamma_natural = gamma_family.natural_from_shape_rate(gamma_shapes, gamma_rates)
+    gamma_mean = gamma_family.mean_from_natural(gamma_natural).values
+    direct_gamma_mean = jnp.stack(
+        (
+            jsp.special.digamma(gamma_shapes) - jnp.log(gamma_rates),
+            gamma_shapes / gamma_rates,
+        ),
+        axis=-1,
+    )
+
+    def gamma_round_trip(values):
+        return gamma_family.natural_from_mean(
+            gamma_family.mean_from_natural(gamma_family.natural(values))
+        )
+
+    gamma_cold, gamma_compile, gamma_execute = _jit_timings(
+        gamma_round_trip,
+        gamma_natural.values,
+        repetitions=repetitions,
+    )
+    gamma_conversion = gamma_round_trip(gamma_natural.values)
+
+    multivariate_family = phx.uq.MultivariateNormalFamily(4)
+    multivariate_location = jnp.asarray([0.2, -0.4, 0.7, 0.1])
+    covariance_root = jnp.asarray(
+        [
+            [1.1, 0.0, 0.0, 0.0],
+            [0.2, 0.9, 0.0, 0.0],
+            [-0.1, 0.3, 1.2, 0.0],
+            [0.1, 0.0, 0.2, 0.8],
+        ]
+    )
+    multivariate_covariance = covariance_root @ covariance_root.T
+    multivariate_natural = multivariate_family.natural_from_location_covariance(
+        multivariate_location, multivariate_covariance
+    )
+    reconstructed_location, reconstructed_covariance = (
+        multivariate_family.location_covariance_from_natural(multivariate_natural)
+    )
+    multivariate_direction = jnp.linspace(
+        -0.4, 0.6, multivariate_family.signature.dimension
+    )
+    multivariate_fisher = multivariate_family.fisher_action(
+        multivariate_natural, multivariate_direction
+    )
+    dense_multivariate_fisher = (
+        jax.hessian(
+            lambda values: multivariate_family.log_normalizer(
+                multivariate_family.natural(values)
+            )
+        )(multivariate_natural.values)
+        @ multivariate_direction
+    )
+    factor_location, gaussian_factor = phx.uq.gaussian_factor_from_multivariate_normal(
+        multivariate_family.law(multivariate_natural)
+    )
+    factor_conversion = phx.uq.multivariate_normal_from_gaussian_factor(
+        multivariate_family, factor_location, gaussian_factor
+    )
+    factor_location, factor_covariance = (
+        multivariate_family.location_covariance_from_natural(factor_conversion.natural)
+    )
+
+    dirichlet_family = phx.uq.DirichletFamily(5)
+    dirichlet_concentration = 0.15 + jnp.exp(
+        0.7 * jr.normal(keys[12], (structured_count, 5))
+    )
+    dirichlet_natural = dirichlet_family.natural_from_concentration(
+        dirichlet_concentration
+    )
+    dirichlet_mean = dirichlet_family.mean_from_natural(dirichlet_natural).values
+    direct_dirichlet_mean = jsp.special.digamma(
+        dirichlet_concentration
+    ) - jsp.special.digamma(jnp.sum(dirichlet_concentration, axis=-1, keepdims=True))
+
+    def dirichlet_round_trip(values):
+        return dirichlet_family.natural_from_mean(
+            dirichlet_family.mean_from_natural(dirichlet_family.natural(values))
+        )
+
+    dirichlet_cold, dirichlet_compile, dirichlet_execute = _jit_timings(
+        dirichlet_round_trip,
+        dirichlet_natural.values,
+        repetitions=repetitions,
+    )
+    dirichlet_conversion = dirichlet_round_trip(dirichlet_natural.values)
+    simplex_bijector = phx.uq.SimplexBijector(5)
+    simplex_raw = 0.5 * jr.normal(keys[13], (4,))
+    simplex_jacobian = jax.jacobian(simplex_bijector.forward)(simplex_raw)
+    direct_simplex_log_volume = (
+        0.5 * jnp.linalg.slogdet(simplex_jacobian.T @ simplex_jacobian)[1]
+    )
+
+    gamma_poisson = phx.uq.GammaPoissonConjugacy(2.0, 1.5).update(
+        jnp.asarray([0.0, 2.0, 3.0]),
+        exposure=jnp.asarray([1.0, 0.5, 2.0]),
+    )
+    gamma_poisson_shape, gamma_poisson_rate = gamma_poisson.posterior_shape_rate
+    dirichlet_categorical = phx.uq.DirichletCategoricalConjugacy(
+        jnp.asarray([1.0, 2.0, 3.0])
+    ).update(jnp.asarray([0, 2, 1, 2, 2]))
+
+    maximum_kernel_error = jnp.maximum(
+        jnp.max(jnp.abs(bernoulli_values - direct_bernoulli)),
+        jnp.max(jnp.abs(poisson_values - direct_poisson)),
+    )
+    maximum_loss_error = jnp.maximum(
+        jnp.max(
+            jnp.abs(
+                bernoulli_loss
+                - (
+                    jax.nn.softplus(bernoulli_natural)
+                    - bernoulli_targets * bernoulli_natural
+                )
+            )
+        ),
+        jnp.max(
+            jnp.abs(
+                poisson_loss
+                - (jnp.exp(poisson_natural) - poisson_targets * poisson_natural)
+            )
+        ),
+    )
+    maximum_score_error = jnp.maximum(
+        jnp.max(
+            jnp.abs(
+                bernoulli_score - (jax.nn.sigmoid(bernoulli_natural) - bernoulli_targets)
+            )
+        ),
+        jnp.max(jnp.abs(poisson_score - (jnp.exp(poisson_natural) - poisson_targets))),
+    )
+    metrics = {
+        "canonical_log_probability_max_error": metric(
+            maximum_kernel_error, "accuracy", maximum=2.0e-12
+        ),
+        "canonical_loss_max_error": metric(
+            maximum_loss_error, "accuracy", maximum=2.0e-12
+        ),
+        "canonical_score_max_error": metric(
+            maximum_score_error, "accuracy", maximum=2.0e-12
+        ),
+        "categorical_log_probability_max_error": metric(
+            jnp.max(jnp.abs(categorical_values - direct_categorical)),
+            "accuracy",
+            maximum=2.0e-12,
+        ),
+        "gamma_mean_coordinates_max_error": metric(
+            jnp.max(jnp.abs(gamma_mean - direct_gamma_mean)),
+            "accuracy",
+            maximum=2.0e-12,
+        ),
+        "gamma_inverse_max_error": metric(
+            jnp.max(jnp.abs(gamma_conversion.natural.values - gamma_natural.values)),
+            "accuracy",
+            maximum=2.0e-8,
+        ),
+        "gamma_inverse_valid_fraction": metric(
+            jnp.mean(gamma_conversion.valid.astype(float)),
+            "convergence",
+            minimum=1.0,
+        ),
+        "multivariate_normal_round_trip_max_error": metric(
+            jnp.maximum(
+                jnp.max(jnp.abs(reconstructed_location - multivariate_location)),
+                jnp.max(jnp.abs(reconstructed_covariance - multivariate_covariance)),
+            ),
+            "accuracy",
+            maximum=2.0e-11,
+        ),
+        "multivariate_normal_fisher_max_error": metric(
+            jnp.max(jnp.abs(multivariate_fisher - dense_multivariate_fisher)),
+            "accuracy",
+            maximum=2.0e-10,
+        ),
+        "gaussian_factor_bridge_max_error": metric(
+            jnp.maximum(
+                jnp.max(jnp.abs(factor_location - multivariate_location)),
+                jnp.max(jnp.abs(factor_covariance - multivariate_covariance)),
+            ),
+            "accuracy",
+            maximum=2.0e-11,
+        ),
+        "dirichlet_mean_coordinates_max_error": metric(
+            jnp.max(jnp.abs(dirichlet_mean - direct_dirichlet_mean)),
+            "accuracy",
+            maximum=2.0e-12,
+        ),
+        "dirichlet_inverse_max_error": metric(
+            jnp.max(
+                jnp.abs(dirichlet_conversion.natural.values - dirichlet_natural.values)
+            ),
+            "accuracy",
+            maximum=3.0e-8,
+        ),
+        "dirichlet_inverse_valid_fraction": metric(
+            jnp.mean(dirichlet_conversion.valid.astype(float)),
+            "convergence",
+            minimum=1.0,
+        ),
+        "simplex_hausdorff_jacobian_error": metric(
+            jnp.abs(
+                simplex_bijector.forward_log_det_jacobian(simplex_raw)
+                - direct_simplex_log_volume
+            ),
+            "accuracy",
+            maximum=2.0e-12,
+        ),
+        "gamma_poisson_posterior_max_error": metric(
+            jnp.maximum(
+                jnp.abs(gamma_poisson_shape - 7.0),
+                jnp.abs(gamma_poisson_rate - 5.0),
+            ),
+            "accuracy",
+            maximum=2.0e-12,
+        ),
+        "dirichlet_categorical_posterior_max_error": metric(
+            jnp.max(
+                jnp.abs(
+                    dirichlet_categorical.posterior_concentration
+                    - jnp.asarray([2.0, 3.0, 6.0])
+                )
+            ),
+            "accuracy",
+            maximum=2.0e-12,
+        ),
+        "conjugate_update_valid_fraction": metric(
+            0.5
+            * (
+                gamma_poisson.valid.astype(float)
+                + dirichlet_categorical.valid.astype(float)
+            ),
+            "convergence",
+            minimum=1.0,
+        ),
+        "projection_mean_max_error": metric(
+            jnp.abs(one_shot.mean_coordinates.values[0] - direct_projection_mean),
+            "accuracy",
+            maximum=2.0e-12,
+        ),
+        "merged_projection_max_error": metric(
+            jnp.max(
+                jnp.abs(merged.mean_coordinates.values - one_shot.mean_coordinates.values)
+            ),
+            "accuracy",
+            maximum=2.0e-12,
+        ),
+        "family_fisher_max_error": metric(
+            jnp.max(jnp.abs(fisher_action - dense_fisher_action)),
+            "accuracy",
+            maximum=2.0e-11,
+        ),
+        "parameter_fisher_max_error": metric(
+            jnp.max(jnp.abs(parameter_action - direct_parameter_action)),
+            "accuracy",
+            maximum=2.0e-11,
+        ),
+        "projection_valid_fraction": metric(
+            0.5 * (one_shot.valid.astype(float) + merged.valid.astype(float)),
+            "convergence",
+            minimum=1.0,
+        ),
+        "bernoulli_cold_seconds": metric(bernoulli_cold, "performance", unit="s"),
+        "bernoulli_compile_seconds": metric(bernoulli_compile, "performance", unit="s"),
+        "bernoulli_execute_seconds": metric(bernoulli_execute, "performance", unit="s"),
+        "bernoulli_throughput": metric(
+            sample_count / bernoulli_execute,
+            "performance",
+            unit="observation/s",
+        ),
+        "poisson_cold_seconds": metric(poisson_cold, "performance", unit="s"),
+        "poisson_compile_seconds": metric(poisson_compile, "performance", unit="s"),
+        "poisson_execute_seconds": metric(poisson_execute, "performance", unit="s"),
+        "poisson_throughput": metric(
+            sample_count / poisson_execute,
+            "performance",
+            unit="observation/s",
+        ),
+        "categorical_cold_seconds": metric(categorical_cold, "performance", unit="s"),
+        "categorical_compile_seconds": metric(
+            categorical_compile, "performance", unit="s"
+        ),
+        "categorical_execute_seconds": metric(
+            categorical_execute, "performance", unit="s"
+        ),
+        "categorical_throughput": metric(
+            structured_count / categorical_execute,
+            "performance",
+            unit="observation/s",
+        ),
+        "gamma_inverse_cold_seconds": metric(gamma_cold, "performance", unit="s"),
+        "gamma_inverse_compile_seconds": metric(gamma_compile, "performance", unit="s"),
+        "gamma_inverse_execute_seconds": metric(gamma_execute, "performance", unit="s"),
+        "dirichlet_inverse_cold_seconds": metric(dirichlet_cold, "performance", unit="s"),
+        "dirichlet_inverse_compile_seconds": metric(
+            dirichlet_compile, "performance", unit="s"
+        ),
+        "dirichlet_inverse_execute_seconds": metric(
+            dirichlet_execute, "performance", unit="s"
+        ),
+        "one_shot_projection_seconds": metric(one_shot_seconds, "performance", unit="s"),
+        "merged_projection_seconds": metric(merged_seconds, "performance", unit="s"),
+        "projection_merge_time_ratio": metric(
+            merged_seconds / one_shot_seconds, "diagnostic"
+        ),
+        "family_fisher_cold_seconds": metric(fisher_cold, "performance", unit="s"),
+        "family_fisher_compile_seconds": metric(fisher_compile, "performance", unit="s"),
+        "family_fisher_execute_seconds": metric(fisher_execute, "performance", unit="s"),
+        "parameter_fisher_cold_seconds": metric(parameter_cold, "performance", unit="s"),
+        "parameter_fisher_compile_seconds": metric(
+            parameter_compile, "performance", unit="s"
+        ),
+        "parameter_fisher_execute_seconds": metric(
+            parameter_execute, "performance", unit="s"
+        ),
+        "dense_parameter_fisher_reference_bytes": metric(
+            parameter_dimension * parameter_dimension * jnp.dtype(float).itemsize,
+            "performance",
+            unit="byte",
+        ),
+        "matrix_free_action_bytes": metric(
+            parameter_action.nbytes, "performance", unit="byte"
+        ),
+        "wall_seconds": metric(time.perf_counter() - started, "performance", unit="s"),
+    }
+    return ScenarioResult(
+        name="exponential_family_geometry",
+        description=exponential_family_geometry.__doc__ or "",
+        seed=seed,
+        metrics=metrics,
+        metadata={
+            "profile": configuration.profile,
+            "sample_count": sample_count,
+            "timing_repetitions": repetitions,
+            "structured_sample_count": structured_count,
+            "symmetric_coordinate_chart": "orthonormal-svec",
+            "simplex_measure": "hausdorff",
+            "parameter_dimension": parameter_dimension,
+            "parameter_natural_dimension": natural_dimension,
+            "fisher_materialization": "matrix_free",
+        },
+    )
+
+
 SCENARIOS: dict[str, Scenario] = {
     "elliptic_coefficient_inverse": elliptic_coefficient_inverse,
     "nonlinear_transformed_ode": nonlinear_transformed_ode,
@@ -3377,6 +3861,7 @@ SCENARIOS: dict[str, Scenario] = {
     "stochastic_gradient_regression": stochastic_gradient_regression,
     "linearized_uncertainty_propagation": linearized_uncertainty_propagation,
     "dynamic_factor_stochastic_volatility": dynamic_factor_stochastic_volatility,
+    "exponential_family_geometry": exponential_family_geometry,
 }
 
 
