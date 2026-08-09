@@ -299,6 +299,25 @@ class WeightedMomentsDiagnostics(StrictModule):
     log_weight_range: Array
     finite_count: Array
 
+    def __init__(
+        self,
+        *,
+        weight_ess: Array,
+        relative_weight_ess: Array,
+        coefficient_of_variation: Array,
+        maximum_normalized_weight: Array,
+        entropy: Array,
+        log_weight_range: Array,
+        finite_count: Array,
+    ):
+        self.weight_ess = jnp.asarray(weight_ess)
+        self.relative_weight_ess = jnp.asarray(relative_weight_ess)
+        self.coefficient_of_variation = jnp.asarray(coefficient_of_variation)
+        self.maximum_normalized_weight = jnp.asarray(maximum_normalized_weight)
+        self.entropy = jnp.asarray(entropy)
+        self.log_weight_range = jnp.asarray(log_weight_range)
+        self.finite_count = jnp.asarray(finite_count, dtype=jnp.int32)
+
 
 def weighted_diagnostics(
     accumulator: LogWeightedAccumulator,

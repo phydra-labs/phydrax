@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from ..._exponential_family import BernoulliFamily, PoissonFamily
 from .._batch import MLBatch, WeightPolicy
 from .._contracts import AbstractRecipe, FitResult
 from ._base import (
@@ -27,6 +28,10 @@ from ._base import (
     prepare_supervised,
     unrolled_contract,
 )
+
+
+_BERNOULLI_FAMILY = BernoulliFamily()
+_POISSON_FAMILY = PoissonFamily()
 
 
 def _scalar(value: ArrayLike, name: str, /, *, positive: bool = False) -> Array:
@@ -101,7 +106,8 @@ def _fit_binary_logistic(
 
     def objective(beta, bias):
         scores = design_matmul(prepared.design, beta) + bias[:, None, :]
-        loss = jax.nn.softplus(scores) - targets * scores
+        natural = _BERNOULLI_FAMILY.natural(scores[..., None])
+        loss = _BERNOULLI_FAMILY.canonical_loss(natural, targets)
         return jnp.sum(
             prepared.weights * loss, axis=(1, 2)
         ) + 0.5 * recipe.l2_strength * jnp.sum(beta * beta, axis=(1, 2))
@@ -110,7 +116,10 @@ def _fit_binary_logistic(
         del iteration
         beta, bias = state
         scores = design_matmul(prepared.design, beta) + bias[:, None, :]
-        derivative = prepared.weights * (jax.nn.sigmoid(scores) - targets)
+        natural = _BERNOULLI_FAMILY.natural(scores[..., None])
+        derivative = (
+            prepared.weights * _BERNOULLI_FAMILY.canonical_score(natural, targets)[..., 0]
+        )
         beta_candidate = beta - learning_rate * (
             design_transpose_matmul(prepared.design, derivative)
             + recipe.l2_strength * beta
@@ -350,17 +359,22 @@ def _fit_log_glm(recipe, batch: MLBatch, /, *, family: str, power: float) -> Fit
     learning_rate = recipe.learning_rate
     active = prepared.weights > 0.0
     if family == "poisson":
-        domain = prepared.targets >= 0.0
+        domain = _POISSON_FAMILY.sufficient_statistics(prepared.targets).valid
+        family_targets = jnp.where(domain, prepared.targets, 0.0)
     elif family == "gamma":
         domain = prepared.targets > 0.0
+        family_targets = prepared.targets
     else:
         domain = prepared.targets > 0.0 if power == 2.0 else prepared.targets >= 0.0
+        family_targets = prepared.targets
     domain_valid = jnp.all(domain | (~active), axis=(1, 2))
 
     def loss_and_derivative(eta):
         if family == "poisson":
-            mean_value = jnp.exp(eta)
-            return mean_value - prepared.targets * eta, mean_value - prepared.targets
+            natural = _POISSON_FAMILY.natural(eta[..., None])
+            loss = _POISSON_FAMILY.canonical_loss(natural, family_targets)
+            derivative = _POISSON_FAMILY.canonical_score(natural, family_targets)[..., 0]
+            return loss, derivative
         if family == "gamma":
             inverse_mean = jnp.exp(-eta)
             return (

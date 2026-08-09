@@ -10,8 +10,9 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from .._probability import AbstractProbabilityLaw
 from .._strict import StrictModule
-from ._distributions import AbstractDistribution, LogNormal, Normal
+from ._distributions import LogNormal, Normal
 from ._posterior import (
     AbstractBijector,
     ExpBijector,
@@ -50,7 +51,7 @@ class GaussianPriorWhitening(StrictModule):
         initial_leaves, treedef = jax.tree_util.tree_flatten(space.initial)
         prior_leaves = jax.tree_util.tree_leaves(
             space.priors,
-            is_leaf=lambda value: isinstance(value, AbstractDistribution),
+            is_leaf=lambda value: isinstance(value, AbstractProbabilityLaw),
         )
         bijector_leaves = jax.tree_util.tree_leaves(
             space.bijectors,

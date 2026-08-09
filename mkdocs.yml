@@ -235,6 +235,7 @@ nav:
             - Geometry-preserving solvers: "api/solver/geometric.md"
         - Uncertainty quantification:
             - Overview: "api/uq/index.md"
+            - Exponential families: "api/uq/exponential_families.md"
             - Predictive results: "api/uq/predictive.md"
             - Neural-operator uncertainty: "api/uq/operator.md"
             - Inference and ensembles: "api/uq/inference.md"

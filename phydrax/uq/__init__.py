@@ -4,12 +4,49 @@
 
 """Native uncertainty-quantification tools for Phydrax."""
 
+from .._exponential_family import (
+    AbstractExponentialFamily,
+    BernoulliFamily,
+    CategoricalFamily,
+    DirichletCategoricalConjugacy,
+    DirichletCategoricalStatistics,
+    DirichletCategoricalUpdate,
+    DirichletFamily,
+    EXPONENTIAL_FAMILY_INSUFFICIENT_WEIGHT,
+    EXPONENTIAL_FAMILY_INVALID_EVENT,
+    EXPONENTIAL_FAMILY_MEAN_BOUNDARY,
+    EXPONENTIAL_FAMILY_NONCONVERGED,
+    EXPONENTIAL_FAMILY_NONFINITE,
+    EXPONENTIAL_FAMILY_OUTSIDE_MEAN_DOMAIN,
+    EXPONENTIAL_FAMILY_OUTSIDE_NATURAL_DOMAIN,
+    exponential_family_status_name,
+    EXPONENTIAL_FAMILY_SUCCESS,
+    ExponentialFamilyConversionResult,
+    ExponentialFamilyDomainResult,
+    ExponentialFamilyLaw,
+    ExponentialFamilySignature,
+    ExponentialFamilyStatus,
+    ExponentialRateFamily,
+    GammaFamily,
+    GammaPoissonConjugacy,
+    GammaPoissonStatistics,
+    GammaPoissonUpdate,
+    MeanCoordinates,
+    MultivariateNormalFamily,
+    NaturalCoordinates,
+    NormalFamily,
+    PoissonFamily,
+    StatisticBatch,
+)
 from .._likelihoods import (
     AbstractLikelihood,
+    CategoricalExponentialFamilyLikelihood,
     GaussianLikelihood,
     GaussianLocationScaleLikelihood,
+    ScalarNaturalExponentialFamilyLikelihood,
     StudentTLikelihood,
 )
+from .._probability import AbstractProbabilityLaw
 from ._bellman import (
     bellman_filter,
     bellman_filter_status_name,
@@ -127,6 +164,16 @@ from ._ensemble_filter import (
     EnsembleSmootherResult,
     initialize_ensemble_filter,
 )
+from ._exponential_family_gaussian import (
+    gaussian_factor_from_multivariate_normal,
+    multivariate_normal_from_gaussian_factor,
+)
+from ._exponential_family_projection import (
+    ExponentialFamilyEstimateResult,
+    ExponentialFamilyProjectionAccumulator,
+    fit_exponential_family,
+    project_exponential_family,
+)
 from ._filter_checkpoint import (
     FilterCheckpointAlgorithm,
     FilterState,
@@ -167,7 +214,6 @@ from ._gaussian_factor import (
     GaussianFactorStatus,
     solve_triangular_rank_aware,
 )
-from ._gp_condition import GaussianProcessCondition, GaussianProcessConditioner
 from ._gp_classification import (
     BernoulliGaussianProcessLikelihood,
     BernoulliGaussianProcessPosterior,
@@ -176,6 +222,7 @@ from ._gp_classification import (
     condition_bernoulli_gaussian_process,
     condition_categorical_gaussian_process,
 )
+from ._gp_condition import GaussianProcessCondition, GaussianProcessConditioner
 from ._gp_functional import (
     directional_derivative_functional,
     functional_kernel_diagonal,
@@ -330,16 +377,6 @@ from ._operator_metrics import (
     operator_interval_coverage,
     operator_interval_width,
 )
-from ._transport_metrics import (
-    operator_ensemble_sinkhorn_divergence,
-    operator_ensemble_sliced_wasserstein,
-    predictive_sinkhorn_divergence,
-    PredictiveTransportMetricResult,
-)
-from ._transport_resampling import (
-    optimal_transport_ensemble_transform,
-    OptimalTransportEnsembleTransformResult,
-)
 from ._particle import (
     bootstrap_particle_filter,
     effective_sample_size,
@@ -396,6 +433,7 @@ from ._posterior import (
     ParameterSpace,
     PosteriorProblem,
     SigmoidIntervalBijector,
+    SimplexBijector,
 )
 from ._posterior_coreset import PosteriorCoreset, SteinThinning, thin_posterior
 from ._posterior_diagnostics import (
@@ -492,6 +530,8 @@ from ._sensitivity import (
     EmpiricalDirectionsResult,
     experiment_design_objective,
     ExperimentDesignResult,
+    exponential_family_fisher_action,
+    exponential_family_parameter_fisher_action,
     fisher_information_action,
     fixed_noise_pathwise_gradient,
     gauss_newton_action,
@@ -568,6 +608,16 @@ from ._stochastic_spectra import (
     state_output_cross_spectral_density,
     state_spectral_density,
 )
+from ._transport_metrics import (
+    operator_ensemble_sinkhorn_divergence,
+    operator_ensemble_sliced_wasserstein,
+    predictive_sinkhorn_divergence,
+    PredictiveTransportMetricResult,
+)
+from ._transport_resampling import (
+    optimal_transport_ensemble_transform,
+    OptimalTransportEnsembleTransformResult,
+)
 from ._whitening import GaussianPriorWhitening
 
 
@@ -633,6 +683,8 @@ __all__ = [
     "gaussian_cross_covariance",
     "gaussian_factor_from_covariance",
     "gaussian_factor_log_determinant",
+    "gaussian_factor_from_multivariate_normal",
+    "multivariate_normal_from_gaussian_factor",
     "gaussian_factor_quadratic_form",
     "solve_triangular_rank_aware",
     "NONLINEAR_GAUSSIAN_INPUT_FACTOR_INVALID",
@@ -663,11 +715,50 @@ __all__ = [
     "gauss_newton_action",
     "likelihood_ratio_gradient",
     "resampling_score_gradient",
+    "exponential_family_fisher_action",
+    "exponential_family_parameter_fisher_action",
     "AbstractDistribution",
     "EmpiricalDistribution",
     "LogNormal",
     "Normal",
     "Uniform",
+    "AbstractProbabilityLaw",
+    "DirichletFamily",
+    "AbstractExponentialFamily",
+    "BernoulliFamily",
+    "CategoricalFamily",
+    "DirichletCategoricalConjugacy",
+    "DirichletCategoricalStatistics",
+    "DirichletCategoricalUpdate",
+    "EXPONENTIAL_FAMILY_INSUFFICIENT_WEIGHT",
+    "EXPONENTIAL_FAMILY_INVALID_EVENT",
+    "EXPONENTIAL_FAMILY_MEAN_BOUNDARY",
+    "EXPONENTIAL_FAMILY_NONFINITE",
+    "EXPONENTIAL_FAMILY_NONCONVERGED",
+    "EXPONENTIAL_FAMILY_OUTSIDE_MEAN_DOMAIN",
+    "EXPONENTIAL_FAMILY_OUTSIDE_NATURAL_DOMAIN",
+    "EXPONENTIAL_FAMILY_SUCCESS",
+    "exponential_family_status_name",
+    "ExponentialFamilyConversionResult",
+    "ExponentialFamilyDomainResult",
+    "ExponentialFamilyEstimateResult",
+    "ExponentialFamilyLaw",
+    "GammaFamily",
+    "GammaPoissonConjugacy",
+    "GammaPoissonStatistics",
+    "GammaPoissonUpdate",
+    "ExponentialFamilyProjectionAccumulator",
+    "ExponentialFamilySignature",
+    "ExponentialFamilyStatus",
+    "ExponentialRateFamily",
+    "fit_exponential_family",
+    "MultivariateNormalFamily",
+    "MeanCoordinates",
+    "NaturalCoordinates",
+    "NormalFamily",
+    "PoissonFamily",
+    "project_exponential_family",
+    "StatisticBatch",
     "propagate",
     "RandomSampleBatch",
     "sample_joint",
@@ -826,9 +917,11 @@ __all__ = [
     "ParticleMarginalMetropolisHastingsResult",
     "sample_conditional_particle_path",
     "AbstractLikelihood",
+    "CategoricalExponentialFamilyLikelihood",
     "GaussianLikelihood",
     "GaussianLocationScaleLikelihood",
     "StudentTLikelihood",
+    "ScalarNaturalExponentialFamilyLikelihood",
     "CovarianceBatching",
     "LinearizedGaussianMeasurementLikelihood",
     "GaussianScaleCalibrator",
@@ -935,6 +1028,7 @@ __all__ = [
     "ExpBijector",
     "IdentityBijector",
     "SigmoidIntervalBijector",
+    "SimplexBijector",
     "ParameterSpace",
     "PosteriorProblem",
     "diagnose_posterior",

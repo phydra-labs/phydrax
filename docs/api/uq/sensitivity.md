@@ -88,11 +88,26 @@ assert curvature_direction.method_id == "jax_jvp_vjp"
 The returned action records `operator_id`, `method_id`, approximation, explicit
 regularization, sample count when applicable, validity, and status.
 
+For a declared exponential family,
+`exponential_family_fisher_action` applies the exact natural-coordinate Fisher as a
+JVP of the mean map. `exponential_family_parameter_fisher_action` wraps this with the
+natural-parameter JVP and transpose pullback to apply `Jηᵀ F(η) Jη`. These actions are
+exact for the declared family geometry and do not require score samples.
+
+
 ::: phydrax.uq.SensitivityActionResult
 
 ---
 
 ::: phydrax.uq.fisher_information_action
+
+---
+
+::: phydrax.uq.exponential_family_fisher_action
+
+---
+
+::: phydrax.uq.exponential_family_parameter_fisher_action
 
 ---
 

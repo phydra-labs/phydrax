@@ -1,7 +1,9 @@
 # Uncertainty quantification
 
-`phydrax.uq` provides covariance-factor and conditional Gaussian algebra, guarded
-nonlinear moment transforms, covariance- and square-root-form Kalman methods,
+`phydrax.uq` provides normalized exponential-family laws, typed natural/mean/statistic
+coordinates, weighted maximum-likelihood projection, and exact matrix-free family
+Fisher actions. It also provides covariance-factor and conditional Gaussian algebra,
+guarded nonlinear moment transforms, covariance- and square-root-form Kalman methods,
 continuous-discrete Gaussian filtering and smoothing, and stationary stochastic
 spectra. Its sensitivity layer covers global Sobol indices, stochastic pathwise and
 score gradients, matrix-free Fisher and Gauss--Newton actions, empirical directions,
@@ -42,6 +44,7 @@ spectral routes. Singular positive-semidefinite factors remain singular, and com
 covariances and spectra use conjugate adjoints.
 
 - [Predictive results](predictive.md)
+- [Exponential families](exponential_families.md)
 - [Native optimal transport](../transport/index.md)
 - [Shared positive-definite kernels](../kernels.md)
 - [Inference and ensembles](inference.md)
