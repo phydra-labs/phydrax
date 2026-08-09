@@ -38,7 +38,7 @@ evolution = phx.solver.DiffraxEvolution(
     system, rtol=1e-8, atol=1e-10
 )
 grid = phx.dynamics.TimeGrid(
-    jnp.linspace(0.0, 40.0, 4001), time_id="lorenz-observation-grid"
+    jnp.linspace(0.0, 25.0, 251), time_id="lorenz-observation-grid"
 )
 trajectory = phx.dynamics.evolve(
     evolution, jnp.asarray([1.0, 1.0, 1.0]), grid
@@ -165,7 +165,7 @@ crossings = phx.dynamics.analysis.find_section_crossings(
     section,
     direction="positive",
     refinement="interpolation",
-    max_crossings=128,
+    max_crossings=32,
 )
 return_map = phx.dynamics.analysis.section_return_map(crossings)
 ```
@@ -189,7 +189,7 @@ phase = phx.dynamics.analysis.ComponentPhaseCondition(
 periodic_problem = phx.dynamics.analysis.PeriodicOrbitProblem(
     evolution,
     kind="flow",
-    num_segments=8,
+    num_segments=2,
     phase_condition=phase,
     problem_id="lorenz-periodic-orbit",
 )
@@ -203,13 +203,15 @@ orbit = phx.dynamics.analysis.solve_periodic_orbit(
     initial_nodes,
     initial_period=1.5,
     linear_method="matrix_free",
-    max_iterations=20,
+    max_iterations=1,
+    max_line_search=2,
+    krylov_max_iterations=4,
 )
 
 floquet = phx.dynamics.analysis.floquet_spectrum(
     orbit,
     method="leading",
-    leading_k=3,
+    leading_k=2,
 )
 ```
 
@@ -247,9 +249,9 @@ branch = phx.dynamics.analysis.continue_branch(
     jnp.asarray(0.0),
     method="pseudo_arclength",
     direction=1,
-    initial_step=0.02,
-    max_points=256,
-    parameter_bounds=(-1.0, 30.0),
+    initial_step=0.1,
+    max_points=32,
+    parameter_bounds=(-1.0, 5.0),
 )
 ```
 
@@ -270,9 +272,9 @@ spectrum = phx.dynamics.analysis.finite_time_lyapunov_spectrum(
     jnp.asarray([1.0, 1.0, 1.0]),
     grid,
     leading_k=3,
-    qr_interval=10,
-    burn_in=1000,
-    accumulation_interval=100,
+    qr_interval=5,
+    burn_in=50,
+    accumulation_interval=20,
 )
 print(spectrum.exponents)
 print(spectrum.kaplan_yorke_dimension)
@@ -283,16 +285,23 @@ Do not concatenate independently normalized finite-time estimates.
 
 Covariant vectors require a backward triangular sweep:
 
+The short schedule below is enough to exercise the forward and backward contracts. Extend
+the horizon and verify backward-window convergence before interpreting its directions.
+
+
 ```python
+direction_grid = phx.dynamics.TimeGrid(
+    jnp.linspace(0.0, 2.0, 21), time_id="lorenz-direction-grid"
+)
 clv = phx.dynamics.analysis.covariant_directions(
     evolution,
     jnp.asarray([1.0, 1.0, 1.0]),
-    grid,
+    direction_grid,
     kind="clv",
     memory_mode="store",
-    qr_interval=10,
-    save_every=10,
-    backward_discard=20,
+    qr_interval=2,
+    save_every=2,
+    backward_discard=2,
 )
 ```
 
@@ -309,11 +318,11 @@ For finite-amplitude instability at a declared scale, use a separate estimator:
 finite_size = phx.dynamics.analysis.finite_size_growth(
     evolution,
     jnp.asarray([1.0, 1.0, 1.0]),
-    grid,
-    num_directions=16,
+    direction_grid,
+    num_directions=2,
     seed=3,
     perturbation_distance=1e-3,
-    rescale_interval=10,
+    rescale_interval=2,
 )
 ```
 
@@ -328,7 +337,7 @@ explicitly or respect `max_samples`; do not bypass the guard accidentally.
 rqa = phx.dynamics.analysis.recurrence_quantification(
     data,
     2.0,
-    theiler_window=50,
+    theiler_window=10,
     minimum_diagonal_length=2,
     minimum_vertical_length=2,
 )
@@ -337,17 +346,17 @@ zero_one = phx.dynamics.analysis.zero_one_test(
     data,
     component=0,
     observable_id="lorenz-x",
-    burn_in=1000,
-    num_frequencies=100,
+    burn_in=50,
+    num_frequencies=8,
     seed=7,
-    fit_lags=(10, 300),
+    fit_lags=(3, 12),
 )
 
 correlation = phx.dynamics.analysis.correlation_dimension(
     data,
-    jnp.logspace(-2.0, 1.0, 40),
-    theiler_window=50,
-    fit_indices=(10, 28),
+    jnp.logspace(-2.0, 1.0, 12),
+    theiler_window=10,
+    fit_indices=(3, 9),
 )
 ```
 
@@ -367,7 +376,7 @@ significance = phx.dynamics.analysis.surrogate_significance(
     statistic_id="lag-one-product",
     method="aaft",
     alternative="greater",
-    num_surrogates=999,
+    num_surrogates=9,
     seed=11,
 )
 ```
@@ -383,10 +392,13 @@ Generate the cases with the responsible subsystem, compute one diagnostic per ca
 aggregate. Do not label a solver tolerance sweep as process noise or a stochastic path
 ensemble as posterior parameter uncertainty.
 
+The concrete values below stand in for a precomputed diagnostic table; replace them with
+the outputs of those separately declared runs.
+
 ```python
 # Shape: (initial_condition, parameter, noise_realization, tolerance, metric)
-diagnostic_samples = jnp.asarray(...)
-diagnostic_valid = jnp.asarray(...)
+diagnostic_samples = jnp.linspace(0.4, 0.9, 32).reshape((2, 2, 2, 2, 2))
+diagnostic_valid = jnp.ones((2, 2, 2, 2), dtype=bool)
 
 uncertainty = phx.dynamics.analysis.summarize_chaos_uncertainty(
     diagnostic_samples,
@@ -400,7 +412,7 @@ uncertainty = phx.dynamics.analysis.summarize_chaos_uncertainty(
     ),
     sample_valid=diagnostic_valid,
     confidence=0.95,
-    bootstrap_samples=1999,
+    bootstrap_samples=16,
     seed=13,
 )
 ```
@@ -414,28 +426,40 @@ causal attribution.
 Phydrax evaluates a shadowing candidate but does not silently choose one shadowing
 algorithm, segmentation, regularizer, or preconditioner.
 
+For the map \(x_{n+1}=0.8x_n+p\), the one-step inhomogeneous tangent with respect to
+\(p\) is exactly one, so the candidate can be constructed without a hidden solver.
+
 ```python
-shadowing_problem = phx.dynamics.analysis.ShadowingSensitivityProblem(
-    evolution,
-    # Integrated endpoint parameter-tangent contribution on one segment:
-    lambda state, source, target, args: parameter_forcing(
-        state, source, target, args
-    ),
-    lambda coordinate, state, args: state[2],
-    parameter_id="rho",
-    observable_id="mean-z",
-    problem_id="lorenz-rho-shadowing",
-    neutral_direction=lambda coordinate, state, args: lorenz(
-        coordinate, state, args
-    ),
-    time_dilation="flow",
+shadowing_evolution = phx.dynamics.DiscreteEvolution(
+    phx.dynamics.DiscreteSystem(
+        lambda coordinate, state, args: 0.8 * state,
+        state_layout=phx.dynamics.StateLayout((1,)),
+        system_id="contracting-map",
+    )
 )
+shadowing_grid = phx.dynamics.IterationGrid.from_steps(
+    5, iteration_id="shadowing-grid"
+)
+shadowing_trajectory = phx.dynamics.evolve(
+    shadowing_evolution, jnp.asarray([2.0]), shadowing_grid
+)
+shadowing_problem = phx.dynamics.analysis.ShadowingSensitivityProblem(
+    shadowing_evolution,
+    lambda state, source, target, args: jnp.ones_like(state),
+    lambda coordinate, state, args: state[0],
+    parameter_id="additive-offset",
+    observable_id="state",
+    problem_id="contracting-map-shadowing",
+)
+tangent_values = [jnp.asarray([0.0])]
+for _ in range(shadowing_grid.num_steps):
+    tangent_values.append(0.8 * tangent_values[-1] + 1.0)
+tangent_path = jnp.stack(tuple(tangent_values))
 
 candidate = phx.dynamics.analysis.evaluate_shadowing_candidate(
     shadowing_problem,
-    trajectory,
+    shadowing_trajectory,
     tangent_path,
-    time_dilation=dilation_path,
     boundary="free",
 )
 residual = candidate.least_squares_residual()
@@ -454,16 +478,27 @@ The differential adapter accepts `DifferentialSolution`, `MemoryEquationSolution
 `RoughDifferentialSolution`, and `ControlledDifferentialSolution`.
 
 ```python
+delay_state_layout = phx.dynamics.StateLayout(
+    (1,), component_names=("population",)
+)
+delay_problem = phx.solver.DelayDifferentialProblem(
+    lambda time, state, memory, args: -0.2 * state + 0.1 * memory["feedback"],
+    lambda time, args: jnp.ones((1,)),
+    (phx.solver.ConstantDelay("feedback", 0.1),),
+    t0=0.0,
+    t1=0.2,
+)
+save_times = jnp.linspace(0.0, 0.2, 5)
 delay_solution = phx.solver.solve_diffrax_delay(
     delay_problem,
     save_times=save_times,
+    rtol=1e-5,
+    atol=1e-7,
 )
-delay_data = (
-    phx.dynamics.identification.trajectory_data_from_differential_solution(
-        delay_solution,
-        state_layout=delay_state_layout,
-        source_id="retarded-population-study",
-    )
+delay_data = phx.dynamics.identification.trajectory_data_from_differential_solution(
+    delay_solution,
+    state_layout=delay_state_layout,
+    source_id="retarded-population-study",
 )
 ```
 
@@ -478,10 +513,34 @@ ordinary source-aligned controls. Its path ID stays in `source_id`.
 
 ### Finite-horizon controlled dynamics
 
+An externally recorded control trajectory can use the same adapter. This minimal record
+uses the first five saved Lorenz states and an explicit zero-control channel.
+
 ```python
+control_grid = phx.dynamics.TimeGrid(
+    grid.times[:5], time_id="recorded-control-grid"
+)
+control_trajectory = phx.control.ControlTrajectory(
+    time_grid=control_grid,
+    states=trajectory.states[:5],
+    controls=jnp.zeros((control_grid.num_steps, 1)),
+    valid=jnp.ones((control_grid.num_times,), dtype=bool),
+    status=jnp.asarray(0, dtype=jnp.int32),
+    backend_status="recorded",
+    case_shape=(),
+    state_shape=layout.shape,
+    control_shape=(1,),
+    problem_id="recorded-control-problem",
+    dynamics_id=system.system_id,
+    control_id="recorded-control",
+    backend_id="external",
+    method_id="recorded",
+    discretization_id=control_grid.time_id,
+    approximation_id="recorded-control-trajectory",
+)
 control_data = phx.dynamics.identification.trajectory_data_from_control(
-    control_result.trajectory,
-    state_layout=state_layout,
+    control_trajectory,
+    state_layout=layout,
 )
 ```
 
@@ -491,10 +550,26 @@ rather than dropping them.
 
 ### Stochastic paths
 
+Imported path ensembles use the same axis-explicit record. The small offset below only
+constructs a second path for the adapter example; it is not presented as a noise model.
+
 ```python
+external_path_states = jnp.stack(
+    (trajectory.states[:11], trajectory.states[:11] + 1e-3),
+    axis=0,
+)
+stochastic_trajectory = phx.stochastic.StochasticTrajectory(
+    grid.times[:11],
+    external_path_states,
+    realization_axes=("path",),
+    realization_shape=(2,),
+    state_axes=("state",),
+    discretization_id=grid.time_id,
+    approximation_id="external-path-samples",
+)
 stochastic_data = phx.dynamics.identification.trajectory_data_from_stochastic(
     stochastic_trajectory,
-    state_layout=state_layout,
+    state_layout=layout,
 )
 ```
 
@@ -521,21 +596,27 @@ For PDE-FIND, preserve time and spatial axes instead of flattening a field into 
 trajectory:
 
 ```python
+pde_time = jnp.linspace(0.0, 0.5, 21)
+pde_space = jnp.linspace(0.0, 2.0 * jnp.pi, 41)
+diffusivity = 0.1
+field_values = (
+    jnp.exp(-diffusivity * pde_time[:, None])
+    * jnp.sin(pde_space)[None, :]
+)[..., None]
+pde_layout = phx.dynamics.StateLayout((1,), component_names=("u",))
 pde_data = phx.dynamics.identification.StructuredPDEData(
-    (time, space),
+    (pde_time, pde_space),
     field_values,
-    state_layout=phx.dynamics.StateLayout(
-        (1,), component_names=("u",)
-    ),
+    state_layout=pde_layout,
     coordinate_names=("t", "x"),
-    source_id="reaction-diffusion-snapshots",
+    source_id="diffusion-snapshots",
 )
 library = phx.dynamics.identification.PolynomialPDELibrary(
-    pde_data.state_layout,
+    pde_layout,
     ("t", "x"),
-    polynomial_degree=2,
+    polynomial_degree=1,
     spatial_derivative_order=2,
-    include_interactions=True,
+    include_interactions=False,
 )
 pde_result = phx.dynamics.identification.fit_pde_find(
     phx.dynamics.identification.PDEIdentificationProblem(

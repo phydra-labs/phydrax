@@ -83,6 +83,13 @@ from ._score_matching import (
     ScoreSampleProvider,
 )
 from ._supervised_dataset import SupervisedDatasetBatch, SupervisedDatasetTerm
+from ._trajectory_data import (
+    TrajectoryCaseDataBatch,
+    TrajectoryCaseDataTerm,
+    TrajectoryCaseTime,
+    TrajectorySignal,
+    TrajectorySignalInterpolation,
+)
 from ._transport import (
     BarycenterObjectiveTerm,
     EmpiricalSinkhornDivergenceTerm,
@@ -91,13 +98,6 @@ from ._transport import (
     SpatialSinkhornDivergenceTerm,
 )
 from ._unbalanced_transport import SpatialUnbalancedSinkhornDivergenceTerm
-from ._trajectory_data import (
-    TrajectoryCaseDataBatch,
-    TrajectoryCaseDataTerm,
-    TrajectoryCaseTime,
-    TrajectorySignal,
-    TrajectorySignalInterpolation,
-)
 
 
 __all__ = [

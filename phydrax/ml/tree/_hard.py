@@ -640,11 +640,15 @@ def _prepare_batch(
     )
     sample_mask = batch.sample_mask.reshape((case_count, batch.sample_count))
     invalid_weight = sample_mask & (~jnp.isfinite(weight) | (weight < 0.0))
-    weight = eqx.error_if(
-        weight,
-        jnp.any(invalid_weight),
-        "Tree fitting requires finite nonnegative sample weights.",
-    )
+    invalid_weight_predicate = jnp.any(invalid_weight)
+    if isinstance(invalid_weight_predicate, jax.core.Tracer):
+        weight = eqx.error_if(
+            weight,
+            invalid_weight_predicate,
+            "Tree fitting requires finite nonnegative sample weights.",
+        )
+    elif bool(invalid_weight_predicate):
+        raise ValueError("Tree fitting requires finite nonnegative sample weights.")
     target_mask = (
         jnp.ones_like(raw_y, dtype=bool)
         if batch.target_mask is None

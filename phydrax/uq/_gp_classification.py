@@ -4,14 +4,13 @@
 
 from __future__ import annotations
 
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
-from ..kernels import FiniteFeatureKernel
 
 from .._strict import StrictModule
+from ..kernels import FiniteFeatureKernel
 from ._gp_likelihood import GaussianProcessLikelihoodState
 from ._gp_scalar import ExactGaussianProcessFactor, FiniteFeatureGaussianProcessFactor
 
@@ -85,7 +84,9 @@ class CategoricalGaussianProcessPosterior(StrictModule):
 
     def latent_moments(self, query_points: ArrayLike, /) -> tuple[Array, Array]:
         moments = tuple(factor.latent_moments(query_points) for factor in self.factors)
-        return jnp.stack(tuple(value[0] for value in moments), axis=-1), jnp.stack(tuple(value[1] for value in moments), axis=-1)
+        means = jnp.stack(tuple(value[0] for value in moments), axis=-1)
+        variances = jnp.stack(tuple(value[1] for value in moments), axis=-1)
+        return means, variances
 
     def probabilities(self, query_points: ArrayLike, /) -> Array:
         means, variances = self.latent_moments(query_points)

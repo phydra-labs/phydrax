@@ -377,7 +377,6 @@ from ._operator_metrics import (
     operator_interval_coverage,
     operator_interval_width,
 )
-
 from ._particle import (
     bootstrap_particle_filter,
     effective_sample_size,

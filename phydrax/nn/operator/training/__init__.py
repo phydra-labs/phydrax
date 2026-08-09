@@ -94,9 +94,9 @@ from ._semigroup import (
     conditioned_sinkhorn_semigroup_loss,
     ConditionedSemigroupObjective,
     DistributionalSemigroupObjective,
-    SinkhornDistributionalSemigroupObjective,
     SemigroupKeyMode,
     SemigroupReduction,
+    SinkhornDistributionalSemigroupObjective,
 )
 from ._stochastic_transition import (
     direct_operator_horizon_nll,

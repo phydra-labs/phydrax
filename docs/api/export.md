@@ -52,8 +52,39 @@ paths, sampled particle indices, conditional linear means and covariances, lag-o
 covariances, and the source filter/backward-simulation provenance.
 
 ```python
-phx.uq.export_result(result, "inference.phxresult")
-portable = phx.uq.read_result_archive("inference.phxresult")
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+import jax.numpy as jnp
+import phydrax as phx
+
+sensor_x = jnp.linspace(0.1, 0.9, 8)
+source_basis = 0.5 * sensor_x * (1.0 - sensor_x)
+observed_field = 4.0 * source_basis
+likelihood = phx.uq.GaussianLikelihood(0.02)
+parameter_space = phx.uq.ParameterSpace(
+    {"source_strength": jnp.asarray(3.5)},
+    priors={"source_strength": phx.uq.Normal(0.0, 3.0)},
+)
+posterior = phx.uq.PosteriorProblem(
+    parameter_space,
+    lambda parameters: jnp.sum(
+        likelihood.log_prob(
+            parameters["source_strength"] * source_basis,
+            observed_field,
+        )
+    ),
+)
+result = phx.uq.find_map(posterior)
+
+with TemporaryDirectory() as directory:
+    result_path = phx.uq.export_result(
+        result,
+        Path(directory) / "source-inference.phxresult",
+    )
+    portable = phx.uq.read_result_archive(result_path)
+
+assert portable.kind == "map"
 ```
 
 ::: phydrax.uq.export_result

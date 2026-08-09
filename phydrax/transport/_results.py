@@ -8,6 +8,7 @@ from abc import abstractmethod
 
 import equinox as eqx
 import jax.numpy as jnp
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
@@ -220,12 +221,19 @@ class SinkhornResult(AbstractBalancedTransportPlan):
 def require_converged(
     result: AbstractBalancedTransportPlan, /
 ) -> AbstractBalancedTransportPlan:
-    """Raise a JAX-compatible error unless a balanced solve converged."""
+    """Raise unless a balanced solve converged, including under JAX transforms."""
     if not isinstance(result, AbstractBalancedTransportPlan):
         raise TypeError("result must implement the balanced transport plan contract.")
+    failed = jnp.logical_not(result.converged)
+    if not isinstance(failed, jax_core.Tracer):
+        if bool(failed):
+            raise eqx.EquinoxRuntimeError(
+                "Native balanced transport did not converge."
+            )
+        return result
     checked = eqx.error_if(
         result.regularized_cost,
-        ~result.converged,
+        failed,
         "Native balanced transport did not converge.",
     )
     return eqx.tree_at(lambda item: item.regularized_cost, result, checked)
