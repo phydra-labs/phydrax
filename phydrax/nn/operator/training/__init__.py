@@ -85,8 +85,10 @@ from ._rollout import (
 from ._semigroup import (
     conditioned_distributional_semigroup_loss,
     conditioned_semigroup_consistency_loss,
+    conditioned_sinkhorn_semigroup_loss,
     ConditionedSemigroupObjective,
     DistributionalSemigroupObjective,
+    SinkhornDistributionalSemigroupObjective,
     SemigroupKeyMode,
     SemigroupReduction,
 )
@@ -180,8 +182,10 @@ __all__ = [
     "autoregressive_operator_rollout",
     "conditioned_distributional_semigroup_loss",
     "conditioned_semigroup_consistency_loss",
+    "conditioned_sinkhorn_semigroup_loss",
     "ConditionedSemigroupObjective",
     "DistributionalSemigroupObjective",
+    "SinkhornDistributionalSemigroupObjective",
     "SemigroupKeyMode",
     "SemigroupReduction",
     "direct_operator_horizon_nll",

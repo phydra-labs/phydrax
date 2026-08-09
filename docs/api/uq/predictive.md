@@ -30,3 +30,20 @@
     options:
         members:
             - __init__
+
+
+## Transport diagnostics and deterministic particle transforms
+
+`predictive_sinkhorn_divergence` treats each stochastic realization as one complete
+vector event. The ensemble transform replaces normalized weighted particles with an
+equal-weight barycentric ensemble and retains the coupling and mean error.
+
+::: phydrax.uq.predictive_sinkhorn_divergence
+
+---
+
+::: phydrax.uq.OptimalTransportEnsembleTransformResult
+
+---
+
+::: phydrax.uq.optimal_transport_ensemble_transform

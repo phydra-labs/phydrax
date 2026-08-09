@@ -223,3 +223,65 @@ def test_distributional_semigroup_recognizes_brownian_composition_and_key_replay
             _advance,
             key=jr.key(3),
         )
+
+
+def test_sinkhorn_distributional_semigroup_recognizes_process_composition():
+    batch = _transition_batch(cases=2, size=4)
+    objective = phx.nn.operator.training.SinkhornDistributionalSemigroupObjective(
+        num_samples=8,
+        epsilon=1.0,
+        reduction="mean",
+        key_mode="fold_in",
+    )
+    consistent = objective(
+        _BrownianTransition(0.5),
+        batch,
+        0.3,
+        0.4,
+        _condition,
+        _advance,
+        key=jr.key(19),
+    )
+    replay = objective(
+        _BrownianTransition(0.5),
+        batch,
+        0.3,
+        0.4,
+        _condition,
+        _advance,
+        key=jr.key(19),
+    )
+    inconsistent = objective(
+        _BrownianTransition(0.0),
+        batch,
+        0.3,
+        0.4,
+        _condition,
+        _advance,
+        key=jr.key(19),
+    )
+    gradient = eqx.filter_grad(
+        lambda candidate: objective(
+            candidate,
+            batch,
+            0.3,
+            0.4,
+            _condition,
+            _advance,
+            key=jr.key(19),
+        )
+    )(_BrownianTransition(0.5))
+
+    assert jnp.isfinite(consistent)
+    assert jnp.array_equal(consistent, replay)
+    assert consistent < inconsistent
+    assert jnp.isfinite(gradient.scale_power)
+    with pytest.raises(ValueError, match="requires a PRNG key"):
+        objective(
+            _BrownianTransition(),
+            batch,
+            0.3,
+            0.4,
+            _condition,
+            _advance,
+        )

@@ -42,6 +42,7 @@ spectral routes. Singular positive-semidefinite factors remain singular, and com
 covariances and spectra use conjugate adjoints.
 
 - [Predictive results](predictive.md)
+- [Native optimal transport](../transport/index.md)
 - [Shared positive-definite kernels](../kernels.md)
 - [Inference and ensembles](inference.md)
 - [Likelihoods, process diagnostics, calibration, and retention](calibration.md)

@@ -147,6 +147,20 @@ input/method/backend provenance remain present in results. Square-root Kalman
 execution does not support the parallel method. Discrete particle ancestry and
 resampling choices are nondifferentiable.
 
+
+### Optimal transport: geometry between finite measures
+
+`phydrax.transport` lowers integration-native discrete or weighted targets into one
+balanced finite-measure problem with explicit physical mass, active support, event
+encoding, ground cost, and provenance. Stabilized dense and blockwise Sinkhorn return
+potentials, objective components, residuals, status, and matrix-free plan actions.
+Debiased Sinkhorn divergence, exact one-dimensional and sliced Wasserstein distances,
+soft order operations, prepared references, whole-field UQ metrics, scalar terms,
+distributional semigroup losses, and deterministic particle transforms reuse that
+substrate. Unequal mass is rejected rather than silently normalized; unbalanced and
+quadratic transport are intentionally outside the current contract. See
+[Guides → Optimal transport](guides_transport.md).
+
 ### Controlled dynamics, estimation, and optimization
 
 Differentiable driving-path classes and `solve_diffrax_cde` cover controlled

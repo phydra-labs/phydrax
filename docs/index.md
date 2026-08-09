@@ -38,6 +38,9 @@ Most workflows are composing a few primitives:
   and quantum matrix operators.
 - **Integration**: explicit targets define measures, plans define numerical
   realizations, and estimates carry method-valid diagnostics and provenance.
+- **Optimal transport**: finite measures lower into balanced discrete problems with
+  explicit mass, geometry, entropic regularization, convergence diagnostics, and
+  matrix-free coupling actions.
 - **Conditions**: typed residual, moment, and observation declarations on components.
 - **Terms**: nonnegative penalties that turn conditions into trainable scalar terms.
 - **Model losses**: optional parameter-space penalties attached directly to models.

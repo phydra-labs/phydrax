@@ -56,6 +56,7 @@ Differential operators support multiple backends (`backend="ad"|"jet"|"fd"|"basi
 - [Operator learning (DatasetDomain × coordinates)](operator_learning.md)
 - [Uncertainty quantification](uncertainty_quantification.md)
 - [Neural-operator uncertainty quantification](operator_uncertainty.md)
+- [Optimal transport](optimal_transport.md)
 - [Mechanics and Deep Ritz objectives](mechanics.md)
 - [Two-level closed-system quantum dynamics](quantum_two_level.md)
 - [Composite systems and a Bell state](quantum_composite.md)

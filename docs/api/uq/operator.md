@@ -263,6 +263,14 @@ semigroup loss.
 
 ::: phydrax.nn.operator.training.conditioned_distributional_semigroup_loss
 
+---
+
+::: phydrax.nn.operator.training.SinkhornDistributionalSemigroupObjective
+
+---
+
+::: phydrax.nn.operator.training.conditioned_sinkhorn_semigroup_loss
+
 ## Fixed observation likelihood
 
 `FixedOperatorObservationLikelihood` defines a normalized finite-dimensional sensor
@@ -339,6 +347,18 @@ and upper bounds.
 
 ---
 ::: phydrax.uq.operator_ensemble_energy_distance
+
+---
+
+::: phydrax.uq.PredictiveTransportMetricResult
+
+---
+
+::: phydrax.uq.operator_ensemble_sinkhorn_divergence
+
+---
+
+::: phydrax.uq.operator_ensemble_sliced_wasserstein
 
 ---
 

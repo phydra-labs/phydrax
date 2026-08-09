@@ -116,6 +116,31 @@ failures that marginal CRPS cannot. Always report which score was used. Query ma
 exclude padded locations, and quadrature weights prevent a denser region from
 silently receiving more physical measure.
 
+For two predictive ensembles on the same output/query contract, add a whole-field
+transport diagnostic:
+
+```py
+sinkhorn_distance = phx.uq.operator_ensemble_sinkhorn_divergence(
+    test_prediction,
+    reference_prediction,
+    measure="quadrature",
+    reduction="none",
+    epsilon=0.5,
+)
+sliced_distance = phx.uq.operator_ensemble_sliced_wasserstein(
+    test_prediction,
+    reference_prediction,
+    measure="quadrature",
+    reduction="none",
+    num_projections=64,
+    key=jr.key(5),
+)
+```
+
+The Sinkhorn result retains cross and self-solve convergence per physical case. The
+sliced result retains normalized projections. Neither replaces marginal calibration
+or simultaneous coverage.
+
 Set `score="l2"` during calibration for a quadrature-weighted functional norm ball.
 That object has a calibrated radius but no pointwise interval representation; call
 `radius(...)`, not `interval(...)`.
