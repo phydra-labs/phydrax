@@ -13,6 +13,7 @@ from jaxtyping import Array, ArrayLike
 from .._strict import StrictModule
 from ..integration import weighted
 from ..transport import (
+    AbstractBalancedTransportSolver,
     AbstractGroundCost,
     discrete_problem,
     Sinkhorn,
@@ -53,7 +54,7 @@ def predictive_sinkhorn_divergence(
     source_weights: ArrayLike | None = None,
     target_weights: ArrayLike | None = None,
     cost: AbstractGroundCost | None = None,
-    solver: Sinkhorn | None = None,
+    solver: AbstractBalancedTransportSolver | None = None,
     epsilon: float = 0.1,
 ) -> SinkhornDivergenceResult:
     """Compare two empirical predictive laws of complete vector events."""
@@ -91,7 +92,7 @@ def operator_ensemble_sinkhorn_divergence(
     measure: Measure = "quadrature",
     reduction: OperatorReduction = "mean",
     cost: AbstractGroundCost | None = None,
-    solver: Sinkhorn | None = None,
+    solver: AbstractBalancedTransportSolver | None = None,
     epsilon: float = 0.1,
 ) -> PredictiveTransportMetricResult:
     """Compare complete operator-output laws independently for every case."""
@@ -258,10 +259,14 @@ def _log_sample_weights(
     return jnp.where(values > 0.0, jnp.log(values), -jnp.inf)
 
 
-def _solver(epsilon: float, solver: Sinkhorn | None, /) -> Sinkhorn:
+def _solver(
+    epsilon: float, solver: AbstractBalancedTransportSolver | None, /
+) -> AbstractBalancedTransportSolver:
     if solver is not None:
-        if not isinstance(solver, Sinkhorn):
-            raise TypeError("solver must be a Sinkhorn solver or None.")
+        if not isinstance(solver, AbstractBalancedTransportSolver):
+            raise TypeError(
+                "solver must implement the balanced transport solver contract or be None."
+            )
         return solver
     return Sinkhorn(
         epsilon,

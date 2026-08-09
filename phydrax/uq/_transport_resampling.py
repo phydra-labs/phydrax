@@ -15,11 +15,12 @@ from jaxtyping import Array, ArrayLike
 from .._strict import StrictModule
 from ..integration import discrete
 from ..transport import (
+    AbstractBalancedTransportPlan,
+    AbstractBalancedTransportSolver,
     AbstractGroundCost,
     discrete_problem,
     require_converged,
     Sinkhorn,
-    SinkhornResult,
     SquaredEuclideanCost,
 )
 
@@ -32,7 +33,7 @@ class OptimalTransportEnsembleTransformResult(StrictModule):
     source_mean: Array
     transformed_mean: Array
     mean_error: Array
-    transport: SinkhornResult
+    transport: AbstractBalancedTransportPlan
     particle_axis: int = eqx.field(static=True)
     event_shape: tuple[int, ...] = eqx.field(static=True)
 
@@ -44,7 +45,7 @@ def optimal_transport_ensemble_transform(
     *,
     particle_axis: int = 0,
     cost: AbstractGroundCost | None = None,
-    solver: Sinkhorn | None = None,
+    solver: AbstractBalancedTransportSolver | None = None,
     epsilon: float = 0.5,
 ) -> OptimalTransportEnsembleTransformResult:
     """Deterministically transform weighted particles into an equal-weight ensemble.
@@ -147,10 +148,14 @@ def _normalize_weights(weights: Array, /) -> Array:
     return weights / total
 
 
-def _solver(epsilon: float, solver: Sinkhorn | None, /) -> Sinkhorn:
+def _solver(
+    epsilon: float, solver: AbstractBalancedTransportSolver | None, /
+) -> AbstractBalancedTransportSolver:
     if solver is not None:
-        if not isinstance(solver, Sinkhorn):
-            raise TypeError("solver must be a Sinkhorn solver or None.")
+        if not isinstance(solver, AbstractBalancedTransportSolver):
+            raise TypeError(
+                "solver must implement the balanced transport solver contract or be None."
+            )
         return solver
     value = float(epsilon)
     if not math.isfinite(value) or value <= 0.0:

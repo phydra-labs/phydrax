@@ -84,11 +84,13 @@ from ._score_matching import (
 )
 from ._supervised_dataset import SupervisedDatasetBatch, SupervisedDatasetTerm
 from ._transport import (
+    BarycenterObjectiveTerm,
     EmpiricalSinkhornDivergenceTerm,
     SlicedWassersteinTerm,
     SoftQuantileFunctional,
     SpatialSinkhornDivergenceTerm,
 )
+from ._unbalanced_transport import SpatialUnbalancedSinkhornDivergenceTerm
 from ._trajectory_data import (
     TrajectoryCaseDataBatch,
     TrajectoryCaseDataTerm,
@@ -103,6 +105,7 @@ __all__ = [
     "AbstractSamplingTerm",
     "AbstractScalarTerm",
     "BSDETerm",
+    "BarycenterObjectiveTerm",
     "BatchSampler",
     "CochainResidualTerm",
     "DeepBSDEPredictor",
@@ -152,6 +155,7 @@ __all__ = [
     "SlicedWassersteinTerm",
     "SoftQuantileFunctional",
     "SpatialSinkhornDivergenceTerm",
+    "SpatialUnbalancedSinkhornDivergenceTerm",
     "ScoreSampleProvider",
     "SupervisedDatasetBatch",
     "SupervisedDatasetTerm",

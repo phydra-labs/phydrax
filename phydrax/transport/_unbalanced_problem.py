@@ -4,12 +4,10 @@
 
 from __future__ import annotations
 
-import math
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from ..integration._api import IntegrationRealization
@@ -19,31 +17,25 @@ from ..integration._targets import (
     WeightedSampleTarget,
 )
 from ._costs import AbstractGroundCost, GroundCost, PrecomputedCost
+from ._geometry import cost_matrix
 from ._measure import _FiniteTransportMeasure, EventEncoder, lower_transport_measure
+from ._problem import TransportProblemProvenance
 
 
-class TransportProblemProvenance(StrictModule):
-    """Static source, target, and cost identity for a transport problem."""
-
-    source: str = eqx.field(static=True)
-    target: str = eqx.field(static=True)
-    cost: str = eqx.field(static=True)
-
-    def __init__(self, source: str, target: str, cost: str, /):
-        self.source = str(source)
-        self.target = str(target)
-        self.cost = str(cost)
+_TransportMeasureInput = (
+    DiscreteMeasureTarget | WeightedSampleTarget | DensityTarget | IntegrationRealization
+)
 
 
-class DiscreteTransportProblem(StrictModule):
-    """Balanced finite-measure transport problem in canonical coordinates."""
+class UnbalancedTransportProblem(StrictModule):
+    """Finite unbalanced transport with two physical masses and KL relaxations."""
 
     source: _FiniteTransportMeasure
     target: _FiniteTransportMeasure
     cost: GroundCost
-    mass: Array
+    source_marginal_penalty: Array
+    target_marginal_penalty: Array
     provenance: TransportProblemProvenance
-    mass_tolerance: float = eqx.field(static=True)
 
     def __init__(
         self,
@@ -52,7 +44,8 @@ class DiscreteTransportProblem(StrictModule):
         cost: GroundCost,
         /,
         *,
-        mass_tolerance: float = 1e-8,
+        source_marginal_penalty: ArrayLike,
+        target_marginal_penalty: ArrayLike,
     ):
         if not isinstance(source, _FiniteTransportMeasure):
             raise TypeError("source must be a canonical finite transport measure.")
@@ -60,9 +53,6 @@ class DiscreteTransportProblem(StrictModule):
             raise TypeError("target must be a canonical finite transport measure.")
         if not isinstance(cost, (AbstractGroundCost, PrecomputedCost)):
             raise TypeError("cost must be an AbstractGroundCost or PrecomputedCost.")
-        tolerance = float(mass_tolerance)
-        if not math.isfinite(tolerance) or tolerance < 0.0:
-            raise ValueError("mass_tolerance must be finite and nonnegative.")
         if isinstance(cost, PrecomputedCost):
             if cost.shape != (source.num_atoms, target.num_atoms):
                 raise ValueError(
@@ -72,59 +62,61 @@ class DiscreteTransportProblem(StrictModule):
             raise ValueError(
                 "Source and target features must have equal size for a ground cost."
             )
-        mass = eqx.error_if(
-            source.mass,
-            ~jnp.isclose(
-                source.mass,
-                target.mass,
-                rtol=tolerance,
-                atol=tolerance,
-            ),
-            "Balanced transport requires equal positive source and target mass.",
+        source_penalty = jnp.asarray(source_marginal_penalty, dtype=float).reshape(())
+        target_penalty = jnp.asarray(target_marginal_penalty, dtype=float).reshape(())
+        source_penalty = eqx.error_if(
+            source_penalty,
+            ~jnp.isfinite(source_penalty) | (source_penalty <= 0.0),
+            "source_marginal_penalty must be finite and strictly positive.",
+        )
+        target_penalty = eqx.error_if(
+            target_penalty,
+            ~jnp.isfinite(target_penalty) | (target_penalty <= 0.0),
+            "target_marginal_penalty must be finite and strictly positive.",
         )
         self.source = source
         self.target = target
         self.cost = cost
-        self.mass = mass
+        self.source_marginal_penalty = source_penalty
+        self.target_marginal_penalty = target_penalty
         self.provenance = TransportProblemProvenance(
             source.provenance,
             target.provenance,
             cost.cost_id,
         )
-        self.mass_tolerance = tolerance
 
     @property
     def shape(self) -> tuple[int, int]:
         return self.source.num_atoms, self.target.num_atoms
 
     @property
-    def source_probabilities(self) -> Array:
-        return self.source.probabilities
+    def source_mass(self) -> Array:
+        return self.source.mass
 
     @property
-    def target_probabilities(self) -> Array:
-        return self.target.probabilities
+    def target_mass(self) -> Array:
+        return self.target.mass
 
     @property
     def source_weights(self) -> Array:
-        return self.mass * self.source.probabilities
+        return self.source.physical_weights
 
     @property
     def target_weights(self) -> Array:
-        return self.mass * self.target.probabilities
+        return self.target.physical_weights
 
     def cost_matrix(self) -> Array:
         """Materialize the complete ground-cost matrix."""
-        if isinstance(self.cost, PrecomputedCost):
-            return self.cost.values
-        return self.cost.matrix(self.source.points, self.target.points)
+        return cost_matrix(
+            self.cost,
+            self.source.points,
+            self.target.points,
+        )
 
     def cost_at(self, source_indices: Array, target_indices: Array, /) -> Array:
-        """Evaluate costs on two index arrays with broadcast-compatible shapes."""
-        source_indices_, target_indices_ = jnp.broadcast_arrays(
-            jnp.asarray(source_indices, dtype=jnp.int32),
-            jnp.asarray(target_indices, dtype=jnp.int32),
-        )
+        """Evaluate costs on broadcast-compatible source and target indices."""
+        source_indices_ = jnp.asarray(source_indices, dtype=jnp.int32)
+        target_indices_ = jnp.asarray(target_indices, dtype=jnp.int32)
         if isinstance(self.cost, PrecomputedCost):
             return self.cost.values[source_indices_, target_indices_]
         source_points = self.source.points[source_indices_]
@@ -132,30 +124,23 @@ class DiscreteTransportProblem(StrictModule):
         flat_source = source_points.reshape((-1, source_points.shape[-1]))
         flat_target = target_points.reshape((-1, target_points.shape[-1]))
         values = jax.vmap(self.cost.pairwise)(flat_source, flat_target)
-        return values.reshape(source_indices_.shape)
+        return values.reshape(
+            jnp.broadcast_shapes(source_indices_.shape, target_indices_.shape)
+        )
 
 
-def discrete_problem(
-    source: (
-        DiscreteMeasureTarget
-        | WeightedSampleTarget
-        | DensityTarget
-        | IntegrationRealization
-    ),
-    target: (
-        DiscreteMeasureTarget
-        | WeightedSampleTarget
-        | DensityTarget
-        | IntegrationRealization
-    ),
+def unbalanced_problem(
+    source: _TransportMeasureInput,
+    target: _TransportMeasureInput,
     /,
     *,
     cost: GroundCost,
+    source_marginal_penalty: ArrayLike,
+    target_marginal_penalty: ArrayLike,
     source_encoder: EventEncoder | None = None,
     target_encoder: EventEncoder | None = None,
-    mass_tolerance: float = 1e-8,
-) -> DiscreteTransportProblem:
-    """Construct a balanced transport problem from existing measure contracts."""
+) -> UnbalancedTransportProblem:
+    """Construct unbalanced transport without equating or normalizing physical masses."""
     source_measure = lower_transport_measure(
         source,
         encoder=source_encoder,
@@ -166,16 +151,16 @@ def discrete_problem(
         encoder=target_encoder,
         name="target",
     )
-    return DiscreteTransportProblem(
+    return UnbalancedTransportProblem(
         source_measure,
         target_measure,
         cost,
-        mass_tolerance=mass_tolerance,
+        source_marginal_penalty=source_marginal_penalty,
+        target_marginal_penalty=target_marginal_penalty,
     )
 
 
 __all__ = [
-    "DiscreteTransportProblem",
-    "TransportProblemProvenance",
-    "discrete_problem",
+    "UnbalancedTransportProblem",
+    "unbalanced_problem",
 ]

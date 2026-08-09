@@ -13,7 +13,10 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array
 
-from ....transport import AbstractGroundCost, Sinkhorn
+from ....transport import (
+    AbstractBalancedTransportSolver,
+    AbstractGroundCost,
+)
 from ..._keys import (
     EvalKey,
     fold_in_eval_key,
@@ -362,7 +365,7 @@ class SinkhornDistributionalSemigroupObjective:
     key_mode: SemigroupKeyMode = "fold_in"
     epsilon: float = 0.5
     cost: AbstractGroundCost | None = None
-    solver: Sinkhorn | None = None
+    solver: AbstractBalancedTransportSolver | None = None
 
     def __post_init__(self):
         if int(self.num_samples) < 2:
@@ -379,8 +382,12 @@ class SinkhornDistributionalSemigroupObjective:
             raise ValueError("epsilon must be finite and positive.")
         if self.cost is not None and not isinstance(self.cost, AbstractGroundCost):
             raise TypeError("cost must be an AbstractGroundCost or None.")
-        if self.solver is not None and not isinstance(self.solver, Sinkhorn):
-            raise TypeError("solver must be a Sinkhorn solver or None.")
+        if self.solver is not None and not isinstance(
+            self.solver, AbstractBalancedTransportSolver
+        ):
+            raise TypeError(
+                "solver must implement the balanced transport solver contract or be None."
+            )
 
     def __call__(
         self,
@@ -475,7 +482,7 @@ def conditioned_sinkhorn_semigroup_loss(
     key_mode: SemigroupKeyMode = "fold_in",
     epsilon: float = 0.5,
     cost: AbstractGroundCost | None = None,
-    solver: Sinkhorn | None = None,
+    solver: AbstractBalancedTransportSolver | None = None,
     key: EvalKey = None,
 ) -> Array:
     """Evaluate Sinkhorn distributional conditioned semigroup consistency."""

@@ -90,12 +90,18 @@ reconstruction is a separate problem.
 ## Transport functionals
 
 Transport terms compare complete physical measures or empirical events instead of
-reducing pointwise discrepancies first. Sinkhorn terms retain native convergence
-diagnostics and reject a failed solve. Prepared references reuse only the fixed target
-self term. Sliced terms retain their projection design; soft quantile functionals are
-regularized order objectives, not exact sample quantiles.
+reducing pointwise discrepancies first. Balanced Sinkhorn terms retain native
+convergence diagnostics and reject a failed solve. The unbalanced spatial term is
+reserved for physical intensity or count measures with meaningful unequal mass and
+also rejects transported-mass collapse. Prepared references reuse only the fixed
+target self term. Sliced terms retain their projection design; soft quantile
+functionals are regularized order objectives, not exact sample quantiles.
 
 ::: phydrax.terms.SpatialSinkhornDivergenceTerm
+
+---
+
+::: phydrax.terms.SpatialUnbalancedSinkhornDivergenceTerm
 
 ---
 

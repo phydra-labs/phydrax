@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from abc import abstractmethod
+
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
@@ -23,6 +25,7 @@ class TransportProvenance(StrictModule):
     differentiation: str = eqx.field(static=True)
     source: str = eqx.field(static=True)
     target: str = eqx.field(static=True)
+    approximation: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -33,6 +36,8 @@ class TransportProvenance(StrictModule):
         source: str,
         target: str,
         /,
+        *,
+        approximation: str = "exact",
     ):
         self.method = str(method)
         self.cost = str(cost)
@@ -40,7 +45,67 @@ class TransportProvenance(StrictModule):
         self.differentiation = str(differentiation)
         self.source = str(source)
         self.target = str(target)
+        self.approximation = str(approximation)
 
+
+class AbstractBalancedTransportPlan(StrictModule):
+    """Minimal common contract for balanced finite transport plans."""
+
+    @property
+    @abstractmethod
+    def converged(self) -> Array:
+        """Whether the solve satisfies its convergence and validity contracts."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def regularized_objective(self) -> Array:
+        """Return the physical regularized objective consumed by divergence."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def source_marginal(self) -> Array:
+        """Return the physical source marginal induced by the plan."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def target_marginal(self) -> Array:
+        """Return the physical target marginal induced by the plan."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def apply_source_to_target(self, values: ArrayLike, /) -> Array:
+        """Apply the physical coupling to source-indexed payloads."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def apply_target_to_source(self, values: ArrayLike, /) -> Array:
+        """Apply the physical coupling to target-indexed payloads."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def barycentric_source_to_target(self, values: ArrayLike, /) -> Array:
+        """Return target-conditioned barycenters of source payloads."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def barycentric_target_to_source(self, values: ArrayLike, /) -> Array:
+        """Return source-conditioned barycenters of target payloads."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def dense_plan(self) -> Array:
+        """Explicitly materialize the physical transport matrix."""
+        raise NotImplementedError
+
+
+class AbstractBalancedTransportSolver(StrictModule):
+    """Solver producing a balanced plan for one finite transport problem."""
+
+    @abstractmethod
+    def __call__(
+        self, problem: DiscreteTransportProblem, /
+    ) -> AbstractBalancedTransportPlan:
+        raise NotImplementedError
 
 class SinkhornDiagnostics(StrictModule):
     """Fixed-structure convergence diagnostics for balanced Sinkhorn."""
@@ -56,7 +121,7 @@ class SinkhornDiagnostics(StrictModule):
     residual_history: Array
 
 
-class SinkhornResult(StrictModule):
+class SinkhornResult(AbstractBalancedTransportPlan):
     """Native balanced entropic transport solution and matrix-free plan."""
 
     problem: DiscreteTransportProblem
@@ -75,6 +140,10 @@ class SinkhornResult(StrictModule):
     def converged(self) -> Array:
         """Whether the final iterate satisfies the convergence contract."""
         return self.diagnostics.status == int(TransportStatus.CONVERGED)
+
+    def regularized_objective(self) -> Array:
+        """Return the physical regularized Sinkhorn objective."""
+        return self.regularized_cost
 
     def source_marginal(self) -> Array:
         """Return the physical source marginal induced by the computed plan."""
@@ -146,19 +215,23 @@ class SinkhornResult(StrictModule):
         )
 
 
-def require_converged(result: SinkhornResult, /) -> SinkhornResult:
-    """Raise a JAX-compatible error unless a Sinkhorn solve converged."""
-    if not isinstance(result, SinkhornResult):
-        raise TypeError("result must be a SinkhornResult.")
+def require_converged(
+    result: AbstractBalancedTransportPlan, /
+) -> AbstractBalancedTransportPlan:
+    """Raise a JAX-compatible error unless a balanced solve converged."""
+    if not isinstance(result, AbstractBalancedTransportPlan):
+        raise TypeError("result must implement the balanced transport plan contract.")
     checked = eqx.error_if(
-        result.source_potential,
+        result.regularized_cost,
         ~result.converged,
-        "Native Sinkhorn transport did not converge.",
+        "Native balanced transport did not converge.",
     )
-    return eqx.tree_at(lambda item: item.source_potential, result, checked)
+    return eqx.tree_at(lambda item: item.regularized_cost, result, checked)
 
 
 __all__ = [
+    "AbstractBalancedTransportPlan",
+    "AbstractBalancedTransportSolver",
     "SinkhornDiagnostics",
     "SinkhornResult",
     "TransportProvenance",

@@ -330,12 +330,19 @@ from ._operator_metrics import (
     operator_interval_coverage,
     operator_interval_width,
 )
+from ._transport_barycenters import (
+    aggregate_free_support_transport_barycenter,
+    aggregate_transport_barycenter,
+    FreeSupportTransportBarycenterAggregationResult,
+    TransportBarycenterAggregationResult,
+)
 from ._transport_metrics import (
     operator_ensemble_sinkhorn_divergence,
     operator_ensemble_sliced_wasserstein,
     predictive_sinkhorn_divergence,
     PredictiveTransportMetricResult,
 )
+from ._unbalanced_transport import spatial_unbalanced_sinkhorn_divergence
 from ._transport_resampling import (
     optimal_transport_ensemble_transform,
     OptimalTransportEnsembleTransformResult,
@@ -914,10 +921,15 @@ __all__ = [
     "operator_ensemble_crps",
     "operator_interval_coverage",
     "operator_interval_width",
+    "aggregate_free_support_transport_barycenter",
+    "aggregate_transport_barycenter",
+    "FreeSupportTransportBarycenterAggregationResult",
+    "TransportBarycenterAggregationResult",
     "operator_ensemble_sinkhorn_divergence",
     "operator_ensemble_sliced_wasserstein",
     "predictive_sinkhorn_divergence",
     "PredictiveTransportMetricResult",
+    "spatial_unbalanced_sinkhorn_divergence",
     "optimal_transport_ensemble_transform",
     "OptimalTransportEnsembleTransformResult",
     "FixedOperatorObservationLikelihood",
