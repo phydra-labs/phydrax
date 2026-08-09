@@ -218,3 +218,206 @@ def test_soft_order_transport_exposes_solver_diagnostics_and_rejects_bad_weights
             weights=jnp.asarray([0.2, -0.3, 0.5]),
         )
         jax.block_until_ready(invalid.source_potential)
+
+
+@pytest.mark.parametrize(
+    "operator",
+    (
+        lambda values: phx.transport.soft_sort(values, epsilon=0.15),
+        lambda values: phx.transport.soft_rank(values, epsilon=0.15),
+        lambda values: phx.transport.soft_quantile(values, 0.35, epsilon=0.15),
+        lambda values: phx.transport.soft_topk_mask(values, 2, epsilon=0.15),
+    ),
+    ids=("sort", "rank", "quantile", "topk"),
+)
+def test_soft_order_operators_compose_with_forward_reverse_and_batch_transforms(
+    operator,
+):
+    values = jnp.asarray([-1.3, 0.2, 2.1, 0.8])
+    direction = jnp.asarray([0.3, -0.5, 0.2, 0.7])
+    eager = operator(values)
+    compiled = jax.jit(operator)(values)
+    _, tangent = jax.jvp(operator, (values,), (direction,))
+    jacobian = jax.jacfwd(operator)(values)
+    expected_tangent = jnp.tensordot(jacobian, direction, axes=([-1], [0]))
+    gradient = jax.grad(lambda candidate: jnp.sum(operator(candidate) ** 2))(values)
+    batched = jax.vmap(operator)(jnp.stack((values, values + 1.0)))
+
+    assert jnp.allclose(compiled, eager, rtol=1e-8, atol=1e-9)
+    assert jnp.allclose(tangent, expected_tangent, rtol=1e-7, atol=1e-8)
+    assert jnp.all(jnp.isfinite(jacobian))
+    assert jnp.all(jnp.isfinite(gradient))
+    assert batched.shape == (2,) + jnp.shape(eager)
+
+
+def test_soft_order_has_finite_symmetric_second_derivatives_and_tie_sensitivities():
+    values = jnp.asarray([-1.1, 0.4, 1.7, 3.2])
+    hessian = jax.hessian(
+        lambda candidate: jnp.sum(
+            phx.transport.soft_sort(candidate, epsilon=0.15) ** 2
+        )
+    )(values)
+    constant = jnp.ones((4,))
+    constant_sorted = phx.transport.soft_sort(constant, epsilon=0.15)
+    constant_jacobian = jax.jacfwd(
+        lambda candidate: phx.transport.soft_sort(candidate, epsilon=0.15)
+    )(constant)
+    tied = jnp.asarray([1.0, 1.0, 2.0, 4.0])
+    tied_ranks = phx.transport.soft_rank(tied, epsilon=0.15)
+    tied_gradient = jax.grad(
+        lambda candidate: jnp.sum(
+            phx.transport.soft_rank(candidate, epsilon=0.15) ** 2
+        )
+    )(tied)
+
+    assert jnp.all(jnp.isfinite(hessian))
+    assert jnp.allclose(hessian, hessian.T, rtol=1e-7, atol=1e-8)
+    assert jnp.array_equal(constant_sorted, constant)
+    assert jnp.all(jnp.isfinite(constant_jacobian))
+    assert jnp.allclose(constant_jacobian, constant_jacobian[0])
+    assert tied_ranks[0] == tied_ranks[1]
+    assert jnp.allclose(tied_gradient[0], tied_gradient[1], atol=1e-10)
+
+
+def test_soft_order_preserves_order_invariances_and_coupling_mass():
+    values = jnp.asarray([3.0, -1.0, 2.0, 0.5])
+    permutation = jnp.asarray([2, 0, 3, 1])
+    ordered = phx.transport.soft_sort(values, epsilon=0.15)
+    ranks = phx.transport.soft_rank(values, epsilon=0.15)
+    mask = phx.transport.soft_topk_mask(values, 2, epsilon=0.15)
+
+    assert jnp.allclose(
+        phx.transport.soft_sort(values + 7.0, epsilon=0.15),
+        ordered + 7.0,
+        rtol=1e-9,
+        atol=1e-9,
+    )
+    assert jnp.allclose(
+        phx.transport.soft_sort(2.5 * values - 4.0, epsilon=0.15),
+        2.5 * ordered - 4.0,
+        rtol=1e-8,
+        atol=1e-8,
+    )
+    assert jnp.allclose(
+        phx.transport.soft_sort(-2.0 * values + 1.0, epsilon=0.15),
+        (-2.0 * ordered + 1.0)[::-1],
+        rtol=1e-8,
+        atol=1e-8,
+    )
+    assert jnp.allclose(
+        phx.transport.soft_sort(values[permutation], epsilon=0.15), ordered
+    )
+    assert jnp.allclose(
+        phx.transport.soft_rank(values[permutation], epsilon=0.15),
+        ranks[permutation],
+    )
+    assert jnp.allclose(
+        phx.transport.soft_topk_mask(values[permutation], 2, epsilon=0.15),
+        mask[permutation],
+    )
+    assert jnp.allclose(jnp.sum(ranks), 6.0, atol=1e-8)
+    assert jnp.allclose(jnp.sum(mask), 2.0, atol=1e-8)
+
+    weights = jnp.asarray([0.1, 0.2, 0.3, 0.4])
+    weighted_mask = phx.transport.soft_topk_mask(
+        values,
+        2,
+        weights=weights,
+        epsilon=0.15,
+    )
+    assert jnp.allclose(jnp.sum(weights * weighted_mask), 0.5, atol=1e-8)
+
+
+def test_soft_order_weighted_named_and_blockwise_paths_share_one_contract():
+    values = jnp.asarray([[3.0, 1.0, 4.0, 2.0], [0.5, -2.0, 1.5, 3.0]])
+    field = cx.Field(values, dims=("case", "sample"))
+    named = phx.transport.soft_sort(field, axis="sample", epsilon=0.2)
+    plain = phx.transport.soft_sort(values, axis=1, epsilon=0.2)
+
+    assert named.dims == field.dims
+    assert jnp.allclose(named.data, plain)
+
+    vector = values[0]
+    zero_weights = jnp.asarray([0.2, 0.0, 0.3, 0.5])
+    zero_weight_result = phx.transport.soft_sort(
+        vector,
+        weights=zero_weights,
+        epsilon=0.2,
+    )
+    changed_inert_atom = phx.transport.soft_sort(
+        vector.at[1].set(1e6),
+        weights=zero_weights,
+        epsilon=0.2,
+    )
+    assert jnp.allclose(zero_weight_result, changed_inert_atom)
+
+    zero_weight_gradient = jax.grad(
+        lambda candidate: jnp.dot(
+            phx.transport.soft_topk_mask(
+                candidate,
+                2,
+                weights=zero_weights,
+                epsilon=0.2,
+            ),
+            jnp.arange(4.0),
+        )
+    )(vector)
+    assert jnp.all(jnp.isfinite(zero_weight_gradient))
+    assert zero_weight_gradient[1] == 0.0
+
+    dense_solver = phx.transport.Sinkhorn(
+        0.2,
+        max_iterations=300,
+        tolerance=1e-7,
+        check_every=5,
+    )
+    block_solver = phx.transport.Sinkhorn(
+        0.2,
+        max_iterations=300,
+        tolerance=1e-7,
+        check_every=5,
+        block_size=2,
+    )
+    dense = phx.transport.soft_sort(vector, weights=zero_weights, solver=dense_solver)
+    block = phx.transport.soft_sort(vector, weights=zero_weights, solver=block_solver)
+    assert jnp.allclose(block, dense, rtol=1e-8, atol=1e-8)
+
+    positive_weights = jnp.asarray([0.2, 0.1, 0.3, 0.4])
+    weight_gradient = jax.grad(
+        lambda candidate_weights: jnp.sum(
+            phx.transport.soft_sort(
+                vector,
+                weights=candidate_weights,
+                solver=dense_solver,
+            )
+            ** 2
+        )
+    )(positive_weights)
+    assert jnp.all(jnp.isfinite(weight_gradient))
+
+
+def test_soft_order_provenance_and_explicit_solver_precedence_are_visible():
+    solver = phx.transport.Sinkhorn(
+        0.3,
+        max_iterations=300,
+        tolerance=1e-7,
+        check_every=5,
+    )
+    values = jnp.asarray([3.0, 1.0, 2.0])
+    result = phx.transport.soft_order_transport(
+        values,
+        epsilon=jnp.nan,
+        solver=solver,
+    )
+
+    assert result.problem.provenance.source == (
+        "soft-order-source:weighted-standardize-sigmoid"
+    )
+    assert result.problem.provenance.target == (
+        "soft-order-target:probability-midpoints"
+    )
+    assert jnp.array_equal(result.epsilon, solver.epsilon)
+    assert jnp.allclose(
+        result.barycentric_source_to_target(values),
+        phx.transport.soft_sort(values, solver=solver),
+    )

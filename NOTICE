@@ -11,6 +11,14 @@ Licensed under the Apache License, Version 2.0.
 The Faddeeva and Dawson implementations are adapted from JAX special-function kernels.
 See LICENSES/JAX-APACHE-2.0.txt.
 
+Fast Soft Sort
+Copyright 2020 Google LLC
+Licensed under the Apache License, Version 2.0.
+The fast unweighted permutahedron ordering implementation follows the
+pool-adjacent-violators formulation of Fast Differentiable Sorting and Ranking
+(Blondel, Teboul, Berthet, and Djolonga, ICML 2020).
+The Apache License text is included at LICENSES/JAX-APACHE-2.0.txt.
+
 Numerax
 Copyright (c) 2025 Juehang Qin
 Licensed under the MIT License.

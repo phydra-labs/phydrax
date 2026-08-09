@@ -148,10 +148,26 @@ A relaxed model is a separate mathematical model:
 - sigmoid or sparse-continuous tree gates instead of threshold routing;
 - smooth sorting or quantile approximations instead of exact order statistics.
 
+`phydrax.transport.fast_soft_sort` and `fast_soft_rank` use an L2
+permutahedron projection. Their custom JVP differentiates block averages for the
+current pool-adjacent-violators partition. The map is continuous and piecewise
+smooth; derivatives are conditional on that active partition, and a sufficiently
+hard rank relaxation can have an exactly discrete local value with zero derivative.
+
 Temperature and regularization remain array-valued continuous hyperparameters when
-possible. A temperature approaching zero can make derivatives singular or
-ill-conditioned. Hardening produces a new exact model and terminates the gradient
-path; Phydrax does not install a straight-through gradient by default.
+possible. `ContinuousSparseGateRecipe.temperature` and `.sparsity` are differentiable
+array leaves, but their derivatives are conditional: score functions must be
+differentiable, masks and positive effective mass must remain fixed, score
+normalization needs a nonzero range with stable extrema, and the default absolute
+correlation must stay away from zero covariance and variance. A temperature
+approaching zero can make derivatives singular or ill-conditioned.
+
+Relaxed quantile interiors inherit their solver's regularity. Exact minimum/maximum
+endpoints remain only almost-everywhere differentiable, and an absolute-discrepancy
+objective has an additional kink at zero residual.
+
+Hardening produces a new exact model and terminates the gradient path; Phydrax does
+not install a straight-through gradient by default.
 
 ## Weights and masks
 
@@ -248,7 +264,7 @@ family-level rule, not a substitute for reading the returned conditions.
 | Soft voting/mixture of experts | probabilities, expert weights, gate | optional hard expert/vote | normalized finite weights and valid children |
 | Hard voting/stacking selection | meta-model values conditional on child outputs | hard vote and fold/candidate identity | fixed folds/children and valid meta-design |
 | Exact feature selection | transformed retained values | selected indices, bins, recursive/sequential path | fixed selected set |
-| Continuous sparse gates | gate values and relaxed fit | optional hard threshold | positive temperature/regularization and fixed iterations |
+| Continuous sparse gates | gate values and relaxed fit, conditionally including features, targets, weights, temperature, and sparsity | optional hard threshold | differentiable scorer, fixed masks, positive effective mass, nonzero score range, stable extrema, and no absolute-correlation kink |
 | Sensitivity and partial dependence | derivative of the actual callable and weighted reduction | hard model branches inherited from the model | model's own prediction contract and valid domain |
 | Permutation importance | score conditional on a fixed permutation | permutation draw and ranking | explicit fixed key and valid scorer |
 | Influence functions | implicit parameter/data influence | active set inherited from objective | nonsingular regularized Hessian/KKT system |

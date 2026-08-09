@@ -46,14 +46,14 @@ def _packed_affine_batch():
 
 
 def test_recurrent_batch_rejects_ambiguous_padding_and_resets():
-    with pytest.raises(eqx.EquinoxRuntimeError, match="after padding"):
+    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="after padding"):
         batch = RecurrentBatch(
             jnp.ones((4, 2)),
             jnp.asarray([True, False, True, False]),
         )
         jax.block_until_ready(batch.valid)
 
-    with pytest.raises(eqx.EquinoxRuntimeError, match="requires a valid"):
+    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="requires a valid"):
         batch = RecurrentBatch(
             jnp.ones((3, 2)),
             jnp.asarray([True, False, False]),

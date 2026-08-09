@@ -106,6 +106,7 @@ order-by-type = false
 max-line-length = 120
 
 [tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
 filterwarnings = [
     "ignore::DeprecationWarning:ezdxf.queryparser:",
     "ignore::DeprecationWarning:build123d.objects_curve:",

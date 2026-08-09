@@ -143,6 +143,7 @@ def test_operator_architecture_tiers_and_recommendation_eligibility_are_exact():
             "IFNO",
             "AxialFactorizedFNO",
             "ConditionalFlowFunctionOperator",
+            "LinearRecurrentOperator",
         },
         "research": {
             "Flower",
@@ -172,6 +173,8 @@ def test_operator_architecture_tiers_and_recommendation_eligibility_are_exact():
             "GNOT",
             "KoopmanTemporalOperator",
             "GreenKernelOperator",
+            "LatticeEquivariantCNO",
+            "WeightSpaceOperator",
         },
     }
     assert set(phx.nn.operator.OPERATOR_ARCHITECTURE_STATUSES) == set().union(

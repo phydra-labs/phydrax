@@ -63,8 +63,12 @@ needed.
   event encodings are rejected.
 - A structured event PyTree must lower to one array leaf or provide an explicit
   `encoder=`. The encoder is part of the scientific model, not serialization detail.
-- Ground-cost units determine the units of `epsilon`; coordinate scaling therefore
-  changes both geometry and the appropriate regularization scale.
+- For general transport, ground-cost units determine the units of `epsilon`; coordinate
+  scaling changes both geometry and the appropriate regularization scale.
+  Differentiable ordering explicitly canonicalizes values first, so its `epsilon` is
+  dimensionless in the order geometry described on the ordering page.
+  The separate fast unweighted PAV family uses a dimensionless `temperature` and
+  exposes no coupling or solver diagnostics.
 
 ::: phydrax.transport.DiscreteTransportProblem
 
