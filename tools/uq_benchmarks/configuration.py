@@ -41,6 +41,11 @@ class BenchmarkConfiguration:
     flow_history_capacity: int
     flow_local_steps: int
     flow_global_steps: int
+    dfsv_assets: int
+    dfsv_steps: int
+    dfsv_factors: int
+    dfsv_particles: int
+    dfsv_smoother_paths: int
 
     def as_dict(self) -> dict[str, int | str]:
         return asdict(self)
@@ -74,6 +79,11 @@ PROFILES: dict[ProfileName, BenchmarkConfiguration] = {
         flow_history_capacity=80,
         flow_local_steps=2,
         flow_global_steps=3,
+        dfsv_assets=64,
+        dfsv_steps=16,
+        dfsv_factors=2,
+        dfsv_particles=256,
+        dfsv_smoother_paths=64,
     ),
     "standard": BenchmarkConfiguration(
         profile="standard",
@@ -102,6 +112,11 @@ PROFILES: dict[ProfileName, BenchmarkConfiguration] = {
         flow_history_capacity=256,
         flow_local_steps=3,
         flow_global_steps=2,
+        dfsv_assets=256,
+        dfsv_steps=64,
+        dfsv_factors=4,
+        dfsv_particles=2_048,
+        dfsv_smoother_paths=256,
     ),
 }
 

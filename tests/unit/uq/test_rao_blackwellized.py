@@ -13,7 +13,9 @@ def _observations():
     )
 
 
-def _rao_blackwellized_problem(*, args=None, input_signal=None):
+def _rao_blackwellized_problem(
+    *, args=None, input_signal=None, diagonal_observation=False
+):
     if args is None:
         args = {
             "initial_mean": 0.0,
@@ -39,6 +41,11 @@ def _rao_blackwellized_problem(*, args=None, input_signal=None):
         process_id="constant-mode",
         approximation_id="exact-constant-mode",
     )
+    observation_covariance = (
+        phx.uq.DiagonalCovariance(jnp.asarray([0.2]))
+        if diagonal_observation
+        else jnp.asarray([[0.2]])
+    )
     model = phx.uq.RaoBlackwellizedStateSpaceModel(
         nonlinear_prior,
         nonlinear_transition,
@@ -54,7 +61,7 @@ def _rao_blackwellized_problem(*, args=None, input_signal=None):
         lambda mode, time, context: (
             jnp.asarray([[1.0]]),
             context.args["observation_input_scale"] * context.observation_input,
-            jnp.asarray([[0.2]]),
+            observation_covariance,
         ),
         linear_state_shape=(1,),
         observation_shape=(1,),
@@ -166,4 +173,37 @@ def test_single_mode_rao_blackwellized_filter_matches_exact_kalman_filter():
         expected.final_state.log_likelihood,
     )
     assert jnp.allclose(jnp.exp(result.log_weights), 1.0 / 8.0)
+    assert result.initial_nonlinear_particles.shape == (8, 1)
+    assert result.initial_linear_means.shape == (8, 1)
+    assert result.initial_linear_covariances.shape == (8, 1, 1)
+    assert jnp.allclose(jnp.exp(result.initial_log_weights), 1.0 / 8.0)
     assert jnp.all(result.nonlinear_particles == 0)
+
+
+def test_diagonal_observation_covariance_matches_dense_conditioning():
+    dense = phx.uq.rao_blackwellized_particle_filter(
+        jr.key(17),
+        _rao_blackwellized_problem(),
+        num_particles=8,
+        resampling_policy="never",
+    )
+    diagonal = phx.uq.rao_blackwellized_particle_filter(
+        jr.key(17),
+        _rao_blackwellized_problem(diagonal_observation=True),
+        num_particles=8,
+        resampling_policy="never",
+    )
+
+    assert jnp.allclose(diagonal.predicted_linear_means, dense.predicted_linear_means)
+    assert jnp.allclose(
+        diagonal.predicted_linear_covariances,
+        dense.predicted_linear_covariances,
+    )
+    assert jnp.allclose(diagonal.linear_means, dense.linear_means)
+    assert jnp.allclose(diagonal.linear_covariances, dense.linear_covariances)
+    assert jnp.allclose(diagonal.log_weights, dense.log_weights)
+    assert jnp.allclose(
+        diagonal.incremental_log_likelihood,
+        dense.incremental_log_likelihood,
+    )
+    assert jnp.array_equal(diagonal.valid, dense.valid)

@@ -38,3 +38,27 @@ result = trained.save_onnx(
 
 ::: phydrax.export.OnnxExportResult
 
+## Portable uncertainty results
+
+`phydrax.uq.export_result` writes native UQ results as pickle-free, checksummed archives
+whose arrays can be inspected without reconstructing the model. This is distinct from
+ONNX deployment: the archive preserves inference output and provenance, not an
+executable solver.
+
+Bellman archives retain filtered modes, local covariances and information matrices,
+curvature diagnostics, optimizer results, status masks, and cumulative
+pseudo-log-likelihood. Rao--Blackwellized full-smoother archives retain nonlinear
+paths, sampled particle indices, conditional linear means and covariances, lag-one
+covariances, and the source filter/backward-simulation provenance.
+
+```python
+phx.uq.export_result(result, "inference.phxresult")
+portable = phx.uq.read_result_archive("inference.phxresult")
+```
+
+::: phydrax.uq.export_result
+
+---
+
+::: phydrax.uq.read_result_archive
+

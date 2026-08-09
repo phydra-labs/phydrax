@@ -493,6 +493,44 @@ frequency diagnostics, per-frequency validity, supplied spectra, and
 ::: phydrax.uq.output_input_cross_spectral_density
 
 
+## Bellman posterior-mode filtering
+
+`bellman_filter` performs deterministic posterior-mode filtering for a normalized,
+twice-differentiable prior, transition density, and observation density. It is not a
+Bayesian posterior sampler: its covariance is a local Laplace covariance at the mode,
+and `pseudo_log_likelihood` is the Bellman filter's explicitly penalized criterion
+rather than a marginal log likelihood.
+
+`method="auto"` selects the exact Kalman engine only for a fully linear-Gaussian model
+and otherwise uses the optimization engine. `method="analytic"` rejects any other model.
+The optimization path records the requested and resolved modes, predicted and filtered
+information matrices and covariances, raw curvature eigenvalues, score outer products,
+solver diagnostics, and separate prediction, update, and pseudo-likelihood validity.
+`curvature="observed"` uses the objective Hessian; `"score-outer-product"` uses the
+aggregate observation score outer product for the update information. Damping is
+explicit and recorded. Indefinite or non-finite curvature fails visibly instead of
+triggering an adaptive jitter fallback.
+
+`bellman_smoother` is exact RTS smoothing on the analytic linear-Gaussian path. On an
+optimization result it is available only when the transition is a
+`LinearGaussianTransitionKernel`; nonlinear or state-dependent transitions are
+rejected because their local-Gaussian smoothing semantics would be approximate.
+
+::: phydrax.uq.initialize_bellman_filter
+
+---
+
+::: phydrax.uq.bellman_filter_step
+
+---
+
+::: phydrax.uq.bellman_filter
+
+---
+
+::: phydrax.uq.bellman_smoother
+
+
 ## Bootstrap particle filtering
 
 Particle states retain normalized log weights, root-key lineage, algorithm settings,
@@ -598,8 +636,19 @@ linear-Gaussian proposals are built in; custom proposals implement the same cont
 `rao_blackwellized_particle_filter` samples a nonlinear state while propagating the
 conditionally linear state by Kalman recursion. It therefore requires an explicit
 conditional-linear model rather than attempting to discover one from arbitrary
-callables. Fixed-lag smoothers expose the deliberate memory/latency approximation for
-both Kalman and particle histories.
+callables. An observation callback may return `DiagonalCovariance`; this uses
+factor-space conditioning and avoids constructing or factorizing a dense observation
+covariance while preserving the dense result.
+
+`rao_blackwellized_particle_smoother` performs full-interval FFBSi over the nonlinear
+particle system, then reruns the exact conditional Kalman/RTS recursion along each
+sampled nonlinear path. It retains the initial nonlinear particle cloud because the
+first conditional transition may depend on both the sampled initial and first
+observation-time nonlinear states. The output is a conditional mixture: sampled
+nonlinear paths plus one smoothed Gaussian mean, covariance, and lag-one covariance per
+path. It deliberately does not collapse those path-conditioned Gaussians into one
+purported Gaussian. Fixed-lag smoothers expose a separate, explicit memory/latency
+approximation for Kalman and particle histories.
 
 ::: phydrax.uq.AbstractParticleProposal
 
@@ -613,11 +662,28 @@ both Kalman and particle histories.
 
 ---
 
+::: phydrax.uq.RaoBlackwellizedStateSpaceModel
+
+---
+
 ::: phydrax.uq.RaoBlackwellizedStateSpaceProblem
 
 ---
 
 ::: phydrax.uq.rao_blackwellized_particle_filter
+
+---
+
+::: phydrax.uq.rao_blackwellized_backward_simulation
+
+---
+
+::: phydrax.uq.rao_blackwellized_particle_smoother
+
+---
+
+::: phydrax.uq.sample_rao_blackwellized_backward_paths
+
 
 ---
 
@@ -632,17 +698,27 @@ both Kalman and particle histories.
 Filter checkpoints are atomic, pickle-free archives with checksummed arrays and exact
 compatibility metadata. A checkpoint resumes only when the live model, observation
 schedule, physical case layout, algorithm, and numerical settings match. The unified
-entry points dispatch among Kalman, particle, and ensemble state formats; explicit
-algorithm-specific readers remain available.
+entry points dispatch among Bellman, Kalman, particle, and ensemble state formats;
+explicit algorithm-specific readers remain available. Bellman compatibility includes
+the execution and curvature methods, damping, dimension guard, and optimizer settings.
 
-Complete filter, smoother, and BSDE evaluations can be written with `export_result` and
-read without importing the original model through `read_result_archive`.
+Complete Bellman, Rao--Blackwellized, Kalman, particle, ensemble, smoother, and BSDE
+evaluations can be written with `export_result` and read without importing the original
+model through `read_result_archive`.
 
 ::: phydrax.uq.write_filter_checkpoint
 
 ---
 
 ::: phydrax.uq.read_filter_checkpoint
+
+---
+
+::: phydrax.uq.write_bellman_filter_checkpoint
+
+---
+
+::: phydrax.uq.read_bellman_filter_checkpoint
 
 ---
 

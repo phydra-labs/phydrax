@@ -26,6 +26,8 @@ from ..stochastic._state_space import (
     StateSpaceStepContext,
 )
 from ..stochastic._state_space_input import AbstractStateSpaceInput
+from ._conditional_moments import _condition_affine_gaussian_diagonal
+from ._covariance import DiagonalCovariance
 from ._particle import (
     effective_sample_size,
     normalize_log_weights,
@@ -46,7 +48,7 @@ ConditionalLinearTransition: TypeAlias = Callable[
 ]
 ConditionalLinearObservation: TypeAlias = Callable[
     [Array, Array, StateSpaceStepContext],
-    tuple[ArrayLike, ArrayLike, ArrayLike],
+    tuple[ArrayLike, ArrayLike, ArrayLike | DiagonalCovariance],
 ]
 
 
@@ -57,7 +59,8 @@ class RaoBlackwellizedStateSpaceModel(StrictModule):
 
     - ``initial_linear_gaussian(mode, args) -> (mean, covariance)``;
     - ``linear_transition(previous_mode, mode, t0, t1, context) -> (A, b, Q)``;
-    - ``observation(mode, time, context) -> (H, d, R)``.
+    - ``observation(mode, time, context) -> (H, d, R)``, where ``R`` may be a
+      dense array or :class:`DiagonalCovariance`.
     """
 
     nonlinear_prior: AbstractStatePrior
@@ -169,22 +172,32 @@ class RaoBlackwellizedStateSpaceModel(StrictModule):
         time: ArrayLike,
         context: StateSpaceStepContext,
         /,
-    ) -> tuple[Array, Array, Array]:
+    ) -> tuple[Array, Array, Array | DiagonalCovariance]:
         matrix, offset, covariance = self.observation_fn(
             jnp.asarray(nonlinear_state), jnp.asarray(time), context
         )
         linear_size = prod(self.linear_state_shape) if self.linear_state_shape else 1
         observation_size = prod(self.observation_shape) if self.observation_shape else 1
         matrix_array = jnp.asarray(matrix, dtype=float)
-        covariance_array = jnp.asarray(covariance, dtype=float)
         offset_array = jnp.broadcast_to(
             jnp.asarray(offset, dtype=float), (observation_size,)
         )
         if matrix_array.shape != (observation_size, linear_size):
             raise ValueError("Conditional observation matrix has incompatible shape.")
-        if covariance_array.shape != (observation_size, observation_size):
-            raise ValueError("Conditional observation covariance has incompatible shape.")
-        return matrix_array, offset_array, covariance_array
+        if isinstance(covariance, DiagonalCovariance):
+            variance = jnp.asarray(covariance.variance, dtype=float)
+            if variance.shape != self.observation_shape:
+                raise ValueError(
+                    "Conditional diagonal observation variance has incompatible shape."
+                )
+            covariance_value = covariance
+        else:
+            covariance_value = jnp.asarray(covariance, dtype=float)
+            if covariance_value.shape != (observation_size, observation_size):
+                raise ValueError(
+                    "Conditional observation covariance has incompatible shape."
+                )
+        return matrix_array, offset_array, covariance_value
 
 
 class RaoBlackwellizedStateSpaceProblem(StrictModule):
@@ -278,6 +291,10 @@ class RaoBlackwellizedFilterState(StrictModule):
 
 class RaoBlackwellizedFilterResult(StrictModule):
     """Particle modes and analytic conditional Gaussian filtering histories."""
+    initial_nonlinear_particles: Array
+    initial_linear_means: Array
+    initial_linear_covariances: Array
+    initial_log_weights: Array
 
     predicted_nonlinear_particles: Array
     predicted_linear_means: Array
@@ -365,48 +382,69 @@ def _condition_linear_state(
     forecast_covariance = 0.5 * (forecast_covariance + forecast_covariance.T)
     flat_value = value.reshape((observation_size,))
     flat_mask = mask.reshape((observation_size,))
-    active = flat_mask.astype(forecast_mean.dtype)
-    effective_observation = observation * active[:, None]
-    effective_covariance = observation_covariance * active[:, None] * active[
-        None, :
-    ] + jnp.diag(1.0 - active)
-    innovation = jnp.where(
-        flat_mask,
-        flat_value - observation @ forecast_mean - observation_offset,
-        0.0,
-    )
-    innovation_covariance = (
-        effective_observation @ forecast_covariance @ effective_observation.T
-        + effective_covariance
-    )
-    scale = jnp.linalg.cholesky(innovation_covariance)
-    cross = forecast_covariance @ effective_observation.T
-    gain = jnp.linalg.solve(innovation_covariance, cross.T).T
-    filtered_mean = forecast_mean + gain @ innovation
-    identity = jnp.eye(linear_size, dtype=forecast_mean.dtype)
-    update = identity - gain @ effective_observation
-    filtered_covariance = (
-        update @ forecast_covariance @ update.T + gain @ effective_covariance @ gain.T
-    )
-    filtered_covariance = 0.5 * (filtered_covariance + filtered_covariance.T)
-    diagonal = jnp.diagonal(scale)
-    solved = jax.scipy.linalg.solve_triangular(scale, innovation[:, None], lower=True)[
-        :, 0
-    ]
-    log_likelihood = -0.5 * (
-        jnp.sum(solved**2)
-        + 2.0 * jnp.sum(jnp.log(diagonal))
-        + jnp.sum(flat_mask) * jnp.log(2.0 * jnp.pi)
-    )
-    valid = (
-        jnp.all(jnp.isfinite(forecast_mean))
-        & jnp.all(jnp.isfinite(forecast_covariance))
-        & jnp.all(jnp.isfinite(filtered_mean))
-        & jnp.all(jnp.isfinite(filtered_covariance))
-        & jnp.all(jnp.isfinite(scale))
-        & jnp.all(diagonal > 0.0)
-        & jnp.isfinite(log_likelihood)
-    )
+    if isinstance(observation_covariance, DiagonalCovariance):
+        (
+            filtered_mean,
+            filtered_covariance,
+            log_likelihood,
+            valid,
+        ) = _condition_affine_gaussian_diagonal(
+            forecast_mean,
+            forecast_covariance,
+            observation,
+            observation_offset,
+            jnp.asarray(observation_covariance.variance).reshape(
+                (observation_size,)
+            ),
+            flat_value,
+            flat_mask,
+        )
+    else:
+        active = flat_mask.astype(forecast_mean.dtype)
+        effective_observation = observation * active[:, None]
+        effective_covariance = observation_covariance * active[:, None] * active[
+            None, :
+        ] + jnp.diag(1.0 - active)
+        innovation = jnp.where(
+            flat_mask,
+            flat_value - observation @ forecast_mean - observation_offset,
+            0.0,
+        )
+        innovation_covariance = (
+            effective_observation @ forecast_covariance @ effective_observation.T
+            + effective_covariance
+        )
+        scale = jnp.linalg.cholesky(innovation_covariance)
+        cross = forecast_covariance @ effective_observation.T
+        gain = jnp.linalg.solve(innovation_covariance, cross.T).T
+        filtered_mean = forecast_mean + gain @ innovation
+        identity = jnp.eye(linear_size, dtype=forecast_mean.dtype)
+        update = identity - gain @ effective_observation
+        filtered_covariance = (
+            update @ forecast_covariance @ update.T
+            + gain @ effective_covariance @ gain.T
+        )
+        filtered_covariance = 0.5 * (
+            filtered_covariance + filtered_covariance.T
+        )
+        diagonal = jnp.diagonal(scale)
+        solved = jax.scipy.linalg.solve_triangular(
+            scale, innovation[:, None], lower=True
+        )[:, 0]
+        log_likelihood = -0.5 * (
+            jnp.sum(solved**2)
+            + 2.0 * jnp.sum(jnp.log(diagonal))
+            + jnp.sum(flat_mask) * jnp.log(2.0 * jnp.pi)
+        )
+        valid = (
+            jnp.all(jnp.isfinite(forecast_mean))
+            & jnp.all(jnp.isfinite(forecast_covariance))
+            & jnp.all(jnp.isfinite(filtered_mean))
+            & jnp.all(jnp.isfinite(filtered_covariance))
+            & jnp.all(jnp.isfinite(scale))
+            & jnp.all(diagonal > 0.0)
+            & jnp.isfinite(log_likelihood)
+        )
     return (
         forecast_mean.reshape(model.linear_state_shape),
         forecast_covariance,
@@ -484,6 +522,10 @@ def rao_blackwellized_particle_filter(
     log_weights = jnp.full(
         (case_count, count), -jnp.log(float(count)), dtype=linear_means.dtype
     )
+    initial_nonlinear_particles = nonlinear_particles
+    initial_linear_means = linear_means
+    initial_linear_covariances = linear_covariances
+    initial_log_weights = log_weights
     times = problem.initial_time.reshape((case_count,))
     cumulative = jnp.zeros((case_count,), dtype=linear_means.dtype)
     alive = jnp.stack(initial_valid)
@@ -728,6 +770,16 @@ def rao_blackwellized_particle_filter(
         problem_id=problem.problem_id,
     )
     result = RaoBlackwellizedFilterResult(
+        initial_nonlinear_particles=initial_nonlinear_particles.reshape(
+            case_shape + (count,) + nonlinear_shape
+        ),
+        initial_linear_means=initial_linear_means.reshape(
+            case_shape + (count,) + linear_shape
+        ),
+        initial_linear_covariances=initial_linear_covariances.reshape(
+            case_shape + (count, linear_size, linear_size)
+        ),
+        initial_log_weights=initial_log_weights.reshape(case_shape + (count,)),
         predicted_nonlinear_particles=restore(
             predicted_nonlinear_history, (count,) + nonlinear_shape
         ),
@@ -774,6 +826,70 @@ def rao_blackwellized_particle_filter(
     return result
 
 
+class RaoBlackwellizedFilterLikelihood(StrictModule):
+    """Configured conditionally linear particle likelihood for experiments."""
+
+    key_data: tuple[int, ...] = eqx.field(static=True)
+    key_implementation: str = eqx.field(static=True)
+    num_particles: int = eqx.field(static=True)
+    resampling_method: ResamplingMethod = eqx.field(static=True)
+    resampling_policy: ResamplingPolicy = eqx.field(static=True)
+    resampling_threshold: float = eqx.field(static=True)
+    raise_on_failure: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        key: Key[Array, ""],
+        /,
+        *,
+        num_particles: int,
+        resampling_method: ResamplingMethod = "systematic",
+        resampling_policy: ResamplingPolicy = "ess",
+        resampling_threshold: float = 0.5,
+        raise_on_failure: bool = False,
+    ):
+        count, method, policy, threshold = _configuration(
+            num_particles,
+            resampling_method,
+            resampling_policy,
+            resampling_threshold,
+        )
+        if not isinstance(raise_on_failure, bool):
+            raise TypeError("raise_on_failure must be a bool.")
+        key_data = np.asarray(jax.device_get(jax.random.key_data(key)))
+        if key_data.ndim != 1:
+            raise ValueError("key must be one unbatched JAX random key.")
+        self.key_data = tuple(int(value) for value in key_data)
+        self.key_implementation = str(jax.random.key_impl(key))
+        self.num_particles = count
+        self.resampling_method = method
+        self.resampling_policy = policy
+        self.resampling_threshold = threshold
+        self.raise_on_failure = raise_on_failure
+
+    @property
+    def key(self) -> Array:
+        """Reconstruct the configured typed JAX key without static array state."""
+        return jax.random.wrap_key_data(
+            jnp.asarray(self.key_data, dtype=jnp.uint32),
+            impl=self.key_implementation,
+        )
+
+    def __call__(
+        self, problem: RaoBlackwellizedStateSpaceProblem, /
+    ) -> RaoBlackwellizedFilterResult:
+        """Evaluate the configured deterministic-key particle likelihood."""
+        return rao_blackwellized_particle_filter(
+            self.key,
+            problem,
+            num_particles=self.num_particles,
+            resampling_method=self.resampling_method,
+            resampling_policy=self.resampling_policy,
+            resampling_threshold=self.resampling_threshold,
+            raise_on_failure=self.raise_on_failure,
+        )
+
+
 __all__ = [
     "ConditionalLinearObservation",
     "ConditionalLinearTransition",
@@ -781,6 +897,7 @@ __all__ = [
     "rao_blackwellized_particle_filter",
     "RaoBlackwellizedFilterResult",
     "RaoBlackwellizedFilterState",
+    "RaoBlackwellizedFilterLikelihood",
     "RaoBlackwellizedStateSpaceModel",
     "RaoBlackwellizedStateSpaceProblem",
 ]

@@ -120,9 +120,10 @@ def test_stochastic_gradient_benchmark_controls_are_profiled_and_registered():
     smoke = runner.get_configuration("smoke")
     standard = runner.get_configuration("standard")
 
-    assert tuple(runner.SCENARIOS)[-2:] == (
+    assert tuple(runner.SCENARIOS)[-3:] == (
         "stochastic_gradient_regression",
         "linearized_uncertainty_propagation",
+        "dynamic_factor_stochastic_volatility",
     )
     assert smoke.sgmcmc_burnin > 0
     assert smoke.sgmcmc_draws > 0
@@ -152,3 +153,13 @@ def test_stochastic_gradient_benchmark_controls_are_profiled_and_registered():
         >= smoke.linearized_hutchinson_probes
     )
     assert standard.linearized_qmc_samples >= smoke.linearized_qmc_samples
+    assert smoke.dfsv_assets > smoke.dfsv_factors > 0
+    assert smoke.dfsv_steps > 0
+    assert smoke.dfsv_particles > 0
+    assert smoke.dfsv_smoother_paths > 0
+    assert standard.dfsv_assets >= smoke.dfsv_assets
+    assert standard.dfsv_steps >= smoke.dfsv_steps
+    assert standard.dfsv_factors >= smoke.dfsv_factors
+    assert standard.dfsv_particles >= smoke.dfsv_particles
+    assert standard.dfsv_smoother_paths >= smoke.dfsv_smoother_paths
+

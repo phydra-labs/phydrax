@@ -356,12 +356,19 @@ and a sequence ID. Analytic marginal kernels and solver-backed differential,
 jump, hybrid, finite-state, or neural-operator kernels implement the same
 transition-sample contract.
 
-`phydrax.uq` supplies exact Kalman/RTS inference for linear-Gaussian models,
-bootstrap particle filtering with genealogy and backward simulation, and an
-ensemble transform Kalman filter/smoother that works in member and observation
-space. Every filter has streaming and batch execution, status-aware
-diagnostics, predictive conversion, and pickle-free compatible checkpoints.
-Complete histories can be exported as portable results.
+`phydrax.uq` supplies exact Kalman/RTS inference for linear-Gaussian models; Bellman
+posterior-mode filtering for normalized differentiable nonlinear models; bootstrap,
+guided, and Rao--Blackwellized particle filtering with genealogy and full backward
+simulation; and an ensemble transform Kalman filter/smoother that works in member and
+observation space. Bellman results distinguish their penalized pseudo-log-likelihood
+from a marginal likelihood and expose every curvature and optimizer failure. The
+Rao--Blackwellized smoother retains sampled nonlinear paths and conditional
+linear-Gaussian moments as a mixture rather than flattening them into false Gaussian
+moments. Bellman, Kalman, bootstrap-particle, and ensemble filters expose matching
+streaming and batch execution, status-aware diagnostics, and pickle-free compatible
+checkpoints. Predictive conversion is available where mathematically defined. Complete
+histories can be exported as portable results.
+
 
 `optimal_transport_ensemble_transform` is a separate deterministic equal-weight
 barycentric transform for normalized weighted particle arrays. It preserves leading

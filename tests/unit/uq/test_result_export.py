@@ -297,3 +297,111 @@ def test_sgmcmc_arviz_export_preserves_approximation_and_thermostat_semantics():
     assert all(
         sample_stats[name].dims == ("chain", "draw") for name in sample_stats.data_vars
     )
+
+
+def test_bellman_and_rao_blackwellized_results_have_portable_archives(tmp_path):
+    observations = phx.stochastic.ObservationSequence(
+        jnp.asarray([0.5, 1.0]),
+        jnp.asarray([[0.5], [1.0]]),
+        case_ids=("only",),
+        sequence_id="export-filter-sequence",
+    )
+    state_problem = phx.stochastic.StateSpaceProblem(
+        phx.stochastic.StateSpaceModel(
+            phx.stochastic.GaussianStatePrior(
+                jnp.zeros(1),
+                jnp.eye(1),
+                state_shape=(1,),
+                prior_id="export-filter-prior",
+            ),
+            phx.stochastic.LinearGaussianTransitionKernel(
+                jnp.eye(1),
+                jnp.asarray([[0.1]]),
+                state_shape=(1,),
+                process_id="export-filter-process",
+            ),
+            phx.stochastic.LinearGaussianObservationModel(
+                jnp.eye(1),
+                jnp.asarray([[0.2]]),
+                state_shape=(1,),
+                observation_shape=(1,),
+            ),
+            model_id="export-filter-model",
+        ),
+        observations,
+        initial_time=0.0,
+        problem_id="export-filter-problem",
+    )
+    bellman = phx.uq.bellman_filter(state_problem)
+    bellman_smoother = phx.uq.bellman_smoother(bellman)
+
+    nonlinear_prior = phx.stochastic.CategoricalStatePrior(
+        jnp.asarray([[0]]),
+        jnp.asarray([1.0]),
+        prior_id="export-rb-prior",
+    )
+    nonlinear_transition = phx.stochastic.CallableTransitionKernel(
+        lambda key, state, t0, t1, context: state,
+        state_shape=(1,),
+        process_id="export-rb-mode",
+        approximation_id="constant-mode",
+        log_prob_fn=lambda next_state, state, t0, t1, context: jnp.where(
+            jnp.all(next_state == state), 0.0, -jnp.inf
+        ),
+    )
+    rb_problem = phx.uq.RaoBlackwellizedStateSpaceProblem(
+        phx.uq.RaoBlackwellizedStateSpaceModel(
+            nonlinear_prior,
+            nonlinear_transition,
+            lambda mode, args: (jnp.zeros(1), jnp.eye(1)),
+            lambda previous_mode, mode, t0, t1, context: (
+                jnp.eye(1),
+                jnp.zeros(1),
+                jnp.asarray([[0.1]]),
+            ),
+            lambda mode, time, context: (
+                jnp.eye(1),
+                jnp.zeros(1),
+                jnp.asarray([[0.2]]),
+            ),
+            linear_state_shape=(1,),
+            observation_shape=(1,),
+            model_id="export-rb-model",
+        ),
+        observations,
+        initial_time=0.0,
+        problem_id="export-rb-problem",
+    )
+    rb_filter = phx.uq.rao_blackwellized_particle_filter(
+        jr.key(951), rb_problem, num_particles=4, resampling_policy="never"
+    )
+    rb_backward = phx.uq.rao_blackwellized_backward_simulation(
+        jr.key(952), rb_filter, sample_shape=(2,)
+    )
+    rb_smoother = phx.uq.rao_blackwellized_particle_smoother(
+        jr.key(952), rb_filter, sample_shape=(2,)
+    )
+    results = (
+        bellman,
+        bellman_smoother,
+        rb_filter,
+        rb_backward,
+        rb_smoother,
+    )
+    archives = tuple(
+        _assert_archive_matches_adapter(result, tmp_path / f"filter-{index}.phxuq")
+        for index, result in enumerate(results)
+    )
+
+    assert tuple(archive.kind for archive in archives) == (
+        "bellman_filter",
+        "bellman_smoother",
+        "rao_blackwellized_filter",
+        "rao_blackwellized_backward_simulation",
+        "rao_blackwellized_smoother",
+    )
+    assert archives[0].metadata["curvature_method"] == "observed"
+    assert "cumulative_pseudo_log_likelihood" in archives[0].fields
+    assert "initial_nonlinear_particles" in archives[2].fields
+    assert "particle_indices" in archives[3].fields
+    assert "lag_one_covariances" in archives[4].fields

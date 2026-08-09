@@ -374,8 +374,15 @@ particle approximations, not exact observed information.
 `StateSpaceExperiment` binds one parameterized problem builder to a named experiment
 and an explicit physical case contract. Every evaluation must reproduce the declared
 `case_axes`, `case_shape`, and unique `case_ids`. Its exact path selects Kalman or
-finite-state likelihood explicitly; a custom particle, guided-particle, or ensemble
-likelihood must carry a non-exact `likelihood_id`. Custom likelihoods default to
+finite-state likelihood explicitly. Bellman pseudo-likelihood enters through
+`StateSpaceLaplaceLikelihood`; conditionally linear particle likelihood enters through
+`RaoBlackwellizedFilterLikelihood`. Both are explicit approximate backends and retain
+their native filter result and diagnostics. The Rao--Blackwellized backend requires a
+`RaoBlackwellizedStateSpaceProblem`; the built-in exact path rejects that problem type
+rather than inventing an exact likelihood.
+
+Any Bellman, Rao--Blackwellized, particle, guided-particle, or ensemble backend must
+carry a non-exact `likelihood_id`. Approximate likelihoods default to
 `transform_safe=False`, so local MAP, global-then-local MAP, and Laplace reject them
 before tracing. Set `transform_safe=True` only when the callback and retained backend
 are JAX-transform-safe; this is an explicit caller assertion, not an inferred fallback.
@@ -398,6 +405,14 @@ is added once. Its local/global MAP, Laplace, and sampler methods reuse the exis
 algorithm results and attach likelihood diagnostics at the selected reference point.
 Global initialization remains bounded stochastic search and is not a guarantee of a
 global optimum. Failures and approximation provenance are returned, not repaired.
+
+::: phydrax.uq.StateSpaceLaplaceLikelihood
+
+---
+
+::: phydrax.uq.RaoBlackwellizedFilterLikelihood
+
+---
 
 ::: phydrax.uq.StateSpaceExperiment
 

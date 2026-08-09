@@ -16,6 +16,7 @@ from jaxtyping import Array, Key, PyTree
 from .._strict import StrictModule
 from ..optim import DifferentialEvolutionSearch
 from ..stochastic._state_space import StateSpaceProblem
+from ._bellman import BellmanFilterResult
 from ._ensemble_filter import EnsembleFilterResult
 from ._guided_particle import GuidedParticleFilterResult
 from ._kalman import KalmanExecutionMethod
@@ -26,6 +27,10 @@ from ._map_search import MAPSearchResult, PositionBounds, search_map
 from ._particle import ParticleFilterResult
 from ._posterior import ParameterSpace, PosteriorProblem
 from ._posterior_terms import AbstractPosteriorTerm
+from ._rao_blackwellized import (
+    RaoBlackwellizedFilterResult,
+    RaoBlackwellizedStateSpaceProblem,
+)
 from ._state_space_inference import (
     exact_state_space_log_likelihood,
     ExactStateSpaceLikelihood,
@@ -33,14 +38,21 @@ from ._state_space_inference import (
 )
 
 
+StateSpaceEstimationProblem: TypeAlias = (
+    StateSpaceProblem | RaoBlackwellizedStateSpaceProblem
+)
 ApproximateStateSpaceLikelihoodResult: TypeAlias = (
-    ParticleFilterResult | GuidedParticleFilterResult | EnsembleFilterResult
+    BellmanFilterResult
+    | ParticleFilterResult
+    | GuidedParticleFilterResult
+    | EnsembleFilterResult
+    | RaoBlackwellizedFilterResult
 )
 StateSpaceLikelihoodBackend: TypeAlias = (
     ExactStateSpaceLikelihood | ApproximateStateSpaceLikelihoodResult
 )
 StateSpaceLikelihoodFunction: TypeAlias = Callable[
-    [StateSpaceProblem], StateSpaceLikelihoodBackend
+    [StateSpaceEstimationProblem], StateSpaceLikelihoodBackend
 ]
 StateSpaceSampler: TypeAlias = Callable[..., Any]
 
@@ -87,7 +99,7 @@ class ExperimentStateSpaceLikelihood(StrictModule):
     valid: Array
     status: Array
     backend: StateSpaceLikelihoodBackend
-    problem: StateSpaceProblem
+    problem: StateSpaceEstimationProblem
     experiment_id: str = eqx.field(static=True)
     case_axes: tuple[str, ...] = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
@@ -103,6 +115,7 @@ class ExperimentStateSpaceLikelihood(StrictModule):
     model_discretization_id: str | None = eqx.field(static=True)
     observation_discretization_id: str | None = eqx.field(static=True)
     covariance_regularization: float | None = eqx.field(static=True)
+    curvature_damping: float | None = eqx.field(static=True)
 
     @property
     def successful(self) -> Array:
@@ -134,7 +147,9 @@ class MultiExperimentStateSpaceLikelihoodResult(StrictModule):
 class StateSpaceExperiment(StrictModule):
     """Parameterized state-space problem with an explicit experiment/case contract."""
 
-    problem_fn: Callable[[PyTree[Any]], StateSpaceProblem] = eqx.field(static=True)
+    problem_fn: Callable[[PyTree[Any]], StateSpaceEstimationProblem] = eqx.field(
+        static=True
+    )
     likelihood_fn: StateSpaceLikelihoodFunction | None = eqx.field(static=True)
     experiment_id: str = eqx.field(static=True)
     case_axes: tuple[str, ...] = eqx.field(static=True)
@@ -148,7 +163,7 @@ class StateSpaceExperiment(StrictModule):
 
     def __init__(
         self,
-        problem: Callable[[PyTree[Any]], StateSpaceProblem],
+        problem: Callable[[PyTree[Any]], StateSpaceEstimationProblem],
         /,
         *,
         experiment_id: str,
@@ -203,10 +218,22 @@ class StateSpaceExperiment(StrictModule):
         self.temporal_method = temporal_method
         self.transform_safe = transform_safe
 
-    def problem(self, parameters: PyTree[Any], /) -> StateSpaceProblem:
+    def problem(self, parameters: PyTree[Any], /) -> StateSpaceEstimationProblem:
         problem = self.problem_fn(parameters)
-        if not isinstance(problem, StateSpaceProblem):
-            raise TypeError("problem(parameters) must return a StateSpaceProblem.")
+        if not isinstance(
+            problem, (StateSpaceProblem, RaoBlackwellizedStateSpaceProblem)
+        ):
+            raise TypeError(
+                "problem(parameters) must return a StateSpaceProblem or "
+                "RaoBlackwellizedStateSpaceProblem."
+            )
+        if (
+            isinstance(problem, RaoBlackwellizedStateSpaceProblem)
+            and self.likelihood_fn is None
+        ):
+            raise TypeError(
+                "A RaoBlackwellizedStateSpaceProblem requires a custom likelihood."
+            )
         observations = problem.observations
         if observations.case_axes != self.case_axes:
             raise ValueError(
@@ -224,22 +251,23 @@ class StateSpaceExperiment(StrictModule):
 
     def evaluate(self, parameters: PyTree[Any], /) -> ExperimentStateSpaceLikelihood:
         problem = self.problem(parameters)
-        backend = (
-            exact_state_space_log_likelihood(
+        if self.likelihood_fn is None:
+            if not isinstance(problem, StateSpaceProblem):
+                raise TypeError("Exact likelihood requires a StateSpaceProblem.")
+            backend = exact_state_space_log_likelihood(
                 problem,
                 method=self.exact_method,
                 covariance_regularization=self.covariance_regularization,
                 temporal_method=self.temporal_method,
             )
-            if self.likelihood_fn is None
-            else self.likelihood_fn(problem)
-        )
+        else:
+            backend = self.likelihood_fn(problem)
         return _experiment_likelihood(self, problem, backend)
 
 
 def _experiment_likelihood(
     experiment: StateSpaceExperiment,
-    problem: StateSpaceProblem,
+    problem: StateSpaceEstimationProblem,
     backend: StateSpaceLikelihoodBackend,
     /,
 ) -> ExperimentStateSpaceLikelihood:
@@ -255,6 +283,7 @@ def _experiment_likelihood(
         temporal_method = backend.temporal_method
         approximation_id = backend.problem.model.approximation_id
         covariance_regularization = experiment.covariance_regularization
+        curvature_damping = None
     elif isinstance(backend, ParticleFilterResult):
         per_case = jnp.where(
             backend.successful,
@@ -271,6 +300,26 @@ def _experiment_likelihood(
         temporal_method = "sequential"
         approximation_id = f"particle:{backend.num_particles}"
         covariance_regularization = None
+        curvature_damping = None
+    elif isinstance(backend, BellmanFilterResult):
+        per_case = jnp.where(
+            backend.successful,
+            backend.cumulative_pseudo_log_likelihood[..., -1],
+            -jnp.inf,
+        )
+        total = jnp.sum(per_case).reshape(())
+        incremental = backend.incremental_pseudo_log_likelihood
+        cumulative = backend.cumulative_pseudo_log_likelihood
+        step_valid = backend.step_valid
+        valid = backend.valid
+        status = backend.status
+        method = "bellman-pseudo"
+        temporal_method = "sequential"
+        approximation_id = (
+            f"bellman:{backend.execution_method}:{backend.curvature_method}"
+        )
+        covariance_regularization = None
+        curvature_damping = backend.curvature_damping
     elif isinstance(backend, GuidedParticleFilterResult):
         per_case = jnp.where(
             backend.successful,
@@ -289,6 +338,7 @@ def _experiment_likelihood(
             f"guided-particle:{backend.proposal_id}:{backend.num_particles}"
         )
         covariance_regularization = None
+        curvature_damping = None
     elif isinstance(backend, EnsembleFilterResult):
         per_case = jnp.where(
             backend.successful,
@@ -305,16 +355,40 @@ def _experiment_likelihood(
         temporal_method = "sequential"
         approximation_id = f"ensemble:{backend.ensemble_size}"
         covariance_regularization = backend.covariance_regularization
+        curvature_damping = None
+    elif isinstance(backend, RaoBlackwellizedFilterResult):
+        per_case = jnp.where(
+            backend.successful,
+            backend.cumulative_log_likelihood[..., -1],
+            -jnp.inf,
+        )
+        total = jnp.sum(per_case).reshape(())
+        incremental = backend.incremental_log_likelihood
+        cumulative = backend.cumulative_log_likelihood
+        step_valid = backend.step_valid
+        valid = backend.valid
+        status = backend.status
+        method = "rao-blackwellized-particle"
+        temporal_method = "sequential"
+        approximation_id = (
+            "rao-blackwellized:"
+            f"{backend.problem.model.nonlinear_transition.approximation_id}:"
+            f"{backend.num_particles}"
+        )
+        covariance_regularization = None
+        curvature_damping = None
     else:
         raise TypeError(
             "likelihood(problem) must return ExactStateSpaceLikelihood, "
-            "ParticleFilterResult, GuidedParticleFilterResult, or EnsembleFilterResult."
+            "BellmanFilterResult, ParticleFilterResult, GuidedParticleFilterResult, "
+            "EnsembleFilterResult, or RaoBlackwellizedFilterResult."
         )
     if backend.problem is not problem:
         raise ValueError(
             f"Experiment {experiment.experiment_id!r} likelihood backend must retain "
-            "the exact evaluated StateSpaceProblem, including its model, input, and "
-            "observation schedule; cached or relabelled diagnostics are not accepted."
+            "the exact evaluated StateSpaceProblem or RaoBlackwellizedStateSpaceProblem, "
+            "including its model, input, and observation schedule; cached or relabelled "
+            "diagnostics are not accepted."
         )
     expected_case_shape = experiment.case_shape
     if per_case.shape != expected_case_shape:
@@ -359,9 +433,14 @@ def _experiment_likelihood(
         input_id=(
             None if problem.input_signal is None else problem.input_signal.input_id
         ),
-        model_discretization_id=problem.model.discretization_id,
+        model_discretization_id=(
+            problem.model.discretization_id
+            if isinstance(problem, StateSpaceProblem)
+            else None
+        ),
         observation_discretization_id=problem.observations.discretization_id,
         covariance_regularization=covariance_regularization,
+        curvature_damping=curvature_damping,
     )
 
 
@@ -701,6 +780,7 @@ __all__ = [
     "ExperimentStateSpaceLikelihood",
     "MultiExperimentStateSpaceLikelihood",
     "MultiExperimentStateSpaceLikelihoodResult",
+    "StateSpaceEstimationProblem",
     "StateSpaceEstimation",
     "StateSpaceExperiment",
     "StateSpaceLaplaceWorkflowResult",

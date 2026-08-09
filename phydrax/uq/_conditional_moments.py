@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Literal
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
@@ -414,6 +415,91 @@ def compose_gaussian_regressions(
         noise,
         regression_id=regression_id,
         resolved_method="independent-affine-regression-composition",
+    )
+
+
+def _condition_affine_gaussian_diagonal(
+    prior_mean: ArrayLike,
+    prior_covariance: ArrayLike,
+    observation_matrix: ArrayLike,
+    observation_offset: ArrayLike,
+    observation_variance: ArrayLike,
+    value: ArrayLike,
+    mask: ArrayLike,
+    /,
+) -> tuple[Array, Array, Array, Array]:
+    """Condition through diagonal observation noise in latent-state space."""
+    mean = jnp.asarray(prior_mean)
+    covariance = jnp.asarray(prior_covariance)
+    matrix = jnp.asarray(observation_matrix)
+    offset = jnp.asarray(observation_offset)
+    variance = jnp.asarray(observation_variance)
+    observed = jnp.asarray(mask, dtype=bool)
+    state_size = mean.size
+    observation_size = variance.size
+    if mean.shape != (state_size,):
+        raise ValueError("prior_mean must be a flat state vector.")
+    if covariance.shape != (state_size, state_size):
+        raise ValueError("prior_covariance has incompatible shape.")
+    if matrix.shape != (observation_size, state_size):
+        raise ValueError("observation_matrix has incompatible shape.")
+    if offset.shape != (observation_size,):
+        raise ValueError("observation_offset has incompatible shape.")
+    if jnp.asarray(value).shape != (observation_size,):
+        raise ValueError("value has incompatible shape.")
+    if observed.shape != (observation_size,):
+        raise ValueError("mask has incompatible shape.")
+
+    variance_valid = jnp.isfinite(variance) & (variance > 0.0)
+    safe_variance = jnp.where(variance_valid, variance, 1.0)
+    effective_matrix = jnp.where(observed[:, None], matrix, 0.0)
+    precision = jnp.where(observed, 1.0 / safe_variance, 0.0)
+    residual = jnp.where(observed, jnp.asarray(value) - matrix @ mean - offset, 0.0)
+    identity = jnp.eye(state_size, dtype=mean.dtype)
+    prior_scale = jnp.linalg.cholesky(covariance)
+    prior_information = jax.scipy.linalg.cho_solve(
+        (prior_scale, True), identity
+    )
+    posterior_information = (
+        prior_information + effective_matrix.T @ (precision[:, None] * effective_matrix)
+    )
+    posterior_scale = jnp.linalg.cholesky(posterior_information)
+    posterior_covariance = jax.scipy.linalg.cho_solve(
+        (posterior_scale, True), identity
+    )
+    projected = effective_matrix.T @ (precision * residual)
+    posterior_mean = mean + posterior_covariance @ projected
+    quadratic = residual @ (precision * residual) - projected @ (
+        posterior_covariance @ projected
+    )
+    log_determinant = (
+        jnp.sum(jnp.where(observed, jnp.log(safe_variance), 0.0))
+        + 2.0 * jnp.sum(jnp.log(jnp.diag(prior_scale)))
+        + 2.0 * jnp.sum(jnp.log(jnp.diag(posterior_scale)))
+    )
+    observed_count = jnp.sum(observed)
+    log_likelihood = -0.5 * (
+        quadratic + log_determinant + observed_count * jnp.log(2.0 * jnp.pi)
+    )
+    valid = (
+        jnp.all(variance_valid | ~observed)
+        & jnp.all(jnp.isfinite(prior_scale))
+        & jnp.all(jnp.diag(prior_scale) > 0.0)
+        & jnp.all(jnp.isfinite(posterior_scale))
+        & jnp.all(jnp.diag(posterior_scale) > 0.0)
+        & jnp.all(jnp.isfinite(posterior_mean))
+        & jnp.all(jnp.isfinite(posterior_covariance))
+        & jnp.isfinite(log_likelihood)
+    )
+    return (
+        jnp.where(valid, posterior_mean, mean),
+        jnp.where(
+            valid,
+            0.5 * (posterior_covariance + posterior_covariance.T),
+            covariance,
+        ),
+        jnp.where(valid, log_likelihood, -jnp.inf),
+        valid,
     )
 
 

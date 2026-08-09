@@ -285,6 +285,59 @@ to counts and statistics. Each result retains validity/status, physical cases,
 contract. Its PyTree structure and leaf shapes must remain constant across state pairs,
 steps, and cases.
 
+### Posterior modes with a Bellman filter
+
+Use Bellman filtering when a normalized nonlinear transition and observation density
+are differentiable in the state and a deterministic local posterior approximation is
+appropriate:
+
+```python
+bellman = phx.uq.bellman_filter(
+    problem,
+    method="auto",
+    curvature="observed",
+)
+bellman_smoothed = phx.uq.bellman_smoother(bellman)
+```
+
+For this linear-Gaussian `problem`, `"auto"` uses the analytic engine and the result
+matches Kalman/RTS. A nonlinear problem selects optimization instead. Its
+`pseudo_log_likelihood` is a penalized Bellman criterion, not a marginal likelihood;
+compare it only under identical model and numerical settings. Inspect raw minimum
+curvature eigenvalues, convergence flags, and the separate
+`pseudo_likelihood_valid` flag. Add fixed `curvature_damping` deliberately when the
+declared model justifies it; the filter never hides an indefinite curvature behind an
+adaptive jitter cascade.
+
+### Rao--Blackwellized full-interval smoothing
+
+For a model with nonlinear state `z` and conditionally linear-Gaussian state `x`,
+construct a `RaoBlackwellizedStateSpaceProblem` rather than flattening both into one
+opaque particle state. Its observation callback may return
+`phx.uq.DiagonalCovariance(variance)` to keep high-dimensional independent observation
+noise in factor space.
+
+```python
+rb_filtered = phx.uq.rao_blackwellized_particle_filter(
+    jr.key(20),
+    rb_problem,
+    num_particles=256,
+    resampling_policy="ess",
+)
+rb_smoothed = phx.uq.rao_blackwellized_particle_smoother(
+    jr.key(21),
+    rb_filtered,
+    sample_shape=(64,),
+)
+```
+
+The smoother samples full nonlinear FFBSi paths and returns conditional linear
+Kalman/RTS means, covariances, and lag-one covariances for every path. Those components
+form a mixture; averaging their covariances alone omits between-path uncertainty.
+Transition `log_prob` must be a normalized density. Correlated innovations matter:
+replacing the transition covariance with its diagonal changes the backward law.
+
+
 ## 5. Nonlinear or non-Gaussian particle filtering
 
 The bootstrap filter uses the same problem. A solver-backed
@@ -357,7 +410,7 @@ predictive result.
 ```python
 checkpoint_directory = tempfile.TemporaryDirectory()
 checkpoint_path = Path(checkpoint_directory.name) / "filter-state.phxckpt"
-result_path = Path(checkpoint_directory.name) / "particle-result.phxresult"
+result_path = Path(checkpoint_directory.name) / "bellman-result.phxresult"
 state = phx.uq.initialize_particle_filter(
     jr.key(7),
     problem,
@@ -374,14 +427,17 @@ restored = phx.uq.read_filter_checkpoint(
 )
 restored, _ = phx.uq.particle_filter_step(problem, restored)
 
-phx.uq.export_result(particles, result_path)
+phx.uq.export_result(bellman, result_path)
 portable = phx.uq.read_result_archive(result_path)
 checkpoint_directory.cleanup()
 ```
 
 A checkpoint is a resumable algorithm state and therefore requires an exact live
-problem and settings match. A portable result archive is read-only output and can be
-inspected without reconstructing the original model.
+problem and settings match; Bellman checkpoints also match curvature, damping, and
+optimizer settings. A portable result archive is read-only output and can be inspected
+without reconstructing the original model. Bellman and Rao--Blackwellized smoother
+archives preserve status fields, pseudo-likelihood or path provenance, and conditional
+mixture components.
 
 ## 8. Failure rules
 
@@ -392,3 +448,8 @@ inspected without reconstructing the original model.
 - A failed event stream or insufficient jump capacity remains a failed transition.
 - Compare particle or ensemble settings on common semantic root keys when measuring
   algorithmic differences.
+- Do not compare a Bellman pseudo-log-likelihood to a particle or exact marginal log
+  likelihood as if they estimated the same quantity.
+- Do not collapse Rao--Blackwellized conditional mixture components into a Gaussian
+  without explicitly adding between-path covariance.
+

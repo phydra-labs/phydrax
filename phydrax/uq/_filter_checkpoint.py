@@ -15,6 +15,12 @@ import jax.random as jr
 
 from .._fingerprint import array_tree_fingerprint
 from ..stochastic._state_space import StateSpaceProblem
+from ._bellman import (
+    _configuration as _bellman_configuration,
+    BellmanCurvatureMethod,
+    BellmanExecutionMethod,
+    BellmanFilterState,
+)
 from ._checkpoint import (
     read_checkpoint_archive,
     write_checkpoint_archive,
@@ -30,8 +36,12 @@ from ._particle import (
 )
 
 
-FilterCheckpointAlgorithm: TypeAlias = Literal["kalman", "particle", "ensemble"]
-FilterState: TypeAlias = KalmanFilterState | ParticleFilterState | EnsembleFilterState
+FilterCheckpointAlgorithm: TypeAlias = Literal[
+    "bellman", "kalman", "particle", "ensemble"
+]
+FilterState: TypeAlias = (
+    BellmanFilterState | KalmanFilterState | ParticleFilterState | EnsembleFilterState
+)
 
 
 def _base_compatibility(problem: StateSpaceProblem, /) -> dict[str, object]:
@@ -158,6 +168,137 @@ def read_kalman_filter_checkpoint(
     )
 
 
+def write_bellman_filter_checkpoint(
+    path: str | PathLike[str],
+    problem: StateSpaceProblem,
+    state: BellmanFilterState,
+    /,
+) -> Path:
+    """Atomically save a pickle-free streaming Bellman-filter state."""
+    _validate_problem(problem)
+    if not isinstance(state, BellmanFilterState):
+        raise TypeError("state must be a BellmanFilterState.")
+    if state.problem_id != problem.problem_id:
+        raise ValueError("Bellman-filter state and problem IDs do not match.")
+    compatibility = _base_compatibility(problem)
+    compatibility.update(
+        {
+            "execution_method": state.execution_method,
+            "curvature_method": state.curvature_method,
+            "curvature_damping": state.curvature_damping,
+            "optimizer_rtol": state.optimizer_rtol,
+            "optimizer_atol": state.optimizer_atol,
+            "optimizer_max_steps": state.optimizer_max_steps,
+            "max_dimension": state.max_dimension,
+        }
+    )
+    return write_checkpoint_archive(
+        path,
+        kind="bellman-filter-state-v1",
+        compatibility=compatibility,
+        state={"step_index": _validate_step_index(state.step_index, problem)},
+        arrays={
+            "mode": state.mode,
+            "information": state.information,
+            "covariance": state.covariance,
+            "time": state.time,
+            "pseudo_log_likelihood": state.pseudo_log_likelihood,
+            "mode_valid": state.mode_valid,
+            "pseudo_likelihood_valid": state.pseudo_likelihood_valid,
+            "status": state.status,
+        },
+    )
+
+
+def read_bellman_filter_checkpoint(
+    path: str | PathLike[str],
+    problem: StateSpaceProblem,
+    /,
+    *,
+    method: BellmanExecutionMethod = "auto",
+    curvature: BellmanCurvatureMethod = "observed",
+    curvature_damping: float = 0.0,
+    optimizer_rtol: float = 1e-7,
+    optimizer_atol: float = 1e-9,
+    optimizer_max_steps: int = 128,
+    max_dimension: int = 64,
+) -> BellmanFilterState:
+    """Load a Bellman state only when model, schedule, and settings match."""
+    (
+        execution_method,
+        curvature_method,
+        damping,
+        rtol,
+        atol,
+        maximum_steps,
+        dimension,
+    ) = _bellman_configuration(
+        problem,
+        method=method,
+        curvature=curvature,
+        curvature_damping=curvature_damping,
+        optimizer_rtol=optimizer_rtol,
+        optimizer_atol=optimizer_atol,
+        optimizer_max_steps=optimizer_max_steps,
+        max_dimension=max_dimension,
+    )
+    compatibility = _base_compatibility(problem)
+    compatibility.update(
+        {
+            "execution_method": execution_method,
+            "curvature_method": curvature_method,
+            "curvature_damping": damping,
+            "optimizer_rtol": rtol,
+            "optimizer_atol": atol,
+            "optimizer_max_steps": maximum_steps,
+            "max_dimension": dimension,
+        }
+    )
+    state_data, arrays = read_checkpoint_archive(
+        path,
+        kind="bellman-filter-state-v1",
+        compatibility=compatibility,
+    )
+    if set(state_data) != {"step_index"}:
+        raise ValueError("Bellman-filter checkpoint state manifest is invalid.")
+    step_index = _validate_step_index(state_data["step_index"], problem)
+    case_shape = problem.observations.case_shape
+    state_size = prod(problem.model.state_shape) if problem.model.state_shape else 1
+    _validate_arrays(
+        arrays,
+        {
+            "mode": case_shape + problem.model.state_shape,
+            "information": case_shape + (state_size, state_size),
+            "covariance": case_shape + (state_size, state_size),
+            "time": case_shape,
+            "pseudo_log_likelihood": case_shape,
+            "mode_valid": case_shape,
+            "pseudo_likelihood_valid": case_shape,
+            "status": case_shape,
+        },
+        owner="Bellman-filter",
+    )
+    return BellmanFilterState(
+        mode=arrays["mode"],
+        information=arrays["information"],
+        covariance=arrays["covariance"],
+        time=arrays["time"],
+        pseudo_log_likelihood=arrays["pseudo_log_likelihood"],
+        mode_valid=arrays["mode_valid"].astype(bool),
+        pseudo_likelihood_valid=arrays["pseudo_likelihood_valid"].astype(bool),
+        status=arrays["status"].astype(jnp.int32),
+        step_index=jnp.asarray(step_index, dtype=jnp.int32),
+        problem_id=problem.problem_id,
+        execution_method=execution_method,
+        curvature_method=curvature_method,
+        curvature_damping=damping,
+        optimizer_rtol=rtol,
+        optimizer_atol=atol,
+        optimizer_max_steps=maximum_steps,
+        max_dimension=dimension,
+    )
+
+
 def write_ensemble_filter_checkpoint(
     path: str | PathLike[str],
     problem: StateSpaceProblem,
@@ -265,13 +406,17 @@ def write_filter_checkpoint(
     /,
 ) -> Path:
     """Write any native streaming filter state using its canonical format."""
+    if isinstance(state, BellmanFilterState):
+        return write_bellman_filter_checkpoint(path, problem, state)
     if isinstance(state, KalmanFilterState):
         return write_kalman_filter_checkpoint(path, problem, state)
     if isinstance(state, ParticleFilterState):
         return write_particle_filter_checkpoint(path, problem, state)
     if isinstance(state, EnsembleFilterState):
         return write_ensemble_filter_checkpoint(path, problem, state)
-    raise TypeError("state must be a Kalman, particle, or ensemble filter state.")
+    raise TypeError(
+        "state must be a Bellman, Kalman, particle, or ensemble filter state."
+    )
 
 
 def read_filter_checkpoint(
@@ -287,8 +432,27 @@ def read_filter_checkpoint(
     resampling_method: ResamplingMethod = "systematic",
     resampling_policy: ResamplingPolicy = "ess",
     resampling_threshold: float = 0.5,
+    bellman_method: BellmanExecutionMethod = "auto",
+    bellman_curvature: BellmanCurvatureMethod = "observed",
+    bellman_curvature_damping: float = 0.0,
+    bellman_optimizer_rtol: float = 1e-7,
+    bellman_optimizer_atol: float = 1e-9,
+    bellman_optimizer_max_steps: int = 128,
+    bellman_max_dimension: int = 64,
 ) -> FilterState:
     """Read one native streaming filter state under an explicit algorithm contract."""
+    if algorithm == "bellman":
+        return read_bellman_filter_checkpoint(
+            path,
+            problem,
+            method=bellman_method,
+            curvature=bellman_curvature,
+            curvature_damping=bellman_curvature_damping,
+            optimizer_rtol=bellman_optimizer_rtol,
+            optimizer_atol=bellman_optimizer_atol,
+            optimizer_max_steps=bellman_optimizer_max_steps,
+            max_dimension=bellman_max_dimension,
+        )
     if algorithm == "kalman":
         return read_kalman_filter_checkpoint(
             path,
@@ -316,16 +480,20 @@ def read_filter_checkpoint(
             resampling_policy=resampling_policy,
             resampling_threshold=resampling_threshold,
         )
-    raise ValueError("algorithm must be 'kalman', 'particle', or 'ensemble'.")
+    raise ValueError(
+        "algorithm must be 'bellman', 'kalman', 'particle', or 'ensemble'."
+    )
 
 
 __all__ = [
     "FilterCheckpointAlgorithm",
     "FilterState",
+    "read_bellman_filter_checkpoint",
     "read_ensemble_filter_checkpoint",
     "read_filter_checkpoint",
     "read_kalman_filter_checkpoint",
     "write_ensemble_filter_checkpoint",
+    "write_bellman_filter_checkpoint",
     "write_filter_checkpoint",
     "write_kalman_filter_checkpoint",
 ]
