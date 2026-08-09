@@ -11,6 +11,11 @@ import jax.numpy as jnp
 from phydrax.domain import DomainFunction
 
 from ..._strict import StrictModule
+from ...metrix import (
+    PoissonStructure,
+    symplectic_to_poisson,
+    SymplecticForm,
+)
 from .._composition import pullback
 from ..differential._domain_ops import dt, grad
 from ..linalg._ops import einsum
@@ -51,12 +56,8 @@ class _StackPairCallable(StrictModule):
     def __call__(self, *args: Any, key=None, **kwargs: Any):
         first_args = tuple(args[position] for position in self.first_positions)
         second_args = tuple(args[position] for position in self.second_positions)
-        first_value = jnp.atleast_1d(
-            self.first.func(*first_args, key=key, **kwargs)
-        )
-        second_value = jnp.atleast_1d(
-            self.second.func(*second_args, key=key, **kwargs)
-        )
+        first_value = jnp.atleast_1d(self.first.func(*first_args, key=key, **kwargs))
+        second_value = jnp.atleast_1d(self.second.func(*second_args, key=key, **kwargs))
         return jnp.concatenate((first_value, second_value), axis=-1)
 
 
@@ -65,9 +66,7 @@ def _compatible_domain(a: DomainFunction, b: DomainFunction, /):
         return a.domain.join(b.domain)
     for label in a.domain.labels:
         if not a.domain.coordinate(label).compatible(b.domain.coordinate(label)):
-            raise ValueError(
-                f"Incompatible domain factors for shared label {label!r}."
-            )
+            raise ValueError(f"Incompatible domain factors for shared label {label!r}.")
     return a.domain
 
 
@@ -85,9 +84,7 @@ def _stack_pair(first: DomainFunction, second: DomainFunction, /) -> DomainFunct
     first_ = first.promote(domain)
     second_ = second.promote(domain)
     deps = tuple(
-        label
-        for label in domain.labels
-        if label in first_.deps or label in second_.deps
+        label for label in domain.labels if label in first_.deps or label in second_.deps
     )
     positions = {label: index for index, label in enumerate(deps)}
     return DomainFunction(
@@ -114,9 +111,7 @@ def _canonical_gradients(
 ) -> tuple[DomainFunction, DomainFunction]:
     _require_factor(function, configuration_var, role="Configuration")
     _require_factor(function, momentum_var, role="Momentum")
-    configuration_dimension = function.domain.coordinate(
-        configuration_var
-    ).event_size
+    configuration_dimension = function.domain.coordinate(configuration_var).event_size
     momentum_dimension = function.domain.coordinate(momentum_var).event_size
     if configuration_dimension != momentum_dimension:
         raise ValueError(
@@ -166,7 +161,7 @@ def canonical_hamiltonian_vector_field(
     return _stack_pair(d_momentum, -d_configuration)
 
 
-def poisson_bracket(
+def canonical_poisson_bracket(
     f: DomainFunction,
     g: DomainFunction,
     /,
@@ -198,6 +193,240 @@ def poisson_bracket(
     )
     return einsum("...i,...i->...", _as_vector(f_q), _as_vector(g_p)) - einsum(
         "...i,...i->...", _as_vector(f_p), _as_vector(g_q)
+    )
+
+
+class _PoissonBracketCallable(StrictModule):
+    left_derivatives: tuple[DomainFunction, ...]
+    right_derivatives: tuple[DomainFunction, ...]
+    poisson: PoissonStructure
+    left_positions: tuple[tuple[int, ...], ...]
+    right_positions: tuple[tuple[int, ...], ...]
+    coordinate_positions: tuple[int, ...]
+
+    def __init__(
+        self,
+        left_derivatives: tuple[DomainFunction, ...],
+        right_derivatives: tuple[DomainFunction, ...],
+        poisson: PoissonStructure,
+        deps: tuple[str, ...],
+        variables: tuple[str, ...],
+        /,
+    ):
+        positions = {label: index for index, label in enumerate(deps)}
+        self.left_derivatives = left_derivatives
+        self.right_derivatives = right_derivatives
+        self.poisson = poisson
+        self.left_positions = tuple(
+            tuple(positions[label] for label in derivative.deps)
+            for derivative in left_derivatives
+        )
+        self.right_positions = tuple(
+            tuple(positions[label] for label in derivative.deps)
+            for derivative in right_derivatives
+        )
+        self.coordinate_positions = tuple(positions[label] for label in variables)
+
+    def __call__(self, *args: Any, key=None, **kwargs: Any):
+        left = jnp.concatenate(
+            tuple(
+                jnp.atleast_1d(
+                    derivative.func(
+                        *[args[position] for position in positions],
+                        key=key,
+                        **kwargs,
+                    )
+                )
+                for derivative, positions in zip(
+                    self.left_derivatives, self.left_positions, strict=True
+                )
+            ),
+            axis=-1,
+        )
+        right = jnp.concatenate(
+            tuple(
+                jnp.atleast_1d(
+                    derivative.func(
+                        *[args[position] for position in positions],
+                        key=key,
+                        **kwargs,
+                    )
+                )
+                for derivative, positions in zip(
+                    self.right_derivatives, self.right_positions, strict=True
+                )
+            ),
+            axis=-1,
+        )
+        coordinates = jnp.concatenate(
+            tuple(
+                jnp.atleast_1d(args[position]) for position in self.coordinate_positions
+            ),
+            axis=-1,
+        )
+        return jnp.einsum(
+            "...i,...ij,...j->...",
+            left,
+            self.poisson(coordinates),
+            right,
+        )
+
+
+class _PoissonHamiltonianCallable(StrictModule):
+    derivatives: tuple[DomainFunction, ...]
+    poisson: PoissonStructure
+    derivative_positions: tuple[tuple[int, ...], ...]
+    coordinate_positions: tuple[int, ...]
+
+    def __init__(
+        self,
+        derivatives: tuple[DomainFunction, ...],
+        poisson: PoissonStructure,
+        deps: tuple[str, ...],
+        variables: tuple[str, ...],
+        /,
+    ):
+        positions = {label: index for index, label in enumerate(deps)}
+        self.derivatives = derivatives
+        self.poisson = poisson
+        self.derivative_positions = tuple(
+            tuple(positions[label] for label in derivative.deps)
+            for derivative in derivatives
+        )
+        self.coordinate_positions = tuple(positions[label] for label in variables)
+
+    def __call__(self, *args: Any, key=None, **kwargs: Any):
+        differential = jnp.concatenate(
+            tuple(
+                jnp.atleast_1d(
+                    derivative.func(
+                        *[args[position] for position in positions],
+                        key=key,
+                        **kwargs,
+                    )
+                )
+                for derivative, positions in zip(
+                    self.derivatives, self.derivative_positions, strict=True
+                )
+            ),
+            axis=-1,
+        )
+        coordinates = jnp.concatenate(
+            tuple(
+                jnp.atleast_1d(args[position]) for position in self.coordinate_positions
+            ),
+            axis=-1,
+        )
+        return jnp.einsum(
+            "...ij,...j->...i",
+            self.poisson(coordinates),
+            differential,
+        )
+
+
+def _poisson_contract(
+    function: DomainFunction,
+    structure: PoissonStructure | SymplecticForm,
+    variables: tuple[str, ...],
+    /,
+) -> tuple[PoissonStructure, int]:
+    if not variables or len(set(variables)) != len(variables):
+        raise ValueError("variables must be a nonempty tuple of unique domain labels.")
+    poisson = (
+        symplectic_to_poisson(structure)
+        if isinstance(structure, SymplecticForm)
+        else structure
+    )
+    if not isinstance(poisson, PoissonStructure):
+        raise TypeError("structure must be a PoissonStructure or SymplecticForm.")
+    dimension = 0
+    for variable in variables:
+        _require_factor(function, variable, role="Poisson phase")
+        dimension += function.domain.coordinate(variable).event_size
+    if dimension != poisson.chart.dimension:
+        raise ValueError(
+            f"Poisson chart dimension {poisson.chart.dimension} does not match "
+            f"combined phase-variable dimension {dimension}."
+        )
+    return poisson, dimension
+
+
+def poisson_bracket(
+    left: DomainFunction,
+    right: DomainFunction,
+    structure: PoissonStructure | SymplecticForm,
+    /,
+    *,
+    variables: tuple[str, ...],
+    mode: Literal["reverse", "forward"] = "reverse",
+    ad_engine: _ADEngine = "auto",
+) -> DomainFunction:
+    """Poisson bracket on one or more labeled phase-space variables."""
+    domain = _compatible_domain(left, right)
+    left_function = left.promote(domain)
+    right_function = right.promote(domain)
+    poisson, _ = _poisson_contract(left_function, structure, variables)
+    _poisson_contract(right_function, poisson, variables)
+    left_derivatives = tuple(
+        grad(left_function, var=variable, mode=mode, ad_engine=ad_engine)
+        for variable in variables
+    )
+    right_derivatives = tuple(
+        grad(right_function, var=variable, mode=mode, ad_engine=ad_engine)
+        for variable in variables
+    )
+    deps = tuple(
+        label
+        for label in domain.labels
+        if label in variables
+        or any(label in derivative.deps for derivative in left_derivatives)
+        or any(label in derivative.deps for derivative in right_derivatives)
+    )
+    return DomainFunction(
+        domain=domain,
+        deps=deps,
+        func=_PoissonBracketCallable(
+            left_derivatives,
+            right_derivatives,
+            poisson,
+            deps,
+            variables,
+        ),
+        metadata={},
+    )
+
+
+def hamiltonian_vector_field(
+    hamiltonian: DomainFunction,
+    structure: PoissonStructure | SymplecticForm,
+    /,
+    *,
+    variables: tuple[str, ...],
+    mode: Literal["reverse", "forward"] = "reverse",
+    ad_engine: _ADEngine = "auto",
+) -> DomainFunction:
+    """Hamiltonian vector field for a declared Poisson or symplectic structure."""
+    poisson, _ = _poisson_contract(hamiltonian, structure, variables)
+    derivatives = tuple(
+        grad(hamiltonian, var=variable, mode=mode, ad_engine=ad_engine)
+        for variable in variables
+    )
+    deps = tuple(
+        label
+        for label in hamiltonian.domain.labels
+        if label in variables
+        or any(label in derivative.deps for derivative in derivatives)
+    )
+    return DomainFunction(
+        domain=hamiltonian.domain,
+        deps=deps,
+        func=_PoissonHamiltonianCallable(
+            derivatives,
+            poisson,
+            deps,
+            variables,
+        ),
+        metadata=hamiltonian.metadata,
     )
 
 
@@ -311,17 +540,22 @@ def hamilton_jacobi_residual(
         {momentum_var: momentum},
         domain=action.domain,
     )
-    return dt(
-        action,
-        var=time_var,
-        mode=mode,
-        ad_engine=ad_engine,
-    ) + hamiltonian_path
+    return (
+        dt(
+            action,
+            var=time_var,
+            mode=mode,
+            ad_engine=ad_engine,
+        )
+        + hamiltonian_path
+    )
 
 
 __all__ = [
     "canonical_hamiltonian_residual",
     "canonical_hamiltonian_vector_field",
+    "canonical_poisson_bracket",
+    "hamiltonian_vector_field",
     "hamilton_jacobi_residual",
     "poisson_bracket",
 ]

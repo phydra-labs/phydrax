@@ -23,13 +23,16 @@ four-layer model and integration-source choices, see
       if supplied, before any term observes the fields.
     - `partition_functions()` exposes the trainable/non-trainable state split used
       by `solve(...)`.
-    - `solve(...)` accepts standard and line-search Optax transformations, Evosax
-      distribution-based algorithms, and the structured `phydrax.optim.kfac(...)`
-      optimizer. Population-based Evosax algorithms require a separate finite
-      search-space contract and are rejected.
+    - `solve(...)` accepts standard and line-search Optax transformations, Phydrax
+      Riemannian optimizers, Evosax distribution-based algorithms, and the structured
+      `phydrax.optim.kfac(...)` optimizer. Population-based Evosax algorithms require
+      a separate finite search-space contract and are rejected.
     - `solve(..., evaluation_parameters=...)` keeps optimizer updates on raw
       training parameters while using the optimizer-prescribed view for diagnostics,
       selection, and returned functions.
+    - Riemannian optimizers bind selected trainable leaves through
+      [`ParameterGeometry`](../optim.md#parameter-pytree-binding); they reject
+      `evaluation_parameters` transforms that could leave the manifold.
     - `solve(..., train_term_sample_size=k)` trains on an unbiased fixed-size
       subset of training terms per optimizer step.
     - `solve(..., log_terms=True)` logs the training and evaluation term breakdown;

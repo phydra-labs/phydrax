@@ -42,6 +42,14 @@ from ._cochain_ops import (
     HodgeLaplacianComponent,
 )
 from ._cochain_residual import CochainResidualProgram
+from ._continuous_bridge import (
+    ContinuousCochainBridge,
+    ContinuousCochainProjection,
+    integrate_form_to_cochain,
+    OrientedCellParameterization,
+    StokesValidationReport,
+    validate_stokes_bridge,
+)
 from ._data import Batch, Data
 from ._derived import (
     line_graph,
@@ -443,4 +451,10 @@ __all__ = [
     "query_graph_from_edges",
     "radius_graph",
     "radius_query_graph",
+    "ContinuousCochainBridge",
+    "ContinuousCochainProjection",
+    "OrientedCellParameterization",
+    "StokesValidationReport",
+    "integrate_form_to_cochain",
+    "validate_stokes_bridge",
 ]

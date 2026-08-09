@@ -7,7 +7,9 @@
 from ._hamiltonian import (
     canonical_hamiltonian_residual,
     canonical_hamiltonian_vector_field,
+    canonical_poisson_bracket,
     hamilton_jacobi_residual,
+    hamiltonian_vector_field,
     poisson_bracket,
 )
 from ._lagrangian import canonical_momentum, euler_lagrange
@@ -17,7 +19,9 @@ __all__ = [
     "canonical_hamiltonian_residual",
     "canonical_hamiltonian_vector_field",
     "canonical_momentum",
+    "canonical_poisson_bracket",
     "euler_lagrange",
+    "hamiltonian_vector_field",
     "hamilton_jacobi_residual",
     "poisson_bracket",
 ]

@@ -6,12 +6,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
-from ._metric import RiemannianMetric
+from ._metric import AbstractSemiRiemannianMetric, RiemannianMetric
 from ._utils import _coordinates
 
 
@@ -21,6 +22,8 @@ class MetricJet(StrictModule):
     matrix: Array
     inverse: Array
     determinant: Array
+    determinant_sign: Array
+    log_abs_determinant: Array
     volume_density: Array
     log_volume_density: Array
     first_derivative: Array | None
@@ -33,6 +36,8 @@ class MetricJet(StrictModule):
         matrix: Array,
         inverse: Array,
         determinant: Array,
+        determinant_sign: Array,
+        log_abs_determinant: Array,
         volume_density: Array,
         log_volume_density: Array,
         first_derivative: Array | None,
@@ -42,6 +47,8 @@ class MetricJet(StrictModule):
         self.matrix = matrix
         self.inverse = inverse
         self.determinant = determinant
+        self.determinant_sign = determinant_sign
+        self.log_abs_determinant = log_abs_determinant
         self.volume_density = volume_density
         self.log_volume_density = log_volume_density
         self.first_derivative = first_derivative
@@ -51,13 +58,15 @@ class MetricJet(StrictModule):
 
 class _MetricJetEvaluator(StrictModule):
     metric_function: Callable[[Array], Array]
-    dimension: int
-    order: int
+    dimension: int = eqx.field(static=True)
+    order: int = eqx.field(static=True)
+    positive_definite: bool = eqx.field(static=True)
 
-    def __init__(self, metric: RiemannianMetric, order: int, /):
+    def __init__(self, metric: AbstractSemiRiemannianMetric, order: int, /):
         self.metric_function = metric.matrix_function
         self.dimension = metric.chart.dimension
         self.order = int(order)
+        self.positive_definite = isinstance(metric, RiemannianMetric)
 
     def __call__(self, coordinates: Array, /):
         matrix = jnp.asarray(self.metric_function(coordinates))
@@ -68,16 +77,22 @@ class _MetricJetEvaluator(StrictModule):
             )
         identity = jnp.eye(self.dimension, dtype=matrix.dtype)
         inverse = jnp.linalg.solve(matrix, identity)
-        factor = jnp.linalg.cholesky(matrix)
-        diagonal = jnp.diagonal(factor)
-        volume_density = jnp.prod(diagonal)
-        log_volume_density = jnp.sum(jnp.log(diagonal))
-        determinant = volume_density * volume_density
+        if self.positive_definite:
+            factor = jnp.linalg.cholesky(matrix)
+            log_abs_determinant = 2.0 * jnp.sum(jnp.log(jnp.diagonal(factor)))
+            determinant_sign = jnp.asarray(1.0, dtype=matrix.dtype)
+        else:
+            determinant_sign, log_abs_determinant = jnp.linalg.slogdet(matrix)
+        log_volume_density = 0.5 * log_abs_determinant
+        volume_density = jnp.exp(log_volume_density)
+        determinant = determinant_sign * jnp.exp(log_abs_determinant)
         if self.order == 0:
             return (
                 matrix,
                 inverse,
                 determinant,
+                determinant_sign,
+                log_abs_determinant,
                 volume_density,
                 log_volume_density,
             )
@@ -88,6 +103,8 @@ class _MetricJetEvaluator(StrictModule):
                 matrix,
                 inverse,
                 determinant,
+                determinant_sign,
+                log_abs_determinant,
                 volume_density,
                 log_volume_density,
                 first_derivative,
@@ -97,6 +114,8 @@ class _MetricJetEvaluator(StrictModule):
             matrix,
             inverse,
             determinant,
+            determinant_sign,
+            log_abs_determinant,
             volume_density,
             log_volume_density,
             first_derivative,
@@ -119,32 +138,38 @@ def _evaluate_jet(
 
 
 def metric_jet(
-    metric: RiemannianMetric,
+    metric: AbstractSemiRiemannianMetric,
     coordinates: ArrayLike,
     /,
     *,
     order: int = 2,
 ) -> MetricJet:
-    """Evaluate a reusable metric jet up to coordinate derivative order two."""
-
-    order_ = int(order)
-    if order_ not in (0, 1, 2):
+    """Evaluate a reusable nondegenerate metric jet through derivative order two."""
+    if not isinstance(metric, AbstractSemiRiemannianMetric):
+        raise TypeError("metric_jet requires a nondegenerate metric.")
+    order_value = int(order)
+    if order_value not in (0, 1, 2):
         raise ValueError("Metric jet order must be 0, 1, or 2.")
     points = _coordinates(coordinates, metric.chart.dimension)
     values = _evaluate_jet(
-        _MetricJetEvaluator(metric, order_),
+        _MetricJetEvaluator(metric, order_value),
         points,
         metric.chart.dimension,
     )
-    first_derivative = None if order_ == 0 else values[5]
-    second_derivative = None if order_ < 2 else values[6]
+    first_derivative = None if order_value == 0 else values[7]
+    second_derivative = None if order_value < 2 else values[8]
     return MetricJet(
         matrix=values[0],
         inverse=values[1],
         determinant=values[2],
-        volume_density=values[3],
-        log_volume_density=values[4],
+        determinant_sign=values[3],
+        log_abs_determinant=values[4],
+        volume_density=values[5],
+        log_volume_density=values[6],
         first_derivative=first_derivative,
         second_derivative=second_derivative,
-        order=order_,
+        order=order_value,
     )
+
+
+__all__ = ["MetricJet", "metric_jet"]

@@ -10,6 +10,13 @@ numerical state membership and local updates, not a second metric or domain
 hierarchy. `LocalRetraction` binds a geometry to one validated base point and
 records both a stable retraction ID and the resolved method.
 
+`AbstractStateGeometry` is also separate from
+[`AbstractRiemannianManifold`](manifolds.md). State retractions consume local
+coordinates and expose differential pullbacks for geometric integration. Parameter
+manifolds consume ambient tangents and supply a metric gradient plus optimizer-state
+transport. The SO(n) and SPD(n) parameter manifolds delegate their retractions to the
+state implementations documented here.
+
 ## Built-in geometries
 
 - `EuclideanStateGeometry` is the identity/addition geometry. It is marked

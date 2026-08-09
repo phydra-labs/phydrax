@@ -176,13 +176,20 @@ are rejected rather than clipped or repaired.
 
 ### Geometry: Euclidean coordinates vs metric-aware calculus
 
-`phydrax.metrix` supplies explicit charts, tensor transformation laws,
-positive-definite metric fields, Levi-Civita operators, curvature, embedded
-charts, and metric-aware stochastic generators. Use it when a PDE, PINN, or
-operator is posed in curvilinear coordinates or on a parameterized manifold.
-Bounds, seams, sampling, and admissibility remain domain concerns; metric volume
-can be attached to a component with `with_riemannian_measure`. See
+`phydrax.metrix` supplies charts and differentiable maps; tensors and compressed
+differential forms; positive and signed metrics; affine connections and curvature;
+Lie groups; symplectic, Poisson, and horizontal structures; and metric-aware
+stochastic kernels. Positive norms, Lorentzian wave operators, Poisson brackets, and
+sub-Laplacians remain distinct named operations rather than overloads with hidden
+defaults. Bounds, seams, sampling, and admissibility remain domain concerns. See
 [API → Metrix](api/metrix/index.md).
+
+For trainable arrays on spheres, hyperbolic spaces, probability simplices, matrix
+manifolds, SO(n), or SPD(n), `ParameterGeometry` binds exact PyTree leaf paths to
+declared metrics. Weighted product metrics, Riemannian SGD and momentum, conjugate
+gradient, and L-BFGS update those leaves through tangent conversion, retraction, and
+transport while ordinary leaves remain Euclidean.
+See [API → Optimization](api/optim.md#riemannian-optimization).
 
 ## A first real PDE example: Poisson on a square
 

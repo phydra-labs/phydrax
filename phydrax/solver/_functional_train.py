@@ -34,6 +34,10 @@ from .._training import (
 )
 from ..integration import AdaptiveIntegration
 from ..operators.differential._runtime import derivative_runtime_context
+from ..optim._riemannian import (
+    AbstractRiemannianLineSearchOptimizer,
+    AbstractRiemannianOptimizer,
+)
 from ..sampling.collocation import ControlledCollocationPolicy
 from ..terms._residual import ResidualPenalty
 from ._model_losses import function_model_loss_labels, function_model_loss_values
@@ -104,8 +108,6 @@ def _term_tag(index: int, name: str, /) -> str:
 
 def _model_loss_tag(index: int, name: str, /) -> str:
     return f"model_losses/{index:03d}_{_clean_tag_part(name)}"
-
-
 
 
 def _metric_suffix(metrics: dict[str, Any], /) -> str:
@@ -220,8 +222,6 @@ def _write_model_loss_tensorboard_scalars(
         writer.scalar(f"train/{_model_loss_tag(i, name)}/loss", val, step)
 
 
-
-
 def _log_tensorboard_scalars(
     writer: _TensorBoardLogger,
     *,
@@ -318,9 +318,7 @@ def _refresh_collocation(
         enforced = solver.enforcement.apply(functions)
     keys = jr.split(key, len(solver.terms))
     refreshed: list[Any | None] = []
-    for term, population, term_key in zip(
-        solver.terms, collocation, keys, strict=True
-    ):
+    for term, population, term_key in zip(solver.terms, collocation, keys, strict=True):
         if population is None:
             refreshed.append(None)
             continue
@@ -352,9 +350,7 @@ def _settle_collocation(
         enforced = solver.enforcement.apply(functions)
     keys = jr.split(key, len(solver.terms))
     settled: list[Any | None] = []
-    for term, population, term_key in zip(
-        solver.terms, collocation, keys, strict=True
-    ):
+    for term, population, term_key in zip(solver.terms, collocation, keys, strict=True):
         if population is None:
             settled.append(None)
             continue
@@ -380,9 +376,7 @@ def _record_collocation_training_evaluations(
     term_indices: tuple[int, ...] | None = None,
 ) -> tuple[Any | None, ...]:
     selected = (
-        None
-        if term_indices is None
-        else frozenset(int(index) for index in term_indices)
+        None if term_indices is None else frozenset(int(index) for index in term_indices)
     )
     recorded: list[Any | None] = []
     for index, (term, population) in enumerate(
@@ -424,7 +418,8 @@ def solve(
     self: "FunctionalSolver",
     *,
     num_iter: int,
-    optim: optax.GradientTransformation
+    optim: AbstractRiemannianOptimizer
+    | optax.GradientTransformation
     | optax.GradientTransformationExtraArgs
     | Any = optax.rprop(1e-3),
     evaluation_parameters: EvaluationParametersFn | None = None,
@@ -445,14 +440,23 @@ def solve(
 
     if isinstance(optim, str):
         raise TypeError(
-            "optim must be an optimizer object (e.g. optax.adam(...), optax.lbfgs(...), "
-            "or an evosax distribution-based algorithm instance), not a string."
+            "optim must be an optimizer object (e.g. phydrax.optim.riemannian_sgd(...), "
+            "optax.adam(...), optax.lbfgs(...), or an evosax distribution-based "
+            "algorithm instance), not a string."
         )
 
     _opt_linesearch: optax.GradientTransformationExtraArgs | None = None
     _opt_standard: optax.GradientTransformation | None = None
 
-    if isinstance(optim, optax.GradientTransformationExtraArgs):
+    _opt_riemannian: AbstractRiemannianOptimizer | None = None
+    if isinstance(optim, AbstractRiemannianOptimizer):
+        if evaluation_parameters is not None:
+            raise ValueError(
+                "evaluation_parameters is unsupported for Riemannian optimizers "
+                "because an ambient transform need not preserve manifold membership."
+            )
+        _opt_riemannian = optim
+    elif isinstance(optim, optax.GradientTransformationExtraArgs):
         _opt_linesearch = optim
     elif isinstance(optim, optax.GradientTransformation):
         _opt_standard = optim
@@ -490,9 +494,12 @@ def solve(
         )
     else:
         raise TypeError(
-            "optim must be an Optax transformation or an Evosax distribution-based "
-            "algorithm instance."
+            "optim must be a Phydrax Riemannian optimizer, an Optax transformation, "
+            "or an Evosax distribution-based algorithm instance."
         )
+    optimizer_label = (
+        _opt_riemannian.optimizer_id if _opt_riemannian is not None else "optax"
+    )
 
     log_ctx = (
         open(Path(log_path), "w", encoding="utf-8")
@@ -644,6 +651,10 @@ def solve(
         loss_fn = eqx.filter_value_and_grad(_loss_wrt_params, has_aux=True)
 
         is_linesearch = _opt_linesearch is not None
+        is_riemannian = _opt_riemannian is not None
+        is_riemannian_linesearch = isinstance(
+            _opt_riemannian, AbstractRiemannianLineSearchOptimizer
+        )
 
         def solve_step_terms(
             params_,
@@ -657,6 +668,60 @@ def solve(
             collocation_,
             materialized_batches_,
         ):
+            if is_riemannian:
+                (loss_val, terms), grads = loss_fn(
+                    params_,
+                    non_trainable_,
+                    solver,
+                    active_terms_,
+                    term_scale,
+                    key,
+                    iter_,
+                    collocation_,
+                    materialized_batches_,
+                )
+                assert _opt_riemannian is not None
+                if is_riemannian_linesearch:
+
+                    def _riemannian_value_fn(p):
+                        return _loss_wrt_params(
+                            p,
+                            non_trainable_,
+                            solver,
+                            active_terms_,
+                            term_scale,
+                            key,
+                            iter_,
+                            collocation_,
+                            materialized_batches_,
+                        )[0]
+
+                    params_, opt_state = _opt_riemannian.update(
+                        grads,
+                        opt_state,
+                        params_,
+                        value=loss_val,
+                        value_fn=_riemannian_value_fn,
+                    )
+                    loss_val, terms = _loss_wrt_params(
+                        params_,
+                        non_trainable_,
+                        solver,
+                        active_terms_,
+                        term_scale,
+                        key,
+                        iter_,
+                        collocation_,
+                        materialized_batches_,
+                    )
+                else:
+                    params_, opt_state = _opt_riemannian.update(
+                        grads,
+                        opt_state,
+                        params_,
+                    )
+                return params_, opt_state, loss_val, terms
+
             if is_linesearch:
                 import jax.tree_util as jtu
 
@@ -743,7 +808,11 @@ def solve(
             else _loss_wrt_params
         )
 
-        opt = _opt_linesearch if is_linesearch else _opt_standard
+        opt = (
+            _opt_riemannian
+            if is_riemannian
+            else (_opt_linesearch if is_linesearch else _opt_standard)
+        )
         if opt is None:
             raise ValueError("Optimizer is not configured.")
         opt_state = opt.init(params)
@@ -768,7 +837,7 @@ def solve(
         for epoch in range(int(num_iter)):
             if signal_guard.stop_requested:
                 _log_training_signal_stop(
-                    "optax",
+                    optimizer_label,
                     signal_guard,
                     completed=epoch,
                     total=int(num_iter),
@@ -793,12 +862,10 @@ def solve(
                     jax.block_until_ready(collocation)
                     refresh_wall_time += time.perf_counter() - refresh_started
                 optimizer_started = time.perf_counter() if profile_adaptive else 0.0
-                active_terms, active_term_indices, term_scale = (
-                    _active_train_terms(
-                        self.terms,
-                        sample_size=term_sample_size,
-                        key=jr.fold_in(subkey, 17),
-                    )
+                active_terms, active_term_indices, term_scale = _active_train_terms(
+                    self.terms,
+                    sample_size=term_sample_size,
+                    key=jr.fold_in(subkey, 17),
                 )
                 active_collocation = tuple(
                     collocation[index] for index in active_term_indices
@@ -854,7 +921,9 @@ def solve(
                 if keep_best:
                     if evaluation_parameters is None:
                         selection_parameters = (
-                            params if is_linesearch else pre_update_params
+                            params
+                            if is_linesearch or is_riemannian_linesearch
+                            else pre_update_params
                         )
                         selection_loss = loss_val
                     else:
@@ -879,7 +948,7 @@ def solve(
                 iter_time_s = time.perf_counter() - iter_start
                 if signal_guard.stop_requested:
                     _log_training_signal_stop(
-                        "optax",
+                        optimizer_label,
                         signal_guard,
                         completed=step,
                         total=int(num_iter),
@@ -888,6 +957,15 @@ def solve(
                     break
                 console_step = log_every_ > 0 and (step % log_every_ == 0)
                 tensorboard_step = tb_every_ is not None and (step % tb_every_ == 0)
+                riemannian_step_metrics = None
+                riemannian_constraint_residual = None
+                if _opt_riemannian is not None and (console_step or tensorboard_step):
+                    riemannian_step_metrics = _opt_riemannian.step_metrics(opt_state)
+                    riemannian_constraint_residual = (
+                        _opt_riemannian.parameter_geometry.maximum_constraint_residual(
+                            current_evaluation_params
+                        )
+                    )
                 train_data_metrics: tuple[dict[str, Any], ...] = tuple(
                     {} for _ in self.terms
                 )
@@ -945,10 +1023,49 @@ def solve(
                         if evaluation_loss is None
                         else f" eval_loss={float(evaluation_loss):.6e}"
                     )
+                    optimizer_suffix = ""
+                    if riemannian_step_metrics is not None:
+                        if riemannian_constraint_residual is None:
+                            raise RuntimeError(
+                                "Riemannian diagnostics require a constraint residual."
+                            )
+                        optimizer_suffix = (
+                            " rgrad="
+                            f"{float(riemannian_step_metrics.gradient_norm):.6e}"
+                            " step_norm="
+                            f"{float(riemannian_step_metrics.tangent_step_norm):.6e}"
+                            " constraint="
+                            f"{float(riemannian_constraint_residual):.6e}"
+                        )
+                        if (
+                            _opt_riemannian is not None
+                            and _opt_riemannian.optimizer_id == "riemannian-momentum"
+                        ):
+                            optimizer_suffix += (
+                                " momentum="
+                                f"{float(riemannian_step_metrics.momentum_norm):.6e}"
+                            )
+                        if (
+                            _opt_riemannian is not None
+                            and _opt_riemannian.optimizer_id
+                            in (
+                                "riemannian-conjugate-gradient",
+                                "riemannian-lbfgs",
+                            )
+                        ):
+                            optimizer_suffix += (
+                                " line_search="
+                                f"{int(riemannian_step_metrics.line_search_evaluations)}"
+                                " accepted="
+                                f"{int(riemannian_step_metrics.line_search_accepted)}"
+                                " reduction="
+                                f"{float(riemannian_step_metrics.line_search_reduction):.6e}"
+                            )
                     print(
-                        f"[phydrax][optax] iter {step}/{int(num_iter)} "
+                        f"[phydrax][{optimizer_label}] iter {step}/{int(num_iter)} "
                         f"loss={loss_f:.6e}{evaluation_suffix} "
-                        f"best={best_display:.6e} iter_time={iter_time_s:.3f}s",
+                        f"best={best_display:.6e} iter_time={iter_time_s:.3f}s"
+                        f"{optimizer_suffix}",
                         file=out_file,
                     )
                     if log_terms_:
@@ -1012,12 +1129,83 @@ def solve(
                         eval_data_metrics=eval_data_metrics,
                         log_terms=log_terms_,
                     )
+                    if riemannian_step_metrics is not None:
+                        tb_writer.scalar(
+                            "optimizer/riemannian/learning_rate",
+                            riemannian_step_metrics.learning_rate,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/riemannian/gradient_norm",
+                            riemannian_step_metrics.gradient_norm,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/riemannian/clipping_scale",
+                            riemannian_step_metrics.clipping_scale,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/riemannian/tangent_step_norm",
+                            riemannian_step_metrics.tangent_step_norm,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/riemannian/momentum_norm",
+                            riemannian_step_metrics.momentum_norm,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/riemannian/constraint_residual_max",
+                            riemannian_constraint_residual,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/riemannian/line_search_evaluations",
+                            riemannian_step_metrics.line_search_evaluations,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/riemannian/line_search_accepted",
+                            riemannian_step_metrics.line_search_accepted,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/riemannian/line_search_reduction",
+                            riemannian_step_metrics.line_search_reduction,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/riemannian/conjugacy_beta",
+                            riemannian_step_metrics.conjugacy_beta,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/riemannian/history_pair_count",
+                            riemannian_step_metrics.history_pair_count,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/riemannian/tangent_residual",
+                            riemannian_step_metrics.tangent_residual,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/riemannian/transported_tangent_residual",
+                            riemannian_step_metrics.transported_tangent_residual,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/riemannian/transport_metric_distortion",
+                            riemannian_step_metrics.transport_metric_distortion,
+                            step,
+                        )
                     if step % tb_flush_every_ == 0:
                         tb_writer.flush()
             except (KeyboardInterrupt, InterruptedError) as exc:
                 signal_guard.request_stop_from_exception(exc)
                 _log_training_signal_stop(
-                    "optax",
+                    optimizer_label,
                     signal_guard,
                     completed=completed,
                     total=int(num_iter),
@@ -1035,6 +1223,49 @@ def solve(
             if keep_best
             else current_evaluation_params
         )
+        riemannian_diagnostics: dict[str, Any] = {}
+        if _opt_riemannian is not None:
+            geometry = _opt_riemannian.parameter_geometry
+            if not bool(geometry.contains(chosen)):
+                raise ValueError(
+                    "Returned parameters are outside their declared ParameterGeometry."
+                )
+            final_metrics = _opt_riemannian.step_metrics(opt_state)
+            riemannian_diagnostics = {
+                "optimizer/riemannian/num_manifold_leaves": jnp.asarray(
+                    geometry.num_manifold_leaves
+                ),
+                "optimizer/riemannian/learning_rate": final_metrics.learning_rate,
+                "optimizer/riemannian/gradient_norm": final_metrics.gradient_norm,
+                "optimizer/riemannian/clipping_scale": final_metrics.clipping_scale,
+                "optimizer/riemannian/tangent_step_norm": (
+                    final_metrics.tangent_step_norm
+                ),
+                "optimizer/riemannian/momentum_norm": final_metrics.momentum_norm,
+                "optimizer/riemannian/constraint_residual_max": (
+                    geometry.maximum_constraint_residual(chosen)
+                ),
+                "optimizer/riemannian/tangent_residual": (final_metrics.tangent_residual),
+                "optimizer/riemannian/transported_tangent_residual": (
+                    final_metrics.transported_tangent_residual
+                ),
+                "optimizer/riemannian/transport_metric_distortion": (
+                    final_metrics.transport_metric_distortion
+                ),
+                "optimizer/riemannian/line_search_evaluations": (
+                    final_metrics.line_search_evaluations
+                ),
+                "optimizer/riemannian/line_search_accepted": (
+                    final_metrics.line_search_accepted
+                ),
+                "optimizer/riemannian/line_search_reduction": (
+                    final_metrics.line_search_reduction
+                ),
+                "optimizer/riemannian/conjugacy_beta": (final_metrics.conjugacy_beta),
+                "optimizer/riemannian/history_pair_count": (
+                    final_metrics.history_pair_count
+                ),
+            }
         functions = combine_trainable(chosen, non_trainable)
         settle_started = time.perf_counter() if profile_adaptive else 0.0
         collocation = _settle_collocation(
@@ -1061,6 +1292,7 @@ def solve(
                     steady_optimizer_step_wall_time / max(completed - 1, 1)
                 ),
             }
+            | riemannian_diagnostics
         )
         return eqx.tree_at(lambda s: s.training_diagnostics, result, diagnostics)
 
@@ -1086,8 +1318,7 @@ def _solve_evosax_distribution(
 
     if train_term_sample_size is not None:
         raise NotImplementedError(
-            "train_term_sample_size is currently supported only for Optax "
-            "optimizers."
+            "train_term_sample_size is currently supported only for Optax optimizers."
         )
 
     params, non_trainable = partition_trainable(self.functions)
@@ -1211,9 +1442,7 @@ def _solve_evosax_distribution(
         )
         values: list[jax.Array] = []
         with derivative_runtime_context():
-            for term, batch, term_key in zip(
-                requested_terms, batches, keys, strict=True
-            ):
+            for term, batch, term_key in zip(requested_terms, batches, keys, strict=True):
                 value = _term_value(
                     term,
                     None,
@@ -1227,18 +1456,14 @@ def _solve_evosax_distribution(
             return jnp.stack(values, axis=0)
         return jnp.zeros((0,), dtype=float)
 
-    def _data_metrics_for_terms(
-        p, non_trainable_, solver, requested_terms, key, iter_
-    ):
+    def _data_metrics_for_terms(p, non_trainable_, solver, requested_terms, key, iter_):
         enforced = _enforced_functions_for_params(p, non_trainable_, solver)
         keys = jr.split(key, len(requested_terms))
         metrics: list[dict[str, Any]] = []
         with derivative_runtime_context():
             for term, term_key in zip(requested_terms, keys, strict=True):
                 if isinstance(term, _SupportsDataMetrics):
-                    metrics.append(
-                        term.data_metrics(enforced, key=term_key, iter_=iter_)
-                    )
+                    metrics.append(term.data_metrics(enforced, key=term_key, iter_=iter_))
                 else:
                     metrics.append({})
         return tuple(metrics)

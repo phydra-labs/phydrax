@@ -11,10 +11,11 @@ from typing import Any, ClassVar, Literal
 import diffrax as dfx
 import equinox as eqx
 import jax.numpy as jnp
+from diffrax._term import WrapTerm
 from jaxtyping import Array
 
 from .._strict import StrictModule
-from ..metrix import AbstractStateGeometry
+from ..metrix import AbstractStateGeometry, EuclideanStateGeometry
 
 
 class GeometricLocalInterpolation(dfx.AbstractLocalInterpolation):
@@ -91,6 +92,141 @@ class GeometricEuler(AbstractGeometricSolver):
             y0=y0,
             y1=y1,
             local_increment=local,
+            geometry=self.geometry,
+        )
+        return y1, None, dense_info, None, dfx.RESULTS.successful
+
+    def func(self, terms, t0, y0, args):
+        return terms.vf(t0, y0, args)
+
+
+class SeparableHamiltonianVectorField(StrictModule):
+    """Canonical vector field for ``H(q, p) = V(q) + T(p)``."""
+
+    potential_gradient: Callable[[Array, Array, Any], Array]
+    kinetic_gradient: Callable[[Array, Array, Any], Array]
+    configuration_dimension: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        potential_gradient: Callable[[Array, Array, Any], Array],
+        kinetic_gradient: Callable[[Array, Array, Any], Array],
+        configuration_dimension: int,
+        /,
+    ):
+        if not callable(potential_gradient) or not callable(kinetic_gradient):
+            raise TypeError("Hamiltonian gradients must be callable.")
+        if int(configuration_dimension) <= 0:
+            raise ValueError("configuration_dimension must be positive.")
+        self.potential_gradient = potential_gradient
+        self.kinetic_gradient = kinetic_gradient
+        self.configuration_dimension = int(configuration_dimension)
+
+    def split(self, state: Array, /) -> tuple[Array, Array]:
+        state_array = jnp.asarray(state)
+        expected = 2 * self.configuration_dimension
+        if state_array.shape[-1] != expected:
+            raise ValueError(
+                f"Canonical phase state must have trailing dimension {expected}; "
+                f"got {state_array.shape[-1]}."
+            )
+        return (
+            state_array[..., : self.configuration_dimension],
+            state_array[..., self.configuration_dimension :],
+        )
+
+    def __call__(self, time: Array, state: Array, args: Any, /) -> Array:
+        configuration, momentum = self.split(state)
+        velocity = jnp.asarray(self.kinetic_gradient(time, momentum, args))
+        force = -jnp.asarray(self.potential_gradient(time, configuration, args))
+        if velocity.shape != configuration.shape or force.shape != momentum.shape:
+            raise ValueError(
+                "Hamiltonian gradients must have the corresponding phase-state shape."
+            )
+        return jnp.concatenate((velocity, force), axis=-1)
+
+
+def _separable_hamiltonian_vector_field(
+    terms: dfx.ODETerm | WrapTerm,
+    /,
+) -> tuple[SeparableHamiltonianVectorField, Array]:
+    if isinstance(terms, WrapTerm):
+        term = terms.term
+        direction = terms.direction
+    else:
+        term = terms
+        direction = jnp.asarray(1)
+    if not isinstance(term, dfx.ODETerm) or not isinstance(
+        term.vector_field, SeparableHamiltonianVectorField
+    ):
+        raise TypeError(
+            "StormerVerlet requires an ODETerm containing "
+            "SeparableHamiltonianVectorField."
+        )
+    return term.vector_field, direction
+
+
+class StormerVerlet(AbstractGeometricSolver):
+    """Second-order symplectic integrator for separable canonical Hamiltonians."""
+
+    term_structure: ClassVar = dfx.ODETerm
+    interpolation_cls: ClassVar[Callable[..., GeometricLocalInterpolation]] = (
+        GeometricLocalInterpolation
+    )
+    configuration_dimension: int = eqx.field(static=True)
+
+    def __init__(self, configuration_dimension: int, /):
+        if int(configuration_dimension) <= 0:
+            raise ValueError("configuration_dimension must be positive.")
+        self.configuration_dimension = int(configuration_dimension)
+        self.geometry = EuclideanStateGeometry(
+            geometry_id="state-geometry:canonical-phase"
+        )
+        self.solver_id = "solver:stormer-verlet:canonical"
+        self.resolved_method = "kick-drift-kick"
+        self.stage_abscissae = (0.0, 0.5, 1.0)
+        self.causal_stage_extent = 1.0
+
+    def order(self, terms):
+        del terms
+        return 2
+
+    def init(self, terms, t0, t1, y0, args):
+        del t0, t1, args
+        vector_field, _ = _separable_hamiltonian_vector_field(terms)
+        if vector_field.configuration_dimension != self.configuration_dimension:
+            raise ValueError(
+                "Solver and Hamiltonian vector field configuration dimensions differ."
+            )
+        vector_field.split(y0)
+        return None
+
+    def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
+        del solver_state, made_jump
+        vector_field, direction = _separable_hamiltonian_vector_field(terms)
+        configuration, momentum = vector_field.split(y0)
+        dt = terms.contr(t0, t1)
+        half_momentum = momentum - 0.5 * dt * vector_field.potential_gradient(
+            t0 * direction,
+            configuration,
+            args,
+        )
+        next_configuration = configuration + dt * vector_field.kinetic_gradient(
+            (t0 + 0.5 * (t1 - t0)) * direction,
+            half_momentum,
+            args,
+        )
+        next_momentum = half_momentum - 0.5 * dt * vector_field.potential_gradient(
+            t1 * direction,
+            next_configuration,
+            args,
+        )
+        y1 = jnp.concatenate((next_configuration, next_momentum), axis=-1)
+        local_increment = y1 - y0
+        dense_info = dict(
+            y0=y0,
+            y1=y1,
+            local_increment=local_increment,
             geometry=self.geometry,
         )
         return y1, None, dense_info, None, dfx.RESULTS.successful
@@ -412,7 +548,9 @@ __all__ = [
     "GeometricEuler",
     "GeometricLocalInterpolation",
     "RKMK",
+    "SeparableHamiltonianVectorField",
     "SRKMK",
+    "StormerVerlet",
     "commutator_free_midpoint_tableau",
     "solver_state_geometry",
 ]
