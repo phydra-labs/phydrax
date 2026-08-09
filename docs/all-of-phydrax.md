@@ -91,6 +91,24 @@ maps live in `phydrax.nn.parameters`; raw arrays remain optimizer leaves and
 physical values are constructed on demand. The same package owns explicit
 model-PyTree selection through `ParameterSubspace`.
 
+### Native ML: fitted array models, not mutable estimators
+
+`phydrax.ml` covers preprocessing and composition; linear, generalized-linear,
+robust, sparse, discriminant, Bayes, and calibrated supervision; decomposition;
+kernel, neighbor, covariance, mixture, clustering, manifold, outlier, tree, and
+ensemble methods; selection, metrics, inspection, artifacts, and audited
+conversion.
+
+An immutable recipe plus `MLBatch` produces a `FitResult` containing a
+solver-frozen `AbstractArrayModel`, fit diagnostics, validity/status, the resolved
+method, and a per-input `GradientContract`. Exact discrete algorithms and smooth
+relaxations have separate types. Dense-only recipes reject sparse storage rather
+than allocating silently. The resulting model uses the same `ModelBinding` as
+neural models, so it can remain a fixed domain closure or be explicitly unwrapped
+as a trainable warm start. See [Native machine learning](guides/ml.md), the
+[scientific ML workflow](cookbook/native_ml.md), and the
+[complete ML API](api/ml/index.md).
+
 ### Irregular sequences: invariant affine recurrence
 
 `phydrax.nn.operator.architectures.DiagonalStateSpaceMixer` is the

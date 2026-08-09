@@ -20,6 +20,11 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, ArrayLike, Key
 
+from .._array_archive import (
+    ArrayArchiveCorruptionError,
+    read_array_archive,
+    write_array_archive,
+)
 from .._numerics import LogWeightedAccumulator
 from .._strict import StrictModule
 from ._estimates import IntegrationEstimate, IntegrationProvenance
@@ -771,7 +776,6 @@ def write_multilevel_result(
     """Write a checksum-validated portable MLMC result archive."""
     if not isinstance(estimate.diagnostics, MultilevelDiagnostics):
         raise TypeError("estimate must contain MultilevelDiagnostics.")
-    from ..uq._checkpoint import _write_array_archive
 
     diagnostics = estimate.diagnostics
     arrays: dict[str, Any] = {
@@ -801,7 +805,7 @@ def write_multilevel_result(
         arrays[f"level/{index}/mean"] = mean
         arrays[f"level/{index}/variance"] = variance
         arrays[f"level/{index}/standard_error"] = standard_error
-    return _write_array_archive(
+    return write_array_archive(
         path,
         manifest={
             "format": _RESULT_FORMAT,
@@ -823,16 +827,21 @@ def write_multilevel_result(
 
 def read_multilevel_result(path: str | os.PathLike[str], /) -> MultilevelResultArchive:
     """Read and checksum-validate a portable MLMC result archive."""
-    from ..uq._checkpoint import _read_array_archive, CheckpointCorruptionError
+    manifest, loaded = read_array_archive(path)
 
-    manifest, loaded = _read_array_archive(path)
     if set(manifest) != {"format", "metadata", "arrays"}:
-        raise CheckpointCorruptionError("Multilevel result manifest fields are invalid.")
+        raise ArrayArchiveCorruptionError(
+            "Multilevel result manifest fields are invalid."
+        )
     if manifest.get("format") != _RESULT_FORMAT:
-        raise CheckpointCorruptionError("Archive is not a Phydrax multilevel result.")
+        raise ArrayArchiveCorruptionError(
+            "Archive is not a Phydrax multilevel result."
+        )
     metadata = manifest.get("metadata")
     if not isinstance(metadata, dict):
-        raise CheckpointCorruptionError("Multilevel result metadata is invalid.")
+        raise ArrayArchiveCorruptionError(
+            "Multilevel result metadata is invalid."
+        )
     arrays: dict[str, np.ndarray] = {}
     for name, value in loaded.items():
         value.setflags(write=False)

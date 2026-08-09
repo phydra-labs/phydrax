@@ -4,13 +4,9 @@
 
 from __future__ import annotations
 
-import hashlib
 import importlib.metadata
-import io
 import json
 import os
-import tempfile
-import zipfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -19,6 +15,12 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import PyTree
+
+from .._array_archive import (
+    ArrayArchiveCorruptionError,
+    read_array_archive,
+    write_array_archive,
+)
 
 from .._fingerprint import array_tree_fingerprint, array_tree_signature
 from ._posterior import PosteriorProblem
@@ -200,130 +202,19 @@ def _write_array_archive(
     manifest: Mapping[str, Any],
     arrays: Mapping[str, Any],
 ) -> Path:
-    destination = Path(path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    inventory: dict[str, dict[str, Any]] = {}
-    payloads: dict[str, bytes] = {}
-    for index, name in enumerate(sorted(arrays)):
-        if not isinstance(name, str) or not name:
-            raise TypeError("Archive array names must be non-empty strings.")
-        array = np.asarray(arrays[name])
-        if array.dtype.hasobject:
-            raise TypeError(f"Archive array {name!r} cannot have object dtype.")
-        buffer = io.BytesIO()
-        np.save(buffer, array, allow_pickle=False)
-        payload = buffer.getvalue()
-        member = f"arrays/{index:06d}.npy"
-        payloads[member] = payload
-        inventory[name] = {
-            "member": member,
-            "shape": list(array.shape),
-            "dtype": array.dtype.str,
-            "sha256": hashlib.sha256(payload).hexdigest(),
-        }
-    complete_manifest = dict(manifest)
-    complete_manifest["arrays"] = inventory
-    try:
-        manifest_payload = json.dumps(
-            complete_manifest,
-            allow_nan=False,
-            indent=2,
-            sort_keys=True,
-        ).encode("utf-8")
-    except (TypeError, ValueError) as error:
-        raise TypeError("Archive manifest must contain finite JSON values.") from error
-
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{destination.name}.",
-        suffix=".tmp",
-        dir=destination.parent,
-    )
-    os.close(descriptor)
-    temporary = Path(temporary_name)
-    try:
-        with zipfile.ZipFile(
-            temporary,
-            mode="w",
-            compression=zipfile.ZIP_STORED,
-            strict_timestamps=False,
-        ) as archive:
-            archive.writestr("manifest.json", manifest_payload)
-            for member in sorted(payloads):
-                archive.writestr(member, payloads[member])
-        with temporary.open("rb") as stream:
-            os.fsync(stream.fileno())
-        os.replace(temporary, destination)
-        directory_descriptor = os.open(destination.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_descriptor)
-        finally:
-            os.close(directory_descriptor)
-    finally:
-        temporary.unlink(missing_ok=True)
-    return destination
+    """Compatibility wrapper for the shared portable array archive."""
+    return write_array_archive(path, manifest=manifest, arrays=arrays)
 
 
 def _read_array_archive(
     path: str | os.PathLike[str],
     /,
 ) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
-    source = Path(path)
+    """Read a shared array archive using the established UQ error type."""
     try:
-        with zipfile.ZipFile(source, mode="r") as archive:
-            if archive.testzip() is not None:
-                raise CheckpointCorruptionError("Archive CRC validation failed.")
-            names = set(archive.namelist())
-            if "manifest.json" not in names:
-                raise CheckpointCorruptionError("Archive manifest is missing.")
-            try:
-                manifest = json.loads(archive.read("manifest.json"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as error:
-                raise CheckpointCorruptionError(
-                    "Archive manifest is invalid JSON."
-                ) from error
-            if not isinstance(manifest, dict):
-                raise CheckpointCorruptionError("Archive manifest must be an object.")
-            inventory = manifest.get("arrays")
-            if not isinstance(inventory, dict):
-                raise CheckpointCorruptionError("Archive array inventory is missing.")
-            expected_members = {"manifest.json"}
-            values: dict[str, np.ndarray] = {}
-            for logical_name, record in inventory.items():
-                if not isinstance(logical_name, str) or not isinstance(record, dict):
-                    raise CheckpointCorruptionError("Archive array inventory is invalid.")
-                member = record.get("member")
-                if not isinstance(member, str) or member not in names:
-                    raise CheckpointCorruptionError(
-                        f"Archive member for array {logical_name!r} is missing."
-                    )
-                expected_members.add(member)
-                payload = archive.read(member)
-                if hashlib.sha256(payload).hexdigest() != record.get("sha256"):
-                    raise CheckpointCorruptionError(
-                        f"Archive array {logical_name!r} checksum failed."
-                    )
-                try:
-                    value = np.load(io.BytesIO(payload), allow_pickle=False)
-                except (OSError, ValueError) as error:
-                    raise CheckpointCorruptionError(
-                        f"Archive array {logical_name!r} is invalid."
-                    ) from error
-                if list(value.shape) != record.get(
-                    "shape"
-                ) or value.dtype.str != record.get("dtype"):
-                    raise CheckpointCorruptionError(
-                        f"Archive array {logical_name!r} metadata is inconsistent."
-                    )
-                values[logical_name] = value
-            if names != expected_members:
-                raise CheckpointCorruptionError("Archive contains unexpected members.")
-            return manifest, values
-    except CheckpointError:
-        raise
-    except (FileNotFoundError, PermissionError, zipfile.BadZipFile, OSError) as error:
-        raise CheckpointCorruptionError(
-            f"Cannot read checkpoint archive {source}."
-        ) from error
+        return read_array_archive(path)
+    except ArrayArchiveCorruptionError as error:
+        raise CheckpointCorruptionError(str(error)) from error
 
 
 def _runtime_versions() -> dict[str, str]:

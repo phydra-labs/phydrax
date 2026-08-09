@@ -4,38 +4,18 @@
 
 from abc import abstractmethod
 from collections.abc import Callable
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar
 
 import jax.numpy as jnp
 from jaxtyping import Array
 
 from .._doc import DOC_KEY0
-from .._model import ModelBinding, ModelEvaluator, ModelObjectiveProvider
-from .._strict import AbstractAttribute, StrictModule
+from .._model import AbstractArrayModel, ModelBinding, ModelObjectiveProvider
 from ._keys import EvalKey
 
 
-class _AbstractBaseModel(StrictModule, ModelEvaluator, ModelObjectiveProvider):
-    """Abstract base class for callable models with defined input and output sizes."""
-
-    in_size: AbstractAttribute[int | tuple[int, ...] | Literal["scalar"]]
-    out_size: AbstractAttribute[int | tuple[int, ...] | Literal["scalar"]]
-
-    @abstractmethod
-    def __call__(
-        self,
-        x: Any,
-        /,
-        *,
-        key: EvalKey = DOC_KEY0,
-    ) -> Array:
-        raise NotImplementedError
-
-    _input_binding: ClassVar[ModelBinding] = ModelBinding.pointwise()
-
-    def input_binding(self) -> ModelBinding:
-        """Return the model's domain input packing and batch execution contract."""
-        return self._input_binding
+class _AbstractBaseModel(AbstractArrayModel, ModelObjectiveProvider):
+    """Base model that may contribute local objectives during neural training."""
 
     def __loss__(
         self,

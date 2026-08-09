@@ -10,6 +10,7 @@ from dataclasses import replace
 from math import prod
 from typing import Literal
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array
@@ -200,11 +201,26 @@ class IntegralBranchEncoder(_AbstractBranchEncoder):
 
 
 class PODBasis(StrictModule, NonTrainableState):
-    """Fixed reduced output basis for POD-DeepONet decoding."""
+    """Fixed affine reduced output decoder for POD-DeepONet.
+
+    ``offset`` is the fitted spatial mean, not the output-channel bias.  Query
+    layout metadata is retained so a basis cannot silently move between
+    incompatible tensor-product or point-cloud layouts.
+    """
 
     values: Array
+    offset: Array
     latent_size: int
     out_size: int | Literal["scalar"]
+    has_offset: bool
+    query_axis_names: tuple[str, ...]
+    query_axis_bases: tuple[str, ...]
+    query_axis_periodic: tuple[bool, ...]
+    query_coordinate_dimension: int | None
+    query_axis_nodes: tuple[Array, ...]
+    query_coordinates: Array | None
+    query_weights: Array | None
+    geometry_fingerprint: str | None
 
     def __init__(
         self,
@@ -213,18 +229,144 @@ class PODBasis(StrictModule, NonTrainableState):
         *,
         latent_size: int,
         out_size: int | Literal["scalar"] = "scalar",
+        offset: Array | None = None,
+        query_layout: FunctionSamples | None = None,
+        geometry_fingerprint: str | None = None,
     ):
         basis = jnp.asarray(values)
         self.latent_size = int(latent_size)
         self.out_size = out_size
         out_count = _get_size(out_size)
-        if out_size == "scalar" and basis.shape[-1:] == (self.latent_size,):
+        if (
+            out_size == "scalar"
+            and basis.shape[-2:] != (1, self.latent_size)
+            and basis.shape[-1:] == (self.latent_size,)
+        ):
             basis = basis[..., None, :]
         if basis.shape[-2:] != (out_count, self.latent_size):
             raise ValueError(
                 f"POD basis must end in (out_size, latent_size); got {basis.shape}."
             )
+        if offset is None:
+            offset_ = jnp.zeros(basis.shape[:-1], dtype=basis.dtype)
+            has_offset = False
+        else:
+            offset_ = jnp.asarray(offset, dtype=basis.dtype)
+            if out_size == "scalar" and offset_.shape == basis.shape[:-2]:
+                offset_ = offset_[..., None]
+            if offset_.shape != basis.shape[:-1]:
+                raise ValueError(
+                    "POD spatial mean must have sample_shape + (out_size,); got "
+                    f"{offset_.shape} for basis {basis.shape}."
+                )
+            has_offset = True
+        if query_layout is not None and query_layout.sample_shape != basis.shape[:-2]:
+            raise ValueError(
+                "POD query layout sample shape must match the basis; got "
+                f"{query_layout.sample_shape} and {basis.shape[:-2]}."
+            )
+        if query_layout is not None and query_layout.geometry_case_shape:
+            raise ValueError("POD query layouts must be shared rather than case-dependent.")
         self.values = basis
+        self.offset = offset_
+        self.has_offset = has_offset
+        self.query_axis_names = (
+            () if query_layout is None else tuple(axis.name for axis in query_layout.axes)
+        )
+        self.query_axis_bases = (
+            () if query_layout is None else tuple(axis.basis for axis in query_layout.axes)
+        )
+        self.query_axis_periodic = (
+            ()
+            if query_layout is None
+            else tuple(axis.periodic for axis in query_layout.axes)
+        )
+        self.query_coordinate_dimension = (
+            None
+            if query_layout is None or query_layout.coordinates is None
+            else int(query_layout.coordinates.shape[-1])
+        )
+        self.query_axis_nodes = (
+            () if query_layout is None else tuple(axis.nodes for axis in query_layout.axes)
+        )
+        self.query_coordinates = (
+            None if query_layout is None else query_layout.coordinates
+        )
+        self.query_weights = (
+            None if query_layout is None else query_layout.weights(case_shape=())
+        )
+        self.geometry_fingerprint = (
+            query_layout.geometry_fingerprint()
+            if query_layout is not None and geometry_fingerprint is None
+            else geometry_fingerprint
+        )
+
+    def validate_query_layout(self, query: FunctionSamples, /) -> None:
+        if self.values.shape[:-2] != query.sample_shape:
+            raise ValueError(
+                "POD basis sample shape must match the query sample shape; got "
+                f"{self.values.shape[:-2]} and {query.sample_shape}."
+            )
+        if self.query_axis_names and (
+            tuple(axis.name for axis in query.axes) != self.query_axis_names
+            or tuple(axis.basis for axis in query.axes) != self.query_axis_bases
+            or tuple(axis.periodic for axis in query.axes)
+            != self.query_axis_periodic
+        ):
+            raise ValueError("POD basis query axis layout does not match its fit layout.")
+        if self.query_coordinate_dimension is not None and (
+            query.coordinates is None
+            or int(query.coordinates.shape[-1]) != self.query_coordinate_dimension
+        ):
+            raise ValueError(
+                "POD basis point-cloud coordinate dimension does not match its fit layout."
+            )
+        if (
+            self.query_axis_nodes
+            or self.query_coordinates is not None
+            or self.query_weights is not None
+        ) and query.geometry_case_shape:
+            raise ValueError("POD basis evaluation requires one shared fixed query layout.")
+
+    def _validated_query_value(
+        self,
+        value: Array,
+        query: FunctionSamples,
+        /,
+    ) -> Array:
+        validated = value
+        if self.query_axis_nodes:
+            for fitted, current in zip(
+                self.query_axis_nodes, (axis.nodes for axis in query.axes), strict=True
+            ):
+                if fitted.shape != current.shape:
+                    raise ValueError("POD query axis node shapes do not match the fit layout.")
+                validated = eqx.error_if(
+                    validated,
+                    jnp.any(fitted != current),
+                    "POD query axis nodes do not match the fit layout.",
+                )
+        if self.query_coordinates is not None:
+            assert query.coordinates is not None
+            if self.query_coordinates.shape != query.coordinates.shape:
+                raise ValueError(
+                    "POD point coordinates do not have the fitted query shape."
+                )
+            validated = eqx.error_if(
+                validated,
+                jnp.any(self.query_coordinates != query.coordinates),
+                "POD point coordinates do not match the fit layout.",
+            )
+        if self.query_weights is not None:
+            current_weights = query.weights(case_shape=())
+            if self.query_weights.shape != current_weights.shape:
+                raise ValueError("POD query weights do not have the fitted layout shape.")
+            validated = eqx.error_if(
+                validated,
+                jnp.any(self.query_weights != current_weights),
+                "POD query quadrature or mask does not match the fit layout.",
+            )
+        return validated
 
     def evaluate(
         self,
@@ -233,15 +375,23 @@ class PODBasis(StrictModule, NonTrainableState):
         *,
         case_shape: tuple[int, ...] = (),
     ) -> Array:
-        if self.values.shape[:-2] != query.sample_shape:
-            raise ValueError(
-                "POD basis sample shape must match the query sample shape; got "
-                f"{self.values.shape[:-2]} and {query.sample_shape}."
-            )
+        self.validate_query_layout(query)
+        values = self._validated_query_value(self.values, query)
         return jnp.broadcast_to(
-            self.values,
-            case_shape + self.values.shape,
+            values,
+            case_shape + values.shape,
         )
+
+    def evaluate_offset(
+        self,
+        query: FunctionSamples,
+        /,
+        *,
+        case_shape: tuple[int, ...] = (),
+    ) -> Array:
+        self.validate_query_layout(query)
+        offset = self._validated_query_value(self.offset, query)
+        return jnp.broadcast_to(offset, case_shape + offset.shape)
 
 
 def _deeponet_contract(model):
@@ -461,6 +611,11 @@ class DeepONet(AbstractOperatorModel):
             basis * coefficients.reshape(coefficient_shape),
             axis=-1,
         )
+        if isinstance(self.trunk, PODBasis) and self.trunk.has_offset:
+            output = output + jnp.broadcast_to(
+                self.trunk.offset,
+                batch.case_shape + self.trunk.offset.shape,
+            )
         output = output + self.bias
         output = (
             output

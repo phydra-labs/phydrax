@@ -75,6 +75,12 @@ from ._physics import (
     project_operator_conservation,
     WeakOperatorLoss,
 )
+from ._pod import (
+    fit_operator_pod,
+    fit_pod_basis,
+    OperatorPODDiagnostics,
+    OperatorPODFit,
+)
 from ._rollout import (
     autoregressive_operator_loss,
     autoregressive_operator_rollout,
@@ -161,6 +167,10 @@ __all__ = [
     "DTypeName",
     "fit_operator_normalization",
     "fit_operator",
+    "fit_operator_pod",
+    "fit_pod_basis",
+    "OperatorPODDiagnostics",
+    "OperatorPODFit",
     "OperatorBatchLoader",
     "OperatorBatchEpoch",
     "OperatorDataset",
