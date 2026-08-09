@@ -30,11 +30,17 @@ _ARTIFACT_VALUES_BY_ID: dict[str, Any] = {}
 _ARTIFACT_IDS_BY_VALUE: dict[int, tuple[Any, str]] = {}
 
 
-def register_artifact_value(value_id: str, value: Any, /) -> Any:
-    """Register one path-independent, versioned artifact value identity."""
+def _register_artifact_identity(
+    value_id: str,
+    value: Any,
+    /,
+    *,
+    require_version: bool,
+) -> Any:
     identity = str(value_id).strip()
-    if not identity or "@" not in identity:
-        raise ValueError("Artifact value IDs must be non-empty and explicitly versioned.")
+    if not identity or (require_version and "@" not in identity):
+        qualifier = " and explicitly versioned" if require_version else ""
+        raise ValueError(f"Artifact value IDs must be non-empty{qualifier}.")
     if not callable(value):
         raise TypeError("Registered artifact values must be types or callables.")
     existing_value = _ARTIFACT_VALUES_BY_ID.get(identity)
@@ -53,6 +59,15 @@ def register_artifact_value(value_id: str, value: Any, /) -> Any:
     _ARTIFACT_VALUES_BY_ID[identity] = value
     _ARTIFACT_IDS_BY_VALUE[id(value)] = (value, identity)
     return value
+
+
+def register_artifact_value(value_id: str, value: Any, /) -> Any:
+    """Register one path-independent, versioned artifact value identity."""
+    return _register_artifact_identity(
+        value_id,
+        value,
+        require_version=True,
+    )
 
 
 def artifact_value_id(value: Any, /) -> str:
@@ -126,10 +141,8 @@ class OperatorArchitectureCodec:
 
     def __post_init__(self) -> None:
         architecture_id = self.architecture_id.strip()
-        if not architecture_id or "@" not in architecture_id:
-            raise ValueError(
-                "Operator architecture IDs must be non-empty and explicitly versioned."
-            )
+        if not architecture_id:
+            raise ValueError("Operator architecture IDs must be non-empty.")
         if not isinstance(self.model_type, type):
             raise TypeError("Operator architecture codec model_type must be a type.")
         if (self.encode is None) != (self.decode is None):
@@ -160,7 +173,11 @@ def register_operator_architecture_codec(
             f"Operator model type {codec.model_type.__name__} already has architecture ID "
             f"{existing_type.architecture_id!r}."
         )
-    register_artifact_value(codec.architecture_id, codec.model_type)
+    _register_artifact_identity(
+        codec.architecture_id,
+        codec.model_type,
+        require_version=False,
+    )
     _CODECS_BY_ID[codec.architecture_id] = codec
     _CODECS_BY_TYPE[codec.model_type] = codec
     return codec

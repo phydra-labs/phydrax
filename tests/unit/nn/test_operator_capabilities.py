@@ -139,6 +139,28 @@ def test_cno_and_uno_declare_their_actual_measure_and_mask_support():
     assert "MASKED_INPUT_UNSUPPORTED" in uno_masked.codes
 
 
+def test_spectral_operator_contracts_match_runtime_invariants():
+    wavelet = phx.nn.operator.operator_architecture_contract(
+        "WaveletNeuralOperator"
+    ).capabilities
+    multiwavelet = phx.nn.operator.operator_architecture_contract(
+        "MultiwaveletOperator"
+    ).capabilities
+    sfno = phx.nn.operator.operator_architecture_contract("SFNO").capabilities
+
+    assert wavelet.spatial_dimensions == (1, 2, 3)
+    assert wavelet.resolution_transfer
+    assert wavelet.masks == "supported"
+    assert multiwavelet.spatial_dimensions == (1,)
+    assert multiwavelet.resolution_transfer
+    assert multiwavelet.masks == "supported"
+    assert sfno.source_geometries == ("sphere",)
+    assert sfno.query_geometries == ("sphere",)
+    assert sfno.quadrature == "physical_required"
+    assert sfno.masks == "all_valid_only"
+    assert not sfno.resolution_transfer
+
+
 def test_fixed_query_is_separate_from_source_query_structure():
     variable_query_problem = phx.nn.operator.OperatorProblemSpec(
         source_query_relation="coincident",

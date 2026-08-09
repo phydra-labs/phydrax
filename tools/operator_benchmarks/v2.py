@@ -907,8 +907,8 @@ def standard_operator_benchmark_ladders(
             "spherical_field",
             "spherical_field",
             spherical_diffusion_scenario(
-                theta_points=max(6, low_resolution),
-                phi_points=2 * max(6, low_resolution),
+                bandlimit=max(6, low_resolution),
+                sampling="mw",
                 num_cases=cases,
                 diffusivity=0.02,
                 dt=0.2,
@@ -917,8 +917,8 @@ def standard_operator_benchmark_ladders(
                 seed=505,
             ),
             spherical_diffusion_scenario(
-                theta_points=max(8, high_resolution),
-                phi_points=2 * max(8, high_resolution),
+                bandlimit=max(8, high_resolution),
+                sampling="mw",
                 num_cases=cases,
                 diffusivity=0.005,
                 dt=0.5,
@@ -1984,31 +1984,27 @@ def native_kernel_parity_checks() -> tuple[KernelParityCheck, ...]:
         )
     )
 
-    theta_nodes = jnp.linspace(0.0, jnp.pi, 9)
-    phi_nodes = jnp.linspace(0.0, 2.0 * jnp.pi, 16, endpoint=False)
-    theta_axis = phx.nn.operator.OperatorAxis("theta", theta_nodes, basis="legendre")
-    phi_axis = phx.nn.operator.OperatorAxis(
-        "phi",
-        phi_nodes,
-        basis="fourier",
-        periodic=True,
+    spherical_plan = phx.nn.operator.architectures.SphericalHarmonicPlan(
+        4,
+        sampling="mw",
+        execution="recursive",
     )
     spherical = phx.nn.operator.architectures.SphericalSpectralConv(
+        spherical_plan,
         in_channels=1,
         out_channels=1,
-        max_degree=3,
         key=jr.key(104),
     )
-    spherical_values = jr.normal(jr.key(105), (9, 16, 1))
-    shift = 3
+    spherical_values = jr.normal(jr.key(105), spherical_plan.sample_shape + (1,))
+    shift = 2
     expected = jnp.roll(
-        spherical(spherical_values, (theta_axis, phi_axis)),
+        spherical(spherical_values, spherical_plan),
         shift,
         axis=1,
     )
     actual = spherical(
         jnp.roll(spherical_values, shift, axis=1),
-        (theta_axis, phi_axis),
+        spherical_plan,
     )
     spherical_error = _relative_array_error(actual, expected)
     checks.append(

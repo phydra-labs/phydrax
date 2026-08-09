@@ -18,7 +18,7 @@ import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
 
 from phydrax._doc import DOC_KEY0
-from phydrax._interpolation import fourier_resample as _fourier_resample
+from phydrax._spectral._fourier import fourier_resample as _fourier_resample
 from phydrax._strict import StrictModule
 from phydrax.nn._keys import EvalKey, fold_in_eval_key
 from phydrax.nn._scan import (

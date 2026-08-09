@@ -314,6 +314,7 @@ _BENCHMARK_CAPABILITY_ARCHITECTURES = {
     "axial_factorized_fno": "AxialFactorizedFNO",
     "poseidon": "Poseidon",
     "wavelet": "WaveletNeuralOperator",
+    "multiwavelet": "MultiwaveletOperator",
     "flower_one_level": "Flower",
     "flower_multilevel": "Flower",
     "flower_resolution_consistent": "Flower",
@@ -1002,11 +1003,31 @@ def _wavelet_factory(*, quick: bool):
         channels = _sample_channels(source, scenario.train_batch.case_shape)
         output_channels = _target_channels(scenario)
         return phx.nn.operator.architectures.WaveletNeuralOperator(
-            source.sample_shape,
+            len(source.sample_shape),
             in_channels="scalar" if channels == 1 else channels,
             out_channels="scalar" if output_channels == 1 else output_channels,
             levels=2 if quick else 3,
-            boundary="periodic",
+            boundary="periodization",
+            width=max(2, round((4 if quick else 32) * size_scale)),
+            depth=1 if quick else 4,
+            source_key=name,
+            key=jr.key(seed),
+        )
+
+    return build
+
+
+def _multiwavelet_factory(*, quick: bool):
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+        name, source = _primary_source(scenario)
+        channels = _sample_channels(source, scenario.train_batch.case_shape)
+        output_channels = _target_channels(scenario)
+        return phx.nn.operator.architectures.MultiwaveletOperator(
+            in_channels="scalar" if channels == 1 else channels,
+            out_channels="scalar" if output_channels == 1 else output_channels,
+            order=2 if quick else 3,
+            levels=2 if quick else 3,
+            boundary="periodization",
             width=max(2, round((4 if quick else 32) * size_scale)),
             depth=1 if quick else 4,
             source_key=name,
@@ -1116,17 +1137,18 @@ def _local_factory(*, quick: bool):
 
 def _sfno_factory(*, quick: bool):
     def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
-        name, source = _primary_source(scenario)
+        name, _ = _primary_source(scenario)
+        metadata = dict(scenario.metadata)
+        plan = phx.nn.operator.architectures.SphericalHarmonicPlan(
+            int(metadata["bandlimit"]),
+            sampling=metadata["sampling"],
+        )
         return phx.nn.operator.architectures.SFNO(
+            plan,
             in_channels="scalar",
             out_channels="scalar",
             width=max(2, round((4 if quick else 24) * size_scale)),
             depth=1 if quick else 4,
-            max_degree=max(
-                2,
-                min(4 if quick else 12, int(source.sample_shape[0]) - 1),
-            ),
-            theta_weights_include_sine=True,
             source_key=name,
             key=jr.key(seed),
         )
@@ -2026,7 +2048,7 @@ def _periodic_tensor_grid_compatible(scenario: OperatorBenchmarkScenario, /) -> 
     )
 
 
-def _fixed_periodic_tensor_grid_compatible(
+def _wavelet_tensor_grid_compatible(
     scenario: OperatorBenchmarkScenario,
     /,
     *,
@@ -2034,10 +2056,10 @@ def _fixed_periodic_tensor_grid_compatible(
 ) -> bool:
     if not _periodic_tensor_grid_compatible(scenario):
         return False
-    source_name, source = _primary_source(scenario)
-    divisor = 2 ** int(levels)
-    return all(size % divisor == 0 for size in source.sample_shape) and all(
-        batch.input(source_name).sample_shape == source.sample_shape
+    source_name, _ = _primary_source(scenario)
+    minimum_size = 2 ** max(0, int(levels) - 1)
+    return all(
+        min(batch.input(source_name).sample_shape) > minimum_size
         for batch in _all_source_batches(scenario)
     )
 
@@ -2652,7 +2674,7 @@ def compatible_architectures(
                 )
             )
         wavelet_levels = 2 if quick else 3
-        if _fixed_periodic_tensor_grid_compatible(
+        if _wavelet_tensor_grid_compatible(
             scenario,
             levels=wavelet_levels,
         ):
@@ -2666,6 +2688,17 @@ def compatible_architectures(
                     promotion_scope="specialized",
                 )
             )
+            if len(source.sample_shape) == 1:
+                candidates.append(
+                    OperatorArchitecture(
+                        "multiwavelet",
+                        "multiwavelet",
+                        _multiwavelet_factory(quick=quick),
+                        True,
+                        normalization="spectral",
+                        promotion_scope="specialized",
+                    )
+                )
         flower_levels = 2 if quick else 4
         if _flower_learned_compatible(scenario, levels=1):
             candidates.append(

@@ -82,21 +82,23 @@ def _case_point_batch(values):
 
 
 def _grid_batch(values, *, query_mask=None, source_name="state"):
-    points = jnp.linspace(0.0, 1.0, 8, endpoint=False)
+    values = jnp.asarray(values)
+    size = int(values.shape[0])
+    points = jnp.linspace(0.0, 1.0, size, endpoint=False)
     axis = phx.nn.operator.OperatorAxis(
         "x",
         points,
-        quadrature_weights=jnp.full((8,), 1.0 / 8.0),
+        quadrature_weights=jnp.full((size,), 1.0 / size),
         periodic=True,
     )
     if query_mask is None:
-        query_mask = jnp.ones((8,), dtype=bool)
+        query_mask = jnp.ones((size,), dtype=bool)
     return phx.nn.operator.OperatorBatch(
         inputs={
             source_name: phx.nn.operator.FunctionSamples(
-                values=jnp.asarray(values),
+                values=values,
                 axes=(axis,),
-                mask=jnp.ones((8,), dtype=bool),
+                mask=jnp.ones((size,), dtype=bool),
             )
         },
         queries={
@@ -172,11 +174,11 @@ def test_wavelet_operators_reconstruct_and_execute_scalar_and_channel_fields():
     channel_values = jnp.stack((scalar_values, jnp.cos(scalar_values)), axis=-1)
     query_mask = jnp.array([True, True, True, True, True, True, True, False])
 
-    wavelet = phx.nn.operator.architectures.MultiresolutionTransform(
-        (8,), levels=2, wavelet="db2", boundary="periodic"
+    wavelet = phx._spectral.DiscreteWaveletTransform(
+        (-2,), levels=2, wavelet="db2", boundary="periodization"
     )
-    multiwavelet = phx.nn.operator.architectures.AlpertMultiwaveletTransform(
-        8, order=2, levels=2, boundary="periodic"
+    multiwavelet = phx._spectral.AlpertMultiwaveletTransform(
+        order=2, levels=2, boundary="periodization"
     )
     assert jnp.allclose(
         wavelet.synthesis(wavelet.analysis(channel_values)),
@@ -192,7 +194,7 @@ def test_wavelet_operators_reconstruct_and_execute_scalar_and_channel_fields():
     )
 
     wno = phx.nn.operator.architectures.WaveletNeuralOperator(
-        (8,),
+        1,
         in_channels=2,
         out_channels=2,
         levels=2,
@@ -203,7 +205,6 @@ def test_wavelet_operators_reconstruct_and_execute_scalar_and_channel_fields():
         key=jr.key(2),
     )
     mwt = phx.nn.operator.architectures.MultiwaveletOperator(
-        8,
         in_channels="scalar",
         out_channels="scalar",
         order=2,
@@ -233,6 +234,46 @@ def test_wavelet_operators_reconstruct_and_execute_scalar_and_channel_fields():
     _assert_finite_model_gradient(mwt, lambda item: jnp.sum(item(scalar_batch) ** 2))
 
 
+def test_wavelet_operators_reuse_one_model_across_resolutions():
+    sizes = (17, 29)
+    batches = tuple(
+        _grid_batch(
+            jnp.sin(2.0 * jnp.pi * jnp.arange(size, dtype=float) / size)
+        )
+        for size in sizes
+    )
+    wno = phx.nn.operator.architectures.WaveletNeuralOperator(
+        1,
+        in_channels="scalar",
+        out_channels="scalar",
+        levels=2,
+        wavelet="db2",
+        width=4,
+        depth=1,
+        source_key="state",
+        key=jr.key(51),
+    )
+    mwt = phx.nn.operator.architectures.MultiwaveletOperator(
+        in_channels="scalar",
+        out_channels="scalar",
+        order=3,
+        levels=2,
+        width=4,
+        depth=1,
+        source_key="state",
+        key=jr.key(52),
+    )
+    compiled = eqx.filter_jit(lambda model, data: model(data))
+
+    wno_outputs = tuple(compiled(wno, batch) for batch in batches)
+    mwt_outputs = tuple(compiled(mwt, batch) for batch in batches)
+
+    assert tuple(output.shape for output in wno_outputs) == ((17,), (29,))
+    assert tuple(output.shape for output in mwt_outputs) == ((17,), (29,))
+    assert all(jnp.all(jnp.isfinite(output)) for output in wno_outputs)
+    assert all(jnp.all(jnp.isfinite(output)) for output in mwt_outputs)
+
+
 def test_manifold_spectral_operator_runs_valid_small_laplacian_plan():
     laplacian = np.array(
         [
@@ -242,7 +283,7 @@ def test_manifold_spectral_operator_runs_valid_small_laplacian_plan():
             [-1.0, 0.0, -1.0, 2.0],
         ]
     )
-    plan = phx.nn.operator.architectures.SpectralDiscretization.from_stiffness(
+    plan = phx._spectral.SpectralDiscretization.from_stiffness(
         laplacian, np.ones((4,)), n_modes=4, basis_id="cycle-4"
     )
     coordinates = jnp.array([[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0]])
@@ -293,7 +334,7 @@ def test_stiffness_plan_rejects_negative_semidefinite_operator():
     )
 
     with pytest.raises(ValueError, match="positive semidefinite"):
-        phx.nn.operator.architectures.SpectralDiscretization.from_stiffness(
+        phx._spectral.SpectralDiscretization.from_stiffness(
             differential_laplacian,
             np.ones((4,)),
             n_modes=4,
@@ -302,9 +343,12 @@ def test_stiffness_plan_rejects_negative_semidefinite_operator():
 
 def test_triangle_mesh_plan_preserves_sparse_sphere_eigenspace_multiplicities():
     mesh = trimesh.creation.icosphere(subdivisions=3, radius=1.0)
-    plan = phx.nn.operator.architectures.SpectralDiscretization.from_triangle_mesh(
+    triangle_mesh = phx.geometry.simplicial.TriangleMesh(
         np.asarray(mesh.vertices),
         np.asarray(mesh.faces),
+    )
+    plan = phx.graph.spectral_discretization_from_triangle_mesh(
+        triangle_mesh,
         n_modes=9,
     )
     eigenvalues = np.asarray(plan.eigenvalues)

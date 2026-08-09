@@ -24,7 +24,6 @@ from ._protocols import (
     ModelEvaluator,
     StructuredDerivativeProvider,
 )
-from ._spectral import SpectralDiscretizationProvider
 from ._structure import (
     deserialise_model_leaf,
     model_from_structure_recipe,
@@ -57,7 +56,6 @@ __all__ = [
     "model_structure_recipe",
     "model_objective_values",
     "ModelInputMode",
-    "SpectralDiscretizationProvider",
     "serialise_model_leaf",
     "StructuredDerivativeProvider",
 ]

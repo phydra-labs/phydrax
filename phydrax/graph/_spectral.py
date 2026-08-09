@@ -6,7 +6,10 @@ from typing import Any, Literal
 import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
+import numpy as np
+import scipy.sparse as scipy_sparse
 
+from .._spectral._modal import SpectralDiscretization
 from ..sparse import linear_apply, route_reduce
 from ._graph import ensure_graph
 from ._ir import GraphIR
@@ -473,6 +476,149 @@ class GraphChebyshevFilter(eqx.Module):
         )
 
 
+def spectral_discretization_from_graph(
+    graph: GraphIR,
+    /,
+    *,
+    n_modes: int,
+    weight: Any = None,
+    weight_key: str | None = None,
+    mass: Any = None,
+    mass_key: str | None = None,
+    symmetrize: bool = True,
+    group_tolerance: float = 1e-7,
+    basis_id: str | None = None,
+    max_construction_bytes: int = 512 * 1024**2,
+) -> SpectralDiscretization:
+    """Build a host-side weighted graph-Laplacian eigenbasis.
+
+    Directed adjacency is averaged with its transpose when ``symmetrize`` is true;
+    otherwise the weighted adjacency must already be symmetric.
+    """
+    graph_value = ensure_graph(graph, validate=True)
+    counts = np.asarray(graph_value.n_node).reshape((-1,))
+    if counts.size != 1:
+        raise ValueError("Graph spectral plans require exactly one graph.")
+    num_nodes = int(counts[0])
+    if num_nodes <= 0:
+        raise ValueError("Graph spectral plans require at least one node.")
+    if graph_value.node_mask is not None and not bool(
+        np.all(np.asarray(graph_value.node_mask))
+    ):
+        raise ValueError("Graph spectral plans do not accept padded or masked nodes.")
+    if graph_value.senders is None or graph_value.receivers is None:
+        raise ValueError("Graph spectral plans require explicit senders and receivers.")
+    senders = np.asarray(graph_value.senders, dtype=np.int64).reshape((-1,))
+    receivers = np.asarray(graph_value.receivers, dtype=np.int64).reshape((-1,))
+    weights = np.asarray(
+        _edge_weight(
+            graph_value,
+            weight=weight,
+            weight_key=weight_key,
+        ),
+        dtype=float,
+    )
+    if np.any(~np.isfinite(weights)) or np.any(weights < 0.0):
+        raise ValueError("Graph spectral edge weights must be finite and non-negative.")
+    if min(max_construction_bytes, 0) == max_construction_bytes:
+        raise ValueError("max_construction_bytes must be positive.")
+    assembly_bytes = 6 * max(1, weights.size) * np.dtype(float).itemsize
+    if assembly_bytes > int(max_construction_bytes):
+        raise ValueError(
+            "Graph Laplacian assembly exceeds max_construction_bytes; "
+            f"estimated {assembly_bytes} bytes."
+        )
+    adjacency = scipy_sparse.coo_matrix(
+        (weights, (senders, receivers)),
+        shape=(num_nodes, num_nodes),
+        dtype=float,
+    ).tocsr()
+    adjacency.sum_duplicates()
+    if symmetrize:
+        adjacency = 0.5 * (adjacency + adjacency.T)
+    else:
+        difference = adjacency - adjacency.T
+        error = (
+            float(np.max(np.abs(difference.data))) if difference.data.size else 0.0
+        )
+        scale = float(np.max(np.abs(adjacency.data))) if adjacency.data.size else 1.0
+        if error > 1e-10 * max(1.0, scale):
+            raise ValueError(
+                "Graph adjacency must be symmetric when symmetrize is false."
+            )
+    adjacency.setdiag(0.0)
+    adjacency.eliminate_zeros()
+    degree = np.asarray(adjacency.sum(axis=1), dtype=float).reshape((-1,))
+    stiffness = scipy_sparse.diags(degree, format="csr") - adjacency
+    if mass is not None and mass_key is not None:
+        raise ValueError("Specify mass or mass_key, not both.")
+    if mass_key is not None:
+        if not isinstance(graph_value.nodes, Mapping):
+            raise TypeError("mass_key requires mapping-valued graph nodes.")
+        if mass_key not in graph_value.nodes:
+            raise KeyError(f"Graph nodes do not contain mass_key {mass_key!r}.")
+        measure = graph_value.nodes[mass_key]
+    elif mass is None:
+        measure = np.ones((num_nodes,), dtype=float)
+    else:
+        measure = mass
+    return SpectralDiscretization.from_stiffness(
+        stiffness,
+        measure,
+        n_modes=n_modes,
+        group_tolerance=group_tolerance,
+        basis_id=basis_id,
+        max_construction_bytes=max_construction_bytes,
+    )
+
+
+def spectral_discretization_from_triangle_mesh(
+    mesh: Any,
+    /,
+    *,
+    n_modes: int,
+    group_tolerance: float = 1e-7,
+    basis_id: str | None = None,
+    max_construction_bytes: int = 512 * 1024**2,
+) -> SpectralDiscretization:
+    """Build a cotangent-FEM eigenbasis from a ``TriangleMesh``."""
+    from phydrax.geometry.simplicial import DDGOperators, TriangleMesh
+
+    if not isinstance(mesh, TriangleMesh):
+        raise TypeError("mesh must be a TriangleMesh.")
+    operators = DDGOperators(mesh)
+    edges = np.asarray(operators.edges, dtype=np.int64)
+    weights = np.asarray(operators.edge_weights, dtype=float)
+    num_nodes = int(mesh.vertices.shape[0])
+    assembly_bytes = 8 * max(1, weights.size) * np.dtype(float).itemsize
+    if int(max_construction_bytes) <= 0:
+        raise ValueError("max_construction_bytes must be positive.")
+    if assembly_bytes > int(max_construction_bytes):
+        raise ValueError(
+            "Cotangent Laplacian assembly exceeds max_construction_bytes; "
+            f"estimated {assembly_bytes} bytes."
+        )
+    first = edges[:, 0]
+    second = edges[:, 1]
+    rows = np.concatenate((first, second, first, second))
+    columns = np.concatenate((second, first, first, second))
+    data = np.concatenate((-weights, -weights, weights, weights))
+    stiffness = scipy_sparse.coo_matrix(
+        (data, (rows, columns)),
+        shape=(num_nodes, num_nodes),
+        dtype=float,
+    ).tocsr()
+    stiffness.sum_duplicates()
+    return SpectralDiscretization.from_stiffness(
+        stiffness,
+        np.asarray(operators.vertex_mass, dtype=float),
+        n_modes=n_modes,
+        group_tolerance=group_tolerance,
+        basis_id=basis_id,
+        max_construction_bytes=max_construction_bytes,
+    )
+
+
 __all__ = [
     "GraphChebyshevFilter",
     "GraphFilterOperator",
@@ -481,5 +627,7 @@ __all__ = [
     "GraphLaplacianOperator",
     "GraphPolynomialFilter",
     "graph_adjacency_apply",
+    "spectral_discretization_from_graph",
+    "spectral_discretization_from_triangle_mesh",
     "graph_laplacian_apply",
 ]

@@ -438,6 +438,8 @@ class OperatorTask(StrictModule):
         if samples.topology is not None:
             return samples.topology.kind
         if samples.axes:
+            if any(axis.basis == "sphere" for axis in samples.axes):
+                return "sphere"
             return "tensor_grid"
         if samples.coordinates is not None:
             return "point_cloud"

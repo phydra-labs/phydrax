@@ -393,7 +393,7 @@ def test_compiler_requires_one_evolution_equation_per_field_and_static_packing()
 
 def test_spectral_laplacian_compilation_preserves_exact_representation():
     eigenvalues = jnp.asarray([0.0, 1.0, 4.0])
-    plan = phx.nn.operator.architectures.SpectralDiscretization.from_eigenpairs(
+    plan = phx._spectral.SpectralDiscretization.from_eigenpairs(
         eigenvalues,
         jnp.eye(3),
         jnp.ones((3,)),
@@ -778,7 +778,7 @@ def test_uniform_tensor_grid_rejects_nonperiodic_roll_semantics():
 
 
 def test_spectral_compilation_rejects_frames_and_only_preserves_full_bases():
-    full_plan = phx.nn.operator.architectures.SpectralDiscretization.from_eigenpairs(
+    full_plan = phx._spectral.SpectralDiscretization.from_eigenpairs(
         jnp.asarray((0.0, 1.0, 4.0)),
         jnp.eye(3),
         jnp.ones((3,)),
@@ -803,7 +803,7 @@ def test_spectral_compilation_rejects_frames_and_only_preserves_full_bases():
     with pytest.raises(ValueError, match="has no coordinate frame"):
         phx.equations.compile_semidiscrete_pde(coordinate_problem, full)
 
-    truncated_plan = phx.nn.operator.architectures.SpectralDiscretization.from_eigenpairs(
+    truncated_plan = phx._spectral.SpectralDiscretization.from_eigenpairs(
         jnp.asarray((0.0, 1.0)),
         jnp.asarray(
             (
