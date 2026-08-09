@@ -15,7 +15,7 @@ from jaxtyping import Array
 
 from .._numerics import log_normalize
 from .._strict import StrictModule
-from ..integration import DiscreteMeasureTarget, WeightedSampleTarget
+from ..integration._targets import DiscreteMeasureTarget, WeightedSampleTarget
 
 
 EventEncoder = Callable[[Any], Array | cx.Field]

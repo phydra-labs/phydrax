@@ -88,6 +88,25 @@ def test_inducing_selection_reports_numerical_rank_exhaustion():
         phx.uq.select_inducing_points(jnp.zeros((8, 2)), 2, key=jr.key(4))
 
 
+def test_inducing_selection_preserves_structured_path_inputs():
+    paths = jnp.cumsum(jr.normal(jr.key(44), (7, 5, 2)) * 0.2, axis=1)
+    kernel = phx.kernels.SignaturePDEKernel(
+        phx.kernels.LinearKernel(),
+        polynomial_order=4,
+        pair_block_size=3,
+    )
+    selection = phx.uq.select_inducing_points(
+        paths,
+        3,
+        kernel=kernel,
+        key=jr.key(45),
+    )
+
+    assert selection.points.shape == (3, 5, 2)
+    assert jnp.allclose(selection.points, paths[selection.indices])
+    assert jnp.unique(selection.indices).shape == (3,)
+
+
 def test_stein_thinning_preserves_chains_source_indices_and_diagnostics():
     result = _gaussian_mcmc_result()
     method = phx.uq.SteinThinning(10)

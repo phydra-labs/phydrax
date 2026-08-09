@@ -401,7 +401,7 @@ class SparseGaussianProcessDiscrepancy(StrictModule):
         num_inducing: int,
     ) -> SparseGaussianProcessDiscrepancy:
         """Choose a deterministic index-spaced inducing subset."""
-        points = _as_points(_field_data(observation_points))
+        points = _as_design(_field_data(observation_points))
         count = int(num_inducing)
         if not 0 < count < int(points.shape[0]):
             raise ValueError(
@@ -506,12 +506,16 @@ def _field_data(value: Any) -> Array:
     return jnp.asarray(value.data if isinstance(value, cx.Field) else value, dtype=float)
 
 
-def _as_points(value: ArrayLike) -> Array:
+def _as_design(value: ArrayLike) -> Array:
     array = jnp.asarray(value, dtype=float)
     if array.ndim == 1:
-        return array[:, None]
-    if array.ndim != 2:
-        raise ValueError("GP points must have shape (point, coordinate).")
+        array = array[:, None]
+    if array.ndim < 2:
+        raise ValueError(
+            "GP inputs must have one design axis and at least one input axis."
+        )
+    if any(int(size) <= 0 for size in array.shape[1:]):
+        raise ValueError("GP kernel input axes must be nonempty.")
     return array
 
 
@@ -533,13 +537,13 @@ def _query_output_dims(
     if isinstance(query_points, cx.Field):
         if query_points.data.ndim == 1:
             return tuple(query_points.dims)
-        if query_points.data.ndim == 2:
+        if query_points.data.ndim >= 2:
             return (query_points.dims[0],)
     return (output_dim,)
 
 
 def _validated_factor_points(value: ArrayLike | cx.Field, /) -> Array:
-    points = _as_points(_field_data(value))
+    points = _as_design(_field_data(value))
     return eqx.error_if(
         points,
         jnp.any(~jnp.isfinite(points)),
@@ -554,7 +558,7 @@ def _validated_observations(
     *,
     name: str,
 ) -> tuple[Array, Array]:
-    points = _as_points(_field_data(observation_points))
+    points = _as_design(_field_data(observation_points))
     values = _as_vector(_field_data(observations), name=name)
     if int(points.shape[0]) != int(values.shape[0]):
         raise ValueError("GP observations must align with observation points.")
@@ -573,10 +577,6 @@ def _observation_noise(noise_scale: ArrayLike, /, *, count: int) -> Array:
 
 
 def _validate_inducing_design(points: Array, inducing: Array, /) -> None:
-    if inducing.shape[1] != points.shape[1]:
-        raise ValueError(
-            "inducing_points and observation_points need equal coordinate size."
-        )
     if not 0 < int(inducing.shape[0]) < int(points.shape[0]):
         raise ValueError("Sparse GP requires fewer inducing points than observations.")
 

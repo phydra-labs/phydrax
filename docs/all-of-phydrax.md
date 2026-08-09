@@ -651,10 +651,11 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - `phydrax.operators` for PDE operators.
 - `phydrax.nn` for models, wrappers, and the generic diagonal state-space mixer.
 - `phydrax.stochastic` for process paths, trajectories, typed state-space
-  problems and inputs, transition kernels, and structural model compilation.
+  problems and inputs, transition kernels, exact signature and log-signature
+  features, and structural model compilation.
 - `phydrax.kernels` for covariance-safe stationary, algebraic, transformed,
-  finite-feature, graph/Hodge spectral, compact, combinatorial, and fixed-noise
-  noncompact kernels shared by GP and coreset methods.
+  finite-feature, structured-input, signature-PDE, graph/Hodge spectral, compact,
+  combinatorial, and fixed-noise noncompact kernels shared by GP and coreset methods.
 - `phydrax.uq` for Gaussian factors and transforms, filtering/smoothing,
   state-space estimation, sensitivities, and stochastic spectra.
 - `phydrax.optim` for canonical QPs and the native implicit QPax backend.

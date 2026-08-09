@@ -32,7 +32,7 @@ class GaussianProcessCondition(StrictModule):
         variance: ArrayLike,
         output_dims: tuple[str | None, ...],
     ):
-        points = _as_points(query_points)
+        points = _as_design(query_points)
         mean_array = _as_vector(mean, name="conditioned GP mean")
         covariance_array = jnp.asarray(covariance, dtype=float)
         variance_array = _as_vector(variance, name="conditioned GP variance")
@@ -112,7 +112,7 @@ class GaussianProcessConditioner(StrictModule):
         variance: ArrayLike,
         output_dims: tuple[str | None, ...],
     ):
-        points = _as_points(query_points)
+        points = _as_design(query_points)
         projection = jnp.asarray(residual_projection, dtype=float)
         covariance_array = jnp.asarray(covariance, dtype=float)
         variance_array = _as_vector(variance, name="conditioned GP variance")
@@ -158,12 +158,16 @@ def _sample_gaussian_psd(
     return mean + noise @ factor.T
 
 
-def _as_points(value: ArrayLike) -> Array:
+def _as_design(value: ArrayLike) -> Array:
     array = jnp.asarray(value, dtype=float)
     if array.ndim == 1:
-        return array[:, None]
-    if array.ndim != 2:
-        raise ValueError("GP points must have shape (point, coordinate).")
+        array = array[:, None]
+    if array.ndim < 2:
+        raise ValueError(
+            "GP inputs must have one design axis and at least one input axis."
+        )
+    if any(int(size) <= 0 for size in array.shape[1:]):
+        raise ValueError("GP kernel input axes must be nonempty.")
     return array
 
 

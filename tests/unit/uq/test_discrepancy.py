@@ -3,6 +3,7 @@
 #
 
 import coordax as cx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -103,4 +104,126 @@ def test_gp_discrepancy_rejects_misaligned_scalar_observations():
         phx.uq.ExactGaussianProcessDiscrepancy(
             jnp.linspace(0.0, 1.0, 4),
             jnp.ones((4, 2)),
+        )
+
+
+def test_exact_scalar_gp_supports_path_valued_kernel_inputs():
+    observation_paths = jnp.cumsum(
+        jr.normal(jr.key(30), (7, 5, 2)) * 0.25,
+        axis=1,
+    )
+    query_paths = jnp.cumsum(
+        jr.normal(jr.key(31), (4, 7, 2)) * 0.25,
+        axis=1,
+    )
+    observations = 0.3 * observation_paths[:, -1, 0] - 0.2 * observation_paths[:, -1, 1]
+    kernel = phx.kernels.SignaturePDEKernel(
+        phx.kernels.LinearKernel(),
+        polynomial_order=4,
+        pair_block_size=3,
+    )
+    state = phx.uq.GaussianProcessLikelihoodState(
+        kernel=kernel,
+        noise_scale=0.05,
+        jitter=1e-9,
+    )
+    model = phx.uq.ExactGaussianProcessDiscrepancy(
+        observation_paths,
+        observations,
+    )
+    residual = model.residual(jnp.zeros_like(observations))
+    factor = model.factor(state=state)
+    conditioned = factor.condition(residual, query_paths, output_dim="path")
+
+    observation_covariance = kernel.matrix(observation_paths, observation_paths)
+    observation_covariance = observation_covariance + (
+        state.noise_scale**2 + state.jitter
+    ) * jnp.eye(observation_paths.shape[0])
+    cross_covariance = kernel.matrix(query_paths, observation_paths)
+    expected_projection = jnp.linalg.solve(observation_covariance, cross_covariance.T).T
+    expected_covariance = (
+        kernel.matrix(query_paths, query_paths) - expected_projection @ cross_covariance.T
+    )
+
+    assert jnp.isfinite(factor.log_probability(residual))
+    assert conditioned.query_points.shape == query_paths.shape
+    assert conditioned.output_dims == ("path",)
+    assert jnp.allclose(conditioned.mean, expected_projection @ residual)
+    assert jnp.allclose(conditioned.covariance, expected_covariance)
+    assert jnp.all(conditioned.variance >= 0.0)
+
+
+def test_sparse_scalar_gp_supports_different_path_design_lengths():
+    observation_paths = jnp.cumsum(
+        jr.normal(jr.key(40), (8, 6, 2)) * 0.2,
+        axis=1,
+    )
+    inducing_paths = jnp.cumsum(
+        jr.normal(jr.key(41), (3, 4, 2)) * 0.2,
+        axis=1,
+    )
+    query_paths = jnp.cumsum(
+        jr.normal(jr.key(42), (5, 7, 2)) * 0.2,
+        axis=1,
+    )
+    observations = observation_paths[:, -1, 0]
+    kernel = phx.kernels.SignaturePDEKernel(
+        phx.kernels.SquaredExponentialKernel(length_scale=0.8),
+        polynomial_order=4,
+        pair_block_size=3,
+    )
+    state = phx.uq.GaussianProcessLikelihoodState(
+        kernel=kernel,
+        noise_scale=0.08,
+    )
+    model = phx.uq.SparseGaussianProcessDiscrepancy(
+        observation_paths,
+        observations,
+        inducing_paths,
+    )
+    factor = model.factor(state=state)
+    conditioned = factor.condition(
+        model.residual(jnp.zeros_like(observations)),
+        query_paths,
+        output_dim="path",
+    )
+
+    assert jnp.isfinite(
+        model.log_marginal_likelihood(
+            jnp.zeros_like(observations),
+            state=state,
+        )
+    )
+    assert factor.observation_points.shape == observation_paths.shape
+    assert factor.inducing_points.shape == inducing_paths.shape
+    assert conditioned.mean.shape == (5,)
+    assert conditioned.covariance.shape == (5, 5)
+    assert jnp.all(conditioned.variance >= 0.0)
+
+
+def test_path_valued_gp_likelihood_is_differentiable_and_functional_gp_rejects_it():
+    paths = jnp.cumsum(jr.normal(jr.key(50), (5, 4, 2)) * 0.15, axis=1)
+    observations = paths[:, -1, 0]
+    model = phx.uq.ExactGaussianProcessDiscrepancy(paths, observations)
+
+    def objective(scale):
+        state = phx.uq.GaussianProcessLikelihoodState(
+            kernel=phx.kernels.SignaturePDEKernel(
+                phx.kernels.ScaleKernel(phx.kernels.LinearKernel(), scale),
+                polynomial_order=3,
+            ),
+            noise_scale=0.05,
+        )
+        return model.log_marginal_likelihood(
+            jnp.zeros_like(observations),
+            state=state,
+        )
+
+    gradient = jax.grad(objective)(jnp.asarray(0.7))
+    assert jnp.isfinite(gradient)
+
+    with pytest.raises(ValueError, match="input_ndim == 1"):
+        phx.uq.FunctionalGaussianProcessLikelihoodState(
+            kernel=phx.kernels.SignaturePDEKernel(phx.kernels.LinearKernel()),
+            noise_scale=0.1,
         )

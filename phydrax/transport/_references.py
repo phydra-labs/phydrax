@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from .._strict import StrictModule
-from ..integration import DiscreteMeasureTarget, WeightedSampleTarget
+from ..integration._targets import DiscreteMeasureTarget, WeightedSampleTarget
 from ._costs import AbstractGroundCost
 from ._divergence import SinkhornDivergenceResult
 from ._measure import _FiniteTransportMeasure, EventEncoder, lower_transport_measure

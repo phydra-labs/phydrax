@@ -19,6 +19,7 @@ The central invariants are explicit:
 ## API sections
 
 - [State-space models and solver transition adapters](state_space.md)
+- [Signatures and path kernels](signatures.md)
 - [Martingale problems and stopping](martingales.md)
 - [Backward stochastic differential equations](bsde.md)
 - [Filtering and smoothing](../uq/filtering.md)

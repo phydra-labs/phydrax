@@ -791,6 +791,46 @@ factorization. Equal or larger feature rank also uses the dense path. Both paths
 implement the same declared covariance and expose comparable log-probability,
 conditioning, and storage diagnostics.
 
+Scalar value-observation GPs accept any design rank declared by
+`state.kernel.input_ndim`. A signature-kernel observation design is
+`(observation, knot, channel)`; inducing and query paths may use different knot
+counts when the kernel supports rectangular cross-evaluation. Exact and FITC
+factorizations preserve these axes and return one scalar latent value per
+leading design row.
+
+```python
+import jax.numpy as jnp
+import phydrax as phx
+
+time = jnp.linspace(0.0, 1.0, 6)
+path = jnp.stack((time, time**2), axis=-1)
+paths = jnp.stack((path, -path, 0.5 * path, 1.5 * path))
+observations = paths[:, -1, 0]
+physical_mean = jnp.zeros_like(observations)
+query_time = jnp.linspace(0.0, 1.0, 4)
+query_path = jnp.stack((query_time, query_time**2), axis=-1)
+query_paths = jnp.stack((query_path, -query_path))
+path_kernel = phx.kernels.SignaturePDEKernel(
+    phx.kernels.LinearKernel(),
+    polynomial_order=5,
+)
+model = phx.uq.ExactGaussianProcessDiscrepancy(paths, observations)
+state = phx.uq.GaussianProcessLikelihoodState(
+    kernel=path_kernel,
+    noise_scale=0.05,
+)
+conditioned = model.condition(
+    physical_mean,
+    query_paths,
+    state=state,
+    output_dim="trajectory",
+)
+```
+
+Path kernels are not coordinate-functional kernels. `FunctionalDesign`,
+coordinate partial derivatives, and differential-functional GP states require
+`input_ndim == 1` and reject path kernels explicitly.
+
 ::: phydrax.uq.GaussianProcessLikelihoodState
 
 ---

@@ -4,7 +4,13 @@
 
 """Composable positive-definite kernels shared across Phydrax subsystems."""
 
-from ._algebra import AmplitudeKernel, ProductKernel, ScaleKernel, SumKernel
+from ._algebra import (
+    AmplitudeKernel,
+    NormalizedKernel,
+    ProductKernel,
+    ScaleKernel,
+    SumKernel,
+)
 from ._base import AbstractPositiveDefiniteKernel, AbstractUnitDiagonalKernel
 from ._combinatorial import HammingSpectralKernel, HypercubeSpectralKernel
 from ._compact import (
@@ -21,6 +27,7 @@ from ._finite_feature import (
     kernel_features,
 )
 from ._hodge import CochainHodgeSpectralKernel
+from ._linear import LinearKernel
 from ._noncompact import (
     hyperbolic_feature_proposal,
     HyperbolicRandomFeatureKernel,
@@ -37,6 +44,7 @@ from ._operator_valued import (
     sphere_tangent_kernel,
     sphere_tangent_projector,
 )
+from ._signature import SignaturePDEKernel
 from ._spectral import (
     AbstractSpectralMultiplier,
     HeatSpectralMultiplier,
@@ -74,8 +82,11 @@ __all__ = [
     "ImportanceFeatureDiagnostics",
     "InputTransformedKernel",
     "HypercubeSpectralKernel",
+    "LinearKernel",
+    "NormalizedKernel",
     "InverseMultiquadricKernel",
     "Matern32Kernel",
+    "SignaturePDEKernel",
     "Matern52Kernel",
     "ProductKernel",
     "MaternSpectralMultiplier",

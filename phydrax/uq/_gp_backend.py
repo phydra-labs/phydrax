@@ -20,7 +20,9 @@ def exact_gp_cholesky(
     jitter: ArrayLike,
 ) -> Array:
     """Factor an exact scalar GP observation covariance."""
-    points = _as_points(observation_points)
+    points = _as_kernel_inputs(
+        observation_points, kernel=kernel, name="observation_points"
+    )
     diagonal = _observation_diagonal(
         noise_scale,
         jitter,
@@ -51,8 +53,10 @@ def exact_gp_conditioner(
     kernel: AbstractPositiveDefiniteKernel,
 ) -> tuple[Array, Array, Array]:
     """Precompute exact residual projection and latent query covariance."""
-    points = _as_points(observation_points)
-    query = _as_points(query_points)
+    points = _as_kernel_inputs(
+        observation_points, kernel=kernel, name="observation_points"
+    )
+    query = _as_kernel_inputs(query_points, kernel=kernel, name="query_points")
     return exact_gp_conditioner_from_covariances(
         cholesky,
         kernel.matrix(query, points),
@@ -88,8 +92,10 @@ def fitc_factors(
     jitter: ArrayLike,
 ) -> tuple[Array, Array, Array, Array]:
     """Build generic FITC factors from a positive-definite kernel."""
-    points = _as_points(observation_points)
-    inducing = _as_points(inducing_points)
+    points = _as_kernel_inputs(
+        observation_points, kernel=kernel, name="observation_points"
+    )
+    inducing = _as_kernel_inputs(inducing_points, kernel=kernel, name="inducing_points")
     return fitc_factors_from_covariances(
         kernel.matrix(points, inducing),
         kernel.diagonal(points),
@@ -183,9 +189,9 @@ def sparse_gp_conditioner(
     kernel: AbstractPositiveDefiniteKernel,
 ) -> tuple[Array, Array, Array]:
     """Precompute FITC residual projection and latent query covariance."""
-    _as_points(observation_points)
-    inducing = _as_points(inducing_points)
-    query = _as_points(query_points)
+    _as_kernel_inputs(observation_points, kernel=kernel, name="observation_points")
+    inducing = _as_kernel_inputs(inducing_points, kernel=kernel, name="inducing_points")
+    query = _as_kernel_inputs(query_points, kernel=kernel, name="query_points")
     return sparse_gp_conditioner_from_covariances(
         kernel.matrix(query, inducing),
         kernel.diagonal(query),
@@ -275,12 +281,24 @@ def _observation_diagonal(
     return noise * noise + jnp.asarray(jitter)
 
 
-def _as_points(value: ArrayLike) -> Array:
+def _as_kernel_inputs(
+    value: ArrayLike,
+    /,
+    *,
+    kernel: AbstractPositiveDefiniteKernel,
+    name: str,
+) -> Array:
     array = jnp.asarray(value, dtype=float)
-    if array.ndim == 1:
-        return array[:, None]
-    if array.ndim != 2:
-        raise ValueError("GP points must have shape (point, coordinate).")
+    if kernel.input_ndim == 1 and array.ndim == 1:
+        array = array[:, None]
+    expected_rank = kernel.input_ndim + 1
+    if array.ndim != expected_rank:
+        raise ValueError(
+            f"{name} must have one design axis followed by "
+            f"{kernel.input_ndim} kernel input axes."
+        )
+    if any(int(size) <= 0 for size in array.shape[1:]):
+        raise ValueError(f"{name} must have nonempty kernel input axes.")
     return array
 
 

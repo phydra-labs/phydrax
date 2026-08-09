@@ -54,14 +54,18 @@ def randomized_pivoted_cholesky(
     if not isinstance(method, RandomizedPivotedCholesky):
         raise TypeError("method must be a RandomizedPivotedCholesky.")
     values = jnp.asarray(points, dtype=float)
-    if values.ndim != 2:
-        raise ValueError("points must have shape (source_points, coordinate_size).")
+    expected_rank = method.kernel.input_ndim + 1
+    if values.ndim != expected_rank:
+        raise ValueError(
+            "points must have one source axis followed by "
+            f"{method.kernel.input_ndim} kernel input axes."
+        )
     source_points = int(values.shape[0])
     if source_points < 1:
         raise ValueError("Pivoted Cholesky requires at least one source point.")
     if method.num_points > source_points:
         raise ValueError("Cannot select more inducing points than source points.")
-    rows_valid = jnp.all(jnp.isfinite(values), axis=1)
+    rows_valid = jnp.all(jnp.isfinite(values), axis=tuple(range(1, values.ndim)))
     input_valid = jnp.all(rows_valid)
     safe_points = jnp.nan_to_num(values)
     diagonal = method.kernel.diagonal(safe_points)
@@ -95,7 +99,7 @@ def randomized_pivoted_cholesky(
             jr.choice(jr.fold_in(key, iteration), source_points, p=probabilities),
             dtype=jnp.int32,
         )
-        kernel_column = method.kernel.matrix(safe_points, safe_points[pivot][None, :])[
+        kernel_column = method.kernel.matrix(safe_points, safe_points[pivot][None, ...])[
             :, 0
         ]
         previous = factors @ factors[pivot]

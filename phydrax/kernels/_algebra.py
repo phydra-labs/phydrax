@@ -27,6 +27,9 @@ class SumKernel(AbstractPositiveDefiniteKernel):
                 flattened.append(kernel)
         if not flattened:
             raise ValueError("SumKernel requires at least one child kernel.")
+        input_ndim = flattened[0].input_ndim
+        if any(kernel.input_ndim != input_ndim for kernel in flattened[1:]):
+            raise ValueError("SumKernel children must have equal input_ndim.")
         self.kernels = tuple(flattened)
 
     def pairwise(self, left: ArrayLike, right: ArrayLike, /) -> Array:
@@ -46,6 +49,10 @@ class SumKernel(AbstractPositiveDefiniteKernel):
         for kernel in self.kernels[1:]:
             value = value + kernel.diagonal(points)
         return value
+
+    @property
+    def input_ndim(self) -> int:
+        return self.kernels[0].input_ndim
 
     @property
     def max_derivative_order(self) -> int | None:
@@ -79,6 +86,9 @@ class ProductKernel(AbstractPositiveDefiniteKernel):
                 flattened.append(kernel)
         if not flattened:
             raise ValueError("ProductKernel requires at least one child kernel.")
+        input_ndim = flattened[0].input_ndim
+        if any(kernel.input_ndim != input_ndim for kernel in flattened[1:]):
+            raise ValueError("ProductKernel children must have equal input_ndim.")
         self.kernels = tuple(flattened)
 
     def pairwise(self, left: ArrayLike, right: ArrayLike, /) -> Array:
@@ -98,6 +108,10 @@ class ProductKernel(AbstractPositiveDefiniteKernel):
         for kernel in self.kernels[1:]:
             value = value * kernel.diagonal(points)
         return value
+
+    @property
+    def input_ndim(self) -> int:
+        return self.kernels[0].input_ndim
 
     @property
     def max_derivative_order(self) -> int | None:
@@ -145,6 +159,10 @@ class ScaleKernel(AbstractPositiveDefiniteKernel):
 
     def diagonal(self, points: ArrayLike, /) -> Array:
         return self.scale * self.kernel.diagonal(points)
+
+    @property
+    def input_ndim(self) -> int:
+        return self.kernel.input_ndim
 
     @property
     def max_derivative_order(self) -> int | None:
@@ -197,6 +215,10 @@ class AmplitudeKernel(AbstractPositiveDefiniteKernel):
         return self.variance_scale * self.kernel.diagonal(points)
 
     @property
+    def input_ndim(self) -> int:
+        return self.kernel.input_ndim
+
+    @property
     def max_derivative_order(self) -> int | None:
         return self.kernel.max_derivative_order
 
@@ -207,6 +229,59 @@ class AmplitudeKernel(AbstractPositiveDefiniteKernel):
     @property
     def kernel_id(self) -> str:
         return f"AmplitudeKernel[{self.kernel.kernel_id}]"
+
+
+class NormalizedKernel(AbstractPositiveDefiniteKernel):
+    """Unit-diagonal normalization of a strictly positive-diagonal kernel."""
+
+    kernel: AbstractPositiveDefiniteKernel
+
+    def __init__(self, kernel: AbstractPositiveDefiniteKernel, /):
+        if not isinstance(kernel, AbstractPositiveDefiniteKernel):
+            raise TypeError("kernel must be a positive-definite kernel.")
+        self.kernel = kernel
+
+    @staticmethod
+    def _checked_diagonal(diagonal: Array, /) -> Array:
+        return eqx.error_if(
+            diagonal,
+            jnp.any(~jnp.isfinite(diagonal)) | jnp.any(diagonal <= 0.0),
+            "NormalizedKernel requires a finite strictly positive child diagonal.",
+        )
+
+    def pairwise(self, left: ArrayLike, right: ArrayLike, /) -> Array:
+        left_diagonal = self._checked_diagonal(self.kernel.pairwise(left, left))
+        right_diagonal = self._checked_diagonal(self.kernel.pairwise(right, right))
+        return self.kernel.pairwise(left, right) / jnp.sqrt(
+            left_diagonal * right_diagonal
+        )
+
+    def matrix(self, left: ArrayLike, right: ArrayLike, /) -> Array:
+        left_diagonal = self._checked_diagonal(self.kernel.diagonal(left))
+        right_diagonal = self._checked_diagonal(self.kernel.diagonal(right))
+        return self.kernel.matrix(left, right) / jnp.sqrt(
+            left_diagonal[:, None] * right_diagonal[None, :]
+        )
+
+    def diagonal(self, points: ArrayLike, /) -> Array:
+        diagonal = self._checked_diagonal(self.kernel.diagonal(points))
+        return diagonal / diagonal
+
+    @property
+    def input_ndim(self) -> int:
+        return self.kernel.input_ndim
+
+    @property
+    def max_derivative_order(self) -> int | None:
+        return self.kernel.max_derivative_order
+
+    @property
+    def is_unit_diagonal(self) -> bool:
+        return True
+
+    @property
+    def kernel_id(self) -> str:
+        return f"NormalizedKernel[{self.kernel.kernel_id}]"
 
 
 def _minimum_regularity(
@@ -220,6 +295,7 @@ def _minimum_regularity(
 
 __all__ = [
     "AmplitudeKernel",
+    "NormalizedKernel",
     "ProductKernel",
     "ScaleKernel",
     "SumKernel",
