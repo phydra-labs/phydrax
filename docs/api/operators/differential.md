@@ -480,6 +480,37 @@ explicit chart, degree, and orientation semantics.
 
 ::: phydrax.operators.semi_riemannian_grad
 
+Trainable spacetime inverse problems use one matrix-valued `DomainFunction` as
+the optimizer-owned field. `as_lorentzian_metric_field` exposes a metric that
+way; `lorentzian_metric_from_field` reconstructs pointwise metric calculus
+inside residual or observation operators. The domain curvature adapters then
+produce Riemann, Ricci, scalar-curvature, or Einstein tensor fields while
+retaining the same trainable parameter tree.
+
+::: phydrax.operators.as_lorentzian_metric_field
+
+---
+
+::: phydrax.operators.lorentzian_metric_from_field
+
+---
+
+::: phydrax.operators.domain_riemann_tensor
+
+---
+
+::: phydrax.operators.domain_ricci_tensor
+
+---
+
+::: phydrax.operators.domain_scalar_curvature
+
+---
+
+::: phydrax.operators.domain_einstein_tensor
+
+---
+
 ---
 
 ::: phydrax.operators.horizontal_grad

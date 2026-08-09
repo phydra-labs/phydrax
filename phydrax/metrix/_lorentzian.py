@@ -80,6 +80,28 @@ class _FLRWMetricMap(StrictModule):
         return matrix if self.convention == "mostly_plus" else -matrix
 
 
+def _assemble_adm_matrix(
+    lapse: Array,
+    shift: Array,
+    spatial_metric: Array,
+    convention: LorentzianConvention,
+    /,
+) -> Array:
+    shift_covector = jnp.einsum("...ij,...j->...i", spatial_metric, shift)
+    time_time = -(lapse**2) + jnp.einsum(
+        "...i,...i->...",
+        shift,
+        shift_covector,
+    )
+    first_row = jnp.concatenate((time_time[..., None], shift_covector), axis=-1)
+    remaining = jnp.concatenate(
+        (shift_covector[..., :, None], spatial_metric),
+        axis=-1,
+    )
+    matrix = jnp.concatenate((first_row[..., None, :], remaining), axis=-2)
+    return matrix if convention == "mostly_plus" else -matrix
+
+
 class _ADMMetricMap(StrictModule):
     lapse: Callable[[Array], Array]
     shift: Callable[[Array], Array]
@@ -130,12 +152,7 @@ class _ADMMetricMap(StrictModule):
             | (jnp.min(jnp.linalg.eigvalsh(spatial)) <= 0.0),
             "ADM spatial_metric must be finite, symmetric, and positive definite.",
         )
-        shift_covector = spatial @ shift
-        time_time = -(lapse**2) + jnp.dot(shift, shift_covector)
-        first_row = jnp.concatenate((time_time[None], shift_covector))
-        remaining = jnp.concatenate((shift_covector[:, None], spatial), axis=1)
-        matrix = jnp.concatenate((first_row[None, :], remaining), axis=0)
-        return matrix if self.convention == "mostly_plus" else -matrix
+        return _assemble_adm_matrix(lapse, shift, spatial, self.convention)
 
 
 class _SchwarzschildMetricMap(StrictModule):

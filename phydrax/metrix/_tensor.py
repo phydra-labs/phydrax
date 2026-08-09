@@ -14,7 +14,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from ._chart import ChartTransition
-from ._metric import RiemannianMetric
+from ._metric import AbstractSemiRiemannianMetric
 
 
 TensorVariance: TypeAlias = Literal["contravariant", "covariant"]
@@ -120,7 +120,7 @@ def _apply_linear_axis(
 
 def raise_index(
     tensor: ArrayLike,
-    metric: RiemannianMetric,
+    metric: AbstractSemiRiemannianMetric,
     coordinates: ArrayLike,
     /,
     *,
@@ -145,7 +145,7 @@ def raise_index(
 
 def lower_index(
     tensor: ArrayLike,
-    metric: RiemannianMetric,
+    metric: AbstractSemiRiemannianMetric,
     coordinates: ArrayLike,
     /,
     *,
@@ -171,23 +171,23 @@ def lower_index(
 def inner_product(
     left: ArrayLike,
     right: ArrayLike,
-    metric: RiemannianMetric,
+    metric: AbstractSemiRiemannianMetric,
     coordinates: ArrayLike,
     /,
 ) -> Array:
-    """Metric inner product of two contravariant vectors."""
+    """Metric bilinear pairing of two contravariant vectors."""
 
-    return metric.inner(left, right, coordinates)
+    return metric.bilinear(left, right, coordinates)
 
 
 def tensor_norm_squared(
     tensor: ArrayLike,
-    metric: RiemannianMetric,
+    metric: AbstractSemiRiemannianMetric,
     tensor_type: TensorType,
     coordinates: ArrayLike,
     /,
 ) -> Array:
-    """Pointwise metric norm squared of a tensor with declared variance."""
+    """Pointwise metric self-contraction with declared tensor variance."""
 
     array, points, leading_ndim = _tensor_array(
         tensor, tensor_type, coordinates, metric.chart.dimension

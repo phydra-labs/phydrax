@@ -13,7 +13,7 @@ import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ._connection import AbstractAffineConnection, LeviCivitaConnection
-from ._metric import RiemannianMetric
+from ._metric import AbstractSemiRiemannianMetric, RiemannianMetric
 from ._tensor import TensorType
 from ._utils import _pointwise_array
 
@@ -85,13 +85,13 @@ def connection_covariant_hessian(
 
 def covariant_hessian(
     field: Callable[[Array], Array],
-    metric: RiemannianMetric,
+    metric: AbstractSemiRiemannianMetric,
     coordinates: ArrayLike,
     /,
 ) -> Array:
-    """Covariant Hessian ``∇_i∇_j field`` of a scalar field."""
-    if not isinstance(metric, RiemannianMetric):
-        raise TypeError("covariant_hessian requires a RiemannianMetric.")
+    """Covariant Hessian induced by a metric's Levi-Civita connection."""
+    if not isinstance(metric, AbstractSemiRiemannianMetric):
+        raise TypeError("covariant_hessian requires a nondegenerate metric.")
     return connection_covariant_hessian(field, LeviCivitaConnection(metric), coordinates)
 
 
@@ -148,13 +148,13 @@ def connection_divergence(
 
 def divergence(
     field: Callable[[Array], Array],
-    metric: RiemannianMetric,
+    metric: AbstractSemiRiemannianMetric,
     coordinates: ArrayLike,
     /,
 ) -> Array:
-    """Riemannian divergence of a contravariant vector field."""
-    if not isinstance(metric, RiemannianMetric):
-        raise TypeError("divergence requires a RiemannianMetric.")
+    """Divergence under a metric's Levi-Civita connection."""
+    if not isinstance(metric, AbstractSemiRiemannianMetric):
+        raise TypeError("divergence requires a nondegenerate metric.")
     return connection_divergence(field, LeviCivitaConnection(metric), coordinates)
 
 
@@ -222,14 +222,14 @@ def affine_covariant_derivative(
 
 def covariant_derivative(
     field: Callable[[Array], Array],
-    metric: RiemannianMetric,
+    metric: AbstractSemiRiemannianMetric,
     tensor_type: TensorType,
     coordinates: ArrayLike,
     /,
 ) -> Array:
-    """Riemannian covariant derivative with derivative axis appended last."""
-    if not isinstance(metric, RiemannianMetric):
-        raise TypeError("covariant_derivative requires a RiemannianMetric.")
+    """Metric covariant derivative with derivative axis appended last."""
+    if not isinstance(metric, AbstractSemiRiemannianMetric):
+        raise TypeError("covariant_derivative requires a nondegenerate metric.")
     return affine_covariant_derivative(
         field,
         LeviCivitaConnection(metric),
