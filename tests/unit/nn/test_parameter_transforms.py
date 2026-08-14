@@ -8,7 +8,9 @@ from phydrax.nn.layers import Linear
 from phydrax.nn.parameters import (
     HurwitzTransform,
     IntervalTransform,
+    PackedSkewSymmetricTransform,
     PositiveDefiniteTransform,
+    PositiveSemidefiniteTransform,
     PositiveTransform,
     SchurStableTransform,
     SimplexTransform,
@@ -62,6 +64,30 @@ def test_positive_definite_transform_uses_packed_coordinates():
     assert matrix.shape == (3, 3)
     assert jnp.allclose(matrix, matrix.T)
     assert jnp.min(jnp.linalg.eigvalsh(matrix)) > 0.0
+    assert jnp.all(jnp.isfinite(jax.jacrev(transform)(raw)))
+
+
+def test_packed_skew_transform_uses_only_independent_coordinates():
+    raw = jnp.asarray([[1.0, -2.0, 3.0], [0.5, 0.25, -0.75]])
+    transform = PackedSkewSymmetricTransform()
+    matrices = jax.jit(transform)(raw)
+
+    assert matrices.shape == (2, 3, 3)
+    assert jnp.array_equal(matrices, -jnp.swapaxes(matrices, -1, -2))
+    assert jnp.array_equal(jnp.diagonal(matrices, axis1=-2, axis2=-1), jnp.zeros((2, 3)))
+    assert jnp.all(jnp.isfinite(jax.jacrev(transform)(raw)))
+
+
+def test_positive_semidefinite_transform_preserves_exact_zero_factor():
+    transform = PositiveSemidefiniteTransform()
+    raw = jnp.asarray([[0.0, 0.0, 0.0], [1.0, -2.0, 0.5]])
+    factors = jax.jit(transform.factor)(raw)
+    matrices = transform(raw)
+
+    assert factors.shape == (2, 2, 2)
+    assert jnp.array_equal(factors[0], jnp.zeros((2, 2)))
+    assert jnp.array_equal(matrices[0], jnp.zeros((2, 2)))
+    assert jnp.all(jnp.linalg.eigvalsh(matrices) >= -1e-12)
     assert jnp.all(jnp.isfinite(jax.jacrev(transform)(raw)))
 
 
@@ -148,6 +174,10 @@ def test_linear_rejects_incompatible_weight_parameterizations():
 def test_transforms_reject_invalid_coordinate_shapes():
     with pytest.raises(ValueError, match="packed-triangle"):
         PositiveDefiniteTransform()(jnp.ones((4,)))
+    with pytest.raises(ValueError, match="strict-triangle"):
+        PackedSkewSymmetricTransform()(jnp.ones((2,)))
+    with pytest.raises(ValueError, match="packed-triangle"):
+        PositiveSemidefiniteTransform()(jnp.ones((4,)))
     with pytest.raises(ValueError, match="square matrix"):
         SymmetricTransform()(jnp.ones((2, 3)))
     with pytest.raises(ValueError, match="rows >= columns"):

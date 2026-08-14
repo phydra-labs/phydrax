@@ -70,6 +70,25 @@ class WienerTerm(StrictModule):
         """Flattened control dimension contributed by this term."""
         return prod(self.noise_shape) if self.noise_shape else 1
 
+    def coefficient_matrix(
+        self,
+        time: ArrayLike,
+        state: ArrayLike,
+        args: Any = None,
+        /,
+    ) -> Array:
+        """Evaluate the coefficient as ``(state_size, noise_size)``."""
+        state_array = jnp.asarray(state)
+        expected_shape = tuple(state_array.shape) + self.noise_shape
+        coefficient = jnp.asarray(self.coefficient(time, state_array, args))
+        if tuple(coefficient.shape) != expected_shape:
+            raise ValueError(
+                f"WienerTerm {self.name!r} coefficient must return shape "
+                f"{expected_shape}; got {coefficient.shape}."
+            )
+        state_size = prod(state_array.shape) if state_array.shape else 1
+        return coefficient.reshape((state_size, self.noise_size))
+
 
 def _noise_identity(terms: tuple[WienerTerm, ...], /) -> str | None:
     if not terms or all(term.basis_id is None for term in terms):
@@ -162,13 +181,7 @@ class DifferentialProblem(StrictModule):
         offset = 0
         slices: dict[str, tuple[int, int]] = {}
         for term in terms:
-            expected_shape = tuple(state.shape) + term.noise_shape
-            coefficient = jnp.asarray(term.coefficient(start, state, args))
-            if tuple(coefficient.shape) != expected_shape:
-                raise ValueError(
-                    f"WienerTerm {term.name!r} coefficient must return shape "
-                    f"{expected_shape}; got {coefficient.shape}."
-                )
+            term.coefficient_matrix(start, state, args)
             slices[term.name] = (offset, offset + term.noise_size)
             offset += term.noise_size
 

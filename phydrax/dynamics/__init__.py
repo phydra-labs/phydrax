@@ -21,6 +21,7 @@ from ._evolution import (
 from ._grid import EvolutionGrid, IterationGrid, TimeGrid
 from ._layout import InputLayout, InputRole, StateLayout
 from ._linearization import EvolutionJacobianAction
+from ._model_system import continuous_model_system, ContinuousModelVectorField
 from ._system import (
     AbstractInputPolicy,
     AutonomousContinuousVectorField,
@@ -51,6 +52,7 @@ __all__ = [
     "AutonomousDiscreteTransition",
     "CallableInputPolicy",
     "CaseAxisRole",
+    "ContinuousModelVectorField",
     "ContinuousSystem",
     "DiscreteEvolution",
     "DiscreteSystem",
@@ -75,5 +77,6 @@ __all__ = [
     "TimeGrid",
     "TrajectoryData",
     "TrajectoryTransitions",
+    "continuous_model_system",
     "evolve",
 ]

@@ -16,9 +16,11 @@ $$
 Omit `wiener_terms` for an ODE. Each named `WienerTerm` declares one independent
 Wiener source: its coefficient, native noise shape, optional basis identity, and
 mathematical structure (`additive`, `commutative`, or `general`). For a state of shape
-`state_shape`, the coefficient must return `state_shape + noise_shape`. The backend
-flattens and concatenates the terms in declared order; `DifferentialSolution` retains
-the corresponding named column slices.
+`state_shape`, the coefficient must return `state_shape + noise_shape`.
+`coefficient_matrix(time, state, args)` validates that contract and returns the
+canonical `(state_size, noise_size)` view without transposing physical axes. The
+backend flattens and concatenates terms in declared order; `DifferentialSolution`
+retains the corresponding named column slices.
 
 A `WienerRealization` defines one global Brownian path or coupled path batch. Its
 `support` is independent of any one solve interval, so solving adjacent subintervals
@@ -47,6 +49,7 @@ common randomness is required.
         members:
             - __init__
             - noise_size
+            - coefficient_matrix
 
 ---
 

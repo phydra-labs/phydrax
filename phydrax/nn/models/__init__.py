@@ -38,7 +38,11 @@ from ._linear_recurrent import LinearRecurrentModel
 from ._mlp import MLP
 from ._modified_mlp import ModifiedMLP
 from ._piratenet import PirateNet
-from ._port_hamiltonian import PortHamiltonianVectorField
+from ._port_hamiltonian import (
+    DissipationStructure,
+    FeatureNormPotential,
+    PortHamiltonianVectorField,
+)
 from ._recurrent import (
     BidirectionalRecurrentSequenceModel,
     RecurrentSequenceModel,
@@ -82,11 +86,13 @@ __all__ = [
     "DeformationGradientMinors",
     "ConcatenatedModel",
     "DifferentialFieldDecoder",
+    "DissipationStructure",
     "DifferentialNormalization",
     "EquinoxModel",
     "EquinoxStructuredModel",
     "FeynmaNN",
     "FlowJAXProcessDistribution",
+    "FeatureNormPotential",
     "FunctionalStateDecoder",
     "IdentityCoefficientTransition",
     "InputConvexNetwork",

@@ -155,6 +155,98 @@ object directly to `LinearGaussianTransitionKernel`. The legacy transition,
 covariance, and offset constructor remains supported through the same
 `LinearGaussianParameterization` contract.
 
+`EulerMaruyamaTransitionKernel` consumes one canonical `ContinuousSystem` and
+one or more `solver.WienerTerm` objects. At a source state, it forms
+`mean = state + dt * drift` and `covariance = dt * B @ B.T`, where `B`
+concatenates the Wiener coefficients in declared order. Only this covariance
+calculation flattens physical state and noise axes. Rectangular and rank-deficient
+`B` remain exact: density is finite on covariance support and negative infinity
+off support. No jitter or Cholesky assumption is introduced. Invalid or
+nonpositive intervals return an invalid sample and negative-infinite density.
+For a controlled system, the drift uses the canonical left-endpoint
+`transition_start_input`.
+
+`EulerMaruyamaQuasiLikelihood` evaluates the same local transition law over
+`TrajectoryTransitions`. It preserves transition masks, geometric sample weights,
+irregular durations, source-aligned inputs, dataset identity, process identity,
+and approximation identity. Its weighted mean negative log likelihood may be
+normalized by interval, but it remains an Euler--Maruyama quasi-likelihood, not
+an exact continuous-time SDE likelihood.
+
+`IsothermalPortHamiltonianDynamics` specializes an autonomous, dissipative
+`nn.models.PortHamiltonianVectorField` at a fixed positive temperature. For
+`R = L @ L.T`, its Itô drift and Wiener coefficient are
+`(J - R) grad(H) + temperature * div(R - J)` and
+`sqrt(2 * temperature) * L`. The complete divergence correction is evaluated
+exactly by one JVP per state coordinate. Constant structure takes an exact-zero
+correction path. Control, external forcing, absent dissipation, and nonpositive
+temperature are rejected so the Gibbs-invariance contract is not overstated.
+`stationary_fokker_planck_residual` evaluates the normalized stationary equation
+from the actual drift and mobility rather than an algebraically cancelled
+identity. The first implementation is Itô-only.
+
+The thermodynamic decomposition is independently implemented; the
+[OnsagerNet-JAX repository](https://github.com/MLDS-NUS/onsagernet-jax) and
+[OnsagerNet paper](https://arxiv.org/abs/2009.02327) provide scientific context.
+
+::: phydrax.stochastic.EulerMaruyamaParameters
+
+---
+
+::: phydrax.stochastic.EulerMaruyamaTransitionKernel
+    options:
+        members:
+            - __init__
+            - parameters
+            - mean
+            - covariance
+            - sample
+            - log_prob
+
+---
+
+::: phydrax.stochastic.EulerMaruyamaQuasiLikelihoodResult
+
+---
+
+::: phydrax.stochastic.EulerMaruyamaQuasiLikelihood
+    options:
+        members:
+            - __init__
+            - evaluate
+            - __call__
+
+---
+
+::: phydrax.stochastic.IsothermalPortHamiltonianDynamics
+    options:
+        members:
+            - __init__
+            - ito_correction
+            - drift
+            - diffusion_factor
+            - diffusion
+            - diffusion_covariance
+            - energy_generator
+            - stationary_fokker_planck_residual
+            - continuous_system
+            - wiener_term
+            - transition_kernel
+
+---
+
+::: phydrax.stochastic.IsothermalPortHamiltonianTransitionKernel
+    options:
+        members:
+            - __init__
+            - parameters
+            - mean
+            - covariance
+            - sample
+            - log_prob
+
+---
+
 
 ::: phydrax.stochastic.AbstractTransitionKernel
 

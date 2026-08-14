@@ -3,7 +3,55 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 
-from phydrax.nn.models import PortHamiltonianVectorField
+from phydrax._model import AbstractArrayModel
+from phydrax.nn.models import FeatureNormPotential, PortHamiltonianVectorField
+
+
+class _QuadraticEnergy(AbstractArrayModel):
+    in_size: int = 3
+    out_size: str = "scalar"
+
+    def __call__(self, state, /, *, key=None):
+        del key
+        return 0.5 * jnp.vdot(state, state).real
+
+
+class _StateInterconnection(AbstractArrayModel):
+    in_size: int = 3
+    out_size: int = 3
+
+    def __call__(self, state, /, *, key=None):
+        del key
+        return jnp.asarray([state[0], 0.5 * state[1], -state[2]])
+
+
+class _StateDissipation(AbstractArrayModel):
+    in_size: int = 3
+    out_size: int = 6
+
+    def __call__(self, state, /, *, key=None):
+        del key
+        return jnp.asarray(
+            [1.0 + state[0], 0.2 * state[1], 1.0, 0.0, 0.1 * state[2], 0.5]
+        )
+
+
+class _StateControl(AbstractArrayModel):
+    in_size: int = 3
+    out_size: int = 6
+
+    def __call__(self, state, /, *, key=None):
+        del key
+        return jnp.asarray([1.0, state[0], state[1], 1.0, state[2], -state[0]])
+
+
+class _FeatureMap(AbstractArrayModel):
+    in_size: int = 2
+    out_size: int = 3
+
+    def __call__(self, state, /, *, key=None):
+        del key
+        return jnp.asarray([state[0], state[1], state[0] * state[1]])
 
 
 def test_port_hamiltonian_structural_matrices_are_exactly_valid():
@@ -95,3 +143,62 @@ def test_parameter_updates_cannot_break_hamiltonian_matrix_invariants():
 
     assert jnp.array_equal(interconnection, -interconnection.T)
     assert jnp.min(jnp.linalg.eigvalsh(dissipation)) > 0.0
+
+
+def test_state_dependent_structure_preserves_exact_power_balance():
+    model = PortHamiltonianVectorField(
+        state_size=3,
+        energy=_QuadraticEnergy(),
+        interconnection_model=_StateInterconnection(),
+        dissipation_model=_StateDissipation(),
+        control_model=_StateControl(),
+        control_size=2,
+        dissipation_structure="positive_semidefinite",
+        key=jr.key(10),
+    )
+    state = jnp.asarray([0.4, -0.3, 0.8])
+    other_state = jnp.asarray([-0.2, 0.6, 0.1])
+    control = jnp.asarray([0.25, -0.5])
+
+    interconnection = model.interconnection_matrix(state)
+    dissipation = model.dissipation_matrix(state)
+    assert not jnp.allclose(interconnection, model.interconnection_matrix(other_state))
+    assert not jnp.allclose(dissipation, model.dissipation_matrix(other_state))
+    assert jnp.array_equal(interconnection, -interconnection.T)
+    assert jnp.array_equal(jnp.diag(interconnection), jnp.zeros(3))
+    assert jnp.min(jnp.linalg.eigvalsh(dissipation)) >= -1e-12
+    assert jnp.allclose(
+        model.energy_balance_residual((state, control)),
+        0.0,
+        atol=1e-12,
+        rtol=0.0,
+    )
+    assert jax.jit(model)((state, control)).shape == (3,)
+
+
+def test_semidefinite_dissipation_can_be_exactly_zero():
+    model = PortHamiltonianVectorField(
+        state_size=2,
+        energy_width=4,
+        energy_depth=1,
+        dissipation_structure="positive_semidefinite",
+        initial_damping=0.0,
+        key=jr.key(11),
+    )
+
+    assert jnp.array_equal(model.dissipation_factor(), jnp.zeros((2, 2)))
+    assert jnp.array_equal(model.dissipation_matrix(), jnp.zeros((2, 2)))
+
+
+def test_feature_norm_potential_has_positive_coercive_tail():
+    potential = FeatureNormPotential(
+        _FeatureMap(),
+        initial_quadratic=0.2,
+        minimum_quadratic=1e-4,
+    )
+    state = jnp.asarray([0.5, -0.7])
+
+    assert potential(state).shape == ()
+    assert potential.quadratic_coefficient() > 1e-4
+    assert potential(10.0 * state) > potential(state)
+    assert jnp.all(jnp.isfinite(jax.grad(potential)(state)))

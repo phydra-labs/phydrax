@@ -91,11 +91,34 @@ each fixed context.
 
 ---
 
-`PortHamiltonianVectorField` evaluates a vector field rather than integrating
-time. Its interconnection matrix is exactly skew-symmetric, its optional
-dissipation matrix is positive definite by parameterization, and its energy is
-a scalar model. An optional control dimension adds a learned linear control map
-and changes the input contract to `(state, control)`.
+`FeatureNormPotential` constructs a scalar energy
+`H(x) = 0.5 * ||phi(x)||^2 + beta * ||x||^2`. The strictly positive learned
+`beta` gives a coercive quadratic tail without forcing `phi` to be injective or
+the complete energy to have a unique minimum.
+
+::: phydrax.nn.models.FeatureNormPotential
+    options:
+        members:
+            - __init__
+            - quadratic_coefficient
+            - __call__
+
+---
+
+`PortHamiltonianVectorField` evaluates
+`(J(x) - R(x)) grad(H(x)) + G(x) u + f(x)`; time integration remains
+solver-owned. `J` is exactly skew-symmetric from `d * (d - 1) / 2` independent
+coordinates. `R = L @ L.T` is positive semidefinite, or positive definite when
+requested. Energy, interconnection, dissipation, control, and forcing may each be
+separate `AbstractArrayModel` PyTree children. Omitting them preserves the
+constant-matrix constructor and its state-only or `(state, control)` call
+contract.
+
+At fixed control, `energy_balance_residual` evaluates
+`energy_rate + dissipation_rate - input_power`; it is zero up to floating-point
+roundoff for the represented vector field. Control-conditioned energy is rejected
+because this method differentiates only with respect to state, not along a
+time-varying control path.
 
 ::: phydrax.nn.models.PortHamiltonianVectorField
     options:
@@ -103,10 +126,20 @@ and changes the input contract to `(state, control)`.
             - __init__
             - __call__
             - interconnection_matrix
+            - dissipation_factor
             - dissipation_matrix
+            - control_map
             - energy_gradient
             - energy_rate
             - dissipation_rate
+            - input_power
+            - energy_balance_residual
+
+The structured decomposition is independently implemented. Design motivation and
+comparison points include the
+[OnsagerNet-JAX repository](https://github.com/MLDS-NUS/onsagernet-jax), the
+[OnsagerNet paper](https://arxiv.org/abs/2009.02327), and
+[custom thermodynamics from deep learning](https://www.nature.com/articles/s43588-023-00581-5).
 
 ---
 ## Recurrent sequence models
