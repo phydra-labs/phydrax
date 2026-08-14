@@ -97,10 +97,11 @@ The enforced route is staged as boundary → initial → interior data. See:
   and [API → NN → Architectures](api/nn/architectures.md).
 
 Trainable coordinates and their physical geometry are separate. Reusable
-positivity, interval, symmetry, stability, orthogonality, and positive-definite
-maps live in `phydrax.nn.parameters`; raw arrays remain optimizer leaves and
-physical values are constructed on demand. The same package owns explicit
-model-PyTree selection through `ParameterSubspace`.
+positivity, interval, symmetry, packed skew symmetry, semidefinite/definite
+factorization, stability, and orthogonality maps live in
+`phydrax.nn.parameters`; raw arrays remain optimizer leaves and physical values
+are constructed on demand. The same package owns explicit model-PyTree
+selection through `ParameterSubspace`.
 
 ### Native ML: fitted array models, not mutable estimators
 
@@ -157,6 +158,12 @@ State-space inference binds each physical case and schedule step to one canonica
 `StateSpaceStepContext`. `SampledStateSpaceInput` and `BSplineStateSpaceInput`
 provide case-indexed exogenous signals with explicit support, breakpoint masks,
 and stable input provenance rather than untyped callback payloads.
+Euler--Maruyama transition kernels reuse canonical `ContinuousSystem` and
+`WienerTerm` contracts, retain singular covariance support exactly, and expose
+masked irregular-trajectory quasi-likelihoods without claiming exact SDE
+likelihoods. Isothermal Port-Hamiltonian dynamics add the full
+state-dependent Itô fluctuation--dissipation correction and a normalized
+stationary Fokker--Planck diagnostic.
 Complete-field Gaussian or conditional-flow operators define transition
 marginals; typed Wiener/jump operator adapters define pathwise or composite
 process transitions without pretending that independent marginal draws share
@@ -206,6 +213,11 @@ keep physical-time and map-iteration normalization distinct. Solver, control,
 stochastic, memory/delay, rough, and canonical evolution outputs enter the same
 `TrajectoryData` contract through explicit adapters without losing masks, reset
 boundaries, case/realization axes, or provenance.
+Array models bind into `ContinuousSystem` as explicit trainable PyTree children.
+Structured Port-Hamiltonian fields provide state-dependent energy,
+interconnection, dissipation, control, and forcing components while preserving
+exact skew and semidefinite geometry; solver-owned isothermal dynamics add the
+matching thermal diffusion without creating a second dynamics hierarchy.
 
 Identification includes mask-safe DMD/DMDc and EDMD; strong, discrete, integral,
 and weak SINDy; polynomial, Fourier, tensor-product, transformed, symmetry, and

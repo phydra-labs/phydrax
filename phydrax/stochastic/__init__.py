@@ -19,6 +19,12 @@ from ._bsde import (
     evaluate_bsde,
     semilinear_pde_residual,
 )
+from ._euler_maruyama import (
+    EulerMaruyamaParameters,
+    EulerMaruyamaQuasiLikelihood,
+    EulerMaruyamaQuasiLikelihoodResult,
+    EulerMaruyamaTransitionKernel,
+)
 from ._events import (
     AccumulatedPathEvent,
     AtomicPathEvent,
@@ -45,6 +51,10 @@ from ._feynman_kac import (
     query_feynman_kac_labels,
     sample_feynman_kac_paths,
     trajectory_node_feynman_kac_labels,
+)
+from ._fluctuation_dissipation import (
+    IsothermalPortHamiltonianDynamics,
+    IsothermalPortHamiltonianTransitionKernel,
 )
 from ._fractional import (
     FractionalGaussianInterpolation,
@@ -313,6 +323,10 @@ __all__ = [
     "CrossingDirection",
     "FractionalGaussianInterpolation",
     "FractionalGaussianSamplingMethod",
+    "EulerMaruyamaParameters",
+    "EulerMaruyamaQuasiLikelihood",
+    "EulerMaruyamaQuasiLikelihoodResult",
+    "EulerMaruyamaTransitionKernel",
     "FractionalGaussianProcess",
     "FeynmanKacControlTargetMode",
     "FeynmanKacLabelBatch",
@@ -361,6 +375,8 @@ __all__ = [
     "jump_measure_change",
     "JumpMeasureChange",
     "JumpEventBatch",
+    "IsothermalPortHamiltonianDynamics",
+    "IsothermalPortHamiltonianTransitionKernel",
     "JumpMap",
     "JumpProcess",
     "JumpSide",

@@ -16,6 +16,12 @@ The central invariants are explicit:
   silently replaced by valid draws;
 - weak, martingale, BSDE, and filtering diagnostics account for dependence clusters.
 
+Finite-step learning can reuse canonical solver coefficients through
+`EulerMaruyamaTransitionKernel` and masked `EulerMaruyamaQuasiLikelihood`.
+`IsothermalPortHamiltonianDynamics` adds the complete state-dependent Itô
+fluctuation--dissipation correction and an exact Gibbs-stationarity diagnostic;
+it does not label the local Gaussian transition as an exact SDE likelihood.
+
 ## API sections
 
 - [State-space models and solver transition adapters](state_space.md)

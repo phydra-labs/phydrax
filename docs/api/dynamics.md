@@ -50,6 +50,12 @@ input layout is present and `callback(coordinate, state, args)` otherwise. Input
 supplied by an explicit `AbstractInputPolicy`; they are not captured from a global
 schedule.
 
+`continuous_model_system` binds an `AbstractArrayModel` into this system contract
+without capturing trainable leaves in a closure. A flat model is state-only; a
+structured `(state, input)` model requires a matching `InputLayout`. Input/output
+sizes are checked at construction, and the resulting `ContinuousModelVectorField`
+remains an explicit PyTree child for partitioning, optimization, and export.
+
 `TimeGrid` requires finite, strictly increasing physical times. `IterationGrid` requires
 strictly increasing integer iteration labels. Both are `EvolutionGrid` contracts, but
 physical-time normalization and iteration normalization remain distinct. An evolution
@@ -62,6 +68,11 @@ segment-level failure evidence.
 ::: phydrax.dynamics.InputLayout
 
 ::: phydrax.dynamics.ContinuousSystem
+
+::: phydrax.dynamics.ContinuousModelVectorField
+
+
+::: phydrax.dynamics.continuous_model_system
 
 ::: phydrax.dynamics.DiscreteSystem
 
@@ -467,11 +478,22 @@ convergence claim is hidden behind this evaluation call.
 
 ## Reproducible substrate benchmarks
 
-Run `python tools/dynamics_benchmarks.py` from the project root. The harness measures
-exact Lorenz strong-SINDy recovery and high-dimensional leading Lyapunov/covariant
-analysis through JVP tangent actions. Its JSON output includes warm-run timing, array
-working-set bytes, sparse support precision/recall, coefficient and exponent errors,
-covariance defects, tangent-evaluation counts, convergence/status evidence, environment,
-and one aggregate `passed` flag. It never constructs a dense Jacobian in the
-high-dimensional case. The checked reference run is stored at
+Run `python -m tools.dynamics_benchmarks` from the project root. With no extra
+flags, the existing baseline remains unchanged: exact Lorenz strong-SINDy
+recovery and high-dimensional leading Lyapunov/covariant analysis through JVP
+tangent actions. Its JSON output includes warm-run timing, array working-set
+bytes, sparse support precision/recall, coefficient and exponent errors,
+covariance defects, tangent-evaluation counts, convergence/status evidence,
+environment, and one aggregate `passed` flag. It never constructs a dense
+Jacobian in the high-dimensional case. The checked reference run is stored at
 `benchmarks/dynamics_substrate.json`.
+
+Opt in to learned thermodynamic comparisons with
+`--scenarios deterministic`, `--scenarios stochastic`, or
+`--scenarios thermodynamic`. `--architectures`, `--seeds`, and `--quick`
+select model families, deterministic repetitions, and smoke-scale training.
+Per-model records include parameter counts; compilation, training, and inference
+times; derivative or transition likelihood errors; rollout or stationary-moment
+errors; covariance error; and energy diagnostics where defined. The benchmark
+reports comparative evidence and never treats one quick random seed as a
+superiority claim.

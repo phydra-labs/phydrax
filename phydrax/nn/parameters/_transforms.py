@@ -140,6 +140,60 @@ def _packed_dimension(size: int, /, *, name: str) -> int:
     return dimension
 
 
+def _strict_packed_dimension(size: int, /, *, name: str) -> int:
+    discriminant = 1 + 8 * int(size)
+    root = math.isqrt(discriminant)
+    dimension = (1 + root) // 2
+    if root * root != discriminant or dimension * (dimension - 1) // 2 != size:
+        raise ValueError(
+            f"{name} requires a trailing strict-triangle size n(n-1)/2; got {size}."
+        )
+    return dimension
+
+
+class PackedSkewSymmetricTransform(AbstractParameterTransform):
+    """Construct a skew-symmetric matrix from packed strict-lower coordinates."""
+
+    def __call__(self, raw: ArrayLike, /) -> Array:
+        value = jnp.asarray(raw)
+        if jnp.issubdtype(value.dtype, jnp.complexfloating):
+            raise TypeError("PackedSkewSymmetricTransform requires real coordinates.")
+        if value.ndim < 1:
+            raise ValueError(
+                "PackedSkewSymmetricTransform requires a packed trailing axis."
+            )
+        dimension = _strict_packed_dimension(
+            int(value.shape[-1]), name="PackedSkewSymmetricTransform"
+        )
+        row, column = jnp.tril_indices(dimension, k=-1)
+        matrix = jnp.zeros(value.shape[:-1] + (dimension, dimension), dtype=value.dtype)
+        matrix = matrix.at[..., row, column].set(value)
+        return matrix.at[..., column, row].set(-value)
+
+
+class PositiveSemidefiniteTransform(AbstractParameterTransform):
+    """Construct a PSD matrix from packed lower-triangular factor coordinates."""
+
+    def factor(self, raw: ArrayLike, /) -> Array:
+        value = jnp.asarray(raw)
+        if jnp.issubdtype(value.dtype, jnp.complexfloating):
+            raise TypeError("PositiveSemidefiniteTransform requires real coordinates.")
+        if value.ndim < 1:
+            raise ValueError(
+                "PositiveSemidefiniteTransform requires a packed trailing axis."
+            )
+        dimension = _packed_dimension(
+            int(value.shape[-1]), name="PositiveSemidefiniteTransform"
+        )
+        row, column = jnp.tril_indices(dimension)
+        factor = jnp.zeros(value.shape[:-1] + (dimension, dimension), dtype=value.dtype)
+        return factor.at[..., row, column].set(value)
+
+    def __call__(self, raw: ArrayLike, /) -> Array:
+        factor = self.factor(raw)
+        return factor @ jnp.swapaxes(factor, -1, -2)
+
+
 class PositiveDefiniteTransform(AbstractParameterTransform):
     """Construct an SPD matrix from packed lower-triangular coordinates."""
 
@@ -249,7 +303,9 @@ __all__ = [
     "HurwitzTransform",
     "IdentityTransform",
     "IntervalTransform",
+    "PackedSkewSymmetricTransform",
     "PositiveDefiniteTransform",
+    "PositiveSemidefiniteTransform",
     "PositiveTransform",
     "SchurStableTransform",
     "SimplexTransform",

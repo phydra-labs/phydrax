@@ -11,9 +11,11 @@ A transform is pure: raw leaves remain ordinary trainable arrays and the physica
   `StiefelTransform`.
 - Shape-changing transforms: `SimplexTransform`, which maps `k - 1` additive
   log-ratio coordinates to an interior `k`-simplex point;
-  `PositiveDefiniteTransform`, which consumes packed lower-triangular
-  coordinates; and the tuple-valued `HurwitzTransform` and
-  `SchurStableTransform`.
+  `PackedSkewSymmetricTransform`, which consumes exactly the independent strict
+  lower triangle; `PositiveSemidefiniteTransform`, which maps packed lower-triangular
+  factors to `L @ L.T` without a diagonal floor; `PositiveDefiniteTransform`,
+  which adds a strictly positive diagonal; and the tuple-valued `HurwitzTransform`
+  and `SchurStableTransform`.
 - Unsupported complex inputs and impossible matrix shapes fail before numerical execution.
 
 ```python
@@ -58,6 +60,21 @@ spd = phx.nn.parameters.PositiveDefiniteTransform()(raw)
 ---
 
 ::: phydrax.nn.parameters.SkewSymmetricTransform
+
+---
+
+::: phydrax.nn.parameters.PackedSkewSymmetricTransform
+
+---
+
+::: phydrax.nn.parameters.PositiveSemidefiniteTransform
+    options:
+        members:
+            - factor
+            - __call__
+
+---
+
 
 ---
 
