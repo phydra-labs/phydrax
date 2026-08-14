@@ -9,6 +9,7 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
+import jax.core as jax_core
 import jax.numpy as jnp
 from jaxtyping import Array
 
@@ -178,7 +179,7 @@ def _empty_tree(
     *,
     value_dtype,
     threshold_dtype,
-) -> dict[str, Array | bool]:
+) -> dict[str, Array]:
     return {
         "feature_index": jnp.full((node_capacity,), -1, dtype=jnp.int32),
         "threshold": jnp.zeros((node_capacity,), dtype=threshold_dtype),
@@ -195,7 +196,7 @@ def _empty_tree(
         "leaf_mask": jnp.zeros((node_capacity,), dtype=bool),
         "node_gain": jnp.zeros((node_capacity,), dtype=jnp.asarray(0.0).dtype),
         "node_cover": jnp.zeros((node_capacity,), dtype=jnp.asarray(0.0).dtype),
-        "capacity_exhausted": False,
+        "capacity_exhausted": jnp.asarray(False),
     }
 
 
@@ -296,7 +297,7 @@ def _build_tree(
     l1_regularization: float = 0.0,
     gamma: float = 0.0,
     max_delta_step: float | None = None,
-) -> dict[str, Array | bool]:
+) -> dict[str, Array]:
     newton = gradient is not None
     if newton == (hessian is None) or newton == (y is not None):
         raise ValueError("Supply exactly y or both gradient and hessian.")
@@ -363,16 +364,12 @@ def _build_tree(
             )
         if monotonic_enabled:
             parent_value = jnp.clip(parent_value, lower_bound, upper_bound)
-        tree["node_mask"] = tree["node_mask"].at[node].set(True)  # type: ignore[union-attr]
-        tree["leaf_mask"] = tree["leaf_mask"].at[node].set(True)  # type: ignore[union-attr]
+        tree["node_mask"] = tree["node_mask"].at[node].set(True)
+        tree["leaf_mask"] = tree["leaf_mask"].at[node].set(True)
         tree["leaf_value"] = (
-            tree["leaf_value"]
-            .at[node]
-            .set(  # type: ignore[union-attr]
-                parent_value.astype(tree["leaf_value"].dtype)  # type: ignore[index]
-            )
+            tree["leaf_value"].at[node].set(parent_value.astype(tree["leaf_value"].dtype))
         )
-        tree["node_cover"] = tree["node_cover"].at[node].set(parent_cover)  # type: ignore[union-attr]
+        tree["node_cover"] = tree["node_cover"].at[node].set(parent_cover)
         if (
             depth >= max_depth
             or _as_float(parent_count) < min_samples_split
@@ -482,6 +479,7 @@ def _build_tree(
                         ordinary_left | (missing & default_left)
                     )
                     if newton:
+                        assert gradient is not None and hessian is not None
                         left_value, left_metric, left_cover, left_count = _newton_stats(
                             gradient,
                             hessian,
@@ -502,6 +500,7 @@ def _build_tree(
                         )
                         gain = left_metric + right_metric - parent_metric - gamma
                     else:
+                        assert y is not None
                         left_value, left_metric, left_cover, left_count = _cart_stats(
                             y, weight, left_mask
                         )
@@ -543,21 +542,21 @@ def _build_tree(
         if best_feature < 0 or _as_float(best_gain) <= min_gain:
             continue
         if next_node + 1 >= node_capacity:
-            tree["capacity_exhausted"] = True
+            tree["capacity_exhausted"] = jnp.asarray(True)
             continue
         left_node, right_node = next_node, next_node + 1
         next_node += 2
         leaf_count += 1
-        tree["leaf_mask"] = tree["leaf_mask"].at[node].set(False)  # type: ignore[union-attr]
-        tree["feature_index"] = tree["feature_index"].at[node].set(best_feature)  # type: ignore[union-attr]
-        tree["threshold"] = tree["threshold"].at[node].set(best_threshold)  # type: ignore[union-attr]
-        tree["left_child"] = tree["left_child"].at[node].set(left_node)  # type: ignore[union-attr]
-        tree["right_child"] = tree["right_child"].at[node].set(right_node)  # type: ignore[union-attr]
-        tree["default_left"] = tree["default_left"].at[node].set(best_default_left)  # type: ignore[union-attr]
-        tree["split_kind"] = tree["split_kind"].at[node].set(best_kind)  # type: ignore[union-attr]
-        tree["category_values"] = tree["category_values"].at[node].set(best_categories)  # type: ignore[union-attr]
-        tree["category_mask"] = tree["category_mask"].at[node].set(best_category_mask)  # type: ignore[union-attr]
-        tree["node_gain"] = tree["node_gain"].at[node].set(best_gain)  # type: ignore[union-attr]
+        tree["leaf_mask"] = tree["leaf_mask"].at[node].set(False)
+        tree["feature_index"] = tree["feature_index"].at[node].set(best_feature)
+        tree["threshold"] = tree["threshold"].at[node].set(best_threshold)
+        tree["left_child"] = tree["left_child"].at[node].set(left_node)
+        tree["right_child"] = tree["right_child"].at[node].set(right_node)
+        tree["default_left"] = tree["default_left"].at[node].set(best_default_left)
+        tree["split_kind"] = tree["split_kind"].at[node].set(best_kind)
+        tree["category_values"] = tree["category_values"].at[node].set(best_categories)
+        tree["category_mask"] = tree["category_mask"].at[node].set(best_category_mask)
+        tree["node_gain"] = tree["node_gain"].at[node].set(best_gain)
         next_used = tuple(sorted(set(used_features) | {best_feature}))
         left_lower, left_upper = lower_bound, upper_bound
         right_lower, right_upper = lower_bound, upper_bound
@@ -595,7 +594,7 @@ def _build_tree(
     return tree
 
 
-def _tree_predict(tree: dict[str, Array | bool], x: Array) -> Array:
+def _tree_predict(tree: dict[str, Array], x: Array) -> Array:
     return jax.vmap(
         lambda point: _traverse_one_tree(
             point,
@@ -610,7 +609,7 @@ def _tree_predict(tree: dict[str, Array | bool], x: Array) -> Array:
             tree["leaf_value"],
             tree["node_mask"],
             tree["leaf_mask"],
-            int(tree["feature_index"].shape[0]),  # type: ignore[union-attr]
+            int(tree["feature_index"].shape[0]),
         )[0]
     )(x)  # type: ignore[arg-type]
 
@@ -641,7 +640,7 @@ def _prepare_batch(
     sample_mask = batch.sample_mask.reshape((case_count, batch.sample_count))
     invalid_weight = sample_mask & (~jnp.isfinite(weight) | (weight < 0.0))
     invalid_weight_predicate = jnp.any(invalid_weight)
-    if isinstance(invalid_weight_predicate, jax.core.Tracer):
+    if isinstance(invalid_weight_predicate, jax_core.Tracer):
         weight = eqx.error_if(
             weight,
             invalid_weight_predicate,
@@ -689,7 +688,7 @@ def _prepare_batch(
 
 
 def _stack_model(
-    case_forests: list[list[dict[str, Array | bool]]],
+    case_forests: list[list[dict[str, Array]]],
     tree_weights: list[Array],
     base_scores: list[Array],
     *,
@@ -726,7 +725,7 @@ def _stack_model(
         for forest in case_forests:
             values = [tree[name] for tree in forest]
             while len(values) < tree_capacity:
-                values.append(jnp.zeros_like(exemplar[name]))  # type: ignore[arg-type]
+                values.append(jnp.zeros_like(exemplar[name]))
             padded_cases.append(jnp.stack(values[:tree_capacity]))
         value = jnp.stack(padded_cases)
         trailing = value.shape[1:]
@@ -769,7 +768,7 @@ def _finish_result(
     model: TreeEnsemble,
     *,
     batch: MLBatch,
-    case_forests: list[list[dict[str, Array | bool]]],
+    case_forests: list[list[dict[str, Array]]],
     effective_samples: list[Array],
     objectives: list[Array],
     valid: list[bool],
@@ -788,7 +787,7 @@ def _finish_result(
             for tree in forest
         )
         for forest in case_forests
-    ]  # type: ignore[operator]
+    ]
     status = [
         ML_CAPACITY_EXHAUSTED
         if exhausted
@@ -849,6 +848,7 @@ def _fit_bagged(
         num_classes=recipe.num_classes if classification else None,
     )
     case_count = int(x.shape[0])
+    all_keys: list[list[Any]]
     if key is None:
         all_keys = [[None] * tree_count for _ in range(case_count)]
     else:
@@ -857,7 +857,7 @@ def _fit_bagged(
             flat_keys[case * tree_count : (case + 1) * tree_count]
             for case in range(case_count)
         ]
-    forests: list[list[dict[str, Array | bool]]] = []
+    forests: list[list[dict[str, Array]]] = []
     weights_out: list[Array] = []
     bases: list[Array] = []
     effective: list[Array] = []
@@ -870,6 +870,8 @@ def _fit_bagged(
             tree_key = all_keys[case][tree_index]
             tree_weight = weight[case]
             if bootstrap:
+                if tree_key is None:
+                    raise RuntimeError("Bootstrap tree fitting is missing its PRNG key.")
                 tree_key, sample_key = jax.random.split(tree_key)
                 probabilities = sample_mask[case].astype(weight.dtype)
                 probability_sum = jnp.sum(probabilities)

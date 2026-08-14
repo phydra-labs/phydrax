@@ -139,6 +139,7 @@ class LaplaceResult(StrictModule):
         """Draw transformed physical-parameter samples."""
         unconstrained = self.sample_unconstrained(key, num_samples=num_samples)
         return self.problem.parameter_space.constrain(unconstrained)
+
     def linearized_predict(
         self,
         /,
@@ -152,7 +153,6 @@ class LaplaceResult(StrictModule):
             DenseCovariance(self.covariance),
             source="epistemic",
         )
-
 
     def predict(
         self,

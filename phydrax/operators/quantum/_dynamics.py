@@ -156,9 +156,7 @@ def schrodinger_residual(
         mode=mode,
         ad_engine=ad_engine,
     )
-    domain, deps, promoted, positions = join_function_arguments(
-        state_derivative, action
-    )
+    domain, deps, promoted, positions = join_function_arguments(state_derivative, action)
     return DomainFunction(
         domain=domain,
         deps=deps,

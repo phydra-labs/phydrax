@@ -63,9 +63,9 @@ def _problem(
                 provenance=f"barycenter-benchmark-measure-{index}",
             )
         )
-    support_coordinates = jnp.arange(
-        support_atoms * dimension, dtype=float
-    ).reshape((support_atoms, dimension))
+    support_coordinates = jnp.arange(support_atoms * dimension, dtype=float).reshape(
+        (support_atoms, dimension)
+    )
     support = _measure(
         jnp.cos(0.019 * support_coordinates),
         jnp.ones((support_atoms,), dtype=float),

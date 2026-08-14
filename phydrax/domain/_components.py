@@ -249,6 +249,8 @@ def _sample_scalar(
         idx = jr.randint(key, shape=(int(num_points),), minval=0, maxval=2)
         return choices[idx]
     raise TypeError(f"Unsupported scalar component {type(component).__name__}.")
+
+
 def _explicit_point_array(domain: Domain, label: str, value: ArrayLike, /) -> Array:
     factor = domain.factor(label)
     array = jnp.asarray(value, dtype=float)
@@ -308,17 +310,14 @@ def _split_explicit_points(
     total = sum(widths)
     if int(stacked.shape[1]) != total:
         raise ValueError(
-            f"Stacked coordinates require coordinate_dim={total}, "
-            f"got {stacked.shape[1]}."
+            f"Stacked coordinates require coordinate_dim={total}, got {stacked.shape[1]}."
         )
 
     result: dict[str, Array] = {}
     offset = 0
     for label, width in zip(labels, widths, strict=True):
         result[label] = (
-            stacked[:, offset]
-            if width == 1
-            else stacked[:, offset : offset + width]
+            stacked[:, offset] if width == 1 else stacked[:, offset : offset + width]
         )
         offset += width
     return frozendict(result)
@@ -1685,7 +1684,6 @@ class ComponentSum(StrictModule):
             raise ValueError("min_points_per_term must be >= 1.")
         if isinstance(sampling, GridSampling):
             raise TypeError("ComponentSum does not support GridSampling.")
-
 
         if isinstance(sampling, PointSampling):
             if not isinstance(sampling.count, int):

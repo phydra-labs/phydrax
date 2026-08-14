@@ -78,7 +78,9 @@ class GCNConv(eqx.Module):
         if x.ndim != 2:
             raise ValueError("`x` must be rank-2 with shape (num_nodes, num_features).")
 
-        n_nodes = maybe_num_nodes(edge_index, num_nodes if num_nodes is not None else x.shape[0])
+        n_nodes = maybe_num_nodes(
+            edge_index, num_nodes if num_nodes is not None else x.shape[0]
+        )
 
         if edge_weight is None:
             edge_weight = jnp.ones((edge_index.shape[1],), dtype=x.dtype)

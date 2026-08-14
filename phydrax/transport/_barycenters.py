@@ -25,9 +25,7 @@ from ._measure import EventEncoder, lower_transport_measure
 from ._status import TransportStatus
 
 
-BarycenterMeasure = (
-    DiscreteMeasureTarget | WeightedSampleTarget | IntegrationRealization
-)
+BarycenterMeasure = DiscreteMeasureTarget | WeightedSampleTarget | IntegrationRealization
 
 
 class BarycenterProblemProvenance(StrictModule):
@@ -94,17 +92,12 @@ class FixedSupportBarycenterProblem(StrictModule):
         if not math.isfinite(tolerance) or tolerance < 0.0:
             raise ValueError("mass_tolerance must be finite and nonnegative.")
         if encoders is None:
-            resolved_encoders: tuple[EventEncoder | None, ...] = (
-                None,
-            ) * len(measures)
+            resolved_encoders: tuple[EventEncoder | None, ...] = (None,) * len(measures)
         else:
             resolved_encoders = tuple(encoders)
             if len(resolved_encoders) != len(measures):
                 raise ValueError("encoders must contain one entry per measure.")
-            if any(
-                item is not None and not callable(item)
-                for item in resolved_encoders
-            ):
+            if any(item is not None and not callable(item) for item in resolved_encoders):
                 raise TypeError("Each encoder must be callable or None.")
         if support_encoder is not None and not callable(support_encoder):
             raise TypeError("support_encoder must be callable or None.")
@@ -449,7 +442,9 @@ class SinkhornBarycenter(StrictModule):
             )
             support_potentials = eqx.error_if(
                 support_potentials,
-                jnp.any(problem.support_active[None, :] & ~jnp.isfinite(support_potentials)),
+                jnp.any(
+                    problem.support_active[None, :] & ~jnp.isfinite(support_potentials)
+                ),
                 "Active initial support potentials must be finite.",
             )
         probabilities = (
@@ -464,9 +459,7 @@ class SinkhornBarycenter(StrictModule):
             jnp.any(~jnp.isfinite(probabilities))
             | jnp.any(problem.support_active & (probabilities <= 0.0))
             | jnp.any(~problem.support_active & (probabilities != 0.0))
-            | ~jnp.isclose(
-                jnp.sum(probabilities), 1.0, rtol=1e-8, atol=1e-10
-            ),
+            | ~jnp.isclose(jnp.sum(probabilities), 1.0, rtol=1e-8, atol=1e-10),
             "Initial support probabilities must be positive on active support and sum to one.",
         )
         epsilon = self.epsilon.astype(dtype)
@@ -553,9 +546,7 @@ class SinkhornBarycenter(StrictModule):
                     jnp.exp(log_q_unnormalized - log_q_normalizer),
                     0.0,
                 )
-                next_g = epsilon * (
-                    _safe_log(next_q)[None, :] - log_support
-                )
+                next_g = epsilon * (_safe_log(next_q)[None, :] - log_support)
                 next_g = jnp.where(problem.support_active[None, :], next_g, 0.0)
                 finite = (
                     jnp.all(jnp.isfinite(jnp.where(problem.measure_active, next_f, 0.0)))
@@ -570,10 +561,13 @@ class SinkhornBarycenter(StrictModule):
                 next_f = jnp.where(finite, next_f, current_f)
                 next_g = jnp.where(finite, next_g, current_g)
                 next_q = jnp.where(finite, next_q, current_q)
-                potential_change = jnp.maximum(
-                    jnp.max(jnp.abs(next_f - current_f)),
-                    jnp.max(jnp.abs(next_g - current_g)),
-                ) / epsilon
+                potential_change = (
+                    jnp.maximum(
+                        jnp.max(jnp.abs(next_f - current_f)),
+                        jnp.max(jnp.abs(next_g - current_g)),
+                    )
+                    / epsilon
+                )
                 probability_change = jnp.sum(jnp.abs(next_q - current_q))
                 return (
                     next_f,
@@ -713,12 +707,10 @@ class SinkhornBarycenter(StrictModule):
             epsilon,
             costs,
         )
-        per_measure_residual, consensus_residual, marginal_finite = _residuals_from_couplings(
-            problem, couplings, probabilities
+        per_measure_residual, consensus_residual, marginal_finite = (
+            _residuals_from_couplings(problem, couplings, probabilities)
         )
-        final_residual = jnp.maximum(
-            jnp.max(per_measure_residual), consensus_residual
-        )
+        final_residual = jnp.maximum(jnp.max(per_measure_residual), consensus_residual)
         transport_costs, regularizations, objectives, objective_finite = _objectives(
             problem,
             couplings,
@@ -782,9 +774,7 @@ class SinkhornBarycenter(StrictModule):
             per_measure_history = jnp.swapaxes(histories[1][indices], 0, 1)
         else:
             residual_history = jnp.empty((0,), dtype=dtype)
-            per_measure_history = jnp.empty(
-                (problem.num_measures, 0), dtype=dtype
-            )
+            per_measure_history = jnp.empty((problem.num_measures, 0), dtype=dtype)
         actual_iterations = jnp.where(
             self.early_stop & (terminal_iteration >= 0),
             terminal_iteration,
@@ -1002,8 +992,7 @@ class FreeSupportBarycenter(StrictModule):
                 current_problem.support_points,
             )
             mass_collapse = jnp.any(
-                problem.support_active
-                & (denominator <= self.collapse_tolerance)
+                problem.support_active & (denominator <= self.collapse_tolerance)
             )
             pair_difference = proposal[:, None, :] - proposal[None, :, :]
             pair_distance_squared = jnp.sum(pair_difference * pair_difference, axis=-1)
@@ -1038,10 +1027,7 @@ class FreeSupportBarycenter(StrictModule):
             )
             iteration = jnp.asarray(outer_index + 1, dtype=jnp.int32)
             converged = (
-                result.converged
-                & (displacement <= self.tolerance)
-                & ~collapsed
-                & finite
+                result.converged & (displacement <= self.tolerance) & ~collapsed & finite
             )
             objective_improvement = previous_objective - result.objective
             improved = jnp.isinf(previous_objective) | (
@@ -1072,9 +1058,7 @@ class FreeSupportBarycenter(StrictModule):
             )
             inner_failure = ~result.converged
             failure_iteration = jnp.where(
-                (failure_iteration < 0)
-                & (inner_failure | ~finite)
-                & ~frozen,
+                (failure_iteration < 0) & (inner_failure | ~finite) & ~frozen,
                 iteration,
                 failure_iteration,
             )
@@ -1089,19 +1073,14 @@ class FreeSupportBarycenter(StrictModule):
             )
             terminal = converged | collapsed | ~finite | inner_failure | stagnated
             next_frozen = frozen | terminal
-            accept_update = (
-                ~next_frozen
-                & (outer_index + 1 < self.max_iterations)
-            )
+            accept_update = ~next_frozen & (outer_index + 1 < self.max_iterations)
             next_points = jnp.where(
                 accept_update,
                 proposal,
                 current_problem.support_points,
             )
             current_problem = current_problem.with_support_points(next_points)
-            previous_objective = jnp.where(
-                frozen, previous_objective, result.objective
-            )
+            previous_objective = jnp.where(frozen, previous_objective, result.objective)
             previous_result = result
             frozen = next_frozen
             inner_results.append(result)
@@ -1252,7 +1231,9 @@ def _row_logsumexp(
         ((0, padded_rows - row_count), (0, padded_columns - column_count)),
         constant_values=jnp.inf,
     )
-    padded_values = jnp.pad(values, (0, padded_columns - column_count), constant_values=-jnp.inf)
+    padded_values = jnp.pad(
+        values, (0, padded_columns - column_count), constant_values=-jnp.inf
+    )
     padded_row_active = jnp.pad(row_active, (0, padded_rows - row_count))
     padded_column_active = jnp.pad(column_active, (0, padded_columns - column_count))
     output = jnp.full((padded_rows,), -jnp.inf, dtype=values.dtype)
@@ -1267,9 +1248,7 @@ def _row_logsumexp(
             block = jax.lax.dynamic_slice(
                 padded_costs, (row_start, column_start), (size, size)
             )
-            block_values = jax.lax.dynamic_slice(
-                padded_values, (column_start,), (size,)
-            )
+            block_values = jax.lax.dynamic_slice(padded_values, (column_start,), (size,))
             column_mask = jax.lax.dynamic_slice(
                 padded_column_active, (column_start,), (size,)
             )
@@ -1277,9 +1256,7 @@ def _row_logsumexp(
             terms = jnp.where(row_mask[:, None] & column_mask[None, :], terms, -jnp.inf)
             return jnp.logaddexp(current, logsumexp(terms, axis=1))
 
-        accumulator = jax.lax.fori_loop(
-            0, column_blocks, column_body, accumulator
-        )
+        accumulator = jax.lax.fori_loop(0, column_blocks, column_body, accumulator)
         return jax.lax.dynamic_update_slice(
             result, jnp.where(row_mask, accumulator, -jnp.inf), (row_start,)
         )
@@ -1318,9 +1295,7 @@ def _couplings(
 ) -> Array:
     del probabilities
     log_ratio = (
-        measure_potentials[:, :, None]
-        + support_potentials[:, None, :]
-        - costs
+        measure_potentials[:, :, None] + support_potentials[:, None, :] - costs
     ) / epsilon
     valid = problem.measure_active[:, :, None] & problem.support_active[None, None, :]
     return jnp.where(valid, jnp.exp(log_ratio), 0.0)
@@ -1386,9 +1361,7 @@ def _objectives(
 ) -> tuple[Array, Array, Array, Array]:
     valid = problem.measure_active[:, :, None] & problem.support_active[None, None, :]
     log_ratio = (
-        measure_potentials[:, :, None]
-        + support_potentials[:, None, :]
-        - costs
+        measure_potentials[:, :, None] + support_potentials[:, None, :] - costs
     ) / epsilon
     safe_ratio = jnp.where(valid & jnp.isfinite(log_ratio), log_ratio, 0.0)
     transport = jnp.sum(couplings * costs, axis=(1, 2))

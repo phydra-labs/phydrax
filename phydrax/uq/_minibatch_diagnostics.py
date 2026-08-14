@@ -173,9 +173,9 @@ def diagnose_minibatch_posterior(
     initial_value, stochastic_gradient = value_and_grad(position, first_batch)
     repeated_value, repeated_gradient = value_and_grad(position, first_batch)
     compiled_value, compiled_gradient = eqx.filter_jit(
-        lambda current, current_batch: jax.value_and_grad(
-            problem.log_density_estimate
-        )(current, current_batch)
+        lambda current, current_batch: jax.value_and_grad(problem.log_density_estimate)(
+            current, current_batch
+        )
     )(position, first_batch)
 
     def epoch_log_density(current: PyTree[Any]) -> Array:

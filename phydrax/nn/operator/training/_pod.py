@@ -65,7 +65,9 @@ class OperatorPODFit(StrictModule):
 
     def transform(self, values: ArrayLike, /) -> Array:
         array = jnp.asarray(values)
-        expected = self.sample_shape + (() if self.out_size == "scalar" else (int(self.out_size),))
+        expected = self.sample_shape + (
+            () if self.out_size == "scalar" else (int(self.out_size),)
+        )
         if tuple(int(size) for size in array.shape[-len(expected) :]) != expected:
             raise ValueError(
                 f"POD values must end in fitted output layout {expected}; got {array.shape}."
@@ -82,8 +84,12 @@ class OperatorPODFit(StrictModule):
         )
 
     def inverse_transform(self, coefficients: ArrayLike, /) -> Array:
-        values = jnp.asarray(coefficients) @ self.components + self.spatial_mean.reshape((-1,))
-        trailing = self.sample_shape + (() if self.out_size == "scalar" else (int(self.out_size),))
+        values = jnp.asarray(coefficients) @ self.components + self.spatial_mean.reshape(
+            (-1,)
+        )
+        trailing = self.sample_shape + (
+            () if self.out_size == "scalar" else (int(self.out_size),)
+        )
         return values.reshape(values.shape[:-1] + trailing)
 
 
@@ -189,9 +195,7 @@ def fit_operator_pod(
     ).astype(jnp.int32)
     largest = jnp.max(spectral.singular_values, initial=0.0)
     repeated = spectral.minimum_retained_gap <= (
-        64.0
-        * jnp.finfo(spectral.singular_values.dtype).eps
-        * jnp.maximum(largest, 1.0)
+        64.0 * jnp.finfo(spectral.singular_values.dtype).eps * jnp.maximum(largest, 1.0)
     )
     diagnostics = OperatorPODDiagnostics(
         singular_values=spectral.singular_values,

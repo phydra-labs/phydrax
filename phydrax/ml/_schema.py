@@ -46,7 +46,7 @@ class FeatureSchema(StrictModule, NonTrainableState):
                 "Feature kinds must align with names and use supported values."
             )
         self.names = names_
-        self.kinds = kinds_  # ty: ignore[invalid-assignment]
+        self.kinds = kinds_
         self.layout_id = str(layout_id)
 
     @classmethod

@@ -24,6 +24,7 @@ ordinary Euclidean geometry.
     ```python
     import phydrax as phx
 
+
     def train_riemannian(solver):
         parameters = solver.trainable_functions()
         paths = phx.optim.ParameterGeometry.array_leaf_paths(parameters)
@@ -192,6 +193,7 @@ uses a type-II generalized Gauss–Newton (GGN) curvature model.
 !!! example
     ```python
     import phydrax as phx
+
 
     def train_with_kfac(solver):
         optimizer = phx.optim.kfac(

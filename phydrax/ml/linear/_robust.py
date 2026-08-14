@@ -606,7 +606,7 @@ class RANSACRegressorRecipe(AbstractRecipe):
                 method="ransac-subset-ols",
                 model_type=RANSACModel,
             )
-            model = candidate.as_trainable()
+            model = candidate.as_trainable(RANSACModel)
             beta = model.coefficients.reshape(
                 (cases, prepared.design.features, prepared.outputs)
             )
@@ -651,7 +651,7 @@ class RANSACRegressorRecipe(AbstractRecipe):
             selected_subset=selected_subset.reshape(prepared.case_shape + (samples,)),
             subset_scores=score_array.reshape(prepared.case_shape + (self.num_trials,)),
         )
-        refit_model = refit.as_trainable()
+        refit_model = refit.as_trainable(RANSACModel)
         model = RANSACModel(
             jax.lax.stop_gradient(refit_model.coefficients),
             jax.lax.stop_gradient(refit_model.intercept),
@@ -734,7 +734,7 @@ class TheilSenRegressorRecipe(AbstractRecipe):
                 method="theil-sen-subset-ols",
                 model_type=TheilSenModel,
             )
-            model = candidate.as_trainable()
+            model = candidate.as_trainable(TheilSenModel)
             coefficients.append(
                 model.coefficients.reshape(
                     (cases, prepared.design.features, prepared.outputs)

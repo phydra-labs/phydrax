@@ -181,9 +181,7 @@ def test_parallel_filter_freezes_failed_cases_exactly():
 @pytest.mark.parametrize("method", ("sequential", "parallel", "auto"))
 @pytest.mark.parametrize("regularization", (-1.0, jnp.nan))
 def test_filter_methods_share_regularization_validation(method, regularization):
-    with pytest.raises(
-        ValueError, match="must be finite and nonnegative"
-    ):
+    with pytest.raises(ValueError, match="must be finite and nonnegative"):
         phx.uq.kalman_filter(
             _problem(),
             method=method,
@@ -223,9 +221,7 @@ def test_parallel_smoother_and_coherent_samples_are_equivalent_and_prefix_stable
             method="parallel",
         )
     )(key, parallel)
-    assert jnp.allclose(
-        compiled_paths, sequential_paths[:2], rtol=2e-9, atol=2e-9
-    )
+    assert jnp.allclose(compiled_paths, sequential_paths[:2], rtol=2e-9, atol=2e-9)
     increments = parallel_paths[:, 0, 1:, 0] - parallel_paths[:, 0, :-1, 0]
     assert jnp.any(jnp.abs(increments) > 0.0)
 

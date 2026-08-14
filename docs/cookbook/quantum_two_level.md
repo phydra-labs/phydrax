@@ -31,17 +31,20 @@ time = phx.domain.TimeInterval(0.0, 1.0)
 omega = 1.7
 H = time.Function()(0.5 * omega * sigma_z)
 
+
 @time.Function("t")
 def psi(t):
     return jnp.asarray(
         [jnp.exp(-0.5j * omega * t), jnp.exp(0.5j * omega * t)]
     ) / jnp.sqrt(2.0)
 
+
 @time.Function("t")
 def perturbed_psi(t):
     return jnp.asarray(
         [jnp.exp(-0.3j * omega * t), jnp.exp(0.3j * omega * t)]
     ) / jnp.sqrt(2.0)
+
 
 component = time.component()
 condition = phx.conditions.Residual(
@@ -74,9 +77,11 @@ assert jnp.isrealobj(exact_loss)
 assert exact_loss < 1e-20
 assert perturbed_loss > 1e-4
 
+
 @time.Function("t")
 def density_factor(t):
     return psi.func(t)[:, None]
+
 
 density = phx.operators.density_from_factor(density_factor)
 Sx = time.Function()(sigma_x)

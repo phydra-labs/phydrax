@@ -61,17 +61,15 @@ def test_residual_and_moment_penalties_have_distinct_ordering_semantics():
     conservation = phx.terms.MomentPenalty(moment, source, scale=2.0)
 
     assert jnp.allclose(penalty.loss({"u": field}, key=jr.key(1)), 1.0, atol=1e-12)
-    assert jnp.allclose(
-        conservation.loss({"u": field}, key=jr.key(2)), 0.0, atol=1e-12
-    )
+    assert jnp.allclose(conservation.loss({"u": field}, key=jr.key(2)), 0.0, atol=1e-12)
 
-    nonzero_moment = phx.conditions.Moment(
-        "u", component, lambda u: u, target=0.25
-    )
+    nonzero_moment = phx.conditions.Moment("u", component, lambda u: u, target=0.25)
     nonzero_penalty = phx.terms.MomentPenalty(nonzero_moment, source)
     assert jnp.allclose(
         nonzero_penalty.loss({"u": field}, key=jr.key(3)), 0.25**2, atol=1e-12
     )
+
+
 def test_moment_penalty_rejects_solver_managed_adaptive_integration():
     _, component, _, target, _ = _interval_problem()
     condition = phx.conditions.Moment("u", component, lambda u: u, target=0.5)
@@ -86,8 +84,6 @@ def test_moment_penalty_rejects_solver_managed_adaptive_integration():
 
     with pytest.raises(TypeError, match="requires ResidualPenalty"):
         phx.terms.MomentPenalty(condition, source)
-
-
 
 
 def test_observation_penalty_uses_the_same_explicit_integration_source_contract():
@@ -136,9 +132,7 @@ def test_residual_density_multiplies_pointwise_score_without_renormalization():
         density=density,
     )
 
-    assert jnp.allclose(
-        penalty.loss({"u": field}, key=jr.key(4)), 8.0 / 3.0, atol=1e-12
-    )
+    assert jnp.allclose(penalty.loss({"u": field}, key=jr.key(4)), 8.0 / 3.0, atol=1e-12)
 
 
 def test_condition_and_integration_components_must_match_exactly():

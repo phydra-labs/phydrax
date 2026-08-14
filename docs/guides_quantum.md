@@ -242,9 +242,11 @@ time = phx.domain.TimeInterval(0.0, 1.0)
 omega = 1.4
 H = time.Function()(0.5 * omega * sigma_z)
 
+
 @time.Function("t")
 def psi(t):
     return jnp.asarray([jnp.exp(-0.5j * omega * t), 0.0j])
+
 
 component = time.component()
 condition = phx.conditions.Residual(

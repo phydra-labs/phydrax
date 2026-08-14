@@ -63,9 +63,8 @@ def Convection(
             var=var,
             mode=mode,
         )
-        return (
-            -(conductivity * derivative)
-            - heat_transfer_coefficient * (temperature - ambient)
+        return -(conductivity * derivative) - heat_transfer_coefficient * (
+            temperature - ambient
         )
 
     return Residual(temperature_field, on, residual, label=label)

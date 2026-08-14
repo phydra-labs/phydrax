@@ -174,8 +174,8 @@ def run_stochastic_heat_convergence_benchmark(
             deterministic,
             save_times=jnp.asarray([0.2]),
             dt=0.2,
-            matrix_function_policy=phx.solver.MatrixFunctionPolicy(
-                "lanczos", num_matvecs=size
+            matrix_function_policy=phx.linalg.MatrixFunctionPolicy(
+                "lanczos", max_dimension=size
             ),
         ).states[-1]
         exact = jnp.exp(-0.03 * (2.0 * jnp.pi) ** 2 * 0.2) * initial
@@ -289,8 +289,8 @@ def run_stochastic_heat_convergence_benchmark(
         save_times=jnp.asarray([8.0]),
         realization=stationary_realization,
         dt=8.0,
-        matrix_function_policy=phx.solver.MatrixFunctionPolicy(
-            "lanczos", num_matvecs=spatial.num_points
+        matrix_function_policy=phx.linalg.MatrixFunctionPolicy(
+            "lanczos", max_dimension=spatial.num_points
         ),
     )
     stationary_coefficients = _modal_coefficients(
@@ -783,7 +783,7 @@ def run_rough_logode_convergence_benchmark(
         driver_dimension=2,
         problem_id="noncommuting-linear-logode-convergence",
     )
-    matrix_policy = phx.solver.MatrixFunctionPolicy("arnoldi", num_matvecs=2)
+    matrix_policy = phx.linalg.MatrixFunctionPolicy("arnoldi", max_dimension=2)
     linear_solver = phx.solver.LinearLogODE(
         (left, right),
         matrix_function_policy=matrix_policy,
@@ -821,7 +821,9 @@ def run_rough_logode_convergence_benchmark(
             coarse_control = control
             coarse_linear = solution
     if coarse_control is None or coarse_linear is None:
-        raise RuntimeError("The rough log-ODE benchmark did not construct a coarse level.")
+        raise RuntimeError(
+            "The rough log-ODE benchmark did not construct a coarse level."
+        )
     general = phx.solver.solve_rough_differential(
         problem,
         coarse_control,

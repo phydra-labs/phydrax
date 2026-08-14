@@ -189,12 +189,9 @@ class SampleLayout(StrictModule):
                 return name
         return None
 
+
 AxisSampling: TypeAlias = (
-    int
-    | tuple[int, ...]
-    | AbstractAxisSpec
-    | tuple[AbstractAxisSpec, ...]
-    | GridSpec
+    int | tuple[int, ...] | AbstractAxisSpec | tuple[AbstractAxisSpec, ...] | GridSpec
 )
 
 
@@ -232,7 +229,14 @@ class GridSampling(StrictModule):
 
     def __init__(
         self,
-        axes: Mapping[str, int | Sequence[int] | AbstractAxisSpec | Sequence[AbstractAxisSpec] | GridSpec],
+        axes: Mapping[
+            str,
+            int
+            | Sequence[int]
+            | AbstractAxisSpec
+            | Sequence[AbstractAxisSpec]
+            | GridSpec,
+        ],
         /,
         *,
         dense: PointSampling | None = None,
@@ -246,7 +250,9 @@ class GridSampling(StrictModule):
             else:
                 values = tuple(request)
                 if not values:
-                    raise ValueError(f"GridSampling axis request for {label!r} must be non-empty.")
+                    raise ValueError(
+                        f"GridSampling axis request for {label!r} must be non-empty."
+                    )
                 normalized[label] = values
         if not normalized:
             raise ValueError("GridSampling.axes must be non-empty.")
@@ -256,8 +262,8 @@ class GridSampling(StrictModule):
         self.dense = dense
         self.design = resolve_design(design)
 
-SamplingPlan: TypeAlias = PointSampling | GridSampling
 
+SamplingPlan: TypeAlias = PointSampling | GridSampling
 
 
 class PointBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):  # ty: ignore[invalid-method-override]
@@ -396,9 +402,7 @@ class GridBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):  # ty: ignore[inv
 
             mask = mask_by_label[lbl]
             if not isinstance(mask, cx.Field):
-                raise TypeError(
-                    f"GridBatch mask for {lbl!r} must be a coordax.Field."
-                )
+                raise TypeError(f"GridBatch mask for {lbl!r} must be a coordax.Field.")
             if mask.dims != axes:
                 raise ValueError(
                     f"GridBatch mask for {lbl!r} must have dims {axes}, got {mask.dims}."
@@ -407,8 +411,7 @@ class GridBatch(StrictModule, Mapping[str, PyTree[cx.Field]]):  # ty: ignore[inv
             if geometry_weight is not None:
                 if not isinstance(geometry_weight, cx.Field):
                     raise TypeError(
-                        f"GridBatch geometry weight for {lbl!r} "
-                        "must be a coordax.Field."
+                        f"GridBatch geometry weight for {lbl!r} must be a coordax.Field."
                     )
                 if geometry_weight.dims != axes:
                     raise ValueError(

@@ -271,14 +271,11 @@ def test_multihead_warp_conditioning_preserves_unconditioned_path_and_case_isola
     )(conditioned, values, conditions)
     separate = jnp.stack(
         tuple(
-            conditioned(values[index], condition=conditions[index])
-            for index in range(2)
+            conditioned(values[index], condition=conditions[index]) for index in range(2)
         )
     )
     condition_gradient = jax.grad(
-        lambda context: jnp.mean(
-            conditioned(values, condition=context) ** 2
-        )
+        lambda context: jnp.mean(conditioned(values, condition=context) ** 2)
     )(conditions)
 
     assert jnp.allclose(zero_context, reference)

@@ -27,7 +27,9 @@ def test_integral_functional_returns_raw_signed_value_through_solver():
     domain = phx.domain.Interval1d(0.0, 1.0)
     density = domain.Function()(-2.0)
     objective = _fixed_problem(density, label="negative_energy")
-    solver = phx.solver.FunctionalSolver(functions={"density": density}, terms=(objective,))
+    solver = phx.solver.FunctionalSolver(
+        functions={"density": density}, terms=(objective,)
+    )
 
     assert jnp.allclose(solver.loss(key=jr.key(0)), -2.0, atol=1e-12)
 

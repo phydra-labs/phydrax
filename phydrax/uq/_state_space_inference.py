@@ -465,10 +465,13 @@ def finite_state_backward_smoother(
     """
     if not isinstance(result, FiniteStateFilterResult):
         raise TypeError("result must be a FiniteStateFilterResult.")
+    prior = result.problem.model.prior
+    if not isinstance(prior, CategoricalStatePrior):
+        raise TypeError("Finite-state smoothing requires CategoricalStatePrior.")
     case_shape = result.case_shape
     case_count = prod(case_shape) if case_shape else 1
     num_steps = result.problem.observations.num_steps
-    num_states = int(result.problem.model.prior.states.shape[0])
+    num_states = int(prior.states.shape[0])
     filtered = result.filtered_probabilities.reshape((case_count, num_steps, num_states))
     predicted = result.predicted_probabilities.reshape(
         (case_count, num_steps, num_states)
@@ -681,8 +684,11 @@ def finite_state_expected_transition_counts(
     """Aggregate exact posterior endpoint-transition probabilities by case."""
     if not isinstance(result, FiniteStateSmootherResult):
         raise TypeError("result must be a FiniteStateSmootherResult.")
+    prior = result.filter_result.problem.model.prior
+    if not isinstance(prior, CategoricalStatePrior):
+        raise TypeError("Finite-state transition counts require CategoricalStatePrior.")
     case_shape = result.filter_result.case_shape
-    num_states = int(result.filter_result.problem.model.prior.states.shape[0])
+    num_states = int(prior.states.shape[0])
     case_count = prod(case_shape) if case_shape else 1
     probabilities = result.transition_probabilities.reshape(
         (case_count, -1, num_states, num_states)

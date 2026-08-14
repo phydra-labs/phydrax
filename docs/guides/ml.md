@@ -13,9 +13,7 @@ import jax
 import jax.numpy as jnp
 import phydrax as phx
 
-features = jnp.array(
-    [[-1.0, 0.2], [-0.4, -0.7], [0.1, 0.3], [0.8, -0.2], [1.0, 0.9]]
-)
+features = jnp.array([[-1.0, 0.2], [-0.4, -0.7], [0.1, 0.3], [0.8, -0.2], [1.0, 0.9]])
 targets = 0.7 * features[:, 0] - 0.25 * features[:, 1] + 1.2
 weights = jnp.array([0.8, 1.0, 1.2, 1.0, 0.7])
 query = jnp.array([0.25, -0.1])

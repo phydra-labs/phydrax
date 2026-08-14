@@ -131,9 +131,7 @@ def test_residual_penalty_fixed_sampling_reuses_batch_and_honors_override():
     assert float(loss0) > 0.0
 
     x_field = batch0.points["x"]
-    zeros_batch = component.points(
-        {"x": jnp.zeros_like(x_field.data).reshape((-1, 1))}
-    )
+    zeros_batch = component.points({"x": jnp.zeros_like(x_field.data).reshape((-1, 1))})
     override = phx.integration.from_samples(target, zeros_batch, key=jr.key(4))
     caller_term = ResidualPenalty(condition, phx.integration.caller(target))
     override_loss = caller_term.loss({"u": u}, realization=override)
@@ -240,7 +238,6 @@ def test_residual_penalty_source_validation():
             {"u": geom.Function()(0.0)},
             realization=realization,
         )
-
 
 
 @pytest.mark.parametrize("reduction", ["mean", "integral"])

@@ -14,20 +14,22 @@ def _infinite_memory_problem(*, stochastic=False):
     lags = jnp.asarray([0.2, 1.0, 10.0])
     tail = phx.solver.FunctionalDelay(
         "tail",
-        lambda time, state, history, args: jnp.mean(
-            history.values(lags), axis=0
-        ),
+        lambda time, state, history, args: jnp.mean(history.values(lags), axis=0),
         (0.1, jnp.inf),
     )
     noise = (
-        phx.solver.DelayWienerTerm(
-            "driver",
-            lambda time, state, memory, args: jnp.zeros(state.shape + (1,)),
-            (1,),
-            structure="additive",
-            basis_id="infinite-memory-driver",
-        ),
-    ) if stochastic else ()
+        (
+            phx.solver.DelayWienerTerm(
+                "driver",
+                lambda time, state, memory, args: jnp.zeros(state.shape + (1,)),
+                (1,),
+                structure="additive",
+                basis_id="infinite-memory-driver",
+            ),
+        )
+        if stochastic
+        else ()
+    )
     return phx.solver.DelayDifferentialProblem(
         lambda time, state, memory, args: memory["tail"],
         lambda time, args: jnp.ones((1,)),

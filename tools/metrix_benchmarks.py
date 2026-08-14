@@ -100,6 +100,8 @@ def _maximum_difference(left: Any, right: Any) -> float:
         )
     ]
     return float(jax.device_get(jnp.max(jnp.stack(differences))))
+
+
 def run_state_geometry_benchmarks(
     dimensions: Sequence[int] = (2, 3, 8),
     /,
@@ -114,9 +116,7 @@ def run_state_geometry_benchmarks(
         dimension_ = int(dimension)
         if dimension_ < 2:
             raise ValueError("state-geometry benchmark dimensions must be at least two.")
-        raw = jnp.arange(dimension_**2, dtype=float).reshape(
-            (dimension_, dimension_)
-        )
+        raw = jnp.arange(dimension_**2, dtype=float).reshape((dimension_, dimension_))
         skew = 1e-2 * (raw - raw.T)
         symmetric = 5e-3 * (raw + raw.T)
         identity = jnp.eye(dimension_)
@@ -160,8 +160,6 @@ def run_state_geometry_benchmarks(
         "repeats": repeats,
         "records": records,
     }
-
-
 
 
 def run_benchmarks(

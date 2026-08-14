@@ -8,10 +8,22 @@ from collections.abc import Iterable
 from typing import Literal
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ...linalg import (
+    ArraySpace,
+    DenseCholesky,
+    DenseLinearOperator,
+    DiagonalPreconditioner,
+    FunctionLinearOperator,
+    LinearSolvePolicy,
+    LinearSystem,
+    OperatorProperties,
+    PCG,
+    solve,
+    TolerancePolicy,
+)
 from ._types import (
     AffineBlockSpec,
     AffineFactorObservation,
@@ -313,7 +325,7 @@ def preconditioned_conjugate_gradient(
     max_steps: int,
     relative_tolerance: float,
 ) -> tuple[Array, Array, Array]:
-    """Solve a symmetric positive-definite block with diagonal-preconditioned CG."""
+    """Solve a symmetric positive-definite block through the shared linear runtime."""
 
     rhs = jnp.asarray(rhs)
     if int(max_steps) <= 0:
@@ -328,56 +340,45 @@ def preconditioned_conjugate_gradient(
             "KFAC PCG requires a finite positive preconditioner diagonal.",
         )
     )
-    rhs_norm = jnp.linalg.norm(rhs)
-    x0 = jnp.zeros_like(rhs)
-    residual0 = rhs
-    z0 = residual0 / diagonal
-    direction0 = z0
-    rz0 = jnp.vdot(residual0, z0).real
-    threshold = float(relative_tolerance) * rhs_norm
-
-    def cond(carry):
-        step, _x, residual, _z, _direction, _rz = carry
-        return (step < int(max_steps)) & (jnp.linalg.norm(residual) > threshold)
-
-    def body(carry):
-        step, x, residual, z, direction, rz = carry
-        product = matvec(direction)
-        denominator = jnp.vdot(direction, product).real
-        denominator = eqx.error_if(
-            denominator,
-            (~jnp.isfinite(denominator)) | (denominator <= 0.0),
-            "KFAC PCG encountered a nonpositive curvature denominator.",
-        )
-        alpha = rz / denominator
-        new_x = x + alpha * direction
-        new_residual = residual - alpha * product
-        new_z = new_residual / diagonal
-        new_rz = jnp.vdot(new_residual, new_z).real
-        beta = jnp.where(rz > 0.0, new_rz / rz, 0.0)
-        new_direction = new_z + beta * direction
-        return step + 1, new_x, new_residual, new_z, new_direction, new_rz
-
-    initial = (
-        jnp.asarray(0, dtype=jnp.int32),
-        x0,
-        residual0,
-        z0,
-        direction0,
-        rz0,
+    space = ArraySpace(rhs.shape, dtype=rhs.dtype)
+    operator = FunctionLinearOperator(
+        matvec,
+        source=space,
+        target=space,
+        properties=OperatorProperties(
+            self_adjoint=True,
+            positive_definite=True,
+            evidence={
+                "self_adjoint": "construction",
+                "positive_definite": "construction",
+                "positive_semidefinite": "construction",
+            },
+        ),
+        operator_id="kfac-block-curvature",
     )
-    step, solution, residual, _z, _direction, _rz = jax.lax.while_loop(
-        cond,
-        body,
-        initial,
+    result = solve(
+        LinearSystem(operator),
+        rhs,
+        policy=LinearSolvePolicy(
+            PCG(),
+            tolerance=TolerancePolicy(
+                relative=relative_tolerance,
+                absolute=0.0,
+                max_steps=max_steps,
+            ),
+            preconditioner=DiagonalPreconditioner(
+                diagonal,
+                space=space,
+                positive_definite=True,
+                preconditioner_id="kfac-block-jacobi",
+            ),
+        ),
     )
-    relative_residual = jnp.where(
-        rhs_norm > 0.0,
-        jnp.linalg.norm(residual) / rhs_norm,
-        0.0,
+    return (
+        result.value,
+        result.diagnostics.iterations,
+        result.diagnostics.relative_residual,
     )
-    solution = jnp.where(rhs_norm > 0.0, solution, jnp.zeros_like(solution))
-    return solution, step, relative_residual
 
 
 def _uncovered_direction(
@@ -397,7 +398,24 @@ def _uncovered_direction(
             spec.parameter_count,
             dtype=curvature.dtype,
         )
-        return jnp.linalg.solve(curvature, gradient)
+        return solve(
+            LinearSystem(
+                DenseLinearOperator(
+                    curvature,
+                    properties=OperatorProperties(
+                        self_adjoint=True,
+                        positive_definite=True,
+                        evidence={
+                            "self_adjoint": "construction",
+                            "positive_definite": "construction",
+                            "positive_semidefinite": "construction",
+                        },
+                    ),
+                )
+            ),
+            gradient,
+            policy=LinearSolvePolicy(DenseCholesky()),
+        ).value
     diagonal = sum(
         (factor.value for factor in factors),
         jnp.zeros_like(factors[0].value),

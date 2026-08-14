@@ -30,6 +30,7 @@ def normalize_case_sampling(
     layout = sampling.layout or SampleLayout((labels,))
     return PointSampling(sampling.count, layout=layout, design=sampling.design)
 
+
 def case_sample_count(sampling: PointSampling, /) -> int:
     """Return the scalar count guaranteed by normalized empirical sampling."""
     count = sampling.count

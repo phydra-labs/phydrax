@@ -120,7 +120,9 @@ class CochainCells(Selection):
         if resolved_degree < 0:
             raise ValueError("Cochain cell degree must be non-negative.")
         if region not in ("all", "interior", "boundary"):
-            raise ValueError("Cochain cell region must be 'all', 'interior', or 'boundary'.")
+            raise ValueError(
+                "Cochain cell region must be 'all', 'interior', or 'boundary'."
+            )
         self.degree = resolved_degree
         self.region = region
 
@@ -208,7 +210,9 @@ def _size_for_kind(graph: Any, kind: GraphComponentKind, /) -> int:
     return int(graph.num_graphs)
 
 
-def _entity_type_payload(graph: Any, component: _AbstractGraphTypeSubset, kind: GraphComponentKind, /) -> Array:
+def _entity_type_payload(
+    graph: Any, component: _AbstractGraphTypeSubset, kind: GraphComponentKind, /
+) -> Array:
     payload = graph.nodes if kind == "nodes" else graph.edges
     if not isinstance(payload, Mapping):
         raise TypeError(
@@ -249,21 +253,23 @@ def _cochain_cell_indices(graph: Any, component: CochainCells, /) -> Array:
         if boundary.ndim != 1 or boundary.shape != cell_dim.shape:
             raise ValueError("graph.nodes['boundary'] must match graph cell count.")
         boundary = boundary.astype(bool)
-        mask = mask & (
-            boundary if component.region == "boundary" else ~boundary
-        )
+        mask = mask & (boundary if component.region == "boundary" else ~boundary)
     if graph.node_mask is not None:
         mask = mask & jnp.asarray(graph.node_mask, dtype=bool)
     return jnp.asarray(np.nonzero(np.asarray(mask))[0], dtype=jnp.int32)
 
 
-def _validate_explicit_indices(idx: Array, *, size: int, kind: GraphComponentKind) -> Array:
+def _validate_explicit_indices(
+    idx: Array, *, size: int, kind: GraphComponentKind
+) -> Array:
     idx = jnp.asarray(idx, dtype=jnp.int32)
     idx_np = np.asarray(idx)
     if np.any(idx_np < 0):
         raise ValueError("Graph component indices must be non-negative.")
     if np.any(idx_np >= size):
-        raise ValueError(f"Graph component index out of bounds for {kind}: size is {size}.")
+        raise ValueError(
+            f"Graph component index out of bounds for {kind}: size is {size}."
+        )
     if np.unique(idx_np).shape[0] != idx_np.shape[0]:
         raise ValueError("Graph component indices must be unique.")
     return idx

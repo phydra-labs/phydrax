@@ -150,7 +150,9 @@ def _as_samples(
         return value
     if isinstance(value, StochasticTrajectory):
         return trajectory_state_time_samples(value)
-    raise TypeError("Score sample providers must return trajectory or state-time samples.")
+    raise TypeError(
+        "Score sample providers must return trajectory or state-time samples."
+    )
 
 
 def _probes(
@@ -228,9 +230,7 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
     def __init__(
         self,
         score_name: str,
-        samples: TrajectoryStateTimeSamples
-        | StochasticTrajectory
-        | ScoreSampleProvider,
+        samples: TrajectoryStateTimeSamples | StochasticTrajectory | ScoreSampleProvider,
         /,
         *,
         policy: ScoreMatchingPolicy | None = None,
@@ -381,7 +381,9 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
                 )
                 projection = jnp.sum(probe * value)
                 directional_divergence = jnp.sum(probe * derivative)
-                return 0.5 * jnp.abs(projection) ** 2 + directional_divergence, directional_divergence
+                return 0.5 * jnp.abs(
+                    projection
+                ) ** 2 + directional_divergence, directional_divergence
 
             losses, divergences = jax.vmap(one)(probes)
             divergence_mean = jnp.mean(divergences)
@@ -402,9 +404,9 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
                 node_keys,
             )
         elif self.policy.method == "implicit":
-            node_loss, score_norm, divergence, divergence_error = jax.vmap(
-                implicit_node
-            )(safe_states, safe_times, node_keys)
+            node_loss, score_norm, divergence, divergence_error = jax.vmap(implicit_node)(
+                safe_states, safe_times, node_keys
+            )
         else:
             node_loss, score_norm, divergence, divergence_error = jax.vmap(sliced_node)(
                 safe_states,
@@ -450,18 +452,11 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
         materialized = self.sample(key=key) if batch is None else batch
         evaluation = self._evaluate_nodes(functions, materialized)
         samples = materialized.samples
-        objective = self.scalar_weight * jnp.sum(
-            evaluation.weights * evaluation.loss
-        )
-        score_norm = jnp.sqrt(
-            jnp.sum(evaluation.weights * evaluation.score_norm)
-        )
+        objective = self.scalar_weight * jnp.sum(evaluation.weights * evaluation.loss)
+        score_norm = jnp.sqrt(jnp.sum(evaluation.weights * evaluation.score_norm))
         divergence = jnp.sum(evaluation.weights * evaluation.divergence)
         divergence_error = jnp.sqrt(
-            jnp.sum(
-                evaluation.weights**2
-                * evaluation.divergence_standard_error**2
-            )
+            jnp.sum(evaluation.weights**2 * evaluation.divergence_standard_error**2)
         )
         path_error = _path_standard_error(
             evaluation.loss,
@@ -476,9 +471,7 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
         )
         ess = 1.0 / jnp.sum(evaluation.weights**2)
         finite = (
-            jnp.isfinite(objective)
-            & jnp.isfinite(score_norm)
-            & jnp.isfinite(divergence)
+            jnp.isfinite(objective) & jnp.isfinite(score_norm) & jnp.isfinite(divergence)
         )
         return ScoreMatchingDiagnostics(
             objective=objective,

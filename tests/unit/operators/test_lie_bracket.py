@@ -10,7 +10,9 @@ import phydrax as phx
 
 
 def test_lie_bracket_matches_analytic_vector_fields():
-    geom = phx.domain.GeometryDomain(phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile())
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def x_field(x):
@@ -26,7 +28,9 @@ def test_lie_bracket_matches_analytic_vector_fields():
 
 
 def test_lie_bracket_is_antisymmetric_and_satisfies_jacobi_identity():
-    geom = phx.domain.GeometryDomain(phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile())
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def x_field(x):
@@ -53,7 +57,9 @@ def test_lie_bracket_is_antisymmetric_and_satisfies_jacobi_identity():
 
 
 def test_lie_bracket_rejects_nonvector_value_shape():
-    geom = phx.domain.GeometryDomain(phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile())
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
 
     @geom.Function("x")
     def scalar(x):

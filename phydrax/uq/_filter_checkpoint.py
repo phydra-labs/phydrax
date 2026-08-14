@@ -12,6 +12,7 @@ from typing import Literal, TypeAlias
 
 import jax.numpy as jnp
 import jax.random as jr
+from jaxtyping import Array
 
 from .._fingerprint import array_tree_fingerprint
 from ..stochastic._state_space import StateSpaceProblem
@@ -65,7 +66,7 @@ def _validate_problem(problem: StateSpaceProblem, /) -> None:
         raise TypeError("problem must be a StateSpaceProblem.")
 
 
-def _validate_step_index(step_index: int, problem: StateSpaceProblem, /) -> int:
+def _validate_step_index(step_index: int | Array, problem: StateSpaceProblem, /) -> int:
     index = int(step_index)
     if not 0 <= index <= problem.observations.num_steps:
         raise ValueError("Filter checkpoint step_index is outside the schedule.")
@@ -480,9 +481,7 @@ def read_filter_checkpoint(
             resampling_policy=resampling_policy,
             resampling_threshold=resampling_threshold,
         )
-    raise ValueError(
-        "algorithm must be 'bellman', 'kalman', 'particle', or 'ensemble'."
-    )
+    raise ValueError("algorithm must be 'bellman', 'kalman', 'particle', or 'ensemble'.")
 
 
 __all__ = [

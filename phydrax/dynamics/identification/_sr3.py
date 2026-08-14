@@ -13,6 +13,15 @@ from jaxtyping import Array
 
 from ..._numerics import normalize_least_squares_design
 from ..._strict import StrictModule
+from ...linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    FailurePolicy,
+    LinearSolvePolicy,
+    LinearSystem,
+    prepare,
+    solve,
+)
 from ._sindy_design import SINDyDesign
 from ._sparse_regression import (
     _solve_outputs,
@@ -138,6 +147,17 @@ class SR3Regression(AbstractSparseRegression):
         system = gram + inverse_relaxation * jnp.eye(
             design.num_features, dtype=gram.dtype
         )
+        solve_dtype = jnp.result_type(system, moment)
+        system = system.astype(solve_dtype)
+        moment = moment.astype(solve_dtype)
+        linear_operator = DenseLinearOperator(system)
+        prepared_system = prepare(
+            LinearSystem(linear_operator),
+            LinearSolvePolicy(
+                DenseLU(),
+                failure=FailurePolicy("error"),
+            ),
+        )
         sparse = jnp.zeros((design.num_features, design.output_size), dtype=moment.dtype)
         relaxed = sparse
         converged = jnp.zeros((design.output_size,), dtype=bool)
@@ -158,9 +178,10 @@ class SR3Regression(AbstractSparseRegression):
         relaxation_history = [jnp.zeros((design.output_size,), dtype=moment.real.dtype)]
 
         for _ in range(self.max_iterations):
-            candidate_relaxed = jnp.linalg.solve(
-                system, moment + inverse_relaxation * sparse
-            )
+            candidate_relaxed = solve(
+                prepared_system,
+                moment + inverse_relaxation * sparse,
+            ).value
             if self.penalty == "l0":
                 threshold = jnp.sqrt(2.0 * self.regularization * self.relaxation_strength)
                 candidate_sparse = jnp.where(

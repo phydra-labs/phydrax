@@ -457,16 +457,12 @@ def _condition_affine_gaussian_diagonal(
     residual = jnp.where(observed, jnp.asarray(value) - matrix @ mean - offset, 0.0)
     identity = jnp.eye(state_size, dtype=mean.dtype)
     prior_scale = jnp.linalg.cholesky(covariance)
-    prior_information = jax.scipy.linalg.cho_solve(
-        (prior_scale, True), identity
-    )
-    posterior_information = (
-        prior_information + effective_matrix.T @ (precision[:, None] * effective_matrix)
+    prior_information = jax.scipy.linalg.cho_solve((prior_scale, True), identity)
+    posterior_information = prior_information + effective_matrix.T @ (
+        precision[:, None] * effective_matrix
     )
     posterior_scale = jnp.linalg.cholesky(posterior_information)
-    posterior_covariance = jax.scipy.linalg.cho_solve(
-        (posterior_scale, True), identity
-    )
+    posterior_covariance = jax.scipy.linalg.cho_solve((posterior_scale, True), identity)
     projected = effective_matrix.T @ (precision * residual)
     posterior_mean = mean + posterior_covariance @ projected
     quadratic = residual @ (precision * residual) - projected @ (

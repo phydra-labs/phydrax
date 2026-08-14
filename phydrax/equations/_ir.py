@@ -153,8 +153,12 @@ class PDEField:
             self, "physical_dimension", _dimension(self.physical_dimension)
         )
         scales = _finite_values(list(self.scale), "PDE field scale")
-        if len(scales) not in (1, self.components) or any(value <= 0.0 for value in scales):
-            raise ValueError("PDE field scale must be positive and scalar or per-component.")
+        if len(scales) not in (1, self.components) or any(
+            value <= 0.0 for value in scales
+        ):
+            raise ValueError(
+                "PDE field scale must be positive and scalar or per-component."
+            )
         object.__setattr__(self, "scale", scales)
         names = tuple(self.component_names)
         if names and (len(names) != self.components or len(set(names)) != len(names)):
@@ -175,14 +179,18 @@ class PDEParameter:
 
     def __post_init__(self) -> None:
         if not self.name or int(self.components) <= 0:
-            raise ValueError("PDE parameters require a name and positive component count.")
+            raise ValueError(
+                "PDE parameters require a name and positive component count."
+            )
         object.__setattr__(self, "components", int(self.components))
         object.__setattr__(
             self, "physical_dimension", _dimension(self.physical_dimension)
         )
         scales = _finite_values(list(self.scale), "PDE parameter scale")
         if len(scales) not in (1, self.components) or any(item <= 0.0 for item in scales):
-            raise ValueError("PDE parameter scale must be positive and scalar or per-component.")
+            raise ValueError(
+                "PDE parameter scale must be positive and scalar or per-component."
+            )
         object.__setattr__(self, "scale", scales)
         if self.value is not None:
             value = (
@@ -342,7 +350,9 @@ def as_expression(value: Any, /) -> PDEExpression:
         return value
     if isinstance(value, (int, float)):
         return PDEExpression.constant(float(value))
-    raise TypeError("PDE expressions only accept numeric constants or PDEExpression nodes.")
+    raise TypeError(
+        "PDE expressions only accept numeric constants or PDEExpression nodes."
+    )
 
 
 @dataclass(frozen=True, slots=True)

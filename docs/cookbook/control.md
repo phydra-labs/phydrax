@@ -46,10 +46,7 @@ def running_cost(
     context: dict[str, jax.Array],
 ) -> jax.Array:
     del time
-    return 0.5 * (
-        state @ context["Q"] @ state
-        + control @ context["R"] @ control
-    )
+    return 0.5 * (state @ context["Q"] @ state + control @ context["R"] @ control)
 
 
 def terminal_cost(
@@ -126,9 +123,7 @@ if not bool(lqr.valid):
 # AffineFeedbackPolicy stores its gains; its coefficient token is scalar-shaped.
 lqr_evaluation = problem.evaluate(lqr.policy, jnp.zeros(()))
 if not bool(lqr_evaluation.successful):
-    raise RuntimeError(
-        f"LQR policy rollout failed with status {lqr_evaluation.status}"
-    )
+    raise RuntimeError(f"LQR policy rollout failed with status {lqr_evaluation.status}")
 ```
 
 Use `lqr.feedback_gain`, `lqr.feedforward`, and `lqr.value` for the policy and value

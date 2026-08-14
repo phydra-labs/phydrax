@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from itertools import product
-from typing import Literal, TypeAlias
+from typing import cast, Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -31,7 +31,9 @@ def _backend_boundary(boundary: WaveletBoundary, /) -> BackendBoundary:
 def _per_axis_strings(
     value: str | Sequence[str], count: int, name: str, /
 ) -> tuple[str, ...]:
-    values = (value,) * count if isinstance(value, str) else tuple(str(item) for item in value)
+    values = (
+        (value,) * count if isinstance(value, str) else tuple(str(item) for item in value)
+    )
     if len(values) != count:
         raise ValueError(f"{name} must provide one value per transformed axis.")
     if any(not item for item in values):
@@ -89,9 +91,13 @@ class WaveletFilterBank(StrictModule, NonTrainableState):
         if not identity:
             raise ValueError("Wavelet filter-bank names must be non-empty.")
         if any(tap.ndim != 1 or int(tap.size) < 2 for tap in taps):
-            raise ValueError("Wavelet filters must be one-dimensional with at least two taps.")
+            raise ValueError(
+                "Wavelet filters must be one-dimensional with at least two taps."
+            )
         if len({int(tap.size) for tap in taps}) != 1:
-            raise ValueError("Wavelet decomposition and reconstruction filters must align.")
+            raise ValueError(
+                "Wavelet decomposition and reconstruction filters must align."
+            )
         if any(not bool(jnp.all(jnp.isfinite(tap))) for tap in taps):
             raise ValueError("Wavelet filters must be finite.")
         digest = array_tree_fingerprint(taps)["sha256"]
@@ -150,17 +156,16 @@ class DiscreteWaveletTransform(StrictModule, NonTrainableState):
         wavelet_names = _per_axis_strings(wavelet, len(axes_value), "wavelet")
         boundary_names = _per_axis_strings(boundary, len(axes_value), "boundary")
         if any(
-            name not in ("periodization", "symmetric", "zero")
-            for name in boundary_names
+            name not in ("periodization", "symmetric", "zero") for name in boundary_names
         ):
             raise ValueError(
                 "Wavelet boundaries must be 'periodization', 'symmetric', or 'zero'."
             )
         banks = tuple(WaveletFilterBank.from_name(name) for name in wavelet_names)
-        boundaries = tuple(boundary_names)
+        boundaries = cast(tuple[WaveletBoundary, ...], boundary_names)
         self.filter_banks = banks
         self.axes = axes_value
-        self.boundaries = boundaries  # type: ignore[assignment]
+        self.boundaries = boundaries
         self.levels = level_count
         self.fingerprint = canonical_fingerprint(
             {
@@ -221,9 +226,7 @@ class DiscreteWaveletTransform(StrictModule, NonTrainableState):
                     transformed.extend(((label + (0,), low), (label + (1,), high)))
                 bands = transformed
             approximation = bands[0][1]
-            detail_levels.append(
-                tuple(band for label, band in bands if label != all_low)
-            )
+            detail_levels.append(tuple(band for label, band in bands if label != all_low))
         return MultiresolutionCoefficients(
             approximation,
             tuple(reversed(detail_levels)),

@@ -97,13 +97,9 @@ class Sinkhorn(AbstractBalancedTransportSolver):
             source_initial = jnp.asarray(initial_potentials[0], dtype=dtype)
             target_initial = jnp.asarray(initial_potentials[1], dtype=dtype)
             if source_initial.shape != (source_count,):
-                raise ValueError(
-                    "Initial source potential must match source atom count."
-                )
+                raise ValueError("Initial source potential must match source atom count.")
             if target_initial.shape != (target_count,):
-                raise ValueError(
-                    "Initial target potential must match target atom count."
-                )
+                raise ValueError("Initial target potential must match target atom count.")
             source_initial = eqx.error_if(
                 source_initial,
                 jnp.any(~jnp.isfinite(source_initial)),
@@ -153,12 +149,8 @@ class Sinkhorn(AbstractBalancedTransportSolver):
                     epsilon,
                     block_size=self.block_size,
                 )
-                source_mean = jnp.sum(
-                    problem.source_probabilities * next_source
-                )
-                target_mean = jnp.sum(
-                    problem.target_probabilities * next_target
-                )
+                source_mean = jnp.sum(problem.source_probabilities * next_source)
+                target_mean = jnp.sum(problem.target_probabilities * next_target)
                 shift = 0.5 * (target_mean - source_mean)
                 next_source = next_source + shift
                 next_target = next_target - shift
@@ -167,10 +159,13 @@ class Sinkhorn(AbstractBalancedTransportSolver):
                 )
                 next_source = jnp.where(finite, next_source, source_potential)
                 next_target = jnp.where(finite, next_target, target_potential)
-                next_dual_residual = jnp.maximum(
-                    jnp.max(jnp.abs(next_source - source_potential)),
-                    jnp.max(jnp.abs(next_target - target_potential)),
-                ) / epsilon
+                next_dual_residual = (
+                    jnp.maximum(
+                        jnp.max(jnp.abs(next_source - source_potential)),
+                        jnp.max(jnp.abs(next_target - target_potential)),
+                    )
+                    / epsilon
+                )
                 return next_source, next_target, next_dual_residual, ~finite
 
             def keep(_):
@@ -190,26 +185,16 @@ class Sinkhorn(AbstractBalancedTransportSolver):
             )
 
             def check(_):
-                source_marginal, target_marginal, _, _, _, finite = (
-                    coupling_statistics(
-                        problem,
-                        next_source,
-                        next_target,
-                        epsilon,
-                        block_size=self.block_size,
-                    )
+                source_marginal, target_marginal, _, _, _, finite = coupling_statistics(
+                    problem,
+                    next_source,
+                    next_target,
+                    epsilon,
+                    block_size=self.block_size,
                 )
                 residual = jnp.maximum(
-                    jnp.sum(
-                        jnp.abs(
-                            source_marginal - problem.source_probabilities
-                        )
-                    ),
-                    jnp.sum(
-                        jnp.abs(
-                            target_marginal - problem.target_probabilities
-                        )
-                    ),
+                    jnp.sum(jnp.abs(source_marginal - problem.source_probabilities)),
+                    jnp.sum(jnp.abs(target_marginal - problem.target_probabilities)),
                 )
                 return jnp.where(finite, residual, jnp.inf), ~finite
 
@@ -291,9 +276,7 @@ class Sinkhorn(AbstractBalancedTransportSolver):
         regularized_cost = problem.mass * primal_probability
         dual_cost = problem.mass * dual_probability
         finite_objective = (
-            objective_finite
-            & jnp.isfinite(regularized_cost)
-            & jnp.isfinite(dual_cost)
+            objective_finite & jnp.isfinite(regularized_cost) & jnp.isfinite(dual_cost)
         )
         final_converged = (
             (final_residual <= tolerance)

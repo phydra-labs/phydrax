@@ -156,7 +156,9 @@ class EnforcementSpec(StrictModule):
             raise ValueError("Enforcement dependencies must exclude the target field.")
         if len(set(resolved_dependencies)) != len(resolved_dependencies):
             raise ValueError("Enforcement dependencies must be unique.")
-        resolved_stage = _stage(condition.on, str(evolution_var)) if stage is None else stage
+        resolved_stage = (
+            _stage(condition.on, str(evolution_var)) if stage is None else stage
+        )
         if resolved_stage not in ("boundary", "initial", "interior"):
             raise ValueError("stage must be 'boundary', 'initial', or 'interior'.")
         resolved_kind = _kind(condition) if kind is None else kind
@@ -209,7 +211,9 @@ class EnforcementSpec(StrictModule):
 
     @property
     def max_derivative_order(self) -> int:
-        return max((requirement.order for requirement in self.derivative_requirements), default=0)
+        return max(
+            (requirement.order for requirement in self.derivative_requirements), default=0
+        )
 
     @property
     def time_derivative_order(self) -> int:

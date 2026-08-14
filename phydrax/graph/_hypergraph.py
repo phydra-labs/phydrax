@@ -85,7 +85,9 @@ def _combine_features(
         if int(second_arr.shape[0]) != n_second:
             raise ValueError(f"{name} hyperedge feature leading axis must be {n_second}.")
         if first_arr.shape[1:] != second_arr.shape[1:]:
-            raise ValueError(f"{name} node and hyperedge features must share trailing shape.")
+            raise ValueError(
+                f"{name} node and hyperedge features must share trailing shape."
+            )
     return jnp.concatenate([first_arr, second_arr], axis=0)
 
 
@@ -120,7 +122,9 @@ class HypergraphBipartiteGraph(eqx.Module):
         self.original_nodes = jnp.asarray(original_nodes, dtype=jnp.int32)
         self.hyperedge_nodes = jnp.asarray(hyperedge_nodes, dtype=jnp.int32)
         self.incidence_edges = jnp.asarray(incidence_edges, dtype=jnp.int32)
-        self.reverse_incidence_edges = jnp.asarray(reverse_incidence_edges, dtype=jnp.int32)
+        self.reverse_incidence_edges = jnp.asarray(
+            reverse_incidence_edges, dtype=jnp.int32
+        )
         self.original_node_type = int(original_node_type)
         self.hyperedge_node_type = int(hyperedge_node_type)
         self.incidence_edge_type = int(incidence_edge_type)
@@ -177,7 +181,9 @@ def incidence_to_bipartite_graph(
 
     senders = node_idx
     receivers = hyper_nodes
-    edge_type = jnp.full((int(node_idx.shape[0]),), int(incidence_edge_type), dtype=jnp.int32)
+    edge_type = jnp.full(
+        (int(node_idx.shape[0]),), int(incidence_edge_type), dtype=jnp.int32
+    )
     edge_node_index = node_idx
     edge_hyperedge_index = hyper_idx
     if add_reverse_edges:
@@ -342,14 +348,18 @@ def _edge_weight(graph: GraphIR, edge_weight_key: str | None, /) -> jnp.ndarray:
         if not isinstance(graph.edges, Mapping):
             raise TypeError("edge_weight_key requires mapping-valued graph edges.")
         if edge_weight_key not in graph.edges:
-            raise KeyError(f"Graph edges do not contain edge_weight_key {edge_weight_key!r}.")
+            raise KeyError(
+                f"Graph edges do not contain edge_weight_key {edge_weight_key!r}."
+            )
         out = jnp.asarray(graph.edges[edge_weight_key], dtype=float).reshape((-1,))
     if graph.edge_mask is not None:
         out = out * graph.edge_mask.astype(out.dtype)
     return out
 
 
-def _with_node_output(graph: GraphIR, value: jnp.ndarray, output_key: str | None, /) -> Any:
+def _with_node_output(
+    graph: GraphIR, value: jnp.ndarray, output_key: str | None, /
+) -> Any:
     if output_key is None:
         return value
     nodes = {} if graph.nodes is None else dict(graph.nodes)
@@ -414,8 +424,12 @@ class HypergraphConvolution(eqx.Module):
         n = int(x.shape[0])
         weights = _edge_weight(graph, self.edge_weight_key)
         edge_types = edge_type_ids(graph, type_key=self.edge_type_key)
-        original = node_type_indices(graph, self.original_node_type, type_key=self.node_type_key)
-        hyper = node_type_indices(graph, self.hyperedge_node_type, type_key=self.node_type_key)
+        original = node_type_indices(
+            graph, self.original_node_type, type_key=self.node_type_key
+        )
+        hyper = node_type_indices(
+            graph, self.hyperedge_node_type, type_key=self.node_type_key
+        )
         is_incidence = edge_types == self.incidence_edge_type
         is_reverse = edge_types == self.reverse_incidence_edge_type
 
@@ -439,7 +453,9 @@ class HypergraphConvolution(eqx.Module):
         combined = jnp.where(original_mask[:, None], out, jnp.zeros_like(out))
         combined = jnp.where(hyper_mask[:, None], hyper_state, combined)
         combined = _mask_nodes(combined, graph)
-        return graph.replace(nodes=_with_node_output(graph, combined, self.output_key), validate=False)
+        return graph.replace(
+            nodes=_with_node_output(graph, combined, self.output_key), validate=False
+        )
 
 
 __all__ = [

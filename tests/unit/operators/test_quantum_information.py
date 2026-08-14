@@ -34,8 +34,7 @@ def test_bell_state_has_one_bit_of_entanglement_entropy():
     zero = time.Function()(jnp.asarray([1.0, 0.0], dtype=complex))
     one = time.Function()(jnp.asarray([0.0, 1.0], dtype=complex))
     bell = (
-        phx.operators.tensor_product(zero, zero)
-        + phx.operators.tensor_product(one, one)
+        phx.operators.tensor_product(zero, zero) + phx.operators.tensor_product(one, one)
     ) / jnp.sqrt(2.0)
     density = _density_from_state(time, bell.func())
     reduced = phx.operators.partial_trace(
@@ -117,9 +116,9 @@ def test_information_measures_are_jittable_and_parameter_differentiable():
         return (jnp.sqrt(p * q) + jnp.sqrt((1.0 - p) * (1.0 - q))) ** 2
 
     p = 0.37
-    purity_gradient, entropy_gradient, fidelity_gradient = jax.jit(
-        jax.jacrev(measures)
-    )(p)
+    purity_gradient, entropy_gradient, fidelity_gradient = jax.jit(jax.jacrev(measures))(
+        p
+    )
 
     assert jnp.allclose(purity_gradient, 4.0 * p - 2.0, atol=1e-12)
     assert jnp.allclose(

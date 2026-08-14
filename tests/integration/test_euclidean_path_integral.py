@@ -192,7 +192,10 @@ def test_kernel_function_runs_through_operator_constraint_solver():
             phx.integration.MonteCarloPlan(4),
         ),
     )
-    solver = phx.solver.FunctionalSolver(functions={"kernel": kernel}, terms=[constraint], )
+    solver = phx.solver.FunctionalSolver(
+        functions={"kernel": kernel},
+        terms=[constraint],
+    )
 
     loss = solver.loss(key=jr.key(5))
     assert jnp.isfinite(loss)

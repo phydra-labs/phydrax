@@ -506,9 +506,9 @@ def test_stratonovich_geometric_advanced_memory_replays_all_history_modes():
         args,
     ):
         del time, nodes, kernels, args
-        local_values = jax.vmap(
-            lambda point: geometry.inverse_retract(state, point)
-        )(delayed_values)
+        local_values = jax.vmap(lambda point: geometry.inverse_retract(state, point))(
+            delayed_values
+        )
         local_mean = jnp.tensordot(
             weights,
             local_values,
@@ -532,9 +532,7 @@ def test_stratonovich_geometric_advanced_memory_replays_all_history_modes():
     noise = phx.solver.DelayWienerTerm(
         "rotation",
         lambda time, state, memory, args: (
-            0.2
-            * (1.0 + 0.05 * memory["spread"][1, 0])
-            * (state @ _GENERATOR)
+            0.2 * (1.0 + 0.05 * memory["spread"][1, 0]) * (state @ _GENERATOR)
         )[..., None],
         (1,),
         structure="commutative",

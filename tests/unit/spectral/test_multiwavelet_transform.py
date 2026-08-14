@@ -26,9 +26,7 @@ _CASES = (
 def test_alpert_multiwavelet_roundtrips_divisible_and_padded_lengths(
     order, levels, num_points, boundary
 ):
-    values = jnp.asarray(
-        np.random.default_rng(912).normal(size=(2, num_points, 3))
-    )
+    values = jnp.asarray(np.random.default_rng(912).normal(size=(2, num_points, 3)))
     transform = AlpertMultiwaveletTransform(
         order=order,
         levels=levels,
@@ -57,12 +55,12 @@ def test_alpert_multiwavelet_is_orthogonal_and_annihilates_constant_details(orde
 
     coefficients = transform.analysis(values)
     coefficient_energy = jnp.sum(coefficients.scaling**2) + sum(
-        jnp.sum(band**2)
-        for detail_level in coefficients.details
-        for band in detail_level
+        jnp.sum(band**2) for detail_level in coefficients.details for band in detail_level
     )
 
-    assert jnp.allclose(transform.base_analysis @ transform.base_synthesis, jnp.eye(order))
+    assert jnp.allclose(
+        transform.base_analysis @ transform.base_synthesis, jnp.eye(order)
+    )
     assert jnp.allclose(
         transform.level_analysis @ transform.level_synthesis,
         jnp.eye(2 * order),
@@ -70,9 +68,9 @@ def test_alpert_multiwavelet_is_orthogonal_and_annihilates_constant_details(orde
         atol=1e-12,
     )
     assert jnp.allclose(coefficient_energy, jnp.sum(values**2), rtol=1e-12, atol=1e-12)
-    assert max(
-        float(jnp.max(jnp.abs(level[0]))) for level in coefficients.details
-    ) < 3e-14
+    assert (
+        max(float(jnp.max(jnp.abs(level[0]))) for level in coefficients.details) < 3e-14
+    )
 
 
 def test_alpert_multiwavelet_is_shape_independent_jittable_and_differentiable():
@@ -84,15 +82,15 @@ def test_alpert_multiwavelet_is_shape_independent_jittable_and_differentiable():
     short = jnp.asarray(np.random.default_rng(2).normal(size=(17, 2)))
     long = jnp.asarray(np.random.default_rng(3).normal(size=(31, 2)))
 
-    short_coefficients = eqx.filter_jit(
-        lambda plan, values: plan.analysis(values)
-    )(transform, short)
+    short_coefficients = eqx.filter_jit(lambda plan, values: plan.analysis(values))(
+        transform, short
+    )
     short_reconstructed = eqx.filter_jit(
         lambda plan, coefficients: plan.synthesis(coefficients)
     )(transform, short_coefficients)
-    mapped = jax.vmap(
-        lambda values: transform.synthesis(transform.analysis(values))
-    )(jnp.stack((short, -short)))
+    mapped = jax.vmap(lambda values: transform.synthesis(transform.analysis(values)))(
+        jnp.stack((short, -short))
+    )
     gradient = jax.grad(
         lambda values: jnp.sum(transform.synthesis(transform.analysis(values)) ** 2)
     )(short)

@@ -212,7 +212,9 @@ class SGMCMCMixingError(RuntimeError):
 
     def __init__(self, report: SGMCMCMixingReport):
         self.report = report
-        super().__init__("SG-MCMC mixing gates failed: " + ", ".join(report.failures) + ".")
+        super().__init__(
+            "SG-MCMC mixing gates failed: " + ", ".join(report.failures) + "."
+        )
 
 
 def sgmcmc_diagnostics(
@@ -284,7 +286,10 @@ def _failing_locations(tree: PyTree[Any], predicate: Any, /) -> tuple[str, ...]:
 
 def _tree_extreme(tree: PyTree[Any], /, *, maximum: bool) -> Array:
     values = jnp.concatenate(
-        [jnp.ravel(jnp.asarray(leaf, dtype=float)) for leaf in jax.tree_util.tree_leaves(tree)]
+        [
+            jnp.ravel(jnp.asarray(leaf, dtype=float))
+            for leaf in jax.tree_util.tree_leaves(tree)
+        ]
     )
     return jnp.max(values) if maximum else jnp.min(values)
 

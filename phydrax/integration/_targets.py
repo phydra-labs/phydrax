@@ -95,9 +95,7 @@ class ComponentTarget(StrictModule):
         normalized: bool = False,
     ):
         if not isinstance(component, (DomainComponent, ComponentSum)):
-            raise TypeError(
-                "component must be a DomainComponent or ComponentSum."
-            )
+            raise TypeError("component must be a DomainComponent or ComponentSum.")
         self.component = component
         self.axes = axes
         self.normalized = bool(normalized)

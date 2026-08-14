@@ -54,7 +54,9 @@ def test_graph_degree_operator():
 def test_graph_degree_operator_restricts_to_node_set():
     domain = phx.domain.GraphDomain(_line_graph())
     component = domain.component({"graph": phx.domain.BoundaryNodes([0, 2])})
-    batch = component.sample(phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),))))
+    batch = component.sample(
+        phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),)))
+    )
 
     deg_in = phx.operators.graph_degree(domain, mode="in")
     deg_out = phx.operators.graph_degree(domain, mode="out")
@@ -102,7 +104,9 @@ def test_graph_gradient_operator_on_edges():
 def test_graph_gradient_operator_restricts_to_edge_set():
     domain = phx.domain.GraphDomain(_line_graph())
     component = domain.component({"graph": phx.domain.InterfaceEdges([1])})
-    batch = component.sample(phx.domain.PointSampling(1, layout=phx.domain.SampleLayout((("graph",),))))
+    batch = component.sample(
+        phx.domain.PointSampling(1, layout=phx.domain.SampleLayout((("graph",),)))
+    )
 
     @domain.Function("graph")
     def u(node):
@@ -143,7 +147,9 @@ def test_graph_divergence_operator_on_nodes():
 def test_graph_divergence_operator_restricts_to_node_set():
     domain = phx.domain.GraphDomain(_weighted_line_graph())
     component = domain.component({"graph": phx.domain.BoundaryNodes([0, 2])})
-    batch = component.sample(phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),))))
+    batch = component.sample(
+        phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),)))
+    )
 
     @domain.Function("graph")
     def flux(edge):

@@ -13,9 +13,7 @@ from phydrax.terms import ResidualPenalty
 
 
 def _fixed_source(component, values):
-    batch = component.points(
-        {"x": jnp.asarray(values, dtype=float).reshape((-1, 1))}
-    )
+    batch = component.points({"x": jnp.asarray(values, dtype=float).reshape((-1, 1))})
     realization = phx.integration.from_samples(
         phx.integration.mean_over(component),
         batch,

@@ -11,7 +11,7 @@ import jax.numpy as jnp
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
-from .._strict import StrictModule
+from .._strict import AbstractAttribute, StrictModule
 from ._blocks import apply_plan, coupling_statistics, dense_plan
 from ._problem import DiscreteTransportProblem
 from ._status import TransportStatus
@@ -51,6 +51,8 @@ class TransportProvenance(StrictModule):
 
 class AbstractBalancedTransportPlan(StrictModule):
     """Minimal common contract for balanced finite transport plans."""
+
+    regularized_cost: AbstractAttribute[Array]
 
     @property
     @abstractmethod
@@ -102,11 +104,14 @@ class AbstractBalancedTransportPlan(StrictModule):
 class AbstractBalancedTransportSolver(StrictModule):
     """Solver producing a balanced plan for one finite transport problem."""
 
+    epsilon: AbstractAttribute[Array]
+
     @abstractmethod
     def __call__(
         self, problem: DiscreteTransportProblem, /
     ) -> AbstractBalancedTransportPlan:
         raise NotImplementedError
+
 
 class SinkhornDiagnostics(StrictModule):
     """Fixed-structure convergence diagnostics for balanced Sinkhorn."""
@@ -227,9 +232,7 @@ def require_converged(
     failed = jnp.logical_not(result.converged)
     if not isinstance(failed, jax_core.Tracer):
         if bool(failed):
-            raise eqx.EquinoxRuntimeError(
-                "Native balanced transport did not converge."
-            )
+            raise eqx.EquinoxRuntimeError("Native balanced transport did not converge.")
         return result
     checked = eqx.error_if(
         result.regularized_cost,

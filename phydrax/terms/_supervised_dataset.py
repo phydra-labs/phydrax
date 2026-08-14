@@ -95,9 +95,7 @@ class SupervisedDatasetTerm(AbstractSamplingTerm):
         data_accuracy_eps: float = 1e-12,
     ):
         if not isinstance(component.domain, DatasetDomain):
-            raise TypeError(
-                "SupervisedDatasetTerm requires a DatasetDomain component."
-            )
+            raise TypeError("SupervisedDatasetTerm requires a DatasetDomain component.")
         sampling_ = normalize_case_sampling(
             sampling,
             labels=component.domain.labels,

@@ -309,8 +309,6 @@ def _reduce_cases(values: Array, case_count: int, /, *, label: str) -> Array:
     return values.reshape((case_count, -1)).sum(axis=1)
 
 
-
-
 __all__ = [
     "AbstractPosteriorTerm",
     "CompositePosteriorLikelihood",

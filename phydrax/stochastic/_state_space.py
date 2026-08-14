@@ -645,7 +645,7 @@ class MarginalTransitionKernel(AbstractTransitionKernel):
         return distribution.log_prob(next_state)
 
 
-def _parameter(value: Array | Callable[..., ArrayLike], *args: Array) -> Array:
+def _parameter(value: Array | Callable[..., ArrayLike], *args: Any) -> Array:
     if callable(value):
         function = cast(Callable[..., ArrayLike], value)
         return jnp.asarray(function(*args), dtype=float)

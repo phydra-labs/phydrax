@@ -54,9 +54,9 @@ def test_temperature_primitives_are_transformable_and_validate_dynamic_values():
         ),
         probabilities,
     )
-    batched = jax.vmap(
-        lambda x: phx.ml.temperature_softmax(x, temperature=temperature)
-    )(jnp.stack((logits, -logits)))
+    batched = jax.vmap(lambda x: phx.ml.temperature_softmax(x, temperature=temperature))(
+        jnp.stack((logits, -logits))
+    )
     assert batched.shape == (2, 3)
 
     tangent = jax.jvp(
@@ -75,9 +75,9 @@ def test_temperature_primitives_are_transformable_and_validate_dynamic_values():
 
     for invalid in (0.0, -1.0, jnp.nan, jnp.inf):
         with pytest.raises(Exception, match="temperature must be finite and positive"):
-            result = jax.jit(
-                lambda t: phx.ml.temperature_sigmoid(logits, temperature=t)
-            )(jnp.asarray(invalid))
+            result = jax.jit(lambda t: phx.ml.temperature_sigmoid(logits, temperature=t))(
+                jnp.asarray(invalid)
+            )
             jax.block_until_ready(result)
 
 
@@ -106,7 +106,9 @@ def test_gumbel_softmax_replays_keys_and_has_relaxed_gradients():
         )
     )(jnp.asarray(0.8))
     samples = jax.jit(
-        jax.vmap(lambda sample_key: phx.ml.gumbel_softmax(sample_key, logits, temperature=0.8))
+        jax.vmap(
+            lambda sample_key: phx.ml.gumbel_softmax(sample_key, logits, temperature=0.8)
+        )
     )(jax.random.split(key, 4))
     assert samples.shape == (4, 3)
     assert jnp.all(jnp.isfinite(logits_gradient))
@@ -124,9 +126,7 @@ def test_soft_ranks_define_one_based_orientation_ties_and_axis_semantics():
     assert jnp.allclose(descending, 5.0 - ascending, atol=1e-12)
     assert tied[0] == tied[1]
     assert jnp.allclose(equal, 2.5)
-    assert jnp.allclose(
-        phx.ml.soft_ranks(values + 100.0, temperature=0.01), ascending
-    )
+    assert jnp.allclose(phx.ml.soft_ranks(values + 100.0, temperature=0.01), ascending)
 
     matrix = jnp.stack((values, values[::-1]), axis=1)
     along_rows = phx.ml.soft_ranks(matrix, temperature=0.2, axis=0)
@@ -139,9 +139,7 @@ def test_soft_ranks_define_one_based_orientation_ties_and_axis_semantics():
         (jnp.asarray([0.2, -0.1, 0.3, 0.4]),),
     )[1]
     gradient = jax.grad(
-        lambda candidate: jnp.sum(
-            phx.ml.soft_ranks(candidate, temperature=0.2) ** 2
-        )
+        lambda candidate: jnp.sum(phx.ml.soft_ranks(candidate, temperature=0.2) ** 2)
     )(values)
     assert jnp.all(jnp.isfinite(tangent))
     assert jnp.all(jnp.isfinite(gradient))

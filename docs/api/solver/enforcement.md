@@ -21,9 +21,7 @@ u_free = space.Function("x")(lambda x: x[0])
 functions = {"u": u_free}
 
 interior = space.component()
-interior_condition = phx.conditions.Residual(
-    "u", interior, lambda value: value
-)
+interior_condition = phx.conditions.Residual("u", interior, lambda value: value)
 interior_penalty = phx.terms.ResidualPenalty(
     interior_condition,
     phx.integration.per_step(

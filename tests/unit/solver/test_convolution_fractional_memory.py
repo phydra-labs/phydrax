@@ -39,14 +39,10 @@ def test_convolution_backend_is_jittable_and_differentiable():
             kernel=lambda lag, args: jnp.exp(-lag),
             args=rate,
         )
-        return phx.solver.solve_convolution_volterra(
-            problem, times=times
-        ).states[-1, 0]
+        return phx.solver.solve_convolution_volterra(problem, times=times).states[-1, 0]
 
     value, gradient = jax.jit(jax.value_and_grad(terminal))(jnp.asarray(2.0))
-    expected_gradient = jnp.sum(
-        jnp.diff(times) * jnp.exp(-(1.0 - times[:-1]))
-    )
+    expected_gradient = jnp.sum(jnp.diff(times) * jnp.exp(-(1.0 - times[:-1])))
 
     assert jnp.isclose(value, 1.0 + 2.0 * expected_gradient)
     assert jnp.isclose(gradient, expected_gradient)
@@ -85,11 +81,7 @@ def test_caputo_orders_above_one_include_initial_derivative():
         initial_derivative=jnp.asarray([-0.3]),
     )
     solution = phx.solver.solve_caputo_fractional(problem, times=times)
-    expected = (
-        2.0
-        - 0.3 * times
-        + 0.5 * times**order / jsp.special.gamma(order + 1.0)
-    )
+    expected = 2.0 - 0.3 * times + 0.5 * times**order / jsp.special.gamma(order + 1.0)
 
     assert jnp.allclose(solution.states[:, 0], expected, rtol=0.0, atol=2e-15)
 
@@ -107,9 +99,7 @@ def test_caputo_backend_is_jittable_and_differentiable():
             t1=1.0,
             args=rate,
         )
-        return phx.solver.solve_caputo_fractional(
-            problem, times=times
-        ).states[-1, 0]
+        return phx.solver.solve_caputo_fractional(problem, times=times).states[-1, 0]
 
     value, gradient = jax.jit(jax.value_and_grad(terminal))(jnp.asarray(2.0))
     expected_gradient = 1.0 / jsp.special.gamma(order + 1.0)

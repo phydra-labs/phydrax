@@ -46,7 +46,9 @@ def _domain() -> phx.domain.GraphTrajectoryDatasetDomain:
 
 def test_graph_trajectory_points_from_case_time_repeats_time_over_nodes():
     domain = _domain()
-    component = domain.component({"graph": phx.domain.Nodes(), "t": phx.domain.Interior()})
+    component = domain.component(
+        {"graph": phx.domain.Nodes(), "t": phx.domain.Interior()}
+    )
     batch = domain.points_from_case_time(
         [0, 1],
         [0.5, 1.0],
@@ -67,7 +69,9 @@ def test_graph_trajectory_points_from_case_time_repeats_time_over_nodes():
 
 def test_graph_trajectory_domain_function_evaluates_graph_and_time():
     domain = _domain()
-    component = domain.component({"graph": phx.domain.Nodes(), "t": phx.domain.Interior()})
+    component = domain.component(
+        {"graph": phx.domain.Nodes(), "t": phx.domain.Interior()}
+    )
     batch = domain.points_from_case_time(
         [0, 1],
         [0.5, 1.0],
@@ -84,7 +88,9 @@ def test_graph_trajectory_domain_function_evaluates_graph_and_time():
 
 def test_graph_trajectory_gradient_remaps_time_from_edges_to_nodes():
     domain = _domain()
-    component = domain.component({"graph": phx.domain.EdgeSet([0]), "t": phx.domain.Interior()})
+    component = domain.component(
+        {"graph": phx.domain.EdgeSet([0]), "t": phx.domain.Interior()}
+    )
     batch = domain.points_from_case_time(
         [0, 1],
         [0.5, 1.0],
@@ -112,9 +118,7 @@ def test_graph_trajectory_residual_penalty_samples_fixed_start_edges():
         del node, t
         return 2.0
 
-    condition = phx.conditions.Residual(
-        "u", component, phx.operators.graph_gradient
-    )
+    condition = phx.conditions.Residual("u", component, phx.operators.graph_gradient)
     source = phx.integration.per_step(
         phx.integration.mean_over(component),
         phx.domain.PointSampling(2, layout=structure),
@@ -178,7 +182,9 @@ def test_graph_trajectory_graph_model_edge_input_fn_uses_time_on_full_edge_view(
 def test_graph_trajectory_layout_packs_topology_but_exposes_real_time_rows():
     base = _domain()
     domain = base.with_layout(base.layout_for_batch_size(2, multiple=2))
-    component = domain.component({"graph": phx.domain.Nodes(), "t": phx.domain.Interior()})
+    component = domain.component(
+        {"graph": phx.domain.Nodes(), "t": phx.domain.Interior()}
+    )
     batch = domain.points_from_case_time(
         [0, 1],
         [0.5, 1.0],

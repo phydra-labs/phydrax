@@ -8,12 +8,8 @@ import phydrax as phx
 
 def _constant_mode_problems():
     times = jnp.asarray([[0.5, 1.0, 1.5], [0.5, 1.0, 1.0]])
-    values = jnp.asarray(
-        [[[1.0], [0.0], [1.5]], [[-0.5], [0.7], [0.0]]]
-    )
-    masks = jnp.asarray(
-        [[[True], [False], [True]], [[True], [True], [False]]]
-    )
+    values = jnp.asarray([[[1.0], [0.0], [1.5]], [[-0.5], [0.7], [0.0]]])
+    masks = jnp.asarray([[[True], [False], [True]], [[True], [True], [False]]])
     step_valid = jnp.asarray([[True, True, True], [True, True, False]])
     observations = phx.stochastic.ObservationSequence(
         times,
@@ -312,13 +308,13 @@ def test_backward_path_prefixes_are_stable_and_resampling_policies_are_coherent(
         jr.key(7), always, sample_shape=(2,)
     )
 
-    assert jnp.allclose(
-        short.nonlinear_paths, long.nonlinear_paths[:3], equal_nan=True
-    )
+    assert jnp.allclose(short.nonlinear_paths, long.nonlinear_paths[:3], equal_nan=True)
     assert jnp.array_equal(short.particle_indices, long.particle_indices[:3])
     assert jnp.all(short.valid)
     assert jnp.all(smoothed_always.successful)
-    assert jnp.all(jax.lax.stop_gradient(short.particle_indices) == short.particle_indices)
+    assert jnp.all(
+        jax.lax.stop_gradient(short.particle_indices) == short.particle_indices
+    )
 
 
 def test_backward_simulation_uses_full_correlated_transition_density():
@@ -332,9 +328,7 @@ def test_backward_simulation_uses_full_correlated_transition_density():
     particles = filtered.nonlinear_particles
     previous_particles = particles[0]
     context = problem.step_context(0, 1)
-    covariance_diagonal = jnp.diag(
-        jnp.diag(jnp.asarray([[1.0, 0.94], [0.94, 1.0]]))
-    )
+    covariance_diagonal = jnp.diag(jnp.diag(jnp.asarray([[1.0, 0.94], [0.94, 1.0]])))
     diagonal_inverse = jnp.linalg.inv(covariance_diagonal)
     full_probabilities = []
     diagonal_probabilities = []
@@ -364,9 +358,7 @@ def test_backward_simulation_uses_full_correlated_transition_density():
         )
     full_probabilities = jnp.stack(full_probabilities)
     diagonal_probabilities = jnp.stack(diagonal_probabilities)
-    separations = jnp.sum(
-        jnp.abs(full_probabilities - diagonal_probabilities), axis=-1
-    )
+    separations = jnp.sum(jnp.abs(full_probabilities - diagonal_probabilities), axis=-1)
     terminal = int(jnp.argmax(separations))
     full_probability = full_probabilities[terminal]
     diagonal_probability = diagonal_probabilities[terminal]

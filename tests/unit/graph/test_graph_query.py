@@ -27,8 +27,12 @@ def test_radius_query_graph_builds_weighted_bipartite_geometry():
     assert jnp.allclose(graph.receivers, jnp.array([3, 4], dtype=jnp.int32))
     assert jnp.allclose(graph.edges["relative"], jnp.array([[0.2], [-0.4]]), atol=1e-7)
     assert jnp.allclose(graph.edges["distance"], jnp.array([[0.2], [0.4]]), atol=1e-7)
-    assert jnp.allclose(graph.edges["kernel_weight"], jnp.array([[0.6], [0.2]]), atol=1e-7)
-    assert jnp.allclose(graph.nodes["features"][:, 0], jnp.array([1.0, 2.0, 3.0, 0.0, 0.0]))
+    assert jnp.allclose(
+        graph.edges["kernel_weight"], jnp.array([[0.6], [0.2]]), atol=1e-7
+    )
+    assert jnp.allclose(
+        graph.nodes["features"][:, 0], jnp.array([1.0, 2.0, 3.0, 0.0, 0.0])
+    )
 
 
 def test_radius_query_graph_uses_periodic_minimum_image():
@@ -80,7 +84,9 @@ def test_query_graph_components_select_source_target_and_edges():
     target_batch = targets.sample(phx.domain.PointSampling(1, layout=structure))
     edge_batch = query_edges.sample(phx.domain.PointSampling(2, layout=structure))
 
-    assert jnp.allclose(source_batch["graph"]["features"].data[:, 0], jnp.array([1.0, 3.0]))
+    assert jnp.allclose(
+        source_batch["graph"]["features"].data[:, 0], jnp.array([1.0, 3.0])
+    )
     assert jnp.allclose(target_batch["graph"]["features"].data[:, 0], jnp.array([0.0]))
     assert jnp.allclose(edge_batch["graph"]["distance"].data[:, 0], jnp.array([0.5, 0.5]))
     assert targets.mass.value == 1.0
@@ -115,7 +121,9 @@ def test_graph_neural_operator_wraps_as_graph_model_on_query_targets():
     )
     domain = phx.domain.GraphDomain(bundle.graph)
     targets = domain.component({"graph": bundle.target_nodes_component()})
-    batch = targets.sample(phx.domain.PointSampling(1, layout=phx.domain.SampleLayout((("graph",),))))
+    batch = targets.sample(
+        phx.domain.PointSampling(1, layout=phx.domain.SampleLayout((("graph",),)))
+    )
 
     @domain.Function("graph")
     def u(node):

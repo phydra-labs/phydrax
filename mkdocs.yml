@@ -129,6 +129,8 @@ nav:
         - Overview: "examples/index.md"
     - API:
         - Overview: "api/phydrax.md"
+        - Linear algebra runtime: "api/linalg.md"
+        - Sparse derivatives: "api/sparse_derivatives.md"
         - Integration: "api/integration.md"
         - Optimal transport:
             - Overview: "api/transport/index.md"

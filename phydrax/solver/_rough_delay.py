@@ -41,9 +41,7 @@ from ._rough import (
 )
 
 
-RoughDelayVectorFields: TypeAlias = Callable[
-    [Array, Array, DelayValues, Any], ArrayLike
-]
+RoughDelayVectorFields: TypeAlias = Callable[[Array, Array, DelayValues, Any], ArrayLike]
 RoughDelayDrift: TypeAlias = Callable[[Array, Array, DelayValues, Any], ArrayLike]
 
 
@@ -306,9 +304,7 @@ def _rough_delay_memory(
         elif isinstance(term, ConstantDelay):
             value = history.value(time - term.delay)
         elif isinstance(term, StateDependentDelay):
-            value = history.value(
-                time - term.value(time, state, problem.args)
-            )
+            value = history.value(time - term.value(time, state, problem.args))
         else:
             raise TypeError(f"Unsupported rough delay term {type(term).__name__}.")
         if value.shape != problem.state_shape:
@@ -399,9 +395,13 @@ def _rough_delay_integrate(
         > 100.0 * jnp.finfo(control.times.dtype).eps
     ) | jnp.any(jnp.diff(control.times) > problem.minimum_delay)
     if davie:
-        tolerance = 100.0 * jnp.finfo(control.times.dtype).eps * jnp.maximum(
-            1.0,
-            jnp.max(jnp.abs(control.times)),
+        tolerance = (
+            100.0
+            * jnp.finfo(control.times.dtype).eps
+            * jnp.maximum(
+                1.0,
+                jnp.max(jnp.abs(control.times)),
+            )
         )
         for term in problem.delay_terms:
             assert isinstance(term, ConstantDelay)
@@ -436,10 +436,14 @@ def _rough_delay_integrate(
     indices = jnp.arange(control.num_steps, dtype=jnp.int32)
 
     def one_path(first, second):
-        initial_buffer = jnp.zeros(
-            (control.num_steps + 1,) + problem.state_shape,
-            dtype=problem.initial_state.dtype,
-        ).at[0].set(problem.initial_state)
+        initial_buffer = (
+            jnp.zeros(
+                (control.num_steps + 1,) + problem.state_shape,
+                dtype=problem.initial_state.dtype,
+            )
+            .at[0]
+            .set(problem.initial_state)
+        )
 
         def advance(carry, item):
             state, buffer = carry
@@ -598,9 +602,7 @@ def _rough_delay_integrate(
 
     if control.sample_shape:
         path_count = int(np.prod(control.sample_shape))
-        first = first_level.reshape(
-            (path_count, control.num_steps, control.dimension)
-        )
+        first = first_level.reshape((path_count, control.num_steps, control.dimension))
         if second_level is None:
             second = jnp.zeros((path_count, control.num_steps, 0), dtype=first.dtype)
         else:

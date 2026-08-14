@@ -347,9 +347,7 @@ def _extract_tessellation(
                 global_indices.append(global_index)
             if len(set(global_indices)) < 3:
                 continue
-            triangles.append(
-                (global_indices[0], global_indices[1], global_indices[2])
-            )
+            triangles.append((global_indices[0], global_indices[1], global_indices[2]))
             triangle_face_ids.append(face_index)
             triangle_parameters.append(
                 np.stack([local_parameters[local_index] for local_index in local])

@@ -86,7 +86,9 @@ def test_flowjax_operator_distribution_batches_samples_logs_and_differentiates()
         leaf for leaf in jax.tree_util.tree_leaves(gradients) if eqx.is_array(leaf)
     )
 
-    assert isinstance(distribution, phx.nn.operator.architectures.FlowJAXOperatorDistribution)
+    assert isinstance(
+        distribution, phx.nn.operator.architectures.FlowJAXOperatorDistribution
+    )
     assert distribution.event_shape == (4,)
     assert distribution.uncertainty_source == "process"
     assert distribution.condition.shape == (6, 4)
@@ -99,7 +101,9 @@ def test_flowjax_operator_distribution_batches_samples_logs_and_differentiates()
     assert leaves
     assert all(bool(jnp.all(jnp.isfinite(leaf))) for leaf in leaves)
 
-    status = phx.nn.operator.operator_architecture_status("ConditionalFlowFunctionOperator")
+    status = phx.nn.operator.operator_architecture_status(
+        "ConditionalFlowFunctionOperator"
+    )
     assert status.tier == "experimental"
     assert status.capabilities.requires_fixed_query
     assert not status.capabilities.resolution_transfer
@@ -114,7 +118,9 @@ def test_flowjax_operator_distribution_batches_samples_logs_and_differentiates()
 def test_flowjax_fixed_query_accepts_loader_broadcast_but_rejects_changed_geometry():
     dataset = _dataset()
     model = _model(dataset)
-    loader = phx.nn.operator.training.OperatorBatchLoader(dataset, batch_size=2, shuffle=False)
+    loader = phx.nn.operator.training.OperatorBatchLoader(
+        dataset, batch_size=2, shuffle=False
+    )
     loader_batch = next(loader.epoch()).batch
     distribution = model.distribution(loader_batch)
 
@@ -128,7 +134,9 @@ def test_flowjax_fixed_query_accepts_loader_broadcast_but_rejects_changed_geomet
     )
     changed = phx.nn.operator.OperatorBatch(
         inputs=dataset.batch.inputs,
-        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(changed_axis,))},
+        queries={
+            "query": phx.nn.operator.FunctionSamples(values=None, axes=(changed_axis,))
+        },
         case_axes=dataset.batch.case_axes,
     )
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="fixed reference"):
@@ -152,7 +160,10 @@ def test_flowjax_operator_trains_through_fit_operator():
     assert jnp.isfinite(result.initial_loss)
     assert jnp.isfinite(result.final_loss)
     assert result.final_loss < result.initial_loss
-    assert isinstance(result.execution_model, phx.nn.operator.architectures.ConditionalFlowFunctionOperator)
+    assert isinstance(
+        result.execution_model,
+        phx.nn.operator.architectures.ConditionalFlowFunctionOperator,
+    )
 
 
 def test_flowjax_fit_checkpoint_resume_is_bitwise_exact(tmp_path):
@@ -167,7 +178,9 @@ def test_flowjax_fit_checkpoint_resume_is_bitwise_exact(tmp_path):
         "configuration": {"test_contract": "flowjax-exact-resume-v1"},
         "jit": True,
     }
-    uninterrupted = phx.nn.operator.training.fit_operator(model, dataset, steps=2, **common)
+    uninterrupted = phx.nn.operator.training.fit_operator(
+        model, dataset, steps=2, **common
+    )
     checkpoint = tmp_path / "flow-checkpoint"
     phx.nn.operator.training.fit_operator(
         model,

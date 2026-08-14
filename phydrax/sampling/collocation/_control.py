@@ -181,17 +181,14 @@ class RefreshGuard(StrictModule):
             raise ValueError("max_consecutive_rejections must be positive.")
         if int(suspension_steps) < 0:
             raise ValueError("suspension_steps must be non-negative.")
-        self.max_relative_regression = jnp.asarray(
-            max_relative_regression, dtype=float
-        )
+        self.max_relative_regression = jnp.asarray(max_relative_regression, dtype=float)
         self.absolute_tolerance = jnp.asarray(absolute_tolerance, dtype=float)
         self.max_consecutive_rejections = int(max_consecutive_rejections)
         self.suspension_steps = int(suspension_steps)
 
     def accepts(self, baseline: Array, monitored: Array, /) -> Array:
         limit = (
-            jnp.asarray(baseline, dtype=float)
-            * (1.0 + self.max_relative_regression)
+            jnp.asarray(baseline, dtype=float) * (1.0 + self.max_relative_regression)
             + self.absolute_tolerance
         )
         return jnp.asarray(monitored, dtype=float) <= limit
@@ -225,17 +222,13 @@ class AdaptationBudget(StrictModule):
             None if max_refresh_attempts is None else int(max_refresh_attempts)
         )
         self.max_candidate_evaluations = (
-            None
-            if max_candidate_evaluations is None
-            else int(max_candidate_evaluations)
+            None if max_candidate_evaluations is None else int(max_candidate_evaluations)
         )
         self.max_monitor_evaluations = (
             None if max_monitor_evaluations is None else int(max_monitor_evaluations)
         )
         self.max_training_evaluations = (
-            None
-            if max_training_evaluations is None
-            else int(max_training_evaluations)
+            None if max_training_evaluations is None else int(max_training_evaluations)
         )
 
 
@@ -303,34 +296,18 @@ class ControlledCollocationPopulation(StrictModule):
         self.monitor_point_count = int(monitor_point_count)
         self.last_control_step = jnp.asarray(last_control_step, dtype=jnp.int32)
         self.proposal_pending = jnp.asarray(proposal_pending, dtype=bool)
-        self.baseline_monitor_mean = jnp.asarray(
-            baseline_monitor_mean, dtype=float
-        )
+        self.baseline_monitor_mean = jnp.asarray(baseline_monitor_mean, dtype=float)
         self.monitor_mean = jnp.asarray(monitor_mean, dtype=float)
         self.monitor_rms = jnp.asarray(monitor_rms, dtype=float)
         self.monitor_max = jnp.asarray(monitor_max, dtype=float)
-        self.refresh_attempt_count = jnp.asarray(
-            refresh_attempt_count, dtype=jnp.int32
-        )
-        self.refresh_accept_count = jnp.asarray(
-            refresh_accept_count, dtype=jnp.int32
-        )
-        self.refresh_reject_count = jnp.asarray(
-            refresh_reject_count, dtype=jnp.int32
-        )
-        self.consecutive_rejections = jnp.asarray(
-            consecutive_rejections, dtype=jnp.int32
-        )
+        self.refresh_attempt_count = jnp.asarray(refresh_attempt_count, dtype=jnp.int32)
+        self.refresh_accept_count = jnp.asarray(refresh_accept_count, dtype=jnp.int32)
+        self.refresh_reject_count = jnp.asarray(refresh_reject_count, dtype=jnp.int32)
+        self.consecutive_rejections = jnp.asarray(consecutive_rejections, dtype=jnp.int32)
         self.suspended_until = jnp.asarray(suspended_until, dtype=jnp.int32)
-        self.candidate_evaluations = jnp.asarray(
-            candidate_evaluations, dtype=jnp.int32
-        )
-        self.monitor_evaluations = jnp.asarray(
-            monitor_evaluations, dtype=jnp.int32
-        )
-        self.training_evaluations = jnp.asarray(
-            training_evaluations, dtype=jnp.int32
-        )
+        self.candidate_evaluations = jnp.asarray(candidate_evaluations, dtype=jnp.int32)
+        self.monitor_evaluations = jnp.asarray(monitor_evaluations, dtype=jnp.int32)
+        self.training_evaluations = jnp.asarray(training_evaluations, dtype=jnp.int32)
 
     @property
     def refresh_count(self) -> Array:
@@ -398,9 +375,7 @@ class ControlledCollocationPolicy(AbstractCollocationPolicy):
             key=jr.fold_in(key, 2),
         )
         point_count = _population_logical_count(self.base_policy, current)
-        anchor_reference = (
-            current if float(self.anchors.fraction) > 0.0 else None
-        )
+        anchor_reference = current if float(self.anchors.fraction) > 0.0 else None
         if anchor_reference is not None:
             _validate_anchor_population(current)
         return ControlledCollocationPopulation(
@@ -502,9 +477,8 @@ class ControlledCollocationPolicy(AbstractCollocationPolicy):
     ) -> ControlledCollocationPopulation:
         if int(multiplier) <= 0:
             raise ValueError("Training evaluation multiplier must be positive.")
-        count = (
-            _population_logical_count(self.base_policy, population.current)
-            * int(multiplier)
+        count = _population_logical_count(self.base_policy, population.current) * int(
+            multiplier
         )
         return _replace_controlled(
             population,
@@ -597,9 +571,7 @@ class ControlledCollocationPolicy(AbstractCollocationPolicy):
             rollback=population.current,
             proposal_pending=True,
             refresh_attempt_count=population.refresh_attempt_count + 1,
-            candidate_evaluations=(
-                population.candidate_evaluations + candidate_count
-            ),
+            candidate_evaluations=(population.candidate_evaluations + candidate_count),
         )
 
     def settle(
@@ -624,9 +596,7 @@ class ControlledCollocationPolicy(AbstractCollocationPolicy):
             epsilon=self.monitor.epsilon,
         )
         monitor_evaluations = population.monitor_evaluations + monitor_count
-        if not bool(
-            self.guard.accepts(population.baseline_monitor_mean, mean)
-        ):
+        if not bool(self.guard.accepts(population.baseline_monitor_mean, mean)):
             consecutive = population.consecutive_rejections + 1
             suspended_until = population.suspended_until
             if int(consecutive) >= self.guard.max_consecutive_rejections:
@@ -779,9 +749,7 @@ def _within_budget(
         > budget.max_candidate_evaluations
     ):
         return False
-    if not _monitor_budget_available(
-        policy, population, monitor_batches=monitor_batches
-    ):
+    if not _monitor_budget_available(policy, population, monitor_batches=monitor_batches):
         return False
     if (
         budget.max_training_evaluations is not None
@@ -823,7 +791,9 @@ def _inject_collocation_anchors(
     axis, size = _single_axis_and_size(population.batch)
     reference_axis, reference_size = _single_axis_and_size(reference.batch)
     if axis != reference_axis or size != reference_size:
-        raise ValueError("Coverage anchor and proposal populations must have equal shape.")
+        raise ValueError(
+            "Coverage anchor and proposal populations must have equal shape."
+        )
     count = min(size - 1, max(1, int(round(size * fraction))))
     indices = jnp.arange(count)
     anchored_batch = _set_batch_rows(
@@ -882,15 +852,9 @@ def _replace_controlled(
         updates.get("rollback", population.rollback),
         updates.get("monitor_batch", population.monitor_batch),
         updates.get("monitor_point_count", population.monitor_point_count),
-        anchor_reference=updates.get(
-            "anchor_reference", population.anchor_reference
-        ),
-        last_control_step=updates.get(
-            "last_control_step", population.last_control_step
-        ),
-        proposal_pending=updates.get(
-            "proposal_pending", population.proposal_pending
-        ),
+        anchor_reference=updates.get("anchor_reference", population.anchor_reference),
+        last_control_step=updates.get("last_control_step", population.last_control_step),
+        proposal_pending=updates.get("proposal_pending", population.proposal_pending),
         baseline_monitor_mean=updates.get(
             "baseline_monitor_mean", population.baseline_monitor_mean
         ),
@@ -909,9 +873,7 @@ def _replace_controlled(
         consecutive_rejections=updates.get(
             "consecutive_rejections", population.consecutive_rejections
         ),
-        suspended_until=updates.get(
-            "suspended_until", population.suspended_until
-        ),
+        suspended_until=updates.get("suspended_until", population.suspended_until),
         candidate_evaluations=updates.get(
             "candidate_evaluations", population.candidate_evaluations
         ),

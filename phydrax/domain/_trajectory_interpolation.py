@@ -25,6 +25,8 @@ from ._trajectory_dataset import (
 
 RaggedTimeSeriesHardInterpolation = Literal["linear", "cubic_hermite"]
 RaggedTimeSeriesHardGate = Literal["sin2", "sin4"]
+
+
 def _field_array(batch: PointBatch, key: str, /) -> Array:
     if key not in batch:
         raise ValueError(
@@ -67,6 +69,8 @@ def _validate_values(
             f"{domain.max_length} entries, got {arr.shape[1]}."
         )
     return arr
+
+
 class _RaggedTimeSeriesTable(StrictModule, NonTrainableState):
     domain: TrajectoryDatasetDomain
     values: Array

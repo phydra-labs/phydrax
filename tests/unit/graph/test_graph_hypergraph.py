@@ -41,8 +41,12 @@ def test_hypergraph_bundle_components_select_original_and_hyperedge_entities():
     hyperedge_batch = hyperedges.sample(phx.domain.PointSampling(2, layout=structure))
     incidence_batch = incidence.sample(phx.domain.PointSampling(4, layout=structure))
 
-    assert jnp.allclose(original_batch["graph"]["features"].data[:, 0], jnp.array([1.0, 2.0, 3.0]))
-    assert jnp.allclose(hyperedge_batch["graph"]["features"].data[:, 0], jnp.array([0.0, 0.0]))
+    assert jnp.allclose(
+        original_batch["graph"]["features"].data[:, 0], jnp.array([1.0, 2.0, 3.0])
+    )
+    assert jnp.allclose(
+        hyperedge_batch["graph"]["features"].data[:, 0], jnp.array([0.0, 0.0])
+    )
     assert jnp.allclose(
         incidence_batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data,
         jnp.array([0, 1, 2, 3], dtype=jnp.int32),
@@ -60,7 +64,9 @@ def test_hypergraph_convolution_wraps_as_graph_model_on_original_nodes():
     bundle = _bundle()
     domain = phx.domain.GraphDomain(bundle.graph)
     component = domain.component({"graph": bundle.original_nodes_component()})
-    batch = component.sample(phx.domain.PointSampling(3, layout=phx.domain.SampleLayout((("graph",),))))
+    batch = component.sample(
+        phx.domain.PointSampling(3, layout=phx.domain.SampleLayout((("graph",),)))
+    )
 
     @domain.Function("graph")
     def u(node):
@@ -90,7 +96,9 @@ def test_hypergraph_bipartite_graph_batches_in_graph_dataset_domain():
     )
 
     assert batch.graph.num_nodes == 9
-    assert jnp.allclose(batch["graph"]["features"].data[:, 0], jnp.array([1.0, 2.0, 3.0, 2.0, 4.0, 8.0]))
+    assert jnp.allclose(
+        batch["graph"]["features"].data[:, 0], jnp.array([1.0, 2.0, 3.0, 2.0, 4.0, 8.0])
+    )
     assert jnp.allclose(
         batch[phx.domain.graph.GRAPH_DATASET_INDEX_KEY].data,
         jnp.array([0, 0, 0, 1, 1, 1], dtype=jnp.int32),

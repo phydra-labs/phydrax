@@ -19,8 +19,12 @@ def _batch() -> phx.nn.operator.OperatorBatch:
         values=jnp.ones((1, 3)),
         coordinates=coordinates,
     )
-    return phx.nn.operator.OperatorBatch(inputs={"forcing": source}, queries={"query": query}, case_axes=("case",),
-    case_shape=(1,),)
+    return phx.nn.operator.OperatorBatch(
+        inputs={"forcing": source},
+        queries={"query": query},
+        case_axes=("case",),
+        case_shape=(1,),
+    )
 
 
 def test_operator_map_laplace_and_geometry_reattachment_match_gaussian_reference():

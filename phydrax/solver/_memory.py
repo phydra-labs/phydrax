@@ -40,7 +40,6 @@ class _UnitVolterraKernel(eqx.Module):
         return jnp.asarray(1.0)
 
 
-
 class _ConvolutionKernelAdapter(eqx.Module):
     kernel: ConvolutionKernel
 
@@ -52,6 +51,7 @@ class _UnitConvolutionKernel(eqx.Module):
     def __call__(self, lag, args):
         del lag, args
         return jnp.asarray(1.0)
+
 
 class StochasticVolterraProblem(StrictModule):
     """Explicit stochastic Volterra integral equation.
@@ -191,8 +191,6 @@ class StochasticVolterraProblem(StrictModule):
         return self.diffusion is not None
 
 
-
-
 class ConvolutionVolterraProblem(StrictModule):
     """Volterra equation with translation-invariant causal kernels.
 
@@ -228,9 +226,7 @@ class ConvolutionVolterraProblem(StrictModule):
             raise TypeError("diffusion_kernel must be callable or None.")
         drift_lag_kernel = _UnitConvolutionKernel() if kernel is None else kernel
         noise_lag_kernel = (
-            _UnitConvolutionKernel()
-            if diffusion_kernel is None
-            else diffusion_kernel
+            _UnitConvolutionKernel() if diffusion_kernel is None else diffusion_kernel
         )
         self.volterra = StochasticVolterraProblem(
             drift,
@@ -296,6 +292,8 @@ class ConvolutionVolterraProblem(StrictModule):
     @property
     def problem_id(self) -> str:
         return self.volterra.problem_id
+
+
 class MemoryEquationSolution(StrictModule):
     """Saved Volterra or delay trajectory with global driver provenance."""
 
@@ -480,10 +478,10 @@ def _time_grid(t0: Array, t1: Array, times: ArrayLike, /) -> Array:
     )
     return eqx.error_if(
         grid,
-        (jnp.abs(grid[0] - t0) > tolerance)
-        | (jnp.abs(grid[-1] - t1) > tolerance),
+        (jnp.abs(grid[0] - t0) > tolerance) | (jnp.abs(grid[-1] - t1) > tolerance),
         "times must span exactly from problem t0 through t1.",
     )
+
 
 def _wiener_increments(
     *,
@@ -574,15 +572,13 @@ def solve_stochastic_volterra(
                         problem.state_shape,
                         owner="drift_kernel",
                     )
-                    drift_sum = (
-                        drift_sum
-                        + step_sizes[source_index]
-                        * _weighted_kernel_value(
-                            drift_kernel,
-                            drift,
-                            problem.state_shape,
-                            0,
-                        )
+                    drift_sum = drift_sum + step_sizes[
+                        source_index
+                    ] * _weighted_kernel_value(
+                        drift_kernel,
+                        drift,
+                        problem.state_shape,
+                        0,
                     )
                     if problem.stochastic:
                         assert problem.diffusion is not None
@@ -606,12 +602,8 @@ def solve_stochastic_volterra(
                             problem.state_shape,
                             len(problem.noise_shape),
                         )
-                        state_axes = tuple(
-                            range(len(problem.state_shape), weighted.ndim)
-                        )
-                        increment_axes = tuple(
-                            range(path_increments[source_index].ndim)
-                        )
+                        state_axes = tuple(range(len(problem.state_shape), weighted.ndim))
+                        increment_axes = tuple(range(path_increments[source_index].ndim))
                         noise_sum = noise_sum + jnp.tensordot(
                             weighted,
                             path_increments[source_index],
@@ -668,8 +660,6 @@ def solve_stochastic_volterra(
     )
 
 
-
-
 def solve_convolution_volterra(
     problem: ConvolutionVolterraProblem,
     /,
@@ -704,6 +694,8 @@ def solve_convolution_volterra(
             "convolution_backend": "direct-causal",
         },
     )
+
+
 __all__ = [
     "ConvolutionKernel",
     "ConvolutionVolterraProblem",

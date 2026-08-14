@@ -48,12 +48,19 @@ For this runnable example, we choose a simple analytic “operator” that maps 
     domain = data_dom @ geom
 
     latent = 32
-    branch = phx.nn.models.MLP(in_size=K, out_size=latent, width_size=64, depth=2, key=jr.key(1))
-    trunk = phx.nn.models.MLP(in_size=1, out_size=latent, width_size=64, depth=2, key=jr.key(2))
-    deeponet = phx.nn.operator.architectures.DeepONet(branch=branch, trunk=trunk, coord_dim=1, latent_size=latent)
+    branch = phx.nn.models.MLP(
+        in_size=K, out_size=latent, width_size=64, depth=2, key=jr.key(1)
+    )
+    trunk = phx.nn.models.MLP(
+        in_size=1, out_size=latent, width_size=64, depth=2, key=jr.key(2)
+    )
+    deeponet = phx.nn.operator.architectures.DeepONet(
+        branch=branch, trunk=trunk, coord_dim=1, latent_size=latent
+    )
 
     # u_hat(data, x): predicted field on the x-axis for each dataset sample
     u_hat = domain.Model("data", "x")(deeponet)
+
 
     # Supervised target u_true(data, x): analytic mapping from coefficients to a function of x
     @domain.Function("data", "x")
@@ -61,9 +68,11 @@ For this runnable example, we choose a simple analytic “operator” that maps 
         ks = jnp.arange(1, K + 1, dtype=float)
         return jnp.sum(c * jnp.sin(jnp.pi * ks * x[0]))
 
+
     # Supervised residual on Ω_data × Ω_x.
     def residual(u_f):
         return u_f - u_true
+
 
     # Sample empirical rows in one point block and x on an explicit axis.
     nx = 32
@@ -187,12 +196,14 @@ measured_batch = phx.nn.operator.OperatorBatch(
             mask=source_mask,
         )
     },
-    queries={"query": phx.nn.operator.FunctionSamples(
-        values=None,
-        coordinates=query_x,
-        quadrature_weights=jnp.full((query_x.shape[0],), 1.0 / query_x.shape[0]),
-        mask=query_mask,
-    )},
+    queries={
+        "query": phx.nn.operator.FunctionSamples(
+            values=None,
+            coordinates=query_x,
+            quadrature_weights=jnp.full((query_x.shape[0],), 1.0 / query_x.shape[0]),
+            mask=query_mask,
+        )
+    },
 )
 
 upt = phx.nn.operator.architectures.UPT(
@@ -257,8 +268,7 @@ nomad = phx.nn.operator.architectures.CoordinateConditionedOperator(
 )
 
 predictions = tuple(
-    model(measured_batch)
-    for model in (upt, transolver, transolver_pp, gnot, nomad)
+    model(measured_batch) for model in (upt, transolver, transolver_pp, gnot, nomad)
 )
 assert all(prediction.shape == query_x.shape[:-1] for prediction in predictions)
 assert all(jnp.allclose(prediction[-1], 0.0) for prediction in predictions)
@@ -428,11 +438,13 @@ grid_samples = phx.nn.operator.FunctionSamples(
 )
 grid_batch = phx.nn.operator.OperatorBatch(
     inputs={"state": grid_samples},
-    queries={"query": phx.nn.operator.FunctionSamples(
-        values=None,
-        axes=(grid_axis,),
-        mask=jnp.ones((8,), dtype=bool),
-    )},
+    queries={
+        "query": phx.nn.operator.FunctionSamples(
+            values=None,
+            axes=(grid_axis,),
+            mask=jnp.ones((8,), dtype=bool),
+        )
+    },
 )
 
 ifno = phx.nn.operator.architectures.IFNO(
@@ -687,9 +699,8 @@ deformation = 0.04 * jnp.stack(
     axis=-1,
 )
 source_coordinates = jnp.stack((base, base + deformation))
-source_values = (
-    jnp.sin(jnp.pi * source_coordinates[..., 0])
-    * jnp.cos(jnp.pi * source_coordinates[..., 1])
+source_values = jnp.sin(jnp.pi * source_coordinates[..., 0]) * jnp.cos(
+    jnp.pi * source_coordinates[..., 1]
 )
 
 query_base = jnp.stack(
@@ -700,9 +711,7 @@ query_base = jnp.stack(
     axis=-1,
 )
 query_coordinates = jnp.stack((query_base, query_base + 0.5 * deformation[:10]))
-query_mask = jnp.array(
-    [[True] * 10, [True] * 8 + [False, False]]
-)
+query_mask = jnp.array([[True] * 10, [True] * 8 + [False, False]])
 geometry_batch = phx.nn.operator.OperatorBatch(
     inputs={
         "forcing": phx.nn.operator.FunctionSamples(
@@ -711,11 +720,13 @@ geometry_batch = phx.nn.operator.OperatorBatch(
             quadrature_weights=jnp.full((2, 12), 1.0 / 12.0),
         )
     },
-    queries={"query": phx.nn.operator.FunctionSamples(
-        values=None,
-        coordinates=query_coordinates,
-        mask=query_mask,
-    )},
+    queries={
+        "query": phx.nn.operator.FunctionSamples(
+            values=None,
+            coordinates=query_coordinates,
+            mask=query_mask,
+        )
+    },
     case_axes=("case",),
 )
 
@@ -802,8 +813,7 @@ with jax.disable_jit():
     }
 assert all(prediction.shape == (2, 10) for prediction in geometry_predictions.values())
 assert all(
-    jnp.allclose(prediction[1, 8:], 0.0)
-    for prediction in geometry_predictions.values()
+    jnp.allclose(prediction[1, 8:], 0.0) for prediction in geometry_predictions.values()
 )
 ```
 
@@ -840,9 +850,7 @@ support_coordinates = jnp.stack(
     jnp.meshgrid(support_axis, support_axis, indexing="ij"),
     axis=-1,
 ).reshape((-1, 2))
-domain_sdf = (
-    jnp.abs(jnp.linalg.norm(support_coordinates, axis=-1) - 0.6) - 0.25
-)
+domain_sdf = jnp.abs(jnp.linalg.norm(support_coordinates, axis=-1) - 0.6) - 0.25
 density = 1.0 + 0.2 * jnp.cos(3.0 * ring_angle)
 
 conservative_batch = phx.nn.operator.OperatorBatch(
@@ -858,11 +866,13 @@ conservative_batch = phx.nn.operator.OperatorBatch(
             quadrature_weights=jnp.full((64,), 4.0 / 64.0),
         ),
     },
-    queries={"query": phx.nn.operator.FunctionSamples(
-        values=None,
-        coordinates=ring_coordinates,
-        quadrature_weights=ring_weights,
-    )},
+    queries={
+        "query": phx.nn.operator.FunctionSamples(
+            values=None,
+            coordinates=ring_coordinates,
+            quadrature_weights=ring_weights,
+        )
+    },
 )
 conservative_flower = phx.nn.operator.architectures.GeometryInformedFlower(
     in_channels="scalar",
@@ -919,9 +929,7 @@ boundary cells, and degree determine both the neural operator and its physics
 loss.
 
 ```python
-cochain_vertices = jnp.asarray(
-    [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
-)
+cochain_vertices = jnp.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
 cochain_faces = jnp.asarray([[0, 1, 2], [0, 2, 3]], dtype=jnp.int32)
 cochain_complex = phx.graph.triangle_mesh_to_cochain_complex(
     cochain_vertices,
@@ -1345,6 +1353,7 @@ def boundary_envelope(coordinates, batch, *, key):
     x = coordinates[..., 0]
     return x * (1.0 - x)
 
+
 physics_latent = 8
 physics_branch = phx.nn.operator.architectures.IntegralBranchEncoder(
     feature_model=phx.nn.models.MLP(
@@ -1550,9 +1559,7 @@ batch = phx.nn.operator.OperatorBatch(
             axes=(source_axis,),
         )
     },
-    queries={
-        "query": phx.nn.operator.FunctionSamples(values=None, axes=(query_axis,))
-    },
+    queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(query_axis,))},
 )
 flower = phx.nn.operator.architectures.Flower(
     in_channels="scalar",
@@ -1571,12 +1578,8 @@ flower = phx.nn.operator.architectures.Flower(
 )
 prediction, diagnostics = flower.evaluate_with_diagnostics(batch)
 
-source_mass = jnp.sum(
-    source_values * source_axis.quadrature_weights
-)
-query_mass = jnp.sum(
-    prediction * query_axis.quadrature_weights
-)
+source_mass = jnp.sum(source_values * source_axis.quadrature_weights)
+query_mass = jnp.sum(prediction * query_axis.quadrature_weights)
 assert prediction.shape == (24,)
 assert jnp.allclose(source_mass, query_mass)
 assert len(diagnostics.blocks) == 2 * flower.levels - 1

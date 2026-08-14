@@ -62,8 +62,8 @@ def test_divergence_samples_use_jvps_and_match_linear_trace_in_expectation():
 
 def test_probe_standard_error_and_parameter_gradient_have_expected_behavior():
     state = jnp.asarray([0.3, -0.5, 0.7, 0.1])
-    field = lambda scale, value: scale * jnp.asarray(
-        [value[1], value[0], value[3], value[2]]
+    field = lambda scale, value: (
+        scale * jnp.asarray([value[1], value[0], value[3], value[2]])
     )
 
     def estimate(scale, count):
@@ -153,11 +153,13 @@ def test_coordinate_laplacian_samples_scale_to_dimension_1000_without_dense_hess
     assert samples.indices.shape == (16,)
     assert jnp.abs(samples.mean - exact) <= 5.0 * samples.standard_error
     compiled = jax.jit(
-        lambda scale: coordinate_second_derivative_samples(
-            lambda value: scale * jnp.sum(coefficients * value**2),
-            state,
-            jr.key(24),
-            policy,
-        ).mean
+        lambda scale: (
+            coordinate_second_derivative_samples(
+                lambda value: scale * jnp.sum(coefficients * value**2),
+                state,
+                jr.key(24),
+                policy,
+            ).mean
+        )
     )
     assert jnp.isfinite(compiled(jnp.asarray(1.0)))

@@ -90,7 +90,10 @@ def test_semilinear_deep_picard_trains_global_time_field_and_removes_temporary_s
         num_time_steps=4,
         refresh_mode="fixed",
     )
-    solver = phx.solver.FunctionalSolver(functions={"value": _function(_TimeCoefficient(jnp.asarray(0.0)))}, terms=(), )
+    solver = phx.solver.FunctionalSolver(
+        functions={"value": _function(_TimeCoefficient(jnp.asarray(0.0)))},
+        terms=(),
+    )
     times = jnp.linspace(0.0, 1.0, 9)
     states = jnp.zeros((9, 1))
 
@@ -133,8 +136,9 @@ def test_structured_source_context_uses_factor_hvps_and_trains_quadratic_case():
 
     def source_builder(_context):
         return StructuredPicardSource(
-            lambda time, state, current, args: 0.5
-            * current.covariance_trace(time, state),
+            lambda time, state, current, args: (
+                0.5 * current.covariance_trace(time, state)
+            ),
             source_id="half-covariance-trace",
         )
 
@@ -146,7 +150,10 @@ def test_structured_source_context_uses_factor_hvps_and_trains_quadratic_case():
         antithetic=True,
         refresh_mode="fixed",
     )
-    solver = phx.solver.FunctionalSolver(functions={"value": source_model}, terms=(), )
+    solver = phx.solver.FunctionalSolver(
+        functions={"value": source_model},
+        terms=(),
+    )
     times = jnp.linspace(0.0, 1.0, 7)
     states = jnp.linspace(-0.5, 0.5, 7)[:, None]
 
@@ -186,11 +193,16 @@ def test_deep_picard_martingale_targets_train_explicit_control():
         antithetic=True,
         refresh_mode="fixed",
     )
-    exact_value = _domain().Function("t", "x")(lambda time, state: jnp.asarray([state[0]]))
-    solver = phx.solver.FunctionalSolver(functions={
-        "value": exact_value,
-        "control": _function(_ConstantControl(jnp.asarray(0.0))),
-    }, terms=(), )
+    exact_value = _domain().Function("t", "x")(
+        lambda time, state: jnp.asarray([state[0]])
+    )
+    solver = phx.solver.FunctionalSolver(
+        functions={
+            "value": exact_value,
+            "control": _function(_ConstantControl(jnp.asarray(0.0))),
+        },
+        terms=(),
+    )
     times = jnp.asarray([0.0, 0.25, 0.5, 0.75])
     states = jnp.asarray([[-0.4], [0.0], [0.2], [0.7]])
 

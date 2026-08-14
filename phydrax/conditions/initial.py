@@ -42,9 +42,13 @@ class Initial(AbstractResidualCondition):
         if not isinstance(on, DomainComponent):
             raise TypeError("Initial conditions require one DomainComponent.")
         if evolution_var not in on.domain.labels:
-            raise KeyError(f"Label {evolution_var!r} is not in domain {on.domain.labels}.")
+            raise KeyError(
+                f"Label {evolution_var!r} is not in domain {on.domain.labels}."
+            )
         if not isinstance(on.spec.selection_for(evolution_var), FixedStart):
-            raise ValueError("Initial conditions require FixedStart on the evolution variable.")
+            raise ValueError(
+                "Initial conditions require FixedStart on the evolution variable."
+            )
         resolved_order = int(order)
         if resolved_order < 0:
             raise ValueError("Initial derivative order must be nonnegative.")

@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from math import isfinite
 from numbers import Integral
-from typing import Any, cast, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import coordax as cx
 import equinox as eqx
@@ -23,6 +23,18 @@ from ..._interpolation import BoundsMode, bspline_evaluate, bspline_stencil, BSp
 from ..._numerics import solve_weighted_least_squares
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    DenseSVD,
+    FailurePolicy,
+    LeastSquaresProblem,
+    LinearSolvePolicy,
+    LinearSystem,
+    MinimumNormProblem,
+    RankPolicy,
+    solve,
+)
 
 
 BSplineFitMode: TypeAlias = Literal["interpolate", "least_squares", "smooth"]
@@ -127,7 +139,7 @@ class BSplineBoundaryConstraint(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Constraint location must be 'lower', 'upper', or finite."
                 )
-            location_ = cast(Literal["lower", "upper"], location)
+            location_ = location
         else:
             location_ = float(location)
             if not isfinite(location_):
@@ -360,7 +372,20 @@ def _constrained_lstsq(
         raise ValueError("B-spline boundary constraints are rank deficient or redundant.")
     _, _, vh = np.linalg.svd(np.asarray(constraints), full_matrices=True)
     null_space = jnp.asarray(vh[constraint_rank:].T, dtype=matrix.dtype)
-    particular = jnp.linalg.lstsq(constraints, constraint_values, rcond=rcond)[0]
+    constraint_dtype = jnp.result_type(constraints, constraint_values)
+    constraint_operator = DenseLinearOperator(constraints.astype(constraint_dtype))
+    particular = solve(
+        MinimumNormProblem(constraint_operator),
+        constraint_values.astype(constraint_dtype),
+        policy=LinearSolvePolicy(
+            DenseSVD(),
+            rank=RankPolicy(
+                relative_cutoff=rcond,
+                require_full_rank=True,
+            ),
+            failure=FailurePolicy("error"),
+        ),
+    ).value
     if null_space.shape[1] == 0:
         return particular
     reduced_matrix = matrix @ null_space
@@ -370,7 +395,20 @@ def _constrained_lstsq(
             "B-spline fitting system is underdetermined or rank deficient after constraints."
         )
     reduced_rhs = right_hand_side - matrix @ particular
-    correction = jnp.linalg.lstsq(reduced_matrix, reduced_rhs, rcond=rcond)[0]
+    reduced_dtype = jnp.result_type(reduced_matrix, reduced_rhs)
+    reduced_operator = DenseLinearOperator(reduced_matrix.astype(reduced_dtype))
+    correction = solve(
+        LeastSquaresProblem(reduced_operator),
+        reduced_rhs.astype(reduced_dtype),
+        policy=LinearSolvePolicy(
+            DenseSVD(),
+            rank=RankPolicy(
+                relative_cutoff=rcond,
+                require_full_rank=True,
+            ),
+            failure=FailurePolicy("error"),
+        ),
+    ).value
     return particular + null_space @ correction
 
 
@@ -494,7 +532,15 @@ def fit_bspline(
         rank, condition = _rank_and_condition(system, plan_.rcond)
         if rank != grid_.coefficient_count:
             raise ValueError("Exact B-spline interpolation system is rank deficient.")
-        coefficients_flat = jnp.linalg.solve(system, right_hand_side)
+        solve_dtype = jnp.result_type(system, right_hand_side)
+        coefficients_flat = solve(
+            LinearSystem(DenseLinearOperator(system.astype(solve_dtype))),
+            right_hand_side.astype(solve_dtype),
+            policy=LinearSolvePolicy(
+                DenseLU(),
+                failure=FailurePolicy("error"),
+            ),
+        ).value
     else:
         square_root_weights = jnp.sqrt(weights_)
         system = basis * square_root_weights[:, None]

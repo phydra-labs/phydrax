@@ -30,7 +30,9 @@ def test_ragged_time_series_data_constraint_matches_exact_observations():
         "u",
         domain.component(),
         values,
-        sampling=phx.domain.PointSampling(12, layout=SampleLayout((("data", "t"),)), design="uniform"),
+        sampling=phx.domain.PointSampling(
+            12, layout=SampleLayout((("data", "t"),)), design="uniform"
+        ),
         selection="observation_uniform",
         label="trajectory_data",
     )
@@ -54,7 +56,9 @@ def test_ragged_time_series_data_constraint_linear_interpolation():
         "u",
         domain.component(),
         values,
-        sampling=phx.domain.PointSampling(16, layout=SampleLayout((("data", "t"),)), design="uniform"),
+        sampling=phx.domain.PointSampling(
+            16, layout=SampleLayout((("data", "t"),)), design="uniform"
+        ),
         selection="case_time_uniform",
         interpolation="linear",
     )

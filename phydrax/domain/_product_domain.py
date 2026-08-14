@@ -35,7 +35,9 @@ class ProductDomain(Domain):
                 overlap = candidate_labels.intersection(existing.labels)
                 if not overlap:
                     continue
-                if candidate.labels == existing.labels and candidate.same_support(existing):
+                if candidate.labels == existing.labels and candidate.same_support(
+                    existing
+                ):
                     duplicate = True
                     break
                 raise ValueError(
@@ -122,7 +124,6 @@ class ProductDomain(Domain):
                 terms.append(self.component({label: FixedEnd()}))
                 continue
             raise TypeError(
-                "boundary() is not defined for factor type "
-                f"{type(factor).__name__}."
+                f"boundary() is not defined for factor type {type(factor).__name__}."
             )
         return ComponentSum(tuple(terms))

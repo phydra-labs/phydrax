@@ -168,9 +168,7 @@ class Robin(AbstractResidualCondition):
             raise ValueError("mode must be 'reverse' or 'forward'.")
         self.fields = _fields(field)
         self.on = on
-        self.dirichlet_coefficient = _condition_value(
-            dirichlet_coefficient, on, 0.0
-        )
+        self.dirichlet_coefficient = _condition_value(dirichlet_coefficient, on, 0.0)
         self.neumann_coefficient = _condition_value(neumann_coefficient, on, 0.0)
         self.target = _condition_value(target, on, 0.0)
         self.normal = on.normal(var=var)

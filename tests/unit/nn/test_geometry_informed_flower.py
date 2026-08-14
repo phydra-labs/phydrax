@@ -141,7 +141,9 @@ def test_geometry_informed_flower_projects_explicit_hard_latent_support(support_
     assert jnp.all(jnp.isfinite(output))
     assert jnp.array_equal(diagnostics.latent_mask, expected_mask)
     assert jnp.allclose(diagnostics.latent_support, support_values)
-    assert isinstance(diagnostics.processor, phx.nn.operator.architectures.FlowerDiagnostics)
+    assert isinstance(
+        diagnostics.processor, phx.nn.operator.architectures.FlowerDiagnostics
+    )
     assert len(diagnostics.processor.blocks) == 3
 
 
@@ -195,8 +197,12 @@ def test_geometry_informed_flower_propagates_case_conditions_and_diagnostics():
 
     assert output.shape == (2, 5)
     assert jnp.max(jnp.abs(output[0] - output[1])) > 1e-8
-    assert isinstance(diagnostics, phx.nn.operator.architectures.GeometryOperatorDiagnostics)
-    assert isinstance(diagnostics.processor, phx.nn.operator.architectures.FlowerDiagnostics)
+    assert isinstance(
+        diagnostics, phx.nn.operator.architectures.GeometryOperatorDiagnostics
+    )
+    assert isinstance(
+        diagnostics.processor, phx.nn.operator.architectures.FlowerDiagnostics
+    )
     assert diagnostics.processor.level_shapes == ((8,),)
     assert jnp.allclose(model(batch), output)
 

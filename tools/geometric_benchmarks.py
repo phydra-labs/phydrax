@@ -161,8 +161,6 @@ def run_benchmarks(
     }
 
 
-
-
 def _csg_setup(grid_size: int):
     Sphere = phx.geometry.analytic.Sphere
     target_source = Sphere(
@@ -259,9 +257,9 @@ def _csg_setup(grid_size: int):
         value = target_field(point)
         return value**2
 
-    target_forcing = jax.vmap(
-        lambda point: jnp.trace(jax.hessian(target_trial)(point))
-    )(pde_points)
+    target_forcing = jax.vmap(lambda point: jnp.trace(jax.hessian(target_trial)(point)))(
+        pde_points
+    )
     return {
         "target": target,
         "sharp_field": sharp_field,
@@ -315,11 +313,15 @@ def _fit_csg(setup, strategy: str, seed: int, steps: int):
             jnp.sqrt(corrected_second) + 1e-8
         )
         return (
-            parameters_,
-            first_moment,
-            second_moment,
-            iteration,
-        ), value, gradient
+            (
+                parameters_,
+                first_moment,
+                second_moment,
+                iteration,
+            ),
+            value,
+            gradient,
+        )
 
     if strategy == "sharp":
         widths = jnp.zeros((steps,))
@@ -343,8 +345,6 @@ def _fit_csg(setup, strategy: str, seed: int, steps: int):
         "remaining_training_seconds": remaining_seconds,
         "final_width": widths[-1],
     }
-
-
 
 
 def _csg_metric_functions(setup, geometry: str, width: jax.Array):
@@ -374,9 +374,9 @@ def _csg_record(setup, strategy: str, seed: int, fit, *, geometry: str):
                 width=width,
             )
         )
-    success = (
-        final_sharp["parameter_recovery_error"] < 0.08
-    ) & (final_sharp["containment_error"] < 0.02)
+    success = (final_sharp["parameter_recovery_error"] < 0.08) & (
+        final_sharp["containment_error"] < 0.02
+    )
     return {
         "strategy": strategy,
         "evaluation_geometry": geometry,
@@ -408,9 +408,7 @@ def _csg_record_metrics(setup, parameters, *, geometry: str, width: jax.Array):
     boundary_trial = boundary_values * (
         1.0 + 0.2 * jnp.sum(setup["boundary_points"] ** 2, axis=-1)
     )
-    boundary_error = jnp.sum(
-        jnp.where(mask, jnp.abs(boundary_trial), 0.0)
-    ) / count
+    boundary_error = jnp.sum(jnp.where(mask, jnp.abs(boundary_trial), 0.0)) / count
     containment = jnp.mean(
         (field(setup["training_points"]) <= 0.0)
         != (setup["target_training_field"] <= 0.0)
@@ -419,9 +417,9 @@ def _csg_record_metrics(setup, parameters, *, geometry: str, width: jax.Array):
     def trial(point):
         return field(point) ** 2
 
-    forcing = jax.vmap(
-        lambda point: jnp.trace(jax.hessian(trial)(point))
-    )(setup["pde_points"])
+    forcing = jax.vmap(lambda point: jnp.trace(jax.hessian(trial)(point)))(
+        setup["pde_points"]
+    )
     pde_residual = forcing - setup["target_forcing"]
     target = setup["target_parameters"]
     parameter_error = jnp.minimum(
@@ -440,21 +438,19 @@ def _csg_record_metrics(setup, parameters, *, geometry: str, width: jax.Array):
         axis=-1,
     )
     right_points = left_points.at[:, 0].set(switch + delta)
-    left_jacobian = jax.jacfwd(
-        lambda candidate: field_for(candidate, left_points)
-    )(parameters)
-    right_jacobian = jax.jacfwd(
-        lambda candidate: field_for(candidate, right_points)
-    )(parameters)
+    left_jacobian = jax.jacfwd(lambda candidate: field_for(candidate, left_points))(
+        parameters
+    )
+    right_jacobian = jax.jacfwd(lambda candidate: field_for(candidate, right_points))(
+        parameters
+    )
     switch_jacobian = jnp.concatenate((left_jacobian, right_jacobian), axis=0)
     singular_values = jnp.linalg.svd(switch_jacobian, compute_uv=False)
     condition = singular_values[0] / jnp.maximum(
         singular_values[-1],
         jnp.finfo(singular_values.dtype).eps,
     )
-    jump = jnp.linalg.norm(right_jacobian - left_jacobian) / jnp.sqrt(
-        right_jacobian.size
-    )
+    jump = jnp.linalg.norm(right_jacobian - left_jacobian) / jnp.sqrt(right_jacobian.size)
     return {
         "sharp_zero_set_error": zero_set,
         "containment_error": containment,
@@ -535,6 +531,7 @@ def run_csg_continuation(
         "success_by_strategy": success_by_strategy,
         "records": records,
     }
+
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(

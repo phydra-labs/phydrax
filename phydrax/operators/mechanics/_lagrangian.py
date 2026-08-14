@@ -87,9 +87,7 @@ def euler_lagrange(
 
     _require_factor(lagrangian, configuration_var, role="Configuration")
     _require_factor(lagrangian, velocity_var, role="Velocity")
-    configuration_dimension = lagrangian.domain.coordinate(
-        configuration_var
-    ).event_size
+    configuration_dimension = lagrangian.domain.coordinate(configuration_var).event_size
     velocity_dimension = lagrangian.domain.coordinate(velocity_var).event_size
     if configuration_dimension != velocity_dimension:
         raise ValueError(

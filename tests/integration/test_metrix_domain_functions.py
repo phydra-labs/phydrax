@@ -8,7 +8,9 @@ from phydrax._frozendict import frozendict
 
 
 def _polar_problem():
-    domain = phx.domain.GeometryDomain(phx.geometry.Square(center=(2.0, 0.0), side=2.0).compile())
+    domain = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(2.0, 0.0), side=2.0).compile()
+    )
     chart = phx.metrix.CoordinateChart("polar", ("r", "theta"))
     metric = phx.metrix.diagonal_metric(
         lambda q: jnp.array([1.0, q[0] ** 2]),
@@ -79,7 +81,9 @@ def test_laplace_beltrami_matches_unit_sphere_eigenfunction():
         3,
     )
     metric = embedded.induced_metric()
-    domain = phx.domain.GeometryDomain(phx.geometry.Square(center=(1.5, 0.0), side=2.0).compile())
+    domain = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(1.5, 0.0), side=2.0).compile()
+    )
     scalar = domain.Function("x")(lambda q: jnp.sin(q[0]) * jnp.cos(q[1]))
     points = _points([[0.6, -0.7], [1.1, 0.4], [2.2, 0.8]])
 
@@ -158,7 +162,10 @@ def test_metric_aware_fokker_planck_constraint_threads_metric_to_residual():
         condition,
         phx.integration.fixed(realization),
     )
-    solver = phx.solver.FunctionalSolver(functions={"p": density}, terms=(constraint,), )
+    solver = phx.solver.FunctionalSolver(
+        functions={"p": density},
+        terms=(constraint,),
+    )
 
     assert solver.loss(key=jr.key(6)) < 1e-20
 
@@ -181,6 +188,9 @@ def test_riemannian_residual_runs_through_functional_solver():
         condition,
         phx.integration.fixed(realization),
     )
-    solver = phx.solver.FunctionalSolver(functions={"u": field}, terms=(constraint,), )
+    solver = phx.solver.FunctionalSolver(
+        functions={"u": field},
+        terms=(constraint,),
+    )
 
     assert solver.loss(key=jr.key(4)) < 1e-20

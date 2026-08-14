@@ -112,9 +112,7 @@ def main() -> None:
         lambda value: value.values,
         repeats,
     )
-    diagnostics = phx.transport.dynamic.bridge_path_law_diagnostics(
-        result, path_sample
-    )
+    diagnostics = phx.transport.dynamic.bridge_path_law_diagnostics(result, path_sample)
     record = {
         "scenario": "exact-finite-state-schrodinger-bridge",
         "states": states,
@@ -126,9 +124,7 @@ def main() -> None:
         "iterations": int(result.diagnostics.num_iterations),
         "endpoint_residual": float(result.diagnostics.endpoint_residual),
         "path_kl": float(result.diagnostics.path_kl),
-        "empirical_marginal_residual": float(
-            diagnostics.empirical_marginal_residual
-        ),
+        "empirical_marginal_residual": float(diagnostics.empirical_marginal_residual),
         "reference_process": result.provenance.reference_process,
         "approximation": result.provenance.approximation,
     }

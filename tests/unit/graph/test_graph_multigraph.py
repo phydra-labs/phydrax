@@ -145,7 +145,9 @@ def test_query_graph_operator_result_can_be_used_as_graph_domain():
     )(_source_graph())
     domain = phx.domain.GraphDomain(out)
     targets = domain.component({"graph": query.target_nodes_component()})
-    batch = targets.sample(phx.domain.PointSampling(1, layout=phx.domain.SampleLayout((("graph",),))))
+    batch = targets.sample(
+        phx.domain.PointSampling(1, layout=phx.domain.SampleLayout((("graph",),)))
+    )
 
     @domain.Function("graph")
     def predicted(node):
@@ -201,7 +203,9 @@ def test_query_encode_process_decode_result_can_be_used_as_graph_domain():
     )(_source_graph())
     domain = phx.domain.GraphDomain(out)
     targets = domain.component({"graph": decoder_query.target_nodes_component()})
-    batch = targets.sample(phx.domain.PointSampling(1, layout=phx.domain.SampleLayout((("graph",),))))
+    batch = targets.sample(
+        phx.domain.PointSampling(1, layout=phx.domain.SampleLayout((("graph",),)))
+    )
 
     @domain.Function("graph")
     def prediction(node):

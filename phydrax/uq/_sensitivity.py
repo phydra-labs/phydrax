@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from math import isfinite
-from typing import Any, Literal
+from typing import Any, cast, Literal
 
 import coordax as cx
 import equinox as eqx
@@ -1023,6 +1023,7 @@ def experiment_design_objective(
     """Evaluate a guarded A-, D-, E-, or mutual-information design objective."""
     penalty = _validate_regularization(regularization)
     if callable(information):
+        action = cast(Callable[[Array], ArrayLike], information)
         if dimension is None:
             raise ValueError(
                 "dimension is required for a matrix-free information action."
@@ -1033,7 +1034,7 @@ def experiment_design_objective(
                 "dimension must be positive and no larger than max_dimension."
             )
         basis = jnp.eye(size)
-        matrix = jax.vmap(lambda vector: jnp.asarray(information(vector)))(basis).T
+        matrix = jax.vmap(lambda vector: jnp.asarray(action(vector)))(basis).T
         method_id = "matrix_free_actions_materialized"
         approximation = "exact_guarded_materialization"
     else:

@@ -676,11 +676,7 @@ def domain_codifferential(
     first = domain_hodge_star(form, metric, orientation=orientation)
     derivative = domain_exterior_derivative(first)
     result = domain_hodge_star(derivative, metric, orientation=orientation)
-    exponent = (
-        form.chart.dimension * (form.degree + 1)
-        + metric.signature.index
-        + 1
-    )
+    exponent = form.chart.dimension * (form.degree + 1) + metric.signature.index + 1
     sign = -1 if exponent % 2 else 1
     coefficients = DomainFunction(
         domain=result.coefficients.domain,
@@ -739,13 +735,10 @@ def domain_maxwell_residuals(
 ) -> DomainMaxwellResiduals:
     r"""Compose ``dF - M`` and ``delta F + J_flat`` on four-dimensional spacetime."""
     if not isinstance(field_strength, DomainDifferentialForm):
-        raise TypeError(
-            "domain_maxwell_residuals requires a DomainDifferentialForm."
-        )
+        raise TypeError("domain_maxwell_residuals requires a DomainDifferentialForm.")
     if field_strength.chart.dimension != 4 or field_strength.degree != 2:
         raise ValueError(
-            "Maxwell field strength must be a degree-2 form on a "
-            "four-dimensional chart."
+            "Maxwell field strength must be a degree-2 form on a four-dimensional chart."
         )
     if not isinstance(metric, LorentzianMetric):
         raise TypeError("domain_maxwell_residuals requires a LorentzianMetric.")

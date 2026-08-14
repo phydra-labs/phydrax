@@ -18,9 +18,9 @@ with the `@` operator:
 ```python
 import phydrax as phx
 
-geom = phx.domain.Interval1d(0.0, 1.0)        # label "x"
-time = phx.domain.TimeInterval(0.0, 2.0)    # label "t" (alias of ScalarInterval)
-domain = geom @ time                        # labels ("x", "t")
+geom = phx.domain.Interval1d(0.0, 1.0)  # label "x"
+time = phx.domain.TimeInterval(0.0, 2.0)  # label "t" (alias of ScalarInterval)
+domain = geom @ time  # labels ("x", "t")
 ```
 
 For non-time scalar axes, use `ScalarInterval(start, end, label="...")`.
@@ -82,9 +82,11 @@ features = phx.domain.HyperRectangle(
     label="x",
 )
 
+
 @features.Function("x")
 def u(x):
     return jnp.sum(x)
+
 
 points = jnp.array(
     [
@@ -95,9 +97,11 @@ points = jnp.array(
 component = features.component()
 batch = component.points(points)
 
+
 @features.Function("x")
 def observed(x):
     return jnp.sum(x)
+
 
 observation = phx.conditions.Observation("u", component, observed)
 source = phx.integration.fixed(
@@ -127,9 +131,11 @@ rows = jnp.asarray([[0.0, 1.0], [1.0, 2.0], [2.0, 4.0]])
 targets = rows[:, 0] + 2.0 * rows[:, 1]
 dataset_domain = phx.domain.DatasetDomain(rows)
 
+
 @dataset_domain.Function("data")
 def u(row):
     return row[0] + 2.0 * row[1]
+
 
 term = phx.terms.SupervisedDatasetTerm(
     "u",
@@ -182,9 +188,11 @@ layout = phx.domain.SampleLayout((("data", "t"),))
 sampling = phx.domain.PointSampling(8, layout=layout)
 batch = component.sample(sampling, key=jr.key(0))
 
+
 @trajectory_domain.Function("data", "t")
 def u(data, t):
     return data[0] + t
+
 
 values = u(batch)
 
@@ -452,12 +460,8 @@ measure:
 ```py
 import phydrax as phx
 
-target = phx.integration.over(
-    cad.component({"x": phx.domain.Boundary()})
-)
-plan = phx.integration.FixedQuadraturePlan(
-    phx.integration.GaussLegendreRule(6)
-)
+target = phx.integration.over(cad.component({"x": phx.domain.Boundary()}))
+plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(6))
 surface_measure = phx.integration.integrate(1.0, target, plan).value
 ```
 
@@ -471,14 +475,16 @@ geometry that you *relabel* as momentum.
 ```python
 import phydrax as phx
 
-x = phx.domain.Interval1d(0.0, 1.0)              # label "x"
+x = phx.domain.Interval1d(0.0, 1.0)  # label "x"
 p = phx.domain.Interval1d(-2.0, 2.0).relabel("p")  # momentum axis, label "p"
 
-phase = x @ p                                  # labels ("x", "p")
+phase = x @ p  # labels ("x", "p")
+
 
 @phase.Function("x", "p")
 def f(x, p):
     return x[0] ** 2 + p[0] ** 2
+
 
 layout = phx.domain.SampleLayout((("x", "p"),))  # paired (x,p) samples
 batch = phase.component().sample(phx.domain.PointSampling(256, layout=layout))
@@ -494,18 +500,18 @@ import phydrax as phx
 
 x = phx.domain.Interval1d(0.0, 1.0)
 p = phx.domain.Interval1d(-2.0, 2.0).relabel("p")
-t = phx.domain.TimeInterval(0.0, 5.0)          # label "t"
+t = phx.domain.TimeInterval(0.0, 5.0)  # label "t"
 
-phase_time = x @ p @ t                         # labels ("x", "p", "t")
+phase_time = x @ p @ t  # labels ("x", "p", "t")
+
 
 @phase_time.Function("x", "p", "t")
 def f(x, p, t):
     return (x[0] ** 2 + p[0] ** 2) * (1.0 + t)
 
+
 layout = phx.domain.SampleLayout((("x", "p", "t"),))
-batch = phase_time.component().sample(
-    phx.domain.PointSampling(512, layout=layout)
-)
+batch = phase_time.component().sample(phx.domain.PointSampling(512, layout=layout))
 val = f(batch)
 ```
 
@@ -516,9 +522,7 @@ For multi-dimensional momentum, relabel a 2D/3D geometry:
 ```python
 import phydrax as phx
 
-x = phx.domain.GeometryDomain(
-    phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
-)
+x = phx.domain.GeometryDomain(phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile())
 p = phx.domain.GeometryDomain(
     phx.geometry.Square(center=(0.0, 0.0), side=6.0).compile(),
     label="p",

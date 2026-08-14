@@ -86,7 +86,7 @@ class AbstractLieGroup(StrictModule):
     """Minimal group, Lie-algebra, and trivialization contract."""
 
     group_id: AbstractAttribute[str]
-    point_shape: AbstractAttribute[tuple[int, ...]]
+    point_shape: AbstractAttribute[tuple[int, int]]
 
     @abstractmethod
     def identity(self, *, dtype: Any = jnp.float64) -> Array:
@@ -144,7 +144,7 @@ class SpecialOrthogonalGroup(AbstractLieGroup):
     tolerance: float = eqx.field(static=True)
     manifold: SpecialOrthogonalManifold
     group_id: str = eqx.field(static=True)
-    point_shape: tuple[int, ...] = eqx.field(static=True)
+    point_shape: tuple[int, int] = eqx.field(static=True)
 
     def __init__(self, dimension: int, /, *, tolerance: float = 1e-6):
         dimension_value = int(dimension)
@@ -219,7 +219,7 @@ class SpecialEuclideanGroup(AbstractLieGroup):
     tolerance: float = eqx.field(static=True)
     rotation_group: SpecialOrthogonalGroup
     group_id: str = eqx.field(static=True)
-    point_shape: tuple[int, ...] = eqx.field(static=True)
+    point_shape: tuple[int, int] = eqx.field(static=True)
 
     def __init__(self, spatial_dimension: int, /, *, tolerance: float = 1e-6):
         dimension = int(spatial_dimension)

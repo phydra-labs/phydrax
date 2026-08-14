@@ -48,9 +48,13 @@ def _validate_specs(
         if not key:
             raise ValueError(f"Cochain residual {name} names must be non-empty.")
         if not isinstance(spec, CochainFieldSpec):
-            raise TypeError(f"Cochain residual {name} spec {key!r} is not a CochainFieldSpec.")
+            raise TypeError(
+                f"Cochain residual {name} spec {key!r} is not a CochainFieldSpec."
+            )
         if spec.complex_side != "primal":
-            raise ValueError("CochainResidualProgram currently supports primal fields only.")
+            raise ValueError(
+                "CochainResidualProgram currently supports primal fields only."
+            )
         expected = "invariant" if spec.degree == 0 else "signed"
         if spec.cell_orientation != expected:
             raise ValueError(

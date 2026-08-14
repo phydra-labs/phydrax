@@ -34,8 +34,6 @@ RaggedTimeSeriesHardInterpolation = Literal["linear", "cubic_hermite"]
 RaggedTimeSeriesHardGate = Literal["sin2", "sin4"]
 
 
-
-
 def _validate_components(components: Sequence[int] | None, /) -> tuple[int, ...] | None:
     if components is None:
         return None
@@ -71,8 +69,6 @@ def _blend_components(
     mask = jnp.zeros((width,), dtype=float).at[component_idx].set(1.0)
     mask = mask.reshape((1,) * (free_arr.ndim - 1) + (width,))
     return free_arr + mask * (hard_arr - free_arr)
-
-
 
 
 class _RaggedTimeSeriesHardAnsatz(StrictModule, BatchEvaluator):

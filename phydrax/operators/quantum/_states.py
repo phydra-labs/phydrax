@@ -162,7 +162,9 @@ def _state_observable_operation(
     *,
     operation: Literal["expectation", "variance"],
 ) -> DomainFunction:
-    if not isinstance(state, DomainFunction) or not isinstance(observable, DomainFunction):
+    if not isinstance(state, DomainFunction) or not isinstance(
+        observable, DomainFunction
+    ):
         raise TypeError(f"{operation} expects state and observable DomainFunctions.")
     domain, deps, promoted, positions = join_function_arguments(state, observable)
     return DomainFunction(

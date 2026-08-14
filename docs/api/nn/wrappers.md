@@ -73,12 +73,16 @@ import phydrax as phx
 
 key = jr.key(0)
 
+
 def stack_pair(inp, *, key=None):
     del key
     a, b = inp
     return jnp.stack([a, b])
 
-model = phx.nn.models.EquinoxStructuredModel(stack_pair, in_size=2, out_size=2, layout="passthrough")
+
+model = phx.nn.models.EquinoxStructuredModel(
+    stack_pair, in_size=2, out_size=2, layout="passthrough"
+)
 y = model((1.0, 2.0), key=key)
 assert y.shape == (2,)
 ```

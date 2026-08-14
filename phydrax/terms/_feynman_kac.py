@@ -133,7 +133,9 @@ class FeynmanKacRegressionTerm(AbstractSamplingTerm):
             _validate_batch(labels, problem, plan)
         elif callable(labels):
             if plan.refresh_mode != "resample":
-                raise ValueError("Callable label providers require refresh_mode='resample'.")
+                raise ValueError(
+                    "Callable label providers require refresh_mode='resample'."
+                )
             fixed_labels = None
             label_provider = labels
         else:

@@ -388,9 +388,7 @@ class SpectralDiscretization(StrictModule, NonTrainableState):
                 stiffness_times_physical
                 - mass_times_physical * np.asarray(values)[None, :]
             )
-            stiffness_scale = float(
-                np.max(np.asarray(abs(stiffness_sparse).sum(axis=1)))
-            )
+            stiffness_scale = float(np.max(np.asarray(abs(stiffness_sparse).sum(axis=1))))
             mass_scale = float(np.max(np.asarray(abs(mass_sparse).sum(axis=1))))
             vector_norm = np.linalg.norm(physical, axis=0)
             denominator = (
@@ -495,13 +493,10 @@ def _basis_matrix(
         columns.append(jnp.ones_like(coordinate))
         frequency = 1
         while len(columns) < modes:
-            columns.append(
-                jnp.sqrt(2.0) * jnp.cos(2.0 * jnp.pi * frequency * coordinate)
-            )
+            columns.append(jnp.sqrt(2.0) * jnp.cos(2.0 * jnp.pi * frequency * coordinate))
             if len(columns) < modes:
                 columns.append(
-                    jnp.sqrt(2.0)
-                    * jnp.sin(2.0 * jnp.pi * frequency * coordinate)
+                    jnp.sqrt(2.0) * jnp.sin(2.0 * jnp.pi * frequency * coordinate)
                 )
             frequency += 1
     elif basis == "sine":
@@ -522,10 +517,7 @@ def _basis_matrix(
             columns.append(z)
         for degree in range(2, modes):
             columns.append(
-                (
-                    (2.0 * degree - 1.0) * z * columns[-1]
-                    - (degree - 1.0) * columns[-2]
-                )
+                ((2.0 * degree - 1.0) * z * columns[-1] - (degree - 1.0) * columns[-2])
                 / float(degree)
             )
     else:
@@ -554,11 +546,11 @@ class BasisTransformPlan(StrictModule, NonTrainableState):
         *,
         max_construction_bytes: int = _DEFAULT_CONSTRUCTION_BYTES,
     ):
-        nodes_value = tuple(jnp.asarray(value, dtype=float).reshape((-1,)) for value in nodes)
+        nodes_value = tuple(
+            jnp.asarray(value, dtype=float).reshape((-1,)) for value in nodes
+        )
         quadrature_value = tuple(
-            None
-            if value is None
-            else jnp.asarray(value, dtype=float).reshape((-1,))
+            None if value is None else jnp.asarray(value, dtype=float).reshape((-1,))
             for value in quadrature_weights
         )
         periodic_value = tuple(bool(value) for value in periodic)
@@ -606,16 +598,13 @@ class BasisTransformPlan(StrictModule, NonTrainableState):
         for axis, weights, basis_matrix in zip(
             nodes_value, quadrature_value, synthesis, strict=True
         ):
-            integration_weights = (
-                _trapezoid_weights(axis) if weights is None else weights
-            )
+            integration_weights = _trapezoid_weights(axis) if weights is None else weights
             weighted_basis = integration_weights[:, None] * basis_matrix
             gram = basis_matrix.T @ weighted_basis
             regularizer = jnp.finfo(basis_matrix.dtype).eps * jnp.trace(gram)
             analysis.append(
                 jnp.linalg.solve(
-                    gram
-                    + regularizer * jnp.eye(gram.shape[0], dtype=gram.dtype),
+                    gram + regularizer * jnp.eye(gram.shape[0], dtype=gram.dtype),
                     weighted_basis.T,
                 )
             )

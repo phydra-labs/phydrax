@@ -87,6 +87,7 @@ def _update_checksum(digest, value) -> None:
     digest.update(str(array.shape).encode("utf-8"))
     digest.update(array.tobytes(order="C"))
 
+
 def _update_tree_checksum(digest, value) -> None:
     for leaf in jax.tree_util.tree_leaves(value):
         if isinstance(leaf, (jax.Array, np.ndarray)):
@@ -146,9 +147,7 @@ def scenario_checksum(scenario: OperatorBenchmarkScenario, /) -> str:
         "nondimensional_parameters": tuple(
             asdict(parameter) for parameter in scenario.nondimensional_parameters
         ),
-        "reference_evidence": _reference_evidence_contract(
-            scenario.reference_evidence
-        ),
+        "reference_evidence": _reference_evidence_contract(scenario.reference_evidence),
         "evaluations": tuple(
             {
                 "name": evaluation.name,
@@ -281,9 +280,7 @@ def aggregate_benchmark_results(
                 peak_memory_bytes_mean=(
                     None if not memory_values else float(np.mean(memory_values))
                 ),
-                convergence_rate=float(
-                    np.mean([result.converged for result, _ in rows])
-                ),
+                convergence_rate=float(np.mean([result.converged for result, _ in rows])),
             )
         )
     return tuple(aggregates)

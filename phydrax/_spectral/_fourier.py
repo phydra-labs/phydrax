@@ -113,9 +113,7 @@ def phase_shift_fourier_coefficients(
     for axis, size in zip(axes, source_shape, strict=True):
         if size % 2 == 0:
             result = resize_fourier_axis(result, axis, size + 1)
-    for local_axis, (axis, offset) in enumerate(
-        zip(axes, offsets_value, strict=True)
-    ):
+    for local_axis, (axis, offset) in enumerate(zip(axes, offsets_value, strict=True)):
         raw_offset = jnp.asarray(offset)
         if raw_offset.ndim != 0:
             raise ValueError(
@@ -131,12 +129,7 @@ def phase_shift_fourier_coefficients(
         )
         size = int(result.shape[axis])
         modes = jnp.fft.fftfreq(size).astype(result.real.dtype) * size
-        angle = (
-            2.0
-            * jnp.asarray(jnp.pi, dtype=result.real.dtype)
-            * modes
-            * offset_value
-        )
+        angle = 2.0 * jnp.asarray(jnp.pi, dtype=result.real.dtype) * modes * offset_value
         phase = jnp.exp(1j * angle).astype(result.dtype)
         shape = [1] * result.ndim
         shape[axis] = size

@@ -48,7 +48,10 @@ def test_dimension_100_ornstein_uhlenbeck_score_improves_over_zero_field():
         samples,
         policy=ScoreMatchingPolicy("implicit", num_probes=2),
     )
-    solver = phx.solver.FunctionalSolver(functions={"score": score}, terms=(objective,), )
+    solver = phx.solver.FunctionalSolver(
+        functions={"score": score},
+        terms=(objective,),
+    )
     trained = solver.solve(
         num_iter=100,
         optim=optax.adam(0.05),
@@ -61,10 +64,7 @@ def test_dimension_100_ornstein_uhlenbeck_score_improves_over_zero_field():
     exact = -heldout / variance
     zero_error = jnp.sqrt(jnp.mean(exact**2))
     predicted = jnp.asarray(
-        [
-            trained.functions["score"].func(state, jnp.asarray(time))
-            for state in heldout
-        ]
+        [trained.functions["score"].func(state, jnp.asarray(time)) for state in heldout]
     )
     trained_error = jnp.sqrt(jnp.mean((predicted - exact) ** 2))
 

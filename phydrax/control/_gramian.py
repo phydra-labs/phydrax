@@ -10,12 +10,16 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.scipy as jsp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
-from ..solver._matrix_functions import matrix_exponential_action, MatrixFunctionPolicy
+from ..linalg import (
+    ArraySpace,
+    FunctionLinearOperator,
+    matrix_exponential_action,
+    MatrixFunctionPolicy,
+)
 from ._lyapunov import (
     finite_continuous_lyapunov,
     finite_discrete_lyapunov,
@@ -572,57 +576,6 @@ def _checked_action(
     return result
 
 
-def _complex_arnoldi_exponential_action(
-    action: Callable[[Array], ArrayLike],
-    vector: Array,
-    time: Array,
-    /,
-    *,
-    policy: MatrixFunctionPolicy,
-) -> Array:
-    if policy.method not in ("auto", "arnoldi"):
-        raise ValueError(
-            "Complex Gramian actions require an Arnoldi matrix-function policy."
-        )
-    size = int(vector.size)
-    iterations = min(policy.num_matvecs, size)
-    norm = jnp.linalg.norm(vector)
-    safe_norm = jnp.where(norm > 0.0, norm, 1.0)
-    basis = jnp.zeros((size, iterations + 1), dtype=vector.dtype)
-    basis = basis.at[:, 0].set(vector / safe_norm)
-    hessenberg = jnp.zeros((iterations + 1, iterations), dtype=vector.dtype)
-
-    def body(index, carry):
-        vectors, projected = carry
-        image = _checked_action(
-            action,
-            vectors[:, index],
-            owner="generator action",
-            expected_shape=vector.shape,
-        )
-        coefficients = jnp.conj(vectors.T) @ image
-        residual = image - vectors @ coefficients
-        if policy.reorthogonalization == "full":
-            correction = jnp.conj(vectors.T) @ residual
-            coefficients = coefficients + correction
-            residual = residual - vectors @ correction
-        residual_norm = jnp.linalg.norm(residual)
-        projected = projected.at[:, index].set(coefficients)
-        projected = projected.at[index + 1, index].set(residual_norm)
-        next_vector = jnp.where(
-            residual_norm > jnp.finfo(vector.real.dtype).eps,
-            residual / jnp.where(residual_norm > 0.0, residual_norm, 1.0),
-            jnp.zeros_like(residual),
-        )
-        vectors = vectors.at[:, index + 1].set(next_vector)
-        return vectors, projected
-
-    basis, hessenberg = jax.lax.fori_loop(0, iterations, body, (basis, hessenberg))
-    exponential = jsp.linalg.expm(time * hessenberg[:iterations, :iterations])
-    approximation = safe_norm * (basis[:, :iterations] @ exponential[:, 0])
-    return jnp.where(norm > 0.0, approximation, jnp.zeros_like(approximation))
-
-
 def _exponential_action(
     action: Callable[[Array], ArrayLike],
     vector: Array,
@@ -631,9 +584,19 @@ def _exponential_action(
     *,
     policy: MatrixFunctionPolicy,
 ) -> Array:
-    if jnp.issubdtype(vector.dtype, jnp.complexfloating):
-        return _complex_arnoldi_exponential_action(action, vector, time, policy=policy)
-    return matrix_exponential_action(action, vector, time, policy=policy)
+    space = ArraySpace(vector.shape, dtype=vector.dtype)
+    operator = FunctionLinearOperator(
+        action,
+        source=space,
+        target=space,
+        closure_convert=False,
+    )
+    return matrix_exponential_action(
+        operator,
+        vector,
+        time,
+        policy=policy,
+    ).value
 
 
 def _continuous_action_quadrature(
@@ -702,7 +665,7 @@ def _continuous_gramian_action(
     if accuracy < 0.0:
         raise ValueError("action_tolerance must be non-negative.")
     selected_policy = (
-        MatrixFunctionPolicy("arnoldi", num_matvecs=krylov_count)
+        MatrixFunctionPolicy("arnoldi", max_dimension=krylov_count)
         if policy is None
         else policy
     )
@@ -733,7 +696,7 @@ def _continuous_gramian_action(
     finite = jnp.all(jnp.isfinite(approximation)) & jnp.isfinite(error)
     krylov_complete = (
         selected_policy.method in ("auto", "arnoldi")
-        and selected_policy.num_matvecs >= value.size
+        and selected_policy.max_dimension >= value.size
     )
     converged = finite & (relative_error <= accuracy) & krylov_complete
     status = jnp.where(
@@ -758,7 +721,7 @@ def _continuous_gramian_action(
             horizon=duration,
             terms=jnp.asarray(order, dtype=jnp.int32),
             quadrature_order=order,
-            krylov_dimension=selected_policy.num_matvecs,
+            krylov_dimension=selected_policy.max_dimension,
             method="gauss-legendre-krylov-action",
             kind=kind,
             system_type="continuous",

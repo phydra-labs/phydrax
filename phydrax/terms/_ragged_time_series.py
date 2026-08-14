@@ -476,9 +476,7 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
         if not isinstance(
             domain, (TrajectoryDatasetDomain, IrregularTrajectoryDatasetDomain)
         ):
-            raise TypeError(
-                "RaggedTimeSeriesDataTerm domain is not a trajectory domain."
-            )
+            raise TypeError("RaggedTimeSeriesDataTerm domain is not a trajectory domain.")
         return domain
 
     @property

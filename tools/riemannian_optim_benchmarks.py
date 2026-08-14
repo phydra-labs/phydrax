@@ -100,12 +100,8 @@ def _benchmark_case(
         "final_objective": float(objective(parameters)),
         "gradient_norm": float(metrics.gradient_norm),
         "tangent_step_norm": float(metrics.tangent_step_norm),
-        "adaptive_denominator_minimum": float(
-            metrics.adaptive_denominator_minimum
-        ),
-        "adaptive_denominator_maximum": float(
-            metrics.adaptive_denominator_maximum
-        ),
+        "adaptive_denominator_minimum": float(metrics.adaptive_denominator_minimum),
+        "adaptive_denominator_maximum": float(metrics.adaptive_denominator_maximum),
         "constraint_residual_max": float(
             geometry.maximum_constraint_residual(parameters)
         ),
@@ -477,9 +473,7 @@ def _qualification_case(
         "optimizer": optimizer_name,
         "initial_objective": float(objective(initial)),
         "final_objective": float(objective(point)),
-        "constraint_residual_max": float(
-            geometry.maximum_constraint_residual(point)
-        ),
+        "constraint_residual_max": float(geometry.maximum_constraint_residual(point)),
         "gradient_norm": float(metrics.gradient_norm),
         "accepted_step_count": accepted_count,
         "restart_count": restart_count,
@@ -563,9 +557,7 @@ def run_smoke_benchmarks() -> dict[str, Any]:
     """Execute every benchmark once and enforce basic progress and invariants."""
     report = run_benchmarks(repeats=1)
     for record in (
-        report["records"]
-        + report["adaptive_records"]
-        + report["line_search_records"]
+        report["records"] + report["adaptive_records"] + report["line_search_records"]
     ):
         if record["final_objective"] >= record["initial_objective"]:
             raise RuntimeError(f"{record['name']} objective did not decrease.")

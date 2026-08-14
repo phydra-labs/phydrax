@@ -58,6 +58,17 @@ Fourier evaluation, sparse Smolyak approximation, sparse Gaussian processes,
 and stochastic estimators remain specialized methods rather than sparse
 storage types. See [API → Operators → Interpolation](api/operators/interpolation.md).
 
+Finite-dimensional algebra above those storage kernels is shared through
+`phydrax.linalg`: paired array/PyTree/block spaces, composable explicit and
+matrix-free operators, exact/least-squares/minimum-norm problem contracts,
+deterministic capability-based planning, reusable factorizations, and portable
+status, diagnostics, and provenance. Provider-neutral sparse derivative plans
+compile known structural patterns natively or use ASDEX once for global pattern
+detection and optimized coloring. Repeated Jacobian and Hessian evaluation is
+native JAX and produces ordinary sparse coordinate operators. See
+[API → Linear algebra runtime](api/linalg.md) and
+[API → Sparse derivatives](api/sparse_derivatives.md).
+
 ### Differentiation: AD / jets / FD / basis
 
 Differential operators support multiple backends (`backend="ad"|"jet"|"fd"|"basis"`) and autodiff modes
@@ -295,10 +306,12 @@ with the analytic choice \(g(x,y)=x^2+y^2\) (so the exact solution is \(u^\star(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )  # [-1,1]^2, label "x"
 
+
     # Exact solution / boundary target g(x,y) = x^2 + y^2
     @geom.Function("x")
     def g(x):
         return x[0] ** 2 + x[1] ** 2
+
 
     # Trainable field u_theta(x)
     model = phx.nn.models.MLP(
@@ -330,13 +343,9 @@ with the analytic choice \(g(x,y)=x^2+y^2\) (so the exact solution is \(u^\star(
         phx.integration.mean_over(boundary_condition.on),
         phx.domain.PointSampling(32, layout=layout),
     )
-    boundary_term = phx.terms.ResidualPenalty(
-        boundary_condition, boundary_source, scale=10.0
-    )
+    boundary_term = phx.terms.ResidualPenalty(boundary_condition, boundary_source, scale=10.0)
 
-    solver = phx.solver.FunctionalSolver(
-        functions={"u": u}, terms=[pde_term, boundary_term]
-    )
+    solver = phx.solver.FunctionalSolver(functions={"u": u}, terms=[pde_term, boundary_term])
     solver = solver.solve(num_iter=20, optim=optax.adam(1e-3), seed=0)
     ```
 
@@ -356,11 +365,15 @@ which maps \(u\mapsto\tilde u\).
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )
 
+
     @geom.Function("x")
     def g(x):
         return x[0] ** 2 + x[1] ** 2
 
-    model = phx.nn.models.MLP(in_size=2, out_size="scalar", width_size=16, depth=2, key=jr.key(0))
+
+    model = phx.nn.models.MLP(
+        in_size=2, out_size="scalar", width_size=16, depth=2, key=jr.key(0)
+    )
     u = geom.Model("x")(model)
     functions = {"u": u}
 
@@ -409,9 +422,7 @@ interior = geom.component()
 batch = interior.points({"x": anchors})
 data_condition = phx.conditions.Observation("u", interior, g)
 data_source = phx.integration.fixed(
-    phx.integration.from_samples(
-        phx.integration.mean_over(data_condition.on), batch
-    )
+    phx.integration.from_samples(phx.integration.mean_over(data_condition.on), batch)
 )
 data_term = phx.terms.ObservationPenalty(data_condition, data_source)
 ```
@@ -681,6 +692,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - [Cookbook](cookbook/index.md)
 - [Domains and sampling](guides_domain.md)
 - [Differential operators](guides_differential.md)
+- [Linear algebra runtime](api/linalg.md)
 - [Metrix: differentiable geometry](api/metrix/index.md)
 - [Positive-definite kernels](api/kernels.md)
 - [Integrals and measures](guides_integrals.md)
@@ -701,6 +713,8 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - `phydrax.domain` for geometry, time, and sampling.
 - `phydrax.sampling` for typed reference designs and capability inspection.
 - `phydrax.sparse` for JAX-native relations, routing kernels, and sparse linear actions.
+- `phydrax.linalg` for paired vector spaces, composable operators, linear
+  problems, solve policies, reusable plans, diagnostics, and backend provenance.
 - `phydrax.metrix` for charts, tensors, metrics, curvature, and stochastic geometry.
 - `phydrax.data_utils` for CSV loading, array scaling, and case-index splits.
 - `phydrax.conditions` for residual, moment, observation, and physical conditions.

@@ -71,8 +71,6 @@ def _initial_label(component: DomainComponent, evolution_var: str, /) -> str | N
     return None
 
 
-
-
 class InteriorAnchors(StrictModule):
     r"""Interior data source for enforced data overlays.
 
@@ -1672,9 +1670,7 @@ class _FieldEnforcementPipeline(StrictModule):
         boundary_overlays: list[_BoundaryBlendOverlay] = []
         if boundary_specs:
             # For now: single geometry boundary label for all boundary constraints.
-            labels = [
-                _geometry_boundary_labels(c.component) for c in boundary_specs
-            ]
+            labels = [_geometry_boundary_labels(c.component) for c in boundary_specs]
             for ls in labels:
                 if len(ls) != 1:
                     raise ValueError(
@@ -1752,11 +1748,7 @@ class _FieldEnforcementPipeline(StrictModule):
                 var=var,
                 targets=targets_by_order,
             )
-            initial_specs = [
-                c
-                for c in initial_specs
-                if c.initial_target is None
-            ]
+            initial_specs = [c for c in initial_specs if c.initial_target is None]
 
         self.initial_overlay = initial_overlay
         self.initial = tuple(initial_specs)

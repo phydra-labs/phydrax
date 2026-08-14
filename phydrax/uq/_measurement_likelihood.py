@@ -35,8 +35,8 @@ class LinearizedGaussianMeasurementLikelihood(AbstractPosteriorTerm):
     targets: Array
     input_covariance: Array | None
     observation_covariance: Array | None
-    predict_fn: Callable[[PyTree[Any], PyTree[Array]], ArrayLike | cx.Field] = (
-        eqx.field(static=True)
+    predict_fn: Callable[[PyTree[Any], PyTree[Array]], ArrayLike | cx.Field] = eqx.field(
+        static=True
     )
     input_covariance_fn: Callable[[PyTree[Any]], ArrayLike] | None = eqx.field(
         static=True
@@ -288,14 +288,11 @@ class LinearizedGaussianMeasurementLikelihood(AbstractPosteriorTerm):
         input_hermitian = 0.5 * (input_covariance + input_covariance.T)
         input_eigenvalues, input_eigenvectors = jnp.linalg.eigh(input_hermitian)
         input_factors = (
-            jnp.sqrt(jnp.maximum(input_eigenvalues, 0.0))[:, None]
-            * input_eigenvectors.T
+            jnp.sqrt(jnp.maximum(input_eigenvalues, 0.0))[:, None] * input_eigenvectors.T
         )
         propagated_factors = jax.vmap(pushforward)(input_factors)
         pushed_covariance = propagated_factors.T @ propagated_factors
-        observation_hermitian = 0.5 * (
-            observation_covariance + observation_covariance.T
-        )
+        observation_hermitian = 0.5 * (observation_covariance + observation_covariance.T)
         effective_covariance = (
             observation_hermitian
             + pushed_covariance
@@ -310,14 +307,9 @@ class LinearizedGaussianMeasurementLikelihood(AbstractPosteriorTerm):
             & jnp.all(jnp.isfinite(target))
             & jnp.all(jnp.isfinite(input_covariance))
             & jnp.all(jnp.isfinite(observation_covariance))
+            & (jnp.max(jnp.abs(input_covariance - input_covariance.T)) <= input_tolerance)
             & (
-                jnp.max(jnp.abs(input_covariance - input_covariance.T))
-                <= input_tolerance
-            )
-            & (
-                jnp.max(
-                    jnp.abs(observation_covariance - observation_covariance.T)
-                )
+                jnp.max(jnp.abs(observation_covariance - observation_covariance.T))
                 <= observation_tolerance
             )
             & (jnp.min(input_eigenvalues) >= -input_tolerance)
@@ -383,9 +375,9 @@ def _validate_fixed_covariance(
     if bool(jnp.any(~jnp.isfinite(matrices))):
         raise ValueError(f"{owner} must be finite.")
     tolerances = jax.vmap(_covariance_tolerance)(matrices)
-    symmetry_errors = jax.vmap(
-        lambda matrix: jnp.max(jnp.abs(matrix - matrix.T))
-    )(matrices)
+    symmetry_errors = jax.vmap(lambda matrix: jnp.max(jnp.abs(matrix - matrix.T)))(
+        matrices
+    )
     if bool(jnp.any(symmetry_errors > tolerances)):
         raise ValueError(f"{owner} must be symmetric within tolerance.")
     hermitian = 0.5 * (matrices + jnp.swapaxes(matrices, -1, -2))

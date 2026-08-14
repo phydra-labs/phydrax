@@ -291,9 +291,7 @@ def test_coreset_fill_distance_guard_retains_the_current_population():
 
 
 def test_coreset_collocation_is_declared_conditional():
-    support = phx.sampling.collocation.collocation_policy_support(
-        CoresetCollocation()
-    )
+    support = phx.sampling.collocation.collocation_policy_support(CoresetCollocation())
 
     assert support.name == "coreset"
     assert support.tier == "conditional"

@@ -69,11 +69,13 @@ def test_raw_predictive_sinkhorn_divergence_retains_all_three_solves_and_gradien
         epsilon=1.0,
     )
     gradient = jax.grad(
-        lambda shift: phx.uq.predictive_sinkhorn_divergence(
-            source,
-            source + shift,
-            epsilon=1.0,
-        ).value
+        lambda shift: (
+            phx.uq.predictive_sinkhorn_divergence(
+                source,
+                source + shift,
+                epsilon=1.0,
+            ).value
+        )
     )(jnp.asarray(0.4))
 
     assert identity.converged & translated.converged
@@ -355,7 +357,9 @@ def test_soft_quantile_functional_has_finite_interior_gradient_and_validates_eps
     gradient = jax.grad(lambda candidate: term.loss({"values": candidate}))(values)
     assert jnp.all(jnp.isfinite(gradient))
     assert jnp.linalg.norm(gradient) > 0.0
-    assert not jnp.any(term.term_evaluation({"values": values}).diagnostics["endpoint_mask"])
+    assert not jnp.any(
+        term.term_evaluation({"values": values}).diagnostics["endpoint_mask"]
+    )
 
     for invalid in (0.0, -0.1, jnp.nan, jnp.inf):
         with pytest.raises(ValueError, match="epsilon must be finite and positive"):

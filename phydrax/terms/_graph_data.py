@@ -35,7 +35,6 @@ def _component_kind_for_constraint(
     return graph_component_kind(component.spec.selection_for(graph_label))
 
 
-
 def GraphSupervisedTerm(
     field: str,
     component: DomainComponent,
@@ -56,18 +55,14 @@ def GraphSupervisedTerm(
     `GraphTarget(...)`.
     """
     if not isinstance(component.domain, GraphDatasetDomain):
-        raise TypeError(
-            "GraphSupervisedTerm requires a GraphDatasetDomain component."
-        )
+        raise TypeError("GraphSupervisedTerm requires a GraphDatasetDomain component.")
     if reduction not in ("mean", "integral"):
         raise ValueError("reduction must be 'mean' or 'integral'.")
     domain = component.domain
     kind = _component_kind_for_constraint(component, domain.label)
     target = GraphTarget(domain, values, component_kind=kind)
     condition = Observation(str(field), component, target, label=label)
-    integration_target = (
-        mean_over(component) if reduction == "mean" else over(component)
-    )
+    integration_target = mean_over(component) if reduction == "mean" else over(component)
     source = per_step(integration_target, sampling)
     if isinstance(weight, DomainFunction):
         return ObservationPenalty(
@@ -120,9 +115,7 @@ def GraphTrajectorySupervisedTerm(
     )
 
     condition = Observation(str(field), component, target, label=label)
-    integration_target = (
-        mean_over(component) if reduction == "mean" else over(component)
-    )
+    integration_target = mean_over(component) if reduction == "mean" else over(component)
     source = per_step(integration_target, sampling)
     if isinstance(weight, DomainFunction):
         return ObservationPenalty(

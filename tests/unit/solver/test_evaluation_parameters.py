@@ -24,11 +24,15 @@ def _scalar_solver(initial: float, *, target: float = 0.0, integrand=None):
         integrand=density,
         materialization_policy="fixed",
     )
-    return phx.solver.FunctionalSolver(functions={"u": field}, terms=(objective,), )
+    return phx.solver.FunctionalSolver(
+        functions={"u": field},
+        terms=(objective,),
+    )
 
 
 def _parameter_value(solver):
     return jnp.asarray(solver["u"].func()).reshape(())
+
 
 def test_public_solve_rejects_negative_iterations_before_optimizer_dispatch():
     with pytest.raises(ValueError, match="num_iter must be non-negative"):
@@ -39,7 +43,6 @@ def test_public_zero_iteration_solve_returns_original_solver():
     solver = _scalar_solver(1.0)
 
     assert solver.solve(num_iter=0, optim=object()) is solver
-
 
 
 def test_standard_optimizer_best_score_keeps_its_preupdate_parameters():

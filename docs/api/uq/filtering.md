@@ -65,16 +65,20 @@ prior = phx.stochastic.GaussianStatePrior(
     prior_id="driven-prior",
 )
 
+
 def transition_matrix(t0, t1, context):
     del t0, t1
     return (1.0 + 0.05 * context.transition_end_input[0]).reshape((1, 1))
 
+
 def transition_offset(t0, t1, context):
     return context.args["gain"] * (t1 - t0) * context.transition_start_input
+
 
 def observation_matrix(time, context):
     del time
     return (1.0 + 0.1 * context.observation_input[0]).reshape((1, 1))
+
 
 transition = phx.stochastic.LinearGaussianTransitionKernel(
     transition_matrix,

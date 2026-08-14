@@ -16,14 +16,26 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..linalg import (
+    ArraySpace,
+    FunctionLinearOperator,
+    matrix_exponential_action,
+    MatrixFunctionPolicy,
+)
+from ..linalg.krylov import KrylovBreakdownStatus
 from ..stochastic import AbstractRoughControl, LogSignatureControl, PrimitiveBasis
-from ._matrix_functions import matrix_exponential_action, MatrixFunctionPolicy
 from ._rough import (
     _fractional_hurst,
     AbstractRoughSolver,
     RoughDifferentialProblem,
 )
 from ._rough_lift import lift_rough_vector_fields, LiftedRoughVectorFields
+
+
+_LINEAR_LOGODE_SUCCESS = 0
+_LINEAR_LOGODE_UNCONVERGED = 1
+_LINEAR_LOGODE_BREAKDOWN = 2
+_LINEAR_LOGODE_NONFINITE = 3
 
 
 def _class_identifier(value: Any, /) -> str:
@@ -37,9 +49,7 @@ def _callable_identifier(value: Callable[..., Any], /) -> str:
     return _class_identifier(value)
 
 
-def _update_configuration_digest(
-    digest: hashlib._Hash, value: Any, /
-) -> None:
+def _update_configuration_digest(digest: hashlib._Hash, value: Any, /) -> None:
     digest.update(_class_identifier(value).encode("utf-8"))
     digest.update(b"\0")
     for leaf in jax.tree.leaves(value):
@@ -136,9 +146,7 @@ def _automatic_log_field(
             drift = jnp.asarray(problem.drift(physical_time, state, problem.args))
             ambient = jnp.concatenate((drift[..., None], rough_fields), axis=-1)
             local_fields = jax.vmap(
-                lambda tangent: _projected_local_field(
-                    retraction, local, tangent
-                ),
+                lambda tangent: _projected_local_field(retraction, local, tangent),
                 in_axes=-1,
                 out_axes=-1,
             )(ambient)
@@ -165,13 +173,9 @@ def _automatic_log_field(
         def local_fields(_time, local_flat, _args):
             local = local_flat.reshape(problem.state_shape)
             state = retraction(local)
-            ambient = jnp.asarray(
-                problem.vector_fields(left_time, state, problem.args)
-            )
+            ambient = jnp.asarray(problem.vector_fields(left_time, state, problem.args))
             pulled_back = jax.vmap(
-                lambda tangent: _projected_local_field(
-                    retraction, local, tangent
-                ),
+                lambda tangent: _projected_local_field(retraction, local, tangent),
                 in_axes=-1,
                 out_axes=-1,
             )(ambient)
@@ -354,9 +358,7 @@ class LogODE(AbstractRoughSolver):
                     path_coefficients,
                 ),
             )
-            states = jnp.concatenate(
-                (problem.initial_state[None, ...], stepped), axis=0
-            )
+            states = jnp.concatenate((problem.initial_state[None, ...], stepped), axis=0)
             return states, statuses, stats
 
         if log_control.sample_shape:
@@ -433,9 +435,7 @@ def _lift_linear_operators(
             lifted.append(operators[word[0]])
         else:
             left_index, right_index = children
-            lifted.append(
-                _CommutatorOperator(lifted[left_index], lifted[right_index])
-            )
+            lifted.append(_CommutatorOperator(lifted[left_index], lifted[right_index]))
     return tuple(lifted)
 
 
@@ -474,9 +474,9 @@ class LinearLogODE(AbstractRoughSolver):
         self.solver_name = "LinearLogODE"
         self.solver_id = (
             "rough-solver:linear-logode:"
-            f"{resolved_policy.method}:{resolved_policy.num_matvecs}:"
-            f"{resolved_policy.reorthogonalization}:"
-            f"{resolved_policy.differentiation}"
+            f"{resolved_policy.method}:{resolved_policy.max_dimension}:"
+            f"{resolved_policy.orthogonalization}:"
+            f"{resolved_policy.error_tolerance}"
         )
         self.required_depth = 1
 
@@ -488,9 +488,7 @@ class LinearLogODE(AbstractRoughSolver):
     ) -> tuple[Array, Array, Mapping[str, Array]]:
         log_control = _validate_log_control(problem, control)
         if problem.time_dependent:
-            raise ValueError(
-                "LinearLogODE only supports autonomous explicit operators."
-            )
+            raise ValueError("LinearLogODE only supports autonomous explicit operators.")
         if not problem.geometry.trivial:
             raise ValueError("LinearLogODE requires a trivial Euclidean state geometry.")
         if len(self.operators) != log_control.dimension:
@@ -501,46 +499,80 @@ class LinearLogODE(AbstractRoughSolver):
             image = jnp.asarray(operator(problem.initial_state))
             if image.shape != problem.state_shape:
                 raise ValueError("Each linear operator must preserve the state shape.")
-        lifted = _lift_linear_operators(
-            self.operators, log_control.primitive_basis
-        )
+        lifted = _lift_linear_operators(self.operators, log_control.primitive_basis)
 
         def one_path(path_coefficients):
             def advance(state, coefficients):
                 combined = _WeightedOperator(lifted, coefficients)
-                next_state = matrix_exponential_action(
+                space = ArraySpace(state.shape, dtype=state.dtype)
+                canonical_operator = FunctionLinearOperator(
                     combined,
+                    source=space,
+                    target=space,
+                    closure_convert=False,
+                )
+                result = matrix_exponential_action(
+                    canonical_operator,
                     state,
                     jnp.asarray(1.0, dtype=state.dtype),
                     policy=self.matrix_function_policy,
                 )
-                return next_state, next_state
+                finite = (
+                    jnp.all(jnp.isfinite(result.value))
+                    & jnp.all(jnp.isfinite(result.error_estimate))
+                    & jnp.all(jnp.isfinite(result.residual_estimate))
+                )
+                admissible_breakdown = (
+                    (result.breakdown_status == int(KrylovBreakdownStatus.NONE))
+                    | (result.breakdown_status == int(KrylovBreakdownStatus.HAPPY))
+                    | (
+                        result.breakdown_status
+                        == int(KrylovBreakdownStatus.RANK_DEFICIENT_START)
+                    )
+                )
+                status = jnp.where(
+                    ~finite,
+                    _LINEAR_LOGODE_NONFINITE,
+                    jnp.where(
+                        ~admissible_breakdown,
+                        _LINEAR_LOGODE_BREAKDOWN,
+                        jnp.where(
+                            result.converged,
+                            _LINEAR_LOGODE_SUCCESS,
+                            _LINEAR_LOGODE_UNCONVERGED,
+                        ),
+                    ),
+                ).astype(jnp.int32)
+                return result.value, (result.value, status)
 
-            _, stepped = jax.lax.scan(
+            _, (stepped, statuses) = jax.lax.scan(
                 advance, problem.initial_state, path_coefficients
             )
-            return jnp.concatenate(
-                (problem.initial_state[None, ...], stepped), axis=0
-            )
+            states = jnp.concatenate((problem.initial_state[None, ...], stepped), axis=0)
+            return states, statuses
 
         if log_control.sample_shape:
             path_count = int(np.prod(log_control.sample_shape))
             coefficients = log_control.log_coefficients.reshape(
                 (path_count, log_control.num_steps, log_control.primitive_basis.size)
             )
-            states = jax.vmap(one_path)(coefficients).reshape(
+            flat_states, flat_statuses = jax.vmap(one_path)(coefficients)
+            states = flat_states.reshape(
                 log_control.sample_shape
                 + (log_control.num_steps + 1,)
                 + problem.state_shape
             )
+            statuses = flat_statuses.reshape(
+                log_control.sample_shape + (log_control.num_steps,)
+            )
         else:
-            states = one_path(log_control.log_coefficients)
+            states, statuses = one_path(log_control.log_coefficients)
         interval_shape = log_control.sample_shape + (log_control.num_steps,)
-        statuses = jnp.zeros(interval_shape, dtype=jnp.int32)
+        accepted = statuses == _LINEAR_LOGODE_SUCCESS
         statistics = {
             "num_steps": jnp.ones(interval_shape, dtype=jnp.int32),
-            "num_accepted_steps": jnp.ones(interval_shape, dtype=jnp.int32),
-            "num_rejected_steps": jnp.zeros(interval_shape, dtype=jnp.int32),
+            "num_accepted_steps": accepted.astype(jnp.int32),
+            "num_rejected_steps": (~accepted).astype(jnp.int32),
         }
         return states, statuses, statistics
 

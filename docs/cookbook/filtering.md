@@ -17,9 +17,7 @@ import phydrax as phx
 observations = phx.stochastic.ObservationSequence(
     jnp.asarray([0.25, 0.5, 0.75, 1.0]),
     jnp.asarray([[0.2], [0.4], [0.7], [0.9]]),
-    observation_mask=jnp.asarray(
-        [[True], [True], [False], [True]]
-    ),
+    observation_mask=jnp.asarray([[True], [True], [False], [True]]),
     case_ids=("experiment-0",),
     sequence_id="position-sensors-v1",
 )
@@ -72,20 +70,25 @@ forcing = phx.stochastic.SampledStateSpaceInput(
     input_id="position-forcing-v1",
 )
 
+
 def transition_matrix(t0, t1, context):
     del t0, t1
     return (1.0 + 0.05 * context.transition_end_input[0]).reshape((1, 1))
 
+
 def transition_offset(t0, t1, context):
     return context.args["gain"] * (t1 - t0) * context.transition_start_input
+
 
 def observation_matrix(time, context):
     del time
     return (1.0 + 0.1 * context.observation_input[0]).reshape((1, 1))
 
+
 def observation_offset(time, context):
     del time
     return context.args["sensor_bias"] * context.observation_input
+
 
 driven_transition = phx.stochastic.LinearGaussianTransitionKernel(
     transition_matrix,
@@ -199,16 +202,21 @@ decoding, expected transition counts, and arbitrary expected transition statisti
 ```python
 finite_states = jnp.asarray([[0], [1]])
 
+
 def chain_rates(time, state, args):
     del time, args
-    return jnp.asarray([
-        jnp.where(state[0] == 0, 0.8, 0.0),
-        jnp.where(state[0] == 1, 0.5, 0.0),
-    ])
+    return jnp.asarray(
+        [
+            jnp.where(state[0] == 0, 0.8, 0.0),
+            jnp.where(state[0] == 1, 0.5, 0.0),
+        ]
+    )
+
 
 def chain_jump(state, channel, mark, args):
     del state, mark, args
     return jnp.where(channel == 0, jnp.asarray([1]), jnp.asarray([0]))
+
 
 chain = phx.stochastic.JumpProcess(
     chain_rates,
@@ -226,18 +234,19 @@ finite_prior = phx.stochastic.CategoricalStatePrior(
     prior_id="two-state-prior",
 )
 
+
 def finite_log_prob(value, state, time, mask, context):
     del time, context
     residual = (value - state.astype(float)) / 0.25
     terms = -0.5 * residual**2 - jnp.log(0.25 * jnp.sqrt(2.0 * jnp.pi))
     return jnp.sum(jnp.where(mask, terms, 0.0))
 
+
 finite_observation = phx.stochastic.CallableObservationModel(
     lambda state, time, context: state.astype(float),
     finite_log_prob,
     lambda key, state, time, sample_shape, context: (
-        state.astype(float)
-        + 0.25 * jr.normal(key, tuple(sample_shape) + (1,))
+        state.astype(float) + 0.25 * jr.normal(key, tuple(sample_shape) + (1,))
     ),
     state_shape=(1,),
     observation_shape=(1,),
@@ -261,12 +270,14 @@ finite_smoother = phx.uq.finite_state_backward_smoother(finite_filter)
 finite_path = phx.uq.finite_state_viterbi(finite_filter)
 finite_counts = phx.uq.finite_state_expected_transition_counts(finite_smoother)
 
+
 def changed(previous_state, state, t0, t1, context):
     del t0, t1
     return {
         "changed": (previous_state[0] != state[0]).astype(float),
         "case_index": context.case_index.astype(float),
     }
+
 
 finite_statistics = phx.uq.finite_state_expected_sufficient_statistics(
     finite_smoother, changed
@@ -324,10 +335,12 @@ rb_nonlinear_prior = phx.stochastic.CategoricalStatePrior(
     prior_id="motion-regime-prior",
 )
 
+
 def sample_motion_regime(key, regime, t0, t1, context):
     del t0, t1, context
     switches = jr.bernoulli(key, 0.1)
     return jnp.where(switches, 1 - regime, regime)
+
 
 def motion_regime_log_prob(next_regime, regime, t0, t1, context):
     del t0, t1, context
@@ -339,6 +352,7 @@ def motion_regime_log_prob(next_regime, regime, t0, t1, context):
         jnp.where(switches, jnp.log(0.1), -jnp.inf),
     )
 
+
 rb_nonlinear_transition = phx.stochastic.CallableTransitionKernel(
     sample_motion_regime,
     state_shape=(1,),
@@ -347,14 +361,17 @@ rb_nonlinear_transition = phx.stochastic.CallableTransitionKernel(
     log_prob_fn=motion_regime_log_prob,
 )
 
+
 def initial_linear_state(regime, args):
     del args
     return (0.25 * regime.astype(float), jnp.asarray([[1.0]]))
+
 
 def conditional_linear_transition(previous_regime, regime, t0, t1, context):
     del previous_regime, t0, t1, context
     drift = jnp.where(regime == 0, -0.05, 0.15)
     return jnp.asarray([[1.0]]), drift, jnp.asarray([[0.05]])
+
 
 def conditional_observation(regime, time, context):
     del regime, time, context
@@ -363,6 +380,7 @@ def conditional_observation(regime, time, context):
         jnp.zeros(1),
         phx.uq.DiagonalCovariance(jnp.asarray([0.1])),
     )
+
 
 rb_model = phx.uq.RaoBlackwellizedStateSpaceModel(
     rb_nonlinear_prior,
@@ -430,9 +448,7 @@ backward_simulated = phx.uq.particle_backward_simulation(
     particles,
     sample_shape=(4,),
 )
-particle_prediction = phx.uq.particle_filter_predictive(
-    jr.key(5), particles
-)
+particle_prediction = phx.uq.particle_filter_predictive(jr.key(5), particles)
 ```
 
 `full_particle_smoother` uses the complete realized genealogy and needs no transition

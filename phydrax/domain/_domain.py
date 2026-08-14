@@ -19,8 +19,8 @@ if TYPE_CHECKING:
 
 class Domain(StrictModule):
     """Semantic domain composed from one or more independent joint factors."""
-    __strict_abstract__ = True
 
+    __strict_abstract__ = True
 
     @property
     @abc.abstractmethod
@@ -67,6 +67,7 @@ class Domain(StrictModule):
             self.coordinate(label).compatible(other.coordinate(label))
             for label in self.labels
         )
+
     def is_subdomain_of(self, other: "Domain", /) -> bool:
         """Return whether every complete factor is preserved by ``other``."""
         if not isinstance(other, Domain):
@@ -80,7 +81,6 @@ class Domain(StrictModule):
             if len(matches) != 1 or not factor.same_support(matches[0]):
                 return False
         return True
-
 
     def join(self, other: "Domain", /) -> "Domain":
         from ._product_domain import ProductDomain
@@ -129,6 +129,7 @@ class Domain(StrictModule):
         if not kept:
             raise ValueError("Cannot drop all labels from a domain.")
         return self.restrict(kept)
+
     def component(
         self,
         spec: Any = None,
@@ -277,8 +278,8 @@ class Domain(StrictModule):
 
 class JointFactor(Domain):
     """Atomic support that may own one or several intrinsically coupled coordinates."""
-    __strict_abstract__ = True
 
+    __strict_abstract__ = True
 
     @property
     def joint_factors(self) -> tuple["JointFactor", ...]:
@@ -288,6 +289,7 @@ class JointFactor(Domain):
     @abc.abstractmethod
     def coordinate_specs(self) -> tuple[CoordinateSpec, ...]:
         raise NotImplementedError
+
     @abc.abstractmethod
     def bind_component(
         self,
@@ -296,7 +298,6 @@ class JointFactor(Domain):
     ) -> Any:
         """Validate factor selections and bind their base measure."""
         raise NotImplementedError
-
 
     @abc.abstractmethod
     def _same_factor_support(self, other: object, /) -> bool:

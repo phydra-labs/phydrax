@@ -53,7 +53,9 @@ def _tree_segment_reduce(
         return summed
     if reduce != "mean":
         raise ValueError("Graph pool reduce must be 'sum' or 'mean'.")
-    counts = segment_sum(jnp.ones((segment_ids.shape[0],), dtype=float), segment_ids, num_segments)
+    counts = segment_sum(
+        jnp.ones((segment_ids.shape[0],), dtype=float), segment_ids, num_segments
+    )
 
     def divide(value):
         scale = jnp.where(counts > 0, 1.0 / counts, 0.0)
@@ -73,7 +75,9 @@ def _filter_tree(tree: Any, mask: np.ndarray, /) -> Any:
     return jtu.tree_map(lambda x: jnp.asarray(x)[mask_jnp], tree)
 
 
-def _coalesce_tree(tree: Any, inverse: np.ndarray, n_unique: int, reduce: GraphPoolReduce, /) -> Any:
+def _coalesce_tree(
+    tree: Any, inverse: np.ndarray, n_unique: int, reduce: GraphPoolReduce, /
+) -> Any:
     inverse_jnp = jnp.asarray(inverse, dtype=jnp.int32)
     return _tree_segment_reduce(tree, inverse_jnp, n_unique, reduce)
 
@@ -101,7 +105,9 @@ def pool_graph_by_cluster(
     """
     graph = ensure_graph(graph, validate=False)
     if int(graph.n_node.shape[0]) != 1:
-        raise ValueError("pool_graph_by_cluster currently expects one materialized graph.")
+        raise ValueError(
+            "pool_graph_by_cluster currently expects one materialized graph."
+        )
     if graph.nodes is None:
         raise ValueError("pool_graph_by_cluster requires node features.")
     if graph.senders is None or graph.receivers is None:
@@ -145,7 +151,9 @@ def pool_graph_by_cluster(
         receivers = jnp.zeros((0,), dtype=jnp.int32)
         edges = None
         if graph.edges is not None:
-            edges = _filter_tree(graph.edges, np.zeros((int(graph.senders.shape[0]),), dtype=bool))
+            edges = _filter_tree(
+                graph.edges, np.zeros((int(graph.senders.shape[0]),), dtype=bool)
+            )
     else:
         keys = coarse_senders_np * n_cluster + coarse_receivers_np
         unique_keys, inverse = np.unique(keys, return_inverse=True)
@@ -154,7 +162,9 @@ def pool_graph_by_cluster(
         edges = None
         if graph.edges is not None:
             filtered_edges = _filter_tree(graph.edges, valid_edge_np)
-            edges = _coalesce_tree(filtered_edges, inverse, int(unique_keys.shape[0]), reduce_edges)
+            edges = _coalesce_tree(
+                filtered_edges, inverse, int(unique_keys.shape[0]), reduce_edges
+            )
 
     return GraphIR(
         nodes=nodes,

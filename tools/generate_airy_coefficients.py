@@ -30,6 +30,7 @@ def _positive_normalized_values(
         sqrt_pi * mp.exp(-zeta) * bip / fourth_root,
     )
 
+
 def _negative_normalized_values(
     coordinate: mp.mpf, lower_bound: mp.mpf
 ) -> tuple[mp.mpf, mp.mpf, mp.mpf, mp.mpf]:
@@ -76,8 +77,6 @@ def _print_coefficients(
         print(")")
 
 
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--degree", type=int, default=24)
@@ -104,7 +103,12 @@ def main() -> None:
         for angle in angles
     ]
     _print_coefficients(
-        names=("AIRY_NEGATIVE_U", "AIRY_NEGATIVE_V", "AIRY_NEGATIVE_UD", "AIRY_NEGATIVE_VD"),
+        names=(
+            "AIRY_NEGATIVE_U",
+            "AIRY_NEGATIVE_V",
+            "AIRY_NEGATIVE_UD",
+            "AIRY_NEGATIVE_VD",
+        ),
         values=negative_values,
         angles=angles,
     )

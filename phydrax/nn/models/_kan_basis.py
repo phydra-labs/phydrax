@@ -111,7 +111,7 @@ class AbstractEdgeBasis(StrictModule):
         out_size: int,
         in_size: int,
         initialization: EdgeInitialization,
-        key: Key,
+        key: Key[Array, ""],
     ) -> Any:
         """Initialize one output-by-input edge-parameter PyTree."""
 
@@ -177,7 +177,7 @@ class OrthogonalPolynomialEdgeBasis(AbstractEdgeBasis):
         out_size: int,
         in_size: int,
         initialization: EdgeInitialization,
-        key: Key,
+        key: Key[Array, ""],
     ) -> Array:
         coefficients = jnp.zeros((out_size, in_size, self.coefficient_count))
         if initialization == "identity":
@@ -319,6 +319,8 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
                     "B-spline grid-bank size must match the KAN layer input size."
                 )
             return self
+        if isinstance(self.grid, TrainableBSplineGrid):
+            return self
         if not self.per_input:
             return self
         return BSplineEdgeBasis(
@@ -334,7 +336,7 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
         out_size: int,
         in_size: int,
         initialization: EdgeInitialization,
-        key: Key,
+        key: Key[Array, ""],
     ) -> Array:
         if isinstance(self.grid, BSplineGridBank):
             if self.grid.num_grids != in_size:
@@ -589,7 +591,7 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
         out_size: int,
         in_size: int,
         initialization: EdgeInitialization,
-        key: Key,
+        key: Key[Array, ""],
     ) -> RationalBSplineEdgeParameters:
         if isinstance(self.grid, BSplineGridBank):
             if self.grid.num_grids != in_size:

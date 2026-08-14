@@ -41,10 +41,14 @@ Let \(x\in[0,1]\), \(t\in[0,T]\). In Phydrax:
     time = phx.domain.TimeInterval(0.0, T)
     domain = geom @ time
 
+
     def u0(x):
         return jnp.sin(jnp.pi * x[0])
 
-    model = phx.nn.models.MLP(in_size=2, out_size="scalar", width_size=16, depth=2, key=jr.key(0))
+
+    model = phx.nn.models.MLP(
+        in_size=2, out_size="scalar", width_size=16, depth=2, key=jr.key(0)
+    )
     u = domain.Model("x", "t")(model)
 
     layout_xt = phx.domain.SampleLayout((("x", "t"),))
@@ -55,10 +59,7 @@ Let \(x\in[0,1]\), \(t\in[0,T]\). In Phydrax:
     pde_condition = phx.conditions.Residual(
         "u",
         interior,
-        lambda f: (
-            phx.operators.dt(f, var="t")
-            - alpha * phx.operators.laplacian(f, var="x")
-        ),
+        lambda f: phx.operators.dt(f, var="t") - alpha * phx.operators.laplacian(f, var="x"),
     )
     pde = phx.terms.ResidualPenalty(
         pde_condition,
@@ -124,9 +125,10 @@ Phydrax supports:
     import jax.numpy as jnp
     import phydrax as phx
 
-    sensors = jnp.array([[0.25], [0.75]])     # M sensors in 1D
-    times = jnp.linspace(0.0, T, 51)          # T time points
-    sensor_values = jnp.zeros((2, 51))        # shape (M, T) for scalar u
+    sensors = jnp.array([[0.25], [0.75]])  # M sensors in 1D
+    times = jnp.linspace(0.0, T, 51)  # T time points
+    sensor_values = jnp.zeros((2, 51))  # shape (M, T) for scalar u
+
 
     @domain.Function("x", "t")
     def observed_temperature(x, t):
@@ -134,15 +136,14 @@ Phydrax supports:
         time_index = jnp.argmin(jnp.abs(times - t))
         return sensor_values[sensor_index, time_index]
 
+
     track_x = jnp.repeat(sensors, times.size, axis=0)
     track_t = jnp.tile(times, sensors.shape[0])
     observation_index = jnp.arange(256) % track_t.size
     observation_batch = domain.component().points(
         {"x": track_x[observation_index], "t": track_t[observation_index]}
     )
-    observation = phx.conditions.Observation(
-        "u", domain.component(), observed_temperature
-    )
+    observation = phx.conditions.Observation("u", domain.component(), observed_temperature)
     observation_source = phx.integration.fixed(
         phx.integration.from_samples(
             phx.integration.mean_over(observation.on),
@@ -171,17 +172,13 @@ periodic coordinate or a Neumann boundary condition paired with this basis.
     import jax.numpy as jnp
     import phydrax as phx
 
-    x = phx.equations.PDECoordinate(
-        "x", "space", bounds=(0.0, 1.0), periodic=False
-    )
+    x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0), periodic=False)
     t = phx.equations.PDECoordinate("t", "time", bounds=(0.0, 1.0))
     field = phx.equations.PDEField("u", coordinates=("x", "t"))
     diffusivity = phx.equations.PDEParameter("alpha", value=0.1)
     u = phx.equations.PDEExpression.field("u")
 
-    boundary_region = phx.equations.PDERegion(
-        "x-boundary", "boundary", ("x",)
-    )
+    boundary_region = phx.equations.PDERegion("x-boundary", "boundary", ("x",))
     problem = phx.equations.PDEProblemIR(
         coordinates=(x, t),
         fields=(field,),
@@ -190,8 +187,7 @@ periodic coordinate or a Neumann boundary condition paired with this basis.
             phx.equations.PDEEquation(
                 "heat",
                 u.derivative("t"),
-                phx.equations.PDEExpression.parameter("alpha")
-                * u.laplacian("x"),
+                phx.equations.PDEExpression.parameter("alpha") * u.laplacian("x"),
             ),
         ),
         conditions=(
@@ -211,9 +207,9 @@ periodic coordinate or a Neumann boundary condition paired with this basis.
     dynamics = phx.equations.compile_semidiscrete_pde(problem, space)
 
     initial = jnp.sin(jnp.pi * axis.nodes)
-    drift = jax.jit(
-        lambda state, alpha: dynamics(0.0, state, {"alpha": alpha})
-    )(initial, jnp.asarray(0.1))
+    drift = jax.jit(lambda state, alpha: dynamics(0.0, state, {"alpha": alpha}))(
+        initial, jnp.asarray(0.1)
+    )
 
     assert drift.shape == initial.shape
     assert dynamics.semilinear_drift is not None

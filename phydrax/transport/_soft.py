@@ -64,9 +64,7 @@ def soft_order_transport(
         dtype=source_values.dtype,
     )
     source_locations = _canonical_order_locations(source_values, source_probabilities)
-    target_locations = (
-        jnp.cumsum(target_probabilities) - 0.5 * target_probabilities
-    )
+    target_locations = jnp.cumsum(target_probabilities) - 0.5 * target_probabilities
     source_measure = _FiniteTransportMeasure(
         source_locations[:, None],
         source_probabilities,
@@ -159,9 +157,7 @@ def soft_sort_by(
     solver: AbstractBalancedTransportSolver | None = None,
 ) -> Array | cx.Field:
     """Differentiably reorder a same-shaped payload by a scalar criterion."""
-    criterion_data, position, dims = _data_axis(
-        criterion, axis=axis, name="criterion"
-    )
+    criterion_data, position, dims = _data_axis(criterion, axis=axis, name="criterion")
     payload_data, payload_position, payload_dims = _data_axis(
         payload, axis=axis, name="payload"
     )
@@ -263,7 +259,9 @@ def soft_topk_values(
         epsilon=epsilon,
         solver=solver,
     )
-    sorted_data = sorted_values.data if isinstance(sorted_values, cx.Field) else sorted_values
+    sorted_data = jnp.asarray(
+        sorted_values.data if isinstance(sorted_values, cx.Field) else sorted_values
+    )
     indices = jnp.arange(count - selected, count, dtype=jnp.int32)
     output = jnp.take(sorted_data, indices, axis=position)
     return _restore(output, dims)
@@ -302,7 +300,9 @@ def soft_quantile(
         epsilon=epsilon,
         solver=solver,
     )
-    sorted_data = sorted_values.data if isinstance(sorted_values, cx.Field) else sorted_values
+    sorted_data = jnp.asarray(
+        sorted_values.data if isinstance(sorted_values, cx.Field) else sorted_values
+    )
     moved = jnp.moveaxis(sorted_data, position, -1)
     moved_original = jnp.moveaxis(data, position, -1)
     weight_data = _weight_data(weights, data, position, dims=dims)

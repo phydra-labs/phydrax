@@ -28,7 +28,10 @@ DeepBSDEPredictor: TypeAlias = Callable | DomainFunction
 def _validate_paths(paths: BSDEPathBatch, problem: BSDEProblem, /) -> None:
     if not isinstance(paths, BSDEPathBatch):
         raise TypeError("Deep BSDE paths must be a BSDEPathBatch.")
-    if paths.state_shape != problem.state_shape or paths.noise_shape != problem.noise_shape:
+    if (
+        paths.state_shape != problem.state_shape
+        or paths.noise_shape != problem.noise_shape
+    ):
         raise ValueError("Deep BSDE path event shapes do not match the problem.")
     if paths.process_id != problem.process_id:
         raise ValueError("Deep BSDE path and problem process IDs do not match.")
@@ -116,7 +119,9 @@ def deep_bsde_rollout(
         raise TypeError("problem must be a BSDEProblem.")
     _validate_paths(paths, problem)
     if not callable(initial_value_predictor) or not callable(control_predictor):
-        raise TypeError("Deep BSDE initial-value and control predictors must be callable.")
+        raise TypeError(
+            "Deep BSDE initial-value and control predictors must be callable."
+        )
 
     sample_count = prod(paths.sample_shape) if paths.sample_shape else 1
     state_size = prod(problem.state_shape)
@@ -128,9 +133,7 @@ def deep_bsde_rollout(
     safe_increments = jnp.where(increment_mask, paths.wiener_increments, 0.0)
     initial_key, control_key = jr.split(key)
     initial_times = jnp.full(paths.sample_shape, paths.times[0])
-    initial_states = safe_states[
-        ..., 0, *([slice(None)] * len(problem.state_shape))
-    ]
+    initial_states = safe_states[..., 0, *([slice(None)] * len(problem.state_shape))]
     initial_values = _pointwise_values(
         initial_value_predictor,
         initial_times,
@@ -139,9 +142,7 @@ def deep_bsde_rollout(
         key=initial_key,
         output_shape=problem.output_shape,
     )
-    left_states = safe_states[
-        ..., :-1, *([slice(None)] * len(problem.state_shape))
-    ]
+    left_states = safe_states[..., :-1, *([slice(None)] * len(problem.state_shape))]
     controls = _pointwise_values(
         control_predictor,
         paths.times[:-1],
@@ -152,15 +153,11 @@ def deep_bsde_rollout(
     )
 
     initial_flat = initial_values.reshape((sample_count, output_size))
-    states_flat = left_states.reshape(
-        (sample_count, paths.num_steps, state_size)
-    )
+    states_flat = left_states.reshape((sample_count, paths.num_steps, state_size))
     controls_flat = controls.reshape(
         (sample_count, paths.num_steps, output_size, noise_size)
     )
-    increments_flat = safe_increments.reshape(
-        (sample_count, paths.num_steps, noise_size)
-    )
+    increments_flat = safe_increments.reshape((sample_count, paths.num_steps, noise_size))
 
     def step(value_flat, inputs):
         time, state_flat, control_flat, increment_flat, dt = inputs
@@ -180,9 +177,7 @@ def deep_bsde_rollout(
             return output.reshape((output_size,))
 
         generator_flat = jax.vmap(generator_at)(state_flat, value_flat, control_flat)
-        martingale_flat = jnp.einsum(
-            "son,sn->so", control_flat, increment_flat
-        )
+        martingale_flat = jnp.einsum("son,sn->so", control_flat, increment_flat)
         next_value = value_flat - dt * generator_flat + martingale_flat
         return next_value, (next_value, generator_flat, martingale_flat)
 
@@ -208,9 +203,7 @@ def deep_bsde_rollout(
     martingale_increments = jnp.moveaxis(martingale_increments, 0, 1).reshape(
         paths.sample_shape + (paths.num_steps,) + problem.output_shape
     )
-    terminal_states = safe_states[
-        ..., -1, *([slice(None)] * len(problem.state_shape))
-    ]
+    terminal_states = safe_states[..., -1, *([slice(None)] * len(problem.state_shape))]
     terminal_targets = jax.vmap(
         lambda state: jnp.asarray(problem.terminal(state, problem.args))
     )(terminal_states.reshape((-1,) + problem.state_shape)).reshape(
@@ -218,9 +211,7 @@ def deep_bsde_rollout(
     )
     if terminal_targets.shape != paths.sample_shape + problem.output_shape:
         raise ValueError("BSDE terminal condition returned an incompatible output shape.")
-    terminal_values = values[
-        ..., -1, *([slice(None)] * len(problem.output_shape))
-    ]
+    terminal_values = values[..., -1, *([slice(None)] * len(problem.output_shape))]
     terminal_residual = terminal_values - terminal_targets
     valid_paths = (
         paths.path_valid
@@ -268,9 +259,7 @@ def deep_bsde_shooting_diagnostics(
         rollout.valid_paths,
         output_shape,
     )
-    control_event_shape = rollout.controls.shape[
-        len(rollout.paths.sample_shape) + 1 :
-    ]
+    control_event_shape = rollout.controls.shape[len(rollout.paths.sample_shape) + 1 :]
     interval_valid = jnp.broadcast_to(
         rollout.valid_paths[..., None],
         rollout.paths.sample_shape + (rollout.paths.num_steps,),
@@ -391,9 +380,7 @@ class DeepBSDEShootingTerm(AbstractSamplingTerm):
     ) -> Array:
         del kwargs
         rollout = self.rollout(functions, key=key, batch=batch)
-        output_shape = rollout.terminal_residual.shape[
-            len(rollout.paths.sample_shape) :
-        ]
+        output_shape = rollout.terminal_residual.shape[len(rollout.paths.sample_shape) :]
         return self.terminal_weight * _masked_mean_square(
             rollout.terminal_residual,
             rollout.valid_paths,

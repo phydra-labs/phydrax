@@ -45,7 +45,9 @@ def test_ifno_shared_iteration_diagnostics_jit_and_query_mask():
     batch = phx.nn.operator.OperatorBatch(
         inputs={"state": phx.nn.operator.FunctionSamples(values=values, axes=(axis,))},
         queries={
-            "query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,), mask=query_mask)
+            "query": phx.nn.operator.FunctionSamples(
+                values=None, axes=(axis,), mask=query_mask
+            )
         },
         case_axes=("case",),
     )
@@ -222,8 +224,12 @@ def test_gnot_named_source_order_is_deterministic_and_heterogeneous_branches_fus
         attention_execution="dense",
         key=jr.key(4),
     )
-    first = phx.nn.operator.architectures.GNOT(in_channels={"velocity": 2, "forcing": "scalar"}, **settings)
-    reordered = phx.nn.operator.architectures.GNOT(in_channels={"forcing": "scalar", "velocity": 2}, **settings)
+    first = phx.nn.operator.architectures.GNOT(
+        in_channels={"velocity": 2, "forcing": "scalar"}, **settings
+    )
+    reordered = phx.nn.operator.architectures.GNOT(
+        in_channels={"forcing": "scalar", "velocity": 2}, **settings
+    )
     batch = _gnot_batch()
     reversed_batch = _gnot_batch(reverse=True)
     output = first(batch)
@@ -354,7 +360,9 @@ def _poseidon_batch(values, time):
             "time": phx.nn.operator.FunctionSamples(values=time),
         },
         queries={
-            "query": phx.nn.operator.FunctionSamples(values=None, axes=axes, mask=query_mask)
+            "query": phx.nn.operator.FunctionSamples(
+                values=None, axes=axes, mask=query_mask
+            )
         },
         case_axes=("case",),
     )

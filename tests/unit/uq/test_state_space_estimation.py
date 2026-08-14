@@ -261,6 +261,7 @@ def test_approximate_experiment_composes_without_discarding_particle_diagnostics
         jnp.sum(diagnostic.per_case_log_likelihood)
     )
 
+
 def test_bellman_and_rao_blackwellized_likelihood_backends_retain_diagnostics():
     _, template = _templates()
     bellman_experiment = phx.uq.StateSpaceExperiment(

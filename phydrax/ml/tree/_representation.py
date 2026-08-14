@@ -502,7 +502,9 @@ class TreeEnsemble(AbstractArrayModel):
             point_shape = tuple(values.shape[len(self.case_shape) : -1])
             points = values.reshape((math.prod(self.case_shape), -1, self.in_size))
             raw, tree_values, leaves, paths = jax.vmap(
-                lambda pts, *case_arrays: _predict_case(pts, *case_arrays, self.max_steps)
+                lambda pts, *case_arrays: _predict_case(
+                    pts, *case_arrays, max_steps=self.max_steps
+                )
             )(points, *arrays)
             if self.aggregation == "weighted_median":
                 raw = jax.vmap(_weighted_median_case)(
@@ -513,7 +515,7 @@ class TreeEnsemble(AbstractArrayModel):
             point_shape = tuple(values.shape[:-1])
             points = values.reshape((-1, self.in_size))
             raw, tree_values, leaves, paths = _predict_case(
-                points, *(a[0] for a in arrays), self.max_steps
+                points, *(a[0] for a in arrays), max_steps=self.max_steps
             )
             if self.aggregation == "weighted_median":
                 raw = _weighted_median_case(

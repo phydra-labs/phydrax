@@ -34,7 +34,9 @@ class MultiresolutionCoefficients(StrictModule):
         detail_arrays = tuple(
             tuple(jnp.asarray(band) for band in level) for level in details
         )
-        shapes = tuple(tuple(int(size) for size in shape) for shape in reconstruction_shapes)
+        shapes = tuple(
+            tuple(int(size) for size in shape) for shape in reconstruction_shapes
+        )
         fingerprint = str(transform_fingerprint).strip()
         if not detail_arrays:
             raise ValueError("Multiresolution coefficients require at least one level.")

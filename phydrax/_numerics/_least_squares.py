@@ -11,6 +11,15 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..linalg import (
+    DenseLinearOperator,
+    DenseSVD,
+    DiagonalLinearOperator,
+    LeastSquaresProblem,
+    LinearSolvePolicy,
+    RankPolicy,
+    solve,
+)
 
 
 LeastSquaresStatus: TypeAlias = Literal[0, 1, 2, 3]
@@ -244,24 +253,35 @@ def solve_normalized_least_squares(
     weighted_matrix = root_weights[:, None] * safe_matrix * active[None, :]
     weighted_response = root_weights[:, None] * safe_response
 
-    left, singular_values, right_h = jnp.linalg.svd(weighted_matrix, full_matrices=False)
+    singular_values = jnp.linalg.svd(weighted_matrix, compute_uv=False)
     resolved_rcond = _rcond(rcond, dtype, design.num_samples, design.num_features)
     largest = jnp.max(singular_values, initial=0.0)
     tolerance = largest * resolved_rcond
     retained = singular_values > tolerance
     rank = jnp.sum(retained).astype(jnp.int32)
     ridge_value = _ridge(ridge)
-    factors = jnp.where(
-        retained,
-        singular_values
-        / (singular_values**2 + jnp.asarray(ridge_value, singular_values.dtype)),
-        0.0,
+    operator = DenseLinearOperator(weighted_matrix)
+    regularizer = (
+        None
+        if ridge_value == 0.0
+        else DiagonalLinearOperator(
+            jnp.full(
+                (design.num_features,),
+                jnp.sqrt(jnp.asarray(ridge_value, dtype=_real_dtype(dtype))),
+                dtype=dtype,
+            ),
+            space=operator.source,
+        )
     )
-    projected = jnp.swapaxes(jnp.conj(left), -1, -2) @ weighted_response
-    coefficients_flat = jnp.swapaxes(jnp.conj(right_h), -1, -2) @ (
-        factors[:, None] * projected
+    linear_result = solve(
+        LeastSquaresProblem(operator, regularizer=regularizer),
+        weighted_response,
+        policy=LinearSolvePolicy(
+            DenseSVD(),
+            rank=RankPolicy(relative_cutoff=resolved_rcond),
+        ),
     )
-    coefficients_flat = coefficients_flat * active[:, None]
+    coefficients_flat = linear_result.value * active[:, None]
     prediction_flat = matrix @ coefficients_flat
     residual_flat = flat_response - prediction_flat
     weighted_residual = jnp.where(

@@ -20,38 +20,39 @@ def test_matrix_function_actions_match_dense_values_and_derivatives():
     matrix = jnp.asarray([[-1.5, 0.4], [-0.2, -0.7]])
     vector = jnp.asarray([0.8, -0.3])
     step = 0.2
-    operator = lambda value: matrix @ value
-    policy = phx.solver.MatrixFunctionPolicy("arnoldi", num_matvecs=2)
+    space = phx.linalg.ArraySpace(vector.shape, dtype=vector.dtype)
+    operator = phx.linalg.FunctionLinearOperator(
+        lambda value: matrix @ value,
+        source=space,
+        target=space,
+    )
+    policy = phx.linalg.MatrixFunctionPolicy("arnoldi", max_dimension=2)
     expected_exponential = jsp_linalg.expm(step * matrix) @ vector
     expected_phi1 = jnp.linalg.solve(
         step * matrix,
         (jsp_linalg.expm(step * matrix) - jnp.eye(2)) @ vector,
     )
 
-    exponential = phx.solver.matrix_exponential_action(
+    exponential = phx.linalg.matrix_exponential_action(
         operator,
         vector,
         step,
         policy=policy,
-    )
-    phi1 = phx.solver.matrix_phi1_action(
+    ).value
+    phi1 = phx.linalg.matrix_phi1_action(
         operator,
         vector,
         step,
         policy=policy,
-    )
+    ).value
 
     def approximate(value):
-        return phx.solver.matrix_exponential_action(
+        return phx.linalg.matrix_exponential_action(
             operator,
             value,
             step,
-            policy=phx.solver.MatrixFunctionPolicy(
-                "arnoldi",
-                num_matvecs=2,
-                differentiation="forward",
-            ),
-        )
+            policy=policy,
+        ).value
 
     tangent = jnp.asarray([-0.1, 0.5])
     _, approximate_jvp = jax.jvp(approximate, (vector,), (tangent,))
@@ -184,15 +185,19 @@ def test_exact_modal_stochastic_convolution_replays_and_matches_covariance():
 def _geometric_spde(*, duration, rate=-0.2, noise=0.7, structure="commutative"):
     discretization = _periodic_discretization(2)
     initial = jnp.asarray([0.8, 1.3])
-    spectral = phx.solver.SpectralMatrixRepresentation(
+    operator = phx.linalg.DenseLinearOperator(
+        rate * jnp.eye(2),
+        operator_id="geometric-linear-drift",
+    )
+    spectral = phx.linalg.SpectralMatrixRepresentation(
+        operator,
         jnp.full((2,), rate),
         jnp.eye(2),
         jnp.eye(2),
-        state_shape=initial.shape,
         representation_id="geometric-linear-drift",
     )
     spde = phx.solver.semidiscretize_semilinear_spde(
-        lambda state: rate * state,
+        operator,
         None,
         initial,
         discretization,

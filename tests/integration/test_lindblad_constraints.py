@@ -50,8 +50,14 @@ def test_lindblad_residual_runs_through_functional_solver():
             phx.integration.MonteCarloPlan(32),
         ),
     )
-    exact = phx.solver.FunctionalSolver(functions={"rho": exact_density}, terms=[constraint], )
-    perturbed = phx.solver.FunctionalSolver(functions={"rho": perturbed_density}, terms=[constraint], )
+    exact = phx.solver.FunctionalSolver(
+        functions={"rho": exact_density},
+        terms=[constraint],
+    )
+    perturbed = phx.solver.FunctionalSolver(
+        functions={"rho": perturbed_density},
+        terms=[constraint],
+    )
 
     loss = eqx.filter_jit(lambda solver, key: solver.loss(key=key))
     exact_loss = loss(exact, jr.key(0))

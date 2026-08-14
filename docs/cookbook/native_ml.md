@@ -65,9 +65,7 @@ selected by an outer JAX objective without an estimator callback.
 ```python
 validation_features = jnp.array([[-0.75, 0.1], [0.2, 0.4], [0.9, -0.2]])
 validation_targets = (
-    1.2
-    + 0.7 * validation_features[:, 0]
-    - 0.25 * validation_features[:, 1]
+    1.2 + 0.7 * validation_features[:, 0] - 0.25 * validation_features[:, 1]
 )
 
 

@@ -214,7 +214,7 @@ class FittedSimpleImputer(AbstractArrayModel):
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
     fill_values: Array
-    missing_values: Number = eqx.field(static=True)
+    missing_values: Number | float = eqx.field(static=True)
     missing_is_nan: bool = eqx.field(static=True)
     add_indicator: bool = eqx.field(static=True)
     input_schema: FeatureSchema = eqx.field(static=True)
@@ -226,7 +226,7 @@ class FittedSimpleImputer(AbstractArrayModel):
         fill_values: Array,
         /,
         *,
-        missing_values: Number,
+        missing_values: Number | float,
         missing_is_nan: bool,
         add_indicator: bool,
         input_schema: FeatureSchema,
@@ -244,8 +244,9 @@ class FittedSimpleImputer(AbstractArrayModel):
         self.case_shape = tuple(case_shape)
 
     def _missing(self, values: Array, mask: Any | None) -> Array:
-        missing = (
-            jnp.isnan(values) if self.missing_is_nan else values == self.missing_values
+        missing = jnp.asarray(
+            jnp.isnan(values) if self.missing_is_nan else values == self.missing_values,
+            dtype=bool,
         )
         if mask is not None:
             missing = missing | ~jnp.broadcast_to(
@@ -292,8 +293,8 @@ class SimpleImputer(AbstractRecipe):
     """Mask-aware weighted scalar imputation with an optional missingness channel."""
 
     strategy: ImputationStrategy = eqx.field(static=True)
-    fill_value: Number = eqx.field(static=True)
-    missing_values: Number = eqx.field(static=True)
+    fill_value: Number | float = eqx.field(static=True)
+    missing_values: Number | float = eqx.field(static=True)
     missing_is_nan: bool = eqx.field(static=True)
     add_indicator: bool = eqx.field(static=True)
     weight_policy: WeightPolicy = eqx.field(static=True)
@@ -302,8 +303,8 @@ class SimpleImputer(AbstractRecipe):
         self,
         *,
         strategy: ImputationStrategy = "mean",
-        fill_value: Number = 0.0,
-        missing_values: Number = float("nan"),
+        fill_value: Number | float = 0.0,
+        missing_values: Number | float = float("nan"),
         add_indicator: bool = False,
         weight_policy: WeightPolicy = "statistical",
     ):
@@ -325,7 +326,10 @@ class SimpleImputer(AbstractRecipe):
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         del key
         raw = _dense_batch(batch)
-        available = ~jnp.isnan(raw) if self.missing_is_nan else raw != self.missing_values
+        available = jnp.asarray(
+            ~jnp.isnan(raw) if self.missing_is_nan else raw != self.missing_values,
+            dtype=bool,
+        )
         x, weights, mass, effective, valid, status = _feature_observations(
             batch, weight_policy=self.weight_policy, extra_mask=available
         )
@@ -825,11 +829,14 @@ class TargetEncoder(AbstractRecipe):
         if batch.feature_count != self.schema.feature_count:
             raise ValueError("Categorical schema does not match the input feature count.")
         targets = batch.require_targets()
+        target_mask_values = batch.target_mask
+        if target_mask_values is None:
+            raise RuntimeError("Supervised target data is missing its validity mask.")
         if batch.target_shape == (1,):
             targets = targets[..., 0]
-            target_mask = batch.target_mask[..., 0]
+            target_mask = target_mask_values[..., 0]
         elif batch.target_shape == ():
-            target_mask = batch.target_mask
+            target_mask = target_mask_values
         else:
             raise ValueError("TargetEncoder requires one scalar target per sample.")
         x = _dense_batch(batch)

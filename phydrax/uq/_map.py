@@ -202,10 +202,14 @@ def find_map(
 
     started = time.perf_counter()
     compilation_started = time.perf_counter()
-    compiled_initial_evaluation = cast(Any, _compiled_initial_evaluation).lower(
-        position,
-        problem,
-    ).compile()
+    compiled_initial_evaluation = (
+        cast(Any, _compiled_initial_evaluation)
+        .lower(
+            position,
+            problem,
+        )
+        .compile()
+    )
     initial_compilation_seconds = time.perf_counter() - compilation_started
     evaluation_started = time.perf_counter()
     objective, gradient, gradient_norm = compiled_initial_evaluation(position, problem)
@@ -223,15 +227,19 @@ def find_map(
     compiled_step = None
     if not converged:
         compilation_started = time.perf_counter()
-        compiled_step = cast(Any, _compiled_lbfgs_step).lower(
-            position,
-            optimizer_state,
-            objective,
-            gradient,
-            problem,
-            learning_rate=step_size,
-            memory=history_size,
-        ).compile()
+        compiled_step = (
+            cast(Any, _compiled_lbfgs_step)
+            .lower(
+                position,
+                optimizer_state,
+                objective,
+                gradient,
+                problem,
+                learning_rate=step_size,
+                memory=history_size,
+            )
+            .compile()
+        )
         step_compilation_seconds = time.perf_counter() - compilation_started
 
     for step in range(1, steps_limit + 1):

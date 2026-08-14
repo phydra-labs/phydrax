@@ -152,8 +152,6 @@ def _factor_condition_estimate(curvature, /, *, damping: float):
     return maximum
 
 
-
-
 def solve_kfac(
     self,
     *,
@@ -210,9 +208,7 @@ def solve_kfac(
         num_terms=len(self.terms),
     )
     term_names = tuple(_term_label(term) for term in self.terms)
-    evaluation_term_names = tuple(
-        _term_label(term) for term in self.evaluation_terms
-    )
+    evaluation_term_names = tuple(_term_label(term) for term in self.evaluation_terms)
     root_key = jr.key(int(seed))
     objective = self.objective
     best_loss = float("inf")
@@ -406,9 +402,7 @@ def solve_kfac(
                 curvature=curvature,
                 factor_updates=factor_updates,
             )
-            objective = objective.record_training_evaluations(
-                term_indices=active_indices
-            )
+            objective = objective.record_training_evaluations(term_indices=active_indices)
             completed = iteration
             if profile_adaptive:
                 jax.block_until_ready((params, accepted_loss, state))
@@ -503,8 +497,7 @@ def solve_kfac(
                     ):
                         suffix = _metric_suffix(train_data_metrics[term_index])
                         print(
-                            f"  [train {term_index}] {name}: "
-                            f"{float(value):.6e}{suffix}",
+                            f"  [train {term_index}] {name}: {float(value):.6e}{suffix}",
                             file=log_file,
                         )
                     for term_index, (name, value) in enumerate(
@@ -512,8 +505,7 @@ def solve_kfac(
                     ):
                         suffix = _metric_suffix(eval_data_metrics[term_index])
                         print(
-                            f"  [eval {term_index}] {name}: "
-                            f"{float(value):.6e}{suffix}",
+                            f"  [eval {term_index}] {name}: {float(value):.6e}{suffix}",
                             file=log_file,
                         )
             if tensorboard_step and tensorboard_writer is not None:

@@ -192,7 +192,9 @@ def _has_unknown_dependence(expression: PDEExpression, problem: PDEProblemIR, /)
         return True
     if expression.op == "parameter":
         assert expression.symbol is not None
-        parameter = next(item for item in problem.parameters if item.name == expression.symbol)
+        parameter = next(
+            item for item in problem.parameters if item.name == expression.symbol
+        )
         return parameter.functional
     return any(_has_unknown_dependence(argument, problem) for argument in expression.args)
 
@@ -221,7 +223,9 @@ def _analyze_expression(
         randomized_children = sum(children)
         if node.op in ("laplacian", "divergence"):
             if randomized_children:
-                reasons.append(f"{path}: nested randomized differential operators are unsupported.")
+                reasons.append(
+                    f"{path}: nested randomized differential operators are unsupported."
+                )
                 return True
             assert node.coordinate is not None
             coordinate = _coordinate(problem, node.coordinate)
@@ -244,7 +248,10 @@ def _analyze_expression(
             reasons.append(
                 f"{path}: differentiation of a randomized intermediate is unsupported."
             )
-        if node.op in ("sin", "cos", "exp", "log", "sqrt", "power") and randomized_children:
+        if (
+            node.op in ("sin", "cos", "exp", "log", "sqrt", "power")
+            and randomized_children
+        ):
             reasons.append(
                 f"{path}: nonlinear transformation of a randomized estimator is biased."
             )
@@ -255,7 +262,9 @@ def _analyze_expression(
         if node.op == "dot" and randomized_children > 1:
             reasons.append(f"{path}: dot product of randomized intermediates is biased.")
         if node.op == "integral":
-            reasons.append(f"{path}: randomized expressions under integral nodes are unsupported.")
+            reasons.append(
+                f"{path}: randomized expressions under integral nodes are unsupported."
+            )
         return randomized_children > 0
 
     visit(expression, "root")
@@ -281,7 +290,9 @@ def analyze_randomized_compilation(
     )
     rejected = list(reasons)
     if not value_type.is_scalar:
-        rejected.append("root: randomized residual objectives currently require a scalar equation.")
+        rejected.append(
+            "root: randomized residual objectives currently require a scalar equation."
+        )
     if not randomized:
         rejected.append(
             "root: no stochastic differential node remains after exact-first lowering; "
@@ -338,7 +349,9 @@ def _promoted_fields(
     return domain, {name: value.promote(domain) for name, value in selected.items()}
 
 
-def _coordinate_functions(domain: Any, problem: PDEProblemIR, /) -> dict[str, DomainFunction]:
+def _coordinate_functions(
+    domain: Any, problem: PDEProblemIR, /
+) -> dict[str, DomainFunction]:
     from phydrax.domain import DomainFunction
 
     coordinates: dict[str, DomainFunction] = {}
@@ -396,7 +409,9 @@ class _RandomizedPointCallable(StrictModule):
         key: Key[Array, ""],
         /,
     ) -> Array:
-        coordinates = _coordinate_functions(next(iter(self.fields.values())).domain, self.problem)
+        coordinates = _coordinate_functions(
+            next(iter(self.fields.values())).domain, self.problem
+        )
         compiled = compile_pde_expression(
             node,
             self.problem,
@@ -429,7 +444,9 @@ class _RandomizedPointCallable(StrictModule):
         assert node.coordinate is not None
         coordinate_position = self.labels.index(node.coordinate)
         state = jnp.asarray(args[coordinate_position])
-        coordinates = _coordinate_functions(next(iter(self.fields.values())).domain, self.problem)
+        coordinates = _coordinate_functions(
+            next(iter(self.fields.values())).domain, self.problem
+        )
         operand = compile_pde_expression(
             node.args[0],
             self.problem,
@@ -439,7 +456,9 @@ class _RandomizedPointCallable(StrictModule):
             differential_backend="ad",
         )
         if not isinstance(operand, DomainFunction):
-            raise TypeError(f"{path}: randomized differential operand must be a DomainFunction.")
+            raise TypeError(
+                f"{path}: randomized differential operand must be a DomainFunction."
+            )
         operand_positions = {label: index for index, label in enumerate(self.labels)}
         local_args = [args[operand_positions[label]] for label in operand.deps]
         if node.coordinate not in operand.deps:
@@ -507,8 +526,7 @@ class _RandomizedPointCallable(StrictModule):
         if path in randomized_path_set:
             return self._random_operator(node, path, args, key), True
         descendants = tuple(
-            item == path or item.startswith(path + ".")
-            for item in self.randomized_paths
+            item == path or item.startswith(path + ".") for item in self.randomized_paths
         )
         if not any(descendants):
             return self._exact(node, args, key), False
@@ -542,7 +560,9 @@ class _RandomizedPointCallable(StrictModule):
             elif randomized[1] and not randomized[0]:
                 left = left[None, ...]
             return jnp.sum(left * right, axis=-1), True
-        raise RuntimeError(f"Unsupported randomized expression node {node.op!r} at {path}.")
+        raise RuntimeError(
+            f"Unsupported randomized expression node {node.op!r} at {path}."
+        )
 
     def __call__(self, *args: Any, key=None, iter=None, **kwargs: Any) -> Array:
         del iter, kwargs
@@ -554,7 +574,9 @@ class _RandomizedPointCallable(StrictModule):
             resolved_key,
         )
         if not randomized:
-            raise RuntimeError("Randomized expression unexpectedly lowered to an exact value.")
+            raise RuntimeError(
+                "Randomized expression unexpectedly lowered to an exact value."
+            )
         return result
 
 
@@ -577,9 +599,13 @@ class _RandomizedPDEEvaluator(StrictModule):
         from ..terms._randomized_residual import RandomizedResidualSamples
 
         if isinstance(collocation, tuple):
-            raise TypeError("Randomized PDE objectives do not support ComponentSum batches.")
+            raise TypeError(
+                "Randomized PDE objectives do not support ComponentSum batches."
+            )
         if not isinstance(collocation, (PointBatch, GridBatch)):
-            raise TypeError("Randomized PDE collocation must be a structured point batch.")
+            raise TypeError(
+                "Randomized PDE collocation must be a structured point batch."
+            )
         domain, fields = _promoted_fields(functions, self.problem)
         node_indices = tuple(
             (path, index) for index, path in enumerate(self.randomized_paths)
@@ -606,12 +632,18 @@ class _RandomizedPDEEvaluator(StrictModule):
             index for index, dim in enumerate(evaluated.dims) if dim is None
         )
         if len(output_positions) < 1:
-            raise ValueError("Randomized residual output is missing its realization axis.")
+            raise ValueError(
+                "Randomized residual output is missing its realization axis."
+            )
         permutation = named_positions + output_positions
         data = jnp.transpose(jnp.asarray(evaluated.data), permutation)
-        sample_shape = tuple(int(data.shape[index]) for index in range(len(named_positions)))
+        sample_shape = tuple(
+            int(data.shape[index]) for index in range(len(named_positions))
+        )
         if int(data.shape[len(sample_shape)]) != self.plan.num_realizations:
-            raise ValueError("Randomized residual realization count does not match its plan.")
+            raise ValueError(
+                "Randomized residual realization count does not match its plan."
+            )
         values = jnp.moveaxis(data, len(sample_shape), 0)
         event_shape = tuple(int(size) for size in values.shape[1 + len(sample_shape) :])
         mask = jnp.ones(sample_shape, dtype=bool)
@@ -704,8 +736,6 @@ def compile_pde_randomized_term(
         label=source.name if label is None else label,
     )
     return CompiledRandomizedPDETerm(term, report, source)
-
-
 
 
 __all__ = [

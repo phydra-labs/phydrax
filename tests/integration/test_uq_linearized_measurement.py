@@ -48,8 +48,7 @@ def test_linearized_eiv_posterior_matches_explicit_latent_input_nuts_reference()
         latent_space,
         lambda parameters: jnp.sum(
             observation_likelihood.log_prob(
-                parameters["slope"]
-                * (measured_inputs + parameters["input_error"]),
+                parameters["slope"] * (measured_inputs + parameters["input_error"]),
                 measured_targets,
             )
         ),
@@ -70,9 +69,7 @@ def test_linearized_eiv_posterior_matches_explicit_latent_input_nuts_reference()
     eiv_mean = jnp.mean(eiv_draws)
     latent_mean = jnp.mean(latent_slope_draws)
 
-    ordinary_precision = (
-        jnp.sum(measured_inputs**2) / observation_scale**2 + 1.0 / 3.0**2
-    )
+    ordinary_precision = jnp.sum(measured_inputs**2) / observation_scale**2 + 1.0 / 3.0**2
     ordinary_mean = (
         jnp.sum(measured_inputs * measured_targets) / observation_scale**2
     ) / ordinary_precision

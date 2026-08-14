@@ -397,6 +397,7 @@ def test_segmented_state_dependent_and_neutral_delays_match_whole_solve():
     assert jnp.allclose(neutral_segmented.states, 1.0)
     assert neutral_segmented.stats["num_segments"] > 1
 
+
 def test_segmented_distributed_delay_matches_whole_solve():
     term = phx.solver.DistributedDelay(
         "spread",

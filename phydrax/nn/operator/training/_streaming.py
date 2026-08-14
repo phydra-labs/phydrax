@@ -25,6 +25,7 @@ from ....graph import (
 )
 from ..._keys import EvalKey, fold_in_eval_key
 from ..data import FunctionSamples, OperatorBatch, pad_function_samples
+from ..engine import AbstractOperatorModel
 from ..protocols import EncodedOperatorModel, OperatorModel
 
 
@@ -432,7 +433,7 @@ def _crop_query_axis(values: Array, count: int, case_ndim: int, /) -> Array:
 
 
 def decode_query_chunks(
-    model: OperatorModel,
+    model: AbstractOperatorModel,
     batch: OperatorBatch,
     query_source: OperatorQuerySource,
     sink: OperatorPredictionSink,

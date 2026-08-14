@@ -237,9 +237,7 @@ def test_wavelet_operators_reconstruct_and_execute_scalar_and_channel_fields():
 def test_wavelet_operators_reuse_one_model_across_resolutions():
     sizes = (17, 29)
     batches = tuple(
-        _grid_batch(
-            jnp.sin(2.0 * jnp.pi * jnp.arange(size, dtype=float) / size)
-        )
+        _grid_batch(jnp.sin(2.0 * jnp.pi * jnp.arange(size, dtype=float) / size))
         for size in sizes
     )
     wno = phx.nn.operator.architectures.WaveletNeuralOperator(

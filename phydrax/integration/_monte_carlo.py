@@ -35,6 +35,14 @@ from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._sampling import design_capabilities, design_name, materialize_design
 from ..geometry import BoundaryAtlasPartition
+from ..linalg import (
+    DenseLinearOperator,
+    DenseSVD,
+    DiagonalLinearOperator,
+    LeastSquaresProblem,
+    LinearSolvePolicy,
+    solve,
+)
 from ._batches import PointIntegrationBatch, WeightedSampleBatch
 from ._estimates import (
     AntitheticDiagnostics,
@@ -559,9 +567,27 @@ def _apply_control_variate(
             fit_values = flat_values[:production_start]
         centered_controls = fit_controls - jnp.mean(fit_controls, axis=0, keepdims=True)
         centered_values = fit_values - jnp.mean(fit_values, axis=0, keepdims=True)
-        gram = centered_controls.T @ centered_controls
-        gram = gram + control.regularization * jnp.eye(gram.shape[0])
-        coefficients = jnp.linalg.solve(gram, centered_controls.T @ centered_values)
+        solve_dtype = jnp.result_type(centered_controls, centered_values)
+        centered_controls = centered_controls.astype(solve_dtype)
+        centered_values = centered_values.astype(solve_dtype)
+        operator = DenseLinearOperator(centered_controls)
+        regularizer = (
+            None
+            if control.regularization == 0.0
+            else DiagonalLinearOperator(
+                jnp.full(
+                    (controls.shape[1],),
+                    jnp.sqrt(control.regularization),
+                    dtype=solve_dtype,
+                ),
+                space=operator.source,
+            )
+        )
+        coefficients = solve(
+            LeastSquaresProblem(operator, regularizer=regularizer),
+            centered_values,
+            policy=LinearSolvePolicy(DenseSVD()),
+        ).value
     else:
         coefficients = jnp.asarray(control.coefficients, dtype=flat_values.dtype)
         if coefficients.ndim == 0:

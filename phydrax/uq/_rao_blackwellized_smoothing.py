@@ -15,6 +15,7 @@ from jaxtyping import Array, Key
 
 from .._strict import StrictModule
 from ..stochastic._state_space import state_space_key
+from ._covariance import _solve_covariance_system
 from ._particle import normalize_log_weights
 from ._rao_blackwellized import (
     _condition_linear_state,
@@ -85,8 +86,6 @@ def _sample_shape(value: tuple[int, ...], /) -> tuple[tuple[int, ...], int]:
     return shape, prod(shape) if shape else 1
 
 
-
-
 def rao_blackwellized_backward_simulation(
     key: Key[Array, ""],
     result: RaoBlackwellizedFilterResult,
@@ -124,9 +123,7 @@ def rao_blackwellized_backward_simulation(
     filter_valid = result.valid.reshape((case_count, num_steps))
     paths = np.full((sample_count, case_count, num_steps, nonlinear_size), np.nan)
     initial_states = np.full((sample_count, case_count, nonlinear_size), np.nan)
-    indices = np.full(
-        (sample_count, case_count, num_steps + 1), -1, dtype=np.int32
-    )
+    indices = np.full((sample_count, case_count, num_steps + 1), -1, dtype=np.int32)
     valid = np.zeros((sample_count, case_count), dtype=bool)
     members = jnp.arange(sample_count, dtype=jnp.uint32)
     steps = jnp.arange(num_steps, dtype=jnp.uint32)
@@ -202,9 +199,9 @@ def rao_blackwellized_backward_simulation(
                 backward_weights, _, weights_valid = normalize_log_weights(
                     case_log_weights[step] + density
                 )
-                particle_index = jr.categorical(
-                    path_keys[step], backward_weights
-                ).astype(jnp.int32)
+                particle_index = jr.categorical(path_keys[step], backward_weights).astype(
+                    jnp.int32
+                )
                 path = path.at[step].set(case_particles[step, particle_index])
                 path_indices = path_indices.at[step + 1].set(particle_index)
                 path_is_valid = path_is_valid & weights_valid
@@ -327,9 +324,7 @@ def rao_blackwellized_particle_smoother(
     masks = result.problem.observations.observation_mask.reshape(
         (case_count, num_steps) + model.observation_shape
     )
-    smoothed_means = np.full(
-        (sample_count, case_count, num_steps, linear_size), np.nan
-    )
+    smoothed_means = np.full((sample_count, case_count, num_steps, linear_size), np.nan)
     smoothed_covariances = np.full(
         (sample_count, case_count, num_steps, linear_size, linear_size), np.nan
     )
@@ -412,36 +407,47 @@ def rao_blackwellized_particle_smoother(
             )
             path_lag_one = jnp.zeros_like(path_gains)
             for step in range(active_count - 2, -1, -1):
-                cross = (
-                    filtered_covariances_array[step]
-                    @ transitions_array[step + 1].T
+                cross = filtered_covariances_array[step] @ transitions_array[step + 1].T
+                solve_result = _solve_covariance_system(
+                    forecast_covariances_array[step + 1],
+                    cross.T,
                 )
-                gain = jnp.linalg.solve(
-                    forecast_covariances_array[step + 1], cross.T
-                ).T
+                gain = solve_result.value.T
                 proposed_mean = filtered_means_array[step] + gain @ (
                     means[step + 1] - forecast_means_array[step + 1]
                 )
-                proposed_covariance = filtered_covariances_array[step] + gain @ (
-                    covariances[step + 1] - forecast_covariances_array[step + 1]
-                ) @ gain.T
-                proposed_covariance = 0.5 * (
-                    proposed_covariance + proposed_covariance.T
+                proposed_covariance = (
+                    filtered_covariances_array[step]
+                    + gain
+                    @ (covariances[step + 1] - forecast_covariances_array[step + 1])
+                    @ gain.T
+                )
+                proposed_covariance = 0.5 * (proposed_covariance + proposed_covariance.T)
+                sample_is_valid = (
+                    sample_is_valid
+                    & jnp.all(solve_result.successful)
+                    & jnp.all(jnp.isfinite(gain))
+                    & jnp.all(jnp.isfinite(proposed_mean))
+                    & jnp.all(jnp.isfinite(proposed_covariance))
                 )
                 means = means.at[step].set(proposed_mean)
                 covariances = covariances.at[step].set(proposed_covariance)
                 path_gains = path_gains.at[step].set(gain)
-                path_lag_one = path_lag_one.at[step].set(
-                    covariances[step + 1] @ gain.T
+                path_lag_one = path_lag_one.at[step].set(covariances[step + 1] @ gain.T)
+            full_means = (
+                jnp.full((num_steps, linear_size), jnp.nan, dtype=means.dtype)
+                .at[:active_count]
+                .set(means)
+            )
+            full_covariances = (
+                jnp.full(
+                    (num_steps, linear_size, linear_size),
+                    jnp.nan,
+                    dtype=covariances.dtype,
                 )
-            full_means = jnp.full(
-                (num_steps, linear_size), jnp.nan, dtype=means.dtype
-            ).at[:active_count].set(means)
-            full_covariances = jnp.full(
-                (num_steps, linear_size, linear_size),
-                jnp.nan,
-                dtype=covariances.dtype,
-            ).at[:active_count].set(covariances)
+                .at[:active_count]
+                .set(covariances)
+            )
             full_gains = jnp.zeros(
                 (max(num_steps - 1, 0), linear_size, linear_size),
                 dtype=path_gains.dtype,

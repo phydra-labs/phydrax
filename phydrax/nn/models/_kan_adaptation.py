@@ -239,6 +239,9 @@ def _adapt_layer(
     if not isinstance(layer.edge_basis, BSplineEdgeBasis):
         records.skipped_paths.append(path)
         return layer
+    coefficients = layer.coeffs
+    if coefficients is None:
+        raise RuntimeError("B-spline KAN layer is missing its dense coefficients.")
 
     if isinstance(layer.edge_basis.grid, TrainableBSplineGrid):
         raise ValueError(
@@ -250,7 +253,7 @@ def _adapt_layer(
         old_grids = (
             old_grid.grids
             if isinstance(old_grid, BSplineGridBank)
-            else (old_grid,) * int(layer.coeffs.shape[1])
+            else (old_grid,) * int(coefficients.shape[1])
         )
         new_grids: list[BSplineGrid] = []
         coefficient_columns: list[Array] = []
@@ -258,7 +261,7 @@ def _adapt_layer(
             input_values = normalized_inputs[..., input_index]
             new_grid, degenerate = _adapted_grid(input_grid, input_values, plan)
             transfer = BSplineGridTransfer(input_grid, new_grid)
-            old_coefficients = layer.coeffs[:, input_index, :]
+            old_coefficients = coefficients[:, input_index, :]
             coefficient_columns.append(transfer(old_coefficients))
             new_grids.append(new_grid)
             coefficient_norms = np.linalg.norm(np.asarray(old_coefficients), axis=-1)
@@ -287,7 +290,7 @@ def _adapt_layer(
 
     new_grid, degenerate = _adapted_grid(old_grid, normalized_inputs, plan)
     transfer = BSplineGridTransfer(old_grid, new_grid)
-    new_coefficients = transfer(layer.coeffs)
+    new_coefficients = transfer(coefficients)
     new_basis = BSplineEdgeBasis(
         grid=new_grid,
         regularization_order=layer.edge_basis.regularization_order,
@@ -299,7 +302,7 @@ def _adapt_layer(
     )
 
     coefficient_norms = np.linalg.norm(
-        np.asarray(layer.coeffs).reshape((-1, old_grid.coefficient_count)),
+        np.asarray(coefficients).reshape((-1, old_grid.coefficient_count)),
         axis=1,
     )
     records.paths.append(path)

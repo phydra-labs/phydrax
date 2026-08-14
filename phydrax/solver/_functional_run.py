@@ -50,7 +50,6 @@ class FunctionalSolveConfig:
         object.__setattr__(self, "tensorboard_flush_every", flush_every)
 
 
-
 def validate_term_sample_size(
     value: int | None,
     /,

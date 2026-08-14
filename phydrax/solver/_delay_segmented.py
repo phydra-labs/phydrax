@@ -609,8 +609,6 @@ class DelaySegmentArchive(eqx.Module):
         return values.reshape(query.shape + values.shape[1:])
 
 
-
-
 def _host_bool(value: Any, /) -> bool:
     return bool(np.asarray(jax.device_get(value)))
 
@@ -788,9 +786,7 @@ def solve_diffrax_delay_segmented(
             history_capacity=(
                 history_capacity
                 if history_capacity is not None
-                else max_steps_per_segment * adjoint.max_segments
-                + history_margin
-                + 2
+                else max_steps_per_segment * adjoint.max_segments + history_margin + 2
             ),
             history_margin=history_margin,
             max_steps=max_steps_per_segment * adjoint.max_segments,
@@ -820,9 +816,7 @@ def solve_diffrax_delay_segmented(
             state_shape=replay.state_shape,
             solver_name=replay.solver_name,
             solver_id=f"{replay.solver_id}:segmented-adjoint-replay",
-            resolved_method=(
-                f"{replay.resolved_method}:segmented-adjoint-replay"
-            ),
+            resolved_method=(f"{replay.resolved_method}:segmented-adjoint-replay"),
             metadata={
                 **dict(replay.metadata),
                 "execution_mode": "segmented-adjoint-replay",
@@ -1094,9 +1088,7 @@ def solve_diffrax_delay_segmented(
                 controller = StateDependentFixedController(controller, dynamic_tracker)
             tracking_mode = (
                 "sign-isolated-nonmonotone-roots"
-                if any(
-                    not delay.monotone_argument for delay in dynamic_delays
-                )
+                if any(not delay.monotone_argument for delay in dynamic_delays)
                 else "high-order-dynamic-roots"
             )
         else:
@@ -1124,9 +1116,7 @@ def solve_diffrax_delay_segmented(
             path_levy_area=brownian.levy_area,
             path_key_impl=jr.key_impl(validated_realization.path_keys),
             geometry=(
-                selected_solver.geometry
-                if isinstance(selected_solver, SRKMK)
-                else None
+                selected_solver.geometry if isinstance(selected_solver, SRKMK) else None
             ),
         )
     elif isinstance(problem, NeutralDelayProblem):
@@ -1383,9 +1373,7 @@ def solve_diffrax_delay_segmented(
         solver_id = selected_solver.solver_id
         resolved_method = selected_solver.resolved_method
     elif stochastic:
-        solver_id = (
-            f"solver:diffrax-delay-stochastic:{solver_name}:segmented-retarded-v1"
-        )
+        solver_id = f"solver:diffrax-delay-stochastic:{solver_name}:segmented-retarded-v1"
         resolved_method = f"{solver_name}:segmented-causal-wiener-path"
     elif isinstance(problem, NeutralDelayProblem):
         solver_id = "solver:diffrax-delay:Euler:segmented-transformed-neutral-v1"

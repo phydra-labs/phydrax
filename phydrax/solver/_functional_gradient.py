@@ -526,8 +526,7 @@ def solve_gradient(
                                 == "riemannian-conjugate-gradient"
                             ):
                                 optimizer_suffix += (
-                                    " restarted="
-                                    f"{int(riemannian_step_metrics.restarted)}"
+                                    f" restarted={int(riemannian_step_metrics.restarted)}"
                                 )
                             if _opt_riemannian.optimizer_id == "riemannian-lbfgs":
                                 optimizer_suffix += (

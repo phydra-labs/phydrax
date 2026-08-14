@@ -85,10 +85,12 @@ geom = phx.domain.GeometryDomain(
     phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
 )  # [-1,1]^2, label "x"
 
+
 # Exact solution / boundary target g(x,y) = x^2 + y^2
 @geom.Function("x")
 def g(x):
     return x[0] ** 2 + x[1] ** 2
+
 
 # Trainable field u_theta(x)
 model = phx.nn.models.MLP(
@@ -124,13 +126,9 @@ boundary_source = phx.integration.per_step(
     phx.integration.mean_over(boundary_condition.on),
     phx.domain.PointSampling(32, layout=layout),
 )
-boundary_term = phx.terms.ResidualPenalty(
-    boundary_condition, boundary_source, scale=10.0
-)
+boundary_term = phx.terms.ResidualPenalty(boundary_condition, boundary_source, scale=10.0)
 
-solver = phx.solver.FunctionalSolver(
-    functions={"u": u}, terms=[pde_term, boundary_term]
-)
+solver = phx.solver.FunctionalSolver(functions={"u": u}, terms=[pde_term, boundary_term])
 solver = solver.solve(num_iter=20, optim=optax.adam(1e-3), seed=0)
 ```
 

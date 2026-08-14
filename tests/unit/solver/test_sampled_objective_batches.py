@@ -36,7 +36,10 @@ class _NestedSampledObjective(phx.terms.AbstractSamplingTerm):
 
 def _solver(*objectives):
     domain = phx.domain.Interval1d(0.0, 1.0)
-    return phx.solver.FunctionalSolver(functions={"u": domain.Parameter(1.0)}, terms=objectives, )
+    return phx.solver.FunctionalSolver(
+        functions={"u": domain.Parameter(1.0)},
+        terms=objectives,
+    )
 
 
 def _key_recorder(store):
@@ -64,6 +67,7 @@ def test_optax_materializes_each_sampled_objective_once_per_update():
 
     assert len(sampled_keys) == 4
     assert len(set(sampled_keys)) == 4
+
 
 def test_optax_materializes_each_integration_realization_once_per_update(
     monkeypatch,

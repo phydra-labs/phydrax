@@ -390,9 +390,7 @@ def _lower_weighted(
             included = jnp.ones(atom_shape, dtype=bool)
         else:
             mask_field = cast(cx.Field, target.mask).broadcast_like(weights)
-            included = jnp.transpose(
-                jnp.asarray(mask_field.data, dtype=bool), positions
-            )
+            included = jnp.transpose(jnp.asarray(mask_field.data, dtype=bool), positions)
         raw_samples = encoder(target.samples) if encoder is not None else target.samples
         points, event_shape = _canonical_points_named_or_raw(
             raw_samples,
@@ -480,16 +478,17 @@ def _canonical_points_named_or_raw(
         canonical = jnp.transpose(jnp.asarray(leaf.data), positions + remaining)
         observed = tuple(int(size) for size in canonical.shape[: len(axes)])
         if observed != atom_shape:
-            raise ValueError(
-                f"{name} atom shape must be {atom_shape}; got {observed}."
-            )
+            raise ValueError(f"{name} atom shape must be {atom_shape}; got {observed}.")
         return _flatten_events(canonical, atom_shape=atom_shape)
     data = jnp.asarray(leaf)
-    if data.ndim < len(raw_weight_dims) or tuple(data.shape[: len(raw_weight_dims)]) != tuple(
-        int(size) for size in atom_shape
-    ):
+    if data.ndim < len(raw_weight_dims) or tuple(
+        data.shape[: len(raw_weight_dims)]
+    ) != tuple(int(size) for size in atom_shape):
         # Raw arrays paired with named weights follow the target axis order.
-        if data.ndim < len(atom_shape) or tuple(data.shape[: len(atom_shape)]) != atom_shape:
+        if (
+            data.ndim < len(atom_shape)
+            or tuple(data.shape[: len(atom_shape)]) != atom_shape
+        ):
             raise ValueError(
                 f"{name} raw arrays must begin with atom shape {atom_shape}."
             )

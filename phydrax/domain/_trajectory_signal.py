@@ -30,6 +30,7 @@ from ._trajectory_interpolation import _RaggedTimeSeriesTable, _validate_values
 
 TrajectorySignalInterpolation = Literal["nearest", "linear", "cubic_hermite"]
 
+
 class _NearestTrajectorySignal(StrictModule, BatchEvaluator, NonTrainableState):
     domain: TrajectoryDatasetDomain
     values: Array
@@ -494,7 +495,6 @@ def TrajectorySignal(
         return _hook
 
     return base.with_derivative_rule(CallbackDerivativeRule(_make_hook(0)))
-
 
 
 __all__ = ["TrajectorySignalInterpolation"]

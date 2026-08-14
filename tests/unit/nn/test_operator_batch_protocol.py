@@ -261,7 +261,9 @@ def test_case_slicing_preserves_shared_coordinates_with_per_case_masks():
     )
     batch = phx.nn.operator.OperatorBatch(
         inputs={"u": source},
-        queries={"query": phx.nn.operator.FunctionSamples(values=None, coordinates=coordinates)},
+        queries={
+            "query": phx.nn.operator.FunctionSamples(values=None, coordinates=coordinates)
+        },
         case_axes=("case",),
         case_shape=(4,),
     )

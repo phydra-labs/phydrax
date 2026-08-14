@@ -79,7 +79,9 @@ def test_finite_volume_diffusion_wraps_as_graph_model_on_dual_graph():
     dual = _square_dual()
     domain = phx.domain.GraphDomain(dual.graph)
     faces = domain.component({"graph": dual.face_nodes_component()})
-    batch = faces.sample(phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),))))
+    batch = faces.sample(
+        phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),)))
+    )
     values = jnp.array([1.0, 3.0])
 
     @domain.Function("graph")

@@ -36,8 +36,14 @@ def test_infidelity_residual_runs_through_functional_solver():
             phx.integration.MonteCarloPlan(32),
         ),
     )
-    exact = phx.solver.FunctionalSolver(functions={"psi": exact_state}, terms=[constraint], )
-    orthogonal = phx.solver.FunctionalSolver(functions={"psi": orthogonal_state}, terms=[constraint], )
+    exact = phx.solver.FunctionalSolver(
+        functions={"psi": exact_state},
+        terms=[constraint],
+    )
+    orthogonal = phx.solver.FunctionalSolver(
+        functions={"psi": orthogonal_state},
+        terms=[constraint],
+    )
 
     loss = eqx.filter_jit(lambda solver, key: solver.loss(key=key))
     exact_loss = loss(exact, jr.key(0))

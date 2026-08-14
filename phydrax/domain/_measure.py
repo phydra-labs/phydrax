@@ -111,8 +111,10 @@ class BaseMeasure(StrictModule):
             raise ValueError(f"Unknown measure kind {kind!r}.")
         if not isinstance(mass, (ExactMass, EstimatedMass, UnknownMass)):
             raise TypeError("BaseMeasure.mass must be an explicit Mass descriptor.")
-        if normalized and isinstance(mass, ExactMass) and not bool(
-            jnp.isclose(mass.value, 1.0)
+        if (
+            normalized
+            and isinstance(mass, ExactMass)
+            and not bool(jnp.isclose(mass.value, 1.0))
         ):
             raise ValueError("A normalized exact measure must have unit mass.")
         self.kind = kind
@@ -136,9 +138,9 @@ def product_mass(masses: Sequence[Mass], /) -> Mass:
             continue
         estimated_value = estimated_value * mass.value
         safe_value = jnp.maximum(mass.value, jnp.finfo(float).tiny)
-        estimated_relative_variance = estimated_relative_variance + (
-            mass.uncertainty / safe_value
-        ) ** 2
+        estimated_relative_variance = (
+            estimated_relative_variance + (mass.uncertainty / safe_value) ** 2
+        )
         evaluations += mass.evaluations
         provenance.append(mass.provenance)
     if provenance:

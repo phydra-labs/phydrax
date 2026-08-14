@@ -33,7 +33,9 @@ def _mapping_value(payload: Any, key: str, kind: str, /) -> jnp.ndarray:
 def _positions(graph: GraphIR, position_key: str, /) -> jnp.ndarray:
     pos = _mapping_value(graph.nodes, position_key, "nodes")
     if pos.ndim != 2:
-        raise ValueError(f"Graph node positions must have shape (n, dim); got {pos.shape!r}.")
+        raise ValueError(
+            f"Graph node positions must have shape (n, dim); got {pos.shape!r}."
+        )
     return pos
 
 
@@ -49,7 +51,9 @@ def _node_scalar(graph: GraphIR, input_key: str | None, /) -> jnp.ndarray:
     if arr.ndim == 1:
         return arr[:, None]
     if arr.ndim != 2:
-        raise ValueError(f"Node scalar field must be rank-1 or rank-2; got {arr.shape!r}.")
+        raise ValueError(
+            f"Node scalar field must be rank-1 or rank-2; got {arr.shape!r}."
+        )
     return arr
 
 
@@ -68,9 +72,13 @@ def _edge_weight(graph: GraphIR, edge_weight_key: str | None, /) -> jnp.ndarray 
     return weight
 
 
-def _oriented_edges(graph: GraphIR, flow: GraphFlow, /) -> tuple[jnp.ndarray, jnp.ndarray]:
+def _oriented_edges(
+    graph: GraphIR, flow: GraphFlow, /
+) -> tuple[jnp.ndarray, jnp.ndarray]:
     if graph.senders is None or graph.receivers is None:
-        raise ValueError("Equivariant graph operators require explicit senders/receivers.")
+        raise ValueError(
+            "Equivariant graph operators require explicit senders/receivers."
+        )
     if flow == "source_to_target":
         return graph.senders, graph.receivers
     if flow == "target_to_source":

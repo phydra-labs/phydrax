@@ -62,7 +62,9 @@ def test_enforce_ragged_time_series_supports_first_time_derivative():
 
     hard = phx.enforcement.enforce_ragged_time_series(free, domain, values)
     dt_hard = partial_t(hard, var="t")
-    batch = domain.component().sample(phx.domain.PointSampling(12, layout=structure), key=jr.key(1))
+    batch = domain.component().sample(
+        phx.domain.PointSampling(12, layout=structure), key=jr.key(1)
+    )
     pred = jnp.asarray(dt_hard(batch, key=jr.key(2)).data)
     expected = jnp.broadcast_to(jnp.asarray([2.0, 3.0]), pred.shape)
     assert jnp.allclose(pred, expected, atol=1e-12)
@@ -83,7 +85,9 @@ def test_enforce_ragged_time_series_supports_cubic_hermite_second_time_derivativ
         gate="sin4",
     )
     d2_hard = partial_n(hard, var="t", order=2)
-    batch = domain.component().sample(phx.domain.PointSampling(12, layout=structure), key=jr.key(5))
+    batch = domain.component().sample(
+        phx.domain.PointSampling(12, layout=structure), key=jr.key(5)
+    )
     pred = jnp.asarray(d2_hard(batch, key=jr.key(6)).data)
     assert jnp.allclose(pred, jnp.zeros_like(pred), atol=1e-10)
 

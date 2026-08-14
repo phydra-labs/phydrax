@@ -82,10 +82,14 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
             raise ValueError(
                 "DiffraxEvolution requires exactly one input policy for an input-driven system."
             )
-        if input_policy is not None and (
-            input_policy.input_layout.layout_id != system.input_layout.layout_id
-        ):
-            raise ValueError("Input policy and system input layouts must match exactly.")
+        if input_policy is not None:
+            system_input_layout = system.input_layout
+            if system_input_layout is None:
+                raise RuntimeError("Input-driven system is missing its input layout.")
+            if input_policy.input_layout.layout_id != system_input_layout.layout_id:
+                raise ValueError(
+                    "Input policy and system input layouts must match exactly."
+                )
         relative_tolerance = float(rtol)
         absolute_tolerance = float(atol)
         if (

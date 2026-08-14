@@ -25,9 +25,9 @@ class _PreparedIntegrationRealization(StrictModule):
     """Internal marker for a realization frozen by objective preparation."""
 
     realization: IntegrationRealization
+
     def __init__(self, realization: IntegrationRealization, /):
         self.realization = realization
-
 
 
 def prepare_term_realization(
@@ -50,6 +50,7 @@ def resolve_term_realization(
     if not isinstance(realization, _PreparedIntegrationRealization):
         return resolve_integration(source, key=key, realization=realization)
     return realization.realization
+
 
 def checked_estimate_field(estimate: IntegrationEstimate, /) -> cx.Field:
     """Return one estimate field after convergence validation."""

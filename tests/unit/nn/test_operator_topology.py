@@ -39,7 +39,11 @@ def _batch(*, source_mask=None):
         coordinates=coordinates,
         topology=topology,
     )
-    return phx.nn.operator.OperatorBatch(inputs={"u": source}, queries={"query": query}, case_axes=("case",),)
+    return phx.nn.operator.OperatorBatch(
+        inputs={"u": source},
+        queries={"query": query},
+        case_axes=("case",),
+    )
 
 
 def test_graph_batch_roundtrip_preserves_all_masks():
@@ -48,8 +52,12 @@ def test_graph_batch_roundtrip_preserves_all_masks():
     batched = phx.graph.batch_graphs((first, second))
     restored = phx.graph.unbatch_graph(batched)
 
-    assert jnp.array_equal(batched.node_mask, jnp.concatenate((first.node_mask, second.node_mask)))
-    assert jnp.array_equal(batched.edge_mask, jnp.concatenate((first.edge_mask, second.edge_mask)))
+    assert jnp.array_equal(
+        batched.node_mask, jnp.concatenate((first.node_mask, second.node_mask))
+    )
+    assert jnp.array_equal(
+        batched.edge_mask, jnp.concatenate((first.edge_mask, second.edge_mask))
+    )
     assert jnp.array_equal(batched.graph_mask, jnp.asarray([True, True]))
     for expected, actual in zip((first, second), restored, strict=True):
         assert jnp.array_equal(actual.node_mask, expected.node_mask)
@@ -71,8 +79,12 @@ def test_operator_topology_materializes_and_gathers_case_local_graph_fields():
     assert graph.num_graphs == 2
     assert graph.nodes["features"].shape == (6,)
     assert jnp.array_equal(graph.nodes["type"], jnp.asarray([0, 1, 1, 0, 1, 1]))
-    assert jnp.array_equal(graph.nodes["sample_mask"], jnp.asarray([True, True, False, True, True, True]))
-    assert jnp.array_equal(graph.nodes["features"], jnp.asarray([0.0, 1.0, 0.0, 3.0, 4.0, 5.0]))
+    assert jnp.array_equal(
+        graph.nodes["sample_mask"], jnp.asarray([True, True, False, True, True, True])
+    )
+    assert jnp.array_equal(
+        graph.nodes["features"], jnp.asarray([0.0, 1.0, 0.0, 3.0, 4.0, 5.0])
+    )
     assert jnp.array_equal(gathered, jnp.asarray([[0.0, 1.0, 0.0], [3.0, 4.0, 5.0]]))
 
 
@@ -166,7 +178,9 @@ def test_topology_survives_padding_stacking_slicing_and_sampling():
 
     assert padded.topology is not None
     assert padded.topology.sample_shape == (5,)
-    assert jnp.array_equal(padded.topology.sample_entities, jnp.asarray([0, 1, 2, -1, -1]))
+    assert jnp.array_equal(
+        padded.topology.sample_entities, jnp.asarray([0, 1, 2, -1, -1])
+    )
     assert jnp.array_equal(selected.sample_entities, jnp.asarray([2, 0]))
     assert stacked.case_shape == (2,)
     assert stacked.graph.num_graphs == 2
@@ -180,7 +194,9 @@ def test_simplicial_complex_maps_vertices_edges_and_faces_to_native_sites():
         jnp.asarray([[0, 1, 2], [0, 2, 3]]),
         num_vertices=4,
     )
-    vertices = phx.nn.operator.OperatorTopology.from_simplicial(complex_graph, site="vertex")
+    vertices = phx.nn.operator.OperatorTopology.from_simplicial(
+        complex_graph, site="vertex"
+    )
     edges = phx.nn.operator.OperatorTopology.from_simplicial(complex_graph, site="edge")
     faces = phx.nn.operator.OperatorTopology.from_simplicial(complex_graph, site="face")
 
@@ -188,7 +204,9 @@ def test_simplicial_complex_maps_vertices_edges_and_faces_to_native_sites():
     assert vertices.sample_shape == (4,)
     assert edges.sample_shape == (5,)
     assert faces.sample_shape == (2,)
-    assert vertices.graph_fingerprint == edges.graph_fingerprint == faces.graph_fingerprint
+    assert (
+        vertices.graph_fingerprint == edges.graph_fingerprint == faces.graph_fingerprint
+    )
 
 
 def test_topology_fingerprint_changes_with_connectivity_not_only_sample_shape():

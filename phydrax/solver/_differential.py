@@ -254,21 +254,14 @@ class DifferentialSolution(StrictModule):
         valid_array = arrays.valid
         if not isinstance(solver_name, str) or not solver_name:
             raise ValueError("DifferentialSolution solver_name must be non-empty.")
-        resolved_solver_id = (
-            f"solver:{solver_name}" if solver_id is None else solver_id
-        )
+        resolved_solver_id = f"solver:{solver_name}" if solver_id is None else solver_id
         resolved_solver_method = (
             solver_name if resolved_method is None else resolved_method
         )
         if not isinstance(resolved_solver_id, str) or not resolved_solver_id:
             raise ValueError("DifferentialSolution solver_id must be non-empty.")
-        if (
-            not isinstance(resolved_solver_method, str)
-            or not resolved_solver_method
-        ):
-            raise ValueError(
-                "DifferentialSolution resolved_method must be non-empty."
-            )
+        if not isinstance(resolved_solver_method, str) or not resolved_solver_method:
+            raise ValueError("DifferentialSolution resolved_method must be non-empty.")
         if interpretation not in ("ito", "stratonovich"):
             raise ValueError("interpretation must be 'ito' or 'stratonovich'.")
         if state_geometry_id is not None and (

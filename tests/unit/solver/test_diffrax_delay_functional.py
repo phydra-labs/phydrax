@@ -17,12 +17,14 @@ def _functional_problem():
     normalization = jnp.sum(weights * jnp.exp(-lags))
     window = phx.solver.FunctionalDelay(
         "window",
-        lambda time, state, history, args: jnp.tensordot(
-            weights,
-            history.values(lags),
-            axes=((0,), (0,)),
-        )
-        / normalization,
+        lambda time, state, history, args: (
+            jnp.tensordot(
+                weights,
+                history.values(lags),
+                axes=((0,), (0,)),
+            )
+            / normalization
+        ),
         (0.2, 0.5),
         discontinuity_lags=jnp.asarray([0.2, 0.5]),
     )
@@ -93,7 +95,6 @@ def test_functional_delay_enforces_declared_query_window_at_initialization():
         )
 
 
-
 def test_functional_delay_routes_through_stochastic_whole_and_segmented_backends():
     lags = jnp.asarray([0.1, 0.15, 0.2])
     functional = phx.solver.FunctionalDelay(
@@ -145,9 +146,7 @@ def test_functional_delay_routes_through_stochastic_whole_and_segmented_backends
 
     assert jnp.array_equal(rolling.states, full.states)
     assert jnp.allclose(segmented.states, full.states, rtol=0.0, atol=5e-10)
-    assert full.metadata["delay_mode"] == (
-        "declared-functional-retarded-stochastic"
-    )
+    assert full.metadata["delay_mode"] == ("declared-functional-retarded-stochastic")
     assert segmented.metadata["delay_mode"] == "segmented-functional-retarded"
     assert full.stats["functional_tracking"] == "declared-lag-translations"
     assert full.realization is realization

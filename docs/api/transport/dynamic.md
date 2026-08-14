@@ -35,17 +35,18 @@ terminal = phx.integration.discrete(
 )
 reference_matrix = jnp.asarray([[0.9, 0.1], [0.2, 0.8]])
 
+
 def sample(key, state, t0, t1, context):
     del t0, t1, context
     row = reference_matrix[state.astype(jnp.int32)]
     return jr.categorical(key, jnp.log(row)).astype(float)
 
+
 def log_prob(next_state, state, t0, t1, context):
     del t0, t1, context
-    probability = reference_matrix[
-        state.astype(jnp.int32), next_state.astype(jnp.int32)
-    ]
+    probability = reference_matrix[state.astype(jnp.int32), next_state.astype(jnp.int32)]
     return jnp.where(probability > 0, jnp.log(probability), -jnp.inf)
+
 
 reference = phx.stochastic.CallableTransitionKernel(
     sample,

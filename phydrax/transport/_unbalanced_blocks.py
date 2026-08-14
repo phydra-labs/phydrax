@@ -49,15 +49,9 @@ def coupling_statistics(
     if block_size is None:
         costs = problem.cost_matrix()
         log_ratio = (
-            source_potential[:, None]
-            + target_potential[None, :]
-            - costs
+            source_potential[:, None] + target_potential[None, :] - costs
         ) / epsilon
-        log_plan = (
-            source_log_weights[:, None]
-            + target_log_weights[None, :]
-            + log_ratio
-        )
+        log_plan = source_log_weights[:, None] + target_log_weights[None, :] + log_ratio
         plan = jnp.exp(log_plan)
         source_marginal = jnp.sum(plan, axis=1)
         target_marginal = jnp.sum(plan, axis=0)
@@ -106,11 +100,7 @@ def dense_plan(
     log_plan = (
         _safe_log(problem.source_weights)[:, None]
         + _safe_log(problem.target_weights)[None, :]
-        + (
-            source_potential[:, None]
-            + target_potential[None, :]
-            - problem.cost_matrix()
-        )
+        + (source_potential[:, None] + target_potential[None, :] - problem.cost_matrix())
         / epsilon
     )
     return jnp.exp(log_plan)
@@ -199,9 +189,7 @@ def _blockwise_statistics(
         source_result, target_result, cost_total, ratio_total, mass_total, finite = state
         source_start = source_block * block_size
         source_indices, source_valid = indices(source_start, block_size, source_count)
-        source_accumulator = jnp.zeros(
-            (block_size,), dtype=source_potential.dtype
-        )
+        source_accumulator = jnp.zeros((block_size,), dtype=source_potential.dtype)
 
         def target_body(target_block, inner):
             (
@@ -213,9 +201,7 @@ def _blockwise_statistics(
                 finite_partial,
             ) = inner
             target_start = target_block * block_size
-            target_indices, target_valid = indices(
-                target_start, block_size, target_count
-            )
+            target_indices, target_valid = indices(target_start, block_size, target_count)
             costs = cost_block(
                 problem.cost,
                 problem.source.points,
@@ -245,9 +231,8 @@ def _blockwise_statistics(
                 target_slice + jnp.sum(plan, axis=0),
                 (target_start,),
             )
-            block_finite = (
-                jnp.all(jnp.isfinite(plan))
-                & jnp.all(jnp.isfinite(jnp.where(valid, costs, 0.0)))
+            block_finite = jnp.all(jnp.isfinite(plan)) & jnp.all(
+                jnp.isfinite(jnp.where(valid, costs, 0.0))
             )
             return (
                 source_partial + jnp.sum(plan, axis=1),
@@ -293,11 +278,7 @@ def _blockwise_statistics(
         transported_mass,
         finite,
     ) = jax.lax.fori_loop(0, source_blocks, source_body, initial)
-    entropy_kl = (
-        ratio_term
-        - transported_mass
-        + problem.source_mass * problem.target_mass
-    )
+    entropy_kl = ratio_term - transported_mass + problem.source_mass * problem.target_mass
     finite = finite & jnp.isfinite(transport_cost) & jnp.isfinite(entropy_kl)
     return (
         source_marginal[:source_count],
@@ -327,9 +308,7 @@ def _blockwise_apply(
     source_log_weights = _safe_log(problem.source_weights)
     target_log_weights = _safe_log(problem.target_weights)
     output_count = target_blocks if direction == "source_to_target" else source_blocks
-    output = jnp.zeros(
-        (output_count * block_size, payload_size), dtype=values.dtype
-    )
+    output = jnp.zeros((output_count * block_size, payload_size), dtype=values.dtype)
 
     def source_body(source_block, result):
         source_start = source_block * block_size
@@ -343,9 +322,7 @@ def _blockwise_apply(
 
         def target_body(target_block, inner_result):
             target_start = target_block * block_size
-            target_indices, target_valid = indices(
-                target_start, block_size, target_count
-            )
+            target_indices, target_valid = indices(target_start, block_size, target_count)
             g = jnp.take(target_potential, target_indices, axis=0)
             log_b = jnp.take(target_log_weights, target_indices, axis=0)
             costs = cost_block(
@@ -381,9 +358,7 @@ def _blockwise_apply(
 
         if direction == "source_to_target":
             return jax.lax.fori_loop(0, target_blocks, target_body, result)
-        source_output = jax.lax.fori_loop(
-            0, target_blocks, target_body, source_output
-        )
+        source_output = jax.lax.fori_loop(0, target_blocks, target_body, source_output)
         return jax.lax.dynamic_update_slice(
             result,
             source_output,

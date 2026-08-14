@@ -215,15 +215,17 @@ def _remap_graph_axis_tree(
     num_graphs: int,
 ) -> Any:
     return jax.tree_util.tree_map(
-        lambda x: _remap_graph_axis_field(
-            x,
-            axis=axis,
-            old_graph_ids=old_graph_ids,
-            new_graph_ids=new_graph_ids,
-            num_graphs=num_graphs,
-        )
-        if isinstance(x, cx.Field)
-        else x,
+        lambda x: (
+            _remap_graph_axis_field(
+                x,
+                axis=axis,
+                old_graph_ids=old_graph_ids,
+                new_graph_ids=new_graph_ids,
+                num_graphs=num_graphs,
+            )
+            if isinstance(x, cx.Field)
+            else x
+        ),
         tree,
         is_leaf=lambda x: isinstance(x, cx.Field),
     )
@@ -604,7 +606,9 @@ def graph_gradient(
     weights are evaluated on the same edge batch and multiplied into the result.
     """
     if flow not in ("source_to_target", "target_to_source"):
-        raise ValueError("graph_gradient flow must be 'source_to_target' or 'target_to_source'.")
+        raise ValueError(
+            "graph_gradient flow must be 'source_to_target' or 'target_to_source'."
+        )
     return DomainFunction(
         domain=u.domain,
         deps=u.deps,
@@ -625,7 +629,9 @@ def graph_divergence(
     and `-flux` to its sender. `sign="out_minus_in"` flips that convention.
     """
     if sign not in ("in_minus_out", "out_minus_in"):
-        raise ValueError("graph_divergence sign must be 'in_minus_out' or 'out_minus_in'.")
+        raise ValueError(
+            "graph_divergence sign must be 'in_minus_out' or 'out_minus_in'."
+        )
     return DomainFunction(
         domain=flux.domain,
         deps=flux.deps,

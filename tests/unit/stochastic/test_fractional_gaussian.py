@@ -109,7 +109,6 @@ def test_hurst_half_recovers_brownian_covariance_contract():
     )
 
 
-
 def test_dense_method_preserves_seeded_values_and_identifiers():
     process = phx.stochastic.FractionalGaussianProcess(
         0.35,
@@ -142,9 +141,7 @@ def test_dense_method_preserves_seeded_values_and_identifiers():
         "davies-harte",
         "auto",
     }
-    values_digest = hashlib.sha256(
-        bytes(jax.device_get(default.values))
-    ).hexdigest()
+    values_digest = hashlib.sha256(bytes(jax.device_get(default.values))).hexdigest()
 
     assert default.sampling_method == explicit.sampling_method == "dense"
     assert automatic.sampling_method == "dense"
@@ -215,16 +212,13 @@ def test_davies_harte_matches_covariance_autocovariance_and_hurst():
         ]
     )
     autocovariance_error = jnp.max(
-        jnp.abs(empirical_autocovariance - exact_autocovariance)
-        / exact_autocovariance
+        jnp.abs(empirical_autocovariance - exact_autocovariance) / exact_autocovariance
     )
 
     values = realization.values[..., 0]
     variance_lag_one = jnp.mean((values[:, 1:] - values[:, :-1]) ** 2)
     variance_lag_eight = jnp.mean((values[:, 8:] - values[:, :-8]) ** 2)
-    estimated_hurst = 0.5 * jnp.log(variance_lag_eight / variance_lag_one) / jnp.log(
-        8.0
-    )
+    estimated_hurst = 0.5 * jnp.log(variance_lag_eight / variance_lag_one) / jnp.log(8.0)
 
     assert realization.sampling_method == "davies-harte"
     assert covariance_error < 0.055
@@ -349,9 +343,7 @@ def test_davies_harte_jit_interpolation_trajectory_and_rough_consumers():
         interpolation="linear",
     )[:, 0]
     trajectory = realization.to_stochastic_trajectory(realization_axes=("path",))
-    rough_path = phx.stochastic.GeometricRoughPath.from_fractional_gaussian(
-        realization
-    )
+    rough_path = phx.stochastic.GeometricRoughPath.from_fractional_gaussian(realization)
 
     assert jnp.allclose(compiled_values, realization.values, rtol=1e-14, atol=1e-14)
     assert jnp.allclose(jnp.sum(pieces, axis=1), whole, rtol=0.0, atol=1e-12)
@@ -416,20 +408,11 @@ def test_davies_harte_rejects_invalid_inputs_and_auto_records_fallbacks():
     trajectory = automatic_embedding.to_stochastic_trajectory()
 
     assert automatic_nonuniform.sampling_method == "dense"
-    assert (
-        automatic_nonuniform.sampling_provenance
-        == "auto:dense-nonuniform-grid"
-    )
+    assert automatic_nonuniform.sampling_provenance == "auto:dense-nonuniform-grid"
     assert automatic_embedding.sampling_method == "dense"
-    assert (
-        automatic_embedding.sampling_provenance
-        == "auto:dense-invalid-embedding"
-    )
+    assert automatic_embedding.sampling_provenance == "auto:dense-invalid-embedding"
     assert trajectory.metadata["sampling_method"] == "dense"
-    assert (
-        trajectory.metadata["sampling_provenance"]
-        == "auto:dense-invalid-embedding"
-    )
+    assert trajectory.metadata["sampling_provenance"] == "auto:dense-invalid-embedding"
 
 
 def test_davies_harte_requires_exact_anchor_and_translation_invariant_spacing():
@@ -460,9 +443,7 @@ def test_davies_harte_requires_exact_anchor_and_translation_invariant_spacing():
         1.0,
         reference_time=1e16,
     )
-    translated_nonuniform_grid = jnp.asarray(
-        [1e16, 1e16 + 100.0, 1e16 + 300.0]
-    )
+    translated_nonuniform_grid = jnp.asarray([1e16, 1e16 + 100.0, 1e16 + 300.0])
     with pytest.raises(ValueError, match="uniform grid"):
         phx.stochastic.FractionalGaussianRealization(
             translated_process,
@@ -480,9 +461,6 @@ def test_davies_harte_requires_exact_anchor_and_translation_invariant_spacing():
     assert explicit_dense.sampling_method == automatic_anchor.sampling_method == "dense"
     assert explicit_dense.realization_id == automatic_anchor.realization_id
     assert explicit_dense.coupling_id == automatic_anchor.coupling_id
-    assert (
-        automatic_anchor.sampling_provenance
-        == "auto:dense-reference-time-mismatch"
-    )
+    assert automatic_anchor.sampling_provenance == "auto:dense-reference-time-mismatch"
     assert automatic_spacing.sampling_method == "dense"
     assert automatic_spacing.sampling_provenance == "auto:dense-nonuniform-grid"

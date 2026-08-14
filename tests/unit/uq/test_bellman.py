@@ -6,7 +6,9 @@ import pytest
 import phydrax as phx
 
 
-def _scalar_linear_problem(*, values=None, mask=None, step_valid=None, problem_id="scalar"):
+def _scalar_linear_problem(
+    *, values=None, mask=None, step_valid=None, problem_id="scalar"
+):
     if values is None:
         values = jnp.asarray([[0.4], [-0.2]])
     observations = phx.stochastic.ObservationSequence(
@@ -90,12 +92,8 @@ def _time_varying_masked_problem():
         process_id="time-varying-process",
     )
     observation = phx.stochastic.LinearGaussianObservationModel(
-        lambda time, context: jnp.asarray(
-            [[1.0, 0.15 * time], [-0.1 * time, 0.9]]
-        ),
-        lambda time, context: jnp.asarray(
-            [[0.25 + 0.02 * time, 0.04], [0.04, 0.3]]
-        ),
+        lambda time, context: jnp.asarray([[1.0, 0.15 * time], [-0.1 * time, 0.9]]),
+        lambda time, context: jnp.asarray([[0.25 + 0.02 * time, 0.04], [0.04, 0.3]]),
         state_shape=(2,),
         observation_shape=(2,),
         observation_id="time-varying-observation",
@@ -112,12 +110,14 @@ def _time_varying_masked_problem():
 
 
 def _poisson_problem():
-    base = _scalar_linear_problem(values=jnp.asarray([[3.0], [2.0]]), problem_id="poisson")
+    base = _scalar_linear_problem(
+        values=jnp.asarray([[3.0], [2.0]]), problem_id="poisson"
+    )
 
     def log_prob(value, state, time, mask, context):
         del time, context
-        terms = value * state[0] - jnp.exp(state[0]) - jax.scipy.special.gammaln(
-            value + 1.0
+        terms = (
+            value * state[0] - jnp.exp(state[0]) - jax.scipy.special.gammaln(value + 1.0)
         )
         return jnp.sum(jnp.where(mask, terms, 0.0))
 
@@ -333,8 +333,9 @@ def test_normalized_state_dependent_transition_uses_log_determinant_and_schur_pr
     def objective(joint):
         previous = joint[:1]
         current = joint[1:]
-        return 0.5 * previous @ previous_information @ previous - problem.model.transition.log_prob(
-            current, previous, 0.0, 1.0, context
+        return (
+            0.5 * previous @ previous_information @ previous
+            - problem.model.transition.log_prob(current, previous, 0.0, 1.0, context)
         )
 
     hessian = jax.hessian(objective)(joint_mode)
@@ -352,9 +353,7 @@ def test_normalized_state_dependent_transition_uses_log_determinant_and_schur_pr
 def test_curvature_failure_is_visible_and_declared_damping_repairs_it():
     problem = _nonconcave_observation_problem()
     failed = phx.uq.bellman_filter(problem, method="optimization")
-    damped = phx.uq.bellman_filter(
-        problem, method="optimization", curvature_damping=2.0
-    )
+    damped = phx.uq.bellman_filter(problem, method="optimization", curvature_damping=2.0)
 
     assert failed.status[0] == phx.uq.BELLMAN_UPDATE_CURVATURE_FAILURE
     assert not failed.mode_valid[0]
@@ -365,9 +364,7 @@ def test_curvature_failure_is_visible_and_declared_damping_repairs_it():
 
 def test_solver_failure_freezes_state_and_dimension_and_density_guards_reject():
     problem = _scalar_linear_problem()
-    failed = phx.uq.bellman_filter(
-        problem, method="optimization", optimizer_max_steps=1
-    )
+    failed = phx.uq.bellman_filter(problem, method="optimization", optimizer_max_steps=1)
 
     assert failed.status[0] == phx.uq.BELLMAN_INITIALIZATION_OPTIMIZER_FAILURE
     assert jnp.allclose(failed.filtered_modes[0], problem.model.prior.location)

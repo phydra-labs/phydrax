@@ -178,7 +178,10 @@ def test_implicit_score_matching_trains_gaussian_score_field():
         samples,
         policy=ScoreMatchingPolicy("implicit", num_probes=4),
     )
-    solver = phx.solver.FunctionalSolver(functions={"score": score}, terms=(objective,), )
+    solver = phx.solver.FunctionalSolver(
+        functions={"score": score},
+        terms=(objective,),
+    )
 
     trained = solver.solve(
         num_iter=120,
@@ -208,7 +211,10 @@ def test_resampled_particle_provider_runs_once_per_optimizer_update():
         sampling_mode="resample",
         policy=ScoreMatchingPolicy("implicit", num_probes=2),
     )
-    solver = phx.solver.FunctionalSolver(functions={"score": score}, terms=(objective,), )
+    solver = phx.solver.FunctionalSolver(
+        functions={"score": score},
+        terms=(objective,),
+    )
 
     solver.solve(
         num_iter=4,

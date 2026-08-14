@@ -122,7 +122,11 @@ def bridge_path_law_diagnostics(
     one_hot = jax.nn.one_hot(indices, result.problem.num_states)
     empirical = jnp.mean(one_hot, axis=1)
     exact = result.marginal_probabilities.reshape(
-        (result.problem.num_cases, result.problem.num_steps + 1, result.problem.num_states)
+        (
+            result.problem.num_cases,
+            result.problem.num_steps + 1,
+            result.problem.num_states,
+        )
     )
     marginal_residual = jnp.max(jnp.sum(jnp.abs(empirical - exact), axis=-1), axis=-1)
     controlled_log_prob = bridge_path_log_prob(result, values).reshape(
@@ -139,8 +143,7 @@ def bridge_path_law_diagnostics(
     case_shape = result.problem.case_shape
     return BridgePathLawDiagnostics(
         empirical_marginal_probabilities=empirical.reshape(
-            case_shape
-            + (result.problem.num_steps + 1, result.problem.num_states)
+            case_shape + (result.problem.num_steps + 1, result.problem.num_states)
         ),
         empirical_marginal_residual=marginal_residual.reshape(case_shape),
         mean_log_likelihood_ratio=mean.reshape(case_shape),

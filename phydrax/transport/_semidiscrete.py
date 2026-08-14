@@ -311,12 +311,8 @@ class SemidiscreteTransportResult(StrictModule):
 
     @property
     def converged(self) -> Array:
-        return (
-            (self.diagnostics.status == int(TransportStatus.CONVERGED))
-            & (
-                self.integration_diagnostics.status
-                == int(IntegrationStatus.CONVERGED)
-            )
+        return (self.diagnostics.status == int(TransportStatus.CONVERGED)) & (
+            self.integration_diagnostics.status == int(IntegrationStatus.CONVERGED)
         )
 
     @property
@@ -495,14 +491,12 @@ class SemidiscreteSinkhorn(StrictModule):
                 )
                 candidate = jnp.where(
                     problem.target_mask,
-                    potential
-                    + epsilon * (active_log_target - active_log_marginal),
+                    potential + epsilon * (active_log_target - active_log_marginal),
                     0.0,
                 )
                 candidate = jnp.where(
                     problem.target_mask,
-                    candidate
-                    - jnp.sum(problem.target_probabilities * candidate),
+                    candidate - jnp.sum(problem.target_probabilities * candidate),
                     0.0,
                 )
                 finite = jnp.all(
@@ -511,9 +505,7 @@ class SemidiscreteSinkhorn(StrictModule):
                 estimate_ok = estimate.status == int(IntegrationStatus.CONVERGED)
                 valid = finite & estimate_ok
                 next_potential = jnp.where(valid, candidate, potential)
-                residual = jnp.sum(
-                    jnp.abs(marginal - problem.target_probabilities)
-                )
+                residual = jnp.sum(jnp.abs(marginal - problem.target_probabilities))
                 residual = jnp.where(valid, residual, jnp.inf)
                 dual = jnp.max(jnp.abs(next_potential - potential)) / epsilon
                 return (
@@ -785,7 +777,9 @@ class SemidiscreteQuantizer(StrictModule):
     def physical_support(self, parameters: ArrayLike, /) -> Array:
         """Map outer optimizer coordinates to physical support coordinates."""
         values = jnp.asarray(parameters, dtype=float)
-        return values if self.support_transform is None else self.support_transform(values)
+        return (
+            values if self.support_transform is None else self.support_transform(values)
+        )
 
     def objective(
         self,
@@ -883,9 +877,10 @@ class _MarginalIntegrand(StrictModule):
         costs = _coordinate_costs(
             coordinates, self.encoder, self.cost, self.target_points
         )
-        logits = _safe_log(self.target_probabilities) + (
-            self.target_potential - costs
-        ) / self.epsilon
+        logits = (
+            _safe_log(self.target_probabilities)
+            + (self.target_potential - costs) / self.epsilon
+        )
         normalizer = jsp.special.logsumexp(logits, axis=-1)
         probabilities = jnp.exp(logits - normalizer[..., None])
         return jnp.where(self.target_mask, probabilities, 0.0)
@@ -905,9 +900,10 @@ class _StatisticsIntegrand(StrictModule):
         costs = _coordinate_costs(
             coordinates, self.encoder, self.cost, self.target_points
         )
-        logits = _safe_log(self.target_probabilities) + (
-            self.target_potential - costs
-        ) / self.epsilon
+        logits = (
+            _safe_log(self.target_probabilities)
+            + (self.target_potential - costs) / self.epsilon
+        )
         log_normalizer = jsp.special.logsumexp(logits, axis=-1)
         probabilities = jnp.where(
             self.target_mask,
@@ -955,7 +951,9 @@ def _estimate_array(estimate: IntegrationEstimate, /) -> Array:
 def _error_array(estimate: IntegrationEstimate, dtype: Any, /) -> tuple[Array, Array]:
     if estimate.error_estimate is None:
         return jnp.asarray(jnp.nan, dtype=dtype), jnp.asarray(False)
-    return jnp.asarray(estimate.error_estimate, dtype=dtype).reshape(()), jnp.asarray(True)
+    return jnp.asarray(estimate.error_estimate, dtype=dtype).reshape(()), jnp.asarray(
+        True
+    )
 
 
 def _coordinate_costs(
@@ -979,15 +977,15 @@ def _encode_points(
     if len(coordinates) == 1 and isinstance(coordinates[0], tuple):
         axes = tuple(jnp.asarray(axis, dtype=float) for axis in coordinates[0])
         if not axes or any(axis.ndim != 1 for axis in axes):
-            raise ValueError("Separable source coordinates must be nonempty rank-one axes.")
+            raise ValueError(
+                "Separable source coordinates must be nonempty rank-one axes."
+            )
         raw = jnp.stack(jnp.meshgrid(*axes, indexing="ij"), axis=-1)
         batch_shape = raw.shape[:-1]
         encoded = raw if encoder is None else encoder(raw)
         points = jnp.asarray(encoded, dtype=float)
         if points.shape[: len(batch_shape)] != batch_shape:
-            raise ValueError(
-                "source_encoder must preserve the integration batch shape."
-            )
+            raise ValueError("source_encoder must preserve the integration batch shape.")
         if points.ndim == len(batch_shape):
             points = points[..., None]
         if points.ndim != len(batch_shape) + 1 or points.shape[-1] == 0:

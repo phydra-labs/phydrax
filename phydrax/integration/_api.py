@@ -82,6 +82,7 @@ class IntegrationRealization(StrictModule):
     batch: Any
     key: Any
     compression: Any | None = None
+
     def __init__(
         self,
         target: Any,
@@ -126,10 +127,8 @@ def _attach_compression(
     )
 
 
-
 def _base_target(target: Any, /) -> Any:
     return target.base if isinstance(target, DensityTarget) else target
-
 
 
 def _is_domain_sampling_plan(plan: Any, /) -> bool:
@@ -138,6 +137,7 @@ def _is_domain_sampling_plan(plan: Any, /) -> bool:
         and bool(plan)
         and all(isinstance(term, PointSampling) for term in plan)
     )
+
 
 def _requires_random_key(plan: Any, /) -> bool:
     if _is_domain_sampling_plan(plan):

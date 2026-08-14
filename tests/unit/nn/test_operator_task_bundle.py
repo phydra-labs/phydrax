@@ -419,9 +419,7 @@ def test_portable_operator_artifact_round_trips_inference_and_training_state(tmp
     manifest = phx.nn.operator.training.load_operator_artifact_manifest(destination)
     assert manifest.format == "phydrax-operator-artifact"
     assert manifest.version == 3
-    assert (
-        manifest.execution_model_architecture_id == "phydrax.operator.architecture:FNO"
-    )
+    assert manifest.execution_model_architecture_id == "phydrax.operator.architecture:FNO"
     recipe = json.dumps(manifest.execution_model_recipe, sort_keys=True)
     assert "phydrax.nn." not in recipe
     assert "phydrax.operator.architecture:FNO" in recipe
@@ -483,9 +481,7 @@ def test_wavelet_operator_artifacts_round_trip_without_model_templates(tmp_path)
 
         restored = phx.nn.operator.training.load_trained_operator(destination)
         actual = restored.predict(batch).field("solution").values
-        manifest = phx.nn.operator.training.load_operator_artifact_manifest(
-            destination
-        )
+        manifest = phx.nn.operator.training.load_operator_artifact_manifest(destination)
 
         assert manifest.execution_model_architecture_id == (
             f"phydrax.operator.architecture:{type(model).__name__}"

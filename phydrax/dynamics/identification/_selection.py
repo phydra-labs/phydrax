@@ -174,17 +174,19 @@ def _case_input_policy(problem: SINDyProblem, case: int, /):
     data = problem.data
     if data.inputs is None:
         return None
+    input_layout = data.input_layout
+    input_alignment = data.input_alignment
+    if input_layout is None or input_alignment is None:
+        raise RuntimeError("Observed inputs are missing their layout contract.")
     coordinates = data.coordinates.reshape((data.num_cases, data.capacity))[case]
-    count = data.capacity if data.input_alignment == "samples" else data.capacity - 1
-    values = data.inputs.reshape((data.num_cases, count) + data.input_layout.shape)[case]
-    policy_coordinates = (
-        coordinates if data.input_alignment == "samples" else coordinates[:-1]
-    )
+    count = data.capacity if input_alignment == "samples" else data.capacity - 1
+    values = data.inputs.reshape((data.num_cases, count) + input_layout.shape)[case]
+    policy_coordinates = coordinates if input_alignment == "samples" else coordinates[:-1]
     return _ObservedInputPolicy(
         coordinates=policy_coordinates,
         values=values,
-        input_layout=data.input_layout,
-        alignment=data.input_alignment,
+        input_layout=input_layout,
+        alignment=input_alignment,
         policy_id=f"observed-inputs:{data.dataset_id}:case={case}",
     )
 

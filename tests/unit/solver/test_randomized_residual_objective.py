@@ -46,9 +46,9 @@ def test_u_statistic_is_unbiased_for_noisy_residual_and_has_exact_gradient():
     batch = objective.sample(key=jr.key(4))
 
     value = objective.loss(_functions(parameter), batch=batch)
-    gradient = jax.grad(
-        lambda value_: objective.loss(_functions(value_), batch=batch)
-    )(parameter)
+    gradient = jax.grad(lambda value_: objective.loss(_functions(value_), batch=batch))(
+        parameter
+    )
 
     assert jnp.allclose(value, parameter**2, atol=8e-2)
     assert jnp.allclose(gradient, 2.0 * parameter, atol=8e-2)
@@ -135,7 +135,10 @@ def test_resampled_collocation_is_materialized_once_per_optimizer_update():
         collocation=sampler,
         sampling_mode="resample",
     )
-    solver = phx.solver.FunctionalSolver(functions=_functions(0.0), terms=(objective,), )
+    solver = phx.solver.FunctionalSolver(
+        functions=_functions(0.0),
+        terms=(objective,),
+    )
 
     trained = solver.solve(
         num_iter=5,

@@ -16,6 +16,13 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import AbstractAttribute, StrictModule
+from ...linalg import (
+    DenseLinearOperator,
+    DenseSVD,
+    LeastSquaresProblem,
+    LinearSolvePolicy,
+    solve,
+)
 from .._layout import StateLayout
 
 
@@ -331,7 +338,11 @@ def _newton_correct(
         return values, norm, 0, True, CONTINUATION_POINT_SUCCESS
     for iteration in range(1, max_iterations + 1):
         jacobian = jax.jacfwd(residual_function)(values)
-        step = jnp.linalg.lstsq(jacobian, -residual, rcond=None)[0]
+        step = solve(
+            LeastSquaresProblem(DenseLinearOperator(jacobian)),
+            -residual,
+            policy=LinearSolvePolicy(DenseSVD()),
+        ).value
         if not bool(jnp.all(jnp.isfinite(jacobian)) & jnp.all(jnp.isfinite(step))):
             return (
                 values,
@@ -451,11 +462,11 @@ def _initial_tangent(
         parameter
     ).reshape((-1,))
     tangent_parameter = jnp.asarray(direction, dtype=state.dtype)
-    tangent_state = jnp.linalg.lstsq(
-        state_jacobian,
+    tangent_state = solve(
+        LeastSquaresProblem(DenseLinearOperator(state_jacobian)),
         -parameter_derivative * tangent_parameter,
-        rcond=None,
-    )[0].reshape(problem.state_layout.shape)
+        policy=LinearSolvePolicy(DenseSVD()),
+    ).value.reshape(problem.state_layout.shape)
     norm = jnp.sqrt(jnp.sum(jnp.abs(tangent_state) ** 2) + tangent_parameter**2)
     valid = (
         jnp.all(jnp.isfinite(state_jacobian))
@@ -688,6 +699,7 @@ def continue_branch(
     parameter = jnp.asarray(initial_parameter)
     if state.shape != problem.state_layout.shape or parameter.shape != ():
         raise ValueError("Initial state or parameter has the wrong shape.")
+    initial_parameter_value = float(parameter)
     spectrum_width = (
         problem.state_layout.size if spectrum_capacity is None else int(spectrum_capacity)
     )
@@ -943,7 +955,7 @@ def continue_branch(
                 "problem": problem.problem_id,
                 "method": method,
                 "direction": int(direction),
-                "initial_parameter": float(initial_parameter),
+                "initial_parameter": initial_parameter_value,
                 "parent": parent_branch_id,
             }
         )

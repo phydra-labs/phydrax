@@ -112,10 +112,9 @@ def _pde_problem(size: int, dtype: jnp.dtype) -> _Problem:
     coordinate = jnp.linspace(0.0, 1.0, size + 2, dtype=dtype)[1:-1]
     mode = jnp.arange(1, 9, dtype=dtype)
     basis = jnp.sin(jnp.pi * coordinate[:, None] * mode[None, :])
-    second_derivative = -(jnp.pi * mode) ** 2 * basis
-    forcing = (
-        jnp.pi**2 * jnp.sin(jnp.pi * coordinate)
-        + 16.0 * jnp.exp(-((coordinate - 0.72) / 0.055) ** 2)
+    second_derivative = -((jnp.pi * mode) ** 2) * basis
+    forcing = jnp.pi**2 * jnp.sin(jnp.pi * coordinate) + 16.0 * jnp.exp(
+        -(((coordinate - 0.72) / 0.055) ** 2)
     )
     boundary_basis = jnp.sin(
         jnp.pi * jnp.asarray([[0.0], [1.0]], dtype=dtype) * mode[None, :]
@@ -152,9 +151,7 @@ def _ensemble_problem(size: int, dtype: jnp.dtype) -> _Problem:
     true_mean = 0.4 - 0.7 * coordinate + 0.5 * coordinate**2
     scale = 0.08 + 0.5 * (coordinate + 1.0) ** 2
     noise = jnp.sin(
-        1.7
-        + 2.3 * jnp.arange(case_count, dtype=dtype)[:, None]
-        + 3.1 * member[None, :]
+        1.7 + 2.3 * jnp.arange(case_count, dtype=dtype)[:, None] + 3.1 * member[None, :]
     )
     observations = true_mean[:, None] + scale[:, None] * noise
     design = jnp.stack(
@@ -231,8 +228,7 @@ def _objective(
         elif method == "logsumexp":
             temperature = jnp.asarray(logsumexp_temperature, dtype=residuals.dtype)
             tail = temperature * (
-                jsp.special.logsumexp(residuals / temperature)
-                - jnp.log(residuals.size)
+                jsp.special.logsumexp(residuals / temperature) - jnp.log(residuals.size)
             )
         else:
             tail = _hard_cvar(residuals, quantile)
@@ -275,11 +271,15 @@ def _adam_step(objective, learning_rate: float):
             jnp.sqrt(corrected_second) + stability
         )
         return (
-            parameters,
-            first_moment,
-            second_moment,
-            next_iteration,
-        ), value, gradient
+            (
+                parameters,
+                first_moment,
+                second_moment,
+                next_iteration,
+            ),
+            value,
+            gradient,
+        )
 
     return step
 
@@ -519,9 +519,7 @@ def main() -> None:
                         quantile=float(arguments.quantile),
                         epsilon=float(arguments.epsilon),
                         solver_iterations=int(arguments.sinkhorn_iterations),
-                        logsumexp_temperature=float(
-                            arguments.logsumexp_temperature
-                        ),
+                        logsumexp_temperature=float(arguments.logsumexp_temperature),
                         learning_rate=float(arguments.learning_rate),
                         steps=steps,
                     )

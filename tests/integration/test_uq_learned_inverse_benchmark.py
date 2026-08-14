@@ -100,9 +100,7 @@ def _make_inverse_solver(
     observation_key=None,
 ):
     geometry = phx.domain.Interval1d(0.0, 1.0)
-    observation_layout = phx.domain.SampleLayout((("x",),)).canonicalize(
-        geometry.labels
-    )
+    observation_layout = phx.domain.SampleLayout((("x",),)).canonicalize(geometry.labels)
 
     def model_factory(model_key):
         return phx.nn.models.MLP(
@@ -212,7 +210,10 @@ def _make_inverse_solver(
         phx.integration.fixed(data_realization),
         scale=20.0,
     )
-    return phx.solver.FunctionalSolver(functions={"state": state}, terms=(poisson, constant_source, data), )
+    return phx.solver.FunctionalSolver(
+        functions={"state": state},
+        terms=(poisson, constant_source, data),
+    )
 
 
 def _fit_staged(key, *, seed: int):

@@ -70,7 +70,9 @@ class _ManifoldSpectralMixer(StrictModule):
     ) -> Array:
         array = jnp.asarray(values)
         if source.num_modes != self.num_modes or target.num_modes != self.num_modes:
-            raise ValueError("Source and target spectral mode counts must match the mixer.")
+            raise ValueError(
+                "Source and target spectral mode counts must match the mixer."
+            )
         if source.num_groups != self.num_groups or target.num_groups != self.num_groups:
             raise ValueError("Source and target eigenspace groups must match the mixer.")
         if (
@@ -82,7 +84,9 @@ class _ManifoldSpectralMixer(StrictModule):
         ):
             raise ValueError("Source and target eigenspace groups must align.")
         if source.basis_id != self.basis_id or target.basis_id != self.basis_id:
-            raise ValueError("Source and target plans require the mixer's aligned basis_id.")
+            raise ValueError(
+                "Source and target plans require the mixer's aligned basis_id."
+            )
         if array.shape[-2:] != (source.num_points, self.in_channels):
             raise ValueError(
                 "Manifold spectral values must end in source points/channels "
@@ -217,7 +221,9 @@ class ManifoldSpectralOperator(AbstractOperatorModel):
         if prod(source.sample_shape) != self.source_plan.num_points:
             raise ValueError("Source sample count does not match the spectral plan.")
         if prod(query.sample_shape) != self.target_plan.num_points:
-            raise ValueError("Query sample count does not match the target spectral plan.")
+            raise ValueError(
+                "Query sample count does not match the target spectral plan."
+            )
         values = jnp.asarray(source.values)
         sample_ndim = len(source.sample_shape)
         trailing = values.shape[len(batch.case_shape) + sample_ndim :]

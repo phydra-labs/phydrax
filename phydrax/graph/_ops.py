@@ -55,7 +55,9 @@ def concatenated_args(
         def wrapper(*args: Any, **kwargs: Any) -> ArrayTree:
             leaves = jtu.tree_flatten(args)[0] + jtu.tree_flatten(kwargs)[0]
             if len(leaves) == 0:
-                raise ValueError("concatenated_args received no array leaves to concatenate.")
+                raise ValueError(
+                    "concatenated_args received no array leaves to concatenate."
+                )
             return fn(jnp.concatenate(leaves, axis=axis))
 
         return wrapper

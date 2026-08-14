@@ -90,6 +90,7 @@ def test_domain_differential_forms_share_continuous_exterior_calculus():
     with pytest.raises(ValueError, match="charts must match"):
         phx.operators.domain_codifferential(form, mismatched_metric)
 
+
 def test_domain_signed_codifferential_matches_pointwise_form_calculus():
     domain = phx.domain.HyperRectangle([-1.0] * 4, [1.0] * 4, label="x")
     chart = phx.metrix.CoordinateChart("minkowski_forms", ("t", "x", "y", "z"))

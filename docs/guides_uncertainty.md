@@ -826,9 +826,7 @@ For scalar Bernoulli-logit and Poisson-log-rate models, use the family kernel th
 the ordinary observation-likelihood protocol:
 
 ```python
-count_likelihood = phx.uq.ScalarNaturalExponentialFamilyLikelihood(
-    phx.uq.PoissonFamily()
-)
+count_likelihood = phx.uq.ScalarNaturalExponentialFamilyLikelihood(phx.uq.PoissonFamily())
 log_rate = jnp.asarray([0.0, jnp.log(2.0), jnp.log(3.0)])
 counts = jnp.asarray([0.0, 1.0, 4.0])
 count_log_probability = count_likelihood.log_prob(log_rate, counts)
@@ -1042,9 +1040,7 @@ space = phx.uq.ParameterSpace(
 )
 posterior = phx.uq.PosteriorProblem(
     space,
-    lambda p: jnp.sum(
-        observation_likelihood.log_prob(p["source"] * basis, observed)
-    ),
+    lambda p: jnp.sum(observation_likelihood.log_prob(p["source"] * basis, observed)),
     predict=lambda p, x: cx.Field(
         p["source"] * 0.5 * x * (1.0 - x),
         dims=("x",),
@@ -1461,9 +1457,7 @@ correctness reference for small parameter spaces.
 
 ```python
 # This conjugate example has an analytic MAP.
-posterior_variance = 1.0 / (
-    1.0 / 3.0**2 + jnp.vdot(basis, basis) / noise_scale**2
-)
+posterior_variance = 1.0 / (1.0 / 3.0**2 + jnp.vdot(basis, basis) / noise_scale**2)
 posterior_mean = posterior_variance * jnp.vdot(basis, observed) / noise_scale**2
 
 laplace = phx.uq.fit_laplace(
@@ -1481,9 +1475,7 @@ For cheap local prediction moments, propagate the Laplace covariance without
 drawing:
 
 ```python
-linearized_prediction = laplace.linearized_predict(
-    jnp.linspace(0.0, 1.0, 65)
-)
+linearized_prediction = laplace.linearized_predict(jnp.linspace(0.0, 1.0, 65))
 linearized_variance = linearized_prediction.exact_variance()
 ```
 
@@ -1579,11 +1571,8 @@ size, and solves updates in ensemble space:
 ```python
 eki_posterior = phx.uq.PosteriorProblem(
     space,
-    lambda p: -0.5
-    * jnp.sum(((p["source"] * basis - observed) / noise_scale) ** 2),
-    gauss_newton_residual=lambda p: (
-        p["source"] * basis - observed
-    ) / noise_scale,
+    lambda p: -0.5 * jnp.sum(((p["source"] * basis - observed) / noise_scale) ** 2),
+    gauss_newton_residual=lambda p: (p["source"] * basis - observed) / noise_scale,
     predict=lambda p, x: cx.Field(
         p["source"] * 0.5 * x * (1.0 - x),
         dims=("x",),
@@ -1922,14 +1911,13 @@ value_points = jnp.linspace(0.05, 0.95, 8)[:, None]
 interior_points = jnp.linspace(0.1, 0.9, 6)[:, None]
 diffusion = jnp.asarray(0.2)
 measured_values = jnp.sin(jnp.pi * value_points[:, 0])
-measured_forcing = (
-    diffusion * jnp.pi**2 * jnp.sin(jnp.pi * interior_points[:, 0])
-)
+measured_forcing = diffusion * jnp.pi**2 * jnp.sin(jnp.pi * interior_points[:, 0])
 value_mean = jnp.zeros_like(measured_values)
 forcing_mean = jnp.zeros_like(measured_forcing)
 
 value = phx.uq.value_functional(1)
 laplacian = phx.uq.laplacian_functional(1)
+
 
 def operator_model(diffusion):
     blocks = (
@@ -2012,13 +2000,11 @@ time point or node.
 ```python
 num_cases = 64
 
-train, calibration, test = (
-    phx.data_utils.train_calibration_test_split_indices(
-        num_cases,
-        calibration_fraction=0.2,
-        test_fraction=0.2,
-        key=jr.key(2),
-    )
+train, calibration, test = phx.data_utils.train_calibration_test_split_indices(
+    num_cases,
+    calibration_fraction=0.2,
+    test_fraction=0.2,
+    key=jr.key(2),
 )
 ```
 
@@ -2045,6 +2031,7 @@ Jacobian.
 ```python
 def forward(diffusivity, source):
     return diffusivity + source
+
 
 center = {
     "diffusivity": jnp.asarray(0.2),
@@ -2133,6 +2120,7 @@ source = phx.domain.ProbabilityDomain(
 )
 parameter_domain = diffusivity @ source
 
+
 @parameter_domain.Function("diffusivity", "source")
 def observable(diffusivity, source):
     return jnp.stack(
@@ -2141,6 +2129,7 @@ def observable(diffusivity, source):
             diffusivity * source,
         )
     )
+
 
 surrogate = phx.operators.interpolate_smolyak(
     observable,

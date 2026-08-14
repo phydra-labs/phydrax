@@ -611,9 +611,7 @@ def integrate_product(
         )
         if len(estimates) > 1:
             value_data = jnp.mean(values, axis=0)
-            error = jnp.max(
-                jnp.std(values, axis=0, ddof=1) / jnp.sqrt(len(estimates))
-            )
+            error = jnp.max(jnp.std(values, axis=0, ddof=1) / jnp.sqrt(len(estimates)))
             error_kind = "randomized-qmc-replicate-error"
         else:
             value_data = estimates[0].value.data
@@ -622,9 +620,7 @@ def integrate_product(
         status = jnp.max(
             jnp.stack(tuple(jnp.asarray(estimate.status) for estimate in estimates))
         )
-        evaluations = sum(
-            int(batch.weights.data.size) for batch in realization.batches
-        )
+        evaluations = sum(int(batch.weights.data.size) for batch in realization.batches)
         diagnostics = ProductIntegrationDiagnostics(
             status=status,
             num_evaluations=jnp.asarray(evaluations, dtype=jnp.int32),

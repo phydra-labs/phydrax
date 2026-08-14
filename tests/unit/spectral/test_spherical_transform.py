@@ -69,12 +69,8 @@ def test_spherical_plan_matches_s2fft_and_handles_batch_channel_axes():
             jnp.stack((0.25 * first, 2.0 * first), axis=-1),
         )
     )
-    forward_precomputes = tuple(
-        s2fft.generate_precomputes_jax(4, 0, "mw", None, True)
-    )
-    inverse_precomputes = tuple(
-        s2fft.generate_precomputes_jax(4, 0, "mw", None, False)
-    )
+    forward_precomputes = tuple(s2fft.generate_precomputes_jax(4, 0, "mw", None, True))
+    inverse_precomputes = tuple(s2fft.generate_precomputes_jax(4, 0, "mw", None, False))
     expected_first = s2fft_spherical.forward_jax(
         first,
         4,
@@ -100,9 +96,7 @@ def test_spherical_plan_matches_s2fft_and_handles_batch_channel_axes():
         True,
         inverse_precomputes,
     )
-    gradient = jax.grad(lambda field: jnp.sum(jnp.abs(plan.analysis(field)) ** 2))(
-        first
-    )
+    gradient = jax.grad(lambda field: jnp.sum(jnp.abs(plan.analysis(field)) ** 2))(first)
 
     assert actual.shape == (2, *plan.coefficient_shape, 2)
     assert jnp.allclose(actual[0, ..., 0], expected_first, rtol=1e-12, atol=1e-12)

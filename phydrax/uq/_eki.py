@@ -16,6 +16,7 @@ from jaxtyping import Array, PyTree
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ._covariance import _solve_covariance_system
 from ._posterior import PosteriorProblem
 from ._posterior_predictive import (
     predict_from_position_samples,
@@ -381,10 +382,10 @@ def _eki_update(
     ensemble_system = ensemble_system + ((count - 1) * alpha + jitter) * jnp.eye(
         count, dtype=residuals.dtype
     )
-    coefficients = jnp.linalg.solve(
+    coefficients = _solve_covariance_system(
         ensemble_system,
         residual_anomalies @ innovation.T,
-    )
+    ).value
     updated = parameters - (parameter_anomalies.T @ coefficients).T
     mean = jnp.mean(updated, axis=0, keepdims=True)
     updated = mean + inflation * (updated - mean)

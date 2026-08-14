@@ -27,7 +27,6 @@ class frozendict(StrictModule, Mapping[_KT, _VT]):
     def __getitem__(self, key: _KT, /) -> _VT:
         return self._mapping.__getitem__(key)
 
-
     def keys(self) -> KeysView[_KT]:
         return self._mapping.keys()
 

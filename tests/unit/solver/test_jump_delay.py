@@ -36,9 +36,7 @@ def test_jump_delay_uses_right_continuous_history_at_exact_event_times():
     )
     problem = phx.solver.JumpDelayProblem(
         base,
-        lambda time, state, memory, channel, mark, args: (
-            state + mark + memory["lag"]
-        ),
+        lambda time, state, memory, channel, mark, args: state + mark + memory["lag"],
         mark_shape=(1,),
     )
     solution = phx.solver.solve_jump_delay(
@@ -113,9 +111,7 @@ def test_jump_delay_replays_one_global_wiener_path_across_events():
 
     assert jnp.allclose(solution.states[:, 0], expected, rtol=0.0, atol=5e-9)
     assert solution.realization is realization
-    assert solution.metadata["driver_family"] == (
-        "wiener-plus-finite-activity-jump"
-    )
+    assert solution.metadata["driver_family"] == ("wiener-plus-finite-activity-jump")
 
 
 def test_jump_delay_accepts_an_empty_successful_schedule():

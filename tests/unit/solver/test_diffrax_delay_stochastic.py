@@ -159,6 +159,7 @@ def test_dense_history_uses_the_same_wiener_path_inside_an_accepted_step():
     history = solution.interpolation.history.computed_history
     assert int(history.size) == int(solution.stats["num_accepted_steps"])
 
+
 def test_batched_stochastic_rolling_history_replays_full_path_solution():
     problem = _problem(t1=0.8, delay=0.2, structure="additive")
     realization = _realization(
@@ -456,9 +457,9 @@ def test_stochastic_state_dependent_and_distributed_delays_replay_all_history_mo
     )
     noise = phx.solver.DelayWienerTerm(
         "driver",
-        lambda time, state, memory, args: (
-            0.2 * memory["past"] + 0.1 * memory["spread"]
-        )[..., None],
+        lambda time, state, memory, args: (0.2 * memory["past"] + 0.1 * memory["spread"])[
+            ..., None
+        ],
         (1,),
         structure="general",
         basis_id="advanced-delay-basis",
@@ -501,9 +502,7 @@ def test_stochastic_state_dependent_and_distributed_delays_replay_all_history_mo
     assert jnp.array_equal(segmented.states, full.states)
     assert jnp.array_equal(rolling.evaluate(query), full.evaluate(query))
     assert jnp.array_equal(segmented.evaluate(query), full.evaluate(query))
-    assert full.stats["state_dependent_tracking"] == (
-        "first-order-pathwise-untracked"
-    )
+    assert full.stats["state_dependent_tracking"] == ("first-order-pathwise-untracked")
     assert segmented.stats["state_dependent_tracking"] == (
         "first-order-pathwise-untracked"
     )

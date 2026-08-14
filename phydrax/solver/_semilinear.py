@@ -13,13 +13,15 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ..stochastic import WienerRealization
-from ._differential import DifferentialProblem, DifferentialSolution
-from ._matrix_functions import (
+from ..linalg import (
+    AbstractLinearOperator,
+    ArraySpace,
     matrix_exponential_action,
     matrix_phi1_action,
     MatrixFunctionPolicy,
 )
+from ..stochastic import WienerRealization
+from ._differential import DifferentialProblem, DifferentialSolution
 from ._noise import SpatialNoiseBasis
 from ._spde import SemidiscreteSPDE
 
@@ -349,8 +351,7 @@ def solve_semilinear_spde(
         and not spde.problem.state_geometry.trivial
     ):
         raise ValueError(
-            "Semilinear exponential solvers do not support nontrivial "
-            "state_geometry."
+            "Semilinear exponential solvers do not support nontrivial state_geometry."
         )
     step_limit = float(dt)
     if not isfinite(step_limit) or step_limit <= 0.0:
@@ -399,6 +400,10 @@ def solve_semilinear_spde(
     )
     num_steps = int(steps.size)
     initial_state = spde.problem.initial_state
+    if isinstance(drift.linear_operator, AbstractLinearOperator) and isinstance(
+        drift.linear_operator.source, ArraySpace
+    ):
+        initial_state = initial_state.astype(drift.linear_operator.source.dtype)
     stochastic = spde.problem.stochastic
     exact_additive = resolved_scheme == "exact_additive"
     noise_basis = spde.noise_basis
@@ -419,34 +424,37 @@ def solve_semilinear_spde(
     else:
         sample_shape = () if realization is None else realization.sample_shape
         path_increments = jnp.zeros(sample_shape + (num_steps, 0))
+    matrix_operator = drift.linear_operator
+    if (
+        not isinstance(matrix_operator, AbstractLinearOperator)
+        and drift.spectral_representation is not None
+    ):
+        matrix_operator = drift.spectral_representation.operator
 
     def exponential_action(value, step_value):
         return matrix_exponential_action(
-            drift.linear_operator,
+            matrix_operator,
             value,
             step_value,
             policy=policy,
             spectral=drift.spectral_representation,
             spectral_bounds=drift.spectral_bounds,
-            self_adjoint=drift.mass_self_adjoint,
-            mass_weights=drift.mass_weights,
         )
 
     def one_path(path_key, path_sign, wiener_increments):
         def advance(carry, item):
-            time, state = carry
+            time, state, path_valid = carry
             step_value, step_index, wiener_increment = item
             nonlinear = drift.nonlinear(time, state, spde.problem.args)
-            nonlinear_update = step_value * matrix_phi1_action(
-                drift.linear_operator,
+            nonlinear_result = matrix_phi1_action(
+                matrix_operator,
                 nonlinear,
                 step_value,
                 policy=policy,
                 spectral=drift.spectral_representation,
                 spectral_bounds=drift.spectral_bounds,
-                self_adjoint=drift.mass_self_adjoint,
-                mass_weights=drift.mass_weights,
             )
+            nonlinear_update = step_value * nonlinear_result.value
             if exact_additive:
                 assert noise_basis is not None
                 assert noise_eigenvalues is not None
@@ -456,7 +464,7 @@ def solve_semilinear_spde(
                     (noise_basis.rank,),
                     dtype=state.real.dtype,
                 )
-                propagated = exponential_action(state, step_value)
+                propagated_result = exponential_action(state, step_value)
                 noise_update = exact_modal_stochastic_convolution(
                     noise_basis,
                     noise_eigenvalues,
@@ -479,17 +487,31 @@ def solve_semilinear_spde(
                         wiener_increment,
                         diffusion,
                     )
-                propagated = exponential_action(state + local_noise, step_value)
+                propagated_result = exponential_action(
+                    state + local_noise,
+                    step_value,
+                )
                 noise_update = jnp.zeros_like(state)
             else:
-                propagated = exponential_action(state, step_value)
+                propagated_result = exponential_action(state, step_value)
                 noise_update = jnp.zeros_like(state)
-            next_state = propagated + nonlinear_update + noise_update
-            return (time + step_value, next_state), next_state
+            next_state = propagated_result.value + nonlinear_update + noise_update
+            next_valid = (
+                path_valid & propagated_result.converged & nonlinear_result.converged
+            )
+            return (
+                time + step_value,
+                next_state,
+                next_valid,
+            ), (next_state, next_valid)
 
-        _, stepped = jax.lax.scan(
+        _, (stepped, step_valid) = jax.lax.scan(
             advance,
-            (jnp.asarray(spde.problem.t0), initial_state),
+            (
+                jnp.asarray(spde.problem.t0),
+                initial_state,
+                jnp.asarray(True),
+            ),
             (
                 steps,
                 jnp.arange(num_steps, dtype=jnp.uint32),
@@ -497,7 +519,8 @@ def solve_semilinear_spde(
             ),
         )
         complete = jnp.concatenate((initial_state[None, ...], stepped), axis=0)
-        return complete[save_indices]
+        complete_valid = jnp.concatenate((jnp.asarray([True]), step_valid))
+        return complete[save_indices], complete_valid[save_indices]
 
     if stochastic:
         assert realization is not None
@@ -507,15 +530,21 @@ def solve_semilinear_spde(
             flat_increments = path_increments.reshape(
                 (realization.num_paths, num_steps, path_increments.shape[-1])
             )
-            states = jax.vmap(one_path)(
+            flat_states, flat_matrix_valid = jax.vmap(one_path)(
                 flat_keys,
                 flat_signs,
                 flat_increments,
-            ).reshape(realization.sample_shape + (int(saved.size),) + spde.state_shape)
+            )
+            states = flat_states.reshape(
+                realization.sample_shape + (int(saved.size),) + spde.state_shape
+            )
+            matrix_valid = flat_matrix_valid.reshape(
+                realization.sample_shape + (int(saved.size),)
+            )
             times = jnp.broadcast_to(saved, realization.sample_shape + saved.shape)
             sample_shape = realization.sample_shape
         else:
-            states = one_path(
+            states, matrix_valid = one_path(
                 realization.path_keys,
                 realization.path_signs,
                 path_increments,
@@ -523,7 +552,7 @@ def solve_semilinear_spde(
             times = saved
             sample_shape = ()
     else:
-        states = one_path(
+        states, matrix_valid = one_path(
             jr.key(0),
             jnp.asarray(1.0),
             path_increments,
@@ -531,7 +560,11 @@ def solve_semilinear_spde(
         times = saved
         sample_shape = ()
     state_axes = tuple(range(len(sample_shape) + 1, states.ndim))
-    valid = jnp.isfinite(times) & jnp.all(jnp.isfinite(states), axis=state_axes)
+    valid = (
+        matrix_valid
+        & jnp.isfinite(times)
+        & jnp.all(jnp.isfinite(states), axis=state_axes)
+    )
     stats_steps = (
         jnp.full(sample_shape, num_steps, dtype=jnp.int32)
         if sample_shape
@@ -550,8 +583,9 @@ def solve_semilinear_spde(
         backend_result="successful",
         stats={
             "num_steps": stats_steps,
+            "matrix_function_converged": jnp.all(matrix_valid, axis=-1),
             "matrix_function_method": policy.method,
-            "differentiation": policy.differentiation,
+            "matrix_function_orthogonalization": policy.orthogonalization,
             "scheme": resolved_scheme,
             "exact_stochastic_convolution": exact_additive,
             "uses_realization_increments": bool(stochastic and not exact_additive),

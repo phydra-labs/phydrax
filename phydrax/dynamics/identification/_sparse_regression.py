@@ -78,10 +78,10 @@ class AbstractSparseRegression(StrictModule):
 
 
 def _thresholds(value: float | Sequence[float], output_size: int, /) -> tuple[float, ...]:
-    if np.isscalar(value):
-        resolved = (float(value),) * output_size
-    else:
+    if isinstance(value, Sequence):
         resolved = tuple(float(item) for item in value)
+    else:
+        resolved = (float(value),) * output_size
     if len(resolved) != output_size or any(
         not np.isfinite(item) or item < 0.0 for item in resolved
     ):
@@ -171,9 +171,9 @@ class SequentialThresholdedLeastSquares(AbstractSparseRegression):
         ):
             raise ValueError("zero_tolerance must be finite and nonnegative or None.")
         self.thresholds = (
-            float(threshold)
-            if np.isscalar(threshold)
-            else tuple(float(item) for item in threshold)
+            tuple(float(item) for item in threshold)
+            if isinstance(threshold, Sequence)
+            else float(threshold)
         )
         self.ridge = ridge_value
         self.max_iterations = iterations

@@ -356,8 +356,6 @@ class HeterogeneousFunctionEnsemble(StrictModule):
         )
 
 
-
-
 class RandomizedPriorModel(_AbstractBaseModel):
     """Trainable model plus an independently initialized, structurally frozen prior."""
 

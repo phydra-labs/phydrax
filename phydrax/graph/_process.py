@@ -202,7 +202,9 @@ def rollout_features(
 
 def _tree_squared_error(prediction: Any, target: Any, /) -> Any:
     return jtu.tree_map(
-        lambda pred, tgt: jnp.square(jnp.asarray(pred, dtype=float) - jnp.asarray(tgt, dtype=float)),
+        lambda pred, tgt: jnp.square(
+            jnp.asarray(pred, dtype=float) - jnp.asarray(tgt, dtype=float)
+        ),
         prediction,
         target,
     )

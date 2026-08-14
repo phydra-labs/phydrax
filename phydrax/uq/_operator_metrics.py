@@ -254,8 +254,6 @@ def operator_interval_width(
     return _reduce_cases(per_case, interval.lower.case_shape, reduction=reduction)
 
 
-
-
 __all__ = [
     "operator_energy_score",
     "operator_ensemble_energy_distance",

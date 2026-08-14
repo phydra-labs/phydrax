@@ -117,9 +117,7 @@ class _TrajectoryRecord:
                 "case + realization + time + state."
             )
         if tuple(values.shape[: len(leading)]) != leading:
-            raise ValueError(
-                f"Trajectory record states must begin with shape {leading}."
-            )
+            raise ValueError(f"Trajectory record states must begin with shape {leading}.")
         if tuple(values.shape[len(leading) + 1 :]) != state:
             raise ValueError(
                 f"Trajectory record states must end with state shape {state}."

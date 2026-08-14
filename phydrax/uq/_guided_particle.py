@@ -25,6 +25,7 @@ from ..stochastic._state_space import (
     StateSpaceStepContext,
     TransitionSample,
 )
+from ._covariance import _factor_and_solve_covariance_system
 from ._particle import (
     effective_sample_size,
     normalize_log_weights,
@@ -478,11 +479,11 @@ def _linear_gaussian_condition(
     innovation_covariance = (
         effective_matrix @ process_covariance @ effective_matrix.T + effective_covariance
     )
-    scale = jnp.linalg.cholesky(innovation_covariance)
-    gain = jnp.linalg.solve(
+    gain_result, scale = _factor_and_solve_covariance_system(
         innovation_covariance,
         effective_matrix @ process_covariance,
-    ).T
+    )
+    gain = gain_result.value.T
     conditional_mean = transition_mean + gain @ residual
     identity = jnp.eye(state_size, dtype=transition_mean.dtype)
     update = identity - gain @ effective_matrix

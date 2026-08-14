@@ -11,7 +11,7 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from jaxtyping import Array, Key
+from jaxtyping import Array, ArrayLike, Key
 
 from phydrax._doc import DOC_KEY0
 from phydrax._spectral._fourier import fourier_resample as spectral_resample
@@ -130,9 +130,9 @@ class AntiAliasedConvND(_AbstractMeasureNormalizedConvND):
         values: Array,
         /,
         *,
-        source_mask: Array | None = None,
-        target_mask: Array | None = None,
-        quadrature: Array | None = None,
+        source_mask: ArrayLike | None = None,
+        target_mask: ArrayLike | None = None,
+        quadrature: ArrayLike | None = None,
     ) -> Array:
         output = super().__call__(
             values,

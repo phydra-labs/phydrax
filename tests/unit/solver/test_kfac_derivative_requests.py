@@ -22,8 +22,7 @@ def test_trace_derivative_requests_keeps_laplacian_contracted():
         "u",
         domain.component(),
         lambda field: (
-            laplacian(field, var="x")
-            + partial_n(field, var="x", axis=1, order=1)
+            laplacian(field, var="x") + partial_n(field, var="x", axis=1, order=1)
         ),
     )
     requests = trace_derivative_requests(condition.residual, {"u": u})

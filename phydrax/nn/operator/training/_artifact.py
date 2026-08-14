@@ -46,8 +46,6 @@ def _sha256(path: Path, /) -> str:
     return digest.hexdigest()
 
 
-
-
 @dataclasses.dataclass(frozen=True, slots=True)
 class OperatorArtifactTrainingState:
     """Restored optional optimizer/loop state and its immutable metadata."""

@@ -15,11 +15,13 @@ import phydrax as phx
 
 chart = phx.metrix.CoordinateChart("heisenberg", ("x", "y", "z"))
 cometric = phx.metrix.HorizontalCometric(
-    lambda q: jnp.array([
-        [1.0, 0.0],
-        [0.0, 1.0],
-        [-0.5 * q[1], 0.5 * q[0]],
-    ]),
+    lambda q: jnp.array(
+        [
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [-0.5 * q[1], 0.5 * q[0]],
+        ]
+    ),
     chart,
     2,
 )

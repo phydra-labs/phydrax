@@ -58,10 +58,16 @@ def _batch(*, channels=None):
             [False, True, True, True],
         ]
     )
-    return phx.nn.operator.OperatorBatch(inputs={
-        "state": phx.nn.operator.FunctionSamples(values=state, axes=(axis,)),
-        "duration": phx.nn.operator.FunctionSamples(values=duration, axes=(axis,)),
-    }, queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,), mask=mask)}, case_axes=("case",),)
+    return phx.nn.operator.OperatorBatch(
+        inputs={
+            "state": phx.nn.operator.FunctionSamples(values=state, axes=(axis,)),
+            "duration": phx.nn.operator.FunctionSamples(values=duration, axes=(axis,)),
+        },
+        queries={
+            "query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,), mask=mask)
+        },
+        case_axes=("case",),
+    )
 
 
 def _condition(batch, duration):
@@ -128,7 +134,9 @@ def test_violating_channel_transition_is_positive_and_respects_query_measure():
         reduction="sum",
         weight=2.5,
     )
-    query_mass = jnp.sum(batch.require_single_query().weights(case_shape=batch.case_shape))
+    query_mass = jnp.sum(
+        batch.require_single_query().weights(case_shape=batch.case_shape)
+    )
     channel_count = batch.input("state").values.shape[-1]
 
     assert mean > 0.0
@@ -198,7 +206,10 @@ def test_semigroup_evaluation_key_modes_are_deterministic(key_mode):
 
 
 def test_semigroup_public_exports_are_available_from_nn_namespace():
-    assert phx.nn.operator.training.ConditionedSemigroupObjective is ConditionedSemigroupObjective
+    assert (
+        phx.nn.operator.training.ConditionedSemigroupObjective
+        is ConditionedSemigroupObjective
+    )
     assert (
         phx.nn.operator.training.conditioned_semigroup_consistency_loss
         is conditioned_semigroup_consistency_loss

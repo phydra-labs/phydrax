@@ -492,11 +492,7 @@ def codifferential(
     first = hodge_star(form, metric, orientation=orientation)
     derivative = exterior_derivative(first)
     result = hodge_star(derivative, metric, orientation=orientation)
-    exponent = (
-        form.chart.dimension * (form.degree + 1)
-        + metric.signature.index
-        + 1
-    )
+    exponent = form.chart.dimension * (form.degree + 1) + metric.signature.index + 1
     sign = -1 if exponent % 2 else 1
     return DifferentialForm(
         _ScaledFormCoefficient(result, sign),

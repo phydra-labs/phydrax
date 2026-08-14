@@ -140,6 +140,7 @@ class StructuredLaplaceResult(StrictModule):
         """Draw transformed physical parameters."""
         positions = self.sample_unconstrained(key, num_samples=num_samples)
         return self.problem.parameter_space.constrain(positions)
+
     def linearized_predict(
         self,
         /,
@@ -153,7 +154,6 @@ class StructuredLaplaceResult(StrictModule):
             CovarianceOperator(self.covariance_mv),
             source="epistemic",
         )
-
 
     def predict(
         self,

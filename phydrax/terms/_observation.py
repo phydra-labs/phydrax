@@ -33,4 +33,5 @@ def ObservationPenalty(
         data_accuracy_eps=data_accuracy_eps,
     )
 
+
 __all__ = ["ObservationPenalty"]

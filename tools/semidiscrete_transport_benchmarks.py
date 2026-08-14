@@ -36,9 +36,7 @@ def _problem(order: int, atoms: int):
     )
     realization = phx.integration.materialize(
         source,
-        phx.integration.FixedQuadraturePlan(
-            phx.integration.GaussLegendreRule(order)
-        ),
+        phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(order)),
     )
     support = (jnp.arange(atoms, dtype=float) + 0.5) / atoms
     target = phx.integration.discrete(
@@ -98,9 +96,7 @@ def _record(order: int, atoms: int, iterations: int, repeats: int):
 
     replay = compiled(problem)
     jax.block_until_ready(replay.regularized_cost)
-    error_available = bool(
-        result.integration_diagnostics.objective_error_available
-    )
+    error_available = bool(result.integration_diagnostics.objective_error_available)
     return {
         "integration_order": order,
         "integration_evaluations": int(
@@ -111,9 +107,7 @@ def _record(order: int, atoms: int, iterations: int, repeats: int):
         "integration_status": int(result.integration_status),
         "integration_error_available": error_available,
         "integration_error_estimate": (
-            float(result.integration_error_estimate)
-            if error_available
-            else None
+            float(result.integration_error_estimate) if error_available else None
         ),
         "atoms": atoms,
         "iterations": int(result.diagnostics.num_iterations),
@@ -141,12 +135,11 @@ def main() -> None:
     arguments = _parser().parse_args()
     orders = (8, 16) if arguments.smoke else tuple(arguments.orders)
     atoms = min(arguments.atoms, 4) if arguments.smoke else int(arguments.atoms)
-    iterations = min(arguments.iterations, 30) if arguments.smoke else int(arguments.iterations)
+    iterations = (
+        min(arguments.iterations, 30) if arguments.smoke else int(arguments.iterations)
+    )
     repeats = 1 if arguments.smoke else int(arguments.repeats)
-    records = [
-        _record(order, atoms, iterations, repeats)
-        for order in orders
-    ]
+    records = [_record(order, atoms, iterations, repeats) for order in orders]
     print(json.dumps({"records": records}, indent=2, sort_keys=True))
 
 

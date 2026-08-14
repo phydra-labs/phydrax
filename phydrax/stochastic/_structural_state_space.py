@@ -30,6 +30,31 @@ TransitionValue = Array | Callable[[Array, Array, StateSpaceStepContext], ArrayL
 ObservationValue = Array | Callable[[Array, StateSpaceStepContext], ArrayLike]
 
 
+def _resolve_transition(
+    value: TransitionValue,
+    t0: Array,
+    t1: Array,
+    context: StateSpaceStepContext,
+    /,
+) -> ArrayLike:
+    if callable(value):
+        function = cast(Callable[[Array, Array, StateSpaceStepContext], ArrayLike], value)
+        return function(t0, t1, context)
+    return value
+
+
+def _resolve_observation(
+    value: ObservationValue,
+    time: Array,
+    context: StateSpaceStepContext,
+    /,
+) -> ArrayLike:
+    if callable(value):
+        function = cast(Callable[[Array, StateSpaceStepContext], ArrayLike], value)
+        return function(time, context)
+    return value
+
+
 def _name(value: str, /, *, owner: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{owner} must be a non-empty string.")
@@ -61,7 +86,7 @@ def _finite_scalar(
     return array
 
 
-def _vector(value: ArrayLike, size: int, /, *, owner: str) -> Array:
+def _vector(value: ArrayLike | Sequence[float], size: int, /, *, owner: str) -> Array:
     array = jnp.asarray(value, dtype=float)
     if array.ndim == 0 and size == 1:
         array = array.reshape((1,))
@@ -192,7 +217,7 @@ class TrendComponent(AbstractStructuralComponent):
         *,
         level_variance: ArrayLike,
         slope_variance: ArrayLike,
-        initial_mean: ArrayLike = (0.0, 0.0),
+        initial_mean: ArrayLike | Sequence[float] = (0.0, 0.0),
         initial_covariance: ArrayLike = 1.0,
     ):
         resolved = _name(name, owner="name")
@@ -245,7 +270,7 @@ class DampedTrendComponent(AbstractStructuralComponent):
         damping: ArrayLike,
         level_variance: ArrayLike,
         slope_variance: ArrayLike,
-        initial_mean: ArrayLike = (0.0, 0.0),
+        initial_mean: ArrayLike | Sequence[float] = (0.0, 0.0),
         initial_covariance: ArrayLike = 1.0,
     ):
         resolved = _name(name, owner="name")
@@ -428,7 +453,7 @@ class RegressionComponent(AbstractStructuralComponent):
         return self.coefficient_covariance * _positive_interval(t0, t1)
 
     def observation_loading(self, time, context, /):
-        loading = self.design(time, context) if callable(self.design) else self.design
+        loading = _resolve_observation(self.design, time, context)
         array = jnp.asarray(loading, dtype=self.initial_mean.dtype)
         if array.shape != (self.state_size,):
             raise ValueError("Regression design callback returned an incompatible shape.")
@@ -553,11 +578,7 @@ class DeterministicTransitionComponent(AbstractStructuralComponent):
         self.process_noise_id = "none"
 
     def transition_matrix(self, t0, t1, context, /):
-        matrix = (
-            self.transition(t0, t1, context)
-            if callable(self.transition)
-            else self.transition
-        )
+        matrix = _resolve_transition(self.transition, t0, t1, context)
         array = jnp.asarray(matrix, dtype=self.initial_mean.dtype)
         if array.shape != (self.state_size, self.state_size):
             raise ValueError("Transition callback returned an incompatible shape.")
@@ -570,11 +591,7 @@ class DeterministicTransitionComponent(AbstractStructuralComponent):
         )
 
     def observation_loading(self, time, context, /):
-        loading = (
-            self.observation(time, context)
-            if callable(self.observation)
-            else self.observation
-        )
+        loading = _resolve_observation(self.observation, time, context)
         array = jnp.asarray(loading, dtype=self.initial_mean.dtype)
         if array.shape != (self.state_size,):
             raise ValueError("Observation callback returned an incompatible shape.")
@@ -680,7 +697,7 @@ class _ScalarObservationParameter(StrictModule):
     parameter_name: str = eqx.field(static=True)
 
     def __call__(self, time, context, /):
-        resolved = self.value(time, context) if callable(self.value) else self.value
+        resolved = _resolve_observation(self.value, time, context)
         array = jnp.asarray(resolved, dtype=float)
         if array.ndim == 0:
             return (

@@ -115,9 +115,7 @@ def optimal_transport_ensemble_transform(
     )
     transport = jax.tree.map(
         lambda leaf: (
-            leaf.reshape(leading_shape + leaf.shape[1:])
-            if eqx.is_array(leaf)
-            else leaf
+            leaf.reshape(leading_shape + leaf.shape[1:]) if eqx.is_array(leaf) else leaf
         ),
         transport,
     )
@@ -140,9 +138,7 @@ def _normalize_weights(weights: Array, /) -> Array:
     total = jnp.sum(weights, axis=-1, keepdims=True)
     weights = eqx.error_if(
         weights,
-        jnp.any(~jnp.isfinite(weights))
-        | jnp.any(weights < 0.0)
-        | jnp.any(total <= 0.0),
+        jnp.any(~jnp.isfinite(weights)) | jnp.any(weights < 0.0) | jnp.any(total <= 0.0),
         "weights must be finite, nonnegative, and have positive casewise mass.",
     )
     return weights / total

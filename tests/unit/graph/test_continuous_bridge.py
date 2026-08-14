@@ -41,9 +41,7 @@ def _uniform_interval_bridge(segment_count, chart):
         1,
         segment_count,
         1,
-        lambda cell, reference: jnp.asarray(
-            [(cell + reference[0]) * spacing]
-        ),
+        lambda cell, reference: jnp.asarray([(cell + reference[0]) * spacing]),
         lambda cell, reference: jnp.asarray([[spacing]]),
         jnp.asarray([[0.5]]),
         jnp.ones((1,)),

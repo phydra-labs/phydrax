@@ -102,9 +102,7 @@ def _record(
         jnp.sin(jnp.arange(size * 4, dtype=float)),
         (size, 4),
     )
-    apply = eqx.filter_jit(
-        lambda solved, values: solved.apply_source_to_target(values)
-    )
+    apply = eqx.filter_jit(lambda solved, values: solved.apply_source_to_target(values))
     applied = apply(result, payload)
     jax.block_until_ready(applied)
     started = time.perf_counter()

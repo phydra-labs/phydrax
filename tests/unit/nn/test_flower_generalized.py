@@ -37,13 +37,16 @@ def _axis(name, nodes, *, periodic=False, quadrature_weights=None):
 
 
 def _batch(values, axes, query, *, source_mask=None):
-    return phx.nn.operator.OperatorBatch(inputs={
-        "state": phx.nn.operator.FunctionSamples(
-            values=values,
-            axes=axes,
-            mask=source_mask,
-        )
-    }, queries={"query": query}, )
+    return phx.nn.operator.OperatorBatch(
+        inputs={
+            "state": phx.nn.operator.FunctionSamples(
+                values=values,
+                axes=axes,
+                mask=source_mask,
+            )
+        },
+        queries={"query": query},
+    )
 
 
 def test_flower_omitted_generalized_options_preserve_explicit_default_execution():
@@ -117,9 +120,9 @@ def test_resolution_consistent_flower_supports_nonuniform_nodes_eager_and_jit():
     )
 
     eager = model((values, nodes))
-    compiled = eqx.filter_jit(
-        lambda current, field, grid: current((field, grid))
-    )(model, values, nodes)
+    compiled = eqx.filter_jit(lambda current, field, grid: current((field, grid)))(
+        model, values, nodes
+    )
 
     assert eager.shape == values.shape
     assert jnp.all(jnp.isfinite(eager))

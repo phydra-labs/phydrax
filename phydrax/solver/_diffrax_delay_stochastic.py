@@ -374,8 +374,7 @@ class _VectorizedDelayDenseInterpolation(eqx.Module):
         query = eqx.error_if(
             query,
             jnp.any(
-                (query < jnp.max(self.lower_times))
-                | (query > jnp.min(self.final_times))
+                (query < jnp.max(self.lower_times)) | (query > jnp.min(self.final_times))
             ),
             "Dense delay query times must lie within every solution interval.",
         )
@@ -851,6 +850,7 @@ def _solve_diffrax_delay_stochastic(
                 breakpoints=discontinuities,
                 initial_time=problem.t0,
             )
+
     def one(path_key: Array, path_sign: Array):
         return _native_stochastic_delay_solution(
             problem,
@@ -955,9 +955,7 @@ def _solve_diffrax_delay_stochastic(
         solver_id = selected_solver.solver_id
         resolved_method = selected_solver.resolved_method
     else:
-        extension = (
-            "euler-heun-wiener-path" if heun else "euler-maruyama-wiener-path"
-        )
+        extension = "euler-heun-wiener-path" if heun else "euler-maruyama-wiener-path"
         solver_id = f"solver:diffrax-delay-stochastic:{solver_name}:retarded-v1"
         resolved_method = f"{solver_name}:causal-{extension}"
     stats = {

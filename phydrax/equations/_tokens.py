@@ -92,12 +92,8 @@ PDE_TOKEN_ATTRIBUTES = (
     "nondimensionalization",
 )
 _KIND_INDEX = {name: index for index, name in enumerate(PDE_TOKEN_KINDS)}
-_OPERATOR_INDEX = {
-    name: index for index, name in enumerate(PDE_OPERATOR_VOCABULARY)
-}
-_ATTRIBUTE_INDEX = {
-    name: index for index, name in enumerate(PDE_TOKEN_ATTRIBUTES)
-}
+_OPERATOR_INDEX = {name: index for index, name in enumerate(PDE_OPERATOR_VOCABULARY)}
+_ATTRIBUTE_INDEX = {name: index for index, name in enumerate(PDE_TOKEN_ATTRIBUTES)}
 
 
 class PDETokenBatch(StrictModule):
@@ -137,11 +133,7 @@ def _symbol_vocabulary(problem: PDEProblemIR, /) -> tuple[str, ...]:
     names.update(item.name for item in problem.regions)
     names.update(item.name for item in problem.equations)
     names.update(item.name for item in problem.conditions)
-    names.update(
-        item.component
-        for item in problem.regions
-        if item.component is not None
-    )
+    names.update(item.component for item in problem.regions if item.component is not None)
     names.update(
         component_name
         for item in problem.fields
@@ -563,9 +555,7 @@ def stack_pde_tokens(tokens: tuple[PDETokenBatch, ...], /) -> PDETokenBatch:
         attribute=jnp.stack(tuple(item.attribute for item in padded)),
         symbol=jnp.stack(tuple(remap_symbols(item) for item in padded)),
         scalar=jnp.stack(tuple(item.scalar for item in padded)),
-        physical_dimension=jnp.stack(
-            tuple(item.physical_dimension for item in padded)
-        ),
+        physical_dimension=jnp.stack(tuple(item.physical_dimension for item in padded)),
         slot=jnp.stack(tuple(item.slot for item in padded)),
         parent=jnp.stack(tuple(item.parent for item in padded)),
         depth=jnp.stack(tuple(item.depth for item in padded)),

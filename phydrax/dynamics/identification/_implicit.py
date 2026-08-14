@@ -217,18 +217,22 @@ class ImplicitSINDyProblem(StrictModule):
     def homogeneous_design(
         self,
     ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
+        derivatives = self.data.derivatives
+        derivative_valid = self.data.derivative_valid
+        if derivatives is None or derivative_valid is None:
+            raise RuntimeError("Implicit SINDy data lost its derivative contract.")
         count = (
             self.data.capacity
             if self.data.inputs is None or self.data.input_alignment == "samples"
             else self.data.capacity - 1
         )
         states = _time_values(self.data, self.data.states, slice(0, count))
-        derivatives = _time_values(self.data, self.data.derivatives, slice(0, count))
+        derivatives = _time_values(self.data, derivatives, slice(0, count))
         inputs, input_valid = _sample_inputs(self.data, count)
         evaluation = self.library.evaluate(states, derivatives, inputs)
         valid = (
             self.data.sample_valid[..., :count]
-            & self.data.derivative_valid[..., :count]
+            & derivative_valid[..., :count]
             & input_valid
             & evaluation.valid
         )

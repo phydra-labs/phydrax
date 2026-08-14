@@ -251,9 +251,7 @@ def _log_sample_weights(
         raise ValueError(f"Sample weights must have shape {(count,)}.")
     values = eqx.error_if(
         values,
-        jnp.any(~jnp.isfinite(values))
-        | jnp.any(values < 0.0)
-        | (jnp.sum(values) <= 0.0),
+        jnp.any(~jnp.isfinite(values)) | jnp.any(values < 0.0) | (jnp.sum(values) <= 0.0),
         "Sample weights must be finite, nonnegative, and have positive total mass.",
     )
     return jnp.where(values > 0.0, jnp.log(values), -jnp.inf)

@@ -723,19 +723,20 @@ discretization-error uncertainty.
 `semidiscretize_semilinear_spde` preserves an explicit linear/nonlinear split.
 `solve_semilinear_spde` specializes to fixed-step exponential Euler with exact
 compatible modal stochastic convolution for additive finite-rank Itô noise.
-`MatrixFunctionPolicy` selects exact spectral, Chebyshev, Lanczos, or Arnoldi
-actions without requiring a global operator matrix. Unsupported specializations
-use the validated Diffrax backend unless `fallback="error"` is requested.
+`phydrax.linalg.MatrixFunctionPolicy` selects exact spectral, Chebyshev, Lanczos,
+or Arnoldi actions without requiring a global operator matrix. Unsupported
+specializations use the validated Diffrax backend unless `fallback="error"` is
+requested.
 
 ::: phydrax.solver.SemilinearDrift
 
 ---
 
-::: phydrax.solver.MatrixFunctionPolicy
+::: phydrax.linalg.MatrixFunctionPolicy
 
 ---
 
-::: phydrax.solver.SpectralMatrixRepresentation
+::: phydrax.linalg.SpectralMatrixRepresentation
 
 ---
 

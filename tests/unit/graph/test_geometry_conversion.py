@@ -78,7 +78,9 @@ def test_mesh_to_geometry_graph_exposes_boundary_components():
 
     domain = phx.domain.GraphDomain(bundle.graph)
     component = domain.component({"graph": bundle.boundary_nodes_component()})
-    batch = component.sample(phx.domain.PointSampling(3, layout=phx.domain.SampleLayout((("graph",),))))
+    batch = component.sample(
+        phx.domain.PointSampling(3, layout=phx.domain.SampleLayout((("graph",),)))
+    )
 
     assert jnp.allclose(batch["graph"]["positions"].data, geom.mesh_vertices)
 

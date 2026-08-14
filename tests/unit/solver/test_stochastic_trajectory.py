@@ -50,7 +50,9 @@ def test_stochastic_transition_view_preserves_paths_masks_and_split_provenance()
         dataset,
         train_fraction=0.5,
         validation_fraction=0.25,
-        policy=phx.nn.operator.training.OperatorSplitPolicy(group_by=("trajectory",), seed=3),
+        policy=phx.nn.operator.training.OperatorSplitPolicy(
+            group_by=("trajectory",), seed=3
+        ),
     )
     trajectory_groups = [
         {record.identities["trajectory"] for record in partition.provenance}

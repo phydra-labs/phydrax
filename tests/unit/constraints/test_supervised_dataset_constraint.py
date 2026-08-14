@@ -109,7 +109,9 @@ def test_supervised_dataset_constraint_supports_pytree_rows():
         "u",
         domain.component(),
         targets,
-        sampling=phx.domain.PointSampling(12, layout=SampleLayout((("data",),)), design="uniform"),
+        sampling=phx.domain.PointSampling(
+            12, layout=SampleLayout((("data",),)), design="uniform"
+        ),
     )
 
     loss = constraint.loss({"u": u}, key=jr.key(3))

@@ -996,9 +996,17 @@ def _active_set_adjoint_single(
         inequality_matrix_gradient,
         inequality_rhs_gradient,
     )
-    return tuple(
-        jnp.where(valid, gradient, jnp.full_like(gradient, jnp.nan))
-        for gradient in gradients
+
+    def masked(gradient: Array, /) -> Array:
+        return jnp.where(valid, gradient, jnp.full_like(gradient, jnp.nan))
+
+    return (
+        masked(quadratic_gradient),
+        masked(linear_gradient),
+        masked(equality_matrix_gradient),
+        masked(equality_rhs_gradient),
+        masked(inequality_matrix_gradient),
+        masked(inequality_rhs_gradient),
     )
 
 

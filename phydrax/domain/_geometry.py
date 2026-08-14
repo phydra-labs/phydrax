@@ -44,6 +44,7 @@ class GeometryDomain(AbstractGeometry):
             raise ValueError("GeometryDomain label must be a non-empty string.")
         self.geometry = geometry
         self._label = label
+
     @property
     def compiled(self) -> CompiledGeometry:
         return self.geometry

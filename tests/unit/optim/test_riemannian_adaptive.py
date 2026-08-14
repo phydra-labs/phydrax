@@ -213,9 +213,7 @@ def test_riemannian_adam_eager_and_jit_updates_agree():
         parameters,
     )
 
-    assert jax.tree.all(
-        jax.tree.map(jnp.allclose, eager_parameters, compiled_parameters)
-    )
+    assert jax.tree.all(jax.tree.map(jnp.allclose, eager_parameters, compiled_parameters))
     assert jax.tree.all(
         jax.tree.map(
             jnp.allclose,

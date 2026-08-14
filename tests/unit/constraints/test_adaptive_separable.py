@@ -53,9 +53,7 @@ def test_separable_population_tracks_logical_and_active_counts():
     policy = PeriodicSeparableCollocation(refresh_every=2)
     domain = phx.domain.GeometryDomain(phx.geometry.Circle((0.0, 0.0), 1.0).compile())
     component = domain.component()
-    condition = phx.conditions.Residual(
-        "u", component, lambda _u: domain.Function()(1.0)
-    )
+    condition = phx.conditions.Residual("u", component, lambda _u: domain.Function()(1.0))
     source = phx.integration.adaptive(
         phx.integration.mean_over(component),
         phx.domain.GridSampling({"x": (16, 14)}),

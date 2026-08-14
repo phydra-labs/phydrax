@@ -135,7 +135,6 @@ class BinaryFieldEvaluator(StrictModule, BatchEvaluator):
         self.b_pos = tuple(int(i) for i in b_pos)
         self.reverse = bool(reverse)
 
-
     def __call_batch__(
         self,
         batch: Any,
@@ -207,10 +206,10 @@ def _has_trainable_arrays(function: "DomainFunction", /) -> bool:
     )
     return any(is_trainable_leaf(leaf) for leaf in leaves)
 
+
 def _domain_has_tracer(domain: Domain, /) -> bool:
     return any(
-        isinstance(leaf, jax_core.Tracer)
-        for leaf in jax.tree_util.tree_leaves(domain)
+        isinstance(leaf, jax_core.Tracer) for leaf in jax.tree_util.tree_leaves(domain)
     )
 
 
@@ -419,14 +418,18 @@ class DomainFunction(StrictModule):
             raise TypeError("DomainFunction.domain must be a Domain.")
         deps_ = tuple(deps)
         if len(set(deps_)) != len(deps_):
-            raise ValueError(f"DomainFunction dependencies must be unique, got {deps_!r}.")
+            raise ValueError(
+                f"DomainFunction dependencies must be unique, got {deps_!r}."
+            )
         unknown = tuple(label for label in deps_ if label not in domain.labels)
         if unknown:
             raise ValueError(
                 f"Unknown dependencies {unknown!r}; expected a subset of {domain.labels!r}."
             )
         self.domain = domain
-        if derivative_rule is not None and not isinstance(derivative_rule, DerivativeRule):
+        if derivative_rule is not None and not isinstance(
+            derivative_rule, DerivativeRule
+        ):
             raise TypeError(
                 "DomainFunction.derivative_rule must be a DerivativeRule or None."
             )

@@ -53,9 +53,7 @@ def _uniform_problem(
     )
     realization = phx.integration.materialize(
         source,
-        phx.integration.FixedQuadraturePlan(
-            phx.integration.GaussLegendreRule(order)
-        ),
+        phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(order)),
     )
     target = _finite(
         support,
@@ -97,7 +95,7 @@ def test_uniform_density_to_one_atom_matches_analytic_cost_and_is_approximate():
 
 
 def test_two_atom_uniform_solution_is_symmetric_and_exposes_soft_c_transform():
-    result = _solver()( _uniform_problem([0.25, 0.75], [0.5, 0.5], order=48))
+    result = _solver()(_uniform_problem([0.25, 0.75], [0.5, 0.5], order=48))
 
     assert result.converged
     assert jnp.allclose(result.target_potential[0], result.target_potential[1], atol=1e-9)
@@ -245,8 +243,7 @@ def test_quantizer_composes_bounded_parameterization_without_clipping():
     assert result.diagnostics.constrained
     assert result.diagnostics.objective_history.shape == (3,)
     assert (
-        result.transport.problem.provenance.realization
-        == problem.provenance.realization
+        result.transport.problem.provenance.realization == problem.provenance.realization
     )
 
 

@@ -77,11 +77,13 @@ def test_univariate_and_sliced_distances_are_differentiable_away_from_ties():
         lambda values: phx.transport.wasserstein_distance_1d(values, target, p=2.0)
     )(source)
     sliced_gradient = jax.grad(
-        lambda values: phx.transport.sliced_wasserstein_distance(
-            values,
-            jnp.asarray([[0.2, 0.4], [1.0, 1.3], [2.0, 2.4]]),
-            projections=jnp.asarray([[1.0, 0.0], [1.0, 1.0]]),
-        ).value
+        lambda values: (
+            phx.transport.sliced_wasserstein_distance(
+                values,
+                jnp.asarray([[0.2, 0.4], [1.0, 1.3], [2.0, 2.4]]),
+                projections=jnp.asarray([[1.0, 0.0], [1.0, 1.0]]),
+            ).value
+        )
     )(jnp.asarray([[0.0, 0.1], [0.8, 1.0], [1.7, 2.0]]))
 
     assert jnp.all(jnp.isfinite(gradient))
@@ -148,7 +150,9 @@ def test_soft_topk_masks_and_values_have_explicit_boundary_behavior():
     assert jnp.allclose(jnp.sum(mask), 2.0, atol=1e-8)
     assert jnp.array_equal(jnp.argsort(mask)[-2:], jnp.asarray([0, 2]))
     assert jnp.allclose(top_values, jnp.asarray([3.0, 4.0]), atol=0.1)
-    assert jnp.array_equal(phx.transport.soft_topk_mask(values, 0), jnp.zeros_like(values))
+    assert jnp.array_equal(
+        phx.transport.soft_topk_mask(values, 0), jnp.zeros_like(values)
+    )
     assert jnp.array_equal(phx.transport.soft_topk_mask(values, 4), jnp.ones_like(values))
     assert phx.transport.soft_topk_values(values, 0).shape == (0,)
     with pytest.raises(ValueError, match=r"\[0, axis_size\]"):
@@ -190,9 +194,7 @@ def test_soft_quantile_normalization_quantization_and_gradients_are_finite():
     )
     quantized = phx.transport.soft_quantize(values, 2, epsilon=0.1)
     gradient = jax.grad(
-        lambda candidate: jnp.sum(
-            phx.transport.soft_sort(candidate, epsilon=0.1) ** 2
-        )
+        lambda candidate: jnp.sum(phx.transport.soft_sort(candidate, epsilon=0.1) ** 2)
     )(values)
 
     assert jnp.array_equal(jnp.argsort(normalized), jnp.argsort(values))
@@ -253,9 +255,7 @@ def test_soft_order_operators_compose_with_forward_reverse_and_batch_transforms(
 def test_soft_order_has_finite_symmetric_second_derivatives_and_tie_sensitivities():
     values = jnp.asarray([-1.1, 0.4, 1.7, 3.2])
     hessian = jax.hessian(
-        lambda candidate: jnp.sum(
-            phx.transport.soft_sort(candidate, epsilon=0.15) ** 2
-        )
+        lambda candidate: jnp.sum(phx.transport.soft_sort(candidate, epsilon=0.15) ** 2)
     )(values)
     constant = jnp.ones((4,))
     constant_sorted = phx.transport.soft_sort(constant, epsilon=0.15)
@@ -265,9 +265,7 @@ def test_soft_order_has_finite_symmetric_second_derivatives_and_tie_sensitivitie
     tied = jnp.asarray([1.0, 1.0, 2.0, 4.0])
     tied_ranks = phx.transport.soft_rank(tied, epsilon=0.15)
     tied_gradient = jax.grad(
-        lambda candidate: jnp.sum(
-            phx.transport.soft_rank(candidate, epsilon=0.15) ** 2
-        )
+        lambda candidate: jnp.sum(phx.transport.soft_rank(candidate, epsilon=0.15) ** 2)
     )(tied)
 
     assert jnp.all(jnp.isfinite(hessian))
@@ -413,9 +411,7 @@ def test_soft_order_provenance_and_explicit_solver_precedence_are_visible():
     assert result.problem.provenance.source == (
         "soft-order-source:weighted-standardize-sigmoid"
     )
-    assert result.problem.provenance.target == (
-        "soft-order-target:probability-midpoints"
-    )
+    assert result.problem.provenance.target == ("soft-order-target:probability-midpoints")
     assert jnp.array_equal(result.epsilon, solver.epsilon)
     assert jnp.allclose(
         result.barycentric_source_to_target(values),

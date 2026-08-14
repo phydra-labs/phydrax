@@ -834,14 +834,10 @@ def read_multilevel_result(path: str | os.PathLike[str], /) -> MultilevelResultA
             "Multilevel result manifest fields are invalid."
         )
     if manifest.get("format") != _RESULT_FORMAT:
-        raise ArrayArchiveCorruptionError(
-            "Archive is not a Phydrax multilevel result."
-        )
+        raise ArrayArchiveCorruptionError("Archive is not a Phydrax multilevel result.")
     metadata = manifest.get("metadata")
     if not isinstance(metadata, dict):
-        raise ArrayArchiveCorruptionError(
-            "Multilevel result metadata is invalid."
-        )
+        raise ArrayArchiveCorruptionError("Multilevel result metadata is invalid.")
     arrays: dict[str, np.ndarray] = {}
     for name, value in loaded.items():
         value.setflags(write=False)

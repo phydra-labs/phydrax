@@ -18,31 +18,21 @@ method. The grid owns the physical coordinates.
 
 ```python
 sigma, rho, beta = 10.0, 28.0, 8.0 / 3.0
-layout = phx.dynamics.StateLayout(
-    (3,), component_names=("x", "y", "z")
-)
+layout = phx.dynamics.StateLayout((3,), component_names=("x", "y", "z"))
 
 
 def lorenz(time, state, args):
     del time, args
     x, y, z = state
-    return jnp.asarray(
-        [sigma * (y - x), x * (rho - z) - y, x * y - beta * z]
-    )
+    return jnp.asarray([sigma * (y - x), x * (rho - z) - y, x * y - beta * z])
 
 
-system = phx.dynamics.ContinuousSystem(
-    lorenz, state_layout=layout, system_id="lorenz-63"
-)
-evolution = phx.solver.DiffraxEvolution(
-    system, rtol=1e-8, atol=1e-10
-)
+system = phx.dynamics.ContinuousSystem(lorenz, state_layout=layout, system_id="lorenz-63")
+evolution = phx.solver.DiffraxEvolution(system, rtol=1e-8, atol=1e-10)
 grid = phx.dynamics.TimeGrid(
     jnp.linspace(0.0, 25.0, 251), time_id="lorenz-observation-grid"
 )
-trajectory = phx.dynamics.evolve(
-    evolution, jnp.asarray([1.0, 1.0, 1.0]), grid
-)
+trajectory = phx.dynamics.evolve(evolution, jnp.asarray([1.0, 1.0, 1.0]), grid)
 assert trajectory.successful
 ```
 
@@ -51,9 +41,7 @@ estimator. The adapter carries node and transition masks and does not reinterpre
 or padded nodes as data.
 
 ```python
-data = phx.dynamics.identification.trajectory_data_from_evolution(
-    trajectory
-)
+data = phx.dynamics.identification.trajectory_data_from_evolution(trajectory)
 ```
 
 If derivatives were not generated analytically, attach one declared estimate. Local
@@ -75,9 +63,7 @@ attached derivative is not automatically valid at every sample.
 Choose a feature library, formulation, and sparse solver independently.
 
 ```python
-library = phx.dynamics.identification.PolynomialFeatureLibrary(
-    layout, degree=2
-)
+library = phx.dynamics.identification.PolynomialFeatureLibrary(layout, degree=2)
 problem = phx.dynamics.identification.SINDyProblem(
     data=data_with_derivative,
     library=library,
@@ -223,17 +209,13 @@ Continuation is a generic square residual with one scalar parameter. For an equi
 branch, the residual is the vector field evaluated at an equilibrium state.
 
 ```python
-continuation_layout = phx.dynamics.StateLayout(
-    (3,), component_names=("x", "y", "z")
-)
+continuation_layout = phx.dynamics.StateLayout((3,), component_names=("x", "y", "z"))
 
 
 def equilibrium_residual(state, parameter, args):
     del args
     x, y, z = state
-    return jnp.asarray(
-        [sigma * (y - x), x * (parameter - z) - y, x * y - beta * z]
-    )
+    return jnp.asarray([sigma * (y - x), x * (parameter - z) - y, x * y - beta * z])
 
 
 continuation_problem = phx.dynamics.analysis.ContinuationProblem(
@@ -437,9 +419,7 @@ shadowing_evolution = phx.dynamics.DiscreteEvolution(
         system_id="contracting-map",
     )
 )
-shadowing_grid = phx.dynamics.IterationGrid.from_steps(
-    5, iteration_id="shadowing-grid"
-)
+shadowing_grid = phx.dynamics.IterationGrid.from_steps(5, iteration_id="shadowing-grid")
 shadowing_trajectory = phx.dynamics.evolve(
     shadowing_evolution, jnp.asarray([2.0]), shadowing_grid
 )
@@ -478,9 +458,7 @@ The differential adapter accepts `DifferentialSolution`, `MemoryEquationSolution
 `RoughDifferentialSolution`, and `ControlledDifferentialSolution`.
 
 ```python
-delay_state_layout = phx.dynamics.StateLayout(
-    (1,), component_names=("population",)
-)
+delay_state_layout = phx.dynamics.StateLayout((1,), component_names=("population",))
 delay_problem = phx.solver.DelayDifferentialProblem(
     lambda time, state, memory, args: -0.2 * state + 0.1 * memory["feedback"],
     lambda time, args: jnp.ones((1,)),
@@ -517,9 +495,7 @@ An externally recorded control trajectory can use the same adapter. This minimal
 uses the first five saved Lorenz states and an explicit zero-control channel.
 
 ```python
-control_grid = phx.dynamics.TimeGrid(
-    grid.times[:5], time_id="recorded-control-grid"
-)
+control_grid = phx.dynamics.TimeGrid(grid.times[:5], time_id="recorded-control-grid")
 control_trajectory = phx.control.ControlTrajectory(
     time_grid=control_grid,
     states=trajectory.states[:5],
@@ -599,10 +575,9 @@ trajectory:
 pde_time = jnp.linspace(0.0, 0.5, 21)
 pde_space = jnp.linspace(0.0, 2.0 * jnp.pi, 41)
 diffusivity = 0.1
-field_values = (
-    jnp.exp(-diffusivity * pde_time[:, None])
-    * jnp.sin(pde_space)[None, :]
-)[..., None]
+field_values = (jnp.exp(-diffusivity * pde_time[:, None]) * jnp.sin(pde_space)[None, :])[
+    ..., None
+]
 pde_layout = phx.dynamics.StateLayout((1,), component_names=("u",))
 pde_data = phx.dynamics.identification.StructuredPDEData(
     (pde_time, pde_space),
@@ -619,9 +594,7 @@ library = phx.dynamics.identification.PolynomialPDELibrary(
     include_interactions=False,
 )
 pde_result = phx.dynamics.identification.fit_pde_find(
-    phx.dynamics.identification.PDEIdentificationProblem(
-        data=pde_data, library=library
-    ),
+    phx.dynamics.identification.PDEIdentificationProblem(data=pde_data, library=library),
     phx.dynamics.identification.SequentialThresholdedLeastSquares(
         0.02, threshold_space="physical"
     ),

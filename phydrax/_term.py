@@ -49,7 +49,6 @@ class AbstractScalarTerm(StrictModule):
     ) -> Array:
         raise NotImplementedError
 
-
     def evaluate(
         self,
         functions: Mapping[str, DomainFunction],

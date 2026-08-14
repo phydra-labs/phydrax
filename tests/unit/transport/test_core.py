@@ -21,9 +21,7 @@ def _target(
 ):
     weight_field = cx.Field(jnp.asarray(weights, dtype=float), dims=("atom",))
     mask_field = (
-        None
-        if mask is None
-        else cx.Field(jnp.asarray(mask, dtype=bool), dims=("atom",))
+        None if mask is None else cx.Field(jnp.asarray(mask, dtype=bool), dims=("atom",))
     )
     point_values = points if isinstance(points, cx.Field) else jnp.asarray(points)
     return phx.integration.discrete(
@@ -141,14 +139,14 @@ def test_symmetric_two_atom_problem_matches_analytic_entropic_plan():
     ratio = jnp.exp(1.0 / result.epsilon)
     diagonal = 0.5 * ratio / (1.0 + ratio)
     off_diagonal = 0.5 / (1.0 + ratio)
-    expected = jnp.asarray(
-        [[diagonal, off_diagonal], [off_diagonal, diagonal]]
-    )
+    expected = jnp.asarray([[diagonal, off_diagonal], [off_diagonal, diagonal]])
 
     assert result.converged
     assert result.diagnostics.normalized_marginal_residual < 1e-10
     assert jnp.allclose(result.dense_plan(), expected, rtol=1e-10, atol=1e-10)
-    assert jnp.allclose(result.regularized_cost, result.transport_cost + result.regularization)
+    assert jnp.allclose(
+        result.regularized_cost, result.transport_cost + result.regularization
+    )
     assert jnp.allclose(result.regularized_cost, result.dual_cost, atol=1e-10)
     assert result.provenance.execution == "dense"
     assert result.diagnostics.residual_history.ndim == 1
@@ -172,8 +170,12 @@ def test_physical_mass_and_matrix_free_plan_actions_are_not_silently_normalized(
     assert jnp.allclose(jnp.sum(plan, axis=0), problem.target_weights, atol=1e-9)
     assert jnp.allclose(result.source_marginal(), problem.source_weights, atol=1e-9)
     assert jnp.allclose(result.target_marginal(), problem.target_weights, atol=1e-9)
-    assert jnp.allclose(result.apply_source_to_target(source_payload), plan.T @ source_payload)
-    assert jnp.allclose(result.apply_target_to_source(target_payload), plan @ target_payload)
+    assert jnp.allclose(
+        result.apply_source_to_target(source_payload), plan.T @ source_payload
+    )
+    assert jnp.allclose(
+        result.apply_target_to_source(target_payload), plan @ target_payload
+    )
     assert jnp.allclose(
         result.barycentric_source_to_target(source_payload),
         (plan.T @ source_payload) / problem.target_weights[:, None],
@@ -204,9 +206,15 @@ def test_blockwise_solver_matches_dense_on_nondivisible_rectangular_problems(blo
 
     assert dense.converged & blockwise.converged
     assert blockwise.provenance.execution == "blockwise"
-    assert jnp.allclose(blockwise.regularized_cost, dense.regularized_cost, rtol=1e-9, atol=1e-9)
-    assert jnp.allclose(blockwise.source_potential, dense.source_potential, rtol=1e-8, atol=1e-8)
-    assert jnp.allclose(blockwise.target_potential, dense.target_potential, rtol=1e-8, atol=1e-8)
+    assert jnp.allclose(
+        blockwise.regularized_cost, dense.regularized_cost, rtol=1e-9, atol=1e-9
+    )
+    assert jnp.allclose(
+        blockwise.source_potential, dense.source_potential, rtol=1e-8, atol=1e-8
+    )
+    assert jnp.allclose(
+        blockwise.target_potential, dense.target_potential, rtol=1e-8, atol=1e-8
+    )
     assert jnp.allclose(blockwise.dense_plan(), dense.dense_plan(), rtol=1e-8, atol=1e-9)
     assert jnp.allclose(
         blockwise.apply_source_to_target(payload),
@@ -258,7 +266,9 @@ def test_solver_is_permutation_invariant_jittable_and_differentiable():
 
     assert jnp.isfinite(compiled)
     assert jnp.all(jnp.isfinite(gradient))
-    assert jnp.allclose(jnp.sum(gradient * direction), finite_difference, rtol=2e-4, atol=2e-5)
+    assert jnp.allclose(
+        jnp.sum(gradient * direction), finite_difference, rtol=2e-4, atol=2e-5
+    )
     assert jnp.allclose(permuted_value, compiled, rtol=1e-10, atol=1e-10)
 
 
@@ -300,7 +310,9 @@ def test_nonconvergence_and_invalid_measures_remain_explicit():
         check_every=1,
     )(problem)
     assert not result.converged
-    assert result.diagnostics.status == int(phx.transport.TransportStatus.MAXIMUM_ITERATIONS_REACHED)
+    assert result.diagnostics.status == int(
+        phx.transport.TransportStatus.MAXIMUM_ITERATIONS_REACHED
+    )
     with pytest.raises(eqx.EquinoxRuntimeError, match="did not converge"):
         checked = phx.transport.require_converged(result)
         jax.block_until_ready(checked.source_potential)

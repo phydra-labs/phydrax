@@ -15,17 +15,55 @@ from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, ArrayLike, PyTree
 
 from .._strict import StrictModule
+from ..linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    LinearSolvePolicy,
+    LinearSystem,
+    OperatorProperties,
+    prepare,
+    solve,
+)
+
+
+def _factor_and_solve_covariance_system(
+    matrix: Array,
+    right_hand_side: Array,
+    /,
+):
+    operator = DenseLinearOperator(
+        matrix,
+        properties=OperatorProperties(
+            self_adjoint=True,
+            positive_definite=True,
+            evidence={
+                "self_adjoint": "construction",
+                "positive_definite": "construction",
+                "positive_semidefinite": "construction",
+            },
+        ),
+    )
+    prepared = prepare(
+        LinearSystem(operator),
+        LinearSolvePolicy(DenseLU()),
+    )
+    return solve(prepared, right_hand_side), jnp.linalg.cholesky(matrix)
+
+
+def _solve_covariance_system(matrix: Array, right_hand_side: Array, /):
+    result, _ = _factor_and_solve_covariance_system(matrix, right_hand_side)
+    return result
 
 
 CovarianceRepresentation = Literal["diagonal", "dense", "factor", "operator"]
+
+
 def _validated_array(value: Array, predicate: Array, message: str, /) -> Array:
     if isinstance(predicate, jax_core.Tracer):
         return eqx.error_if(value, predicate, message)
     if bool(predicate):
         raise ValueError(message)
     return value
-
-
 
 
 class AbstractCovariance(StrictModule):
@@ -180,10 +218,9 @@ def _validate_covariance_template(
                 "Dense covariance shape must match the flattened uncertain value; "
                 f"expected {(dimension, dimension)}, got {covariance.matrix.shape}."
             )
-        if (
-            jnp.issubdtype(covariance.matrix.dtype, jnp.complexfloating)
-            and not jnp.issubdtype(flat_template.dtype, jnp.complexfloating)
-        ):
+        if jnp.issubdtype(
+            covariance.matrix.dtype, jnp.complexfloating
+        ) and not jnp.issubdtype(flat_template.dtype, jnp.complexfloating):
             raise TypeError(
                 "Complex dense covariance requires a complex uncertain value."
             )
@@ -200,9 +237,8 @@ def _validate_covariance_template(
             template_leaves,
             strict=True,
         ):
-            if (
-                jnp.issubdtype(factor.dtype, jnp.complexfloating)
-                and not jnp.issubdtype(template_leaf.dtype, jnp.complexfloating)
+            if jnp.issubdtype(factor.dtype, jnp.complexfloating) and not jnp.issubdtype(
+                template_leaf.dtype, jnp.complexfloating
             ):
                 raise TypeError(
                     "Complex covariance factors require complex uncertain values."

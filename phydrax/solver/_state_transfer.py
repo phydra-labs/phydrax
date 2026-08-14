@@ -15,6 +15,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..linalg import ArraySpace, FunctionLinearOperator
 
 
 TensorGridBoundary: TypeAlias = Literal["endpoint", "periodic"]
@@ -120,6 +121,38 @@ class AbstractStateTransfer(StrictModule):
     @abc.abstractmethod
     def prolong(self, coarse_state: ArrayLike, /) -> Array:
         raise NotImplementedError
+
+    def restriction_operator(
+        self,
+        /,
+        *,
+        dtype=np.float64,
+    ) -> FunctionLinearOperator:
+        """Return restriction as a rectangular canonical linear operator."""
+        source = ArraySpace(self.fine_shape, dtype=dtype)
+        target = ArraySpace(self.coarse_shape, dtype=dtype)
+        return FunctionLinearOperator(
+            lambda value: self.restrict(value).astype(dtype),
+            source=source,
+            target=target,
+            operator_id=f"{self.transfer_id}:restriction",
+        )
+
+    def prolongation_operator(
+        self,
+        /,
+        *,
+        dtype=np.float64,
+    ) -> FunctionLinearOperator:
+        """Return prolongation as a rectangular canonical linear operator."""
+        source = ArraySpace(self.coarse_shape, dtype=dtype)
+        target = ArraySpace(self.fine_shape, dtype=dtype)
+        return FunctionLinearOperator(
+            lambda value: self.prolong(value).astype(dtype),
+            source=source,
+            target=target,
+            operator_id=f"{self.transfer_id}:prolongation",
+        )
 
 
 class IdentityStateTransfer(AbstractStateTransfer):

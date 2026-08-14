@@ -159,7 +159,9 @@ class EmpiricalSinkhornDivergenceTerm(AbstractEvaluatedScalarTerm):
         log_weights = _resolve(self.log_weights, functions)
         if log_weights is None:
             leaf = _sample_leaf(samples)
-            axis = self.sample_axis + leaf.ndim if self.sample_axis < 0 else self.sample_axis
+            axis = (
+                self.sample_axis + leaf.ndim if self.sample_axis < 0 else self.sample_axis
+            )
             if axis < 0 or axis >= leaf.ndim:
                 raise ValueError("sample_axis is out of range for empirical samples.")
             log_weights = jnp.zeros((leaf.shape[axis],), dtype=float)
@@ -417,7 +419,7 @@ class SoftQuantileFunctional(AbstractEvaluatedScalarTerm):
         effective_epsilon = (
             self.solver.epsilon
             if self.solver is not None
-            else jnp.asarray(self.epsilon, dtype=estimate_data.dtype)
+            else jnp.asarray(self.epsilon, dtype=residual.dtype)
         )
         endpoint_mask = (self.q == 0.0) | (self.q == 1.0)
         diagnostics = {

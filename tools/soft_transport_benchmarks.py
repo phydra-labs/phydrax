@@ -411,9 +411,7 @@ def _accuracy(
         order = jnp.argsort(jnp.where(active, values, jnp.inf), axis=-1, stable=True)
         ordered_output = jnp.take_along_axis(output_rows, order, axis=-1)
         ordered_weights = jnp.take_along_axis(weights, order, axis=-1)
-        active_pairs = (ordered_weights[:, :-1] > 0.0) & (
-            ordered_weights[:, 1:] > 0.0
-        )
+        active_pairs = (ordered_weights[:, :-1] > 0.0) & (ordered_weights[:, 1:] > 0.0)
         monotonicity = jnp.sum(
             active_pairs & (jnp.diff(ordered_output, axis=-1) < -tolerance)
         )

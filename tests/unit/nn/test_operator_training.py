@@ -68,7 +68,9 @@ def test_normalization_is_training_only_invertible_and_persisted(tmp_path):
         split.validation.targets.field("solution").values,
     )
 
-    path = phx.nn.operator.training.save_operator_normalization(tmp_path / "normalization.json", policy)
+    path = phx.nn.operator.training.save_operator_normalization(
+        tmp_path / "normalization.json", policy
+    )
     loaded = phx.nn.operator.training.load_operator_normalization(path)
     assert loaded.to_dict() == policy.to_dict()
     assert "format_version" not in policy.to_dict()
@@ -332,7 +334,9 @@ def test_named_normalization_and_dtype_preserve_complex_fields(tmp_path):
         targets.field("sensor").values,
     )
     loaded = phx.nn.operator.training.load_operator_normalization(
-        phx.nn.operator.training.save_operator_normalization(tmp_path / "complex.json", policy)
+        phx.nn.operator.training.save_operator_normalization(
+            tmp_path / "complex.json", policy
+        )
     )
     assert jnp.allclose(
         loaded.targets["wave"].mean,
@@ -385,7 +389,9 @@ def test_checkpoint_restores_exact_optimizer_rng_and_policies(tmp_path):
         compute_dtype="float32",
         reduction_dtype="float64",
     )
-    schema = phx.nn.operator.training.operator_batch_schema(dataset.batch, target=dataset.targets)
+    schema = phx.nn.operator.training.operator_batch_schema(
+        dataset.batch, target=dataset.targets
+    )
     path = phx.nn.operator.training.save_operator_training_checkpoint(
         tmp_path / "checkpoint",
         model,
@@ -507,7 +513,9 @@ def test_autoregressive_rollout_curricula_and_gradients():
     )
     assert jnp.array_equal(rollout.predictions, targets)
     schedule = phx.nn.operator.training.RolloutHorizonSchedule(1, 3, transition_steps=10)
-    forcing = phx.nn.operator.training.TeacherForcingSchedule(1.0, 0.0, transition_steps=10)
+    forcing = phx.nn.operator.training.TeacherForcingSchedule(
+        1.0, 0.0, transition_steps=10
+    )
     loss = phx.nn.operator.training.autoregressive_operator_loss(
         _IncrementOperator(),
         initial,
@@ -544,7 +552,9 @@ def test_dtype_and_prefetch_loader_apply_explicit_device_policy():
     assert first[0].targets.field("solution").values.dtype == jnp.float32
     assert first[0].batch.input("state").values.sharding.spec[0] == "data"
 
-    model = phx.nn.operator.architectures.FNO(width=4, depth=1, n_modes=(3,), key=jr.key(3))
+    model = phx.nn.operator.architectures.FNO(
+        width=4, depth=1, n_modes=(3,), key=jr.key(3)
+    )
     cast_model = dtype_policy.cast_model(model)
     leaves = jax.tree_util.tree_leaves(eqx.filter(cast_model, eqx.is_inexact_array))
     assert leaves and all(

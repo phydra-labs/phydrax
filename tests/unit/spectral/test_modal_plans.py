@@ -92,12 +92,10 @@ def test_basis_transform_plan_reconstructs_its_modal_subspace_and_differentiates
     )
     coefficients = jnp.arange(9.0)
     values = plan.synthesis_matrices[0] @ coefficients
-    reconstructed = plan.synthesis_matrices[0] @ (
-        plan.analysis_matrices[0] @ values
+    reconstructed = plan.synthesis_matrices[0] @ (plan.analysis_matrices[0] @ values)
+    gradient = jax.grad(lambda field: jnp.sum((plan.analysis_matrices[0] @ field) ** 2))(
+        values
     )
-    gradient = jax.grad(
-        lambda field: jnp.sum((plan.analysis_matrices[0] @ field) ** 2)
-    )(values)
 
     assert jnp.allclose(
         plan.analysis_matrices[0] @ plan.synthesis_matrices[0],

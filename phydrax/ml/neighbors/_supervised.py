@@ -885,7 +885,7 @@ class KernelNeighborsRegressorRecipe(AbstractRecipe):
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         result = self.recipe.fit_batch(batch, key=key)
-        raw = result.as_trainable()
+        raw = result.as_trainable(ExactNeighborRegressorModel)
         model = KernelNeighborRegressorModel(
             support=raw.support,
             targets=raw.targets,
@@ -943,7 +943,7 @@ class KernelNeighborsClassifierRecipe(AbstractRecipe):
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         result = self.recipe.fit_batch(batch, key=key)
-        raw = result.as_trainable()
+        raw = result.as_trainable(ExactNeighborClassifierModel)
         model = KernelNeighborClassifierModel(
             support=raw.support,
             labels=raw.labels,
@@ -999,7 +999,7 @@ class RadiusNeighborsRegressorRecipe(AbstractRecipe):
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         result = self.recipe.fit_batch(batch, key=key)
-        raw = result.as_trainable()
+        raw = result.as_trainable(ExactNeighborRegressorModel)
         model = RadiusNeighborRegressorModel(
             support=raw.support,
             targets=raw.targets,
@@ -1054,7 +1054,7 @@ class RadiusNeighborsClassifierRecipe(AbstractRecipe):
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         result = self.recipe.fit_batch(batch, key=key)
-        raw = result.as_trainable()
+        raw = result.as_trainable(ExactNeighborClassifierModel)
         model = RadiusNeighborClassifierModel(
             support=raw.support,
             labels=raw.labels,

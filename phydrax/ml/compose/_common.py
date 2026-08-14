@@ -579,6 +579,18 @@ def _join_sparse(blocks: Sequence[SparseFeatures], /) -> SparseFeatures:
     )
 
 
+def _require_sparse_blocks(
+    values: Sequence[FeatureArray],
+    /,
+) -> tuple[SparseFeatures, ...]:
+    blocks: list[SparseFeatures] = []
+    for value in values:
+        if not isinstance(value, SparseFeatures):
+            raise TypeError("Expected an exclusively sparse feature collection.")
+        blocks.append(value)
+    return tuple(blocks)
+
+
 def _join_feature_batches(
     source: MLBatch,
     named_batches: Sequence[tuple[str, MLBatch]],
@@ -602,7 +614,7 @@ def _join_feature_batches(
     schema = _join_schemas(tuple((name, batch.feature_schema) for name, batch in entries))
     if all(sparse):
         features = _join_sparse(
-            tuple(batch.features for _, batch in entries)  # type: ignore[misc]
+            _require_sparse_blocks(tuple(batch.features for _, batch in entries))
         )
         return source.with_features(features, feature_schema=schema)
     features = jnp.concatenate(
@@ -628,7 +640,7 @@ def _join_feature_values(named: Sequence[tuple[str, FeatureArray]], /) -> Featur
         )
     if all(sparse):
         return _join_sparse(
-            tuple(values for _, values in entries)  # type: ignore[misc]
+            _require_sparse_blocks(tuple(values for _, values in entries))
         )
     arrays = tuple(jnp.asarray(values) for _, values in entries)
     leading = tuple(int(size) for size in arrays[0].shape[:-1])

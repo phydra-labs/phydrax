@@ -70,9 +70,7 @@ Inspect `result.diagnostics.normalized_marginal_residual`,
 Plan actions support arbitrary trailing payload dimensions.
 
 ```python
-source_payload = jnp.asarray(
-    [[1.0, 0.0], [0.0, 1.0], [2.0, 3.0]]
-)
+source_payload = jnp.asarray([[1.0, 0.0], [0.0, 1.0], [2.0, 3.0]])
 transported_mass = result.apply_source_to_target(source_payload)
 target_conditioned = result.barycentric_source_to_target(source_payload)
 ```
@@ -199,9 +197,7 @@ truly scalar.
 ## 7. Replay sliced Wasserstein projections
 
 ```python
-source_events = jnp.asarray(
-    [[0.0, 0.0], [1.0, 0.5], [0.2, 1.0], [0.8, 0.9]]
-)
+source_events = jnp.asarray([[0.0, 0.0], [1.0, 0.5], [0.2, 1.0], [0.8, 0.9]])
 target_events = source_events + jnp.asarray([0.3, -0.1])
 
 sliced = phx.transport.sliced_wasserstein_distance(
@@ -300,9 +296,7 @@ Raw empirical predictive samples use one leading sample axis and treat every tra
 coordinate as one event:
 
 ```python
-source_draws = jnp.asarray(
-    [[0.0, 1.0], [0.2, 0.8], [-0.1, 1.1], [0.1, 0.9]]
-)
+source_draws = jnp.asarray([[0.0, 1.0], [0.2, 0.8], [-0.1, 1.1], [0.1, 0.9]])
 target_draws = source_draws + jnp.asarray([0.3, -0.2])
 predictive_metric = phx.uq.predictive_sinkhorn_divergence(
     source_draws,
@@ -366,9 +360,7 @@ when both paths share one explicit driver realization.
 ## 12. Transform weighted particles deterministically
 
 ```python
-particles = jnp.asarray(
-    [[-1.0, 0.0], [0.0, 0.5], [1.0, 2.0], [2.0, 3.0]]
-)
+particles = jnp.asarray([[-1.0, 0.0], [0.0, 0.5], [1.0, 2.0], [2.0, 3.0]])
 weights = jnp.asarray([0.05, 0.15, 0.30, 0.50])
 transform = phx.uq.optimal_transport_ensemble_transform(
     particles,
@@ -457,16 +449,17 @@ terminal = phx.integration.discrete(
 )
 matrix = jnp.asarray([[0.85, 0.15], [0.25, 0.75]])
 
+
 def reference_sample(key, state, t0, t1, context):
     del t0, t1, context
     return jr.categorical(key, jnp.log(matrix[state.astype(jnp.int32)])).astype(float)
 
+
 def reference_log_prob(next_state, state, t0, t1, context):
     del t0, t1, context
-    probability = matrix[
-        state.astype(jnp.int32), next_state.astype(jnp.int32)
-    ]
+    probability = matrix[state.astype(jnp.int32), next_state.astype(jnp.int32)]
     return jnp.where(probability > 0, jnp.log(probability), -jnp.inf)
+
 
 reference = phx.stochastic.CallableTransitionKernel(
     reference_sample,

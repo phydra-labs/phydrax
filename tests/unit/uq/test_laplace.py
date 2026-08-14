@@ -141,7 +141,6 @@ def test_laplace_rejects_nonstationary_centers_and_implicit_regularization():
         )
 
 
-
 def test_dense_laplace_linearized_prediction_matches_covariance_and_draws():
     problem, likelihood_precision = _gaussian_problem()
     result = phx.uq.fit_laplace(problem, jnp.zeros(6))
@@ -205,9 +204,7 @@ def test_structured_laplace_linearized_prediction_stays_matrix_free():
     design = jnp.asarray(
         [[1.0, 0.0, -0.3, 0.0, 0.2, 0.0], [0.0, 0.5, 0.0, 1.0, 0.0, -0.1]]
     )
-    expected_parameter_covariance = jnp.linalg.inv(
-        likelihood_precision + jnp.eye(6)
-    )
+    expected_parameter_covariance = jnp.linalg.inv(likelihood_precision + jnp.eye(6))
     expected = design @ expected_parameter_covariance @ design.T
     linearized = result.linearized_predict(design)
 

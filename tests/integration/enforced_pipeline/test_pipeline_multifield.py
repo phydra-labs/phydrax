@@ -58,7 +58,10 @@ def test_multifield_pipeline_uses_enforced_covars():
         transform=lambda _value, get_field: get_field("v"),
     )
 
-    pipelines = EnforcementProgram.build(functions={"u": u, "v": v}, specs=[u_spec, v_spec], )
+    pipelines = EnforcementProgram.build(
+        functions={"u": u, "v": v},
+        specs=[u_spec, v_spec],
+    )
     enforced = pipelines.apply({"u": u, "v": v})
 
     batch = _line_batch(geom, xs=jnp.array([0.3, 0.7]))
@@ -105,4 +108,7 @@ def test_multifield_pipeline_cycle_error():
     )
 
     with pytest.raises(ValueError, match="dependency cycle"):
-        EnforcementProgram.build(functions={"u": u, "v": v}, specs=[u_spec, v_spec], )
+        EnforcementProgram.build(
+            functions={"u": u, "v": v},
+            specs=[u_spec, v_spec],
+        )

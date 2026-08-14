@@ -288,7 +288,9 @@ def _momentum_source(
     if source.shape == (spatial_dimension,):
         return jnp.broadcast_to(source, expected)
     if source.shape != expected:
-        raise ValueError(f"momentum_density must have shape {expected}; got {source.shape}.")
+        raise ValueError(
+            f"momentum_density must have shape {expected}; got {source.shape}."
+        )
     return source
 
 

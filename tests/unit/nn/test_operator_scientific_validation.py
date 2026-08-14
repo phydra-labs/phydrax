@@ -528,10 +528,9 @@ def test_spherical_filter_applies_one_gain_per_harmonic_degree():
 
 def test_spherical_operator_is_equivariant_to_longitude_rotations():
     layer, plan = _degree_filter((0.8, -0.3, 1.2, 0.4))
-    values = (
-        jnp.real(_harmonic(1, 1, plan))
-        + 0.3 * jnp.real(_harmonic(3, -2, plan))
-    )[..., None]
+    values = (jnp.real(_harmonic(1, 1, plan)) + 0.3 * jnp.real(_harmonic(3, -2, plan)))[
+        ..., None
+    ]
     shift = 2
     expected = jnp.roll(layer(values, plan), shift, axis=1)
     actual = layer(jnp.roll(values, shift, axis=1), plan)

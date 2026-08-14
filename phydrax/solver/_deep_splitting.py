@@ -39,7 +39,9 @@ class _TerminalPredictor(StrictModule):
         del time
         value = jnp.asarray(self.problem.terminal(state, self.problem.args))
         if value.shape != self.problem.output_shape:
-            raise ValueError("BSDE terminal condition returned an incompatible output shape.")
+            raise ValueError(
+                "BSDE terminal condition returned an incompatible output shape."
+            )
         return value
 
 
@@ -110,7 +112,9 @@ class DeepSplittingSolution(StrictModule):
             key=key,
         )
         if value.shape != self.problem.output_shape:
-            raise ValueError("Deep splitting slice returned an incompatible output shape.")
+            raise ValueError(
+                "Deep splitting slice returned an incompatible output shape."
+            )
         return value
 
     def _node_value(self, index: Array, state: Array, key: Array, /) -> Array:
@@ -193,9 +197,9 @@ class DeepSplittingSolution(StrictModule):
         """Differentiate the interpolated value and contract it with the diffusion."""
         time_value = jnp.asarray(time)
         state_value = jnp.asarray(state)
-        gradient = jax.jacrev(
-            lambda argument: self(time_value, argument, key=key)
-        )(state_value)
+        gradient = jax.jacrev(lambda argument: self(time_value, argument, key=key))(
+            state_value
+        )
         diffusion = jnp.asarray(
             self.problem.diffusion(time_value, state_value, self.problem.args)
         )
@@ -203,7 +207,9 @@ class DeepSplittingSolution(StrictModule):
         if diffusion.shape != expected:
             raise ValueError(f"diffusion must have shape {expected}.")
         return (
-            gradient.reshape((prod(self.problem.output_shape), prod(self.problem.state_shape)))
+            gradient.reshape(
+                (prod(self.problem.output_shape), prod(self.problem.state_shape))
+            )
             @ diffusion.reshape(
                 (prod(self.problem.state_shape), prod(self.problem.noise_shape))
             )
@@ -408,9 +414,7 @@ def solve_deep_splitting(
     ):
         raise RuntimeError("Deep splitting did not produce every requested time slice.")
     learned_slices = tuple(value for value in slice_models if value is not None)
-    diagnostics_values = tuple(
-        value for value in slice_diagnostics if value is not None
-    )
+    diagnostics_values = tuple(value for value in slice_diagnostics if value is not None)
     diagnostics = DeepSplittingDiagnostics(
         slice_indices=jnp.arange(num_steps),
         times=times[:-1],
