@@ -26,9 +26,7 @@ def test_adm_normal_and_projector_obey_signed_hypersurface_identities(
     metric = phx.metrix.adm_metric(
         lambda q: 1.3 + 0.1 * q[0],
         lambda q: jnp.array([0.2, -0.1 * q[1], 0.05]),
-        lambda q: jnp.array(
-            [[1.4, 0.1, 0.0], [0.1, 1.8, -0.05], [0.0, -0.05, 2.1]]
-        ),
+        lambda q: jnp.array([[1.4, 0.1, 0.0], [0.1, 1.8, -0.05], [0.0, -0.05, 2.1]]),
         chart=_chart(),
         convention=convention,
     )

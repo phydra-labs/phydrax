@@ -174,9 +174,16 @@ def prepare_supervised(
 def parameter_dtype(prepared: PreparedBatch, /):
     """Return the lossless floating/complex dtype shared by data and weights."""
     design = prepared.design
-    feature_dtype = (
-        design.values.dtype if design.sparse else design.dense.dtype  # type: ignore[union-attr]
-    )
+    if design.sparse:
+        values = design.values
+        if values is None:
+            raise RuntimeError("Sparse design is missing its value buffer.")
+        feature_dtype = values.dtype
+    else:
+        dense = design.dense
+        if dense is None:
+            raise RuntimeError("Dense design is missing its matrix.")
+        feature_dtype = dense.dtype
     return jnp.result_type(
         feature_dtype,
         prepared.targets.dtype,

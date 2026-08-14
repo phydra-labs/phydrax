@@ -147,6 +147,7 @@ def test_parameter_geometry_factor_moments_follow_product_axes_and_weights():
     )
     assert jnp.array_equal(scaled["offset"], jnp.array([6.0, 12.0]))
 
+
 def test_parameter_geometry_rejects_invalid_bindings_and_reuse():
     parameters = _mixed_parameters()
 

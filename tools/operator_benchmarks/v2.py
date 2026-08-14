@@ -1915,7 +1915,9 @@ def native_kernel_parity_checks() -> tuple[KernelParityCheck, ...]:
                 axes=(source_axis,),
             )
         },
-        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(query_axis,))},
+        queries={
+            "query": phx.nn.operator.FunctionSamples(values=None, axes=(query_axis,))
+        },
         case_axes=("case",),
         case_shape=(3,),
     )
@@ -1966,9 +1968,13 @@ def native_kernel_parity_checks() -> tuple[KernelParityCheck, ...]:
                 axes=(time_axis,),
             )
         },
-        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(time_axis,))},
+        queries={
+            "query": phx.nn.operator.FunctionSamples(values=None, axes=(time_axis,))
+        },
     )
-    laplace = phx.nn.operator.architectures.LaplaceTemporalOperator(num_poles=4, key=jr.key(103))
+    laplace = phx.nn.operator.architectures.LaplaceTemporalOperator(
+        num_poles=4, key=jr.key(103)
+    )
     laplace_error = _relative_array_error(
         laplace.recurrent(temporal_batch),
         laplace(temporal_batch),

@@ -135,7 +135,10 @@ def test_dataset_and_loader_fingerprints_cover_content_but_not_prefetch():
     equivalent = _dataset(provenance=provenance)
     baseline_fingerprint = phx.nn.operator.training.operator_dataset_fingerprint(baseline)
 
-    assert phx.nn.operator.training.operator_dataset_fingerprint(equivalent) == baseline_fingerprint
+    assert (
+        phx.nn.operator.training.operator_dataset_fingerprint(equivalent)
+        == baseline_fingerprint
+    )
     assert (
         phx.nn.operator.training.operator_dataset_fingerprint(
             _dataset(input_offset=0.25, provenance=provenance)
@@ -161,7 +164,9 @@ def test_dataset_and_loader_fingerprints_cover_content_but_not_prefetch():
         != baseline_fingerprint
     )
     assert (
-        phx.nn.operator.training.operator_dataset_fingerprint(_dataset(masked=True, provenance=provenance))
+        phx.nn.operator.training.operator_dataset_fingerprint(
+            _dataset(masked=True, provenance=provenance)
+        )
         != baseline_fingerprint
     )
 
@@ -177,7 +182,9 @@ def test_dataset_and_loader_fingerprints_cover_content_but_not_prefetch():
     for changed in (changed_case_id, changed_identity, changed_order):
         assert (
             phx.nn.operator.training.operator_dataset_fingerprint(
-                phx.nn.operator.training.OperatorDataset(baseline.batch, baseline.targets, changed)
+                phx.nn.operator.training.OperatorDataset(
+                    baseline.batch, baseline.targets, changed
+                )
             )
             != baseline_fingerprint
         )

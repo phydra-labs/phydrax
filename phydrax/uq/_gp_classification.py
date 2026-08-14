@@ -11,6 +11,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from ..kernels import FiniteFeatureKernel
+from ._covariance import _factor_and_solve_covariance_system
 from ._gp_likelihood import GaussianProcessLikelihoodState
 from ._gp_scalar import ExactGaussianProcessFactor, FiniteFeatureGaussianProcessFactor
 
@@ -46,7 +47,9 @@ class CategoricalGaussianProcessLikelihood(StrictModule):
     def log_probability(self, observation: ArrayLike, latent: ArrayLike, /) -> Array:
         labels = jnp.asarray(observation, dtype=jnp.int32)
         logits = jnp.asarray(latent)
-        return jnp.take_along_axis(jax.nn.log_softmax(logits, axis=-1), labels[..., None], axis=-1)[..., 0]
+        return jnp.take_along_axis(
+            jax.nn.log_softmax(logits, axis=-1), labels[..., None], axis=-1
+        )[..., 0]
 
 
 class BernoulliGaussianProcessPosterior(StrictModule):
@@ -58,13 +61,17 @@ class BernoulliGaussianProcessPosterior(StrictModule):
     iterations: int = eqx.field(static=True)
 
     def latent_moments(self, query_points: ArrayLike, /) -> tuple[Array, Array]:
-        condition = self.factor.condition(self.pseudo_observations, query_points, output_dim="point")
+        condition = self.factor.condition(
+            self.pseudo_observations, query_points, output_dim="point"
+        )
         return condition.mean, condition.variance
 
     def probabilities(self, query_points: ArrayLike, /) -> Array:
         mean, variance = self.latent_moments(query_points)
         # Logistic-Gaussian moment approximation; unlike thresholding this is smooth.
-        return jax.nn.sigmoid(mean / jnp.sqrt(1.0 + jnp.pi * jnp.maximum(variance, 0.0) / 8.0))
+        return jax.nn.sigmoid(
+            mean / jnp.sqrt(1.0 + jnp.pi * jnp.maximum(variance, 0.0) / 8.0)
+        )
 
     def predict(self, query_points: ArrayLike, /) -> Array:
         return (self.probabilities(query_points) >= 0.5).astype(jnp.int32)
@@ -78,7 +85,9 @@ class CategoricalGaussianProcessPosterior(StrictModule):
 
     def __init__(self, factors: tuple[BernoulliGaussianProcessPosterior, ...]):
         if len(factors) < 2:
-            raise ValueError("Categorical GP posterior requires at least two latent factors.")
+            raise ValueError(
+                "Categorical GP posterior requires at least two latent factors."
+            )
         self.factors = tuple(factors)
         self.likelihood = CategoricalGaussianProcessLikelihood(len(factors))
 
@@ -111,7 +120,9 @@ def condition_bernoulli_gaussian_process(
     points = jnp.asarray(observation_points, dtype=float)
     labels = jnp.asarray(observations, dtype=float)
     if points.ndim != 2 or labels.shape != (points.shape[0],):
-        raise ValueError("Bernoulli GP data must have shapes (sample, feature) and (sample,).")
+        raise ValueError(
+            "Bernoulli GP data must have shapes (sample, feature) and (sample,)."
+        )
     if int(iterations) <= 0:
         raise ValueError("iterations must be positive.")
     if not isinstance(state, GaussianProcessLikelihoodState):
@@ -157,7 +168,11 @@ def condition_bernoulli_gaussian_process(
         gradient = weight * (labels - probabilities)
         b = curvature * latent + gradient
         system = identity + root[:, None] * kernel_matrix * root[None, :]
-        correction = jnp.linalg.solve(system, root * (kernel_matrix @ b))
+        correction, _ = _factor_and_solve_covariance_system(
+            system,
+            root * (kernel_matrix @ b),
+        )
+        correction = correction.value
         alpha = b - root * correction
         return kernel_matrix @ alpha
 

@@ -36,4 +36,5 @@ def validate_save_times(
         "save_times must lie within the problem time interval.",
     )
 
+
 __all__ = ["validate_save_times"]

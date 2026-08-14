@@ -176,7 +176,7 @@ class FittedColumnTransformer(AbstractArrayModel):
     gradient_contract: GradientContract
     in_size: int = eqx.field(static=True)
     out_size: int = eqx.field(static=True)
-    _input_binding: ModelBinding = eqx.field(static=True)
+    _input_binding: ModelBinding = eqx.field(static=True)  # ty: ignore[invalid-attribute-override]
 
     def __init__(
         self,

@@ -15,6 +15,15 @@ from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..linalg import (
+    DenseCholesky,
+    DenseLinearOperator,
+    FailurePolicy,
+    LinearSolvePolicy,
+    LinearSystem,
+    OperatorProperties,
+    solve,
+)
 from ._bspline import bspline_stencil
 from ._bspline_grid import BSplineGrid
 
@@ -95,6 +104,30 @@ def bspline_cross_gram(old_grid: BSplineGrid, new_grid: BSplineGrid, /) -> Array
         (old_grid, new_grid), old_grid.degree + new_grid.degree
     )
     return _gram_from_stencils(new_grid, old_grid, nodes, weights)
+
+
+def _solve_mass_matrix(mass: Array, right_hand_side: Array, /) -> Array:
+    solve_dtype = jnp.result_type(mass, right_hand_side)
+    operator = DenseLinearOperator(
+        mass.astype(solve_dtype),
+        properties=OperatorProperties(
+            self_adjoint=True,
+            positive_definite=True,
+            evidence={
+                "self_adjoint": "construction",
+                "positive_definite": "construction",
+                "positive_semidefinite": "construction",
+            },
+        ),
+    )
+    return solve(
+        LinearSystem(operator),
+        right_hand_side.astype(solve_dtype),
+        policy=LinearSolvePolicy(
+            DenseCholesky(),
+            failure=FailurePolicy("error"),
+        ),
+    ).value
 
 
 def _refinement_insertions(
@@ -188,7 +221,7 @@ def bspline_projection_matrix(
             )
     mass = bspline_mass_matrix(new_grid)
     cross_gram = bspline_cross_gram(old_grid, new_grid)
-    return jnp.linalg.solve(mass, cross_gram)
+    return _solve_mass_matrix(mass, cross_gram)
 
 
 class BSplineGridTransfer(StrictModule, NonTrainableState):
@@ -234,7 +267,7 @@ class BSplineGridTransfer(StrictModule, NonTrainableState):
             error_bound = 0.0
         else:
             cross_gram = bspline_cross_gram(old_grid, new_grid)
-            matrix = jnp.linalg.solve(mass, cross_gram)
+            matrix = _solve_mass_matrix(mass, cross_gram)
             residual_gram = bspline_mass_matrix(old_grid) - cross_gram.T @ matrix
             residual_gram = 0.5 * (residual_gram + residual_gram.T)
             maximum_eigenvalue = float(

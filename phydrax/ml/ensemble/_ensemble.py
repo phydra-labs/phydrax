@@ -594,9 +594,9 @@ class StackingRecipe(AbstractRecipe):
             (fold * batch.sample_count) // self.num_folds
             for fold in range(self.num_folds + 1)
         )
-        oof_blocks = []
-        fold_valid = []
-        fold_status = []
+        oof_blocks: list[Array] = []
+        fold_valid: list[Array] = []
+        fold_status: list[Array] = []
         dense = batch.dense_features()
         sample_axis = len(batch.case_shape)
         for base_index, recipe in enumerate(self.base_recipes):
@@ -630,6 +630,8 @@ class StackingRecipe(AbstractRecipe):
                 oof = oof.at[index].set(flat)
                 fold_valid.append(result.valid)
                 fold_status.append(result.status)
+            if oof is None:
+                raise RuntimeError("Stacking produced no out-of-fold predictions.")
             oof_blocks.append(oof)
         meta_features = jnp.concatenate(tuple(oof_blocks), axis=-1)
         meta_batch = batch.with_features(

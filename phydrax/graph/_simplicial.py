@@ -19,7 +19,9 @@ FormDegree = Literal[0, 1, 2]
 def _validate_faces(faces: Any, num_vertices: int | None, /) -> tuple[np.ndarray, int]:
     faces_np = np.asarray(faces, dtype=np.int32)
     if faces_np.ndim != 2 or faces_np.shape[1] != 3:
-        raise ValueError(f"mesh_faces must have shape (n_face, 3); got {faces_np.shape!r}.")
+        raise ValueError(
+            f"mesh_faces must have shape (n_face, 3); got {faces_np.shape!r}."
+        )
     if faces_np.shape[0] == 0:
         raise ValueError("mesh_faces must contain at least one face.")
     if np.any(faces_np < 0):
@@ -392,10 +394,18 @@ def triangle_mesh_to_simplicial_graph(
     edges = {
         "type": jnp.asarray(edge_type_arr, dtype=jnp.int32),
         "incidence_sign": jnp.asarray(np.concatenate(sign_parts, axis=0), dtype=float),
-        "lower_index": jnp.asarray(np.concatenate(lower_index_parts, axis=0), dtype=jnp.int32),
-        "upper_index": jnp.asarray(np.concatenate(upper_index_parts, axis=0), dtype=jnp.int32),
-        "lower_cell_dim": jnp.asarray(np.concatenate(lower_dim_parts, axis=0), dtype=jnp.int32),
-        "upper_cell_dim": jnp.asarray(np.concatenate(upper_dim_parts, axis=0), dtype=jnp.int32),
+        "lower_index": jnp.asarray(
+            np.concatenate(lower_index_parts, axis=0), dtype=jnp.int32
+        ),
+        "upper_index": jnp.asarray(
+            np.concatenate(upper_index_parts, axis=0), dtype=jnp.int32
+        ),
+        "lower_cell_dim": jnp.asarray(
+            np.concatenate(lower_dim_parts, axis=0), dtype=jnp.int32
+        ),
+        "upper_cell_dim": jnp.asarray(
+            np.concatenate(upper_dim_parts, axis=0), dtype=jnp.int32
+        ),
     }
     graph = GraphIR(
         nodes=nodes,
@@ -442,9 +452,7 @@ def _node_field(graph: GraphIR, input_key: str | None, /) -> jnp.ndarray:
         raise ValueError("SimplicialHodgeLaplacian requires node/cell features.")
     if input_key is None:
         if isinstance(graph.nodes, Mapping):
-            raise TypeError(
-                "mapping-valued simplicial-complex nodes require input_key."
-            )
+            raise TypeError("mapping-valued simplicial-complex nodes require input_key.")
         return _as_array("nodes", graph.nodes)
     if not isinstance(graph.nodes, Mapping):
         raise TypeError("input_key requires mapping-valued simplicial-complex nodes.")
@@ -508,7 +516,9 @@ def _mask_cell_type(
     return values * _broadcast_weight(keep.astype(values.dtype), values)
 
 
-def _with_node_output(graph: GraphIR, value: jnp.ndarray, output_key: str | None, /) -> Any:
+def _with_node_output(
+    graph: GraphIR, value: jnp.ndarray, output_key: str | None, /
+) -> Any:
     if output_key is None:
         return value
     nodes = _as_feature_mapping(graph.nodes)
@@ -613,8 +623,14 @@ class SimplicialHodgeLaplacian(eqx.Module):
                 self.vertex_type,
                 node_type_key=self.node_type_key,
             )
-            out = self._delta(graph, self._d(graph, x, self.vertex_to_edge_type), self.edge_to_vertex_type)
-            out = _mask_cell_type(graph, out, self.vertex_type, node_type_key=self.node_type_key)
+            out = self._delta(
+                graph,
+                self._d(graph, x, self.vertex_to_edge_type),
+                self.edge_to_vertex_type,
+            )
+            out = _mask_cell_type(
+                graph, out, self.vertex_type, node_type_key=self.node_type_key
+            )
         elif self.form_degree == 1:
             x = _mask_cell_type(
                 graph,
@@ -650,9 +666,13 @@ class SimplicialHodgeLaplacian(eqx.Module):
                 self._delta(graph, x, self.face_to_edge_type),
                 self.edge_to_face_type,
             )
-            out = _mask_cell_type(graph, out, self.face_type, node_type_key=self.node_type_key)
+            out = _mask_cell_type(
+                graph, out, self.face_type, node_type_key=self.node_type_key
+            )
 
-        return graph.replace(nodes=_with_node_output(graph, out, self.output_key), validate=False)
+        return graph.replace(
+            nodes=_with_node_output(graph, out, self.output_key), validate=False
+        )
 
 
 __all__ = [

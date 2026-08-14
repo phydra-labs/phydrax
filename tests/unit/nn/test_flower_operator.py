@@ -23,14 +23,20 @@ def _conditioned_batch(values, conditions, *, query_mask=None):
     conditions = jnp.asarray(conditions)
     case_axes = ("case",) if values.ndim == 2 else ()
     axis = _axis(values.shape[-1])
-    return phx.nn.operator.OperatorBatch(inputs={
-        "state": phx.nn.operator.FunctionSamples(values=values, axes=(axis,)),
-        "shift": phx.nn.operator.FunctionSamples(values=conditions),
-    }, queries={"query": phx.nn.operator.FunctionSamples(
-        values=None,
-        axes=(axis,),
-        mask=query_mask,
-    )}, case_axes=case_axes,)
+    return phx.nn.operator.OperatorBatch(
+        inputs={
+            "state": phx.nn.operator.FunctionSamples(values=values, axes=(axis,)),
+            "shift": phx.nn.operator.FunctionSamples(values=conditions),
+        },
+        queries={
+            "query": phx.nn.operator.FunctionSamples(
+                values=None,
+                axes=(axis,),
+                mask=query_mask,
+            )
+        },
+        case_axes=case_axes,
+    )
 
 
 def _conditioned_flower(key):
@@ -123,13 +129,15 @@ def test_flower_scalar_case_count_equal_to_grid_size_is_not_a_channel_axis():
     )
 
     direct = model((values, nodes))
-    separate = jnp.stack(
-        tuple(model((values[index], nodes)) for index in range(size))
-    )
+    separate = jnp.stack(tuple(model((values[index], nodes)) for index in range(size)))
     axis = _axis(size)
-    batch = phx.nn.operator.OperatorBatch(inputs={
-        "state": phx.nn.operator.FunctionSamples(values=values, axes=(axis,)),
-    }, queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,))}, case_axes=("case",),)
+    batch = phx.nn.operator.OperatorBatch(
+        inputs={
+            "state": phx.nn.operator.FunctionSamples(values=values, axes=(axis,)),
+        },
+        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,))},
+        case_axes=("case",),
+    )
     structured = model(batch)
 
     assert direct.shape == (size, size)

@@ -30,8 +30,12 @@ def _batch(
         values=jnp.ones((cases, nodes.size)),
         coordinates=query_coordinates,
     )
-    return phx.nn.operator.OperatorBatch(inputs={"forcing": source}, queries={"query": query}, case_axes=("case",),
-    case_shape=(cases,),)
+    return phx.nn.operator.OperatorBatch(
+        inputs={"forcing": source},
+        queries={"query": query},
+        case_axes=("case",),
+        case_shape=(cases,),
+    )
 
 
 def _predictive(samples, batch):

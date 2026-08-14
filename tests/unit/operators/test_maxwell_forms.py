@@ -31,24 +31,18 @@ def test_plane_wave_potential_satisfies_both_vacuum_maxwell_form_residuals():
     )
     field_strength = phx.operators.domain_exterior_derivative(potential)
     residuals = phx.operators.domain_maxwell_residuals(field_strength, metric)
-    points = jnp.array(
-        [[0.2, -0.3, 0.1, 0.4], [0.7, 0.1, -0.2, 0.3]]
-    )
+    points = jnp.array([[0.2, -0.3, 0.1, 0.4], [0.7, 0.1, -0.2, 0.3]])
 
     assert residuals.field_strength is field_strength
     assert residuals.homogeneous.degree == 3
     assert residuals.inhomogeneous.degree == 1
     assert jnp.allclose(
-        jax.jit(jax.vmap(lambda q: residuals.homogeneous.coefficients.func(q)))(
-            points
-        ),
+        jax.jit(jax.vmap(lambda q: residuals.homogeneous.coefficients.func(q)))(points),
         0.0,
         atol=1e-10,
     )
     assert jnp.allclose(
-        jax.jit(jax.vmap(lambda q: residuals.inhomogeneous.coefficients.func(q)))(
-            points
-        ),
+        jax.jit(jax.vmap(lambda q: residuals.inhomogeneous.coefficients.func(q)))(points),
         0.0,
         atol=1e-10,
     )
@@ -162,9 +156,7 @@ def test_maxwell_form_residuals_compose_into_standard_solver_conditions():
         component,
         lambda coefficients: maxwell(coefficients).inhomogeneous.coefficients,
     )
-    points = jnp.array(
-        [[0.1, -0.2, 0.3, 0.4], [0.5, 0.2, -0.1, 0.3]]
-    )
+    points = jnp.array([[0.1, -0.2, 0.3, 0.4], [0.5, 0.2, -0.1, 0.3]])
     realization = phx.integration.from_samples(
         phx.integration.mean_over(component),
         component.points(points),

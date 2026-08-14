@@ -13,9 +13,7 @@ def test_riemannian_benchmark_records_progress_and_invariants():
     line_search_records = {
         record["name"]: record for record in report["line_search_records"]
     }
-    adaptive_records = {
-        record["name"]: record for record in report["adaptive_records"]
-    }
+    adaptive_records = {record["name"]: record for record in report["adaptive_records"]}
     records = {record["name"]: record for record in report["records"]}
 
     assert set(records) == {
@@ -68,8 +66,7 @@ def test_riemannian_benchmark_records_progress_and_invariants():
 def test_advanced_optimizers_qualify_across_builtin_manifold_families():
     report = run_qualification_benchmarks(steps=8)
     records = {
-        (record["geometry"], record["optimizer"]): record
-        for record in report["records"]
+        (record["geometry"], record["optimizer"]): record for record in report["records"]
     }
 
     assert {geometry for geometry, _ in records} == {

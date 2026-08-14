@@ -1129,6 +1129,13 @@ def _base_logits(model: AbstractArrayModel, x: Any) -> Array:
     return jnp.log(jnp.maximum(probability, jnp.finfo(probability.dtype).tiny))
 
 
+def _flat_input_size(model: AbstractArrayModel, owner: str, /) -> int:
+    size = model.in_size
+    if not isinstance(size, int):
+        raise ValueError(f"{owner} requires a flat integer model input size.")
+    return size
+
+
 def _calibration_input(model: AbstractArrayModel, x: Any, in_size: int) -> Array:
     logits = _base_logits(model, x)
     if in_size != 1:
@@ -1165,7 +1172,7 @@ class CalibratedClassifierModel(AbstractArrayModel):
         self.calibration_model = calibration_model
         self.labels = jnp.asarray(labels)
         self.target_schema = target_schema
-        self.in_size = int(base_model.in_size)
+        self.in_size = _flat_input_size(base_model, "CalibratedClassifierModel")
         self.out_size = int(self.labels.shape[0])
         if calibration_model.out_size != self.out_size:
             raise ValueError(
@@ -1174,7 +1181,9 @@ class CalibratedClassifierModel(AbstractArrayModel):
 
     def decision_function(self, x: Any, /) -> Array:
         logits = _calibration_input(
-            self.base_model, x, int(self.calibration_model.in_size)
+            self.base_model,
+            x,
+            _flat_input_size(self.calibration_model, "CalibratedClassifierModel"),
         )
         if isinstance(self.calibration_model, DecisionFunctionModel):
             return self.calibration_model.decision_function(logits)
@@ -1184,7 +1193,11 @@ class CalibratedClassifierModel(AbstractArrayModel):
 
     def predict_proba(self, x: Any, /) -> Array:
         probability = self.calibration_model(
-            _calibration_input(self.base_model, x, int(self.calibration_model.in_size))
+            _calibration_input(
+                self.base_model,
+                x,
+                _flat_input_size(self.calibration_model, "CalibratedClassifierModel"),
+            )
         )
         return probability / jnp.maximum(
             jnp.sum(probability, axis=-1, keepdims=True),

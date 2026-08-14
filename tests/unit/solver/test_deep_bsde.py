@@ -33,11 +33,7 @@ def _problem(paths, *, terminal=None):
         lambda time, state, args: jnp.zeros_like(state),
         lambda time, state, args: jnp.ones((1, 1)),
         lambda time, state, value, control, args: jnp.zeros_like(value),
-        (
-            (lambda state, args: jnp.asarray([state[0]]))
-            if terminal is None
-            else terminal
-        ),
+        ((lambda state, args: jnp.asarray([state[0]])) if terminal is None else terminal),
         state_shape=(1,),
         noise_shape=(1,),
         output_shape=(1,),
@@ -89,10 +85,13 @@ def test_solve_deep_bsde_trains_initial_value_and_removes_temporary_objective():
     )
     problem = _problem(paths, terminal=lambda state, args: jnp.asarray([2.0]))
     domain = phx.domain.Interval1d(-1.0, 1.0)
-    solver = phx.solver.FunctionalSolver(functions={
-        "initial": domain.Parameter(jnp.asarray([0.0])),
-        "control": _constant(domain, [[0.0]]),
-    }, terms=(), )
+    solver = phx.solver.FunctionalSolver(
+        functions={
+            "initial": domain.Parameter(jnp.asarray([0.0])),
+            "control": _constant(domain, [[0.0]]),
+        },
+        terms=(),
+    )
 
     result = solve_deep_bsde(
         solver,

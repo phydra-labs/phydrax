@@ -9,9 +9,7 @@ def test_tensor_exponential_and_chen_product_match_piecewise_linear_signature():
     left_signature = phx.stochastic.tensor_exponential(left, 3)
     right_signature = phx.stochastic.tensor_exponential(right, 3)
     composed = phx.stochastic.chen_multiply(left_signature, right_signature)
-    piecewise = phx.stochastic.piecewise_linear_signature(
-        jnp.stack((left, right)), 3
-    )
+    piecewise = phx.stochastic.piecewise_linear_signature(jnp.stack((left, right)), 3)
 
     assert jnp.allclose(left_signature[1], 0.5 * jnp.outer(left, left))
     assert jnp.allclose(
@@ -61,9 +59,7 @@ def test_lyndon_basis_tensor_log_conversion_recovers_bch_coefficients():
 
 def test_log_signature_control_aggregates_fine_knots_and_records_provenance():
     fine_times = jnp.linspace(0.0, 1.0, 5)
-    values = jnp.asarray(
-        [[0.0, 0.0], [0.2, -0.1], [0.1, 0.4], [0.7, 0.5], [0.6, 1.0]]
-    )
+    values = jnp.asarray([[0.0, 0.0], [0.2, -0.1], [0.1, 0.4], [0.7, 0.5], [0.6, 1.0]])
     control = phx.stochastic.LogSignatureControl.from_values(
         fine_times,
         values,
@@ -111,9 +107,7 @@ def test_depth_four_log_signature_control_promotes_integer_values():
         coarse_indices=(0, 2),
         source_id="integer-depth-four",
     )
-    expected = phx.stochastic.piecewise_linear_signature(
-        jnp.diff(values, axis=0), 4
-    )
+    expected = phx.stochastic.piecewise_linear_signature(jnp.diff(values, axis=0), 4)
     tensor_log = phx.stochastic.tensor_logarithm(control.terminal_signature)
     reconstructed = control.primitive_basis.primitive_to_tensor(
         control.primitive_basis.tensor_to_primitive(tensor_log)
@@ -126,6 +120,5 @@ def test_depth_four_log_signature_control_promotes_integer_values():
         for actual, target in zip(control.terminal_signature, expected)
     )
     assert all(
-        jnp.allclose(actual, target)
-        for actual, target in zip(reconstructed, tensor_log)
+        jnp.allclose(actual, target) for actual, target in zip(reconstructed, tensor_log)
     )

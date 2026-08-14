@@ -81,9 +81,7 @@ def row_logsumexp(
             )
             return jnp.logaddexp(current, logsumexp(terms, axis=1))
 
-        accumulator = jax.lax.fori_loop(
-            0, target_blocks, target_body, accumulator
-        )
+        accumulator = jax.lax.fori_loop(0, target_blocks, target_body, accumulator)
         accumulator = jnp.where(source_valid, accumulator, -jnp.inf)
         return jax.lax.dynamic_update_slice(result, accumulator, (source_start,))
 
@@ -139,9 +137,7 @@ def column_logsumexp(
             )
             return jnp.logaddexp(current, logsumexp(terms, axis=0))
 
-        accumulator = jax.lax.fori_loop(
-            0, source_blocks, source_body, accumulator
-        )
+        accumulator = jax.lax.fori_loop(0, source_blocks, source_body, accumulator)
         accumulator = jnp.where(target_valid, accumulator, -jnp.inf)
         return jax.lax.dynamic_update_slice(result, accumulator, (target_start,))
 

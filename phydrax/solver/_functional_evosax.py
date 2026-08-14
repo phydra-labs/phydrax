@@ -154,9 +154,7 @@ def _solve_evosax_distribution(
                 control.key, ask_key, eval_key, tell_key, cand_key = jr.split(
                     control.key, 5
                 )
-                population, evo_state = algo_runtime.ask(
-                    ask_key, evo_state, algo_params
-                )
+                population, evo_state = algo_runtime.ask(ask_key, evo_state, algo_params)
                 popsize = None
                 for leaf in jax.tree_util.tree_leaves(population):
                     if (

@@ -107,9 +107,7 @@ def _type_mask(batch: GraphBatch, component: NodeType | EdgeType, /) -> Array:
             f"{type(component).__name__} enforcement requires mapping-valued graph payloads."
         )
     if component.type_key not in payload:
-        raise KeyError(
-            f"Graph payload does not contain type key {component.type_key!r}."
-        )
+        raise KeyError(f"Graph payload does not contain type key {component.type_key!r}.")
     field = payload[component.type_key]
     if not isinstance(field, cx.Field):
         raise TypeError("Graph type payload must be a coordax.Field.")
@@ -167,7 +165,9 @@ def _component_mask(
     return valid
 
 
-def _coerce_target(target: DomainFunction | ArrayLike | None, u: DomainFunction, /) -> DomainFunction:
+def _coerce_target(
+    target: DomainFunction | ArrayLike | None, u: DomainFunction, /
+) -> DomainFunction:
     if target is None:
         return DomainFunction(domain=u.domain, deps=(), func=0.0, metadata={})
     if isinstance(target, DomainFunction):
@@ -282,9 +282,7 @@ def enforce_graph_values(
                 "orientation, and sampling semantics as the base field."
             )
     deps = tuple(
-        lbl
-        for lbl in u.domain.labels
-        if (lbl in u.deps) or (lbl in target_fn.deps)
+        lbl for lbl in u.domain.labels if (lbl in u.deps) or (lbl in target_fn.deps)
     )
     return DomainFunction(
         domain=u.domain,
@@ -292,6 +290,7 @@ def enforce_graph_values(
         func=_GraphValueEnforcement(u, target_fn, component, label),
         metadata=u.metadata,
     )
+
 
 def enforce_cochain_values(
     u: DomainFunction,

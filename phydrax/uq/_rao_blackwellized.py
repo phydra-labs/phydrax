@@ -27,7 +27,10 @@ from ..stochastic._state_space import (
 )
 from ..stochastic._state_space_input import AbstractStateSpaceInput
 from ._conditional_moments import _condition_affine_gaussian_diagonal
-from ._covariance import DiagonalCovariance
+from ._covariance import (
+    _factor_and_solve_covariance_system,
+    DiagonalCovariance,
+)
 from ._particle import (
     effective_sample_size,
     normalize_log_weights,
@@ -291,6 +294,7 @@ class RaoBlackwellizedFilterState(StrictModule):
 
 class RaoBlackwellizedFilterResult(StrictModule):
     """Particle modes and analytic conditional Gaussian filtering histories."""
+
     initial_nonlinear_particles: Array
     initial_linear_means: Array
     initial_linear_covariances: Array
@@ -393,9 +397,7 @@ def _condition_linear_state(
             forecast_covariance,
             observation,
             observation_offset,
-            jnp.asarray(observation_covariance.variance).reshape(
-                (observation_size,)
-            ),
+            jnp.asarray(observation_covariance.variance).reshape((observation_size,)),
             flat_value,
             flat_mask,
         )
@@ -414,19 +416,19 @@ def _condition_linear_state(
             effective_observation @ forecast_covariance @ effective_observation.T
             + effective_covariance
         )
-        scale = jnp.linalg.cholesky(innovation_covariance)
         cross = forecast_covariance @ effective_observation.T
-        gain = jnp.linalg.solve(innovation_covariance, cross.T).T
+        gain_result, scale = _factor_and_solve_covariance_system(
+            innovation_covariance,
+            cross.T,
+        )
+        gain = gain_result.value.T
         filtered_mean = forecast_mean + gain @ innovation
         identity = jnp.eye(linear_size, dtype=forecast_mean.dtype)
         update = identity - gain @ effective_observation
         filtered_covariance = (
-            update @ forecast_covariance @ update.T
-            + gain @ effective_covariance @ gain.T
+            update @ forecast_covariance @ update.T + gain @ effective_covariance @ gain.T
         )
-        filtered_covariance = 0.5 * (
-            filtered_covariance + filtered_covariance.T
-        )
+        filtered_covariance = 0.5 * (filtered_covariance + filtered_covariance.T)
         diagonal = jnp.diagonal(scale)
         solved = jax.scipy.linalg.solve_triangular(
             scale, innovation[:, None], lower=True

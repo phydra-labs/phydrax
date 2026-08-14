@@ -127,7 +127,9 @@ def add_self_loops(
     if edge_attr.ndim == 1:
         loop_attr = jnp.full((n_nodes,), fill_value, dtype=edge_attr.dtype)
     else:
-        loop_attr = jnp.full((n_nodes,) + edge_attr.shape[1:], fill_value, dtype=edge_attr.dtype)
+        loop_attr = jnp.full(
+            (n_nodes,) + edge_attr.shape[1:], fill_value, dtype=edge_attr.dtype
+        )
     out_attr = jnp.concatenate([edge_attr, loop_attr], axis=0)
     return out_index, out_attr
 

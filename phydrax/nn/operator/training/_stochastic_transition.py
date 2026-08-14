@@ -1154,9 +1154,7 @@ def _trajectory_from_steps(
         case_shape=batch.case_shape,
         realization_shape=realization_shape,
         realizations=(
-            (driver,) * case_count
-            if driver is not None
-            else (None,) * case_count
+            (driver,) * case_count if driver is not None else (None,) * case_count
         ),
         case_ids=cases,
         parameter_ids=parameters,

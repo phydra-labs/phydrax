@@ -248,7 +248,9 @@ def _weighted_source(
     axis, count = _single_weighted_axis(batch)
     if isinstance(batch.log_weights, cx.Field):
         log_weights = jnp.asarray(batch.log_weights.data, dtype=float)
-        mask = None if batch.mask is None else jnp.asarray(cast(cx.Field, batch.mask).data)
+        mask = (
+            None if batch.mask is None else jnp.asarray(cast(cx.Field, batch.mask).data)
+        )
     else:
         log_weights = jnp.asarray(batch.log_weights, dtype=float)
         mask = None if batch.mask is None else jnp.asarray(batch.mask, dtype=bool)
@@ -304,7 +306,9 @@ def compress(
             "Compression requires a one-axis PointIntegrationBatch or "
             "WeightedSampleBatch."
         )
-    samples, axis, count, source_log_weights, source_mask, normalized, source_mass = source
+    samples, axis, count, source_log_weights, source_mask, normalized, source_mass = (
+        source
+    )
     support_valid = (
         realization.batch.support_valid
         if isinstance(realization.batch, WeightedSampleBatch)

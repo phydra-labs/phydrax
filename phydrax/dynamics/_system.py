@@ -40,7 +40,7 @@ def _inexact(value: ArrayLike, /) -> Array:
 class ContinuousSystem(StrictModule):
     """A continuous-time local evolution law independent of numerical integration."""
 
-    vector_field: SystemVectorField
+    vector_field: Callable[..., ArrayLike]
     state_layout: StateLayout
     input_layout: InputLayout | None
     system_id: str = eqx.field(static=True)
@@ -118,7 +118,7 @@ class ContinuousSystem(StrictModule):
 class DiscreteSystem(StrictModule):
     """A discrete transition law independent of rollout and analysis policy."""
 
-    transition: SystemTransition
+    transition: Callable[..., ArrayLike]
     state_layout: StateLayout
     input_layout: InputLayout | None
     system_id: str = eqx.field(static=True)

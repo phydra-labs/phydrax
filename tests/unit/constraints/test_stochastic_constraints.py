@@ -180,9 +180,7 @@ def test_fokker_planck_constraint_composes_with_explicit_density_normalization()
     dynamics_target = phx.integration.mean_over(dynamics_condition.on)
     dynamics = phx.terms.ResidualPenalty(
         dynamics_condition,
-        phx.integration.fixed(
-            phx.integration.materialize(dynamics_target, plan)
-        ),
+        phx.integration.fixed(phx.integration.materialize(dynamics_target, plan)),
     )
     normalization_condition = phx.conditions.Moment(
         "p",
@@ -193,9 +191,7 @@ def test_fokker_planck_constraint_composes_with_explicit_density_normalization()
     normalization_target = phx.integration.over(normalization_condition.on)
     normalization = phx.terms.MomentPenalty(
         normalization_condition,
-        phx.integration.fixed(
-            phx.integration.materialize(normalization_target, plan)
-        ),
+        phx.integration.fixed(phx.integration.materialize(normalization_target, plan)),
     )
     solver = phx.solver.FunctionalSolver(
         functions={"p": density},

@@ -50,7 +50,9 @@ def _compile(problem, domain, plan, *, num_points=32):
         "governing",
         plan,
         component=domain.component(),
-        sampling=phx.domain.PointSampling(num_points, layout=phx.domain.SampleLayout((("x",),))),
+        sampling=phx.domain.PointSampling(
+            num_points, layout=phx.domain.SampleLayout((("x",),))
+        ),
         sampling_mode="fixed",
         fixed_batch_key=jr.key(19),
     )
@@ -129,9 +131,7 @@ def test_randomized_compiler_preserves_parameter_gradients():
     batch = compiled.term.sample(key=jr.key(5))
 
     def loss(coefficient):
-        function = domain.Function("x")(
-            lambda x: coefficient * jnp.dot(x, x)
-        )
+        function = domain.Function("x")(lambda x: coefficient * jnp.dot(x, x))
         return compiled.term.loss({"u": function}, batch=batch)
 
     coefficient = jnp.asarray(0.2)

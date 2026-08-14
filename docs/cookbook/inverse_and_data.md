@@ -33,17 +33,22 @@ operator. Everything is still “minimize functionals over domains”.
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
     )  # Ω=[-1,1]^2
 
+
     # Known forcing and boundary value (toy choices)
     @geom.Function("x")
     def f(x):
         return 1.0
 
+
     @geom.Function("x")
     def g(x):
         return 0.0
 
+
     # State u(x) and unknown coefficient k(x) (positive via final activation)
-    u_model = phx.nn.models.MLP(in_size=2, out_size="scalar", width_size=16, depth=2, key=jr.key(0))
+    u_model = phx.nn.models.MLP(
+        in_size=2, out_size="scalar", width_size=16, depth=2, key=jr.key(0)
+    )
     k_model = phx.nn.models.MLP(
         in_size=2,
         out_size="scalar",
@@ -59,10 +64,12 @@ operator. Everything is still “minimize functionals over domains”.
     layout = phx.domain.SampleLayout((("x",),))
     interior = geom.component()
 
+
     def pde_operator(u_f, k_f):
-        grad_u = phx.operators.grad(u_f, var="x")      # ∇u (vector)
-        flux = k_f * grad_u                            # k∇u
-        return -phx.operators.div(flux, var="x") - f    # -∇·(k∇u) - f
+        grad_u = phx.operators.grad(u_f, var="x")  # ∇u (vector)
+        flux = k_f * grad_u  # k∇u
+        return -phx.operators.div(flux, var="x") - f  # -∇·(k∇u) - f
+
 
     pde_condition = phx.conditions.Residual(
         ("u", "k"),
@@ -92,10 +99,12 @@ operator. Everything is still “minimize functionals over domains”.
     anchors = jnp.array([[0.0, 0.0], [0.5, -0.25]])
     values = jnp.array([0.0, 0.1])
 
+
     @geom.Function("x")
     def observed_u(x):
         nearest = jnp.argmin(jnp.sum((anchors - x) ** 2, axis=-1))
         return values[nearest]
+
 
     observation = phx.conditions.Observation("u", interior, observed_u)
     observation_batch = interior.points({"x": anchors})

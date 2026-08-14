@@ -178,9 +178,7 @@ def _davie_correction(
     flattened = derivatives.reshape(
         (problem.driver_dimension, int(state.size), problem.driver_dimension)
     )
-    return jnp.einsum("isj,ij->s", flattened, second_level).reshape(
-        problem.state_shape
-    )
+    return jnp.einsum("isj,ij->s", flattened, second_level).reshape(problem.state_shape)
 
 
 def _classical_integrate(
@@ -199,9 +197,7 @@ def _classical_integrate(
             time, step, first_increment, second_increment = item
             drift = jnp.asarray(problem.drift(time, state, problem.args))
             fields = jnp.asarray(problem.vector_fields(time, state, problem.args))
-            first_update = jnp.tensordot(
-                fields, first_increment, axes=((-1,), (0,))
-            )
+            first_update = jnp.tensordot(fields, first_increment, axes=((-1,), (0,)))
             second_update = (
                 _davie_correction(problem, time, state, fields, second_increment)
                 if davie
@@ -224,9 +220,7 @@ def _classical_integrate(
 
     if control.sample_shape:
         path_count = int(np.prod(control.sample_shape))
-        first = first_level.reshape(
-            (path_count, control.num_steps, control.dimension)
-        )
+        first = first_level.reshape((path_count, control.num_steps, control.dimension))
         if second_level is None:
             second = jnp.zeros((path_count, control.num_steps, 0), dtype=first.dtype)
         else:
@@ -357,7 +351,9 @@ class RoughDifferentialSolution(StrictModule):
         resolved_statistics = {
             str(name): jnp.asarray(value) for name, value in statistics.items()
         }
-        if any(value.shape != expected_statuses for value in resolved_statistics.values()):
+        if any(
+            value.shape != expected_statuses for value in resolved_statistics.values()
+        ):
             raise ValueError("RDE statistics must align with control intervals.")
         geometry_id = str(state_geometry_id)
         if not geometry_id:

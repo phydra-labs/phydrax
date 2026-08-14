@@ -36,7 +36,9 @@ class BridgePathSample(StrictModule):
     approximation_id: str = eqx.field(static=True)
 
 
-def _flat_case_index(context: StateSpaceStepContext, case_shape: tuple[int, ...]) -> Array:
+def _flat_case_index(
+    context: StateSpaceStepContext, case_shape: tuple[int, ...]
+) -> Array:
     index = jnp.asarray(context.case_index, dtype=jnp.int32)
     if not case_shape:
         return jnp.asarray(0, dtype=jnp.int32)
@@ -57,7 +59,10 @@ def _flat_case_index(context: StateSpaceStepContext, case_shape: tuple[int, ...]
 
 def _state_indices(values: Array, support: Array, state_shape: tuple[int, ...], /):
     if state_shape:
-        if values.ndim < len(state_shape) or tuple(values.shape[-len(state_shape) :]) != state_shape:
+        if (
+            values.ndim < len(state_shape)
+            or tuple(values.shape[-len(state_shape) :]) != state_shape
+        ):
             raise ValueError(f"State values must end with state_shape {state_shape}.")
         batch_shape = values.shape[: -len(state_shape)]
         flat = values.reshape((-1,) + state_shape)
@@ -114,7 +119,8 @@ class ControlledTransitionKernel(AbstractTransitionKernel):
         step_index = jnp.asarray(context.step_index, dtype=jnp.int32)
         case_index = eqx.error_if(
             case_index,
-            (case_index < 0) | (case_index >= (prod(self.case_shape) if self.case_shape else 1)),
+            (case_index < 0)
+            | (case_index >= (prod(self.case_shape) if self.case_shape else 1)),
             "Bridge transition context.case_index is out of range.",
         )
         step_index = eqx.error_if(
@@ -124,7 +130,9 @@ class ControlledTransitionKernel(AbstractTransitionKernel):
         )
         return case_index, step_index
 
-    def _validate_interval(self, step_index: Array, t0: ArrayLike, t1: ArrayLike, /) -> Array:
+    def _validate_interval(
+        self, step_index: Array, t0: ArrayLike, t1: ArrayLike, /
+    ) -> Array:
         observed_start = jnp.asarray(t0)
         observed_end = jnp.asarray(t1)
         mismatch = (
@@ -143,7 +151,9 @@ class ControlledTransitionKernel(AbstractTransitionKernel):
         case_index, step_index = self._case_step(context)
         step_index = self._validate_interval(step_index, t0, t1)
         count = prod(self.case_shape) if self.case_shape else 1
-        support = self.support.reshape((count, self.num_states) + self.state_shape)[case_index]
+        support = self.support.reshape((count, self.num_states) + self.state_shape)[
+            case_index
+        ]
         probabilities = self.probabilities.reshape(
             (count, self.num_steps, self.num_states, self.num_states)
         )[case_index, step_index]
@@ -169,7 +179,9 @@ class ControlledTransitionKernel(AbstractTransitionKernel):
         case_index, step_index = self._case_step(context)
         step_index = self._validate_interval(step_index, t0, t1)
         count = prod(self.case_shape) if self.case_shape else 1
-        support = self.support.reshape((count, self.num_states) + self.state_shape)[case_index]
+        support = self.support.reshape((count, self.num_states) + self.state_shape)[
+            case_index
+        ]
         probabilities = self.probabilities.reshape(
             (count, self.num_steps, self.num_states, self.num_states)
         )[case_index, step_index]
@@ -212,9 +224,7 @@ def _sample_indices_flat(
 
             def step(state_index, step_data):
                 step_index, matrix = step_data
-                step_key = jr.fold_in(
-                    member_key, (step_index + 1).astype(jnp.uint32)
-                )
+                step_key = jr.fold_in(member_key, (step_index + 1).astype(jnp.uint32))
                 probabilities = matrix[state_index]
                 log_probabilities = jnp.where(
                     probabilities > 0.0, jnp.log(probabilities), -jnp.inf
@@ -287,7 +297,9 @@ def sample_bridge_paths(
     )
 
 
-def _path_indices(result: SchrodingerBridgeResult, paths: ArrayLike, /) -> tuple[Array, Array, tuple[int, ...]]:
+def _path_indices(
+    result: SchrodingerBridgeResult, paths: ArrayLike, /
+) -> tuple[Array, Array, tuple[int, ...]]:
     problem = result.problem
     values = jnp.asarray(paths)
     event_rank = len(problem.state_shape)
@@ -323,7 +335,9 @@ def _path_indices(result: SchrodingerBridgeResult, paths: ArrayLike, /) -> tuple
     return indices, valid, sample_shape
 
 
-def _path_log_prob(result: SchrodingerBridgeResult, paths: ArrayLike, *, reference: bool) -> Array:
+def _path_log_prob(
+    result: SchrodingerBridgeResult, paths: ArrayLike, *, reference: bool
+) -> Array:
     indices, valid, sample_shape = _path_indices(result, paths)
     problem = result.problem
     case_count = problem.num_cases
@@ -340,9 +354,7 @@ def _path_log_prob(result: SchrodingerBridgeResult, paths: ArrayLike, *, referen
             initial_values > 0.0, jnp.log(initial_values), -jnp.inf
         )
         for step in range(problem.num_steps):
-            values = transitions[
-                step, case_indices[:, step], case_indices[:, step + 1]
-            ]
+            values = transitions[step, case_indices[:, step], case_indices[:, step + 1]]
             log_probability = log_probability + jnp.where(
                 values > 0.0, jnp.log(values), -jnp.inf
             )
@@ -354,9 +366,7 @@ def _path_log_prob(result: SchrodingerBridgeResult, paths: ArrayLike, *, referen
     return values.reshape(problem.case_shape + sample_shape)
 
 
-def bridge_path_log_prob(
-    result: SchrodingerBridgeResult, paths: ArrayLike, /
-) -> Array:
+def bridge_path_log_prob(result: SchrodingerBridgeResult, paths: ArrayLike, /) -> Array:
     """Evaluate the solved controlled path law on finite-state paths."""
     return _path_log_prob(result, paths, reference=False)
 

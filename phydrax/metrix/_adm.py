@@ -102,11 +102,15 @@ class ADMDecomposition(StrictModule):
         inverse_lapse_squared = 1.0 / self.lapse**2
         time_time = -inverse_lapse_squared
         time_space = self.shift * inverse_lapse_squared[..., None]
-        spatial = self.spatial_inverse - jnp.einsum(
-            "...i,...j->...ij",
-            self.shift,
-            self.shift,
-        ) * inverse_lapse_squared[..., None, None]
+        spatial = (
+            self.spatial_inverse
+            - jnp.einsum(
+                "...i,...j->...ij",
+                self.shift,
+                self.shift,
+            )
+            * inverse_lapse_squared[..., None, None]
+        )
         first_row = jnp.concatenate((time_time[..., None], time_space), axis=-1)
         remaining = jnp.concatenate((time_space[..., :, None], spatial), axis=-1)
         inverse = jnp.concatenate((first_row[..., None, :], remaining), axis=-2)
@@ -127,8 +131,7 @@ def decompose_adm_metric(
     shift_covector = normalized[..., 0, 1:]
     shift = jnp.linalg.solve(spatial, shift_covector[..., None])[..., 0]
     lapse_squared = (
-        jnp.einsum("...i,...i->...", shift, shift_covector)
-        - normalized[..., 0, 0]
+        jnp.einsum("...i,...i->...", shift, shift_covector) - normalized[..., 0, 0]
     )
     asymmetry = jnp.max(
         jnp.abs(spatial - jnp.swapaxes(spatial, -1, -2)),
@@ -197,9 +200,7 @@ class ADMValidationReport(StrictModule):
         self.spatial_symmetric = jnp.asarray(spatial_symmetric, dtype=bool)
         self.signature_matches = jnp.asarray(signature_matches, dtype=bool)
         self.minimum_lapse = jnp.asarray(minimum_lapse)
-        self.minimum_spatial_eigenvalue = jnp.asarray(
-            minimum_spatial_eigenvalue
-        )
+        self.minimum_spatial_eigenvalue = jnp.asarray(minimum_spatial_eigenvalue)
         self.maximum_spatial_asymmetry = jnp.asarray(maximum_spatial_asymmetry)
         self.maximum_inverse_residual = jnp.asarray(maximum_inverse_residual)
         self.maximum_reconstruction_residual = jnp.asarray(
@@ -241,9 +242,7 @@ def validate_adm_decomposition(
     )
     minimum_lapse = jnp.min(lapse)
     lapse_positive = minimum_lapse > 0.0
-    maximum_asymmetry = jnp.max(
-        jnp.abs(spatial - jnp.swapaxes(spatial, -1, -2))
-    )
+    maximum_asymmetry = jnp.max(jnp.abs(spatial - jnp.swapaxes(spatial, -1, -2)))
     spatial_symmetric = maximum_asymmetry <= tolerances[0]
     spatial_eigenvalues = jnp.linalg.eigvalsh(
         0.5 * (spatial + jnp.swapaxes(spatial, -1, -2))
@@ -273,8 +272,7 @@ def validate_adm_decomposition(
         expected_positive = 1
         expected_negative = decomposition.spatial_dimension
     signature_matches = jnp.all(
-        (positive_count == expected_positive)
-        & (negative_count == expected_negative)
+        (positive_count == expected_positive) & (negative_count == expected_negative)
     )
     identity = jnp.broadcast_to(
         jnp.eye(decomposition.chart.dimension, dtype=matrix.dtype),
@@ -368,9 +366,7 @@ class ADMParameterization(StrictModule):
         if not isfinite(lapse_floor) or lapse_floor <= 0.0:
             raise ValueError("minimum_lapse must be finite and positive.")
         if not isfinite(diagonal_floor) or diagonal_floor <= 0.0:
-            raise ValueError(
-                "minimum_spatial_diagonal must be finite and positive."
-            )
+            raise ValueError("minimum_spatial_diagonal must be finite and positive.")
         if convention not in ("mostly_plus", "mostly_minus"):
             raise ValueError("convention must be 'mostly_plus' or 'mostly_minus'.")
         self.raw_lapse = raw_lapse
@@ -403,7 +399,9 @@ class ADMParameterization(StrictModule):
         if not jnp.issubdtype(shift.dtype, jnp.floating):
             raise TypeError("shift must return a real floating-point vector.")
         if not jnp.issubdtype(raw_factor.dtype, jnp.floating):
-            raise TypeError("raw_spatial_factor must return a real floating-point matrix.")
+            raise TypeError(
+                "raw_spatial_factor must return a real floating-point matrix."
+            )
         raw_lapse = eqx.error_if(
             raw_lapse,
             ~jnp.isfinite(raw_lapse),
@@ -448,8 +446,7 @@ class ADMParameterization(StrictModule):
             lapse = lapse.reshape(leading_shape)
             shift = shift.reshape(leading_shape + (self.chart.dimension - 1,))
             spatial = spatial.reshape(
-                leading_shape
-                + (self.chart.dimension - 1, self.chart.dimension - 1)
+                leading_shape + (self.chart.dimension - 1, self.chart.dimension - 1)
             )
         return ADMDecomposition(
             lapse,

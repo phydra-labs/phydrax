@@ -55,9 +55,7 @@ class SpatialUnbalancedSinkhornDivergenceTerm(AbstractEvaluatedScalarTerm):
         if not callable(measure_builder):
             raise TypeError("measure_builder must be callable.")
         if not isinstance(reference, PreparedUnbalancedSinkhornReference):
-            raise TypeError(
-                "reference must be a PreparedUnbalancedSinkhornReference."
-            )
+            raise TypeError("reference must be a PreparedUnbalancedSinkhornReference.")
         if encoder is not None and not callable(encoder):
             raise TypeError("encoder must be callable or None.")
         weight_ = jnp.asarray(weight, dtype=float)

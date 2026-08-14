@@ -243,7 +243,9 @@ class Batch(Data):
             n_edge = jnp.asarray([int(senders.shape[0])], dtype=jnp.int32)
 
         nodes = self.x if self.x is not None else self.pos
-        globals_ = self.y if (self.y is not None and int(self.y.shape[0]) == n_graph) else None
+        globals_ = (
+            self.y if (self.y is not None and int(self.y.shape[0]) == n_graph) else None
+        )
 
         return GraphIR(
             nodes=nodes,

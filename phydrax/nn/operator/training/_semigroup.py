@@ -284,7 +284,9 @@ def _distributional_predictives(
     else:
         keys = tuple(fold_in_eval_key(key, site) for site in range(key_count))
     if any(value is None for value in keys):
-        raise AssertionError("Distributional semigroup keys unexpectedly resolved to None.")
+        raise AssertionError(
+            "Distributional semigroup keys unexpectedly resolved to None."
+        )
     resolved_keys = tuple(cast(Array, value) for value in keys)
 
     direct_distribution = model.distribution(direct_batch, key=resolved_keys[0])
@@ -427,7 +429,9 @@ class SinkhornDistributionalSemigroupObjective:
             epsilon=self.epsilon,
         )
         if result.transport is None:
-            raise AssertionError("Sinkhorn semigroup metric omitted transport diagnostics.")
+            raise AssertionError(
+                "Sinkhorn semigroup metric omitted transport diagnostics."
+            )
         value = eqx.error_if(
             result.value,
             jnp.any(~result.transport.converged),

@@ -101,9 +101,7 @@ class PicardSourceContext(StrictModule):
 
     def covariance_trace(self, time: Array, state: Array, /) -> Array:
         """Return tr(sigma sigmaᵀ Hess u) through factor-HVP contractions."""
-        diffusion = jnp.asarray(
-            self.problem.diffusion(time, state, self.problem.args)
-        )
+        diffusion = jnp.asarray(self.problem.diffusion(time, state, self.problem.args))
         expected = self.problem.state_shape + self.problem.noise_shape
         if diffusion.shape != expected:
             raise ValueError(f"diffusion must have shape {expected}.")
@@ -184,7 +182,9 @@ class DeepPicardResult(StrictModule):
 
 
 def _zero_predictor(problem: BSDEProblem, /) -> Callable[[Array, Array], Array]:
-    return lambda time, state: jnp.zeros(problem.output_shape, dtype=jnp.asarray(state).dtype)
+    return lambda time, state: jnp.zeros(
+        problem.output_shape, dtype=jnp.asarray(state).dtype
+    )
 
 
 def _source_problem(
@@ -354,10 +354,10 @@ def _damped_labels(
     )
     if labels.control_targets is not None:
         if controls is None:
-            raise RuntimeError("Control targets exist but current controls are unavailable.")
-        damped_controls = (
-            (1.0 - damping) * controls + damping * labels.control_targets
-        )
+            raise RuntimeError(
+                "Control targets exist but current controls are unavailable."
+            )
+        damped_controls = (1.0 - damping) * controls + damping * labels.control_targets
         out = eqx.tree_at(lambda batch: batch.control_targets, out, damped_controls)
         if labels.control_standard_errors is not None:
             out = eqx.tree_at(
@@ -378,9 +378,7 @@ def _masked_rmse(
     axes = tuple(range(squared.ndim - len(event_shape), squared.ndim))
     squared = jnp.sum(squared, axis=axes)
     count = jnp.sum(valid)
-    return jnp.sqrt(
-        jnp.sum(jnp.where(valid, squared, 0.0)) / jnp.maximum(count, 1)
-    )
+    return jnp.sqrt(jnp.sum(jnp.where(valid, squared, 0.0)) / jnp.maximum(count, 1))
 
 
 def _validation_queries(
@@ -486,14 +484,10 @@ def solve_deep_picard(
         else query_sampler
     )
     validation_times_input = (
-        validation_query_times
-        if validation_query_times is not None
-        else query_times
+        validation_query_times if validation_query_times is not None else query_times
     )
     validation_states_input = (
-        validation_query_states
-        if validation_query_states is not None
-        else query_states
+        validation_query_states if validation_query_states is not None else query_states
     )
     validation_weights_input = (
         validation_query_weights
@@ -531,9 +525,7 @@ def solve_deep_picard(
     for outer in range(outer_steps):
         old_functions = current.ansatz_functions()
         source_value = (
-            None
-            if outer == 0 and initial_source == "zero"
-            else old_functions[value_name]
+            None if outer == 0 and initial_source == "zero" else old_functions[value_name]
         )
         source_control = (
             None

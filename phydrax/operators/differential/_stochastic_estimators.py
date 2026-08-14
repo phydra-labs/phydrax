@@ -188,9 +188,7 @@ class StochasticOperatorSamples(StrictModule):
         count = int(samples.shape[0])
         mean = jnp.mean(samples, axis=0)
         centered = samples - mean
-        sample_variance = jnp.sum(jnp.abs(centered) ** 2, axis=0) / float(
-            count - 1
-        )
+        sample_variance = jnp.sum(jnp.abs(centered) ** 2, axis=0) / float(count - 1)
         standard_error = jnp.sqrt(sample_variance / float(count))
         ids = (
             jnp.arange(count, dtype=jnp.int32)
@@ -214,6 +212,7 @@ class StochasticOperatorSamples(StrictModule):
             self.num_probes,
             self.distribution,
         )
+
 
 def _probes(
     key: Key[Array, ""],

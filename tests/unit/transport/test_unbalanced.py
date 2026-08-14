@@ -14,9 +14,7 @@ import phydrax as phx
 def _measure(points, weights, *, mask=None, provenance="unbalanced-test"):
     weight_field = cx.Field(jnp.asarray(weights, dtype=float), dims=("atom",))
     mask_field = (
-        None
-        if mask is None
-        else cx.Field(jnp.asarray(mask, dtype=bool), dims=("atom",))
+        None if mask is None else cx.Field(jnp.asarray(mask, dtype=bool), dims=("atom",))
     )
     return phx.integration.discrete(
         jnp.asarray(points, dtype=float),
@@ -45,7 +43,9 @@ def _problem(
     )
 
 
-def _solver(*, epsilon=0.7, block_size=None, max_iterations=800, tolerance=1e-11, **kwargs):
+def _solver(
+    *, epsilon=0.7, block_size=None, max_iterations=800, tolerance=1e-11, **kwargs
+):
     return phx.transport.UnbalancedSinkhorn(
         epsilon,
         block_size=block_size,
@@ -147,7 +147,9 @@ def test_large_marginal_penalties_recover_balanced_sinkhorn_for_unit_mass():
     )
 
     assert balanced.converged & unbalanced.converged
-    assert jnp.allclose(unbalanced.dense_plan(), balanced.dense_plan(), rtol=2e-6, atol=2e-7)
+    assert jnp.allclose(
+        unbalanced.dense_plan(), balanced.dense_plan(), rtol=2e-6, atol=2e-7
+    )
 
 
 @pytest.mark.parametrize("block_size", [1, 2, 4, 8])
@@ -226,9 +228,9 @@ def test_joint_mass_scaling_follows_declared_product_reference_kl_convention():
             target_penalty=target_penalty,
         )
     )
-    exponent = (
-        2.0 * epsilon + source_penalty + target_penalty
-    ) / (epsilon + source_penalty + target_penalty)
+    exponent = (2.0 * epsilon + source_penalty + target_penalty) / (
+        epsilon + source_penalty + target_penalty
+    )
 
     assert jnp.allclose(
         scaled.transported_mass,

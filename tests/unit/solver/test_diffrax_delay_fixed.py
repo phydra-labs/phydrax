@@ -128,6 +128,7 @@ def test_fixed_delay_solver_is_jittable_vectorizable_and_differentiable():
     assert jnp.allclose(observed, expected, atol=1e-6)
     assert jnp.isclose(jax.grad(terminal)(1.0), 3.0, atol=1e-5)
 
+
 def test_rolling_whole_solve_matches_full_history_with_bounded_storage():
     problem = _piecewise_problem(t1=4.0)
     times = jnp.linspace(0.0, 4.0, 41)

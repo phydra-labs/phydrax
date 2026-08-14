@@ -49,7 +49,9 @@ def test_simplicial_bundle_components_select_cells_and_incidences():
     edge_batch = edges.sample(phx.domain.PointSampling(3, layout=structure))
     incidence_batch = incidence.sample(phx.domain.PointSampling(3, layout=structure))
 
-    assert jnp.allclose(vertex_batch["graph"]["features"].data[:, 0], jnp.array([1.0, 2.0, 3.0]))
+    assert jnp.allclose(
+        vertex_batch["graph"]["features"].data[:, 0], jnp.array([1.0, 2.0, 3.0])
+    )
     assert jnp.allclose(edge_batch["graph"]["features"].data[:, 0], jnp.zeros((3,)))
     assert jnp.allclose(
         incidence_batch["graph"]["incidence_sign"].data,
@@ -85,9 +87,9 @@ def test_simplicial_hodge_laplacian_known_one_form_circulation():
     alpha = jnp.array([0.0, 0.0, 0.0, 1.0, -1.0, 1.0, 0.0])
     graph = graph.replace(nodes={**graph.nodes, "alpha": alpha}, validate=False)
 
-    out = phx.graph.SimplicialHodgeLaplacian(1, input_key="alpha", output_key="lap_alpha")(
-        graph
-    )
+    out = phx.graph.SimplicialHodgeLaplacian(
+        1, input_key="alpha", output_key="lap_alpha"
+    )(graph)
 
     assert jnp.allclose(
         out.nodes["lap_alpha"],
@@ -116,9 +118,7 @@ def test_simplicial_hodge_laplacian_integrates_with_graph_model_and_constraints(
 
     model = residual(u)
     batch = vertices.sample(phx.domain.PointSampling(3, layout=structure))
-    condition = phx.conditions.Residual(
-        "u", vertices, lambda f: residual(f) - model
-    )
+    condition = phx.conditions.Residual("u", vertices, lambda f: residual(f) - model)
     source = phx.integration.per_step(
         phx.integration.mean_over(vertices),
         phx.domain.PointSampling(3, layout=structure),

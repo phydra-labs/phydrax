@@ -69,6 +69,12 @@ def _optional_exact_array(
     return _exact_array_shape(value, shape, name, dtype=dtype)
 
 
+def _required_array(value: Array | None, name: str, /) -> Array:
+    if value is None:
+        raise RuntimeError(f"Missing validated {name} array.")
+    return value
+
+
 def _positive_semidefinite_symmetric_part(
     value: Array,
     name: str,
@@ -912,12 +918,25 @@ def compile_linear_quadratic_control(
             stage_row = constraints.stage_equality_slices[stage]
             equality_matrix = equality_matrix.at[
                 ..., stage_row, layout.state_slice(stage)
-            ].set(specification.stage_equality_state_matrix[..., stage, :, :])
+            ].set(
+                _required_array(
+                    specification.stage_equality_state_matrix,
+                    "stage equality state matrix",
+                )[..., stage, :, :]
+            )
             equality_matrix = equality_matrix.at[
                 ..., stage_row, layout.control_slice(stage)
-            ].set(specification.stage_equality_control_matrix[..., stage, :, :])
+            ].set(
+                _required_array(
+                    specification.stage_equality_control_matrix,
+                    "stage equality control matrix",
+                )[..., stage, :, :]
+            )
             equality_rhs = equality_rhs.at[..., stage_row].set(
-                specification.stage_equality_rhs[..., stage, :]
+                _required_array(
+                    specification.stage_equality_rhs,
+                    "stage equality right-hand side",
+                )[..., stage, :]
             )
     if specification.num_terminal_equalities:
         terminal_row = constraints.terminal_equality_slice
@@ -938,38 +957,57 @@ def compile_linear_quadratic_control(
             -identity_state
         )
         inequality_rhs = inequality_rhs.at[..., row].set(
-            -specification.state_lower_bounds[..., stage, :]
+            -_required_array(specification.state_lower_bounds, "state lower bounds")[
+                ..., stage, :
+            ]
         )
     for stage, row in enumerate(constraints.state_upper_slices):
         inequality_matrix = inequality_matrix.at[..., row, layout.state_slice(stage)].set(
             identity_state
         )
         inequality_rhs = inequality_rhs.at[..., row].set(
-            specification.state_upper_bounds[..., stage, :]
+            _required_array(specification.state_upper_bounds, "state upper bounds")[
+                ..., stage, :
+            ]
         )
     for stage, row in enumerate(constraints.control_lower_slices):
         inequality_matrix = inequality_matrix.at[
             ..., row, layout.control_slice(stage)
         ].set(-identity_control)
         inequality_rhs = inequality_rhs.at[..., row].set(
-            -specification.control_lower_bounds[..., stage, :]
+            -_required_array(specification.control_lower_bounds, "control lower bounds")[
+                ..., stage, :
+            ]
         )
     for stage, row in enumerate(constraints.control_upper_slices):
         inequality_matrix = inequality_matrix.at[
             ..., row, layout.control_slice(stage)
         ].set(identity_control)
         inequality_rhs = inequality_rhs.at[..., row].set(
-            specification.control_upper_bounds[..., stage, :]
+            _required_array(specification.control_upper_bounds, "control upper bounds")[
+                ..., stage, :
+            ]
         )
     for stage, row in enumerate(constraints.stage_inequality_slices):
         inequality_matrix = inequality_matrix.at[..., row, layout.state_slice(stage)].set(
-            specification.stage_inequality_state_matrix[..., stage, :, :]
+            _required_array(
+                specification.stage_inequality_state_matrix,
+                "stage inequality state matrix",
+            )[..., stage, :, :]
         )
         inequality_matrix = inequality_matrix.at[
             ..., row, layout.control_slice(stage)
-        ].set(specification.stage_inequality_control_matrix[..., stage, :, :])
+        ].set(
+            _required_array(
+                specification.stage_inequality_control_matrix,
+                "stage inequality control matrix",
+            )[..., stage, :, :]
+        )
         inequality_rhs = inequality_rhs.at[..., row].set(
-            specification.stage_inequality_rhs[..., stage, :]
+            _required_array(
+                specification.stage_inequality_rhs,
+                "stage inequality right-hand side",
+            )[..., stage, :]
         )
     if specification.num_terminal_inequalities:
         terminal_row = constraints.terminal_inequality_slice

@@ -346,9 +346,7 @@ def _(jax, jnp, jr, phx):
             return jnp.sin(x[0])
 
         # Exact boundary and initial conditions are compiled from semantics.
-        boundary_condition = phx.conditions.Dirichlet(
-            "u", boundary, target=0.0
-        )
+        boundary_condition = phx.conditions.Dirichlet("u", boundary, target=0.0)
         initial_value = phx.conditions.Initial(
             "u",
             initial,
@@ -377,16 +375,13 @@ def _(jax, jnp, jr, phx):
             domain.component(),
             lambda u: (
                 phx.operators.dt_n(u, var="t", order=2, ad_engine="jvp")
-                - (float(c) ** 2)
-                * phx.operators.laplacian(u, var="x", ad_engine="jvp")
+                - (float(c) ** 2) * phx.operators.laplacian(u, var="x", ad_engine="jvp")
             ),
             label="wave_residual",
         )
         source = phx.integration.per_step(
             phx.integration.mean_over(residual.on),
-            phx.integration.MonteCarloPlan(
-                int(num_x_interior) * int(num_t_interior)
-            ),
+            phx.integration.MonteCarloPlan(int(num_x_interior) * int(num_t_interior)),
         )
         penalty = phx.terms.ResidualPenalty(residual, source)
 

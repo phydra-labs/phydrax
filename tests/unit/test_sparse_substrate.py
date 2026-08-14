@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
+from phydrax.linalg import ArraySpace, DiagonalPairing
 
 
 def test_edge_linear_map_matches_dense_forward_transpose_and_adjoint():
@@ -125,3 +126,116 @@ def test_cochain_incidence_exposes_sparse_boundary_and_derivative_actions():
     assert jnp.allclose(boundary_action(upper), boundary @ upper)
     assert jnp.array_equal(derivative_action.as_dense(), boundary.T)
     assert jnp.array_equal(boundary_action.as_dense(), boundary)
+
+
+def test_sparse_coordinate_operator_adjoint_respects_declared_pairings():
+    source = ArraySpace(
+        (3,),
+        dtype=jnp.complex128,
+        pairing=DiagonalPairing(jnp.asarray([2.0, 3.0, 5.0])),
+    )
+    target = ArraySpace(
+        (2,),
+        dtype=jnp.complex128,
+        pairing=DiagonalPairing(jnp.asarray([7.0, 11.0])),
+    )
+    relation = phx.sparse.EdgeRelation(
+        jnp.asarray([0, 1, 2, 0], dtype=jnp.int32),
+        jnp.asarray([0, 0, 1, 1], dtype=jnp.int32),
+        source_size=3,
+        target_size=2,
+    )
+    operator = phx.sparse.SparseCoordinateOperator(
+        relation,
+        jnp.asarray([1.0 + 2.0j, -3.0j, 4.0 - 1.0j, 2.0]),
+        source=source,
+        target=target,
+    )
+    left = jnp.asarray([1.0 - 1.0j, 2.0, -0.5 + 3.0j])
+    right = jnp.asarray([0.25 + 2.0j, -1.0j])
+
+    assert jnp.allclose(
+        target.inner(operator.mv(left), right),
+        source.inner(left, operator.adjoint_mv(right)),
+    )
+
+    row_operator = phx.sparse.SparseCoordinateOperator(
+        phx.sparse.RowRelation(
+            jnp.asarray([[0, 1], [1, 2]], dtype=jnp.int32),
+            source_size=3,
+        ),
+        jnp.asarray([[1.0 + 1.0j, 2.0], [3.0, 4.0 - 2.0j]]),
+        source=source,
+        target=target,
+    )
+    assert jnp.allclose(
+        row_operator.mv(left),
+        row_operator.as_dense() @ left,
+    )
+    assert jnp.allclose(
+        target.inner(row_operator.mv(left), right),
+        source.inner(left, row_operator.adjoint_mv(right)),
+    )
+
+
+def test_sparse_plans_reuse_global_asdex_jacobian_and_hessian_patterns():
+    space = ArraySpace((4,), dtype=jnp.float64)
+    target = ArraySpace((3,), dtype=jnp.float64)
+
+    def residual(values, _):
+        return (values[1:] - values[:-1]) ** 2
+
+    first = jnp.asarray([0.0, 1.0, 3.0, 6.0])
+    second = jnp.asarray([1.0, 1.5, 2.5, 4.0])
+    jacobian_plan = phx.sparse.compile_sparse_jacobian(
+        residual,
+        first,
+        source=space,
+        target=target,
+        compiler="asdex",
+    )
+    first_operator = jacobian_plan.operator(first)
+    second_operator = jacobian_plan.operator(second)
+
+    assert jacobian_plan.nnz == 6
+    assert jacobian_plan.num_colors == 2
+    assert jnp.allclose(first_operator.as_dense(), jax.jacfwd(residual)(first, None))
+    assert jnp.allclose(second_operator.as_dense(), jax.jacfwd(residual)(second, None))
+    assert jnp.allclose(
+        jax.jit(lambda vector: second_operator.mv(vector))(jnp.ones_like(second)),
+        second_operator.as_dense() @ jnp.ones_like(second),
+    )
+    dynamic_action = jax.jit(
+        lambda point, vector: jacobian_plan.operator(point).mv(vector)
+    )
+    assert jnp.allclose(
+        dynamic_action(second, jnp.ones_like(second)),
+        second_operator.as_dense() @ jnp.ones_like(second),
+    )
+
+    def energy(values, _):
+        return jnp.sum((values[1:] - values[:-1]) ** 2) + jnp.sum(values**2)
+
+    hessian_plan = phx.sparse.compile_sparse_hessian(
+        energy,
+        first,
+        space=space,
+        compiler="asdex",
+        properties=phx.linalg.OperatorProperties(
+            self_adjoint=True,
+            positive_definite=True,
+            evidence={
+                "self_adjoint": "construction",
+                "positive_definite": "construction",
+                "positive_semidefinite": "construction",
+            },
+        ),
+    )
+    hessian = hessian_plan.operator(second)
+    hessian_matrix = jax.hessian(energy)(second, None)
+    assert hessian_plan.num_colors < space.size
+    assert jnp.allclose(hessian.as_dense(), hessian_matrix)
+    rhs = jnp.asarray([1.0, -2.0, 0.5, 3.0])
+    result = phx.linalg.solve(phx.linalg.LinearSystem(hessian), rhs)
+    assert bool(result.successful)
+    assert jnp.allclose(result.value, jnp.linalg.solve(hessian_matrix, rhs))

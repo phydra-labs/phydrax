@@ -62,8 +62,6 @@ _SOURCE_TYPES = (
 )
 
 
-
-
 def _adaptive_component(source: AdaptiveIntegration, /) -> DomainComponent:
     target = source.target
     while isinstance(target, DensityTarget):
@@ -111,8 +109,7 @@ def _apply_local_weight(
         )
         if unexpected:
             raise ValueError(
-                "Adaptive collocation loss weight has incompatible axes "
-                f"{unexpected!r}."
+                f"Adaptive collocation loss weight has incompatible axes {unexpected!r}."
             )
         weighted_batch = PointIntegrationBatch(
             batch.points,
@@ -131,8 +128,7 @@ def _apply_local_weight(
         )
         if unexpected:
             raise ValueError(
-                "Adaptive collocation loss weight has incompatible axes "
-                f"{unexpected!r}."
+                f"Adaptive collocation loss weight has incompatible axes {unexpected!r}."
             )
         coupled_weight = (
             local_weight
@@ -158,6 +154,7 @@ def _apply_local_weight(
         weighted_batch,
         realization.key,
     )
+
 
 def _squared_frobenius_field(value: cx.Field, /) -> cx.Field:
     data = jnp.asarray(value.data)
@@ -235,9 +232,7 @@ def _target_reduction_weights(
 
     if target.normalized:
         denominators: list[cx.Field] = []
-        for coefficient, term_batch in zip(
-            density_weights, batches, strict=True
-        ):
+        for coefficient, term_batch in zip(density_weights, batches, strict=True):
             denominator = coefficient
             for axis in term_batch.axes:
                 denominator = sum_over(denominator, axis)
@@ -245,9 +240,7 @@ def _target_reduction_weights(
         normalization = denominators[0]
         for denominator in denominators[1:]:
             normalization = normalization + denominator
-        density_weights = [
-            coefficient / normalization for coefficient in density_weights
-        ]
+        density_weights = [coefficient / normalization for coefficient in density_weights]
 
     if isinstance(base.component, ComponentSum):
         return tuple(density_weights)
@@ -276,7 +269,6 @@ def _checked_quadratic_coefficient(coefficient: cx.Field, /) -> cx.Field:
         )
     )
     return cx.Field(data, dims=coefficient.dims)
-
 
 
 class _SquaredFrobeniusResidual(StrictModule, BatchEvaluator):
@@ -322,7 +314,9 @@ class _DensityWeightedResidual(StrictModule, BatchEvaluator):
         score = self.score(batch, key=key, **kwargs)
         density = self.density(batch, key=key, **kwargs)
         if not isinstance(score, cx.Field) or not isinstance(density, cx.Field):
-            raise TypeError("Residual score and density must return coordax.Field values.")
+            raise TypeError(
+                "Residual score and density must return coordax.Field values."
+            )
         density_data = jnp.asarray(density.data)
         if jnp.iscomplexobj(density_data):
             raise TypeError("Penalty density must be real.")
@@ -346,7 +340,6 @@ class _DensityWeightedResidual(StrictModule, BatchEvaluator):
         return self.score.func(*args, key=key, **kwargs) * density
 
 
-
 def _realization_points(realization: IntegrationRealization, /) -> Any:
     batch = realization.batch
     if isinstance(batch, tuple):
@@ -359,6 +352,7 @@ def _realization_points(realization: IntegrationRealization, /) -> Any:
     if isinstance(batch, WeightedSampleBatch):
         return batch.samples
     raise TypeError(f"Unsupported data-diagnostics batch {type(batch).__name__}.")
+
 
 class ResidualPenalty(AbstractEvaluatedScalarTerm):
     """Nonnegative local residual score reduced by an integration realization."""
@@ -399,7 +393,9 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
             if not isinstance(density, DomainFunction):
                 raise TypeError("Penalty density must be a DomainFunction or None.")
             if not density.domain.same_support(condition.on.domain):
-                raise ValueError("Penalty density domain is incompatible with the condition.")
+                raise ValueError(
+                    "Penalty density domain is incompatible with the condition."
+                )
         accuracy_eps = float(data_accuracy_eps)
         if not bool(jnp.isfinite(accuracy_eps)) or accuracy_eps <= 0.0:
             raise ValueError("data_accuracy_eps must be finite and positive.")
@@ -464,12 +460,9 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
                 "Adaptive realization requires an AdaptiveIntegration source."
             )
         if not isinstance(batch, (PointBatch, GridBatch)):
-            raise TypeError(
-                "Adaptive collocation requires one PointBatch or GridBatch."
-            )
+            raise TypeError("Adaptive collocation requires one PointBatch or GridBatch.")
         realization = from_samples(self.source.target, batch, key=key)
         return _apply_local_weight(realization, local_weight)
-
 
     def _score_function(
         self,
@@ -554,9 +547,7 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
             self.source,
             key=key,
             realization=(
-                None
-                if realization is None
-                else prepare_term_realization(realization)
+                None if realization is None else prepare_term_realization(realization)
             ),
         )
         target = resolved.target
@@ -595,15 +586,11 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
                 "Quadratic residual data requires a component integration target."
             )
         if isinstance(base.component, ComponentSum):
-            if not isinstance(batch, tuple) or not isinstance(
-                reduction_weights, tuple
-            ):
+            if not isinstance(batch, tuple) or not isinstance(reduction_weights, tuple):
                 raise RuntimeError("Component-sum integration data must be tuples.")
             integration_batches = batch
             coefficients = reduction_weights
-            term_keys = tuple(
-                jr.split(evaluation_key, len(base.component.terms))
-            )
+            term_keys = tuple(jr.split(evaluation_key, len(base.component.terms)))
         else:
             if isinstance(batch, tuple) or isinstance(reduction_weights, tuple):
                 raise RuntimeError(
@@ -644,17 +631,14 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
                     raise TypeError("Penalty density must be real.")
                 density_data = eqx.error_if(
                     density_data,
-                    jnp.any(~jnp.isfinite(density_data))
-                    | jnp.any(density_data < 0.0),
+                    jnp.any(~jnp.isfinite(density_data)) | jnp.any(density_data < 0.0),
                     "Penalty density must be finite and nonnegative.",
                 )
                 coefficient = coefficient * cx.Field(
                     density_data,
                     dims=evaluated_density.dims,
                 )
-            coefficient = _checked_quadratic_coefficient(
-                self.scale * coefficient
-            )
+            coefficient = _checked_quadratic_coefficient(self.scale * coefficient)
             weighted = coefficient * _squared_frobenius_field(residual)
             total = total + jnp.sum(jnp.asarray(weighted.data, dtype=float))
             residuals.append(residual)
@@ -664,7 +648,6 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
             tuple(checked_coefficients),
             total,
         )
-
 
     def data_metrics(
         self,
@@ -692,7 +675,9 @@ class ResidualPenalty(AbstractEvaluatedScalarTerm):
             raise TypeError("Observation operators must return a DomainFunction.")
         prediction = prediction_fn(points, key=key, **kwargs)
         target = condition.target(points, key=key, **kwargs)
-        prediction_data = prediction.data if isinstance(prediction, cx.Field) else prediction
+        prediction_data = (
+            prediction.data if isinstance(prediction, cx.Field) else prediction
+        )
         target_data = target.data if isinstance(target, cx.Field) else target
         return supervised_data_metrics(
             jnp.asarray(prediction_data, dtype=float),

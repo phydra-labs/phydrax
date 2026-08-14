@@ -449,9 +449,7 @@ class _NeutralRecovery(eqx.Module):
         memory, validation = self.context._memory(time, state, args)
         neutral = self._retarded(time, memory, args)
         if self.endpoint_neutral is not None:
-            endpoint = jnp.asarray(
-                self.endpoint_neutral(time, state, memory, args)
-            )
+            endpoint = jnp.asarray(self.endpoint_neutral(time, state, memory, args))
             if endpoint.shape != self.state_shape:
                 raise ValueError("endpoint_neutral changed its declared state shape.")
             neutral = neutral + endpoint
@@ -629,6 +627,7 @@ class _NeutralRetardedSolver(_RetardedSolver):
             _RetardedSolverState(inner_state=next_inner, history=history),
             result,
         )
+
 
 def _stage_time_extent(solver: dfx.AbstractSolver, /) -> Array:
     return stage_time_extent(solver)
@@ -1025,9 +1024,7 @@ def solve_diffrax_delay(
     if history_mode not in ("full", "rolling"):
         raise ValueError("history_mode must be 'full' or 'rolling'.")
     if max_steps is not None and (
-        not isinstance(max_steps, int)
-        or isinstance(max_steps, bool)
-        or max_steps <= 0
+        not isinstance(max_steps, int) or isinstance(max_steps, bool) or max_steps <= 0
     ):
         raise ValueError("max_steps must be a positive integer or None.")
     if history_mode == "full" and max_steps is None:
@@ -1252,9 +1249,7 @@ def solve_diffrax_delay(
             )
             tracking_mode = (
                 "sign-isolated-nonmonotone-roots"
-                if any(
-                    not delay.monotone_argument for delay in dynamic_delays
-                )
+                if any(not delay.monotone_argument for delay in dynamic_delays)
                 else "high-order-dynamic-roots"
             )
         else:

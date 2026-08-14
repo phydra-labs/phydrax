@@ -68,7 +68,9 @@ def test_variable_advection_is_reproducible_conservative_and_nonuniform():
         "resolution",
         "rollout",
     }
-    assert all(jnp.all(jnp.isfinite(evaluation.target)) for evaluation in scenario.evaluations)
+    assert all(
+        jnp.all(jnp.isfinite(evaluation.target)) for evaluation in scenario.evaluations
+    )
 
 
 def test_acoustic_wave_preserves_characteristic_phase_and_energy():
@@ -106,7 +108,9 @@ def test_acoustic_wave_preserves_characteristic_phase_and_energy():
     assert jnp.allclose(target_energy, initial_energy, rtol=2e-6)
     assert float(dict(scenario.metadata)["maximum_relative_energy_drift"]) < 3e-6
     assert scenario.reference_evidence is not None and scenario.reference_evidence.passed
-    assert all(jnp.all(jnp.isfinite(evaluation.target)) for evaluation in scenario.evaluations)
+    assert all(
+        jnp.all(jnp.isfinite(evaluation.target)) for evaluation in scenario.evaluations
+    )
 
 
 def test_multichannel_acoustic_flower_and_comparators_run_all_resolutions():
@@ -125,7 +129,9 @@ def test_multichannel_acoustic_flower_and_comparators_run_all_resolutions():
     )
     for name in ("fno", "ifno", "cno", "uno", "flower_resolution_consistent"):
         model = architectures[name].build(scenario, seed=5)
-        assert jnp.asarray(model(scenario.train_batch)).shape == scenario.train_target.shape
+        assert (
+            jnp.asarray(model(scenario.train_batch)).shape == scenario.train_target.shape
+        )
         assert all(
             jnp.asarray(model(evaluation.batch)).shape == evaluation.target.shape
             for evaluation in scenario.evaluations
@@ -160,7 +166,9 @@ def test_viscous_burgers_shock_rollout_is_finite_and_conservative():
     assert "shock_formation" in scenario.regimes
     assert "viscous_rollout" in scenario.regimes
     assert scenario.reference_evidence is not None and scenario.reference_evidence.passed
-    assert all(jnp.all(jnp.isfinite(evaluation.target)) for evaluation in scenario.evaluations)
+    assert all(
+        jnp.all(jnp.isfinite(evaluation.target)) for evaluation in scenario.evaluations
+    )
 
 
 def test_flower_factories_and_comparators_obey_tensor_grid_contracts():
@@ -191,7 +199,9 @@ def test_flower_factories_and_comparators_obey_tensor_grid_contracts():
     ):
         architecture = architectures[name]
         model = architecture.build(scenario, seed=3)
-        assert jnp.asarray(model(scenario.train_batch)).shape == scenario.train_target.shape
+        assert (
+            jnp.asarray(model(scenario.train_batch)).shape == scenario.train_target.shape
+        )
         assert all(
             jnp.asarray(model(evaluation.batch)).shape == evaluation.target.shape
             for evaluation in scenario.evaluations
@@ -200,15 +210,19 @@ def test_flower_factories_and_comparators_obey_tensor_grid_contracts():
         assert configuration["query_mode"] == "coincident"
         assert configuration["probabilistic_routing"] == "False"
 
-    assert dict(architectures["flower_one_level"].configuration(scenario))[
-        "transition_mode"
-    ] == "learned"
-    assert dict(architectures["flower_multilevel"].configuration(scenario))[
-        "levels"
-    ] == "2"
-    assert dict(
-        architectures["flower_resolution_consistent"].configuration(scenario)
-    )["transition_mode"] == "resolution_consistent"
+    assert (
+        dict(architectures["flower_one_level"].configuration(scenario))["transition_mode"]
+        == "learned"
+    )
+    assert (
+        dict(architectures["flower_multilevel"].configuration(scenario))["levels"] == "2"
+    )
+    assert (
+        dict(architectures["flower_resolution_consistent"].configuration(scenario))[
+            "transition_mode"
+        ]
+        == "resolution_consistent"
+    )
 
 
 def test_masked_ladder_keeps_only_resolution_consistent_flower():

@@ -26,7 +26,7 @@ from ..kernel_methods._estimators import (
     SupportVectorRegressorModel,
 )
 from ..linear._base import (
-    LinearRegressorModel,
+    AbstractLinearRegressorModel,
     LogisticClassifierModel,
     MultinomialLogisticModel,
 )
@@ -814,7 +814,7 @@ def _linear_regression_result(
     estimator: Any,
     snapshot: _Snapshot,
     api: _SklearnAPI,
-    model_type: type[LinearRegressorModel],
+    model_type: type[AbstractLinearRegressorModel],
     family: str,
     configuration: dict[str, object],
 ) -> _Converted:

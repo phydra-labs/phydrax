@@ -23,6 +23,7 @@ requires-python = ">=3.11,<3.14"
 license-files = ["LICENSE", "LICENSES/*", "NOTICE"]
 
 dependencies = [
+    "asdex>=0.5.1,<0.5.2",
     "arviz>=0.23.4",
     "blackjax>=1.6.2,<1.7",
     "build123d>=0.10.0",
@@ -37,6 +38,7 @@ dependencies = [
     "jaxwavelets==0.1.13",
     "jaxtyping>=0.3.5",
     "laplax==0.0.2",
+    "lineax>=0.1.0,<0.2",
     "matfree>=0.6.1,<0.7",
     "manifold3d>=3.3.2",
     "meshio>=5.3.5",
@@ -83,8 +85,9 @@ tests = [
     "pytest-xdist>=3.8.0",
 ]
 qa = [
-    "ruff>=0.14.14",
-    "ty>=0.0.13",
+    "ruff==0.16.3",
+    "scikit-learn>=1.4,<1.11",
+    "ty==0.0.71",
 ]
 
 

@@ -57,14 +57,14 @@ import jax.numpy as jnp
 
 space = phx.domain.ScalarInterval(-1.0, 2.0, label="x")
 
+
 @space.Function("x")
 def square(x):
     return x**2
 
+
 target = phx.integration.over(space.component())
-plan = phx.integration.FixedQuadraturePlan(
-    phx.integration.GaussLegendreRule(24)
-)
+plan = phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(24))
 estimate = phx.integration.integrate(square, target, plan)
 
 value = estimate.value
@@ -110,9 +110,7 @@ compression between materialization and reduction:
 ```python
 samples = jnp.linspace(0.0, 2.0, 25)
 log_weights = jnp.zeros((25,))
-source = phx.integration.materialize(
-    phx.integration.weighted(samples, log_weights)
-)
+source = phx.integration.materialize(phx.integration.weighted(samples, log_weights))
 compressed = phx.integration.compress(
     source,
     phx.coresets.MomentRecombination(),
@@ -178,6 +176,7 @@ refinement path, but refinement decisions are discrete.
 
 ```python
 import jax.random as jr
+
 plan = phx.integration.MonteCarloPlan(4096)
 estimate = phx.integration.integrate(
     square,
@@ -208,6 +207,7 @@ A control variate states both the control and its known expectation:
 @space.Function("x")
 def x_control(x):
     return x
+
 
 control = phx.integration.ControlVariateEstimator(
     (x_control,),
@@ -242,18 +242,18 @@ partition = phx.geometry.GeometryMeasurePartition(
     kind="segment",
 )
 
+
 @space.Function("x")
 def stratified_square(x):
     return x[0] ** 2
+
 
 design = phx.integration.StratifiedDesign(
     partition,
     allocation="proportional",  # or "equal" / "explicit"
 )
 plan = phx.integration.StratifiedMonteCarloPlan(2048, design)
-estimate = phx.integration.integrate(
-    stratified_square, target, plan, key=jr.key(1)
-)
+estimate = phx.integration.integrate(stratified_square, target, plan, key=jr.key(1))
 ```
 
 The estimator is
@@ -311,9 +311,11 @@ probability = phx.domain.ProbabilityDomain(
 )
 proposal = phx.uq.Normal(0.0, 2.0)
 
+
 @probability.Function("z")
 def field(z):
     return z**2
+
 
 plan = phx.integration.ImportanceSamplingPlan(
     4096,
@@ -517,9 +519,7 @@ Use `ProductIntegrationPlan` when factor groups need different methods:
 plan = phx.integration.ProductIntegrationPlan(
     {
         ("x", "y"): phx.integration.SparseGridPlan(2, 4),
-        "t": phx.integration.FixedQuadraturePlan(
-            phx.integration.GaussLegendreRule(8)
-        ),
+        "t": phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(8)),
     }
 )
 ```

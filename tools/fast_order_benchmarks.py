@@ -161,8 +161,10 @@ def _hard_output(case: _Case, values: jax.Array) -> jax.Array:
     if case.operation == "sort":
         return jnp.sort(values)
     order = jnp.argsort(values, stable=True)
-    return jnp.zeros((case.size,), dtype=values.dtype).at[order].set(
-        jnp.arange(case.size, dtype=values.dtype)
+    return (
+        jnp.zeros((case.size,), dtype=values.dtype)
+        .at[order]
+        .set(jnp.arange(case.size, dtype=values.dtype))
     )
 
 
@@ -219,15 +221,11 @@ def _accuracy(case: _Case, values: jax.Array, output: jax.Array) -> dict[str, An
     maximum = jnp.max(values) if case.operation == "sort" else case.size - 1
     minimum = jnp.min(values) if case.operation == "sort" else 0.0
     expected_sum = (
-        jnp.sum(values)
-        if case.operation == "sort"
-        else case.size * (case.size - 1) / 2
+        jnp.sum(values) if case.operation == "sort" else case.size * (case.size - 1) / 2
     )
     return {
         "relative_hard_error": float(relative_error),
-        "monotonicity_violations": int(
-            jnp.sum(jnp.diff(ordered_output) < -tolerance)
-        ),
+        "monotonicity_violations": int(jnp.sum(jnp.diff(ordered_output) < -tolerance)),
         "range_violations": int(
             jnp.sum((output < minimum - tolerance) | (output > maximum + tolerance))
         ),
@@ -281,9 +279,7 @@ def _convergence(
         "status": "available",
         "converged": bool(result.converged),
         "iterations": int(diagnostics.num_iterations),
-        "normalized_marginal_residual": float(
-            diagnostics.normalized_marginal_residual
-        ),
+        "normalized_marginal_residual": float(diagnostics.normalized_marginal_residual),
         "physical_marginal_residual": float(diagnostics.physical_marginal_residual),
     }
 
@@ -339,9 +335,7 @@ def _record(
         "output_dtype": str(output.dtype),
         "workload": case.workload,
         "parameter": {
-            "name": (
-                "epsilon" if case.backend == "native-sinkhorn" else "temperature"
-            ),
+            "name": ("epsilon" if case.backend == "native-sinkhorn" else "temperature"),
             "value": (
                 configuration.native_epsilon
                 if case.backend == "native-sinkhorn"

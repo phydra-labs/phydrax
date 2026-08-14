@@ -51,7 +51,7 @@ class BridgeProblemProvenance(StrictModule):
 
 
 def _product_weights(weights: Mapping[str, cx.Field], axes: tuple[str, ...]) -> cx.Field:
-    values = cast(Mapping[str, cx.Field], weights)
+    values = weights
     total = cx.Field(jnp.asarray(1.0), dims=())
     for axis in axes:
         total = total * values[axis]
@@ -87,11 +87,13 @@ def _canonical_support(
         remaining = tuple(index for index in range(leaf.ndim) if index not in positions)
         canonical = jnp.transpose(jnp.asarray(leaf.data), positions + remaining)
         observed = tuple(int(size) for size in canonical.shape[: len(leading)])
-        expected = ((case_shape if present_cases else ()) + atom_shape)
+        expected = (case_shape if present_cases else ()) + atom_shape
         if observed != expected:
             raise ValueError(f"{name} leading shape must be {expected}; got {observed}.")
         event_shape = tuple(int(size) for size in canonical.shape[len(leading) :])
-        support = canonical.reshape(expected[: len(present_cases)] + (prod(atom_shape),) + event_shape)
+        support = canonical.reshape(
+            expected[: len(present_cases)] + (prod(atom_shape),) + event_shape
+        )
         if not present_cases:
             support = jnp.broadcast_to(support, case_shape + support.shape)
         return support, event_shape
@@ -105,8 +107,7 @@ def _canonical_support(
         outputs = tuple(range(weight_rank, data.ndim))
         canonical = jnp.transpose(data, weight_order + outputs)
         event_shape = tuple(
-            int(size)
-            for size in canonical.shape[len(case_shape) + len(atom_shape) :]
+            int(size) for size in canonical.shape[len(case_shape) + len(atom_shape) :]
         )
         return (
             canonical.reshape(case_shape + (prod(atom_shape),) + event_shape),
@@ -125,8 +126,7 @@ def _canonical_support(
         outputs = tuple(range(weight_rank, data.ndim))
         canonical = jnp.transpose(data, weight_order + outputs)
         event_shape = tuple(
-            int(size)
-            for size in canonical.shape[len(case_shape) + len(atom_shape) :]
+            int(size) for size in canonical.shape[len(case_shape) + len(atom_shape) :]
         )
         return (
             canonical.reshape(case_shape + (prod(atom_shape),) + event_shape),
@@ -229,13 +229,17 @@ def _lower_discrete(target: DiscreteMeasureTarget, name: str, /) -> _FiniteEndpo
     order = case_positions + atom_positions
     canonical = jnp.transpose(jnp.asarray(weights.data, dtype=float), order)
     case_shape = tuple(int(canonical.shape[index]) for index in range(len(case_axes)))
-    atom_shape = tuple(int(canonical.shape[len(case_axes) + index]) for index in range(len(atom_axes)))
+    atom_shape = tuple(
+        int(canonical.shape[len(case_axes) + index]) for index in range(len(atom_axes))
+    )
     values = canonical.reshape(case_shape + (prod(atom_shape),))
     if target.mask is None:
         included = jnp.ones_like(values, dtype=bool)
     else:
         mask = target.mask.broadcast_like(weights)
-        included = jnp.transpose(jnp.asarray(mask.data, dtype=bool), order).reshape(values.shape)
+        included = jnp.transpose(jnp.asarray(mask.data, dtype=bool), order).reshape(
+            values.shape
+        )
     support, event_shape = _canonical_support(
         target.points,
         atom_axes=atom_axes,
@@ -272,18 +276,25 @@ def _lower_weighted(target: WeightedSampleTarget, name: str, /) -> _FiniteEndpoi
         order = case_positions + atom_positions
         canonical = jnp.transpose(jnp.asarray(weights.data, dtype=float), order)
         case_shape = tuple(int(canonical.shape[index]) for index in range(len(case_axes)))
-        atom_shape = tuple(int(canonical.shape[len(case_axes) + index]) for index in range(len(atom_axes)))
+        atom_shape = tuple(
+            int(canonical.shape[len(case_axes) + index])
+            for index in range(len(atom_axes))
+        )
         values = canonical.reshape(case_shape + (prod(atom_shape),))
         if target.mask is None:
             included = jnp.ones_like(values, dtype=bool)
         else:
             mask = cast(cx.Field, target.mask).broadcast_like(weights)
-            included = jnp.transpose(jnp.asarray(mask.data, dtype=bool), order).reshape(values.shape)
+            included = jnp.transpose(jnp.asarray(mask.data, dtype=bool), order).reshape(
+                values.shape
+            )
         weight_rank = weights.ndim
     else:
         raw = jnp.asarray(target.log_weights, dtype=float)
         atom_positions = cast(tuple[int, ...], target.sample_axes)
-        case_positions = tuple(index for index in range(raw.ndim) if index not in atom_positions)
+        case_positions = tuple(
+            index for index in range(raw.ndim) if index not in atom_positions
+        )
         order = case_positions + atom_positions
         canonical = jnp.transpose(raw, order)
         case_shape = tuple(int(raw.shape[index]) for index in case_positions)
@@ -304,7 +315,9 @@ def _lower_weighted(target: WeightedSampleTarget, name: str, /) -> _FiniteEndpoi
             raise ValueError(
                 f"{name} support_valid must contain one value per finite state."
             )
-        included = included & support_valid.reshape((1,) * len(case_shape) + (prod(atom_shape),))
+        included = included & support_valid.reshape(
+            (1,) * len(case_shape) + (prod(atom_shape),)
+        )
     support, event_shape = _canonical_support(
         target.samples,
         atom_axes=atom_axes,
@@ -349,8 +362,12 @@ def _lower_endpoint(target: FiniteBridgeTarget, name: str, /) -> _FiniteEndpoint
             if callable(target.log_density)
             else target.log_density
         )
-        density = jnp.broadcast_to(jnp.asarray(log_density, dtype=float), base.probabilities.shape)
-        base_log = jnp.where(base.probabilities > 0.0, jnp.log(base.probabilities), -jnp.inf)
+        density = jnp.broadcast_to(
+            jnp.asarray(log_density, dtype=float), base.probabilities.shape
+        )
+        base_log = jnp.where(
+            base.probabilities > 0.0, jnp.log(base.probabilities), -jnp.inf
+        )
         combined = base_log + density
         finite = jnp.isfinite(combined)
         maximum = jnp.max(jnp.where(finite, combined, -jnp.inf), axis=-1, keepdims=True)
@@ -436,19 +453,29 @@ class SchrodingerBridgeProblem(StrictModule):
             grid = jnp.asarray(times, dtype=float)
             time_id = "schrodinger-bridge-grid"
         if grid.ndim != 1 or grid.shape[0] < 2:
-            raise ValueError("times must be a one-dimensional grid with at least two entries.")
+            raise ValueError(
+                "times must be a one-dimensional grid with at least two entries."
+            )
         if bool(jnp.any(~jnp.isfinite(grid))) or bool(jnp.any(jnp.diff(grid) <= 0.0)):
             raise ValueError("times must be finite and strictly increasing.")
         initial_endpoint = _lower_endpoint(initial, "initial")
         terminal_endpoint = _lower_endpoint(terminal, "terminal")
         if initial_endpoint.case_axes != terminal_endpoint.case_axes:
-            raise ValueError("Initial and terminal endpoint case axes must agree exactly.")
+            raise ValueError(
+                "Initial and terminal endpoint case axes must agree exactly."
+            )
         if initial_endpoint.case_shape != terminal_endpoint.case_shape:
-            raise ValueError("Initial and terminal endpoint case shapes must agree exactly.")
+            raise ValueError(
+                "Initial and terminal endpoint case shapes must agree exactly."
+            )
         if initial_endpoint.event_shape != terminal_endpoint.event_shape:
-            raise ValueError("Initial and terminal endpoint event shapes must agree exactly.")
+            raise ValueError(
+                "Initial and terminal endpoint event shapes must agree exactly."
+            )
         if initial_endpoint.support.shape != terminal_endpoint.support.shape:
-            raise ValueError("Initial and terminal finite state support shapes must agree.")
+            raise ValueError(
+                "Initial and terminal finite state support shapes must agree."
+            )
         support_difference = jnp.max(
             jnp.abs(initial_endpoint.support - terminal_endpoint.support)
         )

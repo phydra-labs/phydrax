@@ -128,8 +128,7 @@ def test_fast_soft_order_supports_jit_vmap_forward_and_reverse_ad():
     compiled = jax.jit(operation)(values)
     _, tangent = jax.jvp(operation, (values,), (direction,))
     finite_difference = (
-        operation(values + 1e-4 * direction)
-        - operation(values - 1e-4 * direction)
+        operation(values + 1e-4 * direction) - operation(values - 1e-4 * direction)
     ) / 2e-4
     forward_jacobian = jax.jacfwd(operation)(values)
     reverse_jacobian = jax.jacrev(operation)(values)
@@ -183,8 +182,8 @@ def test_fast_soft_rank_has_informative_gradients_for_nearby_values():
 def test_fast_soft_order_temperature_controls_hard_approximation():
     values = jnp.asarray([3.0, -1.0, 2.0, 0.5, 4.0])
     order = jnp.argsort(values, stable=True)
-    hard_ranks = jnp.zeros_like(values).at[order].set(
-        jnp.arange(values.size, dtype=values.dtype)
+    hard_ranks = (
+        jnp.zeros_like(values).at[order].set(jnp.arange(values.size, dtype=values.dtype))
     )
     low_sort = phx.transport.fast_soft_sort(values, temperature=0.03)
     high_sort = phx.transport.fast_soft_sort(values, temperature=1.5)
@@ -197,7 +196,6 @@ def test_fast_soft_order_temperature_controls_hard_approximation():
     assert jnp.linalg.norm(low_ranks - hard_ranks) < jnp.linalg.norm(
         high_ranks - hard_ranks
     )
-
 
 
 def test_fast_soft_order_rejects_invalid_inputs_eagerly_and_under_jit():

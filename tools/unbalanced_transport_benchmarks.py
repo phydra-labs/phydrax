@@ -134,12 +134,8 @@ def _record(size, dimension, block_size, iterations, repeats, *, blockwise):
         "transported_mass": float(result.transported_mass),
         "transport_cost": float(result.transport_cost),
         "entropy_regularization": float(result.entropy_regularization),
-        "source_marginal_regularization": float(
-            result.source_marginal_regularization
-        ),
-        "target_marginal_regularization": float(
-            result.target_marginal_regularization
-        ),
+        "source_marginal_regularization": float(result.source_marginal_regularization),
+        "target_marginal_regularization": float(result.target_marginal_regularization),
         "regularized_cost": float(result.regularized_cost),
         "fixed_point_residual": float(result.diagnostics.fixed_point_residual),
         "primal_dual_gap": float(result.diagnostics.primal_dual_gap),

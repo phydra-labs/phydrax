@@ -85,9 +85,7 @@ def KineticEnergyFlux(
     return Moment(
         velocity_field,
         on,
-        lambda velocity: 0.5
-        * dot(velocity, velocity)
-        * dot(velocity, normal),
+        lambda velocity: 0.5 * dot(velocity, velocity) * dot(velocity, normal),
         target=target,
         label=label,
     )

@@ -43,9 +43,7 @@ import jax.numpy as jnp
 import phydrax as phx
 
 geometry = phx.metrix.SpecialOrthogonalStateGeometry(3)
-omega = jnp.array(
-    [[0.0, -0.4, 0.2], [0.4, 0.0, -0.1], [-0.2, 0.1, 0.0]]
-)
+omega = jnp.array([[0.0, -0.4, 0.2], [0.4, 0.0, -0.1], [-0.2, 0.1, 0.0]])
 problem = phx.solver.DifferentialProblem(
     lambda t, rotation, args: rotation @ omega,
     jnp.eye(3),
@@ -230,9 +228,7 @@ u = geom.Function("x")(lambda x: x[0])
 functions = {"u": u}
 
 component = geom.component()
-interior_condition = phx.conditions.Residual(
-    "u", component, lambda value: value
-)
+interior_condition = phx.conditions.Residual("u", component, lambda value: value)
 terms = (
     phx.terms.ResidualPenalty(
         interior_condition,
@@ -420,9 +416,7 @@ policy = phx.sampling.collocation.controlled_collocation(
         max_retain_fraction=0.9,
     ),
     schedule=phx.sampling.collocation.RefreshSchedule(25),
-    monitor=phx.sampling.collocation.ResidualMonitor(
-        sampler="sobol_scrambled"
-    ),
+    monitor=phx.sampling.collocation.ResidualMonitor(sampler="sobol_scrambled"),
     guard=phx.sampling.collocation.RefreshGuard(
         max_relative_regression=0.0,
         max_consecutive_rejections=2,

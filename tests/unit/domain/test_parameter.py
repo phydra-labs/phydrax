@@ -19,7 +19,9 @@ def test_parameter_broadcasts_over_product_domain():
 
     component = dom.component()
     structure = SampleLayout((("x",), ("t",)))
-    batch = component.sample(phx.domain.PointSampling((3, 4), layout=structure), key=jr.key(0))
+    batch = component.sample(
+        phx.domain.PointSampling((3, 4), layout=structure), key=jr.key(0)
+    )
     out = jnp.asarray(lam(batch).data)
     assert out.shape == (3, 4)
     assert jnp.allclose(out, 2.5)

@@ -68,7 +68,6 @@ def imag_part(u: DomainFunction, /) -> DomainFunction:
     return _pointwise_transform(u, "imag")
 
 
-
 def norm(u: DomainFunction, /, *, order: int = 2) -> DomainFunction:
     r"""Pointwise vector norm of a `DomainFunction`.
 

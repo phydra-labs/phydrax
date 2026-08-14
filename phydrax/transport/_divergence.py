@@ -22,7 +22,9 @@ class SinkhornDivergenceResult(StrictModule):
 
     @property
     def converged(self) -> Array:
-        return self.cross.converged & self.source_self.converged & self.target_self.converged
+        return (
+            self.cross.converged & self.source_self.converged & self.target_self.converged
+        )
 
 
 def sinkhorn_divergence(

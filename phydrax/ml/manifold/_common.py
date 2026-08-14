@@ -22,7 +22,7 @@ from .._contracts import (
     ML_NONFINITE,
     ML_SUCCESS,
 )
-from .._numerics import pairwise_distances
+from .._numerics import MetricName, pairwise_distances
 
 
 _BLOCKWISE_BINDING = ModelBinding.blockwise("flat", pass_key=True)
@@ -223,7 +223,7 @@ def build_neighbor_graph(
     /,
     *,
     n_neighbors: int,
-    metric: str = "euclidean",
+    metric: MetricName = "euclidean",
 ) -> NeighborhoodGraph:
     """Construct a hard k-NN relation; only edge distances retain conditional gradients."""
     x = jnp.asarray(features)

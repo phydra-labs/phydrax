@@ -207,8 +207,7 @@ def InterfaceNormalBContinuity(
         (magnetic_field_1, magnetic_field_2),
         on,
         lambda first, second: (
-            permeability_2 * dot(second, normal)
-            - permeability_1 * dot(first, normal)
+            permeability_2 * dot(second, normal) - permeability_1 * dot(first, normal)
         ),
         label=label,
     )

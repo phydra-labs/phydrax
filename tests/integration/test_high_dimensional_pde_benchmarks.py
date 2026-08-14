@@ -69,14 +69,11 @@ def test_high_dimensional_method_matrix_runs_with_common_result_schema():
         assert record["status"] == "completed"
         assert record["success"]
     feynman_kac_records = [
-        record
-        for record in result["records"]
-        if record["method"] == "query-feynman-kac"
+        record for record in result["records"] if record["method"] == "query-feynman-kac"
     ]
     assert all(record["control_error"] is not None for record in feynman_kac_records)
     assert all(
-        record["control_standard_error"] is not None
-        for record in feynman_kac_records
+        record["control_standard_error"] is not None for record in feynman_kac_records
     )
     assert all(record["total_wall_ms"] > 0.0 for record in feynman_kac_records)
     score_records = [

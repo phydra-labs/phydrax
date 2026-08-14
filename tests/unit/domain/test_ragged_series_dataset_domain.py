@@ -88,7 +88,9 @@ def test_ragged_series_dataset_packed_storage_matches_valid_rows():
 
 def test_ragged_series_dataset_samples_from_component():
     domain = _domain()
-    batch = domain.component().sample(phx.domain.PointSampling(5, layout=SampleLayout((("data",),))), key=jr.key(0))
+    batch = domain.component().sample(
+        phx.domain.PointSampling(5, layout=SampleLayout((("data",),))), key=jr.key(0)
+    )
     axis = batch.structure.axis_for("data")
 
     assert axis is not None
@@ -153,8 +155,12 @@ def test_ragged_series_dataset_window_prefix_and_suffix_sampling():
 
     window_idx = window["data"]["sample_index"].data
     assert jnp.all(jnp.diff(window_idx[0]) == 1)
-    assert jnp.allclose(prefix["data"]["sample_index"].data, jnp.asarray([[0, 1], [0, 0]]))
-    assert jnp.allclose(suffix["data"]["sample_index"].data, jnp.asarray([[1, 2], [0, 0]]))
+    assert jnp.allclose(
+        prefix["data"]["sample_index"].data, jnp.asarray([[0, 1], [0, 0]])
+    )
+    assert jnp.allclose(
+        suffix["data"]["sample_index"].data, jnp.asarray([[1, 2], [0, 0]])
+    )
     assert jnp.allclose(prefix["data"]["mask"].data[1], jnp.asarray([True, False]))
 
 

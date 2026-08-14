@@ -83,7 +83,9 @@ def test_trajectory_nodes_accumulate_constant_source_and_preserve_clusters():
 
     expected_first = jnp.asarray([[3.0], [2.5], [1.0]])
     expected_second = jnp.asarray([[4.0], [3.5], [2.0]])
-    assert jnp.allclose(labels.value_targets, jnp.concatenate((expected_first, expected_second)))
+    assert jnp.allclose(
+        labels.value_targets, jnp.concatenate((expected_first, expected_second))
+    )
     assert jnp.array_equal(labels.cluster_ids, jnp.asarray([0, 0, 0, 1, 1, 1]))
     assert jnp.all(labels.valid)
     assert feynman_kac_label_diagnostics(labels).passed
@@ -105,7 +107,9 @@ def test_trajectory_trapezoid_handles_nonuniform_time_grid_and_invalid_paths():
     labels = trajectory_node_feynman_kac_labels(problem, paths, plan)
 
     assert jnp.allclose(labels.value_targets[:3, 0], jnp.asarray([1.5, 1.46875, 1.0]))
-    assert jnp.array_equal(labels.valid, jnp.asarray([True, True, True, False, False, True]))
+    assert jnp.array_equal(
+        labels.valid, jnp.asarray([True, True, True, False, False, True])
+    )
     assert jnp.allclose(labels.sample_weights[:3], jnp.asarray([0.125, 0.5, 0.375]))
 
 

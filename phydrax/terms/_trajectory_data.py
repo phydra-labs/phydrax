@@ -238,9 +238,7 @@ class TrajectoryCaseDataTerm(AbstractSamplingTerm):
     def domain(self) -> TrajectoryDatasetDomain:
         domain = self.component.domain
         if not isinstance(domain, TrajectoryDatasetDomain):
-            raise TypeError(
-                "TrajectoryCaseDataTerm domain is not a trajectory domain."
-            )
+            raise TypeError("TrajectoryCaseDataTerm domain is not a trajectory domain.")
         return domain
 
     def sample(
@@ -337,8 +335,6 @@ class TrajectoryCaseDataTerm(AbstractSamplingTerm):
 
         reduced = reduce_supervised_loss(per_sample, reduction=self.reduction)
         return self.weight * jnp.asarray(reduced, dtype=float).reshape(())
-
-
 
 
 __all__ = [

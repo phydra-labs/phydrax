@@ -29,9 +29,7 @@ def test_jcgm_102_section_9_2_additive_common_effect(
     )
     covariance = result.materialize_covariance().matrix
     standard_uncertainty = jnp.sqrt(jnp.diag(covariance))
-    correlation = covariance[0, 1] / (
-        standard_uncertainty[0] * standard_uncertainty[1]
-    )
+    correlation = covariance[0, 1] / (standard_uncertainty[0] * standard_uncertainty[1])
 
     assert jnp.array_equal(result.mean, jnp.zeros(2))
     assert jnp.allclose(covariance, expected_covariance)

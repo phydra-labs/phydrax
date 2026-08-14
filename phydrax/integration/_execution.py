@@ -70,6 +70,7 @@ def fixed(realization: IntegrationRealization, /) -> FixedIntegration:
     """Construct a fixed integration source from an explicit realization."""
     return FixedIntegration(realization)
 
+
 def caller(target: Any, /) -> CallerIntegration:
     """Construct a caller-managed integration source."""
     return CallerIntegration(target)
@@ -80,7 +81,9 @@ def adaptive(target: Any, initial_plan: Any, policy: Any, /) -> AdaptiveIntegrat
     return AdaptiveIntegration(target, initial_plan, policy)
 
 
-def _validate_caller_target(source_target: Any, realization: IntegrationRealization) -> None:
+def _validate_caller_target(
+    source_target: Any, realization: IntegrationRealization
+) -> None:
     if type(source_target) is not type(realization.target):
         raise TypeError("Caller integration realization has an incompatible target type.")
     if not bool(eqx.tree_equal(source_target, realization.target)):

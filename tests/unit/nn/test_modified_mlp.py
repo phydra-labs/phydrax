@@ -86,9 +86,7 @@ def test_modified_mlp_is_differentiable_through_input_and_parameters():
     leaves = jax.tree.leaves(parameter_gradient, is_leaf=lambda value: value is None)
     assert input_gradient.shape == x.shape
     assert jnp.all(jnp.isfinite(input_gradient))
-    assert any(
-        leaf is not None and jnp.any(jnp.asarray(leaf) != 0.0) for leaf in leaves
-    )
+    assert any(leaf is not None and jnp.any(jnp.asarray(leaf) != 0.0) for leaf in leaves)
 
 
 def test_separable_modified_mlp_supports_dense_and_coordinate_inputs():

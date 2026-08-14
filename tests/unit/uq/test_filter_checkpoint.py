@@ -66,6 +66,7 @@ def test_kalman_filter_checkpoint_replays_streaming_state(tmp_path):
             covariance_regularization=1e-6,
         )
 
+
 def test_bellman_filter_checkpoint_replays_and_rejects_changed_numerics(tmp_path):
     problem = _problem()
     initial = phx.uq.initialize_bellman_filter(problem)
@@ -80,9 +81,7 @@ def test_bellman_filter_checkpoint_replays_and_rejects_changed_numerics(tmp_path
     assert jnp.array_equal(restored.mode, state.mode)
     assert jnp.array_equal(restored.information, state.information)
     assert jnp.array_equal(replay.mode, expected.mode)
-    assert jnp.array_equal(
-        replay.pseudo_log_likelihood, expected.pseudo_log_likelihood
-    )
+    assert jnp.array_equal(replay.pseudo_log_likelihood, expected.pseudo_log_likelihood)
     assert jnp.array_equal(replay_step.filtered_mode, expected_step.filtered_mode)
     with pytest.raises(phx.uq.CheckpointCompatibilityError):
         phx.uq.read_filter_checkpoint(

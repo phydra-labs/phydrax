@@ -158,6 +158,7 @@ def test_adm_validation_reports_invalid_fields_without_repairing_them():
 
 def test_adm_parameterization_rejects_invalid_static_and_field_contracts():
     chart = _chart()
+
     def valid_shift(q):
         return jnp.zeros((3,), dtype=q.dtype)
 

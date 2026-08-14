@@ -28,8 +28,7 @@ def _subsystem_dimensions(subsystem_dims: Sequence[int], /) -> tuple[int, ...]:
     for position, value in enumerate(subsystem_dims):
         if isinstance(value, bool):
             raise TypeError(
-                "subsystem_dims must contain positive integers; "
-                f"item {position} is bool."
+                f"subsystem_dims must contain positive integers; item {position} is bool."
             )
         try:
             dimension = py_operator.index(value)
@@ -53,7 +52,9 @@ def _subsystem_index(value: Any, /, *, count: int, role: str) -> int:
     try:
         index = py_operator.index(value)
     except TypeError as exc:
-        raise TypeError(f"{role} must be an integer, got {type(value).__name__}.") from exc
+        raise TypeError(
+            f"{role} must be an integer, got {type(value).__name__}."
+        ) from exc
     if index < 0 or index >= count:
         raise ValueError(f"{role} must be in [0, {count}), got {index}.")
     return index

@@ -84,9 +84,7 @@ def _wasserstein_cost_1d(
         0,
         target.shape[0] - 1,
     )
-    displacement = jnp.abs(
-        source_sorted[source_indices] - target_sorted[target_indices]
-    )
+    displacement = jnp.abs(source_sorted[source_indices] - target_sorted[target_indices])
     return jnp.sum(widths * displacement**p)
 
 

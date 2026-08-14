@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any, Literal, Protocol, runtime_checkable, TypeAlias
+from typing import Any, Literal, overload, Protocol, runtime_checkable, TypeAlias, TypeVar
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -20,6 +20,7 @@ GradientLevel: TypeAlias = Literal["smooth", "almost-everywhere", "conditional",
 FitGradientMode: TypeAlias = Literal[
     "direct", "implicit", "unrolled", "spectral", "relaxed", "stopped"
 ]
+_ModelT = TypeVar("_ModelT", bound=AbstractArrayModel)
 
 ML_SUCCESS = 0
 ML_INSUFFICIENT_DATA = 1
@@ -169,9 +170,25 @@ class FitResult(StrictModule):
         self.gradient_contract = gradient_contract
         self.method = str(method)
 
-    def as_trainable(self, /) -> AbstractArrayModel:
-        """Return the fitted executable without the solver-freezing wrapper."""
-        return self.model.as_trainable()
+    @overload
+    def as_trainable(self, /) -> AbstractArrayModel: ...
+
+    @overload
+    def as_trainable(self, expected_type: type[_ModelT], /) -> _ModelT: ...
+
+    def as_trainable(
+        self,
+        expected_type: type[_ModelT] | None = None,
+        /,
+    ) -> AbstractArrayModel | _ModelT:
+        """Return the fitted executable, optionally enforcing its concrete type."""
+        model = self.model.as_trainable()
+        if expected_type is not None and not isinstance(model, expected_type):
+            raise TypeError(
+                f"Expected fitted model {expected_type.__name__}; "
+                f"got {type(model).__name__}."
+            )
+        return model
 
 
 class AbstractRecipe(StrictModule):

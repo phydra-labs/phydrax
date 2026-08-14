@@ -31,9 +31,7 @@ exactly `primitive_basis.words`.
 import jax.numpy as jnp
 import phydrax as phx
 
-path = jnp.asarray(
-    [[0.0, 0.0], [0.3, -0.1], [0.5, 0.4], [0.8, 0.2]]
-)
+path = jnp.asarray([[0.0, 0.0], [0.3, -0.1], [0.5, 0.4], [0.8, 0.2]])
 paths = jnp.stack((path, -path, 0.5 * path))
 features = phx.stochastic.SignatureFeatures(
     2,
@@ -71,9 +69,7 @@ padded_paths = jnp.asarray(
     ]
 )
 lengths = jnp.asarray([3, 2])
-times = jnp.asarray(
-    [[0.0, 0.5, 1.0, jnp.nan], [0.0, 0.75, jnp.nan, jnp.nan]]
-)
+times = jnp.asarray([[0.0, 0.5, 1.0, jnp.nan], [0.0, 0.75, jnp.nan, jnp.nan]])
 clean = phx.stochastic.repeat_last_path_padding(padded_paths, lengths)
 space_time = phx.stochastic.time_augment_path(times, clean, lengths=lengths)
 ```

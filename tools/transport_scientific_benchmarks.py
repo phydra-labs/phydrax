@@ -41,7 +41,11 @@ def _spatial_density_record(size: int, repeats: int):
     points = (parameter**2)[:, None]
     widths = jnp.diff(
         jnp.concatenate(
-            [jnp.asarray([0.0]), 0.5 * (points[1:, 0] + points[:-1, 0]), jnp.asarray([1.0])]
+            [
+                jnp.asarray([0.0]),
+                0.5 * (points[1:, 0] + points[:-1, 0]),
+                jnp.asarray([1.0]),
+            ]
         )
     )
     source_weights = widths * jnp.exp(-8.0 * (points[:, 0] - 0.35) ** 2)

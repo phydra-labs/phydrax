@@ -179,13 +179,18 @@ class PortHamiltonianVectorField(_AbstractStructuredInputModel):
             self.interconnection_matrix() - self.dissipation_matrix()
         ) @ gradient
         if control is not None:
+            control_matrix = self.control_matrix
+            if control_matrix is None:
+                raise RuntimeError(
+                    "Controlled dynamics are missing their control matrix."
+                )
             control_array = jnp.asarray(control)
             if control_array.shape != (self.control_size,):
                 raise ValueError(
                     f"control must have shape ({self.control_size},), "
                     f"got {control_array.shape}."
                 )
-            vector_field = vector_field + self.control_matrix @ control_array
+            vector_field = vector_field + control_matrix @ control_array
         return vector_field
 
     def energy_rate(

@@ -135,8 +135,7 @@ def pde_ir_to_dict(problem: PDEProblemIR, /) -> dict[str, Any]:
             for item in sorted(problem.conditions, key=lambda value: value.name)
         ],
         "nondimensionalization": [
-            [name, float(value)]
-            for name, value in sorted(problem.nondimensionalization)
+            [name, float(value)] for name, value in sorted(problem.nondimensionalization)
         ],
         "metadata": [list(item) for item in sorted(problem.metadata)],
     }

@@ -84,7 +84,9 @@ def test_trajectory_signal_cubic_hermite_supports_second_time_derivative():
     signal = TrajectorySignal(domain, values, interpolation="cubic_hermite")
     d2_signal = partial_n(signal, var="t", order=2)
 
-    batch = domain.component().sample(phx.domain.PointSampling(12, layout=structure), key=jr.key(6))
+    batch = domain.component().sample(
+        phx.domain.PointSampling(12, layout=structure), key=jr.key(6)
+    )
     pred = jnp.asarray(d2_signal(batch, key=jr.key(7)).data)
     assert jnp.allclose(pred, jnp.zeros_like(pred), atol=1e-10)
 

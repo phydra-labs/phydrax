@@ -121,9 +121,7 @@ class _MultiwaveletSubbandMixer1D(StrictModule):
         input_width = transform.order * in_size
         output_width = transform.order * out_size
         scale = 1.0 / sqrt(float(input_width))
-        self.scaling_weight = scale * jr.normal(
-            keys[0], (output_width, input_width)
-        )
+        self.scaling_weight = scale * jr.normal(keys[0], (output_width, input_width))
         self.detail_weights = tuple(
             scale * jr.normal(keys[index + 1], (output_width, input_width))
             for index in range(transform.levels)
@@ -134,9 +132,7 @@ class _MultiwaveletSubbandMixer1D(StrictModule):
         self.transform_fingerprint = transform.fingerprint
 
     def _mix(self, weight: Array, values: Array, /) -> Array:
-        flattened = values.reshape(
-            values.shape[:-2] + (self.order * self.in_channels,)
-        )
+        flattened = values.reshape(values.shape[:-2] + (self.order * self.in_channels,))
         mixed = oe.contract("oi,...i->...o", weight, flattened)
         return mixed.reshape(mixed.shape[:-1] + (self.order, self.out_channels))
 
@@ -144,7 +140,9 @@ class _MultiwaveletSubbandMixer1D(StrictModule):
         self, coefficients: MultiresolutionCoefficients, /
     ) -> MultiresolutionCoefficients:
         if coefficients.transform_fingerprint != self.transform_fingerprint:
-            raise ValueError("Multiwavelet mixer and coefficient transforms do not match.")
+            raise ValueError(
+                "Multiwavelet mixer and coefficient transforms do not match."
+            )
         scaling = self._mix(self.scaling_weight, coefficients.scaling)
         details = tuple(
             (self._mix(weight, bands[0]),)
@@ -170,7 +168,9 @@ def _grid_values(
         return values[..., None]
     expected = scalar_shape + (channels,)
     if tuple(int(size) for size in values.shape) != expected:
-        raise ValueError(f"Grid source values must have shape {expected}; got {values.shape}.")
+        raise ValueError(
+            f"Grid source values must have shape {expected}; got {values.shape}."
+        )
     return values
 
 
@@ -336,9 +336,7 @@ class WaveletNeuralOperator(AbstractOperatorModel):
             self.spatial_ndim,
             self.transform.boundaries,
         )
-        values = _grid_values(
-            source, batch.case_shape, self.in_channels, spatial_shape
-        )
+        values = _grid_values(source, batch.case_shape, self.in_channels, spatial_shape)
         source_mask = source.mask_array(case_shape=batch.case_shape)
         hidden = self.lift(values * source_mask[..., None], key=fold_in_eval_key(key, 0))
         for index, (mixer, pointwise) in enumerate(
@@ -469,9 +467,7 @@ class MultiwaveletOperator(AbstractOperatorModel):
             1,
             (self.transform.boundary,),
         )
-        values = _grid_values(
-            source, batch.case_shape, self.in_channels, spatial_shape
-        )
+        values = _grid_values(source, batch.case_shape, self.in_channels, spatial_shape)
         source_mask = source.mask_array(case_shape=batch.case_shape)
         hidden = self.lift(values * source_mask[..., None], key=fold_in_eval_key(key, 0))
         for index, (mixer, pointwise) in enumerate(

@@ -538,9 +538,7 @@ def spectral_discretization_from_graph(
         adjacency = 0.5 * (adjacency + adjacency.T)
     else:
         difference = adjacency - adjacency.T
-        error = (
-            float(np.max(np.abs(difference.data))) if difference.data.size else 0.0
-        )
+        error = float(np.max(np.abs(difference.data))) if difference.data.size else 0.0
         scale = float(np.max(np.abs(adjacency.data))) if adjacency.data.size else 1.0
         if error > 1e-10 * max(1.0, scale):
             raise ValueError(

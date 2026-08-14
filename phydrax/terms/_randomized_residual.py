@@ -72,8 +72,7 @@ class RandomizedResidualSamples(StrictModule):
         expected_ndim = 1 + len(sample_axes) + len(event_axes)
         if samples.ndim != expected_ndim:
             raise ValueError(
-                "values must have shape (num_realizations,) + sample_shape + "
-                "event_shape."
+                "values must have shape (num_realizations,) + sample_shape + event_shape."
             )
         if samples.shape[1:] != sample_axes + event_axes:
             raise ValueError("values trailing dimensions do not match declared shapes.")
@@ -297,7 +296,9 @@ class RandomizedResidualTerm(AbstractSamplingTerm):
             sampler = collocation
         else:
             if callable(collocation):
-                raise TypeError("Fixed objectives require a materialized collocation batch.")
+                raise TypeError(
+                    "Fixed objectives require a materialized collocation batch."
+                )
             fixed = collocation
             sampler = None
         weight = jnp.asarray(scalar_weight, dtype=float).reshape(())

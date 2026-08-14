@@ -299,9 +299,7 @@ class LinearizedPropagationResult(StrictModule):
             sample_square_sum = sample_square_sum + jnp.sum(samples**2, axis=0)
 
         estimate = sample_sum / count
-        sample_variance = (
-            sample_square_sum - sample_sum**2 / count
-        ) / (count - 1)
+        sample_variance = (sample_square_sum - sample_sum**2 / count) / (count - 1)
         standard_error = jnp.sqrt(jnp.maximum(sample_variance, 0.0) / count)
         return LinearizedVarianceEstimate(
             self.output_unravel(estimate),
@@ -345,7 +343,9 @@ class LinearizedPropagationResult(StrictModule):
             columns.append(jnp.swapaxes(applied, 0, 1))
         matrix = jnp.concatenate(tuple(columns), axis=1)
         adjoint = jnp.conj(matrix.T)
-        scale = jnp.maximum(jnp.linalg.norm(matrix), jnp.finfo(jnp.real(matrix).dtype).eps)
+        scale = jnp.maximum(
+            jnp.linalg.norm(matrix), jnp.finfo(jnp.real(matrix).dtype).eps
+        )
         defect = jnp.linalg.norm(matrix - adjoint) / scale
         tolerance = _matrix_tolerance(matrix) / jnp.maximum(
             jnp.max(jnp.abs(matrix)),
@@ -390,7 +390,6 @@ class LinearizedPropagationResult(StrictModule):
             directions,
             self.input_template,
         )
-
 
     def _factor_directions(self) -> tuple[PyTree[Array], int]:
         def input_dtype(directions):
@@ -508,14 +507,14 @@ def _validate_like(
         ),
         owner=owner,
     )
+
+
 def _real_pullback(transpose: Callable[..., Any], cotangent: PyTree[Array], /):
     return transpose(cotangent)[0]
 
 
 def _complex_pullback(transpose: Callable[..., Any], cotangent: PyTree[Array], /):
     return _conjugate_tree(transpose(_conjugate_tree(cotangent))[0])
-
-
 
 
 def _tree_is_complex(value: PyTree[Array], /) -> bool:
@@ -542,12 +541,14 @@ def _flat_probes(
     indices = jnp.arange(start, start + count, dtype=jnp.uint32)
     keys = jax.vmap(lambda index: jr.fold_in(key, index))(indices)
     if complex_output:
-        phase_indices = jax.vmap(lambda probe_key: jr.randint(
-            probe_key,
-            (dimension,),
-            0,
-            4,
-        ))(keys)
+        phase_indices = jax.vmap(
+            lambda probe_key: jr.randint(
+                probe_key,
+                (dimension,),
+                0,
+                4,
+            )
+        )(keys)
         phases = jnp.asarray((1.0, 1.0j, -1.0, -1.0j), dtype=dtype)
         return phases[phase_indices]
     return jax.vmap(

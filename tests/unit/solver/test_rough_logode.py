@@ -39,9 +39,7 @@ def test_recursive_lift_uses_davie_bracket_orientation_and_explicit_fields():
 def test_rough_solver_ids_are_stable_and_resolve_numerical_configuration():
     default = phx.solver.LogODE()
     repeated = phx.solver.LogODE()
-    loose = phx.solver.LogODE(
-        stepsize_controller=dfx.PIDController(rtol=1e-4, atol=1e-6)
-    )
+    loose = phx.solver.LogODE(stepsize_controller=dfx.PIDController(rtol=1e-4, atol=1e-6))
     stepped = phx.solver.LogODE(dt0=0.05)
     limited = phx.solver.LogODE(max_steps=32)
     inner_euler = phx.solver.LogODE(
@@ -53,8 +51,8 @@ def test_rough_solver_ids_are_stable_and_resolve_numerical_configuration():
     linear_repeated = phx.solver.LinearLogODE((2.0 * jnp.eye(2),))
     linear_short = phx.solver.LinearLogODE(
         (jnp.eye(2),),
-        matrix_function_policy=phx.solver.MatrixFunctionPolicy(
-            "arnoldi", num_matvecs=4
+        matrix_function_policy=phx.linalg.MatrixFunctionPolicy(
+            "arnoldi", max_dimension=4
         ),
     )
 
@@ -65,14 +63,17 @@ def test_rough_solver_ids_are_stable_and_resolve_numerical_configuration():
     assert default.solver_id != inner_euler.solver_id
     assert linear_default.solver_id == linear_repeated.solver_id
     assert linear_default.solver_id != linear_short.solver_id
-    assert len(
-        {
-            phx.solver.RoughEuler().solver_id,
-            phx.solver.Davie().solver_id,
-            default.solver_id,
-            linear_default.solver_id,
-        }
-    ) == 4
+    assert (
+        len(
+            {
+                phx.solver.RoughEuler().solver_id,
+                phx.solver.Davie().solver_id,
+                default.solver_id,
+                linear_default.solver_id,
+            }
+        )
+        == 4
+    )
 
 
 def test_general_and_linear_logode_agree_for_noncommuting_linear_system():
@@ -103,9 +104,7 @@ def test_general_and_linear_logode_agree_for_noncommuting_linear_system():
 
     def explicit_fields(time, state, args):
         del time, args
-        return jnp.stack(
-            tuple(matrix @ state for matrix in lifted_matrices), axis=-1
-        )
+        return jnp.stack(tuple(matrix @ state for matrix in lifted_matrices), axis=-1)
 
     problem = phx.solver.RoughDifferentialProblem(
         vector_fields,
@@ -126,8 +125,8 @@ def test_general_and_linear_logode_agree_for_noncommuting_linear_system():
         control,
         solver=phx.solver.LinearLogODE(
             (left, right),
-            matrix_function_policy=phx.solver.MatrixFunctionPolicy(
-                "arnoldi", num_matvecs=2
+            matrix_function_policy=phx.linalg.MatrixFunctionPolicy(
+                "arnoldi", max_dimension=2
             ),
         ),
     )
@@ -223,9 +222,7 @@ def test_linear_logode_rejects_time_dependent_problem():
         phx.solver.solve_rough_differential(
             problem,
             control,
-            solver=phx.solver.LinearLogODE(
-                (jnp.asarray([[0.2]]), jnp.asarray([[0.5]]))
-            ),
+            solver=phx.solver.LinearLogODE((jnp.asarray([[0.2]]), jnp.asarray([[0.5]]))),
         )
 
 
@@ -394,3 +391,35 @@ def test_logode_is_jittable_batched_and_differentiable():
         rtol=2e-7,
         atol=2e-8,
     )
+
+
+def test_linear_logode_rejects_unconverged_matrix_function_intervals():
+    control = phx.stochastic.LogSignatureControl.from_values(
+        jnp.asarray([0.0, 1.0]),
+        jnp.asarray([[0.0], [1.0]]),
+        depth=2,
+    )
+    matrix = jnp.diag(jnp.asarray([1.0, 2.0]))
+    problem = phx.solver.RoughDifferentialProblem(
+        lambda time, state, args: jnp.stack((matrix @ state,), axis=-1),
+        jnp.asarray([1.0, 1.0]),
+        driver_dimension=1,
+    )
+    solution = phx.solver.solve_rough_differential(
+        problem,
+        control,
+        solver=phx.solver.LinearLogODE(
+            (matrix,),
+            matrix_function_policy=phx.linalg.MatrixFunctionPolicy(
+                "arnoldi",
+                max_dimension=1,
+                error_tolerance=1e-12,
+            ),
+        ),
+    )
+
+    assert solution.statuses.shape == (1,)
+    assert int(solution.statuses[0]) != 0
+    assert not bool(solution.successful)
+    assert int(solution.statistics["num_accepted_steps"][0]) == 0
+    assert int(solution.statistics["num_rejected_steps"][0]) == 1

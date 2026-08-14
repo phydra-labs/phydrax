@@ -100,6 +100,7 @@ class StateDependentDiscontinuityTracker(eqx.Module):
     max_root_iterations: int = eqx.field(static=True)
 
     maximum_isolation_step: Array
+
     def __init__(
         self,
         delays: tuple[StateDependentDelay, ...],
@@ -248,9 +249,9 @@ class StateDependentDiscontinuityTracker(eqx.Module):
                 state,
             )
         roots, root_active = self._values(state, time, value, args)
-        monotone = jnp.asarray(
-            tuple(delay.monotone_argument for delay in self.delays)
-        )[None, :]
+        monotone = jnp.asarray(tuple(delay.monotone_argument for delay in self.delays))[
+            None, :
+        ]
         already_propagated = (
             root_active & monotone & (roots >= -self._time_tolerance(time))
         )
@@ -276,9 +277,9 @@ class StateDependentDiscontinuityTracker(eqx.Module):
         )
         roots = delayed_arguments[None, :] - state.times[:, None]
         active_sources = jnp.arange(self.capacity) < state.count
-        monotone = jnp.asarray(
-            tuple(delay.monotone_argument for delay in self.delays)
-        )[None, :]
+        monotone = jnp.asarray(tuple(delay.monotone_argument for delay in self.delays))[
+            None, :
+        ]
         active = (
             active_sources[:, None]
             & (state.generations[:, None] < self.depth)
@@ -305,9 +306,7 @@ class StateDependentDiscontinuityTracker(eqx.Module):
         /,
     ) -> Array:
         pending = jax.lax.stop_gradient(self._next_pending(state, start))
-        isolation_end = jax.lax.stop_gradient(
-            start + self.maximum_isolation_step
-        )
+        isolation_end = jax.lax.stop_gradient(start + self.maximum_isolation_step)
         return jax.lax.stop_gradient(
             jnp.minimum(jnp.minimum(proposed_end, pending), isolation_end)
         )
@@ -450,11 +449,10 @@ class StateDependentDiscontinuityTracker(eqx.Module):
     ) -> Array:
         forward = (low_values < 0.0) & (high_values >= 0.0)
         reverse = (low_values > 0.0) & (high_values <= 0.0)
-        monotone = jnp.asarray(
-            tuple(delay.monotone_argument for delay in self.delays)
-        )[None, :]
+        monotone = jnp.asarray(tuple(delay.monotone_argument for delay in self.delays))[
+            None, :
+        ]
         return active & jnp.where(monotone, forward, forward | reverse)
-
 
     def start_bracket(
         self,
@@ -592,9 +590,9 @@ class StateDependentDiscontinuityTracker(eqx.Module):
             state.bracket_source,
             state.bracket_delay,
         ].set(True)
-        monotone = jnp.asarray(
-            tuple(delay.monotone_argument for delay in self.delays)
-        )[None, :]
+        monotone = jnp.asarray(tuple(delay.monotone_argument for delay in self.delays))[
+            None, :
+        ]
         processed = state.processed | (simultaneous & monotone)
         parent_generations = jnp.broadcast_to(
             state.generations[:, None],

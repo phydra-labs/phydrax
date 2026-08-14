@@ -60,9 +60,7 @@ def _transformed_neutral_problem(
     delay = 0.4
     rate = 0.3
     neutral_weight = 0.2
-    coefficient = rate * (
-        1.0 - neutral_weight * jnp.exp(-rate * delay) - endpoint_weight
-    )
+    coefficient = rate * (1.0 - neutral_weight * jnp.exp(-rate * delay) - endpoint_weight)
 
     def history(time, args):
         del args
@@ -381,7 +379,6 @@ def test_state_dependent_neutral_jump_roots_propagate_to_the_solve_horizon():
     assert solution.stats["state_dependent_tracking"] == "high-order-dynamic-roots"
     assert int(solution.stats["num_dynamic_discontinuity_roots"]) == 2
     assert int(solution.stats["num_internal_discontinuity_restarts"]) >= 2
-
 
 
 @pytest.mark.parametrize("endpoint_weight", [0.0, 0.15])

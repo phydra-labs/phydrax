@@ -53,7 +53,10 @@ def test_unified_interior_data_tracks_and_scattered():
         sensor_values=jnp.array([[3.0, 4.0]], dtype=float),
     )
 
-    pipelines = EnforcementProgram.build(functions={"u": u}, interior=[scattered, tracks], )
+    pipelines = EnforcementProgram.build(
+        functions={"u": u},
+        interior=[scattered, tracks],
+    )
     u_enforced = pipelines.apply({"u": u})["u"]
 
     xs = jnp.array([0.2, 0.8, 0.5, 0.5], dtype=float)
@@ -82,7 +85,10 @@ def test_enforced_interior_data_hermite_track_matches_curve():
         time_interp="hermite",
     )
 
-    pipelines = EnforcementProgram.build(functions={"u": u}, interior=[tracks], )
+    pipelines = EnforcementProgram.build(
+        functions={"u": u},
+        interior=[tracks],
+    )
     u_enforced = pipelines.apply({"u": u})["u"]
 
     xs = jnp.array([0.5, 0.5], dtype=float)

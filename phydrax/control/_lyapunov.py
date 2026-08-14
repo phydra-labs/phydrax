@@ -15,6 +15,18 @@ import jax.scipy as jsp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..linalg import (
+    ArraySpace,
+    DenseLinearOperator,
+    DenseLU,
+    FunctionLinearOperator,
+    GMRES,
+    LinearSolvePolicy,
+    LinearSystem,
+    prepare,
+    solve,
+    TolerancePolicy,
+)
 
 
 LyapunovMethod: TypeAlias = Literal["schur", "cayley", "doubling", "gmres"]
@@ -175,11 +187,20 @@ def _continuous_schur_solution(matrix: Array, source: Array, /) -> Array:
 
 def _discrete_schur_impl(matrix: Array, source: Array, /) -> Array:
     """Solve X - A X Aᴴ = Q through a Cayley-transformed Sylvester equation."""
-    identity = jnp.eye(matrix.shape[0], dtype=matrix.dtype)
+    size = matrix.shape[0]
+    identity = jnp.eye(size, dtype=matrix.dtype)
     plus = matrix + identity
-    cayley = jnp.linalg.solve(plus, matrix - identity)
-    left_source = jnp.linalg.solve(plus, source)
-    transformed_source = 2.0 * jnp.conj(jnp.linalg.solve(plus, jnp.conj(left_source.T)).T)
+    prepared = prepare(
+        LinearSystem(DenseLinearOperator(plus)),
+        LinearSolvePolicy(DenseLU()),
+    )
+    initial = solve(
+        prepared,
+        jnp.concatenate((matrix - identity, source), axis=1),
+    ).value
+    cayley = initial[:, :size]
+    left_source = initial[:, size:]
+    transformed_source = 2.0 * jnp.conj(solve(prepared, jnp.conj(left_source.T)).value.T)
     return jsp.linalg.solve_sylvester(
         cayley,
         jnp.conj(cayley.T),
@@ -270,9 +291,20 @@ def continuous_lyapunov_solution(
         )
     identity = jnp.eye(dimension, dtype=matrix_array.dtype)
     denominator = shift * identity - matrix_array
-    discrete_matrix = jnp.linalg.solve(denominator, shift * identity + matrix_array)
-    left_source = jnp.linalg.solve(denominator, 2.0 * shift * source_array)
-    discrete_source = jnp.conj(jnp.linalg.solve(denominator, jnp.conj(left_source.T)).T)
+    prepared = prepare(
+        LinearSystem(DenseLinearOperator(denominator)),
+        LinearSolvePolicy(DenseLU()),
+    )
+    transformed = solve(
+        prepared,
+        jnp.concatenate(
+            (shift * identity + matrix_array, 2.0 * shift * source_array),
+            axis=1,
+        ),
+    ).value
+    discrete_matrix = transformed[:, :dimension]
+    left_source = transformed[:, dimension:]
+    discrete_source = jnp.conj(solve(prepared, jnp.conj(left_source.T)).value.T)
     return _discrete_doubling_solution(
         discrete_matrix,
         discrete_source,
@@ -654,14 +686,30 @@ def _krylov_lyapunov(
         return value - _right_adjoint_action(operator, left)
 
     right_hand_side = -source_array if system_type == "continuous" else source_array
-    solution, _ = jsp.sparse.linalg.gmres(
-        equation,
+    space = ArraySpace(source_array.shape, dtype=source_array.dtype)
+    linear_result = solve(
+        LinearSystem(
+            FunctionLinearOperator(
+                equation,
+                source=space,
+                target=space,
+                operator_id=f"{system_type}-lyapunov-operator",
+            )
+        ),
         right_hand_side,
-        tol=relative_tolerance,
-        atol=absolute_tolerance_,
-        restart=restart_count,
-        maxiter=step_count,
+        policy=LinearSolvePolicy(
+            GMRES(
+                restart=restart_count,
+                stagnation_iterations=restart_count,
+            ),
+            tolerance=TolerancePolicy(
+                relative=relative_tolerance,
+                absolute=absolute_tolerance_,
+                max_steps=step_count,
+            ),
+        ),
     )
+    solution = linear_result.value
     residual = equation(solution) - right_hand_side
     residual_norm = jnp.linalg.norm(residual)
     scale = jnp.linalg.norm(right_hand_side)
@@ -684,7 +732,7 @@ def _krylov_lyapunov(
         finite=finite,
         converged=converged,
         status=jnp.asarray(status, dtype=jnp.int32),
-        iterations=jnp.asarray(step_count, dtype=jnp.int32),
+        iterations=linear_result.diagnostics.iterations,
         method="gmres-operator-action",
         system_type=system_type,
     )

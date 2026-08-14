@@ -17,9 +17,7 @@ square = x.Function("x")(lambda value: value**2)
 estimate = phx.integration.integrate(
     square,
     phx.integration.over(x.component()),
-    phx.integration.FixedQuadraturePlan(
-        phx.integration.GaussLegendreRule(24)
-    ),
+    phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(24)),
 )
 ```
 

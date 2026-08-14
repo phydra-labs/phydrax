@@ -212,16 +212,16 @@ and axis-native neural operators.
 
     geom = phx.domain.Interval1d(0.0, 1.0)
 
+
     @geom.Function("x")
     def u(x):
         return jnp.sin(2.0 * jnp.pi * x[0])
 
+
     lap_u = phx.operators.laplacian(u, var="x", backend="basis", basis="fourier")
 
     batch = geom.component().sample(
-        phx.domain.GridSampling(
-            {"x": phx.domain.FourierAxisSpec(64)}
-        ),
+        phx.domain.GridSampling({"x": phx.domain.FourierAxisSpec(64)}),
         key=jr.key(0),
     )
     out = lap_u(batch)

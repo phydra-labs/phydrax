@@ -82,8 +82,10 @@ class _LindbladDissipatorCallable(StrictModule):
                 )
             adjoint = jnp.conj(value.T)
             rate_operator = adjoint @ value
-            result = result + value @ density @ adjoint - 0.5 * (
-                rate_operator @ density + density @ rate_operator
+            result = (
+                result
+                + value @ density @ adjoint
+                - 0.5 * (rate_operator @ density + density @ rate_operator)
             )
         return result
 

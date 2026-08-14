@@ -79,9 +79,7 @@ def test_local_retraction_rejects_shape_changes():
 def test_special_orthogonal_retractions_preserve_group(method):
     geometry = SpecialOrthogonalStateGeometry(3, retraction=method)
     base = jnp.eye(3)
-    local = jnp.array(
-        [[0.0, -0.3, 0.2], [0.3, 0.0, -0.1], [-0.2, 0.1, 0.0]]
-    )
+    local = jnp.array([[0.0, -0.3, 0.2], [0.3, 0.0, -0.1], [-0.2, 0.1, 0.0]])
 
     point = jax.jit(geometry.retract)(base, local)
     assert bool(geometry.contains(point))
@@ -93,16 +91,13 @@ def test_special_orthogonal_retractions_preserve_group(method):
     assert bool(geometry.contains(midpoint))
     assert jnp.allclose(geometry.interpolate(base, point, 1.0), point, atol=2e-10)
 
+
 @pytest.mark.parametrize("method", ["exponential", "cayley"])
 def test_so_pullback_inverts_noncommuting_retraction_jvp(method):
     geometry = SpecialOrthogonalStateGeometry(3, retraction=method)
     base = jnp.eye(3)
-    local = jnp.array(
-        [[0.0, -0.4, 0.2], [0.4, 0.0, -0.3], [-0.2, 0.3, 0.0]]
-    )
-    direction = jnp.array(
-        [[0.0, 0.15, -0.1], [-0.15, 0.0, 0.25], [0.1, -0.25, 0.0]]
-    )
+    local = jnp.array([[0.0, -0.4, 0.2], [0.4, 0.0, -0.3], [-0.2, 0.3, 0.0]])
+    direction = jnp.array([[0.0, 0.15, -0.1], [-0.15, 0.0, 0.25], [0.1, -0.25, 0.0]])
     _, tangent = jax.jvp(
         lambda value: geometry.retract(base, value),
         (local,),
@@ -118,6 +113,7 @@ def test_so_pullback_inverts_noncommuting_retraction_jvp(method):
     assert jnp.linalg.norm(local @ direction - direction @ local) > 0.01
     assert jnp.allclose(tangent, finite_difference, atol=2e-10)
     assert jnp.allclose(recovered, direction, atol=2e-9)
+
 
 def test_so_exponential_pullback_preserves_tiny_float32_velocity():
     geometry = SpecialOrthogonalStateGeometry(3)
@@ -139,6 +135,7 @@ def test_so_exponential_pullback_preserves_tiny_float32_velocity():
 
     assert jnp.linalg.norm(recovered) > 0.0
     assert jnp.allclose(recovered, direction, rtol=5e-4, atol=1e-11)
+
 
 def test_so_exponential_pullback_solves_heterogeneous_batches_independently():
     geometry = SpecialOrthogonalStateGeometry(3)
@@ -177,9 +174,7 @@ def test_so_exponential_pullback_solves_heterogeneous_batches_independently():
 def test_so_exponential_pullback_does_not_materialize_full_jacobian(monkeypatch):
     geometry = SpecialOrthogonalStateGeometry(5)
     local = jnp.diag(jnp.ones(4), 1) - jnp.diag(jnp.ones(4), -1)
-    direction = 0.1 * (
-        jnp.diag(jnp.ones(3), 2) - jnp.diag(jnp.ones(3), -2)
-    )
+    direction = 0.1 * (jnp.diag(jnp.ones(3), 2) - jnp.diag(jnp.ones(3), -2))
     point, tangent = jax.jvp(
         lambda value: geometry.retract(jnp.eye(5), value),
         (local,),
@@ -199,10 +194,7 @@ def test_so_exponential_pullback_does_not_materialize_full_jacobian(monkeypatch)
 
     assert bool(geometry.contains(point))
     assert jnp.allclose(recovered, direction, atol=2e-8)
-    assert (
-        jnp.linalg.norm(reconstructed - tangent) / jnp.linalg.norm(tangent)
-        < 2e-8
-    )
+    assert jnp.linalg.norm(reconstructed - tangent) / jnp.linalg.norm(tangent) < 2e-8
 
 
 def test_so_exponential_inverse_rejects_rotations_outside_local_neighborhood():
@@ -239,9 +231,9 @@ def test_spd_congruence_retraction_and_inverse_are_positive_definite():
     assert bool(geometry.contains(point))
     assert jnp.min(jnp.linalg.eigvalsh(point)) > 0.0
     assert jnp.allclose(recovered, local, atol=1e-9)
-    gradient = jax.grad(
-        lambda scale: jnp.trace(geometry.retract(base, scale * local))
-    )(jnp.asarray(0.5))
+    gradient = jax.grad(lambda scale: jnp.trace(geometry.retract(base, scale * local)))(
+        jnp.asarray(0.5)
+    )
     assert jnp.isfinite(gradient)
 
 
@@ -262,9 +254,7 @@ def test_spd_pullback_inverts_retraction_differential():
 def test_spd_retraction_gradient_is_finite_at_repeated_eigenvalues():
     geometry = SymmetricPositiveDefiniteStateGeometry(2)
     local = jnp.array([[0.15, -0.05], [-0.05, -0.1]])
-    gradient = jax.grad(
-        lambda base: jnp.sum(geometry.retract(base, local))
-    )(jnp.eye(2))
+    gradient = jax.grad(lambda base: jnp.sum(geometry.retract(base, local)))(jnp.eye(2))
     assert jnp.all(jnp.isfinite(gradient))
 
 
@@ -314,9 +304,7 @@ def test_spd_logarithm_jvp_is_stable_for_tiny_separated_spectrum():
 def test_embedded_and_pointwise_adapters_preserve_explicit_contracts():
     sphere = EmbeddedStateGeometry(
         membership=lambda state: jnp.isclose(jnp.linalg.norm(state), 1.0),
-        tangent_projection=lambda state, vector: (
-            vector - jnp.vdot(state, vector) * state
-        ),
+        tangent_projection=lambda state, vector: vector - jnp.vdot(state, vector) * state,
         retraction=lambda state, tangent: (
             (state + tangent) / jnp.linalg.norm(state + tangent)
         ),

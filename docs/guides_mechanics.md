@@ -35,17 +35,21 @@ p_space = phx.domain.HyperRectangle([-2.0], [2.0], label="p")
 time = phx.domain.TimeInterval(0.1, 2.0)
 phase_time = phx.domain.ProductDomain(q_space, p_space, time)
 
+
 @phase_time.Function("q", "p", "t")
 def H(q, p, t):
     return 0.5 * jnp.dot(q, q) + 0.5 * jnp.dot(p, p) + t
+
 
 @time.Function("t")
 def q(t):
     return jnp.asarray([jnp.cos(t)])
 
+
 @time.Function("t")
 def p(t):
     return jnp.asarray([-jnp.sin(t)])
+
 
 energy_along_path = phx.operators.pullback(H, {"q": q, "p": p})
 assert jnp.allclose(energy_along_path.func(0.7), 1.2)
@@ -78,13 +82,16 @@ v_space = phx.domain.HyperRectangle([-2.0], [2.0], label="v")
 time = phx.domain.TimeInterval(0.0, 2.0)
 tangent = phx.domain.ProductDomain(q_space, v_space)
 
+
 @tangent.Function("q", "v")
 def L(q, v):
     return 0.5 * jnp.dot(v, v) - 0.5 * jnp.dot(q, q)
 
+
 @time.Function("t")
 def q(t):
     return jnp.asarray([jnp.cos(t)])
+
 
 p_of_qv = phx.operators.canonical_momentum(L)
 el_residual = phx.operators.euler_lagrange(q, L)
@@ -137,17 +144,21 @@ p_space = phx.domain.HyperRectangle([-2.0], [2.0], label="p")
 time = phx.domain.TimeInterval(0.0, 2.0)
 phase = phx.domain.ProductDomain(q_space, p_space)
 
+
 @phase.Function("q", "p")
 def H(q, p):
     return 0.5 * jnp.dot(q, q) + 0.5 * jnp.dot(p, p)
+
 
 @time.Function("t")
 def q(t):
     return jnp.asarray([jnp.cos(t)])
 
+
 @time.Function("t")
 def p(t):
     return jnp.asarray([-jnp.sin(t)])
+
 
 flow = phx.operators.canonical_hamiltonian_vector_field(H)
 residual = phx.operators.canonical_hamiltonian_residual(q, p, H)
@@ -156,9 +167,7 @@ assert jnp.allclose(
     flow.func(jnp.asarray([0.2]), jnp.asarray([0.3])),
     jnp.asarray([0.3, -0.2]),
 )
-assert jnp.allclose(
-    residual.func(0.7), jnp.asarray([0.0, 0.0]), atol=1e-10
-)
+assert jnp.allclose(residual.func(0.7), jnp.asarray([0.0, 0.0]), atol=1e-10)
 assert jnp.allclose(self_bracket.func(jnp.asarray([0.2]), jnp.asarray([0.3])), 0.0)
 ```
 

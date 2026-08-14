@@ -49,8 +49,7 @@ def _graph_label(field: DomainFunction, /) -> str:
     )
     if len(labels) != 1:
         raise ValueError(
-            "Cochain fields require exactly one graph-domain label; "
-            f"found {labels!r}."
+            f"Cochain fields require exactly one graph-domain label; found {labels!r}."
         )
     return labels[0]
 
@@ -71,13 +70,13 @@ def with_cochain_field_spec(
 ) -> DomainFunction:
     return field.with_metadata(**{_COCHAIN_FIELD_SPEC_KEY: _spec_tuple(spec)})
 
+
 def has_cochain_field_spec(field: DomainFunction, /) -> bool:
     """Return whether a domain field declares cochain semantics."""
     if not isinstance(field, DomainFunction):
         raise TypeError("has_cochain_field_spec expects a DomainFunction.")
     encoded = field.metadata.get(_COCHAIN_FIELD_SPEC_KEY)
     return isinstance(encoded, tuple) and len(encoded) == 4
-
 
 
 def cochain_field_spec(field: DomainFunction, /) -> CochainFieldSpec:
@@ -119,7 +118,11 @@ def as_cochain_field(
         raise TypeError("as_cochain_field expects a DomainFunction.")
     graph_label = _graph_label(field)
     if isinstance(spec, CochainFieldSpec):
-        if cell_orientation is not None or sampling is not None or complex_side != "primal":
+        if (
+            cell_orientation is not None
+            or sampling is not None
+            or complex_side != "primal"
+        ):
             raise ValueError(
                 "Do not pass cochain semantic keywords with a CochainFieldSpec."
             )

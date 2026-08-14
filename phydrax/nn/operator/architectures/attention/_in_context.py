@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from math import prod
-from typing import Literal
+from typing import Any, Literal
 
 import equinox as eqx
 import jax.nn as jnn
@@ -423,7 +423,7 @@ class InContextOperator(AbstractEncodedOperatorModel):
 
     def encode_inputs(
         self,
-        batch: PromptedOperatorBatch,
+        batch: Any,
         /,
         *,
         key: EvalKey = DOC_KEY0,

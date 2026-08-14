@@ -82,7 +82,9 @@ def pad_with_graphs(
     graph.validate()
 
     if n_graph < 2:
-        raise ValueError(f"n_graph is {n_graph}, which is smaller than minimum value of 2.")
+        raise ValueError(
+            f"n_graph is {n_graph}, which is smaller than minimum value of 2."
+        )
 
     n_node = int(n_node)
     n_edge = int(n_edge)

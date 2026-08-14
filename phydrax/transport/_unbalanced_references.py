@@ -76,9 +76,7 @@ def unbalanced_sinkhorn_divergence_against(
 ) -> UnbalancedSinkhornDivergenceResult:
     """Evaluate unbalanced divergence against one prepared physical target."""
     if not isinstance(reference, PreparedUnbalancedSinkhornReference):
-        raise TypeError(
-            "reference must be a PreparedUnbalancedSinkhornReference."
-        )
+        raise TypeError("reference must be a PreparedUnbalancedSinkhornReference.")
     source_measure = lower_transport_measure(
         source,
         encoder=encoder,

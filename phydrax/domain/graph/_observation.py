@@ -36,6 +36,8 @@ from ._trajectory import (
 
 
 GraphTargetInterpolation = Literal["nearest", "linear"]
+
+
 def _size_for_kind(graph, kind: GraphComponentKind, /) -> int:
     if kind == "nodes":
         return int(graph.num_nodes)

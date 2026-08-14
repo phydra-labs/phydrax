@@ -98,9 +98,7 @@ def test_sgld_recovers_conjugate_posterior_and_step_refinement_reduces_bias():
 
 
 def test_sgnht_recovers_conjugate_posterior_with_thermostat_diagnostics():
-    problem, _, source, expected_mean, expected_variance = (
-        _conjugate_normal_problem()
-    )
+    problem, _, source, expected_mean, expected_variance = _conjugate_normal_problem()
     control = phx.uq.build_sgmcmc_control_variate(
         problem,
         source,

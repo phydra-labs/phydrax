@@ -16,20 +16,18 @@ import phydrax as phx
 time = phx.domain.TimeInterval(0.0, 1.0)
 zero = time.Function()(jnp.asarray([1.0, 0.0], dtype=complex))
 one = time.Function()(jnp.asarray([0.0, 1.0], dtype=complex))
-sigma_x = time.Function()(
-    jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
-)
-sigma_z = time.Function()(
-    jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=complex)
-)
+sigma_x = time.Function()(jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=complex))
+sigma_z = time.Function()(jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=complex))
 
 zero_zero = phx.operators.tensor_product(zero, zero)
 one_one = phx.operators.tensor_product(one, one)
 bell = (zero_zero + one_one) / jnp.sqrt(2.0)
 
+
 @time.Function()
 def bell_factor():
     return bell.func()[:, None]
+
 
 rho = phx.operators.density_from_factor(bell_factor)
 rho_a = phx.operators.partial_trace(

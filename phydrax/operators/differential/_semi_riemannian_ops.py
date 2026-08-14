@@ -160,9 +160,7 @@ def _domain_geometry_variable(
         raise TypeError("Domain Lorentzian operators require a Domain.")
     if var is None:
         differentiable = tuple(
-            label
-            for label in domain.labels
-            if domain.coordinate(label).differentiable
+            label for label in domain.labels if domain.coordinate(label).differentiable
         )
         if len(differentiable) != 1:
             raise ValueError(
@@ -176,7 +174,9 @@ def _domain_geometry_variable(
         variable = var
     coordinate = domain.coordinate(variable)
     if not coordinate.differentiable:
-        raise TypeError("Domain Lorentzian operators require a differentiable coordinate.")
+        raise TypeError(
+            "Domain Lorentzian operators require a differentiable coordinate."
+        )
     if coordinate.kind == "scalar":
         coordinate_dimension = 1
     elif coordinate.kind == "array" and coordinate.event_shape is not None:
@@ -222,9 +222,7 @@ class _FieldLorentzianMetricMap(StrictModule):
 
 class _LorentzianCurvatureCallable(StrictModule):
     metric: LorentzianMetric
-    operation: Literal["riemann", "ricci", "scalar", "einstein"] = eqx.field(
-        static=True
-    )
+    operation: Literal["riemann", "ricci", "scalar", "einstein"] = eqx.field(static=True)
 
     def __init__(
         self,

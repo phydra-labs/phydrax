@@ -160,13 +160,17 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
             raise TypeError("DiscreteEvolution system must be a DiscreteSystem.")
         if input_policy is not None and not isinstance(input_policy, AbstractInputPolicy):
             raise TypeError("input_policy must be an AbstractInputPolicy or None.")
-        if (system.input_layout is None) != (input_policy is None):
+        system_input_layout = system.input_layout
+        if system_input_layout is None:
+            if input_policy is not None:
+                raise ValueError(
+                    "An autonomous DiscreteEvolution does not accept an input policy."
+                )
+        elif input_policy is None:
             raise ValueError(
-                "DiscreteEvolution requires exactly one input policy for an input-driven system."
+                "An input-driven DiscreteEvolution requires exactly one input policy."
             )
-        if input_policy is not None and (
-            input_policy.input_layout.layout_id != system.input_layout.layout_id
-        ):
+        elif input_policy.input_layout.layout_id != system_input_layout.layout_id:
             raise ValueError("Input policy and system input layouts must match exactly.")
         resolved_id = (
             f"{system.system_id}:discrete-evolution"

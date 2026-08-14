@@ -47,7 +47,7 @@ product: its dataset row and sampled time remain one inseparable joint factor.
     import jax.numpy as jnp
     import phydrax as phx
 
-    data = jnp.ones((128, 64))     # N=128 samples, each with 64 features
+    data = jnp.ones((128, 64))  # N=128 samples, each with 64 features
     Omega = phx.domain.DatasetDomain(data, label="data") @ phx.domain.Interval1d(0.0, 1.0)
     ```
 

@@ -3,6 +3,7 @@
 #
 
 """Scientific conditions independent of soft or hard numerical treatment."""
+
 from . import cfd, conservation, electromagnetics, solids, stochastic, thermal
 from ._base import (
     AbstractCondition,

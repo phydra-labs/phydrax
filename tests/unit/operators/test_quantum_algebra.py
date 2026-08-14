@@ -44,9 +44,13 @@ def test_commutator_lie_and_leibniz_identities():
         + phx.operators.commutator(c, phx.operators.commutator(a, b))
     )
     leibniz_left = phx.operators.commutator(a, b @ c)
-    leibniz_right = phx.operators.commutator(a, b) @ c + b @ phx.operators.commutator(a, c)
+    leibniz_right = phx.operators.commutator(a, b) @ c + b @ phx.operators.commutator(
+        a, c
+    )
 
-    assert jnp.allclose(phx.operators.commutator(a, b).func(), -phx.operators.commutator(b, a).func())
+    assert jnp.allclose(
+        phx.operators.commutator(a, b).func(), -phx.operators.commutator(b, a).func()
+    )
     assert jnp.allclose(jacobi.func(), jnp.zeros((2, 2)), atol=1e-12)
     assert jnp.allclose(leibniz_left.func(), leibniz_right.func(), atol=1e-12)
     assert jnp.allclose(phx.operators.commutator(a, a).func(), jnp.zeros((2, 2)))

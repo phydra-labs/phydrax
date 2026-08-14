@@ -218,8 +218,8 @@ def _erode_axis(mask: Array, axis: int, /) -> Array:
     left = jnp.roll(mask, 1, axis=axis)
     right = jnp.roll(mask, -1, axis=axis)
     eroded = mask & left & right
-    lower = [slice(None)] * mask.ndim
-    upper = [slice(None)] * mask.ndim
+    lower: list[slice | int] = [slice(None)] * mask.ndim
+    upper: list[slice | int] = [slice(None)] * mask.ndim
     lower[axis] = 0
     upper[axis] = -1
     eroded = eroded.at[tuple(lower)].set(False)
@@ -263,11 +263,16 @@ class FiniteDifferencePDEDerivative(AbstractPDEDerivative):
         for grid_axis, order in enumerate(derivative.orders):
             array_axis = case_rank + grid_axis
             for _ in range(order):
-                values = jnp.gradient(
+                gradient = jnp.gradient(
                     values,
                     data.coordinates[grid_axis],
                     axis=array_axis,
                 )
+                if isinstance(gradient, list):
+                    raise RuntimeError(
+                        "Single-axis finite differences returned multiple gradients."
+                    )
+                values = gradient
                 valid = _erode_axis(valid, array_axis)
         finite = jnp.isfinite(values)
         valid = valid & finite

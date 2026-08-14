@@ -135,7 +135,7 @@ class PrecomputedCost(StrictModule):
 
     @property
     def shape(self) -> tuple[int, int]:
-        return self.values.shape
+        return int(self.values.shape[0]), int(self.values.shape[1])
 
     def block(
         self,
@@ -182,9 +182,7 @@ def _as_points(value: ArrayLike, /, *, name: str) -> Array:
     if points.ndim == 1:
         points = points[:, None]
     if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] == 0:
-        raise ValueError(
-            f"{name} must have shape (point, feature) with nonempty axes."
-        )
+        raise ValueError(f"{name} must have shape (point, feature) with nonempty axes.")
     return eqx.error_if(
         points,
         jnp.any(~jnp.isfinite(points)),

@@ -159,9 +159,7 @@ components and returns the corresponding Hausdorff volume factor.
 
 ```python
 simplex_family = phx.uq.DirichletFamily(4)
-simplex_prior = simplex_family.law_from_concentration(
-    jnp.asarray([1.0, 2.0, 1.5, 3.0])
-)
+simplex_prior = simplex_family.law_from_concentration(jnp.asarray([1.0, 2.0, 1.5, 3.0]))
 simplex_space = phx.uq.ParameterSpace(
     jnp.zeros(3),
     priors=simplex_prior,
@@ -189,12 +187,8 @@ rate_update = gamma_poisson.update(
     exposure=jnp.asarray([1.0, 0.5, 2.0]),
 )
 
-dirichlet_categorical = phx.uq.DirichletCategoricalConjugacy(
-    jnp.asarray([1.0, 1.0, 1.0])
-)
-composition_update = dirichlet_categorical.update(
-    jnp.asarray([0, 2, 1, 2, 2])
-)
+dirichlet_categorical = phx.uq.DirichletCategoricalConjugacy(jnp.asarray([1.0, 1.0, 1.0]))
+composition_update = dirichlet_categorical.update(jnp.asarray([0, 2, 1, 2, 2]))
 ```
 
 Each update exposes the posterior law, exact ordered-observation log evidence,

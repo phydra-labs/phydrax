@@ -463,9 +463,10 @@ def _backward_j(
         scale = jnp.where(scale > scale_limit, scale, jnp.ones_like(scale))
         next_state = (current / scale, previous / scale, target / scale)
         active = index < integer_order + extra_steps
-        return tuple(
-            jnp.where(active, new, old)
-            for new, old in zip(next_state, state, strict=True)
+        return (
+            jnp.where(active, next_state[0], state[0]),
+            jnp.where(active, next_state[1], state[1]),
+            jnp.where(active, next_state[2], state[2]),
         )
 
     initial = (jnp.zeros_like(x), jnp.ones_like(x), jnp.zeros_like(x))

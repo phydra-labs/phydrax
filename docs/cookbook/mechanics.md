@@ -20,9 +20,11 @@ import phydrax as phx
 
 geom = phx.domain.Interval1d(0.0, 1.0)
 
+
 @geom.Function("x")
 def x_coordinate(x):
     return x[0]
+
 
 # u_a(x) = a x(1-x) satisfies the boundary conditions for every a.
 amplitude = geom.Parameter(0.0)
@@ -38,9 +40,7 @@ def energy_density(functions):
 
 energy = phx.terms.IntegralFunctional(
     target=phx.integration.over(geom.component()),
-    plan=phx.integration.FixedQuadraturePlan(
-        phx.integration.GaussLegendreRule(16)
-    ),
+    plan=phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(16)),
     integrand=energy_density,
     materialization_policy="fixed",
     label="poisson_energy",

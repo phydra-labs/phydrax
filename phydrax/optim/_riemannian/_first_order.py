@@ -111,14 +111,10 @@ class RiemannianStepMetrics(StrictModule):
             else jnp.asarray(pair_accepted, dtype=bool)
         )
         self.adaptive_denominator_minimum = (
-            zero
-            if adaptive_denominator_minimum is None
-            else adaptive_denominator_minimum
+            zero if adaptive_denominator_minimum is None else adaptive_denominator_minimum
         )
         self.adaptive_denominator_maximum = (
-            zero
-            if adaptive_denominator_maximum is None
-            else adaptive_denominator_maximum
+            zero if adaptive_denominator_maximum is None else adaptive_denominator_maximum
         )
 
 

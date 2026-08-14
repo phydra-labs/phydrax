@@ -289,14 +289,14 @@ class _AbstractSoftTree(AbstractArrayModel):
             point_shape = tuple(values.shape[len(self.case_shape) : -1])
             points = values.reshape((case_count, -1, self.in_size))
             raw, trees = jax.vmap(
-                lambda pts, *params: _soft_predict_case(pts, *params, self.depth)
+                lambda pts, *params: _soft_predict_case(pts, *params, depth=self.depth)
             )(points, *arrays)
             lead_shape = self.case_shape + point_shape
         else:
             point_shape = tuple(values.shape[:-1])
             points = values.reshape((-1, self.in_size))
             raw, trees = _soft_predict_case(
-                points, *(array[0] for array in arrays), self.depth
+                points, *(array[0] for array in arrays), depth=self.depth
             )
             lead_shape = point_shape
         return raw, trees, lead_shape

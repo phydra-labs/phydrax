@@ -67,15 +67,9 @@ chart = phx.metrix.CoordinateChart("inverse_adm", ("t", "x", "y", "z"))
 
 candidate = parameterization(-0.1, chart).metric()
 target = parameterization(0.35, chart).metric()
-metric_field = phx.operators.as_lorentzian_metric_field(
-    domain, candidate, var="x"
-)
-target_metric_field = phx.operators.as_lorentzian_metric_field(
-    domain, target, var="x"
-)
-target_curvature = phx.operators.domain_scalar_curvature(
-    domain, target, var="x"
-)
+metric_field = phx.operators.as_lorentzian_metric_field(domain, candidate, var="x")
+target_metric_field = phx.operators.as_lorentzian_metric_field(domain, target, var="x")
+target_curvature = phx.operators.domain_scalar_curvature(domain, target, var="x")
 
 
 def scalar_curvature_observable(candidate_field):

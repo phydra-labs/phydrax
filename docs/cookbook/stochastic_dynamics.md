@@ -46,15 +46,9 @@ state = phx.domain.Interval1d(-2.0, 2.0)
 time = phx.domain.TimeInterval(0.0, 1.0)
 domain = state @ time
 
-u = domain.Function("x", "t")(
-    lambda x, t: x[0] ** 2 - sigma_value**2 * t
-)
-drift = domain.Function("x", "t")(
-    lambda x, t: jnp.asarray([0.0])
-)
-diffusion = domain.Function("x", "t")(
-    lambda x, t: jnp.asarray([[sigma_value]])
-)
+u = domain.Function("x", "t")(lambda x, t: x[0] ** 2 - sigma_value**2 * t)
+drift = domain.Function("x", "t")(lambda x, t: jnp.asarray([0.0]))
+diffusion = domain.Function("x", "t")(lambda x, t: jnp.asarray([[sigma_value]]))
 
 backward_condition = phx.conditions.stochastic.Kolmogorov(
     "u",
@@ -118,15 +112,9 @@ has zero stationary residual:
 ```python
 theta, sigma_value = 0.8, 0.6
 state = phx.domain.Interval1d(-3.0, 3.0)
-density = state.Function("x")(
-    lambda x: jnp.exp(-theta * x[0] ** 2 / sigma_value**2)
-)
-drift = state.Function("x")(
-    lambda x: jnp.asarray([-theta * x[0]])
-)
-diffusion = state.Function("x")(
-    lambda x: jnp.asarray([[sigma_value]])
-)
+density = state.Function("x")(lambda x: jnp.exp(-theta * x[0] ** 2 / sigma_value**2))
+drift = state.Function("x")(lambda x: jnp.asarray([-theta * x[0]]))
+diffusion = state.Function("x")(lambda x: jnp.asarray([[sigma_value]]))
 
 stationary_condition = phx.conditions.stochastic.FokkerPlanck(
     "p",
@@ -166,12 +154,8 @@ model = phx.nn.models.MLP(
     key=jr.key(3),
 )
 density = domain.Model("x", "t")(model)
-drift = domain.Function("x", "t")(
-    lambda x, t: jnp.asarray([-0.8 * x[0]])
-)
-diffusion = domain.Function("x", "t")(
-    lambda x, t: jnp.asarray([[0.6]])
-)
+drift = domain.Function("x", "t")(lambda x, t: jnp.asarray([-0.8 * x[0]]))
+diffusion = domain.Function("x", "t")(lambda x, t: jnp.asarray([[0.6]]))
 
 fokker_planck_condition = phx.conditions.stochastic.FokkerPlanck(
     "p",
@@ -216,7 +200,7 @@ initial_slice = domain.component({"t": phx.domain.FixedStart()})
 initial_condition = phx.conditions.Initial(
     "p",
     initial_slice,
-    target=lambda x: jnp.exp(-x[0] ** 2) / normalizer,
+    target=lambda x: jnp.exp(-(x[0] ** 2)) / normalizer,
     evolution_var="t",
     order=0,
 )

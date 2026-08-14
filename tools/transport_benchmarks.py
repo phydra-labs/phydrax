@@ -152,7 +152,11 @@ def main() -> None:
     arguments = _parser().parse_args()
     sizes = (16, 32) if arguments.smoke else tuple(arguments.sizes)
     repeats = 1 if arguments.smoke else int(arguments.repeats)
-    iterations = min(int(arguments.iterations), 30) if arguments.smoke else int(arguments.iterations)
+    iterations = (
+        min(int(arguments.iterations), 30)
+        if arguments.smoke
+        else int(arguments.iterations)
+    )
     records = []
     for size in sizes:
         records.append(

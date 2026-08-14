@@ -21,7 +21,9 @@ def _line_graph() -> phx.graph.GraphIR:
 def _domain_and_node_batch():
     domain = phx.domain.GraphDomain(_line_graph())
     nodes = domain.component({"graph": phx.domain.Nodes()})
-    batch = nodes.sample(phx.domain.PointSampling(3, layout=phx.domain.SampleLayout((("graph",),))))
+    batch = nodes.sample(
+        phx.domain.PointSampling(3, layout=phx.domain.SampleLayout((("graph",),)))
+    )
     return domain, nodes, batch
 
 
@@ -106,9 +108,7 @@ def test_graph_heat_residual_zero_for_constant_implicit_step():
     def residual(next_fn, current_fn):
         return phx.operators.graph_heat_residual(next_fn, current_fn, dt=0.25)
 
-    condition = phx.conditions.Residual(
-        ("u_next", "u_current"), nodes, residual
-    )
+    condition = phx.conditions.Residual(("u_next", "u_current"), nodes, residual)
     source = phx.integration.per_step(
         phx.integration.mean_over(nodes),
         phx.domain.PointSampling(3, layout=structure),

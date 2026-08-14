@@ -174,7 +174,6 @@ def _smallest_tensor_indices(
     return tuple(selected)
 
 
-
 def _dual_basis_first_derivative(
     state: Array,
     nodes: Array,
@@ -206,6 +205,7 @@ def _dual_basis_first_derivative(
     if not jnp.iscomplexobj(state):
         derivative = jnp.real(derivative)
     return jnp.moveaxis(derivative, 0, axis)
+
 
 def _normalize_spatial_axes(
     axes: int | Sequence[int] | None,
@@ -298,7 +298,11 @@ class AbstractSpatialDiscretization(StrictModule):
     ) -> Array:
         selected = _normalize_spatial_axes(axes, len(self.state_shape))
         value = jnp.asarray(state)
-        if len(selected) != 3 or value.ndim <= len(self.state_shape) or value.shape[-1] != 3:
+        if (
+            len(selected) != 3
+            or value.ndim <= len(self.state_shape)
+            or value.shape[-1] != 3
+        ):
             raise ValueError("Curl requires three spatial axes and three components.")
         first, second, third = selected
         return jnp.stack(
@@ -555,9 +559,7 @@ class TensorGridDiscretization(AbstractSpatialDiscretization):
         for axis_index in selected:
             if self.basis[axis_index] == "uniform":
                 spacing = self.axes[axis_index].nodes[1] - self.axes[axis_index].nodes[0]
-                component = (
-                    jnp.roll(array, -1, axis=axis_index) - array
-                ) / spacing
+                component = (jnp.roll(array, -1, axis=axis_index) - array) / spacing
             else:
                 component = self.partial_derivative(array, axis=axis_index)
             components.append(component)

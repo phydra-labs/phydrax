@@ -253,9 +253,7 @@ class GeometricRoughPath(AbstractRoughControl):
             )
             return jax.lax.scan(combine, initial, (path_first, path_second))[0]
 
-        aggregated_first, aggregated_second = jax.vmap(one_path)(
-            flat_first, flat_second
-        )
+        aggregated_first, aggregated_second = jax.vmap(one_path)(flat_first, flat_second)
         return (
             aggregated_first.reshape(self.sample_shape + (self.dimension,)),
             aggregated_second.reshape(

@@ -15,10 +15,12 @@ cartesian = phx.metrix.CoordinateChart("cartesian", ("x", "y"))
 polar_to_cartesian = phx.metrix.DifferentiableMap(
     polar,
     cartesian,
-    lambda q: jnp.array([
-        q[0] * jnp.cos(q[1]),
-        q[0] * jnp.sin(q[1]),
-    ]),
+    lambda q: jnp.array(
+        [
+            q[0] * jnp.cos(q[1]),
+            q[0] * jnp.sin(q[1]),
+        ]
+    ),
 )
 
 point = jnp.array([2.0, 0.3])

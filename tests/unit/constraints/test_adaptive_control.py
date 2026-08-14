@@ -226,7 +226,6 @@ def test_monitor_budget_reserves_validation_for_every_proposal():
     assert not bool(policy.should_refresh(settled, 3))
 
 
-
 def test_controlled_coreset_policy_preserves_selection_metrics_through_anchors():
     domain = Interval1d(0.0, 1.0)
     structure = SampleLayout((("x",),))

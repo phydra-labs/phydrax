@@ -42,9 +42,7 @@ NeutralFunctional: TypeAlias = Callable[[Array, "DelayValues", Any], ArrayLike]
 EndpointNeutralFunctional: TypeAlias = Callable[
     [Array, Array, "DelayValues", Any], ArrayLike
 ]
-NeutralRecoveryGuess: TypeAlias = Callable[
-    [Array, Array, "DelayValues", Any], ArrayLike
-]
+NeutralRecoveryGuess: TypeAlias = Callable[[Array, Array, "DelayValues", Any], ArrayLike]
 
 
 class DelayValues(StrictModule):
@@ -208,9 +206,7 @@ class StateDependentDelay(StrictModule):
         if not isinstance(monotone_argument, bool):
             raise TypeError("monotone_argument must be a bool.")
         if not monotone_argument and root_isolation_step is None:
-            raise ValueError(
-                "Nonmonotone delayed arguments require root_isolation_step."
-            )
+            raise ValueError("Nonmonotone delayed arguments require root_isolation_step.")
         lower = jnp.asarray(minimum_delay, dtype=float)
         if lower.shape != ():
             raise ValueError("minimum_delay must be scalar.")
@@ -785,8 +781,7 @@ def _initial_term_value(
             value = _validated_geometry_point(
                 state_geometry,
                 value,
-                f"FunctionalDelay {term.name!r} returned a point outside "
-                "state_geometry.",
+                f"FunctionalDelay {term.name!r} returned a point outside state_geometry.",
             )
         if (
             state_geometry is not None
@@ -1182,7 +1177,6 @@ class DelayDifferentialProblem(StrictModule):
     def has_functional_delays(self) -> bool:
         return any(isinstance(term, FunctionalDelay) for term in self.delay_terms)
 
-
     @property
     def has_distributed_delays(self) -> bool:
         return any(isinstance(term, DistributedDelay) for term in self.delay_terms)
@@ -1335,9 +1329,7 @@ class NeutralDelayProblem(StrictModule):
                 for term in terms
             ),
         )
-        retarded = jnp.asarray(
-            neutral_functional(self.t0, initial_memory, self.args)
-        )
+        retarded = jnp.asarray(neutral_functional(self.t0, initial_memory, self.args))
         if retarded.shape != self.state_shape:
             raise ValueError("neutral_functional must preserve the state shape.")
         if endpoint_neutral is None:
@@ -1380,7 +1372,6 @@ class NeutralDelayProblem(StrictModule):
     def implicit_recovery(self) -> bool:
         return self.endpoint_neutral is not None
 
-
     @property
     def stochastic(self) -> bool:
         return False
@@ -1396,9 +1387,7 @@ class NeutralDelayProblem(StrictModule):
     @property
     def minimum_delay(self) -> Array:
         return jnp.min(
-            jnp.stack(
-                tuple(jnp.asarray(term.minimum_delay) for term in self.delay_terms)
-            )
+            jnp.stack(tuple(jnp.asarray(term.minimum_delay) for term in self.delay_terms))
         )
 
     @property
@@ -1409,9 +1398,7 @@ class NeutralDelayProblem(StrictModule):
         ):
             return None
         return jnp.max(
-            jnp.stack(
-                tuple(jnp.asarray(term.maximum_delay) for term in self.delay_terms)
-            )
+            jnp.stack(tuple(jnp.asarray(term.maximum_delay) for term in self.delay_terms))
         )
 
     @property
@@ -1422,10 +1409,11 @@ class NeutralDelayProblem(StrictModule):
     def has_functional_delays(self) -> bool:
         return False
 
-
     @property
     def has_distributed_delays(self) -> bool:
         return False
+
+
 __all__ = [
     "ConstantDelay",
     "EndpointNeutralFunctional",
@@ -1448,5 +1436,4 @@ __all__ = [
     "PointDelay",
     "StateDependentDelay",
     "StateDependentLag",
-
 ]

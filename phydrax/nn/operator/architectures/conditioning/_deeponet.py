@@ -266,7 +266,9 @@ class PODBasis(StrictModule, NonTrainableState):
                 f"{query_layout.sample_shape} and {basis.shape[:-2]}."
             )
         if query_layout is not None and query_layout.geometry_case_shape:
-            raise ValueError("POD query layouts must be shared rather than case-dependent.")
+            raise ValueError(
+                "POD query layouts must be shared rather than case-dependent."
+            )
         self.values = basis
         self.offset = offset_
         self.has_offset = has_offset
@@ -274,7 +276,9 @@ class PODBasis(StrictModule, NonTrainableState):
             () if query_layout is None else tuple(axis.name for axis in query_layout.axes)
         )
         self.query_axis_bases = (
-            () if query_layout is None else tuple(axis.basis for axis in query_layout.axes)
+            ()
+            if query_layout is None
+            else tuple(axis.basis for axis in query_layout.axes)
         )
         self.query_axis_periodic = (
             ()
@@ -287,7 +291,9 @@ class PODBasis(StrictModule, NonTrainableState):
             else int(query_layout.coordinates.shape[-1])
         )
         self.query_axis_nodes = (
-            () if query_layout is None else tuple(axis.nodes for axis in query_layout.axes)
+            ()
+            if query_layout is None
+            else tuple(axis.nodes for axis in query_layout.axes)
         )
         self.query_coordinates = (
             None if query_layout is None else query_layout.coordinates
@@ -310,8 +316,7 @@ class PODBasis(StrictModule, NonTrainableState):
         if self.query_axis_names and (
             tuple(axis.name for axis in query.axes) != self.query_axis_names
             or tuple(axis.basis for axis in query.axes) != self.query_axis_bases
-            or tuple(axis.periodic for axis in query.axes)
-            != self.query_axis_periodic
+            or tuple(axis.periodic for axis in query.axes) != self.query_axis_periodic
         ):
             raise ValueError("POD basis query axis layout does not match its fit layout.")
         if self.query_coordinate_dimension is not None and (
@@ -326,7 +331,9 @@ class PODBasis(StrictModule, NonTrainableState):
             or self.query_coordinates is not None
             or self.query_weights is not None
         ) and query.geometry_case_shape:
-            raise ValueError("POD basis evaluation requires one shared fixed query layout.")
+            raise ValueError(
+                "POD basis evaluation requires one shared fixed query layout."
+            )
 
     def _validated_query_value(
         self,
@@ -340,7 +347,9 @@ class PODBasis(StrictModule, NonTrainableState):
                 self.query_axis_nodes, (axis.nodes for axis in query.axes), strict=True
             ):
                 if fitted.shape != current.shape:
-                    raise ValueError("POD query axis node shapes do not match the fit layout.")
+                    raise ValueError(
+                        "POD query axis node shapes do not match the fit layout."
+                    )
                 validated = eqx.error_if(
                     validated,
                     jnp.any(fitted != current),

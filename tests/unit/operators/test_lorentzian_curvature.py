@@ -73,9 +73,7 @@ def test_domain_curvature_is_differentiable_through_trainable_metric_fields():
         ).func(point)
 
     expansion_rate = jnp.asarray(0.2)
-    scalar, derivative = jax.jit(jax.value_and_grad(scalar_from_rate))(
-        expansion_rate
-    )
+    scalar, derivative = jax.jit(jax.value_and_grad(scalar_from_rate))(expansion_rate)
     metric = phx.metrix.LorentzianMetric(
         _TrainableFlatFLRW(expansion_rate),
         chart=chart,

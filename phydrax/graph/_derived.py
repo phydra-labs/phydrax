@@ -298,10 +298,16 @@ def mesh_to_dual_graph(
         "distance": jnp.asarray(distance, dtype=float),
         "unit": jnp.asarray(unit, dtype=float),
     }
-    boundary = sorted(face_indices[0] for face_indices in edge_to_faces.values() if len(face_indices) == 1)
+    boundary = sorted(
+        face_indices[0]
+        for face_indices in edge_to_faces.values()
+        if len(face_indices) == 1
+    )
     boundary_faces = np.asarray(sorted(set(boundary)), dtype=np.int32)
     all_faces = np.arange(n_face, dtype=np.int32)
-    interior_faces = np.setdiff1d(all_faces, boundary_faces, assume_unique=False).astype(np.int32)
+    interior_faces = np.setdiff1d(all_faces, boundary_faces, assume_unique=False).astype(
+        np.int32
+    )
     graph = GraphIR(
         nodes=nodes,
         edges=edges,

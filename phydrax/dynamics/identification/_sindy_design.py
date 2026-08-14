@@ -257,12 +257,18 @@ def _make_design(
     )
 
 
+def _required_input_valid(data: TrajectoryData, /) -> Array:
+    if data.input_valid is None:
+        raise RuntimeError("Trajectory inputs are missing their validity mask.")
+    return data.input_valid
+
+
 def _sample_inputs(data: TrajectoryData, count: int, /):
     if data.inputs is None:
         return None, jnp.ones(data.case_shape + (count,), dtype=bool)
     return (
         _time_values(data, data.inputs, slice(0, count)),
-        data.input_valid[..., :count],
+        _required_input_valid(data)[..., :count],
     )
 
 
@@ -411,12 +417,13 @@ def _interval_features(
         source_input = _time_values(data, data.inputs, interval)
         target_input = _time_values(data, data.inputs, interval + 1)
         input_valid = (
-            data.input_valid[..., interval] & data.input_valid[..., interval + 1]
+            _required_input_valid(data)[..., interval]
+            & _required_input_valid(data)[..., interval + 1]
         )
     else:
         source_input = _time_values(data, data.inputs, interval)
         target_input = source_input
-        input_valid = data.input_valid[..., interval]
+        input_valid = _required_input_valid(data)[..., interval]
     source = library.evaluate(source_state, source_input)
     target = library.evaluate(target_state, target_input)
     valid = (

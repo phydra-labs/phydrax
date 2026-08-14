@@ -19,8 +19,7 @@ def _bell_fields():
     zero = time.Function()(jnp.asarray([1.0, 0.0], dtype=complex))
     one = time.Function()(jnp.asarray([0.0, 1.0], dtype=complex))
     bell_state = (
-        phx.operators.tensor_product(zero, zero)
-        + phx.operators.tensor_product(one, one)
+        phx.operators.tensor_product(zero, zero) + phx.operators.tensor_product(one, one)
     ) / jnp.sqrt(2.0)
 
     @time.Function()
@@ -73,7 +72,9 @@ def test_bell_state_local_expectations_vanish_and_correlations_are_unit():
             subsystem_dims=(2, 2),
         )
         assert jnp.allclose(phx.operators.density_expectation(density, first).func(), 0.0)
-        assert jnp.allclose(phx.operators.density_expectation(density, second).func(), 0.0)
+        assert jnp.allclose(
+            phx.operators.density_expectation(density, second).func(), 0.0
+        )
 
     zz = phx.operators.tensor_product(sigma_z, sigma_z)
     assert jnp.allclose(phx.operators.density_expectation(density, zz).func(), 1.0)

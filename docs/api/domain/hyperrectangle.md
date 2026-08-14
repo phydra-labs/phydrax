@@ -28,13 +28,16 @@ vector.
         ]
     )
 
+
     @features.Function("x")
     def observed(x):
         return jnp.sum(x)
 
+
     @features.Function("x")
     def u(x):
         return jnp.sum(x)
+
 
     component = features.component()
     batch = component.points(points)

@@ -126,10 +126,14 @@ def solve_caputo_fractional(
         raise TypeError("problem must be a CaputoFractionalProblem.")
     grid = _time_grid(problem.t0, problem.t1, times)
     num_times = int(grid.size)
-    states = jnp.zeros(
-        (num_times,) + problem.state_shape,
-        dtype=problem.initial_state.dtype,
-    ).at[0].set(problem.initial_state)
+    states = (
+        jnp.zeros(
+            (num_times,) + problem.state_shape,
+            dtype=problem.initial_state.dtype,
+        )
+        .at[0]
+        .set(problem.initial_state)
+    )
     normalization = jsp.special.gamma(problem.order + 1.0)
 
     def outer(index, state_buffer):

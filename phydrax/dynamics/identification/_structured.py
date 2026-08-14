@@ -14,6 +14,13 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import canonical_fingerprint
 from ..._numerics import normalize_least_squares_design
 from ..._strict import StrictModule
+from ...linalg import (
+    DenseLinearOperator,
+    DenseSVD,
+    LeastSquaresProblem,
+    LinearSolvePolicy,
+    solve,
+)
 from ._sindy_design import SINDyDesign
 from ._sparse_regression import (
     AbstractSparseRegression,
@@ -356,10 +363,11 @@ class StructuredSequentialThresholdedLeastSquares(AbstractSparseRegression):
         repeated_root_weight = jnp.tile(root_weight, design.output_size)
         weighted_matrix = repeated_root_weight[:, None] * block_matrix
         weighted_response = repeated_root_weight * response
-        hessian = weighted_matrix.T @ weighted_matrix + self.ridge * jnp.eye(
+        weighted_adjoint = jnp.conj(jnp.swapaxes(weighted_matrix, 0, 1))
+        hessian = weighted_adjoint @ weighted_matrix + self.ridge * jnp.eye(
             coefficient_count, dtype=design.matrix.dtype
         )
-        moment = weighted_matrix.T @ weighted_response
+        moment = weighted_adjoint @ weighted_response
         physical_scale = (target_scale[:, None] / normalized.scale[None, :]).reshape(
             (-1,)
         )
@@ -377,37 +385,57 @@ class StructuredSequentialThresholdedLeastSquares(AbstractSparseRegression):
         group_history = []
         converged = False
 
-        def solve(active_mask: Array) -> Array:
+        def solve_active(active_mask: Array) -> Array:
             active_indices = np.flatnonzero(np.asarray(active_mask))
+            coefficient_dtype = jnp.result_type(hessian, moment, constraint_rhs)
             if active_indices.size == 0:
-                return jnp.zeros((coefficient_count,), dtype=design.matrix.dtype)
+                return jnp.zeros((coefficient_count,), dtype=coefficient_dtype)
             indices = jnp.asarray(active_indices)
             reduced_hessian = hessian[indices[:, None], indices[None, :]]
             reduced_moment = moment[indices]
             reduced_constraint = normalized_constraint[:, indices]
             if reduced_constraint.shape[0] == 0:
-                reduced = jnp.linalg.lstsq(reduced_hessian, reduced_moment, rcond=None)[0]
+                solve_dtype = jnp.result_type(reduced_hessian, reduced_moment)
+                reduced = solve(
+                    LeastSquaresProblem(
+                        DenseLinearOperator(reduced_hessian.astype(solve_dtype))
+                    ),
+                    reduced_moment.astype(solve_dtype),
+                    policy=LinearSolvePolicy(DenseSVD()),
+                ).value
             else:
+                solve_dtype = jnp.result_type(
+                    reduced_hessian,
+                    reduced_constraint,
+                    reduced_moment,
+                    constraint_rhs,
+                )
+                reduced_hessian = reduced_hessian.astype(solve_dtype)
+                reduced_constraint = reduced_constraint.astype(solve_dtype)
                 zero = jnp.zeros(
                     (
                         reduced_constraint.shape[0],
                         reduced_constraint.shape[0],
                     ),
-                    dtype=hessian.dtype,
+                    dtype=solve_dtype,
                 )
                 kkt = jnp.block(
                     [
                         [
                             reduced_hessian,
-                            jnp.swapaxes(reduced_constraint, 0, 1),
+                            jnp.conj(jnp.swapaxes(reduced_constraint, 0, 1)),
                         ],
                         [reduced_constraint, zero],
                     ]
                 )
-                right = jnp.concatenate((reduced_moment, constraint_rhs))
-                reduced = jnp.linalg.lstsq(kkt, right, rcond=None)[0][
-                    : active_indices.size
-                ]
+                right = jnp.concatenate((reduced_moment, constraint_rhs)).astype(
+                    solve_dtype
+                )
+                reduced = solve(
+                    LeastSquaresProblem(DenseLinearOperator(kkt)),
+                    right,
+                    policy=LinearSolvePolicy(DenseSVD()),
+                ).value[: active_indices.size]
             return (
                 jnp.zeros((coefficient_count,), dtype=reduced.dtype)
                 .at[indices]
@@ -415,7 +443,7 @@ class StructuredSequentialThresholdedLeastSquares(AbstractSparseRegression):
             )
 
         for _ in range(self.max_iterations):
-            coefficients = solve(active)
+            coefficients = solve_active(active)
             group_norms = jnp.stack(
                 tuple(
                     jnp.linalg.norm(coefficients[jnp.asarray(group)]) for group in groups
@@ -459,7 +487,7 @@ class StructuredSequentialThresholdedLeastSquares(AbstractSparseRegression):
                 break
             active = next_active
         if not converged:
-            coefficients = solve(active)
+            coefficients = solve_active(active)
         physical = (physical_scale * coefficients).reshape(
             (design.output_size, design.num_features)
         )

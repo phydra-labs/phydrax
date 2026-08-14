@@ -190,7 +190,6 @@ def test_continuous_sparse_gate_is_distinct_smooth_jittable_and_vmap_safe():
     assert result.gradient_contract.fit_mode == "relaxed"
 
 
-
 def test_continuous_sparse_gate_hyperparameters_are_validated_array_leaves():
     recipe = ContinuousSparseGateRecipe(
         temperature=jnp.asarray(0.2),
@@ -218,24 +217,28 @@ def test_continuous_sparse_gate_hyperparameters_are_validated_array_leaves():
     batch = _batch()
     with pytest.raises(Exception, match="temperature must be finite and positive"):
         invalid_gates = jax.jit(
-            lambda temperature: ContinuousSparseGateRecipe(
-                temperature=temperature,
-                sparsity=0.4,
+            lambda temperature: (
+                ContinuousSparseGateRecipe(
+                    temperature=temperature,
+                    sparsity=0.4,
+                )
+                .fit_batch(batch)
+                .as_trainable()
+                .gates
             )
-            .fit_batch(batch)
-            .as_trainable()
-            .gates
         )(jnp.asarray(0.0))
         jax.block_until_ready(invalid_gates)
     with pytest.raises(Exception, match=r"sparsity must be finite and lie in \[0, 1\]"):
         invalid_gates = jax.jit(
-            lambda sparsity: ContinuousSparseGateRecipe(
-                temperature=0.2,
-                sparsity=sparsity,
+            lambda sparsity: (
+                ContinuousSparseGateRecipe(
+                    temperature=0.2,
+                    sparsity=sparsity,
+                )
+                .fit_batch(batch)
+                .as_trainable()
+                .gates
             )
-            .fit_batch(batch)
-            .as_trainable()
-            .gates
         )(jnp.asarray(1.1))
         jax.block_until_ready(invalid_gates)
 
@@ -254,11 +257,16 @@ def test_continuous_sparse_gate_gradients_match_its_conditional_contract():
             sample_mask=batch.sample_mask,
             sample_weight=weights_,
         )
-        gates = ContinuousSparseGateRecipe(
-            temperature=temperature,
-            sparsity=sparsity,
-            scorer=_smooth_feature_scores,
-        ).fit_batch(candidate).as_trainable().gates
+        gates = (
+            ContinuousSparseGateRecipe(
+                temperature=temperature,
+                sparsity=sparsity,
+                scorer=_smooth_feature_scores,
+            )
+            .fit_batch(candidate)
+            .as_trainable()
+            .gates
+        )
         return jnp.dot(gates, jnp.asarray([1.0, -0.5, 2.0]))
 
     gradients = jax.grad(objective, argnums=(0, 1, 2, 3, 4))(
@@ -311,6 +319,7 @@ def test_continuous_sparse_gate_preserves_values_and_stays_finite_at_degeneracy(
     assert jnp.all(jnp.isfinite(zero_variance.as_trainable().gates))
     assert equal.gradient_contract.fit_features == "conditional"
     assert zero_variance.gradient_contract.fit_targets == "conditional"
+
 
 def test_selector_capacity_scores_weights_and_importance_fail_closed():
     batch = _batch()

@@ -303,6 +303,8 @@ class LinearModelCoregionalizationKernel(AbstractMultiOutputKernel):
                 raise ValueError("LMC components must use identical output names.")
             spatial_kernels.append(spatial_kernel)
             coregionalizations.append(coregionalization)
+        if output_names is None:
+            raise RuntimeError("LMC construction produced no output vocabulary.")
         self.spatial_kernels = tuple(spatial_kernels)
         self.coregionalizations = tuple(coregionalizations)
         self._output_names = output_names

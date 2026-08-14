@@ -44,9 +44,7 @@ pde = phx.conditions.Residual(
 boundary_value = phx.conditions.Dirichlet(
     "u", boundary, target=lambda x: x[0] ** 2, label="boundary"
 )
-mass = phx.conditions.Moment(
-    "u", interior, lambda u: u, target=2.0 / 3.0, label="mass"
-)
+mass = phx.conditions.Moment("u", interior, lambda u: u, target=2.0 / 3.0, label="mass")
 ```
 
 Physical condition families are grouped by field of use:

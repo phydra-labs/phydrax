@@ -34,12 +34,9 @@ def test_affine_measurement_likelihood_matches_normalized_scalar_gaussian():
         observation_covariance=jnp.asarray([[observation_variance]]),
     )
     effective_variance = observation_variance + parameters["slope"] ** 2 * input_variance
-    residuals = targets - (
-        parameters["intercept"] + parameters["slope"] * inputs[:, 0]
-    )
+    residuals = targets - (parameters["intercept"] + parameters["slope"] * inputs[:, 0])
     expected = -0.5 * (
-        residuals**2 / effective_variance
-        + jnp.log(2.0 * jnp.pi * effective_variance)
+        residuals**2 / effective_variance + jnp.log(2.0 * jnp.pi * effective_variance)
     )
 
     assert jnp.allclose(term.per_case_log_prob(parameters), expected)
@@ -55,17 +52,14 @@ def test_multivariate_correlated_measurement_likelihood_matches_dense_reference(
     observation_covariance = jnp.asarray([[0.08, -0.02], [-0.02, 0.12]])
     offset = jnp.asarray([0.1, -0.2])
     term = phx.uq.LinearizedGaussianMeasurementLikelihood(
-        lambda parameters, value: parameters["matrix"] @ value
-        + parameters["offset"],
+        lambda parameters, value: parameters["matrix"] @ value + parameters["offset"],
         inputs,
         targets,
         input_covariance=input_covariance,
         observation_covariance=observation_covariance,
     )
     parameters = {"matrix": matrix, "offset": offset}
-    effective_covariance = (
-        observation_covariance + matrix @ input_covariance @ matrix.T
-    )
+    effective_covariance = observation_covariance + matrix @ input_covariance @ matrix.T
     expected = jnp.asarray(
         [
             _normal_log_density(target - (matrix @ value + offset), effective_covariance)
@@ -76,13 +70,19 @@ def test_multivariate_correlated_measurement_likelihood_matches_dense_reference(
     assert jnp.allclose(term.per_case_log_prob(parameters), expected)
     assert jnp.allclose(
         jax.grad(term.log_prob)(parameters)["matrix"],
-        jax.grad(lambda value: jnp.sum(jnp.asarray([
-            _normal_log_density(
-                target - (value @ measured + offset),
-                observation_covariance + value @ input_covariance @ value.T,
+        jax.grad(
+            lambda value: jnp.sum(
+                jnp.asarray(
+                    [
+                        _normal_log_density(
+                            target - (value @ measured + offset),
+                            observation_covariance + value @ input_covariance @ value.T,
+                        )
+                        for measured, target in zip(inputs, targets, strict=True)
+                    ]
+                )
             )
-            for measured, target in zip(inputs, targets, strict=True)
-        ])))(matrix),
+        )(matrix),
         rtol=1e-10,
         atol=1e-10,
     )

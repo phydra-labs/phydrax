@@ -13,28 +13,18 @@ import phydrax as phx
 
 
 def _square_complex(*, shift=0.0):
-    vertices = np.asarray(
-        [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
-    )
+    vertices = np.asarray([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
     vertices = vertices + float(shift)
     faces = np.asarray([[0, 1, 2], [0, 2, 3]], dtype=np.int32)
     return phx.graph.triangle_mesh_to_cochain_complex(vertices, faces)
 
 
 def _annulus_complex(*, harmonics=False):
-    outer = np.asarray(
-        [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]
-    )
+    outer = np.asarray([[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]])
     vertices = np.concatenate((outer, 0.4 * outer), axis=0)
     faces = np.asarray(
-        [
-            (index, (index + 1) % 4, 4 + (index + 1) % 4)
-            for index in range(4)
-        ]
-        + [
-            (index, 4 + (index + 1) % 4, 4 + index)
-            for index in range(4)
-        ],
+        [(index, (index + 1) % 4, 4 + (index + 1) % 4) for index in range(4)]
+        + [(index, 4 + (index + 1) % 4, 4 + index) for index in range(4)],
         dtype=np.int32,
     )
     complex_ir = phx.graph.triangle_mesh_to_cochain_complex(vertices, faces)
@@ -74,9 +64,7 @@ def _fields():
 
 def _task(fields=None):
     resolved_fields = _fields() if fields is None else tuple(fields)
-    query_names = tuple(
-        field.query_name for field in resolved_fields if field.is_target
-    )
+    query_names = tuple(field.query_name for field in resolved_fields if field.is_target)
     return phx.nn.operator.OperatorTask(
         "cochain-map",
         fields=resolved_fields,
@@ -154,9 +142,7 @@ def _dataset(batch):
             "vertex": "vertex_query",
             "edge": "edge_query",
         },
-        specs={
-            field.name: field.output_spec for field in fields if field.is_target
-        },
+        specs={field.name: field.output_spec for field in fields if field.is_target},
     )
     return phx.nn.operator.training.OperatorDataset(batch, targets)
 
@@ -216,9 +202,10 @@ def test_cochain_topology_survives_materialization_padding_stacking_and_slicing(
     assert topology.kind == "cell_complex"
     assert topology.site == "cell"
     assert topology.case_shape == (2,)
-    assert topology.graph_fingerprint == restacked.query(
-        "vertex_query"
-    ).topology.graph_fingerprint
+    assert (
+        topology.graph_fingerprint
+        == restacked.query("vertex_query").topology.graph_fingerprint
+    )
     assert jnp.array_equal(
         padded.topology.sample_entities,
         jnp.asarray([4, 5, 6, 7, 8, -1, -1]),
@@ -248,9 +235,7 @@ def test_cochain_capability_contract_accepts_typed_fields_and_rejects_mismatch()
         inputs=batch.inputs,
         queries={
             "vertex_query": batch.query("vertex_query"),
-            "edge_query": _batch(_square_complex(shift=0.2), cases=2).query(
-                "edge_query"
-            ),
+            "edge_query": _batch(_square_complex(shift=0.2), cases=2).query("edge_query"),
         },
         case_axes=batch.case_axes,
         case_shape=batch.case_shape,
@@ -275,9 +260,9 @@ def test_cochain_operator_is_multi_output_batched_jittable_and_differentiable():
     model = _model()
 
     prediction = model.predict(batch)
-    compiled = eqx.filter_jit(
-        lambda current, value: current.predict_prevalidated(value)
-    )(model, batch)
+    compiled = eqx.filter_jit(lambda current, value: current.predict_prevalidated(value))(
+        model, batch
+    )
 
     def objective(edge_values):
         changed = eqx.tree_at(
@@ -629,9 +614,12 @@ def test_cochain_residual_loss_scatters_sparse_fields_and_locks_topology():
     assert jnp.isfinite(value)
     assert value > 0.0
     assert term.fingerprint == _source_matching_loss().fingerprint
-    assert term.fingerprint != _source_matching_loss(
-        identity="tests.cochain.changed_source_matching"
-    ).fingerprint
+    assert (
+        term.fingerprint
+        != _source_matching_loss(
+            identity="tests.cochain.changed_source_matching"
+        ).fingerprint
+    )
 
     locked = _source_matching_loss(topology_fingerprint="not-this-topology")
     with pytest.raises(ValueError, match="does not match its declared fingerprint"):

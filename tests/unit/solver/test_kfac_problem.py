@@ -37,6 +37,7 @@ def _zero_model(model):
         model = eqx.tree_at(lambda item: item.layers[index].bias, model, bias)
     return model
 
+
 def _residual_term(domain, fields, operator, *, samples, density=None):
     condition = phx.conditions.Residual(fields, domain.component(), operator)
     return phx.terms.ResidualPenalty(
@@ -47,6 +48,7 @@ def _residual_term(domain, fields, operator, *, samples, density=None):
         ),
         density=density,
     )
+
 
 def _materialize_terms(solver, *, key):
     prepared = solver.objective.prepare_training(

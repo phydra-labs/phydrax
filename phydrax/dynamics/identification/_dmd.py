@@ -34,7 +34,11 @@ def _adjoint(matrix: Array, /) -> Array:
     return jnp.swapaxes(jnp.conj(matrix), -1, -2)
 
 
-def _flatten_event(values: Array, event_shape: tuple[int, ...], /) -> Array:
+def _flatten_event(
+    values: Array,
+    event_shape: tuple[int, ...],
+    /,
+) -> tuple[Array, tuple[int, ...]]:
     event_rank = len(event_shape)
     leading = values.shape if event_rank == 0 else values.shape[:-event_rank]
     size = int(np.prod(event_shape)) if event_shape else 1
@@ -162,10 +166,13 @@ class DMDResult(StrictModule):
         if self.input_matrix is not None:
             if inputs is None:
                 raise ValueError("inputs are required by this controlled DMD fit.")
+            input_layout = self.input_layout
+            if input_layout is None:
+                raise RuntimeError("Controlled DMD result is missing its input layout.")
             predicted = predicted + jnp.einsum(
                 "ij,...j->...i",
                 self.input_matrix,
-                jnp.asarray(inputs).reshape(batch + (self.input_layout.size,)),
+                jnp.asarray(inputs).reshape(batch + (input_layout.size,)),
             )
         elif inputs is not None:
             raise ValueError("This DMD fit has no input model.")
@@ -218,6 +225,8 @@ def fit_dmd(
     transitions, source, target, mask, weights, roots = _weighted_snapshots(data)
     input_values = None
     if transitions.inputs is not None:
+        if data.input_layout is None:
+            raise RuntimeError("Controlled trajectory is missing its input layout.")
         input_values, _ = _flatten_event(transitions.inputs, data.input_layout.shape)
         input_values = jnp.where(mask[:, None], input_values, 0.0)
     design = (
@@ -423,11 +432,14 @@ class EDMDResult(StrictModule):
         if self.input_matrix is not None:
             if inputs is None:
                 raise ValueError("inputs are required by this controlled EDMD fit.")
+            input_layout = self.input_layout
+            if input_layout is None:
+                raise RuntimeError("Controlled EDMD result is missing its input layout.")
             batch = evaluation.valid.shape
             features = features + jnp.einsum(
                 "ij,...j->...i",
                 self.input_matrix,
-                jnp.asarray(inputs).reshape(batch + (self.input_layout.size,)),
+                jnp.asarray(inputs).reshape(batch + (input_layout.size,)),
             )
         elif inputs is not None:
             raise ValueError("This EDMD fit has no input model.")
@@ -494,6 +506,8 @@ def fit_edmd(
     input_values = None
     design = source_features
     if transitions.inputs is not None:
+        if data.input_layout is None:
+            raise RuntimeError("Controlled trajectory is missing its input layout.")
         input_values, _ = _flatten_event(transitions.inputs, data.input_layout.shape)
         design = jnp.concatenate((source_features, input_values), axis=-1)
     evolution = solve_weighted_least_squares(

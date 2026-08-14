@@ -219,6 +219,8 @@ class TrajectoryData(StrictModule):
             resolved_input_valid = None
             resolved_input_alignment = None
         else:
+            if input_layout is None:
+                raise RuntimeError("Validated input_layout unexpectedly absent.")
             resolved_input_alignment = input_alignment
             input_count = capacity if input_alignment == "samples" else capacity - 1
             input_values = jnp.asarray(inputs)

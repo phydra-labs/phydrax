@@ -37,9 +37,7 @@ def spatial_inner_product(
     joined = u.domain.join(v.domain)
     u2 = u.promote(joined)
     v2 = v.promote(joined)
-    deps = tuple(
-        label for label in joined.labels if label in u2.deps or label in v2.deps
-    )
+    deps = tuple(label for label in joined.labels if label in u2.deps or label in v2.deps)
     indices = {label: index for index, label in enumerate(deps)}
     u_positions = tuple(indices[label] for label in u2.deps)
     v_positions = tuple(indices[label] for label in v2.deps)
@@ -82,9 +80,7 @@ def spatial_lp_norm(
         metadata={},
     )
     value = integral(integrand, target_or_realization, plan, **kwargs)
-    return cx.Field(
-        jnp.power(jnp.asarray(value.data), 1.0 / exponent), dims=value.dims
-    )
+    return cx.Field(jnp.power(jnp.asarray(value.data), 1.0 / exponent), dims=value.dims)
 
 
 def spatial_l2_norm(
@@ -95,9 +91,7 @@ def spatial_l2_norm(
     **kwargs: Any,
 ) -> cx.Field:
     """Compute the L-2 norm under a typed integration execution."""
-    return spatial_lp_norm(
-        u, target_or_realization, plan, p=2.0, **kwargs
-    )
+    return spatial_lp_norm(u, target_or_realization, plan, p=2.0, **kwargs)
 
 
 __all__ = [

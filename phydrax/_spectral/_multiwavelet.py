@@ -157,23 +157,21 @@ class AlpertMultiwaveletTransform(StrictModule, NonTrainableState):
         samples = padded.reshape(
             padded.shape[:-2] + (cells, self.order, padded.shape[-1])
         )
-        approximation = oe.contract(
-            "mp,...cpi->...cmi", self.base_analysis, samples
-        )
+        approximation = oe.contract("mp,...cpi->...cmi", self.base_analysis, samples)
         details: list[tuple[Array, ...]] = []
         shapes: list[tuple[int, ...]] = []
         for _ in range(self.levels):
             cells = int(approximation.shape[-3])
             if cells % 2:
-                raise ValueError("Multiwavelet cell count must be divisible at every level.")
+                raise ValueError(
+                    "Multiwavelet cell count must be divisible at every level."
+                )
             shapes.append((cells, num_points, padded_points))
             paired = approximation.reshape(
                 approximation.shape[:-3]
                 + (cells // 2, 2 * self.order, approximation.shape[-1])
             )
-            transformed = oe.contract(
-                "mn,...pni->...pmi", self.level_analysis, paired
-            )
+            transformed = oe.contract("mn,...pni->...pmi", self.level_analysis, paired)
             approximation = transformed[..., : self.order, :]
             details.append((transformed[..., self.order :, :],))
         return MultiresolutionCoefficients(
@@ -190,7 +188,9 @@ class AlpertMultiwaveletTransform(StrictModule, NonTrainableState):
         if coefficients.transform_fingerprint != self.fingerprint:
             raise ValueError("Multiwavelet coefficients belong to a different transform.")
         if coefficients.levels != self.levels:
-            raise ValueError("Multiwavelet coefficient depth does not match this transform.")
+            raise ValueError(
+                "Multiwavelet coefficient depth does not match this transform."
+            )
         approximation = jnp.asarray(coefficients.scaling)
         num_points = coefficients.reconstruction_shapes[-1][1]
         padded_points = coefficients.reconstruction_shapes[-1][2]
@@ -200,19 +200,17 @@ class AlpertMultiwaveletTransform(StrictModule, NonTrainableState):
             strict=True,
         ):
             if len(detail_level) != 1:
-                raise ValueError("Alpert levels require exactly one polynomial detail bank.")
+                raise ValueError(
+                    "Alpert levels require exactly one polynomial detail bank."
+                )
             detail = detail_level[0]
             merged = jnp.concatenate((approximation, detail), axis=-2)
             fine = oe.contract("nm,...pmi->...pni", self.level_synthesis, merged)
             approximation = fine.reshape(
                 fine.shape[:-3] + (shape[0], self.order, fine.shape[-1])
             )
-        samples = oe.contract(
-            "pm,...cmi->...cpi", self.base_synthesis, approximation
-        )
-        output = samples.reshape(
-            samples.shape[:-3] + (padded_points, samples.shape[-1])
-        )
+        samples = oe.contract("pm,...cmi->...cpi", self.base_synthesis, approximation)
+        output = samples.reshape(samples.shape[:-3] + (padded_points, samples.shape[-1]))
         return output[..., :num_points, :]
 
     def __call__(self, values: ArrayLike, /) -> MultiresolutionCoefficients:

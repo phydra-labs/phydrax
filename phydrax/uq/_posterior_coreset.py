@@ -149,9 +149,9 @@ def thin_posterior(
         num_chains,
         num_draws,
     )
-    scores = jax.vmap(jax.vmap(jax.grad(lambda value: result.problem.log_density(unravel(value)))))(
-        flat_samples
-    )
+    scores = jax.vmap(
+        jax.vmap(jax.grad(lambda value: result.problem.log_density(unravel(value))))
+    )(flat_samples)
     if bool(jnp.any(~jnp.isfinite(scores))):
         raise ValueError("Posterior score evaluation produced non-finite values.")
     scale = _resolve_length_scale(flat_samples, method.length_scale)
@@ -218,7 +218,9 @@ def _resolve_length_scale(samples: Array, supplied: Array | None, /) -> Array:
     if supplied is not None:
         scale = jnp.broadcast_to(jnp.asarray(supplied, dtype=float), (dimension,))
         if bool(jnp.any((~jnp.isfinite(scale)) | (scale <= 0.0))):
-            raise ValueError("length_scale must broadcast to finite positive coordinates.")
+            raise ValueError(
+                "length_scale must broadcast to finite positive coordinates."
+            )
         return scale
     scale = jnp.std(samples.reshape((-1, dimension)), axis=0)
     floor = jnp.sqrt(jnp.finfo(samples.dtype).eps)
@@ -245,14 +247,9 @@ def _stein_kernel(
         (right_score - left_score) * scaled_difference,
         axis=-1,
     )
-    mixed_trace = (
-        -4.0
-        * beta
-        * (beta - 1.0)
-        * jnp.power(radius, beta - 2.0)
-        * jnp.sum(scaled_difference * scaled_difference, axis=-1)
-        - 2.0 * beta * jnp.power(radius, beta - 1.0) * jnp.sum(precision)
-    )
+    mixed_trace = -4.0 * beta * (beta - 1.0) * jnp.power(radius, beta - 2.0) * jnp.sum(
+        scaled_difference * scaled_difference, axis=-1
+    ) - 2.0 * beta * jnp.power(radius, beta - 1.0) * jnp.sum(precision)
     return score_term + gradient_term + mixed_trace
 
 

@@ -87,7 +87,9 @@ def test_density_from_factor_rejects_zero_and_invalid_shapes():
     zero = phx.operators.density_from_factor(time.Function()(jnp.zeros((2, 1))))
     invalid = phx.operators.density_from_factor(time.Function()(jnp.ones((2,))))
 
-    with pytest.raises((eqx.EquinoxRuntimeError, ValueError), match="nonzero Frobenius norm"):
+    with pytest.raises(
+        (eqx.EquinoxRuntimeError, ValueError), match="nonzero Frobenius norm"
+    ):
         zero.func()
     with pytest.raises(eqx.EquinoxRuntimeError, match="nonzero Frobenius norm"):
         eqx.filter_jit(zero.func)()

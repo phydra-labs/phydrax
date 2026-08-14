@@ -62,7 +62,7 @@ class SeparableKAN(_AbstractStructuredInputModel):
         skip_connection: bool = True,
         use_bias: bool = True,
         scan: bool = False,
-        key: Key = DOC_KEY0,
+        key: Key[Array, ""] = DOC_KEY0,
     ):
         r"""Create a separable KAN.
 

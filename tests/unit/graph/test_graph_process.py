@@ -145,7 +145,9 @@ def test_graph_rollout_model_respects_node_subsets():
     subset = domain.component(
         {"graph": phx.domain.NodeSet(jnp.array([0, 2], dtype=jnp.int32))}
     )
-    batch = subset.sample(phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),))))
+    batch = subset.sample(
+        phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),)))
+    )
     stepper = phx.graph.EulerGraphStepper(ConstantNodeRate(1.0), dt=1.0)
     rollout_fn = domain.GraphRolloutModel(stepper, steps=1)
 

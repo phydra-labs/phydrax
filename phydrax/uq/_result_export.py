@@ -400,9 +400,7 @@ def _adapt_result(result, arrays, fields, trees):
         )
 
     if isinstance(result, RaoBlackwellizedFilterResult):
-        metadata = _put_rao_blackwellized_filter_result(
-            result, arrays, fields, prefix=""
-        )
+        metadata = _put_rao_blackwellized_filter_result(result, arrays, fields, prefix="")
         return "rao_blackwellized_filter", metadata, ("problem",)
 
     if isinstance(result, RaoBlackwellizedBackwardSimulationResult):

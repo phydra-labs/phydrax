@@ -107,8 +107,6 @@ class _VectorizedDenseInterpolation(eqx.Module):
         return values.reshape(self.sample_shape + query.shape + values.shape[2:])
 
 
-
-
 def _levy_area(kind: str, /) -> type:
     if kind == "brownian":
         return dfx.BrownianIncrement

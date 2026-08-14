@@ -10,6 +10,14 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from .._strict import StrictModule
+from ..linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    LinearSolvePolicy,
+    LinearSystem,
+    RHSLayout,
+    solve,
+)
 
 
 class GaussianFilterElement(StrictModule):
@@ -46,9 +54,16 @@ class GaussianFilterElement(StrictModule):
 
 
 def _solve(matrix: Array, right: Array, /) -> Array:
-    if right.ndim == matrix.ndim - 1:
-        return jnp.linalg.solve(matrix, right[..., None])[..., 0]
-    return jnp.linalg.solve(matrix, right)
+    solve_dtype = jnp.result_type(matrix, right)
+    matrix = matrix.astype(solve_dtype)
+    right = right.astype(solve_dtype)
+    result = solve(
+        LinearSystem(DenseLinearOperator(matrix)),
+        right,
+        policy=LinearSolvePolicy(DenseLU()),
+        rhs_layout=(RHSLayout((right.shape[-1],)) if right.ndim == matrix.ndim else None),
+    )
+    return result.value
 
 
 def _matvec(matrix: Array, vector: Array, /) -> Array:
@@ -70,16 +85,12 @@ def combine_gaussian_filter_elements(
         identity + right.information_matrix @ left.covariance
     )
 
-    propagated_transition = _solve(
-        left_covariance_right_information, left.transition
-    )
+    propagated_transition = _solve(left_covariance_right_information, left.transition)
     shifted_offset = _solve(
         left_covariance_right_information,
         left.offset + _matvec(left.covariance, right.information_vector),
     )
-    propagated_covariance = _solve(
-        left_covariance_right_information, left.covariance
-    )
+    propagated_covariance = _solve(left_covariance_right_information, left.covariance)
     backward_vector = _solve(
         right_information_left_covariance,
         right.information_vector - _matvec(right.information_matrix, left.offset),
@@ -100,8 +111,7 @@ def combine_gaussian_filter_elements(
         + left.information_vector
     )
     information_matrix = (
-        jnp.swapaxes(left.transition, -1, -2) @ backward_matrix
-        + left.information_matrix
+        jnp.swapaxes(left.transition, -1, -2) @ backward_matrix + left.information_matrix
     )
     return GaussianFilterElement(
         transition,
@@ -133,21 +143,17 @@ def _observation_conditioned_elements(
     effective_matrix = observation_matrices * active_float[..., :, None]
     observation_identity = jnp.eye(observation_size, dtype=dtype)
     effective_covariance = (
-        observation_covariances
-        * active_float[..., :, None]
-        * active_float[..., None, :]
+        observation_covariances * active_float[..., :, None] * active_float[..., None, :]
         + observation_identity * (1.0 - active_float[..., :, None])
-        + covariance_regularization
-        * observation_identity
-        * active_float[..., :, None]
+        + covariance_regularization * observation_identity * active_float[..., :, None]
     )
-    predicted_residual = observations - observation_offsets - jnp.einsum(
-        "...ij,...j->...i", effective_matrix, offsets
+    predicted_residual = (
+        observations
+        - observation_offsets
+        - jnp.einsum("...ij,...j->...i", effective_matrix, offsets)
     )
     innovation_covariance = (
-        effective_matrix
-        @ process_covariances
-        @ jnp.swapaxes(effective_matrix, -1, -2)
+        effective_matrix @ process_covariances @ jnp.swapaxes(effective_matrix, -1, -2)
         + effective_covariance
     )
     cross_covariance = process_covariances @ jnp.swapaxes(effective_matrix, -1, -2)
@@ -162,21 +168,16 @@ def _observation_conditioned_elements(
     offset = _matvec(update_operator, offsets) + _matvec(
         gain, observations - observation_offsets
     )
-    covariance = (
-        update_operator
-        @ process_covariances
-        @ jnp.swapaxes(update_operator, -1, -2)
-        + gain @ effective_covariance @ jnp.swapaxes(gain, -1, -2)
-    )
+    covariance = update_operator @ process_covariances @ jnp.swapaxes(
+        update_operator, -1, -2
+    ) + gain @ effective_covariance @ jnp.swapaxes(gain, -1, -2)
     transition_observation = effective_matrix @ transitions
     solved_residual = _solve(innovation_covariance, predicted_residual[..., None])[..., 0]
     solved_transition = _solve(innovation_covariance, transition_observation)
     information_vector = jnp.einsum(
         "...ji,...j->...i", transition_observation, solved_residual
     )
-    information_matrix = (
-        jnp.swapaxes(transition_observation, -1, -2) @ solved_transition
-    )
+    information_matrix = jnp.swapaxes(transition_observation, -1, -2) @ solved_transition
     return GaussianFilterElement(
         transition,
         offset,
@@ -227,12 +228,8 @@ def associative_gaussian_filter(
         jnp.concatenate((initial.transition, local.transition), axis=0),
         jnp.concatenate((initial.offset, local.offset), axis=0),
         jnp.concatenate((initial.covariance, local.covariance), axis=0),
-        jnp.concatenate(
-            (initial.information_vector, local.information_vector), axis=0
-        ),
-        jnp.concatenate(
-            (initial.information_matrix, local.information_matrix), axis=0
-        ),
+        jnp.concatenate((initial.information_vector, local.information_vector), axis=0),
+        jnp.concatenate((initial.information_matrix, local.information_matrix), axis=0),
     )
     prefixes = jax.lax.associative_scan(
         combine_gaussian_filter_elements, elements, axis=0
@@ -268,31 +265,23 @@ def associative_gaussian_smoother(
         "...ij,...j->...i", gains, predicted_means[1:]
     )
     conditional_covariances = filtered_covariances[:-1] - (
-        gains
-        @ predicted_covariances[1:]
-        @ jnp.swapaxes(gains, -1, -2)
+        gains @ predicted_covariances[1:] @ jnp.swapaxes(gains, -1, -2)
     )
     conditional_covariances = 0.5 * (
         conditional_covariances + jnp.swapaxes(conditional_covariances, -1, -2)
     )
-    transition = jnp.where(
-        pair_valid[..., None, None], gains, jnp.zeros_like(gains)
-    )
-    offset = jnp.where(
-        pair_valid[..., None], conditional_offsets, filtered_means[:-1]
-    )
+    transition = jnp.where(pair_valid[..., None, None], gains, jnp.zeros_like(gains))
+    offset = jnp.where(pair_valid[..., None], conditional_offsets, filtered_means[:-1])
     covariance = jnp.where(
         pair_valid[..., None, None],
         conditional_covariances,
         filtered_covariances[:-1],
     )
-    terminal_transition = jnp.zeros((1, case_count, state_size, state_size), filtered_means.dtype)
-    reverse_transition = jnp.concatenate(
-        (terminal_transition, transition[::-1]), axis=0
+    terminal_transition = jnp.zeros(
+        (1, case_count, state_size, state_size), filtered_means.dtype
     )
-    reverse_offset = jnp.concatenate(
-        (filtered_means[-1:], offset[::-1]), axis=0
-    )
+    reverse_transition = jnp.concatenate((terminal_transition, transition[::-1]), axis=0)
+    reverse_offset = jnp.concatenate((filtered_means[-1:], offset[::-1]), axis=0)
     reverse_covariance = jnp.concatenate(
         (filtered_covariances[-1:], covariance[::-1]), axis=0
     )
@@ -333,13 +322,9 @@ def associative_freeze(
         selector = right_flag.reshape(
             right_flag.shape + (1,) * (right_value.ndim - right_flag.ndim)
         )
-        return left_flag | right_flag, jnp.where(
-            selector, right_value, left_value
-        )
+        return left_flag | right_flag, jnp.where(selector, right_value, left_value)
 
-    _, prefixes = jax.lax.associative_scan(
-        select_latest, (flags, seeded_values), axis=0
-    )
+    _, prefixes = jax.lax.associative_scan(select_latest, (flags, seeded_values), axis=0)
     return prefixes[1:]
 
 

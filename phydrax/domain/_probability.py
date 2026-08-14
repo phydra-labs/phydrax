@@ -58,6 +58,7 @@ class ProbabilityDomain(AbstractScalarDomain):
     @property
     def measure(self) -> Array:
         return jnp.asarray(1.0, dtype=float)
+
     def _component_base_measure(self, selection: Selection, /) -> BaseMeasure:
         if isinstance(selection, Interior):
             return BaseMeasure("probability", ExactMass(1.0), normalized=True)
@@ -72,8 +73,6 @@ class ProbabilityDomain(AbstractScalarDomain):
         raise TypeError(
             "Probability factors support only Interior or explicit Fixed selections."
         )
-
-
 
     @property
     def bounds(self) -> Iterator[Array]:

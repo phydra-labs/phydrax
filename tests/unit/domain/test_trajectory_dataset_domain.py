@@ -43,7 +43,9 @@ def test_trajectory_dataset_probability_integral_of_constant_is_one():
     domain = TrajectoryDatasetDomain(inputs, jnp.asarray([2, 4, 3]), dt=0.25)
     component = domain.component()
     structure = SampleLayout((("data", "t"),))
-    batch = component.sample(phx.domain.PointSampling(17, layout=structure), key=jr.key(1))
+    batch = component.sample(
+        phx.domain.PointSampling(17, layout=structure), key=jr.key(1)
+    )
 
     realization = from_samples(over(component), batch)
     out = integral(1.0, realization)

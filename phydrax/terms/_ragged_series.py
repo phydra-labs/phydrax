@@ -263,8 +263,7 @@ class RaggedSeriesSupervisedTerm(AbstractSamplingTerm):
             )
             if len(bucket_groups) > n:
                 raise ValueError(
-                    "num_cases must be at least the number of non-empty length "
-                    "buckets."
+                    "num_cases must be at least the number of non-empty length buckets."
                 )
 
         total = float(case_indices.shape[0])
@@ -315,8 +314,7 @@ class RaggedSeriesSupervisedTerm(AbstractSamplingTerm):
         domain = self.component.domain
         if not isinstance(domain, RaggedSeriesDatasetDomain):
             raise TypeError(
-                "RaggedSeriesSupervisedTerm domain is not a "
-                "RaggedSeriesDatasetDomain."
+                "RaggedSeriesSupervisedTerm domain is not a RaggedSeriesDatasetDomain."
             )
         return domain
 
@@ -369,7 +367,9 @@ class RaggedSeriesSupervisedTerm(AbstractSamplingTerm):
         var = self.fields[0]
         prediction = functions[var](batch.points, key=key, **kwargs)
         if not isinstance(prediction, cx.Field):
-            raise TypeError("Expected ragged series prediction to return a coordax.Field.")
+            raise TypeError(
+                "Expected ragged series prediction to return a coordax.Field."
+            )
         return prediction
 
     def data_metrics(

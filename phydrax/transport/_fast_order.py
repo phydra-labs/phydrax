@@ -38,9 +38,7 @@ def _pav_decreasing_with_blocks(values: Array, /) -> tuple[Array, Array]:
             levels__, _, num_blocks__ = inner_state
             previous = jnp.maximum(num_blocks__ - 2, 0)
             current = jnp.maximum(num_blocks__ - 1, 0)
-            return (num_blocks__ > 1) & (
-                levels__[previous] < levels__[current]
-            )
+            return (num_blocks__ > 1) & (levels__[previous] < levels__[current])
 
         def merge(inner_state):
             levels__, block_sizes__, num_blocks__ = inner_state
@@ -131,18 +129,23 @@ def _soft_rank_row(values: Array, temperature: Array, /) -> Array:
     count = values.shape[0]
     standardized, _, _ = _standardize(values)
     denominator = max(count - 1, 1)
-    anchors = jnp.arange(
-        count - 1,
-        -1,
-        -1,
-        dtype=values.dtype,
-    ) / denominator
+    anchors = (
+        jnp.arange(
+            count - 1,
+            -1,
+            -1,
+            dtype=values.dtype,
+        )
+        / denominator
+    )
     scaled = standardized / temperature
     permutation = jnp.argsort(scaled, descending=True, stable=True)
     ordered = scaled[permutation]
     projected = ordered - _pav_decreasing(ordered - anchors)
-    inverse = jnp.zeros((count,), dtype=jnp.int32).at[permutation].set(
-        jnp.arange(count, dtype=jnp.int32)
+    inverse = (
+        jnp.zeros((count,), dtype=jnp.int32)
+        .at[permutation]
+        .set(jnp.arange(count, dtype=jnp.int32))
     )
     return (denominator * projected)[inverse]
 

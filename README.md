@@ -46,6 +46,10 @@ Most workflows are composing a few primitives:
   and quantum matrix operators.
 - **Integration**: explicit targets define measures, plans define numerical
   realizations, and estimates carry method-valid diagnostics and provenance.
+- **Linear algebra**: paired array/PyTree/block spaces, composable dense,
+  matrix-free, sparse, and block operators, explicit system/least-squares/
+  minimum-norm contracts, reusable plans and factorizations, and portable
+  status, diagnostics, and provenance.
 - **Optimal transport**: integration measures lower into balanced finite transport
   problems with explicit mass, ground geometry, stabilized Sinkhorn diagnostics,
   matrix-free plan actions, exact/sliced Wasserstein distances, and soft order.
@@ -121,10 +125,12 @@ geom = phx.domain.GeometryDomain(
     phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
 )  # [-1,1]^2, label "x"
 
+
 # Exact solution / boundary target g(x,y) = x^2 + y^2
 @geom.Function("x")
 def g(x):
     return x[0] ** 2 + x[1] ** 2
+
 
 # Trainable field u_theta(x)
 model = phx.nn.models.MLP(
@@ -185,8 +191,10 @@ Otherwise, Phydrax will default to the cpu version.
 uv add phydrax
 ```
 
-The core install requires no special build or container. Optional integrations
-are installed explicitly when needed.
+The base install includes ASDEX for compile-time global sparse-derivative
+detection and optimized coloring. Compiled sparse Jacobian and Hessian plans
+evaluate through native JAX and integrate directly with `phydrax.linalg`; ASDEX
+is not imported by ordinary Phydrax or linear-algebra use.
 
 ## Documentation
 

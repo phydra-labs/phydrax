@@ -71,8 +71,10 @@ parameters = {"rate": jnp.asarray(1.0)}
 direction = {"rate": jnp.asarray(1.0)}
 target = jnp.asarray([0.8, 2.1, 3.2])
 
+
 def residual_fn(value):
     return value["rate"] * jnp.asarray([1.0, 2.0, 3.0]) - target
+
 
 curvature_direction = phx.uq.gauss_newton_action(
     residual_fn,

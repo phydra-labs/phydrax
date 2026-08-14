@@ -68,7 +68,10 @@ def test_solve_deep_splitting_trains_distinct_slices_and_interpolates_field():
     paths = _paths()
     problem = _problem(paths)
     domain = phx.domain.Interval1d(-1.0, 1.0)
-    solver = phx.solver.FunctionalSolver(functions={"value": domain.Parameter(jnp.asarray([0.0]))}, terms=(), )
+    solver = phx.solver.FunctionalSolver(
+        functions={"value": domain.Parameter(jnp.asarray([0.0]))},
+        terms=(),
+    )
 
     result = solve_deep_splitting(
         solver,
@@ -85,9 +88,7 @@ def test_solve_deep_splitting_trains_distinct_slices_and_interpolates_field():
     node_values = jnp.stack(
         tuple(result.solution.at_node(index, state) for index in range(3))
     )
-    midpoint_value = jax.jit(lambda time: result.solution(time, state))(
-        jnp.asarray(0.25)
-    )
+    midpoint_value = jax.jit(lambda time: result.solution(time, state))(jnp.asarray(0.25))
 
     assert jnp.allclose(node_values[:, 0], jnp.asarray([1.0, 0.5, 0.0]), atol=1e-8)
     assert jnp.allclose(midpoint_value, jnp.asarray([0.75]), atol=1e-8)

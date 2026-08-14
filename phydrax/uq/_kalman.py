@@ -21,6 +21,7 @@ from ..stochastic._state_space import (
     state_space_key,
     StateSpaceProblem,
 )
+from ._covariance import _factor_and_solve_covariance_system
 from ._gaussian_chain import (
     associative_affine_values,
     associative_freeze,
@@ -315,20 +316,18 @@ def kalman_filter_step(
         )
         + effective_covariance
     )
-    scale = jnp.linalg.cholesky(innovation_covariance)
-    diagonal = jnp.diagonal(scale, axis1=-2, axis2=-1)
-    covariance_valid = jnp.all(jnp.isfinite(scale), axis=(-1, -2)) & jnp.all(
-        diagonal > 0.0, axis=-1
-    )
     cross_covariance = jnp.einsum("cij,ckj->cik", forecast_covariance, effective_matrix)
-    gain = jnp.swapaxes(
-        jnp.linalg.solve(
-            innovation_covariance,
-            jnp.swapaxes(cross_covariance, -1, -2),
-        ),
-        -1,
-        -2,
+    gain_result, scale = _factor_and_solve_covariance_system(
+        innovation_covariance,
+        jnp.swapaxes(cross_covariance, -1, -2),
     )
+    diagonal = jnp.diagonal(scale, axis1=-2, axis2=-1)
+    covariance_valid = (
+        jnp.all(jnp.isfinite(scale), axis=(-1, -2))
+        & jnp.all(diagonal > 0.0, axis=-1)
+        & jnp.all(gain_result.successful, axis=-1)
+    )
+    gain = jnp.swapaxes(gain_result.value, -1, -2)
     updated_mean = forecast_mean + jnp.einsum("cij,cj->ci", gain, innovation)
     identity = jnp.eye(state_size, dtype=forecast_mean.dtype)
     update_operator = identity[None, ...] - jnp.einsum(
@@ -689,20 +688,18 @@ def _parallel_kalman_filter(
         )
         + effective_covariance
     )
-    scale = jnp.linalg.cholesky(innovation_covariance)
-    diagonal = jnp.diagonal(scale, axis1=-2, axis2=-1)
-    covariance_valid = jnp.all(jnp.isfinite(scale), axis=(-1, -2)) & jnp.all(
-        diagonal > 0.0, axis=-1
-    )
     cross_covariance = predicted_covariance @ jnp.swapaxes(effective_matrix, -1, -2)
-    gain = jnp.swapaxes(
-        jnp.linalg.solve(
-            innovation_covariance,
-            jnp.swapaxes(cross_covariance, -1, -2),
-        ),
-        -1,
-        -2,
+    gain_result, scale = _factor_and_solve_covariance_system(
+        innovation_covariance,
+        jnp.swapaxes(cross_covariance, -1, -2),
     )
+    diagonal = jnp.diagonal(scale, axis1=-2, axis2=-1)
+    covariance_valid = (
+        jnp.all(jnp.isfinite(scale), axis=(-1, -2))
+        & jnp.all(diagonal > 0.0, axis=-1)
+        & jnp.all(gain_result.successful, axis=-1)
+    )
+    gain = jnp.swapaxes(gain_result.value, -1, -2)
     updated_mean = predicted_mean + jnp.einsum("tcij,tcj->tci", gain, innovation)
     identity = jnp.eye(state_size, dtype=predicted_mean.dtype)
     update_operator = identity - gain @ effective_matrix

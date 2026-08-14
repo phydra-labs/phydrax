@@ -41,8 +41,14 @@ def test_complex_schrodinger_residual_runs_through_functional_solver():
         return jnp.asarray([jnp.exp(-0.3j * omega * t), 0.0j])
 
     constraint = _schrodinger_constraint(time, hamiltonian)
-    exact_solver = phx.solver.FunctionalSolver(functions={"psi": exact_state}, terms=[constraint], )
-    perturbed_solver = phx.solver.FunctionalSolver(functions={"psi": perturbed_state}, terms=[constraint], )
+    exact_solver = phx.solver.FunctionalSolver(
+        functions={"psi": exact_state},
+        terms=[constraint],
+    )
+    perturbed_solver = phx.solver.FunctionalSolver(
+        functions={"psi": perturbed_state},
+        terms=[constraint],
+    )
 
     loss_fn = eqx.filter_jit(lambda solver, key: solver.loss(key=key))
     exact_loss = loss_fn(exact_solver, jr.key(0))

@@ -491,9 +491,7 @@ def _mesh_vertex_weights(vertices: Array, faces: Array, coord_dim: int, /) -> Ar
     first = triangles[:, 1] - triangles[:, 0]
     second = triangles[:, 2] - triangles[:, 0]
     if coord_dim == 2:
-        measures = 0.5 * jnp.abs(
-            first[:, 0] * second[:, 1] - first[:, 1] * second[:, 0]
-        )
+        measures = 0.5 * jnp.abs(first[:, 0] * second[:, 1] - first[:, 1] * second[:, 0])
     else:
         measures = 0.5 * jnp.linalg.norm(jnp.cross(first, second), axis=-1)
     weights = jnp.zeros((coordinates.shape[0],), dtype=coordinates.dtype)

@@ -14,6 +14,9 @@ Top-level package namespace. Most functionality lives in subpackages:
   exact and sliced Wasserstein distances, and differentiable order operations
 - `phydrax.kernels`: composable positive-definite covariance functions shared by
   Gaussian-process and coreset algorithms
+- `phydrax.linalg`: paired vector spaces, composable dense/matrix-free/block
+  operators, linear problem contracts, reusable solve plans, native JAX
+  factorizations, and private Lineax iterative backends
 - `phydrax.special`: JAX-native named special functions and integral primitives
 - `phydrax.enforcement`: exact condition transforms and enforcement programs
 - `phydrax.optim`: structured residual KFAC and domain-neutral optimization
@@ -46,10 +49,15 @@ reduction, including when their stored payloads are non-finite.
 
 `SparseLinearMap` attaches scalar route coefficients and exposes forward,
 transpose, and conjugate-adjoint actions while preserving trailing payload
-dimensions. Dense and SciPy conversions are explicit interoperability
-operations, not execution fallbacks. Sparse-grid quadrature, sparse Gaussian
-process approximations, stochastic probes, and generic matrix-free callables
-remain in their semantic subsystems.
+dimensions. `SparseCoordinateOperator` binds the same route algebra to
+`phydrax.linalg` spaces and pairing-aware adjoints. Provider-neutral
+`SparsePattern`, `SparseColoring`, and `SparseDerivativePlan` artifacts support
+native compressed JAX evaluation. ASDEX supplies compile-time global detection
+and optimized coloring when a pattern is not already known.
+Dense and SciPy conversions remain explicit interoperability operations, not
+execution fallbacks. Sparse-grid
+quadrature, sparse Gaussian-process approximations, stochastic probes, and
+generic matrix-free callables remain in their semantic subsystems.
 
 ::: phydrax.sparse.EdgeRelation
 
@@ -62,6 +70,20 @@ remain in their semantic subsystems.
 ::: phydrax.sparse.SparseLinearMap
 
 ---
+
+
+::: phydrax.sparse.SparseCoordinateOperator
+
+---
+
+::: phydrax.sparse.compile_sparse_jacobian
+
+---
+
+::: phydrax.sparse.compile_sparse_hessian
+
+---
+
 
 ::: phydrax.sparse.gather_routes
 

@@ -19,7 +19,11 @@ def _tensor_batch(*, cases: int = 2) -> phx.nn.operator.OperatorBatch:
         axes=(axis,),
     )
     query = phx.nn.operator.FunctionSamples(values=None, axes=(axis,))
-    return phx.nn.operator.OperatorBatch(inputs={"source": source}, queries={"query": query}, case_axes=("case",),)
+    return phx.nn.operator.OperatorBatch(
+        inputs={"source": source},
+        queries={"query": query},
+        case_axes=("case",),
+    )
 
 
 def _point_batch(*, shifted: float = 0.0) -> phx.nn.operator.OperatorBatch:
@@ -46,7 +50,11 @@ def _point_batch(*, shifted: float = 0.0) -> phx.nn.operator.OperatorBatch:
         quadrature_weights=weights,
         mask=mask,
     )
-    return phx.nn.operator.OperatorBatch(inputs={"source": source}, queries={"query": query}, case_axes=("case",),)
+    return phx.nn.operator.OperatorBatch(
+        inputs={"source": source},
+        queries={"query": query},
+        case_axes=("case",),
+    )
 
 
 def _multi_output_prediction():

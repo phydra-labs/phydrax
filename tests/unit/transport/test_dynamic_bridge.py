@@ -131,7 +131,12 @@ def test_zero_probability_support_is_retained_and_reachable():
 
 @pytest.mark.parametrize(
     "times",
-    [jnp.asarray([0.0]), jnp.asarray([0.0, 0.0]), jnp.asarray([0.0, -1.0]), jnp.asarray([0.0, jnp.nan])],
+    [
+        jnp.asarray([0.0]),
+        jnp.asarray([0.0, 0.0]),
+        jnp.asarray([0.0, -1.0]),
+        jnp.asarray([0.0, jnp.nan]),
+    ],
 )
 def test_invalid_time_grids_are_rejected(times):
     with pytest.raises(ValueError, match="times"):
@@ -172,7 +177,12 @@ def test_endpoint_recovery_normalization_and_controlled_kernel_density():
     context = phx.stochastic.StateSpaceStepContext.empty(step_index=0)
     density = jnp.exp(
         jnp.stack(
-            [kernel.log_prob(jnp.asarray(next_state), jnp.asarray(0.0), 0.0, 0.5, context) for next_state in (0.0, 1.0)]
+            [
+                kernel.log_prob(
+                    jnp.asarray(next_state), jnp.asarray(0.0), 0.0, 0.5, context
+                )
+                for next_state in (0.0, 1.0)
+            ]
         )
     )
     assert jnp.allclose(jnp.sum(density), 1.0)
@@ -274,9 +284,7 @@ def test_physical_mass_mask_and_vector_event_shape_are_preserved():
         normalized=False,
         provenance="physical-terminal",
     )
-    matrix = jnp.asarray(
-        [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
-    )
+    matrix = jnp.asarray([[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
 
     def sample(key, state, _t0, _t1, _context):
         index = jnp.asarray(state[0], dtype=jnp.int32)
@@ -299,9 +307,7 @@ def test_physical_mass_mask_and_vector_event_shape_are_preserved():
     problem = phx.transport.dynamic.SchrodingerBridgeProblem(
         initial,
         terminal,
-        phx.dynamics.TimeGrid(
-            jnp.asarray([0.0, 1.0]), time_id="physical-bridge-grid"
-        ),
+        phx.dynamics.TimeGrid(jnp.asarray([0.0, 1.0]), time_id="physical-bridge-grid"),
         reference,
         CONTEXT,
     )

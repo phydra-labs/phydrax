@@ -35,7 +35,10 @@ def test_euler_lagrange_residual_runs_through_functional_solver():
             phx.integration.MonteCarloPlan(32),
         ),
     )
-    solver = phx.solver.FunctionalSolver(functions={"q": trajectory}, terms=[constraint], )
+    solver = phx.solver.FunctionalSolver(
+        functions={"q": trajectory},
+        terms=[constraint],
+    )
 
     loss = eqx.filter_jit(lambda s, k: s.loss(key=k))(solver, jr.key(0))
     assert loss < 1e-18
@@ -71,7 +74,10 @@ def test_hamiltonian_residual_runs_through_multifield_constraint():
             phx.integration.MonteCarloPlan(32),
         ),
     )
-    solver = phx.solver.FunctionalSolver(functions={"q": q, "p": p}, terms=[constraint], )
+    solver = phx.solver.FunctionalSolver(
+        functions={"q": q, "p": p},
+        terms=[constraint],
+    )
 
     loss = eqx.filter_jit(lambda s, k: s.loss(key=k))(solver, jr.key(1))
     assert loss < 1e-18

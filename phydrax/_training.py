@@ -68,7 +68,13 @@ class TrainingProgress:
     stopped_early: bool = False
 
     def __post_init__(self):
-        for name in ("epoch", "next_batch_index", "microstep", "update_step", "best_step"):
+        for name in (
+            "epoch",
+            "next_batch_index",
+            "microstep",
+            "update_step",
+            "best_step",
+        ):
             if int(getattr(self, name)) < 0:
                 raise ValueError(f"{name} must be non-negative.")
         if int(self.stale_validations) < 0:
@@ -188,9 +194,13 @@ class TrainingController:
         *,
         metrics: dict[str, Any] | None = None,
     ) -> None:
-        pairs = () if metrics is None else tuple(
-            (str(key), float(jnp.asarray(value, dtype=float).reshape(())))
-            for key, value in metrics.items()
+        pairs = (
+            ()
+            if metrics is None
+            else tuple(
+                (str(key), float(jnp.asarray(value, dtype=float).reshape(())))
+                for key, value in metrics.items()
+            )
         )
         event = TrainingEvent(str(name), self.progress, pairs)
         for callback in self.callbacks:
@@ -271,19 +281,17 @@ class TrainingSignalGuard:
     def request_stop_from_exception(self, exc: BaseException, /) -> None:
         if self.stop_requested:
             return
-        self._reason = "SIGINT" if isinstance(exc, KeyboardInterrupt) else type(exc).__name__
+        self._reason = (
+            "SIGINT" if isinstance(exc, KeyboardInterrupt) else type(exc).__name__
+        )
 
 
 class TensorBoardLogger:
     """Small context-managed scalar writer shared by training frontends."""
 
     def __init__(self, log_dir: str | Path):
-        from tensorboard.compat.proto.event_pb2 import (
-            Event,  # ty: ignore[unresolved-import]
-        )
-        from tensorboard.compat.proto.summary_pb2 import (
-            Summary,  # ty: ignore[unresolved-import]
-        )
+        from tensorboard.compat.proto.event_pb2 import Event
+        from tensorboard.compat.proto.summary_pb2 import Summary
         from tensorboard.summary.writer.event_file_writer import EventFileWriter
 
         path = Path(log_dir)
@@ -302,10 +310,10 @@ class TensorBoardLogger:
     def scalar(self, tag: str, value: Any, step: int) -> None:
         summary = self._summary_cls(
             value=[
-                self._summary_cls.Value(
-                    tag=str(tag),
-                    simple_value=float(jnp.asarray(value, dtype=float).reshape(())),
-                )
+                {
+                    "tag": str(tag),
+                    "simple_value": float(jnp.asarray(value, dtype=float).reshape(())),
+                }
             ]
         )
         event = self._event_cls(

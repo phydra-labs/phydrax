@@ -60,7 +60,9 @@ def _transition_batch(*, cases=2, size=4, driver=False, forcing=0.0):
     values = jnp.zeros((cases, size))
     inputs = {
         "state": phx.nn.operator.FunctionSamples(values=values, axes=(axis,)),
-        "duration": phx.nn.operator.FunctionSamples(values=jnp.ones_like(values), axes=(axis,)),
+        "duration": phx.nn.operator.FunctionSamples(
+            values=jnp.ones_like(values), axes=(axis,)
+        ),
         "forcing": phx.nn.operator.FunctionSamples(
             values=jnp.full_like(values, forcing),
             axes=(axis,),
@@ -77,7 +79,9 @@ def _transition_batch(*, cases=2, size=4, driver=False, forcing=0.0):
 
 def _marginal_law(*, forcing=0.0, uncertainty_source="process"):
     batch = _transition_batch(forcing=forcing)
-    spec = phx.nn.operator.training.OperatorTransitionSpec(phx.nn.operator.OperatorOutputSpec("scalar"))
+    spec = phx.nn.operator.training.OperatorTransitionSpec(
+        phx.nn.operator.OperatorOutputSpec("scalar")
+    )
     return phx.nn.operator.training.OperatorMarginalTransition(
         _BrownianFieldOperator(uncertainty_source=uncertainty_source),
         batch,

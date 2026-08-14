@@ -121,8 +121,7 @@ def test_dirac_translated_weighted_and_permuted_barycenters_are_physical():
     assert jnp.allclose(
         left_weighted.objective,
         jnp.sum(
-            left_weighted.problem.measure_weights
-            * left_weighted.per_measure_objectives
+            left_weighted.problem.measure_weights * left_weighted.per_measure_objectives
         ),
     )
 
@@ -172,7 +171,9 @@ def test_problem_rejects_invalid_mass_measure_weights_and_encoding():
     correct = _measure([[0.0], [1.0]], [0.5, 0.5], mass=2.0)
     wrong_event = _measure([[0.0, 1.0], [1.0, 2.0]], [0.5, 0.5], mass=2.0)
 
-    with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="common physical mass"):
+    with pytest.raises(
+        (ValueError, eqx.EquinoxRuntimeError), match="common physical mass"
+    ):
         _problem((correct, wrong_mass), support)
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="strictly positive"):
         _problem((correct, correct), support, measure_weights=[1.0, 0.0])
@@ -279,7 +280,9 @@ def test_free_support_reports_collapse_without_repairing_support():
         collapse_tolerance=1e-8,
     )(problem)
 
-    assert result.diagnostics.status == int(phx.transport.TransportStatus.SUPPORT_COLLAPSE)
+    assert result.diagnostics.status == int(
+        phx.transport.TransportStatus.SUPPORT_COLLAPSE
+    )
     assert result.diagnostics.collapse_iteration == 1
     assert not result.converged
     assert jnp.array_equal(

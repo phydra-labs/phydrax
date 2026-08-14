@@ -395,9 +395,7 @@ def _try_laplacian_rule(
     return out
 
 
-def _emit_structured_derivative_fallback(
-    u: DomainFunction, reason: str, /
-) -> None:
+def _emit_structured_derivative_fallback(u: DomainFunction, reason: str, /) -> None:
     provider = _structured_derivative_provider(u)
     if provider is not None:
         provider.handle_structured_derivative_fallback(reason)

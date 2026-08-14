@@ -110,6 +110,7 @@ def test_functional_solver_accepts_transported_momentum():
     assert jnp.abs(offset - 0.5) < 0.01
     assert trained.training_diagnostics["optimizer/riemannian/momentum_norm"] > 0.0
 
+
 def test_functional_solver_accepts_intrinsic_adaptive_moments(tmp_path):
     solver = _geometric_solver()
     log_path = tmp_path / "training.log"

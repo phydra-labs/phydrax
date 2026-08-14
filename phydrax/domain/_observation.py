@@ -44,9 +44,7 @@ class _IndexedFieldEvaluator(StrictModule, BatchEvaluator, NonTrainableState):
             raise TypeError(f"{self.owner} requires PointBatch evaluation.")
         index = batch.points.get(self.index_key)
         if not isinstance(index, cx.Field):
-            raise ValueError(
-                f"{self.owner} requires batch metadata {self.index_key!r}."
-            )
+            raise ValueError(f"{self.owner} requires batch metadata {self.index_key!r}.")
         indices = jnp.asarray(index.data, dtype=jnp.int32)
         selected = self.values[indices]
         dims = index.dims + (None,) * max(selected.ndim - len(index.dims), 0)

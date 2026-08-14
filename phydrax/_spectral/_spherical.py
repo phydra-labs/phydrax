@@ -331,12 +331,16 @@ class SphericalHarmonicPlan(StrictModule, NonTrainableState):
         self.spin = selected_spin
         self.reality = selected_reality
         self.execution = execution_value
-        self.sample_shape = tuple(
+        sample_shape = tuple(
             int(size) for size in s2_samples.f_shape(selected_bandlimit, sampling_value)
         )
-        self.coefficient_shape = tuple(
+        coefficient_shape = tuple(
             int(size) for size in s2_samples.flm_shape(selected_bandlimit)
         )
+        if len(sample_shape) != 2 or len(coefficient_shape) != 2:
+            raise RuntimeError("S2FFT returned an invalid rank-two transform shape.")
+        self.sample_shape = (sample_shape[0], sample_shape[1])
+        self.coefficient_shape = (coefficient_shape[0], coefficient_shape[1])
         self.fingerprint = canonical_fingerprint(
             {
                 "kind": "spherical-harmonic-plan-v1",
@@ -392,24 +396,19 @@ class SphericalHarmonicPlan(StrictModule, NonTrainableState):
         coefficients = jax.vmap(self._forward_field)(fields)
         if scalar:
             return coefficients.reshape(leading_shape + self.coefficient_shape)
-        result = coefficients.reshape(
-            leading_shape + (channels, *self.coefficient_shape)
-        )
+        result = coefficients.reshape(leading_shape + (channels, *self.coefficient_shape))
         return jnp.moveaxis(result, -3, -1)
 
     def synthesis(self, coefficients: ArrayLike, /) -> Array:
         """Transform scalar or channel-last ``(ell, m)`` arrays to sampled fields."""
         array = jnp.asarray(coefficients)
-        scalar = (
-            tuple(int(size) for size in array.shape[-2:]) == self.coefficient_shape
-        )
+        scalar = tuple(int(size) for size in array.shape[-2:]) == self.coefficient_shape
         if scalar:
             leading_shape = tuple(int(size) for size in array.shape[:-2])
             fields = array.reshape((prod(leading_shape), *self.coefficient_shape))
         elif (
             array.ndim >= 3
-            and tuple(int(size) for size in array.shape[-3:-1])
-            == self.coefficient_shape
+            and tuple(int(size) for size in array.shape[-3:-1]) == self.coefficient_shape
         ):
             leading_shape = tuple(int(size) for size in array.shape[:-3])
             channels = int(array.shape[-1])

@@ -115,6 +115,7 @@ Masks exclude ragged padding.
 def solve_forward(coefficient, forcing):
     return coefficient + forcing
 
+
 samples = phx.uq.sample_joint(
     {
         "coefficient": phx.uq.LogNormal(-1.0, 0.2),
@@ -143,9 +144,7 @@ local_center = {
 local_covariance = phx.uq.FactorCovariance(
     {
         "coefficient": jnp.asarray([0.05, 0.00]),
-        "forcing": jnp.asarray(
-            [[0.02, 0.02, 0.02], [0.01, -0.01, 0.00]]
-        ),
+        "forcing": jnp.asarray([[0.02, 0.02, 0.02], [0.01, -0.01, 0.00]]),
     }
 )
 local_prediction = phx.uq.propagate_linearized(
@@ -190,9 +189,7 @@ nonlinear_input_factor = phx.uq.GaussianFactor(
     factor_id="rank-one-coefficient",
 )
 nonlinear_moments = phx.uq.spherical_radial_cubature(
-    lambda value: jnp.asarray(
-        [value[0] ** 2, jnp.sin(value[0] + value[1])]
-    ),
+    lambda value: jnp.asarray([value[0] ** 2, jnp.sin(value[0] + value[1])]),
     jnp.asarray([0.5, -0.1]),
     nonlinear_input_factor,
     regularization=1e-8,
@@ -220,8 +217,10 @@ local_parameters = jnp.asarray([1.0])
 local_direction = jnp.asarray([1.0])
 local_target = jnp.asarray([0.8, 2.1, 3.2])
 
+
 def local_residual(value):
     return value[0] * jnp.asarray([1.0, 2.0, 3.0]) - local_target
+
 
 local_curvature = phx.uq.gauss_newton_action(
     local_residual,
@@ -251,14 +250,8 @@ sensor_basis = 0.5 * sensor_x * (1.0 - sensor_x)
 observations = 4.0 * sensor_basis
 observation_likelihood = phx.uq.GaussianLikelihood(0.02)
 
-posterior_variance = 1.0 / (
-    1.0 / 3.0**2 + jnp.vdot(sensor_basis, sensor_basis) / 0.02**2
-)
-posterior_mean = (
-    posterior_variance
-    * jnp.vdot(sensor_basis, observations)
-    / 0.02**2
-)
+posterior_variance = 1.0 / (1.0 / 3.0**2 + jnp.vdot(sensor_basis, sensor_basis) / 0.02**2)
+posterior_mean = posterior_variance * jnp.vdot(sensor_basis, observations) / 0.02**2
 
 parameter_space = phx.uq.ParameterSpace(
     {"source": posterior_mean},
@@ -594,9 +587,7 @@ failure explicitly as $y=u_\theta(x)+\delta(x)+\epsilon$. Keep observations sepa
 from the typed covariance/noise state:
 
 ```python
-misspecified_observations = (
-    4.0 * sensor_basis + 0.03 * jnp.sin(2.0 * jnp.pi * sensor_x)
-)
+misspecified_observations = 4.0 * sensor_basis + 0.03 * jnp.sin(2.0 * jnp.pi * sensor_x)
 discrepancy_model = phx.uq.ExactGaussianProcessDiscrepancy(
     sensor_x,
     misspecified_observations,
@@ -741,14 +732,13 @@ value_points = jnp.linspace(0.05, 0.95, 8)[:, None]
 interior_points = jnp.linspace(0.1, 0.9, 6)[:, None]
 diffusion = jnp.asarray(0.2)
 measured_values = jnp.sin(jnp.pi * value_points[:, 0])
-measured_forcing = (
-    diffusion * jnp.pi**2 * jnp.sin(jnp.pi * interior_points[:, 0])
-)
+measured_forcing = diffusion * jnp.pi**2 * jnp.sin(jnp.pi * interior_points[:, 0])
 value_mean = jnp.zeros_like(measured_values)
 forcing_mean = jnp.zeros_like(measured_forcing)
 
 value = phx.uq.value_functional(1)
 laplacian = phx.uq.laplacian_functional(1)
+
 
 def functional_gp(diffusion):
     return phx.uq.FunctionalGaussianProcessDiscrepancy(

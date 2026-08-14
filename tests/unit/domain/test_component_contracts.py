@@ -48,9 +48,7 @@ def test_probability_and_count_dataset_measures_are_explicit():
 def test_restriction_and_density_have_typed_mass_semantics():
     domain = ScalarInterval(0.0, 2.0, label="x")
 
-    restricted = domain.component().restrict(
-        per_coordinate={"x": lambda x: x < 1.0}
-    )
+    restricted = domain.component().restrict(per_coordinate={"x": lambda x: x < 1.0})
     unnormalized = domain.component().with_density(lambda x: 2.0 * x)
     normalized = domain.component().with_density(lambda x: 0.5, normalized=True)
 
@@ -103,6 +101,4 @@ def test_component_points_rejects_inconsistent_coordinate_counts():
     y = ScalarInterval(0.0, 1.0, label="y")
 
     with pytest.raises(ValueError, match="same leading point count"):
-        (x @ y).component().points(
-            {"x": jnp.array([0.0, 1.0]), "y": jnp.array([0.0])}
-        )
+        (x @ y).component().points({"x": jnp.array([0.0, 1.0]), "y": jnp.array([0.0])})

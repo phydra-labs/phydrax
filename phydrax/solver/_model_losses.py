@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import jax.numpy as jnp
 from jaxtyping import Array, Key
 
 from .._doc import DOC_KEY0
@@ -25,7 +26,8 @@ def function_model_loss_values(
     iter_: int | Array | None = None,
 ) -> tuple[Array, ...]:
     """Evaluate all model objective terms in a function tree."""
-    return model_objective_values(functions, key=key, iter_=iter_)
+    iteration = None if iter_ is None else jnp.asarray(iter_)
+    return model_objective_values(functions, key=key, iter_=iteration)
 
 
 __all__ = [

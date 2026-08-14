@@ -65,8 +65,14 @@ def test_exact_path_enumeration_recovers_normalization_endpoints_and_kl():
     assert jnp.allclose(jnp.sum(reference), 1.0, atol=1e-11)
     first = jax.nn.one_hot(paths[:, 0].astype(jnp.int32), 2)
     last = jax.nn.one_hot(paths[:, -1].astype(jnp.int32), 2)
-    assert jnp.allclose(jnp.sum(controlled[:, None] * first, axis=0), jnp.asarray([0.65, 0.35]), atol=1e-11)
-    assert jnp.allclose(jnp.sum(controlled[:, None] * last, axis=0), jnp.asarray([0.2, 0.8]), atol=1e-11)
+    assert jnp.allclose(
+        jnp.sum(controlled[:, None] * first, axis=0),
+        jnp.asarray([0.65, 0.35]),
+        atol=1e-11,
+    )
+    assert jnp.allclose(
+        jnp.sum(controlled[:, None] * last, axis=0), jnp.asarray([0.2, 0.8]), atol=1e-11
+    )
     enumerated_kl = jnp.sum(
         jnp.where(controlled > 0.0, controlled * jnp.log(controlled / reference), 0.0)
     )

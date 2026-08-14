@@ -99,7 +99,9 @@ def test_equivariant_graph_convolution_wraps_as_graph_model():
     graph = _triangle_graph()
     domain = phx.domain.GraphDomain(graph)
     nodes = domain.component({"graph": phx.domain.Nodes()})
-    batch = nodes.sample(phx.domain.PointSampling(3, layout=phx.domain.SampleLayout((("graph",),))))
+    batch = nodes.sample(
+        phx.domain.PointSampling(3, layout=phx.domain.SampleLayout((("graph",),)))
+    )
 
     @domain.Function("graph")
     def u(node):

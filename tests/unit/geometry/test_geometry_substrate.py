@@ -69,8 +69,12 @@ def test_field_certificates_propagate_through_translation_and_sharp_union():
 
 def test_analytic_domains_have_exact_measures_queries_and_fixed_shape_samples():
     circle = phx.domain.GeometryDomain(phx.geometry.Circle((1.0, -1.0), 2.0).compile())
-    sphere = phx.domain.GeometryDomain(phx.geometry.Sphere((0.0, 0.0, 0.0), 2.0).compile())
-    box = phx.domain.GeometryDomain(phx.geometry.Box((0.0, 0.0, 0.0), (2.0, 3.0, 4.0)).compile())
+    sphere = phx.domain.GeometryDomain(
+        phx.geometry.Sphere((0.0, 0.0, 0.0), 2.0).compile()
+    )
+    box = phx.domain.GeometryDomain(
+        phx.geometry.Box((0.0, 0.0, 0.0), (2.0, 3.0, 4.0)).compile()
+    )
 
     assert circle.area == pytest.approx(4.0 * jnp.pi)
     assert circle.boundary_measure == pytest.approx(4.0 * jnp.pi)
@@ -168,6 +172,9 @@ def test_boundary_atlas_integration_and_hard_constraint_work_end_to_end():
         return jnp.sum(x * x)
 
     enforced = phx.enforcement.enforce_dirichlet(raw_field, boundary, target=3.0)
-    points = boundary.sample(phx.domain.PointSampling(32, layout=structure, design="uniform"), key=jax.random.key(7))
+    points = boundary.sample(
+        phx.domain.PointSampling(32, layout=structure, design="uniform"),
+        key=jax.random.key(7),
+    )
     values = enforced(points).data
     assert jnp.allclose(values, 3.0, atol=1e-10)

@@ -181,6 +181,13 @@ def _validate_binary_models(
         raise ValueError("All parallel binary components must share one input shape.")
 
 
+def _flat_input_size(model: AbstractArrayModel, owner: str, /) -> int:
+    size = model.in_size
+    if not isinstance(size, int):
+        raise ValueError(f"{owner} requires flat integer model inputs.")
+    return size
+
+
 class OneVsRestModel(AbstractArrayModel):
     models: tuple[AbstractArrayModel, ...]
     labels: Array
@@ -200,7 +207,7 @@ class OneVsRestModel(AbstractArrayModel):
         self.models = tuple(models)
         self.labels = jnp.asarray(labels)
         self.target_schema = target_schema
-        self.in_size = int(models[0].in_size)
+        self.in_size = _flat_input_size(models[0], "OneVsRestModel")
         self.out_size = len(models)
 
     def decision_function(self, x: Any, /) -> Array:
@@ -281,7 +288,7 @@ class OneVsOneModel(AbstractArrayModel):
         self.pairs = tuple(pairs)
         self.labels = jnp.asarray(labels)
         self.target_schema = target_schema
-        self.in_size = int(models[0].in_size)
+        self.in_size = _flat_input_size(models[0], "OneVsOneModel")
         self.out_size = int(self.labels.shape[0])
 
     def pairwise_decision_function(self, x: Any, /) -> Array:
@@ -400,7 +407,7 @@ class OutputCodeModel(AbstractArrayModel):
         self.codebook = tuple(tuple(int(bit) for bit in row) for row in codebook)
         self.labels = jnp.asarray(labels)
         self.target_schema = target_schema
-        self.in_size = int(models[0].in_size)
+        self.in_size = _flat_input_size(models[0], "OutputCodeModel")
         self.out_size = len(self.codebook)
 
     def code_decision_function(self, x: Any, /) -> Array:
@@ -530,7 +537,7 @@ class MultilabelModel(AbstractArrayModel):
         _validate_binary_models(models, same_input=True)
         self.models = tuple(models)
         self.target_schema = target_schema
-        self.in_size = int(models[0].in_size)
+        self.in_size = _flat_input_size(models[0], "MultilabelModel")
         self.out_size = len(models)
 
     def decision_function(self, x: Any, /) -> Array:

@@ -99,7 +99,9 @@ def test_graph_neural_operator_preserves_padding_entries():
 def test_graph_kernel_integral_wraps_as_domain_graph_model():
     domain = phx.domain.GraphDomain(_line_graph())
     component = domain.component({"graph": phx.domain.Nodes()})
-    batch = component.sample(phx.domain.PointSampling(3, layout=phx.domain.SampleLayout((("graph",),))))
+    batch = component.sample(
+        phx.domain.PointSampling(3, layout=phx.domain.SampleLayout((("graph",),)))
+    )
 
     @domain.Function("graph")
     def u(node):

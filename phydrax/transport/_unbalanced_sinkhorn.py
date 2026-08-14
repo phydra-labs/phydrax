@@ -109,13 +109,9 @@ class UnbalancedSinkhorn(StrictModule):
             source_initial = jnp.asarray(initial_potentials[0], dtype=dtype)
             target_initial = jnp.asarray(initial_potentials[1], dtype=dtype)
             if source_initial.shape != (source_count,):
-                raise ValueError(
-                    "Initial source potential must match source atom count."
-                )
+                raise ValueError("Initial source potential must match source atom count.")
             if target_initial.shape != (target_count,):
-                raise ValueError(
-                    "Initial target potential must match target atom count."
-                )
+                raise ValueError("Initial target potential must match target atom count.")
             source_initial = eqx.error_if(
                 source_initial,
                 jnp.any(~jnp.isfinite(source_initial)),
@@ -144,28 +140,32 @@ class UnbalancedSinkhorn(StrictModule):
         )
 
         def fixed_point(source_potential, target_potential):
-            next_source = -source_exponent * epsilon * row_logsumexp(
-                problem.cost,
-                problem.source.points,
-                problem.target.points,
-                log_target + target_potential / epsilon,
-                epsilon,
-                block_size=self.block_size,
+            next_source = (
+                -source_exponent
+                * epsilon
+                * row_logsumexp(
+                    problem.cost,
+                    problem.source.points,
+                    problem.target.points,
+                    log_target + target_potential / epsilon,
+                    epsilon,
+                    block_size=self.block_size,
+                )
             )
-            next_target = -target_exponent * epsilon * column_logsumexp(
-                problem.cost,
-                problem.source.points,
-                problem.target.points,
-                log_source + next_source / epsilon,
-                epsilon,
-                block_size=self.block_size,
+            next_target = (
+                -target_exponent
+                * epsilon
+                * column_logsumexp(
+                    problem.cost,
+                    problem.source.points,
+                    problem.target.points,
+                    log_source + next_source / epsilon,
+                    epsilon,
+                    block_size=self.block_size,
+                )
             )
-            log_source_relaxed_mass = logsumexp(
-                log_source - next_source / source_penalty
-            )
-            log_target_relaxed_mass = logsumexp(
-                log_target - next_target / target_penalty
-            )
+            log_source_relaxed_mass = logsumexp(log_source - next_source / source_penalty)
+            log_target_relaxed_mass = logsumexp(log_target - next_target / target_penalty)
             shift = (
                 source_penalty
                 * target_penalty
@@ -195,10 +195,13 @@ class UnbalancedSinkhorn(StrictModule):
                 )
                 next_source = jnp.where(finite, next_source, source_potential)
                 next_target = jnp.where(finite, next_target, target_potential)
-                residual = jnp.maximum(
-                    jnp.max(jnp.abs(next_source - source_potential)),
-                    jnp.max(jnp.abs(next_target - target_potential)),
-                ) / epsilon
+                residual = (
+                    jnp.maximum(
+                        jnp.max(jnp.abs(next_source - source_potential)),
+                        jnp.max(jnp.abs(next_target - target_potential)),
+                    )
+                    / epsilon
+                )
                 return next_source, next_target, residual, ~finite
 
             def keep(_):
@@ -253,10 +256,13 @@ class UnbalancedSinkhorn(StrictModule):
             source_potential,
             target_potential,
         )
-        fixed_residual = jnp.maximum(
-            jnp.max(jnp.abs(mapped_source - source_potential)),
-            jnp.max(jnp.abs(mapped_target - target_potential)),
-        ) / epsilon
+        fixed_residual = (
+            jnp.maximum(
+                jnp.max(jnp.abs(mapped_source - source_potential)),
+                jnp.max(jnp.abs(mapped_target - target_potential)),
+            )
+            / epsilon
+        )
         (
             source_marginal,
             target_marginal,
@@ -289,12 +295,10 @@ class UnbalancedSinkhorn(StrictModule):
             + target_regularization
         )
         source_dual = source_penalty * jnp.sum(
-            problem.source_weights
-            * (1.0 - jnp.exp(-source_potential / source_penalty))
+            problem.source_weights * (1.0 - jnp.exp(-source_potential / source_penalty))
         )
         target_dual = target_penalty * jnp.sum(
-            problem.target_weights
-            * (1.0 - jnp.exp(-target_potential / target_penalty))
+            problem.target_weights * (1.0 - jnp.exp(-target_potential / target_penalty))
         )
         entropy_dual = epsilon * (
             problem.source_mass * problem.target_mass - transported_mass
@@ -322,9 +326,7 @@ class UnbalancedSinkhorn(StrictModule):
             & jnp.isfinite(source_stationarity)
             & jnp.isfinite(target_stationarity)
         )
-        mass_collapsed = (
-            transported_mass <= self.mass_collapse_tolerance.astype(dtype)
-        )
+        mass_collapsed = transported_mass <= self.mass_collapse_tolerance.astype(dtype)
         final_converged = (
             (fixed_residual <= tolerance)
             & (self.max_iterations >= self.min_iterations)

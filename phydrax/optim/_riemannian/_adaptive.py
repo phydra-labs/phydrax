@@ -229,9 +229,7 @@ class RiemannianAdam(AbstractRiemannianOptimizer):
             state.maximum_second_moment,
             second_moment,
         )
-        effective_second_moment = (
-            maximum_second_moment if self.amsgrad else second_moment
-        )
+        effective_second_moment = maximum_second_moment if self.amsgrad else second_moment
         step_number = state.step + jnp.asarray(1, dtype=state.step.dtype)
         step_value = step_number.astype(gradient_norm.dtype)
         first_bias = 1.0 - first_decay**step_value
@@ -272,11 +270,9 @@ class RiemannianAdam(AbstractRiemannianOptimizer):
             first_moment,
         )
         momentum_norm = self.parameter_geometry.norm(parameters, first_moment)
-        transported_tangent_residual = (
-            self.parameter_geometry.maximum_tangent_residual(
-                destination,
-                transported_first,
-            )
+        transported_tangent_residual = self.parameter_geometry.maximum_tangent_residual(
+            destination,
+            transported_first,
         )
         transport_metric_distortion = (
             self.parameter_geometry.maximum_transport_metric_distortion(

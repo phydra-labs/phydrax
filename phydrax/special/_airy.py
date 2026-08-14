@@ -464,7 +464,12 @@ def _airy_jvp(
         jnp.where(jnp.isposinf(x), boundary, derivative)
         for derivative, boundary in zip(derivatives, infinity_derivatives)
     )
-    return (ai, aip, bi, bip), tuple(derivative * x_dot for derivative in derivatives)
+    return (ai, aip, bi, bip), (
+        derivatives[0] * x_dot,
+        derivatives[1] * x_dot,
+        derivatives[2] * x_dot,
+        derivatives[3] * x_dot,
+    )
 
 
 @jax.custom_jvp
@@ -503,7 +508,12 @@ def _airye_jvp(
         jnp.where(jnp.isposinf(x), jnp.zeros_like(derivative), derivative)
         for derivative in derivatives
     )
-    return (ai, aip, bi, bip), tuple(derivative * x_dot for derivative in derivatives)
+    return (ai, aip, bi, bip), (
+        derivatives[0] * x_dot,
+        derivatives[1] * x_dot,
+        derivatives[2] * x_dot,
+        derivatives[3] * x_dot,
+    )
 
 
 def airy(x: ArrayLike) -> tuple[Array, Array, Array, Array]:

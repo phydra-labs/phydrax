@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import isfinite, prod
 from typing import Any, Protocol, TYPE_CHECKING
 
@@ -100,7 +101,7 @@ class SampledControlFeasibility(StrictModule):
 
 
 def _scalar_path(
-    callback: PathConstraint,
+    callback: Callable[..., ArrayLike],
     time: Array,
     state: Array,
     control: Array,

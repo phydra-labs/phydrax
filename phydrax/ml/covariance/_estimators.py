@@ -160,7 +160,7 @@ def _active_data(batch: MLBatch, policy: WeightPolicy) -> tuple[Array, Array, Ar
 
 
 def _moments(
-    x: Array, w: Array, correction: Array
+    x: Array, w: Array, correction: Array | float
 ) -> tuple[Array, Array, Array, Array, Array]:
     real_dtype = _real_dtype(x.dtype)
     tiny = jnp.finfo(real_dtype).tiny

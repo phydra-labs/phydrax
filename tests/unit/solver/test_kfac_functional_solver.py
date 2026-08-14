@@ -61,7 +61,9 @@ def _linear_solver(
         )
         return phx.terms.ResidualPenalty(condition, source)
 
-    terms = [residual_term(lambda field: field - 1.0, "target-one", policy=collocation_policy)]
+    terms = [
+        residual_term(lambda field: field - 1.0, "target-one", policy=collocation_policy)
+    ]
     if two_terms:
         terms.append(
             residual_term(

@@ -116,9 +116,7 @@ heat = phx.operators.feynman_kac_expectation(
     key=jr.key(1),
 )
 
-analytic = jnp.cos(wave_number * 0.25) * jnp.exp(
-    -kappa * wave_number**2 * 0.7
-)
+analytic = jnp.cos(wave_number * 0.25) * jnp.exp(-kappa * wave_number**2 * 0.7)
 assert jnp.abs(heat.value - analytic) < 6.0 * heat.standard_error
 ```
 

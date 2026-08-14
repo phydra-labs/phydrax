@@ -141,16 +141,26 @@ class InputLayout(StrictModule):
         resolved_axes = _axes(axes, len(resolved_shape), "input")
         count = prod(resolved_shape) if resolved_shape else 1
         resolved_components = _components(component_names, count, "u")
-        if isinstance(roles, str):
-            resolved_roles = (roles,) * count
-        else:
-            resolved_roles = tuple(roles)
-        if len(resolved_roles) != count or any(
-            role not in ("control", "forcing", "parameter") for role in resolved_roles
-        ):
+        raw_roles = (roles,) * count if isinstance(roles, str) else tuple(roles)
+        resolved_role_values: list[InputRole] = []
+        for role in raw_roles:
+            if role == "control":
+                resolved_role_values.append("control")
+            elif role == "forcing":
+                resolved_role_values.append("forcing")
+            elif role == "parameter":
+                resolved_role_values.append("parameter")
+            else:
+                raise ValueError(
+                    "roles must assign 'control', 'forcing', or 'parameter' "
+                    "to every component."
+                )
+        if len(resolved_role_values) != count:
             raise ValueError(
-                "roles must assign 'control', 'forcing', or 'parameter' to every component."
+                "roles must assign 'control', 'forcing', or 'parameter' "
+                "to every component."
             )
+        resolved_roles = tuple(resolved_role_values)
         self.shape = resolved_shape
         self.axes = resolved_axes
         self.component_names = resolved_components

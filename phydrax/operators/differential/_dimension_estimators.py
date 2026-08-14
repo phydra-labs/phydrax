@@ -60,7 +60,9 @@ class DimensionSamplingPolicy(StrictModule):
             raise ValueError("sampling must be 'uniform' or 'importance'.")
         if sampling == "uniform":
             if probabilities is not None:
-                raise ValueError("Uniform dimension sampling does not accept probabilities.")
+                raise ValueError(
+                    "Uniform dimension sampling does not accept probabilities."
+                )
             probs = None
             probability_identity = None
         else:
@@ -175,11 +177,7 @@ def _sample_indices(
     policy: DimensionSamplingPolicy,
     /,
 ) -> Array:
-    probabilities = (
-        None
-        if policy.sampling == "uniform"
-        else policy.probabilities
-    )
+    probabilities = None if policy.sampling == "uniform" else policy.probabilities
     return jr.choice(
         key,
         policy.total_dimension,
@@ -208,9 +206,7 @@ def dimension_sum_samples(
         if policy.probabilities is None:
             raise RuntimeError("Importance probabilities are unavailable.")
         selected = policy.probabilities[indices]
-        scaled = values / selected.reshape(
-            selected.shape + (1,) * (values.ndim - 1)
-        )
+        scaled = values / selected.reshape(selected.shape + (1,) * (values.ndim - 1))
     return DimensionOperatorSamples(indices, scaled, policy)
 
 

@@ -152,18 +152,17 @@ def _separable_hamiltonian_vector_field(
 ) -> tuple[SeparableHamiltonianVectorField, Array]:
     if isinstance(terms, WrapTerm):
         term = terms.term
-        direction = terms.direction
+        direction = jnp.asarray(terms.direction)
     else:
         term = terms
         direction = jnp.asarray(1)
-    if not isinstance(term, dfx.ODETerm) or not isinstance(
-        term.vector_field, SeparableHamiltonianVectorField
-    ):
+    vector_field = term.vector_field if isinstance(term, dfx.ODETerm) else None
+    if not isinstance(vector_field, SeparableHamiltonianVectorField):
         raise TypeError(
             "StormerVerlet requires an ODETerm containing "
             "SeparableHamiltonianVectorField."
         )
-    return term.vector_field, direction
+    return vector_field, direction
 
 
 class StormerVerlet(AbstractGeometricSolver):

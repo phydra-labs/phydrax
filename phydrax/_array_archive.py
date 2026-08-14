@@ -109,9 +109,7 @@ def read_array_archive(
             members = archive.infolist()
             member_names = [member.filename for member in members]
             if len(set(member_names)) != len(member_names):
-                raise ArrayArchiveCorruptionError(
-                    "Archive contains duplicate members."
-                )
+                raise ArrayArchiveCorruptionError("Archive contains duplicate members.")
             if any(
                 member.compress_type != zipfile.ZIP_STORED
                 or member.file_size != member.compress_size
@@ -135,9 +133,7 @@ def read_array_archive(
                 raise ArrayArchiveCorruptionError("Archive manifest must be an object.")
             inventory = manifest.get("arrays")
             if not isinstance(inventory, dict):
-                raise ArrayArchiveCorruptionError(
-                    "Archive array inventory is missing."
-                )
+                raise ArrayArchiveCorruptionError("Archive array inventory is missing.")
             expected_members = {"manifest.json"}
             values: dict[str, np.ndarray] = {}
             for logical_name, record in inventory.items():
@@ -162,19 +158,16 @@ def read_array_archive(
                     raise ArrayArchiveCorruptionError(
                         f"Archive array {logical_name!r} is invalid."
                     ) from error
-                if (
-                    list(value.shape) != record.get("shape")
-                    or value.dtype.str != record.get("dtype")
-                ):
+                if list(value.shape) != record.get(
+                    "shape"
+                ) or value.dtype.str != record.get("dtype"):
                     raise ArrayArchiveCorruptionError(
                         f"Archive array {logical_name!r} metadata is inconsistent."
                     )
                 value.setflags(write=False)
                 values[logical_name] = value
             if names != expected_members:
-                raise ArrayArchiveCorruptionError(
-                    "Archive contains unexpected members."
-                )
+                raise ArrayArchiveCorruptionError("Archive contains unexpected members.")
             return manifest, values
     except ArrayArchiveError:
         raise

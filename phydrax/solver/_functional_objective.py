@@ -69,9 +69,7 @@ def _adaptive_policy(term: AbstractScalarTerm, /):
 
 
 def _term_mode(term: AbstractScalarTerm, /) -> _ObjectiveTermMode:
-    if isinstance(term, ResidualPenalty) and isinstance(
-        term.source, AdaptiveIntegration
-    ):
+    if isinstance(term, ResidualPenalty) and isinstance(term.source, AdaptiveIntegration):
         return "adaptive_residual"
     if isinstance(term, AbstractSamplingTerm):
         return "sampled"
@@ -111,6 +109,8 @@ class _ObjectiveTerm(StrictModule):
         if self.mode != "adaptive_residual":
             raise ValueError("Only adaptive residual terms own collocation populations.")
         return eqx.tree_at(lambda slot: slot.population, self, population)
+
+
 _PreparedPayloadKind = Literal["none", "batch", "realization"]
 
 
@@ -163,7 +163,6 @@ class _PreparedTerm(StrictModule):
         self.kwargs = frozendict(kwargs)
 
 
-
 class _PreparedObjective(StrictModule):
     """One immutable same-update objective shared by all candidate evaluations."""
 
@@ -172,6 +171,7 @@ class _PreparedObjective(StrictModule):
     model_loss_key: Any
     iteration: Any
     enforcement: EnforcementProgram | None
+
     def __init__(
         self,
         terms: Sequence[_PreparedTerm],
@@ -188,13 +188,13 @@ class _PreparedObjective(StrictModule):
         self.enforcement = enforcement
 
 
-
 class _ObjectiveValues(StrictModule):
     """Canonical scalar objective and its ordered component values."""
 
     total: Any
     term_values: Any
     model_loss_values: Any
+
     def __init__(
         self,
         total: Any,
@@ -205,7 +205,6 @@ class _ObjectiveValues(StrictModule):
         self.total = total
         self.term_values = term_values
         self.model_loss_values = model_loss_values
-
 
     @property
     def flat_values(self) -> Any:
@@ -234,6 +233,10 @@ def _prepare_slots(
         strict=True,
     ):
         if slot.mode == "adaptive_residual":
+            if not isinstance(slot.term, ResidualPenalty):
+                raise RuntimeError(
+                    "Adaptive objective slot does not contain a residual penalty."
+                )
             policy = _adaptive_policy(slot.term)
             batch, local_weight = policy.loss_batch_and_weight(slot.population)
             payload = slot.term._adaptive_realization(
@@ -314,9 +317,7 @@ def evaluate_prepared_objective(
                 model_loss_values.append(value)
                 total = total + value
     terms_array = (
-        jnp.stack(term_values, axis=0)
-        if term_values
-        else jnp.zeros((0,), dtype=float)
+        jnp.stack(term_values, axis=0) if term_values else jnp.zeros((0,), dtype=float)
     )
     model_array = (
         jnp.stack(model_loss_values, axis=0)
@@ -352,8 +353,6 @@ def prepared_data_metrics(
                 )
             )
     return tuple(metrics)
-
-
 
 
 class _FunctionalObjective(StrictModule):
@@ -413,6 +412,7 @@ class _FunctionalObjective(StrictModule):
     @property
     def populations(self) -> tuple[Any | None, ...]:
         return tuple(slot.population for slot in self.training)
+
     def prepare_training(
         self,
         indices: Sequence[int],
@@ -453,7 +453,6 @@ class _FunctionalObjective(StrictModule):
             enforcement=self.enforcement,
             evaluation_kwargs=evaluation_kwargs,
         )
-
 
     def with_populations(
         self,

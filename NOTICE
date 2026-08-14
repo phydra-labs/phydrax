@@ -39,3 +39,11 @@ Licensed under the BSD 3-Clause License.
 The translated jv/yv kernels are adapted from Cephes sources bundled by
 SciPy XSF.
 See LICENSES/CEPHES-BSD-3-CLAUSE.txt.
+
+ASDEX
+Copyright (c) 2024 Adrian Hill <gh@adrianhill.de>
+Licensed under the MIT License.
+Phydrax uses ASDEX as a compile-time global sparsity-detection and optimized-
+coloring dependency through its public Python API. ASDEX artifacts are
+normalized before Phydrax evaluates compressed derivatives through native JAX.
+See LICENSES/ASDEX-MIT.txt.

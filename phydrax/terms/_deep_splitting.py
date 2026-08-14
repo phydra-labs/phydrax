@@ -95,7 +95,10 @@ class DeepSplittingRegressionDiagnostics(StrictModule):
 def _validate_paths(paths: BSDEPathBatch, problem: BSDEProblem, /) -> None:
     if not isinstance(paths, BSDEPathBatch):
         raise TypeError("Deep splitting paths must be a BSDEPathBatch.")
-    if paths.state_shape != problem.state_shape or paths.noise_shape != problem.noise_shape:
+    if (
+        paths.state_shape != problem.state_shape
+        or paths.noise_shape != problem.noise_shape
+    ):
         raise ValueError("Deep splitting path event shapes do not match the problem.")
     if paths.process_id != problem.process_id:
         raise ValueError("Deep splitting path and problem process IDs do not match.")
@@ -141,9 +144,7 @@ def deep_splitting_labels(
         raise ValueError("slice_index must identify a path interval.")
     left_time = paths.times[index]
     right_time = paths.times[index + 1]
-    left_states = paths.states[
-        ..., index, *([slice(None)] * len(problem.state_shape))
-    ]
+    left_states = paths.states[..., index, *([slice(None)] * len(problem.state_shape))]
     right_states = paths.states[
         ..., index + 1, *([slice(None)] * len(problem.state_shape))
     ]
@@ -183,9 +184,7 @@ def deep_splitting_labels(
     source_values = jax.vmap(source_at)(
         safe_right_states.reshape((-1,) + problem.state_shape),
         next_values.reshape((-1,) + problem.output_shape),
-        source_controls.reshape(
-            (-1,) + problem.output_shape + problem.noise_shape
-        ),
+        source_controls.reshape((-1,) + problem.output_shape + problem.noise_shape),
     ).reshape(paths.sample_shape + problem.output_shape)
     if source_values.shape[0 : len(paths.sample_shape)] != paths.sample_shape:
         raise RuntimeError(f"Failed to preserve {sample_count} splitting samples.")
@@ -197,9 +196,7 @@ def deep_splitting_labels(
         & _event_finite(safe_left_states, problem.state_shape)
         & _event_finite(safe_right_states, problem.state_shape)
         & _event_finite(next_values, problem.output_shape)
-        & _event_finite(
-            source_controls, problem.output_shape + problem.noise_shape
-        )
+        & _event_finite(source_controls, problem.output_shape + problem.noise_shape)
         & _event_finite(source_values, problem.output_shape)
         & _event_finite(value_targets, problem.output_shape)
     )

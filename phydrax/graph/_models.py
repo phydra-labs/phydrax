@@ -27,7 +27,9 @@ def _tree_leading_size(tree: ArrayTree) -> int:
     return int(jnp.asarray(leaves[0]).shape[0])
 
 
-def _tree_repeat(tree: ArrayTree, repeats: jnp.ndarray, total_repeat_length: int) -> ArrayTree:
+def _tree_repeat(
+    tree: ArrayTree, repeats: jnp.ndarray, total_repeat_length: int
+) -> ArrayTree:
     return jtu.tree_map(
         lambda x: jnp.repeat(x, repeats, axis=0, total_repeat_length=total_repeat_length),
         tree,
@@ -130,7 +132,9 @@ class GraphNetwork(eqx.Module):
             weights = jtu.tree_map(normalize, logits)
             attention_reduce_fn = self.attention_reduce_fn
             if attention_reduce_fn is None:
-                raise RuntimeError("GraphNetwork attention reducer invariant was violated.")
+                raise RuntimeError(
+                    "GraphNetwork attention reducer invariant was violated."
+                )
             edges = attention_reduce_fn(edges, weights)
 
         if self.update_node_fn is not None:
@@ -401,7 +405,9 @@ class GAT(eqx.Module):
             received_attributes,
             graph.edges,
         )
-        weights = segment_softmax(softmax_logits, segment_ids=receivers, num_segments=sum_n_node)
+        weights = segment_softmax(
+            softmax_logits, segment_ids=receivers, num_segments=sum_n_node
+        )
         messages = sent_attributes * weights
         updated_nodes = segment_sum(messages, receivers, num_segments=sum_n_node)
 
@@ -463,8 +469,12 @@ class GraphConvolution(eqx.Module):
             receiver_degree = segment_sum(ones, conv_receivers, total_num_nodes)
 
             nodes = jtu.tree_map(
-                lambda x: x
-                * jax.lax.rsqrt(jnp.maximum(sender_degree, 1.0)).astype(x.dtype)[:, None],
+                lambda x: (
+                    x
+                    * jax.lax.rsqrt(jnp.maximum(sender_degree, 1.0)).astype(x.dtype)[
+                        :, None
+                    ]
+                ),
                 nodes,
             )
             nodes = jtu.tree_map(
@@ -476,8 +486,12 @@ class GraphConvolution(eqx.Module):
                 nodes,
             )
             nodes = jtu.tree_map(
-                lambda x: x
-                * jax.lax.rsqrt(jnp.maximum(receiver_degree, 1.0)).astype(x.dtype)[:, None],
+                lambda x: (
+                    x
+                    * jax.lax.rsqrt(jnp.maximum(receiver_degree, 1.0)).astype(x.dtype)[
+                        :, None
+                    ]
+                ),
                 nodes,
             )
         else:
@@ -512,8 +526,12 @@ class GraphMapFeatures(eqx.Module):
 
     def __call__(self, graph: GraphIR) -> GraphIR:
         graph = ensure_graph(graph, validate=False)
-        nodes = graph.nodes if self.embed_node_fn is None else self.embed_node_fn(graph.nodes)
-        edges = graph.edges if self.embed_edge_fn is None else self.embed_edge_fn(graph.edges)
+        nodes = (
+            graph.nodes if self.embed_node_fn is None else self.embed_node_fn(graph.nodes)
+        )
+        edges = (
+            graph.edges if self.embed_edge_fn is None else self.embed_edge_fn(graph.edges)
+        )
         globals_ = (
             graph.globals
             if self.embed_global_fn is None

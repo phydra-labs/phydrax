@@ -36,11 +36,14 @@ def test_minkowski_reference_is_flat_in_both_sign_conventions(
     assert jnp.allclose(phx.metrix.scalar_curvature(metric, point), 0.0)
     assert jnp.allclose(phx.metrix.einstein_tensor(metric, point), 0.0)
     assert jnp.allclose(phx.metrix.adm_extrinsic_curvature(metric, point), 0.0)
-    assert phx.metrix.adm_constraint_residuals(
-        metric,
-        point,
-        einstein_coupling=0.0,
-    ).maximum_absolute == 0.0
+    assert (
+        phx.metrix.adm_constraint_residuals(
+            metric,
+            point,
+            einstein_coupling=0.0,
+        ).maximum_absolute
+        == 0.0
+    )
 
 
 @pytest.mark.parametrize(
@@ -70,14 +73,10 @@ def test_curved_flrw_reference_matches_friedmann_tensors_and_bianchi_identity(
     scale_second_derivative = 0.2
     hubble = scale_derivative / scale
     expected_scalar = 6.0 * (
-        scale_second_derivative / scale
-        + hubble**2
-        + spatial_curvature / scale**2
+        scale_second_derivative / scale + hubble**2 + spatial_curvature / scale**2
     )
     spatial_pressure_factor = -(
-        2.0 * scale * scale_second_derivative
-        + scale_derivative**2
-        + spatial_curvature
+        2.0 * scale * scale_second_derivative + scale_derivative**2 + spatial_curvature
     )
     expected_einstein = jnp.diag(
         jnp.array(
@@ -101,9 +100,7 @@ def test_curved_flrw_reference_matches_friedmann_tensors_and_bianchi_identity(
         atol=1e-10,
     )
 
-    contravariant = phx.metrix.TensorType(
-        ("contravariant", "contravariant")
-    )
+    contravariant = phx.metrix.TensorType(("contravariant", "contravariant"))
 
     def raised_einstein(coordinates):
         inverse = metric.inverse(coordinates)
@@ -157,8 +154,11 @@ def test_schwarzschild_reference_is_vacuum_with_exact_kretschmann_scalar():
         ),
     )
     assert jnp.allclose(phx.metrix.adm_extrinsic_curvature(metric, point), 0.0)
-    assert phx.metrix.adm_constraint_residuals(
-        metric,
-        point,
-        einstein_coupling=0.0,
-    ).maximum_absolute < 1e-10
+    assert (
+        phx.metrix.adm_constraint_residuals(
+            metric,
+            point,
+            einstein_coupling=0.0,
+        ).maximum_absolute
+        < 1e-10
+    )

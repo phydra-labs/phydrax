@@ -89,7 +89,9 @@ class FeynmanKacSamplingPlan(StrictModule):
         t0 = float(initial_time)
         t1 = float(terminal_time)
         if not jnp.isfinite(t0) or not jnp.isfinite(t1) or t1 <= t0:
-            raise ValueError("initial_time and terminal_time must be finite with t1 > t0.")
+            raise ValueError(
+                "initial_time and terminal_time must be finite with t1 > t0."
+            )
         if sampling_mode not in ("trajectory_nodes", "queries"):
             raise ValueError("Unknown Feynman-Kac sampling_mode.")
         paths = int(num_paths_per_query)
@@ -326,7 +328,9 @@ class FeynmanKacLabelBatch(StrictModule):
             if validity.shape != times.shape:
                 raise ValueError("valid must align with query_times.")
         if control_valid is None:
-            control_validity = validity if controls is not None else jnp.zeros_like(validity)
+            control_validity = (
+                validity if controls is not None else jnp.zeros_like(validity)
+            )
         else:
             control_validity = jnp.asarray(control_valid, dtype=bool).reshape((-1,))
             if control_validity.shape != times.shape:
@@ -410,8 +414,7 @@ def feynman_kac_label_diagnostics(
         batch.output_shape,
     )
     finite_value_errors = jnp.where(
-        batch.valid
-        & jnp.all(jnp.isfinite(batch.value_standard_errors), axis=value_axes),
+        batch.valid & jnp.all(jnp.isfinite(batch.value_standard_errors), axis=value_axes),
         jnp.mean(batch.value_standard_errors, axis=value_axes),
         jnp.nan,
     )
@@ -558,9 +561,7 @@ def _source_generator_nodes(
     flat_times = jnp.broadcast_to(times, leading_shape).reshape((-1,))
     flat_states = states.reshape((-1,) + problem.state_shape)
     flat_values = values.reshape((-1,) + problem.output_shape)
-    flat_controls = controls.reshape(
-        (-1,) + problem.output_shape + problem.noise_shape
-    )
+    flat_controls = controls.reshape((-1,) + problem.output_shape + problem.noise_shape)
 
     def evaluate(time, state, value, control):
         result = jnp.asarray(problem.generator(time, state, value, control, problem.args))
@@ -578,9 +579,9 @@ def _source_generator_nodes(
 
 def _terminal_values(problem: BSDEProblem, states: Array, /) -> Array:
     leading_shape = states.shape[: -len(problem.state_shape)]
-    values = jax.vmap(
-        lambda state: jnp.asarray(problem.terminal(state, problem.args))
-    )(states.reshape((-1,) + problem.state_shape))
+    values = jax.vmap(lambda state: jnp.asarray(problem.terminal(state, problem.args)))(
+        states.reshape((-1,) + problem.state_shape)
+    )
     expected = (prod(leading_shape),) + problem.output_shape
     if values.shape != expected:
         raise ValueError(
@@ -598,9 +599,15 @@ def _reverse_targets(
     time_axis: int,
     quadrature: BSDEQuadrature,
 ) -> Array:
-    left = jnp.take(generator_nodes, jnp.arange(generator_nodes.shape[time_axis] - 1), axis=time_axis)
+    left = jnp.take(
+        generator_nodes, jnp.arange(generator_nodes.shape[time_axis] - 1), axis=time_axis
+    )
     if quadrature == "trapezoid":
-        right = jnp.take(generator_nodes, jnp.arange(1, generator_nodes.shape[time_axis]), axis=time_axis)
+        right = jnp.take(
+            generator_nodes,
+            jnp.arange(1, generator_nodes.shape[time_axis]),
+            axis=time_axis,
+        )
         interval_values = 0.5 * (left + right)
     else:
         interval_values = left
@@ -651,12 +658,19 @@ def trajectory_node_feynman_kac_labels(
 ) -> FeynmanKacLabelBatch:
     """Construct one correlated global-time label at every valid trajectory node."""
     if not isinstance(problem, BSDEProblem) or not isinstance(paths, BSDEPathBatch):
-        raise TypeError("problem and paths must be BSDEProblem and BSDEPathBatch objects.")
+        raise TypeError(
+            "problem and paths must be BSDEProblem and BSDEPathBatch objects."
+        )
     if not isinstance(plan, FeynmanKacSamplingPlan):
         raise TypeError("plan must be a FeynmanKacSamplingPlan.")
     if plan.sampling_mode != "trajectory_nodes":
-        raise ValueError("trajectory_node_feynman_kac_labels requires trajectory_nodes mode.")
-    if paths.state_shape != problem.state_shape or paths.noise_shape != problem.noise_shape:
+        raise ValueError(
+            "trajectory_node_feynman_kac_labels requires trajectory_nodes mode."
+        )
+    if (
+        paths.state_shape != problem.state_shape
+        or paths.noise_shape != problem.noise_shape
+    ):
         raise ValueError("Path and problem state/noise shapes do not match.")
     if paths.process_id != problem.process_id:
         raise ValueError("Path and problem process IDs do not match.")
@@ -684,7 +698,9 @@ def trajectory_node_feynman_kac_labels(
     continuation_valid = _continuation_valid(paths.valid, time_axis=time_axis)
     nodes = int(paths.times.shape[0])
     path_count = paths.num_paths
-    query_times = jnp.broadcast_to(paths.times, paths.sample_shape + (nodes,)).reshape((-1,))
+    query_times = jnp.broadcast_to(paths.times, paths.sample_shape + (nodes,)).reshape(
+        (-1,)
+    )
     query_states = paths.states.reshape((-1,) + problem.state_shape)
     value_targets = targets.reshape((-1,) + problem.output_shape)
     valid = continuation_valid.reshape((-1,)) & _event_finite(
@@ -726,7 +742,9 @@ def trajectory_node_feynman_kac_labels(
         control_targets = jnp.concatenate(
             (interval_controls, terminal_control), axis=time_axis
         ).reshape((-1,) + problem.output_shape + problem.noise_shape)
-        interval_valid = jnp.take(continuation_valid, jnp.arange(1, nodes), axis=time_axis)
+        interval_valid = jnp.take(
+            continuation_valid, jnp.arange(1, nodes), axis=time_axis
+        )
         terminal_invalid = jnp.zeros(paths.sample_shape + (1,), dtype=bool)
         control_valid = jnp.concatenate(
             (interval_valid, terminal_invalid), axis=time_axis
@@ -774,7 +792,11 @@ def _resolve_queries(
     query_sampler: Callable[[Key[Array, ""]], Any] | None,
 ) -> tuple[Array, Array, Array]:
     if query_sampler is not None:
-        if query_times is not None or query_states is not None or query_weights is not None:
+        if (
+            query_times is not None
+            or query_states is not None
+            or query_weights is not None
+        ):
             raise ValueError("Supply either query_sampler or explicit queries, not both.")
         sampled = query_sampler(key)
         if isinstance(sampled, Mapping):
@@ -854,8 +876,12 @@ def sample_feynman_kac_paths(
     num_paths: int | None = None,
 ) -> FeynmanKacPathBatch:
     """Simulate Euler--Maruyama continuations on one normalized grid per query."""
-    if not isinstance(problem, BSDEProblem) or not isinstance(plan, FeynmanKacSamplingPlan):
-        raise TypeError("problem and plan must be BSDEProblem and FeynmanKacSamplingPlan.")
+    if not isinstance(problem, BSDEProblem) or not isinstance(
+        plan, FeynmanKacSamplingPlan
+    ):
+        raise TypeError(
+            "problem and plan must be BSDEProblem and FeynmanKacSamplingPlan."
+        )
     if plan.sampling_mode != "queries":
         raise ValueError("sample_feynman_kac_paths requires queries mode.")
     q_times, q_states, q_weights = _resolve_queries(
@@ -894,12 +920,16 @@ def sample_feynman_kac_paths(
 
     def step(current, inputs):
         time, step_dt, noise_increment = inputs
-        point_times = jnp.broadcast_to(time[:, None], (query_count, path_count)).reshape((-1,))
+        point_times = jnp.broadcast_to(time[:, None], (query_count, path_count)).reshape(
+            (-1,)
+        )
         flat_states = current.reshape((-1,) + problem.state_shape)
 
         def coefficients(point_time, point_state):
             drift = jnp.asarray(problem.drift(point_time, point_state, problem.args))
-            diffusion = jnp.asarray(problem.diffusion(point_time, point_state, problem.args))
+            diffusion = jnp.asarray(
+                problem.diffusion(point_time, point_state, problem.args)
+            )
             if drift.shape != problem.state_shape:
                 raise ValueError("BSDE drift returned an incompatible state shape.")
             if diffusion.shape != problem.state_shape + problem.noise_shape:
@@ -976,8 +1006,7 @@ def _aggregate_samples(
         count.shape + (1,) * (samples.ndim - 2)
     )
     standard_error = jnp.sqrt(
-        variance
-        / safe_count.reshape(safe_count.shape + (1,) * (samples.ndim - 2))
+        variance / safe_count.reshape(safe_count.shape + (1,) * (samples.ndim - 2))
     )
     standard_error = jnp.where(
         (count >= 2).reshape(count.shape + (1,) * (samples.ndim - 2)),
@@ -1033,8 +1062,12 @@ def query_feynman_kac_labels(
     return_paths: bool = False,
 ) -> FeynmanKacLabelBatch | tuple[FeynmanKacLabelBatch, FeynmanKacPathBatch]:
     """Estimate conditional Feynman--Kac value/control targets at explicit queries."""
-    if not isinstance(problem, BSDEProblem) or not isinstance(plan, FeynmanKacSamplingPlan):
-        raise TypeError("problem and plan must be BSDEProblem and FeynmanKacSamplingPlan.")
+    if not isinstance(problem, BSDEProblem) or not isinstance(
+        plan, FeynmanKacSamplingPlan
+    ):
+        raise TypeError(
+            "problem and plan must be BSDEProblem and FeynmanKacSamplingPlan."
+        )
     if plan.sampling_mode != "queries":
         raise ValueError("query_feynman_kac_labels requires queries mode.")
     q_times, q_states, q_weights = _resolve_queries(
@@ -1104,7 +1137,9 @@ def query_feynman_kac_labels(
             antithetic=plan.antithetic,
         )
         control_targets = jnp.where(
-            nonterminal.reshape((-1,) + (1,) * (len(problem.output_shape) + len(problem.noise_shape))),
+            nonterminal.reshape(
+                (-1,) + (1,) * (len(problem.output_shape) + len(problem.noise_shape))
+            ),
             control_targets,
             0.0,
         )

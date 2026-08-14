@@ -8,7 +8,6 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 import jax.numpy as jnp
-import jax.random as jr
 from jaxtyping import Array, Key
 
 from .._callable import _ensure_special_kwonly_args
@@ -23,7 +22,7 @@ from .._model import (
 )
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ._keys import EvalKey
+from ._keys import EvalKey, fold_in_eval_key
 
 
 class ModelLossTerm(StrictModule, NonTrainableState):
@@ -153,7 +152,7 @@ class ModelWithLoss(
     ) -> tuple[Array, ...]:
         return tuple(
             jnp.asarray(
-                term(self.model, key=jr.fold_in(key, index), iter_=iter_),
+                term(self.model, key=fold_in_eval_key(key, index), iter_=iter_),
                 dtype=float,
             ).reshape(())
             for index, term in enumerate(self.loss_terms)

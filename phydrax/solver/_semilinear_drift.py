@@ -13,7 +13,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
-from ._matrix_functions import SpectralMatrixRepresentation
+from ..linalg import AbstractLinearOperator, ArraySpace, SpectralMatrixRepresentation
 
 
 class SemilinearDrift(StrictModule):
@@ -24,7 +24,7 @@ class SemilinearDrift(StrictModule):
     materialize a global operator matrix.
     """
 
-    linear_operator: Callable[[Array], ArrayLike]
+    linear_operator: AbstractLinearOperator | Callable[[Array], ArrayLike]
     nonlinear_drift: Callable[[Array, Array, Any], ArrayLike] | None
     mass_weights: Array | None
     spectral_representation: SpectralMatrixRepresentation | None
@@ -37,7 +37,7 @@ class SemilinearDrift(StrictModule):
 
     def __init__(
         self,
-        linear_operator: Callable[[Array], ArrayLike],
+        linear_operator: AbstractLinearOperator | Callable[[Array], ArrayLike],
         nonlinear_drift: Callable[[Array, Array, Any], ArrayLike] | None,
         /,
         *,
@@ -51,7 +51,9 @@ class SemilinearDrift(StrictModule):
         compatible_noise_basis_id: str | None = None,
     ):
         if not callable(linear_operator):
-            raise TypeError("linear_operator must be callable.")
+            raise TypeError(
+                "linear_operator must be an AbstractLinearOperator or callable."
+            )
         if nonlinear_drift is not None and not callable(nonlinear_drift):
             raise TypeError("nonlinear_drift must be callable or None.")
         shape = tuple(int(size) for size in state_shape)
@@ -60,6 +62,20 @@ class SemilinearDrift(StrictModule):
         identifier = str(operator_id)
         if not identifier:
             raise ValueError("operator_id must be non-empty.")
+        if isinstance(linear_operator, AbstractLinearOperator):
+            if (
+                linear_operator.batch_shape
+                or not isinstance(linear_operator.source, ArraySpace)
+                or not isinstance(linear_operator.target, ArraySpace)
+                or linear_operator.source.shape != shape
+                or linear_operator.target.shape != shape
+            ):
+                raise ValueError(
+                    "linear_operator must be an unbatched ArraySpace endomorphism "
+                    "with the declared state_shape."
+                )
+            if identifier != linear_operator.operator_id:
+                raise ValueError("operator_id must equal linear_operator.operator_id.")
         if mass_weights is None:
             weights = None
         else:
@@ -84,8 +100,19 @@ class SemilinearDrift(StrictModule):
                 raise TypeError(
                     "spectral_representation must be SpectralMatrixRepresentation."
                 )
-            if spectral_representation.state_shape != shape:
+            spectral_operator = spectral_representation.operator
+            if (
+                not isinstance(spectral_operator.source, ArraySpace)
+                or not isinstance(spectral_operator.target, ArraySpace)
+                or spectral_operator.source.shape != shape
+                or spectral_operator.target.shape != shape
+            ):
                 raise ValueError("Spectral representation state_shape must match.")
+            if (
+                isinstance(linear_operator, AbstractLinearOperator)
+                and spectral_operator.operator_id != identifier
+            ):
+                raise ValueError("Spectral representation must bind the linear operator.")
         if compatible_noise_eigenvalues is None:
             noise_values = None
             if compatible_noise_basis_id is not None:
@@ -124,7 +151,12 @@ class SemilinearDrift(StrictModule):
             raise ValueError(
                 f"Semilinear state must have shape {self.state_shape}; got {value.shape}."
             )
-        result = jnp.asarray(self.linear_operator(value))
+        action = (
+            self.linear_operator.mv
+            if isinstance(self.linear_operator, AbstractLinearOperator)
+            else self.linear_operator
+        )
+        result = jnp.asarray(action(value))
         if result.shape != self.state_shape:
             raise ValueError(
                 "linear_operator must preserve the declared state shape; "

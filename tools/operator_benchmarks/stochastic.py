@@ -595,7 +595,9 @@ def run_stochastic_heat_process_benchmark(
     transition = phx.nn.operator.training.OperatorMarginalTransition(
         LinearGaussianReferenceOperator(drift, noise),
         batch,
-        phx.nn.operator.training.OperatorTransitionSpec(phx.nn.operator.OperatorOutputSpec("scalar")),
+        phx.nn.operator.training.OperatorTransitionSpec(
+            phx.nn.operator.OperatorOutputSpec("scalar")
+        ),
         process_id="analytic-stochastic-heat",
     )
     direct = transition.marginal_transition(
@@ -604,7 +606,9 @@ def run_stochastic_heat_process_benchmark(
         t1=dataset.duration,
     )
     operator_distribution = direct.operator_distribution
-    if not isinstance(operator_distribution, phx.nn.operator.GaussianOperatorDistribution):
+    if not isinstance(
+        operator_distribution, phx.nn.operator.GaussianOperatorDistribution
+    ):
         raise TypeError("Analytic heat transition must return a Gaussian distribution.")
     direct_covariance = operator_distribution.dense_covariance()
     expected_covariance = jnp.broadcast_to(
@@ -744,7 +748,9 @@ def _fit_allen_cahn_trial(
         ),
         8,
     )
-    conditioner = phx.nn.operator.architectures.OperatorBatchConditioner({"state": encoder})
+    conditioner = phx.nn.operator.architectures.OperatorBatchConditioner(
+        {"state": encoder}
+    )
     flow = phx.nn.operator.architectures.conditional_coupling_flow_operator(
         jr.key(seed + 2),
         location_model=location,

@@ -12,6 +12,13 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    LinearSolvePolicy,
+    LinearSystem,
+    solve,
+)
 
 
 FrequencySystemType: TypeAlias = Literal["continuous", "discrete"]
@@ -174,10 +181,14 @@ def _frequency_result(
     expanded_points = flat_points.reshape((1,) * len(batch_shape) + (point_count, 1, 1))
     identity = jnp.eye(state_size, dtype=complex_dtype)
     resolvent_matrix = expanded_points * identity - state[..., None, :, :]
-    resolvent = jnp.linalg.solve(
-        resolvent_matrix,
-        jnp.broadcast_to(identity, batch_shape + (point_count, state_size, state_size)),
-    )
+    resolvent = solve(
+        LinearSystem(DenseLinearOperator(resolvent_matrix)),
+        jnp.broadcast_to(
+            identity,
+            batch_shape + (point_count, state_size, state_size),
+        ),
+        policy=LinearSolvePolicy(DenseLU()),
+    ).value
     state_response = resolvent @ inputs[..., None, :, :]
     response = outputs[..., None, :, :] @ state_response + feedthrough[..., None, :, :]
 

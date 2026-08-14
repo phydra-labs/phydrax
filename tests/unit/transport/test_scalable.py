@@ -20,9 +20,7 @@ def _target(
     mask=None,
 ):
     mask_field = (
-        None
-        if mask is None
-        else cx.Field(jnp.asarray(mask, dtype=bool), dims=("atom",))
+        None if mask is None else cx.Field(jnp.asarray(mask, dtype=bool), dims=("atom",))
     )
     return phx.integration.discrete(
         jnp.asarray(points, dtype=float),
@@ -155,9 +153,7 @@ def test_factorized_sinkhorn_matches_dense_plan_marginals_actions_and_objectives
     assert approximate.converged
     assert approximate.exact_ground_cost_computed
     assert approximate.provenance.execution == "factorized"
-    assert approximate.provenance.approximation.startswith(
-        "gaussian-positive-features"
-    )
+    assert approximate.provenance.approximation.startswith("gaussian-positive-features")
     assert jnp.allclose(approximate.source_marginal(), problem.source_weights, atol=2e-6)
     assert jnp.allclose(approximate.target_marginal(), problem.target_weights, atol=2e-6)
     assert jnp.allclose(
@@ -184,11 +180,7 @@ def test_factorized_sinkhorn_matches_dense_plan_marginals_actions_and_objectives
         0.0,
     )
     surrogate_cost = -approximate.epsilon * jnp.log(kernel)
-    kl = (
-        jnp.sum(probability_plan * log_ratio)
-        - jnp.sum(probability_plan)
-        + 1.0
-    )
+    kl = jnp.sum(probability_plan * log_ratio) - jnp.sum(probability_plan) + 1.0
     dense_surrogate_objective = problem.mass * (
         jnp.sum(probability_plan * surrogate_cost) + approximate.epsilon * kl
     )
@@ -285,9 +277,7 @@ def test_factorized_solver_is_jittable_vmappable_differentiable_and_preserves_ma
     assert batched.shape == (3,)
     assert jnp.all(jnp.isfinite(batched))
     assert physical.converged
-    assert jnp.allclose(
-        jnp.sum(physical.dense_plan()), physical_problem.mass, atol=5e-6
-    )
+    assert jnp.allclose(jnp.sum(physical.dense_plan()), physical_problem.mass, atol=5e-6)
     assert jnp.allclose(
         physical.source_marginal(), physical_problem.source_weights, atol=5e-6
     )
@@ -320,9 +310,7 @@ def test_scientific_particle_transform_keeps_approximation_provenance_and_reject
     )
 
     assert metric.converged
-    assert metric.cross.provenance.approximation.startswith(
-        "gaussian-positive-features"
-    )
+    assert metric.cross.provenance.approximation.startswith("gaussian-positive-features")
     assert jnp.isfinite(median)
     assert transformed.particles.shape == particles.shape
     assert jnp.all(transformed.transport.converged)

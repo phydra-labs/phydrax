@@ -43,9 +43,7 @@ modes are mutually exclusive. Reusing the returned projections makes comparisons
 gradient checks independent of PRNG consumption.
 
 ```python
-source_events = jnp.asarray(
-    [[0.0, 0.0], [1.0, 0.5], [0.2, 1.0], [0.8, 0.9]]
-)
+source_events = jnp.asarray([[0.0, 0.0], [1.0, 0.5], [0.2, 1.0], [0.8, 0.9]])
 target_events = source_events + jnp.asarray([0.3, -0.1])
 estimate = phx.transport.sliced_wasserstein_distance(
     source_events,

@@ -190,7 +190,7 @@ x_period = 2.0
 y_period = 2.0
 
 sampled = phx.nn.layers.sample_fourier_grid(
-    values,       # batch_shape + source_shape + (channels,)
+    values,  # batch_shape + source_shape + (channels,)
     coordinates,  # batch_shape + query_shape + (spatial_ndim,)
     spatial_ndim=2,
 )
@@ -279,9 +279,11 @@ z = phx.domain.ProbabilityDomain(
 )
 domain = x @ z
 
+
 @domain.Function("x", "z")
 def observable(x, z):
     return jnp.stack((x + z, x**2 + z**2))
+
 
 plan = phx.operators.SmolyakInterpolationPlan(
     2,

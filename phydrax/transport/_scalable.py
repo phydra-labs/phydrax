@@ -214,9 +214,7 @@ class PositiveKernelFactors(StrictModule):
         if source_design.shape[1] != target_design.shape[1]:
             raise ValueError("Factor source and target points must share an event size.")
         if not isinstance(diagnostics, PositiveKernelApproximationDiagnostics):
-            raise TypeError(
-                "diagnostics must be PositiveKernelApproximationDiagnostics."
-            )
+            raise TypeError("diagnostics must be PositiveKernelApproximationDiagnostics.")
         scalar_evidence = (
             diagnostics.status,
             diagnostics.rank,
@@ -369,23 +367,17 @@ class GaussianPositiveFeatures(StrictModule):
         if not isinstance(problem, DiscreteTransportProblem):
             raise TypeError("problem must be a DiscreteTransportProblem.")
         if not isinstance(problem.cost, SquaredEuclideanCost):
-            raise TypeError(
-                "GaussianPositiveFeatures requires SquaredEuclideanCost."
-            )
+            raise TypeError("GaussianPositiveFeatures requires SquaredEuclideanCost.")
         epsilon_ = jnp.asarray(
             epsilon,
-            dtype=jnp.result_type(
-                problem.source.points, problem.target.points, float
-            ),
+            dtype=jnp.result_type(problem.source.points, problem.target.points, float),
         ).reshape(())
         epsilon_ = eqx.error_if(
             epsilon_,
             ~jnp.isfinite(epsilon_) | (epsilon_ <= 0.0),
             "epsilon must be finite and positive.",
         )
-        projection_key, source_probe_key, target_probe_key = jax.random.split(
-            self.key, 3
-        )
+        projection_key, source_probe_key, target_probe_key = jax.random.split(self.key, 3)
         source_points = problem.source.points.astype(epsilon_.dtype)
         target_points = problem.target.points.astype(epsilon_.dtype)
         source_center = jnp.sum(
@@ -403,9 +395,7 @@ class GaussianPositiveFeatures(StrictModule):
             dtype=epsilon_.dtype,
         )
         inverse_scale = jnp.sqrt(2.0 / epsilon_)
-        rank_normalization = 0.5 * jnp.log(
-            jnp.asarray(self.rank, dtype=epsilon_.dtype)
-        )
+        rank_normalization = 0.5 * jnp.log(jnp.asarray(self.rank, dtype=epsilon_.dtype))
 
         def log_features(points):
             squared_norm = jnp.sum(jnp.square(points), axis=1)
@@ -417,15 +407,11 @@ class GaussianPositiveFeatures(StrictModule):
 
         source_log_features = log_features(source_coordinates)
         target_log_features = log_features(target_coordinates)
-        source_factors, source_log_scale, source_finite = (
-            _normalize_log_features(
-                source_log_features, problem.source_probabilities > 0.0
-            )
+        source_factors, source_log_scale, source_finite = _normalize_log_features(
+            source_log_features, problem.source_probabilities > 0.0
         )
-        target_factors, target_log_scale, target_finite = (
-            _normalize_log_features(
-                target_log_features, problem.target_probabilities > 0.0
-            )
+        target_factors, target_log_scale, target_finite = _normalize_log_features(
+            target_log_features, problem.target_probabilities > 0.0
         )
         source_indices = jax.random.categorical(
             source_probe_key,
@@ -437,9 +423,7 @@ class GaussianPositiveFeatures(StrictModule):
             _safe_log(problem.target_probabilities),
             shape=(self.num_probes,),
         ).astype(jnp.int32)
-        exact_probe = jnp.exp(
-            -problem.cost_at(source_indices, target_indices) / epsilon_
-        )
+        exact_probe = jnp.exp(-problem.cost_at(source_indices, target_indices) / epsilon_)
         probe_dot = jnp.sum(
             source_factors[source_indices] * target_factors[target_indices],
             axis=1,
@@ -609,9 +593,7 @@ class PositiveFeatureSinkhornResult(AbstractBalancedTransportPlan):
         """Explicitly materialize the complete approximate physical plan."""
         kernel = self.factors.source_factors @ self.factors.target_factors.T
         return self.problem.mass * (
-            self.source_scaling[:, None]
-            * kernel
-            * self.target_scaling[None, :]
+            self.source_scaling[:, None] * kernel * self.target_scaling[None, :]
         )
 
 
@@ -752,14 +734,12 @@ class PositiveFeatureSinkhorn(AbstractBalancedTransportSolver):
                 raise ValueError("Initial target scaling must match target atom count.")
             source_initial = eqx.error_if(
                 source_initial,
-                jnp.any(~jnp.isfinite(source_initial))
-                | jnp.any(source_initial < 0.0),
+                jnp.any(~jnp.isfinite(source_initial)) | jnp.any(source_initial < 0.0),
                 "Initial source scaling must be finite and nonnegative.",
             )
             target_initial = eqx.error_if(
                 target_initial,
-                jnp.any(~jnp.isfinite(target_initial))
-                | jnp.any(target_initial < 0.0),
+                jnp.any(~jnp.isfinite(target_initial)) | jnp.any(target_initial < 0.0),
                 "Initial target scaling must be finite and nonnegative.",
             )
         source_probe = factors_.source_factors @ (
@@ -768,17 +748,12 @@ class PositiveFeatureSinkhorn(AbstractBalancedTransportSolver):
         target_probe = factors_.target_factors @ (
             factors_.source_factors.T @ source_probability
         )
-        active_zero_source = jnp.any(
-            (source_probability > 0.0) & (source_probe <= 0.0)
-        )
-        active_zero_target = jnp.any(
-            (target_probability > 0.0) & (target_probe <= 0.0)
-        )
+        active_zero_source = jnp.any((source_probability > 0.0) & (source_probe <= 0.0))
+        active_zero_target = jnp.any((target_probability > 0.0) & (target_probe <= 0.0))
         zero_kernel_row = active_zero_source | active_zero_target
         approximation_failed = ~factors_.diagnostics.successful
         nonzero_approximation_failure = approximation_failed & (
-            factors_.diagnostics.status
-            != int(KernelApproximationStatus.ZERO_KERNEL_ROW)
+            factors_.diagnostics.status != int(KernelApproximationStatus.ZERO_KERNEL_ROW)
         )
         initial_carry = (
             source_initial,
@@ -870,8 +845,8 @@ class PositiveFeatureSinkhorn(AbstractBalancedTransportSolver):
             def keep(_):
                 return source_scaling, target_scaling, scaling_residual, failed
 
-            next_source, next_target, next_scaling_residual, next_failed = (
-                jax.lax.cond(frozen, keep, update, operand=None)
+            next_source, next_target, next_scaling_residual, next_failed = jax.lax.cond(
+                frozen, keep, update, operand=None
             )
             iteration = index + 1
             should_check = (
@@ -1052,9 +1027,7 @@ class PositiveFeatureSinkhorn(AbstractBalancedTransportSolver):
             "unrolled",
             problem.provenance.source,
             problem.provenance.target,
-            approximation=(
-                f"{factors_.factorization_id}(rank={factors_.rank})"
-            ),
+            approximation=(f"{factors_.factorization_id}(rank={factors_.rank})"),
         )
         return PositiveFeatureSinkhornResult(
             problem=problem,

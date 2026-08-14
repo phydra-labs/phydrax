@@ -12,6 +12,14 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
 from .._strict import StrictModule
+from ..linalg import (
+    AbstractLinearOperator,
+    ArraySpace,
+    DiagonalPairing,
+    FunctionLinearOperator,
+    OperatorProperties,
+    SpectralMatrixRepresentation,
+)
 from ..stochastic import (
     LevyAreaKind,
     SPDESolutionSpec,
@@ -23,7 +31,6 @@ from ._differential import (
     NoiseStructure,
     WienerTerm,
 )
-from ._matrix_functions import SpectralMatrixRepresentation
 from ._noise import SpatialNoiseBasis
 from ._semilinear_drift import SemilinearDrift
 from ._spatial import AbstractSpatialDiscretization
@@ -129,6 +136,7 @@ def _compatible_noise_eigenvalues(
 
 
 def _spectral_linear_representation(
+    operator: AbstractLinearOperator,
     discretization: AbstractSpatialDiscretization,
     coefficient: Array,
     state_shape: tuple[int, ...],
@@ -141,10 +149,10 @@ def _spectral_linear_representation(
     if coefficient.shape != () or state_shape != discretization.state_shape:
         return None
     return SpectralMatrixRepresentation(
+        operator,
         -coefficient * discretization.plan.eigenvalues,
         discretization.plan.analysis,
         discretization.plan.synthesis,
-        state_shape=state_shape,
         representation_id=discretization.discretization_id,
     )
 
@@ -416,7 +424,7 @@ def semidiscretize_spde(
 
 
 def semidiscretize_semilinear_spde(
-    linear_operator: Callable[[Array], ArrayLike],
+    linear_operator: AbstractLinearOperator,
     nonlinear_drift: Callable[[Array, Array, Any], ArrayLike] | None,
     initial_state: ArrayLike,
     spatial_discretization: AbstractSpatialDiscretization,
@@ -441,6 +449,8 @@ def semidiscretize_semilinear_spde(
 ) -> SemidiscreteSPDE:
     """Semidiscretize an explicitly decomposed semilinear stochastic equation."""
     state_shape = tuple(int(size) for size in jnp.asarray(initial_state).shape)
+    if not isinstance(linear_operator, AbstractLinearOperator):
+        raise TypeError("linear_operator must be an AbstractLinearOperator.")
     compatible_basis_id = (
         None
         if compatible_noise_eigenvalues is None
@@ -532,7 +542,41 @@ def semidiscretize_reaction_diffusion(
             noise_basis,
             coefficient,
         )
+        operator_id = (
+            f"{spatial_discretization.discretization_id}:scaled-laplacian:{coefficient!r}"
+        )
+        weights = jnp.asarray(spatial_discretization.quadrature_weights)
+        expanded_weights = jnp.broadcast_to(
+            weights.reshape(weights.shape + (1,) * (len(state_shape) - weights.ndim)),
+            state_shape,
+        )
+        pairing = (
+            DiagonalPairing(
+                expanded_weights,
+                pairing_id=f"{operator_id}:mass-pairing",
+            )
+            if coefficient.shape == ()
+            else None
+        )
+        operator_space = ArraySpace(
+            state_shape,
+            dtype=jnp.asarray(initial_state).dtype,
+            pairing=pairing,
+        )
+        canonical_operator = FunctionLinearOperator(
+            linear_operator,
+            source=operator_space,
+            target=operator_space,
+            properties=OperatorProperties(
+                self_adjoint=coefficient.shape == (),
+                evidence=(
+                    {"self_adjoint": "construction"} if coefficient.shape == () else None
+                ),
+            ),
+            operator_id=operator_id,
+        )
         spectral = _spectral_linear_representation(
+            canonical_operator,
             spatial_discretization,
             coefficient,
             state_shape,
@@ -544,13 +588,10 @@ def semidiscretize_reaction_diffusion(
             if lower < upper:
                 bounds = (lower, upper)
         semilinear = SemilinearDrift(
-            linear_operator,
+            canonical_operator,
             reaction,
             state_shape=state_shape,
-            operator_id=(
-                f"{spatial_discretization.discretization_id}:"
-                f"scaled-laplacian:{coefficient!r}"
-            ),
+            operator_id=operator_id,
             mass_self_adjoint=coefficient.shape == (),
             mass_weights=spatial_discretization.quadrature_weights,
             spectral_bounds=bounds,

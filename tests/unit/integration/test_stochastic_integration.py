@@ -195,7 +195,9 @@ def test_control_variate_coefficients_fit_on_disjoint_iid_pilot():
 
 
 def test_explicit_stratification_preserves_physical_measure():
-    square = phx.domain.GeometryDomain(phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile())
+    square = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     vertices = jnp.asarray(
         [
             [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0]],
@@ -258,7 +260,9 @@ def test_antithetic_zero_density_reports_invalid_normalization_mass():
 
 
 def test_stratified_zero_density_reports_invalid_normalization_mass():
-    square = phx.domain.GeometryDomain(phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile())
+    square = phx.domain.GeometryDomain(
+        phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
+    )
     vertices = jnp.asarray(
         [
             [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0]],

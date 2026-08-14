@@ -92,7 +92,9 @@ def test_graph_trajectory_signal_matches_nearest_observations():
         times = domain.start + domain.dt * jnp.arange(int(length))
         values.append(graph.nodes[:, 0][None, :] + 2.0 * times[:, None])
     signal = phx.terms.GraphTrajectorySignal(domain, tuple(values))
-    component = domain.component({"graph": phx.domain.Nodes(), "t": phx.domain.Interior()})
+    component = domain.component(
+        {"graph": phx.domain.Nodes(), "t": phx.domain.Interior()}
+    )
     batch = domain.points_from_case_time(
         [0, 1],
         [0.5, 1.0],
@@ -119,7 +121,9 @@ def test_graph_trajectory_signal_linearly_interpolates_time():
         tuple(values),
         interpolation="linear",
     )
-    component = domain.component({"graph": phx.domain.BoundaryNodes([1]), "t": phx.domain.Interior()})
+    component = domain.component(
+        {"graph": phx.domain.BoundaryNodes([1]), "t": phx.domain.Interior()}
+    )
     batch = domain.points_from_case_time(
         [0, 1],
         [0.25, 0.75],

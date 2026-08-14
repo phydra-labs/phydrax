@@ -73,7 +73,9 @@ def compile(
     resolved_functions = dict(functions)
     if not resolved_functions:
         raise ValueError("Hard enforcement requires at least one field.")
-    if any(not isinstance(value, DomainFunction) for value in resolved_functions.values()):
+    if any(
+        not isinstance(value, DomainFunction) for value in resolved_functions.values()
+    ):
         raise TypeError("Every enforced field must be a DomainFunction.")
     resolved_specs = tuple(specs)
     if any(not isinstance(spec, EnforcementSpec) for spec in resolved_specs):

@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from phydrax.integration import IntegrationSource
 
 
-
 DifferentialBackend = Literal["ad", "jet", "fd", "basis"]
 IntegralCompiler = Callable[[Any, str, PDEProblemIR], Any]
 
@@ -121,7 +120,9 @@ def compile_pde_expression(
         if node.op == "field":
             assert node.symbol is not None
             if node.symbol not in fields:
-                raise KeyError(f"No DomainFunction supplied for PDE field {node.symbol!r}.")
+                raise KeyError(
+                    f"No DomainFunction supplied for PDE field {node.symbol!r}."
+                )
             return fields[node.symbol]
         if node.op == "parameter":
             assert node.symbol is not None

@@ -59,9 +59,7 @@ def validate_solution_arrays(
     else:
         raise ValueError(f"Unknown saved-solution time layout {time_layout!r}.")
     if tuple(state_values.shape[: len(trajectory_shape)]) != trajectory_shape:
-        raise ValueError(
-            f"{owner} states must begin with sample_shape + (num_times,)."
-        )
+        raise ValueError(f"{owner} states must begin with sample_shape + (num_times,).")
     inferred_state = tuple(state_values.shape[len(trajectory_shape) :])
     declared_state = (
         inferred_state
@@ -75,8 +73,7 @@ def validate_solution_arrays(
         )
     if valid_values.shape != trajectory_shape:
         raise ValueError(
-            f"{owner} valid must have shape {trajectory_shape}; "
-            f"got {valid_values.shape}."
+            f"{owner} valid must have shape {trajectory_shape}; got {valid_values.shape}."
         )
     return ValidatedSolutionArrays(
         time_values,

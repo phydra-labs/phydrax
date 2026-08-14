@@ -10,12 +10,23 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import jax.scipy as jsp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import AbstractAttribute, StrictModule
+from ...linalg import (
+    ArraySpace,
+    DenseLinearOperator,
+    DenseSVD,
+    FunctionLinearOperator,
+    GMRES,
+    LeastSquaresProblem,
+    LinearSolvePolicy,
+    LinearSystem,
+    solve,
+    TolerancePolicy,
+)
 from .._evolution import AbstractDifferentiableEvolution
 from .._layout import StateLayout
 
@@ -398,7 +409,10 @@ def _orbit_residual(
             )
         )
     if problem.kind == "flow":
-        phase = problem.phase_condition.evaluate(nodes[0], period, args)
+        phase_condition = problem.phase_condition
+        if phase_condition is None:
+            raise RuntimeError("Flow orbit problem is missing its phase condition.")
+        phase = phase_condition.evaluate(nodes[0], period, args)
         pieces.append(jnp.asarray(phase).reshape((1,)))
     return jnp.concatenate(tuple(pieces))
 
@@ -514,18 +528,41 @@ def solve_periodic_orbit(
             break
         if linear_method == "dense":
             jacobian = jax.jacfwd(residual_function)(values)
-            step = jnp.linalg.lstsq(jacobian, -residual, rcond=None)[0]
-            linear_valid = jnp.all(jnp.isfinite(jacobian)) & jnp.all(jnp.isfinite(step))
+            linear_result = solve(
+                LeastSquaresProblem(DenseLinearOperator(jacobian)),
+                -residual,
+                policy=LinearSolvePolicy(DenseSVD()),
+            )
+            step = linear_result.value
+            linear_valid = (
+                linear_result.successful
+                & jnp.all(jnp.isfinite(jacobian))
+                & jnp.all(jnp.isfinite(step))
+            )
         else:
             _, tangent = jax.linearize(residual_function, values)
-            step, information = jsp.sparse.linalg.gmres(
-                tangent,
+            space = ArraySpace(values.shape, dtype=values.dtype)
+            linear_result = solve(
+                LinearSystem(
+                    FunctionLinearOperator(
+                        tangent,
+                        source=space,
+                        target=space,
+                        operator_id="periodic-orbit-newton-jacobian",
+                    )
+                ),
                 -residual,
-                tol=float(krylov_tolerance),
-                atol=0.0,
-                maxiter=int(krylov_max_iterations),
+                policy=LinearSolvePolicy(
+                    GMRES(),
+                    tolerance=TolerancePolicy(
+                        relative=krylov_tolerance,
+                        absolute=0.0,
+                        max_steps=krylov_max_iterations,
+                    ),
+                ),
             )
-            linear_valid = (information == 0) & jnp.all(jnp.isfinite(step))
+            step = linear_result.value
+            linear_valid = linear_result.successful & jnp.all(jnp.isfinite(step))
         if not bool(linear_valid):
             status = PERIODIC_LINEAR_SOLVE_FAILED
             break

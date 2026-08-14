@@ -109,9 +109,7 @@ def test_graph_dataset_domain_samples_through_residual_penalty():
         del node
         return 2.0
 
-    condition = phx.conditions.Residual(
-        "u", component, phx.operators.graph_gradient
-    )
+    condition = phx.conditions.Residual("u", component, phx.operators.graph_gradient)
     source = phx.integration.per_step(
         phx.integration.mean_over(component),
         phx.domain.PointSampling(2, layout=structure),
@@ -173,7 +171,9 @@ def test_graph_dataset_domain_layout_packs_graph_but_exposes_real_entities():
     assert batch.graph.nodes.shape == (6, 1)
     assert batch.graph.senders.shape == (4,)
     assert batch.graph.n_node.shape == (2,)
-    assert jnp.allclose(batch.graph.node_mask, jnp.array([True, True, True, True, True, False]))
+    assert jnp.allclose(
+        batch.graph.node_mask, jnp.array([True, True, True, True, True, False])
+    )
     assert jnp.allclose(batch.graph.edge_mask, jnp.array([True, True, True, False]))
     assert jnp.allclose(batch["graph"].data[:, 0], jnp.array([0.0, 1.0, 2.0, 4.0, 8.0]))
     assert jnp.allclose(
@@ -196,7 +196,9 @@ def test_graph_dataset_domain_layout_preserves_graph_operator_results():
         return node[0]
 
     assert batch.graph.edge_mask.shape == (4,)
-    assert jnp.allclose(phx.operators.graph_gradient(u)(batch).data, jnp.array([1.0, 2.0]))
+    assert jnp.allclose(
+        phx.operators.graph_gradient(u)(batch).data, jnp.array([1.0, 2.0])
+    )
 
 
 def test_graph_dataset_domain_layout_preserves_graph_model_results():

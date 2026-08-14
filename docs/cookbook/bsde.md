@@ -73,9 +73,7 @@ problem = phx.stochastic.BSDEProblem(
     process_id="brownian",
 )
 
-value = lambda t, state: jnp.asarray(
-    [state[0] ** 2 + 1.0 - t]
-)
+value = lambda t, state: jnp.asarray([state[0] ** 2 + 1.0 - t])
 evaluation = phx.stochastic.evaluate_bsde(
     problem,
     paths,
@@ -114,14 +112,13 @@ Use fixed paths for deterministic common-random-number optimization or resample 
 the problem for fresh Monte Carlo batches.
 
 ```python
-domain = (
-    phx.domain.Interval1d(-8.0, 8.0)
-    @ phx.domain.TimeInterval(0.0, 1.0)
-)
+domain = phx.domain.Interval1d(-8.0, 8.0) @ phx.domain.TimeInterval(0.0, 1.0)
+
 
 @domain.Function("t", "x")
 def value_model(t, state):
     return jnp.asarray([state[0] ** 2 + 1.0 - t])
+
 
 term = phx.terms.BSDETerm(
     problem,
@@ -382,6 +379,7 @@ mark, problem arguments, and a deterministic event key:
 def jump_control(label, time, pre_state, channel, mark, args, *, key):
     del label, time, channel, mark, args, key
     return jnp.asarray([1.0])
+
 
 jump_problem = phx.stochastic.JumpBSDEProblem(
     problem,

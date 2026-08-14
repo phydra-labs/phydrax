@@ -279,9 +279,7 @@ class LevySDESolution(StrictModule):
             metadata={
                 **dict(self.metadata),
                 "driver_process_id": self.realization.process_id,
-                "small_jump_approximation": (
-                    self.diagnostics.small_jump_approximation
-                ),
+                "small_jump_approximation": (self.diagnostics.small_jump_approximation),
             },
         )
         return record.to_stochastic_trajectory(

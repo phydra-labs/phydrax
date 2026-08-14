@@ -299,19 +299,25 @@ def _gino_batch(*, query_covariates=False):
     query_values = (
         jnp.cos(2.0 * jnp.pi * query_coordinates[..., 0]) if query_covariates else None
     )
-    return phx.nn.operator.OperatorBatch(inputs={
-        "u": phx.nn.operator.FunctionSamples(
-            values=jnp.sin(2.0 * jnp.pi * source_coordinates[..., 0]),
-            coordinates=source_coordinates,
-            quadrature_weights=jnp.full((2, 8), 1.0 / 8.0),
-        )
-    }, queries={"query": phx.nn.operator.FunctionSamples(
-        values=query_values,
-        coordinates=query_coordinates,
-        mask=jnp.array(
-            [[True, True, True, True, True], [True, True, True, False, False]]
-        ),
-    )}, case_axes=("case",),)
+    return phx.nn.operator.OperatorBatch(
+        inputs={
+            "u": phx.nn.operator.FunctionSamples(
+                values=jnp.sin(2.0 * jnp.pi * source_coordinates[..., 0]),
+                coordinates=source_coordinates,
+                quadrature_weights=jnp.full((2, 8), 1.0 / 8.0),
+            )
+        },
+        queries={
+            "query": phx.nn.operator.FunctionSamples(
+                values=query_values,
+                coordinates=query_coordinates,
+                mask=jnp.array(
+                    [[True, True, True, True, True], [True, True, True, False, False]]
+                ),
+            )
+        },
+        case_axes=("case",),
+    )
 
 
 def test_gino_supports_per_case_geometry_independent_queries_and_masks():
@@ -331,13 +337,17 @@ def test_gino_supports_query_covariates_and_source_permutation():
     reference = model(batch)
     permutation = jnp.array([7, 1, 5, 0, 3, 6, 2, 4])
     source = batch.input("u")
-    permuted = phx.nn.operator.OperatorBatch(inputs={
-        "u": phx.nn.operator.FunctionSamples(
-            values=source.values[:, permutation],
-            coordinates=source.coordinates[:, permutation],
-            quadrature_weights=source.quadrature_weights[:, permutation],
-        )
-    }, queries={"query": batch.require_single_query()}, case_axes=batch.case_axes,)
+    permuted = phx.nn.operator.OperatorBatch(
+        inputs={
+            "u": phx.nn.operator.FunctionSamples(
+                values=source.values[:, permutation],
+                coordinates=source.coordinates[:, permutation],
+                quadrature_weights=source.quadrature_weights[:, permutation],
+            )
+        },
+        queries={"query": batch.require_single_query()},
+        case_axes=batch.case_axes,
+    )
 
     assert jnp.allclose(model(permuted), reference, rtol=1e-10, atol=1e-10)
 
@@ -346,18 +356,23 @@ def test_gino_fuses_independently_sampled_multiple_sources():
     first_coordinates = jnp.linspace(0.0, 1.0, 8)[:, None]
     second_coordinates = jnp.linspace(0.05, 0.95, 9)[:, None]
     query = jnp.linspace(0.1, 0.9, 4)[:, None]
-    batch = phx.nn.operator.OperatorBatch(inputs={
-        "u": phx.nn.operator.FunctionSamples(
-            values=jnp.sin(first_coordinates[:, 0]),
-            coordinates=first_coordinates,
-            quadrature_weights=jnp.full((8,), 1.0 / 8.0),
-        ),
-        "v": phx.nn.operator.FunctionSamples(
-            values=jnp.cos(second_coordinates[:, 0]),
-            coordinates=second_coordinates,
-            quadrature_weights=jnp.full((9,), 1.0 / 9.0),
-        ),
-    }, queries={"query": phx.nn.operator.FunctionSamples(values=None, coordinates=query)}, )
+    batch = phx.nn.operator.OperatorBatch(
+        inputs={
+            "u": phx.nn.operator.FunctionSamples(
+                values=jnp.sin(first_coordinates[:, 0]),
+                coordinates=first_coordinates,
+                quadrature_weights=jnp.full((8,), 1.0 / 8.0),
+            ),
+            "v": phx.nn.operator.FunctionSamples(
+                values=jnp.cos(second_coordinates[:, 0]),
+                coordinates=second_coordinates,
+                quadrature_weights=jnp.full((9,), 1.0 / 9.0),
+            ),
+        },
+        queries={
+            "query": phx.nn.operator.FunctionSamples(values=None, coordinates=query)
+        },
+    )
     model = _gino(
         in_channels={"u": 1, "v": 1},
         source_key=None,
@@ -510,13 +525,17 @@ def test_rigno_supports_case_geometry_query_masks_and_graph_isolation():
     batch = _gino_batch()
     source = batch.input("u")
     changed_values = jnp.asarray(source.values).at[1].add(100.0)
-    changed = phx.nn.operator.OperatorBatch(inputs={
-        "u": phx.nn.operator.FunctionSamples(
-            values=changed_values,
-            coordinates=source.coordinates,
-            quadrature_weights=source.quadrature_weights,
-        )
-    }, queries={"query": batch.require_single_query()}, case_axes=batch.case_axes,)
+    changed = phx.nn.operator.OperatorBatch(
+        inputs={
+            "u": phx.nn.operator.FunctionSamples(
+                values=changed_values,
+                coordinates=source.coordinates,
+                quadrature_weights=source.quadrature_weights,
+            )
+        },
+        queries={"query": batch.require_single_query()},
+        case_axes=batch.case_axes,
+    )
 
     reference = eqx.filter_jit(lambda item, data: item(data))(model, batch)
     modified = model(changed)
@@ -661,20 +680,26 @@ def _gaot_batch():
             [[0.15, 0.1], [0.4, 0.7], [0.65, 0.35], [0.9, 0.75], [0.45, 0.55]],
         ]
     )
-    return phx.nn.operator.OperatorBatch(inputs={
-        "u": phx.nn.operator.FunctionSamples(
-            values=jnp.sin(jnp.pi * source_coordinates[..., 0])
-            * jnp.cos(jnp.pi * source_coordinates[..., 1]),
-            coordinates=source_coordinates,
-            quadrature_weights=jnp.full((2, 9), 1.0 / 9.0),
-        )
-    }, queries={"query": phx.nn.operator.FunctionSamples(
-        values=None,
-        coordinates=query_coordinates,
-        mask=jnp.array(
-            [[True, True, True, True, True], [True, True, True, False, False]]
-        ),
-    )}, case_axes=("case",),)
+    return phx.nn.operator.OperatorBatch(
+        inputs={
+            "u": phx.nn.operator.FunctionSamples(
+                values=jnp.sin(jnp.pi * source_coordinates[..., 0])
+                * jnp.cos(jnp.pi * source_coordinates[..., 1]),
+                coordinates=source_coordinates,
+                quadrature_weights=jnp.full((2, 9), 1.0 / 9.0),
+            )
+        },
+        queries={
+            "query": phx.nn.operator.FunctionSamples(
+                values=None,
+                coordinates=query_coordinates,
+                mask=jnp.array(
+                    [[True, True, True, True, True], [True, True, True, False, False]]
+                ),
+            )
+        },
+        case_axes=("case",),
+    )
 
 
 def _gaot(*, key=jr.key(50)):
@@ -704,13 +729,17 @@ def test_gaot_supports_case_geometry_query_masks_and_graph_isolation():
     model = _gaot()
     batch = _gaot_batch()
     source = batch.input("u")
-    changed = phx.nn.operator.OperatorBatch(inputs={
-        "u": phx.nn.operator.FunctionSamples(
-            values=jnp.asarray(source.values).at[1].add(20.0),
-            coordinates=source.coordinates,
-            quadrature_weights=source.quadrature_weights,
-        )
-    }, queries={"query": batch.require_single_query()}, case_axes=batch.case_axes,)
+    changed = phx.nn.operator.OperatorBatch(
+        inputs={
+            "u": phx.nn.operator.FunctionSamples(
+                values=jnp.asarray(source.values).at[1].add(20.0),
+                coordinates=source.coordinates,
+                quadrature_weights=source.quadrature_weights,
+            )
+        },
+        queries={"query": batch.require_single_query()},
+        case_axes=batch.case_axes,
+    )
 
     reference = eqx.filter_jit(lambda item, data: item(data))(model, batch)
     modified = model(changed)
@@ -734,7 +763,9 @@ def test_gaot_has_finite_parameter_gradients_serializes_and_is_research(tmp_path
     path = tmp_path / "gaot.eqx"
     eqx.tree_serialise_leaves(path, model)
     restored = eqx.tree_deserialise_leaves(path, model)
-    status = phx.nn.operator.operator_architecture_status("geometry-aware operator transformer")
+    status = phx.nn.operator.operator_architecture_status(
+        "geometry-aware operator transformer"
+    )
 
     assert jnp.isfinite(loss)
     assert leaves

@@ -85,9 +85,7 @@ def SlipWall(
     ) -> DomainFunction:
         velocity_gradient = grad(velocity, var=var, mode=mode)
         viscous_stress = viscosity * (velocity_gradient + velocity_gradient.T)
-        traction = -pressure * normal + einsum(
-            "...ij,...j->...i", viscous_stress, normal
-        )
+        traction = -pressure * normal + einsum("...ij,...j->...i", viscous_stress, normal)
         normal_traction = outer_scalar_vector(dot(traction, normal), normal)
         return traction - normal_traction
 

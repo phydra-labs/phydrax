@@ -25,7 +25,9 @@ def _canonical_faces(faces: np.ndarray) -> np.ndarray:
         minimum_position[:, None] + np.arange(faces.shape[1], dtype=np.int32)
     ) % faces.shape[1]
     rotated = np.take_along_axis(faces, offsets, axis=1)
-    order = np.lexsort(tuple(rotated[:, axis] for axis in reversed(range(rotated.shape[1]))))
+    order = np.lexsort(
+        tuple(rotated[:, axis] for axis in reversed(range(rotated.shape[1])))
+    )
     return rotated[order]
 
 
@@ -228,9 +230,7 @@ def planar_region_from_triangles(
     loop_offsets = np.concatenate(
         (
             np.asarray([0], dtype=np.int32),
-            np.cumsum(
-                np.asarray([loop.shape[0] for loop in loops], dtype=np.int32)
-            ),
+            np.cumsum(np.asarray([loop.shape[0] for loop in loops], dtype=np.int32)),
         )
     )
     feature_id_ = feature_id or _canonical_feature_id(

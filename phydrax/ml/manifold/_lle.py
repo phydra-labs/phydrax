@@ -251,7 +251,7 @@ class LocallyLinearEmbeddingRecipe(AbstractRecipe):
     n_components: int = eqx.field(static=True)
     n_neighbors: int = eqx.field(static=True)
     regularization: float = eqx.field(static=True)
-    variant: str = eqx.field(static=True)
+    variant: LLEVariant = eqx.field(static=True)
 
     def __init__(
         self,
@@ -272,7 +272,7 @@ class LocallyLinearEmbeddingRecipe(AbstractRecipe):
         self.n_components = int(n_components)
         self.n_neighbors = int(n_neighbors)
         self.regularization = float(regularization)
-        self.variant = str(variant)
+        self.variant = variant
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         del key

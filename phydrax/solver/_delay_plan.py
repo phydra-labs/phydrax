@@ -73,6 +73,7 @@ class DelayExecutionPlan(StrictModule):
 
 _DelayProblemContract: TypeAlias = DelayDifferentialProblem | NeutralDelayProblem
 
+
 def stage_time_extent(solver: dfx.AbstractSolver, /) -> Array:
     """Return a certified positive bound for every solver stage abscissa."""
 
@@ -228,9 +229,7 @@ def compile_delay_execution_plan(
         else "retarded"
     )
     equation_kind = (
-        f"stochastic-{base_equation_kind}"
-        if problem.stochastic
-        else base_equation_kind
+        f"stochastic-{base_equation_kind}" if problem.stochastic else base_equation_kind
     )
 
     return DelayExecutionPlan(

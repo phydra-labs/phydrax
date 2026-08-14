@@ -17,8 +17,10 @@ BackendBoundary = Literal["periodization", "symmetric", "constant"]
 
 def load_filter_taps(name: str, /) -> tuple[Array, Array, Array, Array]:
     """Load one standard filter bank without leaking the backend value type."""
-    wavelet = jaxwavelets.get_wavelet(str(name))
-    return tuple(jnp.asarray(taps) for taps in wavelet)  # type: ignore[return-value]
+    wavelet = tuple(jnp.asarray(taps) for taps in jaxwavelets.get_wavelet(str(name)))
+    if len(wavelet) != 4:
+        raise RuntimeError("The wavelet backend returned an invalid filter bank.")
+    return wavelet[0], wavelet[1], wavelet[2], wavelet[3]
 
 
 def _backend_wavelet(taps: tuple[Array, Array, Array, Array], /):
@@ -36,9 +38,7 @@ def dwt_axis(
     moved = jnp.moveaxis(values, axis, -1)
     flattened = moved.reshape((-1, moved.shape[-1]))
     wavelet = _backend_wavelet(taps)
-    low, high = jax.vmap(lambda row: jaxwavelets.dwt(row, wavelet, boundary))(
-        flattened
-    )
+    low, high = jax.vmap(lambda row: jaxwavelets.dwt(row, wavelet, boundary))(flattened)
     low = low.reshape(moved.shape[:-1] + (low.shape[-1],))
     high = high.reshape(moved.shape[:-1] + (high.shape[-1],))
     return jnp.moveaxis(low, -1, axis), jnp.moveaxis(high, -1, axis)
@@ -61,16 +61,12 @@ def idwt_axis(
         )
     wavelet = _backend_wavelet(taps)
     reconstructed = jax.vmap(
-        lambda low_row, high_row: jaxwavelets.idwt(
-            low_row, high_row, wavelet, boundary
-        )
+        lambda low_row, high_row: jaxwavelets.idwt(low_row, high_row, wavelet, boundary)
     )(
         moved_low.reshape((-1, moved_low.shape[-1])),
         moved_high.reshape((-1, moved_high.shape[-1])),
     )
-    output = reconstructed.reshape(
-        moved_low.shape[:-1] + (reconstructed.shape[-1],)
-    )
+    output = reconstructed.reshape(moved_low.shape[:-1] + (reconstructed.shape[-1],))
     return jnp.moveaxis(output, -1, axis)
 
 

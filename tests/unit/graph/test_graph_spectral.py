@@ -94,7 +94,9 @@ def test_graph_spectral_filter_wraps_as_domain_graph_model():
     graph = _two_node_graph()
     domain = phx.domain.GraphDomain(graph)
     component = domain.component({"graph": phx.domain.Nodes()})
-    batch = component.sample(phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),))))
+    batch = component.sample(
+        phx.domain.PointSampling(2, layout=phx.domain.SampleLayout((("graph",),)))
+    )
 
     @domain.Function("graph")
     def u(node):

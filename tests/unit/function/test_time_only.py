@@ -20,7 +20,9 @@ def test_time_only_function_broadcasts_over_space_and_time_axes():
 
     component = dom.component()
     structure = SampleLayout((("x",), ("t",)))
-    batch = component.sample(phx.domain.PointSampling((7, 9), layout=structure), key=jr.key(0))
+    batch = component.sample(
+        phx.domain.PointSampling((7, 9), layout=structure), key=jr.key(0)
+    )
 
     out = f(batch)
 

@@ -20,9 +20,7 @@ def _operator_pod_dataset():
     coefficients = jnp.array(
         [[-2.0, 0.0], [-1.0, 1.0], [0.0, -1.0], [1.0, 1.0], [2.0, -1.0]]
     )
-    modes = jnp.array(
-        [[1.0, 0.5, -0.2, 0.8], [0.0, 1.0, 0.4, -0.5]]
-    )
+    modes = jnp.array([[1.0, 0.5, -0.2, 0.8], [0.0, 1.0, 0.4, -0.5]])
     spatial_mean = jnp.array([3.0, -2.0, 1.0, 0.5])
     targets = coefficients @ modes + spatial_mean
     dataset = phx.nn.operator.training.operator_dataset_from_arrays(
@@ -67,7 +65,9 @@ def test_operator_pod_uses_physical_kernel_preserves_layout_and_reconstructs_cen
     assert fitted.query_name == "query"
     assert fitted.field_name == "state"
     assert fitted.sample_shape == (4,)
-    assert fitted.geometry_fingerprint == dataset.batch.query("query").geometry_fingerprint()
+    assert (
+        fitted.geometry_fingerprint == dataset.batch.query("query").geometry_fingerprint()
+    )
     assert fitted.diagnostics.geometry_fingerprint == fitted.geometry_fingerprint
     assert fitted.diagnostics.query_layout_provenance[-1].endswith(
         fitted.geometry_fingerprint
@@ -82,9 +82,7 @@ def test_operator_pod_uses_physical_kernel_preserves_layout_and_reconstructs_cen
 
 def test_centered_pod_deeponet_adds_fixed_spatial_mean_not_channel_bias():
     dataset, _source_axis, _query_axis, _targets = _operator_pod_dataset()
-    fitted = phx.nn.operator.training.fit_pod_basis(
-        dataset, "state", 2, centered=True
-    )
+    fitted = phx.nn.operator.training.fit_pod_basis(dataset, "state", 2, centered=True)
     branch = phx.nn.models.MLP(
         in_size=1,
         out_size=2,
@@ -117,9 +115,7 @@ def test_legacy_uncentered_pod_basis_remains_shape_compatible_and_has_no_affine_
     fitted = phx.nn.operator.training.fit_operator_pod(
         dataset, "state", 2, centered=False
     )
-    legacy = phx.nn.operator.architectures.PODBasis(
-        jnp.ones((4, 2)), latent_size=2
-    )
+    legacy = phx.nn.operator.architectures.PODBasis(jnp.ones((4, 2)), latent_size=2)
 
     assert not fitted.basis.has_offset
     assert jnp.allclose(fitted.spatial_mean, 0.0)
@@ -131,9 +127,7 @@ def test_legacy_uncentered_pod_basis_remains_shape_compatible_and_has_no_affine_
 
 def test_pod_basis_rejects_changed_fixed_query_nodes_weights_and_case_dependent_layout():
     dataset, _source_axis, query_axis, _targets = _operator_pod_dataset()
-    fitted = phx.nn.operator.training.fit_operator_pod(
-        dataset, "state", 2, centered=True
-    )
+    fitted = phx.nn.operator.training.fit_operator_pod(dataset, "state", 2, centered=True)
     changed_nodes = phx.nn.operator.FunctionSamples(
         values=None,
         axes=(
@@ -179,9 +173,7 @@ def test_pod_basis_rejects_changed_fixed_query_nodes_weights_and_case_dependent_
 
 def test_centered_pod_deeponet_prediction_and_operator_fit_gradients_are_finite():
     dataset, source_axis, query_axis, targets = _operator_pod_dataset()
-    fitted = phx.nn.operator.training.fit_operator_pod(
-        dataset, "state", 2, centered=True
-    )
+    fitted = phx.nn.operator.training.fit_operator_pod(dataset, "state", 2, centered=True)
     branch = phx.nn.models.MLP(
         in_size=1,
         out_size=2,
@@ -199,17 +191,13 @@ def test_centered_pod_deeponet_prediction_and_operator_fit_gradients_are_finite(
                 )
             },
             queries={
-                "query": phx.nn.operator.FunctionSamples(
-                    values=None, axes=(query_axis,)
-                )
+                "query": phx.nn.operator.FunctionSamples(values=None, axes=(query_axis,))
             },
             case_axes=("case",),
         )
         return jnp.sum(jnp.square(model(batch)))
 
-    source_gradient = jax.grad(prediction_loss)(
-        jnp.linspace(-1.0, 1.0, dataset.size)
-    )
+    source_gradient = jax.grad(prediction_loss)(jnp.linspace(-1.0, 1.0, dataset.size))
 
     def fit_feature_loss(output_values, snapshot_weight):
         replaced_targets = phx.nn.operator.OperatorTargetBatch.from_arrays(
@@ -227,9 +215,9 @@ def test_centered_pod_deeponet_prediction_and_operator_fit_gradients_are_finite(
         )
         return jnp.sum(jnp.square(result.transform(output_values[:2])))
 
-    target_gradient, weight_gradient = jax.grad(
-        fit_feature_loss, argnums=(0, 1)
-    )(targets, jnp.ones((targets.shape[0],)))
+    target_gradient, weight_gradient = jax.grad(fit_feature_loss, argnums=(0, 1))(
+        targets, jnp.ones((targets.shape[0],))
+    )
     assert jnp.all(jnp.isfinite(source_gradient))
     assert jnp.all(jnp.isfinite(target_gradient))
     assert jnp.all(jnp.isfinite(weight_gradient))

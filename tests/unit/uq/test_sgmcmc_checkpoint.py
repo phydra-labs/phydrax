@@ -21,9 +21,7 @@ def _problem_source(*, seed=17, batch_size=3):
         ),
         lambda parameter, batch: -0.5 * (batch.data - parameter) ** 2,
         num_factors=source.num_factors,
-        full_log_likelihood=lambda parameter: jnp.sum(
-            -0.5 * (data - parameter) ** 2
-        ),
+        full_log_likelihood=lambda parameter: jnp.sum(-0.5 * (data - parameter) ** 2),
     )
     return problem, source
 

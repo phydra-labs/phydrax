@@ -20,9 +20,7 @@ def test_rough_delay_euler_reduces_to_fixed_step_dde_on_smooth_driver():
     delay = phx.solver.ConstantDelay("past", 0.2)
     rate = 0.7
     rough_problem = phx.solver.RoughDelayDifferentialProblem(
-        lambda time, state, memory, args: (
-            rate * memory["past"]
-        )[..., None],
+        lambda time, state, memory, args: (rate * memory["past"])[..., None],
         lambda time, args: jnp.ones((1,)),
         (delay,),
         t0=0.0,
@@ -62,9 +60,7 @@ def test_delayed_davie_cross_level_improves_constant_delay_accuracy():
     rate = 0.8
     delay = phx.solver.ConstantDelay("past", delay_value)
     problem = phx.solver.RoughDelayDifferentialProblem(
-        lambda time, state, memory, args: (
-            rate * memory["past"]
-        )[..., None],
+        lambda time, state, memory, args: (rate * memory["past"])[..., None],
         lambda time, args: jnp.ones((1,)),
         (delay,),
         t0=0.0,
@@ -84,9 +80,7 @@ def test_delayed_davie_cross_level_improves_constant_delay_accuracy():
         save_times=jnp.asarray([1.0]),
     )
     exact = 1.0 + sum(
-        rate**order
-        * (1.0 - (order - 1) * delay_value) ** order
-        / factorial(order)
+        rate**order * (1.0 - (order - 1) * delay_value) ** order / factorial(order)
         for order in range(1, 6)
     )
     euler_error = jnp.abs(euler.states[0, 0] - exact)

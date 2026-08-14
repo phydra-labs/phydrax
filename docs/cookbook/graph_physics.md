@@ -34,13 +34,16 @@ continuous coordinates are not the only natural indexing structure.
     edges = domain.component({"graph": phx.domain.Edges()})
     boundary_nodes = domain.component({"graph": phx.domain.BoundaryNodes([0, 2])})
 
+
     @domain.Function("graph")
     def u(node):
         return node[0]
 
+
     @domain.Function("graph")
     def edge_weight(edge):
         return edge[0]
+
 
     node_batch = nodes.sample(phx.domain.PointSampling(3, layout=layout))
     edge_batch = edges.sample(phx.domain.PointSampling(2, layout=layout))
@@ -96,10 +99,12 @@ continuous coordinates are not the only natural indexing structure.
         boundary_diffusion_source,
     )
 
+
     @domain.Function("graph")
     def constant_u(node):
         del node
         return 1.0
+
 
     assert diffusion.loss({"u": constant_u}) < 1e-12
     assert constant_gradient.loss({"u": constant_u}) < 1e-12
@@ -143,14 +148,14 @@ and constraints see the enforced values.
     boundary = domain.component({"graph": phx.domain.BoundaryNodes([0, 2])})
     boundary_count = 2
 
+
     @domain.Function("graph")
     def u(node):
         return node[0]
 
+
     hard_u = phx.enforcement.enforce_graph_values(u, boundary, target=5.0)
-    batch = nodes.sample(
-        phx.domain.PointSampling(graph.num_nodes, layout=layout)
-    )
+    batch = nodes.sample(phx.domain.PointSampling(graph.num_nodes, layout=layout))
     assert jnp.allclose(hard_u(batch).data, jnp.array([5.0, 1.0, 5.0]))
 
     bc_condition = phx.conditions.Residual(
@@ -169,9 +174,7 @@ and constraints see the enforced values.
     spec = phx.enforcement.EnforcementSpec(
         condition,
         kind="custom",
-        transform=lambda f, _: phx.enforcement.enforce_graph_values(
-            f, boundary, target=5.0
-        ),
+        transform=lambda f, _: phx.enforcement.enforce_graph_values(f, boundary, target=5.0),
     )
     functions = {"u": u}
     program = phx.enforcement.compile(functions, (spec,))
@@ -207,10 +210,12 @@ They return normal `DomainFunction`s and are meant to be used as operators in
     node_count = graph.num_nodes
     nodes = domain.component({"graph": phx.domain.Nodes()})
 
+
     @domain.Function("graph")
     def constant_u(node):
         del node
         return 1.0
+
 
     condition = phx.conditions.Residual(
         "u",
@@ -248,13 +253,16 @@ residual-term path.
     layout = phx.domain.SampleLayout((("graph",),))
     nodes = domain.component({"graph": phx.domain.Nodes()})
 
+
     @domain.Function("graph")
     def u(node):
         del node
         return 1.0
 
+
     def residual(f):
         return domain.GraphModel(phx.graph.GraphDiffusion(), input_fn=f)
+
 
     condition = phx.conditions.Residual("u", nodes, residual)
     source = phx.integration.per_step(
@@ -295,9 +303,11 @@ the result can be exposed as a `DomainFunction` with `GraphDomain.GraphModel`.
         )
     )
 
+
     @domain.Function("graph")
     def u(node):
         return node.get("features")[0]
+
 
     attention = domain.GraphModel(
         phx.graph.GraphAttentionOperator(
@@ -343,9 +353,11 @@ relative coordinates, distances, and optional mollified kernel weights.
         )
     )
 
+
     @domain.Function("graph")
     def u(point):
         return point.get("features")[0]
+
 
     gno = domain.GraphModel(
         phx.graph.GraphNeuralOperator(
@@ -412,9 +424,11 @@ nodes can be sampled by `GraphDomain` for losses and downstream operators.
         )
     )
 
+
     @target_domain.Function("graph")
     def prediction(point):
         return point.get("out")[0]
+
 
     assert jnp.allclose(prediction(target_batch).data, jnp.array([4.0]))
     ```
@@ -492,9 +506,11 @@ which is useful for cell-centered finite-volume workflows.
         )
     )
 
+
     @edge_domain.Function("graph")
     def flux_state(edge_node):
         return edge_node.get("features")[0]
+
 
     edge_diffusion = edge_domain.GraphModel(
         phx.graph.GraphDiffusion(),
@@ -549,9 +565,11 @@ edge distances, and cell areas.
     )
     face_values = jnp.array([1.0, 3.0])
 
+
     @dual_domain.Function("graph")
     def u(face):
         return face_values[face.get("face_index")]
+
 
     diffusion = dual_domain.GraphModel(
         phx.graph.GraphFiniteVolumeDiffusion(input_key="u", output_key="du"),
@@ -580,6 +598,7 @@ Equinox/JAX arrays in the surrounding graph model remain optimizer parameters.
     import jax.numpy as jnp
     import phydrax as phx
 
+
     class WeightedDiffusion:
         def __call__(self, graph):
             nodes = dict(graph.nodes)
@@ -591,6 +610,7 @@ Equinox/JAX arrays in the surrounding graph model remain optimizer parameters.
             outgoing = phx.graph.segment_sum(flux, graph.senders, graph.num_nodes)
             nodes["residual"] = incoming - outgoing
             return graph.replace(nodes=nodes, validate=False)
+
 
     side_input_graph = phx.graph.GraphIR(
         nodes={"x": jnp.array([[0.0], [1.0], [2.0]])},
@@ -605,18 +625,22 @@ Equinox/JAX arrays in the surrounding graph model remain optimizer parameters.
     side_input_nodes = side_input_domain.component({"graph": phx.domain.Nodes()})
     side_input_layout = phx.domain.SampleLayout((("graph",),))
 
+
     @side_input_domain.Function("graph")
     def side_input_u(node):
         del node
         return 1.0
 
+
     @side_input_domain.Function("graph")
     def side_input_k(edge):
         return edge["coefficient"]
 
+
     @side_input_domain.Function("graph")
     def side_input_scale(case):
         return case["case_scale"]
+
 
     def side_input_residual(f):
         return side_input_domain.GraphModel(
@@ -629,6 +653,7 @@ Equinox/JAX arrays in the surrounding graph model remain optimizer parameters.
             global_input_key="scale",
             output_key="residual",
         )
+
 
     side_input_condition = phx.conditions.Residual(
         "u",
@@ -687,9 +712,11 @@ This is useful for force-like, flux-like, and geometry-aware simulator terms.
         )
     )
 
+
     @domain.Function("graph")
     def u(node):
         return node.get("features")[0]
+
 
     vector_model = domain.GraphModel(
         phx.graph.EquivariantGraphConvolution(
@@ -734,9 +761,11 @@ spectral neural operator while remaining local, sparse, and batchable.
         )
     )
 
+
     @domain.Function("graph")
     def u(node):
         return node[0]
+
 
     lap = phx.graph.GraphLaplacianOperator(
         weight_key="weight",
@@ -817,9 +846,11 @@ components, graph models, and constraints remain unchanged.
         )
     )
 
+
     @domain.Function("graph")
     def u(node):
         return node.get("features")[0]
+
 
     model = domain.GraphModel(
         phx.graph.HypergraphConvolution(input_key="u", output_key="u_next"),
@@ -893,17 +924,21 @@ other cell degree.
         sampling="cell_integral",
     )
 
+
     @domain.Function("graph")
     def raw_pressure(cell):
         return jnp.sum(cell["coordinates"])
+
 
     @domain.Function("graph")
     def raw_flux(cell):
         return jnp.zeros_like(cell["primal_measure"])
 
+
     @domain.Function("graph")
     def raw_source(cell):
         return jnp.ones_like(cell["primal_measure"])
+
 
     pressure = phx.domain.as_cochain_field(raw_pressure, zero_form)
     flux = phx.domain.as_cochain_field(raw_flux, one_form)
@@ -917,6 +952,7 @@ other cell degree.
         boundary_vertices,
         target=0.0,
     )
+
 
     def darcy_residual(graph, fields, *, key):
         del key
@@ -936,6 +972,7 @@ other cell degree.
             "constitutive": fields["flux"] + pressure_gradient,
             "mass": flux_divergence - fields["source"],
         }
+
 
     program = phx.graph.CochainResidualProgram(
         inputs={
@@ -1061,8 +1098,10 @@ operators, and physics residuals on one execution path.
     )
     assert coarse.nodes.shape == (2, 2)
 
+
     def coarse_shift(g):
         return g.replace(nodes=g.nodes + 1.0, validate=False)
+
 
     multiscale = phx.graph.GraphMultiscaleBlock(
         jnp.array([0, 0, 1, 1], dtype=jnp.int32),
@@ -1113,10 +1152,12 @@ batched topology.
         structure=layout,
     )
 
+
     @domain.Function("graph")
     def u(node):
         del node
         return 1.0
+
 
     residual = phx.operators.graph_incidence_laplacian(u)
     assert jnp.allclose(residual(batch).data, jnp.zeros((case_count,)))
@@ -1170,9 +1211,11 @@ sampled graph entities, including explicit node/edge subsets and repeated cases.
     domain = phx.domain.GraphDatasetDomain((graph0, graph1))
     nodes = domain.component({"graph": phx.domain.Nodes()})
 
+
     @domain.Function("graph")
     def u(node):
         return 10.0 + 2.0 * node[0]
+
 
     target_fn = phx.terms.GraphTarget(domain, targets)
     batch = domain.points_from_indices(
@@ -1252,9 +1295,11 @@ and return graph subset metadata for boundary/interface constraints.
         )
     )
 
+
     @domain.Function("graph")
     def coordinate_sum(node):
         return jnp.sum(node["positions"], axis=-1)
+
 
     assert jnp.allclose(coordinate_sum(batch).data, jnp.array([0.0, 1.0, 1.0]))
     assert "distance" in bundle.graph.edges
@@ -1286,10 +1331,12 @@ preserving mesh metadata in the graph payload.
     nodes = domain.component({"graph": phx.domain.Nodes()})
     layout = phx.domain.SampleLayout((("graph",),))
 
+
     @domain.Function("graph")
     def u(node):
         del node
         return 1.0
+
 
     def residual(f):
         return domain.GraphModel(
@@ -1302,6 +1349,7 @@ preserving mesh metadata in the graph payload.
             input_key="u",
             output_key="lap_u",
         )
+
 
     condition = phx.conditions.Residual("u", nodes, residual)
     source = phx.integration.per_step(
@@ -1340,8 +1388,10 @@ residual terms.
         n_edge=jnp.array([2], dtype=jnp.int32),
     )
 
+
     def unit_node_rate(g):
         return g.replace(nodes=jnp.ones_like(g.nodes), edges=None, validate=False)
+
 
     stepper = phx.graph.EulerGraphStepper(unit_node_rate, dt=0.25)
     next_graph = stepper(graph)
@@ -1354,16 +1404,20 @@ residual terms.
     graph_nodes = domain.component({"graph": phx.domain.Nodes()})
     layout = phx.domain.SampleLayout((("graph",),))
 
+
     @domain.Function("graph")
     def u(node):
         return node[0]
+
 
     @domain.Function("graph")
     def target(node):
         return node[0] + 0.25 * jnp.arange(3.0)
 
+
     def residual(rollout):
         return rollout - target
+
 
     rollout_model = domain.GraphRolloutModel(stepper, steps=2, input_fn=u)
     condition = phx.conditions.Residual("rollout", graph_nodes, residual)
@@ -1417,10 +1471,12 @@ arguments.
         {"graph": phx.domain.EdgeSet([0]), "t": phx.domain.FixedStart()}
     )
 
+
     @domain.Function("graph", "t")
     def u(node, t):
         del node, t
         return 1.0
+
 
     condition = phx.conditions.Residual(
         "u",

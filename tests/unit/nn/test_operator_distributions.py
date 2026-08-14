@@ -23,7 +23,9 @@ def _batch(*, cases=2, size=6, masked=False):
         mask = jnp.arange(size) < size - 1
     return phx.nn.operator.OperatorBatch(
         inputs={"state": phx.nn.operator.FunctionSamples(values=values, axes=(axis,))},
-        queries={"query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,), mask=mask)},
+        queries={
+            "query": phx.nn.operator.FunctionSamples(values=None, axes=(axis,), mask=mask)
+        },
         case_axes=("case",),
     )
 
@@ -102,7 +104,9 @@ def test_fixed_scale_gaussian_operator_has_coherent_process_distribution_and_gra
     target = jnp.zeros((2, 6))
     loss = phx.nn.operator.training.operator_distribution_nll(model, batch, target)
     gradients = eqx.filter_grad(
-        lambda candidate: phx.nn.operator.training.operator_distribution_nll(candidate, batch, target)
+        lambda candidate: phx.nn.operator.training.operator_distribution_nll(
+            candidate, batch, target
+        )
     )(model)
     leaves = tuple(
         leaf for leaf in jax.tree_util.tree_leaves(gradients) if eqx.is_array(leaf)

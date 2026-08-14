@@ -32,6 +32,7 @@ H = time.Function()(jnp.zeros((2, 2), dtype=complex))
 L = time.Function()(jnp.sqrt(gamma) * lowering)
 Pe = time.Function()(excited_projector)
 
+
 @time.Function("t")
 def rho(t):
     excited = jnp.exp(-gamma * t)
@@ -40,6 +41,7 @@ def rho(t):
         dtype=complex,
     )
 
+
 @time.Function("t")
 def perturbed_rho(t):
     excited = jnp.exp(-0.6 * gamma * t)
@@ -47,6 +49,7 @@ def perturbed_rho(t):
         [[1.0 - excited, 0.0], [0.0, excited]],
         dtype=complex,
     )
+
 
 dissipator = phx.operators.lindblad_dissipator(rho, L)
 residual = phx.operators.lindblad_residual(rho, H, (L,))

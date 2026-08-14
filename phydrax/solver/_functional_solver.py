@@ -58,6 +58,7 @@ class FunctionalSolver(StrictModule):
             collocation_key=collocation_key,
         )
         self.training_diagnostics = frozendict()
+
     @property
     def terms(self) -> tuple[AbstractScalarTerm, ...]:
         """Return the ordered training terms."""
@@ -99,7 +100,6 @@ class FunctionalSolver(StrictModule):
     def _retain_training_prefix(self, count: int, /) -> "FunctionalSolver":
         objective = self.objective.retain_training_prefix(count)
         return eqx.tree_at(lambda solver: solver.objective, self, objective)
-
 
     def ansatz_functions(self) -> frozendict[str, DomainFunction]:
         r"""Return the current field mapping after applying enforcement (if configured)."""

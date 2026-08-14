@@ -34,8 +34,6 @@ FOURIER_CAPABILITIES = InterpolationCapabilities(
 )
 
 
-
-
 def _as_inexact(values: ArrayLike, /) -> Array:
     array = jnp.asarray(values)
     if not jnp.issubdtype(array.dtype, jnp.inexact):

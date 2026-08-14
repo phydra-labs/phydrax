@@ -71,15 +71,15 @@ def test_discrete_wavelet_transform_is_jittable_vmappable_and_differentiable():
     )
     values = jnp.asarray(np.random.default_rng(77).normal(size=(4, 24, 3)))
 
-    coefficients = eqx.filter_jit(
-        lambda plan, field: plan.analysis(field)
-    )(transform, values)
-    reconstructed = eqx.filter_jit(
-        lambda plan, coeffs: plan.synthesis(coeffs)
-    )(transform, coefficients)
-    mapped = jax.vmap(
-        lambda field: transform.synthesis(transform.analysis(field))
-    )(values)
+    coefficients = eqx.filter_jit(lambda plan, field: plan.analysis(field))(
+        transform, values
+    )
+    reconstructed = eqx.filter_jit(lambda plan, coeffs: plan.synthesis(coeffs))(
+        transform, coefficients
+    )
+    mapped = jax.vmap(lambda field: transform.synthesis(transform.analysis(field)))(
+        values
+    )
     gradient = jax.grad(
         lambda field: jnp.sum(transform.synthesis(transform.analysis(field)) ** 2)
     )(values)

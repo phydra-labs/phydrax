@@ -144,9 +144,7 @@ def test_signed_codifferential_and_hodge_square_obey_index_signs():
         degree=0,
     )
     two_form = phx.metrix.DifferentialForm(
-        lambda q: jnp.array(
-            [q[0] * q[1], q[0] * q[2], q[0] * q[3], q[1], q[2], q[3]]
-        ),
+        lambda q: jnp.array([q[0] * q[1], q[0] * q[2], q[0] * q[3], q[1], q[2], q[3]]),
         chart=chart,
         degree=2,
     )
@@ -164,6 +162,7 @@ def test_signed_codifferential_and_hodge_square_obey_index_signs():
         jnp.array([0.0]),
         atol=1e-10,
     )
+
 
 def test_signed_metric_constructors_validate_declared_signatures():
     chart = phx.metrix.CoordinateChart(

@@ -118,7 +118,7 @@ class KANLayer(StrictModule):
         init: Literal["default", "identity"] = "default",
         autoscale: bool = False,
         use_bias: bool = True,
-        key: Key = DOC_KEY0,
+        key: Key[Array, ""] = DOC_KEY0,
     ):
         in_size_c = _canonical_size(in_size)
         out_size_c = _canonical_size(out_size)
@@ -293,7 +293,7 @@ class KAN(_AbstractBaseModel):
         skip_connection: bool = True,
         use_bias: bool = True,
         scan: bool = False,
-        key: Key = DOC_KEY0,
+        key: Key[Array, ""] = DOC_KEY0,
     ):
         in_size_c = _canonical_size(in_size)
         out_size_c = _canonical_size(out_size)

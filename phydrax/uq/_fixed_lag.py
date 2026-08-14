@@ -14,6 +14,7 @@ import numpy as np
 from jaxtyping import Array
 
 from .._strict import StrictModule
+from ._covariance import _solve_covariance_system
 from ._guided_particle import GuidedParticleFilterResult
 from ._kalman import KalmanFilterResult
 from ._particle import normalize_log_weights, ParticleFilterResult
@@ -175,14 +176,17 @@ def fixed_lag_kalman_smoother(
             horizon = min(target + resolved_lag, last) if target_active else target
             mean = filtered_means[case_index, horizon]
             covariance = filtered_covariances[case_index, horizon]
+            smoother_valid = jnp.asarray(True)
             for step in range(horizon - 1, target - 1, -1):
                 cross = (
                     filtered_covariances[case_index, step]
                     @ transitions[case_index, step + 1].T
                 )
-                gain = jnp.linalg.solve(
-                    predicted_covariances[case_index, step + 1], cross.T
-                ).T
+                solve_result = _solve_covariance_system(
+                    predicted_covariances[case_index, step + 1],
+                    cross.T,
+                )
+                gain = solve_result.value.T
                 mean = filtered_means[case_index, step] + gain @ (
                     mean - predicted_means[case_index, step + 1]
                 )
@@ -193,8 +197,15 @@ def fixed_lag_kalman_smoother(
                     @ gain.T
                 )
                 covariance = 0.5 * (covariance + covariance.T)
+                smoother_valid = (
+                    smoother_valid
+                    & jnp.all(solve_result.successful)
+                    & jnp.all(jnp.isfinite(gain))
+                    & jnp.all(jnp.isfinite(mean))
+                    & jnp.all(jnp.isfinite(covariance))
+                )
             window_valid = target_active and bool(
-                jnp.all(valid[case_index, target : horizon + 1])
+                smoother_valid & jnp.all(valid[case_index, target : horizon + 1])
             )
             case_means.append(
                 jnp.where(window_valid, mean, filtered_means[case_index, target])

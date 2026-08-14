@@ -153,7 +153,9 @@ def _configuration(
     if not problem.model.prior.has_log_density:
         raise ValueError("Bellman filtering requires a normalized prior log density.")
     if not problem.model.transition.has_log_density:
-        raise ValueError("Bellman filtering requires a normalized transition log density.")
+        raise ValueError(
+            "Bellman filtering requires a normalized transition log density."
+        )
     if not jnp.issubdtype(problem.model.prior.location.dtype, jnp.inexact):
         raise TypeError("Bellman filtering requires an inexact continuous state dtype.")
     analytic = (
@@ -447,6 +449,7 @@ def _initial_optimization_state(
     validities = []
     statuses = []
     for case_index in range(count):
+
         def objective(flat_state):
             complete = locations.at[case_index].set(flat_state)
             values = complete.reshape(case_shape + state_shape)
@@ -561,8 +564,8 @@ def _pseudo_likelihood(
         jnp.linalg.eigvalsh(_symmetrize(filtered_information - predicted_information))
     )
     dtype = jnp.asarray(increment).dtype
-    tolerance = 100.0 * jnp.finfo(dtype).eps * jnp.maximum(
-        1.0, jnp.abs(observation_log_prob)
+    tolerance = (
+        100.0 * jnp.finfo(dtype).eps * jnp.maximum(1.0, jnp.abs(observation_log_prob))
     )
     valid = (
         jnp.isfinite(observation_log_prob)
@@ -649,11 +652,15 @@ def _analytic_bellman_filter_step(
             filtered_information[case_index],
             observation_value,
         )
-        observations.append(jnp.where(active.reshape((count,))[case_index], observation_value, 0.0))
+        observations.append(
+            jnp.where(active.reshape((count,))[case_index], observation_value, 0.0)
+        )
         penalties.append(jnp.where(active.reshape((count,))[case_index], penalty, 0.0))
         increments.append(jnp.where(active.reshape((count,))[case_index], increment, 0.0))
         gain_minima.append(gain_minimum)
-        pseudo_validities.append(jnp.where(active.reshape((count,))[case_index], pseudo_valid, True))
+        pseudo_validities.append(
+            jnp.where(active.reshape((count,))[case_index], pseudo_valid, True)
+        )
         observed_counts.append(jnp.sum(mask))
     observation_values = jnp.stack(observations)
     penalty_values = jnp.stack(penalties)
@@ -665,7 +672,9 @@ def _analytic_bellman_filter_step(
         & predicted_valid.reshape(case_shape)
         & filtered_valid.reshape(case_shape)
     )
-    cumulative_pseudo_valid = state.pseudo_likelihood_valid & local_pseudo_valid & mode_valid
+    cumulative_pseudo_valid = (
+        state.pseudo_likelihood_valid & local_pseudo_valid & mode_valid
+    )
     accepted_increment = jnp.where(
         active.reshape((count,)) & cumulative_pseudo_valid.reshape((count,)),
         increment_values,
@@ -793,7 +802,11 @@ def _optimization_case_step(
             previous_mode_valid,
             previous_pseudo_valid,
             previous_mode_valid & previous_pseudo_valid,
-            jnp.where(previous_mode_valid & previous_pseudo_valid, BELLMAN_SUCCESS, previous_status).astype(jnp.int32),
+            jnp.where(
+                previous_mode_valid & previous_pseudo_valid,
+                BELLMAN_SUCCESS,
+                previous_status,
+            ).astype(jnp.int32),
             previous_time,
         )
 
@@ -813,7 +826,13 @@ def _optimization_case_step(
             return prior_value - transition_value
 
         joint_initial = jnp.concatenate([previous_mode, previous_mode])
-        joint_mode, prediction_value, prediction_gradient, prediction_iterations, prediction_converged = _minimize(
+        (
+            joint_mode,
+            prediction_value,
+            prediction_gradient,
+            prediction_iterations,
+            prediction_converged,
+        ) = _minimize(
             prediction_objective,
             joint_initial,
             rtol=state.optimizer_rtol,
@@ -824,8 +843,8 @@ def _optimization_case_step(
         previous_block = _symmetrize(joint_hessian[:size, :size])
         previous_scale = jnp.linalg.cholesky(previous_block)
         previous_diagonal = jnp.diag(previous_scale)
-        profile_valid = (
-            jnp.all(jnp.isfinite(previous_scale)) & jnp.all(previous_diagonal > 0.0)
+        profile_valid = jnp.all(jnp.isfinite(previous_scale)) & jnp.all(
+            previous_diagonal > 0.0
         )
         safe_previous = jnp.where(profile_valid, previous_block, identity)
         cross = joint_hessian[:size, size:]
@@ -866,7 +885,9 @@ def _optimization_case_step(
         def observed_update(_):
             def update_objective(flat_state):
                 displacement = flat_state - predicted_mode
-                prediction_value_ = 0.5 * displacement @ predicted_information @ displacement
+                prediction_value_ = (
+                    0.5 * displacement @ predicted_information @ displacement
+                )
                 observation_value_ = observation.log_prob(
                     observation_value,
                     flat_state.reshape(state_shape),
@@ -876,7 +897,13 @@ def _optimization_case_step(
                 ).reshape(())
                 return prediction_value_ - observation_value_
 
-            filtered_mode, update_value, update_gradient, update_iterations, update_converged = _minimize(
+            (
+                filtered_mode,
+                update_value,
+                update_gradient,
+                update_iterations,
+                update_converged,
+            ) = _minimize(
                 update_objective,
                 predicted_mode,
                 rtol=state.optimizer_rtol,
@@ -938,13 +965,17 @@ def _optimization_case_step(
             update_valid,
             filtered_minimum,
             observation_log_prob,
-        ) = jax.lax.cond(observed_count == 0, missing_update, observed_update, operand=None)
-        penalty, increment, information_gain_minimum, local_pseudo_valid = _pseudo_likelihood(
-            predicted_mode,
-            predicted_information,
-            filtered_mode,
-            filtered_information,
-            observation_log_prob,
+        ) = jax.lax.cond(
+            observed_count == 0, missing_update, observed_update, operand=None
+        )
+        penalty, increment, information_gain_minimum, local_pseudo_valid = (
+            _pseudo_likelihood(
+                predicted_mode,
+                predicted_information,
+                filtered_mode,
+                filtered_information,
+                observation_log_prob,
+            )
         )
         mode_valid = prediction_valid & update_valid
         pseudo_valid = previous_pseudo_valid & mode_valid & local_pseudo_valid
@@ -1049,7 +1080,9 @@ def _optimization_bellman_filter_step(
         )
         for case_index in range(count)
     ]
-    stacked = tuple(jnp.stack([output[field] for output in outputs]) for field in range(29))
+    stacked = tuple(
+        jnp.stack([output[field] for output in outputs]) for field in range(29)
+    )
     next_state = BellmanFilterState(
         mode=stacked[4].reshape(case_shape + problem.model.state_shape),
         information=stacked[5].reshape(case_shape + (size, size)),
@@ -1126,7 +1159,9 @@ def bellman_filter_step(
     return _optimization_bellman_filter_step(problem, state)
 
 
-def _stack_steps(records: list[BellmanFilterStep], case_rank: int, /) -> BellmanFilterStep:
+def _stack_steps(
+    records: list[BellmanFilterStep], case_rank: int, /
+) -> BellmanFilterStep:
     stacked = jax.tree_util.tree_map(lambda *values: jnp.stack(values), *records)
     return jax.tree_util.tree_map(
         lambda value: jnp.moveaxis(value, 0, case_rank), stacked
@@ -1313,9 +1348,7 @@ def bellman_smoother(result: BellmanFilterResult, /) -> BellmanSmootherResult:
     steps = result.step_valid.shape[-1]
     size = prod(result.state_shape) if result.state_shape else 1
     filtered_modes = result.filtered_modes.reshape((count, steps, size))
-    filtered_covariances = result.filtered_covariances.reshape(
-        (count, steps, size, size)
-    )
+    filtered_covariances = result.filtered_covariances.reshape((count, steps, size, size))
     predicted_modes = result.predicted_modes.reshape((count, steps, size))
     predicted_covariances = result.predicted_covariances.reshape(
         (count, steps, size, size)
@@ -1356,9 +1389,7 @@ def bellman_smoother(result: BellmanFilterResult, /) -> BellmanSmootherResult:
                 pair_valid[:, None, None], proposed_covariance, covariances[:, index]
             )
         )
-        gains = gains.at[:, index].set(
-            jnp.where(pair_valid[:, None, None], gain, 0.0)
-        )
+        gains = gains.at[:, index].set(jnp.where(pair_valid[:, None, None], gain, 0.0))
         next_previous = covariances[:, index + 1] @ jnp.swapaxes(gain, -1, -2)
         lag_one = lag_one.at[:, index].set(
             jnp.where(pair_valid[:, None, None], next_previous, 0.0)
@@ -1367,9 +1398,7 @@ def bellman_smoother(result: BellmanFilterResult, /) -> BellmanSmootherResult:
         modes=modes.reshape(case_shape + (steps,) + result.state_shape),
         covariances=covariances.reshape(case_shape + (steps, size, size)),
         gains=gains.reshape(case_shape + (max(steps - 1, 0), size, size)),
-        lag_one_covariances=lag_one.reshape(
-            case_shape + (max(steps - 1, 0), size, size)
-        ),
+        lag_one_covariances=lag_one.reshape(case_shape + (max(steps - 1, 0), size, size)),
         valid=valid.reshape(case_shape + (steps,)),
         filter_result=result,
         method_id="bellman-rts-local-gaussian",

@@ -164,9 +164,7 @@ class _LinearHJBValue(eqx.Module):
 
     def __call__(self, time: Array, state: Array, *, key=None) -> Array:
         del key
-        return jnp.asarray(
-            [jnp.mean(state) + self.time_coefficient * (1.0 - time)]
-        )
+        return jnp.asarray([jnp.mean(state) + self.time_coefficient * (1.0 - time)])
 
 
 class _LinearHJBControl(eqx.Module):
@@ -177,13 +175,13 @@ class _LinearHJBControl(eqx.Module):
         del time, state, key
         return jnp.full((1, self.dimension), self.coefficient)
 
+
 class _OrnsteinUhlenbeckScore(eqx.Module):
     variance: Array
 
     def __call__(self, state: Array, time: Array, *, key=None) -> Array:
         del time, key
         return -state / self.variance
-
 
 
 def quadratic_heat_terminal(state: Array, /) -> Array:
@@ -350,8 +348,7 @@ def run_semidiscrete_pde_compiler_benchmark(
             phx.equations.PDEEquation(
                 "reaction-diffusion",
                 u.derivative("t"),
-                phx.equations.PDEExpression.parameter("kappa")
-                * u.laplacian("x")
+                phx.equations.PDEExpression.parameter("kappa") * u.laplacian("x")
                 + u * (1.0 - u),
             ),
         ),
@@ -385,14 +382,10 @@ def run_semidiscrete_pde_compiler_benchmark(
         repeats=repeat_count,
     )
     compiled_gradient = jax.grad(
-        lambda diffusivity: jnp.sum(
-            compiled_drift((state, diffusivity)) ** 2
-        )
+        lambda diffusivity: jnp.sum(compiled_drift((state, diffusivity)) ** 2)
     )(coefficient)
     handwritten_gradient = jax.grad(
-        lambda diffusivity: jnp.sum(
-            handwritten_drift((state, diffusivity)) ** 2
-        )
+        lambda diffusivity: jnp.sum(handwritten_drift((state, diffusivity)) ** 2)
     )(coefficient)
     maximum_error = jnp.max(jnp.abs(compiled_value - handwritten_value))
     gradient_error = jnp.abs(compiled_gradient - handwritten_gradient)
@@ -689,6 +682,7 @@ def _linear_hjb_solver(dimension: int, /) -> phx.solver.FunctionalSolver:
         terms=(),
     )
 
+
 def _linear_hjb_shooting_solver(dimension: int, /) -> phx.solver.FunctionalSolver:
     domain = phx.domain.HyperRectangle(
         jnp.full((dimension,), -4.0),
@@ -809,14 +803,14 @@ def _deep_picard_record(
         terminal_error=terminal_error,
         valid_fraction=float(result.diagnostics.valid_fraction[-1]),
         working_set_bytes=int(
-            query_states.nbytes
-            + num_queries * num_paths * 5 * dimension * 8
+            query_states.nbytes + num_queries * num_paths * 5 * dimension * 8
         ),
         acceptance_tolerance=1e-3,
         total_wall_ms=steady_ms,
         success=bool(result.diagnostics.finite[-1])
         and max(gradient_error, target_error, terminal_error) <= 1e-3,
     )
+
 
 def _deep_bsde_record(
     key: Key[Array, ""],
@@ -1181,13 +1175,9 @@ def _implicit_score_record(
         lambda state: score.func(state, time_value, key=objective_key)
     )(states[:, 0, :])
     score_reference = ornstein_uhlenbeck_score(time_value, states[:, 0, :])
-    score_error = float(
-        jnp.sqrt(jnp.mean((score_values - score_reference) ** 2))
-    )
+    score_error = float(jnp.sqrt(jnp.mean((score_values - score_reference) ** 2)))
     divergence_reference = -float(dimension) / float(variance)
-    divergence_error = abs(
-        float(diagnostics.mean_divergence) - divergence_reference
-    )
+    divergence_error = abs(float(diagnostics.mean_divergence) - divergence_reference)
     return HighDimensionalBenchmarkRecord(
         problem_id="ornstein-uhlenbeck-score",
         method="implicit-score-matching",
@@ -1248,11 +1238,7 @@ def run_high_dimensional_method_benchmarks(
     dims = tuple(int(value) for value in dimensions)
     if not dims or any(value < 2 for value in dims):
         raise ValueError("method benchmark dimensions must be at least two.")
-    if (
-        int(num_samples) < 2
-        or int(num_probes) < 2
-        or int(score_samples) < 2
-    ):
+    if int(num_samples) < 2 or int(num_probes) < 2 or int(score_samples) < 2:
         raise ValueError(
             "num_samples, num_probes, and score_samples must be at least two."
         )
@@ -1280,9 +1266,7 @@ def run_high_dimensional_method_benchmarks(
             "deep_bsde_time_steps and deep_bsde_iterations must be positive."
         )
     if splitting_paths < 2 or splitting_paths % 2:
-        raise ValueError(
-            "deep_splitting_paths must be an even integer of at least two."
-        )
+        raise ValueError("deep_splitting_paths must be an even integer of at least two.")
     if splitting_time_steps < 1 or splitting_iterations < 1:
         raise ValueError(
             "deep_splitting_time_steps and deep_splitting_iterations must be positive."
@@ -1505,6 +1489,7 @@ def main() -> None:
             score_samples=args.score_samples,
         )
     print(json.dumps(result, sort_keys=True))
+
 
 if __name__ == "__main__":
     main()

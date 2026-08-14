@@ -146,9 +146,7 @@ class SchrodingerBridgeSolver(StrictModule):
             tolerance=self.tolerance,
         )
 
-    def __call__(
-        self, problem: SchrodingerBridgeProblem, /
-    ) -> SchrodingerBridgeResult:
+    def __call__(self, problem: SchrodingerBridgeProblem, /) -> SchrodingerBridgeResult:
         return self.solve(problem)
 
 
@@ -229,9 +227,7 @@ def _log_matrix_product(left: Array, right: Array, /) -> Array:
     return jsp.special.logsumexp(left[:, :, None] + right[None, :, :], axis=1)
 
 
-def _endpoint_reference(
-    log_transitions: Array, initial_probabilities: Array, /
-) -> Array:
+def _endpoint_reference(log_transitions: Array, initial_probabilities: Array, /) -> Array:
     size = int(log_transitions.shape[-1])
     identity = jnp.where(jnp.eye(size, dtype=bool), 0.0, -jnp.inf)
     product = identity
@@ -257,9 +253,7 @@ def _coupling_statistics(
     positive = coupling > 0.0
     safe_log_coupling = jnp.where(positive, log_coupling, 0.0)
     safe_log_reference = jnp.where(positive, log_reference, 0.0)
-    path_kl = jnp.sum(
-        coupling * (safe_log_coupling - safe_log_reference)
-    )
+    path_kl = jnp.sum(coupling * (safe_log_coupling - safe_log_reference))
     return coupling, initial_residual, terminal_residual, residual, path_kl, log_coupling
 
 
@@ -347,9 +341,7 @@ def _ipf_case(
         xs=None,
         length=max_iterations,
     )
-    residual_history = jnp.concatenate(
-        (initial_residual[None], histories[0]), axis=0
-    )
+    residual_history = jnp.concatenate((initial_residual[None], histories[0]), axis=0)
     kl_history = jnp.concatenate((initial_kl[None], histories[1]), axis=0)
     initial_residual = histories[2][-1]
     terminal_residual = histories[3][-1]
@@ -357,9 +349,9 @@ def _ipf_case(
     coupling, _, _, _, path_kl, _ = _coupling_statistics(
         log_reference, log_a, log_b, mu0, mu1
     )
-    iterate_admissible = jnp.all(
-        jnp.isfinite(log_a) | jnp.isneginf(log_a)
-    ) & jnp.all(jnp.isfinite(log_b) | jnp.isneginf(log_b))
+    iterate_admissible = jnp.all(jnp.isfinite(log_a) | jnp.isneginf(log_a)) & jnp.all(
+        jnp.isfinite(log_b) | jnp.isneginf(log_b)
+    )
     convergence = (residual_history <= tolerance) & feasible & iterate_admissible
     any_converged = jnp.any(convergence)
     first = jnp.where(any_converged, jnp.argmax(convergence), -1).astype(jnp.int32)
@@ -404,16 +396,12 @@ def _messages(
     forward = [_safe_log(reference_initial) + log_a]
     for step in range(int(log_transitions.shape[0])):
         forward.append(
-            jsp.special.logsumexp(
-                forward[-1][:, None] + log_transitions[step], axis=-2
-            )
+            jsp.special.logsumexp(forward[-1][:, None] + log_transitions[step], axis=-2)
         )
     backward = [log_b]
     for step in range(int(log_transitions.shape[0]) - 1, -1, -1):
         backward.append(
-            jsp.special.logsumexp(
-                log_transitions[step] + backward[-1][None, :], axis=-1
-            )
+            jsp.special.logsumexp(log_transitions[step] + backward[-1][None, :], axis=-1)
         )
     return jnp.stack(forward, axis=0), jnp.stack(backward[::-1], axis=0)
 
@@ -429,9 +417,7 @@ def _doob_and_marginals(
         denominator = backward[step]
         row_valid = jnp.isfinite(denominator)
         log_controlled = (
-            log_transitions[step]
-            + backward[step + 1][None, :]
-            - denominator[:, None]
+            log_transitions[step] + backward[step + 1][None, :] - denominator[:, None]
         )
         doob = jnp.exp(jnp.where(row_valid[:, None], log_controlled, -jnp.inf))
         # The reference row is the canonical normalized extension on polar states.
@@ -500,9 +486,7 @@ def _solve_bridge(
         ),
         path_kl=reshape_case(path_kl, ()),
         reference_row_residual=reshape_case(reference_row_residual, ()),
-        endpoint_residual_history=reshape_case(
-            residual_history, (max_iterations + 1,)
-        ),
+        endpoint_residual_history=reshape_case(residual_history, (max_iterations + 1,)),
         path_kl_history=reshape_case(path_kl_history, (max_iterations + 1,)),
         controlled_row_valid=reshape_case(
             controlled_row_valid,

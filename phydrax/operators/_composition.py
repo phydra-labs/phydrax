@@ -16,14 +16,14 @@ def _domains_compatible(a: Domain, b: Domain, /) -> bool:
     return a.schema_compatible(b)
 
 
-def _join_target_domains(
-    substitutions: Mapping[str, DomainFunction], /
-) -> Domain:
+def _join_target_domains(substitutions: Mapping[str, DomainFunction], /) -> Domain:
     iterator = iter(substitutions.values())
     try:
         first = next(iterator)
     except StopIteration as exc:
-        raise ValueError("pullback requires domain=... when substitutions is empty.") from exc
+        raise ValueError(
+            "pullback requires domain=... when substitutions is empty."
+        ) from exc
 
     target = first.domain
     for replacement in iterator:
@@ -66,9 +66,7 @@ class _PullbackCallable(StrictModule):
                 continue
 
             replacement_args = tuple(args[position] for position in positions)
-            source_args.append(
-                replacement.func(*replacement_args, key=key, **kwargs)
-            )
+            source_args.append(replacement.func(*replacement_args, key=key, **kwargs))
 
         return self.source.func(*source_args, key=key, **kwargs)
 

@@ -14,9 +14,7 @@ class _LinearHJBValue(eqx.Module):
 
     def __call__(self, time, state, *, key=None):
         del key
-        return jnp.asarray(
-            [jnp.mean(state) + self.time_coefficient * (1.0 - time)]
-        )
+        return jnp.asarray([jnp.mean(state) + self.time_coefficient * (1.0 - time)])
 
 
 def test_dimension_100_quadratic_hjb_deep_picard_smoke():
@@ -52,7 +50,10 @@ def test_dimension_100_quadratic_hjb_deep_picard_smoke():
         label="x",
     ) @ phx.domain.TimeInterval(0.0, 1.0)
     value = domain.Function("t", "x")(_LinearHJBValue(jnp.asarray(0.0)))
-    solver = phx.solver.FunctionalSolver(functions={"value": value}, terms=(), )
+    solver = phx.solver.FunctionalSolver(
+        functions={"value": value},
+        terms=(),
+    )
     plan = FeynmanKacSamplingPlan(
         terminal_time=1.0,
         sampling_mode="queries",
