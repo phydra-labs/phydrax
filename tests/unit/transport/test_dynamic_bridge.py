@@ -253,12 +253,20 @@ def test_named_cases_are_solved_independently_without_cross_case_mass():
         CONTEXT,
     )
     result = phx.transport.dynamic.solve_schrodinger_bridge(problem)
+    initial_weights = initial.weights
+    terminal_weights = terminal.weights
+    assert isinstance(initial_weights, cx.Field)
+    assert isinstance(terminal_weights, cx.Field)
 
     assert problem.case_axes == ("case",)
     assert problem.case_shape == (2,)
     assert jnp.all(result.converged)
-    assert jnp.allclose(result.marginal_probabilities[:, 0], initial.weights.data)
-    assert jnp.allclose(result.marginal_probabilities[:, -1], terminal.weights.data)
+    assert jnp.allclose(
+        result.marginal_probabilities[:, 0], jnp.asarray(initial_weights.data)
+    )
+    assert jnp.allclose(
+        result.marginal_probabilities[:, -1], jnp.asarray(terminal_weights.data)
+    )
     first_alone = phx.transport.dynamic.solve_schrodinger_bridge(
         _problem([0.8, 0.2], [0.6, 0.4], [[0.75, 0.25], [0.25, 0.75]])
     )

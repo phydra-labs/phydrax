@@ -79,7 +79,7 @@ def test_trajectory_dataset_fixed_end_is_row_specific():
 
     batch = component.sample(phx.domain.PointSampling(8, layout=structure), key=jr.key(2))
     case_indices = jnp.asarray(batch[TRAJECTORY_CASE_INDEX_KEY].data, dtype=jnp.int32)
-    assert jnp.allclose(batch["t"].data, domain.end_times[case_indices])
+    assert jnp.allclose(jnp.asarray(batch["t"].data), domain.end_times[case_indices])
 
 
 def test_trajectory_dataset_rejects_coord_separable_sampling():

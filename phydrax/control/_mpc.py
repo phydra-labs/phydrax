@@ -10,6 +10,7 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
@@ -176,12 +177,12 @@ class RecedingHorizonMPC(StrictModule):
             )
             applied_control = local_solution.controls[..., 0, :]
             next_state = (
-                jnp.einsum(
+                oe.contract(
                     "...ij,...j->...i",
                     specification.dynamics_matrices[..., stage, :, :],
                     current_state,
                 )
-                + jnp.einsum(
+                + oe.contract(
                     "...ij,...j->...i",
                     specification.control_matrices[..., stage, :, :],
                     applied_control,
@@ -418,37 +419,37 @@ def _realized_objective(
     /,
 ) -> Array:
     stages = states[..., :-1, :]
-    state_quadratic = 0.5 * jnp.einsum(
+    state_quadratic = 0.5 * oe.contract(
         "...ti,...tij,...tj->...t",
         stages,
         specification.state_costs,
         stages,
     )
-    control_quadratic = 0.5 * jnp.einsum(
+    control_quadratic = 0.5 * oe.contract(
         "...ti,...tij,...tj->...t",
         controls,
         specification.control_costs,
         controls,
     )
-    cross = jnp.einsum(
+    cross = oe.contract(
         "...ti,...tij,...tj->...t",
         stages,
         specification.state_control_cross,
         controls,
     )
-    stage_linear = jnp.einsum(
+    stage_linear = oe.contract(
         "...ti,...ti->...t", specification.state_linear, stages
-    ) + jnp.einsum("...ti,...ti->...t", specification.control_linear, controls)
+    ) + oe.contract("...ti,...ti->...t", specification.control_linear, controls)
     final_state = states[..., -1, :]
     terminal = (
         0.5
-        * jnp.einsum(
+        * oe.contract(
             "...i,...ij,...j->...",
             final_state,
             specification.terminal_state_cost,
             final_state,
         )
-        + jnp.einsum("...i,...i->...", specification.terminal_linear, final_state)
+        + oe.contract("...i,...i->...", specification.terminal_linear, final_state)
         + specification.terminal_constant
     )
     return (

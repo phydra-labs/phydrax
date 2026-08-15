@@ -65,7 +65,7 @@ def test_graph_model_wrapper_returns_node_field():
     )
 
     out = wrapped(batch)
-    assert jnp.allclose(out.data, jnp.array([[3.0], [4.0], [5.0]]))
+    assert jnp.allclose(jnp.asarray(out.data), jnp.array([[3.0], [4.0], [5.0]]))
 
 
 def test_graph_model_wrapper_restricts_output_to_node_set():
@@ -79,7 +79,7 @@ def test_graph_model_wrapper_restricts_output_to_node_set():
     )
 
     out = wrapped(batch)
-    assert jnp.allclose(out.data, jnp.array([[3.0], [5.0]]))
+    assert jnp.allclose(jnp.asarray(out.data), jnp.array([[3.0], [5.0]]))
 
 
 def test_graph_model_wrapper_input_fn_uses_full_node_view_for_node_sets():
@@ -98,7 +98,7 @@ def test_graph_model_wrapper_input_fn_uses_full_node_view_for_node_sets():
     )
 
     out = wrapped(batch)
-    assert jnp.allclose(out.data, jnp.array([10.0, 30.0]))
+    assert jnp.allclose(jnp.asarray(out.data), jnp.array([10.0, 30.0]))
 
 
 def test_graph_model_wrapper_installs_edge_and_global_input_functions():
@@ -128,7 +128,7 @@ def test_graph_model_wrapper_installs_edge_and_global_input_functions():
         output_key="out",
     )(batch)
 
-    assert jnp.allclose(out.data, jnp.array([5.0, 8.0]))
+    assert jnp.allclose(jnp.asarray(out.data), jnp.array([5.0, 8.0]))
 
 
 def test_graph_domain_graph_model_convenience():
@@ -138,4 +138,4 @@ def test_graph_domain_graph_model_convenience():
     u = domain.GraphModel(model)
 
     out = u(batch)
-    assert jnp.allclose(out.data, jnp.array([[2.0], [4.0], [6.0]]))
+    assert jnp.allclose(jnp.asarray(out.data), jnp.array([[2.0], [4.0], [6.0]]))

@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy.linalg as jsp_linalg
+import opt_einsum as oe
 import pytest
 
 import phydrax as phx
@@ -145,6 +146,7 @@ def test_exact_modal_stochastic_convolution_replays_and_matches_covariance():
             label="changed-convolution",
         )
     )
+    assert spde.semilinear_drift is not None
     terminal = solution.states[:, -1]
     linear_eigenvalues = spde.semilinear_drift.compatible_noise_eigenvalues
     assert linear_eigenvalues is not None
@@ -153,7 +155,7 @@ def test_exact_modal_stochastic_convolution_replays_and_matches_covariance():
         jnp.expm1(2.0 * duration * linear_eigenvalues) / (2.0 * linear_eigenvalues),
         duration,
     )
-    expected_covariance = jnp.einsum(
+    expected_covariance = oe.contract(
         "ir,r,jr->ij",
         basis.modes.reshape((-1, basis.rank)),
         basis.eigenvalues * factors,

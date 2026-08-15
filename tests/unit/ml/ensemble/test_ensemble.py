@@ -152,7 +152,7 @@ def test_bagging_homogeneous_uq_keys_case_axes_jit_vmap_and_grad():
 
     predictive = model.predictive(points, key=jax.random.key(2))
     assert predictive.samples.data.shape == (3, 2, 4, 1)
-    assert jnp.allclose(predictive.mean().data, model(points))
+    assert jnp.allclose(jnp.asarray(predictive.mean().data), model(points))
     assert jnp.allclose(jax.jit(model)(points), model(points))
     assert jnp.allclose(
         jax.grad(lambda value: jnp.sum(model(value)))(points), jnp.zeros_like(points)

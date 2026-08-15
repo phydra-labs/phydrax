@@ -176,5 +176,5 @@ def test_boundary_atlas_integration_and_hard_constraint_work_end_to_end():
         phx.domain.PointSampling(32, layout=structure, design="uniform"),
         key=jax.random.key(7),
     )
-    values = enforced(points).data
+    values = jnp.asarray(enforced(points).data)
     assert jnp.allclose(values, 3.0, atol=1e-10)

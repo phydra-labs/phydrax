@@ -8,6 +8,7 @@ import diffrax as dfx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 import phydrax as phx
@@ -62,7 +63,7 @@ def _periodic_heat_problem(
 
 
 def _modal_coefficients(states: Array, modes: Array, weights: Array, /) -> Array:
-    return jnp.einsum("pr,p,np->nr", modes, weights, states)
+    return oe.contract("pr,p,np->nr", modes, weights, states)
 
 
 def run_stochastic_heat_convergence_benchmark(

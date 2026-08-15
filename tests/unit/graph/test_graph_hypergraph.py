@@ -48,7 +48,7 @@ def test_hypergraph_bundle_components_select_original_and_hyperedge_entities():
         hyperedge_batch["graph"]["features"].data[:, 0], jnp.array([0.0, 0.0])
     )
     assert jnp.allclose(
-        incidence_batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data,
+        jnp.asarray(incidence_batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data),
         jnp.array([0, 1, 2, 3], dtype=jnp.int32),
     )
     assert jnp.allclose(hyperedges.mass.value, 2.0)
@@ -100,6 +100,6 @@ def test_hypergraph_bipartite_graph_batches_in_graph_dataset_domain():
         batch["graph"]["features"].data[:, 0], jnp.array([1.0, 2.0, 3.0, 2.0, 4.0, 8.0])
     )
     assert jnp.allclose(
-        batch[phx.domain.graph.GRAPH_DATASET_INDEX_KEY].data,
+        jnp.asarray(batch[phx.domain.graph.GRAPH_DATASET_INDEX_KEY].data),
         jnp.array([0, 0, 0, 1, 1, 1], dtype=jnp.int32),
     )

@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import coordax as cx
 import equinox as eqx
 import jax
@@ -54,8 +56,8 @@ def test_ensemble_predictions_record_or_raise_for_invalid_members():
     )
     recorded = ensemble.predict(jnp.asarray([1.0, 2.0]), key=jr.key(4))
 
-    assert jnp.array_equal(recorded.valid.data, jnp.asarray([True, False]))
-    assert jnp.array_equal(recorded.mean().data, jnp.asarray([2.0, 3.0]))
+    assert jnp.array_equal(jnp.asarray(recorded.valid.data), jnp.asarray([True, False]))
+    assert jnp.array_equal(jnp.asarray(recorded.mean().data), jnp.asarray([2.0, 3.0]))
     with pytest.raises(FloatingPointError, match="invalid realizations"):
         ensemble.predict(
             jnp.asarray([1.0, 2.0]),
@@ -85,7 +87,7 @@ def test_randomized_prior_is_structurally_nontrainable_and_members_are_independe
         beta=0.5,
     )
     prediction = ensemble.predict(jnp.ones((2,)), key=jr.key(8))
-    assert jnp.var(prediction.samples.data, axis=0).item() > 0.0
+    assert jnp.var(jnp.asarray(prediction.samples.data), axis=0).item() > 0.0
 
 
 def test_distribution_moments_probability_domain_and_joint_qmc_design():
@@ -129,11 +131,14 @@ def test_propagation_chunking_is_deterministic_and_records_invalid_draws():
 
     whole = phx.uq.propagate(function, samples)
     chunked = phx.uq.propagate(function, samples, batch_size=7)
-    assert jnp.array_equal(whole.samples.data, chunked.samples.data)
-    assert whole.samples.data.shape == (64, 2)
+    assert jnp.array_equal(
+        jnp.asarray(whole.samples.data), jnp.asarray(chunked.samples.data)
+    )
+    assert jnp.asarray(whole.samples.data).shape == (64, 2)
 
     invalid = phx.uq.propagate(lambda x, y: jnp.log(x - 2.0), samples)
-    assert not jnp.any(invalid.valid.data)
+    assert invalid.valid is not None
+    assert not jnp.any(jnp.asarray(invalid.valid.data))
     with pytest.raises(FloatingPointError, match="invalid samples"):
         phx.uq.propagate(lambda x, y: jnp.log(x - 2.0), samples, valid_policy="raise")
 
@@ -176,18 +181,19 @@ def test_sobol_jansen_matches_ishigami_reference_indices():
     expected_first = jnp.asarray([0.3139, 0.4424, 0.0])
     expected_total = jnp.asarray([0.5576, 0.4424, 0.2437])
 
-    assert jnp.allclose(result.first_order.data, expected_first, atol=0.04)
-    assert jnp.allclose(result.total_order.data, expected_total, atol=0.04)
+    assert jnp.allclose(jnp.asarray(result.first_order.data), expected_first, atol=0.04)
+    assert jnp.allclose(jnp.asarray(result.total_order.data), expected_total, atol=0.04)
 
 
 def test_sobol_rejects_unknown_output_reduction():
+    invalid_reduction: Any = "median"
     with pytest.raises(ValueError, match="reduce_output"):
         phx.uq.sobol_indices(
             lambda x: x,
             {"x": phx.uq.Uniform(0.0, 1.0)},
             num_samples=8,
             key=jr.key(14),
-            reduce_output="median",
+            reduce_output=invalid_reduction,
         )
 
 
@@ -222,6 +228,7 @@ def test_fit_ensemble_returns_deterministic_member_diagnostics_and_indexed_failu
     )
 
     assert isinstance(first, phx.uq.EnsembleFitResult)
+    assert isinstance(second, phx.uq.EnsembleFitResult)
     assert first.ensemble.num_members == 3
     assert tuple(member.member_index for member in first.members) == (0, 1, 2)
     assert tuple(member.seed for member in first.members) == tuple(

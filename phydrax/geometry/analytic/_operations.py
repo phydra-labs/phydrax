@@ -13,6 +13,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import opt_einsum as oe
 from jax.scipy.special import logsumexp
 from jaxtyping import Array
 
@@ -147,7 +148,7 @@ class _AffineBoundaryMap(AbstractBoundaryMap):
             return jax.jacfwd(lambda value: self.base.map(index, value))(coordinate)
 
         base_differential = jax.vmap(differential)(flat_indices, flat_reference)
-        transformed = jnp.einsum("ij,njk->nik", self.linear, base_differential)
+        transformed = oe.contract("ij,njk->nik", self.linear, base_differential)
         gram = jnp.swapaxes(transformed, -1, -2) @ transformed
         measure = jnp.sqrt(jnp.maximum(jnp.linalg.det(gram), 0.0))
         return measure.reshape(leading)

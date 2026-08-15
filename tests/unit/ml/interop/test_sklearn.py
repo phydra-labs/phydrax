@@ -7,6 +7,7 @@ import builtins
 import copy
 import importlib
 from types import SimpleNamespace
+from typing import Any, cast, Protocol
 
 import jax
 import numpy as np
@@ -17,6 +18,46 @@ from phydrax.ml.interop import (
     from_sklearn,
     UnsupportedConversionError,
 )
+
+
+class _InvertibleModel(Protocol):
+    def inverse_transform(self, values: Any, /) -> Any: ...
+
+
+class _ArrayPredictor(Protocol):
+    def predict(self, values: Any, /) -> Any: ...
+
+
+class _OffsetModel(Protocol):
+    offsets: tuple[int, ...]
+
+
+class _CenterModel(Protocol):
+    centers: jax.Array
+
+
+class _MixtureModel(Protocol):
+    def log_prob(self, values: Any, /) -> Any: ...
+
+    def predict(self, values: Any, /) -> Any: ...
+
+
+class _SupportClassifierModel(Protocol):
+    def pairwise_decision_function(self, values: Any, /) -> Any: ...
+
+    def predict(self, values: Any, /) -> Any: ...
+
+
+class _LabelPredictor(Protocol):
+    def predict_labels(self, values: Any, /) -> Any: ...
+
+
+class _TreeModel(Protocol):
+    default_left: jax.Array
+
+
+class _LabelArrayModel(Protocol):
+    labels: jax.Array
 
 
 def _configuration(result):
@@ -110,7 +151,9 @@ def test_supported_scalers_match_transform(sk, class_name, kwargs):
     if not kwargs.get("clip", False):
         transformed = estimator.transform(query)
         np.testing.assert_allclose(
-            np.asarray(result.model.model.inverse_transform(transformed)),
+            np.asarray(
+                cast(_InvertibleModel, result.model.model).inverse_transform(transformed)
+            ),
             estimator.inverse_transform(transformed),
             rtol=1e-12,
             atol=1e-12,
@@ -145,7 +188,7 @@ def test_dense_numeric_one_hot_encoder_matches_source_blocks(sk):
     np.testing.assert_array_equal(
         np.asarray(result.model(values)), estimator.transform(values)
     )
-    assert result.model.model.offsets == (0, 3, 6)
+    assert cast(_OffsetModel, result.model.model).offsets == (0, 3, 6)
 
 
 def test_numeric_ordinal_encoder_matches_source_category_order(sk):
@@ -242,7 +285,8 @@ def test_logistic_regression_preserves_binary_and_multinomial_conventions(sk, cl
         atol=2e-7,
     )
     np.testing.assert_array_equal(
-        np.asarray(result.model.model.predict(features)), estimator.predict(features)
+        np.asarray(cast(_ArrayPredictor, result.model.model).predict(features)),
+        estimator.predict(features),
     )
 
 
@@ -294,7 +338,7 @@ def test_decomposition_transform_and_inverse_match(sk, class_name):
         np.asarray(result.model(values)), scores, rtol=1e-11, atol=1e-11
     )
     np.testing.assert_allclose(
-        np.asarray(result.model.model.inverse_transform(scores)),
+        np.asarray(cast(_InvertibleModel, result.model.model).inverse_transform(scores)),
         estimator.inverse_transform(scores),
         rtol=1e-11,
         atol=1e-11,
@@ -313,7 +357,7 @@ def test_kmeans_preserves_center_order_ties_and_predictions(sk):
         np.asarray(result.model(query)), estimator.predict(query)
     )
     np.testing.assert_allclose(
-        np.asarray(result.model.model.centers),
+        np.asarray(cast(_CenterModel, result.model.model).centers),
         estimator.cluster_centers_,
         rtol=0.0,
         atol=0.0,
@@ -340,6 +384,7 @@ def test_gaussian_mixture_geometry_probabilities_and_scores_match(sk, covariance
         n_init=2,
     ).fit(values)
     result = from_sklearn(estimator)
+    native = cast(_MixtureModel, result.model.model)
 
     np.testing.assert_allclose(
         np.asarray(result.model(values)),
@@ -348,13 +393,13 @@ def test_gaussian_mixture_geometry_probabilities_and_scores_match(sk, covariance
         atol=2e-7,
     )
     np.testing.assert_allclose(
-        np.asarray(result.model.model.log_prob(values)),
+        np.asarray(native.log_prob(values)),
         estimator.score_samples(values),
         rtol=2e-7,
         atol=2e-7,
     )
     np.testing.assert_array_equal(
-        np.asarray(result.model.model.predict(values)), estimator.predict(values)
+        np.asarray(native.predict(values)), estimator.predict(values)
     )
 
 
@@ -393,7 +438,7 @@ def test_binary_svc_variants_preserve_decision_and_labels(sk, class_name):
         kwargs["nu"] = 0.4
     estimator = getattr(sk.svm, class_name)(**kwargs).fit(features, target)
     result = from_sklearn(estimator)
-    native = result.model.model
+    native = cast(_SupportClassifierModel, result.model.model)
 
     np.testing.assert_allclose(
         np.asarray(native.pairwise_decision_function(features))[:, 0],
@@ -446,7 +491,7 @@ def test_single_hard_tree_classes_match(sk, class_name, classifier):
         features, target
     )
     result = from_sklearn(estimator)
-    native = result.model.model
+    native = cast(_LabelPredictor, result.model.model)
 
     if classifier:
         np.testing.assert_allclose(
@@ -487,7 +532,7 @@ def test_random_and_extra_forests_match_mean_aggregation(sk, class_name, classif
         n_estimators=5, max_depth=3, random_state=0
     ).fit(features, target)
     result = from_sklearn(estimator)
-    native = result.model.model
+    native = cast(_LabelPredictor, result.model.model)
 
     if classifier:
         np.testing.assert_allclose(
@@ -521,7 +566,11 @@ def test_tree_missing_routing_is_copied(sk):
         np.asarray(result.model(query)), estimator.predict(query), rtol=0.0, atol=0.0
     )
     np.testing.assert_array_equal(
-        np.asarray(result.model.model.default_left[0, : estimator.tree_.node_count]),
+        np.asarray(
+            cast(_TreeModel, result.model.model).default_left[
+                0, : estimator.tree_.node_count
+            ]
+        ),
         estimator.tree_.missing_go_to_left.astype(bool),
     )
 
@@ -541,7 +590,7 @@ def test_adaboost_classifier_samme_probabilities_and_votes_match(sk):
         atol=2e-7,
     )
     np.testing.assert_array_equal(
-        np.asarray(result.model.model.predict_labels(features)),
+        np.asarray(cast(_LabelPredictor, result.model.model).predict_labels(features)),
         estimator.predict(features),
     )
 
@@ -603,7 +652,7 @@ def test_gradient_boosting_log_loss_matches_binary_and_multiclass_links(sk, clas
         actual, expected[:, 1] if classes == 2 else expected, rtol=2e-7, atol=2e-7
     )
     np.testing.assert_array_equal(
-        np.asarray(result.model.model.predict_labels(features)),
+        np.asarray(cast(_LabelPredictor, result.model.model).predict_labels(features)),
         estimator.predict(features),
     )
 
@@ -848,5 +897,5 @@ def test_feature_names_and_numeric_class_order_are_preserved(sk):
         str(label) for label in estimator.classes_
     )
     np.testing.assert_array_equal(
-        np.asarray(result.model.model.labels), estimator.classes_
+        np.asarray(cast(_LabelArrayModel, result.model.model).labels), estimator.classes_
     )

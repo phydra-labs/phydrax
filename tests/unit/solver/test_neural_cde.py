@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -166,7 +168,10 @@ def test_failed_requested_save_rejects_loss_before_optimizer_update():
         update_calls.append(True)
         return gradients, state
 
-    optimizer = optax.GradientTransformation(init_optimizer, update_optimizer)
+    init_fn: Any = init_optimizer
+    update_fn: Any = update_optimizer
+
+    optimizer = optax.GradientTransformation(init_fn, update_fn)
     original_rate = field.model.rate
     with pytest.raises(Exception, match="did not produce every requested save"):
         phx.solver.train_neural_cde(

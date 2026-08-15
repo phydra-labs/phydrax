@@ -7,6 +7,7 @@ import shutil
 import threading
 import time
 from dataclasses import replace
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -335,7 +336,9 @@ def test_prefetch_matches_synchronous_batches_and_propagates_reader_errors():
         indices for indices, _ in async_result
     )
     assert all(
-        jnp.array_equal(sync_values, async_values)
+        sync_values is not None
+        and async_values is not None
+        and jnp.array_equal(sync_values, async_values)
         for (_, sync_values), (_, async_values) in zip(
             sync_result,
             async_result,
@@ -396,7 +399,7 @@ def test_lazy_fit_resumes_at_short_final_batch_and_rejects_source_before_reads(
     tmp_path,
 ):
     dataset = _dataset(cases=5, resolution=8)
-    common = {
+    common: dict[str, Any] = {
         "epochs": 2,
         "batch_size": 2,
         "gradient_accumulation": 2,
@@ -490,7 +493,7 @@ def test_lazy_fit_resumes_at_short_final_batch_and_rejects_source_before_reads(
             prefetch=1,
             checkpoint_path=checkpoint,
             resume=True,
-            **{**common, "seed": 18},
+            **cast(dict[str, Any], {**common, "seed": 18}),
         )
     assert changed_order_reads == []
 

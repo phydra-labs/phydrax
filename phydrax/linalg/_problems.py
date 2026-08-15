@@ -216,6 +216,9 @@ def _nullspace_payload(policy: NullspacePolicy | None, /) -> dict[str, object] |
         "left": None if policy.left is None else policy.left.subspace_id,
         "compatibility": policy.compatibility,
         "gauge": policy.gauge,
+        "certificate": (
+            None if policy.certificate is None else policy.certificate.structure_id
+        ),
     }
 
 

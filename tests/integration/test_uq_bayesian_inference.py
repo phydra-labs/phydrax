@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
@@ -56,7 +58,9 @@ def test_nuts_and_dense_laplace_recover_the_conjugate_poisson_posterior():
     )
     laplace = phx.uq.fit_laplace(problem, {"source": exact_mean})
     query = jnp.linspace(0.0, 1.0, 17)
-    prediction = nuts.predict(query, batch_size=73)["u"]
+    predictions = nuts.predict(query, batch_size=73)
+    assert not isinstance(predictions, phx.uq.PredictiveField)
+    prediction = predictions["u"]
 
     estimated_mean = jnp.mean(nuts.samples["source"])
     estimated_variance = jnp.var(nuts.samples["source"])
@@ -84,12 +88,12 @@ def test_nuts_and_dense_laplace_recover_the_conjugate_poisson_posterior():
         "x",
     )
     assert prediction.samples.shape == (4, 300, 17)
-    assert jnp.allclose(prediction.samples.data[..., (0, -1)], 0.0)
+    assert jnp.allclose(jnp.asarray(prediction.samples.data)[..., (0, -1)], 0.0)
 
 
 def test_fixed_hmc_retains_trajectory_configuration_and_replays_from_root_key():
     problem, exact_mean, _ = _conjugate_poisson_problem()
-    settings = dict(
+    settings: dict[str, Any] = dict(
         num_integration_steps=7,
         num_chains=2,
         num_warmup=80,

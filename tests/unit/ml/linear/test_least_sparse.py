@@ -185,7 +185,8 @@ def test_direct_solvers_match_weighted_normal_equations_and_tikhonov_hypergradie
         pytest.param(
             jnp.float64,
             marks=pytest.mark.skipif(
-                not jax.config.x64_enabled, reason="JAX x64 is disabled"
+                not bool(jax.config.read("jax_enable_x64")),
+                reason="JAX x64 is disabled",
             ),
         ),
     ),

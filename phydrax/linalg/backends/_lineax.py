@@ -14,6 +14,7 @@ from jaxtyping import Array
 from ..._strict import StrictModule
 from .._plans import _certified_rank, LinearSolvePlan
 from .._policies import BiCGStab, ConjugateGradient
+from .._preconditioners import AbstractPreconditioner
 from .._problems import LeastSquaresProblem, LinearSystem, MinimumNormProblem
 from .._results import LinearSolveStatus
 from ._jax_dense import _metric_diagonal
@@ -41,7 +42,13 @@ class LineaxBackendOutput(StrictModule):
     singular_values: Array | None
 
 
-def prepare_lineax(problem, plan: LinearSolvePlan, /) -> LineaxState:
+def prepare_lineax(
+    problem,
+    plan: LinearSolvePlan,
+    /,
+    *,
+    preconditioner: AbstractPreconditioner | None = None,
+) -> LineaxState:
     """Adapt one unbatched Phydrax operator to a private Lineax backend."""
     operator = problem.operator
     if operator.batch_shape:
@@ -84,7 +91,8 @@ def prepare_lineax(problem, plan: LinearSolvePlan, /) -> LineaxState:
     )
     solver = _solver(plan)
     options: dict[str, Any] = {}
-    preconditioner = plan.policy.preconditioner
+    if (plan.preconditioner_plan is None) != (preconditioner is None):
+        raise ValueError("Prepared preconditioning must match the symbolic solve plan.")
     if preconditioner is not None:
 
         def precondition(coordinates):
@@ -98,7 +106,9 @@ def prepare_lineax(problem, plan: LinearSolvePlan, /) -> LineaxState:
             return image if row_scale is None else row_scale * image
 
         preconditioner_tags = (
-            (lx.positive_semidefinite_tag,) if preconditioner.positive_definite else ()
+            (lx.positive_semidefinite_tag,)
+            if preconditioner.properties.certifies("positive_definite")
+            else ()
         )
         options["preconditioner"] = lx.FunctionLinearOperator(
             precondition,

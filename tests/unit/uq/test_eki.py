@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import coordax as cx
 import jax
 import jax.numpy as jnp
@@ -41,7 +43,7 @@ def _linear_problem():
 
 def test_tempered_eki_matches_linear_gaussian_mean_covariance_and_replays():
     problem, exact_mean, exact_covariance = _linear_problem()
-    settings = {
+    settings: dict[str, Any] = {
         "key": jr.key(950),
         "ensemble_size": 512,
         "target_ess": 0.8,
@@ -69,6 +71,7 @@ def test_tempered_eki_matches_linear_gaussian_mean_covariance_and_replays():
 
     query = jnp.asarray([[1.0, 0.0], [0.0, 1.0], [1.0, -1.0]]).T
     prediction = result.predict(query)
+    assert isinstance(prediction, phx.uq.PredictiveField)
     assert prediction.samples.dims == ("__phydra_uq_ensemble", "point")
     assert prediction.samples.shape == (512, 3)
 

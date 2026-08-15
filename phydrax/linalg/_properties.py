@@ -31,6 +31,7 @@ class OperatorCapabilities(StrictModule):
     transpose: bool = eqx.field(static=True)
     adjoint: bool = eqx.field(static=True)
     materialize: bool = eqx.field(static=True)
+    diagonal_assembly: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -38,12 +39,14 @@ class OperatorCapabilities(StrictModule):
         transpose: bool,
         adjoint: bool,
         materialize: bool,
+        diagonal_assembly: bool = False,
     ):
         if adjoint and not transpose:
             raise ValueError("An adjoint capability requires a transpose capability.")
         self.transpose = bool(transpose)
         self.adjoint = bool(adjoint)
         self.materialize = bool(materialize)
+        self.diagonal_assembly = bool(diagonal_assembly)
 
 
 class OperatorProperties(StrictModule):

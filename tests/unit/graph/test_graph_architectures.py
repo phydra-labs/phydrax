@@ -119,6 +119,8 @@ def test_pool_graph_by_cluster_coalesces_edges_and_means_features():
     )
 
     coarse = phx.graph.pool_graph_by_cluster(graph, jnp.array([0, 0, 1, 1]))
+    assert coarse.senders is not None
+    assert coarse.receivers is not None
 
     assert coarse.num_nodes == 2
     assert coarse.num_edges == 1

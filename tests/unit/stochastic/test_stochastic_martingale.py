@@ -70,7 +70,9 @@ def test_combined_generator_and_carre_du_champ():
         lambda state, time: state,
         lambda state, time: 2.0 * state,
     )
-    assert jnp.allclose(generator(jnp.asarray([2.0]), 0.0), jnp.asarray([6.0]))
+    assert jnp.allclose(
+        generator(jnp.asarray([2.0]), jnp.asarray(0.0)), jnp.asarray([6.0])
+    )
 
     def brownian_generator(observable, state, time):
         return 0.5 * jax_hessian_scalar(observable, state)

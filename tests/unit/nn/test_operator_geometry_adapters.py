@@ -27,6 +27,8 @@ def test_geometry_sampling_preserves_interior_and_boundary_measures():
         component="boundary",
         key=jr.key(1),
     )
+    assert interior.coordinates is not None
+    assert boundary.coordinates is not None
 
     assert interior.coordinates.shape == (12, 2)
     assert boundary.coordinates.shape == (10, 2)
@@ -53,6 +55,9 @@ def test_canonical_triangle_mesh_builds_graph_and_simplicial_operator_topologies
         values=values,
         topology_kind="simplicial",
     )
+    assert graph_samples.coordinates is not None
+    assert graph_samples.topology is not None
+    assert simplicial_samples.topology is not None
 
     assert graph_samples.coordinates.shape[-1] == 3
     assert graph_samples.topology.kind == "graph"
@@ -70,6 +75,8 @@ def test_mesh_region_uses_surface_vertex_measure():
     region = phx.geometry.mesh_region_from_source(host_mesh, recenter=False)
 
     samples = phx.nn.operator.function_samples_from_mesh(region)
+    assert samples.coordinates is not None
+    assert samples.topology is not None
 
     assert samples.coordinates.shape == (region.vertices.shape[0], 3)
     assert jnp.sum(samples.quadrature()) == pytest.approx(float(host_mesh.area))
@@ -94,6 +101,7 @@ def test_batched_point_cloud_adapter_compacts_masked_graph_nodes():
         k=2,
     )
     graph = phx.nn.operator.operator_graph_from_samples(samples, case_shape=(2,))
+    assert samples.topology is not None
 
     assert samples.geometry_case_shape == (2,)
     assert samples.topology.case_shape == (2,)

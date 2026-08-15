@@ -23,9 +23,9 @@ def test_predictive_field_preserves_named_dims_and_decomposes_variance():
     )
 
     assert prediction.mean().dims == ("x",)
-    assert jnp.allclose(prediction.mean().data, jnp.asarray([1.0, 3.0, 5.0]))
-    assert jnp.allclose(prediction.epistemic_variance().data, 1.0)
-    assert jnp.allclose(prediction.total_variance().data, 5.0)
+    assert jnp.allclose(jnp.asarray(prediction.mean().data), jnp.asarray([1.0, 3.0, 5.0]))
+    assert jnp.allclose(jnp.asarray(prediction.epistemic_variance().data), 1.0)
+    assert jnp.allclose(jnp.asarray(prediction.total_variance().data), 5.0)
     assert prediction.interval(0.1, 0.9).nominal_coverage == pytest.approx(0.8)
 
 
@@ -36,8 +36,8 @@ def test_predictive_field_valid_mask_excludes_failed_realizations():
         valid=cx.Field(jnp.asarray([True, False]), dims=("draw",)),
     )
 
-    assert jnp.allclose(prediction.mean().data, jnp.asarray([1.0, 2.0]))
-    assert jnp.allclose(prediction.input_variance().data, 0.0)
+    assert jnp.allclose(jnp.asarray(prediction.mean().data), jnp.asarray([1.0, 2.0]))
+    assert jnp.allclose(jnp.asarray(prediction.input_variance().data), 0.0)
 
 
 def test_predictive_conditional_variance_broadcasts_over_valid_sample_axis():
@@ -51,7 +51,10 @@ def test_predictive_conditional_variance_broadcasts_over_valid_sample_axis():
         valid=valid,
     )
 
-    assert jnp.array_equal(prediction.observation_variance().data, conditional.data)
+    assert jnp.array_equal(
+        jnp.asarray(prediction.observation_variance().data),
+        jnp.asarray(conditional.data),
+    )
     with pytest.raises(ValueError, match="mutually exclusive"):
         phx.uq.PredictiveField(
             samples,

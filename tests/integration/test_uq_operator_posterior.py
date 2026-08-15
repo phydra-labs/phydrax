@@ -97,6 +97,7 @@ def test_operator_map_laplace_and_geometry_reattachment_match_gaussian_reference
         num_samples=32,
         sample_dim="posterior_draw",
     )
+    assert isinstance(predictive, phx.uq.PredictiveField)
     operator_predictive = phx.uq.OperatorPredictiveField.from_predictive(
         predictive,
         batch,

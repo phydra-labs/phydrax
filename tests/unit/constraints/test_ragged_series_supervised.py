@@ -136,27 +136,36 @@ def test_ragged_series_supervised_constraint_bucketed_covers_cases_once():
     )
 
     assert len(terms) == 2
+    counts = tuple(term.sampling.count for term in terms)
+    assert all(isinstance(count, int) for count in counts)
     assert tuple(c.series_sampling for c in terms) == ("prefix", "prefix")
     assert tuple(c.num_series_points for c in terms) == (2, 3)
-    assert tuple(c.sampling.count for c in terms) == (3, 1)
-    assert sum(c.sampling.count for c in terms) == 4
+    assert counts == (3, 1)
+    assert sum(count for count in counts if isinstance(count, int)) == 4
     assert tuple(c.label for c in terms) == ("train_bucket_1", "train_bucket_2")
     assert jnp.allclose(
-        jnp.stack([c.weight for c in terms]),
+        jnp.stack([jnp.asarray(c.weight) for c in terms]),
         jnp.asarray([2.0 / 3.0, 1.0 / 3.0]),
     )
 
-    covered = jnp.sort(jnp.concatenate([c.indices for c in terms]))
+    indices = []
+    for term in terms:
+        assert term.indices is not None
+        indices.append(term.indices)
+    covered = jnp.sort(jnp.concatenate(indices))
     assert jnp.array_equal(covered, jnp.asarray([0, 1, 2], dtype=jnp.int32))
 
     for term in terms:
         batch = term.sample(key=jr.key(9))
-        width = int(term.num_series_points)
+        assert term.num_series_points is not None
+        width = term.num_series_points
         assert batch.points["data"]["series"].data.shape == (
             term.sampling.count,
             width,
             2,
         )
+        assert batch.indices is not None
+        assert term.indices is not None
         assert jnp.all(jnp.isin(batch.indices, term.indices))
         assert jnp.all(domain.lengths[batch.indices] <= width)
 
@@ -175,8 +184,12 @@ def test_ragged_series_supervised_constraint_bucketed_accepts_length_edges():
     assert len(terms) == 2
     assert tuple(c.num_series_points for c in terms) == (1, 2)
     assert tuple(c.sampling.count for c in terms) == (2, 1)
-    assert jnp.array_equal(terms[0].indices, jnp.asarray([2], dtype=jnp.int32))
-    assert jnp.array_equal(terms[1].indices, jnp.asarray([0], dtype=jnp.int32))
+    first_indices = terms[0].indices
+    second_indices = terms[1].indices
+    assert first_indices is not None
+    assert second_indices is not None
+    assert jnp.array_equal(first_indices, jnp.asarray([2], dtype=jnp.int32))
+    assert jnp.array_equal(second_indices, jnp.asarray([0], dtype=jnp.int32))
 
 
 def test_ragged_series_supervised_constraint_bucketed_scales_sum_reduction():
@@ -227,7 +240,8 @@ def test_ragged_series_supervised_constraint_bucketed_avoids_global_padding_widt
     short_constraint, _long_constraint = terms
     batch = short_constraint.sample(key=jr.key(11))
 
-    assert int(short_constraint.num_series_points) == 5
+    assert short_constraint.num_series_points is not None
+    assert short_constraint.num_series_points == 5
     assert batch.points["data"]["series"].data.shape == (1, 5, 1)
     assert batch.points["data"]["mask"].data.shape == (1, 5)
 

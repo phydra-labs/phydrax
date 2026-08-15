@@ -49,7 +49,7 @@ def test_ragged_series_model_returns_case_axis_field():
     axis = _batch(domain).structure.axis_for("data")
 
     assert out.dims == (axis,)
-    assert jnp.allclose(out.data, jnp.asarray([5.0, 23.0]))
+    assert jnp.allclose(jnp.asarray(out.data), jnp.asarray([5.0, 23.0]))
 
 
 def test_masked_series_pooling_ignores_padded_tail_values():

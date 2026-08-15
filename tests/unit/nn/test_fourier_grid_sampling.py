@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import cast
+
 import jax
 import jax.numpy as jnp
 
@@ -85,6 +87,8 @@ def test_fourier_grid_sampler_supports_physical_nodes_batches_and_nufft():
         tolerance=1e-10,
         query_chunk_size=2,
     )
+    direct = cast(jax.Array, direct)
+    approximate = cast(jax.Array, approximate)
 
     assert direct.shape == (batch_size, 3, 2)
     assert jnp.allclose(approximate, direct, rtol=2e-8, atol=2e-8)
@@ -128,15 +132,17 @@ def test_fourier_grid_sampler_is_jittable_and_differentiable_in_queries():
     query = jnp.asarray([[-0.4], [0.3]])
 
     def total(points):
-        return jnp.sum(
+        sampled = cast(
+            jax.Array,
             phx.nn.layers.sample_fourier_grid(
                 values,
                 points,
                 spatial_ndim=1,
                 method="nufft",
                 tolerance=1e-10,
-            )
+            ),
         )
+        return jnp.sum(sampled)
 
     output = jax.jit(total)(query)
     gradient = jax.jit(jax.grad(total))(query)

@@ -412,6 +412,7 @@ def test_partial_dependence_preserves_samples_weights_and_rejects_invalid_domain
     )
 
     assert isinstance(result, PartialDependenceResult)
+    assert result.individual is not None
     assert result.feature_index == 0
     assert jnp.array_equal(result.average, jnp.array([3.0, 7.0]))
     assert result.individual.shape == (2, 3)
@@ -491,6 +492,7 @@ def test_soft_gradient_attribution_matches_autodiff_and_baseline_displacement():
     expected = jax.vmap(jax.grad(model))(points)
 
     assert isinstance(explanation, GradientAttribution)
+    assert explanation.baseline is not None
     assert jnp.allclose(explanation.gradients, expected)
     assert jnp.allclose(explanation.attributions, expected * points)
     assert jnp.array_equal(explanation.baseline, baseline)

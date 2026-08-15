@@ -11,6 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
@@ -489,7 +490,7 @@ def _rough_delay_integrate(
                         problem.driver_dimension,
                     )
                 )
-                current_second_update = jnp.einsum(
+                current_second_update = oe.contract(
                     "isj,ij->s",
                     flattened,
                     second_increment,
@@ -564,12 +565,12 @@ def _rough_delay_integrate(
                                 problem.driver_dimension,
                             )
                         )
-                        delayed_cross_level = 0.5 * jnp.einsum(
+                        delayed_cross_level = 0.5 * oe.contract(
                             "i,j->ij",
                             first[delayed_step_index],
                             first_increment,
                         )
-                        return jnp.einsum(
+                        return oe.contract(
                             "isj,ij->s",
                             delayed_derivatives,
                             delayed_cross_level,

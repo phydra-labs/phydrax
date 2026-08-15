@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
@@ -168,10 +169,10 @@ def _weighted_transform(
         input_unravel,
         physical_points,
     )
-    output_mean = jnp.einsum("p,po->o", mean_weights, output_points)
+    output_mean = oe.contract("p,po->o", mean_weights, output_points)
     output_centered = output_points - output_mean[None, :]
     input_centered = physical_points - flat_mean[None, :]
-    cross_covariance = jnp.einsum(
+    cross_covariance = oe.contract(
         "p,pi,po->io",
         covariance_weights,
         input_centered,
@@ -196,7 +197,7 @@ def _weighted_transform(
                 "Scaled unscented dense covariance exceeds max_output_dimension; "
                 f"got {output_mean.size}, cap {max_dense_dimension}."
             )
-        covariance = jnp.einsum(
+        covariance = oe.contract(
             "p,pi,pj->ij",
             covariance_weights,
             output_centered,

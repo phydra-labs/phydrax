@@ -72,7 +72,7 @@ def test_supervised_dataset_constraint_aligns_sampled_indices_with_targets():
     batch = constraint.sample(key=jr.key(2))
     assert batch.target.shape == (8,)
     assert jnp.allclose(batch.target, targets[batch.indices])
-    assert jnp.allclose(batch.points["data"].data, data[batch.indices])
+    assert jnp.allclose(jnp.asarray(batch.points["data"].data), data[batch.indices])
 
 
 def test_supervised_dataset_constraint_samples_only_index_subset():

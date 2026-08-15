@@ -114,7 +114,10 @@ def test_named_weighted_measure_reduces_multiple_sample_axes():
     estimate = phx.integration.integrate(lambda values: values, target)
 
     assert estimate.value.dims == ("case", "state")
-    assert jnp.allclose(estimate.value.data, jnp.mean(samples.data, axis=(1, 2)))
+    assert jnp.allclose(
+        jnp.asarray(estimate.value.data),
+        jnp.mean(jnp.asarray(samples.data), axis=(1, 2)),
+    )
     assert jnp.array_equal(estimate.status, jnp.zeros((2,), dtype=jnp.int32))
     assert jnp.array_equal(estimate.num_evaluations, jnp.asarray([6, 6]))
 
@@ -182,7 +185,7 @@ def test_discrete_measure_preserves_retained_axes_and_fixed_diagnostics():
     estimate = phx.integration.integrate(lambda values: values, target)
 
     assert estimate.value.dims == ("case",)
-    assert jnp.allclose(estimate.value.data, jnp.asarray([4.0, 9.0]))
+    assert jnp.allclose(jnp.asarray(estimate.value.data), jnp.asarray([4.0, 9.0]))
     assert jnp.array_equal(estimate.num_evaluations, jnp.asarray([3, 3]))
     assert isinstance(estimate.diagnostics, phx.integration.FixedQuadratureDiagnostics)
     assert estimate.error_estimate is None
@@ -192,7 +195,7 @@ def test_separable_discrete_measure_avoids_a_second_weight_convention():
     x = cx.Field(jnp.asarray([0.0, 1.0]), dims=("x",))
     y = cx.Field(jnp.asarray([0.0, 2.0, 4.0]), dims=("y",))
     points = cx.Field(
-        x.data[:, None] + y.data[None, :],
+        jnp.asarray(x.data)[:, None] + jnp.asarray(y.data)[None, :],
         dims=("x", "y"),
     )
     target = phx.integration.discrete(
@@ -208,7 +211,7 @@ def test_separable_discrete_measure_avoids_a_second_weight_convention():
 
     assert estimate.successful
     assert estimate.value.dims == ()
-    assert jnp.allclose(estimate.value.data, 10.0)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 10.0)
 
 
 def test_weighted_measure_preserves_design_metadata_and_support_status():
@@ -244,4 +247,4 @@ def test_weighted_measure_preserves_design_metadata_and_support_status():
         estimate.diagnostics.replicate_ids,
         jnp.asarray([0, 1, 2]),
     )
-    assert jnp.array_equal(estimate.diagnostics.ancestry_ids, ancestry.data)
+    assert jnp.array_equal(estimate.diagnostics.ancestry_ids, jnp.asarray(ancestry.data))

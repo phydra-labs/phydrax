@@ -42,7 +42,7 @@ def test_dataset_domain_points_from_indices_carries_internal_indices():
     axis = batch.structure.axis_for("data")
     assert axis is not None
     assert batch["data"].dims == (axis, None)
-    assert jnp.allclose(batch["data"].data, data[indices])
+    assert jnp.allclose(jnp.asarray(batch["data"].data), data[indices])
     assert jnp.all(batch[DATASET_INDEX_KEY].data == indices)
 
 

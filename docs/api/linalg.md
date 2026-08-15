@@ -5,15 +5,17 @@ Phydrax. Control, dynamics, interpolation, sparse derivatives, uncertainty
 quantification, and PDE semidiscretizations use the same contracts rather than
 maintaining subsystem-specific operator and solve APIs.
 
-The design separates five concerns:
+The design separates six concerns:
 
 1. **spaces and pairings** define vectors, coordinates, and inner products;
 2. **operators** define linear actions, certified properties, and executable
    capabilities;
 3. **problems** state exact-system, least-squares, or minimum-norm semantics;
-4. **policies and plans** select a feasible provider without probing traced
+4. **preconditioning** separates setup operators, builders, and prepared
+   approximate-inverse actions;
+5. **policies and plans** select a feasible provider without probing traced
    values;
-5. **prepared artifacts** own reusable numerical state and provenance.
+6. **prepared artifacts** own reusable numerical state and provenance.
 
 A solve returns `LinearSolveResult`: value, status, diagnostics, and static
 provenance. A failed numerical method never masquerades as a successful value.
@@ -101,7 +103,13 @@ Common operators include:
 - `BlockLinearOperator`, `StackedLinearOperator`, and
   `BlockDiagonalLinearOperator`;
 - triangular, tridiagonal, banded, permutation, Kronecker, Kronecker-sum,
-  low-rank, diagonal-plus-low-rank, and Schur-complement operators.
+  low-rank, diagonal-plus-low-rank, arbitrary-base-plus-low-rank, and
+  Schur-complement operators;
+- `TwoSidedScaledLinearOperator` for explicit coordinate scalings and
+  `TransformDiagonalLinearOperator` for FFT- or DCT-diagonal actions.
+`LocalBlockDiagonalLinearOperator` stores one dense local block per disjoint
+canonical block and applies all blocks without constructing a global matrix.
+It supports exact structured solves and fixed-size block extraction.
 
 Addition, scalar multiplication, and `@` construct lazy sum, scaled, and
 composed operators. Materialization is explicit and bounded:
@@ -112,6 +120,14 @@ dense = phx.linalg.materialize(
     phx.linalg.MaterializationPolicy(max_entries=4, max_bytes=4096),
 )
 ```
+`assemble_diagonal` and `assemble_uniform_blocks` expose exact structural
+extraction independently of dense materialization. An operator advertises
+diagonal assembly through `OperatorCapabilities.diagonal_assembly`; Jacobi uses
+that route directly and falls back to bounded materialization only when the
+capability is absent. Uniform blocks use a retained sparse-assembly recipe when
+one is supplied, otherwise the extraction is bounded by
+`SparseAssemblyPolicy`.
+
 
 `OperatorProperties` records mathematical claims such as self-adjointness,
 positive definiteness, triangularity, and known rank. Evidence is attached per
@@ -158,7 +174,7 @@ final gauge residual separately.
 - relative, absolute, and iteration tolerances;
 - numerical-rank requirements;
 - bounded materialization;
-- a preconditioner;
+- a `PreconditioningPolicy` with a prepared action or setup-time builder;
 - differentiation semantics;
 - failure behavior;
 - independent factorization, workspace, and Krylov-basis byte budgets.
@@ -167,14 +183,46 @@ final gauge residual separately.
 contain accepted or rejected cost estimates and reasons. Numerical state is
 not stored in the plan.
 
+`prepare_template(problem, policy)` freezes the symbolic selection independently
+of coefficients; `bind_numeric(template, problem)` then creates the reusable
+`PreparedLinearSolve`. This split is useful when many coefficient realizations
+share spaces, operator identity, property evidence, and method configuration.
+Binding rejects structural drift rather than silently replanning. The ordinary
+`prepare` entry point performs both stages.
+
+`KernelCertificate` and `SpectralInterval` attach auditable evidence to one
+operator structure or numerical value. Numerical certificates include an array
+fingerprint and reject changed coefficients. Structural certificates explicitly
+assert validity across coefficient refreshes. `ProjectedPCG` is available only
+for a certified self-adjoint positive-semidefinite system with an explicit,
+nonempty, complete kernel certificate and matching nullspace policy; it solves
+on the certified quotient space instead of perturbing a singular operator.
+
+`OperatorActionCostEstimate` reports deduplicated resident operator state and
+structural apply scratch per right-hand side. `estimate_operator_action_cost`
+walks composite, block, sparse, low-rank, and tensor operators without
+materializing them. Its `exact` flag distinguishes fully modeled structural
+actions from opaque callbacks, autodiff kernels, or nested inverse actions whose
+implementation may require additional scratch.
+
 `LinearCostEstimate` separates already-resident operator storage, additional
 materialization, factorization storage, `preparation_workspace_bytes`,
-`solve_workspace_bytes_per_rhs`, and `krylov_basis_bytes_per_rhs`.
-Operator-batch multiplicity is included. Planning checks that preparation and
-one canonical right-hand side are feasible; `solve` and `solve_many` then
-multiply both per-RHS estimates by the actual number of shared right-hand sides
-before execution. Input and output arrays are caller-owned and are not counted
-as solver scratch.
+`solve_workspace_bytes_per_rhs`, `operator_apply_workspace_bytes_per_rhs`,
+and `krylov_basis_bytes_per_rhs`. Operator-batch multiplicity is included.
+Planning checks that preparation and one canonical right-hand side are feasible;
+`solve` and `solve_many` multiply all per-RHS estimates by the actual number of
+shared right-hand sides before execution. Input and output arrays are
+caller-owned and are not counted as solver scratch.
+
+`PreconditionerCostEstimate` separately accounts for prepared action storage,
+setup workspace, apply workspace per right-hand side, and setup operator
+applications. Candidate costs propagate the last quantity as
+`preconditioner_setup_matvec_count`; setup work is therefore visible beside
+solve-time operator actions. `SolveResourcePolicy.preconditioner_bytes` bounds
+persistent preconditioner state; preparation and apply scratch remain part of
+the shared workspace budget. Planning rejects an over-budget preconditioner
+before any numeric setup runs.
+
 
 ### Provider and method map
 
@@ -222,6 +270,172 @@ Auto selection is deterministic:
 An explicit infeasible method raises during planning. Phydrax does not silently
 change the mathematical problem, discard weights, materialize an operator
 outside policy, or reinterpret a failed factorization as another method.
+
+## Preconditioning as a prepared subsystem
+
+Preconditioning has its own plan, preparation, refresh, property, and
+provenance contracts. A `PreconditioningPolicy` accepts either:
+
+- an `AbstractPreconditioner`, meaning an already-prepared frozen action; or
+- an `AbstractPreconditionerBuilder`, meaning a symbolic recipe that consumes
+  a setup operator during `prepare`.
+
+The system operator and setup operator are deliberately separate. This allows a
+matrix-free or matrix-expensive operator to remain the true residual action
+while a sparse approximation, assembled surrogate, block extraction, or
+low-order discretization builds the approximate inverse:
+
+```python
+setup = phx.linalg.DiagonalLinearOperator(
+    jnp.array([4.0, 3.0]),
+    properties=properties,
+    operator_id="assembled-setup",
+)
+policy = phx.linalg.LinearSolvePolicy(
+    phx.linalg.PCG(),
+    preconditioning=phx.linalg.PreconditioningPolicy(
+        phx.linalg.JacobiPreconditionerBuilder(),
+        setup_operator=setup,
+    ),
+)
+prepared = phx.linalg.prepare(problem, policy)
+```
+
+`PreconditionerProperties` records `linear`, `stationary`, `self_adjoint`, and
+`positive_definite` claims with the same evidence vocabulary as operator
+properties. Planning uses only certified claims. It never infers solver safety
+from a class name or a Boolean without evidence.
+
+| Method | Side | Required preconditioner contract |
+| --- | --- | --- |
+| `PCG`, Lineax `ConjugateGradient` | left | fixed, linear, self-adjoint, and positive definite |
+| `MINRES` | left | fixed, linear, self-adjoint, and positive definite |
+| `GMRES` | right | fixed and linear |
+| `BiCGStab` | right | fixed and linear |
+| `FGMRES` | right | variable, iteration-dependent, or nonlinear actions are allowed |
+
+An incompatible explicit side or property contract fails during planning.
+Direct methods and the current least-squares providers reject solve
+preconditioning rather than silently ignoring it.
+
+`LinearSolvePlan.preconditioner_plan` records the setup identity, builder or
+action identity, side, refresh policy, certified properties, and static cost
+estimate. `PreparedLinearSolve.preconditioning_state` owns the prepared action
+and its numeric version. Solve provenance reports the preconditioner
+plan/action IDs, side, refresh outcome, current solve version, and version at
+which the action was built.
+
+Builders default to an explicit refresh policy. `JacobiPreconditionerBuilder`
+and `DenseInversePreconditionerBuilder` refresh their numeric state.
+`MultigridHierarchyBuilder` freezes the complete hierarchy by default because
+its coarse operators are independently owned values; reuse remains visible in
+provenance. Callers may request `refresh="rebuild"` only when the stored coarse
+levels remain numerically valid, or construct a new hierarchy policy when
+coarse coefficients change. If a builder uses a distinct setup operator, a
+numerical solve refresh must pass the updated setup explicitly:
+
+```python
+changed_operator = phx.linalg.DenseLinearOperator(
+    jnp.array([[5.0, 1.0], [1.0, 4.0]]),
+    properties=properties,
+    operator_id=operator.operator_id,
+)
+changed_problem = phx.linalg.LinearSystem(
+    changed_operator,
+    problem_id=problem.problem_id,
+)
+changed_setup = phx.linalg.DiagonalLinearOperator(
+    jnp.array([5.0, 4.0]),
+    properties=properties,
+    operator_id=setup.operator_id,
+)
+refreshed = phx.linalg.refresh(
+    prepared,
+    changed_problem,
+    setup_operator=changed_setup,
+)
+```
+
+Omitting it is an error for a non-frozen distinct setup. A deliberately frozen
+prepared action remains reusable, but provenance exposes that reuse.
+
+### Composable corrections, polynomials, and field splits
+
+`SubspaceCorrectionTerm` couples a restriction, prolongation, and typed local
+preconditioner source. `AdditiveSubspaceCorrectionBuilder` covers block Jacobi,
+overlapping Schwarz, patch correction, and explicit coarse correction through
+one sum of local actions. `MultiplicativeSubspaceCorrectionBuilder` executes a
+forward, backward, or symmetric defect-correction sweep. Local setup operators
+are derived as `R A P`; no local dense matrix is materialized unless its own
+builder and materialization policy permit it.
+`BlockJacobiPreconditionerBuilder(block_size, ...)` extracts fixed-size
+canonical diagonal blocks, factors them once, and returns a
+`LocalBlockPreconditioner`. Dense and structured operators use exact block
+assembly; sparse and compositional operators use the same bounded symbolic
+sparse recipe as Galerkin construction. Numeric refresh retains the symbolic
+routes and refactors only changed coefficients.
+
+
+`ChebyshevPreconditionerBuilder` prepares a fixed-degree inverse polynomial from
+an explicit or estimated positive spectral interval. Optional symmetric Jacobi
+scaling transforms the polynomial problem without claiming self-adjointness in
+an incompatible pairing. The prepared action has fixed memory and operator
+counts, so the same object can serve as a Krylov preconditioner or multigrid
+smoother.
+
+`BlockFactorizationPreconditionerBuilder` consumes typed pivot and Schur
+preconditioner sources for an explicit 2 by 2 `BlockLinearOperator`. Diagonal,
+lower, upper, and LDU forms preserve block PyTree structure. Pivot refresh
+precedes Schur reconstruction and Schur-action refresh, preventing stale Schur
+state. Triangular forms remain nonsymmetric unless the complete action has
+independent valid evidence.
+
+### Explicit multigrid hierarchy
+
+`MultigridLevelBuilder` owns a level operator, restriction/prolongation pair,
+smoother or coarse-solve builder, and pre/post smoothing counts.
+`MultigridHierarchyBuilder` validates every transfer space before preparing
+immutable `MultigridLevel` and `MultigridHierarchy` values. The resulting
+`MultigridPreconditioner` executes one JAX-native V-cycle; hierarchy setup stays
+outside the compiled iteration loop.
+
+The coarsest level is an ordinary preconditioner source, so a small
+`DenseInversePreconditionerBuilder` can provide an exact coarse solve without a
+special solver path. Symmetry and positive-definiteness of a full V-cycle must
+be supplied as explicit `PreconditionerProperties`; they are not inferred from
+individual level names.
+The hierarchy derives linearity and stationarity conservatively from every
+level source. An explicit whole-cycle certificate cannot override an
+incompatible variable or nonlinear level contract.
+
+`GalerkinHierarchyBuilder` derives coarse operators as `R A P` around the same
+immutable V-cycle. It plans canonical sparse products once, retains each
+`PreparedSparseAssembly` in the hierarchy, and refreshes coarse coefficients
+through those symbolic routes. Dense construction is an explicit bounded
+fallback; a matrix-free route remains matrix-free at downstream levels.
+`SmoothedAggregationHierarchyBuilder` constructs deterministic aggregates,
+candidate-aware tentative interpolation, damped Jacobi smoothing,
+pairing-aware restrictions, and the same planned sparse Galerkin products for
+explicit dense or canonical sparse inputs. `MultigridSetupDiagnostics` reports
+level dimensions, known nonzero counts, grid/operator complexity, prepared
+bytes, peak setup workspace, construction mode, transfer identities, retained
+aggregate assignments, the builder-dependency fingerprint, and every reuse
+decision.
+
+Hierarchy refresh distinguishes full rebuild, aggregate reuse, transfer reuse,
+and symbolic sparse-product reuse. Every numeric refresh recomputes
+fine-dependent coarse coefficients. Pattern or builder-dependency changes
+invalidate structural reuse. A Galerkin route rejected by cumulative
+materialization limits remains permanently matrix-free, so a downstream level
+builder cannot rematerialize it. Symbolic sparse-product reuse requires the
+retained route map; a mode name never licenses stale coarse values.
+
+
+`multigrid_hierarchy_from_pyamg` is an optional host-only converter. It consumes
+a supplied PyAMG multilevel solver, converts its SciPy level and transfer
+matrices into canonical Phydrax sparse operators, prepares JAX Jacobi smoothers
+and a dense coarse inverse, and returns ordinary Phydrax hierarchy values.
+PyAMG is never called by the compiled V-cycle.
 
 ## Preparation, repeated solves, and refresh
 
@@ -321,34 +535,254 @@ dimension, orthogonality error, matvec counts, and breakdown status. Block
 Arnoldi performs rank deflation instead of inserting invalid normalized
 columns.
 
-`prepare_recycling_subspace(A, basis)` applies `A` once to a coarse source
-basis, rejects dependent images, and returns image-orthonormal source/image
-bases. Its coarse correction is a JAX PyTree operation and can seed a later
-solve:
+`BlockGMRES` and `BlockCG` are explicit true-block methods. A nonempty
+`RHSLayout` becomes part of the solve plan and prepared identity; execution must
+match it exactly. True-block methods form one shared block Krylov space, use
+rank-revealing deflation for dependent residual columns, and report effective
+block rank separately from operator/problem rank. Ordinary scalar methods
+continue to use the distinct pseudo-block path for multiple right-hand sides.
+Auto planning does not select a block method without an explicit RHS contract.
 
-```python
-coarse_basis = jnp.eye(operator.source.size)[:, :1]
-rhs = jnp.array([1.0, 2.0])
-recycling = phx.linalg.prepare_recycling_subspace(operator, coarse_basis)
-recycling_prepared = phx.linalg.prepare(
-    problem,
-    phx.linalg.LinearSolvePolicy(phx.linalg.PCG()),
-)
-initial_guess = recycling.correction(rhs)
-result = phx.linalg.solve(
-    recycling_prepared,
-    rhs,
-    initial_guess=initial_guess,
-)
-```
+`prepare_recycling_subspace(A, basis)` remains the low-level coarse-correction
+primitive. Solver-integrated recycling uses the pure functional
+`solve_recycled` API: it returns an ordinary solve result together with a new
+immutable `RecyclingState`. The state stores source vectors and their current
+orthonormal images, capacities, plan/operator identities, numeric version, and
+update count.
 
-Recycling is explicit: Phydrax never carries a stale subspace across a changed
-operator identity automatically.
+GCRO-DR solves first apply the retained coarse correction, project the residual
+away from the retained image space, build an augmented Krylov space, and
+extract a bounded harmonic-Ritz recycle space. `refresh_recycling` may reuse
+source vectors across a coefficient-only refresh, but always recomputes their
+images. Structure or plan changes reject the state. Extraction and rank
+decisions are algorithmic state and are stopped from mathematical
+differentiation.
+Planning charges both the retained recycling state and the transient augmented
+Arnoldi, search-basis, pseudoinverse, and harmonic-Ritz eigensolve storage before
+preparation.
 
 Saddle-point helpers assemble the block operator `[[A, B*], [B, -C]]`, its
 `LinearSystem`, and the matrix-free dual Schur complement. The block space and
 pairings are retained, and self-adjoint evidence is inferred only when the
 primal and stabilization blocks certify it.
+
+## Eigen, SVD, Schur, and invariant subspaces
+
+### Self-adjoint eigenproblems
+
+`phydrax.linalg.eigen` provides a sibling plan/prepare/refresh/result lifecycle
+for standard and generalized self-adjoint eigenproblems. `LOBPCG` handles
+blocked smallest or largest modes, including an SPD generalized metric and an
+excluded `LinearSubspace`. `RestartedLanczos` supplies a thick-restart
+matrix-free alternative. `DenseEigh` provides the bounded Phydrax-native full
+dense route for standard and generalized Hermitian problems. Generalized
+problems use a certified Cholesky reduction before the JAX Hermitian solve.
+
+Every route retains per-mode residuals, convergence masks, pairing-aware
+orthogonality error, effective count, operator/metric application counts,
+status, cost, and provenance. Generalized eigenvectors are normalized in the
+declared metric; preparation rejects an uncertified or numerically invalid
+positive-definite metric.
+
+Eigenvalue differentiation is deliberately narrower than dense `eigh`.
+`EigenSolvePolicy(differentiation="none")` stops all outputs. Eigenvalue-only
+mode requires a certified converged isolated simple mode and uses the standard
+or generalized pairing-aware derivative while stopping eigenvectors. Repeated
+or unresolved clusters reject individual gradients rather than returning
+values. Algorithmic differentiation through locking, deflation, ordering, and
+restart decisions is not exposed.
+
+### Prepared self-adjoint spectra and differentiable spectral calculus
+
+`prepare_self_adjoint_spectrum` materializes one bounded dense standard or
+generalized self-adjoint problem, solves its complete spectrum once, and retains
+the result for repeated subspace, projector, density-kernel, and smooth
+spectral-function evaluations. `refresh_self_adjoint_spectrum` rebuilds only
+the numerical spectrum while preserving the symbolic problem and plan
+identities. Full-spectrum preparation rejects excluded constraints, partial
+dense capacity, nonconvergence, nonfinite output, an invalid generalized
+metric, or a retained-state budget violation; it never switches to an
+iterative or broadened-eigenvector fallback.
+
+For a generalized problem `A x = λ B x`, let `R` be the source-space Riesz map,
+`G = R B`, and let the retained coordinate basis satisfy `Vᴴ G V = I`. The
+prepared inverse basis is therefore `V⁻¹ = Vᴴ G`. For selected columns `Vₛ`,
+the invariant projector and covariant density kernel are
+`P = Vₛ Vₛᴴ G` and `D = Vₛ Vₛᴴ`, with `P = D G`. This distinction is observable
+for non-Euclidean pairings and generalized metrics.
+
+`self_adjoint_spectral_subspace` applies a `SpectralSelection` to that prepared
+spectrum and returns fixed-shape selected/complement eigenvalues and bases,
+`P`, `D`, the certified selected/complement gap, residual evidence, status, and
+provenance. `expected_dimension` is required so JIT output shapes do not depend
+on data. Repeated eigenvalues inside either block are valid; a cluster crossing
+the selection boundary is rejected. `self_adjoint_spectral_projector_derivative`
+computes the exact selected/complement cross-block Sylvester derivative of
+`P` and `D`, including perturbations of the generalized metric. It does not
+differentiate individual eigenvectors.
+
+```python
+problem = phx.linalg.eigen.Eigenproblem(operator)
+prepared = phx.linalg.eigen.prepare_self_adjoint_spectrum(problem)
+selection = phx.linalg.eigen.SpectralSelection.real_below(
+    0.0,
+    expected_dimension=occupied_dimension,
+)
+subspace = phx.linalg.eigen.self_adjoint_spectral_subspace(
+    prepared,
+    selection,
+    policy=phx.linalg.eigen.SelfAdjointSpectralSubspacePolicy(
+        differentiation="projector",
+    ),
+)
+```
+
+Smooth functions use the basis-invariant Loewner Fréchet rule. In the prepared
+eigenbasis, off-diagonal entries use
+`(f(λᵢ) - f(λⱼ)) / (λᵢ - λⱼ)`, while coincident values use the declared
+`f′(λᵢ)`. Exact repeated eigenvalues are therefore regular for matrix
+exponentials, logarithms, square roots, inverse square roots, fractional
+powers, resolvents, polynomials, and finite-temperature Fermi–Dirac
+occupations. Trainable polynomial coefficients, chemical potential, and
+temperature contribute their ordinary parameter tangents in addition to the
+operator perturbation. Logarithm, square-root, inverse-square-root, fractional
+power, and resolvent domain failures are explicit statuses; eigenvalues are
+never clipped to manufacture a value.
+
+`self_adjoint_spectral_operator` returns the operator matrix, density kernel,
+trace, function values, residual/domain diagnostics, status, and provenance.
+Its policy chooses `"none"` or exact `"frechet"` differentiation. Raw
+`eigensolve(..., differentiation="eigenvalues")` remains the isolated
+eigenvalue-only API: individual eigenvectors are still stopped, and batched raw
+eigenvalue differentiation is rejected rather than silently applying a
+different contract.
+
+Dense `DenseEigh` preparation, solve, diagnostics, prepared-spectrum
+consumers, and exact spectral derivatives support arbitrary leading operator
+batch axes. Every batch member has independent residuals, convergence flags,
+selection counts, gaps, domain validity, and status; selected dimensions and
+all array shapes remain static across the batch. Resource estimates multiply
+retained storage, workspace, materialization, and action counts by the batch
+cardinality. Iterative `LOBPCG` and `RestartedLanczos` routes continue to reject
+operator batches during planning.
+
+### Pairing-aware singular values
+
+`phydrax.linalg.svd` exposes `SVDProblem`, `SVDSolvePolicy`, and the same
+plan/prepare/refresh/result lifecycle for an unbatched map between possibly
+different source and target Hilbert spaces. Dense preparation applies the
+declared Riesz maps, computes the requested largest or smallest triplets, maps
+the vectors back to their spaces, and reports both residual directions and both
+pairing-orthogonality errors. Singular-value-only differentiation requires
+isolated retained values; vector derivatives are not exposed.
+
+### General dense Schur problems and spectral projectors
+
+`SchurEigenproblem` handles a general real or complex dense endomorphism. Its
+host-side preparation computes an ordered complex Schur form with explicit
+unitarity, residual, finite-value, separation, resource, refresh, and backend
+evidence. `schur_spectral_observables` derives determinant, trace, spectral
+radius/abscissa, numerical abscissa, nonnormality, and continuous/discrete-time
+stability without pretending a nonnormal matrix has an orthogonal eigenbasis.
+
+`SpectralSelection` defines a protected half-plane or disk cluster.
+`prepare_spectral_subspace` constructs its right basis, left dual basis, Riesz
+projector, orthogonal projector, exact-or-bounded Sylvester separation, and
+projector-condition evidence. A Riesz projector for a nonnormal operator is not
+generally orthogonal. `spectral_projector_derivative` solves the differentiated
+Sylvester equations and returns commutator and projector-tangent residuals.
+Refresh preserves the selected dimension and rejects eigenvalue crossings.
+
+## Reusable projections, shifted systems, and rational actions
+
+`prepare_krylov_projection(A, v, policy)` binds one fixed-capacity Arnoldi or
+Lanczos basis to the complete numerical operator and starting-vector
+fingerprints. Matrix-function calls can consume that projection repeatedly
+without applying `A` again. `refresh_krylov_projection` rebuilds only the
+numerical basis while preserving the symbolic plan and capacity.
+
+`ShiftedLinearSystemFamily` represents all systems `(z_j I - A) x_j = b`.
+`prepare_shifted_solve` builds one shared Krylov projection; `solve_shifted`
+performs only the projected solves and returns per-shift residual, rank,
+conditioning, status, and shared setup cost. The pole-minus-operator convention
+is explicit and is also used by `PartialFractionRationalFunction`:
+
+```python
+right_hand_side = jnp.array([1.0, -1.0])
+family = phx.linalg.ShiftedLinearSystemFamily(operator, jnp.array([2.0, 3.0]))
+prepared = phx.linalg.prepare_shifted_solve(family, right_hand_side)
+shifted = phx.linalg.solve_shifted(prepared)
+
+rational = phx.linalg.PartialFractionRationalFunction(
+    jnp.array([2.0, 3.0]),
+    jnp.array([0.5, -0.25]),
+    polynomial_coefficients=jnp.array([1.0]),
+)
+action = phx.linalg.rational_function_action(operator, right_hand_side, rational)
+```
+
+Rational preparation shares the shifted basis across all poles and accounts
+separately for polynomial operator applications. Plans bound retained storage,
+transient workspace, and total operator applications; refresh rejects changed
+pole count, polynomial degree, spaces, or operator structure.
+
+## Adaptive stochastic spectral estimation
+
+`adaptive_stochastic_trace` and `adaptive_stochastic_log_determinant` execute
+fixed-capacity probe batches under `jax.jit` while stopping dynamically at
+batch boundaries. Their result distinguishes statistical uncertainty from
+Lanczos projection error and reports the combined error, tolerance, active
+probe count, per-probe status, iterations, and exact forward/adjoint matvec
+counts. The policy fixes minimum and maximum probes, batch size, projection
+dimension, confidence level, and absolute/relative stopping tolerances.
+Self-adjoint evidence is mandatory; log determinants additionally require
+positive-definite evidence.
+
+## Linear matrix equations
+
+`MatrixEquationTerm` represents `c A X B`; `MatrixEquationProblem` sums such
+terms in row-major coordinates. Convenience constructors cover Sylvester and
+continuous/discrete Lyapunov equations. Planning lowers the matrix equation to
+an ordinary Phydrax linear problem, so provider selection, resources,
+factorization reuse, status, provenance, JIT execution, and differentiation all
+follow the shared runtime:
+
+```python
+A = jnp.array([[-1.0, 0.2], [0.0, -2.0]])
+Q = jnp.eye(2)
+problem = phx.linalg.continuous_lyapunov_equation(A, Q)
+prepared = phx.linalg.prepare_matrix_equation(problem)
+result = phx.linalg.solve_matrix_equation(prepared)
+```
+
+Residuals are evaluated against the original matrix equation. A declared
+self-adjoint solution is checked explicitly and receives a separate structure
+status rather than being symmetrized after the fact.
+
+## Low-rank updates, transformation, and resilience
+
+`BasePlusLowRankLinearOperator` represents `B + U C V*` for any reusable base
+operator. Its dedicated plan/prepare/refresh/solve lifecycle factors the base
+once and then applies the Woodbury correction with explicit base
+nonsingularity, correction conditioning, rank, storage, workspace, residual,
+and provenance policies. It does not densify the base as an implicit fallback.
+
+`EquilibrationPolicy` provides no scaling, explicit two-sided scaling, Ruiz
+scaling, or symmetric Ruiz scaling. `ResilientSolvePolicy` composes that
+transformation with an ordinary `LinearSolvePolicy` and bounded iterative
+refinement. `solve_resilient` verifies the residual in the original coordinates
+and reports the initial/final residual, backward error, refinement history,
+condition estimates, scaling spread, base status, and terminal resilience
+status.
+
+`compile_linear_structure` is an explicit host-side optimizer for materializable
+endomorphisms. In declared candidate order it can recognize exact diagonal,
+permutation, tridiagonal, triangular, banded, DCT-diagonal, or FFT-diagonal
+structure, otherwise applying the configured dense/error fallback. Approximate
+projection requires explicit consent and nonzero tolerances. The result records
+the projected error, route, exactness, operator identity, and numeric version;
+`refresh_linear_structure` preserves the selected variant or rejects structural
+drift.
 
 ## Spectral analytics and matrix functions
 
@@ -356,11 +790,11 @@ The spectral API provides:
 
 - numerical range, operator norm, spectral-radius, condition-number, and
   self-adjoint spectral-bound estimates;
-- stochastic trace, log-determinant, diagonal, and inverse-diagonal estimates
-  with replayable keys, samples, standard errors, and matvec counts;
+- fixed-count and adaptive stochastic trace/log-determinant estimates, plus
+  diagonal and inverse-diagonal estimates;
 - `exp`, `phi1`, `phi2`, trigonometric, logarithm, square root, inverse square
   root, fractional power, and resolvent actions;
-- explicit spectral representations and reusable Krylov decompositions.
+- explicit spectral representations and reusable Krylov projections.
 
 `MatrixFunctionResult` contains `.value`, convergence, residual and omitted-mode
 error estimates, Krylov breakdown status, method, effective dimension, matvec
@@ -368,8 +802,9 @@ count, and provenance. Convergence requires finite evidence and an admissible
 breakdown state; truncation is not reported as success. Logarithm, square root,
 inverse square root, and fractional actions require positive-definite evidence,
 explicit bounds, or an explicit spectral representation. Spectral
-representations are bound to numerical operator content, not only an
-`operator_id`. Matrix functions currently require an unbatched endomorphism.
+representations and reusable projections are bound to numerical operator
+content, not only an `operator_id`. Matrix functions currently require an
+unbatched endomorphism.
 
 ## Sparse interoperability
 
@@ -378,6 +813,15 @@ contract. COO-like relations are canonicalized to coalesced CSR storage for
 providers. Provider preparation validates finite coefficients, pointer
 monotonicity, bounds, ordering, and duplicate freedom, including under JAX
 tracing. Invalid storage never reaches a factorization.
+`plan_sparse_assembly` recognizes sparse leaves and exact algebraic recipes for
+supported identity, diagonal, permutation, banded, local-block, scaled, summed,
+composed, transpose, and adjoint operators. `SparseAssemblyPolicy` independently
+bounds nonzeros, resident bytes, contribution count, symbolic workspace, and
+any explicit fallback. `prepare_sparse_assembly` evaluates one immutable CSR
+operator while retaining its symbolic recipe; `refresh_sparse_assembly`
+accepts only the same operator identity, spaces, and structural pattern, then
+updates coefficients without rebuilding routes.
+
 
 `compile_sparse_jacobian` and `compile_sparse_hessian` return reusable derivative
 plans. A supplied structural pattern uses the native compiler; omitting it can
@@ -388,10 +832,10 @@ preconditioner, planning, and diagnostics APIs as every other operator.
 
 See [Sparse derivatives](sparse_derivatives.md) for compiler-specific workflows.
 
-## Reproducible benchmark harness
+## Reproducible benchmark harnesses
 
-`tools/linalg_benchmarks.py` compares lifecycle costs and steady-state execution
-without mixing compilation into warm timings:
+`tools/linalg_benchmarks.py` measures the core solve, preconditioner, sparse
+derivative, sparse assembly, and structured-direct paths:
 
 ```console
 python tools/linalg_benchmarks.py \
@@ -402,26 +846,30 @@ python tools/linalg_benchmarks.py \
   --seed 0
 ```
 
-The command emits one JSON document. `configuration` and `environment` record
-the dimensions, repeat count, seed, Python/JAX versions, backend, device, and
-64-bit mode. The timed fields have these contracts:
+`tools/linalg_advanced_benchmarks.py` measures the reusable Krylov, shared
+shifted/rational, matrix-equation, spectral-projector derivative, arbitrary-base
+low-rank, resilient equilibration/refinement, and adaptive stochastic paths:
 
-- `phydrax_cold_compile_and_execute_ms` is the first compiled dense solve;
-- `prepare_ms` is symbolic planning plus reusable numerical preparation;
-- `prepared_reuse_*_ms` is execution of an already prepared and compiled solve;
-- `direct_jax_*_ms` is the corresponding warmed direct-JAX reference;
-- sparse Jacobian and Hessian `*_compile_ms` measure structural compilation
-  once, while `*_evaluation_*_ms` and `*_action_*_ms` are warmed coefficient or
-  operator evaluations;
-- matrix-free and sparse-solve timings report iterations, forward/adjoint
-  operator counts, status, and relative residual with the wall time.
+```console
+python tools/linalg_advanced_benchmarks.py \
+  --size 64 \
+  --shift-count 12 \
+  --repeats 20 \
+  --seed 0
+```
 
-Every timed device result is synchronized before the clock stops. The top-level
-`passed` flag requires finite outputs, successful solve statuses, tolerance-level
-residuals, and agreement between Phydrax, direct JAX, native sparse, and ASDEX
-paths. Compare steady-state values only between reports with compatible
-`environment` and `configuration`; cold compilation is intentionally reported
-separately.
+Both commands emit one JSON document. `configuration` and `environment` record
+dimensions, repeat count, seed, Python/JAX versions, backend, and device.
+Preparation is timed separately from warmed execution. Every timed device
+result is synchronized before the clock stops. Each advanced record includes a
+dense, exact, finite-difference, or invariant reference as applicable, status
+and diagnostics, and an individual `passed` flag. The top-level `passed` flag
+requires every workload to satisfy its numerical contract. `--smoke` on the
+advanced harness executes a small single-repeat end-to-end check.
+
+Compare steady-state values only between reports with compatible `environment`
+and `configuration`; preparation and cold compilation are intentionally not
+presented as warmed execution.
 
 ## Capability limitations
 
@@ -438,6 +886,12 @@ Current boundaries are deliberate and reported before execution:
   diagonal pairings;
 - Schur-complement operators expose only the supplied forward inverse action,
   not an invented transpose or adjoint;
+- distributed execution is not exposed without a reproducible multi-device
+  workload and benchmark environment; the current runtime has no local/ghost
+  vector abstraction;
+- sparse-direct provider extensibility remains deliberately static until a
+  second concrete backend is selected; current providers are device JAX sparse
+  and host SciPy SuperLU;
 - mathematical property claims require per-property evidence and are never
   inferred from sampled traced values.
 
@@ -541,6 +995,42 @@ old and new plan identities.
 
 ---
 
+::: phydrax.linalg.BasePlusLowRankLinearOperator
+
+---
+
+::: phydrax.linalg.SymmetricLowRankLinearOperator
+
+---
+
+::: phydrax.linalg.TwoSidedScaledLinearOperator
+
+---
+
+::: phydrax.linalg.TransformDiagonalLinearOperator
+
+---
+
+::: phydrax.linalg.StructureCompilationPolicy
+
+---
+
+::: phydrax.linalg.StructureCompilationResult
+
+---
+
+::: phydrax.linalg.compile_linear_structure
+
+---
+
+::: phydrax.linalg.refresh_linear_structure
+
+---
+
+::: phydrax.linalg.LocalBlockDiagonalLinearOperator
+
+---
+
 ::: phydrax.linalg.SchurComplementLinearOperator
 
 ---
@@ -558,6 +1048,23 @@ old and new plan identities.
 ---
 
 ::: phydrax.linalg.materialize
+
+---
+
+::: phydrax.linalg.assemble_diagonal
+
+---
+
+::: phydrax.linalg.assemble_uniform_blocks
+
+---
+
+::: phydrax.linalg.OperatorActionCostEstimate
+
+---
+
+::: phydrax.linalg.estimate_operator_action_cost
+
 
 ### Problems, policies, and runtime
 
@@ -581,7 +1088,39 @@ old and new plan identities.
 
 ---
 
+::: phydrax.linalg.KernelCertificate
+
+---
+
+::: phydrax.linalg.SpectralInterval
+
+---
+
+::: phydrax.linalg.ProjectedPCG
+
+---
+
+::: phydrax.linalg.LinearSolveTemplate
+
+---
+
+::: phydrax.linalg.prepare_template
+
+---
+
+::: phydrax.linalg.bind_numeric
+
+---
+
 ::: phydrax.linalg.LinearSolvePolicy
+
+---
+
+::: phydrax.linalg.BlockGMRES
+
+---
+
+::: phydrax.linalg.BlockCG
 
 ---
 
@@ -645,6 +1184,90 @@ old and new plan identities.
 
 ### Preconditioners and factorizations
 
+::: phydrax.linalg.AbstractPreconditioner
+
+---
+
+::: phydrax.linalg.PreconditionerProperties
+
+---
+
+::: phydrax.linalg.PreconditioningPolicy
+
+---
+
+::: phydrax.linalg.AbstractPreconditionerBuilder
+
+---
+
+::: phydrax.linalg.PreconditionerPlan
+
+---
+
+::: phydrax.linalg.PreparedPreconditioner
+
+---
+
+::: phydrax.linalg.PreconditionerCostEstimate
+
+---
+
+::: phydrax.linalg.LinearCostEstimate
+
+---
+
+::: phydrax.linalg.ChebyshevPreconditionerBuilder
+
+---
+
+::: phydrax.linalg.ChebyshevPreconditioner
+
+---
+
+::: phydrax.linalg.SubspaceCorrectionTerm
+
+---
+
+::: phydrax.linalg.AdditiveSubspaceCorrectionBuilder
+
+---
+
+::: phydrax.linalg.AdditiveSubspaceCorrectionPreconditioner
+
+---
+
+::: phydrax.linalg.MultiplicativeSubspaceCorrectionBuilder
+
+---
+
+::: phydrax.linalg.MultiplicativeSubspaceCorrectionPreconditioner
+
+---
+
+::: phydrax.linalg.BlockFactorizationPreconditionerBuilder
+
+---
+
+::: phydrax.linalg.BlockFactorizationPreconditioner
+
+---
+
+::: phydrax.linalg.JacobiPreconditionerBuilder
+
+---
+
+::: phydrax.linalg.BlockJacobiPreconditionerBuilder
+
+---
+
+::: phydrax.linalg.LocalBlockPreconditioner
+
+---
+
+::: phydrax.linalg.DenseInversePreconditionerBuilder
+
+---
+
 ::: phydrax.linalg.DiagonalPreconditioner
 
 ---
@@ -662,6 +1285,62 @@ old and new plan identities.
 ---
 
 ::: phydrax.linalg.MultigridPreconditioner
+
+---
+
+::: phydrax.linalg.MultigridLevelBuilder
+
+---
+
+::: phydrax.linalg.MultigridLevel
+
+---
+
+::: phydrax.linalg.MultigridHierarchyBuilder
+
+---
+
+::: phydrax.linalg.MultigridHierarchy
+
+---
+
+::: phydrax.linalg.multigrid_hierarchy_from_pyamg
+
+---
+
+::: phydrax.linalg.GalerkinHierarchyBuilder
+
+---
+
+::: phydrax.linalg.SmoothedAggregationHierarchyBuilder
+
+---
+
+::: phydrax.linalg.MultigridSetupDiagnostics
+
+---
+
+::: phydrax.linalg.SparseAssemblyPolicy
+
+---
+
+::: phydrax.linalg.SparseAssemblyPlan
+
+---
+
+::: phydrax.linalg.PreparedSparseAssembly
+
+---
+
+::: phydrax.linalg.plan_sparse_assembly
+
+---
+
+::: phydrax.linalg.prepare_sparse_assembly
+
+---
+
+::: phydrax.linalg.refresh_sparse_assembly
 
 ---
 
@@ -774,3 +1453,495 @@ old and new plan identities.
 ---
 
 ::: phydrax.linalg.estimate_inverse_diagonal
+
+### Reusable Krylov projections
+
+::: phydrax.linalg.KrylovProjectionPolicy
+
+---
+
+::: phydrax.linalg.KrylovProjectionResourcePolicy
+
+---
+
+::: phydrax.linalg.KrylovProjectionPlan
+
+---
+
+::: phydrax.linalg.PreparedKrylovProjection
+
+---
+
+::: phydrax.linalg.plan_krylov_projection
+
+---
+
+::: phydrax.linalg.prepare_krylov_projection
+
+---
+
+::: phydrax.linalg.refresh_krylov_projection
+
+### Shifted systems and rational functions
+
+::: phydrax.linalg.ShiftedLinearSystemFamily
+
+---
+
+::: phydrax.linalg.ShiftedSolvePolicy
+
+---
+
+::: phydrax.linalg.ShiftedSolvePlan
+
+---
+
+::: phydrax.linalg.PreparedShiftedSolve
+
+---
+
+::: phydrax.linalg.ShiftedSolveResult
+
+---
+
+::: phydrax.linalg.plan_shifted_solve
+
+---
+
+::: phydrax.linalg.prepare_shifted_solve
+
+---
+
+::: phydrax.linalg.refresh_shifted_solve
+
+---
+
+::: phydrax.linalg.solve_shifted
+
+---
+
+::: phydrax.linalg.PartialFractionRationalFunction
+
+---
+
+::: phydrax.linalg.RationalFunctionPolicy
+
+---
+
+::: phydrax.linalg.RationalFunctionPlan
+
+---
+
+::: phydrax.linalg.PreparedRationalFunctionAction
+
+---
+
+::: phydrax.linalg.RationalFunctionResult
+
+---
+
+::: phydrax.linalg.plan_rational_function_action
+
+---
+
+::: phydrax.linalg.prepare_rational_function_action
+
+---
+
+::: phydrax.linalg.refresh_rational_function_action
+
+---
+
+::: phydrax.linalg.rational_function_action
+
+### Adaptive stochastic estimators
+
+::: phydrax.linalg.AdaptiveStochasticPolicy
+
+---
+
+::: phydrax.linalg.AdaptiveStochasticEstimate
+
+---
+
+::: phydrax.linalg.adaptive_stochastic_trace
+
+---
+
+::: phydrax.linalg.adaptive_stochastic_log_determinant
+
+### Low-rank and resilient solves
+
+::: phydrax.linalg.LowRankSolvePolicy
+
+---
+
+::: phydrax.linalg.LowRankSolvePlan
+
+---
+
+::: phydrax.linalg.PreparedLowRankSolve
+
+---
+
+::: phydrax.linalg.LowRankSolveResult
+
+---
+
+::: phydrax.linalg.plan_low_rank_solve
+
+---
+
+::: phydrax.linalg.prepare_low_rank_solve
+
+---
+
+::: phydrax.linalg.refresh_low_rank_solve
+
+---
+
+::: phydrax.linalg.solve_low_rank
+
+---
+
+::: phydrax.linalg.EquilibrationPolicy
+
+---
+
+::: phydrax.linalg.RefinementPolicy
+
+---
+
+::: phydrax.linalg.ResilientSolvePolicy
+
+---
+
+::: phydrax.linalg.ResilientSolvePlan
+
+---
+
+::: phydrax.linalg.PreparedResilientSolve
+
+---
+
+::: phydrax.linalg.ResilientSolveResult
+
+---
+
+::: phydrax.linalg.plan_resilient_solve
+
+---
+
+::: phydrax.linalg.prepare_resilient_solve
+
+---
+
+::: phydrax.linalg.refresh_resilient_solve
+
+---
+
+::: phydrax.linalg.solve_resilient
+
+### Matrix equations
+
+::: phydrax.linalg.MatrixEquationTerm
+
+---
+
+::: phydrax.linalg.MatrixEquationProblem
+
+---
+
+::: phydrax.linalg.MatrixEquationPolicy
+
+---
+
+::: phydrax.linalg.MatrixEquationPlan
+
+---
+
+::: phydrax.linalg.PreparedMatrixEquation
+
+---
+
+::: phydrax.linalg.MatrixEquationResult
+
+---
+
+::: phydrax.linalg.plan_matrix_equation
+
+---
+
+::: phydrax.linalg.prepare_matrix_equation
+
+---
+
+::: phydrax.linalg.refresh_matrix_equation
+
+---
+
+::: phydrax.linalg.solve_matrix_equation
+
+---
+
+::: phydrax.linalg.sylvester_equation
+
+---
+
+::: phydrax.linalg.continuous_lyapunov_equation
+
+---
+
+::: phydrax.linalg.discrete_lyapunov_equation
+
+### Self-adjoint eigenproblems
+
+::: phydrax.linalg.eigen.Eigenproblem
+
+---
+
+::: phydrax.linalg.eigen.GeneralizedEigenproblem
+
+---
+
+::: phydrax.linalg.eigen.DenseEigh
+
+---
+
+::: phydrax.linalg.eigen.LOBPCG
+
+---
+
+::: phydrax.linalg.eigen.RestartedLanczos
+
+---
+
+::: phydrax.linalg.eigen.EigenSolvePolicy
+
+---
+
+::: phydrax.linalg.eigen.EigenSolvePlan
+
+---
+
+::: phydrax.linalg.eigen.PreparedEigenSolve
+
+---
+
+::: phydrax.linalg.eigen.EigenSolveResult
+
+---
+
+::: phydrax.linalg.eigen.plan_eigensolve
+
+---
+
+::: phydrax.linalg.eigen.prepare_eigensolve
+
+---
+
+::: phydrax.linalg.eigen.refresh_eigensolve
+
+---
+
+::: phydrax.linalg.eigen.eigensolve
+
+### Self-adjoint spectra, invariant subspaces, and spectral functions
+
+::: phydrax.linalg.eigen.SelfAdjointSpectrumPolicy
+
+---
+
+::: phydrax.linalg.eigen.SelfAdjointSpectrumPlan
+
+---
+
+::: phydrax.linalg.eigen.PreparedSelfAdjointSpectrum
+
+---
+
+::: phydrax.linalg.eigen.plan_self_adjoint_spectrum
+
+---
+
+::: phydrax.linalg.eigen.prepare_self_adjoint_spectrum
+
+---
+
+::: phydrax.linalg.eigen.refresh_self_adjoint_spectrum
+
+---
+
+::: phydrax.linalg.eigen.self_adjoint_spectrum
+
+---
+
+::: phydrax.linalg.eigen.SelfAdjointSpectralSubspacePolicy
+
+---
+
+::: phydrax.linalg.eigen.SelfAdjointSpectralSubspace
+
+---
+
+::: phydrax.linalg.eigen.SelfAdjointSpectralDerivativeResult
+
+---
+
+::: phydrax.linalg.eigen.self_adjoint_spectral_subspace
+
+---
+
+::: phydrax.linalg.eigen.self_adjoint_spectral_projector_derivative
+
+---
+
+::: phydrax.linalg.eigen.AbstractSpectralFunction
+
+---
+
+::: phydrax.linalg.eigen.PolynomialSpectralFunction
+
+---
+
+::: phydrax.linalg.eigen.FermiDiracSpectralFunction
+
+---
+
+::: phydrax.linalg.eigen.ExponentialSpectralFunction
+
+---
+
+::: phydrax.linalg.eigen.LogarithmSpectralFunction
+
+---
+
+::: phydrax.linalg.eigen.SquareRootSpectralFunction
+
+---
+
+::: phydrax.linalg.eigen.InverseSquareRootSpectralFunction
+
+---
+
+::: phydrax.linalg.eigen.FractionalPowerSpectralFunction
+
+---
+
+::: phydrax.linalg.eigen.ResolventSpectralFunction
+
+---
+
+::: phydrax.linalg.eigen.SelfAdjointSpectralOperatorPolicy
+
+---
+
+::: phydrax.linalg.eigen.SelfAdjointSpectralOperator
+
+---
+
+::: phydrax.linalg.eigen.self_adjoint_spectral_operator
+
+### Dense Schur problems and spectral subspaces
+
+::: phydrax.linalg.eigen.SchurEigenproblem
+
+---
+
+::: phydrax.linalg.eigen.SchurSolvePolicy
+
+---
+
+::: phydrax.linalg.eigen.PreparedSchurSolve
+
+---
+
+::: phydrax.linalg.eigen.SchurSolveResult
+
+---
+
+::: phydrax.linalg.eigen.prepare_schur_eigensolve
+
+---
+
+::: phydrax.linalg.eigen.refresh_schur_eigensolve
+
+---
+
+::: phydrax.linalg.eigen.schur_eigensolve
+
+---
+
+::: phydrax.linalg.eigen.schur_spectral_observables
+
+---
+
+::: phydrax.linalg.eigen.SpectralSelection
+
+---
+
+::: phydrax.linalg.eigen.SpectralSubspacePolicy
+
+---
+
+::: phydrax.linalg.eigen.PreparedSpectralSubspace
+
+---
+
+::: phydrax.linalg.eigen.SpectralSubspace
+
+---
+
+::: phydrax.linalg.eigen.prepare_spectral_subspace
+
+---
+
+::: phydrax.linalg.eigen.refresh_spectral_subspace
+
+---
+
+::: phydrax.linalg.eigen.spectral_subspace
+
+---
+
+::: phydrax.linalg.eigen.spectral_projector_derivative
+
+### Singular value decompositions
+
+::: phydrax.linalg.svd.SVDProblem
+
+---
+
+::: phydrax.linalg.svd.DenseSVD
+
+---
+
+::: phydrax.linalg.svd.SVDSolvePolicy
+
+---
+
+::: phydrax.linalg.svd.SVDSolvePlan
+
+---
+
+::: phydrax.linalg.svd.PreparedSVDSolve
+
+---
+
+::: phydrax.linalg.svd.SVDSolveResult
+
+---
+
+::: phydrax.linalg.svd.plan_svd
+
+---
+
+::: phydrax.linalg.svd.prepare_svd
+
+---
+
+::: phydrax.linalg.svd.refresh_svd
+
+---
+
+::: phydrax.linalg.svd.svd

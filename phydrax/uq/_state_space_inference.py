@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
@@ -354,7 +355,7 @@ def _finite_state_filter(problem: StateSpaceProblem, /) -> FiniteStateFilterResu
         transition_valid = (
             matrix_finite & matrix_nonnegative & matrix_stochastic & (durations >= 0.0)
         )
-        predicted = jnp.einsum("ci,cij->cj", probabilities, matrices)
+        predicted = oe.contract("ci,cij->cj", probabilities, matrices)
 
         log_likelihoods = jax.vmap(
             lambda value, mask, time, case_index: state_log_likelihood(
@@ -495,7 +496,7 @@ def finite_state_backward_smoother(
             smoothed[:, index + 1] / denominator,
             0.0,
         )
-        proposed = filtered[:, index] * jnp.einsum(
+        proposed = filtered[:, index] * oe.contract(
             "cij,cj->ci",
             matrices[:, index + 1],
             ratio,

@@ -21,6 +21,7 @@ from ._operators import (
     ComposedLinearOperator,
     DenseLinearOperator,
     DiagonalLinearOperator,
+    estimate_operator_action_cost,
     IdentityLinearOperator,
     ScaledLinearOperator,
     SumLinearOperator,
@@ -30,6 +31,8 @@ from ._policies import (
     AbstractLinearMethod,
     AutoLinearMethod,
     BiCGStab,
+    BlockCG,
+    BlockGMRES,
     ConjugateGradient,
     DenseCholesky,
     DenseLU,
@@ -43,9 +46,11 @@ from ._policies import (
     LSMR,
     MINRES,
     PCG,
+    ProjectedPCG,
     SparseDirect,
     StructuredDirect,
 )
+from ._preconditioning import PreconditionerPlan
 from ._problems import (
     _problem_structure,
     AbstractLinearProblem,
@@ -53,7 +58,12 @@ from ._problems import (
     LinearSystem,
     MinimumNormProblem,
 )
-from ._spaces import _coordinate_dtype, _has_diagonal_pairing, _has_euclidean_pairing
+from ._spaces import (
+    _coordinate_dtype,
+    _has_diagonal_pairing,
+    _has_euclidean_pairing,
+    RHSLayout,
+)
 from ._sparse_contract import AbstractSparseLinearOperator
 from ._structured_operators import (
     _is_structured_exact,
@@ -62,12 +72,14 @@ from ._structured_operators import (
     DiagonalPlusLowRankLinearOperator,
     KroneckerLinearOperator,
     KroneckerSumLinearOperator,
+    LocalBlockDiagonalLinearOperator,
     LowRankLinearOperator,
     PermutationLinearOperator,
     SymmetricLowRankLinearOperator,
     TriangularLinearOperator,
     TridiagonalLinearOperator,
 )
+from ._transform_operators import TransformDiagonalLinearOperator
 
 
 LinearBackend: TypeAlias = Literal[
@@ -76,6 +88,7 @@ LinearBackend: TypeAlias = Literal[
     "jax-sparse",
     "host-sparse",
     "native-krylov",
+    "native-block-krylov",
     "matfree",
     "lineax",
 ]
@@ -86,6 +99,8 @@ class LinearSolvePlan(StrictModule):
 
     policy: LinearSolvePolicy
     candidates: tuple[LinearCostEstimate, ...]
+    preconditioner_plan: PreconditionerPlan | None
+    rhs_layout: RHSLayout | None
     problem_id: str = eqx.field(static=True)
     problem_kind: str = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
@@ -95,13 +110,17 @@ class LinearSolvePlan(StrictModule):
     reason: str = eqx.field(static=True)
     rejected: tuple[str, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
+    recycling_capacity: int = eqx.field(static=True)
+    recycling_state_bytes: int = eqx.field(static=True)
 
     def __init__(
         self,
         *,
         problem: AbstractLinearProblem,
         policy: LinearSolvePolicy,
+        rhs_layout: RHSLayout | None = None,
         backend: LinearBackend,
+        preconditioner_plan: PreconditionerPlan | None,
         method: str,
         reason: str,
         rejected: tuple[str, ...] = (),
@@ -113,6 +132,7 @@ class LinearSolvePlan(StrictModule):
             "jax-sparse",
             "host-sparse",
             "native-krylov",
+            "native-block-krylov",
             "matfree",
             "lineax",
         ):
@@ -120,8 +140,23 @@ class LinearSolvePlan(StrictModule):
         values = (str(method), str(reason))
         if any(not value for value in values):
             raise ValueError("Plan method and reason must be non-empty.")
+        if (policy.preconditioning is None) != (preconditioner_plan is None):
+            raise ValueError(
+                "Solve and preconditioner plans must agree on preconditioning."
+            )
+        if (
+            preconditioner_plan is not None
+            and preconditioner_plan.space_id != problem.operator.source.space_id
+        ):
+            raise ValueError(
+                "Preconditioner plan space must match the problem source space."
+            )
+        if rhs_layout is not None and not isinstance(rhs_layout, RHSLayout):
+            raise TypeError("rhs_layout must be an RHSLayout or None.")
         self.policy = policy
+        self.preconditioner_plan = preconditioner_plan
         self.candidates = candidates
+        self.rhs_layout = rhs_layout
         self.problem_id = problem.problem_id
         self.problem_kind = problem.kind
         self.operator_id = problem.operator.operator_id
@@ -129,6 +164,10 @@ class LinearSolvePlan(StrictModule):
         self.backend = backend
         self.method, self.reason = values
         self.rejected = tuple(str(value) for value in rejected)
+        self.recycling_capacity = (
+            0 if policy.recycling is None else policy.recycling.capacity
+        )
+        self.recycling_state_bytes = _recycling_state_bytes(problem, policy)
         self.plan_id = canonical_fingerprint(
             {
                 "problem": problem.problem_id,
@@ -139,6 +178,7 @@ class LinearSolvePlan(StrictModule):
                 "operator": problem.operator.operator_id,
                 "source": problem.operator.source.space_id,
                 "target": problem.operator.target.space_id,
+                "rhs_layout": None if rhs_layout is None else rhs_layout.layout_id,
                 "batch_shape": list(problem.operator.batch_shape),
                 "properties": {
                     "diagonal": problem.operator.properties.diagonal,
@@ -164,13 +204,21 @@ class LinearSolvePlan(StrictModule):
                 "relative_tolerance": policy.tolerance.relative,
                 "absolute_tolerance": policy.tolerance.absolute,
                 "max_steps": policy.tolerance.max_steps,
-                "preconditioner": (
+                "preconditioning": (
+                    None if preconditioner_plan is None else preconditioner_plan.plan_id
+                ),
+                "recycling": (
                     None
-                    if policy.preconditioner is None
-                    else policy.preconditioner.preconditioner_id
+                    if policy.recycling is None
+                    else {
+                        "capacity": policy.recycling.capacity,
+                        "extraction": policy.recycling.extraction,
+                        "refresh": policy.recycling.refresh,
+                    }
                 ),
                 "differentiation": policy.differentiation.mode,
                 "failure": policy.failure.mode,
+                "require_device_binding": policy.require_device_binding,
                 "materialization": {
                     "max_entries": policy.materialization.max_entries,
                     "max_bytes": policy.materialization.max_bytes,
@@ -179,6 +227,8 @@ class LinearSolvePlan(StrictModule):
                     "factorization_bytes": policy.resources.factorization_bytes,
                     "workspace_bytes": policy.resources.workspace_bytes,
                     "krylov_basis_bytes": policy.resources.krylov_basis_bytes,
+                    "preconditioner_bytes": policy.resources.preconditioner_bytes,
+                    "recycling_state_bytes": policy.resources.recycling_state_bytes,
                 },
             }
         )
@@ -188,6 +238,8 @@ def plan(
     problem: AbstractLinearProblem,
     policy: LinearSolvePolicy | None = None,
     /,
+    *,
+    rhs_layout: RHSLayout | None = None,
 ) -> LinearSolvePlan:
     """Select the first feasible candidate in deterministic capability order."""
     if not isinstance(problem, AbstractLinearProblem):
@@ -195,21 +247,49 @@ def plan(
     policy_ = LinearSolvePolicy() if policy is None else policy
     if not isinstance(policy_, LinearSolvePolicy):
         raise TypeError("policy must be a LinearSolvePolicy.")
+    if rhs_layout is not None and not isinstance(rhs_layout, RHSLayout):
+        raise TypeError("rhs_layout must be an RHSLayout or None.")
     requested = policy_.method
     selected, reason, rejected = (
         _auto_method(problem, policy_)
         if isinstance(requested, AutoLinearMethod)
         else (requested, "explicit policy", ())
     )
-    backend = _validate_method(problem, selected, policy_)
+    if policy_.recycling is not None:
+        if not isinstance(selected, (GMRES, FGMRES)):
+            raise ValueError("RecyclingPolicy requires GMRES or FGMRES.")
+        if policy_.differentiation.mode == "algorithmic":
+            raise ValueError(
+                "Algorithmic differentiation through GCRO-DR is unsupported."
+            )
+        if policy_.preconditioning is not None:
+            raise ValueError(
+                "GCRO-DR recycling with a preconditioner is not yet supported."
+            )
+    backend = _validate_method(problem, selected, policy_, rhs_layout)
+    if policy_.require_device_binding and backend in ("host-sparse", "lineax"):
+        raise ValueError(
+            f"Selected backend {backend!r} cannot bind numerical state on device."
+        )
+    preconditioner_plan = _make_preconditioner_plan(
+        problem,
+        selected,
+        policy_,
+    )
     selected_estimate = _selected_estimate(
         problem,
         selected,
         backend,
         policy_,
+        preconditioner_plan,
+        rhs_layout,
         reason,
     )
-    _require_selected_resources(selected_estimate, policy_)
+    _require_selected_resources(
+        selected_estimate,
+        policy_,
+        1 if rhs_layout is None else rhs_layout.size,
+    )
     estimates = tuple(_rejected_estimate(entry) for entry in rejected) + (
         selected_estimate,
     )
@@ -217,11 +297,51 @@ def plan(
         problem=problem,
         policy=policy_,
         backend=backend,
+        preconditioner_plan=preconditioner_plan,
+        rhs_layout=rhs_layout,
         method=selected.name,
         reason=reason,
         rejected=rejected,
         candidates=estimates,
     )
+
+
+def _make_preconditioner_plan(
+    problem: AbstractLinearProblem,
+    method: AbstractLinearMethod,
+    policy: LinearSolvePolicy,
+    /,
+) -> PreconditionerPlan | None:
+    preconditioning = policy.preconditioning
+    if preconditioning is None:
+        return None
+    if isinstance(method, (PCG, ProjectedPCG, MINRES, ConjugateGradient, BlockCG)):
+        required_side: Literal["left", "right"] = "left"
+    elif isinstance(method, (GMRES, FGMRES, BiCGStab, BlockGMRES)):
+        required_side = "right"
+    else:
+        raise ValueError(f"{method.name} does not accept preconditioning.")
+    if preconditioning.side not in ("auto", required_side):
+        raise ValueError(
+            f"{method.name} requires {required_side} preconditioning; "
+            f"got {preconditioning.side!r}."
+        )
+    return PreconditionerPlan(
+        preconditioning,
+        problem.operator,
+        side=required_side,
+        materialization=policy.materialization,
+    )
+
+
+def _preconditioner_properties(
+    problem: AbstractLinearProblem,
+    policy: LinearSolvePolicy,
+    /,
+):
+    if policy.preconditioning is None:
+        return None
+    return policy.preconditioning.properties_for(problem.operator)
 
 
 def _auto_method(
@@ -231,6 +351,30 @@ def _auto_method(
 ) -> tuple[AbstractLinearMethod, str, tuple[str, ...]]:
     operator = problem.operator
     rejected: list[str] = []
+    projected_rejection = _projected_pcg_rejection(problem)
+    if projected_rejection is None:
+        preconditioner_properties = _preconditioner_properties(problem, policy)
+        if preconditioner_properties is None or (
+            preconditioner_properties.certifies("positive_definite")
+            and preconditioner_properties.certifies("self_adjoint")
+            and preconditioner_properties.certifies("linear")
+            and preconditioner_properties.certifies("stationary")
+        ):
+            return (
+                ProjectedPCG(),
+                "complete certified kernel with positive semidefinite quotient",
+                (),
+            )
+        rejected.append(
+            "projected-pcg: requires a fixed, linear, self-adjoint, "
+            "positive-definite preconditioner"
+        )
+    elif (
+        isinstance(problem, LinearSystem)
+        and problem.nullspace_policy is not None
+        and problem.nullspace_policy.certificate is not None
+    ):
+        rejected.append(f"projected-pcg: {projected_rejection}")
     if isinstance(problem, LinearSystem) and _is_structured_exact(operator):
         fits, explanation = _structured_candidate_fits(problem, policy)
         if fits:
@@ -243,12 +387,12 @@ def _auto_method(
     ):
         if (
             _cuda_sparse_available()
-            and policy.preconditioner is None
+            and policy.preconditioning is None
             and policy.rank.relative_cutoff is None
         ):
             return SparseDirect(), "canonical CSR with native CUDA sparse QR", ()
         rejected.append(
-            "sparse-direct: execution requires CUDA, no preconditioner, and no "
+            "sparse-direct: execution requires CUDA, no preconditioning, and no "
             "numerical rank cutoff"
         )
     if isinstance(problem, LinearSystem):
@@ -259,7 +403,7 @@ def _auto_method(
             dense_method = DenseCholesky()
         else:
             dense_method = DenseLU()
-        if explicit and policy.preconditioner is None:
+        if explicit and policy.preconditioning is None:
             fits, explanation = _dense_candidate_fits(problem, dense_method, policy)
             if fits:
                 return dense_method, explanation, ()
@@ -267,19 +411,20 @@ def _auto_method(
         elif explicit:
             rejected.append(
                 f"{dense_method.name}: dense direct execution does not accept "
-                "preconditioners"
+                "preconditioning"
             )
-        preconditioner_is_positive = (
-            policy.preconditioner is None or policy.preconditioner.positive_definite
+        properties = _preconditioner_properties(problem, policy)
+        preconditioner_is_positive = properties is None or properties.certifies(
+            "positive_definite"
         )
         if _certified_positive_definite(operator) and preconditioner_is_positive:
             return PCG(), "positive-definite Krylov fallback", tuple(rejected)
         if _certified_self_adjoint(operator) and preconditioner_is_positive:
             return MINRES(), "self-adjoint indefinite Krylov fallback", tuple(rejected)
-        if policy.preconditioner is not None:
+        if policy.preconditioning is not None:
             return (
                 FGMRES(),
-                "general variable-preconditioned Krylov fallback",
+                "general flexible-preconditioned Krylov fallback",
                 tuple(rejected),
             )
         if policy.differentiation.mode == "algorithmic" or not _has_diagonal_pairing(
@@ -293,14 +438,14 @@ def _auto_method(
         return GMRES(), "general square Krylov fallback", tuple(rejected)
 
     if isinstance(problem, (LeastSquaresProblem, MinimumNormProblem)):
-        if explicit and policy.preconditioner is None:
+        if explicit and policy.preconditioning is None:
             fits, explanation = _dense_candidate_fits(problem, DenseSVD(), policy)
             if fits:
                 return DenseSVD(), explanation, ()
             rejected.append(f"dense-svd: {explanation}")
         elif explicit:
             rejected.append(
-                "dense-svd: dense direct execution does not accept preconditioners"
+                "dense-svd: dense direct execution does not accept preconditioning"
             )
         if _matfree_lsmr_eligible(problem, policy):
             return LSMR(), "real-Euclidean Matfree LSMR envelope", tuple(rejected)
@@ -312,18 +457,43 @@ def _auto_method(
     raise TypeError(f"Unsupported problem type {type(problem).__name__}.")
 
 
+def _projected_pcg_rejection(problem: AbstractLinearProblem, /) -> str | None:
+    if not isinstance(problem, LinearSystem):
+        return "requires a LinearSystem"
+    operator = problem.operator
+    if not _certified_self_adjoint(operator):
+        return "requires certified self-adjoint structure"
+    if not operator.properties.certifies("positive_semidefinite"):
+        return "requires certified positive semidefiniteness"
+    nullspace = problem.nullspace_policy
+    if nullspace is None or nullspace.right is None:
+        return "requires an explicit right-nullspace policy"
+    certificate = nullspace.certificate
+    if certificate is None:
+        return "requires a KernelCertificate"
+    if not certificate.complete:
+        return "requires a complete kernel/nullity certificate"
+    if certificate.right.capacity == 0:
+        return "requires a nonempty certified kernel"
+    if certificate.right.subspace_id != nullspace.right.subspace_id:
+        return "received a kernel certificate for a different right subspace"
+    if certificate.operator_id != operator.operator_id:
+        return "received a kernel certificate for a different operator structure"
+    if not certificate.matches(operator):
+        return "received a stale numerical kernel certificate"
+    return None
+
+
 def _validate_method(
     problem: AbstractLinearProblem,
     method: AbstractLinearMethod,
     policy: LinearSolvePolicy,
+    rhs_layout: RHSLayout | None,
     /,
 ) -> LinearBackend:
     operator = problem.operator
-    preconditioner = policy.preconditioner
-    if preconditioner is not None and not preconditioner.space.compatible(
-        operator.source
-    ):
-        raise ValueError("Preconditioner space must match the operator source.")
+    preconditioner = policy.preconditioning
+    preconditioner_properties = _preconditioner_properties(problem, policy)
     if isinstance(method, StructuredDirect):
         if not isinstance(problem, LinearSystem) or not _is_structured_exact(operator):
             raise ValueError(
@@ -418,7 +588,17 @@ def _validate_method(
         raise ValueError("Iterative providers require explicit batched execution policy.")
     square_iterative = isinstance(
         method,
-        (PCG, MINRES, FGMRES, ConjugateGradient, GMRES, BiCGStab),
+        (
+            PCG,
+            ProjectedPCG,
+            MINRES,
+            FGMRES,
+            ConjugateGradient,
+            GMRES,
+            BiCGStab,
+            BlockCG,
+            BlockGMRES,
+        ),
     )
     if (
         square_iterative
@@ -435,21 +615,87 @@ def _validate_method(
         raise ValueError(
             "Iterative full-rank requirements need a full-rank operator certificate."
         )
+    if isinstance(method, (BlockCG, BlockGMRES)):
+        if rhs_layout is None or rhs_layout.size <= 1:
+            raise ValueError(
+                f"{method.name} requires a planned layout with multiple right-hand sides."
+            )
+        if not isinstance(problem, LinearSystem):
+            raise ValueError(f"{method.name} requires a LinearSystem.")
+        if policy.differentiation.mode == "algorithmic":
+            raise ValueError(
+                "Block Krylov rank transitions do not expose algorithmic differentiation."
+            )
+        if isinstance(method, BlockCG):
+            if not (
+                _certified_self_adjoint(operator)
+                and _certified_positive_definite(operator)
+            ):
+                raise ValueError(
+                    "BlockCG requires certified self-adjoint positive-definite structure."
+                )
+            if preconditioner_properties is not None and not (
+                preconditioner_properties.certifies("positive_definite")
+                and preconditioner_properties.certifies("self_adjoint")
+                and preconditioner_properties.certifies("linear")
+                and preconditioner_properties.certifies("stationary")
+            ):
+                raise ValueError(
+                    "BlockCG requires a fixed, linear, self-adjoint, "
+                    "positive-definite left preconditioner."
+                )
+        elif preconditioner_properties is not None and not (
+            preconditioner_properties.certifies("linear")
+            and preconditioner_properties.certifies("stationary")
+        ):
+            raise ValueError("BlockGMRES requires fixed linear right preconditioning.")
+        return "native-block-krylov"
+    if isinstance(method, ProjectedPCG):
+        rejection = _projected_pcg_rejection(problem)
+        if rejection is not None:
+            raise ValueError(f"ProjectedPCG {rejection}.")
+        if preconditioner_properties is not None and not (
+            preconditioner_properties.certifies("positive_definite")
+            and preconditioner_properties.certifies("self_adjoint")
+            and preconditioner_properties.certifies("linear")
+            and preconditioner_properties.certifies("stationary")
+        ):
+            raise ValueError(
+                "ProjectedPCG requires a fixed, linear, self-adjoint, "
+                "positive-definite preconditioner."
+            )
+        return "native-krylov"
     if isinstance(method, PCG):
         if not isinstance(problem, LinearSystem):
             raise ValueError("PCG requires a LinearSystem.")
         if not _certified_positive_definite(operator):
             raise ValueError("PCG requires certified positive definiteness.")
-        if preconditioner is not None and not preconditioner.positive_definite:
-            raise ValueError("PCG requires a certified positive-definite preconditioner.")
+        if preconditioner_properties is not None and not (
+            preconditioner_properties.certifies("positive_definite")
+            and preconditioner_properties.certifies("self_adjoint")
+            and preconditioner_properties.certifies("linear")
+            and preconditioner_properties.certifies("stationary")
+        ):
+            raise ValueError(
+                "PCG requires a fixed, linear, self-adjoint, "
+                "positive-definite preconditioner."
+            )
         return "native-krylov"
     if isinstance(method, MINRES):
         if not isinstance(problem, LinearSystem):
             raise ValueError("MINRES requires a LinearSystem.")
         if not _certified_self_adjoint(operator):
             raise ValueError("MINRES requires certified self-adjoint structure.")
-        if preconditioner is not None and not preconditioner.positive_definite:
-            raise ValueError("MINRES requires a positive-definite preconditioner.")
+        if preconditioner_properties is not None and not (
+            preconditioner_properties.certifies("positive_definite")
+            and preconditioner_properties.certifies("self_adjoint")
+            and preconditioner_properties.certifies("linear")
+            and preconditioner_properties.certifies("stationary")
+        ):
+            raise ValueError(
+                "MINRES requires a fixed, linear, self-adjoint, "
+                "positive-definite preconditioner."
+            )
         return "native-krylov"
     if isinstance(method, FGMRES):
         if not isinstance(problem, LinearSystem):
@@ -484,8 +730,14 @@ def _validate_method(
             raise ValueError(
                 "Lineax CG requires a real certified positive-definite operator."
             )
-        if preconditioner is not None and not preconditioner.positive_definite:
-            raise ValueError("CG requires a certified positive-definite preconditioner.")
+        if preconditioner_properties is not None and not (
+            preconditioner_properties.certifies("positive_definite")
+            and preconditioner_properties.certifies("linear")
+            and preconditioner_properties.certifies("stationary")
+        ):
+            raise ValueError(
+                "CG requires a fixed, linear, positive-definite preconditioner."
+            )
         _reject_algorithmic_lineax(policy)
         return "lineax"
     if isinstance(method, GMRES):
@@ -496,6 +748,14 @@ def _validate_method(
                 "GMRES requires a Euclidean or diagonal source pairing; "
                 "use FGMRES for a general Hilbert pairing."
             )
+        if preconditioner_properties is not None and not (
+            preconditioner_properties.certifies("linear")
+            and preconditioner_properties.certifies("stationary")
+        ):
+            raise ValueError(
+                "GMRES requires fixed linear preconditioning; use FGMRES for "
+                "variable or nonlinear actions."
+            )
         return "native-krylov"
     if isinstance(method, BiCGStab):
         if not isinstance(problem, LinearSystem):
@@ -503,6 +763,14 @@ def _validate_method(
         if not _has_diagonal_pairing(operator.source):
             raise ValueError(
                 "Lineax methods require a Euclidean or diagonal source pairing."
+            )
+        if preconditioner_properties is not None and not (
+            preconditioner_properties.certifies("linear")
+            and preconditioner_properties.certifies("stationary")
+        ):
+            raise ValueError(
+                "BiCGStab requires fixed linear preconditioning; use FGMRES for "
+                "variable or nonlinear actions."
             )
         _reject_algorithmic_lineax(policy)
         return "lineax"
@@ -523,7 +791,7 @@ def _matfree_lsmr_eligible(
 ) -> bool:
     if not isinstance(problem, (LeastSquaresProblem, MinimumNormProblem)):
         return False
-    if policy.preconditioner is not None or policy.differentiation.mode == "algorithmic":
+    if policy.preconditioning is not None or policy.differentiation.mode == "algorithmic":
         return False
     if not _is_real(problem.operator):
         return False
@@ -567,6 +835,15 @@ def _structured_dense_entries(operator: AbstractLinearOperator, /) -> int:
             (_structured_dense_entries(factor) for factor in operator.factors),
             default=0,
         )
+    if isinstance(operator, KroneckerSumLinearOperator):
+        return sum(
+            0
+            if isinstance(factor, DenseLinearOperator)
+            else factor.source.size * factor.target.size
+            for factor in operator.factors
+        )
+    if isinstance(operator, LocalBlockDiagonalLinearOperator):
+        return 0
     return 0
 
 
@@ -579,6 +856,8 @@ def _structured_factorization_entries(
         return dimension * dimension + dimension
     if isinstance(operator, TridiagonalLinearOperator):
         return 5 * operator.source.size
+    if isinstance(operator, TransformDiagonalLinearOperator):
+        return operator.source.size + 1
     if isinstance(operator, DiagonalPlusLowRankLinearOperator):
         dimension = operator.source.size
         rank = operator.left_factor.shape[1]
@@ -588,13 +867,72 @@ def _structured_factorization_entries(
             return woodbury
         dense_lu = dimension * dimension + dimension
         return dense_lu + woodbury
+    if isinstance(operator, LocalBlockDiagonalLinearOperator):
+        return operator.blocks.size + operator.num_blocks * operator.input_block_size
     if isinstance(operator, BlockDiagonalLinearOperator):
         return sum(_structured_factorization_entries(block) for block in operator.blocks)
     if isinstance(operator, KroneckerLinearOperator):
         return sum(
             _structured_factorization_entries(factor) for factor in operator.factors
         )
+    if isinstance(operator, KroneckerSumLinearOperator):
+        return (
+            sum(
+                factor.source.size * factor.source.size + 2 * factor.source.size
+                for factor in operator.factors
+            )
+            + 2 * operator.source.size
+            + 1
+        )
     return 0
+
+
+def _structured_factorization_bytes(
+    operator: AbstractLinearOperator,
+    /,
+) -> int:
+    itemsize = _coordinate_dtype(operator.source).itemsize
+    if isinstance(operator, TransformDiagonalLinearOperator):
+        return operator.source.size * itemsize + jnp.dtype(bool).itemsize
+    if isinstance(operator, KroneckerSumLinearOperator):
+        real_itemsize = (
+            max(1, itemsize // 2)
+            if jnp.issubdtype(
+                _coordinate_dtype(operator.source),
+                jnp.complexfloating,
+            )
+            else itemsize
+        )
+        factor_dimensions = tuple(factor.source.size for factor in operator.factors)
+        return (
+            sum(size * size * itemsize for size in factor_dimensions)
+            + 2 * sum(factor_dimensions) * real_itemsize
+            + operator.source.size * real_itemsize
+            + (operator.source.size + 1) * jnp.dtype(bool).itemsize
+        )
+    if isinstance(operator, LocalBlockDiagonalLinearOperator):
+        real_itemsize = jnp.empty((), dtype=operator.blocks.dtype).real.dtype.itemsize
+        return (
+            operator.blocks.size * itemsize
+            + operator.num_blocks
+            * operator.input_block_size
+            * jnp.dtype(jnp.int32).itemsize
+            + operator.num_blocks * operator.input_block_size * real_itemsize
+            + operator.num_blocks * jnp.dtype(bool).itemsize
+        )
+    return _structured_factorization_entries(operator) * itemsize
+
+
+def _structured_solve_workspace_bytes(
+    operator: AbstractLinearOperator,
+    /,
+) -> int:
+    itemsize = _coordinate_dtype(operator.source).itemsize
+    if isinstance(operator, TransformDiagonalLinearOperator):
+        return 3 * operator.source.size * itemsize
+    if isinstance(operator, KroneckerSumLinearOperator):
+        return 4 * operator.source.size * itemsize
+    return (operator.source.size + operator.target.size) * itemsize
 
 
 def _structured_candidate_fits(
@@ -603,27 +941,26 @@ def _structured_candidate_fits(
     /,
 ) -> tuple[bool, str]:
     operator = problem.operator
-    if policy.preconditioner is not None:
+    if policy.preconditioning is not None:
         return False, "structured direct execution does not accept preconditioners"
     if policy.rank.relative_cutoff is not None:
         return False, "structured direct execution cannot enforce a rank cutoff"
     if policy.rank.require_full_rank and not _certifies_full_rank(operator):
         return False, "full-rank execution lacks a full-rank certificate"
     materialized_entries = _structured_dense_entries(operator)
-    factor_entries = _structured_factorization_entries(operator)
     itemsize = _coordinate_dtype(operator.source).itemsize
     materialized_bytes = materialized_entries * itemsize
-    factor_bytes = factor_entries * itemsize
+    factor_bytes = _structured_factorization_bytes(operator)
     if materialized_entries > policy.materialization.max_entries:
         return False, (
             f"fallback materialization requires {materialized_entries} entries"
         )
     if materialized_bytes > policy.materialization.max_bytes:
-        return False, (f"fallback materialization requires {materialized_bytes} bytes")
+        return False, f"fallback materialization requires {materialized_bytes} bytes"
     if factor_bytes > policy.resources.factorization_bytes:
         return False, f"factorization estimate {factor_bytes} exceeds budget"
     workspace = max(
-        (operator.source.size + operator.target.size) * itemsize,
+        _structured_solve_workspace_bytes(operator),
         factor_bytes,
     )
     if workspace > policy.resources.workspace_bytes:
@@ -715,68 +1052,13 @@ def _stores_dense_matrix(operator: AbstractLinearOperator, /) -> bool:
     return False
 
 
-def _array_bytes(*values: jax.Array) -> int:
-    return sum(int(value.size * value.dtype.itemsize) for value in values)
-
-
-def _existing_storage_bytes(operator: AbstractLinearOperator, /) -> int:
-    if isinstance(operator, DenseLinearOperator):
-        return _array_bytes(operator.matrix)
-    if isinstance(operator, DiagonalLinearOperator):
-        return _array_bytes(operator.diagonal)
-    if isinstance(operator, PermutationLinearOperator):
-        return _array_bytes(operator.permutation, operator.inverse_permutation)
-    if isinstance(operator, TriangularLinearOperator):
-        return _array_bytes(operator.matrix)
-    if isinstance(operator, TridiagonalLinearOperator):
-        return _array_bytes(operator.lower, operator.diagonal, operator.upper)
-    if isinstance(operator, BandedLinearOperator):
-        return _array_bytes(operator.bands)
-    if isinstance(operator, LowRankLinearOperator):
-        return _array_bytes(operator.left_factor, operator.right_factor)
-    if isinstance(operator, SymmetricLowRankLinearOperator):
-        return _array_bytes(operator.factor, operator.weights)
-    if isinstance(operator, DiagonalPlusLowRankLinearOperator):
-        return _array_bytes(
-            operator.diagonal,
-            operator.left_factor,
-            operator.right_factor,
-        )
-    if isinstance(operator, (BlockDiagonalLinearOperator, KroneckerLinearOperator)):
-        children = (
-            operator.blocks
-            if isinstance(operator, BlockDiagonalLinearOperator)
-            else operator.factors
-        )
-        return sum(_existing_storage_bytes(child) for child in children)
-    if isinstance(operator, KroneckerSumLinearOperator):
-        return sum(_existing_storage_bytes(factor) for factor in operator.factors)
-    if isinstance(operator, AbstractSparseLinearOperator):
-        storage = operator.sparse_storage()
-        return _array_bytes(storage.values, storage.indices, storage.indptr)
-    if isinstance(operator, (TransposeLinearOperator, AdjointLinearOperator)):
-        return _existing_storage_bytes(operator.operator)
-    if isinstance(operator, ScaledLinearOperator):
-        return _existing_storage_bytes(operator.operator) + _array_bytes(operator.scalar)
-    if isinstance(operator, (SumLinearOperator, ComposedLinearOperator)):
-        return _existing_storage_bytes(operator.left) + _existing_storage_bytes(
-            operator.right
-        )
-    if isinstance(operator, BlockLinearOperator):
-        return sum(
-            _existing_storage_bytes(block)
-            for row in operator.blocks
-            for block in row
-            if block is not None
-        )
-    return 0
-
-
 def _selected_estimate(
     problem: AbstractLinearProblem,
     method: AbstractLinearMethod,
     backend: LinearBackend,
     policy: LinearSolvePolicy,
+    preconditioner_plan: PreconditionerPlan | None,
+    rhs_layout: RHSLayout | None,
     reason: str,
     /,
 ) -> LinearCostEstimate:
@@ -784,11 +1066,14 @@ def _selected_estimate(
     if isinstance(problem, LeastSquaresProblem) and problem.regularizer is not None:
         rows += problem.regularizer.target.size
     itemsize = _coordinate_dtype(problem.operator.source).itemsize
-    existing = _existing_storage_bytes(problem.operator)
+    operator_action_cost = estimate_operator_action_cost(problem.operator)
+    existing = operator_action_cost.storage_bytes
     batch_count = prod(problem.operator.batch_shape or (1,))
     dense_direct = backend == "jax-dense"
+    regularizer_action_cost = None
     if isinstance(problem, LeastSquaresProblem) and problem.regularizer is not None:
-        existing += _existing_storage_bytes(problem.regularizer)
+        regularizer_action_cost = estimate_operator_action_cost(problem.regularizer)
+        existing += regularizer_action_cost.storage_bytes
     sparse_direct = backend in ("jax-sparse", "host-sparse")
     structured_direct = backend == "jax-structured"
     dense_requires_materialization = dense_direct and _requires_dense_materialization(
@@ -798,11 +1083,14 @@ def _selected_estimate(
         _structured_dense_entries(problem.operator) * itemsize if structured_direct else 0
     )
     structured_factor_bytes = (
-        _structured_factorization_entries(problem.operator) * itemsize
-        if structured_direct
-        else 0
+        _structured_factorization_bytes(problem.operator) if structured_direct else 0
     )
-    iterative = backend in ("lineax", "native-krylov", "matfree")
+    iterative = backend in (
+        "lineax",
+        "native-krylov",
+        "native-block-krylov",
+        "matfree",
+    )
     if dense_direct:
         factorization_bytes = batch_count * _factorization_bytes(
             method,
@@ -817,18 +1105,38 @@ def _selected_estimate(
     elif structured_direct:
         factorization_bytes = structured_factor_bytes
         preparation_workspace_bytes = max(
-            (rows + columns) * itemsize,
+            _structured_solve_workspace_bytes(problem.operator),
             structured_factor_bytes,
         )
     else:
         factorization_bytes = 0
         preparation_workspace_bytes = 0
-    solve_workspace_bytes_per_rhs = batch_count * (rows + columns) * itemsize
+    solve_workspace_bytes_per_rhs = (
+        _structured_solve_workspace_bytes(problem.operator)
+        if structured_direct
+        else batch_count * (rows + columns) * itemsize
+    )
+    rhs_width = 1 if rhs_layout is None else rhs_layout.size
     primal_krylov_bytes = (
-        _krylov_storage_bytes(problem, method, policy, itemsize) if iterative else 0
+        _krylov_storage_bytes(problem, method, policy, itemsize, rhs_width)
+        if iterative
+        else 0
     )
     implicit_krylov_bytes = _implicit_storage_bytes(problem, policy, itemsize)
     krylov_basis_bytes_per_rhs = max(primal_krylov_bytes, implicit_krylov_bytes)
+    operator_apply_workspace_bytes_per_rhs = (
+        max(
+            operator_action_cost.apply_workspace_bytes_per_rhs,
+            0
+            if regularizer_action_cost is None
+            else regularizer_action_cost.apply_workspace_bytes_per_rhs,
+        )
+        if iterative
+        else 0
+    )
+    preconditioner_cost = (
+        None if preconditioner_plan is None else preconditioner_plan.cost
+    )
     return LinearCostEstimate(
         provider=backend,
         method=method.name,
@@ -843,7 +1151,26 @@ def _selected_estimate(
         factorization_bytes=factorization_bytes,
         preparation_workspace_bytes=preparation_workspace_bytes,
         solve_workspace_bytes_per_rhs=solve_workspace_bytes_per_rhs,
+        operator_apply_workspace_bytes_per_rhs=(operator_apply_workspace_bytes_per_rhs),
         krylov_basis_bytes_per_rhs=krylov_basis_bytes_per_rhs,
+        preconditioner_storage_bytes=(
+            0 if preconditioner_cost is None else preconditioner_cost.storage_bytes
+        ),
+        preconditioner_preparation_workspace_bytes=(
+            0
+            if preconditioner_cost is None
+            else preconditioner_cost.preparation_workspace_bytes
+        ),
+        preconditioner_apply_workspace_bytes_per_rhs=(
+            0
+            if preconditioner_cost is None
+            else preconditioner_cost.apply_workspace_bytes_per_rhs
+        ),
+        preconditioner_setup_matvec_count=(
+            0 if preconditioner_cost is None else preconditioner_cost.setup_matvec_count
+        ),
+        recycling_capacity=(0 if policy.recycling is None else policy.recycling.capacity),
+        recycling_state_bytes=_recycling_state_bytes(problem, policy),
         operation_class=(
             "structured-direct"
             if structured_direct
@@ -861,6 +1188,7 @@ def _krylov_storage_bytes(
     method: AbstractLinearMethod,
     policy: LinearSolvePolicy,
     itemsize: int,
+    rhs_width: int,
     /,
 ) -> int:
     rows = problem.operator.target.size
@@ -873,25 +1201,88 @@ def _krylov_storage_bytes(
     elif isinstance(method, GMRES):
         restart = method.restart
         primal = ((2 * restart + 1) * columns + (restart + 1) * restart) * itemsize
+    elif isinstance(method, BlockGMRES):
+        max_steps = policy.tolerance.max_steps or columns
+        restart = min(method.restart, max_steps)
+        block_width = min(columns, rhs_width)
+        total_entries = (
+            (2 * restart + 1) * columns * block_width
+            + (restart + 1) * restart * block_width * block_width
+            + (2 * restart + 1) * block_width * rhs_width
+        )
+        primal = ((total_entries + rhs_width - 1) // rhs_width) * itemsize
+    elif isinstance(method, BlockCG):
+        block_width = min(columns, rhs_width)
+        total_entries = (
+            10 * columns * block_width
+            + 6 * block_width * block_width
+            + 2 * block_width * rhs_width
+        )
+        primal = ((total_entries + rhs_width - 1) // rhs_width) * itemsize
     elif isinstance(method, GeneralizedLSMR):
         primal = (5 * columns + 2 * rows) * itemsize
     elif isinstance(method, LSMR):
         primal = (5 * columns + 2 * rows) * itemsize
     elif isinstance(method, MINRES):
         primal = 10 * columns * itemsize
-    elif isinstance(method, (PCG, ConjugateGradient)):
+    elif isinstance(method, (PCG, ProjectedPCG, ConjugateGradient)):
         primal = 6 * columns * itemsize
     elif isinstance(method, BiCGStab):
         primal = 10 * columns * itemsize
     else:
         primal = 0
     batch_count = prod(problem.operator.batch_shape or (1,))
+    recycling = _recycling_krylov_bytes(problem, method, policy, itemsize)
     if policy.differentiation.mode not in ("mathematical", "rhs-only"):
-        return batch_count * primal
-    max_steps = policy.tolerance.max_steps or columns
-    restart = min(30, max_steps, columns)
+        return batch_count * max(primal, recycling)
+    if isinstance(method, (BlockCG, BlockGMRES)):
+        # Native block differentiation uses one full unrestarted scalar Krylov
+        # basis per tangent column, independent of the primal block-step limit.
+        restart = columns
+    else:
+        max_steps = policy.tolerance.max_steps or columns
+        restart = min(30, max_steps, columns)
     tangent = ((2 * restart + 1) * columns + (restart + 1) * restart) * itemsize
-    return batch_count * max(primal, tangent)
+    return batch_count * max(primal, tangent, recycling)
+
+
+def _recycling_krylov_bytes(
+    problem: AbstractLinearProblem,
+    method: AbstractLinearMethod,
+    policy: LinearSolvePolicy,
+    itemsize: int,
+    /,
+) -> int:
+    recycling = policy.recycling
+    if recycling is None or not isinstance(method, (GMRES, FGMRES)):
+        return 0
+    source_size = problem.operator.source.size
+    target_size = problem.operator.target.size
+    max_steps = policy.tolerance.max_steps or source_size
+    restart = min(method.restart, max_steps, source_size)
+    capacity = recycling.capacity
+    search_width = capacity + restart
+
+    # Extraction retains an Arnoldi decomposition, its image basis, concatenated
+    # retained/search bases, and the worst-case real harmonic-Ritz candidate pool.
+    coordinate_entries = (
+        (restart + 2) * source_size
+        + (restart + 1) * restart
+        + target_size * restart
+        + (source_size + target_size) * search_width
+        + 5 * (source_size + target_size) * capacity
+    )
+    # pinv/eig promote real inputs to complex values. Eight square work arrays
+    # conservatively cover Gram, coupling, pseudoinverse, harmonic, and spectral
+    # workspaces; the rectangular term covers selected Ritz coefficients.
+    dtype = _coordinate_dtype(problem.operator.source)
+    spectral_itemsize = (
+        dtype.itemsize
+        if jnp.issubdtype(dtype, jnp.complexfloating)
+        else 2 * dtype.itemsize
+    )
+    spectral_entries = 8 * search_width * search_width + search_width * capacity
+    return int(coordinate_entries * itemsize + spectral_entries * spectral_itemsize)
 
 
 def _implicit_storage_bytes(
@@ -911,9 +1302,27 @@ def _implicit_storage_bytes(
     return prod(problem.operator.batch_shape or (1,)) * per_problem
 
 
+def _recycling_state_bytes(
+    problem: AbstractLinearProblem,
+    policy: LinearSolvePolicy,
+    /,
+) -> int:
+    recycling = policy.recycling
+    if recycling is None:
+        return 0
+    operator = problem.operator
+    itemsize = _coordinate_dtype(operator.source).itemsize
+    basis_bytes = (
+        (operator.source.size + operator.target.size) * recycling.capacity * itemsize
+    )
+    scalar_bytes = 4 * jnp.dtype(jnp.int32).itemsize
+    return int(basis_bytes + scalar_bytes)
+
+
 def _require_selected_resources(
     estimate: LinearCostEstimate,
     policy: LinearSolvePolicy,
+    rhs_count: int = 1,
     /,
 ) -> None:
     checks = (
@@ -924,18 +1333,34 @@ def _require_selected_resources(
         ),
         (
             "preparation workspace",
-            estimate.preparation_workspace_bytes,
+            estimate.preparation_workspace_bytes
+            + estimate.preconditioner_preparation_workspace_bytes,
             policy.resources.workspace_bytes,
         ),
         (
-            "solve workspace per right-hand side",
-            estimate.solve_workspace_bytes_per_rhs,
+            "solve workspace",
+            rhs_count
+            * (
+                estimate.solve_workspace_bytes_per_rhs
+                + estimate.operator_apply_workspace_bytes_per_rhs
+                + estimate.preconditioner_apply_workspace_bytes_per_rhs
+            ),
             policy.resources.workspace_bytes,
         ),
         (
-            "Krylov basis per right-hand side",
-            estimate.krylov_basis_bytes_per_rhs,
+            "Krylov basis",
+            rhs_count * estimate.krylov_basis_bytes_per_rhs,
             policy.resources.krylov_basis_bytes,
+        ),
+        (
+            "preconditioner state",
+            estimate.preconditioner_storage_bytes,
+            policy.resources.preconditioner_bytes,
+        ),
+        (
+            "recycling state",
+            estimate.recycling_state_bytes,
+            policy.resources.recycling_state_bytes,
         ),
     )
     for name, required, available in checks:
@@ -1064,6 +1489,8 @@ def _method_configuration(
     if isinstance(method, (GMRES, FGMRES)):
         configuration["restart"] = method.restart
         configuration["stagnation_iterations"] = method.stagnation_iterations
+    elif isinstance(method, BlockGMRES):
+        configuration["restart"] = method.restart
     elif isinstance(method, (LSMR, GeneralizedLSMR)):
         configuration["condition_limit"] = method.condition_limit
         configuration["damping"] = method.damping

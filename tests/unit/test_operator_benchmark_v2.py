@@ -1,6 +1,7 @@
 import json
 from dataclasses import replace
 from pathlib import Path
+from typing import TypeVar
 
 import jax
 import jax.numpy as jnp
@@ -9,6 +10,7 @@ import polars as pl
 import pytest
 
 import tools.operator_benchmarks.v2 as benchmark_v2
+from phydrax.nn.operator import OperatorTargetBatch
 from tools.operator_benchmarks import (
     audit_external_candidate,
     audit_geometry_scenario,
@@ -65,6 +67,24 @@ from tools.operator_benchmarks.v2 import (
     _promotion_reports,
     _target_parameters,
 )
+
+
+_T = TypeVar("_T")
+
+
+def _array(value: object, /) -> jax.Array:
+    assert value is not None
+    return jnp.asarray(value)
+
+
+def _present(value: _T | None, /) -> _T:
+    assert value is not None
+    return value
+
+
+def _target_batch(value: object, /) -> OperatorTargetBatch:
+    assert isinstance(value, OperatorTargetBatch)
+    return value
 
 
 @pytest.fixture(scope="module")
@@ -126,12 +146,12 @@ def test_seeded_scenario_populations_are_deterministic_and_diverse():
         flattened = first_values.reshape(first_values.shape[0], -1)
 
         assert jnp.array_equal(first_values, repeated_values)
-        assert jnp.array_equal(first.train_target, repeated.train_target)
+        assert jnp.array_equal(_array(first.train_target), _array(repeated.train_target))
         assert not jnp.array_equal(first_values, changed_values)
         assert int(jnp.linalg.matrix_rank(flattened)) >= 4
 
-    navier_values = populations[0][0](41).train_batch.input("vorticity").values
-    green_values = populations[1][0](41).train_batch.input("forcing").values
+    navier_values = _array(populations[0][0](41).train_batch.input("vorticity").values)
+    green_values = _array(populations[1][0](41).train_batch.input("forcing").values)
     navier_spectrum = jnp.abs(jnp.fft.fftn(navier_values[0]))
     green_spectrum = jnp.abs(jnp.fft.rfft(green_values[0]))
     assert int(jnp.count_nonzero(navier_spectrum > 1e-8 * navier_spectrum.max())) > 8
@@ -223,7 +243,7 @@ def test_remaining_seeded_physical_populations_have_rank_without_case_aliases():
         assert first.seed == 23
         assert dict(first.metadata)["population_seed"] == "23"
         assert jnp.array_equal(first_source, repeated_source)
-        assert jnp.array_equal(first.train_target, repeated.train_target)
+        assert jnp.array_equal(_array(first.train_target), _array(repeated.train_target))
         assert not jnp.array_equal(first_source, changed_source)
         _assert_population_rank(first_source)
         _assert_population_rank(first.train_target)
@@ -265,8 +285,9 @@ def test_deformed_elliptic_geometry_and_shift_audits_pass():
     assert geometry_audit.minimum_jacobian > 0.0
     assert coordinates.shape[:2] == (scenario.train_batch.case_shape[0], 12)
     assert not jnp.array_equal(coordinates[0], coordinates[1])
-    assert jnp.all(source.quadrature_weights > 0.0)
-    assert jnp.allclose(jnp.sum(source.quadrature_weights, axis=-1), 1.0)
+    quadrature_weights = _array(source.quadrature_weights)
+    assert jnp.all(quadrature_weights > 0.0)
+    assert jnp.allclose(jnp.sum(quadrature_weights, axis=-1), 1.0)
     assert {evaluation.name for evaluation in scenario.evaluations} >= {
         "nominal",
         "resolution_transfer",
@@ -281,59 +302,61 @@ def test_deformed_elliptic_geometry_and_shift_audits_pass():
     }
     gino = architectures["gino"]
     configuration = dict(gino.configuration(scenario))
-    prediction = gino.build(scenario, seed=9)(scenario.train_batch)
+    prediction = _array(gino.build(scenario, seed=9)(scenario.train_batch))
     geometry_flower = architectures["geometry_informed_flower"]
     geometry_flower_configuration = dict(geometry_flower.configuration(scenario))
     geometry_flower_model = geometry_flower.build(scenario, seed=13)
-    geometry_flower_prediction = geometry_flower_model(scenario.train_batch)
+    geometry_flower_prediction = _array(geometry_flower_model(scenario.train_batch))
     resolution_evaluation = next(
         evaluation
         for evaluation in scenario.evaluations
         if evaluation.name == "resolution_transfer"
     )
-    gino_resolution_prediction = gino.build(scenario, seed=9)(resolution_evaluation.batch)
-    geometry_flower_resolution_prediction = geometry_flower_model(
-        resolution_evaluation.batch
+    gino_resolution_prediction = _array(
+        gino.build(scenario, seed=9)(resolution_evaluation.batch)
+    )
+    geometry_flower_resolution_prediction = _array(
+        geometry_flower_model(resolution_evaluation.batch)
     )
     rigno = architectures["rigno"]
     rigno_configuration = dict(rigno.configuration(scenario))
-    rigno_prediction = rigno.build(scenario, seed=10)(scenario.train_batch)
+    rigno_prediction = _array(rigno.build(scenario, seed=10)(scenario.train_batch))
     gaot = architectures["gaot"]
     gaot_configuration = dict(gaot.configuration(scenario))
-    gaot_prediction = gaot.build(scenario, seed=11)(scenario.train_batch)
+    gaot_prediction = _array(gaot.build(scenario, seed=11)(scenario.train_batch))
     gnot = architectures["gnot"]
-    gnot_prediction = gnot.build(scenario, seed=12)(scenario.train_batch)
+    gnot_prediction = _array(gnot.build(scenario, seed=12)(scenario.train_batch))
 
     assert gino.family == "geometry_informed"
     assert configuration["latent_shape"] == "(6, 6)"
     assert configuration["bounds_policy"] == "'global'"
-    assert prediction.shape == scenario.train_target.shape
+    assert prediction.shape == _array(scenario.train_target).shape
     assert jnp.all(jnp.isfinite(prediction))
     assert geometry_flower.family == "geometry_informed_warp"
     assert geometry_flower_configuration["latent_shape"] == "(8, 8)"
     assert geometry_flower_configuration["transition_mode"] == ("'resolution_consistent'")
-    assert geometry_flower_prediction.shape == scenario.train_target.shape
-    assert jnp.all(jnp.isfinite(geometry_flower_prediction))
-    assert gino_resolution_prediction.shape == resolution_evaluation.target.shape
-    assert geometry_flower_resolution_prediction.shape == (
-        resolution_evaluation.target.shape
+    assert geometry_flower_prediction.shape == _array(scenario.train_target).shape
+    assert gino_resolution_prediction.shape == _array(resolution_evaluation.target).shape
+    assert (
+        geometry_flower_resolution_prediction.shape
+        == _array(resolution_evaluation.target).shape
     )
     assert jnp.all(jnp.isfinite(gino_resolution_prediction))
     assert jnp.all(jnp.isfinite(geometry_flower_resolution_prediction))
     assert rigno.family == "regional_graph"
     assert rigno_configuration["regional_count"] == "8"
     assert rigno_configuration["regional_mode"] == "'farthest_point'"
-    assert rigno_prediction.shape == scenario.train_target.shape
+    assert rigno_prediction.shape == _array(scenario.train_target).shape
     assert jnp.all(jnp.isfinite(rigno_prediction))
     assert gaot.family == "geometry_transformer"
     assert gaot_configuration["latent_shape"] == "(4, 4)"
     assert gaot_configuration["bounds_policy"] == "'case_bbox'"
     assert gaot_configuration["transfer_scales"] == "(1.0, 2.0)"
-    assert gaot_prediction.shape == scenario.train_target.shape
+    assert gaot_prediction.shape == _array(scenario.train_target).shape
     assert jnp.all(jnp.isfinite(gaot_prediction))
     assert gnot.family == "heterogeneous_geometry_transformer"
     assert gnot.promotion_scope == "general"
-    assert gnot_prediction.shape == scenario.train_target.shape
+    assert gnot_prediction.shape == _array(scenario.train_target).shape
     assert jnp.all(jnp.isfinite(gnot_prediction))
     assert {"transolver", "upt"}.isdisjoint(architectures)
 
@@ -545,13 +568,13 @@ def test_roadmap_factories_are_geometry_gated_and_finite():
     assert len({family for family, _, _ in expected.values()}) == len(expected)
     for name, contract in expected.items():
         architecture = architectures[name]
-        prediction = architecture.build(scenario, seed=17)(scenario.train_batch)
+        prediction = _array(architecture.build(scenario, seed=17)(scenario.train_batch))
         assert (
             architecture.family,
             architecture.normalization,
             architecture.promotion_scope,
         ) == contract
-        assert prediction.shape == scenario.train_target.shape
+        assert prediction.shape == _array(scenario.train_target).shape
         assert jnp.all(jnp.isfinite(prediction))
 
     odd_grid = darcy_scenario(resolution=5, num_cases=2, seed=92)
@@ -694,17 +717,17 @@ def test_multi_input_diffusion_components_and_shifted_targets_are_independent():
             n=current_initial.shape[-1],
             axis=-1,
         )
-        assert jnp.allclose(evaluation.target, expected, rtol=1e-11, atol=1e-11)
+        assert jnp.allclose(_array(evaluation.target), expected, rtol=1e-11, atol=1e-11)
 
     shifted = next(
         evaluation
         for evaluation in scenario.evaluations
         if evaluation.shift == "parameter"
     )
-    assert jnp.array_equal(shifted.batch.input("initial").values, initial)
-    assert jnp.array_equal(shifted.batch.input("forcing").values, forcing)
+    assert jnp.array_equal(_array(shifted.batch.input("initial").values), initial)
+    assert jnp.array_equal(_array(shifted.batch.input("forcing").values), forcing)
     assert jnp.allclose(
-        shifted.batch.input("diffusivity").values,
+        _array(shifted.batch.input("diffusivity").values),
         shift_factor * diffusivity,
     )
     assert scenario.reference_evidence is not None
@@ -748,23 +771,27 @@ def test_irregular_and_graph_shifts_reuse_the_same_physical_realizations():
         basis = jnp.stack((jnp.sin(phase), jnp.cos(phase)), axis=-1)
         return jnp.transpose(basis, (1, 0, 2)).reshape(coordinates.shape[0], -1)
 
-    original_basis = planar_basis(original_samples.coordinates)
+    original_coordinates = _array(original_samples.coordinates)
+    shifted_coordinates = _array(shifted_samples.coordinates)
+    original_basis = planar_basis(original_coordinates)
     physical_coefficients = jnp.linalg.lstsq(
         original_basis,
-        jnp.asarray(original_samples.values).T,
+        _array(original_samples.values).T,
     )[0]
     predicted_shifted_values = (
-        planar_basis(shifted_samples.coordinates) @ physical_coefficients
+        planar_basis(shifted_coordinates) @ physical_coefficients
     ).T
     assert jnp.allclose(
-        shifted_samples.values,
+        _array(shifted_samples.values),
         predicted_shifted_values,
         rtol=1e-10,
         atol=1e-10,
     )
+    shifted_query_coordinates = _array(
+        shifted_evaluation.batch.require_single_query().coordinates
+    )
     shifted_displacement = (
-        shifted_evaluation.batch.require_single_query().coordinates[:, None, :]
-        - shifted_samples.coordinates[None, :, :]
+        shifted_query_coordinates[:, None, :] - shifted_coordinates[None, :, :]
     )
     shifted_kernel = -jnp.log(
         jnp.sqrt(jnp.sum(shifted_displacement**2, axis=-1) + 1e-3)
@@ -772,11 +799,11 @@ def test_irregular_and_graph_shifts_reuse_the_same_physical_realizations():
     expected_shifted_target = oe.contract(
         "qs,cs,s->cq",
         shifted_kernel,
-        shifted_samples.values,
-        shifted_samples.quadrature_weights,
+        _array(shifted_samples.values),
+        _array(shifted_samples.quadrature_weights),
     )
     assert jnp.allclose(
-        shifted_evaluation.target,
+        _array(shifted_evaluation.target),
         expected_shifted_target,
         rtol=1e-12,
         atol=1e-12,
@@ -800,11 +827,11 @@ def test_irregular_and_graph_shifts_reuse_the_same_physical_realizations():
         evaluation for evaluation in graph.evaluations if evaluation.shift == "geometry"
     )
     assert jnp.array_equal(
-        resolution_evaluation.batch.input("state").values[:, ::2],
+        _array(resolution_evaluation.batch.input("state").values)[:, ::2],
         graph_values,
     )
     assert jnp.array_equal(
-        geometry_evaluation.batch.input("state").values,
+        _array(geometry_evaluation.batch.input("state").values),
         graph_values,
     )
     assert graph.reference_evidence is not None
@@ -821,7 +848,7 @@ def test_multistep_targets_are_nonidentity_and_spherical_degrees_attenuate():
     )
     navier_source = jnp.asarray(navier.train_batch.input("vorticity").values)
     navier_change = jnp.linalg.norm(
-        navier.train_target - navier_source
+        _array(navier.train_target) - navier_source
     ) / jnp.linalg.norm(navier_source)
     assert float(navier_change) > 0.1
     assert navier.reference_evidence is not None
@@ -842,7 +869,7 @@ def test_multistep_targets_are_nonidentity_and_spherical_degrees_attenuate():
     )
     spherical_source = jnp.asarray(spherical.train_batch.input("field").values)
     spherical_change = jnp.linalg.norm(
-        spherical.train_target - spherical_source
+        _array(spherical.train_target) - spherical_source
     ) / jnp.linalg.norm(spherical_source)
     assert float(spherical_change) > 0.1
 
@@ -862,7 +889,7 @@ def test_multistep_targets_are_nonidentity_and_spherical_degrees_attenuate():
     )[0]
     target_coefficients = jnp.linalg.lstsq(
         legendre_modes,
-        jnp.mean(spherical.train_target, axis=2).T,
+        jnp.mean(_array(spherical.train_target), axis=2).T,
     )[0]
     degrees = jnp.arange(1, 4)
     expected_attenuation = jnp.exp(
@@ -924,10 +951,12 @@ def test_sensor_corruption_and_dropout_have_distinct_mask_semantics():
     assert dropped.shift == "sensor_dropout"
     assert jnp.array_equal(corrupted_mask, original_mask)
     assert jnp.any(dropped_mask != original_mask)
-    assert jnp.array_equal(corrupted_samples.values, dropped_samples.values)
     assert jnp.array_equal(
-        corrupted_samples.values,
-        repeated_corrupted.batch.input("forcing").values,
+        _array(corrupted_samples.values), _array(dropped_samples.values)
+    )
+    assert jnp.array_equal(
+        _array(corrupted_samples.values),
+        _array(repeated_corrupted.batch.input("forcing").values),
     )
     assert jnp.array_equal(
         dropped_mask,
@@ -936,8 +965,10 @@ def test_sensor_corruption_and_dropout_have_distinct_mask_semantics():
         ),
     )
     assert jnp.all(jnp.asarray(corrupted_samples.values)[~dropped_mask] == 0.0)
-    assert jnp.array_equal(corrupted.target, scenario.evaluations[0].target)
-    assert jnp.array_equal(dropped.target, scenario.evaluations[0].target)
+    assert jnp.array_equal(
+        _array(corrupted.target), _array(scenario.evaluations[0].target)
+    )
+    assert jnp.array_equal(_array(dropped.target), _array(scenario.evaluations[0].target))
 
 
 def test_training_sensor_dropout_is_deterministic_and_training_only():
@@ -962,8 +993,10 @@ def test_training_sensor_dropout_is_deterministic_and_training_only():
         augmented_mask,
         repeated_samples.mask_array(case_shape=repeated.train_batch.case_shape),
     )
-    assert jnp.array_equal(augmented_samples.values, repeated_samples.values)
-    assert jnp.array_equal(augmented.train_target, scenario.train_target)
+    assert jnp.array_equal(
+        _array(augmented_samples.values), _array(repeated_samples.values)
+    )
+    assert jnp.array_equal(_array(augmented.train_target), _array(scenario.train_target))
     assert augmented.validation is scenario.validation
     assert augmented.evaluations is scenario.evaluations
     assert dict(augmented.metadata)["training_augmentation"] == "sensor_dropout"
@@ -1017,17 +1050,18 @@ def test_cochain_benchmarks_preserve_typed_fields_and_matched_architectures(
     harmonic_ladder = _ladder(quick_ladders, "cochain_annulus_harmonic")
     mixed = split_operator_scenario(mixed_ladder.levels[0], seed=1729)
     harmonic = split_operator_scenario(harmonic_ladder.levels[0], seed=1729)
-
-    assert tuple(mixed.train_target.fields) == ("pressure", "flux")
-    assert tuple(harmonic.train_target.fields) == ("harmonic",)
+    mixed_target = _target_batch(mixed.train_target)
+    harmonic_target = _target_batch(harmonic.train_target)
+    assert tuple(mixed_target.fields) == ("pressure", "flux")
+    assert tuple(harmonic_target.fields) == ("harmonic",)
     assert mixed.task is not None
     assert harmonic.task is not None
-    assert mixed.task.fields[1].cochain.degree == 0
-    assert mixed.task.fields[2].cochain.degree == 1
-    assert harmonic.task.fields[0].cochain.cell_orientation == "signed"
-    assert mixed.train_batch.input("forcing").topology.graph_fingerprint == (
-        mixed.train_batch.query("edges").topology.graph_fingerprint
-    )
+    assert _present(mixed.task.fields[1].cochain).degree == 0
+    assert _present(mixed.task.fields[2].cochain).degree == 1
+    assert _present(harmonic.task.fields[0].cochain).cell_orientation == "signed"
+    forcing_topology = _present(mixed.train_batch.input("forcing").topology)
+    edge_topology = _present(mixed.train_batch.query("edges").topology)
+    assert forcing_topology.graph_fingerprint == edge_topology.graph_fingerprint
     assert audit_operator_scenario(mixed, quick=True).passed
     assert audit_operator_scenario(harmonic, quick=True).passed
 
@@ -1122,7 +1156,7 @@ def test_v2_registry_includes_specialized_families_and_fixed_pod_basis(quick_lad
         "laplace",
     } <= set(causal_architectures)
     laplace = causal_architectures["laplace"].build(causal, 0)
-    assert laplace(causal.train_batch).shape == causal.train_target.shape
+    assert _array(laplace(causal.train_batch)).shape == _array(causal.train_target).shape
 
     spherical = split_operator_scenario(
         _ladder(quick_ladders, "spherical_field").levels[0], seed=1729
@@ -1134,7 +1168,9 @@ def test_v2_registry_includes_specialized_families_and_fixed_pod_basis(quick_lad
     assert {"sfno", "pod_linear_rom"} <= set(spherical_architectures)
     assert {"fno", "tfno", "cno", "uno"}.isdisjoint(spherical_architectures)
     sfno = spherical_architectures["sfno"].build(spherical, 0)
-    assert sfno(spherical.train_batch).shape == spherical.train_target.shape
+    assert (
+        _array(sfno(spherical.train_batch)).shape == _array(spherical.train_target).shape
+    )
 
     pod = spherical_architectures["pod_deeponet"].build(spherical, 0)
     trained, *_ = train_operator(pod, spherical, steps=1)
@@ -1171,8 +1207,11 @@ def test_wavelet_benchmarks_reuse_models_across_resolutions():
 
     for name in ("wavelet", "multiwavelet"):
         model = architectures[name].build(scenario, 0)
-        assert model(scenario.train_batch).shape == scenario.train_target.shape
-        assert model(transfer.batch).shape == transfer.target.shape
+        assert (
+            _array(model(scenario.train_batch)).shape
+            == _array(scenario.train_target).shape
+        )
+        assert _array(model(transfer.batch)).shape == _array(transfer.target).shape
         evaluation = evaluate_operator(model, transfer, repeats=1)
         assert evaluation.relative_l2 >= 0.0
 
@@ -1612,9 +1651,8 @@ def test_difficulty_audit_detects_persistence_shortcut():
     criteria = PromotionCriteria()
     audit = audit_scenario_difficulty(scenario, criteria)
     assert audit.target_effective_rank >= criteria.minimum_target_effective_rank
-    assert (
-        audit.nearest_realization_relative_distance
-        >= criteria.minimum_nearest_realization_distance
+    assert _present(audit.nearest_realization_relative_distance) >= (
+        criteria.minimum_nearest_realization_distance
     )
     source = jnp.asarray(scenario.train_batch.input("field").values)
     shortcut = replace(scenario, train_target=source)
@@ -1803,26 +1841,32 @@ def test_square_symmetry_contracts_preserve_fno_baselines_and_augmentation():
     assert "lattice_equivariant_cno" not in broken_names
 
     augmented = d4_architectures["fno_p4_augmented"].training_scenario(d4)
+    augmented_target = _array(augmented.train_target)
+    d4_target = _array(d4.train_target)
     assert augmented.train_batch.case_shape == (12,)
-    assert augmented.train_target.shape == (12, 9, 9)
-    assert jnp.array_equal(augmented.train_target[:3], d4.train_target)
+    assert augmented_target.shape == (12, 9, 9)
+    assert jnp.array_equal(augmented_target[:3], d4_target)
     assert jnp.array_equal(
-        augmented.train_target[3:6],
-        jnp.rot90(d4.train_target, k=1, axes=(1, 2)),
+        augmented_target[3:6],
+        jnp.rot90(d4_target, k=1, axes=(1, 2)),
     )
     assert len(set(augmented.case_ids)) == 12
 
-    output = d4_architectures["fno_p4_augmented"].build(
-        d4,
-        seed=0,
-    )(d4.train_batch)
-    assert output.shape == d4.train_target.shape
+    output = _array(
+        d4_architectures["fno_p4_augmented"].build(
+            d4,
+            seed=0,
+        )(d4.train_batch)
+    )
+    assert output.shape == d4_target.shape
     assert jnp.all(jnp.isfinite(output))
-    equivariant_output = d4_architectures["lattice_equivariant_cno"].build(
-        d4,
-        seed=0,
-    )(d4.train_batch)
-    assert equivariant_output.shape == d4.train_target.shape
+    equivariant_output = _array(
+        d4_architectures["lattice_equivariant_cno"].build(
+            d4,
+            seed=0,
+        )(d4.train_batch)
+    )
+    assert equivariant_output.shape == d4_target.shape
     assert jnp.all(jnp.isfinite(equivariant_output))
 
 
@@ -1916,8 +1960,8 @@ def test_symmetry_benchmark_records_fno_defects_and_durable_artifact(tmp_path):
     records = {record.architecture: record for record in result.symmetry_results}
 
     assert result.symmetry_audits[0].passed
-    assert records["fno"].worst_equivariance_defect > 1e-4
-    assert records["lattice_equivariant_cno"].worst_equivariance_defect < 1e-10
+    assert _present(records["fno"].worst_equivariance_defect) > 1e-4
+    assert _present(records["lattice_equivariant_cno"].worst_equivariance_defect) < 1e-10
     assert len(result.sample_efficiency) == 3
     assert all(
         curve.sample_fractions == (2 / 3, 1.0)

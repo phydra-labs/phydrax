@@ -5,6 +5,7 @@ import pytest
 from phydrax.stochastic._bsde import BSDEPathBatch, BSDEProblem
 from phydrax.stochastic._feynman_kac import (
     feynman_kac_label_diagnostics,
+    FeynmanKacLabelBatch,
     FeynmanKacSamplingPlan,
     query_feynman_kac_labels,
     sample_feynman_kac_paths,
@@ -127,7 +128,7 @@ def test_query_conditioned_brownian_value_control_and_terminal_query():
     times = jnp.asarray([0.0, 0.6, 1.0])
     states = jnp.asarray([[0.2], [-0.4], [0.7]])
 
-    labels, paths = query_feynman_kac_labels(
+    result = query_feynman_kac_labels(
         problem,
         plan,
         query_times=times,
@@ -135,8 +136,12 @@ def test_query_conditioned_brownian_value_control_and_terminal_query():
         key=jr.key(4),
         return_paths=True,
     )
+    assert isinstance(result, tuple)
+    labels, paths = result
 
     assert paths.states.shape == (3, 4096, 9, 1)
+    assert labels.control_targets is not None
+    assert labels.control_valid is not None
     assert jnp.allclose(labels.value_targets[:, 0], states[:, 0], atol=2e-2)
     assert jnp.allclose(labels.control_targets[:2, 0, 0], 1.0, atol=8e-2)
     assert jnp.allclose(labels.value_targets[2, 0], states[2, 0])
@@ -187,6 +192,7 @@ def test_dimension_100_query_labels_preserve_shapes_without_hessian_contracts():
         query_states=states,
         key=jr.key(2),
     )
+    assert isinstance(labels, FeynmanKacLabelBatch)
 
     assert labels.query_states.shape == (2, dimension)
     assert labels.value_targets.shape == (2, 1)

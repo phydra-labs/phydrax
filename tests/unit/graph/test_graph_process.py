@@ -64,6 +64,7 @@ def _trajectory_domain() -> phx.domain.GraphTrajectoryDatasetDomain:
 def test_euler_graph_stepper_advances_node_state():
     stepper = phx.graph.EulerGraphStepper(ConstantNodeRate(2.0), dt=0.25)
     out = stepper(_graph())
+    assert out.senders is not None
 
     assert jnp.allclose(out.nodes, jnp.array([[0.5], [1.5], [3.5]]))
     assert jnp.allclose(out.senders, jnp.array([0, 1], dtype=jnp.int32))

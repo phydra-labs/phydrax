@@ -11,6 +11,7 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
@@ -159,8 +160,8 @@ def _linearize(
     )(flat_times, flat_states, flat_controls)
     affine_offset = (
         dynamics_value
-        - jnp.einsum("...ij,...j->...i", state_matrix, flat_states)
-        - jnp.einsum("...ij,...j->...i", control_matrix, flat_controls)
+        - oe.contract("...ij,...j->...i", state_matrix, flat_states)
+        - oe.contract("...ij,...j->...i", control_matrix, flat_controls)
     )
 
     if output is None:
@@ -208,8 +209,8 @@ def _linearize(
 
     output_offset = (
         output_value
-        - jnp.einsum("...ij,...j->...i", output_matrix, flat_states)
-        - jnp.einsum("...ij,...j->...i", feedthrough_matrix, flat_controls)
+        - oe.contract("...ij,...j->...i", output_matrix, flat_states)
+        - oe.contract("...ij,...j->...i", feedthrough_matrix, flat_controls)
     )
     finite_parts = (
         flat_times.reshape((case_count, 1)),

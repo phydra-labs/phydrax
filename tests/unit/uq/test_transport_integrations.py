@@ -78,6 +78,9 @@ def test_raw_predictive_sinkhorn_divergence_retains_all_three_solves_and_gradien
         )
     )(jnp.asarray(0.4))
 
+    assert isinstance(translated.cross, phx.transport.SinkhornResult)
+    assert isinstance(translated.source_self, phx.transport.SinkhornResult)
+    assert isinstance(translated.target_self, phx.transport.SinkhornResult)
     assert identity.converged & translated.converged
     assert jnp.allclose(identity.value, 0.0, atol=1e-12)
     assert translated.value > 0.0
@@ -120,6 +123,9 @@ def test_operator_transport_metrics_keep_physical_cases_independent_and_replay_k
         key=jr.key(4),
         reduction="none",
     )
+    assert sinkhorn.transport is not None
+    assert sliced.sliced is not None
+    assert replay.sliced is not None
 
     assert sinkhorn.method == "sinkhorn-divergence"
     assert sinkhorn.per_case.shape == (2,)
@@ -210,6 +216,7 @@ def test_batched_particle_transform_preserves_case_and_particle_layout():
         particle_axis=1,
         epsilon=1.0,
     )
+    assert isinstance(result.transport, phx.transport.SinkhornResult)
 
     assert result.particles.shape == particles.shape
     assert result.transport.source_potential.shape == (2, 3)

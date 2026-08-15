@@ -1,4 +1,5 @@
 import jax.numpy as jnp
+import opt_einsum as oe
 
 import phydrax as phx
 
@@ -14,7 +15,7 @@ def test_tensor_exponential_and_chen_product_match_piecewise_linear_signature():
     assert jnp.allclose(left_signature[1], 0.5 * jnp.outer(left, left))
     assert jnp.allclose(
         left_signature[2],
-        jnp.einsum("i,j,k->ijk", left, left, left) / 6.0,
+        oe.contract("i,j,k->ijk", left, left, left) / 6.0,
     )
     assert all(
         jnp.allclose(composed_level, piecewise_level)

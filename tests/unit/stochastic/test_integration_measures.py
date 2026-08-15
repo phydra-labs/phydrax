@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -45,7 +47,7 @@ def test_trajectory_marginal_measure_retains_case_time_and_state_axes():
     safe = jnp.where(valid[..., None], trajectory.states, 0.0)
     expected = jnp.sum(safe, axis=1) / jnp.sum(valid, axis=1)[..., None]
     assert estimate.value.dims == ("case", "time", "state")
-    assert jnp.allclose(estimate.value.data, expected)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), expected)
     assert jnp.all(estimate.successful)
     assert estimate.diagnostics.independent
     assert estimate.error_kind == "weighted-iid-standard-error"
@@ -62,7 +64,7 @@ def test_trajectory_path_measure_excludes_an_entire_failed_path():
     expected_right = jnp.mean(trajectory.states[1], axis=0)
     assert estimate.value.dims == ("case", "time", "state")
     assert jnp.allclose(
-        estimate.value.data,
+        jnp.asarray(estimate.value.data),
         jnp.stack((expected_left, expected_right)),
     )
     assert jnp.array_equal(estimate.diagnostics.active_samples, jnp.asarray([2, 3]))
@@ -108,7 +110,7 @@ def test_irregular_time_measure_respects_ragged_prefix_masks(rule):
     estimate = phx.integration.integrate(1.0, target)
 
     assert estimate.value.dims == ("path",)
-    assert jnp.allclose(estimate.value.data, jnp.asarray([1.0, 0.7]))
+    assert jnp.allclose(jnp.asarray(estimate.value.data), jnp.asarray([1.0, 0.7]))
     assert jnp.all(estimate.successful)
 
 
@@ -130,7 +132,7 @@ def test_normalized_trapezoid_time_measure_integrates_linear_time_exactly():
 
     estimate = phx.integration.integrate(target.points, target)
 
-    assert jnp.allclose(estimate.value.data, jnp.asarray([0.5, 0.6]))
+    assert jnp.allclose(jnp.asarray(estimate.value.data), jnp.asarray([0.5, 0.6]))
 
 
 def test_time_measure_rejects_non_prefix_validity_masks():
@@ -150,5 +152,6 @@ def test_time_measure_rejects_non_prefix_validity_masks():
 
 
 def test_trajectory_measure_rejects_unknown_mode():
+    invalid_mode: Any = "unknown"
     with pytest.raises(ValueError, match="mode"):
-        phx.stochastic.trajectory_measure(_trajectory(), mode="unknown")
+        phx.stochastic.trajectory_measure(_trajectory(), mode=invalid_mode)

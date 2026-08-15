@@ -14,7 +14,7 @@ class AddMessagePassing(vx.MessagePassing):
 
 
 def test_message_passing_runs():
-    mp = AddMessagePassing(aggr="add")
+    mp = AddMessagePassing(aggr="add", flow="source_to_target")
     x = jnp.array([[1.0], [2.0], [3.0]])
     edge_index = jnp.array([[0, 1, 2], [1, 2, 0]], dtype=jnp.int32)
 
@@ -23,7 +23,7 @@ def test_message_passing_runs():
 
 
 def test_message_passing_jit_runs():
-    mp = AddMessagePassing(aggr="add")
+    mp = AddMessagePassing(aggr="add", flow="source_to_target")
     x = jnp.array([[1.0], [2.0], [3.0]])
     edge_index = jnp.array([[0, 1, 2], [1, 2, 0]], dtype=jnp.int32)
 

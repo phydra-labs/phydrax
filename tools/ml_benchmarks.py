@@ -527,7 +527,7 @@ def _environment() -> dict[str, Any]:
         },
         "jax": {
             "default_backend": jax.default_backend(),
-            "enable_x64": bool(jax.config.jax_enable_x64),
+            "enable_x64": bool(jax.config.read("jax_enable_x64")),
             "process_index": int(jax.process_index()),
             "process_count": int(jax.process_count()),
             "local_device_count": int(jax.local_device_count()),

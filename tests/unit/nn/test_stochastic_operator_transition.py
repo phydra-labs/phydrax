@@ -204,7 +204,7 @@ def test_pathwise_rollout_reuses_one_wiener_field_and_satisfies_cocycle():
     assert jnp.allclose(coarse.states[:, :, -1], expected[None])
     assert jnp.allclose(coarse.states[:, :, -1], fine.states[:, :, -1])
     assert all(
-        realization.realization_id == driver.realization_id
+        realization is not None and realization.realization_id == driver.realization_id
         for realization in coarse.trajectory.realizations
     )
     assert coarse.metadata["coupling_id"] == driver.coupling_id

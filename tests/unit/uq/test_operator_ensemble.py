@@ -111,7 +111,7 @@ def test_homogeneous_operator_ensemble_matches_explicit_member_loop():
         "__phydra_operator_point",
     )
     assert jnp.array_equal(
-        prediction.predictive.samples.data,
+        jnp.asarray(prediction.predictive.samples.data),
         jnp.where(prediction.output_mask()[None, ...], explicit, 0.0),
     )
 
@@ -141,7 +141,7 @@ def test_heterogeneous_operator_ensemble_matches_explicit_member_loop():
     )
 
     assert jnp.array_equal(
-        prediction.predictive.samples.data,
+        jnp.asarray(prediction.predictive.samples.data),
         jnp.where(prediction.output_mask()[None, ...], explicit, 0.0),
     )
 
@@ -181,12 +181,12 @@ def test_keyed_operator_sampling_is_reproducible_and_chunk_invariant():
     )
 
     assert jnp.array_equal(
-        unchunked.predictive.samples.data,
-        chunked.predictive.samples.data,
+        jnp.asarray(unchunked.predictive.samples.data),
+        jnp.asarray(chunked.predictive.samples.data),
     )
     assert not jnp.array_equal(
-        unchunked.predictive.samples.data,
-        changed.predictive.samples.data,
+        jnp.asarray(unchunked.predictive.samples.data),
+        jnp.asarray(changed.predictive.samples.data),
     )
     first_draw = unchunked.predictive.samples.data[0]
     difference = first_draw - model.__call_operator_batch__(batch, key=None)
@@ -271,9 +271,13 @@ def test_fno_mc_dropout_and_inference_mode_operator_sampling():
         field_name="output",
         query_name="query",
     )
+    stochastic_variance = stochastic.epistemic_variance()
+    deterministic_variance = deterministic.epistemic_variance()
+    assert isinstance(stochastic_variance, phx.nn.operator.OperatorPrediction)
+    assert isinstance(deterministic_variance, phx.nn.operator.OperatorPrediction)
 
-    assert jnp.max(stochastic.epistemic_variance().field("output").values) > 0.0
+    assert jnp.max(stochastic_variance.field("output").values) > 0.0
     assert jnp.allclose(
-        deterministic.epistemic_variance().field("output").values,
+        deterministic_variance.field("output").values,
         0.0,
     )

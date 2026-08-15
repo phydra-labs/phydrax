@@ -8,6 +8,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
@@ -101,11 +102,11 @@ class StreamingGaussianMoments(StrictModule):
         batch_squared_mass = jnp.sum(jnp.square(w), axis=-1)
         tiny = jnp.finfo(real_dtype).tiny
         batch_mean = (
-            jnp.einsum("...n,...nf->...f", w, safe_x)
+            oe.contract("...n,...nf->...f", w, safe_x)
             / jnp.maximum(batch_mass, tiny)[..., None]
         )
         centered = jnp.where(active[..., None], safe_x - batch_mean[..., None, :], 0)
-        batch_scatter = jnp.einsum(
+        batch_scatter = oe.contract(
             "...ni,...n,...nj->...ij", jnp.conj(centered), w, centered
         )
         other = StreamingGaussianMoments(
@@ -124,7 +125,7 @@ class StreamingGaussianMoments(StrictModule):
         safe_total = jnp.maximum(total, jnp.finfo(self.mass.dtype).tiny)
         delta = other.mean - self.mean
         mean = self.mean + delta * (other.mass / safe_total)[..., None]
-        correction = jnp.einsum("...i,...j->...ij", jnp.conj(delta), delta)
+        correction = oe.contract("...i,...j->...ij", jnp.conj(delta), delta)
         correction = correction * (self.mass * other.mass / safe_total)[..., None, None]
         scatter = self.scatter + other.scatter + correction
         empty_self = self.mass <= 0.0

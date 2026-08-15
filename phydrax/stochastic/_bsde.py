@@ -13,6 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
 
 from phydrax.domain import DomainFunction
@@ -547,7 +548,7 @@ def evaluate_bsde(
     increments_flat = paths.wiener_increments.reshape(
         (sample_count, paths.num_steps, noise_size)
     )
-    martingale = jnp.einsum("ston,stn->sto", controls_flat, increments_flat).reshape(
+    martingale = oe.contract("ston,stn->sto", controls_flat, increments_flat).reshape(
         paths.sample_shape + (paths.num_steps,) + problem.output_shape
     )
     dt = jnp.diff(paths.times)
@@ -760,7 +761,7 @@ def semilinear_pde_residual(
     hessian_flat = hessian.reshape((output_size, state_size, state_size))
     covariance = diffusion @ diffusion.T
     generator_action = (
-        jacobian_flat @ drift + 0.5 * jnp.einsum("ij,oij->o", covariance, hessian_flat)
+        jacobian_flat @ drift + 0.5 * oe.contract("ij,oij->o", covariance, hessian_flat)
     ).reshape(problem.output_shape)
     control = (jacobian_flat @ diffusion).reshape(
         problem.output_shape + problem.noise_shape

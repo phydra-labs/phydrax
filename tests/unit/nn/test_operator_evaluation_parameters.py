@@ -2,6 +2,8 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -152,7 +154,7 @@ def test_schedule_free_resume_rejects_changed_or_missing_evaluator_id(
         checkpoint_every=1,
     )
 
-    kwargs = {
+    kwargs: dict[str, Any] = {
         "optimizer": _schedule_free(),
         "optimizer_id": "tests.schedule_free_sgd.v1",
         "batch_size": 2,

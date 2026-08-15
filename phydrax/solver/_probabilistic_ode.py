@@ -10,6 +10,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, ArrayLike
 
@@ -251,8 +252,8 @@ class ProbabilisticODESolution(StrictModule):
             if self.method.factorization == "block_diagonal":
                 result = factor[..., 0, 0] ** 2 * flat
             else:
-                coefficients = jnp.einsum("tir,ti->tr", factor, flat)
-                result = jnp.einsum("tir,tr->ti", factor, coefficients)
+                coefficients = oe.contract("tir,ti->tr", factor, flat)
+                result = oe.contract("tir,tr->ti", factor, coefficients)
         else:
             if source not in _UNCERTAINTY_NAMES:
                 raise ValueError(
@@ -262,7 +263,7 @@ class ProbabilisticODESolution(StrictModule):
             if self.method.factorization == "block_diagonal":
                 result = component.reshape(flat.shape) * flat
             else:
-                result = jnp.einsum("tij,tj->ti", component, flat)
+                result = oe.contract("tij,tj->ti", component, flat)
         return result.reshape(expected)
 
     def dense_covariance(self, /, *, source: str | None = None) -> Array:
@@ -461,7 +462,7 @@ def _dense_filter(
             predicted_sensitivity = (
                 transition @ sensitivity.reshape((augmented_size, parameter_size))
             ).reshape(sensitivity.shape)
-            predicted_sources = jnp.einsum(
+            predicted_sources = oe.contract(
                 "ij,sjk,lk->sil", transition, sources, transition
             )
             predicted_sources = predicted_sources.at[_NUMERICAL].add(
@@ -521,7 +522,7 @@ def _dense_filter(
                 - gain @ residual_sensitivity
             ).reshape(sensitivity.shape)
             joseph = eye_augmented - gain @ observation_matrix
-            updated_sources = jnp.einsum(
+            updated_sources = oe.contract(
                 "ij,sjk,lk->sil", joseph, predicted_sources, joseph
             )
             updated_sources = updated_sources.at[_OBSERVATION].add(
@@ -653,8 +654,8 @@ def _block_filter(
             transition = _transition(order, step, mean.dtype)
             iwp = _iwp_covariance(order, step, mean.dtype)
             predicted_mean = transition @ mean
-            predicted_sensitivity = jnp.einsum("ij,jdp->idp", transition, sensitivity)
-            predicted_sources = jnp.einsum(
+            predicted_sensitivity = oe.contract("ij,jdp->idp", transition, sensitivity)
+            predicted_sources = oe.contract(
                 "ij,sdjk,lk->sdil", transition, sources, transition
             )
             predicted_sources = predicted_sources.at[_NUMERICAL].add(
@@ -702,7 +703,7 @@ def _block_filter(
             )
             predicted_covariance = jnp.sum(predicted_sources, axis=0)
             innovation_variance = (
-                jnp.einsum(
+                oe.contract(
                     "di,dij,dj->d",
                     observation_rows,
                     predicted_covariance,
@@ -711,21 +712,21 @@ def _block_filter(
                 + observation_diagonal
                 + method.covariance_regularization
             )
-            cross_covariance = jnp.einsum(
+            cross_covariance = oe.contract(
                 "dij,dj->di", predicted_covariance, observation_rows
             )
             gain = cross_covariance / innovation_variance[:, None]
             updated_mean = predicted_mean - (gain * residual[:, None]).T
-            updated_sensitivity = predicted_sensitivity - jnp.einsum(
+            updated_sensitivity = predicted_sensitivity - oe.contract(
                 "dq,dp->qdp", gain, residual_sensitivity
             )
-            joseph = eye_derivative[None, :, :] - jnp.einsum(
+            joseph = eye_derivative[None, :, :] - oe.contract(
                 "di,dj->dij", gain, observation_rows
             )
-            updated_sources = jnp.einsum(
+            updated_sources = oe.contract(
                 "dij,sdjk,dlk->sdil", joseph, predicted_sources, joseph
             )
-            outer_gain = jnp.einsum("di,dj->dij", gain, gain)
+            outer_gain = oe.contract("di,dj->dij", gain, gain)
             updated_sources = updated_sources.at[_OBSERVATION].add(
                 observation_diagonal[:, None, None] * outer_gain
             )
@@ -864,7 +865,7 @@ def _dense_smooth(
                 filtered_mean.reshape(-1)
                 + gain @ (next_mean - predicted_mean).reshape(-1)
             ).reshape(filtered_mean.shape)
-            sources = filtered_source + jnp.einsum(
+            sources = filtered_source + oe.contract(
                 "ij,sjk,lk->sil",
                 gain,
                 next_sources - predicted_source,
@@ -970,20 +971,20 @@ def _block_smooth(
         def smooth(_):
             filtered_covariance = jnp.sum(filtered_source, axis=0)
             predicted_covariance = jnp.sum(predicted_source, axis=0)
-            cross = jnp.einsum("dij,kj->dik", filtered_covariance, transition)
+            cross = oe.contract("dij,kj->dik", filtered_covariance, transition)
             gain = jax.vmap(lambda p, c: jnp.linalg.solve(p, c.T).T)(
                 predicted_covariance, cross
             )
             delta = (next_mean - predicted_mean).T
-            mean = filtered_mean + jnp.einsum("dij,dj->di", gain, delta).T
-            sources = filtered_source + jnp.einsum(
+            mean = filtered_mean + oe.contract("dij,dj->di", gain, delta).T
+            sources = filtered_source + oe.contract(
                 "dij,sdjk,dlk->sdil",
                 gain,
                 next_sources - predicted_source,
                 gain,
             )
             sources = 0.5 * (sources + jnp.swapaxes(sources, -1, -2))
-            sensitivity = filtered_sensitivity + jnp.einsum(
+            sensitivity = filtered_sensitivity + oe.contract(
                 "dij,jdp->idp",
                 gain,
                 next_sensitivity - predicted_sensitivity,
@@ -1112,7 +1113,7 @@ def _saved_dense_marginals(
                     (transition.shape[0], filtered_sensitivities.shape[-1])
                 )
             ).reshape(filtered_sensitivities[index].shape)
-            sources = jnp.einsum(
+            sources = oe.contract(
                 "ij,sjk,lk->sil",
                 transition,
                 filtered_sources[index],
@@ -1145,7 +1146,7 @@ def _saved_dense_marginals(
                             smoothed_means[right_index] - predicted_means[record_index]
                         ).reshape(-1)
                     ).reshape(mean.shape)
-                    sources = sources + jnp.einsum(
+                    sources = sources + oe.contract(
                         "ij,sjk,lk->sil",
                         gain,
                         smoothed_sources[right_index] - predicted_sources[record_index],
@@ -1227,10 +1228,10 @@ def _saved_block_marginals(
             delta = time - grid[index]
             transition = _transition(order, delta, filtered_means.dtype)
             mean = transition @ filtered_means[index]
-            sensitivity = jnp.einsum(
+            sensitivity = oe.contract(
                 "ij,jdp->idp", transition, filtered_sensitivities[index]
             )
-            sources = jnp.einsum(
+            sources = oe.contract(
                 "ij,sdjk,lk->sdil",
                 transition,
                 filtered_sources[index],
@@ -1253,7 +1254,7 @@ def _saved_block_marginals(
                         filtered_means.dtype,
                     )
                     covariance = jnp.sum(sources, axis=0)
-                    cross = jnp.einsum("dij,kj->dik", covariance, remaining_transition)
+                    cross = oe.contract("dij,kj->dik", covariance, remaining_transition)
                     predicted_right_covariance = jnp.sum(
                         predicted_sources[record_index], axis=0
                     )
@@ -1264,7 +1265,7 @@ def _saved_block_marginals(
                     )(predicted_right_covariance, cross)
                     mean = (
                         mean
-                        + jnp.einsum(
+                        + oe.contract(
                             "dij,dj->di",
                             gain,
                             (
@@ -1273,14 +1274,14 @@ def _saved_block_marginals(
                             ).T,
                         ).T
                     )
-                    sources = sources + jnp.einsum(
+                    sources = sources + oe.contract(
                         "dij,sdjk,dlk->sdil",
                         gain,
                         smoothed_sources[right_index] - predicted_sources[record_index],
                         gain,
                     )
                     sources = 0.5 * (sources + jnp.swapaxes(sources, -1, -2))
-                    sensitivity = sensitivity + jnp.einsum(
+                    sensitivity = sensitivity + oe.contract(
                         "dij,jdp->idp",
                         gain,
                         smoothed_sensitivities[right_index]
@@ -1645,7 +1646,7 @@ def solve_probabilistic_ode(
             *marginal_arguments
         )
         saved_sources = 0.5 * (saved_sources + jnp.swapaxes(saved_sources, -1, -2))
-        parameter_sources = jnp.einsum(
+        parameter_sources = oe.contract(
             "tdp,pq,teq->tde",
             saved_sensitivities,
             parameter_matrix,
@@ -1667,7 +1668,7 @@ def solve_probabilistic_ode(
         saved_means, saved_sources, saved_sensitivities = _saved_block_marginals(
             *marginal_arguments
         )
-        parameter_sources = jnp.einsum(
+        parameter_sources = oe.contract(
             "tdp,pq,tdq->td",
             saved_sensitivities,
             parameter_matrix,

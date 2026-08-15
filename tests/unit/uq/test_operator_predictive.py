@@ -146,6 +146,12 @@ def test_operator_predictive_tensor_geometry_and_statistics():
         field_name="output",
         query_name="query",
     )
+    variance = prediction.variance()
+    standard_deviation = prediction.std()
+    median = prediction.quantile(0.5)
+    assert isinstance(variance, phx.nn.operator.OperatorPrediction)
+    assert isinstance(standard_deviation, phx.nn.operator.OperatorPrediction)
+    assert isinstance(median, phx.nn.operator.OperatorPrediction)
 
     assert prediction.predictive.samples.dims == ("draw", "case", "x")
     assert prediction.case_axes == ("case",)
@@ -160,15 +166,15 @@ def test_operator_predictive_tensor_geometry_and_statistics():
         values.mean(axis=0),
     )
     assert jnp.allclose(
-        prediction.variance().field("output").values,
+        variance.field("output").values,
         values.var(axis=0),
     )
     assert jnp.allclose(
-        prediction.std().field("output").values,
+        standard_deviation.field("output").values,
         values.std(axis=0),
     )
     assert jnp.allclose(
-        prediction.quantile(0.5).field("output").values,
+        median.field("output").values,
         jnp.median(values, axis=0),
     )
 
@@ -195,6 +201,7 @@ def test_operator_predictive_masks_padding_and_records_valid_draws():
         query_name="query",
     )
 
+    assert prediction.predictive.valid is not None
     assert prediction.predictive.samples.dims == (
         "member",
         "case",
@@ -202,10 +209,10 @@ def test_operator_predictive_masks_padding_and_records_valid_draws():
         "__phydra_operator_channel",
     )
     assert jnp.array_equal(
-        prediction.predictive.valid.data,
+        jnp.asarray(prediction.predictive.valid.data),
         jnp.asarray([True, False, True]),
     )
-    assert jnp.all(prediction.predictive.samples.data[:, 0, 2, :] == 0.0)
+    assert jnp.all(jnp.asarray(prediction.predictive.samples.data)[:, 0, 2, :] == 0.0)
     mean = prediction.mean().field("output").values
     assert jnp.allclose(mean[prediction.output_mask()], 1.0)
     assert jnp.all(mean[~prediction.output_mask()] == 0.0)
@@ -257,7 +264,9 @@ def test_operator_input_predictive_collapses_common_query_geometry():
     assert prediction.case_shape == (2,)
     assert prediction.query.geometry_case_shape == (2,)
     mean = prediction.mean().field("output").values
-    variance = prediction.variance().field("output").values
+    variance_statistic = prediction.variance()
+    assert isinstance(variance_statistic, phx.nn.operator.OperatorPrediction)
+    variance = variance_statistic.field("output").values
     assert jnp.allclose(mean[prediction.output_mask()], 2.0)
     assert jnp.allclose(variance[prediction.output_mask()], 1.0)
     assert jnp.all(mean[~prediction.output_mask()] == 0.0)

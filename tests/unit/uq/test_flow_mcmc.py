@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import coordax as cx
 import jax
 import jax.numpy as jnp
@@ -12,7 +14,7 @@ import phydrax as phx
 
 
 def _small_config(**overrides):
-    settings = {
+    settings: dict[str, Any] = {
         "num_adaptation_rounds": 1,
         "num_local_adaptation_steps": 4,
         "num_global_adaptation_steps": 2,
@@ -179,7 +181,7 @@ def test_flow_nuts_validates_leading_chain_axes_before_warmup():
 
 
 def test_flow_nuts_sequential_and_vectorized_methods_share_semantic_keys():
-    common = {
+    common: dict[str, Any] = {
         "key": jr.key(13),
         "num_chains": 2,
         "num_warmup": 12,

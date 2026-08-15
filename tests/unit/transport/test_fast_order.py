@@ -101,7 +101,7 @@ def test_fast_soft_order_handles_axes_fields_constants_and_singletons():
     )
 
     assert named.dims == field.dims
-    assert jnp.allclose(named.data, plain)
+    assert jnp.allclose(jnp.asarray(named.data), plain)
     assert jnp.allclose(constant_ranks, 2.0)
     assert jnp.array_equal(
         phx.transport.fast_soft_sort(jnp.asarray([4.0])),

@@ -23,6 +23,9 @@ def _make_graph(n_nodes: int, n_edges: int | None = None) -> vx.GraphIR:
 def test_pad_with_graphs_and_unpad_roundtrip():
     graph = _make_graph(3, 3)
     padded = vx.pad_with_graphs(graph, n_node=6, n_edge=5, n_graph=3)
+    assert padded.node_mask is not None
+    assert padded.edge_mask is not None
+    assert padded.graph_mask is not None
 
     assert padded.n_node.tolist() == [3, 3, 0]
     assert padded.n_edge.tolist() == [3, 2, 0]

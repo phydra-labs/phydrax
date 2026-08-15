@@ -36,7 +36,7 @@ def test_diffusion_girsanov_recovers_shifted_gaussian_expectation():
         drift_shift * increments[:, 0, 0] - 0.5 * drift_shift**2,
     )
     assert estimate.successful
-    assert jnp.allclose(estimate.value.data, drift_shift, atol=0.03)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), drift_shift, atol=0.03)
     assert jnp.allclose(estimate.diagnostics.normalizer_estimate, 1.0, atol=0.03)
 
 

@@ -115,6 +115,8 @@ def test_sgnht_recovers_conjugate_posterior_with_thermostat_diagnostics():
         num_samples=5000,
         control_variate=control,
     )
+    assert result.thermostat is not None
+    assert result.momentum_norm is not None
 
     assert jnp.abs(jnp.mean(result.samples) - expected_mean) < 0.03
     assert jnp.abs(jnp.var(result.samples) - expected_variance) / expected_variance < 0.25

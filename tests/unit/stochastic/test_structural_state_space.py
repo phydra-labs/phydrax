@@ -71,6 +71,8 @@ def test_named_components_compile_known_transition_and_observation_blocks():
             "deterministic_loading": jnp.asarray(2.0),
         }
     )
+    assert isinstance(model.transition, phx.stochastic.LinearGaussianTransitionKernel)
+    assert isinstance(model.observation, phx.stochastic.LinearGaussianObservationModel)
     parameters = model.transition.parameters(0.0, 1.0, context)
     matrix, offset, observation_covariance = model.observation.parameters(2.0, context)
     slices = model.metadata["structural_component_slices"]
@@ -190,6 +192,7 @@ def test_compiled_prior_preserves_physical_cases_and_observation_masks():
     )
     result = phx.uq.exact_state_space_log_likelihood(problem)
 
+    assert isinstance(model.prior, phx.stochastic.GaussianStatePrior)
     assert model.prior.batch_shape == (2,)
     assert model.prior.mean.shape == (2, 3)
     assert problem.observations.case_axes == ("experiment_case",)
@@ -276,6 +279,8 @@ def test_process_noise_compiles_as_independent_endpoint_noise():
 
     model = phx.stochastic.compile_structural_state_space((component,), 0.25)
     context = phx.stochastic.StateSpaceStepContext.empty()
+    assert isinstance(model.transition, phx.stochastic.LinearGaussianTransitionKernel)
+    assert isinstance(model.observation, phx.stochastic.LinearGaussianObservationModel)
     transition_matrix, _, process_covariance = model.transition.parameters(
         jnp.asarray(0.0), jnp.asarray(1.0), context
     )
@@ -301,6 +306,7 @@ def test_zero_observation_variance_has_exact_support_and_mask_semantics():
         0.0,
     )
     context = phx.stochastic.StateSpaceStepContext.empty()
+    assert isinstance(model.observation, phx.stochastic.LinearGaussianObservationModel)
     _, _, covariance = model.observation.parameters(jnp.asarray(1.0), context)
     matched = model.observation.log_prob(
         jnp.asarray([1.5]),

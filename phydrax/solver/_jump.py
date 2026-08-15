@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
 import numpy as np
+import opt_einsum as oe
 import optimistix as optx
 from jaxtyping import Array, ArrayLike
 
@@ -753,7 +754,7 @@ def finite_state_generator(
         raise ValueError(
             "Finite state set omits reachable states; choose an explicit boundary policy."
         )
-    off_diagonal = jnp.einsum("ik,ikj->ij", rates, matches.astype(rates.dtype))
+    off_diagonal = oe.contract("ik,ikj->ij", rates, matches.astype(rates.dtype))
     included_rates = jnp.sum(jnp.where(matched, rates, 0.0), axis=-1)
     diagonal_rates = (
         jnp.sum(rates, axis=-1) if boundary_policy == "leak" else included_rates

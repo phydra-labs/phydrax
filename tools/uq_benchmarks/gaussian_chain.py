@@ -8,6 +8,7 @@ import argparse
 import json
 import time
 from collections.abc import Sequence
+from typing import Literal
 
 import jax
 import jax.numpy as jnp
@@ -59,7 +60,11 @@ def _problem(num_steps: int, state_size: int) -> phx.stochastic.StateSpaceProble
     )
 
 
-def _measure(problem, method: str, repeats: int) -> dict[str, float | str]:
+def _measure(
+    problem,
+    method: Literal["sequential", "parallel", "auto"],
+    repeats: int,
+) -> dict[str, float | str]:
     filtered = phx.uq.kalman_filter(problem, method=method)
     smoothed = phx.uq.rts_smoother(filtered, method=method)
     jax.block_until_ready(smoothed.means)

@@ -5,6 +5,7 @@
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 import pytest
 
 from phydrax.ml import (
@@ -209,7 +210,7 @@ def test_every_discriminant_fit_family_has_declared_feature_weight_and_hyperpara
                     - 0.5
                     * (
                         model.log_determinants
-                        + jnp.einsum(
+                        + oe.contract(
                             "cf,cfg,cg->c",
                             probe - means,
                             model.precisions,

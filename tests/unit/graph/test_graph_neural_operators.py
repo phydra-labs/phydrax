@@ -110,7 +110,7 @@ def test_graph_kernel_integral_wraps_as_domain_graph_model():
     model = phx.graph.GraphKernelIntegral(lambda edges, sent, recv, globals_: edges[:, 0])
     integral = domain.GraphModel(model, input_fn=u)
 
-    assert jnp.allclose(integral(batch).data, jnp.array([0.0, 0.0, 3.0]))
+    assert jnp.allclose(jnp.asarray(integral(batch).data), jnp.array([0.0, 0.0, 3.0]))
 
 
 def test_graph_diffusion_penalty_zero_for_constant_graph_time_field():

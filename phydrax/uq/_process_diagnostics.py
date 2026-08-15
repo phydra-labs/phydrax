@@ -13,6 +13,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
 
 from .._frozendict import frozendict
@@ -634,7 +635,7 @@ def temporal_moment_diagnostics(
     mean = jnp.mean(flat, axis=0)
     centered = flat - mean
     denominator = float(flat.shape[0] - 1)
-    cross_covariance = jnp.einsum("mti,msj->tsij", centered, centered) / denominator
+    cross_covariance = oe.contract("mti,msj->tsij", centered, centered) / denominator
     component_indices = jnp.arange(flat.shape[-1])
     covariance = cross_covariance[:, :, component_indices, component_indices]
     variances = jnp.diagonal(covariance, axis1=0, axis2=1).T

@@ -59,7 +59,7 @@ def test_array_minibatch_source_is_deterministic_complete_and_padded():
     assert all(batch.capacity == 3 for batch in first)
     assert jnp.array_equal(jnp.sort(_active_values(source, 2)), data)
     assert all(
-        jnp.array_equal(left.data, right.data)
+        jnp.array_equal(jnp.asarray(left.data), right.data)
         and jnp.array_equal(left.factor_mask, right.factor_mask)
         for left, right in zip(first, second, strict=True)
     )

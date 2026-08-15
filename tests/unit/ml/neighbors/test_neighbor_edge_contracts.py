@@ -16,6 +16,7 @@ from phydrax.ml import (
     SparseFeatures,
 )
 from phydrax.ml.neighbors import (
+    ExactNeighborRegressorModel,
     KernelDensityRecipe,
     KernelNeighborsClassifierRecipe,
     KernelNeighborsRegressorRecipe,
@@ -74,6 +75,7 @@ def test_exact_neighbors_select_unmasked_geometry_preserve_target_axes_and_freez
         sample_mask=jnp.array([True, False, True]),
     )
     model = result.as_trainable()
+    assert isinstance(model, ExactNeighborRegressorModel)
     query = jnp.array([[[1.9], [4.8]]])
     indices, distances = model.neighbor_indices(query)
 

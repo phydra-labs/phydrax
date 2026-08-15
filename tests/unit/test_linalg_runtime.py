@@ -486,9 +486,11 @@ def test_matrix_free_iterative_system_and_least_squares_backends():
         policy=la.LinearSolvePolicy(
             la.ConjugateGradient(),
             tolerance=la.TolerancePolicy(relative=1e-10, absolute=1e-12, max_steps=20),
-            preconditioner=la.DiagonalPreconditioner(
-                jnp.diag(matrix),
-                space=space,
+            preconditioning=la.PreconditioningPolicy(
+                la.DiagonalPreconditioner(
+                    jnp.diag(matrix),
+                    space=space,
+                )
             ),
         ),
     )
@@ -1298,7 +1300,9 @@ def test_nullspace_preconditioner_and_structured_plans_use_primal_coordinates():
     diagonal_preconditioner = la.DiagonalPreconditioner(jnp.asarray([2.0, 3.0]))
     auto_plan = la.plan(
         la.LinearSystem(diagonal),
-        la.LinearSolvePolicy(preconditioner=diagonal_preconditioner),
+        la.LinearSolvePolicy(
+            preconditioning=la.PreconditioningPolicy(diagonal_preconditioner)
+        ),
     )
     assert auto_plan.backend == "native-krylov"
     with pytest.raises(ValueError, match="does not accept preconditioners"):
@@ -1306,7 +1310,7 @@ def test_nullspace_preconditioner_and_structured_plans_use_primal_coordinates():
             la.LinearSystem(diagonal),
             la.LinearSolvePolicy(
                 la.StructuredDirect(),
-                preconditioner=diagonal_preconditioner,
+                preconditioning=la.PreconditioningPolicy(diagonal_preconditioner),
             ),
         )
     with pytest.raises(ValueError, match="rank cutoff"):
@@ -1416,7 +1420,7 @@ def test_batched_rank_deficient_svd_has_correct_implicit_derivative():
     assert jnp.allclose(jax.jit(jax.grad(objective))(scales), expected_gradient)
 
 
-def test_planner_accounts_for_densification_and_batched_resources():
+def test_planner_accounts_for_densification_and_batched_resources(monkeypatch):
     diagonal_values = jnp.asarray([2.0, 3.0])
     diagonal = la.DiagonalLinearOperator(diagonal_values)
     structured_plan = la.plan(la.LinearSystem(diagonal))
@@ -1485,6 +1489,145 @@ def test_planner_accounts_for_densification_and_batched_resources():
     assert bool(la.solve(direct, jnp.ones((2,))).successful)
     with pytest.raises(ValueError, match="workspace bytes for 2 right-hand sides"):
         la.solve_many(direct, jnp.eye(2))
+    with pytest.raises(ValueError, match="workspace bytes for 2 right-hand sides"):
+        la.solve_transpose(direct, jnp.eye(2))
+    with pytest.raises(ValueError, match="workspace bytes for 2 right-hand sides"):
+        la.solve_adjoint(direct, jnp.eye(2))
+
+    def unexpected_preparation(*args, **kwargs):
+        raise AssertionError("Numerical preparation ran before RHS resource rejection.")
+
+    monkeypatch.setattr(
+        "phydrax.linalg._runtime._prepare_for_plan",
+        unexpected_preparation,
+    )
+    with pytest.raises(ValueError, match="solve workspace bytes"):
+        la.solve(
+            problem,
+            jnp.eye(2),
+            policy=la.LinearSolvePolicy(
+                la.DenseLU(),
+                resources=la.SolveResourcePolicy(workspace_bytes=32),
+            ),
+        )
+
+
+def test_operator_action_costs_account_for_shared_state_and_iterative_scratch():
+    values = jnp.asarray([2.0, 3.0, 4.0])
+    diagonal = la.DiagonalLinearOperator(values)
+    shared_sum = la.SumLinearOperator(diagonal, diagonal)
+
+    leaf_cost = la.estimate_operator_action_cost(diagonal)
+    sum_cost = la.estimate_operator_action_cost(shared_sum)
+    opaque_cost = la.estimate_operator_action_cost(
+        la.FunctionLinearOperator(
+            lambda value: diagonal.mv(value),
+            source=diagonal.source,
+            target=diagonal.target,
+        )
+    )
+    solve_plan = la.plan(
+        la.LinearSystem(shared_sum),
+        la.LinearSolvePolicy(
+            la.GMRES(),
+            differentiation=la.DifferentiationPolicy("none"),
+        ),
+    )
+    candidate = solve_plan.candidates[-1]
+
+    assert isinstance(leaf_cost, la.OperatorActionCostEstimate)
+    assert leaf_cost.storage_bytes == values.nbytes
+    assert leaf_cost.apply_workspace_bytes_per_rhs == 0
+    assert sum_cost.storage_bytes == values.nbytes
+    assert sum_cost.apply_workspace_bytes_per_rhs == values.nbytes
+    assert sum_cost.exact
+    assert not opaque_cost.exact
+    assert opaque_cost.apply_workspace_bytes_per_rhs == values.nbytes
+    assert candidate.existing_storage_bytes == sum_cost.storage_bytes
+    assert (
+        candidate.operator_apply_workspace_bytes_per_rhs
+        == sum_cost.apply_workspace_bytes_per_rhs
+    )
+
+
+def test_planner_accounts_for_preconditioner_state_and_workspace():
+    space = la.ArraySpace((2,), dtype=jnp.float64)
+    operator = la.DenseLinearOperator(
+        jnp.asarray([[4.0, 1.0], [1.0, 3.0]]),
+        source=space,
+        target=space,
+        properties=_positive_definite_properties(),
+    )
+    problem = la.LinearSystem(operator)
+    policy = la.LinearSolvePolicy(
+        la.PCG(),
+        differentiation=la.DifferentiationPolicy("none"),
+        preconditioning=la.PreconditioningPolicy(la.JacobiPreconditionerBuilder()),
+    )
+    solve_plan = la.plan(problem, policy)
+    assert solve_plan.preconditioner_plan is not None
+    cost = solve_plan.preconditioner_plan.cost
+    estimate = solve_plan.candidates[-1]
+
+    assert isinstance(cost, la.PreconditionerCostEstimate)
+    assert cost.storage_bytes == 2 * jnp.dtype(jnp.float64).itemsize
+    assert cost.setup_matvec_count == 0
+    matrix_free = la.FunctionLinearOperator(
+        lambda value: operator.mv(value),
+        source=space,
+        target=space,
+        properties=_positive_definite_properties(),
+    )
+    assert (
+        la.DenseInversePreconditionerBuilder()
+        .cost_for(matrix_free, materialization=la.MaterializationPolicy())
+        .setup_matvec_count
+        == space.size
+    )
+    assert (
+        la.DenseInversePreconditionerBuilder()
+        .cost_for(operator + operator, materialization=la.MaterializationPolicy())
+        .setup_matvec_count
+        == 0
+    )
+    assert estimate.preconditioner_setup_matvec_count == cost.setup_matvec_count
+    assert estimate.preconditioner_storage_bytes == cost.storage_bytes
+    assert (
+        estimate.preconditioner_preparation_workspace_bytes
+        == cost.preparation_workspace_bytes
+    )
+    assert (
+        estimate.preconditioner_apply_workspace_bytes_per_rhs
+        == cost.apply_workspace_bytes_per_rhs
+    )
+    with pytest.raises(ValueError, match="preconditioner state"):
+        la.plan(
+            problem,
+            la.LinearSolvePolicy(
+                la.PCG(),
+                differentiation=la.DifferentiationPolicy("none"),
+                preconditioning=la.PreconditioningPolicy(
+                    la.JacobiPreconditionerBuilder()
+                ),
+                resources=la.SolveResourcePolicy(
+                    preconditioner_bytes=cost.storage_bytes - 1
+                ),
+            ),
+        )
+    tight_materialization_plan = la.plan(
+        problem,
+        la.LinearSolvePolicy(
+            la.PCG(),
+            differentiation=la.DifferentiationPolicy("none"),
+            materialization=la.MaterializationPolicy(
+                max_entries=1,
+                max_bytes=1024,
+            ),
+            preconditioning=la.PreconditioningPolicy(la.JacobiPreconditionerBuilder()),
+        ),
+    )
+    assert tight_materialization_plan.preconditioner_plan is not None
+    assert tight_materialization_plan.preconditioner_plan.cost.setup_matvec_count == 0
 
 
 def test_composites_do_not_upgrade_unknown_property_evidence():
@@ -1551,3 +1694,186 @@ def test_block_diagonal_dense_factors_use_structured_direct_execution():
     assert bool(result.successful)
     assert jnp.allclose(result.value[0], jnp.linalg.solve(first.matrix, rhs[0]))
     assert jnp.allclose(result.value[1], jnp.asarray([0.5]))
+
+
+def test_kronecker_sum_structured_direct_matches_dense_and_propagates_properties():
+    properties = la.OperatorProperties(
+        self_adjoint=True,
+        positive_definite=True,
+        evidence={
+            "self_adjoint": "asserted",
+            "positive_definite": "asserted",
+        },
+    )
+    first = la.DenseLinearOperator(
+        jnp.asarray([[3.0, 1.0], [1.0, 2.0]]),
+        properties=properties,
+    )
+    second = la.DenseLinearOperator(
+        jnp.asarray(
+            [
+                [4.0, 0.5, 0.0],
+                [0.5, 3.0, 0.25],
+                [0.0, 0.25, 2.0],
+            ]
+        ),
+        properties=properties,
+    )
+    operator = la.KroneckerSumLinearOperator((first, second))
+    problem = la.LinearSystem(operator)
+    policy = la.LinearSolvePolicy(la.StructuredDirect())
+    rhs = jnp.arange(1.0, 7.0).reshape((2, 3))
+    dense = la.materialize(
+        operator,
+        la.MaterializationPolicy(max_entries=36),
+    )
+
+    selected = la.plan(problem)
+    structured_cost = next(
+        candidate
+        for candidate in selected.candidates
+        if candidate.provider == "jax-structured" and candidate.accepted
+    )
+    strict_selected = la.plan(
+        problem,
+        la.LinearSolvePolicy(
+            la.StructuredDirect(),
+            materialization=la.MaterializationPolicy(
+                max_entries=1,
+                max_bytes=1,
+            ),
+        ),
+    )
+    result = la.solve(problem, rhs, policy=policy)
+    jitted = jax.jit(lambda value: la.solve(problem, value, policy=policy).value)(rhs)
+    expected = jnp.linalg.solve(dense, rhs.reshape((-1,))).reshape(rhs.shape)
+
+    assert operator.properties.certifies("self_adjoint")
+    assert operator.properties.certifies("positive_semidefinite")
+    assert operator.properties.certifies("positive_definite")
+    assert operator.properties.certifies("rank")
+    assert operator.properties.rank == operator.source.size
+    assert operator.capabilities.materialize
+    assert operator.capabilities.diagonal_assembly
+    assert selected.backend == "jax-structured"
+    assert strict_selected.backend == "jax-structured"
+    assert structured_cost.additional_matrix_bytes == 0
+    assert structured_cost.factorization_bytes > 0
+    assert structured_cost.solve_workspace_bytes_per_rhs == (
+        4 * operator.source.size * rhs.dtype.itemsize
+    )
+    assert bool(result.successful)
+    assert jnp.allclose(result.value, expected)
+    assert jnp.allclose(jitted, expected)
+
+
+def test_kronecker_sum_structured_direct_respects_weighted_complex_pairings():
+    weights = jnp.asarray([2.0, 5.0])
+    metric_sqrt = jnp.sqrt(weights)
+    weighted_space = la.ArraySpace(
+        (2,),
+        dtype=jnp.complex128,
+        pairing=la.DiagonalPairing(weights),
+    )
+    hermitian = jnp.asarray(
+        [[3.0, 1.0 + 0.2j], [1.0 - 0.2j, 2.0]],
+        dtype=jnp.complex128,
+    )
+    weighted_matrix = hermitian * metric_sqrt[None, :] / metric_sqrt[:, None]
+    properties = la.OperatorProperties(
+        self_adjoint=True,
+        positive_definite=True,
+        evidence={
+            "self_adjoint": "asserted",
+            "positive_definite": "asserted",
+        },
+    )
+    first = la.DenseLinearOperator(
+        weighted_matrix,
+        source=weighted_space,
+        target=weighted_space,
+        properties=properties,
+    )
+    second = la.DenseLinearOperator(
+        jnp.asarray(
+            [[4.0, 0.3j], [-0.3j, 2.0]],
+            dtype=jnp.complex128,
+        ),
+        properties=properties,
+    )
+    operator = la.KroneckerSumLinearOperator((first, second))
+    rhs = jnp.asarray([[1.0 + 0.5j, 2.0 - 0.2j], [-1.0 + 0.3j, 0.7 - 0.4j]])
+    dense = la.materialize(
+        operator,
+        la.MaterializationPolicy(max_entries=16),
+    )
+
+    result = la.solve(
+        la.LinearSystem(operator),
+        rhs,
+        policy=la.LinearSolvePolicy(la.StructuredDirect()),
+    )
+    expected = jnp.linalg.solve(dense, rhs.reshape((-1,))).reshape(rhs.shape)
+
+    assert bool(result.successful)
+    assert jnp.allclose(result.value, expected)
+
+
+def test_kronecker_sum_structured_direct_is_differentiable_and_reports_singularity():
+    positive_properties = la.OperatorProperties(
+        self_adjoint=True,
+        positive_definite=True,
+        evidence={
+            "self_adjoint": "asserted",
+            "positive_definite": "asserted",
+        },
+    )
+    second = la.DenseLinearOperator(
+        jnp.diag(jnp.asarray([2.0, 4.0, 7.0])),
+        properties=positive_properties,
+    )
+    rhs = jnp.arange(1.0, 7.0).reshape((2, 3))
+    policy = la.LinearSolvePolicy(la.StructuredDirect())
+
+    def objective(parameter):
+        first = la.DenseLinearOperator(
+            jnp.diag(jnp.asarray([parameter, parameter + 1.0])),
+            properties=positive_properties,
+        )
+        operator = la.KroneckerSumLinearOperator((first, second))
+        return jnp.sum(la.solve(la.LinearSystem(operator), rhs, policy=policy).value)
+
+    parameter = jnp.asarray(3.0)
+    eigenvalue_sums = jnp.asarray([[5.0, 7.0, 10.0], [6.0, 8.0, 11.0]])
+    expected_gradient = -jnp.sum(rhs / eigenvalue_sums**2)
+
+    assert jnp.allclose(jax.grad(objective)(parameter), expected_gradient)
+    assert jnp.allclose(
+        jax.jit(jax.grad(objective))(parameter),
+        expected_gradient,
+    )
+
+    self_adjoint_properties = la.OperatorProperties(
+        self_adjoint=True,
+        evidence={"self_adjoint": "asserted"},
+    )
+    singular = la.KroneckerSumLinearOperator(
+        (
+            la.DenseLinearOperator(
+                jnp.diag(jnp.asarray([1.0, -1.0])),
+                properties=self_adjoint_properties,
+            ),
+            la.DenseLinearOperator(
+                jnp.diag(jnp.asarray([-1.0, 2.0])),
+                properties=self_adjoint_properties,
+            ),
+        )
+    )
+    singular_result = la.solve(
+        la.LinearSystem(singular),
+        jnp.ones((2, 2)),
+        policy=policy,
+    )
+
+    assert singular_result.status == int(la.LinearSolveStatus.SINGULAR)
+    assert not bool(singular_result.successful)

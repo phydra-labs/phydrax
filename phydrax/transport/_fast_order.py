@@ -10,7 +10,7 @@ The formulation follows Blondel, Teboul, Berthet, and Djolonga,
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, overload
 
 import coordax as cx
 import equinox as eqx
@@ -225,6 +225,28 @@ def _restore(data: Array, dims: tuple[Any, ...] | None, /) -> Array | cx.Field:
     return data if dims is None else cx.Field(data, dims=dims)
 
 
+@overload
+def fast_soft_sort(
+    values: ArrayLike,
+    /,
+    *,
+    temperature: ArrayLike = 0.5,
+    axis: int | str = -1,
+    descending: bool = False,
+) -> Array: ...
+
+
+@overload
+def fast_soft_sort(
+    values: cx.Field,
+    /,
+    *,
+    temperature: ArrayLike = 0.5,
+    axis: int | str = -1,
+    descending: bool = False,
+) -> cx.Field: ...
+
+
 def fast_soft_sort(
     values: Value,
     /,
@@ -249,6 +271,28 @@ def fast_soft_sort(
     if descending:
         output = jnp.flip(output, axis=position)
     return _restore(output, dims)
+
+
+@overload
+def fast_soft_rank(
+    values: ArrayLike,
+    /,
+    *,
+    temperature: ArrayLike = 0.5,
+    axis: int | str = -1,
+    descending: bool = False,
+) -> Array: ...
+
+
+@overload
+def fast_soft_rank(
+    values: cx.Field,
+    /,
+    *,
+    temperature: ArrayLike = 0.5,
+    axis: int | str = -1,
+    descending: bool = False,
+) -> cx.Field: ...
 
 
 def fast_soft_rank(

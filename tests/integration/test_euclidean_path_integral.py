@@ -130,8 +130,8 @@ def test_domain_potential_and_kernel_function_compose_with_sampled_fields():
     values = kernel(batch, key=jr.key(3))
 
     assert values.data.shape == (6,)
-    assert jnp.all(jnp.isfinite(values.data))
-    assert jnp.all(values.data > 0.0)
+    assert jnp.all(jnp.isfinite(jnp.asarray(values.data)))
+    assert jnp.all(jnp.asarray(values.data) > 0.0)
 
 
 def test_kernel_function_preserves_trainable_domain_potential_gradients():

@@ -2,9 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 import pytest
 
 import phydrax as phx
@@ -168,7 +171,7 @@ def test_dense_and_block_diagonal_factors_agree_for_separable_vector_system():
         t1=1.0,
         args=rates,
     )
-    common = dict(
+    common: dict[str, Any] = dict(
         save_times=jnp.asarray([0.0, 0.4, 1.0]),
         observation_covariance=1e-7,
     )
@@ -191,6 +194,7 @@ def test_dense_and_block_diagonal_factors_agree_for_separable_vector_system():
         **common,
     )
 
+    assert dense.covariances is not None
     assert isinstance(dense.covariance_factor, phx.uq.GaussianFactor)
     assert isinstance(block.covariance_factor, phx.uq.GaussianFactor)
     assert jnp.allclose(dense.means, block.means, rtol=2e-6, atol=2e-7)
@@ -203,7 +207,7 @@ def test_dense_and_block_diagonal_factors_agree_for_separable_vector_system():
     probe = jnp.arange(9.0).reshape((3, 3))
     assert jnp.allclose(
         block.covariance_matvec(probe),
-        jnp.einsum("tij,tj->ti", block.dense_covariance(), probe),
+        oe.contract("tij,tj->ti", block.dense_covariance(), probe),
     )
 
 
@@ -438,7 +442,7 @@ def test_dense_matrix_free_output_retains_no_covariance_matrix():
     assert solution.covariance_representation == "matrix_free"
     assert jnp.allclose(
         solution.covariance_matvec(probe),
-        jnp.einsum("tij,tj->ti", solution.dense_covariance(), probe),
+        oe.contract("tij,tj->ti", solution.dense_covariance(), probe),
     )
 
 

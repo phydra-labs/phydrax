@@ -210,6 +210,7 @@ def test_soft_order_transport_exposes_solver_diagnostics_and_rejects_bad_weights
         weights=jnp.asarray([0.2, 0.3, 0.5]),
         epsilon=0.1,
     )
+    assert isinstance(result, phx.transport.SinkhornResult)
     assert result.converged
     assert result.problem.shape == (3, 3)
     assert jnp.allclose(result.source_marginal(), jnp.asarray([0.2, 0.3, 0.5]), atol=1e-7)
@@ -219,6 +220,7 @@ def test_soft_order_transport_exposes_solver_diagnostics_and_rejects_bad_weights
             jnp.asarray([3.0, 1.0, 2.0]),
             weights=jnp.asarray([0.2, -0.3, 0.5]),
         )
+        assert isinstance(invalid, phx.transport.SinkhornResult)
         jax.block_until_ready(invalid.source_potential)
 
 
@@ -333,7 +335,7 @@ def test_soft_order_weighted_named_and_blockwise_paths_share_one_contract():
     plain = phx.transport.soft_sort(values, axis=1, epsilon=0.2)
 
     assert named.dims == field.dims
-    assert jnp.allclose(named.data, plain)
+    assert jnp.allclose(jnp.asarray(named.data), plain)
 
     vector = values[0]
     zero_weights = jnp.asarray([0.2, 0.0, 0.3, 0.5])
@@ -407,6 +409,7 @@ def test_soft_order_provenance_and_explicit_solver_precedence_are_visible():
         epsilon=jnp.nan,
         solver=solver,
     )
+    assert isinstance(result, phx.transport.SinkhornResult)
 
     assert result.problem.provenance.source == (
         "soft-order-source:weighted-standardize-sigmoid"

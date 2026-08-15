@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
@@ -346,7 +347,7 @@ class PrimitiveBasis(StrictModule):
             inverse = jnp.asarray(
                 self.conversion_inverses[degree - 1], dtype=selected.dtype
             )
-            coefficients.append(jnp.einsum("ij,...j->...i", inverse, selected))
+            coefficients.append(oe.contract("ij,...j->...i", inverse, selected))
         return jnp.concatenate(coefficients, axis=-1)
 
     def primitive_to_tensor(self, coefficients: ArrayLike, /) -> tuple[Array, ...]:
@@ -358,7 +359,7 @@ class PrimitiveBasis(StrictModule):
         for degree, indices in enumerate(self.degree_indices, start=1):
             selected = values[..., jnp.asarray(indices)]
             matrix = jnp.asarray(self.expansion_matrices[degree - 1], dtype=values.dtype)
-            flattened = jnp.einsum("wi,...i->...w", matrix, selected)
+            flattened = oe.contract("wi,...i->...w", matrix, selected)
             levels.append(
                 flattened.reshape(values.shape[:-1] + (self.dimension,) * degree)
             )

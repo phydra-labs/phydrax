@@ -15,6 +15,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from .._fingerprint import array_tree_fingerprint
@@ -1265,7 +1266,7 @@ def particle_fisher_information(
     case_scores = score.case_scores.reshape((case_count, score.parameter_size))
     valid = score.valid.reshape((case_count,))
     valid_count = jnp.sum(valid)
-    information = jnp.einsum(
+    information = oe.contract(
         "ci,cj->ij",
         jnp.where(valid[:, None], case_scores, 0.0),
         jnp.where(valid[:, None], case_scores, 0.0),

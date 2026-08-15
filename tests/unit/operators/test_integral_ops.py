@@ -52,8 +52,8 @@ def test_integral_and_mean_delegate_to_typed_integration_api():
     integrated = integral(function, target, plan)
     averaged = mean(function, target, plan)
 
-    assert jnp.allclose(integrated.data, 2.0, atol=1e-12)
-    assert jnp.allclose(averaged.data, 2.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(integrated.data), 2.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(averaged.data), 2.0, atol=1e-12)
 
 
 def test_spatial_integral_nonlocal_kernel_converges_under_rule_refinement():
@@ -154,7 +154,7 @@ def test_nonlocal_integral_context_parameter_receives_full_context():
     )
     points = frozendict({"x": cx.Field(jnp.array([[0.25], [0.75]]), dims=("n", None))})
 
-    assert jnp.allclose(operator(points).data, 0.5, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(operator(points).data), 0.5, atol=1e-12)
 
 
 def test_local_integral_constant_field_equals_ball_volume():
@@ -169,9 +169,9 @@ def test_local_integral_constant_field_equals_ball_volume():
         ball_quad=_ball_rule(radius, 2, 2048),
     )
 
-    value = operator(
-        frozendict({"x": cx.Field(jnp.array([0.1, -0.2]), dims=(None,))})
-    ).data
+    value = jnp.asarray(
+        operator(frozendict({"x": cx.Field(jnp.array([0.1, -0.2]), dims=(None,))})).data
+    )
 
     assert jnp.allclose(value, jnp.pi * radius**2 * 2.5, atol=1e-12)
 
@@ -186,7 +186,9 @@ def test_local_integral_zero_and_linear_symmetry():
         ball_quad=rule_1d,
     )
     points = jnp.linspace(-0.3, 0.3, 7)[:, None]
-    values = zero_operator(frozendict({"x": cx.Field(points, dims=("n", None))})).data
+    values = jnp.asarray(
+        zero_operator(frozendict({"x": cx.Field(points, dims=("n", None))})).data
+    )
     assert jnp.max(jnp.abs(values)) < 1e-12
 
     square = phx.domain.GeometryDomain(
@@ -203,4 +205,4 @@ def test_local_integral_zero_and_linear_symmetry():
         ball_quad=_ball_rule(0.25, 2, 4096),
     )
     point = frozendict({"x": cx.Field(jnp.array([0.1, -0.2]), dims=(None,))})
-    assert jnp.abs(ball_operator(point).data) < 5e-4
+    assert jnp.abs(jnp.asarray(ball_operator(point).data)) < 5e-4

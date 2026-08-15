@@ -119,24 +119,32 @@ def test_stack_operator_batches_pads_ragged_points_and_slices_cases():
     )
 
     batch = phx.nn.operator.stack_operator_batches((first, second), case_axis="case")
+    input_mask = batch.input("u").mask
+    query_mask = batch.query("query").mask
+    assert input_mask is not None
+    assert query_mask is not None
     assert batch.case_axes == ("case",)
     assert batch.case_shape == (2,)
     assert batch.input("u").sample_shape == (4,)
     assert batch.query("query").sample_shape == (3,)
     assert jnp.array_equal(
-        batch.input("u").mask,
+        input_mask,
         jnp.array([[True, True, False, False], [True, True, True, True]]),
     )
     assert jnp.array_equal(
-        batch.query("query").mask,
+        query_mask,
         jnp.array([[True, True, True], [True, True, False]]),
     )
 
     selected = batch.take(1, axis="case")
+    selected_values = selected.input("u").values
+    selected_mask = selected.query("query").mask
+    assert selected_values is not None
+    assert selected_mask is not None
     assert selected.case_axes == ()
     assert selected.case_shape == ()
-    assert selected.input("u").values.shape == (4,)
-    assert jnp.array_equal(selected.query("query").mask, jnp.array([True, True, False]))
+    assert selected_values.shape == (4,)
+    assert jnp.array_equal(selected_mask, jnp.array([True, True, False]))
 
 
 def test_per_case_deeponet_uses_case_specific_source_and_query_geometry():

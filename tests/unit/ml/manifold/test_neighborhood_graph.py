@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -68,9 +70,10 @@ def test_neighbor_graph_reports_disconnected_components_and_keeps_edge_length_gr
 def test_neighbor_graph_rejects_precomputed_geometry_and_invalid_capacity():
     coordinates = jnp.eye(4)
     active = jnp.ones((4,), dtype=bool)
+    invalid_metric: Any = "precomputed"
 
     with pytest.raises(ValueError, match="Unsupported metric"):
-        build_neighbor_graph(coordinates, active, n_neighbors=2, metric="precomputed")
+        build_neighbor_graph(coordinates, active, n_neighbors=2, metric=invalid_metric)
     with pytest.raises(ValueError, match="n_neighbors"):
         build_neighbor_graph(coordinates, active, n_neighbors=4)
 

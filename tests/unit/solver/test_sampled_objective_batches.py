@@ -1,4 +1,5 @@
 from collections.abc import Callable, Mapping
+from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -16,7 +17,7 @@ class _NestedSampledObjective(phx.terms.AbstractSamplingTerm):
     target_shift: float = eqx.field(static=True)
     label: str | None = eqx.field(static=True)
 
-    def sample(self, *, key):
+    def sample(self, *, key: Key[Array, ""] = jr.key(0)):
         self.recorder(key)
         return {
             "target": (
@@ -25,7 +26,16 @@ class _NestedSampledObjective(phx.terms.AbstractSamplingTerm):
             )
         }
 
-    def loss(self, functions: Mapping, /, *, key, iter_=None, batch=None, **kwargs):
+    def loss(
+        self,
+        functions: Mapping,
+        /,
+        *,
+        key: Key[Array, ""] = jr.key(0),
+        iter_=None,
+        batch: Any = None,
+        **kwargs,
+    ):
         del key, iter_, kwargs
         if batch is None:
             raise AssertionError("Sampled objective batch was not materialized.")

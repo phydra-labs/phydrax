@@ -9,6 +9,7 @@ from typing import Any, ClassVar, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._model import AbstractArrayModel, ModelBinding
@@ -110,7 +111,7 @@ class SpectralEmbeddingModel(AbstractArrayModel):
             normalized = affinities / jnp.sqrt(
                 jnp.maximum(product, jnp.finfo(product.dtype).tiny)
             )
-            projected = jnp.einsum("qk,qkd->qd", normalized, vectors_[indices])
+            projected = oe.contract("qk,qkd->qd", normalized, vectors_[indices])
             return (
                 projected
                 / jnp.maximum(jnp.abs(values_), jnp.finfo(values_.dtype).eps)[None, :]

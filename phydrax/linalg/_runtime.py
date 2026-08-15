@@ -13,9 +13,12 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, PyTree
 
-from ._operators import adjoint, transpose
+from ._binding import LinearSolveTemplate
+from ._gcrodr import refresh_recycling, solve_recycled
+from ._operators import AbstractLinearOperator, adjoint, transpose
 from ._plans import LinearSolvePlan, plan as make_plan
 from ._policies import GeneralizedLSMR, LinearSolvePolicy, LSMR
+from ._preconditioning import prepare_preconditioner, PreparedPreconditioner
 from ._prepared import PreparedLinearSolve
 from ._problems import (
     _problem_structure,
@@ -31,7 +34,7 @@ from ._results import (
     LinearSolveStatus,
 )
 from ._spaces import RHSLayout
-from ._subspaces import LinearSubspace, NullspacePolicy
+from ._subspaces import KernelCertificate, LinearSubspace, NullspacePolicy
 from .backends._jax_dense import (
     DenseCholeskyState,
     DenseLUState,
@@ -39,6 +42,7 @@ from .backends._jax_dense import (
     DenseSVDState,
 )
 from .backends._jax_sparse import HostSparseState
+from .backends._native_block_krylov import NativeBlockKrylovBackendOutput
 from .backends._provider import provider_for
 
 
@@ -51,62 +55,282 @@ class _PackedRHSLayout(NamedTuple):
     broadcast_batch: bool
 
 
+def prepare_template(
+    problem: AbstractLinearProblem,
+    policy: LinearSolvePolicy | LinearSolvePlan | None = None,
+    /,
+    *,
+    rhs_layout: RHSLayout | None = None,
+) -> LinearSolveTemplate:
+    """Plan and analyze coefficient-independent solve structure."""
+    selected_plan = _select_plan(problem, policy, rhs_layout=rhs_layout)
+    return _template_for_plan(problem, selected_plan)
+
+
+def bind_numeric(
+    template: LinearSolveTemplate,
+    problem: AbstractLinearProblem,
+    /,
+    *,
+    numeric_version: Any = 0,
+) -> PreparedLinearSolve:
+    """Bind current coefficients to a reusable symbolic solve template."""
+    return _bind_for_template(
+        template,
+        problem,
+        numeric_version=numeric_version,
+    )
+
+
 def prepare(
     problem: AbstractLinearProblem,
     policy: LinearSolvePolicy | LinearSolvePlan | None = None,
     /,
+    *,
+    rhs_layout: RHSLayout | None = None,
 ) -> PreparedLinearSolve:
-    """Plan and prepare reusable numerical state for one problem."""
+    """Compose symbolic analysis and numerical binding for one problem."""
+    selected_plan = _select_plan(problem, policy, rhs_layout=rhs_layout)
+    return _prepare_for_plan(problem, selected_plan)
+
+
+def _template_for_plan(
+    problem: AbstractLinearProblem,
+    selected_plan: LinearSolvePlan,
+    /,
+) -> LinearSolveTemplate:
+    provider = provider_for(selected_plan.backend)
+    symbolic_state = provider.analyze(problem, selected_plan)
+    device_bindable = selected_plan.backend not in ("host-sparse", "lineax")
+    rejection_reason = (
+        None
+        if device_bindable
+        else f"backend {selected_plan.backend!r} requires host-side numerical setup"
+    )
+    return LinearSolveTemplate(
+        selected_plan,
+        symbolic_state,
+        device_bindable=device_bindable,
+        source_space_id=problem.operator.source.space_id,
+        target_space_id=problem.operator.target.space_id,
+        batch_shape=problem.operator.batch_shape,
+        rejection_reason=rejection_reason,
+    )
+
+
+def _prepare_for_plan(
+    problem: AbstractLinearProblem,
+    selected_plan: LinearSolvePlan,
+    /,
+) -> PreparedLinearSolve:
+    template = _template_for_plan(problem, selected_plan)
+    return _bind_for_template(template, problem)
+
+
+def _select_plan(
+    problem: AbstractLinearProblem,
+    policy: LinearSolvePolicy | LinearSolvePlan | None,
+    /,
+    *,
+    rhs_layout: RHSLayout | None,
+) -> LinearSolvePlan:
     if not isinstance(problem, AbstractLinearProblem):
         raise TypeError("problem must be an AbstractLinearProblem.")
-    if isinstance(policy, LinearSolvePlan):
-        selected_plan = policy
-        if selected_plan.problem_id != problem.problem_id:
-            raise ValueError("Plan and problem IDs must match.")
-        if selected_plan.problem_signature != _problem_structure(problem):
-            raise ValueError(
-                "Plan reuse cannot change operator structure, weights or regularizers, "
-                "or nullspace policies."
-            )
-        refreshed_plan = make_plan(problem, selected_plan.policy)
-        if refreshed_plan.plan_id != selected_plan.plan_id:
-            raise ValueError("Plan does not match the problem's symbolic structure.")
-    else:
-        selected_plan = make_plan(problem, policy)
-    execution_problem = (
-        _stop_problem_arrays(problem)
-        if selected_plan.policy.differentiation.mode in ("rhs-only", "none")
-        else problem
+    if rhs_layout is not None and not isinstance(rhs_layout, RHSLayout):
+        raise TypeError("rhs_layout must be an RHSLayout or None.")
+    if not isinstance(policy, LinearSolvePlan):
+        return make_plan(problem, policy, rhs_layout=rhs_layout)
+    selected_plan = policy
+    if rhs_layout is not None and (
+        selected_plan.rhs_layout is None
+        or rhs_layout.layout_id != selected_plan.rhs_layout.layout_id
+    ):
+        raise ValueError("rhs_layout must match the supplied plan exactly.")
+    if selected_plan.problem_id != problem.problem_id:
+        raise ValueError("Plan and problem IDs must match.")
+    if selected_plan.problem_signature != _problem_structure(problem):
+        raise ValueError(
+            "Plan reuse cannot change operator structure, weights or regularizers, "
+            "or nullspace policies."
+        )
+    refreshed_plan = make_plan(
+        problem,
+        selected_plan.policy,
+        rhs_layout=selected_plan.rhs_layout,
     )
-    provider = provider_for(selected_plan.backend)
-    state = provider.prepare(execution_problem, selected_plan)
-    return PreparedLinearSolve(problem, selected_plan, state)
+    if refreshed_plan.plan_id != selected_plan.plan_id:
+        raise ValueError("Plan does not match the problem's symbolic structure.")
+    return selected_plan
 
 
 def refresh(
     prepared: PreparedLinearSolve,
     problem: AbstractLinearProblem,
     /,
+    *,
+    setup_operator: AbstractLinearOperator | None = None,
 ) -> PreparedLinearSolve:
-    """Refresh all numerical state while preserving one symbolic plan."""
+    """Rebind numerical state while preserving one symbolic solve template."""
     if not isinstance(prepared, PreparedLinearSolve):
         raise TypeError("prepared must be a PreparedLinearSolve.")
     if not isinstance(problem, AbstractLinearProblem):
         raise TypeError("problem must be an AbstractLinearProblem.")
     if problem.problem_id != prepared.problem.problem_id:
         raise ValueError("Numeric refreshes must preserve problem_id.")
-    refreshed_plan = make_plan(problem, prepared.plan.policy)
+    policy = prepared.plan.policy
+    preconditioning = policy.preconditioning
+    if setup_operator is not None:
+        if preconditioning is None:
+            raise ValueError("setup_operator requires a preconditioning policy.")
+        replacement = preconditioning.with_setup_operator(setup_operator)
+        policy = eqx.tree_at(
+            lambda selected: selected.preconditioning,
+            policy,
+            replacement,
+        )
+    elif (
+        preconditioning is not None
+        and preconditioning.builder is not None
+        and preconditioning.setup_operator is not None
+        and preconditioning.refresh_policy != "frozen"
+    ):
+        raise ValueError(
+            "Refreshing a distinct setup operator requires setup_operator=...; "
+            "silent reuse after coefficient changes is forbidden."
+        )
+    refreshed_plan = make_plan(
+        problem,
+        policy,
+        rhs_layout=prepared.plan.rhs_layout,
+    )
     if refreshed_plan.plan_id != prepared.plan.plan_id:
         raise ValueError("Numeric refreshes must preserve the symbolic solve plan.")
-    refreshed = prepare(problem, refreshed_plan)
+    refreshed_template = LinearSolveTemplate(
+        refreshed_plan,
+        prepared.template.symbolic_state,
+        device_bindable=prepared.template.device_bindable,
+        source_space_id=prepared.template.source_space_id,
+        target_space_id=prepared.template.target_space_id,
+        batch_shape=prepared.template.batch_shape,
+        rejection_reason=prepared.template.rejection_reason,
+        schema_version=prepared.template.schema_version,
+    )
+    if refreshed_template.template_id != prepared.template.template_id:
+        raise ValueError("Numeric refreshes must preserve the symbolic solve template.")
+    return _bind_for_template(
+        refreshed_template,
+        problem,
+        previous_preconditioner=prepared.preconditioning_state,
+        numeric_version=prepared.numeric_version + jnp.asarray(1, dtype=jnp.int32),
+    )
+
+
+def _bind_for_template(
+    template: LinearSolveTemplate,
+    problem: AbstractLinearProblem,
+    /,
+    *,
+    previous_preconditioner: PreparedPreconditioner | None = None,
+    numeric_version: Any = 0,
+) -> PreparedLinearSolve:
+    if not isinstance(template, LinearSolveTemplate):
+        raise TypeError("template must be a LinearSolveTemplate.")
+    if not isinstance(problem, AbstractLinearProblem):
+        raise TypeError("problem must be an AbstractLinearProblem.")
+    selected_plan = template.plan
+    if selected_plan.problem_id != problem.problem_id:
+        raise ValueError("Template and problem IDs must match.")
+    if (
+        problem.operator.source.space_id != template.source_space_id
+        or problem.operator.target.space_id != template.target_space_id
+        or problem.operator.batch_shape != template.batch_shape
+    ):
+        raise ValueError("Numerical binding cannot change symbolic problem structure.")
+    if template.problem_signature != _problem_structure(problem):
+        raise ValueError("Numerical binding cannot change symbolic problem structure.")
+    stop_arrays = selected_plan.policy.differentiation.mode in ("rhs-only", "none")
+    execution_problem = _stop_problem_arrays(problem) if stop_arrays else problem
+    preparation_plan = (
+        jax.tree.map(
+            lambda value: jax.lax.stop_gradient(value) if eqx.is_array(value) else value,
+            selected_plan,
+        )
+        if stop_arrays
+        else selected_plan
+    )
+    preconditioning_state = prepare_preconditioner(
+        preparation_plan.preconditioner_plan,
+        execution_problem.operator,
+        materialization=preparation_plan.policy.materialization,
+        previous=previous_preconditioner,
+        numeric_version=numeric_version,
+    )
+    action = None if preconditioning_state is None else preconditioning_state.action
+    provider = provider_for(selected_plan.backend)
+    state = provider.bind(
+        template.symbolic_state,
+        execution_problem,
+        preparation_plan,
+        preconditioner=action,
+    )
     return PreparedLinearSolve(
         problem,
-        refreshed.plan,
-        refreshed.state,
-        preconditioning_state=refreshed.preconditioning_state,
-        transformed_state=refreshed.transformed_state,
-        numeric_version=prepared.numeric_version + 1,
+        template,
+        state,
+        preconditioning_state=preconditioning_state,
+        numeric_version=numeric_version,
     )
+
+
+def _preconditioner_provenance(
+    prepared: PreparedLinearSolve,
+    /,
+) -> dict[str, Any]:
+    state = prepared.preconditioning_state
+    if state is None:
+        return {
+            "preconditioner_plan_id": None,
+            "preconditioner_id": None,
+            "preconditioning_side": None,
+            "preconditioner_refresh": None,
+            "preconditioner_numeric_version": -1,
+            "preconditioner_built_numeric_version": -1,
+            "preconditioner_storage_bytes": 0,
+            "preconditioner_preparation_workspace_bytes": 0,
+            "preconditioner_apply_workspace_bytes_per_rhs": 0,
+            "preconditioner_setup_matvec_count": 0,
+        }
+    return {
+        "preconditioner_plan_id": state.plan.plan_id,
+        "preconditioner_id": state.action.preconditioner_id,
+        "preconditioning_side": state.plan.side,
+        "preconditioner_refresh": state.refresh_kind,
+        "preconditioner_numeric_version": state.numeric_version,
+        "preconditioner_built_numeric_version": state.built_numeric_version,
+        "preconditioner_storage_bytes": state.plan.cost.storage_bytes,
+        "preconditioner_preparation_workspace_bytes": (
+            state.plan.cost.preparation_workspace_bytes
+        ),
+        "preconditioner_apply_workspace_bytes_per_rhs": (
+            state.plan.cost.apply_workspace_bytes_per_rhs
+        ),
+        "preconditioner_setup_matvec_count": state.plan.cost.setup_matvec_count,
+    }
+
+
+def _execution_rhs_layout(
+    prepared: PreparedLinearSolve,
+    rhs_layout: RHSLayout | None,
+    /,
+) -> RHSLayout | None:
+    if rhs_layout is not None and not isinstance(rhs_layout, RHSLayout):
+        raise TypeError("rhs_layout must be an RHSLayout or None.")
+    planned_layout = prepared.plan.rhs_layout
+    if planned_layout is None:
+        return rhs_layout
+    if rhs_layout is not None and rhs_layout.layout_id != planned_layout.layout_id:
+        raise ValueError("Execution rhs_layout must match the prepared plan exactly.")
+    return planned_layout
 
 
 def solve(
@@ -124,9 +348,34 @@ def solve(
             raise ValueError("policy must be omitted when solving prepared state.")
         prepared = problem_or_prepared
     elif isinstance(problem_or_prepared, AbstractLinearProblem):
-        prepared = prepare(problem_or_prepared, policy)
+        if isinstance(policy, LinearSolvePlan):
+            planned_layout = policy.rhs_layout if rhs_layout is None else rhs_layout
+            if planned_layout is None:
+                canonical_rhs, _ = _pack_rhs(
+                    problem_or_prepared.operator.target,
+                    problem_or_prepared.operator.batch_shape,
+                    rhs,
+                )
+                _require_rhs_resources(policy, int(canonical_rhs.shape[-1]))
+        else:
+            planned_layout = rhs_layout
+            if planned_layout is None:
+                _, inferred_layout = _pack_rhs(
+                    problem_or_prepared.operator.target,
+                    problem_or_prepared.operator.batch_shape,
+                    rhs,
+                )
+                if inferred_layout.rhs_shape:
+                    planned_layout = RHSLayout(inferred_layout.rhs_shape)
+        prepared = prepare(
+            problem_or_prepared,
+            policy,
+            rhs_layout=planned_layout,
+        )
+        rhs_layout = planned_layout
     else:
         raise TypeError("Expected an AbstractLinearProblem or PreparedLinearSolve.")
+    declared_layout = _execution_rhs_layout(prepared, rhs_layout)
 
     problem = (
         _stop_problem_arrays(prepared.problem)
@@ -137,7 +386,7 @@ def solve(
         problem.operator.target,
         problem.operator.batch_shape,
         rhs,
-        rhs_layout,
+        declared_layout,
     )
     _require_rhs_resources(prepared.plan, int(canonical_rhs.shape[-1]))
     canonical_rhs, compatibility_residual = _apply_nullspace_compatibility(
@@ -153,7 +402,15 @@ def solve(
             problem.operator.source,
             problem.operator.batch_shape,
             initial_guess,
-            RHSLayout(layout.rhs_shape),
+            (
+                None
+                if not layout.rhs_shape
+                else (
+                    declared_layout
+                    if declared_layout is not None
+                    else RHSLayout(layout.rhs_shape)
+                )
+            ),
         )
         if guess_layout.rhs_shape != layout.rhs_shape:
             raise ValueError("initial_guess RHS axes must match rhs.")
@@ -265,7 +522,12 @@ def solve(
     condition_out = _restore_rhs_axes(
         _rhs_broadcast(backend.condition_estimate, status.shape), layout
     )
-    if prepared.plan.backend in ("native-krylov", "matfree", "lineax"):
+    if prepared.plan.backend in (
+        "native-krylov",
+        "native-block-krylov",
+        "matfree",
+        "lineax",
+    ):
         matvec_count_out = _restore_rhs_axes(
             _rhs_broadcast(backend.matvec_count, status.shape), layout
         )
@@ -276,6 +538,24 @@ def solve(
         zero_counts = jnp.zeros(status.shape, dtype=jnp.int32)
         matvec_count_out = _restore_rhs_axes(zero_counts, layout)
         adjoint_matvec_count_out = matvec_count_out
+    if isinstance(backend, NativeBlockKrylovBackendOutput):
+        effective_block_rank_out = _restore_rhs_axes(
+            _rhs_broadcast(backend.effective_block_rank, status.shape),
+            layout,
+        )
+        deflated_rhs_count_out = _restore_rhs_axes(
+            _rhs_broadcast(backend.deflated_rhs_count, status.shape),
+            layout,
+        )
+    else:
+        effective_block_rank_out = _restore_rhs_axes(
+            jnp.full(status.shape, -1, dtype=jnp.int32),
+            layout,
+        )
+        deflated_rhs_count_out = _restore_rhs_axes(
+            jnp.zeros(status.shape, dtype=jnp.int32),
+            layout,
+        )
     value = _unpack_value(problem.operator.source, canonical_value, layout)
     diagnostics = LinearSolveDiagnostics(
         residual_norm=residual_out,
@@ -300,6 +580,8 @@ def solve(
         ),
         matvec_count=matvec_count_out,
         adjoint_matvec_count=adjoint_matvec_count_out,
+        effective_block_rank=effective_block_rank_out,
+        deflated_rhs_count=deflated_rhs_count_out,
         singular_values=backend.singular_values,
     )
     provenance = LinearSolveProvenance(
@@ -310,6 +592,17 @@ def solve(
         reason=prepared.plan.reason,
         rejected=prepared.plan.rejected,
         prepared=True,
+        rhs_mode=(
+            "true-block"
+            if prepared.plan.backend == "native-block-krylov"
+            else "pseudo-block"
+            if layout.rhs_shape
+            else "single"
+        ),
+        operator_numeric_version=prepared.numeric_version,
+        recycling_capacity=prepared.plan.recycling_capacity,
+        recycling_state_bytes=prepared.plan.recycling_state_bytes,
+        **_preconditioner_provenance(prepared),
     )
     if prepared.plan.policy.failure.mode == "error":
         value = _error_on_failure(value, status_out)
@@ -324,7 +617,11 @@ def solve_many(
     initial_guess: PyTree[Any] | None = None,
 ) -> LinearSolveResult:
     """Solve shared trailing RHS axes and broadcast them over operator batches."""
-    rhs_layout = _shared_rhs_layout(prepared.problem.operator.target, rhs)
+    inferred_layout = _shared_rhs_layout(prepared.problem.operator.target, rhs)
+    planned_layout = prepared.plan.rhs_layout
+    if planned_layout is not None and planned_layout.shape != inferred_layout.shape:
+        raise ValueError("solve_many RHS axes must match the prepared plan exactly.")
+    rhs_layout = inferred_layout if planned_layout is None else planned_layout
     return solve(
         prepared,
         rhs,
@@ -339,20 +636,35 @@ def solve_transpose(
     /,
     *,
     policy: LinearSolvePolicy | None = None,
+    rhs_layout: RHSLayout | None = None,
 ) -> LinearSolveResult:
-    if (
-        isinstance(problem_or_prepared, PreparedLinearSolve)
-        and not problem_or_prepared.problem.operator.batch_shape
-        and provider_for(problem_or_prepared.plan.backend).supports_transformed(
-            problem_or_prepared.state
-        )
-    ):
+    """Solve a transposed system with explicitly declared trailing RHS axes.
+
+    When prepared state has a planned RHS layout, ``rhs_layout`` must match it
+    exactly and the planned layout remains authoritative.
+    """
+    declared_layout = rhs_layout
+    if isinstance(problem_or_prepared, PreparedLinearSolve):
         if policy is not None:
             raise ValueError("policy must be omitted for prepared transformed solves.")
-        return _solve_prepared_transformed(problem_or_prepared, rhs, adjoint_mode=False)
+        declared_layout = _execution_rhs_layout(problem_or_prepared, rhs_layout)
+        if not problem_or_prepared.problem.operator.batch_shape and provider_for(
+            problem_or_prepared.plan.backend
+        ).supports_transformed(problem_or_prepared.state):
+            return _solve_prepared_transformed(
+                problem_or_prepared,
+                rhs,
+                rhs_layout=declared_layout,
+                adjoint_mode=False,
+            )
     problem, selected_policy = _transformed_problem(problem_or_prepared, policy)
     transformed = _transformed_linear_system(problem, adjoint_mode=False)
-    return solve(transformed, rhs, policy=selected_policy)
+    return solve(
+        transformed,
+        rhs,
+        policy=selected_policy,
+        rhs_layout=declared_layout,
+    )
 
 
 def solve_adjoint(
@@ -361,20 +673,35 @@ def solve_adjoint(
     /,
     *,
     policy: LinearSolvePolicy | None = None,
+    rhs_layout: RHSLayout | None = None,
 ) -> LinearSolveResult:
-    if (
-        isinstance(problem_or_prepared, PreparedLinearSolve)
-        and not problem_or_prepared.problem.operator.batch_shape
-        and provider_for(problem_or_prepared.plan.backend).supports_transformed(
-            problem_or_prepared.state
-        )
-    ):
+    """Solve an adjoint system with explicitly declared trailing RHS axes.
+
+    When prepared state has a planned RHS layout, ``rhs_layout`` must match it
+    exactly and the planned layout remains authoritative.
+    """
+    declared_layout = rhs_layout
+    if isinstance(problem_or_prepared, PreparedLinearSolve):
         if policy is not None:
             raise ValueError("policy must be omitted for prepared transformed solves.")
-        return _solve_prepared_transformed(problem_or_prepared, rhs, adjoint_mode=True)
+        declared_layout = _execution_rhs_layout(problem_or_prepared, rhs_layout)
+        if not problem_or_prepared.problem.operator.batch_shape and provider_for(
+            problem_or_prepared.plan.backend
+        ).supports_transformed(problem_or_prepared.state):
+            return _solve_prepared_transformed(
+                problem_or_prepared,
+                rhs,
+                rhs_layout=declared_layout,
+                adjoint_mode=True,
+            )
     problem, selected_policy = _transformed_problem(problem_or_prepared, policy)
     transformed = _transformed_linear_system(problem, adjoint_mode=True)
-    return solve(transformed, rhs, policy=selected_policy)
+    return solve(
+        transformed,
+        rhs,
+        policy=selected_policy,
+        rhs_layout=declared_layout,
+    )
 
 
 def _solve_prepared_transformed(
@@ -382,6 +709,7 @@ def _solve_prepared_transformed(
     rhs: PyTree[Any],
     /,
     *,
+    rhs_layout: RHSLayout | None,
     adjoint_mode: bool,
 ) -> LinearSolveResult:
     problem = (
@@ -401,7 +729,9 @@ def _solve_prepared_transformed(
         transformed_operator.target,
         transformed_operator.batch_shape,
         rhs,
+        rhs_layout,
     )
+    _require_rhs_resources(prepared.plan, int(canonical_rhs.shape[-1]))
     canonical_rhs, compatibility_residual = _apply_nullspace_compatibility(
         transformed_problem,
         canonical_rhs,
@@ -514,6 +844,11 @@ def _solve_prepared_transformed(
         reason="reused prepared direct factorization",
         rejected=prepared.plan.rejected,
         prepared=True,
+        rhs_mode="pseudo-block" if layout.rhs_shape else "single",
+        operator_numeric_version=prepared.numeric_version,
+        recycling_capacity=prepared.plan.recycling_capacity,
+        recycling_state_bytes=prepared.plan.recycling_state_bytes,
+        **_preconditioner_provenance(prepared),
     )
     return LinearSolveResult(value, status_out, diagnostics, provenance)
 
@@ -552,11 +887,25 @@ def _transformed_linear_system(
     else:
         right = _transpose_right_subspace(policy.left, problem.operator.target)
         left = _transpose_left_subspace(policy.right, problem.operator.source)
+    certificate = (
+        None
+        if policy.certificate is None
+        else KernelCertificate(
+            operator,
+            right,
+            left=left,
+            evidence=policy.certificate.evidence,
+            scope=policy.certificate.scope,
+            complete=policy.certificate.complete,
+            tolerance=policy.certificate.tolerance,
+        )
+    )
     return LinearSystem(
         operator,
         nullspace_policy=NullspacePolicy(
             right=right,
             left=left,
+            certificate=certificate,
             compatibility=policy.compatibility,
             gauge=policy.gauge,
         ),
@@ -619,7 +968,10 @@ def _require_rhs_resources(
             f"bytes for {rhs_count} right-hand sides, exceeding the policy budget "
             f"{available_krylov}."
         )
-    required_workspace = rhs_count * estimate.solve_workspace_bytes_per_rhs
+    required_workspace = rhs_count * (
+        estimate.solve_workspace_bytes_per_rhs
+        + estimate.preconditioner_apply_workspace_bytes_per_rhs
+    )
     available_workspace = plan.policy.resources.workspace_bytes
     if required_workspace > available_workspace:
         raise ValueError(
@@ -735,7 +1087,9 @@ def _shared_rhs_layout(space, rhs: PyTree[Any], /) -> RHSLayout:
             trailing = remainder
         elif trailing != remainder:
             raise ValueError("All solve_many leaves must share trailing RHS axes.")
-    return RHSLayout(() if trailing is None else trailing)
+    if trailing is None:
+        raise ValueError("solve_many requires at least one right-hand-side leaf.")
+    return RHSLayout(trailing)
 
 
 def _canonical_action(
@@ -842,7 +1196,7 @@ def _flatten_coordinate_columns(
             "Canonical coordinate batches must end in (space.size, rhs_count)."
         )
     moved = jnp.moveaxis(array, -2, -1)
-    return moved.reshape((-1, space.size)), moved.shape[:-1]
+    return moved.reshape((prod(moved.shape[:-1]), space.size)), moved.shape[:-1]
 
 
 def _rhs_broadcast(value: Array, shape: tuple[int, ...], /) -> Array:
@@ -1148,8 +1502,21 @@ def _callable_gmres(
     from .backends._native_krylov import _fgmres_raw
 
     dimension = int(rhs.shape[0])
-    max_steps = plan.policy.tolerance.max_steps or dimension
-    restart = min(30, max_steps, dimension)
+    if plan.backend == "native-block-krylov":
+        # A full, unrestarted Krylov basis is the conservative fixed-capacity
+        # contract for exact implicit tangents. The primal block iteration
+        # limit cannot safely bound a lower-rank independent-column tangent.
+        max_steps = dimension
+        restart = dimension
+        stagnation_iterations = dimension + 1
+        relative = 0.0
+        absolute = 0.0
+    else:
+        max_steps = plan.policy.tolerance.max_steps or dimension
+        restart = min(30, max_steps, dimension)
+        stagnation_iterations = max_steps
+        relative = plan.policy.tolerance.relative
+        absolute = plan.policy.tolerance.absolute
 
     def inner(left, right):
         return jnp.vdot(left, right)
@@ -1165,9 +1532,9 @@ def _callable_gmres(
         identity,
         max_steps,
         restart,
-        max_steps,
-        plan.policy.tolerance.relative,
-        plan.policy.tolerance.absolute,
+        stagnation_iterations,
+        relative,
+        absolute,
     )
     return value
 
@@ -1180,10 +1547,14 @@ def _stop_problem_arrays(problem: _ProblemT, /) -> _ProblemT:
 
 
 __all__ = [
+    "bind_numeric",
     "prepare",
+    "prepare_template",
     "refresh",
+    "refresh_recycling",
     "solve",
     "solve_adjoint",
     "solve_many",
+    "solve_recycled",
     "solve_transpose",
 ]

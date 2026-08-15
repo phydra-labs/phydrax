@@ -10,6 +10,7 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array
 
 from ..._model import AbstractArrayModel
@@ -204,7 +205,7 @@ def design_matmul(design: Design, coefficients: Array, /) -> Array:
     """Apply a case-flattened design to ``(case, feature, output)`` weights."""
     if not design.sparse:
         assert design.dense is not None
-        return jnp.einsum("cnf,cfo->cno", design.dense, coefficients)
+        return oe.contract("cnf,cfo->cno", design.dense, coefficients)
     assert design.values is not None
     assert design.indices is not None
     assert design.entry_valid is not None
@@ -222,7 +223,7 @@ def design_transpose_matmul(design: Design, values: Array, /) -> Array:
     """Apply the conjugate transpose to ``(case, sample, output)`` values."""
     if not design.sparse:
         assert design.dense is not None
-        return jnp.einsum("cnf,cno->cfo", jnp.conj(design.dense), values)
+        return oe.contract("cnf,cno->cfo", jnp.conj(design.dense), values)
     assert design.values is not None
     assert design.indices is not None
     assert design.entry_valid is not None
@@ -255,7 +256,7 @@ def weighted_feature_gram(design: Design, weights: Array, /) -> Array:
     """Return exact per-output ``Xᴴ W X`` matrices without densifying sparse rows."""
     if not design.sparse:
         assert design.dense is not None
-        return jnp.einsum(
+        return oe.contract(
             "cnf,cno,cng->cofg",
             jnp.conj(design.dense),
             weights,
@@ -371,7 +372,7 @@ def linear_prediction(
         raise ValueError("Prediction input must begin with the fitted case shape.")
     sample_shape = tuple(int(size) for size in values.shape[len(case_shape) : -1])
     values_cases = values.reshape((cases,) + sample_shape + (features,))
-    result = jax.vmap(lambda a, b, c: jnp.einsum("...f,fo->...o", a, b) + c)(
+    result = jax.vmap(lambda a, b, c: oe.contract("...f,fo->...o", a, b) + c)(
         values_cases, beta, bias
     )
     return result.reshape(case_shape + sample_shape + target_shape)

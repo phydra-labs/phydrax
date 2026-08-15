@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import cast
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -43,6 +45,8 @@ def test_rectilinear_sampling_identity_and_periodic_cell_translation(spatial_sha
         boundary=boundary,
         axis_nodes=nodes,
     )
+    identity = cast(jax.Array, identity)
+    translated = cast(jax.Array, translated)
     expected = values
     for axis in range(dimensions):
         expected = jnp.roll(expected, -1, axis=axis)
@@ -137,6 +141,7 @@ def test_rectilinear_sampling_promotes_integral_inputs_before_interpolation():
         spatial_ndim=1,
         boundary=("clamp",),
     )
+    result = cast(jax.Array, result)
 
     assert jnp.issubdtype(result.dtype, jnp.inexact)
     assert jnp.allclose(result, jnp.array([[1.0]]))
@@ -231,6 +236,7 @@ def test_vector_covector_and_rank_two_tensor_transformation_laws(variance, compo
         axis_nodes=(x, y),
         field_spec=phx.metrix.TensorType(variance),
     )
+    transformed = cast(jax.Array, transformed)
     if variance == ("contravariant",):
         expected = components / scales
     elif variance == ("covariant",):

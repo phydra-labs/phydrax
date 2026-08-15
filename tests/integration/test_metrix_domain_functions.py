@@ -109,7 +109,9 @@ def test_riemannian_measure_multiplies_existing_component_weights():
     )
     points = _points([[1.5, 0.1], [2.0, -0.2], [2.5, 0.4]])
 
-    weights = jnp.asarray(component.weight_all(points).data)
+    weight = component.weight_all
+    assert weight is not None
+    weights = jnp.asarray(weight(points).data)
     assert jnp.allclose(weights, jnp.array([1.5, 2.0, 2.5]))
 
 

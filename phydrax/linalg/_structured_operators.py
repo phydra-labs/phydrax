@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from math import prod
 from typing import Any, Literal
 
@@ -13,20 +13,29 @@ import jax
 import jax.core as jax_core
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, PyTree
 
 from ._operators import (
+    _array_value,
+    _assemble_operator_diagonal,
     _generic_adjoint,
     _id,
     _validate_action_dtype,
+    _validate_properties,
     AbstractLinearOperator,
+    AdjointLinearOperator,
     DenseLinearOperator,
     DiagonalLinearOperator,
     IdentityLinearOperator,
 )
+from ._preconditioners import AbstractPreconditioner
 from ._properties import OperatorCapabilities, OperatorProperties, PropertyEvidence
 from ._space_extensions import TensorProductSpace
 from ._spaces import (
+    _coordinate_dtype,
+    _coordinate_pairing_weights,
+    _has_diagonal_pairing,
     _has_euclidean_pairing,
     AbstractVectorSpace,
     ArraySpace,
@@ -159,7 +168,10 @@ class PermutationLinearOperator(AbstractLinearOperator):
             evidence={"rank": "construction"},
         )
         self.capabilities = OperatorCapabilities(
-            transpose=True, adjoint=True, materialize=True
+            transpose=True,
+            adjoint=True,
+            materialize=True,
+            diagonal_assembly=True,
         )
         self.batch_shape = ()
         self.operator_id = _id(
@@ -181,6 +193,11 @@ class PermutationLinearOperator(AbstractLinearOperator):
         dtype = self.source.structure()
         coordinate_dtype = jax.tree.leaves(dtype)[0].dtype
         return jnp.eye(self.source.size, dtype=coordinate_dtype)[self.permutation]
+
+    def _assemble_diagonal(self, /) -> Array:
+        dtype = self.source.structure()
+        coordinate_dtype = jax.tree.leaves(dtype)[0].dtype
+        return (self.permutation == jnp.arange(self.source.size)).astype(coordinate_dtype)
 
 
 class TriangularLinearOperator(AbstractLinearOperator):
@@ -229,7 +246,10 @@ class TriangularLinearOperator(AbstractLinearOperator):
             evidence=_construction_evidence(triangular=True, rank=rank),
         )
         self.capabilities = OperatorCapabilities(
-            transpose=True, adjoint=True, materialize=True
+            transpose=True,
+            adjoint=True,
+            materialize=True,
+            diagonal_assembly=True,
         )
         self.batch_shape = ()
         self.operator_id = _id(
@@ -253,6 +273,9 @@ class TriangularLinearOperator(AbstractLinearOperator):
 
     def _materialize(self, /) -> Array:
         return self.matrix
+
+    def _assemble_diagonal(self, /) -> Array:
+        return jnp.diagonal(self.matrix)
 
 
 class TridiagonalLinearOperator(AbstractLinearOperator):
@@ -295,7 +318,10 @@ class TridiagonalLinearOperator(AbstractLinearOperator):
             evidence={},
         )
         self.capabilities = OperatorCapabilities(
-            transpose=True, adjoint=True, materialize=True
+            transpose=True,
+            adjoint=True,
+            materialize=True,
+            diagonal_assembly=True,
         )
         self.batch_shape = ()
         self.operator_id = _id(
@@ -323,6 +349,9 @@ class TridiagonalLinearOperator(AbstractLinearOperator):
         matrix = jnp.diag(self.diagonal)
         matrix = matrix + jnp.diag(self.lower, -1)
         return matrix + jnp.diag(self.upper, 1)
+
+    def _assemble_diagonal(self, /) -> Array:
+        return self.diagonal
 
 
 class BandedLinearOperator(AbstractLinearOperator):
@@ -366,7 +395,10 @@ class BandedLinearOperator(AbstractLinearOperator):
             evidence=_construction_evidence(diagonal=diagonal, triangular=triangular),
         )
         self.capabilities = OperatorCapabilities(
-            transpose=True, adjoint=True, materialize=True
+            transpose=True,
+            adjoint=True,
+            materialize=True,
+            diagonal_assembly=True,
         )
         self.batch_shape = ()
         self.operator_id = _id(
@@ -435,6 +467,173 @@ class BandedLinearOperator(AbstractLinearOperator):
         values = self.bands[clipped, columns]
         return jnp.where(valid, values, 0)
 
+    def _assemble_diagonal(self, /) -> Array:
+        return self.bands[self.upper_bandwidth]
+
+
+class LocalBlockDiagonalLinearOperator(AbstractLinearOperator):
+    """Homogeneous local blocks forming one global structured linear action."""
+
+    blocks: Array
+    source: ArraySpace
+    target: ArraySpace
+    num_blocks: int = eqx.field(static=True)
+    input_block_size: int = eqx.field(static=True)
+    output_block_size: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        blocks: ArrayLike,
+        /,
+        *,
+        source: ArraySpace | None = None,
+        target: ArraySpace | None = None,
+        properties: OperatorProperties | None = None,
+        operator_id: str | None = None,
+    ):
+        blocks_ = jnp.asarray(blocks)
+        if blocks_.ndim != 3:
+            raise ValueError(
+                "blocks must have shape "
+                "(num_blocks, output_block_size, input_block_size)."
+            )
+        if any(int(size) < 1 for size in blocks_.shape):
+            raise ValueError("Local block dimensions must be positive.")
+        if not jnp.issubdtype(blocks_.dtype, jnp.inexact):
+            blocks_ = blocks_.astype(float)
+        num_blocks, output_size, input_size = map(int, blocks_.shape)
+        source_ = (
+            ArraySpace((num_blocks, input_size), dtype=blocks_.dtype)
+            if source is None
+            else source
+        )
+        target_ = (
+            ArraySpace((num_blocks, output_size), dtype=blocks_.dtype)
+            if target is None
+            else target
+        )
+        if not isinstance(source_, ArraySpace) or not isinstance(target_, ArraySpace):
+            raise TypeError("Local block source and target must be ArraySpace values.")
+        if source_.shape != (num_blocks, input_size):
+            raise ValueError("source shape must match the local block input layout.")
+        if target_.shape != (num_blocks, output_size):
+            raise ValueError("target shape must match the local block output layout.")
+        _validate_action_dtype(blocks_.dtype, source_, target_, "local blocks")
+        _validate_action_dtype(blocks_.dtype, target_, source_, "transposed local blocks")
+
+        diagonal = input_size == output_size == 1 and source_.compatible(target_)
+        if properties is None:
+            properties_ = OperatorProperties(
+                diagonal=diagonal,
+                block_diagonal=True,
+                evidence=_construction_evidence(
+                    diagonal=diagonal,
+                    block_diagonal=True,
+                ),
+            )
+        else:
+            if not isinstance(properties, OperatorProperties):
+                raise TypeError("properties must be OperatorProperties or None.")
+            evidence = dict(properties.evidence)
+            evidence["block_diagonal"] = "construction"
+            properties_ = OperatorProperties(
+                diagonal=properties.diagonal,
+                triangular=properties.triangular,
+                self_adjoint=properties.self_adjoint,
+                positive_definite=properties.positive_definite,
+                positive_semidefinite=properties.positive_semidefinite,
+                block_diagonal=True,
+                rank=properties.rank,
+                evidence=evidence,
+            )
+        _validate_properties(properties_, source_, target_)
+
+        self.blocks = blocks_
+        self.source = source_
+        self.target = target_
+        self.num_blocks = num_blocks
+        self.input_block_size = input_size
+        self.output_block_size = output_size
+        self.properties = properties_
+        self.capabilities = OperatorCapabilities(
+            transpose=True,
+            adjoint=True,
+            materialize=True,
+            diagonal_assembly=source_.compatible(target_),
+        )
+        self.batch_shape = ()
+        self.operator_id = _id(
+            operator_id,
+            {
+                "kind": "local-block-diagonal",
+                "source": source_.space_id,
+                "target": target_.space_id,
+                "num_blocks": num_blocks,
+                "input_block_size": input_size,
+                "output_block_size": output_size,
+            },
+        )
+
+    @staticmethod
+    def _apply_blocks(
+        blocks: Array,
+        source: ArraySpace,
+        target: ArraySpace,
+        vector: PyTree[Any],
+        /,
+    ) -> Array:
+        value, rhs_shape = _array_value(source, (), vector, "vector")
+        columns = value.reshape(
+            (blocks.shape[0], blocks.shape[2], prod(rhs_shape) if rhs_shape else 1)
+        )
+        image = oe.contract("boi,bir->bor", blocks, columns)
+        return image.reshape(target.shape + rhs_shape)
+
+    def mv(self, vector: PyTree[Any], /) -> Array:
+        return self._apply_blocks(self.blocks, self.source, self.target, vector)
+
+    def transpose_mv(self, vector: PyTree[Any], /) -> Array:
+        return self._apply_blocks(
+            jnp.swapaxes(self.blocks, -1, -2),
+            self.target,
+            self.source,
+            vector,
+        )
+
+    def adjoint_mv(self, vector: PyTree[Any], /) -> Array:
+        if not (
+            _has_diagonal_pairing(self.source) and _has_diagonal_pairing(self.target)
+        ):
+            return _generic_adjoint(self, vector)
+        value, rhs_shape = _array_value(self.target, (), vector, "vector")
+        target_weights = _coordinate_pairing_weights(self.target).reshape(
+            self.target.shape + (1,) * len(rhs_shape)
+        )
+        weighted = value * target_weights
+        image = self._apply_blocks(
+            jnp.conj(jnp.swapaxes(self.blocks, -1, -2)),
+            self.target,
+            self.source,
+            weighted,
+        )
+        source_weights = _coordinate_pairing_weights(self.source).reshape(
+            self.source.shape + (1,) * len(rhs_shape)
+        )
+        return image / source_weights
+
+    def _materialize(self, /) -> Array:
+        identity = jnp.eye(self.num_blocks, dtype=self.blocks.dtype)
+        assembled = identity[:, :, None, None] * self.blocks[:, None, :, :]
+        return jnp.swapaxes(assembled, 1, 2).reshape(
+            (
+                self.num_blocks * self.output_block_size,
+                self.num_blocks * self.input_block_size,
+            )
+        )
+
+    def _assemble_diagonal(self, /) -> Array:
+        return jnp.diagonal(self.blocks, axis1=-2, axis2=-1).reshape((-1,))
+
 
 class BlockDiagonalLinearOperator(AbstractLinearOperator):
     """Exact block diagonal operator preserving block-vector structure."""
@@ -483,6 +682,10 @@ class BlockDiagonalLinearOperator(AbstractLinearOperator):
             transpose=all(block.capabilities.transpose for block in blocks_),
             adjoint=all(block.capabilities.adjoint for block in blocks_),
             materialize=all(block.capabilities.materialize for block in blocks_),
+            diagonal_assembly=(
+                source.compatible(target)
+                and all(block.capabilities.diagonal_assembly for block in blocks_)
+            ),
         )
         self.batch_shape = ()
         self.operator_id = _id(
@@ -526,6 +729,11 @@ class BlockDiagonalLinearOperator(AbstractLinearOperator):
             )
         return jnp.concatenate(tuple(rows), axis=0)
 
+    def _assemble_diagonal(self, /) -> Array:
+        return jnp.concatenate(
+            tuple(_assemble_operator_diagonal(block) for block in self.blocks)
+        )
+
 
 class LowRankLinearOperator(AbstractLinearOperator):
     """Rectangular operator ``U Vᴴ`` with explicit rank factors."""
@@ -561,7 +769,10 @@ class LowRankLinearOperator(AbstractLinearOperator):
             evidence={"rank": "asserted"} if rank is not None else {},
         )
         self.capabilities = OperatorCapabilities(
-            transpose=True, adjoint=True, materialize=True
+            transpose=True,
+            adjoint=True,
+            materialize=True,
+            diagonal_assembly=source_.compatible(target_),
         )
         self.batch_shape = ()
         self.operator_id = _id(
@@ -586,6 +797,12 @@ class LowRankLinearOperator(AbstractLinearOperator):
 
     def _materialize(self, /) -> Array:
         return self.left_factor @ jnp.conj(self.right_factor.T)
+
+    def _assemble_diagonal(self, /) -> Array:
+        return jnp.sum(
+            self.left_factor * jnp.conj(self.right_factor),
+            axis=1,
+        )
 
 
 class SymmetricLowRankLinearOperator(AbstractLinearOperator):
@@ -652,7 +869,10 @@ class SymmetricLowRankLinearOperator(AbstractLinearOperator):
             ),
         )
         self.capabilities = OperatorCapabilities(
-            transpose=True, adjoint=True, materialize=True
+            transpose=True,
+            adjoint=True,
+            materialize=True,
+            diagonal_assembly=True,
         )
         self.batch_shape = ()
         self.operator_id = _id(
@@ -676,6 +896,273 @@ class SymmetricLowRankLinearOperator(AbstractLinearOperator):
 
     def _materialize(self, /) -> Array:
         return (self.factor * self.weights) @ jnp.conj(self.factor.T)
+
+    def _assemble_diagonal(self, /) -> Array:
+        return jnp.sum(
+            self.factor * jnp.conj(self.factor) * self.weights,
+            axis=1,
+        )
+
+
+class TwoSidedScaledLinearOperator(AbstractLinearOperator):
+    """Coordinate transform ``diag(left) A diag(right)`` without materialization."""
+
+    operator: AbstractLinearOperator
+    left_scale: Array
+    right_scale: Array
+    congruence: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        operator: AbstractLinearOperator,
+        left_scale: ArrayLike,
+        right_scale: ArrayLike | None = None,
+        /,
+        *,
+        congruence: bool = False,
+        operator_id: str | None = None,
+    ):
+        if not isinstance(operator, AbstractLinearOperator):
+            raise TypeError("operator must be an AbstractLinearOperator.")
+        if operator.batch_shape:
+            raise ValueError(
+                "Two-sided scaling currently requires an unbatched operator."
+            )
+        if congruence and right_scale is not None:
+            raise ValueError(
+                "A congruence transform derives its right scale from the left."
+            )
+        if not congruence and right_scale is None:
+            raise ValueError("A general two-sided transform requires right_scale.")
+        left = jnp.asarray(left_scale)
+        right = left if congruence else jnp.asarray(right_scale)
+        dtype = _coordinate_dtype(operator.source)
+        if _coordinate_dtype(operator.target) != dtype:
+            raise TypeError("Source and target coordinate dtypes must match.")
+        if congruence and (
+            not operator.source.compatible(operator.target)
+            or not _has_diagonal_pairing(operator.source)
+            or np.issubdtype(dtype, np.complexfloating)
+        ):
+            raise ValueError(
+                "Congruence scaling requires a real, diagonal-pairing endomorphism."
+            )
+        if left.shape != (operator.target.size,) or right.shape != (
+            operator.source.size,
+        ):
+            raise ValueError("Scaling arrays must match target and source dimensions.")
+        if np.dtype(left.dtype) != dtype or np.dtype(right.dtype) != dtype:
+            raise TypeError("Scaling dtype must match the operator coordinate dtype.")
+        coefficients = jnp.concatenate((left, right))
+        coefficients = eqx.error_if(
+            coefficients,
+            jnp.any(~jnp.isfinite(coefficients)) | jnp.any(coefficients == 0),
+            "Two-sided scaling coefficients must be finite and nonzero.",
+        )
+        left = coefficients[: operator.target.size]
+        right = coefficients[operator.target.size :]
+        preserves_diagonal = operator.source.compatible(
+            operator.target
+        ) and operator.properties.certifies("diagonal")
+        preserves_triangular = operator.source.compatible(
+            operator.target
+        ) and operator.properties.certifies("triangular")
+        preserves_blocks = operator.properties.certifies("block_diagonal")
+        rank = operator.properties.rank if operator.properties.certifies("rank") else None
+        self_adjoint = congruence and operator.properties.certifies("self_adjoint")
+        positive_definite = congruence and operator.properties.certifies(
+            "positive_definite"
+        )
+        positive_semidefinite = congruence and operator.properties.certifies(
+            "positive_semidefinite"
+        )
+        claims = {
+            "diagonal": preserves_diagonal,
+            "triangular": preserves_triangular,
+            "self_adjoint": self_adjoint,
+            "positive_definite": positive_definite,
+            "positive_semidefinite": positive_semidefinite,
+            "block_diagonal": preserves_blocks,
+            "rank": rank,
+        }
+        self.operator = operator
+        self.left_scale = left
+        self.right_scale = right
+        self.congruence = bool(congruence)
+        self.source = operator.source
+        self.target = operator.target
+        self.properties = OperatorProperties(
+            diagonal=preserves_diagonal,
+            triangular=preserves_triangular,
+            self_adjoint=self_adjoint,
+            positive_definite=positive_definite,
+            positive_semidefinite=positive_semidefinite,
+            block_diagonal=preserves_blocks,
+            rank=rank,
+            evidence={
+                name: "transformed"
+                for name, value in claims.items()
+                if value is not False and value is not None
+            },
+        )
+        self.capabilities = OperatorCapabilities(
+            transpose=operator.capabilities.transpose,
+            adjoint=operator.capabilities.adjoint,
+            materialize=operator.capabilities.materialize,
+            diagonal_assembly=(
+                operator.source.compatible(operator.target)
+                and operator.capabilities.diagonal_assembly
+            ),
+        )
+        self.batch_shape = ()
+        self.operator_id = _id(
+            operator_id,
+            {
+                "kind": "two-sided-scaled",
+                "operator": operator.operator_id,
+                "source": operator.source.space_id,
+                "target": operator.target.space_id,
+                "congruence": self.congruence,
+            },
+        )
+
+    def mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
+        coordinates = self.source.flatten(vector)
+        scaled = self.source.unflatten(self.right_scale * coordinates)
+        result = self.target.flatten(self.operator.mv(scaled))
+        return self.target.unflatten(self.left_scale * result)
+
+    def transpose_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
+        coordinates = self.target.flatten(vector)
+        scaled = self.target.unflatten(self.left_scale * coordinates)
+        result = self.source.flatten(self.operator.transpose_mv(scaled))
+        return self.source.unflatten(self.right_scale * result)
+
+    def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
+        coordinates = self.target.flatten(vector)
+        scaled = self.target.unflatten(jnp.conj(self.left_scale) * coordinates)
+        result = self.source.flatten(self.operator.adjoint_mv(scaled))
+        return self.source.unflatten(jnp.conj(self.right_scale) * result)
+
+    def _materialize(self, /) -> Array:
+        return (
+            self.left_scale[:, None]
+            * self.operator._materialize()
+            * self.right_scale[None, :]
+        )
+
+    def _assemble_diagonal(self, /) -> Array:
+        diagonal = _assemble_operator_diagonal(self.operator)
+        return self.left_scale * diagonal * self.right_scale
+
+
+class BasePlusLowRankLinearOperator(AbstractLinearOperator):
+    """Endomorphism ``B + U C Vᴴ`` with an arbitrary reusable base operator."""
+
+    base: AbstractLinearOperator
+    left_factor: Array
+    core: Array
+    right_factor: Array
+
+    def __init__(
+        self,
+        base: AbstractLinearOperator,
+        left_factor: ArrayLike,
+        right_factor: ArrayLike | None = None,
+        core: ArrayLike | None = None,
+        /,
+        *,
+        properties: OperatorProperties | None = None,
+        operator_id: str | None = None,
+    ):
+        if not isinstance(base, AbstractLinearOperator):
+            raise TypeError("base must be an AbstractLinearOperator.")
+        if base.batch_shape or not base.source.compatible(base.target):
+            raise ValueError(
+                "BasePlusLowRankLinearOperator requires an unbatched endomorphism base."
+            )
+        left = jnp.asarray(left_factor)
+        right = left if right_factor is None else jnp.asarray(right_factor)
+        if left.ndim != 2 or right.ndim != 2 or left.shape != right.shape:
+            raise ValueError("Low-rank factors must have matching shape (n, rank).")
+        if left.shape[1] < 1:
+            raise ValueError("Low-rank factors must contain at least one column.")
+        if left.shape[0] != base.source.size:
+            raise ValueError("Low-rank factor rows must match the base dimension.")
+        dtype = _coordinate_dtype(base.source)
+        if np.dtype(left.dtype) != dtype or np.dtype(right.dtype) != dtype:
+            raise TypeError("Low-rank factor dtype must match the base coordinate dtype.")
+        rank = int(left.shape[1])
+        core_ = jnp.eye(rank, dtype=dtype) if core is None else jnp.asarray(core)
+        if core_.shape != (rank, rank) or np.dtype(core_.dtype) != dtype:
+            raise ValueError(
+                "Low-rank core must have shape (rank, rank) and coordinate dtype."
+            )
+        coefficients = jnp.concatenate(
+            (left.reshape(-1), right.reshape(-1), core_.reshape(-1))
+        )
+        coefficients = eqx.error_if(
+            coefficients,
+            jnp.any(~jnp.isfinite(coefficients)),
+            "Low-rank update coefficients must be finite.",
+        )
+        left_size = left.size
+        right_size = right.size
+        left = coefficients[:left_size].reshape(left.shape)
+        right = coefficients[left_size : left_size + right_size].reshape(right.shape)
+        core_ = coefficients[left_size + right_size :].reshape(core_.shape)
+        properties_ = OperatorProperties() if properties is None else properties
+        _validate_properties(properties_, base.source, base.target)
+        self.base = base
+        self.left_factor = left
+        self.core = core_
+        self.right_factor = right
+        self.source = base.source
+        self.target = base.target
+        self.properties = properties_
+        self.capabilities = OperatorCapabilities(
+            transpose=base.capabilities.transpose,
+            adjoint=base.capabilities.adjoint,
+            materialize=base.capabilities.materialize,
+        )
+        self.batch_shape = ()
+        self.operator_id = _id(
+            operator_id,
+            {
+                "kind": "base-plus-low-rank",
+                "base": base.operator_id,
+                "space": base.source.space_id,
+                "rank": rank,
+            },
+        )
+
+    @property
+    def rank(self) -> int:
+        return int(self.left_factor.shape[1])
+
+    def mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
+        coordinates = self.source.flatten(vector)
+        update = self.left_factor @ (
+            self.core @ (jnp.conj(self.right_factor.T) @ coordinates)
+        )
+        base_value = self.target.flatten(self.base.mv(vector))
+        return self.target.unflatten(base_value + update)
+
+    def transpose_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
+        coordinates = self.target.flatten(vector)
+        update = jnp.conj(self.right_factor) @ (
+            self.core.T @ (self.left_factor.T @ coordinates)
+        )
+        base_value = self.source.flatten(self.base.transpose_mv(vector))
+        return self.source.unflatten(base_value + update)
+
+    def adjoint_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
+        return _generic_adjoint(self, vector)
+
+    def _materialize(self, /) -> Array:
+        return self.base._materialize() + self.left_factor @ (
+            self.core @ jnp.conj(self.right_factor.T)
+        )
 
 
 class DiagonalPlusLowRankLinearOperator(AbstractLinearOperator):
@@ -724,7 +1211,10 @@ class DiagonalPlusLowRankLinearOperator(AbstractLinearOperator):
         self.nonsingular_diagonal = nonsingular
         self.properties = OperatorProperties()
         self.capabilities = OperatorCapabilities(
-            transpose=True, adjoint=True, materialize=True
+            transpose=True,
+            adjoint=True,
+            materialize=True,
+            diagonal_assembly=True,
         )
         self.batch_shape = ()
         self.operator_id = _id(
@@ -751,6 +1241,13 @@ class DiagonalPlusLowRankLinearOperator(AbstractLinearOperator):
 
     def _materialize(self, /) -> Array:
         return jnp.diag(self.diagonal) + self.left_factor @ jnp.conj(self.right_factor.T)
+
+    def _assemble_diagonal(self, /) -> Array:
+        update = jnp.sum(
+            self.left_factor * jnp.conj(self.right_factor),
+            axis=1,
+        )
+        return self.diagonal + update
 
 
 class KroneckerLinearOperator(AbstractLinearOperator):
@@ -789,6 +1286,10 @@ class KroneckerLinearOperator(AbstractLinearOperator):
             transpose=all(factor.capabilities.transpose for factor in factors_),
             adjoint=all(factor.capabilities.adjoint for factor in factors_),
             materialize=all(factor.capabilities.materialize for factor in factors_),
+            diagonal_assembly=(
+                source.compatible(target)
+                and all(factor.capabilities.diagonal_assembly for factor in factors_)
+            ),
         )
         self.batch_shape = ()
         self.operator_id = _id(
@@ -821,6 +1322,12 @@ class KroneckerLinearOperator(AbstractLinearOperator):
             result = jnp.kron(result, factor._materialize())
         return result
 
+    def _assemble_diagonal(self, /) -> Array:
+        result = jnp.asarray([1.0], dtype=self.source.structure().dtype)
+        for factor in self.factors:
+            result = jnp.kron(result, _assemble_operator_diagonal(factor))
+        return result
+
 
 class KroneckerSumLinearOperator(AbstractLinearOperator):
     """Kronecker sum of square factors without materializing the full matrix."""
@@ -846,11 +1353,56 @@ class KroneckerSumLinearOperator(AbstractLinearOperator):
         self.factors = factors_
         self.source = space
         self.target = space
-        self.properties = OperatorProperties()
+        diagonal = all(factor.properties.diagonal for factor in factors_)
+        self_adjoint = all(factor.properties.self_adjoint for factor in factors_)
+        positive_semidefinite = all(
+            factor.properties.positive_semidefinite for factor in factors_
+        )
+        positive_definite = positive_semidefinite and any(
+            factor.properties.positive_definite for factor in factors_
+        )
+        certified_positive = (
+            positive_definite
+            and all(
+                factor.properties.certifies("positive_semidefinite")
+                for factor in factors_
+            )
+            and any(
+                factor.properties.certifies("positive_definite") for factor in factors_
+            )
+        )
+        rank = space.size if certified_positive else None
+        evidence: dict[str, PropertyEvidence] = {}
+        if diagonal and all(
+            factor.properties.certifies("diagonal") for factor in factors_
+        ):
+            evidence["diagonal"] = "transformed"
+        if self_adjoint and all(
+            factor.properties.certifies("self_adjoint") for factor in factors_
+        ):
+            evidence["self_adjoint"] = "transformed"
+        if positive_semidefinite and all(
+            factor.properties.certifies("positive_semidefinite") for factor in factors_
+        ):
+            evidence["positive_semidefinite"] = "transformed"
+        if certified_positive:
+            evidence["positive_definite"] = "transformed"
+            evidence["rank"] = "transformed"
+        self.properties = OperatorProperties(
+            diagonal=diagonal,
+            self_adjoint=self_adjoint,
+            positive_semidefinite=positive_semidefinite,
+            positive_definite=positive_definite,
+            rank=rank,
+            evidence=evidence,
+        )
         self.capabilities = OperatorCapabilities(
             transpose=all(factor.capabilities.transpose for factor in factors_),
             adjoint=all(factor.capabilities.adjoint for factor in factors_),
             materialize=all(factor.capabilities.materialize for factor in factors_),
+            diagonal_assembly=all(
+                factor.capabilities.diagonal_assembly for factor in factors_
+            ),
         )
         self.batch_shape = ()
         self.operator_id = _id(
@@ -890,6 +1442,15 @@ class KroneckerSumLinearOperator(AbstractLinearOperator):
                 term = jnp.kron(term, matrix)
             result = result + term
         return result
+
+    def _assemble_diagonal(self, /) -> Array:
+        sizes = tuple(factor.source.size for factor in self.factors)
+        result = jnp.zeros(sizes, dtype=self.source.structure().dtype)
+        for axis, factor in enumerate(self.factors):
+            shape = [1] * len(sizes)
+            shape[axis] = sizes[axis]
+            result = result + _assemble_operator_diagonal(factor).reshape(tuple(shape))
+        return result.reshape((-1,))
 
 
 class StackedLinearOperator(AbstractLinearOperator):
@@ -976,25 +1537,25 @@ class StackedLinearOperator(AbstractLinearOperator):
 
 
 class SchurComplementLinearOperator(AbstractLinearOperator):
-    """Matrix-free Schur complement ``D - C A⁻¹ B`` with an explicit inverse action."""
+    """Matrix-free Schur complement ``D - C M B`` with a typed inverse action."""
 
     diagonal_block: AbstractLinearOperator
     lower_block: AbstractLinearOperator
     upper_block: AbstractLinearOperator
-    inverse_action: Callable[[PyTree[Any]], PyTree[Array]]
+    inverse_action: AbstractPreconditioner
 
     def __init__(
         self,
         diagonal_block: AbstractLinearOperator,
         lower_block: AbstractLinearOperator,
-        inverse_action: Callable[[PyTree[Any]], PyTree[Array]],
+        inverse_action: AbstractPreconditioner,
         upper_block: AbstractLinearOperator,
         /,
         *,
         operator_id: str | None = None,
     ):
-        if not callable(inverse_action):
-            raise TypeError("inverse_action must be callable.")
+        if not isinstance(inverse_action, AbstractPreconditioner):
+            raise TypeError("inverse_action must be an AbstractPreconditioner.")
         blocks = (diagonal_block, lower_block, upper_block)
         if any(not isinstance(block, AbstractLinearOperator) for block in blocks):
             raise TypeError("Schur complement blocks must be linear operators.")
@@ -1003,13 +1564,38 @@ class SchurComplementLinearOperator(AbstractLinearOperator):
         _same(upper_block.target, lower_block.source)
         _same(diagonal_block.source, upper_block.source)
         _same(diagonal_block.target, lower_block.target)
+        if not inverse_action.space.compatible(upper_block.target):
+            raise ValueError(
+                "inverse_action must act on the Schur complement pivot space."
+            )
+        if not inverse_action.properties.certifies(
+            "linear"
+        ) or not inverse_action.properties.certifies("stationary"):
+            raise ValueError(
+                "inverse_action must certify fixed linear, stationary semantics."
+            )
         self.source = diagonal_block.source
         self.target = diagonal_block.target
         self.diagonal_block = diagonal_block
         self.lower_block = lower_block
         self.upper_block = upper_block
         self.inverse_action = inverse_action
-        self.properties = OperatorProperties()
+        paired_off_diagonals = (
+            isinstance(upper_block, AdjointLinearOperator)
+            and upper_block.operator is lower_block
+        ) or (
+            isinstance(lower_block, AdjointLinearOperator)
+            and lower_block.operator is upper_block
+        )
+        self_adjoint = (
+            diagonal_block.properties.certifies("self_adjoint")
+            and inverse_action.properties.certifies("self_adjoint")
+            and paired_off_diagonals
+        )
+        self.properties = OperatorProperties(
+            self_adjoint=self_adjoint,
+            evidence={"self_adjoint": "transformed"} if self_adjoint else {},
+        )
         self.capabilities = OperatorCapabilities(
             transpose=False, adjoint=False, materialize=False
         )
@@ -1021,12 +1607,15 @@ class SchurComplementLinearOperator(AbstractLinearOperator):
                 "diagonal": diagonal_block.operator_id,
                 "lower": lower_block.operator_id,
                 "upper": upper_block.operator_id,
+                "inverse_action": inverse_action.preconditioner_id,
             },
         )
 
     def mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
         direct = self.diagonal_block.mv(vector)
-        correction = self.lower_block.mv(self.inverse_action(self.upper_block.mv(vector)))
+        correction = self.lower_block.mv(
+            self.inverse_action.apply(self.upper_block.mv(vector))
+        )
         return jax.tree.map(lambda left, right: left - right, direct, correction)
 
     def transpose_mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
@@ -1043,12 +1632,23 @@ class SchurComplementLinearOperator(AbstractLinearOperator):
 
 def _is_structured_exact(operator: AbstractLinearOperator, /) -> bool:
     """Return whether the native structured backend can solve the operator exactly."""
+    from ._transform_operators import TransformDiagonalLinearOperator
+
+    if isinstance(operator, KroneckerSumLinearOperator):
+        return all(
+            factor.capabilities.materialize
+            and factor.properties.certifies("self_adjoint")
+            and _has_diagonal_pairing(factor.source)
+            for factor in operator.factors
+        )
     if isinstance(operator, KroneckerLinearOperator):
         return all(
             factor.source.size == factor.target.size
             and (isinstance(factor, DenseLinearOperator) or _is_structured_exact(factor))
             for factor in operator.factors
         )
+    if isinstance(operator, LocalBlockDiagonalLinearOperator):
+        return operator.input_block_size == operator.output_block_size
     if isinstance(
         operator,
         (
@@ -1059,6 +1659,7 @@ def _is_structured_exact(operator: AbstractLinearOperator, /) -> bool:
             TridiagonalLinearOperator,
             BandedLinearOperator,
             DiagonalPlusLowRankLinearOperator,
+            TransformDiagonalLinearOperator,
         ),
     ):
         return not operator.batch_shape
@@ -1071,15 +1672,18 @@ def _is_structured_exact(operator: AbstractLinearOperator, /) -> bool:
 
 __all__ = [
     "BandedLinearOperator",
+    "BasePlusLowRankLinearOperator",
     "BlockDiagonalLinearOperator",
     "DiagonalPlusLowRankLinearOperator",
     "KroneckerLinearOperator",
     "KroneckerSumLinearOperator",
     "LowRankLinearOperator",
+    "LocalBlockDiagonalLinearOperator",
     "PermutationLinearOperator",
     "SchurComplementLinearOperator",
     "StackedLinearOperator",
     "SymmetricLowRankLinearOperator",
     "TriangularLinearOperator",
+    "TwoSidedScaledLinearOperator",
     "TridiagonalLinearOperator",
 ]

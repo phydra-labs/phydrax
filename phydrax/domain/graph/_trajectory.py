@@ -485,13 +485,13 @@ class GraphTrajectoryDatasetDomain(JointFactor):
 
     def points_from_case_time(
         self,
-        case_indices: ArrayLike,
-        times: ArrayLike,
+        case_indices: ArrayLike | Sequence[int],
+        times: ArrayLike | Sequence[float],
         /,
         *,
         component,
         structure: SampleLayout | None = None,
-        time_indices: ArrayLike | None = None,
+        time_indices: ArrayLike | Sequence[int] | None = None,
     ) -> GraphBatch:
         """Materialize graph-time samples by explicit case and time arrays.
 

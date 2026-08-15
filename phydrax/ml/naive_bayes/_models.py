@@ -10,6 +10,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array
 
 from ..._model import AbstractArrayModel
@@ -230,7 +231,7 @@ class MultinomialNaiveBayesModel(AbstractNaiveBayesModel):
         extra = values.ndim - len(self.case_shape) - 1
         log_prob = _reshape_for_samples(self.feature_log_prob, self.case_shape, extra)
         priors = _reshape_for_samples(self.log_priors, self.case_shape, extra)
-        score = jnp.einsum("...f,...cf->...c", values, log_prob)
+        score = oe.contract("...f,...cf->...c", values, log_prob)
         result = priors - score if self.complement else priors + score
         domain_valid = jnp.all(jnp.isfinite(values) & (values >= 0.0), axis=-1)
         return jnp.where(domain_valid[..., None], result, jnp.nan)
@@ -451,7 +452,7 @@ class GaussianNaiveBayesRecipe(AbstractRecipe):
         feature_weight = class_weight[..., :, :, None] * finite[..., :, None, :]
         feature_mass = jnp.sum(feature_weight, axis=-3)
         safe_x = jnp.where(finite, x, 0)
-        means = jnp.einsum("...ncf,...nf->...cf", feature_weight, safe_x) / jnp.maximum(
+        means = oe.contract("...ncf,...nf->...cf", feature_weight, safe_x) / jnp.maximum(
             feature_mass, jnp.finfo(weight.dtype).tiny
         )
         difference = safe_x[..., :, None, :] - means[..., None, :, :]
@@ -525,7 +526,7 @@ class BernoulliNaiveBayesRecipe(AbstractRecipe):
         class_weight, mass = _membership(y, weight, int(labels.shape[0]))
         feature_weight = class_weight[..., :, :, None] * finite[..., :, None, :]
         feature_mass = jnp.sum(feature_weight, axis=-3)
-        positive = jnp.einsum("...ncf,...nf->...cf", feature_weight, binary)
+        positive = oe.contract("...ncf,...nf->...cf", feature_weight, binary)
         probability = (positive + self.alpha) / (feature_mass + 2.0 * self.alpha)
         priors = _priors(mass, self.class_prior)
         model = BernoulliNaiveBayesModel(
@@ -570,7 +571,7 @@ def _fit_multinomial(recipe: Any, batch: MLBatch, *, complement: bool) -> FitRes
         entry_active & jnp.isfinite(values) & (values >= 0.0), values, 0.0
     )
     class_weight, mass = _membership(y, weight, int(labels.shape[0]))
-    counts = jnp.einsum("...nc,...nf->...cf", class_weight, safe_values)
+    counts = oe.contract("...nc,...nf->...cf", class_weight, safe_values)
     feature_mass = counts
     if complement:
         counts = jnp.sum(counts, axis=-2, keepdims=True) - counts
@@ -710,7 +711,7 @@ class CategoricalNaiveBayesRecipe(AbstractRecipe):
                 dtype=weight.dtype,
             )
             feature_weight = class_weight * valid[..., :, None]
-            counts = jnp.einsum("...nc,...nk->...ck", feature_weight, membership)
+            counts = oe.contract("...nc,...nk->...ck", feature_weight, membership)
             category_mask = jnp.arange(max_categories) < categories
             smoothed = jnp.where(category_mask, counts + self.alpha, 0.0)
             probability = smoothed / jnp.sum(smoothed, axis=-1, keepdims=True)

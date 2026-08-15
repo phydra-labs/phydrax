@@ -21,6 +21,7 @@ from ...linalg import (
     LinearSystem,
     OperatorProperties,
     PCG,
+    PreconditioningPolicy,
     solve,
     TolerancePolicy,
 )
@@ -366,11 +367,13 @@ def preconditioned_conjugate_gradient(
                 absolute=0.0,
                 max_steps=max_steps,
             ),
-            preconditioner=DiagonalPreconditioner(
-                diagonal,
-                space=space,
-                positive_definite=True,
-                preconditioner_id="kfac-block-jacobi",
+            preconditioning=PreconditioningPolicy(
+                DiagonalPreconditioner(
+                    diagonal,
+                    space=space,
+                    positive_definite=True,
+                    preconditioner_id="kfac-block-jacobi",
+                )
             ),
         ),
     )

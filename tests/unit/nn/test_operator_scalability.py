@@ -70,12 +70,18 @@ def test_case_sharding_preserves_operator_values_and_replicates_parameters():
     sharded_model = phx.nn.operator.replicate_operator_model(model, policy)
 
     values = sharded_batch.input("state").values
+    assert values is not None
     assert isinstance(values.sharding, NamedSharding)
     assert values.sharding.spec[0] == "data"
-    assert tuple(sharded_batch.input("state").axes[0].nodes.sharding.spec) == ()
+    node_sharding = sharded_batch.input("state").axes[0].nodes.sharding
+    assert isinstance(node_sharding, NamedSharding)
+    assert tuple(node_sharding.spec) == ()
     leaves = jax.tree_util.tree_leaves(eqx.filter(sharded_model, eqx.is_array))
     assert leaves
-    assert all(tuple(leaf.sharding.spec) == () for leaf in leaves)
+    assert all(
+        isinstance(leaf.sharding, NamedSharding) and tuple(leaf.sharding.spec) == ()
+        for leaf in leaves
+    )
 
     expected = model(scenario.train_batch)
     actual = eqx.filter_jit(lambda current, batch: current(batch))(

@@ -31,7 +31,7 @@ def test_deterministic_product_plan_composes_axis_rules():
         function, phx.integration.over(domain.component()), plan
     )
 
-    assert jnp.allclose(estimate.value.data, 8.0 / 3.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 8.0 / 3.0, atol=1e-12)
     assert estimate.error_estimate is None
     assert estimate.provenance.method == "product"
 
@@ -55,7 +55,7 @@ def test_sparse_grid_axis_group_composes_with_fixed_factor():
         function, phx.integration.over(domain.component()), plan
     )
 
-    assert jnp.allclose(estimate.value.data, 10.0 / 3.0, atol=1e-11)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 10.0 / 3.0, atol=1e-11)
 
 
 def test_mixed_fixed_and_iid_plan_reports_only_stochastic_axis_error():
@@ -76,7 +76,7 @@ def test_mixed_fixed_and_iid_plan_reports_only_stochastic_axis_error():
         key=jr.key(1),
     )
 
-    assert jnp.allclose(estimate.value.data, 8.0 / 3.0, atol=5e-2)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 8.0 / 3.0, atol=5e-2)
     assert estimate.error_kind == "iid-standard-error"
     assert estimate.error_estimate > 0.0
 
@@ -111,7 +111,7 @@ def test_mixed_qmc_needs_replicates_for_uncertainty():
 
     assert deterministic.error_estimate is None
     assert deterministic.error_kind is None
-    assert jnp.allclose(randomized.value.data, 8.0 / 3.0, atol=2e-3)
+    assert jnp.allclose(jnp.asarray(randomized.value.data), 8.0 / 3.0, atol=2e-3)
     assert randomized.error_kind == "randomized-qmc-replicate-error"
 
 
@@ -174,7 +174,7 @@ def test_product_density_normalization_uses_full_product_measure():
 
     estimate = phx.integration.integrate(function, target, plan)
 
-    assert jnp.allclose(estimate.value.data, 31.0 / 18.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 31.0 / 18.0, atol=1e-12)
 
 
 def test_product_plan_preserves_unintegrated_target_axes():
@@ -196,7 +196,9 @@ def test_product_plan_preserves_unintegrated_target_axes():
     time_points = realization.batch.batches[0].points.points["t"]
 
     assert estimate.value.dims == time_points.dims
-    assert jnp.allclose(estimate.value.data, 1.0 / 3.0 + time_points.data, atol=1e-12)
+    assert jnp.allclose(
+        jnp.asarray(estimate.value.data), 1.0 / 3.0 + time_points.data, atol=1e-12
+    )
 
 
 def test_product_plan_integrates_multiple_complete_axis_blocks():
@@ -220,7 +222,9 @@ def test_product_plan_integrates_multiple_complete_axis_blocks():
     time_points = realization.batch.batches[0].points.points["t"]
 
     assert estimate.value.dims == time_points.dims
-    assert jnp.allclose(estimate.value.data, 1.0 + time_points.data, atol=1e-12)
+    assert jnp.allclose(
+        jnp.asarray(estimate.value.data), 1.0 + time_points.data, atol=1e-12
+    )
 
 
 def test_product_plan_rejects_unsupported_control_variates():
@@ -296,7 +300,7 @@ def test_mixed_product_density_preserves_a_normalized_component_base():
     estimate = phx.integration.integrate(1.0, target, plan, key=jr.key(19))
 
     assert estimate.successful
-    assert jnp.allclose(estimate.value.data, 1.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 1.0, atol=1e-12)
 
 
 def test_open_probability_product_materialization_is_jittable():

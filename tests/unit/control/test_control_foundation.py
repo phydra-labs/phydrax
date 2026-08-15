@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import diffrax as dfx
 import jax
 import jax.numpy as jnp
@@ -35,9 +37,10 @@ def test_control_foundation_constructor_guards_are_explicit():
         TimeGrid(jnp.asarray([0.0, 0.0, 1.0]), time_id="repeated")
     with pytest.raises(ValueError, match="non-empty"):
         TimeGrid(jnp.asarray([0.0, 1.0]), time_id="")
+    invalid_dynamics: Any = 3
     with pytest.raises(TypeError, match="callable"):
         make_discrete_control_dynamics(
-            3,
+            invalid_dynamics,
             state_shape=(1,),
             control_shape=(1,),
             dynamics_id="bad",

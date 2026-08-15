@@ -29,6 +29,7 @@ def test_exact_gp_discrepancy_marginalizes_and_conditions_coherent_functions():
         jitter=1e-9,
     )
     query = cx.Field(jnp.linspace(0.0, 1.0, 31), dims=("x",))
+    query_values = jnp.asarray(query.data)
 
     log_probability = model.log_marginal_likelihood(
         physical_mean,
@@ -41,7 +42,7 @@ def test_exact_gp_discrepancy_marginalizes_and_conditions_coherent_functions():
     )
     samples = conditioned.sample(jr.key(0), num_samples=16)
     prediction = conditioned.predictive_field(
-        2.0 * query.data,
+        2.0 * query_values,
         jr.key(1),
         num_samples=12,
         observation_variance=state.noise_scale**2,
@@ -57,10 +58,10 @@ def test_exact_gp_discrepancy_marginalizes_and_conditions_coherent_functions():
     assert prediction.samples.dims == ("__phydra_uq_discrepancy", "x")
     assert prediction.samples.shape == (12, 31)
     assert jnp.allclose(
-        prediction.observation_variance().data,
+        jnp.asarray(prediction.observation_variance().data),
         state.noise_scale**2,
     )
-    expected_discrepancy = 0.15 * jnp.sin(2.0 * jnp.pi * query.data)
+    expected_discrepancy = 0.15 * jnp.sin(2.0 * jnp.pi * query_values)
     assert jnp.sqrt(jnp.mean((conditioned.mean - expected_discrepancy) ** 2)) < 0.02
 
 

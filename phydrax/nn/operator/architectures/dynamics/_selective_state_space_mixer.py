@@ -9,6 +9,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from phydrax._doc import DOC_KEY0
@@ -266,16 +267,16 @@ class SelectiveStateSpaceMixer(AbstractOperatorModel):
     def _selective_scale(self, context: Array, /) -> Array:
         return (
             jax.nn.softplus(
-                jnp.einsum("...ti,mi->...tm", context, self.delta_weight)
+                oe.contract("...ti,mi->...tm", context, self.delta_weight)
                 + self.delta_bias
             )
             + self.min_step_scale
         )
 
     def _drive(self, values: Array, context: Array, /) -> Array:
-        projection = jnp.einsum("...ti,mi->...tm", values, self.input_matrix)
+        projection = oe.contract("...ti,mi->...tm", values, self.input_matrix)
         gate = jax.nn.sigmoid(
-            jnp.einsum("...ti,mi->...tm", context, self.input_gate_weight)
+            oe.contract("...ti,mi->...tm", context, self.input_gate_weight)
             + self.input_gate_bias
         )
         return gate * projection
@@ -358,11 +359,11 @@ class SelectiveStateSpaceMixer(AbstractOperatorModel):
 
     def _readout(self, states: Array, values: Array, valid: Array, /) -> Array:
         gate = jax.nn.sigmoid(
-            jnp.einsum("...ti,mi->...tm", values, self.output_gate_weight)
+            oe.contract("...ti,mi->...tm", values, self.output_gate_weight)
             + self.output_gate_bias
         )
-        dynamic = jnp.einsum("om,...tm->...to", self.output_matrix, gate * states)
-        skip = jnp.einsum("oi,...ti->...to", self.skip_matrix, values)
+        dynamic = oe.contract("om,...tm->...to", self.output_matrix, gate * states)
+        skip = oe.contract("oi,...ti->...to", self.skip_matrix, values)
         output = jnp.where(valid[..., None], dynamic + skip, jnp.zeros_like(dynamic))
         return output[..., 0] if self.out_size == "scalar" else output
 

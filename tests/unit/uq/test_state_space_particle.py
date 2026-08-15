@@ -270,7 +270,7 @@ def test_particle_posterior_measure_matches_weighted_filtering_marginals():
     weights = jnp.exp(result.posterior_log_weights)
     expected = jnp.sum(weights[..., None] * result.predicted_particles, axis=-2)
     assert estimate.value.dims == ("time", None)
-    assert jnp.allclose(estimate.value.data, expected)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), expected)
     assert jnp.all(estimate.successful)
     assert jnp.array_equal(
         estimate.diagnostics.active_samples,

@@ -2,6 +2,8 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import jax.numpy as jnp
 import pytest
 
@@ -125,11 +127,12 @@ def test_composite_operators_reject_ambiguous_or_invalid_shapes():
     matrix = time.Function()(jnp.eye(2))
     rectangular = time.Function()(jnp.ones((2, 3)))
     larger = time.Function()(jnp.eye(3))
+    invalid_factor: Any = object()
 
     with pytest.raises(ValueError, match="at least one"):
         phx.operators.tensor_product()
     with pytest.raises(TypeError, match="only DomainFunctions"):
-        phx.operators.tensor_product(vector, object())
+        phx.operators.tensor_product(vector, invalid_factor)
     with pytest.raises(ValueError, match="all be vector-valued or all be matrix-valued"):
         phx.operators.tensor_product(vector, matrix).func()
     with pytest.raises(ValueError, match="square matrices"):

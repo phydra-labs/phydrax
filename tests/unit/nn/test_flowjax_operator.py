@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -169,7 +171,7 @@ def test_flowjax_operator_trains_through_fit_operator():
 def test_flowjax_fit_checkpoint_resume_is_bitwise_exact(tmp_path):
     dataset = _dataset(cases=4)
     model = _model(dataset, seed=20)
-    common = {
+    common: dict[str, Any] = {
         "loss_terms": (phx.nn.operator.training.OperatorDistributionNLL(),),
         "learning_rate": 1e-3,
         "batch_size": 2,
@@ -205,6 +207,14 @@ def test_flowjax_fit_checkpoint_resume_is_bitwise_exact(tmp_path):
             assert jnp.array_equal(full, restored)
     assert resumed.resumed_from_step == 1
     assert resumed.history == uninterrupted.history
+    assert isinstance(
+        uninterrupted.execution_model,
+        phx.nn.operator.architectures.ConditionalFlowFunctionOperator,
+    )
+    assert isinstance(
+        resumed.execution_model,
+        phx.nn.operator.architectures.ConditionalFlowFunctionOperator,
+    )
     full_prediction = uninterrupted.execution_model.sample(
         dataset.batch,
         num_samples=2,

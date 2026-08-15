@@ -11,6 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 import optimistix as optx
 from jaxtyping import Array
 
@@ -1372,7 +1373,7 @@ def bellman_smoother(result: BellmanFilterResult, /) -> BellmanSmootherResult:
             -2,
         )
         pair_valid = valid[:, index] & valid[:, index + 1]
-        proposed_mode = filtered_modes[:, index] + jnp.einsum(
+        proposed_mode = filtered_modes[:, index] + oe.contract(
             "cij,cj->ci", gain, modes[:, index + 1] - predicted_modes[:, index + 1]
         )
         proposed_covariance = filtered_covariances[:, index] + gain @ (

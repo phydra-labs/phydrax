@@ -280,7 +280,7 @@ def test_cochain_cells_select_degree_boundary_and_padded_dataset_offsets():
     assert jnp.all(edges["graph"]["cell_dim"].data == 1)
     assert jnp.all(boundary_vertices["graph"]["boundary"].data)
     assert jnp.array_equal(
-        interior_vertices["graph"]["local_index"].data,
+        jnp.asarray(interior_vertices["graph"]["local_index"].data),
         jnp.asarray([4], dtype=jnp.int32),
     )
 
@@ -294,11 +294,11 @@ def test_cochain_cells_select_degree_boundary_and_padded_dataset_offsets():
 
     assert dataset_batch.graph.node_mask is not None
     assert jnp.array_equal(
-        dataset_batch[phx.domain.graph.GRAPH_DATASET_INDEX_KEY].data,
+        jnp.asarray(dataset_batch[phx.domain.graph.GRAPH_DATASET_INDEX_KEY].data),
         jnp.asarray([1], dtype=jnp.int32),
     )
     assert jnp.array_equal(
-        dataset_batch["graph"]["local_index"].data,
+        jnp.asarray(dataset_batch["graph"]["local_index"].data),
         jnp.asarray([4], dtype=jnp.int32),
     )
 
@@ -325,14 +325,14 @@ def test_cochain_cells_select_degree_boundary_and_padded_dataset_offsets():
 
     assert trajectory_batch.graph.node_mask is not None
     assert jnp.array_equal(
-        trajectory_batch[phx.domain.graph.GRAPH_DATASET_INDEX_KEY].data,
+        jnp.asarray(trajectory_batch[phx.domain.graph.GRAPH_DATASET_INDEX_KEY].data),
         jnp.asarray([1], dtype=jnp.int32),
     )
     assert jnp.array_equal(
-        trajectory_batch["graph"]["local_index"].data,
+        jnp.asarray(trajectory_batch["graph"]["local_index"].data),
         jnp.asarray([4], dtype=jnp.int32),
     )
-    assert jnp.allclose(trajectory_batch["t"].data, 0.5)
+    assert jnp.allclose(jnp.asarray(trajectory_batch["t"].data), 0.5)
 
 
 def test_cochain_field_masks_other_degrees_and_preserves_compatible_metadata():
@@ -415,9 +415,13 @@ def test_domain_cochain_dec_is_exact_and_matches_sparse_graph_operators():
 
     assert phx.domain.cochain_field_spec(derivative).degree == 1
     assert phx.domain.cochain_field_spec(second_derivative).degree == 2
-    assert jnp.allclose(derivative(edge_batch).data, expected_derivative[edge_indices])
-    assert jnp.allclose(second_derivative(face_batch).data, 0.0, atol=1e-12)
-    assert jnp.allclose(laplacian(vertex_batch).data, expected_laplacian[vertex_indices])
+    assert jnp.allclose(
+        jnp.asarray(derivative(edge_batch).data), expected_derivative[edge_indices]
+    )
+    assert jnp.allclose(jnp.asarray(second_derivative(face_batch).data), 0.0, atol=1e-12)
+    assert jnp.allclose(
+        jnp.asarray(laplacian(vertex_batch).data), expected_laplacian[vertex_indices]
+    )
 
 
 def test_domain_cochain_laplacian_is_equivariant_to_cell_reorientation():

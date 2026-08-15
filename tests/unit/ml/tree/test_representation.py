@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -108,8 +110,9 @@ def test_tree_objectives_labels_weighted_aggregation_and_inactive_trees():
         apply_objective(jnp.array([0.0, 1.0]), "exponential"),
         jnp.exp(jnp.array([0.0, 1.0])),
     )
+    invalid_objective: Any = "unknown"
     with pytest.raises(ValueError, match="Unsupported tree objective"):
-        apply_objective(jnp.array([0.0]), "unknown")
+        apply_objective(jnp.array([0.0]), invalid_objective)
 
     median = TreeEnsemble(
         feature_index=jnp.full((3, 1), -1),

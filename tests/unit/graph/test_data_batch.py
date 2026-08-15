@@ -25,11 +25,15 @@ def test_batch_from_data_list_and_back():
     d2 = _make_data(10.0)
 
     batch = vx.Batch.from_data_list([d1, d2])
+    assert batch.x is not None
+    assert batch.edge_index is not None
     assert batch.num_graphs == 2
     assert batch.x.shape == (4, 1)
     assert batch.edge_index.shape == (2, 4)
 
     recovered = batch.to_data_list()
+    assert recovered[0].x is not None
+    assert recovered[1].edge_index is not None
     assert len(recovered) == 2
     assert recovered[0].x.shape == (2, 1)
     assert recovered[1].edge_index.shape == (2, 2)

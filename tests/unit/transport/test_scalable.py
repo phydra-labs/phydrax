@@ -310,6 +310,8 @@ def test_scientific_particle_transform_keeps_approximation_provenance_and_reject
     )
 
     assert metric.converged
+    assert isinstance(metric.cross, phx.transport.PositiveFeatureSinkhornResult)
+    assert isinstance(transformed.transport, phx.transport.PositiveFeatureSinkhornResult)
     assert metric.cross.provenance.approximation.startswith("gaussian-positive-features")
     assert jnp.isfinite(median)
     assert transformed.particles.shape == particles.shape

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jax.scipy.special import logsumexp
 from jaxtyping import Array, ArrayLike
 
@@ -171,7 +172,7 @@ def silhouette_score(
         jax.nn.one_hot(labels_, classes, dtype=weights.dtype) * weights[..., :, None]
     )
     cluster_mass = jnp.sum(membership, axis=-2)
-    distance_total = jnp.einsum("...ij,...jc->...ic", distances, membership)
+    distance_total = oe.contract("...ij,...jc->...ic", distances, membership)
     own_hot = jax.nn.one_hot(labels_, classes, dtype=bool)
     own_denominator = cluster_mass[..., None, :] - membership
     cluster_mean = distance_total / jnp.where(own_denominator > 0.0, own_denominator, 1.0)
@@ -224,7 +225,7 @@ def smooth_silhouette_score(
     distances = jnp.where(jnp.eye(x.shape[-2], dtype=bool), 0.0, distances)
     weighted_membership = weights[..., :, None] * probability
     cluster_mass = jnp.sum(weighted_membership, axis=-2)
-    distance_total = jnp.einsum("...ij,...jc->...ic", distances, weighted_membership)
+    distance_total = oe.contract("...ij,...jc->...ic", distances, weighted_membership)
     denominator = cluster_mass[..., None, :] - weighted_membership
     cluster_mean = distance_total / jnp.where(denominator > 0.0, denominator, 1.0)
     intra = jnp.sum(probability * cluster_mean, axis=-1)
@@ -278,7 +279,7 @@ def davies_bouldin_score(
     selected_distance = jnp.take_along_axis(
         point_to_centroid, labels_[..., :, None], axis=-1
     )[..., 0]
-    scatter_total = jnp.einsum(
+    scatter_total = oe.contract(
         "...n,...nc->...c",
         weights * selected_distance,
         jax.nn.one_hot(labels_, classes, dtype=weights.dtype),
@@ -335,7 +336,7 @@ def calinski_harabasz_score(
     global_mean = jnp.sum(weights[..., :, None] * x, axis=-2) / jnp.where(
         mass[..., None] > 0.0, mass[..., None], 1.0
     )
-    selected_centroid = jnp.einsum(
+    selected_centroid = oe.contract(
         "...nc,...cf->...nf",
         jax.nn.one_hot(labels_, classes, dtype=centroids.real.dtype),
         centroids,
@@ -391,7 +392,7 @@ def smooth_calinski_harabasz_score(
     )
     weighted_membership = weights[..., :, None] * probability
     cluster_mass = jnp.sum(weighted_membership, axis=-2)
-    centroids = jnp.einsum("...nc,...nf->...cf", weighted_membership, x) / jnp.where(
+    centroids = oe.contract("...nc,...nf->...cf", weighted_membership, x) / jnp.where(
         cluster_mass[..., :, None] > 0.0, cluster_mass[..., :, None], 1.0
     )
     global_mean = jnp.sum(weights[..., :, None] * x, axis=-2) / jnp.where(
@@ -462,8 +463,8 @@ def _label_pair_contingency(
     weights = jnp.where(active & in_range, weights, 0.0)
     true_hot = jax.nn.one_hot(true.astype(jnp.int32), rows, dtype=weights.dtype)
     pred_hot = jax.nn.one_hot(pred.astype(jnp.int32), columns, dtype=weights.dtype)
-    contingency = jnp.einsum("...ni,...n,...nj->...ij", true_hot, weights, pred_hot)
-    second_moment = jnp.einsum("...ni,...n,...nj->...ij", true_hot, weights**2, pred_hot)
+    contingency = oe.contract("...ni,...n,...nj->...ij", true_hot, weights, pred_hot)
+    second_moment = oe.contract("...ni,...n,...nj->...ij", true_hot, weights**2, pred_hot)
     return contingency, second_moment, jnp.sum(weights, axis=-1), invalid
 
 
@@ -654,7 +655,7 @@ def smooth_normalized_mutual_info_score(
         mask=mask,
         metric="smooth_normalized_mutual_info_score",
     )
-    contingency = jnp.einsum("...ni,...n,...nj->...ij", true, weights, pred)
+    contingency = oe.contract("...ni,...n,...nj->...ij", true, weights, pred)
     probability = contingency / jnp.where(
         mass[..., None, None] > 0.0, mass[..., None, None], 1.0
     )

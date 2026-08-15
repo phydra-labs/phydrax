@@ -50,11 +50,15 @@ def test_polynomial_poisson_targets_are_alias_free_reference_projections():
         maximum_frequency=3,
         seed=7,
     )
+    train_target = scenario.train_target
+    transfer_target = scenario.evaluations[-1].target
+    assert isinstance(train_target, jax.Array)
+    assert isinstance(transfer_target, jax.Array)
     source = scenario.train_batch.input("source")
     collocation_target = _collocation_poisson_solution(source.values)
-    relative_gap = np.linalg.norm(
-        collocation_target - scenario.train_target
-    ) / np.linalg.norm(scenario.train_target)
+    relative_gap = np.linalg.norm(collocation_target - train_target) / np.linalg.norm(
+        train_target
+    )
 
     assert source.axes[0].periodic and source.axes[1].periodic
     assert source.axes[0].nodes[-1] < 1.0
@@ -62,7 +66,7 @@ def test_polynomial_poisson_targets_are_alias_free_reference_projections():
     assert scenario.reference_evidence.passed
     assert relative_gap > 1e-3
     assert scenario.evaluations[-1].shift == "resolution_transfer"
-    assert scenario.evaluations[-1].target.shape[-2:] == (16, 16)
+    assert transfer_target.shape[-2:] == (16, 16)
     assert scenario.validation is not None
     assert set(scenario.case_ids).isdisjoint(scenario.validation.case_ids)
     assert all(

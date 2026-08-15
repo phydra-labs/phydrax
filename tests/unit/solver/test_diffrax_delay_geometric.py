@@ -1,3 +1,5 @@
+from typing import Any
+
 import diffrax as dfx
 import equinox as eqx
 import jax
@@ -82,6 +84,7 @@ def test_fixed_geometric_delay_solvers_preserve_so_and_dense_history(solver_name
         dense=True,
         max_steps=128,
     )
+    assert solution.interpolation is not None
 
     off_grid = solution.evaluate(jnp.asarray([0.013, 0.177, 0.333, 0.619, 0.791]))
     _assert_so2(solution.states)
@@ -456,7 +459,7 @@ def test_stratonovich_geometric_delay_preserves_manifold_and_replays_path():
         tolerance=1e-5,
         noise_id=problem.noise_id,
     )
-    common = {
+    common: dict[str, Any] = {
         "save_times": jnp.linspace(0.0, 0.2, 5),
         "realization": realization,
         "dt0": 0.025,
@@ -557,7 +560,7 @@ def test_stratonovich_geometric_advanced_memory_replays_all_history_modes():
         tolerance=1e-5,
         noise_id=problem.noise_id,
     )
-    common = {
+    common: dict[str, Any] = {
         "save_times": jnp.linspace(0.0, 0.24, 7),
         "realization": realization,
         "dt0": 0.02,

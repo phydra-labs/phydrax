@@ -70,6 +70,8 @@ def test_nonlinear_inverse_compares_pathfinder_nuts_and_laplace():
     laplace_samples = laplace.sample(jr.key(101), num_samples=4096)
     nuts_prediction = nuts.predict(query, batch_size=127)
     pathfinder_prediction = pathfinder.predict(query, batch_size=127)
+    assert isinstance(nuts_prediction, phx.uq.PredictiveField)
+    assert isinstance(pathfinder_prediction, phx.uq.PredictiveField)
 
     nuts_amplitude = jnp.mean(nuts.samples["amplitude"])
     nuts_rate = jnp.mean(nuts.samples["rate"])
@@ -88,8 +90,13 @@ def test_nonlinear_inverse_compares_pathfinder_nuts_and_laplace():
     assert pathfinder.sample_memory_bytes > 0
     assert jnp.all(jnp.isfinite(pathfinder.importance_log_weights))
     exact = true_amplitude * jnp.exp(-true_rate * query)
-    assert jnp.sqrt(jnp.mean((nuts_prediction.mean().data - exact) ** 2)) < 2e-3
-    assert jnp.sqrt(jnp.mean((pathfinder_prediction.mean().data - exact) ** 2)) < 2e-3
+    assert (
+        jnp.sqrt(jnp.mean((jnp.asarray(nuts_prediction.mean().data) - exact) ** 2)) < 2e-3
+    )
+    assert (
+        jnp.sqrt(jnp.mean((jnp.asarray(pathfinder_prediction.mean().data) - exact) ** 2))
+        < 2e-3
+    )
 
 
 def test_fixed_physics_residual_likelihood_identifies_hidden_source():

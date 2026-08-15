@@ -15,6 +15,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
 
 from .._strict import AbstractAttribute, StrictModule
@@ -643,7 +644,7 @@ class MassActionJumpProcess(AbstractJumpProcess):
         values = jnp.asarray(weights, dtype=float)
         if values.shape[-1:] != self.state_shape:
             raise ValueError("weights must have a trailing species axis.")
-        return jnp.einsum("...s,ks->...k", values, self.net_stoichiometry)
+        return oe.contract("...s,ks->...k", values, self.net_stoichiometry)
 
 
 def jsp_special_gammaln(value: ArrayLike, /) -> Array:

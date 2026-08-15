@@ -11,6 +11,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
 
 from .._interpolation import apply_gather_stencil, linear_stencil_from_indices
@@ -226,7 +227,7 @@ class EmpiricalMeanField(StrictModule):
         flat = particles.reshape((self.num_particles, -1))
         flat_mean = mean.reshape((-1,))
         centered = flat - flat_mean
-        covariance = jnp.einsum("p,pi,pj->ij", normalized, centered, centered)
+        covariance = oe.contract("p,pi,pj->ij", normalized, centered, centered)
         effective = 1.0 / jnp.maximum(
             jnp.sum(normalized**2), jnp.finfo(normalized.dtype).tiny
         )

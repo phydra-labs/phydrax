@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from .._strict import StrictModule
@@ -641,18 +642,18 @@ def ensemble_kalman_smoother(
         forecast_anomalies = forecast[:, step + 1] - jnp.mean(
             forecast[:, step + 1], axis=1, keepdims=True
         )
-        gram = jnp.einsum("cid,cjd->cij", forecast_anomalies, forecast_anomalies)
+        gram = oe.contract("cid,cjd->cij", forecast_anomalies, forecast_anomalies)
         eigenvalues, eigenvectors = jnp.linalg.eigh(gram)
         cutoff = tolerance * jnp.maximum(eigenvalues[:, -1:], 1.0)
         inverse_values = jnp.where(eigenvalues > cutoff, 1.0 / eigenvalues, 0.0)
-        gram_pseudoinverse = jnp.einsum(
+        gram_pseudoinverse = oe.contract(
             "cik,ck,cjk->cij", eigenvectors, inverse_values, eigenvectors
         )
         delta = smoothed[:, step + 1] - forecast[:, step + 1]
-        coefficients = jnp.einsum(
+        coefficients = oe.contract(
             "cid,cjd,cjk->cik", delta, forecast_anomalies, gram_pseudoinverse
         )
-        correction = jnp.einsum("cij,cjd->cid", coefficients, filtered_anomalies)
+        correction = oe.contract("cij,cjd->cid", coefficients, filtered_anomalies)
         proposed = analysis[:, step] + correction
         pair_valid = valid[:, step] & valid[:, step + 1]
         smoothed = smoothed.at[:, step].set(

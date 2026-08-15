@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..linalg import (
@@ -270,7 +271,7 @@ def _milstein_increment(
     iterated = wiener_increment[:, None] * wiener_increment[None, :] - step * jnp.eye(
         noise_size, dtype=wiener_increment.dtype
     )
-    return (0.5 * jnp.einsum("ksj,kj->s", flattened, iterated)).reshape(state.shape)
+    return (0.5 * oe.contract("ksj,kj->s", flattened, iterated)).reshape(state.shape)
 
 
 def _solve_diffrax_fallback(

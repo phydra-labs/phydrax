@@ -114,7 +114,7 @@ def test_cylindrical_half_order_large_argument_retains_phase():
     np.testing.assert_allclose(
         np.asarray(phx.special.jv(0.5, argument)),
         np.asarray(expected),
-        rtol=8.0 * np.finfo(np.float64).eps,
+        rtol=float(8.0 * np.finfo(np.float64).eps),
         atol=0.0,
     )
 

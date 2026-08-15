@@ -9,6 +9,7 @@ from typing import Any, ClassVar
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._model import AbstractArrayModel
@@ -313,11 +314,11 @@ class MahalanobisMetricRecipe(AbstractRecipe):
             labels = jnp.where(weights > 0, labels, 0)
             same = labels[..., :, None] == labels[..., None, :]
             class_weight = jnp.sum(weights[..., None, :] * same, axis=-1)
-            class_mean = jnp.einsum(
+            class_mean = oe.contract(
                 "...ij,...jf->...if", weights[..., None, :] * same, x
             ) / jnp.maximum(class_weight[..., :, None], jnp.finfo(weights.dtype).tiny)
             centered = x - class_mean
-        covariance = jnp.einsum(
+        covariance = oe.contract(
             "...n,...nf,...ng->...fg", weights, centered, centered
         ) / jnp.maximum(total[..., None], 1.0)
         covariance = covariance + self.ridge * jnp.eye(batch.feature_count, dtype=x.dtype)

@@ -1,5 +1,9 @@
+from typing import Any
+
+import jax
 import jax.numpy as jnp
 
+import phydrax as phx
 from tools.operator_benchmarks.models import compatible_architectures
 from tools.operator_benchmarks.scenarios import (
     add_sensor_dropout_shift,
@@ -11,6 +15,14 @@ from tools.operator_benchmarks.v2 import (
     scenario_checksum,
     standard_operator_benchmark_ladders,
 )
+
+
+def _array_target(
+    target: jax.Array | phx.nn.operator.OperatorTargetBatch,
+    /,
+) -> jax.Array:
+    assert not isinstance(target, phx.nn.operator.OperatorTargetBatch)
+    return jnp.asarray(target)
 
 
 def _architecture_map(scenario):
@@ -34,16 +46,18 @@ def test_constant_advection_is_an_exact_periodic_grid_translation():
     )
     initial = jnp.asarray(scenario.train_batch.input("state").values)
 
-    assert jnp.allclose(scenario.train_target, jnp.roll(initial, 1, axis=-1), atol=2e-6)
+    assert jnp.allclose(
+        _array_target(scenario.train_target), jnp.roll(initial, 1, axis=-1), atol=2e-6
+    )
     assert scenario.reference_evidence is not None
     assert scenario.reference_evidence.passed
     assert scenario.reference_evidence.verification == "analytic"
     assert float(dict(scenario.metadata)["maximum_relative_mass_drift"]) < 2e-6
-    assert jnp.all(jnp.isfinite(scenario.train_target))
+    assert jnp.all(jnp.isfinite(_array_target(scenario.train_target)))
 
 
 def test_variable_advection_is_reproducible_conservative_and_nonuniform():
-    settings = dict(
+    settings: dict[str, Any] = dict(
         train_resolution=24,
         test_resolution=32,
         num_cases=4,
@@ -69,7 +83,8 @@ def test_variable_advection_is_reproducible_conservative_and_nonuniform():
         "rollout",
     }
     assert all(
-        jnp.all(jnp.isfinite(evaluation.target)) for evaluation in scenario.evaluations
+        jnp.all(jnp.isfinite(_array_target(evaluation.target)))
+        for evaluation in scenario.evaluations
     )
 
 
@@ -109,7 +124,8 @@ def test_acoustic_wave_preserves_characteristic_phase_and_energy():
     assert float(dict(scenario.metadata)["maximum_relative_energy_drift"]) < 3e-6
     assert scenario.reference_evidence is not None and scenario.reference_evidence.passed
     assert all(
-        jnp.all(jnp.isfinite(evaluation.target)) for evaluation in scenario.evaluations
+        jnp.all(jnp.isfinite(_array_target(evaluation.target)))
+        for evaluation in scenario.evaluations
     )
 
 
@@ -130,10 +146,12 @@ def test_multichannel_acoustic_flower_and_comparators_run_all_resolutions():
     for name in ("fno", "ifno", "cno", "uno", "flower_resolution_consistent"):
         model = architectures[name].build(scenario, seed=5)
         assert (
-            jnp.asarray(model(scenario.train_batch)).shape == scenario.train_target.shape
+            jnp.asarray(model(scenario.train_batch)).shape
+            == _array_target(scenario.train_target).shape
         )
         assert all(
-            jnp.asarray(model(evaluation.batch)).shape == evaluation.target.shape
+            jnp.asarray(model(evaluation.batch)).shape
+            == _array_target(evaluation.target).shape
             for evaluation in scenario.evaluations
         )
 
@@ -167,7 +185,8 @@ def test_viscous_burgers_shock_rollout_is_finite_and_conservative():
     assert "viscous_rollout" in scenario.regimes
     assert scenario.reference_evidence is not None and scenario.reference_evidence.passed
     assert all(
-        jnp.all(jnp.isfinite(evaluation.target)) for evaluation in scenario.evaluations
+        jnp.all(jnp.isfinite(_array_target(evaluation.target)))
+        for evaluation in scenario.evaluations
     )
 
 
@@ -200,10 +219,12 @@ def test_flower_factories_and_comparators_obey_tensor_grid_contracts():
         architecture = architectures[name]
         model = architecture.build(scenario, seed=3)
         assert (
-            jnp.asarray(model(scenario.train_batch)).shape == scenario.train_target.shape
+            jnp.asarray(model(scenario.train_batch)).shape
+            == _array_target(scenario.train_target).shape
         )
         assert all(
-            jnp.asarray(model(evaluation.batch)).shape == evaluation.target.shape
+            jnp.asarray(model(evaluation.batch)).shape
+            == _array_target(evaluation.target).shape
             for evaluation in scenario.evaluations
         )
         configuration = dict(architecture.configuration(scenario))
@@ -277,4 +298,4 @@ def test_transport_wave_ladders_join_non_smoke_registry_only():
                 assert scenario.provenance is not None
                 assert scenario.reference_evidence is not None
                 assert scenario.reference_evidence.passed
-                assert jnp.all(jnp.isfinite(scenario.train_target))
+                assert jnp.all(jnp.isfinite(_array_target(scenario.train_target)))

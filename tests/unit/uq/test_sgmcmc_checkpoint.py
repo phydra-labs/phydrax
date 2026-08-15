@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any, cast
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -59,7 +61,7 @@ def test_sgld_resume_is_exact_across_lifecycle_boundaries(
     interrupt_update,
 ):
     problem, source = _problem_source()
-    common = {
+    common: dict[str, Any] = {
         "key": jr.key(30),
         "step_size": 1.0e-4,
         "num_chains": 2,
@@ -108,7 +110,7 @@ def test_sgld_resume_is_exact_across_lifecycle_boundaries(
 
 def test_sgnht_resume_preserves_momentum_thermostat_and_samples(tmp_path, monkeypatch):
     problem, source = _problem_source(seed=18)
-    common = {
+    common: dict[str, Any] = {
         "key": jr.key(31),
         "step_size": 5.0e-5,
         "diffusion": 0.02,
@@ -160,7 +162,7 @@ def test_sgnht_resume_preserves_momentum_thermostat_and_samples(tmp_path, monkey
 def test_completed_sgmcmc_checkpoint_extends_without_restarting(tmp_path):
     problem, source = _problem_source(seed=19)
     checkpoint = tmp_path / "extend.phxckpt"
-    common = {
+    common: dict[str, Any] = {
         "key": jr.key(32),
         "step_size": 1.0e-4,
         "num_chains": 2,
@@ -206,7 +208,7 @@ def test_completed_sgmcmc_checkpoint_extends_without_restarting(tmp_path):
 def test_sgmcmc_checkpoint_rejects_identity_source_settings_and_corruption(tmp_path):
     problem, source = _problem_source(seed=20)
     checkpoint = tmp_path / "compatibility.phxckpt"
-    common = {
+    common: dict[str, Any] = {
         "key": jr.key(33),
         "step_size": 1.0e-4,
         "num_chains": 2,
@@ -226,7 +228,7 @@ def test_sgmcmc_checkpoint_rejects_identity_source_settings_and_corruption(tmp_p
         phx.uq.sample_sgld(
             problem,
             source,
-            **(common | {"checkpoint_id": "other"}),
+            **cast(dict[str, Any], common | {"checkpoint_id": "other"}),
             resume_from=checkpoint,
         )
     with pytest.raises(phx.uq.CheckpointCompatibilityError, match="source"):
@@ -240,7 +242,7 @@ def test_sgmcmc_checkpoint_rejects_identity_source_settings_and_corruption(tmp_p
         phx.uq.sample_sgld(
             problem,
             source,
-            **(common | {"step_size": 2.0e-4}),
+            **cast(dict[str, Any], common | {"step_size": 2.0e-4}),
             resume_from=checkpoint,
         )
 

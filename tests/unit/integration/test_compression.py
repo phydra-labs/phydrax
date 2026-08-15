@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
@@ -38,7 +40,7 @@ def test_moment_compression_is_reusable_and_preserves_named_ancestry():
 
     assert compressed.batch.num_samples <= 3
     assert jnp.allclose(
-        compressed_estimate.value.data,
+        jnp.asarray(compressed_estimate.value.data),
         source_estimate.value.data,
         atol=1e-11,
         rtol=1e-11,
@@ -46,8 +48,8 @@ def test_moment_compression_is_reusable_and_preserves_named_ancestry():
     selected_coordinates = compressed.batch.samples.data
     source_indices = jnp.searchsorted(coordinates, selected_coordinates)
     assert jnp.array_equal(
-        compressed.batch.ancestry_ids.data,
-        ancestry.data[source_indices],
+        jnp.asarray(compressed.batch.ancestry_ids.data),
+        jnp.asarray(ancestry.data)[source_indices],
     )
     assert compressed_estimate.provenance.method == "compressed"
     assert isinstance(
@@ -76,7 +78,7 @@ def test_compression_preserves_nonnormalized_target_mass():
 
     assert jnp.isclose(compressed.target.target_mass, 7.0)
     assert jnp.allclose(
-        compressed_estimate.value.data,
+        jnp.asarray(compressed_estimate.value.data),
         source_estimate.value.data,
         atol=1e-11,
     )
@@ -118,7 +120,7 @@ def test_compression_lowers_a_named_discrete_point_measure():
 
     assert compressed.batch.num_samples <= 3
     assert jnp.allclose(
-        compressed_estimate.value.data,
+        jnp.asarray(compressed_estimate.value.data),
         source_estimate.value.data,
         atol=1e-11,
     )
@@ -147,10 +149,11 @@ def test_compression_preserves_proposal_support_failure():
 def test_compression_rejects_unpreserved_sample_grouping(identifier):
     samples = jnp.linspace(0.0, 1.0, 12)
     identifiers = jnp.arange(12, dtype=jnp.int32) // 2
+    grouping: dict[str, Any] = {identifier: identifiers}
     target = phx.integration.weighted(
         samples,
         jnp.zeros((12,)),
-        **{identifier: identifiers},
+        **grouping,
     )
 
     with pytest.raises(ValueError, match="compressed"):

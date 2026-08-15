@@ -11,6 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from .._strict import StrictModule
@@ -250,9 +251,9 @@ def kalman_filter_step(
     )
     previous_mean = state.mean.reshape((case_count, state_size))
     previous_covariance = state.covariance.reshape((case_count, state_size, state_size))
-    forecast_mean = jnp.einsum("cij,cj->ci", matrices, previous_mean) + offsets
+    forecast_mean = oe.contract("cij,cj->ci", matrices, previous_mean) + offsets
     forecast_covariance = (
-        jnp.einsum("cij,cjk,clk->cil", matrices, previous_covariance, matrices)
+        oe.contract("cij,cjk,clk->cil", matrices, previous_covariance, matrices)
         + process_covariances
     )
     forecast_covariance = 0.5 * (
@@ -303,12 +304,12 @@ def kalman_filter_step(
         * active_float[..., :, None]
     )
     predicted_observation = (
-        jnp.einsum("cij,cj->ci", observation_matrices, forecast_mean)
+        oe.contract("cij,cj->ci", observation_matrices, forecast_mean)
         + observation_offsets
     )
     innovation = jnp.where(mask, values - predicted_observation, 0.0)
     innovation_covariance = (
-        jnp.einsum(
+        oe.contract(
             "cij,cjk,clk->cil",
             effective_matrix,
             forecast_covariance,
@@ -316,7 +317,7 @@ def kalman_filter_step(
         )
         + effective_covariance
     )
-    cross_covariance = jnp.einsum("cij,ckj->cik", forecast_covariance, effective_matrix)
+    cross_covariance = oe.contract("cij,ckj->cik", forecast_covariance, effective_matrix)
     gain_result, scale = _factor_and_solve_covariance_system(
         innovation_covariance,
         jnp.swapaxes(cross_covariance, -1, -2),
@@ -328,17 +329,17 @@ def kalman_filter_step(
         & jnp.all(gain_result.successful, axis=-1)
     )
     gain = jnp.swapaxes(gain_result.value, -1, -2)
-    updated_mean = forecast_mean + jnp.einsum("cij,cj->ci", gain, innovation)
+    updated_mean = forecast_mean + oe.contract("cij,cj->ci", gain, innovation)
     identity = jnp.eye(state_size, dtype=forecast_mean.dtype)
-    update_operator = identity[None, ...] - jnp.einsum(
+    update_operator = identity[None, ...] - oe.contract(
         "cij,cjk->cik", gain, effective_matrix
     )
-    updated_covariance = jnp.einsum(
+    updated_covariance = oe.contract(
         "cij,cjk,clk->cil",
         update_operator,
         forecast_covariance,
         update_operator,
-    ) + jnp.einsum("cij,cjk,clk->cil", gain, effective_covariance, gain)
+    ) + oe.contract("cij,cjk,clk->cil", gain, effective_covariance, gain)
     updated_covariance = 0.5 * (
         updated_covariance + jnp.swapaxes(updated_covariance, -1, -2)
     )
@@ -585,10 +586,10 @@ def _parallel_kalman_filter(
         (initial_covariance[None, ...], filtered_covariance[:-1])
     )
     predicted_mean = (
-        jnp.einsum("tcij,tcj->tci", transition_array, previous_mean) + offset_array
+        oe.contract("tcij,tcj->tci", transition_array, previous_mean) + offset_array
     )
     predicted_covariance = (
-        jnp.einsum(
+        oe.contract(
             "tcij,tcjk,tclk->tcil",
             transition_array,
             previous_covariance,
@@ -610,12 +611,12 @@ def _parallel_kalman_filter(
         + covariance_regularization * observation_identity * active_float[..., :, None]
     )
     predicted_observation = (
-        jnp.einsum("tcij,tcj->tci", observation_matrix_array, predicted_mean)
+        oe.contract("tcij,tcj->tci", observation_matrix_array, predicted_mean)
         + observation_offset_array
     )
     innovation = jnp.where(masks, observations - predicted_observation, 0.0)
     innovation_covariance = (
-        jnp.einsum(
+        oe.contract(
             "tcij,tcjk,tclk->tcil",
             effective_matrix,
             predicted_covariance,
@@ -660,10 +661,10 @@ def _parallel_kalman_filter(
         (initial_covariance[None, ...], frozen_covariance[:-1])
     )
     predicted_mean = (
-        jnp.einsum("tcij,tcj->tci", transition_array, previous_mean) + offset_array
+        oe.contract("tcij,tcj->tci", transition_array, previous_mean) + offset_array
     )
     predicted_covariance = (
-        jnp.einsum(
+        oe.contract(
             "tcij,tcjk,tclk->tcil",
             transition_array,
             previous_covariance,
@@ -675,12 +676,12 @@ def _parallel_kalman_filter(
         predicted_covariance + jnp.swapaxes(predicted_covariance, -1, -2)
     )
     predicted_observation = (
-        jnp.einsum("tcij,tcj->tci", observation_matrix_array, predicted_mean)
+        oe.contract("tcij,tcj->tci", observation_matrix_array, predicted_mean)
         + observation_offset_array
     )
     innovation = jnp.where(masks, observations - predicted_observation, 0.0)
     innovation_covariance = (
-        jnp.einsum(
+        oe.contract(
             "tcij,tcjk,tclk->tcil",
             effective_matrix,
             predicted_covariance,
@@ -700,7 +701,7 @@ def _parallel_kalman_filter(
         & jnp.all(gain_result.successful, axis=-1)
     )
     gain = jnp.swapaxes(gain_result.value, -1, -2)
-    updated_mean = predicted_mean + jnp.einsum("tcij,tcj->tci", gain, innovation)
+    updated_mean = predicted_mean + oe.contract("tcij,tcj->tci", gain, innovation)
     identity = jnp.eye(state_size, dtype=predicted_mean.dtype)
     update_operator = identity - gain @ effective_matrix
     updated_covariance = update_operator @ predicted_covariance @ jnp.swapaxes(
@@ -861,7 +862,7 @@ def _psd_pseudoinverse(covariance: Array, /) -> Array:
     hermitian = 0.5 * (covariance + jnp.swapaxes(covariance, -1, -2))
     values, vectors = jnp.linalg.eigh(hermitian)
     inverse = jnp.where(values > 0.0, 1.0 / values, 0.0)
-    return jnp.einsum("...ij,...j,...kj->...ik", vectors, inverse, vectors)
+    return oe.contract("...ij,...j,...kj->...ik", vectors, inverse, vectors)
 
 
 def _sequential_rts_smoother(result: KalmanFilterResult, /) -> KalmanSmootherResult:
@@ -889,19 +890,19 @@ def _sequential_rts_smoother(result: KalmanFilterResult, /) -> KalmanSmootherRes
     covariances = filtered_covariance
     gains = jnp.zeros((case_count, max(num_steps - 1, 0), state_size, state_size))
     for index in range(num_steps - 2, -1, -1):
-        cross = jnp.einsum(
+        cross = oe.contract(
             "cij,ckj->cik", filtered_covariance[:, index], transitions[:, index + 1]
         )
-        gain = jnp.einsum(
+        gain = oe.contract(
             "cij,cjk->cik",
             cross,
             _psd_pseudoinverse(predicted_covariance[:, index + 1]),
         )
         pair_valid = valid[:, index] & valid[:, index + 1]
-        proposed_mean = filtered_mean[:, index] + jnp.einsum(
+        proposed_mean = filtered_mean[:, index] + oe.contract(
             "cij,cj->ci", gain, means[:, index + 1] - predicted_mean[:, index + 1]
         )
-        proposed_covariance = filtered_covariance[:, index] + jnp.einsum(
+        proposed_covariance = filtered_covariance[:, index] + oe.contract(
             "cij,cjk,clk->cil",
             gain,
             covariances[:, index + 1] - predicted_covariance[:, index + 1],
@@ -1182,7 +1183,7 @@ def _parallel_sample_kalman_smoother_paths(
     conditional_covariance = 0.5 * (
         conditional_covariance + jnp.swapaxes(conditional_covariance, -1, -2)
     )
-    conditional_offset = filtered_mean[:, :-1] - jnp.einsum(
+    conditional_offset = filtered_mean[:, :-1] - oe.contract(
         "ctij,ctj->cti", gains, predicted_mean[:, 1:]
     )
     gains = jnp.concatenate(

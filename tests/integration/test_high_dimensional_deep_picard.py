@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
@@ -81,7 +83,8 @@ def test_dimension_100_quadratic_hjb_deep_picard_smoke():
         keep_best=False,
     )
 
-    coefficient = float(result.solver["value"].func.function.time_coefficient)
+    evaluator = cast(Any, result.solver["value"].func)
+    coefficient = float(evaluator.function.time_coefficient)
     expected = 0.5 / dimension
     assert abs(coefficient - expected) < 5e-4
     assert result.diagnostics.target_rmse[-1] < 5e-4

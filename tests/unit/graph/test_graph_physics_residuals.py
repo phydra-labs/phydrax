@@ -48,7 +48,7 @@ def test_graph_poisson_residual_composes_laplacian_and_source():
         weight=diffusivity,
     )
 
-    assert jnp.allclose(residual(batch).data, jnp.zeros((3,)))
+    assert jnp.allclose(jnp.asarray(residual(batch).data), jnp.zeros((3,)))
 
 
 def test_graph_conservation_residual_composes_divergence_and_source():
@@ -64,7 +64,7 @@ def test_graph_conservation_residual_composes_divergence_and_source():
 
     residual = phx.operators.graph_conservation_residual(flux, source=source)
 
-    assert jnp.allclose(residual(batch).data, jnp.zeros((3,)))
+    assert jnp.allclose(jnp.asarray(residual(batch).data), jnp.zeros((3,)))
 
 
 def test_graph_advection_diffusion_residual_adds_advective_flux():
@@ -88,7 +88,7 @@ def test_graph_advection_diffusion_residual_adds_advective_flux():
         source=source,
     )
 
-    assert jnp.allclose(residual(batch).data, jnp.zeros((3,)))
+    assert jnp.allclose(jnp.asarray(residual(batch).data), jnp.zeros((3,)))
 
 
 def test_graph_heat_residual_zero_for_constant_implicit_step():
@@ -140,4 +140,4 @@ def test_graph_euler_residual_matches_explicit_rate():
         dt=0.5,
     )
 
-    assert jnp.allclose(residual(batch).data, jnp.zeros((3,)))
+    assert jnp.allclose(jnp.asarray(residual(batch).data), jnp.zeros((3,)))

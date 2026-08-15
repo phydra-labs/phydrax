@@ -53,6 +53,8 @@ def test_stochastic_collocation_fits_surrogate_moments_and_level_difference():
         "clenshaw-curtis",
         "gauss-hermite",
     )
+    assert result.diagnostics.mean_level_difference_norm is not None
+    assert result.diagnostics.variance_level_difference_norm is not None
     assert result.diagnostics.mean_level_difference_norm < 1e-10
     assert result.diagnostics.variance_level_difference_norm < 1e-9
 

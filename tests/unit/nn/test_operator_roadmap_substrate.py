@@ -4,6 +4,7 @@
 
 import json
 import math
+from typing import Any
 
 import coordax as cx
 import equinox as eqx
@@ -143,7 +144,7 @@ def test_multi_query_batches_stack_and_preserve_per_query_metadata():
     assert tuple(batch.queries) == ("state", "flux")
     assert batch.query("state") is batch.queries["state"]
     assert jnp.array_equal(
-        batch.query("state").mask,
+        batch.query("state").mask_array(case_shape=(2,)),
         jnp.array([[True, True, False], [True, True, True]]),
     )
     assert jnp.allclose(
@@ -151,13 +152,15 @@ def test_multi_query_batches_stack_and_preserve_per_query_metadata():
         jnp.array([[0.4, 0.6, 0.0], [0.2, 0.3, 0.5]]),
     )
     assert jnp.array_equal(
-        batch.query("flux").mask,
+        batch.query("flux").mask_array(case_shape=(2,)),
         jnp.array([[True, False, True], [True, False, False]]),
     )
     selected = batch.take(1, axis="scenario")
     assert selected.case_axes == ()
     assert selected.case_shape == ()
-    assert jnp.array_equal(selected.query("flux").mask, jnp.array([True, False, False]))
+    assert jnp.array_equal(
+        selected.query("flux").mask_array(), jnp.array([True, False, False])
+    )
 
     state_spec = phx.nn.operator.OperatorOutputSpec()
     flux_spec = phx.nn.operator.OperatorOutputSpec(2, component_names=("x", "y"))
@@ -322,17 +325,21 @@ def test_lazy_case_sampling_reads_only_selected_cases_and_preserves_metadata():
     assert case_reads == [7, 2]
     assert dataset.batch.case_axes == ("scenario",)
     assert dataset.batch.case_shape == (2,)
+    input_u = dataset.batch.input("u")
+    assert input_u.values is not None
     assert jnp.array_equal(
-        dataset.batch.input("u").values,
+        input_u.values,
         jnp.array([[7.0, 9.0], [2.0, 4.0]]),
     )
     assert jnp.array_equal(
         dataset.targets.field("solution").values,
         jnp.array([[71.0, 73.0], [21.0, 23.0]]),
     )
-    assert jnp.array_equal(dataset.batch.input("u").mask, jnp.ones((2, 2), dtype=bool))
+    assert jnp.array_equal(
+        input_u.mask_array(case_shape=(2,)), jnp.ones((2, 2), dtype=bool)
+    )
     assert jnp.allclose(
-        dataset.batch.input("u").quadrature(case_shape=(2,)),
+        input_u.quadrature(case_shape=(2,)),
         jnp.array([[0.25, 0.75], [0.25, 0.75]]),
     )
     assert jnp.allclose(
@@ -408,8 +415,12 @@ def test_streamed_encoded_query_decoding_matches_unchunked_eager_and_jit():
     last = source.read_chunk(4, 2)
     assert last.valid_count == 1
     assert last.samples.sample_shape == (2,)
-    assert jnp.array_equal(last.samples.mask[:, 1], jnp.array([False, False]))
-    assert jnp.array_equal(last.samples.quadrature_weights[:, 1], jnp.zeros((2,)))
+    assert jnp.array_equal(
+        last.samples.mask_array(case_shape=(2,))[:, 1], jnp.array([False, False])
+    )
+    assert jnp.array_equal(
+        last.samples.quadrature(case_shape=(2,))[:, 1], jnp.zeros((2,))
+    )
 
     state = model.encode_inputs(batch)
     sink = ArrayPredictionSink()
@@ -639,7 +650,7 @@ def test_pde_ir_round_trip_canonical_hash_tokens_and_constraint_execution():
     points = frozendict({"x": cx.Field(jnp.array([0.25]), dims=(None,))})
     assert compiled.canonical_hash == problem.canonical_hash
     assert jnp.allclose(
-        compiled.equation("unit_residual").residual(points).data,
+        jnp.asarray(compiled.equation("unit_residual").residual(points).data),
         jnp.array([-1.0]),
     )
 
@@ -918,25 +929,27 @@ def test_pde_compiler_rejects_invalid_backend_before_expression_dispatch():
     constant = PDEExpression.constant(1.0)
     geometry = Interval1d(-1.0, 1.0)
     u = geometry.Function("x")(0.0)
+    invalid_backend: Any = "definitely_invalid"
+    invalid_source: Any = None
 
     calls = (
         lambda: phx.equations.compile_pde_expression(
             constant,
             problem,
             fields={"u": u},
-            differential_backend="definitely_invalid",
+            differential_backend=invalid_backend,
         ),
         lambda: compile_pde_problem(
             problem,
             fields={"u": u},
-            differential_backend="definitely_invalid",
+            differential_backend=invalid_backend,
         ),
         lambda: compile_pde_residual_term(
             constant,
             problem,
             component=None,
-            source=None,
-            differential_backend="definitely_invalid",
+            source=invalid_source,
+            differential_backend=invalid_backend,
         ),
     )
     for call in calls:

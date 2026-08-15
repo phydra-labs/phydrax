@@ -9,6 +9,7 @@ from typing import Any, ClassVar, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._model import AbstractArrayModel, ModelBinding
@@ -40,7 +41,7 @@ def _reconstruction_weights_one(
 ) -> Array:
     neighbors = x[indices]
     centered = neighbors - x[:, None, :]
-    gram = jnp.einsum("nki,nli->nkl", centered, jnp.conj(centered))
+    gram = oe.contract("nki,nli->nkl", centered, jnp.conj(centered))
     k = int(indices.shape[-1])
     trace = jnp.real(jnp.trace(gram, axis1=-2, axis2=-1))
     ridge = float(regularization) * jnp.maximum(trace / k, jnp.finfo(x.real.dtype).eps)
@@ -92,11 +93,11 @@ def _lle_alignment_one(
     if variant == "modified":
         nullity = max(1, k - dimensions - 1)
         _evals, local_vectors = _stable_hermitian_eigh(
-            jnp.einsum("nki,nli->nkl", centered, jnp.conj(centered))
+            oe.contract("nki,nli->nkl", centered, jnp.conj(centered))
         )
         null_basis = local_vectors[:, :, :nullity]
         ones = jnp.ones((k, 1), dtype=null_basis.dtype) / jnp.sqrt(float(k))
-        coefficient = jnp.einsum("ki,nkj->nij", jnp.conj(ones), null_basis)
+        coefficient = oe.contract("ki,nkj->nij", jnp.conj(ones), null_basis)
         null_basis = null_basis - ones[None, :, :] * coefficient
         projector = null_basis @ jnp.conj(jnp.swapaxes(null_basis, -1, -2))
         alignment = alignment + _scatter_local(indices, projector, weights)
@@ -142,7 +143,7 @@ def _lle_alignment_one(
     scale = jnp.sqrt(jnp.maximum(jnp.sum(active), 1))
     embedding = eigenvectors * scale
     embedding = jnp.where(active[:, None], embedding, 0.0)
-    reconstructed = jnp.einsum("nk,nkd->nd", local_weights, embedding[indices])
+    reconstructed = oe.contract("nk,nkd->nd", local_weights, embedding[indices])
     residual = jnp.sqrt(
         jnp.sum(
             weights[:, None]
@@ -217,7 +218,7 @@ class LocallyLinearEmbeddingModel(AbstractArrayModel):
             indices = jax.lax.stop_gradient(indices.astype(jnp.int32))
             neighbors = train_[indices]
             centered = neighbors - query[:, None, :]
-            gram = jnp.einsum("qki,qli->qkl", centered, jnp.conj(centered))
+            gram = oe.contract("qki,qli->qkl", centered, jnp.conj(centered))
             trace = jnp.real(jnp.trace(gram, axis1=-2, axis2=-1))
             ridge = self.regularization * jnp.maximum(
                 trace / self.n_neighbors, jnp.finfo(query.real.dtype).eps
@@ -234,7 +235,7 @@ class LocallyLinearEmbeddingModel(AbstractArrayModel):
                 normalization,
                 jnp.ones_like(normalization),
             )
-            return jnp.einsum("qk,qkd->qd", weights, embedding_[indices])
+            return oe.contract("qk,qkd->qd", weights, embedding_[indices])
 
         transformed = jax.vmap(transform_one)(queries, train, embedding, active)
         return _restore_queries(

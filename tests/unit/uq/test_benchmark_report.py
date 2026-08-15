@@ -113,6 +113,7 @@ def test_runner_records_scenario_exceptions_without_losing_the_report(monkeypatc
     assert not report.passed
     assert report.scenarios[0].error_type == "RuntimeError"
     assert report.scenarios[0].failures == ("scenario_error",)
+    assert report.scenarios[0].error_message is not None
     assert "failure for smoke" in report.scenarios[0].error_message
 
 

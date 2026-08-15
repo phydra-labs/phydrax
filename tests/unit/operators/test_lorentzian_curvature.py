@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -102,10 +104,12 @@ def test_domain_curvature_rejects_incompatible_geometry_contracts():
         lambda q: jnp.ones((4,)),
         chart=chart,
     )
+    invalid_domain: Any = object()
+    invalid_metric: Any = riemannian
 
     with pytest.raises(TypeError, match="require a Domain"):
-        phx.operators.domain_scalar_curvature(object(), metric, var="x")
+        phx.operators.domain_scalar_curvature(invalid_domain, metric, var="x")
     with pytest.raises(TypeError, match="requires a LorentzianMetric"):
-        phx.operators.domain_scalar_curvature(domain, riemannian, var="x")
+        phx.operators.domain_scalar_curvature(domain, invalid_metric, var="x")
     with pytest.raises(ValueError, match="does not match"):
         phx.operators.domain_scalar_curvature(line, metric)

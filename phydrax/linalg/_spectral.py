@@ -79,6 +79,7 @@ class StochasticProbeStatus(IntEnum):
     KRYLOV_FAILURE = 2
     SOLVE_FAILURE = 3
     NONFINITE = 4
+    NOT_EVALUATED = 5
 
 
 class StochasticProbeDiagnostics(StrictModule):

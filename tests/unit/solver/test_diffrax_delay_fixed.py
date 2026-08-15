@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import diffrax as dfx
 import equinox as eqx
 import jax
@@ -132,7 +134,7 @@ def test_fixed_delay_solver_is_jittable_vectorizable_and_differentiable():
 def test_rolling_whole_solve_matches_full_history_with_bounded_storage():
     problem = _piecewise_problem(t1=4.0)
     times = jnp.linspace(0.0, 4.0, 41)
-    common = {
+    common: dict[str, Any] = {
         "save_times": times,
         "solver": dfx.Tsit5(),
         "stepsize_controller": dfx.ConstantStepSize(),
@@ -213,7 +215,7 @@ def test_rolling_history_capacity_is_explicit_for_adaptive_execution():
 
 
 def test_fixed_delay_solver_rejects_missing_or_noncausal_step_size():
-    common = {
+    common: dict[str, Any] = {
         "save_times": jnp.asarray([1.0]),
         "solver": dfx.Euler(),
         "stepsize_controller": dfx.ConstantStepSize(),

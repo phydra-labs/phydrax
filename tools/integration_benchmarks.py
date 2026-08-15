@@ -152,7 +152,8 @@ def _interoperability_benchmarks(
                 weighted_operation,
                 repeats=repeats,
                 working_set_bytes=(
-                    weighted_samples.data.nbytes + weighted_log_weights.data.nbytes
+                    jnp.asarray(weighted_samples.data).nbytes
+                    + jnp.asarray(weighted_log_weights.data).nbytes
                 ),
                 weight_layout="batched-log-weights",
             )

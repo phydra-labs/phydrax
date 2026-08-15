@@ -11,6 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ..._doc import DOC_KEY0
@@ -154,7 +155,7 @@ class LinearRecurrentUnit(eqx.Module):
         input_matrix = self.input_matrix_real.astype(
             complex_dtype
         ) + 1j * self.input_matrix_imag.astype(complex_dtype)
-        additions = jnp.einsum("...ti,mi->...tm", safe_values, input_matrix)
+        additions = oe.contract("...ti,mi->...tm", safe_values, input_matrix)
         transition = jnp.broadcast_to(
             self.eigenvalues().astype(complex_dtype), additions.shape
         )
@@ -181,9 +182,9 @@ class LinearRecurrentUnit(eqx.Module):
             complex_dtype
         ) + 1j * self.output_matrix_imag.astype(complex_dtype)
         dynamic = 2.0 * jnp.real(
-            jnp.einsum("om,...tm->...to", output_matrix, recurrence_result.states)
+            oe.contract("om,...tm->...to", output_matrix, recurrence_result.states)
         )
-        skip = jnp.einsum("oi,...ti->...to", self.skip_matrix, safe_values)
+        skip = oe.contract("oi,...ti->...to", self.skip_matrix, safe_values)
         outputs = jnp.where(
             batch.valid[..., None],
             dynamic.astype(skip.dtype) + skip,

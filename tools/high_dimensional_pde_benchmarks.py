@@ -282,7 +282,7 @@ def _block(value: Any) -> None:
 
 def _measure(
     function,
-    argument: Array,
+    argument: Any,
     /,
     *,
     repeats: int,
@@ -357,6 +357,8 @@ def run_semidiscrete_pde_compiler_benchmark(
     spatial = phx.solver.TensorGridDiscretization((axis,))
     started = time.perf_counter()
     compiled = phx.equations.compile_semidiscrete_pde(problem, spatial)
+    if compiled.semilinear_drift is None:
+        raise RuntimeError("Semidiscrete compilation did not produce a linear drift.")
     compiler_wall_ms = 1e3 * (time.perf_counter() - started)
 
     state = 0.2 + 0.1 * jnp.sin(2.0 * jnp.pi * axis.nodes)
@@ -468,7 +470,7 @@ def _query_feynman_kac_record(
     )
 
     def operation():
-        labels, paths = phx.stochastic.query_feynman_kac_labels(
+        result = phx.stochastic.query_feynman_kac_labels(
             problem,
             plan,
             query_times=jnp.asarray([0.0]),
@@ -476,6 +478,9 @@ def _query_feynman_kac_record(
             key=label_key,
             return_paths=True,
         )
+        if not isinstance(result, tuple):
+            raise RuntimeError("Feynman--Kac benchmark requested returned paths.")
+        labels, paths = result
         if labels.control_targets is None or labels.control_standard_errors is None:
             raise RuntimeError("Martingale benchmark labels require control targets.")
         return (
@@ -1210,7 +1215,7 @@ def _benchmark_environment() -> dict[str, Any]:
         "machine": platform.machine(),
         "backend": jax.default_backend(),
         "device_kind": device.device_kind,
-        "x64_enabled": bool(jax.config.x64_enabled),
+        "x64_enabled": bool(jax.config.read("jax_enable_x64")),
     }
 
 
@@ -1406,14 +1411,12 @@ def run_high_dimensional_reference_benchmarks(
                 seed=int(seed),
             )
         )
-        for problem_index, problem in enumerate(
-            (
-                "linear-hjb",
-                "ornstein-uhlenbeck-score",
-                "quartic-laplacian",
-            ),
-            start=1,
-        ):
+        analytic_problems: tuple[BenchmarkProblem, ...] = (
+            "linear-hjb",
+            "ornstein-uhlenbeck-score",
+            "quartic-laplacian",
+        )
+        for problem_index, problem in enumerate(analytic_problems, start=1):
             records.append(
                 _analytic_record(
                     problem,

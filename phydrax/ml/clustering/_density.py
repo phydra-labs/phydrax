@@ -9,6 +9,7 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array
 
 from ..._model import AbstractArrayModel
@@ -107,7 +108,7 @@ class DensityClusterModel(AbstractArrayModel):
         one_hot = jax.nn.one_hot(
             jnp.maximum(labels, 0), self.cluster_capacity, dtype=membership.dtype
         )
-        cluster_score = jnp.einsum("...q,...qk->...k", membership, one_hot)
+        cluster_score = oe.contract("...q,...qk->...k", membership, one_hot)
         active_cluster = self.cluster_active.reshape(
             self.case_shape + (1,) * sample_ndim + (self.cluster_capacity,)
         )

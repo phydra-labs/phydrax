@@ -11,6 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ..._doc import DOC_KEY0
@@ -294,7 +295,7 @@ class SelectiveStateSpaceBlock(StrictModule):
             raise ValueError(
                 "Initial selective time state has incompatible case dimensions."
             )
-        projected = jnp.einsum(
+        projected = oe.contract(
             "oi,...ti->...to",
             self.input_projection.astype(compute_dtype),
             safe_values,
@@ -371,7 +372,7 @@ class SelectiveStateSpaceBlock(StrictModule):
             final_has_time = previous_has_time | jnp.any(batch.valid, axis=-1)
         step_scale = (
             jax.nn.softplus(
-                jnp.einsum(
+                oe.contract(
                     "oi,...ti->...to",
                     self.delta_weight.astype(compute_dtype),
                     content,
@@ -385,7 +386,7 @@ class SelectiveStateSpaceBlock(StrictModule):
         exponent = effective_step[..., None] * decay
         transition = jnp.exp(-exponent)
         coefficient = -jnp.expm1(-exponent) / decay
-        input_state = jnp.einsum(
+        input_state = oe.contract(
             "mi,...ti->...tm",
             self.input_state_weight.astype(compute_dtype),
             content,
@@ -422,7 +423,7 @@ class SelectiveStateSpaceBlock(StrictModule):
             initial_state=recurrent0,
             execution=execution,
         )
-        output_state = jnp.einsum(
+        output_state = oe.contract(
             "mi,...ti->...tm",
             self.output_state_weight.astype(compute_dtype),
             content,
@@ -432,7 +433,7 @@ class SelectiveStateSpaceBlock(StrictModule):
             axis=-1,
         )
         latent = latent * gate
-        branch = jnp.einsum(
+        branch = oe.contract(
             "oi,...ti->...to",
             self.output_projection.astype(compute_dtype),
             latent,

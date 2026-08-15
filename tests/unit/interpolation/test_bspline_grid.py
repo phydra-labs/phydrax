@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -222,8 +224,9 @@ def test_grid_validation_rejects_invalid_knot_contracts(knots, degree, error, me
 
 
 def test_grid_constructor_validation():
+    invalid_degree: Any = 2.5
     with pytest.raises(TypeError, match="integer"):
-        BSplineGrid.open_uniform(3, 2.5)
+        BSplineGrid.open_uniform(3, invalid_degree)
     with pytest.raises(ValueError, match="positive"):
         BSplineGrid.open_uniform(3, 0)
     with pytest.raises(ValueError, match="finite and increasing"):

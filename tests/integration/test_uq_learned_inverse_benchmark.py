@@ -274,25 +274,27 @@ def _calibration_metrics(
         dims=("case", "x"),
     )
     test_target = trajectories[test_indices]
-    pre_width = 1.6448536269514722 * test_scale.data
-    pre_coordinate_coverage = (test_target >= test_center.data - pre_width) & (
-        test_target <= test_center.data + pre_width
+    test_center_values = jnp.asarray(test_center.data)
+    test_scale_values = jnp.asarray(test_scale.data)
+    pre_width = 1.6448536269514722 * test_scale_values
+    pre_coordinate_coverage = (test_target >= test_center_values - pre_width) & (
+        test_target <= test_center_values + pre_width
     )
     interval = calibrator.interval(test_center, test_scale)
-    post_coordinate_coverage = (test_target >= interval.lower.data) & (
-        test_target <= interval.upper.data
-    )
+    lower = jnp.asarray(interval.lower.data)
+    upper = jnp.asarray(interval.upper.data)
+    post_coordinate_coverage = (test_target >= lower) & (test_target <= upper)
     likelihood = phx.uq.GaussianLikelihood(total_scale)
     return {
         "nll": phx.uq.negative_log_likelihood(
             likelihood,
-            test_center.data,
+            test_center_values,
             test_target,
         ),
         "crps": jnp.mean(
             phx.uq.gaussian_crps(
-                test_center.data,
-                test_scale.data,
+                test_center_values,
+                test_scale_values,
                 test_target,
             )
         ),
@@ -300,8 +302,8 @@ def _calibration_metrics(
         "pre_simultaneous_coverage": jnp.mean(jnp.all(pre_coordinate_coverage, axis=1)),
         "post_simultaneous_coverage": jnp.mean(jnp.all(post_coordinate_coverage, axis=1)),
         "post_width": phx.uq.interval_width(
-            interval.lower.data,
-            interval.upper.data,
+            lower,
+            upper,
         ),
     }
 
@@ -731,7 +733,7 @@ def _stress_retention_summary(trials):
         for method in _STRESS_METHODS
     }
     baseline = aggregate["deterministic"]
-    decisions = {"deterministic": {"decision": "reference"}}
+    decisions: dict[str, dict[str, Any]] = {"deterministic": {"decision": "reference"}}
     for method in _STRESS_METHODS[1:]:
         values = aggregate[method]
         nll_deltas = [
@@ -1105,7 +1107,7 @@ def _misspecification_retention_summary(trials):
         for method in _MISSPECIFICATION_METHODS
     }
     baseline = aggregate["deterministic"]
-    decisions = {"deterministic": {"decision": "reference"}}
+    decisions: dict[str, dict[str, Any]] = {"deterministic": {"decision": "reference"}}
     for method in _MISSPECIFICATION_METHODS[1:]:
         values = aggregate[method]
         nll_deltas = [

@@ -323,6 +323,6 @@ def test_composite_process_operator_rollout_combines_wiener_and_jump_drivers():
     assert jnp.allclose(coarse.states[:, :, -1], expected[None], atol=1e-12)
     assert jnp.allclose(coarse.states[:, :, -1], fine.states[:, :, -1], atol=1e-12)
     assert all(
-        item.realization_id == realization.realization_id
+        item is not None and item.realization_id == realization.realization_id
         for item in coarse.trajectory.realizations
     )

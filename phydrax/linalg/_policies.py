@@ -12,7 +12,12 @@ import equinox as eqx
 
 from .._strict import StrictModule
 from ._materialization import MaterializationPolicy
-from ._preconditioners import AbstractPreconditioner
+from ._preconditioning import PreconditioningPolicy
+from ._recycling_policy import (
+    RecyclingExtraction,
+    RecyclingPolicy,
+    RecyclingRefresh,
+)
 
 
 FailureMode: TypeAlias = Literal["status", "error"]
@@ -138,6 +143,28 @@ class PCG(AbstractLinearMethod):
         return "pcg"
 
 
+class ProjectedPCG(AbstractLinearMethod):
+    """PCG on the certified orthogonal complement of a complete kernel."""
+
+    def __init__(self):
+        pass
+
+    @property
+    def name(self) -> str:
+        return "projected-pcg"
+
+
+class BlockCG(AbstractLinearMethod):
+    """True shared-space block conjugate gradients."""
+
+    def __init__(self):
+        pass
+
+    @property
+    def name(self) -> str:
+        return "block-cg"
+
+
 class MINRES(AbstractLinearMethod):
     """Minimum residual iteration for self-adjoint indefinite systems."""
 
@@ -164,6 +191,22 @@ class GMRES(AbstractLinearMethod):
     @property
     def name(self) -> str:
         return "gmres"
+
+
+class BlockGMRES(AbstractLinearMethod):
+    """Restarted true shared-space block GMRES."""
+
+    restart: int = eqx.field(static=True)
+
+    def __init__(self, *, restart: int = 20):
+        restart_ = int(restart)
+        if restart_ < 1:
+            raise ValueError("BlockGMRES restart must be positive.")
+        self.restart = restart_
+
+    @property
+    def name(self) -> str:
+        return "block-gmres"
 
 
 class FGMRES(AbstractLinearMethod):
@@ -306,6 +349,8 @@ class SolveResourcePolicy(StrictModule):
     factorization_bytes: int = eqx.field(static=True)
     workspace_bytes: int = eqx.field(static=True)
     krylov_basis_bytes: int = eqx.field(static=True)
+    preconditioner_bytes: int = eqx.field(static=True)
+    recycling_state_bytes: int = eqx.field(static=True)
 
     def __init__(
         self,
@@ -313,6 +358,8 @@ class SolveResourcePolicy(StrictModule):
         factorization_bytes: int = 512 * 1024 * 1024,
         workspace_bytes: int = 512 * 1024 * 1024,
         krylov_basis_bytes: int = 256 * 1024 * 1024,
+        preconditioner_bytes: int = 256 * 1024 * 1024,
+        recycling_state_bytes: int = 256 * 1024 * 1024,
     ):
         values = tuple(
             int(value)
@@ -320,6 +367,8 @@ class SolveResourcePolicy(StrictModule):
                 factorization_bytes,
                 workspace_bytes,
                 krylov_basis_bytes,
+                preconditioner_bytes,
+                recycling_state_bytes,
             )
         )
         if any(value < 0 for value in values):
@@ -328,6 +377,8 @@ class SolveResourcePolicy(StrictModule):
             self.factorization_bytes,
             self.workspace_bytes,
             self.krylov_basis_bytes,
+            self.preconditioner_bytes,
+            self.recycling_state_bytes,
         ) = values
 
 
@@ -338,10 +389,12 @@ class LinearSolvePolicy(StrictModule):
     tolerance: TolerancePolicy
     rank: RankPolicy
     materialization: MaterializationPolicy
-    preconditioner: AbstractPreconditioner | None
+    preconditioning: PreconditioningPolicy | None
+    recycling: RecyclingPolicy | None
     differentiation: DifferentiationPolicy
     failure: FailurePolicy
     resources: SolveResourcePolicy
+    require_device_binding: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -351,10 +404,12 @@ class LinearSolvePolicy(StrictModule):
         tolerance: TolerancePolicy | None = None,
         rank: RankPolicy | None = None,
         materialization: MaterializationPolicy | None = None,
-        preconditioner: AbstractPreconditioner | None = None,
+        preconditioning: PreconditioningPolicy | None = None,
+        recycling: RecyclingPolicy | None = None,
         differentiation: DifferentiationPolicy | None = None,
         failure: FailurePolicy | None = None,
         resources: SolveResourcePolicy | None = None,
+        require_device_binding: bool = False,
     ):
         method_ = AutoLinearMethod() if method is None else method
         tolerance_ = TolerancePolicy() if tolerance is None else tolerance
@@ -362,10 +417,12 @@ class LinearSolvePolicy(StrictModule):
         materialization_ = (
             MaterializationPolicy() if materialization is None else materialization
         )
-        if preconditioner is not None and not isinstance(
-            preconditioner, AbstractPreconditioner
+        if preconditioning is not None and not isinstance(
+            preconditioning, PreconditioningPolicy
         ):
-            raise TypeError("preconditioner must be an AbstractPreconditioner or None.")
+            raise TypeError("preconditioning must be a PreconditioningPolicy or None.")
+        if recycling is not None and not isinstance(recycling, RecyclingPolicy):
+            raise TypeError("recycling must be a RecyclingPolicy or None.")
         differentiation_ = (
             DifferentiationPolicy() if differentiation is None else differentiation
         )
@@ -389,16 +446,20 @@ class LinearSolvePolicy(StrictModule):
         self.tolerance = tolerance_
         self.rank = rank_
         self.materialization = materialization_
-        self.preconditioner = preconditioner
+        self.preconditioning = preconditioning
+        self.recycling = recycling
         self.differentiation = differentiation_
         self.failure = failure_
         self.resources = resources_
+        self.require_device_binding = bool(require_device_binding)
 
 
 __all__ = [
     "AbstractLinearMethod",
     "AutoLinearMethod",
     "BiCGStab",
+    "BlockCG",
+    "BlockGMRES",
     "ConjugateGradient",
     "DenseCholesky",
     "DenseLU",
@@ -416,9 +477,13 @@ __all__ = [
     "LSMR",
     "MINRES",
     "PCG",
+    "ProjectedPCG",
     "RankPolicy",
     "SolveResourcePolicy",
     "SparseDirect",
     "StructuredDirect",
     "TolerancePolicy",
+    "RecyclingExtraction",
+    "RecyclingPolicy",
+    "RecyclingRefresh",
 ]

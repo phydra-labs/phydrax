@@ -97,5 +97,5 @@ def test_irregular_trajectory_signal_linear_value_and_time_derivative():
     y = domain.inputs[case_indices, 0] + t
     expected = jnp.stack((y, 2.0 * y), axis=-1)
 
-    assert jnp.allclose(out.data, expected, atol=1e-12)
-    assert jnp.allclose(ds_dt.data, jnp.asarray([1.0, 2.0]), atol=1e-12)
+    assert jnp.allclose(jnp.asarray(out.data), expected, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(ds_dt.data), jnp.asarray([1.0, 2.0]), atol=1e-12)

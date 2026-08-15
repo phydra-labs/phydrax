@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any, cast
+
 import coordax as cx
 import jax
 import jax.numpy as jnp
@@ -133,7 +135,7 @@ def test_sgnht_first_update_matches_blackjax_diffusion_convention():
 @pytest.mark.parametrize("sample", [phx.uq.sample_sgld, phx.uq.sample_sgnht])
 def test_sgmcmc_sequential_and_vectorized_chains_replay_exactly(sample):
     problem, source = _regression_problem(batch_size=4)
-    common = {
+    common: dict[str, Any] = {
         "key": jr.key(22),
         "step_size": 1.0e-4,
         "num_chains": 2,
@@ -224,6 +226,7 @@ def test_sgmcmc_preserves_nested_constrained_parameter_samples():
     assert result.samples["scale"].shape == (2, 4)
     assert jnp.all(result.samples["scale"] > 0.0)
     prediction = result.predict(jnp.asarray([1.0, 2.0]))
+    assert isinstance(prediction, phx.uq.PredictiveField)
     assert prediction.samples.shape == (2, 4, 2)
 
 
@@ -244,6 +247,7 @@ def test_sgmcmc_result_exposes_honest_diagnostics_and_mixing_gates():
         min_tail_ess=1.0e9,
     )
 
+    assert result.log_density is not None
     assert result.approximation == "unadjusted_fixed_step"
     assert result.log_density.shape == (2, 8)
     assert result.thermostat is None
@@ -258,7 +262,7 @@ def test_sgmcmc_result_exposes_honest_diagnostics_and_mixing_gates():
 
 def test_sgmcmc_rejects_invalid_controls_and_reports_nonfinite_locations():
     problem, source = _regression_problem()
-    common = {
+    common: dict[str, Any] = {
         "key": jr.key(26),
         "step_size": 1.0e-4,
         "num_chains": 2,
@@ -266,11 +270,23 @@ def test_sgmcmc_rejects_invalid_controls_and_reports_nonfinite_locations():
         "num_samples": 4,
     }
     with pytest.raises(ValueError, match="step_size"):
-        phx.uq.sample_sgld(problem, source, **(common | {"step_size": 0.0}))
+        phx.uq.sample_sgld(
+            problem,
+            source,
+            **cast(dict[str, Any], common | {"step_size": 0.0}),
+        )
     with pytest.raises(ValueError, match="num_chains"):
-        phx.uq.sample_sgld(problem, source, **(common | {"num_chains": 1}))
+        phx.uq.sample_sgld(
+            problem,
+            source,
+            **cast(dict[str, Any], common | {"num_chains": 1}),
+        )
     with pytest.raises(ValueError, match="num_samples"):
-        phx.uq.sample_sgld(problem, source, **(common | {"num_samples": 3}))
+        phx.uq.sample_sgld(
+            problem,
+            source,
+            **cast(dict[str, Any], common | {"num_samples": 3}),
+        )
     with pytest.raises(FloatingPointError, match=r"chain\[1\]"):
         phx.uq.sample_sgld(
             problem,

@@ -2,6 +2,8 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import cast
+
 import coordax as cx
 import jax.numpy as jnp
 
@@ -137,7 +139,7 @@ def test_surface_div_grad_uses_differentiable_normal_provider():
     geom = phx.domain.GeometryDomain(
         phx.geometry.Cube(center=(0.0, 0.0, 0.0), side=2.0).compile()
     )
-    component = _RadialNormalComponent(geom)
+    component = cast(phx.domain.DomainComponent, _RadialNormalComponent(geom))
     points = jnp.array(
         [
             [1.0, 0.0, 0.0],

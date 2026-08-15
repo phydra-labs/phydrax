@@ -56,7 +56,7 @@ def test_function_binding_explicitly_passes_key(sample_batch, interval):
 
     key = jr.key(2)
     out = function(sample_batch, key=key)
-    assert jnp.allclose(out.data, jr.uniform(key))
+    assert jnp.allclose(jnp.asarray(out.data), jr.uniform(key))
 
 
 def test_function_binding_explicitly_passes_iteration(sample_batch, interval):
@@ -69,7 +69,7 @@ def test_function_binding_explicitly_passes_iteration(sample_batch, interval):
 
     out = function(sample_batch, iter_=3)
     expected = 3.0 * sample_batch.points["x"].data[..., 0]
-    assert jnp.allclose(out.data, expected)
+    assert jnp.allclose(jnp.asarray(out.data), expected)
 
 
 def test_add(sample_batch, interval):
@@ -82,7 +82,9 @@ def test_add(sample_batch, interval):
         return 2.0 * x[0]
 
     h = f + g
-    assert jnp.allclose(h(sample_batch).data, f(sample_batch).data + g(sample_batch).data)
+    assert jnp.allclose(
+        jnp.asarray(h(sample_batch).data), f(sample_batch).data + g(sample_batch).data
+    )
 
 
 def test_radd(sample_batch, interval):
@@ -91,7 +93,7 @@ def test_radd(sample_batch, interval):
         return x[0] + 1.0
 
     h = 3.0 + f
-    assert jnp.allclose(h(sample_batch).data, 3.0 + f(sample_batch).data)
+    assert jnp.allclose(jnp.asarray(h(sample_batch).data), 3.0 + f(sample_batch).data)
 
 
 def test_sub(sample_batch, interval):
@@ -104,7 +106,9 @@ def test_sub(sample_batch, interval):
         return 2.0 * x[0]
 
     h = f - g
-    assert jnp.allclose(h(sample_batch).data, f(sample_batch).data - g(sample_batch).data)
+    assert jnp.allclose(
+        jnp.asarray(h(sample_batch).data), f(sample_batch).data - g(sample_batch).data
+    )
 
 
 def test_rsub(sample_batch, interval):
@@ -113,7 +117,7 @@ def test_rsub(sample_batch, interval):
         return x[0] + 1.0
 
     h = 3.0 - f
-    assert jnp.allclose(h(sample_batch).data, 3.0 - f(sample_batch).data)
+    assert jnp.allclose(jnp.asarray(h(sample_batch).data), 3.0 - f(sample_batch).data)
 
 
 def test_mul(sample_batch, interval):
@@ -126,7 +130,9 @@ def test_mul(sample_batch, interval):
         return 2.0 * x[0]
 
     h = f * g
-    assert jnp.allclose(h(sample_batch).data, f(sample_batch).data * g(sample_batch).data)
+    assert jnp.allclose(
+        jnp.asarray(h(sample_batch).data), f(sample_batch).data * g(sample_batch).data
+    )
 
 
 def test_rmul(sample_batch, interval):
@@ -135,7 +141,7 @@ def test_rmul(sample_batch, interval):
         return x[0] + 1.0
 
     h = 3.0 * f
-    assert jnp.allclose(h(sample_batch).data, 3.0 * f(sample_batch).data)
+    assert jnp.allclose(jnp.asarray(h(sample_batch).data), 3.0 * f(sample_batch).data)
 
 
 def test_truediv(sample_batch, interval):
@@ -148,7 +154,9 @@ def test_truediv(sample_batch, interval):
         return 2.0 * x[0] + 1.0
 
     h = f / g
-    assert jnp.allclose(h(sample_batch).data, f(sample_batch).data / g(sample_batch).data)
+    assert jnp.allclose(
+        jnp.asarray(h(sample_batch).data), f(sample_batch).data / g(sample_batch).data
+    )
 
 
 def test_rtruediv(sample_batch, interval):
@@ -157,7 +165,7 @@ def test_rtruediv(sample_batch, interval):
         return x[0] + 1.0
 
     h = 3.0 / f
-    assert jnp.allclose(h(sample_batch).data, 3.0 / f(sample_batch).data)
+    assert jnp.allclose(jnp.asarray(h(sample_batch).data), 3.0 / f(sample_batch).data)
 
 
 def test_pow(sample_batch, interval):
@@ -166,7 +174,7 @@ def test_pow(sample_batch, interval):
         return x[0] + 1.0
 
     h = f**2.0
-    assert jnp.allclose(h(sample_batch).data, f(sample_batch).data ** 2.0)
+    assert jnp.allclose(jnp.asarray(h(sample_batch).data), f(sample_batch).data ** 2.0)
 
 
 def test_rpow(sample_batch, interval):
@@ -175,7 +183,7 @@ def test_rpow(sample_batch, interval):
         return x[0]
 
     h = 3.0**f
-    assert jnp.allclose(h(sample_batch).data, 3.0 ** f(sample_batch).data)
+    assert jnp.allclose(jnp.asarray(h(sample_batch).data), 3.0 ** f(sample_batch).data)
 
 
 def test_abs(sample_batch, interval):
@@ -184,7 +192,7 @@ def test_abs(sample_batch, interval):
         return -x[0]
 
     h = abs(f)
-    assert jnp.allclose(h(sample_batch).data, jnp.abs(f(sample_batch).data))
+    assert jnp.allclose(jnp.asarray(h(sample_batch).data), jnp.abs(f(sample_batch).data))
 
 
 def test_neg(sample_batch, interval):
@@ -193,7 +201,7 @@ def test_neg(sample_batch, interval):
         return x[0]
 
     h = -f
-    assert jnp.allclose(h(sample_batch).data, -f(sample_batch).data)
+    assert jnp.allclose(jnp.asarray(h(sample_batch).data), -f(sample_batch).data)
 
 
 def test_transpose(sample_batch, interval):

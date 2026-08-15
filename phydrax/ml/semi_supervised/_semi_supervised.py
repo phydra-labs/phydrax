@@ -10,6 +10,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array
 
 from ..._model import AbstractArrayModel, ModelBinding
@@ -298,7 +299,7 @@ class LabelPropagationModel(AbstractArrayModel):
             )
         cross = _kernel_matrix_cases(self.kernel, points, self.training_features)
         weighted = cross * self.training_weight[..., None, :]
-        numerator = jnp.einsum("...mn,...nc->...mc", weighted, self.distributions)
+        numerator = oe.contract("...mn,...nc->...mc", weighted, self.distributions)
         denominator = jnp.sum(weighted, axis=-1, keepdims=True)
         prior = self.prior[..., None, :]
         probabilities = jnp.where(
@@ -374,7 +375,7 @@ class LabelPropagationRecipe(AbstractRecipe):
         )
 
         def update(_, current):
-            propagated = jnp.einsum("...nm,...mc->...nc", transition, current)
+            propagated = oe.contract("...nm,...mc->...nc", transition, current)
             return jnp.where(labelled[..., None], targets, propagated)
 
         distributions = jax.lax.fori_loop(0, self.iterations, update, targets)
@@ -481,7 +482,7 @@ class LabelSpreadingRecipe(AbstractRecipe):
 
         def update(_, current):
             return (
-                alpha * jnp.einsum("...nm,...mc->...nc", transition, current)
+                alpha * oe.contract("...nm,...mc->...nc", transition, current)
                 + (jnp.ones((), dtype=transition.dtype) - alpha) * targets
             )
 

@@ -98,6 +98,8 @@ def test_jump_event_diagnostics_recover_counts_channels_and_marks():
     )
 
     assert diagnostics.reference is not None
+    assert diagnostics.count_wasserstein_distance is not None
+    assert diagnostics.channel_frequency_l1 is not None
     assert jnp.abs(diagnostics.candidate.count_mean - 3.0) < 0.1
     assert jnp.allclose(
         diagnostics.candidate.channel_probabilities,

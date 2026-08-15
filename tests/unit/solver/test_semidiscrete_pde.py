@@ -3,6 +3,7 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+import phydrax._spectral as spectral
 
 
 def _heat_problem(*, periodic=False, target=None, reaction=False):
@@ -191,6 +192,7 @@ def test_compiled_heat_matches_handwritten_jit_and_parameter_gradient():
     sensitivity = jax.grad(
         lambda coefficient: jnp.sum(compiled(0.0, state, {"kappa": coefficient}) ** 2)
     )(jnp.asarray(0.35))
+    assert compiled.semilinear_drift is not None
 
     decayed = phx.linalg.matrix_exponential_action(
         compiled.semilinear_drift.linear_operator,
@@ -390,7 +392,7 @@ def test_compiler_requires_one_evolution_equation_per_field_and_static_packing()
 
 def test_spectral_laplacian_compilation_preserves_exact_representation():
     eigenvalues = jnp.asarray([0.0, 1.0, 4.0])
-    plan = phx._spectral.SpectralDiscretization.from_eigenpairs(
+    plan = spectral.SpectralDiscretization.from_eigenpairs(
         eigenvalues,
         jnp.eye(3),
         jnp.ones((3,)),
@@ -400,6 +402,7 @@ def test_spectral_laplacian_compilation_preserves_exact_representation():
     problem = _heat_problem()
     compiled = phx.equations.compile_semidiscrete_pde(problem, spatial)
     state = jnp.asarray([1.0, 2.0, 3.0])
+    assert compiled.semilinear_drift is not None
 
     assert compiled.resolved_method == "semilinear-spectral"
     assert compiled.semilinear_drift.spectral_representation is not None
@@ -758,7 +761,7 @@ def test_uniform_tensor_grid_rejects_nonperiodic_roll_semantics():
 
 
 def test_spectral_compilation_rejects_frames_and_only_preserves_full_bases():
-    full_plan = phx._spectral.SpectralDiscretization.from_eigenpairs(
+    full_plan = spectral.SpectralDiscretization.from_eigenpairs(
         jnp.asarray((0.0, 1.0, 4.0)),
         jnp.eye(3),
         jnp.ones((3,)),
@@ -783,7 +786,7 @@ def test_spectral_compilation_rejects_frames_and_only_preserves_full_bases():
     with pytest.raises(ValueError, match="has no coordinate frame"):
         phx.equations.compile_semidiscrete_pde(coordinate_problem, full)
 
-    truncated_plan = phx._spectral.SpectralDiscretization.from_eigenpairs(
+    truncated_plan = spectral.SpectralDiscretization.from_eigenpairs(
         jnp.asarray((0.0, 1.0)),
         jnp.asarray(
             (
@@ -800,6 +803,7 @@ def test_spectral_compilation_rejects_frames_and_only_preserves_full_bases():
         _heat_problem(),
         truncated,
     )
+    assert compiled.semilinear_drift is not None
     assert compiled.resolved_method == "semilinear-matrix-free"
     assert compiled.semilinear_drift.spectral_representation is None
 
@@ -830,6 +834,9 @@ def test_compiled_operator_identity_includes_parameters_and_lifts():
             ),
         ),
     )
+    assert first.semilinear_drift is not None
+    assert rebound.semilinear_drift is not None
+    assert lifted.semilinear_drift is not None
     assert first.semilinear_drift.operator_id != rebound.semilinear_drift.operator_id
     assert first.semilinear_drift.operator_id != lifted.semilinear_drift.operator_id
     assert first.compilation_id != rebound.compilation_id

@@ -91,14 +91,16 @@ def test_input_function_prediction_matches_explicit_ragged_draw_loop():
         "case",
         "__phydra_operator_point",
     )
-    assert jnp.allclose(prediction.predictive.samples.data, expected)
+    assert jnp.allclose(jnp.asarray(prediction.predictive.samples.data), expected)
     assert prediction.predictive.sample_axes[0].source == "input"
+    input_variance = prediction.input_variance()
+    assert isinstance(input_variance, phx.nn.operator.OperatorPrediction)
     assert jnp.allclose(
         prediction.mean().field("output").values[prediction.output_mask()],
         2.0,
     )
     assert jnp.allclose(
-        prediction.input_variance().field("output").values[prediction.output_mask()],
+        input_variance.field("output").values[prediction.output_mask()],
         1.0,
     )
 
@@ -150,13 +152,13 @@ def test_operator_linearized_covariance_preserves_geometry_and_masks():
     mask = jnp.asarray([[True, True, False], [True, True, True]])
 
     assert result.mean.dims == ("case", "__phydra_operator_point")
-    assert jnp.array_equal(result.mean.data, jnp.where(mask, 2.0, 0.0))
+    assert jnp.array_equal(jnp.asarray(result.mean.data), jnp.where(mask, 2.0, 0.0))
     assert jnp.allclose(
         result.materialize_covariance().matrix,
         expected_covariance,
     )
     assert jnp.allclose(
-        result.exact_variance().data,
+        jnp.asarray(result.exact_variance().data),
         jnp.diag(expected_covariance).reshape((2, 3)),
     )
 
@@ -194,7 +196,7 @@ def test_operator_hilbert_covariance_requires_measure_and_stays_operator_valued(
     expected_output = jnp.where(mask, weighted.pushforward(expected_input), 0.0)
 
     assert jnp.allclose(
-        result.covariance_vector_product(cotangent).data,
+        jnp.asarray(result.covariance_vector_product(cotangent).data),
         expected_output,
     )
     with pytest.raises(ValueError, match="only vector products"):

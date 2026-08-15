@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
@@ -680,24 +681,26 @@ def _diagnostics(
     equality_rhs = problem.equality_rhs
     inequality_matrix = problem.inequality_matrix
     inequality_rhs = problem.inequality_rhs
-    objective = 0.5 * jnp.einsum(
+    objective = 0.5 * oe.contract(
         "...i,...ij,...j->...", primal, quadratic, primal
-    ) + jnp.einsum("...i,...i->...", linear, primal)
+    ) + oe.contract("...i,...i->...", linear, primal)
     stationarity = (
-        jnp.einsum("...ij,...j->...i", quadratic, primal)
+        oe.contract("...ij,...j->...i", quadratic, primal)
         + linear
-        + jnp.einsum("...ji,...j->...i", equality_matrix, equality_dual)
-        + jnp.einsum("...ji,...j->...i", inequality_matrix, inequality_dual)
+        + oe.contract("...ji,...j->...i", equality_matrix, equality_dual)
+        + oe.contract("...ji,...j->...i", inequality_matrix, inequality_dual)
     )
     solver_stationarity = stationarity + regularization * primal
     equality_residual = (
-        jnp.einsum("...ij,...j->...i", equality_matrix, primal) - equality_rhs
+        oe.contract("...ij,...j->...i", equality_matrix, primal) - equality_rhs
     )
     inequality_residual = (
-        jnp.einsum("...ij,...j->...i", inequality_matrix, primal) + slack - inequality_rhs
+        oe.contract("...ij,...j->...i", inequality_matrix, primal)
+        + slack
+        - inequality_rhs
     )
     inequality_violation = jnp.maximum(
-        jnp.einsum("...ij,...j->...i", inequality_matrix, primal) - inequality_rhs,
+        oe.contract("...ij,...j->...i", inequality_matrix, primal) - inequality_rhs,
         0.0,
     )
     complementarity = slack * inequality_dual
@@ -745,17 +748,17 @@ def _diagnostics(
         ),
         equality_rhs.reshape((flat_count, problem.num_equalities)),
     ).reshape(problem.batch_shape)
-    certificate_stationarity = jnp.einsum(
+    certificate_stationarity = oe.contract(
         "...ji,...j->...i", equality_matrix, equality_dual
-    ) + jnp.einsum("...ji,...j->...i", inequality_matrix, inequality_dual)
+    ) + oe.contract("...ji,...j->...i", inequality_matrix, inequality_dual)
     certificate_scale = jnp.maximum(
         1.0,
         jnp.maximum(_max_abs(equality_dual), _max_abs(inequality_dual)),
     )
     certificate_residual = _max_abs(certificate_stationarity) / certificate_scale
     certificate_value = (
-        jnp.einsum("...i,...i->...", equality_rhs, equality_dual)
-        + jnp.einsum("...i,...i->...", inequality_rhs, inequality_dual)
+        oe.contract("...i,...i->...", equality_rhs, equality_dual)
+        + oe.contract("...i,...i->...", inequality_rhs, inequality_dual)
     ) / certificate_scale
     certificate_tolerance = jnp.sqrt(jnp.asarray(tolerance, dtype=quadratic.dtype))
     farkas_infeasible = (
@@ -1065,17 +1068,19 @@ def _dense_primal_forward(
         step_fraction=step_fraction,
     )
     stationarity = (
-        jnp.einsum("...ij,...j->...i", quadratic, primal)
+        oe.contract("...ij,...j->...i", quadratic, primal)
         + regularization * primal
         + linear
-        + jnp.einsum("...ji,...j->...i", equality_matrix, equality_dual)
-        + jnp.einsum("...ji,...j->...i", inequality_matrix, inequality_dual)
+        + oe.contract("...ji,...j->...i", equality_matrix, equality_dual)
+        + oe.contract("...ji,...j->...i", inequality_matrix, inequality_dual)
     )
     equality_residual = (
-        jnp.einsum("...ij,...j->...i", equality_matrix, primal) - equality_rhs
+        oe.contract("...ij,...j->...i", equality_matrix, primal) - equality_rhs
     )
     inequality_residual = (
-        jnp.einsum("...ij,...j->...i", inequality_matrix, primal) + slack - inequality_rhs
+        oe.contract("...ij,...j->...i", inequality_matrix, primal)
+        + slack
+        - inequality_rhs
     )
     complementarity = slack * inequality_dual
     residual = jnp.maximum(

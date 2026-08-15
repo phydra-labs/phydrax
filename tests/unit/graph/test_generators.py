@@ -6,6 +6,8 @@ import phydrax.graph as vx
 
 def test_get_fully_connected_graph_no_self_edges():
     graph = vx.get_fully_connected_graph(3, 2, add_self_edges=False)
+    assert graph.senders is not None
+    assert graph.receivers is not None
     assert graph.n_node.tolist() == [3, 3]
     assert graph.n_edge.tolist() == [6, 6]
     assert int(graph.senders.shape[0]) == 12
@@ -49,6 +51,8 @@ def test_sparse_matrix_to_graph_repeats_indices():
         values=jnp.array([2, 1], dtype=jnp.int32),
         n_node=jnp.array([2], dtype=jnp.int32),
     )
+    assert graph.senders is not None
+    assert graph.receivers is not None
     assert graph.n_edge.tolist() == [3]
     assert graph.senders.tolist() == [0, 0, 1]
     assert graph.receivers.tolist() == [1, 1, 0]

@@ -283,16 +283,17 @@ class PortHamiltonianVectorField(_AbstractStructuredInputModel):
                 name="forcing_model",
             )
         )
-        self.control_model = (
-            None
-            if control_model is None
-            else _validated_model(
+        if control_model is None:
+            self.control_model = None
+        else:
+            if control_dimension is None:
+                raise ValueError("control_model requires control_size.")
+            self.control_model = _validated_model(
                 control_model,
                 state_size=dimension,
-                output_shape=(dimension * int(control_dimension),),
+                output_shape=(dimension * control_dimension,),
                 name="control_model",
             )
-        )
         self.control_matrix = (
             None
             if control_dimension is None or control_model is not None

@@ -448,6 +448,33 @@ def _coordinate_dtype(space: AbstractVectorSpace, /) -> np.dtype:
     return next(iter(dtypes))
 
 
+def _coordinate_pairing_weights(space: AbstractVectorSpace, /) -> Array:
+    """Return coordinate-diagonal Riesz weights for a supported vector space."""
+    if not _has_diagonal_pairing(space):
+        raise TypeError("Vector space does not have a coordinate-diagonal pairing.")
+    ones = jax.tree.map(
+        lambda spec: jnp.ones(spec.shape, dtype=spec.dtype),
+        space.structure(),
+    )
+    return space.flatten(space.riesz(ones))
+
+
+def _coordinate_pairing_matrix(space: AbstractVectorSpace, /) -> Array:
+    """Materialize the coordinate Gram matrix of one finite-dimensional pairing."""
+    basis = jnp.eye(space.size, dtype=_coordinate_dtype(space))
+
+    def row(left_coordinates):
+        left = space.unflatten(left_coordinates)
+        return jax.vmap(
+            lambda right_coordinates: space.inner(
+                left,
+                space.unflatten(right_coordinates),
+            )
+        )(basis)
+
+    return jax.vmap(row)(basis)
+
+
 def _has_diagonal_pairing(space: AbstractVectorSpace, /) -> bool:
     from ._space_extensions import CoordaxSpace, TensorProductSpace
 
@@ -481,15 +508,20 @@ class RHSLayout(StrictModule):
 
     shape: tuple[int, ...] = eqx.field(static=True)
     names: tuple[str | None, ...] = eqx.field(static=True)
+    layout_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        shape: Sequence[int] = (),
+        shape: Sequence[int],
         /,
         *,
         names: Sequence[str | None] | None = None,
     ):
         shape_ = _shape(shape, "RHS shape")
+        if not shape_:
+            raise ValueError("RHSLayout requires at least one trailing RHS axis.")
+        if any(size == 0 for size in shape_):
+            raise ValueError("RHS axes must be non-empty.")
         names_ = (
             (None,) * len(shape_)
             if names is None
@@ -502,10 +534,22 @@ class RHSLayout(StrictModule):
             raise ValueError("Named RHS axes must be non-empty and unique.")
         self.shape = shape_
         self.names = names_
+        self.layout_id = canonical_fingerprint(
+            {
+                "kind": "rhs-layout",
+                "shape": list(shape_),
+                "names": list(names_),
+            }
+        )
 
     @property
     def size(self) -> int:
         return prod(self.shape) if self.shape else 1
+
+    @property
+    def rhs_count(self) -> int:
+        """Number of canonical independent right-hand-side columns."""
+        return self.size
 
 
 __all__ = [

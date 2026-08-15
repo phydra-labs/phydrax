@@ -4,11 +4,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any
-
-from jaxtyping import PyTree
-
 from .._fingerprint import canonical_fingerprint
 from ._operators import (
     AbstractLinearOperator,
@@ -17,6 +12,7 @@ from ._operators import (
     IdentityLinearOperator,
     ScaledLinearOperator,
 )
+from ._preconditioners import AbstractPreconditioner
 from ._problems import LinearSystem
 from ._properties import OperatorProperties
 from ._spaces import BlockSpace
@@ -108,7 +104,7 @@ def saddle_point_system(
 def saddle_point_schur_complement(
     primal_operator: AbstractLinearOperator,
     constraint_operator: AbstractLinearOperator,
-    inverse_action: Callable[[PyTree[Any]], PyTree[Any]],
+    inverse_action: AbstractPreconditioner,
     stabilization: AbstractLinearOperator | None = None,
     /,
     *,
@@ -116,8 +112,8 @@ def saddle_point_schur_complement(
 ) -> SchurComplementLinearOperator:
     """Build the dual Schur complement ``-C - B A⁻¹ B*`` matrix-free."""
     _validate_blocks(primal_operator, constraint_operator, stabilization)
-    if not callable(inverse_action):
-        raise TypeError("inverse_action must be callable.")
+    if not isinstance(inverse_action, AbstractPreconditioner):
+        raise TypeError("inverse_action must be an AbstractPreconditioner.")
     diagonal = (
         ScaledLinearOperator(IdentityLinearOperator(constraint_operator.target), 0.0)
         if stabilization is None

@@ -35,7 +35,7 @@ def test_carlson_symmetry_homogeneity_and_degeneracies():
     np.testing.assert_allclose(rf_values, rf_values[0], rtol=3e-15)
 
     rj_values = [
-        float(phx.special.elliprj(*permutation, 0.8))
+        float(phx.special.elliprj(permutation[0], permutation[1], permutation[2], 0.8))
         for permutation in itertools.permutations(values)
     ]
     np.testing.assert_allclose(rj_values, rj_values[0], rtol=4e-15)
@@ -52,8 +52,13 @@ def test_carlson_symmetry_homogeneity_and_degeneracies():
         rtol=4e-15,
     )
     np.testing.assert_allclose(
-        phx.special.elliprj(*(scale * value for value in values), scale * 0.8),
-        phx.special.elliprj(*values, 0.8) / scale**1.5,
+        phx.special.elliprj(
+            scale * values[0],
+            scale * values[1],
+            scale * values[2],
+            scale * 0.8,
+        ),
+        phx.special.elliprj(values[0], values[1], values[2], 0.8) / scale**1.5,
         rtol=5e-15,
     )
     np.testing.assert_allclose(

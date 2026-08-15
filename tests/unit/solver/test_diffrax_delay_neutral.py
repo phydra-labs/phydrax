@@ -152,6 +152,7 @@ def test_neutral_derivative_jump_has_one_sided_knot_semantics_and_provenance():
         max_steps=512,
         max_discontinuities=16,
     )
+    assert solution.interpolation is not None
     intervals = jnp.arange(4)
     expected = jnp.asarray(
         [sum(factor**power for power in range(1, n + 1)) for n in range(4)]

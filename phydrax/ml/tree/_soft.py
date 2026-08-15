@@ -10,6 +10,7 @@ from typing import Any, Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._model import AbstractArrayModel
@@ -85,7 +86,7 @@ def _soft_tree_values(
         probability = jnp.stack(
             (probability * gate, probability * (1.0 - gate)), axis=-1
         ).reshape((points.shape[0], feature_logits.shape[0], -1))
-    return jnp.einsum("ptl,tlo->pto", probability, leaf_value)
+    return oe.contract("ptl,tlo->pto", probability, leaf_value)
 
 
 def _soft_predict_case(

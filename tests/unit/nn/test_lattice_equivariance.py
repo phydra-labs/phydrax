@@ -2,6 +2,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 import pytest
 
 from phydrax.nn.operator import FunctionSamples, OperatorAxis, OperatorBatch
@@ -171,7 +172,7 @@ def test_scalar_invariant_basis_transfer_reports_exact_central_embedding_and_rej
         residual_tolerance=1e-10,
     )
     central = jnp.zeros((3, 3, 1, 1)).at[1, 1, 0, 0].set(1.0)
-    source_coefficients = jnp.einsum(
+    source_coefficients = oe.contract(
         "ri,i->r",
         source.basis.reshape(source.rank, -1),
         central.reshape(-1),

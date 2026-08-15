@@ -297,6 +297,7 @@ def _transport_diagnostics(
         early_stop=False,
     )
     result = phx.transport.soft_order_transport(residuals, solver=solver)
+    assert isinstance(result, phx.transport.SinkhornResult)
     return {
         "converged": bool(result.converged),
         "normalized_marginal_residual": float(

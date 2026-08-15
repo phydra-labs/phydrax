@@ -51,11 +51,11 @@ def test_graph_dataset_domain_materializes_batched_node_entities():
     assert batch.graph.num_edges == 3
     assert jnp.allclose(batch["graph"].data[:, 0], jnp.array([0.0, 1.0, 2.0, 4.0, 8.0]))
     assert jnp.allclose(
-        batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data,
+        jnp.asarray(batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data),
         jnp.arange(5, dtype=jnp.int32),
     )
     assert jnp.allclose(
-        batch[phx.domain.graph.GRAPH_DATASET_INDEX_KEY].data,
+        jnp.asarray(batch[phx.domain.graph.GRAPH_DATASET_INDEX_KEY].data),
         jnp.array([0, 0, 1, 1, 1], dtype=jnp.int32),
     )
     assert jnp.allclose(
@@ -74,7 +74,7 @@ def test_graph_dataset_domain_applies_local_node_sets_per_graph():
 
     assert jnp.allclose(batch["graph"].data[:, 0], jnp.array([1.0, 4.0]))
     assert jnp.allclose(
-        batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data,
+        jnp.asarray(batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data),
         jnp.array([1, 3], dtype=jnp.int32),
     )
     assert jnp.allclose(
@@ -96,7 +96,7 @@ def test_graph_dataset_domain_graph_gradient_on_local_edge_set():
         return node[0]
 
     grad = phx.operators.graph_gradient(u)
-    assert jnp.allclose(grad(batch).data, jnp.array([1.0, 2.0]))
+    assert jnp.allclose(jnp.asarray(grad(batch).data), jnp.array([1.0, 2.0]))
 
 
 def test_graph_dataset_domain_samples_through_residual_penalty():
@@ -154,7 +154,7 @@ def test_graph_dataset_domain_graph_model_accepts_edge_input_fn():
         edge_input_fn=k,
     )
 
-    assert jnp.allclose(model(batch).data, jnp.array([0.0, 4.0]))
+    assert jnp.allclose(jnp.asarray(model(batch).data), jnp.array([0.0, 4.0]))
 
 
 def test_graph_dataset_domain_layout_packs_graph_but_exposes_real_entities():
@@ -177,7 +177,7 @@ def test_graph_dataset_domain_layout_packs_graph_but_exposes_real_entities():
     assert jnp.allclose(batch.graph.edge_mask, jnp.array([True, True, True, False]))
     assert jnp.allclose(batch["graph"].data[:, 0], jnp.array([0.0, 1.0, 2.0, 4.0, 8.0]))
     assert jnp.allclose(
-        batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data,
+        jnp.asarray(batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data),
         jnp.arange(5, dtype=jnp.int32),
     )
 
@@ -197,7 +197,7 @@ def test_graph_dataset_domain_layout_preserves_graph_operator_results():
 
     assert batch.graph.edge_mask.shape == (4,)
     assert jnp.allclose(
-        phx.operators.graph_gradient(u)(batch).data, jnp.array([1.0, 2.0])
+        jnp.asarray(phx.operators.graph_gradient(u)(batch).data), jnp.array([1.0, 2.0])
     )
 
 

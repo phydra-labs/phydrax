@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 import jax.numpy as jnp
+import opt_einsum as oe
 
 from phydrax.domain import DomainFunction
 
@@ -264,7 +265,7 @@ class _PoissonBracketCallable(StrictModule):
             ),
             axis=-1,
         )
-        return jnp.einsum(
+        return oe.contract(
             "...i,...ij,...j->...",
             left,
             self.poisson(coordinates),
@@ -317,7 +318,7 @@ class _PoissonHamiltonianCallable(StrictModule):
             ),
             axis=-1,
         )
-        return jnp.einsum(
+        return oe.contract(
             "...ij,...j->...i",
             self.poisson(coordinates),
             differential,

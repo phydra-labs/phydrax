@@ -81,7 +81,7 @@ def test_nested_divergence_drops_stale_optimized_derivative_hooks():
     )
     point = frozendict({"x": cx.Field(jnp.asarray([0.4]), dims=(None,))})
 
-    assert jnp.allclose(adjoint(point).data, 12.0 * 0.4**2)
+    assert jnp.allclose(jnp.asarray(adjoint(point).data), 12.0 * 0.4**2)
 
 
 def test_div_ad_engine_jvp_matches_default():

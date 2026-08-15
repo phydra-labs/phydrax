@@ -2,6 +2,10 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from collections.abc import Callable
+from typing import cast
+
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -27,6 +31,14 @@ from tools.operator_benchmarks import (
 )
 
 
+def _array_target(
+    target: jax.Array | phx.nn.operator.OperatorTargetBatch,
+    /,
+) -> jax.Array:
+    assert not isinstance(target, phx.nn.operator.OperatorTargetBatch)
+    return jnp.asarray(target)
+
+
 def test_standard_operator_benchmarks_cover_required_regimes():
     scenarios = standard_operator_benchmarks(quick=True)
     names = {scenario.name for scenario in scenarios}
@@ -40,7 +52,10 @@ def test_standard_operator_benchmarks_cover_required_regimes():
         "navier_stokes_vorticity_2d",
         "periodic_burgers_1d",
     }
-    assert all(jnp.all(jnp.isfinite(scenario.train_target)) for scenario in scenarios)
+    assert all(
+        jnp.all(jnp.isfinite(_array_target(scenario.train_target)))
+        for scenario in scenarios
+    )
 
 
 def test_benchmark_runner_trains_and_reports_cross_resolution_metrics():
@@ -158,6 +173,14 @@ def test_benchmark_runner_resumes_model_optimizer_and_curve_exactly(tmp_path):
         validation_interval=1,
         run_evaluations=False,
     )
+    assert callable(resumed_model)
+    assert callable(fresh_model)
+    resumed_predict = cast(
+        Callable[[phx.nn.operator.OperatorBatch], jax.Array], resumed_model
+    )
+    fresh_predict = cast(
+        Callable[[phx.nn.operator.OperatorBatch], jax.Array], fresh_model
+    )
     assert partial.training_steps == 2
     assert resumed.resumed_from_step == 2
     assert resumed.training_steps == 4
@@ -165,8 +188,8 @@ def test_benchmark_runner_resumes_model_optimizer_and_curve_exactly(tmp_path):
     assert resumed.validation_steps == fresh.validation_steps
     assert resumed.validation_losses == fresh.validation_losses
     assert jnp.array_equal(
-        resumed_model(scenario.train_batch),
-        fresh_model(scenario.train_batch),
+        resumed_predict(scenario.train_batch),
+        fresh_predict(scenario.train_batch),
     )
 
     with pytest.raises(ValueError, match="checkpoint contract mismatch"):
@@ -346,6 +369,8 @@ def test_external_candidate_requires_audit_and_uniform_benchmark_superiority(tmp
     )
     assert not unverified.integrated
     assert "checkpoint artifact" in " ".join(unverified.reasons)
+    assert candidate.code_license is not None
+    assert candidate.weights_license is not None
     manifest = phx.nn.operator.adapters.OperatorCheckpointManifest(
         architecture="candidate",
         model_version="1.0.0",

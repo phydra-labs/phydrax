@@ -107,7 +107,7 @@ def test_graph_spectral_filter_wraps_as_domain_graph_model():
         input_fn=u,
     )
 
-    assert jnp.allclose(filt(batch).data, jnp.array([1.0, 3.0]))
+    assert jnp.allclose(jnp.asarray(filt(batch).data), jnp.array([1.0, 3.0]))
 
 
 def test_graph_spectral_filter_preserves_padding_entries():

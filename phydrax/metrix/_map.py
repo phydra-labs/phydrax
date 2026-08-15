@@ -8,6 +8,7 @@ from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
@@ -96,7 +97,7 @@ class DifferentiableMap(StrictModule):
             raise ValueError(
                 f"Source tangent vector must have shape {expected}; got {values.shape}."
             )
-        return jnp.einsum("...ai,...i->...a", self.jacobian(points), values)
+        return oe.contract("...ai,...i->...a", self.jacobian(points), values)
 
     def pullback_covector(
         self,
@@ -111,7 +112,7 @@ class DifferentiableMap(StrictModule):
             raise ValueError(
                 f"Target covector must have shape {expected}; got {values.shape}."
             )
-        return jnp.einsum("...ai,...a->...i", self.jacobian(points), values)
+        return oe.contract("...ai,...a->...i", self.jacobian(points), values)
 
     def compose(self, after: DifferentiableMap, /) -> DifferentiableMap:
         """Return ``after ∘ self`` after checking the intermediate chart."""

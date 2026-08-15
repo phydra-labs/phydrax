@@ -75,7 +75,9 @@ def test_controlled_population_uses_a_fixed_independent_monitor():
         iter_=1,
     )
 
-    assert jnp.array_equal(refreshed.monitor_batch.points["x"].data, monitor_before)
+    assert jnp.array_equal(
+        jnp.asarray(refreshed.monitor_batch.points["x"].data), monitor_before
+    )
     assert int(refreshed.refresh_attempt_count) == 1
     assert int(refreshed.monitor_evaluations) == 16
     assert int(refreshed.candidate_evaluations) == 16

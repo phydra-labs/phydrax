@@ -1,3 +1,5 @@
+from typing import Any
+
 import diffrax as dfx
 import equinox as eqx
 import jax
@@ -151,6 +153,7 @@ def test_dense_history_uses_the_same_wiener_path_inside_an_accepted_step():
         dt0=0.2,
         dense=True,
     )
+    assert solution.interpolation is not None
     query = jnp.asarray([0.03, 0.13, 0.19])
     increments = realization.increments(jnp.zeros_like(query), query)[..., 0]
     expected = 1.0 + 2.0 * query + 3.0 * increments
@@ -168,7 +171,7 @@ def test_batched_stochastic_rolling_history_replays_full_path_solution():
         support=(0.0, 0.8),
         sample_shape=(2,),
     )
-    common = {
+    common: dict[str, Any] = {
         "save_times": jnp.linspace(0.0, 0.8, 9),
         "realization": realization,
         "solver": dfx.Euler(),
@@ -478,7 +481,7 @@ def test_stochastic_state_dependent_and_distributed_delays_replay_all_history_mo
         support=(0.0, 0.6),
         tolerance=1e-5,
     )
-    common = {
+    common: dict[str, Any] = {
         "save_times": jnp.linspace(0.0, 0.6, 7),
         "realization": realization,
         "dt0": 0.025,

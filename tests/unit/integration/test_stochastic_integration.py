@@ -36,7 +36,7 @@ class _EndpointSensitiveNormal(phx.uq.AbstractDistribution):
 
 
 class _KeyConsumingBatchIntegrand(BatchEvaluator):
-    def __call_batch__(self, batch, /, *, key, **kwargs):
+    def __call_batch__(self, batch, /, *, key=jr.key(0), **kwargs):
         del kwargs
         reference = batch["z"]
         value = jr.uniform(key)
@@ -46,7 +46,7 @@ class _KeyConsumingBatchIntegrand(BatchEvaluator):
 
 
 class _AlternatingBatchIntegrand(BatchEvaluator):
-    def __call_batch__(self, batch, /, *, key, **kwargs):
+    def __call_batch__(self, batch, /, *, key=jr.key(0), **kwargs):
         del key, kwargs
         reference = batch["x"]
         index = jnp.arange(reference.data.shape[0])
@@ -71,7 +71,7 @@ def test_iid_monte_carlo_reports_sampling_standard_error():
         key=jr.key(1),
     )
 
-    assert jnp.allclose(estimate.value.data, 1.0 / 3.0, atol=2e-2)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 1.0 / 3.0, atol=2e-2)
     assert estimate.error_kind == "iid-standard-error"
     assert estimate.error_estimate > 0.0
     assert estimate.diagnostics.num_independent_replicates == 1
@@ -84,7 +84,7 @@ def test_antithetic_error_uses_independent_pairs():
 
     estimate = phx.integration.integrate(function, target, plan, key=jr.key(2))
 
-    assert jnp.allclose(estimate.value.data, 0.5, atol=1e-14)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 0.5, atol=1e-14)
     assert estimate.error_kind == "antithetic-pair-standard-error"
     assert estimate.diagnostics.num_pairs == 256
     assert estimate.diagnostics.pair_covariance < 0.0
@@ -99,7 +99,7 @@ def test_latin_hypercube_does_not_claim_iid_uncertainty():
 
     estimate = phx.integration.integrate(function, target, plan, key=jr.key(3))
 
-    assert jnp.allclose(estimate.value.data, 1.0 / 3.0, atol=1e-3)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 1.0 / 3.0, atol=1e-3)
     assert estimate.error_estimate is None
     assert estimate.error_kind is None
     assert estimate.diagnostics.standard_error is None
@@ -123,7 +123,7 @@ def test_qmc_uncertainty_requires_independent_randomized_replicates():
     assert deterministic.error_estimate is None
     assert deterministic.error_kind is None
     assert deterministic.diagnostics.standard_error is None
-    assert jnp.allclose(randomized.value.data, 1.0 / 3.0, atol=2e-4)
+    assert jnp.allclose(jnp.asarray(randomized.value.data), 1.0 / 3.0, atol=2e-4)
     assert randomized.error_kind == "randomized-qmc-replicate-error"
     assert randomized.error_estimate >= 0.0
     assert randomized.diagnostics.replicate_estimates.shape == (4,)
@@ -141,7 +141,7 @@ def test_importance_sampling_reports_raw_weight_diagnostics():
         key=jr.key(5),
     )
 
-    assert jnp.allclose(estimate.value.data, 1.0, atol=5e-2)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 1.0, atol=5e-2)
     assert estimate.error_kind == "weighted-iid-standard-error"
     assert estimate.error_estimate > 0.0
     assert estimate.diagnostics.weights.weight_ess > 0.0
@@ -172,7 +172,7 @@ def test_external_weighted_samples_do_not_invent_independence():
 
     estimate = phx.integration.integrate(lambda values: values, target)
 
-    assert jnp.allclose(estimate.value.data, 2.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 2.0, atol=1e-12)
     assert estimate.error_estimate is None
     assert estimate.error_kind is None
     assert jnp.allclose(estimate.diagnostics.weights.weight_ess, 8.0 / 3.0)
@@ -189,7 +189,7 @@ def test_control_variate_coefficients_fit_on_disjoint_iid_pilot():
 
     estimate = phx.integration.integrate(function, target, plan, key=jr.key(7))
 
-    assert jnp.allclose(estimate.value.data, 3.5, atol=1e-10)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 3.5, atol=1e-10)
     assert estimate.error_estimate < 1e-10
     assert estimate.num_evaluations == 960
 
@@ -218,7 +218,7 @@ def test_explicit_stratification_preserves_physical_measure():
         key=jr.key(6),
     )
 
-    assert jnp.allclose(estimate.value.data, 4.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 4.0, atol=1e-12)
     assert estimate.error_kind == "stratified-standard-error"
     assert jnp.all(estimate.diagnostics.samples_per_stratum > 0)
 
@@ -237,7 +237,7 @@ def test_direct_monte_carlo_excludes_fixed_component_labels():
     )
 
     assert estimate.successful
-    assert jnp.allclose(estimate.value.data, 1.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 1.0, atol=1e-12)
 
 
 def test_antithetic_zero_density_reports_invalid_normalization_mass():
@@ -375,12 +375,16 @@ def test_randomized_probability_sampling_and_evaluation_use_independent_keys():
     function = probability.Function("z")(_KeyConsumingBatchIntegrand())
     estimate = phx.integration.reduce(function, realization)
 
-    assert jnp.array_equal(realization.batch.points["z"].data, expected_samples)
+    assert jnp.array_equal(
+        jnp.asarray(realization.batch.points["z"].data), expected_samples
+    )
     assert jnp.array_equal(
         jr.key_data(realization.key),
         jr.key_data(evaluation_key),
     )
-    assert jnp.allclose(estimate.value.data, jr.uniform(evaluation_key), atol=1e-14)
+    assert jnp.allclose(
+        jnp.asarray(estimate.value.data), jr.uniform(evaluation_key), atol=1e-14
+    )
 
 
 def test_antithetic_sampling_rejects_partial_coupled_target_axes():
@@ -406,7 +410,7 @@ def test_raw_weighted_scalar_integrand_broadcasts_over_samples():
     estimate = phx.integration.integrate(7.0, target)
 
     assert estimate.successful
-    assert jnp.allclose(estimate.value.data, 7.0, atol=1e-14)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 7.0, atol=1e-14)
     assert estimate.num_evaluations == 5
 
 
@@ -445,9 +449,9 @@ def test_deterministic_qmc_uses_open_probability_quantiles(sequence):
     )
 
     assert realization.key is None
-    assert jnp.all(jnp.isfinite(realization.batch.points["z"].data))
+    assert jnp.all(jnp.isfinite(jnp.asarray(realization.batch.points["z"].data)))
     assert estimate.successful
-    assert jnp.all(jnp.isfinite(estimate.value.data))
+    assert jnp.all(jnp.isfinite(jnp.asarray(estimate.value.data)))
 
 
 def test_identical_unbounded_importance_proposal_passes_support_probes():
@@ -484,7 +488,7 @@ def test_large_measure_monte_carlo_rejects_overflowed_standard_error():
         key=jr.key(21),
     )
 
-    assert jnp.all(jnp.isfinite(estimate.value.data))
+    assert jnp.all(jnp.isfinite(jnp.asarray(estimate.value.data)))
     assert jnp.all(jnp.isinf(estimate.diagnostics.standard_error))
     assert estimate.status == int(phx.integration.IntegrationStatus.NONFINITE_INTEGRAND)
     assert not estimate.successful
