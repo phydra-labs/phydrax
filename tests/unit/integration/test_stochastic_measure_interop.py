@@ -43,13 +43,15 @@ def test_staged_time_then_path_reduction_contains_failed_paths():
     trajectory, _ = _spatiotemporal_trajectory()
     path_target = phx.stochastic.trajectory_measure(trajectory, mode="path")
     time_target = phx.stochastic.time_measure(trajectory)
+    time_weights = time_target.weights
+    assert isinstance(time_weights, cx.Field)
     values = path_target.samples
 
     time_estimate = phx.integration.integrate(values, time_target)
     path_estimate = phx.integration.integrate(time_estimate.value, path_target)
 
     expected_paths = jnp.sum(
-        trajectory.states * time_target.weights.data[..., None],
+        trajectory.states * jnp.asarray(time_weights.data)[..., None],
         axis=1,
     )
     expected = jnp.mean(expected_paths[jnp.asarray([0, 2])], axis=0)
@@ -58,7 +60,7 @@ def test_staged_time_then_path_reduction_contains_failed_paths():
     )
     assert jnp.isnan(time_estimate.value.data[1]).all()
     assert path_estimate.value.dims == ("space",)
-    assert jnp.allclose(path_estimate.value.data, expected)
+    assert jnp.allclose(jnp.asarray(path_estimate.value.data), expected)
     assert path_estimate.successful
 
 
@@ -66,6 +68,8 @@ def test_staged_space_time_path_reduction_is_jittable_and_differentiable():
     trajectory, discretization = _spatiotemporal_trajectory()
     path_target = phx.stochastic.trajectory_measure(trajectory, mode="path")
     time_target = phx.stochastic.time_measure(trajectory)
+    time_weights = time_target.weights
+    assert isinstance(time_weights, cx.Field)
     spatial_target = phx.solver.spatial_measure(
         discretization,
         spatial_dims="space",
@@ -82,7 +86,7 @@ def test_staged_space_time_path_reduction_is_jittable_and_differentiable():
         trajectory.states * discretization.quadrature_weights,
         axis=-1,
     )
-    path_values = jnp.sum(spatial_values * time_target.weights.data, axis=-1)
+    path_values = jnp.sum(spatial_values * jnp.asarray(time_weights.data), axis=-1)
     expected = jnp.mean(path_values[jnp.asarray([0, 2])])
     compiled = jax.jit(staged)(jnp.asarray(2.0))
     derivative = jax.grad(staged)(jnp.asarray(1.0))

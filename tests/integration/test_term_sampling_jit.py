@@ -25,7 +25,7 @@ from phydrax.terms import MomentPenalty, ResidualPenalty
 
 
 class _KeyConsumingResidual(BatchEvaluator):
-    def __call_batch__(self, batch, /, *, key, **kwargs):
+    def __call_batch__(self, batch, /, *, key=jr.key(0), **kwargs):
         del kwargs
         reference = batch["x"]
         draw = jr.uniform(key)

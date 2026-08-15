@@ -77,7 +77,7 @@ def test_diagonal_covariance_preserves_nested_pytrees_and_coordax_dimensions():
 
     assert result.mean["field"].dims == ("component",)
     assert exact["field"].dims == ("component",)
-    assert jnp.allclose(exact["field"].data, jnp.asarray([0.5, 1.9]))
+    assert jnp.allclose(jnp.asarray(exact["field"].data), jnp.asarray([0.5, 1.9]))
     assert jnp.allclose(exact["total"], 0.6)
     tangent = jax.tree_util.tree_map(jnp.ones_like, center)
     cotangent = {

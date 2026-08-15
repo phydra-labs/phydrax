@@ -40,4 +40,4 @@ def test_time_only_function_broadcasts_over_space_and_time_axes():
     else:
         raise AssertionError(f"Unexpected dims for broadcasted output: {out.dims}")
 
-    assert jnp.allclose(out.data, expected)
+    assert jnp.allclose(jnp.asarray(out.data), expected)

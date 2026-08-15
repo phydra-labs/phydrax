@@ -54,7 +54,7 @@ def test_simplicial_bundle_components_select_cells_and_incidences():
     )
     assert jnp.allclose(edge_batch["graph"]["features"].data[:, 0], jnp.zeros((3,)))
     assert jnp.allclose(
-        incidence_batch["graph"]["incidence_sign"].data,
+        jnp.asarray(incidence_batch["graph"]["incidence_sign"].data),
         jnp.array([1.0, 1.0, -1.0]),
     )
     assert vertices.mass.value == 3.0
@@ -125,5 +125,5 @@ def test_simplicial_hodge_laplacian_integrates_with_graph_model_and_constraints(
     )
     term = phx.terms.ResidualPenalty(condition, source)
 
-    assert jnp.allclose(model(batch).data, jnp.array([-1.0, 2.0, -1.0]))
+    assert jnp.allclose(jnp.asarray(model(batch).data), jnp.array([-1.0, 2.0, -1.0]))
     assert term.loss({"u": u}, key=jr.key(0)) < 1e-12

@@ -10,6 +10,7 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array
 
 from ..._model import AbstractArrayModel
@@ -141,10 +142,10 @@ def _class_statistics(
     class_weight = weight[..., :, None] * membership
     mass = jnp.sum(class_weight, axis=-2)
     tiny = jnp.finfo(weight.dtype).tiny
-    means = jnp.einsum("...nc,...nf->...cf", class_weight, x)
+    means = oe.contract("...nc,...nf->...cf", class_weight, x)
     means = means / jnp.maximum(mass[..., :, None], tiny)
     centered = x[..., :, None, :] - means[..., None, :, :]
-    scatter = jnp.einsum(
+    scatter = oe.contract(
         "...nc,...ncf,...ncg->...cfg",
         class_weight,
         jnp.conj(centered),
@@ -176,7 +177,7 @@ def _regularize(
     positive = eigenvalues > tolerance[..., None]
     rank = jnp.sum(positive, axis=-1, dtype=jnp.int32)
     safe_eigenvalues = jnp.maximum(eigenvalues, tolerance[..., None])
-    inverse = jnp.einsum(
+    inverse = oe.contract(
         "...ik,...k,...jk->...ij",
         eigenvectors,
         1.0 / safe_eigenvalues,
@@ -238,7 +239,7 @@ class LinearDiscriminantModel(AbstractArrayModel):
         coefficients = _reshape_for_samples(self.coefficients, self.case_shape, extra)
         intercepts = _reshape_for_samples(self.intercepts, self.case_shape, extra)
         return (
-            jnp.real(jnp.einsum("...f,...cf->...c", jnp.conj(values), coefficients))
+            jnp.real(oe.contract("...f,...cf->...c", jnp.conj(values), coefficients))
             + intercepts
         )
 
@@ -306,7 +307,7 @@ class QuadraticDiscriminantModel(AbstractArrayModel):
         logdet = _reshape_for_samples(self.log_determinants, self.case_shape, extra)
         difference = values[..., None, :] - means
         quadratic = jnp.real(
-            jnp.einsum(
+            oe.contract(
                 "...cf,...cfg,...cg->...c", jnp.conj(difference), precisions, difference
             )
         )
@@ -396,8 +397,8 @@ def _fit_discriminant(
             case_shape=batch.case_shape,
         )
     else:
-        coefficients = jnp.einsum("...fg,...cg->...cf", inverse, means)
-        norm = jnp.real(jnp.einsum("...cf,...cf->...c", jnp.conj(means), coefficients))
+        coefficients = oe.contract("...fg,...cg->...cf", inverse, means)
+        norm = jnp.real(oe.contract("...cf,...cf->...c", jnp.conj(means), coefficients))
         intercepts = log_priors - 0.5 * norm
         model = LinearDiscriminantModel(
             coefficients, intercepts, labels, schema, case_shape=batch.case_shape

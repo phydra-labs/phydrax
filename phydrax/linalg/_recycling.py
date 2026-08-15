@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from enum import IntEnum
 from typing import Any
 
 import equinox as eqx
@@ -15,7 +16,7 @@ from jaxtyping import Array, ArrayLike, PyTree
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ._operators import AbstractLinearOperator
-from ._spaces import AbstractVectorSpace
+from ._spaces import _coordinate_dtype, AbstractVectorSpace
 from ._subspaces import LinearSubspace
 
 
@@ -100,6 +101,160 @@ class RecyclingSubspace(StrictModule):
         /,
     ) -> PyTree[Array]:
         """Add the coarse correction for ``residual`` to an initial solution."""
+        value = self.source.validate(initial)
+        correction = self.correction(residual)
+        return jax.tree.map(lambda left, right: left + right, value, correction)
+
+
+class RecyclingUpdateStatus(IntEnum):
+    """Portable status for one fixed-capacity recycling update."""
+
+    EMPTY = 0
+    CURRENT = 1
+    REFRESHED = 2
+    CAPACITY_TRUNCATED = 3
+    RANK_LOSS = 4
+
+
+class RecyclingState(StrictModule):
+    """Fixed-capacity GCRO-DR state carried between related solves."""
+
+    source: AbstractVectorSpace
+    target: AbstractVectorSpace
+    source_basis: Array
+    image_basis: Array
+    operator_id: str = eqx.field(static=True)
+    recycling_id: str = eqx.field(static=True)
+    effective_dimension: Array
+    operator_numeric_version: Array
+    update_count: Array
+    update_status: Array
+    solve_plan_id: str = eqx.field(static=True)
+    extraction: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        source: AbstractVectorSpace,
+        target: AbstractVectorSpace,
+        source_basis: ArrayLike,
+        image_basis: ArrayLike,
+        effective_dimension: Any,
+        operator_id: str,
+        solve_plan_id: str,
+        operator_numeric_version: Any,
+        recycling_id: str,
+        update_count: Any = 0,
+        update_status: Any = RecyclingUpdateStatus.CURRENT,
+        extraction: str = "harmonic-ritz",
+    ):
+        if not isinstance(source, AbstractVectorSpace) or not isinstance(
+            target, AbstractVectorSpace
+        ):
+            raise TypeError("source and target must be AbstractVectorSpace values.")
+        source_basis_ = jnp.asarray(source_basis)
+        image_basis_ = jnp.asarray(image_basis)
+        if source_basis_.ndim != 2 or image_basis_.ndim != 2:
+            raise ValueError("Recycling state bases must be rank-two arrays.")
+        if source_basis_.shape[1] != image_basis_.shape[1]:
+            raise ValueError("Recycling state bases must have the same capacity.")
+        if np.dtype(source_basis_.dtype) != _coordinate_dtype(source):
+            raise TypeError("source_basis dtype must match the source space.")
+        if np.dtype(image_basis_.dtype) != _coordinate_dtype(target):
+            raise TypeError("image_basis dtype must match the target space.")
+        capacity = int(source_basis_.shape[1])
+        effective = jnp.asarray(effective_dimension, dtype=jnp.int32)
+        numeric_version = jnp.asarray(operator_numeric_version, dtype=jnp.int32)
+        updates = jnp.asarray(update_count, dtype=jnp.int32)
+        status = jnp.asarray(update_status, dtype=jnp.int32)
+        if any(
+            value.ndim != 0 for value in (effective, numeric_version, updates, status)
+        ):
+            raise ValueError("Recycling counters and status must be scalar.")
+        effective = eqx.error_if(
+            effective,
+            (effective < 0) | (effective > capacity),
+            "effective_dimension must be between zero and capacity.",
+        )
+        numeric_version = eqx.error_if(
+            numeric_version,
+            numeric_version < 0,
+            "operator_numeric_version must be non-negative.",
+        )
+        updates = eqx.error_if(
+            updates,
+            updates < 0,
+            "update_count must be non-negative.",
+        )
+        status = eqx.error_if(
+            status,
+            (status < int(RecyclingUpdateStatus.EMPTY))
+            | (status > int(RecyclingUpdateStatus.RANK_LOSS)),
+            "Unknown recycling update status.",
+        )
+        solve_plan_id_ = str(solve_plan_id)
+        if not solve_plan_id_:
+            raise ValueError("solve_plan_id must be non-empty.")
+        extraction_ = str(extraction)
+        if extraction_ != "harmonic-ritz":
+            raise ValueError("Only harmonic-ritz recycling extraction is supported.")
+        active = jnp.arange(capacity) < effective
+        validated = RecyclingSubspace(
+            source=source,
+            target=target,
+            source_basis=jnp.where(active[None, :], source_basis_, 0),
+            image_basis=jnp.where(active[None, :], image_basis_, 0),
+            operator_id=operator_id,
+            recycling_id=recycling_id,
+        )
+        self.source = validated.source
+        self.target = validated.target
+        self.source_basis = validated.source_basis
+        self.image_basis = validated.image_basis
+        self.operator_id = validated.operator_id
+        self.recycling_id = validated.recycling_id
+        self.effective_dimension = effective
+        self.operator_numeric_version = numeric_version
+        self.update_count = updates
+        self.update_status = status
+        self.solve_plan_id = solve_plan_id_
+        self.extraction = extraction_
+
+    @property
+    def dimension(self) -> Array:
+        return self.effective_dimension
+
+    @property
+    def capacity(self) -> int:
+        return int(self.source_basis.shape[1])
+
+    def coefficients(self, residual: PyTree[Any], /) -> Array:
+        value = self.target.validate(residual)
+        coefficients = jax.vmap(
+            lambda column: self.target.inner(self.target.unflatten(column), value),
+            in_axes=1,
+        )(self.image_basis)
+        return jnp.where(
+            jnp.arange(self.capacity) < self.effective_dimension,
+            coefficients,
+            0,
+        )
+
+    def correction(self, residual: PyTree[Any], /) -> PyTree[Array]:
+        return self.source.unflatten(self.source_basis @ self.coefficients(residual))
+
+    def project_residual(self, residual: PyTree[Any], /) -> PyTree[Array]:
+        value = self.target.validate(residual)
+        coordinates = self.target.flatten(value)
+        projected = coordinates - self.image_basis @ self.coefficients(value)
+        return self.target.unflatten(projected)
+
+    def augment(
+        self,
+        initial: PyTree[Any],
+        residual: PyTree[Any],
+        /,
+    ) -> PyTree[Array]:
         value = self.source.validate(initial)
         correction = self.correction(residual)
         return jax.tree.map(lambda left, right: left + right, value, correction)
@@ -198,4 +353,9 @@ def _coordinate_gram(space: AbstractVectorSpace, basis: Array, /) -> Array:
     )(basis)
 
 
-__all__ = ["RecyclingSubspace", "prepare_recycling_subspace"]
+__all__ = [
+    "RecyclingState",
+    "RecyclingSubspace",
+    "RecyclingUpdateStatus",
+    "prepare_recycling_subspace",
+]

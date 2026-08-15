@@ -8,6 +8,7 @@ def test_coalesce_add_merges_duplicate_edges():
     edge_attr = jnp.array([1.0, 2.0, 3.0])
 
     out_index, out_attr = vx.coalesce(edge_index, edge_attr, reduce="add")
+    assert out_attr is not None
     assert out_index.shape == (2, 2)
     assert out_attr.shape == (2,)
     assert jnp.allclose(jnp.sort(out_attr), jnp.array([3.0, 3.0]))

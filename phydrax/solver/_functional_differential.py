@@ -11,6 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 import optimistix as optx
 from jaxtyping import Array, ArrayLike
 
@@ -708,7 +709,7 @@ def _residual_blocks(
     trajectory = _interpolation(problem, plan, unknowns)
     callback_args = _callback_args(problem, unknowns, args)
     half_width = 0.5 * jnp.diff(plan.mesh)
-    derivative_reference = jnp.einsum(
+    derivative_reference = oe.contract(
         "ij,ej...->ei...", plan.differentiation_matrix, values
     )
     derivative_scale = 1.0 / half_width

@@ -82,7 +82,7 @@ def test_mesh_to_geometry_graph_exposes_boundary_components():
         phx.domain.PointSampling(3, layout=phx.domain.SampleLayout((("graph",),)))
     )
 
-    assert jnp.allclose(batch["graph"]["positions"].data, geom.mesh_vertices)
+    assert jnp.allclose(jnp.asarray(batch["graph"]["positions"].data), geom.mesh_vertices)
 
 
 def test_mesh_to_geometry_graph_marks_shared_interface_edges():
@@ -113,6 +113,7 @@ def test_point_cloud_to_graph_knn_geometry_features():
         ]
     )
     graph = point_cloud_to_graph(points, k=1, edge_features="geometry")
+    assert graph.receivers is not None
 
     assert graph.num_nodes == 3
     assert graph.num_edges == 3

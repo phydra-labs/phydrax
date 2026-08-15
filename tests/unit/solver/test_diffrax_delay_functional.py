@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import diffrax as dfx
 import equinox as eqx
 import jax.numpy as jnp
@@ -40,7 +42,7 @@ def _functional_problem():
 
 def test_functional_delay_replays_full_rolling_and_segmented_history():
     problem = _functional_problem()
-    common = {
+    common: dict[str, Any] = {
         "save_times": jnp.linspace(0.0, 1.0, 6),
         "solver": dfx.Euler(),
         "dt0": 0.01,
@@ -125,7 +127,7 @@ def test_functional_delay_routes_through_stochastic_whole_and_segmented_backends
         tolerance=1e-5,
         noise_id=problem.noise_id,
     )
-    common = {
+    common: dict[str, Any] = {
         "save_times": jnp.linspace(0.0, 0.4, 5),
         "realization": realization,
         "dt0": 0.025,

@@ -9,6 +9,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
@@ -345,7 +346,7 @@ class AffineRecurrence(AbstractRecurrentCell):
                 "Matrix affine transitions and states must end with "
                 f"({state_size}, {state_size}) and ({state_size},)."
             )
-        return jnp.einsum("...ij,...j->...i", transition, state)
+        return oe.contract("...ij,...j->...i", transition, state)
 
     def compose_transitions(
         self,
@@ -359,10 +360,10 @@ class AffineRecurrence(AbstractRecurrentCell):
             composed_transition = later_transition * earlier_transition
             propagated_addition = later_transition * earlier_addition
         else:
-            composed_transition = jnp.einsum(
+            composed_transition = oe.contract(
                 "...ij,...jk->...ik", later_transition, earlier_transition
             )
-            propagated_addition = jnp.einsum(
+            propagated_addition = oe.contract(
                 "...ij,...j->...i", later_transition, earlier_addition
             )
         return composed_transition, propagated_addition + later_addition

@@ -8,6 +8,7 @@ import abc
 from typing import Any
 
 from .._plans import LinearBackend, LinearSolvePlan
+from .._preconditioners import AbstractPreconditioner
 from ._jax_dense import prepare_dense, solve_dense, solve_dense_transformed
 from ._jax_sparse import (
     HostSparseState,
@@ -18,11 +19,15 @@ from ._jax_sparse import (
 from ._jax_structured import prepare_structured, solve_structured
 from ._lineax import prepare_lineax, solve_lineax
 from ._matfree import prepare_matfree, solve_matfree
+from ._native_block_krylov import (
+    prepare_native_block_krylov,
+    solve_native_block_krylov,
+)
 from ._native_krylov import prepare_native_krylov, solve_native_krylov
 
 
 class AbstractLinearProvider(abc.ABC):
-    """Internal provider boundary used by the public prepare/solve lifecycle."""
+    """Internal provider boundary used by the public template/bind/solve lifecycle."""
 
     backends: tuple[LinearBackend, ...]
     accepts_initial_guess: bool = False
@@ -31,8 +36,22 @@ class AbstractLinearProvider(abc.ABC):
     def accepts(self, backend: LinearBackend, /) -> bool:
         return backend in self.backends
 
+    def analyze(self, problem: Any, plan: LinearSolvePlan, /) -> Any:
+        """Return coefficient-independent symbolic state for one solve plan."""
+        del problem, plan
+        return None
+
     @abc.abstractmethod
-    def prepare(self, problem: Any, plan: LinearSolvePlan, /) -> Any:
+    def bind(
+        self,
+        symbolic_state: Any,
+        problem: Any,
+        plan: LinearSolvePlan,
+        /,
+        *,
+        preconditioner: AbstractPreconditioner | None = None,
+    ) -> Any:
+        """Bind current coefficients without rediscovering symbolic structure."""
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -66,7 +85,10 @@ class _StructuredProvider(AbstractLinearProvider):
     backends = ("jax-structured",)
     supports_implicit_differentiation = True
 
-    def prepare(self, problem, plan, /):
+    def bind(self, symbolic_state, problem, plan, /, *, preconditioner=None):
+        del symbolic_state
+        if preconditioner is not None:
+            raise ValueError("Structured direct binding rejects preconditioning.")
         return prepare_structured(problem, plan)
 
     def solve(self, state, rhs, plan, /, *, initial_guess=None):
@@ -77,7 +99,10 @@ class _DenseProvider(AbstractLinearProvider):
     backends = ("jax-dense",)
     supports_implicit_differentiation = True
 
-    def prepare(self, problem, plan, /):
+    def bind(self, symbolic_state, problem, plan, /, *, preconditioner=None):
+        del symbolic_state
+        if preconditioner is not None:
+            raise ValueError("Dense binding rejects preconditioning.")
         return prepare_dense(problem, plan)
 
     def solve(self, state, rhs, plan, /, *, initial_guess=None):
@@ -96,7 +121,10 @@ class _SparseProvider(AbstractLinearProvider):
     backends = ("jax-sparse", "host-sparse")
     supports_implicit_differentiation = True
 
-    def prepare(self, problem, plan, /):
+    def bind(self, symbolic_state, problem, plan, /, *, preconditioner=None):
+        del symbolic_state
+        if preconditioner is not None:
+            raise ValueError("Sparse direct binding rejects preconditioning.")
         return prepare_sparse(problem, plan)
 
     def solve(self, state, rhs, plan, /, *, initial_guess=None):
@@ -111,13 +139,40 @@ class _SparseProvider(AbstractLinearProvider):
         return solve_host_sparse_transformed(state, rhs, adjoint=adjoint)
 
 
+class _NativeBlockKrylovProvider(AbstractLinearProvider):
+    backends = ("native-block-krylov",)
+    accepts_initial_guess = True
+    supports_implicit_differentiation = True
+
+    def bind(self, symbolic_state, problem, plan, /, *, preconditioner=None):
+        del symbolic_state
+        return prepare_native_block_krylov(
+            problem,
+            plan,
+            preconditioner=preconditioner,
+        )
+
+    def solve(self, state, rhs, plan, /, *, initial_guess=None):
+        return solve_native_block_krylov(
+            state,
+            rhs,
+            plan,
+            initial_guess=initial_guess,
+        )
+
+
 class _NativeKrylovProvider(AbstractLinearProvider):
     backends = ("native-krylov",)
     accepts_initial_guess = True
     supports_implicit_differentiation = True
 
-    def prepare(self, problem, plan, /):
-        return prepare_native_krylov(problem, plan)
+    def bind(self, symbolic_state, problem, plan, /, *, preconditioner=None):
+        del symbolic_state
+        return prepare_native_krylov(
+            problem,
+            plan,
+            preconditioner=preconditioner,
+        )
 
     def solve(self, state, rhs, plan, /, *, initial_guess=None):
         return solve_native_krylov(state, rhs, plan, initial_guess=initial_guess)
@@ -128,7 +183,10 @@ class _MatfreeProvider(AbstractLinearProvider):
     accepts_initial_guess = True
     supports_implicit_differentiation = True
 
-    def prepare(self, problem, plan, /):
+    def bind(self, symbolic_state, problem, plan, /, *, preconditioner=None):
+        del symbolic_state
+        if preconditioner is not None:
+            raise ValueError("Matfree binding rejects preconditioning.")
         return prepare_matfree(problem, plan)
 
     def solve(self, state, rhs, plan, /, *, initial_guess=None):
@@ -140,8 +198,9 @@ class _LineaxProvider(AbstractLinearProvider):
     supports_implicit_differentiation = True
     accepts_initial_guess = True
 
-    def prepare(self, problem, plan, /):
-        return prepare_lineax(problem, plan)
+    def bind(self, symbolic_state, problem, plan, /, *, preconditioner=None):
+        del symbolic_state
+        return prepare_lineax(problem, plan, preconditioner=preconditioner)
 
     def solve(self, state, rhs, plan, /, *, initial_guess=None):
         return solve_lineax(state, rhs, plan, initial_guess=initial_guess)
@@ -151,6 +210,7 @@ _PROVIDERS: tuple[AbstractLinearProvider, ...] = (
     _StructuredProvider(),
     _DenseProvider(),
     _SparseProvider(),
+    _NativeBlockKrylovProvider(),
     _NativeKrylovProvider(),
     _MatfreeProvider(),
     _LineaxProvider(),

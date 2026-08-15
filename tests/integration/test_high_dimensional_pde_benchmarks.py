@@ -136,11 +136,11 @@ def test_reference_gradients_and_laplacian_match_autodiff():
 
     assert jnp.allclose(
         quadratic_heat_gradient(state),
-        jax.grad(lambda value: quadratic_heat_value(0.0, value))(state),
+        jax.grad(lambda value: quadratic_heat_value(jnp.asarray(0.0), value))(state),
     )
     assert jnp.allclose(
         linear_hjb_gradient(state),
-        jax.grad(lambda value: linear_hjb_value(0.0, value))(state),
+        jax.grad(lambda value: linear_hjb_value(jnp.asarray(0.0), value))(state),
     )
 
     hessian = jax.hessian(quartic_field)(state)

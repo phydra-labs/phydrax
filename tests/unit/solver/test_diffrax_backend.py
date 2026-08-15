@@ -1,3 +1,5 @@
+from typing import Any
+
 import diffrax as dfx
 import equinox as eqx
 import jax
@@ -191,6 +193,7 @@ def test_solve_diffrax_ensemble_has_process_axis_and_brownian_moments():
         realization=realization,
         dt0=0.02,
     )
+    assert solution.realization is not None
     terminal = solution.states[:, -1, 0]
 
     assert solution.states.shape == (256, 1, 1)
@@ -296,6 +299,8 @@ def test_realization_paths_are_prefix_stable_when_batch_grows():
         realization=_realization(32, sample_shape=(7,)),
         dt0=0.01,
     )
+    assert small.realization is not None
+    assert large.realization is not None
 
     assert jnp.array_equal(small.states, large.states[:4])
     assert jnp.array_equal(
@@ -477,11 +482,12 @@ def test_diffrax_contract_rejects_invalid_problem_realization_and_save_configura
         )
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="time interval"):
         phx.solver.solve_diffrax(deterministic, save_times=jnp.asarray([1.1]))
+    invalid_dense: Any = 1
     with pytest.raises(TypeError, match="dense must be a bool"):
         phx.solver.solve_diffrax(
             deterministic,
             save_times=jnp.asarray([1.0]),
-            dense=1,
+            dense=invalid_dense,
         )
     with pytest.raises(ValueError, match="require a WienerRealization"):
         phx.solver.solve_diffrax(

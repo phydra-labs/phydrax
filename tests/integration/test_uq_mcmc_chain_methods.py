@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import coordax as cx
 import jax
 import jax.numpy as jnp
@@ -44,7 +46,7 @@ def _assert_tree_close(left, right, *, atol=1e-10):
 
 def test_vectorized_nuts_replays_and_matches_independent_sequential_chains():
     problem = _correlated_problem()
-    settings = dict(
+    settings: dict[str, Any] = dict(
         key=jr.key(200),
         num_chains=3,
         num_warmup=50,
@@ -120,13 +122,17 @@ def test_vectorized_nuts_replays_and_matches_independent_sequential_chains():
     query = jnp.linspace(0.0, 1.0, 9)
     full = interleaved.predict(query)
     chunked = interleaved.predict(query, batch_size=17)
-    assert jnp.array_equal(full.samples.data, chunked.samples.data)
+    assert isinstance(full, phx.uq.PredictiveField)
+    assert isinstance(chunked, phx.uq.PredictiveField)
+    assert jnp.array_equal(
+        jnp.asarray(full.samples.data), jnp.asarray(chunked.samples.data)
+    )
     assert full.samples.shape == (3, 60, 9)
 
 
 def test_vectorized_hmc_preserves_fixed_trajectory_and_diagnostics():
     problem = _correlated_problem()
-    settings = dict(
+    settings: dict[str, Any] = dict(
         key=jr.key(201),
         num_integration_steps=6,
         num_chains=2,
@@ -152,7 +158,7 @@ def test_vectorized_hmc_preserves_fixed_trajectory_and_diagnostics():
 @pytest.mark.parametrize("chain_method", ["vectorized", "interleaved"])
 def test_vectorized_nuts_supports_dense_and_diagonal_mass_adaptation(chain_method):
     problem = _correlated_problem()
-    settings = dict(
+    settings: dict[str, Any] = dict(
         key=jr.key(202),
         num_chains=2,
         num_warmup=55,
@@ -265,6 +271,8 @@ def test_nuts_and_hmc_sample_every_separable_mlp_final_layer_subtree():
 
 def test_interleaved_chain_method_is_nuts_specific():
     problem = _correlated_problem()
+    invalid_hmc_method: Any = "interleaved"
+    invalid_nuts_method: Any = "unknown"
 
     with pytest.raises(ValueError, match="sequential.*vectorized"):
         phx.uq.sample_hmc(
@@ -274,7 +282,7 @@ def test_interleaved_chain_method_is_nuts_specific():
             num_chains=2,
             num_warmup=8,
             num_samples=4,
-            chain_method="interleaved",
+            chain_method=invalid_hmc_method,
         )
     with pytest.raises(ValueError, match="interleaved"):
         phx.uq.sample_nuts(
@@ -283,5 +291,5 @@ def test_interleaved_chain_method_is_nuts_specific():
             num_chains=2,
             num_warmup=8,
             num_samples=4,
-            chain_method="unknown",
+            chain_method=invalid_nuts_method,
         )

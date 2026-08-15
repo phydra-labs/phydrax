@@ -7,7 +7,7 @@ from __future__ import annotations
 import abc
 from collections.abc import Callable, Mapping, Sequence
 from math import prod
-from typing import Any
+from typing import Any, cast, Protocol
 
 import equinox as eqx
 import jax
@@ -17,6 +17,7 @@ from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ._costs import _array_tree_storage_bytes, OperatorActionCostEstimate
 from ._linearizations import PreparedLinearization
 from ._pairings import DiagonalPairing, EuclideanPairing
 from ._properties import (
@@ -27,6 +28,7 @@ from ._properties import (
 )
 from ._spaces import (
     _coordinate_dtype,
+    _coordinate_pairing_weights,
     _has_diagonal_pairing,
     AbstractVectorSpace,
     ArraySpace,
@@ -323,6 +325,17 @@ class AbstractLinearOperator(StrictModule):
         return ScaledLinearOperator(self, -1.0)
 
 
+class _DiagonalAssembly(Protocol):
+    def _assemble_diagonal(self, /) -> Array: ...
+
+
+def _assemble_operator_diagonal(
+    operator: AbstractLinearOperator,
+    /,
+) -> Array:
+    return cast(_DiagonalAssembly, operator)._assemble_diagonal()
+
+
 class DenseLinearOperator(AbstractLinearOperator):
     """Explicit dense matrix over flattened source and target event coordinates."""
 
@@ -376,6 +389,7 @@ class DenseLinearOperator(AbstractLinearOperator):
             transpose=True,
             adjoint=_supports_batched_adjoint(batch, source_, target_),
             materialize=True,
+            diagonal_assembly=True,
         )
         self.batch_shape = batch
         self.operator_id = _id(
@@ -434,6 +448,9 @@ class DenseLinearOperator(AbstractLinearOperator):
 
     def _materialize(self, /) -> Array:
         return self.matrix
+
+    def _assemble_diagonal(self, /) -> Array:
+        return jnp.diagonal(self.matrix, axis1=-2, axis2=-1)
 
 
 class DiagonalLinearOperator(AbstractLinearOperator):
@@ -495,6 +512,7 @@ class DiagonalLinearOperator(AbstractLinearOperator):
             transpose=True,
             adjoint=_supports_batched_adjoint(batch, space_, space_),
             materialize=True,
+            diagonal_assembly=True,
         )
         self.batch_shape = batch
         self.operator_id = _id(
@@ -539,6 +557,9 @@ class DiagonalLinearOperator(AbstractLinearOperator):
         identity = jnp.eye(self.source.size, dtype=self.diagonal.dtype)
         return self.diagonal[..., :, None] * identity
 
+    def _assemble_diagonal(self, /) -> Array:
+        return self.diagonal
+
 
 class IdentityLinearOperator(AbstractLinearOperator):
     """Identity map on one declared vector space."""
@@ -565,6 +586,7 @@ class IdentityLinearOperator(AbstractLinearOperator):
             transpose=True,
             adjoint=True,
             materialize=True,
+            diagonal_assembly=True,
         )
         self.batch_shape = ()
         self.operator_id = _id(operator_id, {"kind": "identity", "space": space.space_id})
@@ -585,6 +607,12 @@ class IdentityLinearOperator(AbstractLinearOperator):
             *[spec.dtype for spec in jax.tree.leaves(self.source.structure())]
         )
         return jnp.eye(self.source.size, dtype=dtype)
+
+    def _assemble_diagonal(self, /) -> Array:
+        dtype = jnp.result_type(
+            *[spec.dtype for spec in jax.tree.leaves(self.source.structure())]
+        )
+        return jnp.ones((self.source.size,), dtype=dtype)
 
 
 class FunctionLinearOperator(AbstractLinearOperator):
@@ -770,6 +798,9 @@ class ScaledLinearOperator(AbstractLinearOperator):
     def _materialize(self, /) -> Array:
         return self.scalar * self.operator._materialize()
 
+    def _assemble_diagonal(self, /) -> Array:
+        return self.scalar * _assemble_operator_diagonal(self.operator)
+
 
 class SumLinearOperator(AbstractLinearOperator):
     """Sum of operators with identical spaces and batch layout."""
@@ -812,6 +843,10 @@ class SumLinearOperator(AbstractLinearOperator):
             transpose=left.capabilities.transpose and right.capabilities.transpose,
             adjoint=left.capabilities.adjoint and right.capabilities.adjoint,
             materialize=left.capabilities.materialize and right.capabilities.materialize,
+            diagonal_assembly=(
+                left.capabilities.diagonal_assembly
+                and right.capabilities.diagonal_assembly
+            ),
         )
         self.batch_shape = left.batch_shape
         self.operator_id = _id(
@@ -834,6 +869,11 @@ class SumLinearOperator(AbstractLinearOperator):
 
     def _materialize(self, /) -> Array:
         return self.left._materialize() + self.right._materialize()
+
+    def _assemble_diagonal(self, /) -> Array:
+        return _assemble_operator_diagonal(self.left) + _assemble_operator_diagonal(
+            self.right
+        )
 
 
 class ComposedLinearOperator(AbstractLinearOperator):
@@ -927,6 +967,9 @@ class TransposeLinearOperator(AbstractLinearOperator):
     def _materialize(self, /) -> Array:
         return jnp.swapaxes(self.operator._materialize(), -1, -2)
 
+    def _assemble_diagonal(self, /) -> Array:
+        return _assemble_operator_diagonal(self.operator)
+
 
 class AdjointLinearOperator(AbstractLinearOperator):
     """Hilbert-adjoint view relative to the source and target pairings."""
@@ -959,7 +1002,17 @@ class AdjointLinearOperator(AbstractLinearOperator):
             rank=rank,
             evidence=_transformed_evidence(claimed, operator),
         )
-        self.capabilities = operator.capabilities
+        self.capabilities = OperatorCapabilities(
+            transpose=operator.capabilities.transpose,
+            adjoint=operator.capabilities.adjoint,
+            materialize=operator.capabilities.materialize,
+            diagonal_assembly=(
+                operator.capabilities.diagonal_assembly
+                and operator.source.compatible(operator.target)
+                and _has_diagonal_pairing(operator.source)
+                and _has_diagonal_pairing(operator.target)
+            ),
+        )
         self.batch_shape = operator.batch_shape
         self.operator_id = _id(
             None, {"kind": "adjoint", "operator": operator.operator_id}
@@ -1022,6 +1075,12 @@ class AdjointLinearOperator(AbstractLinearOperator):
                 * target_weights[..., None, :]
             )
         return _materialize_by_basis(self)
+
+    def _assemble_diagonal(self, /) -> Array:
+        diagonal = jnp.conj(_assemble_operator_diagonal(self.operator))
+        target_weights = _coordinate_pairing_weights(self.operator.target)
+        source_weights = _coordinate_pairing_weights(self.operator.source)
+        return diagonal * target_weights / source_weights
 
 
 class BlockLinearOperator(AbstractLinearOperator):
@@ -1087,6 +1146,15 @@ class BlockLinearOperator(AbstractLinearOperator):
             transpose=all(value.transpose for value in capabilities),
             adjoint=all(value.adjoint for value in capabilities),
             materialize=all(value.materialize for value in capabilities),
+            diagonal_assembly=(
+                source.compatible(target)
+                and all(
+                    block is None or block.capabilities.diagonal_assembly
+                    for index, row in enumerate(blocks_)
+                    for column, block in enumerate(row)
+                    if index == column
+                )
+            ),
         )
         self.batch_shape = ()
         self.operator_id = _id(
@@ -1168,6 +1236,219 @@ class BlockLinearOperator(AbstractLinearOperator):
             rows.append(jnp.concatenate(values, axis=1))
         return jnp.concatenate(rows, axis=0)
 
+    def _assemble_diagonal(self, /) -> Array:
+        values = []
+        for index, source_space in enumerate(self.source.spaces):
+            block = self.blocks[index][index]
+            values.append(
+                jnp.zeros((source_space.size,), dtype=_coordinate_dtype(source_space))
+                if block is None
+                else _assemble_operator_diagonal(block)
+            )
+        return jnp.concatenate(tuple(values))
+
+
+def _space_storage_bytes(space: AbstractVectorSpace, /) -> int:
+    return int(space.size * np.dtype(_coordinate_dtype(space)).itemsize)
+
+
+def _operator_action_workspace(
+    operator: AbstractLinearOperator,
+    /,
+) -> tuple[int, bool, str]:
+    from ._sparse_contract import AbstractSparseLinearOperator
+    from ._structured_operators import (
+        BandedLinearOperator,
+        BasePlusLowRankLinearOperator,
+        BlockDiagonalLinearOperator,
+        DiagonalPlusLowRankLinearOperator,
+        KroneckerLinearOperator,
+        KroneckerSumLinearOperator,
+        LocalBlockDiagonalLinearOperator,
+        LowRankLinearOperator,
+        PermutationLinearOperator,
+        SchurComplementLinearOperator,
+        StackedLinearOperator,
+        SymmetricLowRankLinearOperator,
+        TriangularLinearOperator,
+        TridiagonalLinearOperator,
+        TwoSidedScaledLinearOperator,
+    )
+    from ._transform_operators import TransformDiagonalLinearOperator
+
+    batch_count = prod(operator.batch_shape) if operator.batch_shape else 1
+    source_bytes = batch_count * _space_storage_bytes(operator.source)
+    target_bytes = batch_count * _space_storage_bytes(operator.target)
+    vector_bytes = max(source_bytes, target_bytes)
+
+    if isinstance(
+        operator,
+        (
+            DenseLinearOperator,
+            DiagonalLinearOperator,
+            IdentityLinearOperator,
+            AbstractSparseLinearOperator,
+            PermutationLinearOperator,
+            TriangularLinearOperator,
+            LocalBlockDiagonalLinearOperator,
+        ),
+    ):
+        kind = (
+            "sparse-action"
+            if isinstance(operator, AbstractSparseLinearOperator)
+            else "explicit-action"
+        )
+        return 0, True, kind
+    if isinstance(operator, TridiagonalLinearOperator):
+        return 2 * vector_bytes, True, "banded-action"
+    if isinstance(operator, BandedLinearOperator):
+        return 2 * vector_bytes, True, "banded-action"
+    if isinstance(operator, TransformDiagonalLinearOperator):
+        return 3 * vector_bytes, True, "transform-diagonal-action"
+    if isinstance(operator, LowRankLinearOperator):
+        rank_bytes = int(
+            operator.left_factor.shape[-1] * operator.left_factor.dtype.itemsize
+        )
+        return rank_bytes, True, "low-rank-action"
+    if isinstance(operator, SymmetricLowRankLinearOperator):
+        rank_bytes = int(operator.factor.shape[-1] * operator.factor.dtype.itemsize)
+        return rank_bytes, True, "low-rank-action"
+    if isinstance(operator, DiagonalPlusLowRankLinearOperator):
+        rank_bytes = int(
+            operator.left_factor.shape[-1] * operator.left_factor.dtype.itemsize
+        )
+        return target_bytes + rank_bytes, True, "low-rank-action"
+    if isinstance(operator, BasePlusLowRankLinearOperator):
+        base_workspace, base_exact, _ = _operator_action_workspace(operator.base)
+        rank_bytes = int(operator.rank * operator.left_factor.dtype.itemsize)
+        return (
+            target_bytes + 2 * rank_bytes + base_workspace,
+            base_exact,
+            "base-plus-low-rank-action",
+        )
+    if isinstance(operator, BlockDiagonalLinearOperator):
+        estimates = tuple(_operator_action_workspace(block) for block in operator.blocks)
+        return (
+            max((estimate[0] for estimate in estimates), default=0),
+            all(estimate[1] for estimate in estimates),
+            "block-action",
+        )
+    if isinstance(operator, KroneckerLinearOperator):
+        estimates = tuple(
+            _operator_action_workspace(factor) for factor in operator.factors
+        )
+        return (
+            vector_bytes + max((estimate[0] for estimate in estimates), default=0),
+            all(estimate[1] for estimate in estimates),
+            "tensor-product-action",
+        )
+    if isinstance(operator, KroneckerSumLinearOperator):
+        estimates = tuple(
+            _operator_action_workspace(factor) for factor in operator.factors
+        )
+        return (
+            2 * vector_bytes + max((estimate[0] for estimate in estimates), default=0),
+            all(estimate[1] for estimate in estimates),
+            "tensor-sum-action",
+        )
+    if isinstance(operator, StackedLinearOperator):
+        estimates = tuple(
+            _operator_action_workspace(child) for child in operator.operators
+        )
+        accumulation = target_bytes if operator.axis == "horizontal" else 0
+        return (
+            accumulation + max((estimate[0] for estimate in estimates), default=0),
+            all(estimate[1] for estimate in estimates),
+            "stacked-action",
+        )
+    if isinstance(operator, SchurComplementLinearOperator):
+        estimates = tuple(
+            _operator_action_workspace(child)
+            for child in (
+                operator.diagonal_block,
+                operator.upper_block,
+                operator.lower_block,
+            )
+        )
+        return (
+            3 * vector_bytes + max((estimate[0] for estimate in estimates), default=0),
+            False,
+            "schur-action",
+        )
+    if isinstance(operator, TwoSidedScaledLinearOperator):
+        workspace, exact, _ = _operator_action_workspace(operator.operator)
+        return 2 * vector_bytes + workspace, exact, "two-sided-scaled-action"
+    if isinstance(operator, ScaledLinearOperator):
+        workspace, exact, _ = _operator_action_workspace(operator.operator)
+        return target_bytes + workspace, exact, "scaled-action"
+    if isinstance(operator, SumLinearOperator):
+        left = _operator_action_workspace(operator.left)
+        right = _operator_action_workspace(operator.right)
+        return (
+            target_bytes + max(left[0], right[0]),
+            left[1] and right[1],
+            "sum-action",
+        )
+    if isinstance(operator, ComposedLinearOperator):
+        left = _operator_action_workspace(operator.left)
+        right = _operator_action_workspace(operator.right)
+        intermediate_bytes = batch_count * _space_storage_bytes(operator.right.target)
+        return (
+            max(right[0], intermediate_bytes + left[0]),
+            left[1] and right[1],
+            "composition-action",
+        )
+    if isinstance(operator, TransposeLinearOperator):
+        workspace, exact, kind = _operator_action_workspace(operator.operator)
+        return workspace, exact, kind
+    if isinstance(operator, AdjointLinearOperator):
+        workspace, exact, _ = _operator_action_workspace(operator.operator)
+        return vector_bytes + workspace, exact, "adjoint-action"
+    if isinstance(operator, BlockLinearOperator):
+        workspaces = []
+        exact = True
+        for row, target in zip(operator.blocks, operator.target.spaces, strict=True):
+            children = tuple(
+                _operator_action_workspace(child) for child in row if child is not None
+            )
+            if children:
+                workspaces.append(
+                    _space_storage_bytes(target) + max(child[0] for child in children)
+                )
+                exact = exact and all(child[1] for child in children)
+        return max(workspaces, default=0), exact, "block-action"
+    return vector_bytes, False, "opaque-action"
+
+
+def estimate_operator_action_cost(
+    operator: AbstractLinearOperator,
+    /,
+) -> OperatorActionCostEstimate:
+    """Estimate resident operator state and structural action scratch."""
+    if not isinstance(operator, AbstractLinearOperator):
+        raise TypeError("operator must be an AbstractLinearOperator.")
+    from ._sparse_contract import AbstractSparseLinearOperator
+
+    workspace, exact, operation_class = _operator_action_workspace(operator)
+    resident = (
+        _array_tree_storage_bytes((operator, operator.sparse_storage()))
+        if isinstance(operator, AbstractSparseLinearOperator)
+        else _array_tree_storage_bytes(operator)
+    )
+    reason = (
+        "exact structural action accounting"
+        if exact
+        else "opaque kernel or nested inverse action may require additional scratch"
+    )
+    return OperatorActionCostEstimate(
+        operator_id=operator.operator_id,
+        storage_bytes=resident,
+        apply_workspace_bytes_per_rhs=workspace,
+        operation_class=operation_class,
+        exact=exact,
+        reason=reason,
+    )
+
 
 def transpose(operator: AbstractLinearOperator, /) -> AbstractLinearOperator:
     if not isinstance(operator, AbstractLinearOperator):
@@ -1196,6 +1477,7 @@ __all__ = [
     "ComposedLinearOperator",
     "DenseLinearOperator",
     "DiagonalLinearOperator",
+    "estimate_operator_action_cost",
     "FunctionLinearOperator",
     "IdentityLinearOperator",
     "JacobianLinearOperator",

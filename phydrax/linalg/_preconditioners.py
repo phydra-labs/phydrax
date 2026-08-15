@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 import equinox as eqx
 import jax
@@ -18,9 +18,19 @@ from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ._costs import _array_tree_storage_bytes, PreconditionerCostEstimate
+from ._local_blocks import (
+    LocalBlockFactorization,
+    prepare_local_block_factorization,
+    solve_local_blocks,
+)
+from ._materialization import MaterializationPolicy
 from ._operators import AbstractLinearOperator
+from ._preconditioner_properties import PreconditionerProperties
+from ._properties import PropertyEvidence
 from ._spaces import (
     _coordinate_dtype,
+    _coordinate_pairing_weights,
     _has_diagonal_pairing,
     AbstractVectorSpace,
     ArraySpace,
@@ -58,16 +68,76 @@ def _coerce_coefficients(
     return value.astype(space_dtype)
 
 
+def _fixed_linear_properties(
+    *,
+    self_adjoint: bool = False,
+    positive_definite: bool = False,
+    evidence: PropertyEvidence = "construction",
+) -> PreconditionerProperties:
+    claims = {
+        "linear": True,
+        "stationary": True,
+        "self_adjoint": bool(self_adjoint),
+        "positive_definite": bool(positive_definite),
+    }
+    return PreconditionerProperties(
+        **claims,
+        evidence={name: evidence for name, claimed in claims.items() if claimed},
+    )
+
+
+def _prepared_action_cost(
+    action: Any,
+    setup_operator: AbstractLinearOperator,
+    /,
+    *,
+    apply_workspace_multiplier: int = 1,
+    reason: str = "supplied prepared action storage and apply workspace",
+) -> PreconditionerCostEstimate:
+    if not isinstance(setup_operator, AbstractLinearOperator):
+        raise TypeError("setup_operator must be an AbstractLinearOperator.")
+    if not action.space.compatible(setup_operator.source):
+        raise ValueError("Prepared action and setup operator spaces must match.")
+    storage = _array_tree_storage_bytes(action)
+    return PreconditionerCostEstimate(
+        component=action.preconditioner_id,
+        storage_bytes=storage,
+        apply_workspace_bytes_per_rhs=(
+            apply_workspace_multiplier
+            * setup_operator.source.size
+            * _coordinate_dtype(setup_operator.source).itemsize
+        ),
+        reason=reason,
+    )
+
+
 class AbstractPreconditioner(StrictModule):
     """Prepared approximate inverse with explicit source-space semantics."""
 
     space: AbstractVectorSpace
-    positive_definite: bool = eqx.field(static=True)
+    properties: PreconditionerProperties
     preconditioner_id: str = eqx.field(static=True)
 
     @abc.abstractmethod
-    def apply(self, residual: PyTree[Any], /) -> PyTree[Array]:
+    def apply(
+        self,
+        residual: PyTree[Any],
+        /,
+        *,
+        iteration: ArrayLike | None = None,
+    ) -> PyTree[Array]:
         raise NotImplementedError
+
+
+@runtime_checkable
+class _CostedPreconditioner(Protocol):
+    def cost_for(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy | None = None,
+    ) -> PreconditionerCostEstimate: ...
 
 
 class IdentityPreconditioner(AbstractPreconditioner):
@@ -75,13 +145,33 @@ class IdentityPreconditioner(AbstractPreconditioner):
         if not isinstance(space, AbstractVectorSpace):
             raise TypeError("space must be an AbstractVectorSpace.")
         self.space = space
-        self.positive_definite = True
+        self.properties = _fixed_linear_properties(
+            self_adjoint=True,
+            positive_definite=True,
+            evidence="construction",
+        )
         self.preconditioner_id = canonical_fingerprint(
             {"kind": "identity", "space": space.space_id}
         )
 
-    def apply(self, residual: PyTree[Any], /) -> PyTree[Array]:
+    def apply(
+        self,
+        residual: PyTree[Any],
+        /,
+        *,
+        iteration: ArrayLike | None = None,
+    ) -> PyTree[Array]:
+        del iteration
         return self.space.validate(residual)
+
+    def cost_for(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy | None = None,
+    ) -> PreconditionerCostEstimate:
+        return _prepared_action_cost(self, setup_operator)
 
 
 class DiagonalPreconditioner(AbstractPreconditioner):
@@ -123,9 +213,17 @@ class DiagonalPreconditioner(AbstractPreconditioner):
             )
         else:
             positive = bool(positive_definite)
-        self.space = space_
         self.inverse_diagonal = jnp.reciprocal(values)
-        self.positive_definite = positive
+        self.space = space_
+        self.properties = _fixed_linear_properties(
+            self_adjoint=positive
+            or (
+                not jnp.issubdtype(values.dtype, jnp.complexfloating)
+                and _has_diagonal_pairing(space_)
+            ),
+            positive_definite=positive,
+            evidence="asserted" if positive_definite is not None else "verified",
+        )
         self.preconditioner_id = _identifier(
             preconditioner_id,
             "diagonal",
@@ -133,9 +231,25 @@ class DiagonalPreconditioner(AbstractPreconditioner):
             extra={"size": values.size},
         )
 
-    def apply(self, residual: PyTree[Any], /) -> PyTree[Array]:
+    def apply(
+        self,
+        residual: PyTree[Any],
+        /,
+        *,
+        iteration: ArrayLike | None = None,
+    ) -> PyTree[Array]:
+        del iteration
         coordinates = self.space.flatten(residual)
         return self.space.unflatten(self.inverse_diagonal * coordinates)
+
+    def cost_for(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy | None = None,
+    ) -> PreconditionerCostEstimate:
+        return _prepared_action_cost(self, setup_operator)
 
 
 class BlockDiagonalPreconditioner(AbstractPreconditioner):
@@ -185,7 +299,11 @@ class BlockDiagonalPreconditioner(AbstractPreconditioner):
         self.space = space
         self.inverse_blocks = tuple(inverses)
         self.offsets = tuple(offsets)
-        self.positive_definite = bool(positive_definite)
+        self.properties = _fixed_linear_properties(
+            self_adjoint=positive_definite,
+            positive_definite=positive_definite,
+            evidence="asserted" if positive_definite else "construction",
+        )
         self.preconditioner_id = _identifier(
             preconditioner_id,
             "block-diagonal",
@@ -193,7 +311,14 @@ class BlockDiagonalPreconditioner(AbstractPreconditioner):
             extra={"sizes": sizes},
         )
 
-    def apply(self, residual: PyTree[Any], /) -> PyTree[Array]:
+    def apply(
+        self,
+        residual: PyTree[Any],
+        /,
+        *,
+        iteration: ArrayLike | None = None,
+    ) -> PyTree[Array]:
+        del iteration
         coordinates = self.space.flatten(residual)
         pieces = tuple(
             inverse @ coordinates[start:stop]
@@ -205,6 +330,138 @@ class BlockDiagonalPreconditioner(AbstractPreconditioner):
             )
         )
         return self.space.unflatten(jnp.concatenate(pieces))
+
+    def cost_for(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy | None = None,
+    ) -> PreconditionerCostEstimate:
+        return _prepared_action_cost(self, setup_operator)
+
+
+class LocalBlockPreconditioner(AbstractPreconditioner):
+    """Prepared inverse of homogeneous local blocks without explicit inverses."""
+
+    factorization: LocalBlockFactorization
+    relaxation: float = eqx.field(static=True)
+    space: AbstractVectorSpace
+
+    def __init__(
+        self,
+        blocks: ArrayLike,
+        /,
+        *,
+        space: AbstractVectorSpace | None = None,
+        positive_definite: bool = False,
+        relaxation: float = 1.0,
+        preconditioner_id: str | None = None,
+    ):
+        matrices = _inexact(blocks)
+        if (
+            matrices.ndim != 3
+            or matrices.shape[1] != matrices.shape[2]
+            or any(int(size) < 1 for size in matrices.shape)
+        ):
+            raise ValueError("blocks must contain nonempty equal-sized square matrices.")
+        num_blocks, block_size, _ = map(int, matrices.shape)
+        space_ = (
+            ArraySpace((num_blocks, block_size), dtype=matrices.dtype)
+            if space is None
+            else space
+        )
+        if (
+            not isinstance(space_, AbstractVectorSpace)
+            or space_.size != num_blocks * block_size
+        ):
+            raise ValueError("space size must match the local block coordinates.")
+        matrices = _coerce_coefficients(matrices, space_, "local blocks")
+        relaxation_ = float(relaxation)
+        if not np.isfinite(relaxation_) or relaxation_ <= 0.0:
+            raise ValueError("relaxation must be finite and positive.")
+        positive = bool(positive_definite)
+        if positive and not _has_diagonal_pairing(space_):
+            raise ValueError(
+                "positive-definite local blocks require a coordinate-diagonal pairing."
+            )
+        metric_weights = (
+            _coordinate_pairing_weights(space_).reshape((num_blocks, block_size))
+            if positive
+            else None
+        )
+        factorization = prepare_local_block_factorization(
+            matrices,
+            positive_definite=positive,
+            metric_weights=metric_weights,
+        )
+        checked_factors = _validated(
+            factorization.factors,
+            jnp.any(factorization.failed_blocks),
+            "Every local preconditioner block must be finite and nonsingular.",
+        )
+        factorization = eqx.tree_at(
+            lambda state: state.factors,
+            factorization,
+            checked_factors,
+        )
+
+        self.factorization = factorization
+        self.relaxation = relaxation_
+        self.space = space_
+        self.properties = _fixed_linear_properties(
+            self_adjoint=positive,
+            positive_definite=positive,
+            evidence="asserted" if positive else "construction",
+        )
+        self.preconditioner_id = _identifier(
+            preconditioner_id,
+            "local-block",
+            space_,
+            extra={
+                "num_blocks": num_blocks,
+                "block_size": block_size,
+                "positive_definite": positive,
+                "relaxation": relaxation_,
+            },
+        )
+
+    def apply(
+        self,
+        residual: PyTree[Any],
+        /,
+        *,
+        iteration: ArrayLike | None = None,
+    ) -> PyTree[Array]:
+        del iteration
+        coordinates = self.space.flatten(self.space.validate(residual))
+        grouped = coordinates.reshape(
+            (
+                self.factorization.num_blocks,
+                self.factorization.block_size,
+            )
+        )
+        solution, failed = solve_local_blocks(self.factorization, grouped)
+        solution = _validated(
+            solution,
+            failed,
+            "Local block preconditioner application failed.",
+        )
+        return self.space.unflatten((self.relaxation * solution).reshape((-1,)))
+
+    def cost_for(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy | None = None,
+    ) -> PreconditionerCostEstimate:
+        return _prepared_action_cost(
+            self,
+            setup_operator,
+            apply_workspace_multiplier=3,
+            reason="local block factors, pivots, and solve workspace",
+        )
 
 
 class IncompleteFactorizationPreconditioner(AbstractPreconditioner):
@@ -258,7 +515,11 @@ class IncompleteFactorizationPreconditioner(AbstractPreconditioner):
         self.lower = lower_
         self.upper = upper_
         self.unit_lower = bool(unit_lower)
-        self.positive_definite = bool(positive_definite)
+        self.properties = _fixed_linear_properties(
+            self_adjoint=positive_definite,
+            positive_definite=positive_definite,
+            evidence="asserted" if positive_definite else "construction",
+        )
         self.preconditioner_id = _identifier(
             preconditioner_id,
             "incomplete-factorization",
@@ -266,7 +527,14 @@ class IncompleteFactorizationPreconditioner(AbstractPreconditioner):
             extra={"unit_lower": self.unit_lower},
         )
 
-    def apply(self, residual: PyTree[Any], /) -> PyTree[Array]:
+    def apply(
+        self,
+        residual: PyTree[Any],
+        /,
+        *,
+        iteration: ArrayLike | None = None,
+    ) -> PyTree[Array]:
+        del iteration
         coordinates = self.space.flatten(residual)
         intermediate = jsp.linalg.solve_triangular(
             self.lower,
@@ -276,6 +544,15 @@ class IncompleteFactorizationPreconditioner(AbstractPreconditioner):
         )
         solution = jsp.linalg.solve_triangular(self.upper, intermediate, lower=False)
         return self.space.unflatten(solution)
+
+    def cost_for(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy | None = None,
+    ) -> PreconditionerCostEstimate:
+        return _prepared_action_cost(self, setup_operator, apply_workspace_multiplier=3)
 
 
 class LowRankWoodburyPreconditioner(AbstractPreconditioner):
@@ -357,7 +634,11 @@ class LowRankWoodburyPreconditioner(AbstractPreconditioner):
         self.left = left_
         self.right = right_
         self.middle_inverse = middle_inverse
-        self.positive_definite = bool(positive_definite)
+        self.properties = _fixed_linear_properties(
+            self_adjoint=positive_definite,
+            positive_definite=positive_definite,
+            evidence="asserted" if positive_definite else "construction",
+        )
         self.preconditioner_id = _identifier(
             preconditioner_id,
             "low-rank-woodbury",
@@ -365,7 +646,14 @@ class LowRankWoodburyPreconditioner(AbstractPreconditioner):
             extra={"rank": rank},
         )
 
-    def apply(self, residual: PyTree[Any], /) -> PyTree[Array]:
+    def apply(
+        self,
+        residual: PyTree[Any],
+        /,
+        *,
+        iteration: ArrayLike | None = None,
+    ) -> PyTree[Array]:
+        del iteration
         coordinates = self.space.flatten(residual)
         diagonal_solution = self.inverse_diagonal * coordinates
         correction_coordinates = jnp.conj(self.right.T) @ diagonal_solution
@@ -375,6 +663,15 @@ class LowRankWoodburyPreconditioner(AbstractPreconditioner):
             @ (self.middle_inverse @ correction_coordinates)
         )
         return self.space.unflatten(diagonal_solution - correction)
+
+    def cost_for(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy | None = None,
+    ) -> PreconditionerCostEstimate:
+        return _prepared_action_cost(self, setup_operator, apply_workspace_multiplier=3)
 
 
 class OperatorPreconditioner(AbstractPreconditioner):
@@ -398,7 +695,15 @@ class OperatorPreconditioner(AbstractPreconditioner):
             )
         self.space = operator.source
         self.operator = operator
-        self.positive_definite = bool(positive_definite)
+        positive = bool(positive_definite) or operator.properties.certifies(
+            "positive_definite"
+        )
+        self_adjoint = positive or operator.properties.certifies("self_adjoint")
+        self.properties = _fixed_linear_properties(
+            self_adjoint=self_adjoint,
+            positive_definite=positive,
+            evidence="asserted" if positive_definite else "transformed",
+        )
         self.preconditioner_id = _identifier(
             preconditioner_id,
             "operator",
@@ -406,132 +711,24 @@ class OperatorPreconditioner(AbstractPreconditioner):
             extra={"operator": operator.operator_id},
         )
 
-    def apply(self, residual: PyTree[Any], /) -> PyTree[Array]:
-        return self.operator.mv(residual)
-
-
-class MultigridPreconditioner(AbstractPreconditioner):
-    """One recursive geometric/algebraic V-cycle over explicit transfer operators."""
-
-    operators: tuple[AbstractLinearOperator, ...]
-    smoothers: tuple[AbstractPreconditioner, ...]
-    restrictions: tuple[AbstractLinearOperator, ...]
-    prolongations: tuple[AbstractLinearOperator, ...]
-    pre_smoothing: int = eqx.field(static=True)
-    post_smoothing: int = eqx.field(static=True)
-
-    def __init__(
+    def apply(
         self,
-        operators: Sequence[AbstractLinearOperator],
-        smoothers: Sequence[AbstractPreconditioner],
-        restrictions: Sequence[AbstractLinearOperator],
-        prolongations: Sequence[AbstractLinearOperator],
+        residual: PyTree[Any],
         /,
         *,
-        pre_smoothing: int = 1,
-        post_smoothing: int = 1,
-        positive_definite: bool = False,
-        preconditioner_id: str | None = None,
-    ):
-        operators_ = tuple(operators)
-        smoothers_ = tuple(smoothers)
-        restrictions_ = tuple(restrictions)
-        prolongations_ = tuple(prolongations)
-        if not all(
-            isinstance(operator, AbstractLinearOperator) for operator in operators_
-        ):
-            raise TypeError("operators must contain AbstractLinearOperator values.")
-        if not all(
-            isinstance(smoother, AbstractPreconditioner) for smoother in smoothers_
-        ):
-            raise TypeError("smoothers must contain AbstractPreconditioner values.")
-        if not all(
-            isinstance(transfer, AbstractLinearOperator)
-            for transfer in restrictions_ + prolongations_
-        ):
-            raise TypeError(
-                "restrictions and prolongations must contain linear operators."
-            )
-        levels = len(operators_)
-        if levels < 2 or len(smoothers_) != levels:
-            raise ValueError(
-                "Multigrid requires at least two operators and one smoother per level."
-            )
-        if len(restrictions_) != levels - 1 or len(prolongations_) != levels - 1:
-            raise ValueError(
-                "Multigrid requires one restriction/prolongation pair per transition."
-            )
-        for level, (operator, smoother) in enumerate(
-            zip(operators_, smoothers_, strict=True)
-        ):
-            if operator.batch_shape or not operator.source.compatible(operator.target):
-                raise ValueError(
-                    "Every multigrid level operator must be an unbatched endomorphism."
-                )
-            if not smoother.space.compatible(operator.source):
-                raise ValueError(f"Smoother space mismatch at level {level}.")
-        for level, (restriction, prolongation) in enumerate(
-            zip(restrictions_, prolongations_, strict=True)
-        ):
-            if restriction.batch_shape or prolongation.batch_shape:
-                raise ValueError("Multigrid transfer operators must be unbatched.")
-            fine = operators_[level].source
-            coarse = operators_[level + 1].source
-            if not restriction.source.compatible(
-                fine
-            ) or not restriction.target.compatible(coarse):
-                raise ValueError(f"Restriction space mismatch at transition {level}.")
-            if not prolongation.source.compatible(
-                coarse
-            ) or not prolongation.target.compatible(fine):
-                raise ValueError(f"Prolongation space mismatch at transition {level}.")
-        pre = int(pre_smoothing)
-        post = int(post_smoothing)
-        if pre < 0 or post < 0:
-            raise ValueError("Smoothing counts must be non-negative.")
-        self.space = operators_[0].source
-        self.operators = operators_
-        self.smoothers = smoothers_
-        self.restrictions = restrictions_
-        self.prolongations = prolongations_
-        self.pre_smoothing = pre
-        self.post_smoothing = post
-        self.positive_definite = bool(positive_definite)
-        self.preconditioner_id = _identifier(
-            preconditioner_id,
-            "multigrid",
-            self.space,
-            extra={"levels": levels, "pre": pre, "post": post},
-        )
+        iteration: ArrayLike | None = None,
+    ) -> PyTree[Array]:
+        del iteration
+        return self.operator.mv(residual)
 
-    def apply(self, residual: PyTree[Any], /) -> PyTree[Array]:
-        return self._cycle(0, self.space.validate(residual))
-
-    def _cycle(self, level: int, residual: PyTree[Array], /) -> PyTree[Array]:
-        if level == len(self.operators) - 1:
-            return self.smoothers[level].apply(residual)
-        estimate = jax.tree.map(jnp.zeros_like, residual)
-        operator = self.operators[level]
-        smoother = self.smoothers[level]
-        for _ in range(self.pre_smoothing):
-            defect = _subtract(residual, operator.mv(estimate))
-            estimate = _add(estimate, smoother.apply(defect))
-        defect = _subtract(residual, operator.mv(estimate))
-        coarse_residual = self.restrictions[level].mv(defect)
-        coarse_correction = self._cycle(level + 1, coarse_residual)
-        estimate = _add(estimate, self.prolongations[level].mv(coarse_correction))
-        for _ in range(self.post_smoothing):
-            defect = _subtract(residual, operator.mv(estimate))
-            estimate = _add(estimate, smoother.apply(defect))
-        return estimate
-
-
-def _add(left: PyTree[Array], right: PyTree[Array], /) -> PyTree[Array]:
-    return jax.tree.map(lambda x, y: x + y, left, right)
-
-
-def _subtract(left: PyTree[Array], right: PyTree[Array], /) -> PyTree[Array]:
-    return jax.tree.map(lambda x, y: x - y, left, right)
+    def cost_for(
+        self,
+        setup_operator: AbstractLinearOperator,
+        /,
+        *,
+        materialization: MaterializationPolicy | None = None,
+    ) -> PreconditionerCostEstimate:
+        return _prepared_action_cost(self, setup_operator)
 
 
 def _identifier(
@@ -559,6 +756,5 @@ __all__ = [
     "IdentityPreconditioner",
     "IncompleteFactorizationPreconditioner",
     "LowRankWoodburyPreconditioner",
-    "MultigridPreconditioner",
     "OperatorPreconditioner",
 ]

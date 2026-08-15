@@ -3,6 +3,7 @@
 #
 
 import jax.numpy as jnp
+import opt_einsum as oe
 import pytest
 
 import phydrax as phx
@@ -112,7 +113,7 @@ def test_curved_flrw_reference_matches_friedmann_tensors_and_bianchi_identity(
         contravariant,
         point,
     )
-    assert jnp.allclose(jnp.einsum("ijj->i", derivative), 0.0, atol=5e-10)
+    assert jnp.allclose(oe.contract("ijj->i", derivative), 0.0, atol=5e-10)
 
 
 def test_schwarzschild_reference_is_vacuum_with_exact_kretschmann_scalar():
@@ -124,8 +125,8 @@ def test_schwarzschild_reference_is_vacuum_with_exact_kretschmann_scalar():
     matrix = metric(point)
     inverse = metric.inverse(point)
     riemann = phx.metrix.riemann_tensor(metric, point)
-    lowered_riemann = jnp.einsum("al,lkij->akij", matrix, riemann)
-    kretschmann = jnp.einsum(
+    lowered_riemann = oe.contract("al,lkij->akij", matrix, riemann)
+    kretschmann = oe.contract(
         "abcd,ae,bf,cg,dh,efgh->",
         lowered_riemann,
         inverse,

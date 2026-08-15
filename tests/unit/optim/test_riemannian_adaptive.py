@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -66,7 +68,7 @@ def test_riemannian_adam_matches_optax_adam_with_pointwise_euclidean_factors():
             expected,
         )
         expected = optax.apply_updates(expected, updates)
-        assert jnp.allclose(parameters["free"], expected)
+        assert jnp.allclose(jnp.asarray(parameters["free"]), jnp.asarray(expected))
 
     assert state.second_moment["free"].shape == (2,)
     assert state.second_moment["point"].shape == ()
@@ -237,6 +239,7 @@ def test_riemannian_adam_eager_and_jit_updates_agree():
 def test_riemannian_adam_rejects_invalid_configuration_and_state():
     parameters = {"point": jnp.array([1.0, 0.0, 0.0])}
     geometry = _sphere_geometry(parameters)
+    invalid_amsgrad: Any = 1
 
     with pytest.raises(ValueError, match="first_moment_decay"):
         phx.optim.riemannian_adam(geometry, first_moment_decay=1.0)
@@ -245,13 +248,14 @@ def test_riemannian_adam_rejects_invalid_configuration_and_state():
     with pytest.raises(ValueError, match="epsilon"):
         phx.optim.riemannian_adam(geometry, epsilon=0.0)
     with pytest.raises(TypeError, match="amsgrad"):
-        phx.optim.riemannian_adam(geometry, amsgrad=1)
+        phx.optim.riemannian_adam(geometry, amsgrad=invalid_amsgrad)
 
     optimizer = phx.optim.riemannian_adam(geometry)
     wrong_state = phx.optim.riemannian_sgd(geometry).init(parameters)
+    invalid_state: Any = wrong_state
     with pytest.raises(TypeError, match="RiemannianAdamState"):
         optimizer.update(
             {"point": jnp.zeros((3,))},
-            wrong_state,
+            invalid_state,
             parameters,
         )

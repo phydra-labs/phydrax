@@ -93,8 +93,8 @@ def test_surface_chart_lowering_integrates_faces_without_seam_duplication(
 
     assert points.shape == (192, 3)
     assert jnp.all(geom._on_boundary(points))
-    assert jnp.allclose(surface_measure.value.data, geom.surface_area_value)
-    assert jnp.allclose(x_moment.value.data, 0.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(surface_measure.value.data), geom.surface_area_value)
+    assert jnp.allclose(jnp.asarray(x_moment.value.data), 0.0, atol=1e-12)
 
 
 def test_bounds_property(geometry_from_cube):

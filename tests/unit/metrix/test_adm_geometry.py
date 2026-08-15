@@ -6,6 +6,7 @@ from math import pi
 
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 import pytest
 
 import phydrax as phx
@@ -92,13 +93,13 @@ def test_adm_gauss_codazzi_constraints_match_spacetime_einstein_projections(
         point,
         einstein_coupling=0.0,
     )
-    expected_hamiltonian = 2.0 * jnp.einsum(
+    expected_hamiltonian = 2.0 * oe.contract(
         "i,ij,j->",
         normal,
         einstein,
         normal,
     )
-    expected_momentum = -decomposition.spatial_inverse @ jnp.einsum(
+    expected_momentum = -decomposition.spatial_inverse @ oe.contract(
         "m,mj->j",
         normal,
         einstein[:, 1:],

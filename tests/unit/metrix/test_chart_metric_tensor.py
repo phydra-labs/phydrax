@@ -71,6 +71,8 @@ def test_metric_constructors_pullback_jets_validation_and_parameter_gradients():
     assert jnp.allclose(jax.jit(metric)(batch), metric(batch))
 
     jet = phx.metrix.metric_jet(metric, point, order=2)
+    assert jet.first_derivative is not None
+    assert jet.second_derivative is not None
     assert jet.matrix.shape == (2, 2)
     assert jet.first_derivative.shape == (2, 2, 2)
     assert jet.second_derivative.shape == (2, 2, 2, 2)

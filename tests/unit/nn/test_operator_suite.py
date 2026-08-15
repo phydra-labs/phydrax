@@ -3,6 +3,7 @@
 #
 
 from dataclasses import FrozenInstanceError
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -72,6 +73,8 @@ def _parameter_count(model):
 
 def test_operator_architecture_status_is_deeply_immutable():
     status = phx.nn.operator.operator_architecture_status("FNO")
+    mutable_status: Any = status
+    mutable_statuses: Any = phx.nn.operator.OPERATOR_ARCHITECTURE_STATUSES
     assert (
         phx.nn.operator.operator_architecture_status
         is phx.nn.operator.operator_architecture_status
@@ -81,9 +84,9 @@ def test_operator_architecture_status_is_deeply_immutable():
         is phx.nn.operator.OperatorArchitectureStatus
     )
     with pytest.raises(FrozenInstanceError):
-        status.tier = "research"
+        mutable_status.tier = "research"
     with pytest.raises(TypeError):
-        phx.nn.operator.OPERATOR_ARCHITECTURE_STATUSES["FNO"] = status
+        mutable_statuses["FNO"] = status
     assert hash(status)
 
 

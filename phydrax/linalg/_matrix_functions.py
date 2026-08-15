@@ -9,6 +9,7 @@ from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
+import jax.core as jax_core
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
@@ -16,6 +17,7 @@ from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
+from ._certificates import _operator_numeric_fingerprint
 from ._operators import AbstractLinearOperator, FunctionLinearOperator
 from ._spaces import PyTreeSpace
 from .krylov import (
@@ -23,6 +25,7 @@ from .krylov import (
     KrylovBreakdownStatus,
     KrylovDecomposition,
     lanczos,
+    PreparedKrylovProjection,
 )
 
 
@@ -206,6 +209,41 @@ def _coerce_matrix_operator(
     return FunctionLinearOperator(operator, source=space, target=space)
 
 
+def _validate_reusable_projection(
+    projection: PreparedKrylovProjection,
+    operator: AbstractLinearOperator,
+    coordinates: Array,
+    /,
+) -> Array:
+    if not projection.operator.source.compatible(operator.source):
+        raise ValueError("Reusable Krylov projection source space does not match.")
+    if projection.operator is not operator:
+        leaves = jax.tree.leaves(operator)
+        if any(isinstance(leaf, jax_core.Tracer) for leaf in leaves):
+            raise ValueError(
+                "A traced reusable projection must be evaluated with projection.operator."
+            )
+        if (
+            projection.operator.operator_id != operator.operator_id
+            or projection.operator_fingerprint != _operator_numeric_fingerprint(operator)
+        ):
+            raise ValueError(
+                "Reusable Krylov projection numerical operator state does not match."
+            )
+    same_start = jnp.array_equal(
+        coordinates, projection.initial_coordinates, equal_nan=True
+    )
+    if isinstance(same_start, jax_core.Tracer):
+        coordinates = eqx.error_if(
+            coordinates,
+            ~same_start,
+            "Reusable Krylov projection starting vector does not match.",
+        )
+    elif not bool(same_start):
+        raise ValueError("Reusable Krylov projection starting vector does not match.")
+    return coordinates
+
+
 def _unflatten_promoted(template: PyTree[Any], coordinates: Array, /) -> PyTree[Array]:
     value = jnp.asarray(coordinates)
     leaves, treedef = jax.tree.flatten(template)
@@ -334,7 +372,7 @@ def matrix_function_action(
     policy: MatrixFunctionPolicy | None = None,
     spectral: SpectralMatrixRepresentation | None = None,
     spectral_bounds: tuple[float, float] | None = None,
-    decomposition: KrylovDecomposition | None = None,
+    decomposition: KrylovDecomposition | PreparedKrylovProjection | None = None,
 ) -> MatrixFunctionResult:
     """Apply a matrix function with explicit convergence and provenance."""
     operator = _coerce_matrix_operator(operator, vector)
@@ -502,14 +540,27 @@ def matrix_function_action(
             provenance="Chebyshev interval approximation without a certified tail bound",
         )
 
-    if decomposition is not None:
+    reused_projection = isinstance(decomposition, PreparedKrylovProjection)
+    if reused_projection:
+        if selected.method not in ("auto", decomposition.method):
+            raise ValueError(
+                "Matrix-function policy method conflicts with the reusable projection."
+            )
+        method = decomposition.method
+        coordinates = _validate_reusable_projection(decomposition, operator, coordinates)
+        decomposition = decomposition.decomposition
+        matvec_count = jnp.asarray(0, dtype=jnp.int32)
+    elif decomposition is not None:
         if not isinstance(decomposition, KrylovDecomposition):
-            raise TypeError("decomposition must be a KrylovDecomposition or None.")
+            raise TypeError(
+                "decomposition must be a PreparedKrylovProjection, "
+                "KrylovDecomposition, or None."
+            )
         raise ValueError(
-            "Supplied Krylov decompositions do not carry numerical operator and "
-            "normalized-start bindings and therefore cannot be safely reused."
+            "Unbound Krylov decompositions do not carry numerical operator and "
+            "normalized-start bindings; use prepare_krylov_projection."
         )
-    if decomposition is None:
+    else:
         dimension = min(selected.max_dimension, operator.source.size)
         if method == "lanczos":
             if not self_adjoint:
@@ -538,8 +589,6 @@ def matrix_function_action(
         else:
             raise ValueError(f"Unsupported matrix-function method {method!r}.")
         matvec_count = decomposition.matvec_count
-    else:
-        raise AssertionError("Unreachable supplied-decomposition branch.")
     projected = decomposition.projected[:-1]
     function = _small_matrix_function(
         projected,
@@ -605,7 +654,11 @@ def matrix_function_action(
         breakdown_status=decomposition.breakdown_status,
         method=method,
         kind=kind,
-        provenance=f"phydrax-native {method} projection with omitted-mode estimate",
+        provenance=(
+            f"reused bound {method} projection with omitted-mode estimate"
+            if reused_projection
+            else f"phydrax-native {method} projection with omitted-mode estimate"
+        ),
     )
 
 

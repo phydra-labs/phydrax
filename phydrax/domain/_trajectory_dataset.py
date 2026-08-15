@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal, TYPE_CHECKING
 
 import coordax as cx
@@ -460,12 +460,12 @@ class TrajectoryDatasetDomain(JointFactor):
 
     def points_from_case_time(
         self,
-        case_indices: ArrayLike,
-        times: ArrayLike,
+        case_indices: ArrayLike | Sequence[int],
+        times: ArrayLike | Sequence[float],
         /,
         *,
         structure: SampleLayout | None = None,
-        time_indices: ArrayLike | None = None,
+        time_indices: ArrayLike | Sequence[int] | None = None,
     ) -> PointBatch:
         """Materialize paired case-time samples as a `PointBatch`."""
         structure_in = structure or SampleLayout((self.labels,))

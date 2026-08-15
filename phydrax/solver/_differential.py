@@ -78,9 +78,10 @@ class WienerTerm(StrictModule):
         /,
     ) -> Array:
         """Evaluate the coefficient as ``(state_size, noise_size)``."""
+        time_array = jnp.asarray(time)
         state_array = jnp.asarray(state)
         expected_shape = tuple(state_array.shape) + self.noise_shape
-        coefficient = jnp.asarray(self.coefficient(time, state_array, args))
+        coefficient = jnp.asarray(self.coefficient(time_array, state_array, args))
         if tuple(coefficient.shape) != expected_shape:
             raise ValueError(
                 f"WienerTerm {self.name!r} coefficient must return shape "

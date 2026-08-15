@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import zipfile
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -26,7 +27,7 @@ def _problem():
 
 
 def _config(**overrides):
-    settings = {
+    settings: dict[str, Any] = {
         "num_adaptation_rounds": 1,
         "num_local_adaptation_steps": 4,
         "num_global_adaptation_steps": 2,
@@ -107,7 +108,7 @@ def test_interrupted_flow_nuts_resume_is_exact_at_every_phase_boundary(
     progress,
 ):
     problem = _problem()
-    common = {
+    common: dict[str, Any] = {
         "key": jr.key(20),
         "num_chains": 2,
         "num_warmup": 16,
@@ -184,7 +185,7 @@ def test_interrupted_flow_nuts_resume_is_exact_at_every_phase_boundary(
 def test_flow_nuts_checkpoint_rejects_changed_configuration(tmp_path):
     problem = _problem()
     checkpoint = tmp_path / "flow-config.phxckpt"
-    common = {
+    common: dict[str, Any] = {
         "key": jr.key(21),
         "num_chains": 2,
         "num_warmup": 12,
@@ -209,7 +210,7 @@ def test_flow_nuts_checkpoint_rejects_changed_configuration(tmp_path):
             checkpoint_every=2,
             **common,
         )
-    extended_settings = common | {"num_samples": 6}
+    extended_settings: dict[str, Any] = common | {"num_samples": 6}
     resumed = phx.uq.sample_flow_nuts(
         problem,
         config=_config(),
@@ -233,7 +234,7 @@ def test_flow_nuts_checkpoint_rejects_changed_configuration(tmp_path):
 def test_flow_checkpoint_rejects_package_array_and_dtype_tampering(tmp_path):
     problem = _problem()
     checkpoint = tmp_path / "flow-tampering.phxckpt"
-    common = {
+    common: dict[str, Any] = {
         "key": jr.key(23),
         "num_chains": 2,
         "num_warmup": 12,

@@ -8,7 +8,7 @@ from phydrax._model import AbstractArrayModel
 
 
 class _LinearField(AbstractArrayModel):
-    scale: jax.Array
+    scale: jax.Array = eqx.field(init=False)
     in_size: int = 1
     out_size: int = 1
 

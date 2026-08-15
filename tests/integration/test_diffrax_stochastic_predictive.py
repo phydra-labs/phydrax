@@ -49,7 +49,7 @@ def test_diffrax_ensemble_converts_to_process_predictive_field():
     assert jnp.all(predictive.valid.data)
     assert predictive.process_variance().dims == ("time", "state")
     assert jnp.allclose(
-        predictive.total_variance().data,
+        jnp.asarray(predictive.total_variance().data),
         predictive.process_variance().data,
     )
     with pytest.raises(ValueError, match="no sample axes for"):

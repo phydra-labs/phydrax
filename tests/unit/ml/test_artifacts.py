@@ -46,6 +46,9 @@ def test_ml_artifact_round_trip_preserves_model_and_contract(tmp_path):
         licenses=("PNPL-2.2",),
     )
     restored = read_ml_artifact(destination)
+    assert restored.manifest.feature_schema is not None
+    assert restored.manifest.target_schema is not None
+    assert restored.manifest.fit is not None
     points = jnp.array([[1.0, 2.0], [-3.0, 0.5]])
 
     assert jnp.allclose(restored.model(points), result.model(points))

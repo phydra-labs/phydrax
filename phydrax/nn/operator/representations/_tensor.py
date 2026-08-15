@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array
 
 from phydrax._strict import StrictModule
@@ -108,7 +109,7 @@ class TensorType(StrictModule):
             leading_shape = array.shape
         flat = array.reshape(leading_shape + (self.component_count,))
         action = self.representation_matrix(transform).astype(flat.dtype)
-        transformed = jnp.einsum("ij,...j->...i", action, flat)
+        transformed = oe.contract("ij,...j->...i", action, flat)
         return transformed.reshape(array.shape)
 
     def to_dict(self) -> dict[str, Any]:

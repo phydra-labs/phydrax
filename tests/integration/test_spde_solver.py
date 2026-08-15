@@ -203,7 +203,10 @@ def test_two_dimensional_tensor_state_preserves_channels_and_noise_axes():
 
     assert spde.state_shape == (4, 5, 2)
     assert spde.noise_shape == (1,)
-    assert spde.problem.wiener_terms[0].coefficient(0.0, initial, None).shape == (
+    coefficient = jnp.asarray(
+        spde.problem.wiener_terms[0].coefficient(jnp.asarray(0.0), initial, None)
+    )
+    assert coefficient.shape == (
         4,
         5,
         2,

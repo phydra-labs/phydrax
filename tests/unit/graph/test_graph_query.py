@@ -20,6 +20,8 @@ def test_radius_query_graph_builds_weighted_bipartite_geometry():
         weight_kind="hat",
     )
     graph = bundle.graph
+    assert graph.senders is not None
+    assert graph.receivers is not None
 
     assert graph.num_nodes == 5
     assert graph.num_edges == 2
@@ -60,6 +62,8 @@ def test_knn_query_graph_and_cached_layout_replay():
         bundle.graph.edges["target_index"],
         weight_kind=None,
     )
+    assert bundle.graph.senders is not None
+    assert bundle.graph.receivers is not None
 
     assert jnp.allclose(bundle.graph.senders, jnp.array([0, 1], dtype=jnp.int32))
     assert jnp.allclose(bundle.graph.receivers, jnp.array([3, 3], dtype=jnp.int32))
@@ -142,7 +146,7 @@ def test_graph_neural_operator_wraps_as_graph_model_on_query_targets():
         output_key="gno",
     )
 
-    assert jnp.allclose(model(batch).data, jnp.array([4.0]))
+    assert jnp.allclose(jnp.asarray(model(batch).data), jnp.array([4.0]))
 
 
 def test_batched_knn_query_graph_is_case_local_and_mask_aware():
@@ -165,6 +169,10 @@ def test_batched_knn_query_graph_is_case_local_and_mask_aware():
         source_measure=jnp.ones((2, 3)),
     )
     graph = query.graph
+    assert graph.senders is not None
+    assert graph.receivers is not None
+    assert graph.edge_mask is not None
+    assert graph.node_mask is not None
 
     assert jnp.array_equal(graph.n_node, jnp.array([5, 5], dtype=jnp.int32))
     assert jnp.array_equal(graph.n_edge, jnp.array([4, 4], dtype=jnp.int32))
@@ -225,6 +233,8 @@ def test_batched_homogeneous_knn_graph_excludes_self_edges():
         jnp.array([[[0.0], [1.0], [3.0]], [[10.0], [11.0], [13.0]]]),
         k=1,
     )
+    assert graph.senders is not None
+    assert graph.receivers is not None
 
     assert graph.senders.shape == (6,)
     assert jnp.all(graph.senders != graph.receivers)

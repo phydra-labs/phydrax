@@ -47,7 +47,7 @@ def test_graph_domain_function_evaluates_over_nodes():
     out = u(batch)
     axis = batch.structure.axis_for("graph")
     assert out.dims == (axis,)
-    assert jnp.allclose(out.data, jnp.array([1.0, 2.0, 3.0]))
+    assert jnp.allclose(jnp.asarray(out.data), jnp.array([1.0, 2.0, 3.0]))
 
 
 def test_graph_domain_samples_explicit_node_sets():
@@ -58,9 +58,9 @@ def test_graph_domain_samples_explicit_node_sets():
     batch = component.sample(phx.domain.PointSampling(2, layout=structure), key=jr.key(1))
 
     assert batch.component_kind == "nodes"
-    assert jnp.allclose(batch["graph"].data, jnp.array([[0.0], [2.0]]))
+    assert jnp.allclose(jnp.asarray(batch["graph"].data), jnp.array([[0.0], [2.0]]))
     assert jnp.allclose(
-        batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data,
+        jnp.asarray(batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data),
         jnp.array([0, 2], dtype=jnp.int32),
     )
     assert jnp.allclose(component.mass.value, 2.0)
@@ -74,9 +74,9 @@ def test_graph_domain_samples_explicit_edge_sets():
     batch = component.sample(phx.domain.PointSampling(2, layout=structure), key=jr.key(1))
 
     assert batch.component_kind == "edges"
-    assert jnp.allclose(batch["graph"].data, jnp.array([[2.5], [0.5]]))
+    assert jnp.allclose(jnp.asarray(batch["graph"].data), jnp.array([[2.5], [0.5]]))
     assert jnp.allclose(
-        batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data,
+        jnp.asarray(batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data),
         jnp.array([2, 0], dtype=jnp.int32),
     )
     assert jnp.allclose(component.mass.value, 2.0)
@@ -95,7 +95,7 @@ def test_graph_domain_integral_measure_modes():
         phx.integration.over(probability_component), probability_batch
     )
     prob_integral = phx.operators.integral(1.0, probability_realization)
-    assert jnp.allclose(prob_integral.data, 1.0)
+    assert jnp.allclose(jnp.asarray(prob_integral.data), 1.0)
 
     count_domain = phx.domain.GraphDomain(graph, measure="count")
     count_component = count_domain.component({"graph": phx.domain.Nodes()})
@@ -104,7 +104,7 @@ def test_graph_domain_integral_measure_modes():
         phx.integration.over(count_component), count_batch
     )
     count_integral = phx.operators.integral(1.0, count_realization)
-    assert jnp.allclose(count_integral.data, 3.0)
+    assert jnp.allclose(jnp.asarray(count_integral.data), 3.0)
 
 
 def test_graph_domain_residual_penalty_is_zero():

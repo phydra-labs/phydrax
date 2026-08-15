@@ -446,6 +446,7 @@ def test_operator_sgmcmc_supports_selected_parameter_subspaces_and_predictions()
         num_samples=4,
     )
     prediction = result.predict()
+    assert isinstance(prediction, phx.uq.PredictiveField)
 
     assert result.samples["weight"].shape == (2, 4)
     assert result.samples["frozen"] is None

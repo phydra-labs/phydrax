@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any, cast
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -43,7 +45,7 @@ def test_interrupted_mcmc_resume_is_exact_and_does_not_repeat_warmup(
     checkpoint_every,
 ):
     problem = _problem()
-    common = {
+    common: dict[str, Any] = {
         "key": jr.key(919),
         "num_chains": 2,
         "num_warmup": 30,
@@ -115,7 +117,7 @@ def test_interrupted_mcmc_resume_is_exact_and_does_not_repeat_warmup(
 def test_mcmc_checkpoint_rejects_incompatible_identity_and_corruption(tmp_path):
     problem = _problem()
     checkpoint = tmp_path / "state.phxckpt"
-    settings = {
+    settings: dict[str, Any] = {
         "key": jr.key(920),
         "num_chains": 2,
         "num_warmup": 25,
@@ -136,14 +138,14 @@ def test_mcmc_checkpoint_rejects_incompatible_identity_and_corruption(tmp_path):
     with pytest.raises(phx.uq.CheckpointCompatibilityError, match="checkpoint id"):
         phx.uq.sample_nuts(
             problem,
-            **(settings | {"checkpoint_id": "different-run"}),
+            **cast(dict[str, Any], settings | {"checkpoint_id": "different-run"}),
             checkpoint_path=None,
             resume_from=checkpoint,
         )
     with pytest.raises(phx.uq.CheckpointCompatibilityError):
         phx.uq.sample_nuts(
             problem,
-            **(settings | {"chain_method": "interleaved"}),
+            **cast(dict[str, Any], settings | {"chain_method": "interleaved"}),
             checkpoint_path=None,
             resume_from=checkpoint,
         )
@@ -161,7 +163,7 @@ def test_mcmc_checkpoint_rejects_incompatible_identity_and_corruption(tmp_path):
 def test_interleaved_checkpoint_can_extend_without_repeating_draws(tmp_path):
     problem = _problem()
     checkpoint = tmp_path / "extended.phxckpt"
-    settings = {
+    settings: dict[str, Any] = {
         "key": jr.key(924),
         "num_chains": 2,
         "num_warmup": 20,

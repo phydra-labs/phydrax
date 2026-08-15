@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,6 +13,7 @@ from scipy.interpolate import BSpline as SciPyBSpline
 
 from phydrax._interpolation import (
     apply_gather_stencil,
+    BoundsMode,
     bspline_evaluate,
     bspline_stencil,
 )
@@ -34,7 +37,7 @@ def _dense_basis(
     *,
     degree: int,
     derivative_order: int = 0,
-    bounds: str = "error",
+    bounds: BoundsMode = "error",
 ):
     control_count = len(knots) - degree - 1
     stencil = bspline_stencil(
@@ -293,11 +296,12 @@ def test_bspline_bounds_modes_are_explicit():
 
 def test_bspline_validation_is_transformation_safe():
     knots = jnp.asarray(_open_knots(2, 5))
+    invalid_degree: Any = 2.0
 
     with pytest.raises(TypeError, match="real-valued"):
         bspline_stencil(knots, jnp.asarray(0.2 + 0.1j), degree=2)
     with pytest.raises(TypeError, match="degree must be an integer"):
-        bspline_stencil(knots, 0.2, degree=2.0)
+        bspline_stencil(knots, 0.2, degree=invalid_degree)
     with pytest.raises(ValueError, match="between zero and the degree"):
         bspline_stencil(knots, 0.2, degree=2, derivative_order=3)
     with pytest.raises(ValueError, match="non-empty"):

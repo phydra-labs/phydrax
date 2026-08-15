@@ -12,6 +12,7 @@ import pytest
 import trimesh
 
 import phydrax as phx
+import phydrax._spectral as spectral
 
 
 def _assert_finite_model_gradient(model, loss):
@@ -174,10 +175,10 @@ def test_wavelet_operators_reconstruct_and_execute_scalar_and_channel_fields():
     channel_values = jnp.stack((scalar_values, jnp.cos(scalar_values)), axis=-1)
     query_mask = jnp.array([True, True, True, True, True, True, True, False])
 
-    wavelet = phx._spectral.DiscreteWaveletTransform(
+    wavelet = spectral.DiscreteWaveletTransform(
         (-2,), levels=2, wavelet="db2", boundary="periodization"
     )
-    multiwavelet = phx._spectral.AlpertMultiwaveletTransform(
+    multiwavelet = spectral.AlpertMultiwaveletTransform(
         order=2, levels=2, boundary="periodization"
     )
     assert jnp.allclose(
@@ -281,7 +282,7 @@ def test_manifold_spectral_operator_runs_valid_small_laplacian_plan():
             [-1.0, 0.0, -1.0, 2.0],
         ]
     )
-    plan = phx._spectral.SpectralDiscretization.from_stiffness(
+    plan = spectral.SpectralDiscretization.from_stiffness(
         laplacian, np.ones((4,)), n_modes=4, basis_id="cycle-4"
     )
     coordinates = jnp.array([[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0]])
@@ -332,7 +333,7 @@ def test_stiffness_plan_rejects_negative_semidefinite_operator():
     )
 
     with pytest.raises(ValueError, match="positive semidefinite"):
-        phx._spectral.SpectralDiscretization.from_stiffness(
+        spectral.SpectralDiscretization.from_stiffness(
             differential_laplacian,
             np.ones((4,)),
             n_modes=4,
@@ -798,6 +799,7 @@ def test_pde_condition_encoder_respects_semantic_hash_and_attaches_case_conditio
     assert jnp.allclose(compiled, encoded_a)
     assert conditioned.case_axes == batch.case_axes
     assert conditioned.case_shape == batch.case_shape
+    assert condition.values is not None
     assert conditioned.query("query") is batch.query("query")
     assert condition.values.shape == (2, 1, 4)
     assert jnp.allclose(condition.values[:, 0], jnp.broadcast_to(encoded_a, (2, 4)))

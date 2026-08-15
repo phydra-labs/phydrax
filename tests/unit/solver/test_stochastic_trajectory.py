@@ -54,10 +54,12 @@ def test_stochastic_transition_view_preserves_paths_masks_and_split_provenance()
             group_by=("trajectory",), seed=3
         ),
     )
-    trajectory_groups = [
-        {record.identities["trajectory"] for record in partition.provenance}
-        for partition in (split.train, split.validation, split.test)
-    ]
+    trajectory_groups = []
+    for partition in (split.train, split.validation, split.test):
+        assert partition.provenance is not None
+        trajectory_groups.append(
+            {record.identities["trajectory"] for record in partition.provenance}
+        )
 
     assert dataset.size == transitions.num_valid
     assert len(transitions.driver_segment_references()) == transitions.num_valid

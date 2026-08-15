@@ -479,7 +479,10 @@ def _deterministic_thermodynamic_record(
         training_ms,
         inference_ms,
     )
-    if maximum_energy_balance_residual is not None:
+    if (
+        maximum_energy_balance_residual is not None
+        and positive_energy_drift_fraction is not None
+    ):
         passed = passed and _finite_record(
             maximum_energy_balance_residual,
             positive_energy_drift_fraction,
@@ -953,7 +956,7 @@ def run_benchmarks(
             "machine": platform.machine(),
             "system": platform.system(),
             "system_release": platform.release(),
-            "x64_enabled": bool(jax.config.x64_enabled),
+            "x64_enabled": bool(jax.config.read("jax_enable_x64")),
         },
     }
     passed = True

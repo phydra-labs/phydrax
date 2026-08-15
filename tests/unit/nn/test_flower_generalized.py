@@ -94,7 +94,9 @@ def test_resolution_consistent_flower_executes_in_one_two_and_three_dimensions(
 ):
     nodes = tuple(jnp.linspace(-1.0, 1.0, 4) for _ in range(spatial_ndim))
     coordinates = jnp.meshgrid(*nodes, indexing="ij")
-    values = sum((axis + 1.0) ** (index + 1) for index, axis in enumerate(coordinates))
+    values = jnp.asarray(
+        sum((axis + 1.0) ** (index + 1) for index, axis in enumerate(coordinates))
+    )
     model = _flower(
         spatial_ndim=spatial_ndim,
         levels=2,

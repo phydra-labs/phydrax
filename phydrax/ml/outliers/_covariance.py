@@ -9,6 +9,7 @@ from typing import Any, ClassVar
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._model import AbstractArrayModel, ModelBinding
@@ -61,7 +62,7 @@ def _regularize_covariance(
 
 def _mahalanobis_one(query: Array, location: Array, precision: Array) -> Array:
     delta = query - location
-    return jnp.real(jnp.einsum("qi,ij,qj->q", jnp.conj(delta), precision, delta))
+    return jnp.real(oe.contract("qi,ij,qj->q", jnp.conj(delta), precision, delta))
 
 
 class CovarianceOutlierModel(AbstractArrayModel):

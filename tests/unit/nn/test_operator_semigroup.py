@@ -34,6 +34,7 @@ class _ConditionedTransition(eqx.Module):
 
 class _KeyedTransition(eqx.Module):
     def __call__(self, batch, *, key=None):
+        assert key is not None
         state = jnp.asarray(batch.input("state").values)
         duration = jnp.asarray(batch.input("duration").values)
         draw = jr.uniform(key, ())

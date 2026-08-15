@@ -69,11 +69,12 @@ def _scalar_tree(
         left = [1, -1, -1]
         right = [2, -1, -1]
         parents = [-1, 0, 0]
-        conditions = [
-            math.nan if categories else float(threshold),
-            float(left_value),
-            float(right_value),
-        ]
+        if categories:
+            split_condition = math.nan
+        else:
+            assert threshold is not None
+            split_condition = float(threshold)
+        conditions = [split_condition, float(left_value), float(right_value)]
         indices = [0, 0, 0]
         defaults = [int(default_left), 0, 0]
         split_type = [int(bool(categories)), 0, 0]
@@ -358,12 +359,12 @@ def test_binary_sigmoid_preserves_base_score_link_strict_tie_and_missing_directi
     )
     result = from_xgboost_artifact(document)
     points = jnp.array([[0.0], [1.0], [jnp.nan]])
+    native = result.model.model
+    assert isinstance(native, TreeEnsemble)
 
-    assert jnp.array_equal(
-        result.model.model.predict_raw(points), jnp.array([-2.0, 2.0, 2.0])
-    )
+    assert jnp.array_equal(native.predict_raw(points), jnp.array([-2.0, 2.0, 2.0]))
     assert jnp.allclose(result.model(points), jax.nn.sigmoid(jnp.array([-2.0, 2.0, 2.0])))
-    assert result.model.model.target_schema.kind == "binary"
+    assert native.target_schema.kind == "binary"
     assert _configuration(result)["base_score_margin"] == (0.0,)
 
 
@@ -383,10 +384,12 @@ def test_multiclass_tree_info_groups_margins_before_softprob():
     result = from_xgboost_artifact(document)
     points = jnp.array([[0.0], [4.0]])
     raw = jnp.array([[1.5, 2.5, -0.5], [1.5, 2.5, -0.5]])
+    native = result.model.model
+    assert isinstance(native, TreeEnsemble)
 
-    assert jnp.array_equal(result.model.model.predict_raw(points), raw)
+    assert jnp.array_equal(native.predict_raw(points), raw)
     assert jnp.allclose(result.model(points), jax.nn.softmax(raw, axis=-1))
-    assert result.model.model.target_schema.kind == "multiclass"
+    assert native.target_schema.kind == "multiclass"
     assert _configuration(result)["tree_info"] == (0, 1, 2)
 
 
@@ -410,6 +413,7 @@ def test_categorical_selected_set_routes_right_and_missing_uses_persisted_defaul
         jnp.array([-3.0, 10.0, -3.0, 10.0]),
     )
     native = result.model.model
+    assert isinstance(native, TreeEnsemble)
     assert native.feature_schema.kinds == ("categorical",)
     assert native.left_child[0, 0] == 2
     assert native.right_child[0, 0] == 1

@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -107,9 +109,10 @@ def test_qpax_implicit_rejects_nondefault_step_fraction_before_backend_call(
 
 
 def test_qpax_explicit_differentiation_is_rejected_without_importing_private_api():
+    invalid_method: Any = "qpax-explicit"
     problem = phx.optim.QuadraticProgram(jnp.eye(1), jnp.array([-1.0]))
     with pytest.raises(ValueError, match="explicit differentiation"):
         phx.optim.solve_quadratic_program_primal(
             problem,
-            method="qpax-explicit",
+            method=invalid_method,
         )

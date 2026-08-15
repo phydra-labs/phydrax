@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -165,13 +166,14 @@ def test_bsde_quadrature_modes_are_explicit_and_finite():
         assert jnp.all(jnp.isfinite(evaluation.local_residuals))
         assert phx.stochastic.bsde_objective_loss(evaluation, mode="joint") > 0.0
 
+    invalid_quadrature: Any = "midpoint"
     with pytest.raises(ValueError, match="left.*trapezoid"):
         phx.stochastic.evaluate_bsde(
             problem,
             paths,
             value,
             control_predictor=control,
-            quadrature="midpoint",
+            quadrature=invalid_quadrature,
         )
 
 

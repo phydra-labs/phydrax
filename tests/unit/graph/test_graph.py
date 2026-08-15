@@ -33,6 +33,10 @@ def test_batch_unbatch_graphs_roundtrip():
 
     batched = vx.batch_graphs((g1, g2))
     pieces = vx.unbatch_graph(batched)
+    assert pieces[0].senders is not None
+    assert g1.senders is not None
+    assert pieces[1].receivers is not None
+    assert g2.receivers is not None
 
     assert len(pieces) == 2
     assert pieces[0].num_nodes == g1.num_nodes

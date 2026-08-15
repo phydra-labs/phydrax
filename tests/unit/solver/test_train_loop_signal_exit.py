@@ -3,6 +3,7 @@
 #
 
 import signal
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as jr
@@ -92,7 +93,10 @@ def test_optax_solve_returns_after_keyboard_interrupt_from_step(tmp_path):
     def update(_grads, state, _params=None):
         raise KeyboardInterrupt
 
-    optim = optax.GradientTransformation(init, update)
+    init_fn: Any = init
+    update_fn: Any = update
+
+    optim = optax.GradientTransformation(init_fn, update_fn)
     log_path = tmp_path / "keyboard_interrupt.log"
 
     trained = _make_solver().solve(

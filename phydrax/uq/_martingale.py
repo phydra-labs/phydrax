@@ -342,7 +342,7 @@ def jump_compensator_diagnostics(
     t0: float,
     t1: float,
     args: object = None,
-    independence_labels: Sequence[str] | None = None,
+    independence_labels: Sequence[str | None] | None = None,
     confidence: float = 0.95,
 ) -> JumpCompensatorDiagnostics:
     """Compare event counts with left-state integrated channel intensities."""

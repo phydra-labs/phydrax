@@ -3,6 +3,7 @@
 #
 
 import json
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -48,14 +49,20 @@ def test_normalization_is_training_only_invertible_and_persisted(tmp_path):
         split.train.targets,
         normalize_coordinates=True,
     )
-    expected_mean = jnp.mean(split.train.batch.input("state").values)
+    train_state = split.train.batch.input("state")
+    assert train_state.values is not None
+    expected_mean = jnp.mean(train_state.values)
     assert jnp.allclose(policy.input_values["state"].mean, expected_mean)
 
     normalized = policy.normalize_batch(split.validation.batch)
     restored = policy.denormalize_batch(normalized)
+    restored_state = restored.input("state")
+    validation_state = split.validation.batch.input("state")
+    assert restored_state.values is not None
+    assert validation_state.values is not None
     assert jnp.allclose(
-        restored.input("state").values,
-        split.validation.batch.input("state").values,
+        restored_state.values,
+        validation_state.values,
     )
     assert jnp.allclose(
         restored.input("state").axes[0].nodes,
@@ -172,7 +179,7 @@ def test_dataset_splitting_and_variable_cardinality_adapter_are_deterministic():
     assert ragged.batch.query("query").sample_shape == (5,)
     assert ragged.targets.field("solution").values.shape == (3, 5)
     assert jnp.array_equal(
-        ragged.batch.query("query").mask,
+        ragged.batch.query("query").mask_array(case_shape=(3,)),
         jnp.asarray(
             [
                 [True, True, True, False, False],
@@ -346,9 +353,11 @@ def test_named_normalization_and_dtype_preserve_complex_fields(tmp_path):
     dtype = phx.nn.operator.training.OperatorDTypePolicy(compute_dtype="float32")
     cast_targets = dtype.cast_targets(targets)
     cast_batch = dtype.cast_batch(batch)
+    cast_wave = cast_batch.input("wave")
+    assert cast_wave.values is not None
     assert cast_targets.field("wave").values.dtype == jnp.complex64
     assert cast_targets.field("sensor").values.dtype == jnp.float32
-    assert cast_batch.input("wave").values.dtype == jnp.complex64
+    assert cast_wave.values.dtype == jnp.complex64
 
 
 def _stochastic_step(model, state, optimizer, key):
@@ -426,6 +435,7 @@ def test_checkpoint_restores_exact_optimizer_rng_and_policies(tmp_path):
     _assert_trees_equal(actual_model, expected_model)
     _assert_trees_equal(actual_state, expected_state)
     assert jnp.array_equal(jr.key_data(actual_key), jr.key_data(expected_key))
+    assert restored.normalization is not None
     assert restored.normalization.to_dict() == normalization.to_dict()
     assert restored.dtype_policy == dtype_policy
     assert restored.metadata == {"dataset": "manufactured"}
@@ -548,9 +558,12 @@ def test_dtype_and_prefetch_loader_apply_explicit_device_policy():
     first = tuple(loader.epoch(2))
     second = tuple(loader.epoch(2))
     assert tuple(item.indices for item in first) == tuple(item.indices for item in second)
-    assert first[0].batch.input("state").values.dtype == jnp.float32
+    first_state = first[0].batch.input("state")
+    assert first_state.values is not None
+    assert isinstance(first_state.values.sharding, jax.sharding.NamedSharding)
+    assert first_state.values.dtype == jnp.float32
     assert first[0].targets.field("solution").values.dtype == jnp.float32
-    assert first[0].batch.input("state").values.sharding.spec[0] == "data"
+    assert first_state.values.sharding.spec[0] == "data"
 
     model = phx.nn.operator.architectures.FNO(
         width=4, depth=1, n_modes=(3,), key=jr.key(3)
@@ -631,7 +644,7 @@ def test_fit_operator_compiles_accumulates_normalizes_and_composes_losses():
 def test_fit_operator_resume_is_bitwise_exact_with_shuffle_and_accumulation(tmp_path):
     dataset = _dataset(cases=8)
     model = _fit_model(seed=2)
-    common = {
+    common: dict[str, Any] = {
         "batch_size": 2,
         "gradient_accumulation": 2,
         "seed": 17,

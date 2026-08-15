@@ -487,7 +487,7 @@ def test_interval_nonzero_neumann_and_robin_targets_are_exact():
 
     neumann = enforce_neumann(u, boundary, target=1.25)
     neumann_derivative = directional_derivative(neumann, normal, var="x")
-    assert jnp.allclose(neumann_derivative(batch).data, 1.25, atol=1e-8)
+    assert jnp.allclose(jnp.asarray(neumann_derivative(batch).data), 1.25, atol=1e-8)
 
     robin = enforce_robin(
         u,
@@ -497,5 +497,7 @@ def test_interval_nonzero_neumann_and_robin_targets_are_exact():
         target=3.0,
     )
     robin_derivative = directional_derivative(robin, normal, var="x")
-    residual = 2.0 * robin(batch).data + 0.5 * robin_derivative(batch).data
+    residual = 2.0 * jnp.asarray(robin(batch).data) + 0.5 * jnp.asarray(
+        robin_derivative(batch).data
+    )
     assert jnp.allclose(residual, 3.0, atol=1e-8)

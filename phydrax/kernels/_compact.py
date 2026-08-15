@@ -8,6 +8,7 @@ from abc import abstractmethod
 
 import equinox as eqx
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..metrix import SphereLaplacianLevels
@@ -383,7 +384,7 @@ class SpecialOrthogonalCharacterKernel(AbstractHomogeneousPolynomialKernel):
             self.membership_tolerance,
             special=True,
         )
-        return jnp.einsum("aij,bij->ab", left_matrices, right_matrices) / self.dimension
+        return oe.contract("aij,bij->ab", left_matrices, right_matrices) / self.dimension
 
     @property
     def kernel_id(self) -> str:
@@ -429,7 +430,7 @@ class SpecialUnitaryCharacterKernel(AbstractHomogeneousPolynomialKernel):
             right, self.dimension, self.membership_tolerance
         )
         return (
-            jnp.einsum("aij,bij->ab", jnp.conj(left_matrices), right_matrices)
+            oe.contract("aij,bij->ab", jnp.conj(left_matrices), right_matrices)
             / self.dimension
         )
 
@@ -488,7 +489,9 @@ class StiefelSpectralKernel(AbstractHomogeneousPolynomialKernel):
             self.membership_tolerance,
             special=False,
         )
-        return jnp.einsum("aij,bij->ab", left_frames, right_frames) / self.frame_dimension
+        return (
+            oe.contract("aij,bij->ab", left_frames, right_frames) / self.frame_dimension
+        )
 
     @property
     def kernel_id(self) -> str:
@@ -545,7 +548,7 @@ class GrassmannSpectralKernel(AbstractHomogeneousPolynomialKernel):
             self.membership_tolerance,
             special=False,
         )
-        overlap = jnp.einsum("anp,bnq->abpq", left_frames, right_frames)
+        overlap = oe.contract("anp,bnq->abpq", left_frames, right_frames)
         return jnp.sum(overlap * overlap, axis=(-1, -2)) / self.subspace_dimension
 
     @property

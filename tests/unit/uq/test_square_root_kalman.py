@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -484,10 +486,14 @@ def test_qr_factor_algebra_uses_conjugate_transposes_for_complex_values():
 
 def test_invalid_covariance_form_and_square_root_parallel_dispatch_are_explicit():
     problem = _problem()
+    invalid_form: Any = "factor"
+    invalid_method: Any = "invalid"
     with pytest.raises(ValueError, match="covariance_form"):
-        phx.uq.kalman_filter(problem, covariance_form="factor")
+        phx.uq.kalman_filter(problem, covariance_form=invalid_form)
     with pytest.raises(ValueError, match="method"):
-        phx.uq.kalman_filter(problem, covariance_form="square_root", method="invalid")
+        phx.uq.kalman_filter(
+            problem, covariance_form="square_root", method=invalid_method
+        )
     with pytest.raises(ValueError, match="does not support method='parallel'"):
         phx.uq.kalman_filter(problem, covariance_form="square_root", method="parallel")
 
@@ -495,6 +501,6 @@ def test_invalid_covariance_form_and_square_root_parallel_dispatch_are_explicit(
         problem, covariance_form="square_root", method="sequential"
     )
     with pytest.raises(ValueError, match="covariance_form"):
-        phx.uq.rts_smoother(result, covariance_form="factor")
+        phx.uq.rts_smoother(result, covariance_form=invalid_form)
     with pytest.raises(ValueError, match="does not support method='parallel'"):
         phx.uq.rts_smoother(result, covariance_form="square_root", method="parallel")

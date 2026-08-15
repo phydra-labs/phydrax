@@ -11,6 +11,7 @@ from typing import Any, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._frozendict import frozendict
@@ -392,7 +393,7 @@ def _mean_field_snapshot(
     mean = jnp.sum(particles * weights.reshape(weights.shape + event_suffix), axis=0)
     flat = particles.reshape((particles.shape[0], -1))
     centered = flat - mean.reshape((-1,))
-    covariance = jnp.einsum("p,pi,pj->ij", weights, centered, centered)
+    covariance = oe.contract("p,pi,pj->ij", weights, centered, centered)
     effective = 1.0 / jnp.sum(weights**2)
     state_axes = tuple(range(1, particles.ndim))
     valid = jnp.all(jnp.isfinite(particles), axis=state_axes)
@@ -573,7 +574,7 @@ def solve_interacting_particles(
     )
     flat_means = means.reshape(sample_shape + (num_times, prod(problem.state_shape)))
     centered = flat_particles - jnp.expand_dims(flat_means, axis=len(sample_shape) + 1)
-    covariances = jnp.einsum(
+    covariances = oe.contract(
         "...tpi,p,...tpj->...tij",
         centered,
         problem.weights,

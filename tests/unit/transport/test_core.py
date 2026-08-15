@@ -315,6 +315,7 @@ def test_nonconvergence_and_invalid_measures_remain_explicit():
     )
     with pytest.raises(eqx.EquinoxRuntimeError, match="did not converge"):
         checked = phx.transport.require_converged(result)
+        assert isinstance(checked, phx.transport.SinkhornResult)
         jax.block_until_ready(checked.source_potential)
 
     invalid_source = _target([[0.0], [1.0]], [1.0, -1.0])

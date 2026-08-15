@@ -1,3 +1,4 @@
+import coordax as cx
 import jax.numpy as jnp
 import pytest
 
@@ -39,9 +40,9 @@ def test_state_time_samples_preserve_axes_masks_and_path_clusters():
     assert batch.num_nodes == 12
     assert batch.num_paths == 3
     assert batch.num_times == 4
-    assert jnp.array_equal(batch.valid.data, trajectory.valid)
-    assert jnp.array_equal(batch.path_indices.data[:, 0], jnp.arange(3))
-    assert jnp.all(batch.path_indices.data == jnp.arange(3)[:, None])
+    assert jnp.array_equal(jnp.asarray(batch.valid.data), trajectory.valid)
+    assert jnp.array_equal(jnp.asarray(batch.path_indices.data[:, 0]), jnp.arange(3))
+    assert jnp.all(jnp.asarray(batch.path_indices.data) == jnp.arange(3)[:, None])
     assert set(batch.samples) == {
         "x",
         "t",
@@ -60,6 +61,8 @@ def test_state_time_measure_retains_time_for_per_time_reductions():
         time_label="time_value",
     )
     target = batch.target()
+    assert isinstance(target.mask, cx.Field)
+    assert isinstance(target.ancestry, cx.Field)
 
     assert target.sample_axes == ("path",)
     assert target.mask.dims == ("path", "saved_time")
@@ -95,9 +98,10 @@ def test_state_time_measure_carries_user_log_weights_without_flattening():
         trajectory,
         log_weights=log_weights,
     )
+    assert isinstance(target.log_weights, cx.Field)
 
     assert target.log_weights.dims == ("path", "saved_time")
-    assert jnp.array_equal(target.log_weights.data, log_weights)
+    assert jnp.array_equal(jnp.asarray(target.log_weights.data), log_weights)
     assert target.provenance == "stochastic-trajectory:state-time:global"
 
 

@@ -2,6 +2,8 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -119,11 +121,12 @@ def test_lindblad_operators_validate_collections_and_dimensions():
     density = time.Function()(jnp.eye(2) / 2.0)
     larger = time.Function()(jnp.eye(3))
     rectangular = time.Function()(jnp.ones((2, 3)))
+    invalid_collapse: Any = object()
 
     with pytest.raises(TypeError, match="contain only DomainFunctions"):
-        phx.operators.lindblad_dissipator(density, [object()])
+        phx.operators.lindblad_dissipator(density, [invalid_collapse])
     with pytest.raises(TypeError, match="DomainFunction or a sequence"):
-        phx.operators.lindblad_dissipator(density, object())
+        phx.operators.lindblad_dissipator(density, invalid_collapse)
     with pytest.raises(ValueError, match="square matrix"):
         phx.operators.lindblad_dissipator(density, rectangular).func()
     with pytest.raises(ValueError, match="dimensions must match"):

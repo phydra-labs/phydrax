@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, Literal, overload, TYPE_CHECKING
 
 import equinox as eqx
 import jax
@@ -210,6 +210,44 @@ class LaplaceResult(StrictModule):
             valid_policy=valid_policy,
             **kwargs,
         )
+
+
+@overload
+def fit_laplace(
+    problem: PosteriorProblem,
+    map_position: PyTree[Array] | None = None,
+    /,
+    *,
+    curvature: Literal["exact"] = "exact",
+    damping: float = 0.0,
+    stationarity_tolerance: float | None = 1e-4,
+    max_dimension: int = 256,
+    prior_precision: float | None = None,
+    rank: int = 20,
+    key: Array | None = None,
+    tolerance: float = 1e-6,
+    mv_jit: bool = True,
+    likelihood_curvature: Literal["hessian", "ggn"] = "hessian",
+) -> LaplaceResult: ...
+
+
+@overload
+def fit_laplace(
+    problem: PosteriorProblem,
+    map_position: PyTree[Array] | None = None,
+    /,
+    *,
+    curvature: Literal["full", "diagonal", "lanczos", "lobpcg"],
+    damping: float = 0.0,
+    stationarity_tolerance: float | None = 1e-4,
+    max_dimension: int = 256,
+    prior_precision: float | None = None,
+    rank: int = 20,
+    key: Array | None = None,
+    tolerance: float = 1e-6,
+    mv_jit: bool = True,
+    likelihood_curvature: Literal["hessian", "ggn"] = "hessian",
+) -> StructuredLaplaceResult: ...
 
 
 def fit_laplace(

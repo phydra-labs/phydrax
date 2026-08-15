@@ -51,6 +51,13 @@ def test_graph_batch_roundtrip_preserves_all_masks():
     second = _graph(masked=True)
     batched = phx.graph.batch_graphs((first, second))
     restored = phx.graph.unbatch_graph(batched)
+    assert batched.node_mask is not None
+    assert batched.edge_mask is not None
+    assert batched.graph_mask is not None
+    assert first.node_mask is not None
+    assert first.edge_mask is not None
+    assert second.node_mask is not None
+    assert second.edge_mask is not None
 
     assert jnp.array_equal(
         batched.node_mask, jnp.concatenate((first.node_mask, second.node_mask))
@@ -60,6 +67,12 @@ def test_graph_batch_roundtrip_preserves_all_masks():
     )
     assert jnp.array_equal(batched.graph_mask, jnp.asarray([True, True]))
     for expected, actual in zip((first, second), restored, strict=True):
+        assert actual.node_mask is not None
+        assert actual.edge_mask is not None
+        assert actual.graph_mask is not None
+        assert expected.node_mask is not None
+        assert expected.edge_mask is not None
+        assert expected.graph_mask is not None
         assert jnp.array_equal(actual.node_mask, expected.node_mask)
         assert jnp.array_equal(actual.edge_mask, expected.edge_mask)
         assert jnp.array_equal(actual.graph_mask, expected.graph_mask)
@@ -185,8 +198,9 @@ def test_topology_survives_padding_stacking_slicing_and_sampling():
     assert stacked.case_shape == (2,)
     assert stacked.graph.num_graphs == 2
     assert sliced.case_shape == ()
-    assert sliced.input("u").topology is not None
-    assert sliced.input("u").topology.case_shape == ()
+    sliced_u = sliced.input("u")
+    assert sliced_u.topology is not None
+    assert sliced_u.topology.case_shape == ()
 
 
 def test_simplicial_complex_maps_vertices_edges_and_faces_to_native_sites():
@@ -243,11 +257,16 @@ def test_stack_operator_batches_broadcasts_shared_inner_case_topology():
 
     outer = phx.nn.operator.slice_operator_batch(stacked, 1, axis="outer")
     inner = phx.nn.operator.slice_operator_batch(outer, 0, axis="case")
-    assert outer.input("u").topology is not None
-    assert outer.input("u").topology.case_shape == (2,)
-    assert inner.input("u").topology is not None
-    assert inner.input("u").topology.case_shape == ()
-    assert jnp.array_equal(inner.input("u").values, second.input("u").values[0])
+    outer_u = outer.input("u")
+    inner_u = inner.input("u")
+    second_u = second.input("u")
+    assert outer_u.topology is not None
+    assert outer_u.topology.case_shape == (2,)
+    assert inner_u.topology is not None
+    assert inner_u.topology.case_shape == ()
+    assert inner_u.values is not None
+    assert second_u.values is not None
+    assert jnp.array_equal(inner_u.values, second_u.values[0])
 
     model = phx.nn.operator.architectures.NativeGraphOperator(
         phx.graph.GraphNeuralOperator(

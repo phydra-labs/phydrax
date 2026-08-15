@@ -42,7 +42,9 @@ def test_polynomial_is_exact_for_scalar_vector_matrix_and_complex_outputs():
 
     assert isinstance(approximation.func, phx.operators.SmolyakInterpolant)
     assert approximation.func.output_shape == (2, 2)
-    assert jnp.allclose(approximation(query).data, function(query).data, atol=1e-11)
+    assert jnp.allclose(
+        jnp.asarray(approximation(query).data), function(query).data, atol=1e-11
+    )
 
 
 def test_named_batched_evaluation_jit_and_dependency_order_are_preserved():
@@ -56,6 +58,7 @@ def test_named_batched_evaluation_jit_and_dependency_order_are_preserved():
             anisotropy=(0.75, 1.25),
         ),
     )
+    assert isinstance(approximation.func, phx.operators.SmolyakInterpolant)
     batch = domain.component().sample(
         phx.domain.PointSampling(9, layout=phx.domain.SampleLayout((("x", "y"),))),
         key=jr.key(2),
@@ -66,7 +69,7 @@ def test_named_batched_evaluation_jit_and_dependency_order_are_preserved():
     assert approximation.deps == ("y", "x")
     assert approximation.func.axis_labels == ("y", "x")
     assert evaluated.dims == expected.dims
-    assert jnp.allclose(evaluated.data, expected.data, atol=1e-11)
+    assert jnp.allclose(jnp.asarray(evaluated.data), expected.data, atol=1e-11)
 
 
 def test_first_and_second_derivatives_are_exact_at_and_near_nodes():
@@ -112,6 +115,7 @@ def test_auto_rules_support_uniform_normal_and_lognormal_reference_coordinates()
         function,
         phx.operators.SmolyakInterpolationPlan(3, 5),
     )
+    assert isinstance(approximation.func, phx.operators.SmolyakInterpolant)
     query = {
         "u": jnp.asarray(0.3),
         "z": jnp.asarray(0.8),
@@ -123,7 +127,9 @@ def test_auto_rules_support_uniform_normal_and_lognormal_reference_coordinates()
         "gauss-hermite",
         "gauss-hermite",
     )
-    assert jnp.allclose(approximation(query).data, function(query).data, atol=1e-11)
+    assert jnp.allclose(
+        jnp.asarray(approximation(query).data), function(query).data, atol=1e-11
+    )
 
 
 def test_interpolant_is_fixed_state_and_does_not_retain_source_callable():
@@ -239,6 +245,7 @@ def test_plan_validation_and_fitted_diagnostics_are_explicit():
         domain.Function("x", "y")(lambda x, y: x + y),
         phx.operators.SmolyakInterpolationPlan(2, 4),
     )
+    assert isinstance(approximation.func, phx.operators.SmolyakInterpolant)
 
     assert approximation.func.num_terms > 0
     assert approximation.func.num_evaluations == approximation.func.num_unique_nodes

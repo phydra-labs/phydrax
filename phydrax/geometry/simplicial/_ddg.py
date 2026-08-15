@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array
 
 from ..._strict import StrictModule
@@ -128,14 +129,14 @@ class DDGOperators(StrictModule):
     def gradient(self, vertex_values: Array, /) -> Array:
         """Map scalar or vector vertex values to piecewise-constant face gradients."""
         values = jnp.asarray(vertex_values)[self.faces]
-        return jnp.einsum("fka,fk...->fa...", self.basis_gradients, values)
+        return oe.contract("fka,fk...->fa...", self.basis_gradients, values)
 
     def divergence(self, face_vectors: Array, /) -> Array:
         """Return the mass-adjoint divergence of piecewise-constant face vectors."""
         vectors = jnp.asarray(face_vectors)
         if vectors.shape[:2] != (self.faces.shape[0], 3):
             raise ValueError("face_vectors must have shape (num_faces, 3, ...).")
-        contractions = jnp.einsum(
+        contractions = oe.contract(
             "fa...,fka->fk...",
             vectors,
             self.basis_gradients,

@@ -135,6 +135,7 @@ def test_stein_thinning_preserves_chains_source_indices_and_diagnostics():
         cx.Field(jnp.linspace(0.0, 1.0, 3), dims=("x",)),
         batch_size=4,
     )
+    assert isinstance(prediction, phx.uq.PredictiveField)
     assert prediction.samples.dims == ("__phydra_uq_chain", "__phydra_uq_draw", "x")
     assert prediction.samples.shape == (2, 10, 3)
 

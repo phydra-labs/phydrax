@@ -53,10 +53,10 @@ def test_graph_target_aligns_repeated_cases_and_node_sets():
     )
 
     assert jnp.allclose(
-        batch[phx.domain.graph.GRAPH_ENTITY_OFFSET_KEY].data,
+        jnp.asarray(batch[phx.domain.graph.GRAPH_ENTITY_OFFSET_KEY].data),
         jnp.array([0, 3, 5], dtype=jnp.int32),
     )
-    assert jnp.allclose(target(batch).data, jnp.array([24.0, 11.0, 24.0]))
+    assert jnp.allclose(jnp.asarray(target(batch).data), jnp.array([24.0, 11.0, 24.0]))
 
 
 def test_graph_supervised_constraint_zero_for_matching_node_function():
@@ -103,7 +103,9 @@ def test_graph_trajectory_signal_matches_nearest_observations():
         time_indices=jnp.array([1, 2], dtype=jnp.int32),
     )
 
-    assert jnp.allclose(signal(batch).data, jnp.array([1.0, 2.0, 4.0, 6.0, 10.0]))
+    assert jnp.allclose(
+        jnp.asarray(signal(batch).data), jnp.array([1.0, 2.0, 4.0, 6.0, 10.0])
+    )
 
 
 def test_graph_trajectory_signal_linearly_interpolates_time():
@@ -131,7 +133,7 @@ def test_graph_trajectory_signal_linearly_interpolates_time():
         structure=phx.domain.SampleLayout((("graph", "t"),)),
     )
 
-    assert jnp.allclose(signal(batch).data, jnp.array([1.5, 5.5]))
+    assert jnp.allclose(jnp.asarray(signal(batch).data), jnp.array([1.5, 5.5]))
 
 
 def test_graph_trajectory_supervised_constraint_zero_for_matching_function():

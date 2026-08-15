@@ -60,7 +60,7 @@ def test_laplace_prediction_propagates_conditional_variance_and_total_variance()
     assert prediction.conditional_variance.dims == ("__phydra_uq_draw", "x")
     assert prediction.conditional_variance.shape == prediction.samples.shape
     assert jnp.allclose(
-        prediction.total_variance().data,
+        jnp.asarray(prediction.total_variance().data),
         prediction.epistemic_variance().data + prediction.observation_variance().data,
     )
     assert jnp.all(prediction.observation_variance().data > 0.0)
@@ -86,8 +86,8 @@ def test_laplace_observation_draws_are_reproducible_chunk_invariant_and_separate
         "epistemic",
         "observation",
     )
-    assert jnp.array_equal(first.samples.data, replay.samples.data)
-    assert not jnp.array_equal(first.samples.data, changed.samples.data)
+    assert jnp.array_equal(jnp.asarray(first.samples.data), replay.samples.data)
+    assert not jnp.array_equal(jnp.asarray(first.samples.data), changed.samples.data)
     assert first.mean(sources="observation").dims == ("__phydra_uq_draw", "x")
     assert first.variance(sources="observation").dims == (
         "__phydra_uq_draw",
@@ -164,6 +164,8 @@ def test_mcmc_observation_prediction_preserves_chain_and_draw_axes():
         num_observation_samples=4,
         batch_size=3,
     )
+    assert isinstance(latent, phx.uq.PredictiveField)
+    assert isinstance(observations, phx.uq.PredictiveField)
     assert latent.conditional_variance is not None
     assert latent.samples.shape == (2, 8, 2)
     assert observations.samples.shape == (2, 8, 4, 2)

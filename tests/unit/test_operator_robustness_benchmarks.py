@@ -1,3 +1,4 @@
+import jax
 import jax.numpy as jnp
 
 from tools.operator_benchmarks.models import compatible_architectures
@@ -61,6 +62,8 @@ def test_irregular_causal_scenario_runs_recurrent_architectures():
         recurrent(scenario.train_batch),
         *(recurrent(evaluation.batch) for evaluation in scenario.evaluations),
     )
+    train_target = scenario.train_target
+    assert isinstance(train_target, jax.Array)
     source = scenario.train_batch.input("forcing")
     train_times = source.coordinates_array(case_shape=scenario.train_batch.case_shape)[
         ..., 0
@@ -72,11 +75,11 @@ def test_irregular_causal_scenario_runs_recurrent_architectures():
     )
     configuration = dict(architecture.configuration(scenario))
 
-    assert train_output.shape == scenario.train_target.shape
+    assert train_output.shape == train_target.shape
     assert jnp.all(jnp.isfinite(train_output))
     assert all(jnp.all(jnp.isfinite(output)) for output in evaluation_outputs)
     assert all(jnp.all(jnp.isfinite(output)) for output in recurrent_outputs)
-    assert recurrent_outputs[0].shape == scenario.train_target.shape
+    assert recurrent_outputs[0].shape == train_target.shape
     assert scenario.ladder == "temporal_irregularity"
     assert diagnostics.extrapolated_fraction == 0.0
     assert diagnostics.minimum_physical_step == jnp.asarray(

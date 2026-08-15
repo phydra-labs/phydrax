@@ -119,6 +119,7 @@ def test_tempered_smc_observation_prediction_preserves_particle_axes():
         observation_dim="measurement",
         batch_size=7,
     )
+    assert isinstance(observations, phx.uq.PredictiveField)
 
     assert observations.samples.dims == (
         "__phydra_uq_particle",

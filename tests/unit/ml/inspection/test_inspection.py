@@ -5,6 +5,7 @@
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 import pytest
 
 from phydrax._model import AbstractArrayModel, ModelBinding
@@ -41,7 +42,7 @@ class _QuadraticModel(AbstractArrayModel):
     def __call__(self, x, /, *, key=None):
         del key
         values = jnp.asarray(x)
-        return jnp.einsum("...f,f->...", values, self.coefficients) + 0.5 * jnp.einsum(
+        return oe.contract("...f,f->...", values, self.coefficients) + 0.5 * oe.contract(
             "...f,f->...", values * values, self.curvature
         )
 
@@ -61,7 +62,7 @@ class _LinearModel(AbstractArrayModel):
     def __call__(self, x, /, *, key=None):
         del key
         return (
-            jnp.einsum("...f,f->...", jnp.asarray(x), self.coefficients) + self.intercept
+            oe.contract("...f,f->...", jnp.asarray(x), self.coefficients) + self.intercept
         )
 
 

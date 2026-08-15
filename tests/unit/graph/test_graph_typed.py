@@ -57,7 +57,7 @@ def test_graph_domain_samples_node_and_edge_type_components():
     assert node_batch.component_kind == "nodes"
     assert jnp.allclose(node_batch["graph"]["features"].data[:, 0], jnp.array([2.0]))
     assert jnp.allclose(
-        node_batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data,
+        jnp.asarray(node_batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data),
         jnp.array([1], dtype=jnp.int32),
     )
     assert edge_batch.component_kind == "edges"
@@ -75,11 +75,11 @@ def test_graph_dataset_domain_resolves_node_types_per_case():
 
     assert jnp.allclose(batch["graph"]["features"].data[:, 0], jnp.array([2.0, 10.0]))
     assert jnp.allclose(
-        batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data,
+        jnp.asarray(batch[phx.domain.graph.GRAPH_ENTITY_INDEX_KEY].data),
         jnp.array([1, 3], dtype=jnp.int32),
     )
     assert jnp.allclose(
-        batch[phx.domain.graph.GRAPH_DATASET_INDEX_KEY].data,
+        jnp.asarray(batch[phx.domain.graph.GRAPH_DATASET_INDEX_KEY].data),
         jnp.array([0, 1], dtype=jnp.int32),
     )
     assert jnp.allclose(

@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array
 
 from .._strict import StrictModule
@@ -605,17 +606,17 @@ def _differential_transition(
                 )
             physical_points = mean[None, :] + canonical_points @ factor.T
             outputs = jax.vmap(flow_payload)(physical_points)
-            output_mean = jnp.einsum("p,po->o", mean_weights, outputs[:, :payload_size])
+            output_mean = oe.contract("p,po->o", mean_weights, outputs[:, :payload_size])
             state_points = outputs[:, :size]
             state_centered = state_points - output_mean[None, :size]
             input_centered = physical_points - mean[None, :]
-            transformed_covariance = jnp.einsum(
+            transformed_covariance = oe.contract(
                 "p,pi,pj->ij",
                 covariance_weights,
                 state_centered,
                 jnp.conj(state_centered),
             )
-            cross_covariance = jnp.einsum(
+            cross_covariance = oe.contract(
                 "p,pi,pj->ij",
                 covariance_weights,
                 input_centered,

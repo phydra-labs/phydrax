@@ -52,7 +52,7 @@ def test_enforce_graph_values_overwrites_boundary_nodes_and_satisfies_residual()
         return node[0]
 
     hard_u = phx.enforcement.enforce_graph_values(u, boundary, target=5.0)
-    assert jnp.allclose(hard_u(node_batch).data, jnp.array([5.0, 1.0, 5.0]))
+    assert jnp.allclose(jnp.asarray(hard_u(node_batch).data), jnp.array([5.0, 1.0, 5.0]))
 
     condition = phx.conditions.Residual("u", boundary, lambda f: f - 5.0)
     source = phx.integration.per_step(
@@ -86,7 +86,9 @@ def test_enforce_graph_values_is_seen_by_graph_gradient_full_node_view():
 
     hard_u = phx.enforcement.enforce_graph_values(u, left, target=2.0)
 
-    assert jnp.allclose(phx.operators.graph_gradient(hard_u)(edge_batch).data, -2.0)
+    assert jnp.allclose(
+        jnp.asarray(phx.operators.graph_gradient(hard_u)(edge_batch).data), -2.0
+    )
 
 
 def test_enforce_graph_values_supports_edge_and_global_components():
@@ -127,8 +129,8 @@ def test_enforce_graph_values_supports_edge_and_global_components():
         target=9.0,
     )
 
-    assert jnp.allclose(hard_flux(edge_batch).data, jnp.array([2.0, -1.0]))
-    assert jnp.allclose(hard_scale(global_batch).data, jnp.array([9.0]))
+    assert jnp.allclose(jnp.asarray(hard_flux(edge_batch).data), jnp.array([2.0, -1.0]))
+    assert jnp.allclose(jnp.asarray(hard_scale(global_batch).data), jnp.array([9.0]))
 
 
 def test_enforce_graph_values_uses_local_indices_for_graph_dataset_batches():
@@ -146,7 +148,9 @@ def test_enforce_graph_values_uses_local_indices_for_graph_dataset_batches():
 
     hard_u = phx.enforcement.enforce_graph_values(u, boundary, target=7.0)
 
-    assert jnp.allclose(hard_u(full_nodes).data, jnp.array([0.0, 7.0, 2.0, 7.0, 8.0]))
+    assert jnp.allclose(
+        jnp.asarray(hard_u(full_nodes).data), jnp.array([0.0, 7.0, 2.0, 7.0, 8.0])
+    )
 
 
 def test_enforce_graph_values_supports_time_dependent_graph_trajectory_targets():
@@ -180,7 +184,9 @@ def test_enforce_graph_values_supports_time_dependent_graph_trajectory_targets()
 
     hard_u = phx.enforcement.enforce_graph_values(u, boundary, target=target)
 
-    assert jnp.allclose(hard_u(batch).data, jnp.array([0.0, 10.5, 0.0, 11.0, 0.0]))
+    assert jnp.allclose(
+        jnp.asarray(hard_u(batch).data), jnp.array([0.0, 10.5, 0.0, 11.0, 0.0])
+    )
 
 
 def test_graph_value_enforcement_integrates_with_functional_solver():
@@ -214,7 +220,9 @@ def test_graph_value_enforcement_integrates_with_functional_solver():
         enforcement=program,
     )
 
-    assert jnp.allclose(solver["u"](node_batch).data, jnp.array([5.0, 1.0, 5.0]))
+    assert jnp.allclose(
+        jnp.asarray(solver["u"](node_batch).data), jnp.array([5.0, 1.0, 5.0])
+    )
 
 
 def _cochain_complex_with_interior_vertex():
@@ -278,10 +286,10 @@ def test_enforce_cochain_values_preserves_signed_semantics_and_rejects_mismatch(
         boundary,
         target=target,
     )
-    boundary_mask = all_edges["graph"]["boundary"].data
-    hard_values = hard(all_edges).data
-    base_values = edge_form(all_edges).data
-    target_values = target(all_edges).data
+    boundary_mask = jnp.asarray(all_edges["graph"]["boundary"].data)
+    hard_values = jnp.asarray(hard(all_edges).data)
+    base_values = jnp.asarray(edge_form(all_edges).data)
+    target_values = jnp.asarray(target(all_edges).data)
 
     assert phx.domain.cochain_field_spec(hard) == edge_spec
     assert jnp.allclose(hard_values[boundary_mask], target_values[boundary_mask])

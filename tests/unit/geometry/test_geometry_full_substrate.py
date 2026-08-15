@@ -2,15 +2,24 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import build123d as bd
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import OCP.BRepAdaptor as _ocp_brep_adaptor
+import OCP.gp as _ocp_gp
 import pytest
-from OCP.BRepAdaptor import BRepAdaptor_Surface
-from OCP.gp import gp_Pnt, gp_Vec
 from scipy.interpolate import BSpline as SciPyBSpline
+
+
+_brep_adaptor: Any = _ocp_brep_adaptor
+_gp: Any = _ocp_gp
+BRepAdaptor_Surface = _brep_adaptor.BRepAdaptor_Surface
+gp_Pnt = _gp.gp_Pnt
+gp_Vec = _gp.gp_Vec
 
 import phydrax as phx
 from phydrax.geometry.brep import BRepBoundaryMap

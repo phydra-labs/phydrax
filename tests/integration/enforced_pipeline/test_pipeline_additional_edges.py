@@ -576,8 +576,8 @@ def test_jit_pipeline_determinism():
 
     batch = _line_batch(geom, xs=jnp.array([0.25, 0.75], dtype=float))
     eval_jit = eqx.filter_jit(lambda b: u_enforced(b).data)
-    out1 = eval_jit(batch).reshape((-1,))
-    out2 = eval_jit(batch).reshape((-1,))
+    out1 = jnp.asarray(eval_jit(batch)).reshape((-1,))
+    out2 = jnp.asarray(eval_jit(batch)).reshape((-1,))
     assert jnp.allclose(out1, out2, atol=1e-8)
 
 
@@ -793,4 +793,4 @@ def test_enforce_neumann_cad_ansatz_is_bounded_in_the_interior():
         ),
         structure=structure,
     )
-    assert jnp.allclose(du_dn(boundary_points).data, 1.0, atol=1e-3)
+    assert jnp.allclose(jnp.asarray(du_dn(boundary_points).data), 1.0, atol=1e-3)

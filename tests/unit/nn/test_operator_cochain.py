@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -164,6 +166,8 @@ def _trainable_arrays(model):
 def test_cochain_field_semantics_roundtrip_through_operator_task():
     task = _task()
     restored = phx.nn.operator.OperatorTask.from_dict(task.to_dict())
+    assert restored.fields[0].cochain is not None
+    assert restored.fields[1].cochain is not None
 
     assert restored.fingerprint == task.fingerprint
     assert restored.fields[0].cochain.to_dict() == {
@@ -198,24 +202,29 @@ def test_cochain_topology_survives_materialization_padding_stacking_and_slicing(
     graph = phx.nn.operator.materialize_operator_fields(restacked, _fields())
 
     topology = restacked.input("edge_source").topology
+    query_topology = restacked.query("vertex_query").topology
+    padded_topology = padded.topology
+    restacked_values = restacked.input("edge_source").values
+    batch_values = batch.input("edge_source").values
     assert topology is not None
+    assert query_topology is not None
+    assert padded_topology is not None
+    assert restacked_values is not None
+    assert batch_values is not None
     assert topology.kind == "cell_complex"
     assert topology.site == "cell"
     assert topology.case_shape == (2,)
-    assert (
-        topology.graph_fingerprint
-        == restacked.query("vertex_query").topology.graph_fingerprint
-    )
+    assert topology.graph_fingerprint == query_topology.graph_fingerprint
     assert jnp.array_equal(
-        padded.topology.sample_entities,
+        padded_topology.sample_entities,
         jnp.asarray([4, 5, 6, 7, 8, -1, -1]),
     )
     assert graph.num_graphs == 2
     assert graph.nodes["field:vertex"].shape == (22,)
     assert graph.nodes["field:edge"].shape == (22,)
     assert jnp.allclose(
-        restacked.input("edge_source").values,
-        batch.input("edge_source").values,
+        restacked_values,
+        batch_values,
     )
 
 
@@ -467,7 +476,7 @@ def test_cochain_normalization_centers_invariant_fields_but_not_signed_fields():
 def test_multi_field_training_and_checkpoint_resume_are_exact(tmp_path):
     dataset = _dataset(_batch(cases=3))
     model = _model(key=jr.key(12))
-    common = {
+    common: dict[str, Any] = {
         "task": _task(),
         "training_evidence": phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"
@@ -630,7 +639,7 @@ def test_targetless_cochain_pino_update_and_checkpoint_resume_are_exact(tmp_path
     dataset = _targetless_dataset(cases=2)
     model = _small_cochain_model(key=jr.key(31))
     term = _source_matching_loss()
-    common = {
+    common: dict[str, Any] = {
         "task": _task(),
         "training_evidence": phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"
@@ -681,7 +690,7 @@ def test_targetless_cochain_pino_update_and_checkpoint_resume_are_exact(tmp_path
             uninterrupted_prediction.field(name).values,
         )
 
-    changed_common = dict(common)
+    changed_common: dict[str, Any] = dict(common)
     changed_common["loss_terms"] = (
         _source_matching_loss(identity="tests.cochain.incompatible_physics"),
     )
@@ -699,7 +708,7 @@ def test_targetless_cochain_pino_update_and_checkpoint_resume_are_exact(tmp_path
 def test_targetless_operator_fit_requires_explicit_physics_and_scaling():
     dataset = _targetless_dataset(cases=2)
     model = _small_cochain_model(key=jr.key(32))
-    common = {
+    common: dict[str, Any] = {
         "task": _task(),
         "training_evidence": phx.nn.operator.OperatorTrainingEvidence(
             regime="task_specific"

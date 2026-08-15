@@ -99,7 +99,7 @@ def test_boundary_chart_lowering_integrates_arclength_without_seam_duplication(
 
     assert points.shape == (20, 2)
     assert jnp.all(geom._on_boundary(points))
-    assert jnp.allclose(estimate.value.data, geom.boundary_length_value)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), geom.boundary_length_value)
 
 
 def test_bounds_property(geometry_from_square):

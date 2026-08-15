@@ -51,6 +51,7 @@ def test_kalman_filter_checkpoint_replays_streaming_state(tmp_path):
         "kalman",
         covariance_regularization=1e-8,
     )
+    assert isinstance(restored, phx.uq.KalmanFilterState)
     expected, _ = phx.uq.kalman_filter_step(problem, state)
     replay, _ = phx.uq.kalman_filter_step(problem, restored)
 
@@ -75,6 +76,7 @@ def test_bellman_filter_checkpoint_replays_and_rejects_changed_numerics(tmp_path
 
     phx.uq.write_filter_checkpoint(path, problem, state)
     restored = phx.uq.read_filter_checkpoint(path, problem, "bellman")
+    assert isinstance(restored, phx.uq.BellmanFilterState)
     expected, expected_step = phx.uq.bellman_filter_step(problem, state)
     replay, replay_step = phx.uq.bellman_filter_step(problem, restored)
 
@@ -146,6 +148,7 @@ def test_unified_particle_checkpoint_dispatch(tmp_path):
         num_particles=16,
         resampling_policy="always",
     )
+    assert isinstance(restored, phx.uq.ParticleFilterState)
 
     assert jnp.array_equal(restored.particles, state.particles)
     assert jnp.array_equal(restored.log_weights, state.log_weights)

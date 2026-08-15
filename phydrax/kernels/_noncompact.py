@@ -11,6 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, PRNGKeyArray
 
 from .._strict import StrictModule
@@ -591,9 +592,9 @@ class SPDRandomFeatureKernel(AbstractFiniteFeatureKernel):
         coordinates = self._horospherical_coordinates(point_design)
         rank_indices = jnp.arange(self.matrix_dimension, dtype=float)
         rho = 0.25 * (self.matrix_dimension - 1.0 - 2.0 * rank_indices)
-        envelope = jnp.exp(-jnp.einsum("pmr,r->pm", coordinates, rho))
+        envelope = jnp.exp(-oe.contract("pmr,r->pm", coordinates, rho))
         phase = (
-            jnp.einsum("pmr,mr->pm", coordinates, self.proposal.frequencies)
+            oe.contract("pmr,mr->pm", coordinates, self.proposal.frequencies)
             + self.proposal.phases[None, :]
         )
         plane_waves = jnp.sqrt(2.0) * envelope * jnp.cos(phase)

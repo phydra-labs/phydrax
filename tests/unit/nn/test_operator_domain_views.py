@@ -39,7 +39,9 @@ def test_points_domain_view_round_trips_named_prediction_fields():
         quadrature={"state": jnp.full((2, 4), 0.25)},
         case_axes=(case_axis,),
     )
-    values = 2.0 * view.batch.input("source").values
+    source = view.batch.input("source")
+    assert source.values is not None
+    values = 2.0 * source.values
     prediction = phx.nn.operator.OperatorPrediction.from_field(
         "solution",
         values,
@@ -56,7 +58,7 @@ def test_points_domain_view_round_trips_named_prediction_fields():
     assert view.batch.case_shape == (2,)
     assert view.batch.query("state").sample_shape == (4,)
     assert restored["solution"].dims == (case_axis, sample_axis)
-    assert jnp.array_equal(restored["solution"].data, values)
+    assert jnp.array_equal(jnp.asarray(restored["solution"].data), values)
 
 
 def test_points_domain_model_dispatches_shared_query_geometry_end_to_end():
@@ -93,7 +95,7 @@ def test_points_domain_model_dispatches_shared_query_geometry_end_to_end():
 
     assert output.dims == tuple(sampled.structure.axis_names)
     assert output.data.shape == (2, 4)
-    assert jnp.all(jnp.isfinite(output.data))
+    assert jnp.all(jnp.isfinite(jnp.asarray(output.data)))
 
 
 def test_coord_separable_domain_view_preserves_axes_and_restores_output():
@@ -165,11 +167,13 @@ def test_graph_domain_view_pads_graph_cases_and_restores_ragged_entity_axis():
     assert view.batch.case_shape == (2,)
     assert view.batch.query("query").sample_shape == (3,)
     assert jnp.array_equal(
-        view.batch.query("query").mask,
+        view.batch.query("query").mask_array(case_shape=(2,)),
         jnp.asarray([[True, True, False], [True, True, True]]),
     )
     assert restored.dims == (sampled.structure.axis_for("graph"),)
-    assert jnp.array_equal(restored.data, jnp.asarray([0.0, 1.0, 3.0, 4.0, 5.0]))
+    assert jnp.array_equal(
+        jnp.asarray(restored.data), jnp.asarray([0.0, 1.0, 3.0, 4.0, 5.0])
+    )
 
     model = phx.nn.operator.architectures.NativeGraphOperator(
         lambda graph: graph,
@@ -186,7 +190,9 @@ def test_graph_domain_view_pads_graph_cases_and_restores_ragged_entity_axis():
         jnp.sum(view.batch.query("query").weights(), axis=-1),
         jnp.ones((2,)),
     )
-    assert jnp.array_equal(evaluated.data, jnp.asarray([0.0, 1.0, 0.0, 1.0, 2.0]))
+    assert jnp.array_equal(
+        jnp.asarray(evaluated.data), jnp.asarray([0.0, 1.0, 0.0, 1.0, 2.0])
+    )
 
 
 def test_simplicial_domain_view_retains_cell_site_and_graph_node_entity():
@@ -252,9 +258,11 @@ def test_ragged_series_domain_view_preserves_masks_weights_and_model_dispatch():
     evaluated = domain.Model("series")(model)(sampled)
 
     assert view.kind == "ragged_series"
-    assert view.batch.input("series").values.shape == (3, 4, 2)
+    series = view.batch.input("series")
+    assert series.values is not None
+    assert series.values.shape == (3, 4, 2)
     assert jnp.array_equal(
-        view.batch.query("query").mask,
+        view.batch.query("query").mask_array(case_shape=(3,)),
         jnp.asarray(
             [
                 [True, True, False, False],
@@ -265,7 +273,12 @@ def test_ragged_series_domain_view_preserves_masks_weights_and_model_dispatch():
     )
     assert evaluated.dims == (sampled.structure.axis_for("series"), None)
     assert evaluated.data.shape == (3, 4)
-    assert jnp.all(evaluated.data[~view.batch.query("query").mask] == 0.0)
+    assert jnp.all(
+        jnp.asarray(evaluated.data)[
+            ~view.batch.query("query").mask_array(case_shape=(3,))
+        ]
+        == 0.0
+    )
 
 
 def test_trajectory_domain_views_group_cases_and_restore_observation_order():
@@ -321,13 +334,15 @@ def test_trajectory_domain_views_group_cases_and_restore_observation_order():
         assert view.kind == "trajectory"
         assert view.batch.case_shape == (2,)
         assert jnp.array_equal(
-            view.batch.query("query").mask,
+            view.batch.query("query").mask_array(case_shape=(2,)),
             jnp.asarray([[True, False], [True, True]]),
         )
-        assert jnp.array_equal(restored.data, jnp.asarray([20.0, 10.0, 21.0]))
+        assert jnp.array_equal(
+            jnp.asarray(restored.data), jnp.asarray([20.0, 10.0, 21.0])
+        )
         assert evaluated.dims == restored.dims
         assert evaluated.data.shape == (3,)
-        assert jnp.all(jnp.isfinite(evaluated.data))
+        assert jnp.all(jnp.isfinite(jnp.asarray(evaluated.data)))
 
 
 def test_graph_trajectory_domain_view_includes_time_in_query_geometry():
@@ -360,11 +375,14 @@ def test_graph_trajectory_domain_view_includes_time_in_query_geometry():
     evaluated = domain.Model("graph", "t")(model)(sampled)
 
     coordinates = view.batch.query("query").coordinates
+    assert coordinates is not None
     assert coordinates.shape == (2, 3, 2)
     assert jnp.allclose(coordinates[0, :2, 1], 0.5)
     assert jnp.allclose(coordinates[1, :, 1], 1.0)
     assert evaluated.data.shape == (5,)
-    assert jnp.array_equal(evaluated.data, jnp.asarray([0.0, 1.0, 0.0, 1.0, 2.0]))
+    assert jnp.array_equal(
+        jnp.asarray(evaluated.data), jnp.asarray([0.0, 1.0, 0.0, 1.0, 2.0])
+    )
 
 
 def test_operator_domain_preflight_rejects_unsupported_geometry_before_execution():

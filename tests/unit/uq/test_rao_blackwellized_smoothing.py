@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 import pytest
 
 import phydrax as phx
@@ -350,7 +351,7 @@ def test_backward_simulation_uses_full_correlated_transition_density():
             jax.nn.softmax(filtered.log_weights[0] + full_log_density)
         )
         residual = terminal_state - 0.55 * previous_particles
-        diagonal_log_density = -0.5 * jnp.einsum(
+        diagonal_log_density = -0.5 * oe.contract(
             "pi,ij,pj->p", residual, diagonal_inverse, residual
         )
         diagonal_probabilities.append(

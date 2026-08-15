@@ -13,6 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
@@ -338,10 +339,10 @@ def _jump_event_summary(
         raise ValueError("Active event marks must be finite.")
     mark_weight = channel_one_hot * usable[..., None]
     mark_counts = jnp.sum(mark_weight, axis=tuple(range(usable.ndim)))
-    mark_sum = jnp.einsum("...k,...i->ki", mark_weight, marks)
+    mark_sum = oe.contract("...k,...i->ki", mark_weight, marks)
     mark_mean_flat = mark_sum / jnp.maximum(mark_counts[:, None], 1)
     centered_marks = marks[..., None, :] - mark_mean_flat
-    mark_covariance_flat = jnp.einsum(
+    mark_covariance_flat = oe.contract(
         "...k,...ki,...kj->kij",
         mark_weight,
         centered_marks,

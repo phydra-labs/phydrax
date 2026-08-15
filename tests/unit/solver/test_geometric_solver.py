@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import diffrax as dfx
 import equinox as eqx
 import jax
@@ -141,8 +143,9 @@ def test_euclidean_geometric_euler_agrees_with_ordinary_euler():
     assert (
         phx.solver.solver_state_geometry(phx.solver.GeometricEuler(geometry)) is geometry
     )
+    invalid_solver: Any = dfx.Euler()
     with pytest.raises(TypeError, match="geometric-solver contract"):
-        phx.solver.solver_state_geometry(dfx.Euler())
+        phx.solver.solver_state_geometry(invalid_solver)
 
 
 def test_rkmk_so_dense_output_jit_gradient_and_convergence():

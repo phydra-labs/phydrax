@@ -80,6 +80,7 @@ class SparseLinearMap(AbstractSparseLinearOperator):
             transpose=True,
             adjoint=True,
             materialize=True,
+            diagonal_assembly=source.compatible(target),
         )
         self.batch_shape = ()
         self.operator_id = (
@@ -243,6 +244,7 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
             transpose=True,
             adjoint=True,
             materialize=True,
+            diagonal_assembly=source.compatible(target),
         )
         self.batch_shape = ()
         self.operator_id = identifier

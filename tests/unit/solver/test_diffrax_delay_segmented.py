@@ -12,8 +12,8 @@ from phydrax.solver._delay_history import RollingDelayHistory
 
 
 class _LinearInterpolation(dfx.AbstractLocalInterpolation):
-    t0: jax.Array
-    t1: jax.Array
+    t0: jax.Array  # ty: ignore[invalid-attribute-override]
+    t1: jax.Array  # ty: ignore[invalid-attribute-override]
     y0: jax.Array
     y1: jax.Array
 

@@ -125,8 +125,8 @@ def test_inverse_poisson_likelihood_and_posterior_benchmark():
     assert jnp.max(jnp.abs(prediction.mean().data - exact)) < 2e-3
     assert jnp.all(exact >= interval.lower.data)
     assert jnp.all(exact <= interval.upper.data)
-    assert jnp.allclose(prediction.samples.data[:, (0, -1)], 0.0, atol=1e-7)
-    assert jnp.max(jnp.abs(residual(residual_points).data)) < 1e-6
+    assert jnp.allclose(jnp.asarray(prediction.samples.data)[:, (0, -1)], 0.0, atol=1e-7)
+    assert jnp.max(jnp.abs(jnp.asarray(residual(residual_points).data))) < 1e-6
 
 
 def test_uncertain_heat_joint_qmc_propagation_benchmark():
@@ -217,8 +217,10 @@ def test_uncertain_heat_joint_qmc_propagation_benchmark():
     assert jnp.max(jnp.abs(prediction.mean().data - exact_mean)) < 8e-4
     assert jnp.max(jnp.abs(prediction.variance().data - exact_variance)) < 8e-4
     assert qmc_error < mc_error
-    assert jnp.allclose(prediction.samples.data[:, (0, -1), :], 0.0, atol=2e-7)
-    assert jnp.max(jnp.abs(pde_residual(residual_points).data)) < 2e-6
+    assert jnp.allclose(
+        jnp.asarray(prediction.samples.data)[:, (0, -1), :], 0.0, atol=2e-7
+    )
+    assert jnp.max(jnp.abs(jnp.asarray(pde_residual(residual_points).data))) < 2e-6
 
 
 def test_functional_conformal_simultaneous_coverage_benchmark():
@@ -268,9 +270,9 @@ def test_functional_conformal_simultaneous_coverage_benchmark():
     )
     test_target = trajectories[test_indices]
     interval = calibrator.interval(test_center, test_scale)
-    coordinate_coverage = (test_target >= interval.lower.data) & (
-        test_target <= interval.upper.data
-    )
+    lower = jnp.asarray(interval.lower.data)
+    upper = jnp.asarray(interval.upper.data)
+    coordinate_coverage = (test_target >= lower) & (test_target <= upper)
     simultaneous_coverage = jnp.mean(jnp.all(coordinate_coverage, axis=1))
     pointwise_coverage = jnp.mean(coordinate_coverage)
 
@@ -278,7 +280,7 @@ def test_functional_conformal_simultaneous_coverage_benchmark():
     assert interval.calibrated
     assert 0.87 <= simultaneous_coverage <= 0.93
     assert pointwise_coverage >= simultaneous_coverage
-    assert jnp.isfinite(phx.uq.interval_width(interval.lower.data, interval.upper.data))
+    assert jnp.isfinite(phx.uq.interval_width(lower, upper))
 
 
 def test_ishigami_sobol_sensitivity_benchmark():
@@ -303,9 +305,16 @@ def test_ishigami_sobol_sensitivity_benchmark():
         7.0**2 / 8.0 + 0.1 * jnp.pi**4 / 5.0 + 0.1**2 * jnp.pi**8 / 18.0 + 0.5
     )
 
+    output_variance = jnp.asarray(result.output_variance.data)
+    first_order = jnp.asarray(result.first_order.data)
+    total_order = jnp.asarray(result.total_order.data)
     assert result.parameter_names == ("x1", "x2", "x3")
-    assert jnp.allclose(result.first_order.data, ISHIGAMI_FIRST_ORDER, atol=0.025)
-    assert jnp.allclose(result.total_order.data, ISHIGAMI_TOTAL_ORDER, atol=0.025)
-    assert jnp.abs(result.output_variance.data - exact_variance) < 0.1
-    assert result.total_order.data[0] - result.first_order.data[0] > 0.2
-    assert result.total_order.data[2] - result.first_order.data[2] > 0.2
+    assert jnp.allclose(
+        jnp.asarray(result.first_order.data), ISHIGAMI_FIRST_ORDER, atol=0.025
+    )
+    assert jnp.allclose(
+        jnp.asarray(result.total_order.data), ISHIGAMI_TOTAL_ORDER, atol=0.025
+    )
+    assert jnp.abs(output_variance - exact_variance) < 0.1
+    assert total_order[0] - first_order[0] > 0.2
+    assert total_order[2] - first_order[2] > 0.2

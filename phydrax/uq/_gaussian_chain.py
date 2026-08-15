@@ -7,6 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array
 
 from .._strict import StrictModule
@@ -67,7 +68,7 @@ def _solve(matrix: Array, right: Array, /) -> Array:
 
 
 def _matvec(matrix: Array, vector: Array, /) -> Array:
-    return jnp.einsum("...ij,...j->...i", matrix, vector)
+    return oe.contract("...ij,...j->...i", matrix, vector)
 
 
 def combine_gaussian_filter_elements(
@@ -150,7 +151,7 @@ def _observation_conditioned_elements(
     predicted_residual = (
         observations
         - observation_offsets
-        - jnp.einsum("...ij,...j->...i", effective_matrix, offsets)
+        - oe.contract("...ij,...j->...i", effective_matrix, offsets)
     )
     innovation_covariance = (
         effective_matrix @ process_covariances @ jnp.swapaxes(effective_matrix, -1, -2)
@@ -174,7 +175,7 @@ def _observation_conditioned_elements(
     transition_observation = effective_matrix @ transitions
     solved_residual = _solve(innovation_covariance, predicted_residual[..., None])[..., 0]
     solved_transition = _solve(innovation_covariance, transition_observation)
-    information_vector = jnp.einsum(
+    information_vector = oe.contract(
         "...ji,...j->...i", transition_observation, solved_residual
     )
     information_matrix = jnp.swapaxes(transition_observation, -1, -2) @ solved_transition
@@ -261,7 +262,7 @@ def associative_gaussian_smoother(
     )
     pair_valid = valid[:-1] & valid[1:]
     gains = jnp.where(pair_valid[..., None, None], gains, 0.0)
-    conditional_offsets = filtered_means[:-1] - jnp.einsum(
+    conditional_offsets = filtered_means[:-1] - oe.contract(
         "...ij,...j->...i", gains, predicted_means[1:]
     )
     conditional_covariances = filtered_covariances[:-1] - (

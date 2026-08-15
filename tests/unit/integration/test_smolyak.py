@@ -79,7 +79,7 @@ def test_gauss_hermite_integrates_shifted_normal_moments():
 
     expected = jnp.asarray([1.0, 2.0, 13.0, 62.0])
     assert estimate.successful
-    assert jnp.allclose(estimate.value.data, expected, atol=1e-11)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), expected, atol=1e-11)
 
 
 def test_gauss_hermite_uses_lognormal_reference_transform():

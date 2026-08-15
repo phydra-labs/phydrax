@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -92,6 +94,7 @@ def test_riemannian_sgd_schedule_and_jit_use_logical_step():
 def test_riemannian_optimizer_configuration_and_nonfinite_failures():
     parameters = {"point": jnp.array([1.0, 0.0, 0.0])}
     geometry = _single_leaf_geometry(parameters, phx.metrix.SphereManifold(3))
+    invalid_learning_rate: Any = []
 
     with pytest.raises(ValueError, match="learning_rate"):
         phx.optim.riemannian_sgd(geometry, learning_rate=0.0)
@@ -100,7 +103,7 @@ def test_riemannian_optimizer_configuration_and_nonfinite_failures():
     with pytest.raises(ValueError, match="momentum"):
         phx.optim.riemannian_momentum(geometry, momentum=1.0)
     with pytest.raises(TypeError, match="learning_rate"):
-        phx.optim.riemannian_sgd(geometry, learning_rate=[])
+        phx.optim.riemannian_sgd(geometry, learning_rate=invalid_learning_rate)
 
     optimizer = phx.optim.riemannian_sgd(geometry)
     with pytest.raises(Exception, match="gradient norm is not finite"):

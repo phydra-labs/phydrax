@@ -60,9 +60,11 @@ def test_graph_trajectory_points_from_case_time_repeats_time_over_nodes():
     assert isinstance(batch, phx.domain.GraphBatch)
     assert batch.graph.num_nodes == 5
     assert jnp.allclose(batch["graph"].data[:, 0], jnp.array([0.0, 1.0, 2.0, 4.0, 8.0]))
-    assert jnp.allclose(batch["t"].data, jnp.array([0.5, 0.5, 1.0, 1.0, 1.0]))
     assert jnp.allclose(
-        batch[phx.domain.graph.GRAPH_TRAJECTORY_TIME_INDEX_KEY].data,
+        jnp.asarray(batch["t"].data), jnp.array([0.5, 0.5, 1.0, 1.0, 1.0])
+    )
+    assert jnp.allclose(
+        jnp.asarray(batch[phx.domain.graph.GRAPH_TRAJECTORY_TIME_INDEX_KEY].data),
         jnp.array([1, 1, 2, 2, 2], dtype=jnp.int32),
     )
 
@@ -83,7 +85,7 @@ def test_graph_trajectory_domain_function_evaluates_graph_and_time():
     def u(node, t):
         return node[0] + t
 
-    assert jnp.allclose(u(batch).data, jnp.array([0.5, 1.5, 3.0, 5.0, 9.0]))
+    assert jnp.allclose(jnp.asarray(u(batch).data), jnp.array([0.5, 1.5, 3.0, 5.0, 9.0]))
 
 
 def test_graph_trajectory_gradient_remaps_time_from_edges_to_nodes():
@@ -103,7 +105,7 @@ def test_graph_trajectory_gradient_remaps_time_from_edges_to_nodes():
         return node[0] + t
 
     grad = phx.operators.graph_gradient(u)
-    assert jnp.allclose(grad(batch).data, jnp.array([1.0, 2.0]))
+    assert jnp.allclose(jnp.asarray(grad(batch).data), jnp.array([1.0, 2.0]))
 
 
 def test_graph_trajectory_residual_penalty_samples_fixed_start_edges():
@@ -147,7 +149,7 @@ def test_graph_trajectory_graph_model_input_fn_uses_time_on_full_node_view():
     model = phx.graph.GraphMapFeatures(embed_node_fn=lambda nodes: nodes)
     u = domain.GraphModel(model, input_fn=input_fn)
 
-    assert jnp.allclose(u(batch).data, jnp.array([1.5, 5.0]))
+    assert jnp.allclose(jnp.asarray(u(batch).data), jnp.array([1.5, 5.0]))
 
 
 def test_graph_trajectory_graph_model_edge_input_fn_uses_time_on_full_edge_view():
@@ -176,7 +178,7 @@ def test_graph_trajectory_graph_model_edge_input_fn_uses_time_on_full_edge_view(
         edge_input_fn=k,
     )
 
-    assert jnp.allclose(model(batch).data, jnp.array([0.75, 6.0]))
+    assert jnp.allclose(jnp.asarray(model(batch).data), jnp.array([0.75, 6.0]))
 
 
 def test_graph_trajectory_layout_packs_topology_but_exposes_real_time_rows():
@@ -195,4 +197,6 @@ def test_graph_trajectory_layout_packs_topology_but_exposes_real_time_rows():
     assert batch.graph.node_mask is not None
     assert batch.graph.nodes.shape == (6, 1)
     assert batch["graph"].data.shape == (5, 1)
-    assert jnp.allclose(batch["t"].data, jnp.array([0.5, 0.5, 1.0, 1.0, 1.0]))
+    assert jnp.allclose(
+        jnp.asarray(batch["t"].data), jnp.array([0.5, 0.5, 1.0, 1.0, 1.0])
+    )

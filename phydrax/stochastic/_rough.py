@@ -13,6 +13,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import AbstractAttribute, StrictModule
@@ -83,7 +84,7 @@ def compose_rough_path_segments(
         raise ValueError("Second-level segments must append two driver axes.")
     return (
         left + right,
-        left_second + right_second + jnp.einsum("...i,...j->...ij", left, right),
+        left_second + right_second + oe.contract("...i,...j->...ij", left, right),
     )
 
 
@@ -141,7 +142,7 @@ class GeometricRoughPath(AbstractRoughControl):
         ):
             raise ValueError("rough path levels must be non-empty and finite.")
         symmetric = 0.5 * (second + jnp.swapaxes(second, -1, -2))
-        geometric = 0.5 * jnp.einsum("...i,...j->...ij", first, first)
+        geometric = 0.5 * oe.contract("...i,...j->...ij", first, first)
         tolerance = 1000.0 * jnp.finfo(second.dtype).eps
         if not bool(jnp.allclose(symmetric, geometric, rtol=1e-7, atol=tolerance)):
             raise ValueError(
@@ -205,7 +206,7 @@ class GeometricRoughPath(AbstractRoughControl):
         ):
             raise ValueError("values must align with sample_shape and times.")
         increments = jnp.diff(path_values, axis=len(samples))
-        second = 0.5 * jnp.einsum("...i,...j->...ij", increments, increments)
+        second = 0.5 * oe.contract("...i,...j->...ij", increments, increments)
         return cls(
             nodes,
             increments,

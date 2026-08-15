@@ -7,6 +7,7 @@ import math
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 import pytest
 
 import phydrax as phx
@@ -125,7 +126,7 @@ def test_special_orthogonal_character_kernel_is_biinvariant_and_psd():
     points = jnp.stack([_rotation(0.0), _rotation(0.4), _rotation(-0.8)])
     left = _rotation(0.3)
     right = _rotation(-0.2)
-    transformed = jnp.einsum("ij,bjk,kl->bil", left, points, right)
+    transformed = oe.contract("ij,bjk,kl->bil", left, points, right)
     kernel = phx.kernels.SpecialOrthogonalCharacterKernel(
         2,
         4,
@@ -160,7 +161,7 @@ def test_special_unitary_character_kernel_is_biinvariant_real_and_psd():
     )(angles)
     left = points[1]
     right = points[2]
-    transformed = jnp.einsum("ij,bjk,kl->bil", left, points, right)
+    transformed = oe.contract("ij,bjk,kl->bil", left, points, right)
     kernel = phx.kernels.SpecialUnitaryCharacterKernel(
         2,
         4,
@@ -179,7 +180,7 @@ def test_stiefel_kernel_is_left_invariant_and_grassmann_kernel_is_quotient_invar
     second = jnp.asarray([[1.0, 0.0], [0.0, 0.0], [0.0, 1.0]])
     frames = jnp.stack((first, second))
     ambient_rotation = jnp.asarray([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
-    transformed = jnp.einsum("ij,bjk->bik", ambient_rotation, frames)
+    transformed = oe.contract("ij,bjk->bik", ambient_rotation, frames)
     multiplier = phx.kernels.MaternSpectralMultiplier(0.8, 1.5)
     stiefel = phx.kernels.StiefelSpectralKernel(3, 2, 3, multiplier)
     grassmann = phx.kernels.GrassmannSpectralKernel(3, 2, 3, multiplier)

@@ -48,21 +48,23 @@ def test_ragged_series_dataset_points_from_indices_carries_payload_and_mask():
     assert batch["data"]["time"].dims == (axis, None)
     assert batch["data"]["mask"].dims == (axis, None)
     assert batch["data"]["length"].dims == (axis,)
-    assert jnp.allclose(batch["data"]["length"].data, jnp.asarray([3, 2]))
+    assert jnp.allclose(jnp.asarray(batch["data"]["length"].data), jnp.asarray([3, 2]))
     assert jnp.allclose(
         batch["data"]["sample_index"].data[0],
         jnp.asarray([0, 1, 2, 2]),
     )
-    assert jnp.allclose(batch["data"]["sample_scale"].data, jnp.asarray([1.0, 1.0]))
+    assert jnp.allclose(
+        jnp.asarray(batch["data"]["sample_scale"].data), jnp.asarray([1.0, 1.0])
+    )
     assert jnp.allclose(
         batch["data"]["time"].data[0],
         jnp.asarray([0.25, 0.75, 1.25, 1.75]),
     )
     assert jnp.allclose(
-        batch["data"]["mask"].data,
+        jnp.asarray(batch["data"]["mask"].data),
         jnp.asarray([[True, True, True, False], [True, True, False, False]]),
     )
-    assert jnp.allclose(batch[RAGGED_SERIES_INDEX_KEY].data, indices)
+    assert jnp.allclose(jnp.asarray(batch[RAGGED_SERIES_INDEX_KEY].data), indices)
 
 
 def test_ragged_series_dataset_packed_storage_matches_valid_rows():
@@ -113,7 +115,7 @@ def test_ragged_series_dataset_points_uniform_samples_fixed_width_valid_views():
     assert batch["data"]["sample_index"].data.shape == (3, 3)
     assert jnp.all(batch["data"]["sample_index"].data < domain.lengths[:, None])
     assert jnp.allclose(
-        batch["data"]["mask"].data,
+        jnp.asarray(batch["data"]["mask"].data),
         jnp.asarray(
             [
                 [True, True, False],
@@ -123,7 +125,7 @@ def test_ragged_series_dataset_points_uniform_samples_fixed_width_valid_views():
         ),
     )
     assert jnp.allclose(
-        batch["data"]["sample_scale"].data,
+        jnp.asarray(batch["data"]["sample_scale"].data),
         jnp.asarray([1.0, 1.0, 1.0]),
     )
 
@@ -156,10 +158,10 @@ def test_ragged_series_dataset_window_prefix_and_suffix_sampling():
     window_idx = window["data"]["sample_index"].data
     assert jnp.all(jnp.diff(window_idx[0]) == 1)
     assert jnp.allclose(
-        prefix["data"]["sample_index"].data, jnp.asarray([[0, 1], [0, 0]])
+        jnp.asarray(prefix["data"]["sample_index"].data), jnp.asarray([[0, 1], [0, 0]])
     )
     assert jnp.allclose(
-        suffix["data"]["sample_index"].data, jnp.asarray([[1, 2], [0, 0]])
+        jnp.asarray(suffix["data"]["sample_index"].data), jnp.asarray([[1, 2], [0, 0]])
     )
     assert jnp.allclose(prefix["data"]["mask"].data[1], jnp.asarray([True, False]))
 

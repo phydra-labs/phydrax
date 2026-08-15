@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any, cast
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -37,7 +39,7 @@ def test_interrupted_smc_resume_is_exact_and_does_not_resample_prior(
     def deterministic_prior(key, count):
         return 2.0 * jr.normal(key, (count,))
 
-    settings = {
+    settings: dict[str, Any] = {
         "key": jr.key(930),
         "num_particles": 96,
         "prior_position_sampler": deterministic_prior,
@@ -72,7 +74,7 @@ def test_interrupted_smc_resume_is_exact_and_does_not_resample_prior(
 
     resumed = phx.uq.sample_tempered_smc(
         problem,
-        **(settings | {"prior_position_sampler": prior_must_not_run}),
+        **cast(dict[str, Any], settings | {"prior_position_sampler": prior_must_not_run}),
         resume_from=checkpoint,
     )
 
@@ -94,7 +96,7 @@ def test_interrupted_smc_resume_is_exact_and_does_not_resample_prior(
 def test_smc_checkpoint_rejects_incompatible_identity_and_corruption(tmp_path):
     problem = _problem()
     checkpoint = tmp_path / "state.phxckpt"
-    settings = {
+    settings: dict[str, Any] = {
         "key": jr.key(931),
         "num_particles": 64,
         "target_ess": 0.8,
@@ -113,7 +115,7 @@ def test_smc_checkpoint_rejects_incompatible_identity_and_corruption(tmp_path):
     with pytest.raises(phx.uq.CheckpointCompatibilityError, match="checkpoint id"):
         phx.uq.sample_tempered_smc(
             problem,
-            **(settings | {"checkpoint_id": "different-smc"}),
+            **cast(dict[str, Any], settings | {"checkpoint_id": "different-smc"}),
             resume_from=checkpoint,
         )
 

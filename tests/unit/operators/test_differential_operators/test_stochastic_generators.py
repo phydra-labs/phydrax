@@ -1,6 +1,7 @@
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 import pytest
 
 import phydrax as phx
@@ -262,7 +263,7 @@ def test_stochastic_trace_estimate_reports_replayable_probe_uncertainty():
     observable = lambda x: jnp.asarray(
         [jnp.dot(x, x), x[0] ** 4 + 2.0 * x[1] ** 2 + x[2] ** 2]
     )
-    exact = jnp.einsum(
+    exact = oe.contract(
         "ij,oij->o",
         matrix,
         jax.jacrev(jax.jacrev(observable))(state),

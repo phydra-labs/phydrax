@@ -14,7 +14,11 @@ import jax
 import jax.numpy as jnp
 
 import phydrax as phx
-from phydrax._numerics import smolyak_terms, weighted_total_degree_indices
+from phydrax._numerics import (
+    smolyak_terms,
+    SmolyakAxisRule,
+    weighted_total_degree_indices,
+)
 from phydrax.integration._sparse_grid import _smolyak_rule
 from phydrax.operators.interpolation._smolyak import _build_topology
 
@@ -37,7 +41,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _domain(dimension: int, rule: str):
+def _domain(dimension: int, rule: SmolyakAxisRule):
     if rule == "gauss-hermite":
         factors = tuple(
             phx.domain.ProbabilityDomain(
@@ -81,7 +85,7 @@ def _array_bytes(tree) -> int:
 def _interpolation_record(
     dimension: int,
     level: int,
-    rule: str,
+    rule: SmolyakAxisRule,
     output_size: int,
     query_sizes: Sequence[int],
     repeats: int,
@@ -95,7 +99,7 @@ def _interpolation_record(
     terms = smolyak_terms(dimension, level, anisotropy)
     index_ms = 1e3 * (time.perf_counter() - started)
 
-    rules = (rule,) * dimension
+    rules: tuple[SmolyakAxisRule, ...] = (rule,) * dimension
     started = time.perf_counter()
     canonical_points, topology = _build_topology(
         dimension,
@@ -116,7 +120,10 @@ def _interpolation_record(
     )
     started = time.perf_counter()
     approximation = phx.operators.interpolate_smolyak(function, plan)
-    jax.block_until_ready(approximation.func.blocks[-1].values)
+    interpolant = approximation.func
+    if not isinstance(interpolant, phx.operators.SmolyakInterpolant):
+        raise RuntimeError("Smolyak interpolation did not return a SmolyakInterpolant.")
+    jax.block_until_ready(interpolant.blocks[-1].values)
     fit_ms = 1e3 * (time.perf_counter() - started)
 
     query_records = []
@@ -127,9 +134,7 @@ def _interpolation_record(
 
         def evaluate(rows):
             return jax.vmap(
-                lambda row: approximation.func(
-                    *tuple(row[axis] for axis in range(dimension))
-                )
+                lambda row: interpolant(*tuple(row[axis] for axis in range(dimension)))
             )(rows)
 
         compiled = jax.jit(evaluate)
@@ -145,10 +150,11 @@ def _interpolation_record(
         steady_ms = 1e3 * (time.perf_counter() - started) / repeats
 
         coordinates = tuple(reference[:, axis] for axis in range(dimension))
-        signal = sum(
-            (axis + 1.0) / dimension * (coordinate + 0.1 * coordinate**2)
-            for axis, coordinate in enumerate(coordinates)
-        )
+        signal = jnp.zeros_like(coordinates[0])
+        for axis, coordinate in enumerate(coordinates):
+            signal = signal + (axis + 1.0) / dimension * (
+                coordinate + 0.1 * coordinate**2
+            )
         expected = (
             signal
             if output_size == 1
@@ -176,9 +182,9 @@ def _interpolation_record(
         "num_terms": len(terms),
         "num_unique_nodes": int(canonical_points.shape[0]),
         "tensor_entries": tensor_entries,
-        "num_blocks": approximation.func.num_blocks,
-        "maximum_active_dimension": approximation.func.maximum_active_dimension,
-        "fitted_bytes": _array_bytes(approximation.func),
+        "num_blocks": interpolant.num_blocks,
+        "maximum_active_dimension": interpolant.maximum_active_dimension,
+        "fitted_bytes": _array_bytes(interpolant),
         "index_ms": index_ms,
         "topology_ms": topology_ms,
         "fit_ms": fit_ms,

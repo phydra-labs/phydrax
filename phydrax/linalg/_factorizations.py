@@ -104,7 +104,7 @@ class PreparedFactorization(StrictModule):
                 "kind": "prepared-factorization",
                 "plan": prepared_solve.plan.plan_id,
                 "operator": operator.operator_id,
-                "numeric_version": prepared_solve.numeric_version,
+                "numeric_version": int(prepared_solve.numeric_version),
             }
         )
 

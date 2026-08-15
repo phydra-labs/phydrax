@@ -92,8 +92,8 @@ def test_component_points_binds_explicit_coordinates_and_fixed_slices():
     assert mapped.structure == stacked.structure
     assert mapped["x"].dims == (mapped.structure.axis_names[0],)
     assert mapped["t"].dims == ()
-    assert jnp.array_equal(mapped["x"].data, stacked["x"].data)
-    assert jnp.array_equal(mapped["t"].data, jnp.asarray(2.0))
+    assert jnp.array_equal(jnp.asarray(mapped["x"].data), stacked["x"].data)
+    assert jnp.array_equal(jnp.asarray(mapped["t"].data), jnp.asarray(2.0))
 
 
 def test_component_points_rejects_inconsistent_coordinate_counts():

@@ -49,10 +49,14 @@ def test_map_to_laplace_pipeline_recovers_nonlinear_transformed_inverse_problem(
         num_samples=128,
         batch_size=31,
     )
+    assert isinstance(prediction, phx.uq.PredictiveField)
 
     assert mode.converged
     assert jnp.abs(mode.parameters["amplitude"] - true_amplitude) < 2e-3
     assert jnp.abs(mode.parameters["rate"] - true_rate) < 2e-3
     assert laplace.gradient_norm < 1e-7
     assert prediction.samples.shape == (128, 30)
-    assert jnp.sqrt(jnp.mean((prediction.mean().data - observations) ** 2)) < 3e-3
+    assert (
+        jnp.sqrt(jnp.mean((jnp.asarray(prediction.mean().data) - observations) ** 2))
+        < 3e-3
+    )

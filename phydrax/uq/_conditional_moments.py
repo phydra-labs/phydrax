@@ -9,6 +9,7 @@ from typing import Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
@@ -201,7 +202,7 @@ class GaussianRegression(StrictModule):
             tolerance,
         )
         matrix = _adjoint(solved_cross)
-        offset = mean - jnp.einsum("...ij,...j->...i", matrix, output_moments.mean)
+        offset = mean - oe.contract("...ij,...j->...i", matrix, output_moments.mean)
         conditional_covariance = input_factor.covariance - (
             matrix @ _adjoint(output_moments.cross_covariance)
         )
@@ -242,7 +243,7 @@ class GaussianRegression(StrictModule):
         value = jnp.asarray(input_value)
         if value.ndim < 1 or value.shape[-1] != self.matrix.shape[-1]:
             raise ValueError("input_value has an incompatible final dimension.")
-        mean = jnp.einsum("...ij,...j->...i", self.matrix, value) + self.offset
+        mean = oe.contract("...ij,...j->...i", self.matrix, value) + self.offset
         cross_covariance = jnp.zeros(
             (
                 *mean.shape[:-1],
@@ -301,7 +302,7 @@ def predict_affine_gaussian(
         raise ValueError("mean and factor must share batch dimensions.")
 
     predicted_mean = (
-        jnp.einsum("...ij,...j->...i", matrix_value, mean_value) + offset_value
+        oe.contract("...ij,...j->...i", matrix_value, mean_value) + offset_value
     )
     transformed = GaussianFactor(
         matrix_value @ factor.factor,
@@ -395,7 +396,7 @@ def compose_gaussian_regressions(
     if outer.matrix.shape[-1] != inner.matrix.shape[-2]:
         raise ValueError("Regression input and output dimensions are incompatible.")
     matrix = outer.matrix @ inner.matrix
-    offset = jnp.einsum("...ij,...j->...i", outer.matrix, inner.offset) + outer.offset
+    offset = oe.contract("...ij,...j->...i", outer.matrix, inner.offset) + outer.offset
     propagated_inner_noise = GaussianFactor(
         outer.matrix @ inner.noise_factor.factor,
         regularization=inner.noise_factor.regularization,

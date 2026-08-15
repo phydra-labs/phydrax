@@ -34,6 +34,8 @@ def _square_mesh():
 def test_line_graph_builds_edge_as_node_path_graph():
     bundle = phx.graph.line_graph(_path_graph())
     graph = bundle.graph
+    assert graph.senders is not None
+    assert graph.receivers is not None
 
     assert graph.num_nodes == 2
     assert graph.num_edges == 1
@@ -57,6 +59,8 @@ def test_line_graph_shared_node_connectivity_adds_undirected_edge_adjacency():
         n_edge=jnp.array([2], dtype=jnp.int32),
     )
     line = phx.graph.line_graph(graph, connectivity="shared_node").graph
+    assert line.senders is not None
+    assert line.receivers is not None
 
     assert line.num_nodes == 2
     assert line.num_edges == 2
@@ -78,13 +82,15 @@ def test_line_graph_integrates_with_graph_domain_model():
 
     model = domain.GraphModel(phx.graph.GraphDiffusion(), input_fn=u)
 
-    assert jnp.allclose(model(batch).data, jnp.array([-2.0, 2.0]))
+    assert jnp.allclose(jnp.asarray(model(batch).data), jnp.array([-2.0, 2.0]))
 
 
 def test_mesh_to_dual_graph_builds_face_centered_graph():
     vertices, faces = _square_mesh()
     bundle = phx.graph.mesh_to_dual_graph(vertices, faces)
     graph = bundle.graph
+    assert graph.senders is not None
+    assert graph.receivers is not None
 
     assert graph.num_nodes == 2
     assert graph.num_edges == 2
@@ -107,6 +113,6 @@ def test_mesh_dual_graph_boundary_component_samples_faces():
     )
 
     assert jnp.allclose(
-        batch["graph"]["face_index"].data, jnp.array([0, 1], dtype=jnp.int32)
+        jnp.asarray(batch["graph"]["face_index"].data), jnp.array([0, 1], dtype=jnp.int32)
     )
     assert boundary.mass.value == 2.0

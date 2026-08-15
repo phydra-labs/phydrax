@@ -16,6 +16,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
+import opt_einsum as oe
 import optax
 
 import phydrax as phx
@@ -524,7 +525,9 @@ def neural_selected_subspace(
             "weight": jnp.asarray([0.7, -1.0, 0.45, 0.8]),
         },
     }
-    subspace = phx.nn.parameters.ParameterSubspace.last_layer(model, num_leaves=2)
+    subspace = phx.nn.parameters.ParameterSubspace.from_subtree_paths(
+        model, ("['head']",)
+    )
 
     def full_forward(full_model, locations):
         hidden = jnp.tanh(
@@ -2231,7 +2234,7 @@ def stochastic_gradient_regression(
         axis=1,
     )
     analytic_prediction_mean = prediction_design @ analytic_mean
-    analytic_prediction_variance = jnp.einsum(
+    analytic_prediction_variance = oe.contract(
         "ni,ij,nj->n",
         prediction_design,
         analytic_covariance,
@@ -2381,7 +2384,7 @@ def stochastic_gradient_regression(
             / covariance_norm
         )
         prediction_mean = prediction_design @ sample_means[name]
-        prediction_variance = jnp.einsum(
+        prediction_variance = oe.contract(
             "ni,ij,nj->n",
             prediction_design,
             sample_covariances[name],

@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import diffrax as dfx
 import jax.numpy as jnp
 import jax.random as jr
@@ -89,6 +91,7 @@ def test_linear_subproblem_matches_kkt_oracle_and_exact_derivatives():
     result = phx.control.solve_multiple_shooting(
         problem, states, controls, max_iterations=3
     )
+    assert result.last_qp_result is not None
     assert result.status == phx.control.MULTIPLE_SHOOTING_SUCCESS
     np.testing.assert_allclose(result.layout.pack(states, controls), jnp.zeros((5,)))
     np.testing.assert_allclose(result.last_qp_result.primal, oracle, atol=1e-6)
@@ -183,6 +186,7 @@ def test_rejected_merit_line_search_is_explicit():
         max_line_search_iterations=1,
         max_iterations=2,
     )
+    assert result.last_qp_result is not None
 
     assert result.status == phx.control.MULTIPLE_SHOOTING_LINE_SEARCH_FAILED
     assert result.last_qp_result.successful
@@ -200,6 +204,7 @@ def test_infeasible_dense_qp_status_is_propagated():
     result = phx.control.solve_multiple_shooting(
         problem, jnp.zeros((2, 1)), jnp.zeros((1, 1)), max_iterations=2
     )
+    assert result.last_qp_result is not None
 
     assert result.status == phx.control.MULTIPLE_SHOOTING_QP_FAILED
     assert result.last_qp_result.status == phx.optim.QP_INFEASIBLE
@@ -320,7 +325,7 @@ def test_differential_rollout_audit_matches_segments_at_control_jumps():
 
 def test_solver_is_deterministic_and_rejects_batched_optimization():
     problem = _linear_problem()
-    kwargs = dict(
+    kwargs: dict[str, Any] = dict(
         initial_states=jnp.zeros((3, 1)),
         initial_controls=jnp.zeros((2, 1)),
         max_iterations=4,

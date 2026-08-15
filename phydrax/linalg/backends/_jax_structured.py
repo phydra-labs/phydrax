@@ -13,6 +13,10 @@ import jax.scipy as jsp
 from jaxtyping import Array
 
 from ..._strict import StrictModule
+from .._local_blocks import (
+    prepare_local_block_factorization,
+    solve_local_blocks,
+)
 from .._operators import (
     DenseLinearOperator,
     DiagonalLinearOperator,
@@ -20,16 +24,20 @@ from .._operators import (
 )
 from .._plans import _certified_rank, LinearSolvePlan
 from .._results import LinearSolveStatus
+from .._spaces import _coordinate_pairing_weights, _has_diagonal_pairing
 from .._structured_operators import (
     _is_structured_exact,
     BandedLinearOperator,
     BlockDiagonalLinearOperator,
     DiagonalPlusLowRankLinearOperator,
     KroneckerLinearOperator,
+    KroneckerSumLinearOperator,
+    LocalBlockDiagonalLinearOperator,
     PermutationLinearOperator,
     TriangularLinearOperator,
     TridiagonalLinearOperator,
 )
+from .._transform_operators import TransformDiagonalLinearOperator
 
 
 class _LUState(StrictModule):
@@ -53,6 +61,20 @@ class _WoodburyState(StrictModule):
     inverse_left: Array
     core: _LUState | None
     dense: _LUState | None
+
+
+class _KroneckerSumState(StrictModule):
+    eigenvalues: tuple[Array, ...]
+    eigenvectors: tuple[Array, ...]
+    metric_sqrts: tuple[Array, ...]
+    summed_eigenvalues: Array
+    singular_entries: Array
+    preparation_failed: Array
+
+
+class _TransformDiagonalState(StrictModule):
+    inverse_spectrum: Array
+    singular: Array
 
 
 class StructuredState(StrictModule):
@@ -162,6 +184,107 @@ def _prepare_woodbury(operator: DiagonalPlusLowRankLinearOperator, /):
     )
 
 
+def _prepare_kronecker_sum(
+    operator: KroneckerSumLinearOperator,
+    /,
+) -> _KroneckerSumState:
+    eigenvalues = []
+    eigenvectors = []
+    metric_sqrts = []
+    failed = jnp.asarray(False)
+    for factor in operator.factors:
+        matrix = factor._materialize()
+        weights = _coordinate_pairing_weights(factor.source)
+        real_weights = jnp.real(weights)
+        valid_weights = jnp.all(
+            jnp.isfinite(real_weights) & (real_weights > 0.0) & (jnp.imag(weights) == 0.0)
+        )
+        metric_sqrt = jnp.sqrt(real_weights)
+        transformed = metric_sqrt[:, None] * matrix / metric_sqrt[None, :]
+        scale = jnp.maximum(jnp.max(jnp.abs(transformed)), 1.0)
+        tolerance = (
+            jnp.finfo(transformed.real.dtype).eps * float(factor.source.size) * scale
+        )
+        symmetry_error = jnp.max(jnp.abs(transformed - jnp.conj(transformed.T)))
+        values, vectors = jnp.linalg.eigh(transformed)
+        failed = (
+            failed
+            | ~valid_weights
+            | (symmetry_error > tolerance)
+            | jnp.any(~jnp.isfinite(matrix))
+            | jnp.any(~jnp.isfinite(values))
+            | jnp.any(~jnp.isfinite(vectors))
+        )
+        eigenvalues.append(values)
+        eigenvectors.append(vectors)
+        metric_sqrts.append(metric_sqrt)
+
+    sizes = tuple(factor.source.size for factor in operator.factors)
+    summed = jnp.zeros(sizes, dtype=eigenvalues[0].dtype)
+    for axis, values in enumerate(eigenvalues):
+        shape = [1] * len(sizes)
+        shape[axis] = sizes[axis]
+        summed = summed + values.reshape(tuple(shape))
+    summed_scale = jnp.maximum(jnp.max(jnp.abs(summed)), 1.0)
+    threshold = jnp.finfo(summed.dtype).eps * float(operator.source.size) * summed_scale
+    singular_entries = jnp.abs(summed) <= threshold
+    return _KroneckerSumState(
+        tuple(eigenvalues),
+        tuple(eigenvectors),
+        tuple(metric_sqrts),
+        summed,
+        singular_entries,
+        failed,
+    )
+
+
+def _apply_axis_matrix(value: Array, matrix: Array, axis: int, /) -> Array:
+    moved = jnp.moveaxis(value, axis, 0)
+    shape = moved.shape
+    applied = matrix @ moved.reshape((shape[0], -1))
+    return jnp.moveaxis(applied.reshape((matrix.shape[0],) + shape[1:]), 0, axis)
+
+
+def _solve_kronecker_sum(
+    operator: KroneckerSumLinearOperator,
+    state: _KroneckerSumState,
+    rhs: Array,
+    /,
+) -> tuple[Array, Array]:
+    sizes = tuple(factor.source.size for factor in operator.factors)
+    value = rhs.reshape(sizes + (rhs.shape[1],))
+    for axis, metric_sqrt in enumerate(state.metric_sqrts):
+        shape = [1] * value.ndim
+        shape[axis] = sizes[axis]
+        value = value * metric_sqrt.reshape(tuple(shape))
+    for axis, vectors in enumerate(state.eigenvectors):
+        value = _apply_axis_matrix(value, jnp.conj(vectors.T), axis)
+    safe_eigenvalues = jnp.where(
+        state.singular_entries,
+        jnp.ones((), dtype=state.summed_eigenvalues.dtype),
+        state.summed_eigenvalues,
+    )
+    value = value / safe_eigenvalues[..., None]
+    for axis, vectors in enumerate(state.eigenvectors):
+        value = _apply_axis_matrix(value, vectors, axis)
+    for axis, metric_sqrt in enumerate(state.metric_sqrts):
+        shape = [1] * value.ndim
+        shape[axis] = sizes[axis]
+        value = value / metric_sqrt.reshape(tuple(shape))
+    value = value.reshape((operator.source.size, rhs.shape[1]))
+    failed = (
+        state.preparation_failed
+        | jnp.any(state.singular_entries)
+        | jnp.any(~jnp.isfinite(value))
+    )
+    value = jnp.where(
+        state.preparation_failed,
+        jnp.zeros((), dtype=value.dtype),
+        value,
+    )
+    return value, failed
+
+
 def _prepare_operator(operator: Any, /) -> Any:
     if isinstance(operator, DenseLinearOperator):
         return _prepare_lu(operator.matrix)
@@ -175,6 +298,36 @@ def _prepare_operator(operator: Any, /) -> Any:
         return tuple(_prepare_operator(block) for block in operator.blocks)
     if isinstance(operator, KroneckerLinearOperator):
         return tuple(_prepare_operator(factor) for factor in operator.factors)
+    if isinstance(operator, KroneckerSumLinearOperator):
+        return _prepare_kronecker_sum(operator)
+    if isinstance(operator, TransformDiagonalLinearOperator):
+        singular = (
+            jnp.asarray(False)
+            if operator.nonsingular
+            else jnp.any(operator.spectrum == 0)
+        )
+        safe = (
+            operator.spectrum
+            if operator.nonsingular
+            else jnp.where(operator.spectrum == 0, 1, operator.spectrum)
+        )
+        return _TransformDiagonalState(jnp.reciprocal(safe), singular)
+    if isinstance(operator, LocalBlockDiagonalLinearOperator):
+        positive = operator.properties.certifies(
+            "positive_definite"
+        ) and _has_diagonal_pairing(operator.source)
+        weights = (
+            _coordinate_pairing_weights(operator.source).reshape(
+                (operator.num_blocks, operator.input_block_size)
+            )
+            if positive
+            else None
+        )
+        return prepare_local_block_factorization(
+            operator.blocks,
+            positive_definite=positive,
+            metric_weights=weights,
+        )
     return None
 
 
@@ -208,6 +361,12 @@ def _solve_operator(
         return _solve_tridiagonal(prepared, rhs)
     if isinstance(operator, BandedLinearOperator):
         return _solve_lu(prepared, rhs)
+    if isinstance(operator, LocalBlockDiagonalLinearOperator):
+        grouped_rhs = rhs.reshape(
+            (operator.num_blocks, operator.output_block_size, rhs.shape[1])
+        )
+        grouped_value, failed = solve_local_blocks(prepared, grouped_rhs)
+        return grouped_value.reshape((operator.source.size, rhs.shape[1])), failed
     if isinstance(operator, BlockDiagonalLinearOperator):
         values = []
         failed = jnp.asarray(False)
@@ -248,6 +407,11 @@ def _solve_operator(
             woodbury_solve,
             operand=None,
         )
+    if isinstance(operator, KroneckerSumLinearOperator):
+        return _solve_kronecker_sum(operator, prepared, rhs)
+    if isinstance(operator, TransformDiagonalLinearOperator):
+        value = operator._solve_flat_columns(rhs, prepared.inverse_spectrum)
+        return value, prepared.singular | jnp.any(~jnp.isfinite(value))
     if isinstance(operator, KroneckerLinearOperator):
         value = rhs.reshape(
             tuple(factor.target.size for factor in operator.factors) + (rhs.shape[1],)

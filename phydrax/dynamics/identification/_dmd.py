@@ -9,6 +9,7 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._numerics import solve_weighted_least_squares
@@ -162,14 +163,14 @@ class DMDResult(StrictModule):
         state_rank = len(self.state_layout.shape)
         batch = values.shape if state_rank == 0 else values.shape[:-state_rank]
         flat = values.reshape(batch + (self.state_layout.size,))
-        predicted = jnp.einsum("ij,...j->...i", self.state_matrix, flat)
+        predicted = oe.contract("ij,...j->...i", self.state_matrix, flat)
         if self.input_matrix is not None:
             if inputs is None:
                 raise ValueError("inputs are required by this controlled DMD fit.")
             input_layout = self.input_layout
             if input_layout is None:
                 raise RuntimeError("Controlled DMD result is missing its input layout.")
-            predicted = predicted + jnp.einsum(
+            predicted = predicted + oe.contract(
                 "ij,...j->...i",
                 self.input_matrix,
                 jnp.asarray(inputs).reshape(batch + (input_layout.size,)),
@@ -428,7 +429,7 @@ class EDMDResult(StrictModule):
 
     def predict(self, states: ArrayLike, inputs: ArrayLike | None = None, /) -> Array:
         evaluation = self.library.evaluate(states)
-        features = jnp.einsum("ij,...j->...i", self.feature_matrix, evaluation.values)
+        features = oe.contract("ij,...j->...i", self.feature_matrix, evaluation.values)
         if self.input_matrix is not None:
             if inputs is None:
                 raise ValueError("inputs are required by this controlled EDMD fit.")
@@ -436,14 +437,14 @@ class EDMDResult(StrictModule):
             if input_layout is None:
                 raise RuntimeError("Controlled EDMD result is missing its input layout.")
             batch = evaluation.valid.shape
-            features = features + jnp.einsum(
+            features = features + oe.contract(
                 "ij,...j->...i",
                 self.input_matrix,
                 jnp.asarray(inputs).reshape(batch + (input_layout.size,)),
             )
         elif inputs is not None:
             raise ValueError("This EDMD fit has no input model.")
-        decoded = jnp.einsum("ij,...j->...i", self.decoder_matrix, features)
+        decoded = oe.contract("ij,...j->...i", self.decoder_matrix, features)
         return decoded.reshape(evaluation.valid.shape + self.state_layout.shape)
 
     def to_system(self, /, *, system_id: str | None = None) -> DiscreteSystem:

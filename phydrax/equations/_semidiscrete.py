@@ -1160,14 +1160,15 @@ class _SemidiscreteEvaluator(StrictModule):
             f"got {result.shape}."
         )
 
-    def physical_state(self, time: Array, state: ArrayLike, args: Any, /) -> Array:
+    def physical_state(self, time: ArrayLike, state: ArrayLike, args: Any, /) -> Array:
+        time_array = jnp.asarray(time)
         value = jnp.asarray(state)
         if tuple(value.shape) != self.layout.state_shape:
             raise ValueError(
                 f"Semidiscrete state must have shape {self.layout.state_shape}; "
                 f"got {value.shape}."
             )
-        return self.layout.pack(self._physical_fields(time, value, args))
+        return self.layout.pack(self._physical_fields(time_array, value, args))
 
     def __call__(self, time: Array, state: Array, args: Any) -> Array:
         value = jnp.asarray(state)
@@ -1278,11 +1279,13 @@ class CompiledSpatialDynamics(StrictModule):
     def state_shape(self) -> tuple[int, ...]:
         return self.layout.state_shape
 
-    def physical_state(self, time: Array, state: ArrayLike, args: Any = None) -> Array:
-        return self._evaluator.physical_state(time, state, args)
+    def physical_state(
+        self, time: ArrayLike, state: ArrayLike, args: Any = None
+    ) -> Array:
+        return self._evaluator.physical_state(jnp.asarray(time), state, args)
 
-    def __call__(self, time: Array, state: Array, args: Any) -> Array:
-        return self.drift(time, state, args)
+    def __call__(self, time: ArrayLike, state: Array, args: Any) -> Array:
+        return self.drift(jnp.asarray(time), state, args)
 
 
 def _signed_additive_terms(

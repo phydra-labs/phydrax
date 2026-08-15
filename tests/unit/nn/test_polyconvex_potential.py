@@ -4,6 +4,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 import pytest
 
 from phydrax.nn.models import (
@@ -82,7 +83,7 @@ def test_material_tangent_matches_directional_stress_derivative():
     gradient = jnp.eye(3) + 0.1 * jr.normal(jr.key(24), (3, 3))
     direction = jr.normal(jr.key(25), (3, 3))
     tangent = model.material_tangent(gradient)
-    expected = jnp.einsum("ijkl,kl->ij", tangent, direction)
+    expected = oe.contract("ijkl,kl->ij", tangent, direction)
     _, derivative = jax.jvp(model.first_piola_stress, (gradient,), (direction,))
     assert jnp.allclose(derivative, expected, atol=2e-8, rtol=2e-8)
 

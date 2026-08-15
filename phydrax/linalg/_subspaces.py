@@ -13,6 +13,7 @@ from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
+from ._certificates import KernelCertificate
 from ._spaces import _coordinate_dtype, AbstractVectorSpace
 
 
@@ -173,6 +174,7 @@ class NullspacePolicy(StrictModule):
 
     right: LinearSubspace | None
     left: LinearSubspace | None
+    certificate: KernelCertificate | None
     compatibility: CompatibilityMode = eqx.field(static=True)
     gauge: GaugeMode = eqx.field(static=True)
 
@@ -181,9 +183,24 @@ class NullspacePolicy(StrictModule):
         *,
         right: LinearSubspace | None = None,
         left: LinearSubspace | None = None,
+        certificate: KernelCertificate | None = None,
         compatibility: CompatibilityMode = "error",
         gauge: GaugeMode = "minimum-norm",
     ):
+        if certificate is not None and not isinstance(certificate, KernelCertificate):
+            raise TypeError("certificate must be a KernelCertificate or None.")
+        if certificate is not None:
+            if right is None:
+                right = certificate.right
+            elif right.subspace_id != certificate.right.subspace_id:
+                raise ValueError("Right nullspace does not match its kernel certificate.")
+            if left is None:
+                left = certificate.left
+            elif (
+                certificate.left is None
+                or left.subspace_id != certificate.left.subspace_id
+            ):
+                raise ValueError("Left nullspace does not match its kernel certificate.")
         if right is not None and not isinstance(right, LinearSubspace):
             raise TypeError("right must be a LinearSubspace or None.")
         if left is not None and not isinstance(left, LinearSubspace):
@@ -194,6 +211,7 @@ class NullspacePolicy(StrictModule):
             raise ValueError("gauge must be 'minimum-norm' or 'project'.")
         self.right = right
         self.left = left
+        self.certificate = certificate
         self.compatibility = compatibility
         self.gauge = gauge
 
@@ -202,5 +220,6 @@ __all__ = [
     "CompatibilityMode",
     "GaugeMode",
     "LinearSubspace",
+    "KernelCertificate",
     "NullspacePolicy",
 ]

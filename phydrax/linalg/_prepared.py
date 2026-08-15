@@ -4,51 +4,82 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import equinox as eqx
+import jax.numpy as jnp
+from jaxtyping import Array
 
 from .._strict import StrictModule
-from ._plans import LinearSolvePlan
+from ._binding import LinearSolveTemplate
+from ._preconditioning import PreparedPreconditioner
 from ._problems import AbstractLinearProblem
 
 
+if TYPE_CHECKING:
+    from ._spaces import RHSLayout
+
+
 class PreparedLinearSolve(StrictModule):
-    """Reusable numerical state bound to exactly one problem and execution plan."""
+    """Numerical state bound to one problem and reusable symbolic template."""
 
     problem: AbstractLinearProblem
-    plan: LinearSolvePlan
+    template: LinearSolveTemplate
     state: Any
-    preconditioning_state: Any
-    transformed_state: Any
-    numeric_version: int = eqx.field(static=True)
+    preconditioning_state: PreparedPreconditioner | None
+    numeric_version: Array
 
     def __init__(
         self,
         problem: AbstractLinearProblem,
-        plan: LinearSolvePlan,
+        template: LinearSolveTemplate,
         state: Any,
         /,
         *,
-        preconditioning_state: Any = None,
-        transformed_state: Any = None,
-        numeric_version: int = 0,
+        preconditioning_state: PreparedPreconditioner | None = None,
+        numeric_version: Any = 0,
     ):
         if not isinstance(problem, AbstractLinearProblem):
             raise TypeError("problem must be an AbstractLinearProblem.")
-        if not isinstance(plan, LinearSolvePlan):
-            raise TypeError("plan must be a LinearSolvePlan.")
-        if plan.problem_id != problem.problem_id:
-            raise ValueError("Prepared plan and problem IDs must match.")
-        version = int(numeric_version)
-        if version < 0:
-            raise ValueError("numeric_version must be non-negative.")
+        if not isinstance(template, LinearSolveTemplate):
+            raise TypeError("template must be a LinearSolveTemplate.")
+        if template.plan.problem_id != problem.problem_id:
+            raise ValueError("Prepared template and problem IDs must match.")
+        if preconditioning_state is not None and not isinstance(
+            preconditioning_state, PreparedPreconditioner
+        ):
+            raise TypeError(
+                "preconditioning_state must be a PreparedPreconditioner or None."
+            )
+        version = jnp.asarray(numeric_version, dtype=jnp.int32)
+        if version.ndim != 0:
+            raise ValueError("numeric_version must be scalar.")
+        version = eqx.error_if(
+            version,
+            version < 0,
+            "numeric_version must be non-negative.",
+        )
         self.problem = problem
-        self.plan = plan
+        self.template = template
         self.state = state
         self.preconditioning_state = preconditioning_state
-        self.transformed_state = transformed_state
         self.numeric_version = version
+
+    @property
+    def plan(self) -> Any:
+        return self.template.plan
+
+    @property
+    def rhs_layout(self) -> RHSLayout | None:
+        return self.plan.rhs_layout
+
+    @property
+    def recycling_capacity(self) -> int:
+        return self.plan.recycling_capacity
+
+    @property
+    def recycling_state_bytes(self) -> int:
+        return self.plan.recycling_state_bytes
 
 
 __all__ = ["PreparedLinearSolve"]

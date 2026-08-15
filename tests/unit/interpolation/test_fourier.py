@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -247,7 +249,9 @@ def test_fourier_point_evaluation_jit_and_coordinate_gradients_agree():
     query = jnp.asarray([[0.13], [0.41], [0.82]])
 
     def loss(points, method):
-        kwargs = {} if method == "direct" else {"method": "nufft", "tolerance": 1e-10}
+        kwargs: dict[str, Any] = (
+            {} if method == "direct" else {"method": "nufft", "tolerance": 1e-10}
+        )
         output = fourier_interpolate(
             values,
             points,

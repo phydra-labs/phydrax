@@ -47,8 +47,8 @@ def test_graph_degree_operator():
     deg_in = phx.operators.graph_degree(domain, mode="in")
     deg_out = phx.operators.graph_degree(domain, mode="out")
 
-    assert jnp.allclose(deg_in(batch).data, jnp.array([0.0, 1.0, 1.0]))
-    assert jnp.allclose(deg_out(batch).data, jnp.array([1.0, 1.0, 0.0]))
+    assert jnp.allclose(jnp.asarray(deg_in(batch).data), jnp.array([0.0, 1.0, 1.0]))
+    assert jnp.allclose(jnp.asarray(deg_out(batch).data), jnp.array([1.0, 1.0, 0.0]))
 
 
 def test_graph_degree_operator_restricts_to_node_set():
@@ -61,8 +61,8 @@ def test_graph_degree_operator_restricts_to_node_set():
     deg_in = phx.operators.graph_degree(domain, mode="in")
     deg_out = phx.operators.graph_degree(domain, mode="out")
 
-    assert jnp.allclose(deg_in(batch).data, jnp.array([0.0, 1.0]))
-    assert jnp.allclose(deg_out(batch).data, jnp.array([1.0, 0.0]))
+    assert jnp.allclose(jnp.asarray(deg_in(batch).data), jnp.array([0.0, 1.0]))
+    assert jnp.allclose(jnp.asarray(deg_out(batch).data), jnp.array([1.0, 0.0]))
 
 
 def test_neighbor_aggregate_operator():
@@ -74,7 +74,7 @@ def test_neighbor_aggregate_operator():
         return node[0]
 
     agg = phx.operators.neighbor_aggregate(u)
-    assert jnp.allclose(agg(batch).data, jnp.array([0.0, 0.0, 1.0]))
+    assert jnp.allclose(jnp.asarray(agg(batch).data), jnp.array([0.0, 0.0, 1.0]))
 
 
 def test_graph_laplacian_operator():
@@ -86,7 +86,7 @@ def test_graph_laplacian_operator():
         return node[0]
 
     lap = phx.operators.graph_laplacian(u)
-    assert jnp.allclose(lap(batch).data, jnp.array([0.0, 1.0, 2.0]))
+    assert jnp.allclose(jnp.asarray(lap(batch).data), jnp.array([0.0, 1.0, 2.0]))
 
 
 def test_graph_gradient_operator_on_edges():
@@ -98,7 +98,7 @@ def test_graph_gradient_operator_on_edges():
         return node[0]
 
     grad = phx.operators.graph_gradient(u)
-    assert jnp.allclose(grad(batch).data, jnp.array([1.0, 2.0]))
+    assert jnp.allclose(jnp.asarray(grad(batch).data), jnp.array([1.0, 2.0]))
 
 
 def test_graph_gradient_operator_restricts_to_edge_set():
@@ -113,7 +113,7 @@ def test_graph_gradient_operator_restricts_to_edge_set():
         return node[0]
 
     grad = phx.operators.graph_gradient(u)
-    assert jnp.allclose(grad(batch).data, jnp.array([2.0]))
+    assert jnp.allclose(jnp.asarray(grad(batch).data), jnp.array([2.0]))
 
 
 def test_graph_gradient_supports_edge_weights():
@@ -129,7 +129,7 @@ def test_graph_gradient_supports_edge_weights():
         return edge[0]
 
     grad = phx.operators.graph_gradient(u, weight=weight)
-    assert jnp.allclose(grad(batch).data, jnp.array([2.0, 6.0]))
+    assert jnp.allclose(jnp.asarray(grad(batch).data), jnp.array([2.0, 6.0]))
 
 
 def test_graph_divergence_operator_on_nodes():
@@ -141,7 +141,7 @@ def test_graph_divergence_operator_on_nodes():
         return edge[0]
 
     div = phx.operators.graph_divergence(flux)
-    assert jnp.allclose(div(batch).data, jnp.array([-2.0, -1.0, 3.0]))
+    assert jnp.allclose(jnp.asarray(div(batch).data), jnp.array([-2.0, -1.0, 3.0]))
 
 
 def test_graph_divergence_operator_restricts_to_node_set():
@@ -156,7 +156,7 @@ def test_graph_divergence_operator_restricts_to_node_set():
         return edge[0]
 
     div = phx.operators.graph_divergence(flux)
-    assert jnp.allclose(div(batch).data, jnp.array([-2.0, 3.0]))
+    assert jnp.allclose(jnp.asarray(div(batch).data), jnp.array([-2.0, 3.0]))
 
 
 def test_graph_incidence_laplacian_is_divergence_of_gradient():
@@ -171,8 +171,8 @@ def test_graph_incidence_laplacian_is_divergence_of_gradient():
     div_grad = phx.operators.graph_divergence(phx.operators.graph_gradient(u))
     expected = jnp.array([-1.0, -1.0, 2.0])
 
-    assert jnp.allclose(lap(batch).data, expected)
-    assert jnp.allclose(div_grad(batch).data, expected)
+    assert jnp.allclose(jnp.asarray(lap(batch).data), expected)
+    assert jnp.allclose(jnp.asarray(div_grad(batch).data), expected)
 
 
 def test_graph_incidence_laplacian_constraint_on_boundary_nodes():

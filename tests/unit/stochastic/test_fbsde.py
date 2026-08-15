@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -40,6 +42,7 @@ def test_coupled_fbsde_explicit_replays_one_wiener_realization():
         jr.key(52), problem, value, control, realization=realization
     )
 
+    assert first.paths.realization is not None
     assert first.paths.states.shape == (32, 9, 1)
     assert jnp.array_equal(first.paths.states, replay.paths.states)
     assert first.paths.realization.realization_id == realization.realization_id
@@ -130,7 +133,7 @@ def test_jump_bsde_propagates_event_failure_status():
     problem, paths = _jump_problem(
         status=jnp.asarray([phx.stochastic.JUMP_SUCCESS, phx.stochastic.JUMP_MAX_EVENTS])
     )
-    kwargs = dict(
+    kwargs: dict[str, Any] = dict(
         control_predictor=lambda time, state: jnp.zeros((1, 1)),
     )
     evaluation = phx.stochastic.evaluate_jump_bsde(

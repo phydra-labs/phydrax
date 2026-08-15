@@ -1,5 +1,8 @@
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 import pytest
 
 import phydrax as phx
@@ -78,7 +81,7 @@ def test_gaussian_small_jump_closure_uses_reserved_global_wiener_path():
         sample_shape=(32,),
         gaussian_tolerance=1e-5,
     )
-    kwargs = dict(
+    kwargs: dict[str, Any] = dict(
         save_times=jnp.asarray([0.25]),
         dt=0.25,
         cutoff=0.05,
@@ -108,7 +111,7 @@ def test_gaussian_small_jump_closure_uses_reserved_global_wiener_path():
         jnp.asarray([0.0]),
         jnp.asarray([0.25]),
     )[:, 0]
-    expected_closure = jnp.einsum("ij,...j->...i", factor, brownian)
+    expected_closure = oe.contract("ij,...j->...i", factor, brownian)
 
     assert jnp.array_equal(gaussian.states, replay.states)
     assert jnp.allclose(

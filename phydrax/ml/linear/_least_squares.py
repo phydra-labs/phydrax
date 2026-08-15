@@ -9,6 +9,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._batch import MLBatch, WeightPolicy
@@ -240,7 +241,7 @@ def _normal_solve(
     residual = prediction - targets
     rss = jnp.sum(weights * jnp.real(residual * jnp.conj(residual)), axis=(1, 2))
     penalty_value = jnp.real(
-        jnp.einsum(
+        oe.contract(
             "cfo,cofg,cgo->c",
             jnp.conj(coefficients),
             penalty,

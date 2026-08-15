@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
 import numpy as np
+import opt_einsum as oe
 import pytest
 
 import phydrax as phx
@@ -96,7 +97,7 @@ def test_multivariate_normal_sampling_and_projection_recover_moments():
     normalized = jax.nn.softmax(log_weights)
     expected_location = normalized @ observations
     centered = observations - expected_location
-    expected_covariance = jnp.einsum("n,ni,nj->ij", normalized, centered, centered)
+    expected_covariance = oe.contract("n,ni,nj->ij", normalized, centered, centered)
     actual_location, actual_covariance = family.location_covariance_from_natural(
         projected.law.natural
     )

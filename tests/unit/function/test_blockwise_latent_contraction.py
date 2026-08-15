@@ -139,7 +139,7 @@ def test_domain_model_blockwise_pointsbatch_singleton_blocks():
     x_vals = jnp.asarray(batch.points["x"].data)[:, 0]
     t_vals = jnp.asarray(batch.points["t"].data)
     expected = x_vals[:, None] * t_vals[None, :] + 1.0
-    assert jnp.allclose(out.data, expected)
+    assert jnp.allclose(jnp.asarray(out.data), expected)
 
 
 def test_domain_model_warns_on_blockwise_fallback_for_paired_blocks():

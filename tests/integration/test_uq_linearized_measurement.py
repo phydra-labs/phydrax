@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -53,7 +55,7 @@ def test_linearized_eiv_posterior_matches_explicit_latent_input_nuts_reference()
             )
         ),
     )
-    settings = dict(
+    settings: dict[str, Any] = dict(
         num_chains=4,
         num_warmup=300,
         num_samples=500,

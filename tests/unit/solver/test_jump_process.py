@@ -178,6 +178,8 @@ def test_marked_compound_poisson_records_marks_and_post_states():
         t1=1.0,
         save_times=jnp.asarray([0.0, 1.0]),
     )
+    assert solution.events.post_states is not None
+    assert solution.events.pre_states is not None
 
     mark_sums = jnp.sum(
         jnp.where(solution.events.valid, solution.events.marks, 0.0), axis=-1

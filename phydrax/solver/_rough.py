@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._frozendict import frozendict
@@ -178,7 +179,7 @@ def _davie_correction(
     flattened = derivatives.reshape(
         (problem.driver_dimension, int(state.size), problem.driver_dimension)
     )
-    return jnp.einsum("isj,ij->s", flattened, second_level).reshape(problem.state_shape)
+    return oe.contract("isj,ij->s", flattened, second_level).reshape(problem.state_shape)
 
 
 def _classical_integrate(

@@ -378,6 +378,7 @@ def test_unknown_period_rescales_physical_time_and_has_implicit_gradient():
         args=jnp.asarray(1.0),
         period_guess=jnp.asarray(6.0),
     )
+    assert solution.period is not None
 
     assert bool(solution.successful)
     assert solution.resolved_method == "root"

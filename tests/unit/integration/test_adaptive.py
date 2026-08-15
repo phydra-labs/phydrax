@@ -30,7 +30,7 @@ def test_adaptive_rules_share_one_plan_and_estimate_contract(rule):
     )
 
     assert estimate.successful
-    assert jnp.allclose(estimate.value.data, 6.6, atol=1e-8)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 6.6, atol=1e-8)
     assert estimate.error_kind == "embedded-rule"
     assert estimate.error_estimate is not None
     assert estimate.diagnostics.partition is not None
@@ -52,7 +52,7 @@ def test_adaptive_breakpoints_cover_each_initial_subinterval():
     )
 
     assert estimate.successful
-    assert jnp.allclose(estimate.value.data, 0.29, atol=1e-11)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 0.29, atol=1e-11)
     assert estimate.diagnostics.partition.count >= 2
 
 
@@ -128,7 +128,7 @@ def test_normalized_adaptive_density_uses_density_in_both_ratio_terms():
     )
 
     assert estimate.successful
-    assert jnp.allclose(estimate.value.data, 5.0 / 9.0, atol=1e-10)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 5.0 / 9.0, atol=1e-10)
     assert estimate.error_kind == "ratio-embedded-rule"
 
 

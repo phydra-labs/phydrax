@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -123,7 +125,7 @@ def test_map_checkpoint_resume_matches_uninterrupted_accumulation():
     matrix = jnp.asarray([[1.03, 0.2], [-0.1, 0.94]])
     initial = jnp.asarray([0.4, -0.2])
     evolution = _map_evolution(matrix, system_id="resume-map")
-    kwargs = dict(qr_interval=7, accumulation_interval=14)
+    kwargs: dict[str, Any] = dict(qr_interval=7, accumulation_interval=14)
     uninterrupted = phx.dynamics.analysis.finite_time_lyapunov_spectrum(
         evolution,
         initial,
@@ -160,7 +162,9 @@ def test_pre_burn_checkpoint_remains_numerically_resumable():
     matrix = jnp.asarray([[1.08, 0.15], [-0.03, 0.92]])
     initial = jnp.asarray([0.4, -0.2])
     evolution = _map_evolution(matrix, system_id="pre-burn-resume-map")
-    kwargs = dict(leading_k=1, qr_interval=5, burn_in=13, accumulation_interval=10)
+    kwargs: dict[str, Any] = dict(
+        leading_k=1, qr_interval=5, burn_in=13, accumulation_interval=10
+    )
     uninterrupted = phx.dynamics.analysis.finite_time_lyapunov_spectrum(
         evolution,
         initial,
@@ -230,7 +234,7 @@ def test_linear_flow_and_resume_match_analytic_spectrum():
 
     evolution = _flow_evolution(drift, state_dimension=3, system_id="linear-flow")
     initial = jnp.asarray([0.6, -0.4, 0.2])
-    kwargs = dict(qr_interval=1, accumulation_interval=2)
+    kwargs: dict[str, Any] = dict(qr_interval=1, accumulation_interval=2)
     whole = phx.dynamics.analysis.finite_time_lyapunov_spectrum(
         evolution,
         initial,

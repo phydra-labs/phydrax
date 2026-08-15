@@ -12,6 +12,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._frozendict import frozendict
@@ -420,7 +421,7 @@ def solve_levy_sde(
             ends,
             dtype=problem.initial_state.real.dtype,
         )
-        driver_increments = driver_increments + jnp.einsum(
+        driver_increments = driver_increments + oe.contract(
             "ij,...j->...i",
             _covariance_factor(small_covariance),
             gaussian,

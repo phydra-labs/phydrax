@@ -153,7 +153,7 @@ def test_query_graph_operator_result_can_be_used_as_graph_domain():
     def predicted(node):
         return node.get("out")[0]
 
-    assert jnp.allclose(predicted(batch).data, jnp.array([4.0]))
+    assert jnp.allclose(jnp.asarray(predicted(batch).data), jnp.array([4.0]))
 
 
 def test_query_encode_process_decode_transfers_source_to_latent_to_target():
@@ -211,4 +211,4 @@ def test_query_encode_process_decode_result_can_be_used_as_graph_domain():
     def prediction(node):
         return node.get("out")[0]
 
-    assert jnp.allclose(prediction(batch).data, jnp.array([4.0]))
+    assert jnp.allclose(jnp.asarray(prediction(batch).data), jnp.array([4.0]))

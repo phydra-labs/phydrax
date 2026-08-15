@@ -9,6 +9,7 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array
 
 from ..._model import AbstractArrayModel
@@ -43,7 +44,7 @@ def _stable_eigvalsh(matrix: Array) -> Array:
 def _stable_eigvalsh_jvp(primals, tangents):
     (matrix,), (matrix_tangent,) = primals, tangents
     values, vectors = jnp.linalg.eigh(_hermitian(matrix))
-    tangent_basis = jnp.einsum(
+    tangent_basis = oe.contract(
         "...ki,...kl,...lj->...ij",
         jnp.conj(vectors),
         _hermitian(matrix_tangent),
@@ -57,7 +58,7 @@ def _spectral_floor(matrix: Array, floor: Array) -> tuple[Array, Array]:
     values, vectors = jnp.linalg.eigh(_hermitian(matrix))
     floor_ = jnp.asarray(floor, dtype=values.dtype)
     clipped = jnp.maximum(values, floor_[..., None])
-    projected = jnp.einsum(
+    projected = oe.contract(
         "...ik,...k,...jk->...ij",
         vectors,
         clipped,
@@ -87,7 +88,7 @@ def _spectral_floor_jvp(primals, tangents):
         1.0,
         jnp.where(crossed, clipped_difference / safe_difference, 0.0),
     )
-    tangent_basis = jnp.einsum(
+    tangent_basis = oe.contract(
         "...ki,...kl,...lj->...ij",
         jnp.conj(vectors),
         matrix_tangent,
@@ -99,13 +100,13 @@ def _spectral_floor_jvp(primals, tangents):
     tangent_basis = tangent_basis + floor_diagonal[..., None, :] * jnp.eye(
         matrix.shape[-1], dtype=matrix.dtype
     )
-    projected = jnp.einsum(
+    projected = oe.contract(
         "...ik,...k,...jk->...ij",
         vectors,
         clipped,
         jnp.conj(vectors),
     )
-    projected_tangent = jnp.einsum(
+    projected_tangent = oe.contract(
         "...ik,...kl,...jl->...ij",
         vectors,
         tangent_basis,
@@ -167,9 +168,9 @@ def _moments(
     mass = jnp.sum(w, axis=-1)
     square_mass = jnp.sum(jnp.square(w), axis=-1)
     safe_mass = jnp.maximum(mass, tiny)
-    mean = jnp.einsum("...n,...nf->...f", w, x) / safe_mass[..., None]
+    mean = oe.contract("...n,...nf->...f", w, x) / safe_mass[..., None]
     centered = jnp.where(w[..., None] > 0.0, x - mean[..., None, :], 0)
-    scatter = jnp.einsum("...ni,...n,...nj->...ij", jnp.conj(centered), w, centered)
+    scatter = oe.contract("...ni,...n,...nj->...ij", jnp.conj(centered), w, centered)
     denominator = mass - correction * square_mass / safe_mass
     safe_denominator = jnp.maximum(denominator, tiny)
     covariance = scatter / safe_denominator[..., None, None]
@@ -266,7 +267,7 @@ class CovarianceModel(AbstractArrayModel):
         )
         centered = values - mean
         return jnp.real(
-            jnp.einsum("...i,...ij,...j->...", jnp.conj(centered), precision, centered)
+            oe.contract("...i,...ij,...j->...", jnp.conj(centered), precision, centered)
         )
 
     def log_density(self, x: Any, /) -> Array:
@@ -288,7 +289,7 @@ class CovarianceModel(AbstractArrayModel):
             self.case_shape + (1,) * sample_ndim + (self.in_size, self.in_size)
         )
         mean = self.mean.reshape(self.case_shape + (1,) * sample_ndim + (self.in_size,))
-        return jnp.einsum("...i,...ij->...j", values - mean, jnp.conj(root))
+        return oe.contract("...i,...ij->...j", values - mean, jnp.conj(root))
 
 
 def _result(
@@ -577,9 +578,9 @@ def _shrinkage_fit(
     n_eff = jnp.where(positive_square_mass, mass * mass / safe_square_mass, 0.0)
     if method == "ledoit-wolf":
         centered = jnp.where(w[..., None] > 0.0, x - mean[..., None, :], 0)
-        outer = jnp.einsum("...ni,...nj->...nij", jnp.conj(centered), centered)
+        outer = oe.contract("...ni,...nj->...nij", jnp.conj(centered), centered)
         residual = outer - covariance[..., None, :, :]
-        beta = jnp.einsum(
+        beta = oe.contract(
             "...n,...nij,...nij->...",
             w * w,
             jnp.conj(residual),
@@ -702,7 +703,7 @@ class RobustCovariance(AbstractRecipe):
             _, precision, _, _ = _regularize(covariance, self.regularization)
             centered = x - mean[..., None, :]
             squared_distance = jnp.real(
-                jnp.einsum(
+                oe.contract(
                     "...ni,...ij,...nj->...n",
                     jnp.conj(centered),
                     precision,

@@ -13,6 +13,7 @@ from functools import partial
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
@@ -153,7 +154,7 @@ class ProjectedTangentKernel(AbstractOperatorValuedKernel):
         right_points = _as_points(right, name="right")
         left_projectors = self._projectors(left_points)
         right_projectors = self._projectors(right_points)
-        projector_blocks = jnp.einsum("aij,bkj->abik", left_projectors, right_projectors)
+        projector_blocks = oe.contract("aij,bkj->abik", left_projectors, right_projectors)
         scalar = self.scalar_kernel.matrix(left_points, right_points)
         return _flatten_blocks(scalar[:, :, None, None] * projector_blocks)
 
@@ -277,7 +278,7 @@ class ProjectedDifferentialFormKernel(AbstractOperatorValuedKernel):
         right_points = _as_points(right, name="right")
         left_projectors = self._projectors(left_points)
         right_projectors = self._projectors(right_points)
-        projector_blocks = jnp.einsum("aij,bkj->abik", left_projectors, right_projectors)
+        projector_blocks = oe.contract("aij,bkj->abik", left_projectors, right_projectors)
         scalar = self.scalar_kernel.matrix(left_points, right_points)
         return _flatten_blocks(scalar[:, :, None, None] * projector_blocks)
 

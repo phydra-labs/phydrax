@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -21,7 +23,7 @@ def test_covariant_store_and_recompute_modes_match_diagonal_map():
     matrix = jnp.diag(jnp.asarray([2.0, 0.5]))
     evolution = _linear_map(matrix, system_id="clv-diagonal-map")
     grid = phx.dynamics.IterationGrid.from_steps(6, iteration_id="clv-grid")
-    options = dict(
+    options: dict[str, Any] = dict(
         initial_basis=jnp.eye(2),
         qr_interval=1,
         save_every=1,

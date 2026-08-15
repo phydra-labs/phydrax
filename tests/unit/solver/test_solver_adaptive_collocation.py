@@ -69,7 +69,7 @@ def test_solver_returns_updated_collocation_state_after_training():
     assert int(updated.refresh_count) == 2
     assert int(updated.last_refresh) == 2
     assert not jnp.allclose(
-        initial.batch.points["x"].data,
+        jnp.asarray(initial.batch.points["x"].data),
         updated.batch.points["x"].data,
     )
 

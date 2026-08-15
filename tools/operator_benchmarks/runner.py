@@ -4,7 +4,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import equinox as eqx
 import jax
@@ -293,7 +293,8 @@ def training_step_cost(
 
         return eqx.filter_value_and_grad(objective)(current_parameters)
 
-    compiled = value_and_gradient.lower(parameters).compile().compiled
+    lowerable: Any = value_and_gradient
+    compiled = lowerable.lower(parameters).compile().compiled
     analysis = compiled.cost_analysis()
     flops = int(round(float(analysis.get("flops", 0.0))))
     accessed_bytes = int(round(float(analysis.get("bytes accessed", 0.0))))

@@ -2,6 +2,8 @@
 #  Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import meshio
@@ -194,9 +196,10 @@ def test_compact_enforcement_gate_saturation_controls_transition_extent():
 
 def test_enforcement_gate_rejects_unknown_method():
     geometry = _scaled_square(1.0)
+    invalid_method: Any = "unknown"
 
     with pytest.raises(ValueError, match="method must be"):
-        geometry.make_enforcement_gate(method="unknown")
+        geometry.make_enforcement_gate(method=invalid_method)
 
 
 def test_boundary_field_has_finite_flat_high_order_face_jets():

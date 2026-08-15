@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -364,7 +366,8 @@ def test_configuration_and_shape_guards_are_explicit():
             jnp.eye(2), jnp.ones(2), equality_matrix=jnp.ones((1, 2))
         )
     problem = phx.optim.QuadraticProgram(jnp.eye(2), jnp.ones(2))
+    invalid_method: Any = "qpax-explicit"
     with pytest.raises(ValueError, match="max_dense_dimension"):
         phx.optim.solve_quadratic_program(problem, max_dense_dimension=1)
     with pytest.raises(ValueError, match="explicit differentiation"):
-        phx.optim.solve_quadratic_program_primal(problem, method="qpax-explicit")
+        phx.optim.solve_quadratic_program_primal(problem, method=invalid_method)

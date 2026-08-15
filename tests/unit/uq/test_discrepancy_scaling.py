@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -260,7 +262,7 @@ def test_repeated_identifiability_report_gates_bias_scores_coverage_and_confound
     baseline = jnp.array([1.48, 1.52, 1.47, 1.51, 1.50, 1.49])
     fixed = jnp.array([1.19, 1.23, 1.18, 1.22, 1.21, 1.20])
     joint = jnp.array([1.18, 1.24, 1.19, 1.21, 1.22, 1.20])
-    common = dict(
+    common: dict[str, Any] = dict(
         true_parameters=jnp.asarray(1.2),
         baseline_parameter_estimates=baseline,
         fixed_gp_parameter_estimates=fixed,

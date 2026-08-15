@@ -9,6 +9,7 @@ from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ._manifold import (
@@ -717,7 +718,7 @@ class AffineInvariantSPDManifold(AbstractRiemannianManifold):
         right = self.project_tangent(value, right_tangent)
         left_solved = jnp.linalg.solve(value, left)
         right_solved = jnp.linalg.solve(value, right)
-        per_point = jnp.einsum("...ij,...ji->...", left_solved, right_solved)
+        per_point = oe.contract("...ij,...ji->...", left_solved, right_solved)
         return jnp.real(jnp.sum(per_point))
 
     def retract(

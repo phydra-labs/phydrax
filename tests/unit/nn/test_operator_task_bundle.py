@@ -570,6 +570,7 @@ def test_sfno_artifact_round_trips_s2fft_plan_without_model_template(tmp_path):
 
     destination = phx.nn.operator.training.save_operator_artifact(tmp_path, trained)
     restored = phx.nn.operator.training.load_trained_operator(destination)
+    assert isinstance(restored.execution_model, phx.nn.operator.architectures.SFNO)
     actual = restored.predict(batch).field("solution").values
 
     assert restored.execution_model.plan.fingerprint == plan.fingerprint

@@ -11,6 +11,7 @@ from math import comb, floor
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
@@ -379,7 +380,7 @@ class FourierFeatureLibrary(AbstractFeatureLibrary):
             state_layout=self.state_layout,
             input_layout=self.input_layout,
         )
-        angles = jnp.einsum("...d,kd->...k", variables, self.frequencies) + self.phases
+        angles = oe.contract("...d,kd->...k", variables, self.frequencies) + self.phases
         pieces = []
         if self.include_bias:
             pieces.append(jnp.ones(angles.shape[:-1] + (1,), dtype=angles.dtype))

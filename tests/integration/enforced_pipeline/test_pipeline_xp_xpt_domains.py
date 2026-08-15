@@ -113,11 +113,11 @@ def test_xp_steady_state_explicit_anchors():
         xs=jnp.array([[0.0], [1.0]], dtype=float),
         ps=jnp.array([[0.0], [0.0]], dtype=float),
     )
-    out = eval_jit(batch).reshape((-1,))
+    out = jnp.asarray(eval_jit(batch)).reshape((-1,))
     assert jnp.allclose(out, jnp.array([1.0, 2.0]), atol=5e-2)
 
     batch = _paired_batch_xp(domain, xs=anchors["x"], ps=anchors["p"])
-    out = eval_jit(batch).reshape((-1,))
+    out = jnp.asarray(eval_jit(batch)).reshape((-1,))
     assert jnp.allclose(out, values, atol=1e-3)
 
 
@@ -205,7 +205,7 @@ def test_xpt_transient_explicit_anchors():
         ps=jnp.array([[0.0], [0.0]], dtype=float),
         ts=jnp.array([0.5, 0.5], dtype=float),
     )
-    out = eval_jit(batch).reshape((-1,))
+    out = jnp.asarray(eval_jit(batch)).reshape((-1,))
     assert jnp.allclose(out, jnp.array([1.0, 2.0]), atol=5e-2)
 
     batch = _paired_batch_xpt(
@@ -214,11 +214,11 @@ def test_xpt_transient_explicit_anchors():
         ps=jnp.array([[0.0]], dtype=float),
         ts=jnp.array([0.0], dtype=float),
     )
-    out = eval_jit(batch).reshape((-1,))
+    out = jnp.asarray(eval_jit(batch)).reshape((-1,))
     assert jnp.allclose(out, 3.0, atol=2e-2)
 
     batch = _paired_batch_xpt(domain, xs=anchors["x"], ps=anchors["p"], ts=anchors["t"])
-    out = eval_jit(batch).reshape((-1,))
+    out = jnp.asarray(eval_jit(batch)).reshape((-1,))
     assert jnp.allclose(out, values, atol=1e-3)
 
 

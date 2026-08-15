@@ -163,6 +163,7 @@ def test_cross_validation_refits_on_training_only_and_aggregates_structured_scor
     for evaluation in result.folds:
         expected = jnp.mean(batch.targets[evaluation.fold.train_indices])
         fitted = evaluation.fit_result.as_trainable()
+        assert isinstance(fitted, _ConstantModel)
         assert jnp.allclose(fitted.center, expected)
         assert not bool(
             jnp.any(

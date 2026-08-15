@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+from typing import Any
+
 import coordax as cx
 import jax.numpy as jnp
 import jax.random as jr
@@ -52,7 +54,7 @@ def test_pathfinder_recovers_correlated_gaussian_and_reports_density_ratios():
 
 def test_pathfinder_is_key_deterministic_and_supports_fresh_constrained_draws():
     problem, _, _ = _gaussian_problem()
-    settings = dict(
+    settings: dict[str, Any] = dict(
         key=jr.key(8),
         num_samples=32,
         num_elbo_samples=20,
@@ -110,6 +112,7 @@ def test_pathfinder_observation_prediction_preserves_draw_and_observation_axes()
         observation_dim="measurement",
         batch_size=3,
     )
+    assert isinstance(observations, phx.uq.PredictiveField)
 
     assert observations.samples.dims == (
         "__phydra_uq_draw",

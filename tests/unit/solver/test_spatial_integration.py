@@ -2,6 +2,7 @@ import coordax as cx
 import jax.numpy as jnp
 
 import phydrax as phx
+import phydrax._spectral as spectral
 
 
 def _tensor_grid():
@@ -27,12 +28,14 @@ def test_spatial_measure_preserves_separable_tensor_weights_and_output_axes():
     estimate = phx.integration.integrate(values, target)
 
     expected = jnp.sum(
-        discretization.quadrature_weights[..., None] * values.data,
+        discretization.quadrature_weights[..., None] * jnp.asarray(values.data),
         axis=(0, 1),
     )
-    assert tuple(target.weights) == ("x", "y")
+    weights = target.weights
+    assert not isinstance(weights, cx.Field)
+    assert tuple(weights) == ("x", "y")
     assert estimate.value.dims == ("channel",)
-    assert jnp.allclose(estimate.value.data, expected)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), expected)
     assert jnp.all(estimate.successful)
     assert estimate.error_estimate is None
 
@@ -56,7 +59,7 @@ def test_spatial_measure_exposes_physical_coordinates_to_callables():
     expected = jnp.sum(
         discretization.quadrature_weights * jnp.sum(coordinates**2, axis=-1)
     )
-    assert jnp.allclose(estimate.value.data, expected)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), expected)
 
 
 def test_normalized_spatial_measure_and_mask_use_physical_quadrature_mass():
@@ -75,7 +78,7 @@ def test_normalized_spatial_measure_and_mask_use_physical_quadrature_mass():
 
     estimate = phx.integration.integrate(values, target)
 
-    assert jnp.allclose(estimate.value.data, 3.0)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 3.0)
     assert jnp.allclose(
         estimate.diagnostics.target_mass,
         jnp.sum(jnp.where(mask, discretization.quadrature_weights, 0.0)),
@@ -83,7 +86,7 @@ def test_normalized_spatial_measure_and_mask_use_physical_quadrature_mass():
 
 
 def test_spectral_spatial_measure_reduces_precomputed_fields_without_coordinates():
-    plan = phx._spectral.SpectralDiscretization.from_eigenpairs(
+    plan = spectral.SpectralDiscretization.from_eigenpairs(
         jnp.asarray([0.0, 1.0, 4.0]),
         jnp.eye(3),
         jnp.asarray([0.2, 0.3, 0.5]),
@@ -96,4 +99,4 @@ def test_spectral_spatial_measure_reduces_precomputed_fields_without_coordinates
     estimate = phx.integration.integrate(values, target)
 
     assert target.points is None
-    assert jnp.allclose(estimate.value.data, 2.8)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 2.8)

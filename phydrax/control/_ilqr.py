@@ -16,6 +16,7 @@ import jax
 import jax.numpy as jnp
 import jax.scipy.linalg as jsp_linalg
 import numpy as np
+import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
@@ -147,7 +148,7 @@ class ILQRPolicy(AbstractControlParameterization):
         control_size = int(np.prod(self.control_shape))
         states = self.nominal_states[:-1].reshape((self.time_grid.num_steps, state_size))
         controls = self.nominal_controls.reshape((self.time_grid.num_steps, control_size))
-        intercept = controls - jnp.einsum("tij,tj->ti", self.feedback, states)
+        intercept = controls - oe.contract("tij,tj->ti", self.feedback, states)
         return intercept.reshape((self.time_grid.num_steps,) + self.control_shape)
 
     def evaluate(
@@ -197,7 +198,7 @@ class ILQRPolicy(AbstractControlParameterization):
         control_size = int(np.prod(self.control_shape))
         flat_delta = (states - nominal_states).reshape(tuple(query.shape) + (state_size,))
         flat_gains = gains.reshape(tuple(query.shape) + (control_size, state_size))
-        correction = jnp.einsum("...ij,...j->...i", flat_gains, flat_delta)
+        correction = oe.contract("...ij,...j->...i", flat_gains, flat_delta)
         return nominal_controls + correction.reshape(
             tuple(query.shape) + self.control_shape
         )

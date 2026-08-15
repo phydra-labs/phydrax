@@ -13,7 +13,15 @@ from jaxtyping import Array
 
 from ..._strict import StrictModule
 from .._plans import _certified_rank, LinearSolvePlan
-from .._policies import FGMRES, GeneralizedLSMR, GMRES, MINRES, PCG
+from .._policies import (
+    FGMRES,
+    GeneralizedLSMR,
+    GMRES,
+    MINRES,
+    PCG,
+    ProjectedPCG,
+)
+from .._preconditioners import AbstractPreconditioner
 from .._problems import LeastSquaresProblem
 from .._results import LinearSolveStatus
 from ..krylov._results import KrylovBreakdownStatus
@@ -21,6 +29,7 @@ from ..krylov._results import KrylovBreakdownStatus
 
 class NativeKrylovState(StrictModule):
     problem: Any
+    preconditioner: AbstractPreconditioner | None
 
 
 class NativeKrylovBackendOutput(StrictModule):
@@ -67,12 +76,20 @@ class _LSMRState(NamedTuple):
     breakdown: Array
 
 
-def prepare_native_krylov(problem: Any, plan: LinearSolvePlan, /) -> NativeKrylovState:
+def prepare_native_krylov(
+    problem: Any,
+    plan: LinearSolvePlan,
+    /,
+    *,
+    preconditioner: AbstractPreconditioner | None = None,
+) -> NativeKrylovState:
     if plan.backend != "native-krylov":
         raise ValueError("Native Krylov preparation requires a native-krylov plan.")
     if problem.operator.batch_shape:
         raise ValueError("Native Krylov preparation requires an unbatched operator.")
-    return NativeKrylovState(problem)
+    if (plan.preconditioner_plan is None) != (preconditioner is None):
+        raise ValueError("Prepared preconditioning must match the symbolic solve plan.")
+    return NativeKrylovState(problem, preconditioner)
 
 
 def solve_native_krylov(
@@ -103,13 +120,50 @@ def solve_native_krylov(
 
     def solve_column(target, guess):
         if method_name == PCG().name:
-            return _square_solve(problem, target, guess, plan, "pcg")
+            return _square_solve(
+                problem,
+                target,
+                guess,
+                plan,
+                "pcg",
+                preconditioner=state.preconditioner,
+            )
+        if method_name == ProjectedPCG().name:
+            return _square_solve(
+                problem,
+                target,
+                guess,
+                plan,
+                "projected-pcg",
+                preconditioner=state.preconditioner,
+            )
         if method_name == MINRES().name:
-            return _square_solve(problem, target, guess, plan, "minres")
+            return _square_solve(
+                problem,
+                target,
+                guess,
+                plan,
+                "minres",
+                preconditioner=state.preconditioner,
+            )
         if method_name == FGMRES().name:
-            return _square_solve(problem, target, guess, plan, "fgmres")
+            return _square_solve(
+                problem,
+                target,
+                guess,
+                plan,
+                "fgmres",
+                preconditioner=state.preconditioner,
+            )
         if method_name == GMRES().name:
-            return _square_solve(problem, target, guess, plan, "gmres")
+            return _square_solve(
+                problem,
+                target,
+                guess,
+                plan,
+                "gmres",
+                preconditioner=state.preconditioner,
+            )
         if method_name == GeneralizedLSMR().name:
             return _least_squares_solve(problem, target, guess, plan)
         raise ValueError(f"Unsupported native Krylov method {method_name!r}.")
@@ -177,26 +231,63 @@ def solve_native_krylov(
     )
     if plan.policy.differentiation.mode == "none":
         value = jax.lax.stop_gradient(value)
-    rank = _certified_rank(problem.operator)
+    if method_name == ProjectedPCG().name:
+        rank = (
+            problem.operator.source.size
+            - problem.nullspace_policy.certificate.right.dimension
+        ).astype(jnp.int32)
+    else:
+        certified_rank = _certified_rank(problem.operator)
+        rank = jnp.asarray(
+            -1 if certified_rank is None else certified_rank,
+            dtype=jnp.int32,
+        )
     return NativeKrylovBackendOutput(
         value=value,
         status=status,
         iterations=iterations,
         matvec_count=matvec_count,
         adjoint_matvec_count=adjoint_matvec_count,
-        rank=jnp.asarray(-1 if rank is None else rank, dtype=jnp.int32),
+        rank=rank,
         condition_estimate=condition,
         singular_values=None,
     )
 
 
-def _square_solve(problem, rhs, initial, plan, method: str, /):
+def _square_solve(
+    problem,
+    rhs,
+    initial,
+    plan,
+    method: str,
+    /,
+    *,
+    preconditioner: AbstractPreconditioner | None,
+):
     operator = problem.operator
     action = lambda vector: _action_coordinates(operator, vector)
     inner = lambda left, right: _space_inner(operator.source, left, right)
-    precondition = _preconditioner_action(plan, operator.source)
+    precondition = _preconditioner_action(preconditioner, operator.source)
     max_steps = plan.policy.tolerance.max_steps or max(1, operator.source.size)
     tolerance = plan.policy.tolerance
+    projected = method == "projected-pcg"
+    if projected:
+        nullspace = problem.nullspace_policy
+        certificate = nullspace.certificate
+        complement = lambda vector: vector - nullspace.right.project_coordinates(vector)
+        rhs = eqx.error_if(
+            complement(rhs),
+            (~certificate.valid) | (certificate.right.dimension < 1),
+            "ProjectedPCG requires a valid nonempty kernel certificate.",
+        )
+        initial = complement(initial)
+        unprojected_action = action
+        action = lambda vector: complement(unprojected_action(complement(vector)))
+        unprojected_precondition = precondition
+        precondition = lambda vector, iteration: complement(
+            unprojected_precondition(complement(vector), iteration)
+        )
+        method = "pcg"
 
     def run(selected_action, target):
         if method == "pcg":
@@ -261,7 +352,8 @@ def _square_solve(problem, rhs, initial, plan, method: str, /):
             jnp.asarray(0, dtype=jnp.int32),
         )
 
-    return run(action, rhs)
+    value, auxiliary = run(action, rhs)
+    return (complement(value) if projected else value), auxiliary
 
 
 def _pcg_raw(
@@ -964,14 +1056,14 @@ def _least_squares_actions(problem, rhs):
     return action, adjoint, target_inner, source_inner, right
 
 
-def _preconditioner_action(plan, space):
-    preconditioner = plan.policy.preconditioner
+def _preconditioner_action(preconditioner, space):
     if preconditioner is None:
         return lambda vector, iteration: vector
 
     def apply(vector, iteration):
-        del iteration
-        return space.flatten(preconditioner.apply(space.unflatten(vector)))
+        return space.flatten(
+            preconditioner.apply(space.unflatten(vector), iteration=iteration)
+        )
 
     return apply
 

@@ -5,6 +5,7 @@
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 import pytest
 
 from phydrax._model import AbstractArrayModel
@@ -41,7 +42,7 @@ class _LinearModel(AbstractArrayModel):
 
     def __call__(self, x, /, *, key=None):
         del key
-        return jnp.einsum("...f,f->...", jnp.asarray(x), self.coefficients)
+        return oe.contract("...f,f->...", jnp.asarray(x), self.coefficients)
 
 
 class _ImportanceRecipe(AbstractRecipe):

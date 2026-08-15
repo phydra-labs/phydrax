@@ -47,10 +47,10 @@ def test_fixed_integral_mean_and_density_have_distinct_measure_semantics():
         plan,
     )
 
-    assert jnp.allclose(integral.value.data, 1.0 / 3.0, atol=1e-12)
-    assert jnp.allclose(mean.value.data, 1.0 / 3.0, atol=1e-12)
-    assert jnp.allclose(unnormalized.value.data, 7.0 / 12.0, atol=1e-12)
-    assert jnp.allclose(normalized.value.data, 7.0 / 18.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(integral.value.data), 1.0 / 3.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(mean.value.data), 1.0 / 3.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(unnormalized.value.data), 7.0 / 12.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(normalized.value.data), 7.0 / 18.0, atol=1e-12)
     assert integral.error_estimate is None
 
 
@@ -66,8 +66,8 @@ def test_materialize_reduce_reuses_exactly_the_same_realization():
     second = phx.integration.reduce(quadratic, realization)
 
     assert first.num_evaluations == second.num_evaluations == 10
-    assert jnp.allclose(first.value.data, 0.5, atol=1e-12)
-    assert jnp.allclose(second.value.data, 1.0 / 3.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(first.value.data), 0.5, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(second.value.data), 1.0 / 3.0, atol=1e-12)
 
 
 def test_from_samples_attaches_target_measure_without_resampling():
@@ -88,7 +88,7 @@ def test_from_samples_attaches_target_measure_without_resampling():
     second = phx.integration.reduce(function, realization)
 
     assert first.value.data == second.value.data
-    assert jnp.allclose(first.value.data, 1.0 / 3.0, atol=2e-2)
+    assert jnp.allclose(jnp.asarray(first.value.data), 1.0 / 3.0, atol=2e-2)
 
 
 def test_domain_sampling_plan_materializes_a_reducible_realization():
@@ -109,7 +109,7 @@ def test_domain_sampling_plan_materializes_a_reducible_realization():
     estimate = phx.integration.reduce(function, realization)
 
     assert estimate.num_evaluations == 4096
-    assert jnp.allclose(estimate.value.data, 1.0 / 3.0, atol=2e-2)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 1.0 / 3.0, atol=2e-2)
 
 
 def test_domain_sampling_plan_requires_explicit_key_ownership():
@@ -135,7 +135,7 @@ def test_scalar_boundary_and_interior_factors_form_one_product_rule():
         phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(8)),
     )
 
-    assert jnp.allclose(estimate.value.data, 6.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 6.0, atol=1e-12)
     assert estimate.num_evaluations == 16
 
 
@@ -155,7 +155,7 @@ def test_scalar_boundary_product_preserves_probability_measure():
     )
 
     assert estimate.successful
-    assert jnp.allclose(estimate.value.data, 2.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 2.0, atol=1e-12)
     assert estimate.num_evaluations == 10
 
 
@@ -172,7 +172,7 @@ def test_sparse_grid_reports_level_difference_not_statistical_error():
     assert realization.batch.previous is not None
     previous_count = realization.batch.previous.weights.data.size
 
-    assert jnp.allclose(estimate.value.data, 0.2, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 0.2, atol=1e-12)
     assert estimate.error_kind == "sparse-grid-level-difference"
     assert estimate.diagnostics.level_difference is not None
     assert estimate.num_evaluations == current_count + previous_count == 14
@@ -195,7 +195,7 @@ def test_mapped_triangle_preserves_output_field_semantics():
     )
 
     assert estimate.value.dims == ()
-    assert jnp.allclose(estimate.value.data, 1.0 / 3.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 1.0 / 3.0, atol=1e-12)
 
 
 def test_output_pytrees_reduce_leafwise_with_structure_and_dtype_preserved():
@@ -215,9 +215,13 @@ def test_output_pytrees_reduce_leafwise_with_structure_and_dtype_preserved():
     estimate = phx.integration.reduce(integrands, realization)
 
     assert set(estimate.value) == {"complex", "moments"}
-    assert jnp.allclose(estimate.value["moments"][0].data, 0.5, atol=1e-12)
-    assert jnp.allclose(estimate.value["moments"][1].data, 1.0 / 3.0, atol=1e-12)
-    assert jnp.allclose(estimate.value["complex"].data, 0.5 + 1.0j, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(estimate.value["moments"][0].data), 0.5, atol=1e-12)
+    assert jnp.allclose(
+        jnp.asarray(estimate.value["moments"][1].data), 1.0 / 3.0, atol=1e-12
+    )
+    assert jnp.allclose(
+        jnp.asarray(estimate.value["complex"].data), 0.5 + 1.0j, atol=1e-12
+    )
     assert jnp.issubdtype(estimate.value["complex"].data.dtype, jnp.complexfloating)
     assert estimate.error_estimate is None
 
@@ -304,7 +308,7 @@ def test_fixed_density_rejects_zero_normalized_component_mass(use_sum):
         phx.integration.IntegrationStatus.INVALID_NORMALIZATION_MASS
     )
     assert not estimate.successful
-    assert not jnp.all(jnp.isfinite(estimate.value.data))
+    assert not jnp.all(jnp.isfinite(jnp.asarray(estimate.value.data)))
 
 
 def test_anisotropic_sparse_grid_preserves_constant_measure():
@@ -319,7 +323,7 @@ def test_anisotropic_sparse_grid_preserves_constant_measure():
     )
 
     assert estimate.successful
-    assert jnp.allclose(estimate.value.data, 1.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 1.0, atol=1e-12)
 
 
 def test_mapped_density_preserves_density_and_normalization_semantics():
@@ -338,7 +342,7 @@ def test_mapped_density_preserves_density_and_normalization_semantics():
     )
 
     assert estimate.successful
-    assert jnp.allclose(estimate.value.data, 5.0 / 9.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 5.0 / 9.0, atol=1e-12)
 
 
 def test_mapped_target_mass_rescales_the_physical_measure():
@@ -357,7 +361,7 @@ def test_mapped_target_mass_rescales_the_physical_measure():
     )
 
     assert estimate.successful
-    assert jnp.allclose(estimate.value.data, 2.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 2.0, atol=1e-12)
     assert jnp.allclose(estimate.diagnostics.target_mass, 2.0, atol=1e-12)
 
 
@@ -379,7 +383,7 @@ def test_mapped_finite_operand_product_overflow_is_nonfinite_integrand():
 
     assert estimate.status == int(phx.integration.IntegrationStatus.NONFINITE_INTEGRAND)
     assert not estimate.successful
-    assert not jnp.all(jnp.isfinite(estimate.value.data))
+    assert not jnp.all(jnp.isfinite(jnp.asarray(estimate.value.data)))
 
 
 def test_mapped_finite_normalized_quotient_overflow_is_nonfinite_integrand():
@@ -412,7 +416,7 @@ def test_mapped_finite_normalized_quotient_overflow_is_nonfinite_integrand():
 
     assert estimate.status == int(phx.integration.IntegrationStatus.NONFINITE_INTEGRAND)
     assert not estimate.successful
-    assert not jnp.all(jnp.isfinite(estimate.value.data))
+    assert not jnp.all(jnp.isfinite(jnp.asarray(estimate.value.data)))
 
 
 def test_fixed_probability_rejects_nonfinite_integrands():
@@ -458,7 +462,8 @@ def test_density_preserves_a_normalized_component_base_across_plans():
 
     assert all(estimate.successful for estimate in estimates)
     assert all(
-        jnp.allclose(estimate.value.data, 1.0, atol=1e-12) for estimate in estimates
+        jnp.allclose(jnp.asarray(estimate.value.data), 1.0, atol=1e-12)
+        for estimate in estimates
     )
 
 
@@ -483,8 +488,8 @@ def test_probability_component_uses_probability_measure():
 
     assert mass.successful
     assert mean.successful
-    assert jnp.allclose(mass.value.data, 1.0, atol=1e-12)
-    assert jnp.allclose(mean.value.data, 1.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(mass.value.data), 1.0, atol=1e-12)
+    assert jnp.allclose(jnp.asarray(mean.value.data), 1.0, atol=1e-12)
 
 
 def test_partial_axis_integration_does_not_apply_unreduced_geometry_weights():
@@ -512,7 +517,9 @@ def test_partial_axis_integration_does_not_apply_unreduced_geometry_weights():
     mask = points.coord_mask_by_label["x"].data
 
     assert estimate.successful
-    assert jnp.allclose(estimate.value.data, jnp.where(mask, 3.0, 0.0), atol=1e-12)
+    assert jnp.allclose(
+        jnp.asarray(estimate.value.data), jnp.where(mask, 3.0, 0.0), atol=1e-12
+    )
 
 
 def test_sparse_grid_rejects_boundary_component_selectors():

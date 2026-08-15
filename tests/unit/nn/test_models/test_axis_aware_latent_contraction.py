@@ -135,7 +135,7 @@ def test_latent_contraction_axis_batch_matches_product_grid_and_grad():
         batch.structure.axis_for("x"),
         batch.structure.axis_for("t"),
     )
-    assert jnp.allclose(out.data, expected)
+    assert jnp.allclose(jnp.asarray(out.data), expected)
 
     def total(scale):
         scaled = LatentContractionModel(

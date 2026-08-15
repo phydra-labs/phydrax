@@ -9,6 +9,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import opt_einsum as oe
 from jaxtyping import Array
 
 from .._batch import MLBatch, WeightPolicy
@@ -93,7 +94,7 @@ class MeanShift(AbstractRecipe):
             )
             mass = jnp.sum(kernel, axis=-2)
             proposed = (
-                jnp.einsum("...nk,...nf->...kf", kernel, x)
+                oe.contract("...nk,...nf->...kf", kernel, x)
                 / jnp.maximum(mass, jnp.finfo(w.dtype).tiny)[..., :, None]
             )
             proposed = jnp.where((mass > 0.0)[..., :, None], proposed, centers)

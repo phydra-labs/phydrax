@@ -1,5 +1,6 @@
 import jax.numpy as jnp
 import jax.random as jr
+import opt_einsum as oe
 import pytest
 
 import phydrax as phx
@@ -31,7 +32,7 @@ def test_piecewise_linear_lift_and_coarsening_satisfy_chens_identity():
     assert jnp.allclose(fine_terminal[0], coarse_terminal[0])
     assert jnp.allclose(fine_terminal[1], coarse_terminal[1])
     symmetric = 0.5 * (coarse.second_level + jnp.swapaxes(coarse.second_level, -1, -2))
-    expected = 0.5 * jnp.einsum(
+    expected = 0.5 * oe.contract(
         "...i,...j->...ij", coarse.first_level, coarse.first_level
     )
     assert jnp.allclose(symmetric, expected)

@@ -139,9 +139,11 @@ def run_benchmarks(
             absolute=1e-11,
             max_steps=100,
         ),
-        preconditioner=phx.linalg.DiagonalPreconditioner(
-            jnp.full((iterative_size,), 4.0),
-            space=iterative_space,
+        preconditioning=phx.linalg.PreconditioningPolicy(
+            phx.linalg.DiagonalPreconditioner(
+                jnp.full((iterative_size,), 4.0),
+                space=iterative_space,
+            )
         ),
     )
     iterative_prepared = phx.linalg.prepare(iterative_problem, iterative_policy)
@@ -322,9 +324,11 @@ def run_benchmarks(
             absolute=1e-11,
             max_steps=100,
         ),
-        preconditioner=phx.linalg.DiagonalPreconditioner(
-            hessian_diagonal,
-            space=sparse_space,
+        preconditioning=phx.linalg.PreconditioningPolicy(
+            phx.linalg.DiagonalPreconditioner(
+                hessian_diagonal,
+                space=sparse_space,
+            )
         ),
     )
     sparse_rhs = jnp.linspace(-1.0, 1.0, iterative_size)
@@ -342,6 +346,133 @@ def run_benchmarks(
     sparse_solve_residual = jnp.linalg.norm(
         hessian_operator.mv(sparse_solve_result.value) - sparse_rhs
     ) / jnp.linalg.norm(sparse_rhs)
+
+    block_size = next(size for size in (4, 3, 2, 1) if iterative_size % size == 0)
+    block_policy = phx.linalg.LinearSolvePolicy(
+        phx.linalg.PCG(),
+        tolerance=phx.linalg.TolerancePolicy(
+            relative=1e-9,
+            absolute=1e-11,
+            max_steps=100,
+        ),
+        differentiation=phx.linalg.DifferentiationPolicy("none"),
+        preconditioning=phx.linalg.PreconditioningPolicy(
+            phx.linalg.BlockJacobiPreconditionerBuilder(block_size)
+        ),
+    )
+    block_prepare_started = time.perf_counter()
+    block_prepared = phx.linalg.prepare(
+        phx.linalg.LinearSystem(hessian_operator),
+        block_policy,
+    )
+    _block(block_prepared)
+    block_prepare_ms = 1e3 * (time.perf_counter() - block_prepare_started)
+    block_solve = jax.jit(lambda targets: phx.linalg.solve(block_prepared, targets))
+    block_result, block_ms, block_std = _measure(
+        lambda: block_solve(sparse_rhs),
+        repeats=repeats,
+    )
+    block_residual = jnp.linalg.norm(
+        hessian_operator.mv(block_result.value) - sparse_rhs
+    ) / jnp.linalg.norm(sparse_rhs)
+    block_difference = jnp.max(jnp.abs(block_result.value - sparse_solve_result.value))
+
+    jacobian_operator = native_jacobian.operator(point)
+    normal_diagonal = phx.linalg.DiagonalLinearOperator(
+        jnp.ones((iterative_size,), dtype=jnp.float64)
+    )
+    normal_operator = (
+        phx.linalg.adjoint(jacobian_operator) @ jacobian_operator + normal_diagonal
+    )
+    assembly_started = time.perf_counter()
+    assembly_plan = phx.linalg.plan_sparse_assembly(normal_operator)
+    sparse_assembly_plan_ms = 1e3 * (time.perf_counter() - assembly_started)
+    assembly_started = time.perf_counter()
+    prepared_assembly = phx.linalg.prepare_sparse_assembly(
+        assembly_plan,
+        normal_operator,
+    )
+    _block(prepared_assembly)
+    sparse_assembly_prepare_ms = 1e3 * (time.perf_counter() - assembly_started)
+    changed_jacobian = native_jacobian.operator(point + 0.01)
+    changed_normal = (
+        phx.linalg.adjoint(changed_jacobian) @ changed_jacobian + normal_diagonal
+    )
+    assembly_started = time.perf_counter()
+    refreshed_assembly = phx.linalg.refresh_sparse_assembly(
+        prepared_assembly,
+        changed_normal,
+    )
+    _block(refreshed_assembly)
+    sparse_assembly_refresh_ms = 1e3 * (time.perf_counter() - assembly_started)
+    assembled_action = jax.jit(lambda vector: prepared_assembly.operator.mv(vector))
+    assembled_value, assembled_ms, assembled_std = _measure(
+        lambda: assembled_action(direction),
+        repeats=repeats,
+    )
+    composite_action = jax.jit(lambda vector: normal_operator.mv(vector))
+    composite_value, composite_ms, composite_std = _measure(
+        lambda: composite_action(direction),
+        repeats=repeats,
+    )
+    assembly_difference = jnp.max(jnp.abs(assembled_value - composite_value))
+
+    factor_size = max(2, min(16, int(iterative_size**0.5)))
+    factor_matrix = (
+        4.0 * jnp.eye(factor_size, dtype=jnp.float64)
+        - jnp.eye(factor_size, k=1, dtype=jnp.float64)
+        - jnp.eye(factor_size, k=-1, dtype=jnp.float64)
+    )
+    factor = phx.linalg.DenseLinearOperator(
+        factor_matrix,
+        properties=properties,
+    )
+    kronecker_sum = phx.linalg.KroneckerSumLinearOperator((factor, factor))
+    kronecker_rhs = jnp.linspace(
+        -1.0,
+        1.0,
+        factor_size * factor_size,
+        dtype=jnp.float64,
+    ).reshape((factor_size, factor_size))
+    structured_policy = phx.linalg.LinearSolvePolicy(phx.linalg.StructuredDirect())
+    structured_prepare_started = time.perf_counter()
+    structured_prepared = phx.linalg.prepare(
+        phx.linalg.LinearSystem(kronecker_sum),
+        structured_policy,
+    )
+    _block(structured_prepared)
+    structured_prepare_ms = 1e3 * (time.perf_counter() - structured_prepare_started)
+    structured_solve = jax.jit(
+        lambda targets: phx.linalg.solve(structured_prepared, targets)
+    )
+    structured_result, structured_ms, structured_std = _measure(
+        lambda: structured_solve(kronecker_rhs),
+        repeats=repeats,
+    )
+    dense_kronecker = phx.linalg.materialize(
+        kronecker_sum,
+        phx.linalg.MaterializationPolicy(
+            max_entries=factor_size**4,
+            max_bytes=factor_size**4 * jnp.dtype(jnp.float64).itemsize,
+        ),
+    )
+    dense_kronecker_solve = jax.jit(
+        lambda targets: jnp.linalg.solve(
+            dense_kronecker,
+            targets.reshape((-1,)),
+        ).reshape(targets.shape)
+    )
+    dense_kronecker_value, dense_kronecker_ms, dense_kronecker_std = _measure(
+        lambda: dense_kronecker_solve(kronecker_rhs),
+        repeats=repeats,
+    )
+    kronecker_difference = jnp.max(
+        jnp.abs(structured_result.value - dense_kronecker_value)
+    )
+    kronecker_residual = jnp.linalg.norm(
+        kronecker_sum.mv(structured_result.value) - kronecker_rhs
+    ) / jnp.linalg.norm(kronecker_rhs)
+    kronecker_action_cost = phx.linalg.estimate_operator_action_cost(kronecker_sum)
     sparse_maximum_difference = jnp.maximum(
         jacobian_maximum_difference,
         hessian_maximum_difference,
@@ -395,6 +526,47 @@ def run_benchmarks(
             "status": int(sparse_solve_result.status),
         },
     }
+    block_result_summary = {
+        "block_size": block_size,
+        "prepare_ms": block_prepare_ms,
+        "mean_ms": block_ms,
+        "standard_deviation_ms": block_std,
+        "iterations": int(block_result.diagnostics.iterations),
+        "matvec_count": int(block_result.diagnostics.matvec_count),
+        "relative_residual": float(block_residual),
+        "maximum_difference_from_diagonal_preconditioner": float(block_difference),
+        "status": int(block_result.status),
+    }
+    assembly_result = {
+        "shape": list(assembly_plan.shape),
+        "nnz": assembly_plan.nnz,
+        "plan_ms": sparse_assembly_plan_ms,
+        "prepare_ms": sparse_assembly_prepare_ms,
+        "refresh_ms": sparse_assembly_refresh_ms,
+        "assembled_action_mean_ms": assembled_ms,
+        "assembled_action_standard_deviation_ms": assembled_std,
+        "composite_action_mean_ms": composite_ms,
+        "composite_action_standard_deviation_ms": composite_std,
+        "maximum_action_difference": float(assembly_difference),
+        "output_bytes": assembly_plan.cost.output_bytes,
+        "recipe_bytes": assembly_plan.cost.recipe_bytes,
+    }
+    kronecker_result = {
+        "factor_size": factor_size,
+        "dimension": factor_size * factor_size,
+        "structured_prepare_ms": structured_prepare_ms,
+        "structured_solve_mean_ms": structured_ms,
+        "structured_solve_standard_deviation_ms": structured_std,
+        "dense_jax_mean_ms": dense_kronecker_ms,
+        "dense_jax_standard_deviation_ms": dense_kronecker_std,
+        "maximum_value_difference": float(kronecker_difference),
+        "relative_residual": float(kronecker_residual),
+        "status": int(structured_result.status),
+        "resident_operator_bytes": kronecker_action_cost.storage_bytes,
+        "action_workspace_bytes_per_rhs": (
+            kronecker_action_cost.apply_workspace_bytes_per_rhs
+        ),
+    }
 
     maximum_dense_difference = jnp.max(
         jnp.abs(jnp.stack((direct_value - cold_value, direct_value - prepared_value)))
@@ -431,6 +603,9 @@ def run_benchmarks(
             "status": int(iterative_result.status),
         },
         "sparse_derivatives": sparse_result,
+        "block_jacobi": block_result_summary,
+        "sparse_assembly": assembly_result,
+        "kronecker_sum": kronecker_result,
         "passed": bool(
             maximum_dense_difference < 1e-10
             and dense_residual < 1e-10
@@ -438,6 +613,13 @@ def run_benchmarks(
             and sparse_maximum_difference < 1e-10
             and sparse_solve_result.successful
             and sparse_solve_residual < 1e-8
+            and block_result.successful
+            and block_residual < 1e-8
+            and block_difference < 1e-8
+            and assembly_difference < 1e-10
+            and structured_result.successful
+            and kronecker_difference < 1e-10
+            and kronecker_residual < 1e-10
         ),
     }
 
