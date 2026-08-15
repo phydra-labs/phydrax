@@ -45,6 +45,11 @@ whose arrays can be inspected without reconstructing the model. This is distinct
 ONNX deployment: the archive preserves inference output and provenance, not an
 executable solver.
 
+Finite MAP candidate archives use kind `map_candidate_search`. They retain selected
+position/parameters when valid and always retain finite-space layout, signature,
+batching, method identity, exact evaluation counts, and explicit all-invalid evidence.
+The live posterior problem and search configuration object are listed as excluded.
+
 Bellman archives retain filtered modes, local covariances and information matrices,
 curvature diagnostics, optimizer results, status masks, and cumulative
 pseudo-log-likelihood. Rao--Blackwellized full-smoother archives retain nonlinear

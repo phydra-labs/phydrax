@@ -6,6 +6,7 @@
 
 from .._model import KFACAffineBlock, KFACLayoutProvider
 from ._differential_evolution import DifferentialEvolutionSearch
+from ._finite import FiniteAxis, FiniteExhaustiveSearch, FiniteProductSpace
 from ._kfac._config import kfac
 from ._quadratic_program import (
     QP_INFEASIBLE,
@@ -33,6 +34,9 @@ from ._riemannian import (
 __all__ = [
     "ArmijoLineSearch",
     "DifferentialEvolutionSearch",
+    "FiniteAxis",
+    "FiniteExhaustiveSearch",
+    "FiniteProductSpace",
     "KFACAffineBlock",
     "KFACLayoutProvider",
     "ParameterGeometry",

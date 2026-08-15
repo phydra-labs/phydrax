@@ -10,9 +10,10 @@ score gradients, matrix-free Fisher and Gauss--Newton actions, empirical directi
 and guarded information-design objectives.
 
 The same namespace also provides explicit exact and factorized posterior problems,
-bounded global and gradient-based local MAP optimization, BlackJAX NUTS/HMC,
-fixed-step SGLD/SGNHT with control variates, flow-assisted NUTS, Pathfinder, adaptive
-tempered SMC, dense and structured Laplace approximations, exact, sparse, and
+deterministic finite-candidate screening, bounded stochastic and gradient-based local
+MAP optimization, BlackJAX NUTS/HMC, fixed-step SGLD/SGNHT with control variates,
+flow-assisted NUTS, Pathfinder, adaptive tempered SMC, dense and structured Laplace
+approximations, exact, sparse, and
 correlated-output Gaussian-process model discrepancy, predictive fields, coherent
 stochastic models, likelihoods and proper scores, first-order covariance propagation,
 normalized errors-in-variables inference, conformal calibration, and uncertain-input

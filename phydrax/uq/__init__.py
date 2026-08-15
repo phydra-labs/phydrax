@@ -301,6 +301,7 @@ from ._linearized import (
     propagate_linearized_map,
 )
 from ._map import find_map, MAPConvergenceError, MAPResult
+from ._map_candidate_search import MAPCandidateSearchResult, search_map_candidates
 from ._map_search import MAPSearchResult, search_map
 from ._martingale import (
     jump_compensator_diagnostics,
@@ -1072,10 +1073,12 @@ __all__ = [
     "FixedResidualLikelihood",
     "GaussianProcessMarginalLikelihood",
     "find_map",
+    "MAPCandidateSearchResult",
     "MAPConvergenceError",
     "MAPResult",
     "MAPSearchResult",
     "search_map",
+    "search_map_candidates",
     "FlowNUTSConfig",
     "FlowNUTSResult",
     "MCMCChainWarmup",
