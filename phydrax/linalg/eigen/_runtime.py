@@ -755,7 +755,7 @@ def _metric_denominators(problem: EigenproblemLike, vectors: Array, /) -> Array:
     )(vectors, metric_vectors)
 
 
-@jax.custom_jvp
+@eqx.filter_custom_jvp
 def _mathematical_eigenvalues(
     problem: EigenproblemLike,
     values: Array,
@@ -767,7 +767,7 @@ def _mathematical_eigenvalues(
     return values
 
 
-@_mathematical_eigenvalues.defjvp
+@_mathematical_eigenvalues.def_jvp
 def _mathematical_eigenvalues_jvp(primals, tangents):
     problem, values, vectors, denominators = primals
     problem_tangent, _, _, _ = tangents
@@ -789,11 +789,13 @@ def _mathematical_eigenvalues_jvp(primals, tangents):
             contributions.append(jnp.real(numerator) / denominators[index])
         return jnp.stack(contributions)
 
-    _, value_tangent = jax.jvp(
+    _, value_tangent = eqx.filter_jvp(
         perturbation,
         (problem,),
         (problem_tangent,),
     )
+    if value_tangent is None:
+        value_tangent = jnp.zeros_like(values)
     return values, value_tangent
 
 

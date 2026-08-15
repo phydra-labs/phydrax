@@ -592,6 +592,13 @@ or unresolved clusters reject individual gradients rather than returning
 values. Algorithmic differentiation through locking, deflation, ordering, and
 restart decisions is not exposed.
 
+Closure-converted `FunctionLinearOperator` actions may capture differentiable
+arrays. Filtered derivative boundaries preserve their callable and static
+leaves, so singular-value, isolated-eigenvalue, projector, density-kernel, and
+smooth spectral-function derivatives support these matrix-free problems under
+JIT, JVP, and reverse mode. The same convergence, isolation, selection-gap, and
+domain requirements still apply.
+
 ### Prepared self-adjoint spectra and differentiable spectral calculus
 
 `prepare_self_adjoint_spectrum` materializes one bounded dense standard or

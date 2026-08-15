@@ -215,12 +215,7 @@ def shard_operator_targets(
 
 def replicate_operator_model(model, policy: OperatorShardingPolicy, /):
     """Replicate every array leaf of a model on the policy mesh."""
-    return jax.tree_util.tree_map(
-        lambda leaf: (
-            jax.device_put(leaf, policy.replicated) if eqx.is_array(leaf) else leaf
-        ),
-        model,
-    )
+    return eqx.filter_shard(model, policy.replicated)
 
 
 __all__ = [

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array
@@ -114,13 +115,20 @@ def perturbation_in_eigenbasis(
             )
         return operator_images, metric_images, _paired_metric(current_problem)
 
-    (_, _, _), (operator_tangent, metric_images_tangent, paired_metric_tangent) = (
-        jax.jvp(
-            operator_and_metric_images,
-            (problem,),
-            (problem_tangent,),
-        )
+    (
+        (operator_images, metric_images, paired_metric),
+        (operator_tangent, metric_images_tangent, paired_metric_tangent),
+    ) = eqx.filter_jvp(
+        operator_and_metric_images,
+        (problem,),
+        (problem_tangent,),
     )
+    if operator_tangent is None:
+        operator_tangent = jnp.zeros_like(operator_images)
+    if metric_images_tangent is None:
+        metric_images_tangent = jnp.zeros_like(metric_images)
+    if paired_metric_tangent is None:
+        paired_metric_tangent = jnp.zeros_like(paired_metric)
     space = problem.operator.source
     pairing = _coordinate_pairing_matrix(space)
     residual_tangent = (
@@ -177,7 +185,7 @@ def projector_derivative_residuals(
     return cross_residual, commutator_residual, tangent_residual
 
 
-@jax.custom_jvp
+@eqx.filter_custom_jvp
 def attach_projector_derivative(
     problem: EigenproblemLike,
     projector: Array,
@@ -192,7 +200,7 @@ def attach_projector_derivative(
     return projector
 
 
-@attach_projector_derivative.defjvp
+@attach_projector_derivative.def_jvp
 def _attach_projector_derivative_jvp(primals, tangents):
     problem, projector, eigenvalues, eigenvectors, inverse_basis, selected_mask = primals
     problem_tangent, _, _, _, _, _ = tangents
@@ -207,7 +215,7 @@ def _attach_projector_derivative_jvp(primals, tangents):
     return projector, derivative
 
 
-@jax.custom_jvp
+@eqx.filter_custom_jvp
 def attach_density_derivative(
     problem: EigenproblemLike,
     density: Array,
@@ -232,7 +240,7 @@ def attach_density_derivative(
     return density
 
 
-@attach_density_derivative.defjvp
+@attach_density_derivative.def_jvp
 def _attach_density_derivative_jvp(primals, tangents):
     (
         problem,

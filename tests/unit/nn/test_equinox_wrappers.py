@@ -6,6 +6,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 
+from phydrax.nn.layers import Dropout, inference_mode
 from phydrax.nn.models import EquinoxModel, EquinoxStructuredModel
 
 
@@ -65,3 +66,26 @@ def test_equinox_structured_model_value_layout_concatenates_tuple():
 
     y = model((jnp.array(1.0), jnp.array(2.0)))
     assert y.shape == ()
+
+
+def test_inference_mode_switches_mixed_phydrax_and_equinox_tree():
+    tree = {
+        "phydrax": Dropout(4, p=0.5, inference=False),
+        "equinox": eqx.nn.Dropout(p=0.5, inference=False),
+        "label": "fixed",
+    }
+
+    converted = inference_mode(tree)
+    restored = inference_mode(converted, False)
+    values = jnp.ones((4,))
+
+    assert converted is not tree
+    assert converted["phydrax"].inference
+    assert converted["equinox"].inference
+    assert not tree["phydrax"].inference
+    assert not tree["equinox"].inference
+    assert converted["label"] == "fixed"
+    assert jnp.array_equal(converted["phydrax"](values), values)
+    assert jnp.array_equal(converted["equinox"](values), values)
+    assert not restored["phydrax"].inference
+    assert not restored["equinox"].inference

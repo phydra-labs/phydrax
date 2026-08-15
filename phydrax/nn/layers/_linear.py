@@ -90,7 +90,10 @@ class Linear(_AbstractBaseModel):
         wkey, skey, bkey = jr.split(key, 3)
 
         # Base weights (V in RWF; full W otherwise)
-        self.weight = _initializer_dict[initializer](in_size_, out_size_, key=wkey)
+        self.weight = _initializer_dict[initializer](
+            wkey,
+            (out_size_, in_size_),
+        )
 
         # Random Weight Factorization setup
         if use_random_weight_factorization is not None and rwf is True:

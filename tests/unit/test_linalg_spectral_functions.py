@@ -52,6 +52,39 @@ def _generalized_problem(operator_matrix, metric_matrix):
     )
 
 
+def _matrix_free_standard_problem(matrix):
+    space = la.ArraySpace((matrix.shape[-1],), dtype=matrix.dtype)
+    return eigen.Eigenproblem(
+        la.FunctionLinearOperator(
+            lambda vector: matrix @ vector,
+            source=space,
+            target=space,
+            properties=_self_adjoint_properties(),
+        )
+    )
+
+
+def _matrix_free_generalized_problem(operator_matrix, metric_matrix):
+    space = la.ArraySpace(
+        (operator_matrix.shape[-1],),
+        dtype=operator_matrix.dtype,
+    )
+    return eigen.GeneralizedEigenproblem(
+        la.FunctionLinearOperator(
+            lambda vector: operator_matrix @ vector,
+            source=space,
+            target=space,
+            properties=_self_adjoint_properties(),
+        ),
+        la.FunctionLinearOperator(
+            lambda vector: metric_matrix @ vector,
+            source=space,
+            target=space,
+            properties=_self_adjoint_properties(positive_definite=True),
+        ),
+    )
+
+
 def test_polynomial_spectral_operator_matches_direct_matrix_polynomial_and_reuses_spectrum():
     matrix = jnp.asarray(
         [
@@ -141,7 +174,13 @@ def test_fermi_dirac_values_and_trainable_parameters_match_scalar_reference():
         eigen.FermiDiracSpectralFunction(jnp.asarray(0.0), jnp.asarray(0.0))
 
 
-def test_loewner_derivative_is_finite_at_repeated_eigenvalues_and_matches_finite_difference():
+@pytest.mark.parametrize(
+    "problem_factory",
+    (_standard_problem, _matrix_free_standard_problem),
+)
+def test_loewner_derivative_is_finite_at_repeated_eigenvalues_and_matches_finite_difference(
+    problem_factory,
+):
     matrix = jnp.asarray(
         [
             [1.0, 0.0, 0.1, 0.0],
@@ -164,7 +203,7 @@ def test_loewner_derivative_is_finite_at_repeated_eigenvalues_and_matches_finite
 
     def operator(current_matrix, current_coefficients):
         return eigen.self_adjoint_spectral_operator(
-            _standard_problem(current_matrix),
+            problem_factory(current_matrix),
             eigen.PolynomialSpectralFunction(current_coefficients),
             policy=policy,
         ).operator
@@ -216,7 +255,13 @@ def test_loewner_derivative_is_finite_at_repeated_eigenvalues_and_matches_finite
     )
 
 
-def test_generalized_loewner_derivative_and_density_include_metric_tangent():
+@pytest.mark.parametrize(
+    "problem_factory",
+    (_generalized_problem, _matrix_free_generalized_problem),
+)
+def test_generalized_loewner_derivative_and_density_include_metric_tangent(
+    problem_factory,
+):
     operator = jnp.diag(jnp.asarray([1.0, 4.0, 12.0, 28.0]))
     metric = jnp.diag(jnp.asarray([1.0, 2.0, 3.0, 4.0]))
     operator_tangent = jnp.asarray(
@@ -240,7 +285,7 @@ def test_generalized_loewner_derivative_and_density_include_metric_tangent():
 
     def outputs(current_operator, current_metric):
         result = eigen.self_adjoint_spectral_operator(
-            _generalized_problem(current_operator, current_metric),
+            problem_factory(current_operator, current_metric),
             function,
             policy=policy,
         )
