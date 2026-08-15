@@ -4,6 +4,10 @@
 
 """Optimal-control problems, dynamics, parameterizations, and diagnostics."""
 
+from ._candidate_search import (
+    ControlCandidateSearchResult,
+    search_control_candidates,
+)
 from ._constraints import (
     evaluate_sampled_feasibility,
     PathConstraint,
@@ -179,6 +183,7 @@ __all__ = [
     "CONTROL_SUCCESS",
     "ControlSystemType",
     "CoefficientBounds",
+    "ControlCandidateSearchResult",
     "ControlProblem",
     "ControlResult",
     "ControlSearchResult",
@@ -263,6 +268,7 @@ __all__ = [
     "linearize_differential_dynamics",
     "linearize_discrete_dynamics",
     "search_control",
+    "search_control_candidates",
     "solve_continuous_are",
     "solve_continuous_lyapunov",
     "solve_continuous_lyapunov_krylov",

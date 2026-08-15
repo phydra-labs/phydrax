@@ -234,7 +234,7 @@ SQP method with explicit Hessian and QP regularization, dense guard, defect audi
 failure statuses. Its nonlinear path constraints are still enforced only at the declared
 nodes; neither it nor `ControlProblem.evaluate` certifies feasibility between nodes.
 
-## B-spline controls and bounded global initialization
+## B-spline controls, finite catalogs, and bounded initialization
 
 Choose a piecewise-constant parameterization for discrete interval controls and direct
 local seeds, piecewise-linear controls for continuous nodal interpolation, or a B-spline
@@ -256,6 +256,29 @@ spline = phx.control.BSplineControlParameterization(
 lower = -2.0 * jnp.ones(spline.parameter_shape)
 upper = 2.0 * jnp.ones(spline.parameter_shape)
 initial = jnp.zeros(spline.parameter_shape)
+
+# Exact selection when the complete coefficient choices are known.
+catalog = phx.optim.FiniteProductSpace(
+    phx.optim.FiniteAxis(
+        jnp.stack(
+            (
+                initial,
+                0.5 * jnp.ones(spline.parameter_shape),
+                -0.5 * jnp.ones(spline.parameter_shape),
+            )
+        )
+    )
+)
+catalog_seed = phx.control.search_control_candidates(
+    problem,
+    spline,
+    catalog,
+    search=phx.optim.FiniteExhaustiveSearch(batch_size=2),
+)
+if not catalog_seed.valid:
+    raise RuntimeError(catalog_seed.termination_reason)
+
+# Differential evolution instead searches a bounded continuous coefficient box.
 
 search = phx.optim.DifferentialEvolutionSearch(
     16,
@@ -300,12 +323,18 @@ refined = spline.refine(
 local_from_global = phx.control.solve_ilqr(problem, global_seed.controls)
 ```
 
+`catalog_seed` certifies the exact minimum only among the three declared coefficient
+arrays. It records three search evaluations and one separate winner reconstruction;
+it does not retain three trajectories. Inspect its invalid count, selected flat index,
+candidate signature, and `total_control_evaluations`.
+
 Inspect `refined.transfer.method`, `condition_estimate`, and
 `projection_error_bound`; an L2 transfer is an approximation, while the nested,
-equal-degree refinement above is exact. The bounded search records its key, design
-signature, population, best-objective history, invalid count, termination reason, and all
-problem and approximation IDs. `population_converged` measures population dispersion.
-Neither it nor the best objective proves global optimality or basin coverage.
+equal-degree refinement above is exact. The bounded stochastic search records its key,
+design signature, population, best-objective history, invalid count, termination
+reason, and all problem and approximation IDs. `population_converged` measures
+population dispersion. Neither it nor the best objective proves global optimality or
+basin coverage.
 
 ## Failure and certification rules
 
@@ -320,5 +349,5 @@ Neither it nor the best objective proves global optimality or basin coverage.
 - Dense Lyapunov and Gramian routines default to `max_dimension=128`; dense QP-based
   routines default to `max_dense_dimension=512`. Use matrix-free actions or a different
   formulation rather than bypassing a guard accidentally.
-- Bounded differential evolution is an initializer or best-found finite search, not a
-  globally optimal control certificate.
+- Bounded differential evolution is a stochastic initializer or best-found bounded
+  search, not a globally optimal control certificate.

@@ -1,9 +1,10 @@
 # Control
 
 `phydrax.control` provides finite-horizon control problem contracts, linear-system
-analysis, and local or bounded-search solvers. The common contract keeps physical time,
-case axes, validity, status, and numerical provenance explicit. It does not clip inputs,
-repair infeasible iterates, change methods after failure, or hide a fallback.
+analysis, and local, exact finite-catalog, or bounded stochastic solvers. The common
+contract keeps physical time, case axes, validity, status, and numerical provenance
+explicit. It does not clip inputs, repair infeasible iterates, change methods after
+failure, or hide a fallback.
 
 ## Choosing a path
 
@@ -16,7 +17,8 @@ repair infeasible iterates, change methods after failure, or hide a fallback.
 | Receding-horizon affine control | `solve_receding_horizon_mpc` | Re-solves canonical QPs and records every subproblem result and exact state handoff. |
 | One unconstrained nonlinear case | `solve_ilqr` | iLQR with a fixed requested regularization and explicit line-search or curvature failure. |
 | One constrained nonlinear case | `solve_multiple_shooting` | Dense SQP with independent state nodes, exact defect accounting, and sampled path constraints. |
-| A bounded initializer | `search_control` | Finite differential-evolution search; returns the best candidate found, never a global-optimality claim. |
+| An explicit finite control catalog | `search_control_candidates` | Exact minimum over the declared coefficient arrays; retains invalidity, index, signature, and winner-reconstruction evidence. |
+| A bounded stochastic initializer | `search_control` | Differential evolution over a continuous coefficient box; returns the best candidate found, never a global-optimality claim. |
 
 ## Shared axes, callbacks, and provenance
 
@@ -411,7 +413,58 @@ constraints remain sample-node checks and do not certify feasibility between nod
 
 ::: phydrax.control.solve_multiple_shooting
 
-## Bounded global initialization
+## Exact finite control catalogs
+
+`search_control_candidates` evaluates an explicit catalog of complete coefficient
+arrays. The candidate point shape must be exactly
+`case_shape + parameterization.parameter_shape`. Use one correlated `FiniteAxis` so
+that each catalog row remains one complete coefficient array; the adapter deliberately
+rejects a Cartesian product of individual coefficient entries.
+
+```python
+catalog = phx.optim.FiniteProductSpace(
+    phx.optim.FiniteAxis(
+        jnp.asarray(
+            [
+                [[0.0], [0.0]],
+                [[0.5], [0.5]],
+                [[1.0], [0.0]],
+            ]
+        )
+    )
+)
+selected = phx.control.search_control_candidates(
+    problem,
+    parameterization,
+    catalog,
+    search=phx.optim.FiniteExhaustiveSearch(batch_size=2),
+)
+```
+
+Each search evaluation performs the ordinary rollout, sampled cost, and sampled
+feasibility contracts. The scalar catalog score is the sum of `sampled_loss.total`
+across all cases. A candidate is selectable only when every case has a successful
+rollout, every sampled constraint is feasible, and the total score is finite.
+
+The search kernel retains only objective, validity, and index evidence. When a valid
+winner exists, the adapter reconstructs that coefficient array and performs one
+additional full evaluation to return its native `ControlResult` and
+`ControlTrajectory`. Consequently, `objective_evaluations == candidate_count`,
+`winner_evaluations` is one or zero, and `total_control_evaluations` is their sum.
+When all candidates are invalid, no coefficients, evaluation, trajectory, or control
+ID are fabricated; accessing `trajectory` or `controls` raises.
+
+The guarantee is exact only over the declared catalog. Sampled feasibility remains a
+sample-site statement, and a winning piecewise or spline parameterization does not
+certify behavior between those sites.
+
+::: phydrax.control.ControlCandidateSearchResult
+
+---
+
+::: phydrax.control.search_control_candidates
+
+## Bounded stochastic initialization
 
 `search_control` combines a `ControlProblem`, any public control parameterization, and a
 `phydrax.optim.DifferentialEvolutionSearch`. `CoefficientBounds` is the public pair

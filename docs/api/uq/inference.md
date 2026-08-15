@@ -455,11 +455,79 @@ The exported composition typing contracts are
 
 ## MAP estimation
 
-`search_map` performs bounded stochastic global initialization in unconstrained
-posterior-position coordinates. It evaluates the complete
-`PosteriorProblem.negative_log_density`, preserves the population and exact
-accounting, and never interprets that population as posterior samples. Local
+`search_map_candidates` performs deterministic screening over an explicitly declared
+finite set of unconstrained posterior positions. Candidate points must exactly match
+`PosteriorProblem.initial_position` in PyTree structure, trailing leaf shapes, and leaf
+dtypes. One `FiniteAxis` may hold complete correlated positions; multiple axes form a
+Cartesian product of independently chosen position blocks.
+
+!!! example
+    ```python
+    import jax.numpy as jnp
+    import phydrax as phx
+
+
+    parameter_space = phx.uq.ParameterSpace(
+        jnp.zeros((2,)),
+        log_prior=lambda _: jnp.zeros(()),
+    )
+    problem = phx.uq.PosteriorProblem(
+        parameter_space,
+        lambda value: -jnp.sum((value - jnp.asarray([1.2, 2.2])) ** 2),
+    )
+    candidates = phx.optim.FiniteProductSpace(
+        phx.optim.FiniteAxis(
+            jnp.asarray(
+                [
+                    [-2.0, -2.0],
+                    [1.0, 2.0],
+                    [3.0, 3.0],
+                ]
+            )
+        )
+    )
+
+    screened = phx.uq.search_map_candidates(
+        problem,
+        candidates,
+        search=phx.optim.FiniteExhaustiveSearch(batch_size=2),
+    )
+    if not screened.valid:
+        raise RuntimeError(screened.termination_reason)
+
+    # Optional continuous local refinement; a separate numerical claim.
+    local = phx.uq.find_map(problem, screened.position)
+    ```
+
+Each candidate is evaluated once with the complete
+`PosteriorProblem.negative_log_density`, including likelihood, prior, bijector
+Jacobian, and any parameter-space transformation. The selected constrained
+`parameters` are reconstructed only after the finite reduction. A valid result reports
+the exact finite minimum, flat and per-axis indices, deterministic axis paths,
+candidate signature, and exact attempted/valid/invalid counts. If every candidate is
+invalid or nonfinite, `valid=False`, `position=None`, `parameters=None`, indices are
+`-1`, and objective and log density are `NaN`; no arbitrary candidate is returned.
+
+Selection is nondifferentiable and the winning position is detached. Use the finite
+result as a deterministic coarse initializer only when a subsequent call to `find_map`
+is required. The finite guarantee does not extend to positions outside the catalog.
+`export_result` stores both valid and all-invalid candidate-search evidence as
+`map_candidate_search`, excluding the live `PosteriorProblem` and search object while
+retaining method, layout, signature, and count provenance.
+
+`search_map` remains the bounded stochastic differential-evolution initializer in
+unconstrained posterior-position coordinates. It preserves the population and exact
+accounting, but never interprets that population as posterior samples. Local
 stationarity remains a separate `find_map` phase.
+
+::: phydrax.uq.search_map_candidates
+
+---
+
+::: phydrax.uq.MAPCandidateSearchResult
+
+---
+
 
 ::: phydrax.uq.search_map
 

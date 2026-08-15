@@ -19,8 +19,9 @@ Top-level package namespace. Most functionality lives in subpackages:
   factorizations, and private Lineax iterative backends
 - `phydrax.special`: JAX-native named special functions and integral primitives
 - `phydrax.enforcement`: exact condition transforms and enforcement programs
-- `phydrax.optim`: structured residual KFAC and domain-neutral optimization
-  configurations consumed by bounded geometry and posterior workflows
+- `phydrax.optim`: finite candidate products and exhaustive search, structured
+  residual KFAC, and domain-neutral optimization configurations consumed by
+  geometry, posterior, and control workflows
 - `phydrax.nn`: neural network components and structured models
 - `phydrax.ml`: case-aware native machine-learning batches, fitted models,
   workflows, model selection, metrics, inspection, and artifact interoperability

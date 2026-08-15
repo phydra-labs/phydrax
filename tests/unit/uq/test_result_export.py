@@ -171,6 +171,46 @@ def test_portable_result_archives_cover_declared_uq_result_types(tmp_path):
     ]
 
 
+def test_map_candidate_search_archives_preserve_valid_and_invalid_evidence(tmp_path):
+    problem = _problem()
+    candidates = phx.optim.FiniteProductSpace(
+        {
+            "offset": phx.optim.FiniteAxis(jnp.asarray([-1.0, 0.0, 1.0])),
+            "slope": phx.optim.FiniteAxis(jnp.asarray([[-1.0, -1.0], [-0.3, 0.8]])),
+        }
+    )
+    valid = phx.uq.search_map_candidates(
+        problem,
+        candidates,
+        search=phx.optim.FiniteExhaustiveSearch(4),
+    )
+    invalid_problem = phx.uq.PosteriorProblem(
+        problem.parameter_space,
+        lambda _: jnp.asarray(jnp.nan),
+    )
+    invalid = phx.uq.search_map_candidates(invalid_problem, candidates)
+
+    valid_archive = _assert_archive_matches_adapter(
+        valid,
+        tmp_path / "valid-map-candidate.phxuq",
+    )
+    invalid_archive = _assert_archive_matches_adapter(
+        invalid,
+        tmp_path / "invalid-map-candidate.phxuq",
+    )
+
+    assert valid_archive.kind == "map_candidate_search"
+    assert valid_archive.excluded == ("problem", "search")
+    assert set(valid_archive.trees) == {"position", "parameters"}
+    assert valid_archive.metadata["candidate_signature"] == candidates.signature()
+    assert valid_archive.metadata["search"] == {"batch_size": 4}
+    assert invalid_archive.kind == "map_candidate_search"
+    assert not invalid_archive.metadata["valid"]
+    assert invalid_archive.metadata["termination_reason"] == "no_finite_candidates"
+    assert not invalid_archive.trees
+    assert invalid_archive.excluded == ("problem", "search")
+
+
 def test_arviz_adapter_preserves_chain_draw_parameter_and_sampler_dimensions():
     problem = _problem()
     result = phx.uq.sample_nuts(

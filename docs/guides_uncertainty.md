@@ -1082,10 +1082,46 @@ domain-specific query arguments.
 
 ## MAP estimation
 
-### Bounded global initialization
+### Deterministic finite screening
 
-`search_map` minimizes `PosteriorProblem.negative_log_density(...)` over an explicit
-finite box when the posterior is multimodal, nonsmooth, or poorly served by one local
+Use `search_map_candidates` when prior scientific knowledge supplies a finite set of
+complete modes, phase/model cases, or low-dimensional coordinate choices:
+
+```python
+candidate_space = phx.optim.FiniteProductSpace(
+    phx.optim.FiniteAxis(
+        jnp.asarray(
+            [
+                [-2.0, -1.0],
+                [0.5, 1.5],
+                [2.0, 3.0],
+            ]
+        )
+    )
+)
+screened_mode = phx.uq.search_map_candidates(
+    posterior,
+    candidate_space,
+    search=phx.optim.FiniteExhaustiveSearch(batch_size=64),
+)
+```
+
+Candidate values are unconstrained posterior positions. A correlated axis chooses a
+complete position jointly; separate axes produce a Cartesian product. The adapter
+evaluates the full posterior objective once per candidate and returns deterministic
+first-index ties, exact invalid counts, product indices, and a content-sensitive
+candidate signature. It returns no position when every candidate is invalid. Its
+claim is exact only over the declared finite set, not over the surrounding continuous
+parameter space.
+
+Pass `screened_mode.position` explicitly to `find_map` for continuous local
+refinement. This second phase can improve the objective, but changes the numerical
+claim from exact finite selection to local stationarity.
+
+### Bounded stochastic initialization
+
+`search_map` minimizes `PosteriorProblem.negative_log_density(...)` over a bounded
+continuous box when the posterior is multimodal, nonsmooth, or poorly served by one local
 initialization. The box is defined in the `ParameterSpace`'s unconstrained position
 coordinates, not in physical parameter coordinates. Lower and upper bounds must be
 PyTrees matching `space.initial`; a scalar bound may broadcast only within its
@@ -1138,9 +1174,9 @@ mode = phx.uq.find_map(
 )
 ```
 
-`search_map` never runs L-BFGS or Laplace implicitly. This keeps the global
-population criterion, local gradient criterion, extra evaluations, and failure modes
-separate and observable.
+`search_map_candidates` and `search_map` never run L-BFGS or Laplace implicitly.
+This keeps finite selection or the global population criterion, the local gradient
+criterion, extra evaluations, and failure modes separate and observable.
 
 `MAPResult.compilation_seconds`, `execution_seconds`, and `mean_step_seconds`
 separate compiler cost from numerical optimization. Repeated problems reuse the
@@ -1615,7 +1651,10 @@ portable = phx.uq.read_result_archive(result_path)
 Both are ZIP containers with JSON metadata, individual NumPy array members,
 SHA-256 checksums, atomic replacement, and no pickle or Python object arrays.
 Portable archives export representable result arrays and explicitly list excluded
-live callables. `MAPSearchResult` archives retain the reconstructed best position,
+live callables. `MAPCandidateSearchResult` archives retain the selected position,
+parameters, objective, exact finite-set indices and counts, batching, method identity,
+and candidate signature; all-invalid archives retain the failure evidence without
+inventing a winner. `MAPSearchResult` archives retain the reconstructed best position,
 full final population, resolved bounds, deterministic key, convergence history,
 search configuration, design provenance, and exact evaluation accounting.
 `FlowNUTSResult` archives include frozen flow parameters, loss histories, local and
@@ -1967,21 +2006,23 @@ returning every exact failure rather than a generic warning.
 
 Phydrax currently recommends:
 
-1. NUTS for low-dimensional, effectively unimodal physical inverse problems.
-2. Flow-assisted NUTS for represented multimodality or nonlinear global geometry at
+1. Exact finite candidate screening for known low-dimensional mode catalogs, followed
+   by explicit local MAP refinement when continuous stationarity is required.
+2. NUTS for low-dimensional, effectively unimodal physical inverse problems.
+3. Flow-assisted NUTS for represented multimodality or nonlinear global geometry at
    moderate dimension; initialize chains across known modes and inspect exact global
    acceptance and ordinary rank diagnostics.
-3. Exact dense Laplace as the small-problem Gaussian reference.
-4. Whitened GGN, diagonal, or low-rank Laplax for selected larger subspaces.
-5. EKI for derivative-free physical or reduced-coordinate inverse problems,
+4. Exact dense Laplace as the small-problem Gaussian reference.
+5. Whitened GGN, diagonal, or low-rank Laplax for selected larger subspaces.
+6. EKI for derivative-free physical or reduced-coordinate inverse problems,
    benchmarked against NUTS or Laplace where feasible.
-6. Pathfinder for rapid local diagnostics, always benchmarked against NUTS.
-7. Tempered SMC for low-dimensional mode discovery and evidence estimation.
-8. Fixed-step SGLD, optionally with an exact-center control variate, for large
+7. Pathfinder for rapid local diagnostics, always benchmarked against NUTS.
+8. Tempered SMC for low-dimensional mode discovery and evidence estimation.
+9. Fixed-step SGLD, optionally with an exact-center control variate, for large
    uniformly factorized likelihoods after step-halving and exact-reference checks.
    Use SGNHT only when its momentum/thermostat dynamics improve measured mixing.
-9. Deep ensembles for independently trained neural-model epistemic variation.
-10. Exact GP discrepancy for moderate scalar data; explicit ICM/LMC for correlated
+10. Deep ensembles for independently trained neural-model epistemic variation.
+11. Exact GP discrepancy for moderate scalar data; explicit ICM/LMC for correlated
     heterotopic outputs; functional GP blocks for value/operator data; exact
     finite-feature factors when the covariance has declared finite rank; and FITC
     only when dense scaling fails a measured workload.

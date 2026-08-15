@@ -11,6 +11,98 @@ Phydrax does not mirror upstream Optax, Evosax, or Optimistix APIs. Import those
 from their native packages. A workflow accepts an external optimizer only when it has an
 explicit adapter for that optimizer family.
 
+## Finite exhaustive search
+
+`FiniteAxis` and `FiniteProductSpace` represent an explicit, array-backed finite
+candidate set. A `FiniteAxis` stores one correlated catalog: every array leaf has the
+same nonempty leading candidate dimension, while all trailing dimensions remain one
+candidate payload. Use separate axes only for choices that should form a Cartesian
+product.
+
+!!! example
+    ```python
+    import jax.numpy as jnp
+    import phydrax as phx
+
+
+    # One correlated catalog of complete two-coefficient choices.
+    coefficient_catalog = phx.optim.FiniteProductSpace(
+        phx.optim.FiniteAxis(
+            jnp.asarray(
+                [
+                    [0.0, 0.0],
+                    [0.5, 0.5],
+                    [1.0, 0.0],
+                ]
+            )
+        )
+    )
+
+    # Two independent coordinate catalogs; this space has 3 × 2 candidates.
+    coordinate_product = phx.optim.FiniteProductSpace(
+        {
+            "offset": phx.optim.FiniteAxis(jnp.asarray([-1.0, 0.0, 1.0])),
+            "slope": phx.optim.FiniteAxis(jnp.asarray([0.0, 2.0])),
+        }
+    )
+    assert coordinate_product.product_shape == (3, 2)
+    assert coordinate_product.size == 6
+    ```
+
+The product is lazy: Phydrax stores the axis arrays, not a materialized Cartesian
+candidate tensor. Candidate order follows deterministic JAX PyTree path order and the
+last axis varies fastest. `ravel_index`, `unravel_index`, and `take` use this same
+row-major convention. Checked public indexing rejects negative and oversized indices;
+it never clips them. `signature()` hashes axis paths, grouping, shapes, dtypes, and
+candidate bytes for content-sensitive provenance.
+
+`FiniteExhaustiveSearch` configures exact enumeration for domain adapters such as
+`phydrax.uq.search_map_candidates` and
+`phydrax.control.search_control_candidates`. `batch_size=None` uses scalar streaming.
+A positive batch size evaluates complete batches plus one exact-size remainder, so no
+candidate is padded, repeated, or omitted. Every declared candidate is evaluated
+exactly once. Invalid or nonfinite values are excluded before reduction, and equal
+finite values select the lowest flat index deterministically.
+
+The guarantee is the minimum over the declared finite set. It is not a certificate of
+continuous global optimality, an integration method, or a marginalization rule.
+Selection is discrete and gradients are stopped through the selected index and
+reconstructed candidate. The current execution kernel is single-device; it makes no
+GPU, TPU, or distributed-sharding scaling claim.
+
+Factorized storage avoids materializing a candidate landscape, but it cannot remove
+Cartesian growth. If axis lengths are `n₁, …, nₖ`, the evaluator still runs
+`n₁ × ⋯ × nₖ` times. Batch size trades transient candidate/output storage for
+throughput. Candidate payloads remain correlated within an axis; split them only when
+the full cross product is intended.
+
+Run the factorized-streaming and bounded dense-oracle benchmark with:
+
+```bash
+python tools/finite_search_benchmarks.py \
+    --axes 3 --axis-length 16 --batch-size 64
+```
+
+The JSON report records candidate cardinality, stored and estimated dense bytes,
+compilation and steady execution time, compiler-reported memory, exact evaluation
+counts, and selected value/index agreement. Dense materialization is skipped when its
+estimate exceeds `--max-dense-bytes`.
+
+The array-backed lazy-product pattern was independently implemented after reviewing
+[Brutax](https://github.com/michael-0brien/brutax) as design inspiration. Phydrax does
+not depend on Brutax; its reducer, validity, evidence, provenance, domain adapters, and
+result contracts are Phydrax-owned.
+
+::: phydrax.optim.FiniteAxis
+
+---
+
+::: phydrax.optim.FiniteProductSpace
+
+---
+
+::: phydrax.optim.FiniteExhaustiveSearch
+
 ## Riemannian optimization
 
 `ParameterGeometry` binds complete trainable PyTree leaves to explicit

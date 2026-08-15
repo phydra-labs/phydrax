@@ -36,6 +36,7 @@ from ._kalman import KalmanFilterResult, KalmanSmootherResult
 from ._laplace import LaplaceResult
 from ._laplax_backend import StructuredLaplaceResult
 from ._map import MAPResult
+from ._map_candidate_search import MAPCandidateSearchResult
 from ._map_search import MAPSearchResult
 from ._mcmc import MCMCResult
 from ._particle import (
@@ -872,6 +873,31 @@ def _adapt_result(result, arrays, fields, trees):
         for name in fields:
             metadata.pop(name, None)
         return "mcmc_convergence_report", metadata, ()
+
+    if isinstance(result, MAPCandidateSearchResult):
+        if result.position is not None:
+            _put_tree(trees, arrays, "position", result.position)
+        if result.parameters is not None:
+            _put_tree(trees, arrays, "parameters", result.parameters)
+        _put_field(fields, arrays, "objective", result.objective)
+        _put_field(fields, arrays, "log_density", result.log_density)
+        metadata = {
+            "valid": result.valid,
+            "termination_reason": result.termination_reason,
+            "flat_index": result.flat_index,
+            "product_index": result.product_index,
+            "axis_paths": result.axis_paths,
+            "product_shape": result.product_shape,
+            "candidate_count": result.candidate_count,
+            "objective_evaluations": result.objective_evaluations,
+            "valid_evaluations": result.valid_evaluations,
+            "invalid_evaluations": result.invalid_evaluations,
+            "effective_batch_size": result.effective_batch_size,
+            "candidate_signature": result.candidate_signature,
+            "method_id": result.method_id,
+            "search": {"batch_size": result.search.batch_size},
+        }
+        return "map_candidate_search", metadata, ("problem", "search")
 
     if isinstance(result, MAPSearchResult):
         _put_tree(trees, arrays, "position", result.position)
