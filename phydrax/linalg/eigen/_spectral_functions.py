@@ -465,7 +465,7 @@ def self_adjoint_spectral_operator(
     )
 
 
-@jax.custom_jvp
+@eqx.filter_custom_jvp
 def _attach_spectral_operator_derivative(
     problem,
     function,
@@ -478,7 +478,7 @@ def _attach_spectral_operator_derivative(
     return operator
 
 
-@_attach_spectral_operator_derivative.defjvp
+@_attach_spectral_operator_derivative.def_jvp
 def _spectral_operator_jvp(primals, tangents):
     problem, function, operator, eigenvalues, eigenvectors, inverse_basis = primals
     problem_tangent, function_tangent, _, _, _, _ = tangents
@@ -494,7 +494,7 @@ def _spectral_operator_jvp(primals, tangents):
     return operator, derivative
 
 
-@jax.custom_jvp
+@eqx.filter_custom_jvp
 def _attach_spectral_density_derivative(
     problem,
     function,
@@ -517,7 +517,7 @@ def _attach_spectral_density_derivative(
     return density
 
 
-@_attach_spectral_density_derivative.defjvp
+@_attach_spectral_density_derivative.def_jvp
 def _spectral_density_jvp(primals, tangents):
     (
         problem,
@@ -569,11 +569,13 @@ def _spectral_operator_tangent(
     left = eigenvalues[..., :, None]
     right = eigenvalues[..., None, :]
     loewner = function.divided_difference(left, right).astype(eigenvectors.dtype)
-    _, parameter_tangent = jax.jvp(
+    function_values, parameter_tangent = eqx.filter_jvp(
         lambda current: current.value(eigenvalues),
         (function,),
         (function_tangent,),
     )
+    if parameter_tangent is None:
+        parameter_tangent = jnp.zeros_like(function_values)
     derivative_in_basis = (
         loewner * perturbation
         + parameter_tangent.astype(eigenvectors.dtype)[..., None, :]

@@ -180,6 +180,34 @@ def test_isolated_eigenvalue_gradient_uses_mathematical_derivative():
     assert jnp.allclose(jax.grad(smallest_eigenvalue)(1.25), 1.0, atol=1e-8)
 
 
+def test_matrix_free_eigenvalue_gradient_supports_closure_converted_operator():
+    properties = _self_adjoint_properties()
+    policy = eigen.EigenSolvePolicy(
+        eigen.LOBPCG(block_dimension=2),
+        count=1,
+        initial_basis=jnp.eye(2),
+        differentiation="eigenvalues",
+    )
+
+    def smallest_eigenvalue(coefficient):
+        diagonal = jnp.stack((coefficient, jnp.asarray(3.0)))
+        space = la.ArraySpace((2,), dtype=diagonal.dtype)
+        operator = la.FunctionLinearOperator(
+            lambda vector: diagonal * vector,
+            source=space,
+            target=space,
+            properties=properties,
+        )
+        return eigen.eigensolve(
+            eigen.Eigenproblem(operator),
+            policy=policy,
+        ).eigenvalues[0]
+
+    gradient = jax.jit(jax.grad(smallest_eigenvalue))(jnp.asarray(1.25))
+
+    assert jnp.allclose(gradient, 1.0, atol=1e-8)
+
+
 def test_lobpcg_repairs_rank_deficient_initial_basis_deterministically():
     operator = la.DiagonalLinearOperator(
         jnp.asarray([1.0, 2.0, 3.0, 4.0]),

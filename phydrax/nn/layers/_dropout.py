@@ -6,7 +6,6 @@ from collections.abc import Sequence
 from typing import cast, Literal
 
 import equinox as eqx
-import jax
 import jax.numpy as jnp
 import jax.random as jr
 from jaxtyping import Array
@@ -91,20 +90,9 @@ class Dropout(_AbstractBaseModel):
 
 
 def inference_mode(tree, value: bool = True):
-    """Return a PyTree with every Phydrax Dropout switched to inference mode."""
+    """Switch every inference-aware Equinox or Phydrax leaf in a PyTree."""
 
-    inference = bool(value)
-
-    def replace(layer):
-        if isinstance(layer, Dropout):
-            return eqx.tree_at(lambda item: item.inference, layer, inference)
-        return layer
-
-    return jax.tree_util.tree_map(
-        replace,
-        tree,
-        is_leaf=lambda item: isinstance(item, Dropout),
-    )
+    return eqx.nn.inference_mode(tree, value)
 
 
 __all__ = ["Dropout", "inference_mode"]

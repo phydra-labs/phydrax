@@ -8,6 +8,11 @@ Low-level model building blocks.
     - `Linear` supports Random Weight Factorization (RWF) or one explicit
       shape-preserving physical weight transform.
     - `Dropout(mode="feature")` shares one feature/channel mask over leading field axes.
+    - Named LeCun, He/Kaiming, and Glorot/Xavier initializers follow JAX's
+      post-truncation target-variance definitions; orthogonal initialization
+      factors only the smaller rectangular orientation.
+    - `inference_mode` switches every inference-aware leaf in mixed
+      Phydrax/Equinox trees.
     - `AdaptiveResidual` starts exactly at the identity when `alpha=0`.
     - Recurrent cells consume a canonical `RecurrentBatch`; serial and associative
       execution share one reset and padding contract.

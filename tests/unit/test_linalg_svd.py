@@ -139,3 +139,29 @@ def test_singular_value_derivatives_require_nonzero_isolated_values():
                 ),
             ),
         )
+
+
+def test_matrix_free_singular_value_gradient_supports_closure_converted_operator():
+    policy = svd.SVDSolvePolicy(
+        count=2,
+        differentiation="singular-values",
+    )
+
+    def nuclear_norm(coefficient):
+        diagonal = jnp.stack((coefficient, jnp.asarray(3.0)))
+        space = la.ArraySpace((2,), dtype=diagonal.dtype)
+        operator = la.FunctionLinearOperator(
+            lambda vector: diagonal * vector,
+            source=space,
+            target=space,
+        )
+        return jnp.sum(
+            svd.svd(
+                svd.SVDProblem(operator),
+                policy=policy,
+            ).singular_values
+        )
+
+    gradient = jax.jit(jax.grad(nuclear_norm))(jnp.asarray(1.25))
+
+    assert jnp.allclose(gradient, 1.0, atol=1e-8)

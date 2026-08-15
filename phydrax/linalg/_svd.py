@@ -640,14 +640,14 @@ def svd(
         ).astype(jnp.int32)
         values = jax.lax.cond(
             differentiation_valid,
-            lambda payload: _mathematical_singular_values(*payload),
-            lambda payload: jax.lax.stop_gradient(payload[1]),
-            (
+            lambda payload: _mathematical_singular_values(
                 prepared.problem,
-                jax.lax.stop_gradient(values),
-                jax.lax.stop_gradient(left),
-                jax.lax.stop_gradient(right),
+                jax.lax.stop_gradient(payload[0]),
+                jax.lax.stop_gradient(payload[1]),
+                jax.lax.stop_gradient(payload[2]),
             ),
+            lambda payload: jax.lax.stop_gradient(payload[0]),
+            (values, left, right),
         )
     if prepared.plan.policy.failure.mode == "error":
         failed = status != int(SVDSolveStatus.SUCCESS)
@@ -872,7 +872,7 @@ def _unflatten_columns(space: AbstractVectorSpace, columns: Array, /) -> PyTree[
     return jax.vmap(space.unflatten, in_axes=1, out_axes=-1)(columns)
 
 
-@jax.custom_jvp
+@eqx.filter_custom_jvp
 def _mathematical_singular_values(
     problem: SVDProblem,
     values: Array,
@@ -884,7 +884,7 @@ def _mathematical_singular_values(
     return values
 
 
-@_mathematical_singular_values.defjvp
+@_mathematical_singular_values.def_jvp
 def _mathematical_singular_values_jvp(primals, tangents):
     problem, values, left, right = primals
     problem_tangent, _, _, _ = tangents
@@ -899,11 +899,13 @@ def _mathematical_singular_values_jvp(primals, tangents):
             contributions.append(jnp.real(target.inner(left_vector, image)))
         return jnp.stack(contributions)
 
-    _, tangent = jax.jvp(
+    _, tangent = eqx.filter_jvp(
         perturbation,
         (problem,),
         (problem_tangent,),
     )
+    if tangent is None:
+        tangent = jnp.zeros_like(values)
     return values, tangent
 
 

@@ -57,6 +57,40 @@ def _generalized_problem(operator_matrix, metric_matrix, *, space=None):
     )
 
 
+def _matrix_free_standard_problem(matrix):
+    space = la.ArraySpace((matrix.shape[-1],), dtype=matrix.dtype)
+    return eigen.Eigenproblem(
+        la.FunctionLinearOperator(
+            lambda vector: matrix @ vector,
+            source=space,
+            target=space,
+            properties=_self_adjoint_properties(),
+        )
+    )
+
+
+def _matrix_free_generalized_problem(operator_matrix, metric_matrix, *, space=None):
+    space_ = (
+        la.ArraySpace((operator_matrix.shape[-1],), dtype=operator_matrix.dtype)
+        if space is None
+        else space
+    )
+    return eigen.GeneralizedEigenproblem(
+        la.FunctionLinearOperator(
+            lambda vector: operator_matrix @ vector,
+            source=space_,
+            target=space_,
+            properties=_self_adjoint_properties(),
+        ),
+        la.FunctionLinearOperator(
+            lambda vector: metric_matrix @ vector,
+            source=space_,
+            target=space_,
+            properties=_self_adjoint_properties(positive_definite=True),
+        ),
+    )
+
+
 def test_self_adjoint_spectrum_reuses_dense_state_and_refreshes_numeric_values():
     matrix = jnp.asarray(
         [
@@ -212,7 +246,13 @@ def test_projector_is_basis_invariant_for_repeated_internal_eigenvalues():
     assert subspace.diagnostics.idempotence_error < 1e-12
 
 
-def test_projector_derivatives_match_explicit_kernel_forward_reverse_and_finite_difference():
+@pytest.mark.parametrize(
+    "problem_factory",
+    (_standard_problem, _matrix_free_standard_problem),
+)
+def test_projector_derivatives_match_explicit_kernel_forward_reverse_and_finite_difference(
+    problem_factory,
+):
     matrix = jnp.asarray(
         [
             [1.0, 0.0, 0.1, 0.0],
@@ -234,7 +274,7 @@ def test_projector_derivatives_match_explicit_kernel_forward_reverse_and_finite_
 
     def projector(current):
         return eigen.self_adjoint_spectral_subspace(
-            _standard_problem(current),
+            problem_factory(current),
             selection,
             policy=policy,
         ).projector
@@ -244,7 +284,7 @@ def test_projector_derivatives_match_explicit_kernel_forward_reverse_and_finite_
         (matrix,),
         (perturbation,),
     )
-    prepared = eigen.prepare_self_adjoint_spectrum(_standard_problem(matrix))
+    prepared = eigen.prepare_self_adjoint_spectrum(problem_factory(matrix))
     explicit = eigen.self_adjoint_spectral_projector_derivative(
         prepared,
         selection,
@@ -319,7 +359,13 @@ def test_complex_hermitian_projector_derivative_is_cluster_safe_and_matches_fini
     assert jnp.allclose(tangent, finite_difference, rtol=3e-6, atol=3e-7)
 
 
-def test_generalized_projector_and_density_derivatives_include_metric_perturbations():
+@pytest.mark.parametrize(
+    "problem_factory",
+    (_generalized_problem, _matrix_free_generalized_problem),
+)
+def test_generalized_projector_and_density_derivatives_include_metric_perturbations(
+    problem_factory,
+):
     operator = jnp.diag(jnp.asarray([1.0, 4.0, 12.0, 28.0]))
     metric = jnp.diag(jnp.asarray([1.0, 2.0, 3.0, 4.0]))
     operator_perturbation = jnp.asarray(
@@ -343,7 +389,7 @@ def test_generalized_projector_and_density_derivatives_include_metric_perturbati
 
     def outputs(current_operator, current_metric):
         result = eigen.self_adjoint_spectral_subspace(
-            _generalized_problem(current_operator, current_metric),
+            problem_factory(current_operator, current_metric),
             selection,
             policy=policy,
         )
@@ -355,7 +401,7 @@ def test_generalized_projector_and_density_derivatives_include_metric_perturbati
         (operator_perturbation, metric_perturbation),
     )
     prepared = eigen.prepare_self_adjoint_spectrum(
-        _generalized_problem(operator, metric)
+        problem_factory(operator, metric)
     )
     explicit = eigen.self_adjoint_spectral_projector_derivative(
         prepared,
