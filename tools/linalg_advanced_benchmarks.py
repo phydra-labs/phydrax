@@ -485,6 +485,130 @@ def _resilience_benchmark(
     }, passed
 
 
+def _differentiable_spectral_benchmark(
+    size: int,
+    key: jax.Array,
+    /,
+    *,
+    repeats: int,
+) -> tuple[dict[str, Any], bool]:
+    dimension = max(4, min(size, 12))
+    selected_dimension = dimension // 2
+    lower = jnp.linspace(1.0, 2.0, selected_dimension, dtype=jnp.float64)
+    upper = jnp.linspace(
+        4.0,
+        6.0,
+        dimension - selected_dimension,
+        dtype=jnp.float64,
+    )
+    diagonal = jnp.concatenate((lower, upper))
+    matrices = jnp.stack((jnp.diag(diagonal), jnp.diag(diagonal + 0.1)))
+    random = jr.normal(key, matrices.shape, dtype=jnp.float64)
+    perturbations = 0.05 * (random + jnp.swapaxes(random, -1, -2))
+    properties = la.OperatorProperties(
+        self_adjoint=True,
+        evidence={"self_adjoint": "construction"},
+    )
+    problem = eig.Eigenproblem(
+        la.DenseLinearOperator(matrices, properties=properties)
+    )
+    prepared, preparation_ms = _prepare(
+        lambda: eig.prepare_self_adjoint_spectrum(problem)
+    )
+    selection = eig.SpectralSelection.real_below(
+        3.0,
+        expected_dimension=selected_dimension,
+    )
+    subspace = eig.self_adjoint_spectral_subspace(prepared, selection)
+    derivative_action = jax.jit(
+        lambda: eig.self_adjoint_spectral_projector_derivative(
+            prepared,
+            selection,
+            perturbations,
+        )
+    )
+    derivative, derivative_ms, derivative_std = _measure(
+        derivative_action,
+        repeats=repeats,
+    )
+
+    function_policy = eig.SelfAdjointSpectralOperatorPolicy(
+        differentiation="frechet"
+    )
+
+    def squared_operator(current: jax.Array, /) -> jax.Array:
+        current_problem = eig.Eigenproblem(
+            la.DenseLinearOperator(current, properties=properties)
+        )
+        return eig.self_adjoint_spectral_operator(
+            current_problem,
+            eig.PolynomialSpectralFunction(jnp.asarray([0.0, 0.0, 1.0])),
+            policy=function_policy,
+        ).operator
+
+    spectral_jvp_action = jax.jit(
+        lambda: jax.jvp(
+            squared_operator,
+            (matrices,),
+            (perturbations,),
+        )
+    )
+    (squared, squared_tangent), spectral_ms, spectral_std = _measure(
+        spectral_jvp_action,
+        repeats=repeats,
+    )
+    expected_squared = matrices @ matrices
+    expected_tangent = matrices @ perturbations + perturbations @ matrices
+    value_error = float(jnp.max(jnp.abs(squared - expected_squared)))
+    tangent_error = float(jnp.max(jnp.abs(squared_tangent - expected_tangent)))
+
+    def coefficient_loss(coefficients: jax.Array, /) -> jax.Array:
+        result = eig.self_adjoint_spectral_operator(
+            prepared,
+            eig.PolynomialSpectralFunction(coefficients),
+            policy=function_policy,
+        )
+        return jnp.sum(jnp.square(jnp.abs(result.operator)))
+
+    coefficients = jnp.asarray([0.2, -0.1, 0.05])
+    training_step = jax.jit(jax.value_and_grad(coefficient_loss))
+    (loss, gradient), training_ms, training_std = _measure(
+        lambda: training_step(coefficients),
+        repeats=repeats,
+    )
+    maximum_derivative_residual = float(
+        jnp.max(derivative.diagnostics.relative_residual)
+    )
+    passed = bool(
+        jnp.all(subspace.successful)
+        & jnp.all(derivative.successful)
+        & jnp.isfinite(loss)
+        & jnp.all(jnp.isfinite(gradient))
+        & (maximum_derivative_residual < 1e-10)
+        & (value_error < 1e-12)
+        & (tangent_error < 1e-10)
+    )
+    return {
+        "batch_size": int(matrices.shape[0]),
+        "dimension": dimension,
+        "selected_dimension": selected_dimension,
+        "preparation_ms": preparation_ms,
+        "projector_derivative_ms": derivative_ms,
+        "projector_derivative_std_ms": derivative_std,
+        "spectral_jvp_ms": spectral_ms,
+        "spectral_jvp_std_ms": spectral_std,
+        "training_step_ms": training_ms,
+        "training_step_std_ms": training_std,
+        "maximum_derivative_relative_residual": maximum_derivative_residual,
+        "squared_operator_error": value_error,
+        "squared_operator_tangent_error": tangent_error,
+        "loss": float(loss),
+        "gradient_norm": float(jnp.linalg.norm(gradient)),
+        "retained_storage_bytes": int(prepared.plan.cost.retained_bytes),
+        "passed": passed,
+    }, passed
+
+
 def _adaptive_spectral_benchmark(
     matrix: jax.Array,
     operator: Any,
@@ -587,6 +711,14 @@ def run_benchmarks(
         operator,
         keys[3],
         repeats=repeats,
+    )
+    passed.append(status)
+    records["differentiable_spectral"], status = (
+        _differentiable_spectral_benchmark(
+            size,
+            keys[4],
+            repeats=repeats,
+        )
     )
     passed.append(status)
 

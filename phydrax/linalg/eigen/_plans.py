@@ -377,8 +377,8 @@ def make_eigensolve_plan(
 
 def _validate_problem_certificates(problem: EigenproblemLike, /) -> None:
     operator = problem.operator
-    if operator.batch_shape or not operator.source.compatible(operator.target):
-        raise ValueError("Eigen plans require an unbatched operator endomorphism.")
+    if not operator.source.compatible(operator.target):
+        raise ValueError("Eigen plans require an operator endomorphism.")
     if not operator.properties.certifies("self_adjoint"):
         raise ValueError("Eigen plans require certified operator self-adjointness.")
     coordinate_dtype = _coordinate_dtype(operator.source)
@@ -389,8 +389,8 @@ def _validate_problem_certificates(problem: EigenproblemLike, /) -> None:
         )
     if isinstance(problem, GeneralizedEigenproblem):
         metric = problem.metric_operator
-        if metric.batch_shape or not metric.source.compatible(operator.source):
-            raise ValueError("The metric_operator must be an unbatched endomorphism.")
+        if not metric.source.compatible(operator.source):
+            raise ValueError("The metric_operator must be an endomorphism.")
         if not metric.properties.certifies(
             "self_adjoint"
         ) or not metric.properties.certifies("positive_definite"):
@@ -467,9 +467,9 @@ def _evaluate_candidate(
     )
     if isinstance(method, DenseEigh):
         structural_reason = None
-        if method.backend != "jax":
+        if problem.batch_shape and policy.differentiation != "none":
             structural_reason = (
-                "the optional eigh-ffi backend is not installed and qualified"
+                "batched dense eigendecomposition does not expose raw eigenvalue derivatives"
             )
         elif problem.constraints is not None and problem.constraints.capacity > 0:
             structural_reason = "dense full-spectrum solves do not support constraints"
@@ -493,7 +493,9 @@ def _evaluate_candidate(
             )
         )
         structural_reason = None
-        if block < minimum_block:
+        if problem.batch_shape:
+            structural_reason = "LOBPCG does not support operator batch axes"
+        elif block < minimum_block:
             structural_reason = f"block_dimension must be at least {minimum_block}"
         elif block > available:
             structural_reason = "block_dimension exceeds the available dimension"
@@ -526,7 +528,9 @@ def _evaluate_candidate(
             max(policy.count + extra, supplied_columns + 1),
         )
         structural_reason = None
-        if preconditioner_plan is not None:
+        if problem.batch_shape:
+            structural_reason = "restarted Lanczos does not support operator batch axes"
+        elif preconditioner_plan is not None:
             structural_reason = "restarted Lanczos does not support preconditioning"
         elif supplied_columns > block:
             structural_reason = (
@@ -564,15 +568,16 @@ def _dense_cost_estimate(
 ) -> EigenCostEstimate:
     n = problem.dimension
     itemsize = _coordinate_dtype(problem.operator.source).itemsize
-    matrix_entries = n * n
+    batch_count = int(np.prod(problem.batch_shape)) if problem.batch_shape else 1
+    matrix_entries = batch_count * n * n
     matrix_bytes = matrix_entries * itemsize
     generalized = isinstance(problem, GeneralizedEigenproblem)
     materialized_count = 2 if generalized else 1
     storage = 2 * matrix_bytes
     preparation_workspace = (5 + materialized_count) * matrix_bytes
     apply_workspace = 4 * matrix_bytes
-    operator_matvecs = n
-    metric_matvecs = n if generalized else 0
+    operator_matvecs = batch_count * n
+    metric_matvecs = batch_count * n if generalized else 0
     failures: list[str] = []
     if structural_reason is not None:
         failures.append(structural_reason)

@@ -574,9 +574,9 @@ primal and stabilization blocks certify it.
 for standard and generalized self-adjoint eigenproblems. `LOBPCG` handles
 blocked smallest or largest modes, including an SPD generalized metric and an
 excluded `LinearSubspace`. `RestartedLanczos` supplies a thick-restart
-matrix-free alternative. `DenseEigh` provides a bounded full dense route for
-standard and generalized Hermitian problems, with either the JAX backend or the
-optional `eigh-ffi` backend.
+matrix-free alternative. `DenseEigh` provides the bounded Phydrax-native full
+dense route for standard and generalized Hermitian problems. Generalized
+problems use a certified Cholesky reduction before the JAX Hermitian solve.
 
 Every route retains per-mode residuals, convergence masks, pairing-aware
 orthogonality error, effective count, operator/metric application counts,
@@ -591,6 +591,80 @@ or generalized pairing-aware derivative while stopping eigenvectors. Repeated
 or unresolved clusters reject individual gradients rather than returning
 values. Algorithmic differentiation through locking, deflation, ordering, and
 restart decisions is not exposed.
+
+### Prepared self-adjoint spectra and differentiable spectral calculus
+
+`prepare_self_adjoint_spectrum` materializes one bounded dense standard or
+generalized self-adjoint problem, solves its complete spectrum once, and retains
+the result for repeated subspace, projector, density-kernel, and smooth
+spectral-function evaluations. `refresh_self_adjoint_spectrum` rebuilds only
+the numerical spectrum while preserving the symbolic problem and plan
+identities. Full-spectrum preparation rejects excluded constraints, partial
+dense capacity, nonconvergence, nonfinite output, an invalid generalized
+metric, or a retained-state budget violation; it never switches to an
+iterative or broadened-eigenvector fallback.
+
+For a generalized problem `A x = λ B x`, let `R` be the source-space Riesz map,
+`G = R B`, and let the retained coordinate basis satisfy `Vᴴ G V = I`. The
+prepared inverse basis is therefore `V⁻¹ = Vᴴ G`. For selected columns `Vₛ`,
+the invariant projector and covariant density kernel are
+`P = Vₛ Vₛᴴ G` and `D = Vₛ Vₛᴴ`, with `P = D G`. This distinction is observable
+for non-Euclidean pairings and generalized metrics.
+
+`self_adjoint_spectral_subspace` applies a `SpectralSelection` to that prepared
+spectrum and returns fixed-shape selected/complement eigenvalues and bases,
+`P`, `D`, the certified selected/complement gap, residual evidence, status, and
+provenance. `expected_dimension` is required so JIT output shapes do not depend
+on data. Repeated eigenvalues inside either block are valid; a cluster crossing
+the selection boundary is rejected. `self_adjoint_spectral_projector_derivative`
+computes the exact selected/complement cross-block Sylvester derivative of
+`P` and `D`, including perturbations of the generalized metric. It does not
+differentiate individual eigenvectors.
+
+```python
+problem = phx.linalg.eigen.Eigenproblem(operator)
+prepared = phx.linalg.eigen.prepare_self_adjoint_spectrum(problem)
+selection = phx.linalg.eigen.SpectralSelection.real_below(
+    0.0,
+    expected_dimension=occupied_dimension,
+)
+subspace = phx.linalg.eigen.self_adjoint_spectral_subspace(
+    prepared,
+    selection,
+    policy=phx.linalg.eigen.SelfAdjointSpectralSubspacePolicy(
+        differentiation="projector",
+    ),
+)
+```
+
+Smooth functions use the basis-invariant Loewner Fréchet rule. In the prepared
+eigenbasis, off-diagonal entries use
+`(f(λᵢ) - f(λⱼ)) / (λᵢ - λⱼ)`, while coincident values use the declared
+`f′(λᵢ)`. Exact repeated eigenvalues are therefore regular for matrix
+exponentials, logarithms, square roots, inverse square roots, fractional
+powers, resolvents, polynomials, and finite-temperature Fermi–Dirac
+occupations. Trainable polynomial coefficients, chemical potential, and
+temperature contribute their ordinary parameter tangents in addition to the
+operator perturbation. Logarithm, square-root, inverse-square-root, fractional
+power, and resolvent domain failures are explicit statuses; eigenvalues are
+never clipped to manufacture a value.
+
+`self_adjoint_spectral_operator` returns the operator matrix, density kernel,
+trace, function values, residual/domain diagnostics, status, and provenance.
+Its policy chooses `"none"` or exact `"frechet"` differentiation. Raw
+`eigensolve(..., differentiation="eigenvalues")` remains the isolated
+eigenvalue-only API: individual eigenvectors are still stopped, and batched raw
+eigenvalue differentiation is rejected rather than silently applying a
+different contract.
+
+Dense `DenseEigh` preparation, solve, diagnostics, prepared-spectrum
+consumers, and exact spectral derivatives support arbitrary leading operator
+batch axes. Every batch member has independent residuals, convergence flags,
+selection counts, gaps, domain validity, and status; selected dimensions and
+all array shapes remain static across the batch. Resource estimates multiply
+retained storage, workspace, materialization, and action counts by the batch
+cardinality. Iterative `LOBPCG` and `RestartedLanczos` routes continue to reject
+operator batches during planning.
 
 ### Pairing-aware singular values
 
@@ -1671,6 +1745,102 @@ old and new plan identities.
 ---
 
 ::: phydrax.linalg.eigen.eigensolve
+
+### Self-adjoint spectra, invariant subspaces, and spectral functions
+
+::: phydrax.linalg.eigen.SelfAdjointSpectrumPolicy
+
+---
+
+::: phydrax.linalg.eigen.SelfAdjointSpectrumPlan
+
+---
+
+::: phydrax.linalg.eigen.PreparedSelfAdjointSpectrum
+
+---
+
+::: phydrax.linalg.eigen.plan_self_adjoint_spectrum
+
+---
+
+::: phydrax.linalg.eigen.prepare_self_adjoint_spectrum
+
+---
+
+::: phydrax.linalg.eigen.refresh_self_adjoint_spectrum
+
+---
+
+::: phydrax.linalg.eigen.self_adjoint_spectrum
+
+---
+
+::: phydrax.linalg.eigen.SelfAdjointSpectralSubspacePolicy
+
+---
+
+::: phydrax.linalg.eigen.SelfAdjointSpectralSubspace
+
+---
+
+::: phydrax.linalg.eigen.SelfAdjointSpectralDerivativeResult
+
+---
+
+::: phydrax.linalg.eigen.self_adjoint_spectral_subspace
+
+---
+
+::: phydrax.linalg.eigen.self_adjoint_spectral_projector_derivative
+
+---
+
+::: phydrax.linalg.eigen.AbstractSpectralFunction
+
+---
+
+::: phydrax.linalg.eigen.PolynomialSpectralFunction
+
+---
+
+::: phydrax.linalg.eigen.FermiDiracSpectralFunction
+
+---
+
+::: phydrax.linalg.eigen.ExponentialSpectralFunction
+
+---
+
+::: phydrax.linalg.eigen.LogarithmSpectralFunction
+
+---
+
+::: phydrax.linalg.eigen.SquareRootSpectralFunction
+
+---
+
+::: phydrax.linalg.eigen.InverseSquareRootSpectralFunction
+
+---
+
+::: phydrax.linalg.eigen.FractionalPowerSpectralFunction
+
+---
+
+::: phydrax.linalg.eigen.ResolventSpectralFunction
+
+---
+
+::: phydrax.linalg.eigen.SelfAdjointSpectralOperatorPolicy
+
+---
+
+::: phydrax.linalg.eigen.SelfAdjointSpectralOperator
+
+---
+
+::: phydrax.linalg.eigen.self_adjoint_spectral_operator
 
 ### Dense Schur problems and spectral subspaces
 

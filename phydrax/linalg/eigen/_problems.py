@@ -18,7 +18,7 @@ EigenproblemKind: TypeAlias = Literal["standard", "generalized"]
 
 
 class Eigenproblem(StrictModule):
-    """Certified unbatched self-adjoint eigenproblem ``A x = lambda x``."""
+    """Certified self-adjoint eigenproblem ``A x = lambda x``."""
 
     operator: AbstractLinearOperator
     constraints: LinearSubspace | None
@@ -52,6 +52,10 @@ class Eigenproblem(StrictModule):
     def dimension(self) -> int:
         return self.operator.source.size
 
+    @property
+    def batch_shape(self) -> tuple[int, ...]:
+        return self.operator.batch_shape
+
 
 class GeneralizedEigenproblem(StrictModule):
     """Certified generalized self-adjoint eigenproblem ``A x = lambda B x``."""
@@ -83,6 +87,10 @@ class GeneralizedEigenproblem(StrictModule):
             raise ValueError(
                 "The generalized metric_operator must act on the operator vector space."
             )
+        if metric_operator.batch_shape != operator.batch_shape:
+            raise ValueError(
+                "Generalized eigenproblem operators must share one batch shape."
+            )
         _validate_constraints(constraints, operator)
         self.operator = operator
         self.metric_operator = metric_operator
@@ -103,6 +111,10 @@ class GeneralizedEigenproblem(StrictModule):
     def dimension(self) -> int:
         return self.operator.source.size
 
+    @property
+    def batch_shape(self) -> tuple[int, ...]:
+        return self.operator.batch_shape
+
 
 def _validate_self_adjoint_endomorphism(
     operator: AbstractLinearOperator,
@@ -111,8 +123,6 @@ def _validate_self_adjoint_endomorphism(
 ) -> None:
     if not isinstance(operator, AbstractLinearOperator):
         raise TypeError(f"{name} must be an AbstractLinearOperator.")
-    if operator.batch_shape:
-        raise ValueError(f"Eigenproblem {name} must be unbatched.")
     if not operator.source.compatible(operator.target):
         raise ValueError(f"Eigenproblem {name} must be an endomorphism.")
     if not operator.properties.certifies("self_adjoint"):
@@ -128,6 +138,8 @@ def _validate_constraints(
 ) -> None:
     if constraints is None:
         return
+    if operator.batch_shape:
+        raise ValueError("Batched eigenproblems do not support excluded constraints.")
     if not isinstance(constraints, LinearSubspace):
         raise TypeError("constraints must be a LinearSubspace or None.")
     if not constraints.space.compatible(operator.source):

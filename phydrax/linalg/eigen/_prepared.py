@@ -37,8 +37,8 @@ class DenseEigenState(StrictModule):
         reduced = jnp.asarray(reduced_operator)
         factor = jnp.asarray(metric_factor)
         if (
-            reduced.ndim != 2
-            or reduced.shape[0] != reduced.shape[1]
+            reduced.ndim < 2
+            or reduced.shape[-2] != reduced.shape[-1]
             or factor.shape != reduced.shape
             or factor.dtype != reduced.dtype
         ):

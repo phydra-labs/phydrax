@@ -39,18 +39,14 @@ class AutoEigenMethod(StrictModule):
 
 
 class DenseEigh(StrictModule):
-    """Full dense Hermitian eigendecomposition with an explicit backend."""
+    """Phydrax-native full dense Hermitian eigendecomposition."""
 
-    backend: Literal["jax", "eigh-ffi"] = eqx.field(static=True)
-
-    def __init__(self, *, backend: Literal["jax", "eigh-ffi"] = "jax"):
-        if backend not in ("jax", "eigh-ffi"):
-            raise ValueError("DenseEigh backend must be 'jax' or 'eigh-ffi'.")
-        self.backend = backend
+    def __init__(self):
+        return
 
     @property
     def name(self) -> str:
-        return "dense-eigh" if self.backend == "jax" else "dense-eigh-ffi"
+        return "dense-eigh"
 
 
 class LOBPCG(StrictModule):

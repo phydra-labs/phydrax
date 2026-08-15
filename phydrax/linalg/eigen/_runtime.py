@@ -169,14 +169,17 @@ def _prepare_dense_state(
     metric_matrix = (
         materialize(problem.metric_operator, plan.policy.materialization)
         if isinstance(problem, GeneralizedEigenproblem)
-        else jnp.eye(n, dtype=dtype)
+        else jnp.broadcast_to(
+            jnp.eye(n, dtype=dtype),
+            problem.batch_shape + (n, n),
+        )
     )
     paired_operator = _require_hermitian(
-        pairing @ operator_matrix,
+        jnp.matmul(pairing, operator_matrix),
         "paired operator",
     )
     paired_metric = _require_hermitian(
-        pairing @ metric_matrix,
+        jnp.matmul(pairing, metric_matrix),
         "paired metric",
     )
     metric_factor = jnp.linalg.cholesky(
@@ -186,7 +189,7 @@ def _prepare_dense_state(
     metric_factor = eqx.error_if(
         metric_factor,
         jnp.any(~jnp.isfinite(metric_factor))
-        | jnp.any(jnp.real(jnp.diag(metric_factor)) <= 0),
+        | jnp.any(jnp.real(jnp.diagonal(metric_factor, axis1=-2, axis2=-1)) <= 0),
         "Dense generalized eigensolve metric factorization failed.",
     )
     left_reduced = jsp.linalg.solve_triangular(
@@ -195,11 +198,15 @@ def _prepare_dense_state(
         lower=True,
     )
     reduced_operator = jnp.conj(
-        jsp.linalg.solve_triangular(
-            metric_factor,
-            jnp.conj(left_reduced.T),
-            lower=True,
-        ).T
+        jnp.swapaxes(
+            jsp.linalg.solve_triangular(
+                metric_factor,
+                jnp.conj(jnp.swapaxes(left_reduced, -1, -2)),
+                lower=True,
+            ),
+            -1,
+            -2,
+        )
     )
     reduced_operator = _require_hermitian(
         reduced_operator,
@@ -214,12 +221,15 @@ def _prepare_dense_state(
 
 
 def _require_hermitian(matrix: Array, name: str, /) -> Array:
-    scale = jnp.maximum(jnp.max(jnp.abs(matrix)), 1)
-    tolerance = 64 * max(matrix.shape[0], 1) * jnp.finfo(matrix.real.dtype).eps * scale
-    error = jnp.max(jnp.abs(matrix - jnp.conj(matrix.T)))
+    scale = jnp.maximum(jnp.max(jnp.abs(matrix), axis=(-2, -1)), 1)
+    tolerance = 64 * max(matrix.shape[-1], 1) * jnp.finfo(matrix.real.dtype).eps * scale
+    error = jnp.max(
+        jnp.abs(matrix - jnp.conj(jnp.swapaxes(matrix, -1, -2))),
+        axis=(-2, -1),
+    )
     return eqx.error_if(
         matrix,
-        jnp.any(~jnp.isfinite(matrix)) | (error > tolerance),
+        jnp.any(~jnp.isfinite(matrix)) | jnp.any(error > tolerance),
         f"Dense eigensolve {name} contradicts its self-adjoint certificate.",
     )
 
@@ -599,11 +609,11 @@ def eigensolve(
         message = (
             "Eigen solve failed; inspect status-mode diagnostics for the failure class."
         )
-        status = eqx.error_if(status, failed, message)
-        values = eqx.error_if(values, failed, message)
-        vectors = eqx.error_if(vectors, failed, message)
+        status = eqx.error_if(status, jnp.any(failed), message)
+        values = eqx.error_if(values, jnp.any(failed), message)
+        vectors = eqx.error_if(vectors, jnp.any(failed), message)
 
-    effective_count = jnp.sum(native.mode_mask, dtype=jnp.int32)
+    effective_count = jnp.sum(native.mode_mask, axis=-1, dtype=jnp.int32)
     eigenvectors = _unflatten_mode_columns(prepared.problem.operator.source, vectors)
     diagnostics = EigenSolveDiagnostics(
         native.residual_norms,
@@ -622,7 +632,7 @@ def eigensolve(
         native.mode_mask,
         effective_count,
         native.isolation_gaps,
-        prepared.initial_rank,
+        jnp.broadcast_to(prepared.initial_rank, prepared.problem.batch_shape),
     )
     provenance = EigenSolveProvenance(
         prepared.plan.selected_method.name,
@@ -662,15 +672,21 @@ def _dispatch_native(prepared: PreparedEigenSolve, /) -> _NativeEigenResult:
 
 def _solve_status(native: _NativeEigenResult, count: int, /) -> Array:
     finite = (
-        jnp.all(jnp.isfinite(native.values))
-        & jnp.all(jnp.isfinite(native.vectors))
-        & jnp.all(jnp.isfinite(native.residual_norms) | ~native.mode_mask)
-        & jnp.all(jnp.isfinite(native.relative_residuals) | ~native.mode_mask)
+        jnp.all(jnp.isfinite(native.values), axis=-1)
+        & jnp.all(jnp.isfinite(native.vectors), axis=(-2, -1))
+        & jnp.all(
+            jnp.isfinite(native.residual_norms) | ~native.mode_mask,
+            axis=-1,
+        )
+        & jnp.all(
+            jnp.isfinite(native.relative_residuals) | ~native.mode_mask,
+            axis=-1,
+        )
         & jnp.isfinite(native.orthogonality_error)
     )
     converged = native.converged & native.mode_mask
-    effective_count = jnp.sum(native.mode_mask, dtype=jnp.int32)
-    converged_count = jnp.sum(converged, dtype=jnp.int32)
+    effective_count = jnp.sum(native.mode_mask, axis=-1, dtype=jnp.int32)
+    converged_count = jnp.sum(converged, axis=-1, dtype=jnp.int32)
     complete = (effective_count == count) & (converged_count == count)
     partial = converged_count > 0
     status = jnp.where(
@@ -694,6 +710,10 @@ def _solve_status(native: _NativeEigenResult, count: int, /) -> Array:
 
 
 def _unflatten_mode_columns(space: Any, coordinates: Array, /) -> PyTree[Array]:
+    if coordinates.ndim > 2:
+        return coordinates.reshape(
+            coordinates.shape[:-2] + space.shape + (coordinates.shape[-1],)
+        )
     return jax.vmap(space.unflatten, in_axes=1, out_axes=-1)(coordinates)
 
 

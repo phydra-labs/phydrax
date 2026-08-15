@@ -11,7 +11,9 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 from jaxtyping import Array
 
+from .._spaces import _coordinate_pairing_matrix
 from ..krylov._decompositions import _block_inner, _orthonormalize_block
+from ._problems import GeneralizedEigenproblem
 from ._results import _NativeEigenResult
 
 
@@ -20,6 +22,8 @@ def _solve_dense_eigh(prepared: Any, /) -> _NativeEigenResult:
     problem = prepared.problem
     policy = prepared.plan.policy
     state = prepared.dense_state
+    if problem.batch_shape:
+        return _solve_batched_dense_eigh(prepared)
     values, reduced_vectors = jnp.linalg.eigh(
         state.reduced_operator,
         symmetrize_input=False,
@@ -105,6 +109,174 @@ def _solve_dense_eigh(prepared: Any, /) -> _NativeEigenResult:
         isolation_gaps=isolation_gaps,
         rank_deficient=jnp.asarray(False),
     )
+
+
+def _solve_batched_dense_eigh(prepared: Any, /) -> _NativeEigenResult:
+    problem = prepared.problem
+    policy = prepared.plan.policy
+    state = prepared.dense_state
+    batch_shape = problem.batch_shape
+    values, reduced_vectors = jnp.linalg.eigh(
+        state.reduced_operator,
+        symmetrize_input=False,
+    )
+    vectors = jsp.linalg.solve_triangular(
+        jnp.conj(jnp.swapaxes(state.metric_factor, -1, -2)),
+        reduced_vectors,
+        lower=False,
+    )
+    if policy.which == "smallest-algebraic":
+        criterion = values
+    elif policy.which == "largest-algebraic":
+        criterion = -values
+    elif policy.which == "smallest-magnitude":
+        criterion = jnp.abs(values)
+    else:
+        criterion = -jnp.abs(values)
+    order = jnp.argsort(criterion, axis=-1, stable=True)
+    selected_indices = order[..., : policy.count]
+    selected_values = jnp.real(
+        jnp.take_along_axis(values, selected_indices, axis=-1)
+    )
+    selected_vectors = jnp.take_along_axis(
+        vectors,
+        selected_indices[..., None, :],
+        axis=-1,
+    )
+    mode_mask = jnp.ones(batch_shape + (policy.count,), dtype=bool)
+    operator_vectors = _batched_operator_images(
+        problem.operator,
+        selected_vectors,
+    )
+    metric_vectors = (
+        _batched_operator_images(problem.metric_operator, selected_vectors)
+        if isinstance(problem, GeneralizedEigenproblem)
+        else selected_vectors
+    )
+    residual = operator_vectors - metric_vectors * selected_values[..., None, :]
+    pairing = _coordinate_pairing_matrix(problem.operator.source)
+    residual_norms = _batched_column_norms(pairing, residual)
+    operator_norms = _batched_column_norms(pairing, operator_vectors)
+    metric_norms = _batched_column_norms(pairing, metric_vectors)
+    scale = operator_norms + jnp.abs(selected_values) * metric_norms
+    relative_residuals = residual_norms / jnp.maximum(
+        scale,
+        jnp.finfo(residual_norms.dtype).tiny,
+    )
+    gram = jnp.einsum(
+        "...ni,nm,...mj->...ij",
+        jnp.conj(selected_vectors),
+        pairing,
+        metric_vectors,
+    )
+    identity = jnp.eye(policy.count, dtype=gram.dtype)
+    orthogonality = jnp.max(
+        jnp.abs(gram - identity),
+        axis=(-2, -1),
+    )
+    converged = _mode_convergence(
+        residual_norms,
+        relative_residuals,
+        mode_mask,
+        policy.tolerance.absolute,
+        policy.tolerance.relative,
+    ) & (
+        orthogonality[..., None]
+        <= jnp.asarray(policy.tolerance.orthogonality, orthogonality.dtype)
+    )
+    isolation_gaps = _batched_dense_isolation_gaps(
+        selected_values,
+        values,
+        selected_indices,
+        residual_norms,
+        relative_residuals,
+        policy.which,
+    )
+    per_batch = lambda value: jnp.full(batch_shape, value, dtype=jnp.int32)
+    return _NativeEigenResult(
+        values=selected_values,
+        vectors=selected_vectors,
+        mode_mask=mode_mask,
+        converged=converged,
+        residual_norms=residual_norms,
+        relative_residuals=relative_residuals,
+        orthogonality_error=orthogonality,
+        iterations=per_batch(1),
+        operator_matvec_count=per_batch(
+            state.operator_matvec_count + policy.count
+        ),
+        metric_matvec_count=per_batch(
+            state.metric_matvec_count
+            + (
+                policy.count
+                if isinstance(problem, GeneralizedEigenproblem)
+                else 0
+            )
+        ),
+        preconditioner_apply_count=per_batch(0),
+        isolation_gaps=isolation_gaps,
+        rank_deficient=jnp.zeros(batch_shape, dtype=bool),
+    )
+
+
+def _batched_operator_images(operator: Any, vectors: Array, /) -> Array:
+    batch_shape = operator.batch_shape
+    space = operator.source
+    width = vectors.shape[-1]
+    structured = vectors.reshape(batch_shape + space.shape + (width,))
+    images = operator.mv(structured)
+    return jnp.asarray(images).reshape(batch_shape + (space.size, width))
+
+
+def _batched_column_norms(pairing: Array, block: Array, /) -> Array:
+    squared = jnp.einsum(
+        "...ni,nm,...mi->...i",
+        jnp.conj(block),
+        pairing,
+        block,
+    )
+    return jnp.sqrt(jnp.maximum(jnp.real(squared), 0))
+
+
+def _batched_dense_isolation_gaps(
+    selected_values: Array,
+    all_values: Array,
+    selected_indices: Array,
+    residual_norms: Array,
+    relative_residuals: Array,
+    which: str,
+    /,
+) -> Array:
+    distances = jnp.abs(
+        selected_values[..., :, None] - all_values[..., None, :]
+    )
+    if which in ("smallest-magnitude", "largest-magnitude"):
+        target_distances = jnp.abs(
+            jnp.abs(selected_values)[..., :, None]
+            - jnp.abs(all_values)[..., None, :]
+        )
+        distances = jnp.minimum(distances, target_distances)
+    selected_scale = jnp.maximum(jnp.abs(selected_values), 1)
+    selected_uncertainty = 4 * jnp.maximum(
+        residual_norms,
+        relative_residuals * selected_scale,
+    )
+    all_uncertainty = (
+        jnp.sqrt(jnp.finfo(all_values.dtype).eps)
+        * max(all_values.shape[-1], 1)
+        * jnp.maximum(jnp.abs(all_values), 1)
+    )
+    distances = (
+        distances
+        - selected_uncertainty[..., :, None]
+        - all_uncertainty[..., None, :]
+    )
+    neighbors = (
+        selected_indices[..., :, None]
+        != jnp.arange(all_values.shape[-1])[None, :]
+    )
+    distances = jnp.where(neighbors, distances, jnp.asarray(jnp.inf))
+    return jnp.min(distances, axis=-1)
 
 
 def _dense_isolation_gaps(

@@ -23,6 +23,12 @@
 - General dense real/complex Schur eigensolves, nonnormal spectral observables, Riesz spectral subspaces, and first-order projector derivatives.
 - Generalized, Sylvester, and continuous/discrete Lyapunov matrix-equation lifecycles built on the shared linear runtime.
 - An advanced JSON benchmark harness covering Krylov reuse, shifted/rational actions, matrix equations, spectral projectors, low-rank updates, resilience, and adaptive spectral estimation.
+- Reusable full self-adjoint spectra with exact cluster-safe projector,
+  density-kernel, and Loewner spectral-function derivatives for standard and
+  generalized real or complex problems.
+- Native batched dense Hermitian eigensolves and batched self-adjoint spectral
+  calculus with per-member diagnostics, status, provenance, and batch-scaled
+  resource accounting.
 
 ### Changed
 

@@ -286,7 +286,6 @@ def test_dense_eigh_auto_full_spectrum_is_jittable_and_refreshable():
     compiled = jax.jit(eigen.eigensolve)(prepared)
 
     assert isinstance(plan.selected_method, eigen.DenseEigh)
-    assert plan.selected_method.backend == "jax"
     assert bool(result.successful)
     assert jnp.allclose(result.eigenvalues, jnp.linalg.eigvalsh(matrix))
     assert jnp.allclose(compiled.eigenvalues, result.eigenvalues)
@@ -316,14 +315,6 @@ def test_dense_eigh_auto_full_spectrum_is_jittable_and_refreshable():
                     max_entries=8,
                     max_bytes=1024,
                 ),
-            ),
-        )
-    with pytest.raises(ValueError, match="not installed and qualified"):
-        eigen.plan_eigensolve(
-            problem,
-            eigen.EigenSolvePolicy(
-                eigen.DenseEigh(backend="eigh-ffi"),
-                count=3,
             ),
         )
 

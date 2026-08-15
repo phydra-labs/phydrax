@@ -65,8 +65,8 @@ class EigenSolveDiagnostics(StrictModule):
         converged_ = jnp.asarray(converged, dtype=bool)
         mask = jnp.asarray(mode_mask, dtype=bool)
         gaps = jnp.asarray(isolation_gaps)
-        if residuals.ndim != 1:
-            raise ValueError("residual_norms must be rank one.")
+        if residuals.ndim < 1:
+            raise ValueError("residual_norms must have a trailing mode axis.")
         shape = residuals.shape
         if any(value.shape != shape for value in (relative, converged_, mask, gaps)):
             raise ValueError("Per-mode eigen diagnostics must have identical shapes.")
@@ -86,8 +86,11 @@ class EigenSolveDiagnostics(StrictModule):
             effective,
             initial_rank_,
         )
-        if any(value.shape != () for value in scalars):
-            raise ValueError("Aggregate eigen diagnostics must be scalar.")
+        batch_shape = shape[:-1]
+        if any(value.shape != batch_shape for value in scalars):
+            raise ValueError(
+                "Aggregate eigen diagnostics must match the operator batch shape."
+            )
         self.residual_norms = residuals
         self.relative_residuals = relative
         self.orthogonality_error = orthogonality
@@ -180,15 +183,18 @@ class EigenSolveResult(StrictModule):
     ):
         values = jnp.asarray(eigenvalues)
         mask = jnp.asarray(mode_mask, dtype=bool)
-        if values.ndim != 1 or mask.shape != values.shape:
+        if values.ndim < 1 or mask.shape != values.shape:
             raise ValueError(
-                "eigenvalues and mode_mask must have one matching mode axis."
+                "eigenvalues and mode_mask must share one trailing mode axis."
             )
         effective = jnp.asarray(effective_count, dtype=jnp.int32)
         converged_ = jnp.asarray(converged, dtype=bool)
         status_ = jnp.asarray(status, dtype=jnp.int32)
-        if effective.shape != () or status_.shape != ():
-            raise ValueError("effective_count and status must be scalar.")
+        batch_shape = values.shape[:-1]
+        if effective.shape != batch_shape or status_.shape != batch_shape:
+            raise ValueError(
+                "effective_count and status must match the operator batch shape."
+            )
         if converged_.shape != values.shape:
             raise ValueError("converged must provide one flag per requested mode.")
         if not isinstance(diagnostics, EigenSolveDiagnostics):
