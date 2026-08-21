@@ -50,8 +50,34 @@ measures, and composed space/time/stochastic reductions.
 ::: phydrax.integration.IntegrationRealization
 
 ---
+::: phydrax.integration.calibrate
+
+---
+
 
 ::: phydrax.integration.compress
+
+---
+
+
+## Measure calibration
+
+`calibrate` reweights an already materialized finite positive measure to exact or
+quadratically reconciled normalized feature expectations. It preserves physical
+mass and sample metadata, requires a successful core calibration, and appends
+ordered transformation evidence before downstream reduction.
+
+::: phydrax.integration.MeasureCalibrationDiagnostics
+
+---
+
+::: phydrax.integration.MeasureTransformationRecord
+
+---
+
+::: phydrax.integration.TransformedIntegrationDiagnostics
+
+---
 
 ## Measure compression
 
@@ -108,10 +134,6 @@ selection = phx.coresets.kernel_herd(
 ---
 
 ::: phydrax.integration.MeasureCompressionDiagnostics
-
----
-
-::: phydrax.integration.CompressedIntegrationDiagnostics
 
 ---
 

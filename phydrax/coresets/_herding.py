@@ -14,10 +14,10 @@ from phydrax.kernels import (
     SquaredExponentialKernel,
 )
 
+from .._measure_weights import log_weights_from_normalized, normalized_weights
 from .._strict import StrictModule
 from ._kernel_reductions import _weighted_kernel_mean, _weighted_kernel_sum
 from ._types import CoresetSelection, KernelHerdingDiagnostics
-from ._weights import log_weights_from_normalized, normalized_weights
 
 
 class KernelHerding(StrictModule):

@@ -157,6 +157,50 @@ def test_newton_krylov_uses_descent_fallback_for_indefinite_hessian():
     assert result.provenance.method == "newton-krylov"
 
 
+def test_newton_krylov_forcing_controls_inner_accuracy_under_jit():
+    diagonal = jnp.logspace(0.0, 6.0, 24)
+
+    def objective(value, _):
+        return 0.5 * jnp.sum(diagonal * value**2)
+
+    termination = _termination(steps=1, tolerance=0.0)
+    initial = jnp.ones((24,))
+    loose_method = phx.optim.NewtonKrylov(
+        minimum_forcing=0.5,
+        maximum_forcing=0.5,
+    )
+    tight_method = phx.optim.NewtonKrylov(
+        minimum_forcing=1e-8,
+        maximum_forcing=1e-8,
+    )
+
+    def solve(method):
+        return phx.optim.minimize(
+            objective,
+            initial,
+            method=method,
+            termination=termination,
+        )
+
+    loose = solve(loose_method)
+    tight = solve(tight_method)
+    compiled_loose = eqx.filter_jit(lambda: solve(loose_method))()
+    compiled_tight = eqx.filter_jit(lambda: solve(tight_method))()
+
+    assert int(loose.diagnostics.linear_iterations) < int(
+        tight.diagnostics.linear_iterations
+    )
+    assert float(tight.diagnostics.final_optimality_norm) < float(
+        loose.diagnostics.final_optimality_norm
+    )
+    assert int(compiled_loose.diagnostics.linear_iterations) == int(
+        loose.diagnostics.linear_iterations
+    )
+    assert int(compiled_tight.diagnostics.linear_iterations) == int(
+        tight.diagnostics.linear_iterations
+    )
+
+
 def test_nonfinite_initial_parameters_return_typed_status():
     result = phx.optim.minimize(
         lambda value, _: jnp.sum(value**2),

@@ -47,3 +47,14 @@ Phydrax uses ASDEX as a compile-time global sparsity-detection and optimized-
 coloring dependency through its public Python API. ASDEX artifacts are
 normalized before Phydrax evaluates compressed derivatives through native JAX.
 See LICENSES/ASDEX-MIT.txt.
+
+Research and design acknowledgments
+
+The moment-calibration formulation follows Shane Barratt, Guillermo Angeris,
+and Stephen Boyd, “Optimal Representative Sample Weighting,” Statistics and
+Computing 31:19 (2021), and its public cvxgrp/rsw implementation.
+
+The absorption study also considered rswjax by Andrew Timm, licensed under the
+Apache License, Version 2.0. The Phydrax moment-calibration implementation is
+independent and does not include source code copied or translated from rsw or
+rswjax.

@@ -102,6 +102,49 @@ An integrand may itself be any nonempty PyTree of `DomainFunction`, callable, or
 array leaves. Reduction preserves that container structure and every leaf dtype in
 `estimate.value`; method diagnostics are returned with the same leaf structure.
 
+## Calibrate a reusable finite realization
+
+Calibration corrects a finite measure to externally known normalized feature
+expectations without discarding source points:
+
+```python
+samples = jnp.linspace(0.0, 1.0, 41)
+source = phx.integration.materialize(
+    phx.integration.weighted(
+        samples,
+        jnp.zeros((41,)),
+        normalized=False,
+        target_mass=jnp.asarray(7.0),
+    )
+)
+calibrated = phx.integration.calibrate(
+    source,
+    phx.weighting.ExactMoments(jnp.array([0.7])),
+    features=samples,
+)
+
+physical_first_moment = phx.integration.reduce(lambda x: x, calibrated)
+```
+
+The calibration target is always a normalized expectation: here it requests mean
+`0.7`. The transformed measure retains physical mass `7`, so reducing `x` returns
+`4.9`. `QuadraticMoments` provides soft reconciliation when targets are uncertain or
+outside the finite moment hull.
+
+Calibration accepts one-axis `PointIntegrationBatch` and `WeightedSampleBatch`
+realizations. A feature callable, array, named `coordax.Field`, or supported feature
+PyTree is canonicalized to `(source_points, moment_count)`. Sample values, named or
+positional sample axis, explicit mask, zero-prior support, ancestry, support validity,
+execution key, and source provenance remain attached. Strata, antithetic pairs,
+replicates, component unions, and multi-axis measures are rejected until their joint
+weight constraints can be preserved.
+
+Each calibration or compression appends a `MeasureTransformationRecord`.
+`TransformedIntegrationDiagnostics` retains that ordered history beside the
+downstream reduction diagnostics. Because reweighting invalidates the original
+quadrature or Monte Carlo error model, transformed reductions report
+`error_estimate=None` rather than a misleading inherited bound.
+
 ## Compress a reusable finite realization
 
 For several expensive integrands over the same finite positive measure, insert
@@ -126,12 +169,14 @@ moments, including mass through its internal constant feature. The result retain
 most one more active point than the supplied feature count. `KernelHerding(k)` instead
 selects `k` equally weighted points that greedily reduce a blockwise kernel MMD.
 
-Compression currently accepts a finite, one-axis `PointIntegrationBatch` or
-`WeightedSampleBatch`. It rejects signed weights and any stratum, antithetic pair,
-replicate, or component-union structure that cannot yet be preserved exactly. Source
-ancestry, target mass, named sample axes, masks, execution key, and provenance survive
-the reduction. `CompressedIntegrationDiagnostics` keeps selection evidence separate
-from downstream integration diagnostics.
+Compression accepts the same finite one-axis measure substrate as calibration. It
+rejects signed weights and any stratum, antithetic pair, replicate, or
+component-union structure that cannot yet be preserved exactly. Source ancestry,
+target mass, named sample axes, masks, execution key, and provenance survive the
+reduction. Its `MeasureTransformationRecord` contains
+`MeasureCompressionDiagnostics`; `TransformedIntegrationDiagnostics` keeps the
+complete ordered transformation chain separate from downstream integration
+diagnostics.
 
 Compression discrepancy is not reported as `IntegrationEstimate.error_estimate`:
 feature-moment residual and MMD are construction diagnostics, not general error bounds

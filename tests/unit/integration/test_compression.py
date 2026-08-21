@@ -54,7 +54,12 @@ def test_moment_compression_is_reusable_and_preserves_named_ancestry():
     assert compressed_estimate.provenance.method == "compressed"
     assert isinstance(
         compressed_estimate.diagnostics,
-        phx.integration.CompressedIntegrationDiagnostics,
+        phx.integration.TransformedIntegrationDiagnostics,
+    )
+    assert compressed_estimate.diagnostics.transformations[0].kind == "compression"
+    assert isinstance(
+        compressed_estimate.diagnostics.transformations[0].diagnostics,
+        phx.integration.MeasureCompressionDiagnostics,
     )
 
 
@@ -156,7 +161,7 @@ def test_compression_rejects_unpreserved_sample_grouping(identifier):
         **grouping,
     )
 
-    with pytest.raises(ValueError, match="compressed"):
+    with pytest.raises(ValueError, match="transformed"):
         phx.integration.compress(
             phx.integration.materialize(target),
             phx.coresets.MomentRecombination(),

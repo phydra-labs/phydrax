@@ -193,6 +193,25 @@ execution does not support the parallel method. Discrete particle ancestry and
 resampling choices are nondifferentiable.
 
 
+### Moment calibration and target-aware finite measures
+
+`phydrax.weighting` computes the minimum-relative-entropy reweighting of a finite
+prior subject to exact feature expectations, or reconciles uncertain and
+unreachable expectations with a diagonal quadratic discrepancy. Dense,
+`SparseLinearMap`, and compatible matrix-free moment actions share one moment-space
+geometry path with explicit affine-rank, target-residual, regularity, optimizer, KL,
+effective-sample-size, support, and provenance evidence. Exact success means a
+finite regular relative-interior solution; boundary and inconsistent targets remain
+typed failures.
+
+`phydrax.integration.calibrate` applies that contract to a reusable realized
+measure while preserving physical mass, axes, masks, ancestry, support validity,
+and execution key. Calibration and coreset compression compose as an ordered
+transformation chain, allowing correction before support reduction without
+conflating feature preservation with a general integration-error bound. See
+[API → Moment weighting](api/weighting.md) and
+[Guides → Integrals and measures](guides_integrals.md#calibrate-a-reusable-finite-realization).
+
 ### Optimal transport: geometry between finite measures
 
 `phydrax.transport` lowers integration-native finite targets and explicit realizations
@@ -767,6 +786,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - `phydrax.conditions` for residual, moment, observation, and physical conditions.
 - `phydrax.terms` for penalty and specialized numerical/data terms.
 - `phydrax.integration` for targets, sources, and reductions.
+- `phydrax.weighting` for exact and quadratically reconciled moment calibration.
 - `phydrax.special` for JAX-native named special functions and integral primitives.
 - `phydrax.enforcement` for exact condition transforms.
 - `phydrax.operators` for PDE operators.
