@@ -16,7 +16,7 @@ from ._fas import (
     FASResult,
 )
 from ._fixed_point import AndersonAcceleration, FixedPointIteration, PicardIteration
-from ._implicit import implicit_root
+from ._implicit import implicit_root, implicit_root_result
 from ._linearization import (
     JacobianMode,
     JacobianPolicy,
@@ -127,6 +127,7 @@ __all__ = [
     "complementarity_certificate",
     "fas_cycle",
     "implicit_root",
+    "implicit_root_result",
     "left_precondition",
     "nonlinear_status_message",
     "prepare_jacobian",

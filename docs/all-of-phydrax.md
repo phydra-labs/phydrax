@@ -235,6 +235,11 @@ keep physical-time and map-iteration normalization distinct. Solver, control,
 stochastic, memory/delay, rough, and canonical evolution outputs enter the same
 `TrajectoryData` contract through explicit adapters without losing masks, reset
 boundaries, case/realization axes, or provenance.
+`DifferentialAlgebraicSystem` adds a state-shaped implicit residual with declared
+differential/algebraic component roles and independent state, rate, and residual
+scales. Its prepared fixed-grid BDF solver preserves native nonlinear diagnostics,
+implicit derivatives, and trajectory rate-validity masks without introducing a
+second identification representation.
 Array models bind into `ContinuousSystem` as explicit trainable PyTree children.
 Structured Port-Hamiltonian fields provide state-dependent energy,
 interconnection, dissipation, control, and forcing components while preserving
@@ -575,6 +580,13 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   Diffrax backend. Stochastic collocation provides a separate deterministic
   quadrature path for finite-dimensional random inputs.
   See [API → Solver → Differential equations](api/solver/differential.md).
+- **Differential-algebraic equations**: declare a state-shaped residual
+  `F(t, y, ydot, args) = 0`, component roles, scales, and an explicit consistency
+  contract. Native prepared BDF1/BDF2 solves support fixed-grid JIT, JVP, VJP, and
+  batching; failed initialization or stages remain explicit status evidence.
+  Semidiscrete PDE IR can compile directly to the same residual contract when every
+  equation has a bijective field target and supported direct temporal incidence.
+  See [API → Solver → Differential-algebraic equations](api/solver/differential_algebraic.md).
 - **System identification and equation discovery**: normalize canonical
   evolution, differential/delay/memory/rough, controlled, or stochastic output
   as `TrajectoryData`; preserve sample/transition masks and reset boundaries;

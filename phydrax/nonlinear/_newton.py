@@ -905,13 +905,22 @@ def _eager_initial_status(
     termination: NonlinearTermination,
     /,
 ) -> Array | None:
-    if isinstance(state.status, jax_core.Tracer):
+    if any(
+        isinstance(value, jax_core.Tracer)
+        for value in (
+            state.status,
+            state.residual_norm,
+            state.initial_residual_norm,
+        )
+    ):
         return None
     if int(state.status) != int(NonlinearStatus.ITERATING):
         return state.status
     converged = state.residual_norm <= termination.residual_threshold(
         state.initial_residual_norm
     )
+    if isinstance(converged, jax_core.Tracer):
+        return None
     if bool(converged):
         return jnp.asarray(int(NonlinearStatus.SUCCESS), dtype=jnp.int32)
     return None

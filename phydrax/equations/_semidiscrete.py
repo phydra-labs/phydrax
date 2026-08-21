@@ -15,6 +15,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..dynamics import DAERole, DAEStructure, DifferentialAlgebraicSystem
 from ..linalg import (
     ArraySpace,
     DiagonalPairing,
@@ -836,6 +837,8 @@ class _SemidiscreteEvaluator(StrictModule):
         args: Any,
         fields: Mapping[str, Array],
         /,
+        *,
+        rate_fields: Mapping[str, Array] | None = None,
     ) -> Any:
         if (
             node.op == "divergence"
@@ -851,6 +854,7 @@ class _SemidiscreteEvaluator(StrictModule):
                 time,
                 args,
                 fields,
+                rate_fields=rate_fields,
             )
         if node.op == "constant":
             assert node.value is not None
@@ -864,8 +868,29 @@ class _SemidiscreteEvaluator(StrictModule):
         if node.op == "coordinate":
             assert node.symbol is not None
             return self._coordinate(node.symbol, time)
+        if node.op == "derivative" and node.coordinate == self.time_coordinate:
+            field_name = _temporal_field(node, self.time_coordinate)
+            if field_name is None:
+                raise ValueError(
+                    "Semidiscrete DAE residuals support only direct first temporal "
+                    "derivatives of fields."
+                )
+            if rate_fields is None:
+                raise ValueError(
+                    "Temporal derivatives may only appear in implicit DAE residuals."
+                )
+            return rate_fields[field_name]
 
-        values = tuple(self._evaluate(arg, time, args, fields) for arg in node.args)
+        values = tuple(
+            self._evaluate(
+                argument,
+                time,
+                args,
+                fields,
+                rate_fields=rate_fields,
+            )
+            for argument in node.args
+        )
         if node.op == "add":
             result = values[0]
             for value in values[1:]:
@@ -1156,7 +1181,7 @@ class _SemidiscreteEvaluator(StrictModule):
         if compatible:
             return jnp.broadcast_to(result, expected)
         raise ValueError(
-            f"Evolution RHS for field {name!r} must have shape {expected}; "
+            f"Semidiscrete value for field {name!r} must have shape {expected}; "
             f"got {result.shape}."
         )
 
@@ -1169,6 +1194,74 @@ class _SemidiscreteEvaluator(StrictModule):
                 f"got {value.shape}."
             )
         return self.layout.pack(self._physical_fields(time_array, value, args))
+
+    def physical_state_rate(
+        self,
+        time: ArrayLike,
+        state_rate: ArrayLike,
+        args: Any,
+        /,
+    ) -> Array:
+        time_array = jnp.asarray(time)
+        value = jnp.asarray(state_rate)
+        if tuple(value.shape) != self.layout.state_shape:
+            raise ValueError(
+                f"Semidiscrete state rate must have shape {self.layout.state_shape}; "
+                f"got {value.shape}."
+            )
+        fields = self.layout.unpack(value)
+        for lift in self.boundary_lifts:
+            derivative = lift.derivative(time_array, args)
+            expected = self.layout.field_shape(lift.field_name)
+            if tuple(derivative.shape) != expected:
+                raise ValueError(
+                    f"Boundary lift derivative {lift.lift_id!r} has shape "
+                    f"{derivative.shape}; expected {expected}."
+                )
+            fields[lift.field_name] = fields[lift.field_name] + derivative
+        return self.layout.pack(fields)
+
+    def residual(
+        self,
+        time: ArrayLike,
+        state: ArrayLike,
+        state_rate: ArrayLike,
+        args: Any,
+        /,
+    ) -> Array:
+        time_array = jnp.asarray(time)
+        value = jnp.asarray(state)
+        rate = jnp.asarray(state_rate)
+        if tuple(value.shape) != self.layout.state_shape:
+            raise ValueError(
+                f"Semidiscrete state must have shape {self.layout.state_shape}; "
+                f"got {value.shape}."
+            )
+        if tuple(rate.shape) != self.layout.state_shape:
+            raise ValueError(
+                f"Semidiscrete state rate must have shape {self.layout.state_shape}; "
+                f"got {rate.shape}."
+            )
+        fields = self._physical_fields(time_array, value, args)
+        rate_fields = self.layout.unpack(self.physical_state_rate(time_array, rate, args))
+        residuals = {
+            name: self._coerce_field_value(
+                name,
+                self._evaluate(
+                    expression,
+                    time_array,
+                    args,
+                    fields,
+                    rate_fields=rate_fields,
+                ),
+            )
+            for name, expression in zip(
+                self.layout.field_names,
+                self.rhs_expressions,
+                strict=True,
+            )
+        }
+        return self.layout.pack(residuals)
 
     def __call__(self, time: Array, state: Array, args: Any) -> Array:
         value = jnp.asarray(state)
@@ -1288,6 +1381,162 @@ class CompiledSpatialDynamics(StrictModule):
         return self.drift(jnp.asarray(time), state, args)
 
 
+class SemidiscreteDAEStructuralReport(StrictModule):
+    """Temporal-incidence evidence without an inferred index or regularity claim."""
+
+    field_names: tuple[str, ...] = eqx.field(static=True)
+    equation_names: tuple[str, ...] = eqx.field(static=True)
+    equation_targets: tuple[tuple[str, str], ...] = eqx.field(static=True)
+    variable_roles: tuple[DAERole, ...] = eqx.field(static=True)
+    equation_roles: tuple[DAERole, ...] = eqx.field(static=True)
+    temporal_derivative_counts: tuple[int, ...] = eqx.field(static=True)
+    regularity_verified: bool = eqx.field(static=True)
+    index_assumption: str = eqx.field(static=True)
+    report_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        field_names: Sequence[str],
+        equation_names: Sequence[str],
+        equation_targets: Sequence[tuple[str, str]],
+        variable_roles: Sequence[DAERole],
+        equation_roles: Sequence[DAERole],
+        temporal_derivative_counts: Sequence[int],
+    ):
+        fields = tuple(str(name) for name in field_names)
+        equations = tuple(str(name) for name in equation_names)
+        targets = tuple(
+            (str(equation), str(field)) for equation, field in equation_targets
+        )
+        variables = tuple(variable_roles)
+        residual_roles = tuple(equation_roles)
+        counts = tuple(int(count) for count in temporal_derivative_counts)
+        if not fields or not variables:
+            raise ValueError("Semidiscrete DAE structural evidence must not be empty.")
+        if not (
+            len(fields) == len(equations) == len(targets) == len(counts)
+            and len(variables) == len(residual_roles)
+        ):
+            raise ValueError("Semidiscrete DAE structural evidence entries must align.")
+        self.field_names = fields
+        self.equation_names = equations
+        self.equation_targets = targets
+        self.variable_roles = variables
+        self.equation_roles = residual_roles
+        self.temporal_derivative_counts = counts
+        self.regularity_verified = False
+        self.index_assumption = "regular-index-1-required-unverified"
+        self.report_id = _stable_id(
+            "semidiscrete-dae-structure-v2",
+            repr((fields, equations, targets, variables, residual_roles, counts)),
+        )
+
+
+class _CompiledSpatialResidualFunction(StrictModule):
+    evaluator: _SemidiscreteEvaluator
+
+    def __call__(
+        self,
+        time: Array,
+        state: Array,
+        state_rate: Array,
+        args: Any,
+    ) -> Array:
+        return self.evaluator.residual(time, state, state_rate, args)
+
+
+class CompiledSpatialResidual(StrictModule):
+    """Implicit semidiscrete PDE residual and explicit DAE structure."""
+
+    residual: _CompiledSpatialResidualFunction
+    system: DifferentialAlgebraicSystem
+    layout: SemidiscreteFieldLayout
+    spatial_discretization: Any
+    structure: DAEStructure
+    structural_report: SemidiscreteDAEStructuralReport
+    boundary_lifts: tuple[BoundaryLift, ...]
+    _evaluator: _SemidiscreteEvaluator
+    compilation_id: str = eqx.field(static=True)
+    source_hash: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        residual: _CompiledSpatialResidualFunction,
+        system: DifferentialAlgebraicSystem,
+        layout: SemidiscreteFieldLayout,
+        spatial_discretization: Any,
+        evaluator: _SemidiscreteEvaluator,
+        /,
+        *,
+        structure: DAEStructure,
+        structural_report: SemidiscreteDAEStructuralReport,
+        boundary_lifts: Sequence[BoundaryLift],
+        compilation_id: str,
+        source_hash: str,
+    ):
+        self.residual = residual
+        self.system = system
+        self.layout = layout
+        self.spatial_discretization = spatial_discretization
+        self.structure = structure
+        self.structural_report = structural_report
+        self.boundary_lifts = tuple(boundary_lifts)
+        self._evaluator = evaluator
+        self.compilation_id = str(compilation_id)
+        self.source_hash = str(source_hash)
+
+    @property
+    def state_shape(self) -> tuple[int, ...]:
+        return self.layout.state_shape
+
+    def physical_state(
+        self,
+        time: ArrayLike,
+        state: ArrayLike,
+        args: Any = None,
+    ) -> Array:
+        return self._evaluator.physical_state(jnp.asarray(time), state, args)
+
+    def physical_state_rate(
+        self,
+        time: ArrayLike,
+        state_rate: ArrayLike,
+        args: Any = None,
+    ) -> Array:
+        return self._evaluator.physical_state_rate(
+            jnp.asarray(time),
+            state_rate,
+            args,
+        )
+
+    def rate_jacobian(
+        self,
+        time: ArrayLike,
+        state: ArrayLike,
+        state_rate: ArrayLike,
+        args: Any = None,
+    ) -> Array:
+        """Materialize the dense local derivative ∂F/∂state_rate."""
+        time_array = jnp.asarray(time)
+        state_array = jnp.asarray(state)
+        rate_array = jnp.asarray(state_rate)
+        jacobian = jax.jacfwd(
+            lambda rate: self.residual(time_array, state_array, rate, args)
+        )(rate_array)
+        size = int(np.prod(self.layout.state_shape))
+        return jacobian.reshape((size, size))
+
+    def __call__(
+        self,
+        time: ArrayLike,
+        state: Array,
+        state_rate: Array,
+        args: Any,
+    ) -> Array:
+        return self.residual(jnp.asarray(time), state, state_rate, args)
+
+
 def _signed_additive_terms(
     expression: PDEExpression,
     sign: float = 1.0,
@@ -1381,6 +1630,87 @@ def _expression_nodes(expression: PDEExpression, /) -> tuple[PDEExpression, ...]
     return (expression,) + tuple(
         node for argument in expression.args for node in _expression_nodes(argument)
     )
+
+
+def _dae_residual_layout(
+    problem: PDEProblemIR,
+    layout: SemidiscreteFieldLayout,
+    time_coordinate: str,
+    equation_targets: Mapping[str, str],
+    /,
+) -> tuple[
+    tuple[PDEExpression, ...],
+    DAEStructure,
+    SemidiscreteDAEStructuralReport,
+]:
+    targets = {str(name): str(field) for name, field in equation_targets.items()}
+    equation_names = {equation.name for equation in problem.equations}
+    field_names = set(layout.field_names)
+    if set(targets) != equation_names:
+        missing = sorted(equation_names - set(targets))
+        extra = sorted(set(targets) - equation_names)
+        raise ValueError(
+            "equation_targets must name every PDE equation exactly once; "
+            f"missing={missing}, extra={extra}."
+        )
+    if set(targets.values()) != field_names or len(set(targets.values())) != len(targets):
+        raise ValueError(
+            "equation_targets must map equations bijectively onto all PDE fields."
+        )
+    equation_by_name = {equation.name: equation for equation in problem.equations}
+    target_to_equation = {field: name for name, field in targets.items()}
+    residuals: list[PDEExpression] = []
+    ordered_equations: list[str] = []
+    ordered_targets: list[tuple[str, str]] = []
+    variable_roles: list[DAERole] = []
+    equation_roles: list[DAERole] = []
+    derivative_counts: list[int] = []
+    for field_name, components in zip(
+        layout.field_names,
+        layout.component_counts,
+        strict=True,
+    ):
+        equation_name = target_to_equation[field_name]
+        equation = equation_by_name[equation_name]
+        temporal_nodes = tuple(
+            node
+            for node in _expression_nodes(equation.residual)
+            if node.op == "derivative" and node.coordinate == time_coordinate
+        )
+        temporal_fields = tuple(
+            _temporal_field(node, time_coordinate) for node in temporal_nodes
+        )
+        if any(name is None for name in temporal_fields):
+            raise ValueError(
+                f"PDE equation {equation_name!r} contains an unsupported temporal "
+                "derivative; only direct first derivatives of fields are accepted."
+            )
+        if any(name != field_name for name in temporal_fields):
+            raise ValueError(
+                f"PDE equation {equation_name!r} targets field {field_name!r} but "
+                f"contains temporal derivatives of {temporal_fields}."
+            )
+        role: DAERole = "differential" if temporal_fields else "algebraic"
+        residuals.append(equation.residual)
+        ordered_equations.append(equation_name)
+        ordered_targets.append((equation_name, field_name))
+        variable_roles.extend((role,) * components)
+        equation_roles.extend((role,) * components)
+        derivative_counts.append(len(temporal_fields))
+    structure = DAEStructure(
+        variable_roles,
+        equation_roles=equation_roles,
+        component_axis=None if layout.squeezed else -1,
+    )
+    report = SemidiscreteDAEStructuralReport(
+        field_names=layout.field_names,
+        equation_names=ordered_equations,
+        equation_targets=ordered_targets,
+        variable_roles=variable_roles,
+        equation_roles=equation_roles,
+        temporal_derivative_counts=derivative_counts,
+    )
+    return tuple(residuals), structure, report
 
 
 def _evolution_rhs(
@@ -1855,36 +2185,31 @@ def _spectral_representation(
     )
 
 
-def compile_semidiscrete_pde(
+def _semidiscrete_setup(
     problem: PDEProblemIR,
     discretization: Any,
+    boundary_lifts: Sequence[BoundaryLift],
     /,
-    *,
-    parameter_values: Mapping[str, Any] | None = None,
-    boundary_lifts: Sequence[BoundaryLift] = (),
-    method: SemidiscreteCompilationMethod = "auto",
-) -> CompiledSpatialDynamics:
-    """Compile validated PDE IR into state-shaped method-of-lines dynamics."""
-    from ..solver._semilinear_drift import SemilinearDrift
-    from ..solver._spatial import (
-        AbstractSpatialDiscretization,
-        SpectralSpatialDiscretization,
-    )
+) -> tuple[
+    str,
+    tuple[str, ...],
+    tuple[BoundaryLift, ...],
+    tuple[tuple[str, tuple[int, ...]], ...],
+    SemidiscreteFieldLayout,
+]:
+    from ..solver._spatial import AbstractSpatialDiscretization
 
     if not isinstance(problem, PDEProblemIR):
         raise TypeError("problem must be a PDEProblemIR.")
     if not isinstance(discretization, AbstractSpatialDiscretization):
         raise TypeError("discretization must be an AbstractSpatialDiscretization.")
-    if method not in ("auto", "direct", "semilinear"):
-        raise ValueError("method must be 'auto', 'direct', or 'semilinear'.")
     validate_pde_ir(problem)
-
     time_coordinates = tuple(
         coordinate for coordinate in problem.coordinates if coordinate.kind == "time"
     )
     if len(time_coordinates) != 1 or time_coordinates[0].size != 1:
         raise ValueError(
-            "Semidiscrete PDE compilation requires exactly one scalar time coordinate."
+            "Semidiscrete compilation requires exactly one scalar time coordinate."
         )
     time_coordinate = time_coordinates[0].name
     spatial_coordinates = tuple(
@@ -1896,7 +2221,7 @@ def compile_semidiscrete_pde(
     for field in problem.fields:
         if time_coordinate not in field.coordinates:
             raise ValueError(
-                f"Evolution field {field.name!r} must depend on time coordinate "
+                f"Semidiscrete field {field.name!r} must depend on time coordinate "
                 f"{time_coordinate!r}."
             )
         field_spatial_coordinates = tuple(
@@ -1906,11 +2231,10 @@ def compile_semidiscrete_pde(
         )
         if field_spatial_coordinates != spatial_coordinates:
             raise ValueError(
-                "All evolution fields must use the same complete spatial coordinate "
-                f"layout {spatial_coordinates}; field {field.name!r} uses "
-                f"{field_spatial_coordinates}."
+                "All semidiscrete fields must use the same complete spatial "
+                f"coordinate layout {spatial_coordinates}; field {field.name!r} "
+                f"uses {field_spatial_coordinates}."
             )
-
     lifts = tuple(boundary_lifts)
     if any(not isinstance(lift, BoundaryLift) for lift in lifts):
         raise TypeError("boundary_lifts must contain BoundaryLift objects.")
@@ -1922,7 +2246,6 @@ def compile_semidiscrete_pde(
         raise ValueError(
             f"Boundary lifts reference unknown fields {sorted(unknown_lifts)}."
         )
-
     coordinate_axes = _coordinate_axis_map(problem, discretization)
     _validate_boundary_conditions(
         problem,
@@ -1930,49 +2253,25 @@ def compile_semidiscrete_pde(
         coordinate_axes,
         lifts,
     )
-    rhs_expressions = _evolution_rhs(problem, time_coordinate)
-    regions_by_name = {region.name: region for region in problem.regions}
-    unsupported_integrals = tuple(
-        region_name
-        for expression in rhs_expressions
-        for region_name in _integral_regions(expression)
-        if (
-            regions_by_name[region_name].kind != "interior"
-            or regions_by_name[region_name].component is not None
-            or len(set(regions_by_name[region_name].coordinates))
-            != len(regions_by_name[region_name].coordinates)
-            or any(
-                coordinate not in spatial_coordinate_set
-                for coordinate in regions_by_name[region_name].coordinates
-            )
-        )
+    return (
+        time_coordinate,
+        spatial_coordinates,
+        lifts,
+        coordinate_axes,
+        SemidiscreteFieldLayout(problem.fields, discretization.state_shape),
     )
-    if unsupported_integrals:
-        raise ValueError(
-            "Semidiscrete volume quadrature only supports unpartitioned interior "
-            f"spatial regions with unique coordinates; got {unsupported_integrals}."
-        )
-    if isinstance(discretization, SpectralSpatialDiscretization):
-        if lifts:
-            raise ValueError(
-                "SpectralSpatialDiscretization cannot apply coordinate-space "
-                "BoundaryLift objects without a coordinate frame."
-            )
-        framed_expressions = rhs_expressions + tuple(
-            expression
-            for condition in problem.conditions
-            for expression in (condition.expression, condition.target)
-        )
-        if any(
-            _requires_coordinate_frame(expression, spatial_coordinate_set)
-            for expression in framed_expressions
-        ):
-            raise ValueError(
-                "SpectralSpatialDiscretization has no coordinate frame for "
-                "coordinate, derivative, gradient, divergence, or curl nodes."
-            )
-    layout = SemidiscreteFieldLayout(problem.fields, discretization.state_shape)
 
+
+def _parameter_defaults(
+    problem: PDEProblemIR,
+    layout: SemidiscreteFieldLayout,
+    parameter_values: Mapping[str, Any] | None,
+    /,
+) -> tuple[
+    tuple[Any | None, ...],
+    dict[str, Any],
+    tuple[tuple[str, str], ...],
+]:
     supplied = {} if parameter_values is None else dict(parameter_values)
     parameter_names = {parameter.name for parameter in problem.parameters}
     unknown_parameters = set(supplied) - parameter_names
@@ -2014,35 +2313,81 @@ def compile_semidiscrete_pde(
         defaults.append(normalized)
         if normalized is not None:
             defaults_by_name[parameter.name] = normalized
-    lift_bindings = tuple(sorted((lift.field_name, lift.lift_id) for lift in lifts))
     parameter_bindings = tuple(
         (parameter.name, _value_fingerprint(value))
         for parameter, value in zip(problem.parameters, defaults, strict=True)
     )
-    binding_id = _stable_id(
-        "semidiscrete-bindings-v1",
-        problem.canonical_hash,
-        discretization.discretization_id,
-        layout.layout_id,
-        repr(lift_bindings),
-        repr(parameter_bindings),
+    return tuple(defaults), defaults_by_name, parameter_bindings
+
+
+def _validate_semidiscrete_expressions(
+    problem: PDEProblemIR,
+    discretization: Any,
+    evaluator: _SemidiscreteEvaluator,
+    expressions: Sequence[PDEExpression],
+    spatial_coordinates: set[str],
+    lifts: Sequence[BoundaryLift],
+    /,
+    *,
+    allow_temporal_derivatives: bool,
+) -> None:
+    from ..solver._spatial import (
+        SpectralSpatialDiscretization,
+        TensorGridDiscretization,
     )
 
-    evaluator = _SemidiscreteEvaluator(
-        problem,
-        rhs_expressions,
-        layout,
-        discretization,
-        lifts,
-        defaults,
-        coordinate_axes,
-        time_coordinate,
-        _region_axis_map(problem, coordinate_axes),
+    expression_values = tuple(expressions)
+    regions_by_name = {region.name: region for region in problem.regions}
+    unsupported_integrals = tuple(
+        region_name
+        for expression in expression_values
+        for region_name in _integral_regions(expression)
+        if (
+            regions_by_name[region_name].kind != "interior"
+            or regions_by_name[region_name].component is not None
+            or len(set(regions_by_name[region_name].coordinates))
+            != len(regions_by_name[region_name].coordinates)
+            or any(
+                coordinate not in spatial_coordinates
+                for coordinate in regions_by_name[region_name].coordinates
+            )
+        )
     )
-    from ..solver._spatial import TensorGridDiscretization
-
-    for expression in rhs_expressions:
+    if unsupported_integrals:
+        raise ValueError(
+            "Semidiscrete volume quadrature only supports unpartitioned interior "
+            f"spatial regions with unique coordinates; got {unsupported_integrals}."
+        )
+    if isinstance(discretization, SpectralSpatialDiscretization):
+        if lifts:
+            raise ValueError(
+                "SpectralSpatialDiscretization cannot apply coordinate-space "
+                "BoundaryLift objects without a coordinate frame."
+            )
+        framed_expressions = expression_values + tuple(
+            expression
+            for condition in problem.conditions
+            for expression in (condition.expression, condition.target)
+        )
+        if any(
+            _requires_coordinate_frame(expression, spatial_coordinates)
+            for expression in framed_expressions
+        ):
+            raise ValueError(
+                "SpectralSpatialDiscretization has no coordinate frame for "
+                "coordinate, derivative, gradient, divergence, or curl nodes."
+            )
+    for expression in expression_values:
         for node in _expression_nodes(expression):
+            if node.op == "derivative" and node.coordinate == evaluator.time_coordinate:
+                if (
+                    allow_temporal_derivatives
+                    and _temporal_field(node, evaluator.time_coordinate) is not None
+                ):
+                    continue
+                raise ValueError(
+                    "Only direct first field derivatives may use the time coordinate."
+                )
             if node.op not in (
                 "derivative",
                 "gradient",
@@ -2051,6 +2396,10 @@ def compile_semidiscrete_pde(
                 "laplacian",
             ):
                 continue
+            if node.coordinate == evaluator.time_coordinate:
+                raise ValueError(
+                    "Only direct first field derivatives may use the time coordinate."
+                )
             if (
                 node.op in ("divergence", "curl")
                 and infer_expression_type(node.args[0], problem).is_scalar
@@ -2082,10 +2431,67 @@ def compile_semidiscrete_pde(
                 parity[axis] == 2 for parity in parities for axis in axes
             ):
                 raise ValueError(
-                    "Cannot infer sine/cosine extension parity for a "
-                    "differentiated composite expression; rewrite it into "
-                    "boundary-compatible terms."
+                    "Cannot infer sine/cosine extension parity for a differentiated "
+                    "composite expression; rewrite it into boundary-compatible terms."
                 )
+
+
+def compile_semidiscrete_pde(
+    problem: PDEProblemIR,
+    discretization: Any,
+    /,
+    *,
+    parameter_values: Mapping[str, Any] | None = None,
+    boundary_lifts: Sequence[BoundaryLift] = (),
+    method: SemidiscreteCompilationMethod = "auto",
+) -> CompiledSpatialDynamics:
+    """Compile validated PDE IR into state-shaped method-of-lines dynamics."""
+    from ..solver._semilinear_drift import SemilinearDrift
+
+    if method not in ("auto", "direct", "semilinear"):
+        raise ValueError("method must be 'auto', 'direct', or 'semilinear'.")
+    (
+        time_coordinate,
+        spatial_coordinates,
+        lifts,
+        coordinate_axes,
+        layout,
+    ) = _semidiscrete_setup(problem, discretization, boundary_lifts)
+    rhs_expressions = _evolution_rhs(problem, time_coordinate)
+    defaults, defaults_by_name, parameter_bindings = _parameter_defaults(
+        problem,
+        layout,
+        parameter_values,
+    )
+    lift_bindings = tuple(sorted((lift.field_name, lift.lift_id) for lift in lifts))
+    binding_id = _stable_id(
+        "semidiscrete-bindings-v1",
+        problem.canonical_hash,
+        discretization.discretization_id,
+        layout.layout_id,
+        repr(lift_bindings),
+        repr(parameter_bindings),
+    )
+    evaluator = _SemidiscreteEvaluator(
+        problem,
+        rhs_expressions,
+        layout,
+        discretization,
+        lifts,
+        defaults,
+        coordinate_axes,
+        time_coordinate,
+        _region_axis_map(problem, coordinate_axes),
+    )
+    _validate_semidiscrete_expressions(
+        problem,
+        discretization,
+        evaluator,
+        rhs_expressions,
+        set(spatial_coordinates),
+        lifts,
+        allow_temporal_derivatives=False,
+    )
 
     full_spatial_axes = tuple(range(len(discretization.state_shape)))
     full_spatial_coordinates = {
@@ -2217,11 +2623,112 @@ def compile_semidiscrete_pde(
     )
 
 
+def compile_semidiscrete_dae(
+    problem: PDEProblemIR,
+    discretization: Any,
+    /,
+    *,
+    equation_targets: Mapping[str, str],
+    parameter_values: Mapping[str, Any] | None = None,
+    boundary_lifts: Sequence[BoundaryLift] = (),
+    state_scale: ArrayLike | None = None,
+    state_rate_scale: ArrayLike | None = None,
+    residual_scale: ArrayLike | None = None,
+    system_id: str | None = None,
+) -> CompiledSpatialResidual:
+    """Compile PDE IR into an implicit residual without claiming index regularity."""
+    if not isinstance(equation_targets, Mapping):
+        raise TypeError("equation_targets must be a mapping from equations to fields.")
+    (
+        time_coordinate,
+        spatial_coordinates,
+        lifts,
+        coordinate_axes,
+        layout,
+    ) = _semidiscrete_setup(problem, discretization, boundary_lifts)
+    residual_expressions, structure, structural_report = _dae_residual_layout(
+        problem,
+        layout,
+        time_coordinate,
+        equation_targets,
+    )
+    defaults, _, parameter_bindings = _parameter_defaults(
+        problem,
+        layout,
+        parameter_values,
+    )
+    lift_bindings = tuple(sorted((lift.field_name, lift.lift_id) for lift in lifts))
+    binding_id = _stable_id(
+        "semidiscrete-dae-bindings-v2",
+        problem.canonical_hash,
+        discretization.discretization_id,
+        layout.layout_id,
+        structural_report.report_id,
+        repr(lift_bindings),
+        repr(parameter_bindings),
+    )
+    evaluator = _SemidiscreteEvaluator(
+        problem,
+        residual_expressions,
+        layout,
+        discretization,
+        lifts,
+        defaults,
+        coordinate_axes,
+        time_coordinate,
+        _region_axis_map(problem, coordinate_axes),
+    )
+    _validate_semidiscrete_expressions(
+        problem,
+        discretization,
+        evaluator,
+        residual_expressions,
+        set(spatial_coordinates),
+        lifts,
+        allow_temporal_derivatives=True,
+    )
+    compilation_id = _stable_id(
+        "semidiscrete-dae-compiler-v2",
+        binding_id,
+        _value_fingerprint(state_scale),
+        _value_fingerprint(state_rate_scale),
+        _value_fingerprint(residual_scale),
+    )
+    residual = _CompiledSpatialResidualFunction(evaluator)
+    resolved_system_id = (
+        f"semidiscrete-dae:{compilation_id}" if system_id is None else system_id
+    )
+    system = DifferentialAlgebraicSystem(
+        residual,
+        state_shape=layout.state_shape,
+        structure=structure,
+        state_scale=state_scale,
+        state_rate_scale=state_rate_scale,
+        residual_scale=residual_scale,
+        system_id=resolved_system_id,
+    )
+    return CompiledSpatialResidual(
+        residual,
+        system,
+        layout,
+        discretization,
+        evaluator,
+        structure=structure,
+        structural_report=structural_report,
+        boundary_lifts=lifts,
+        compilation_id=compilation_id,
+        source_hash=problem.canonical_hash,
+    )
+
+
 __all__ = [
     "BoundaryLift",
     "CompiledSpatialDynamics",
+    "CompiledSpatialResidual",
     "ResolvedSemidiscreteMethod",
     "SemidiscreteCompilationMethod",
+    "SemidiscreteDAEStructuralReport",
     "SemidiscreteFieldLayout",
+    "compile_semidiscrete_dae",
     "compile_semidiscrete_pde",
 ]
