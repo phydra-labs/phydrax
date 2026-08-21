@@ -161,6 +161,98 @@ must be kept distinct.
 weights, and masks are permuted together. Masked sensors contribute exactly zero.
 
 
+### Learned function frame with reusable projection
+
+Use a learned frame when the source should be encoded by an explicit weighted
+projection rather than by a generic set aggregator. The source and query grids
+may differ. Projection uses source coordinates, quadrature, and masks; decoding
+only evaluates the target frame.
+
+```python
+rank = 4
+source_key, target_key, map_key = jr.split(jr.key(2), 3)
+source_frame = phx.nn.operator.architectures.LearnedFunctionFrame(
+    basis_model=phx.nn.models.MLP(
+        in_size=1,
+        out_size=rank,
+        width_size=32,
+        depth=2,
+        key=source_key,
+    ),
+    rank=rank,
+    coord_dim=1,
+    frame_id="forcing-frame",
+)
+target_frame = phx.nn.operator.architectures.LearnedFunctionFrame(
+    basis_model=phx.nn.models.MLP(
+        in_size=1,
+        out_size=rank,
+        width_size=32,
+        depth=2,
+        key=target_key,
+    ),
+    rank=rank,
+    coord_dim=1,
+    frame_id="solution-frame",
+)
+coefficient_map = phx.nn.models.MLP(
+    in_size=rank,
+    out_size=rank,
+    width_size=32,
+    depth=2,
+    key=map_key,
+)
+projection_policy = phx.nn.operator.architectures.FunctionProjectionPolicy(
+    ridge=1e-5,
+    min_samples=rank,
+    rank_policy="regularized",
+    require_physical_quadrature=True,
+)
+frame_operator = phx.nn.operator.architectures.FunctionFrameReconstructor(
+    source_frame=source_frame,
+    target_frame=target_frame,
+    coefficient_map=coefficient_map,
+    policy=projection_policy,
+    source_name="forcing",
+)
+
+report = source_frame.project(source, policy=projection_policy)
+coefficients = report.require_coefficients()
+source_reconstruction = source_frame.decode(coefficients, source)
+
+encoded = frame_operator.encode_inputs(batch)
+prediction = frame_operator.decode_query(encoded, query)
+refined_query = phx.nn.operator.FunctionSamples(
+    values=None,
+    coordinates=jnp.linspace(0.0, 1.0, 128)[:, None],
+)
+refined_prediction = frame_operator.decode_query(encoded, refined_query)
+
+assert prediction.shape == (64,)
+assert refined_prediction.shape == (128,)
+assert encoded.report.frame_id == "forcing-frame"
+```
+
+Inspect `report.status`, `report.rank`, `report.condition_number`,
+`report.relative_residual`, and `report.sample_count` before consuming
+coefficients in custom code. `require_coefficients()` rejects invalid-measure,
+nonfinite, insufficient-support, and unregularized rank-deficient projections.
+A regularized report is usable but deliberately not classified as identified.
+`scale_frame=True` improves conditioning internally while returning coefficients
+in the raw learned-frame coordinates.
+
+For channel-valued functions, one coefficient vector is shared across channels.
+Pass `channel_metric=` when the physical channel norm is not Euclidean. Masked
+padding may contain arbitrary values and coordinates; requested sites may not
+contain invalid measure or nonfinite observations. Uniformly rescaling all
+positive quadrature weights leaves the projected coefficients unchanged.
+
+`FunctionFrameReconstructor` is an ordinary trainable operator model and can be
+passed to `fit_operator`. After training, call `frozen()` to freeze both frames
+and the coefficient map. Reusing `FunctionFrameEncoding` across query grids
+avoids repeated source projection.
+
+
 ### Shape, measure, and mask invariants
 
 Let `C = batch.case_shape` and `S = samples.sample_shape`. A scalar field has

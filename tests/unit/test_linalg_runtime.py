@@ -444,6 +444,65 @@ def test_weighted_regularized_least_squares_and_minimum_norm():
     assert jnp.allclose(minimum_norm.value, expected_minimum_norm)
 
 
+def test_dense_svd_scalar_damping_matches_tikhonov_solution_and_diagnostics():
+    matrix = jnp.asarray([[1.0 + 0.5j, 2.0], [2.0 - 0.25j, -1.0j], [0.5, 3.0 + 2.0j]])
+    rhs = jnp.asarray([1.0 - 0.5j, 2.0 + 1.0j, -1.0 + 0.25j])
+    damping = 0.3
+    result = la.solve(
+        la.LeastSquaresProblem(la.DenseLinearOperator(matrix)),
+        rhs,
+        policy=la.LinearSolvePolicy(la.DenseSVD(damping=damping)),
+    )
+    expected = jnp.linalg.solve(
+        jnp.conj(matrix.T) @ matrix + damping**2 * jnp.eye(matrix.shape[1]),
+        jnp.conj(matrix.T) @ rhs,
+    )
+
+    assert bool(result.successful)
+    assert result.diagnostics.rank == 2
+    assert jnp.allclose(
+        result.diagnostics.singular_values,
+        jnp.linalg.svd(matrix, compute_uv=False),
+    )
+    assert jnp.allclose(result.value, expected, rtol=1e-10, atol=1e-10)
+
+
+def test_dense_svd_damping_has_regularized_rank_deficient_gradients():
+    matrix = jnp.asarray([[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]])
+    rhs = jnp.asarray([1.0, 2.0, 3.0])
+
+    def objective(candidate, target):
+        result = la.solve(
+            la.LeastSquaresProblem(la.DenseLinearOperator(candidate)),
+            target,
+            policy=la.LinearSolvePolicy(la.DenseSVD(damping=0.1)),
+        )
+        return jnp.sum(result.value**2)
+
+    result = la.solve(
+        la.LeastSquaresProblem(la.DenseLinearOperator(matrix)),
+        rhs,
+        policy=la.LinearSolvePolicy(la.DenseSVD(damping=0.1)),
+    )
+    matrix_gradient, rhs_gradient = jax.grad(objective, argnums=(0, 1))(matrix, rhs)
+
+    assert bool(result.successful)
+    assert result.diagnostics.rank == 1
+    assert jnp.all(jnp.isfinite(result.value))
+    assert jnp.all(jnp.isfinite(matrix_gradient))
+    assert jnp.all(jnp.isfinite(rhs_gradient))
+
+
+def test_dense_svd_rejects_invalid_or_minimum_norm_damping():
+    with pytest.raises(ValueError, match="damping"):
+        la.DenseSVD(damping=-1.0)
+    with pytest.raises(ValueError, match="least-squares"):
+        la.prepare(
+            la.MinimumNormProblem(la.DenseLinearOperator(jnp.ones((1, 2)))),
+            la.LinearSolvePolicy(la.DenseSVD(damping=0.1)),
+        )
+
+
 def test_rank_policy_retains_solution_but_reports_rank_deficiency():
     matrix = jnp.asarray([[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]])
     rhs = jnp.asarray([2.0, 4.0, 6.0])

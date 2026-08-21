@@ -12,6 +12,7 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
+from phydrax._model import FrozenModel
 
 
 class _FeatureMap(eqx.Module):
@@ -153,6 +154,7 @@ def test_operator_architecture_tiers_and_recommendation_eligibility_are_exact():
             "UNO",
             "LaplaceTemporalOperator",
             "GINO",
+            "FunctionFrameReconstructor",
             "GeometryInformedFlower",
             "RIGNO",
             "GAOT",
@@ -467,6 +469,55 @@ def test_deeponet_chunked_and_unchunked_queries_agree():
     )
     inputs = (jnp.arange(4.0), jnp.linspace(0.0, 1.0, 11))
     assert jnp.allclose(full(inputs), chunked(inputs))
+
+
+def test_deeponet_accepts_frozen_array_models():
+    branch = phx.nn.models.MLP(
+        in_size=4, out_size=3, width_size=8, depth=2, key=jr.key(2)
+    )
+    trunk = phx.nn.models.MLP(in_size=1, out_size=3, width_size=8, depth=2, key=jr.key(3))
+    ordinary = phx.nn.operator.architectures.DeepONet(
+        branch=branch,
+        trunk=trunk,
+        coord_dim=1,
+        latent_size=3,
+        use_bias=False,
+    )
+    frozen = phx.nn.operator.architectures.DeepONet(
+        branch=FrozenModel(branch),
+        trunk=FrozenModel(trunk),
+        coord_dim=1,
+        latent_size=3,
+        use_bias=False,
+    )
+    inputs = (jnp.arange(4.0), jnp.linspace(0.0, 1.0, 7))
+
+    assert jnp.allclose(ordinary(inputs), frozen(inputs))
+
+
+def test_deeponet_bias_is_explicitly_optional():
+    branch = phx.nn.models.MLP(
+        in_size=4, out_size=3, width_size=8, depth=2, key=jr.key(4)
+    )
+    trunk = phx.nn.models.MLP(in_size=1, out_size=3, width_size=8, depth=2, key=jr.key(5))
+    unbiased = phx.nn.operator.architectures.DeepONet(
+        branch=branch,
+        trunk=trunk,
+        coord_dim=1,
+        latent_size=3,
+        use_bias=False,
+    )
+    biased = phx.nn.operator.architectures.DeepONet(
+        branch=branch,
+        trunk=trunk,
+        coord_dim=1,
+        latent_size=3,
+    )
+    biased = eqx.tree_at(lambda model: model.bias, biased, jnp.asarray([2.0]))
+    inputs = (jnp.arange(4.0), jnp.linspace(0.0, 1.0, 7))
+
+    assert unbiased.bias is None
+    assert jnp.allclose(biased(inputs), unbiased(inputs) + 2.0)
 
 
 def test_local_differential_operator_annihilates_constants():

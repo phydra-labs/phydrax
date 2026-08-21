@@ -21,6 +21,14 @@
 - Newton--Krylov now passes its adaptive forcing tolerance into each inner linear
   solve, so forcing policy changes actual Krylov work under eager and compiled
   execution.
+
+- Learned function frames with masked, quadrature- and channel-metric-aware
+  projection, explicit rank and residual evidence, reusable source encodings,
+  arbitrary-query reconstruction, frozen inference, portable artifacts, and a
+  research-tier operator benchmark composition.
+- Scalar Tikhonov damping for dense SVD least-squares solves and a direct
+  weighted least-squares path that reuses one factorization for coefficients,
+  rank diagnostics, residuals, and differentiation.
 - Native SING natural-gradient variational smoothing for additive-noise latent
   SDEs, with Gaussian information-chain algebra, deterministic and fixed-sample
   Gaussian expectations, irregular masked schedules, per-case backtracking,
@@ -105,6 +113,9 @@
 
 ### Changed
 
+- DeepONet now accepts generalized coordinate-evaluated basis trunks, exposes
+  explicit output-bias control, and preserves existing pointwise and POD
+  behavior while supporting projection branches and frozen nested models.
 - Nonlinear algebraic systems now have one public owner, `phydrax.nonlinear`, and
   generic continuation/bifurcation workflows have one public owner,
   `phydrax.continuation`; obsolete optimization and dynamics-analysis continuation

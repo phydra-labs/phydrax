@@ -1092,6 +1092,85 @@ the same substrate.
             - __init__
             - evaluate
 
+#### Learned function frames and projected branches
+
+`LearnedFunctionFrame` represents a scalar- or channel-valued function with
+coordinate-evaluated trainable basis functions and an optional explicit offset.
+Given sampled values, `project` solves one masked, quadrature-weighted
+least-squares problem for a coefficient vector shared by all output channels.
+`FunctionProjectionPolicy` owns ridge damping, rank cutoff, minimum support,
+column scaling, physical-quadrature requirements, and an optional positive
+definite channel metric.
+
+Projection never hides numerical evidence. `FunctionProjectionReport` retains
+the coefficients, rank, singular values, condition estimate, residual energies,
+sample and equation counts, and per-case status. Invalid measure, nonfinite data,
+insufficient support, and unregularized rank deficiency remain distinct.
+`rank_policy="regularized"` requires positive ridge damping and permits a finite
+regularized result without falsely marking it as identified.
+
+`ProjectionBranchEncoder` turns the projection into a DeepONet branch and may
+apply an ordinary array model in coefficient space. `FunctionFrameReconstructor`
+composes source and target frames with the generalized DeepONet substrate:
+`encode_inputs` projects the source once, while `decode_query` evaluates the
+target frame on any compatible query geometry without another solve.
+`FunctionFrameEncoding` keeps the projection report and frame identity with the
+reusable coefficients. `frozen()` freezes both frames and the optional
+coefficient map for post-training inference.
+
+The architecture is research-tier. Its supported contract is sampled scalar or
+channel-valued functions on tensor grids and point clouds; broad scientific
+promotion still requires benchmark evidence.
+
+::: phydrax.nn.operator.architectures.FunctionProjectionPolicy
+    options:
+        members:
+            - __init__
+
+---
+
+::: phydrax.nn.operator.architectures.FunctionProjectionReport
+    options:
+        members:
+            - require_coefficients
+
+---
+
+::: phydrax.nn.operator.architectures.LearnedFunctionFrame
+    options:
+        members:
+            - __init__
+            - evaluate
+            - evaluate_offset
+            - project
+            - decode
+            - frozen
+
+---
+
+::: phydrax.nn.operator.architectures.ProjectionBranchEncoder
+    options:
+        members:
+            - __init__
+            - project
+            - map_coefficients
+            - __call__
+
+---
+
+::: phydrax.nn.operator.architectures.FunctionFrameEncoding
+
+---
+
+::: phydrax.nn.operator.architectures.FunctionFrameReconstructor
+    options:
+        members:
+            - __init__
+            - encode_inputs
+            - decode_query
+            - __call__
+            - frozen
+
 ### Local, temporal, and attention operators
 
 - `LocalIntegralOperator` evaluates a quadrature-weighted coordinate kernel over

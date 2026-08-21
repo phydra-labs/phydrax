@@ -385,6 +385,13 @@ def _least_squares_design(
     plan: LinearSolvePlan,
     /,
 ) -> tuple[Array, Array | None, Array | None, Array | None]:
+    method = plan.policy.method
+    if (
+        isinstance(problem, MinimumNormProblem)
+        and isinstance(method, DenseSVD)
+        and method.damping > 0.0
+    ):
+        raise ValueError("DenseSVD damping is defined only for least-squares problems.")
     batch_shape = problem.operator.batch_shape
     if isinstance(problem, MinimumNormProblem):
         source_metric = _metric_diagonal(problem.operator.source)
@@ -758,8 +765,25 @@ def _solve_svd(
         state.singular_values,
         jnp.ones_like(state.singular_values),
     )
-    inverse = jnp.where(state.retained, 1.0 / safe_singular_values, 0.0)
-    scaled = inverse[..., :, None] * projected
+    method = plan.policy.method
+    damping = method.damping if isinstance(method, DenseSVD) else 0.0
+    if damping == 0.0:
+        filter_factors = jnp.where(
+            state.retained,
+            1.0 / safe_singular_values,
+            0.0,
+        )
+    else:
+        squared_damping = jnp.asarray(
+            damping**2,
+            dtype=state.singular_values.dtype,
+        )
+        filter_factors = jnp.where(
+            state.retained,
+            state.singular_values / (state.singular_values**2 + squared_damping),
+            0.0,
+        )
+    scaled = filter_factors[..., :, None] * projected
     value = jnp.matmul(jnp.conj(jnp.swapaxes(state.vh, -1, -2)), scaled)
     if state.source_projection is not None:
         value = jnp.matmul(state.source_projection, value)

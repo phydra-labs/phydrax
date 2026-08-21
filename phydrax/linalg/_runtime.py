@@ -18,6 +18,7 @@ from ._gcrodr import refresh_recycling, solve_recycled
 from ._operators import AbstractLinearOperator, adjoint, transpose
 from ._plans import LinearSolvePlan, plan as make_plan
 from ._policies import (
+    DenseSVD,
     FGMRES,
     GeneralizedLSMR,
     GMRES,
@@ -1574,7 +1575,9 @@ def _least_squares_stationarity(
             regularized,
         )
     method = plan.policy.method
-    damping = method.damping if isinstance(method, (LSMR, GeneralizedLSMR)) else 0.0
+    damping = (
+        method.damping if isinstance(method, (DenseSVD, LSMR, GeneralizedLSMR)) else 0.0
+    )
     if damping:
         gradient = gradient + damping**2 * value
     return gradient
@@ -1588,6 +1591,9 @@ def _least_squares_root_residual(
     /,
 ) -> Array:
     normal = _least_squares_stationarity(problem, value, rhs, prepared.plan)
+    method = prepared.plan.policy.method
+    if isinstance(method, DenseSVD) and method.damping > 0.0:
+        return normal
     if not isinstance(prepared.state, DenseSVDState):
         return normal
     projected_normal = _dense_svd_active_projection(prepared.state, normal)

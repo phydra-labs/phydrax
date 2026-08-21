@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -77,3 +78,46 @@ def test_unregularized_rank_deficiency_is_reported_without_repair():
     assert not bool(result.valid)
     assert int(result.status) == LEAST_SQUARES_RANK_DEFICIENT
     assert int(result.rank) == 1
+
+
+def test_regularized_rank_deficiency_is_finite_and_diagnosed():
+    design = jnp.asarray([[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]])
+    target = jnp.asarray([1.0, 2.0, 3.0])
+
+    result = solve_weighted_least_squares(
+        design,
+        target,
+        ridge=1e-2,
+        min_samples=1,
+    )
+
+    assert bool(result.valid)
+    assert int(result.status) == LEAST_SQUARES_SUCCESS
+    assert int(result.rank) == 1
+    assert jnp.all(jnp.isfinite(result.raw_coefficients))
+    assert jnp.isinf(result.condition_number)
+
+
+def test_regularized_weighted_solve_is_jittable_and_differentiable():
+    design = jnp.asarray([[1.0, 0.0], [1.0, 1.0], [1.0, 2.0]])
+    target = jnp.asarray([1.0, 2.0, 2.5])
+
+    def objective(candidate, response):
+        result = solve_weighted_least_squares(
+            candidate,
+            response,
+            ridge=1e-3,
+            scale=True,
+            min_samples=2,
+        )
+        return jnp.sum(result.raw_coefficients**2)
+
+    value = jax.jit(objective)(design, target)
+    design_gradient, target_gradient = jax.grad(objective, argnums=(0, 1))(
+        design,
+        target,
+    )
+
+    assert jnp.isfinite(value)
+    assert jnp.all(jnp.isfinite(design_gradient))
+    assert jnp.all(jnp.isfinite(target_gradient))
