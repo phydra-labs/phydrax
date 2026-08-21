@@ -183,6 +183,50 @@ symbolic linear template while refreshing runtime parameters. Singular or
 incompatible derivative systems fail according to the supplied linear policy instead
 of returning an unverified gradient.
 
+## Causal nonlinear recurrence
+
+`CausalRecurrenceProblem` represents a fixed-length first-order recurrence as the
+direct residual `state[t] - transition(parameters, state[t - 1], driver[t])`.
+`solve_causal_recurrence` evaluates all local transitions concurrently and solves
+the resulting affine temporal system with associative scans. The core contract is
+one trajectory; consumers use `vmap` for physical cases.
+
+`CausalNewton` supplies exact dense DEER or an explicitly identified quasi-Newton
+linearization. `CausalLevenbergMarquardt` supplies ELK-style damping with
+actual-versus-predicted reduction checks. Dense, diagonal, fixed-block, and
+fixed-probe Hutchinson diagonal policies are available through
+`CausalLinearizationPolicy`. Approximate linearizations alter only the proposed
+direction: success is always certified by the direct recurrence residual.
+
+The returned histories distinguish convergence, stagnation, nonfinite evaluation,
+damping rejection, and exhausted work. Maximum steps never imply success.
+The solved trajectory carries an exact implicit derivative: the backward pass solves
+the exact reverse block-bidiagonal recurrence at the converged state and does not
+differentiate through iteration counts, damping choices, or quasi-Newton probes.
+Differentiating a failed solve raises instead of returning an approximate gradient.
+
+::: phydrax.nonlinear.CausalRecurrenceProblem
+
+---
+
+::: phydrax.nonlinear.CausalLinearizationPolicy
+
+---
+
+::: phydrax.nonlinear.CausalNewton
+
+---
+
+::: phydrax.nonlinear.CausalLevenbergMarquardt
+
+---
+
+::: phydrax.nonlinear.CausalRecurrenceResult
+
+---
+
+::: phydrax.nonlinear.solve_causal_recurrence
+
 ## API reference
 
 ::: phydrax.nonlinear.NonlinearSystemProblem

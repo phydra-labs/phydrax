@@ -32,6 +32,7 @@ from ._discrepancy_diagnostics import DiscrepancyIdentifiabilityReport
 from ._eki import EnsembleKalmanResult
 from ._ensemble_filter import EnsembleFilterResult, EnsembleSmootherResult
 from ._flow_mcmc import FlowNUTSResult
+from ._flow_variational import FlowVariationalResult
 from ._kalman import KalmanFilterResult, KalmanSmootherResult
 from ._laplace import LaplaceResult
 from ._laplax_backend import StructuredLaplaceResult
@@ -47,6 +48,7 @@ from ._particle import (
     ParticleFisherScoreResult,
     ParticleSmootherResult,
 )
+from ._particle_genealogical_score import ParticleGenealogicalScoreResult
 from ._pathfinder import PathfinderResult
 from ._rao_blackwellized import RaoBlackwellizedFilterResult
 from ._rao_blackwellized_smoothing import (
@@ -57,6 +59,10 @@ from ._sgmcmc import SGMCMCResult
 from ._sgmcmc_diagnostics import SGMCMCMixingReport
 from ._sing import SINGResult
 from ._smc import TemperedSMCResult
+from ._state_space_amortized import AmortizedStateSpaceVariationalResult
+from ._state_space_buffered import BufferedStateSpaceVariationalResult
+from ._state_space_variational import StateSpaceVariationalResult
+from ._variational import VariationalResult
 
 
 _RESULT_FORMAT = "phydrax-uq-result"
@@ -561,6 +567,36 @@ def _adapt_result(result, arrays, fields, trees):
             ("backward_simulation.filter_result.problem",),
         )
 
+    if isinstance(result, ParticleGenealogicalScoreResult):
+        _put_field(fields, arrays, "flat_score", result.flat_score)
+        _put_field(fields, arrays, "case_scores", result.case_scores)
+        _put_field(fields, arrays, "valid", result.valid)
+        _put_flat_inexact_tree(
+            trees,
+            arrays,
+            "model_score",
+            result.score,
+            expected_size=result.parameter_size,
+        )
+        metadata = {
+            "method_id": result.method_id,
+            "ancestry_gradient": result.ancestry_gradient,
+            "parameter_size": result.parameter_size,
+            "parameter_paths": list(result.parameter_paths),
+            "model_id": result.model_id,
+            "problem_id": result.problem_id,
+            "sequence_id": result.sequence_id,
+            "input_id": result.input_id,
+            "case_shape": list(result.filter_result.case_shape),
+            "case_axes": list(result.filter_result.case_axes),
+            "case_ids": list(result.filter_result.case_ids),
+        }
+        return (
+            "particle_genealogical_score",
+            metadata,
+            ("model_score", "filter_result"),
+        )
+
     if isinstance(result, ParticleFisherScoreResult):
         _put_field(fields, arrays, "flat_score", result.flat_score)
         _put_field(fields, arrays, "case_scores", result.case_scores)
@@ -764,6 +800,7 @@ def _adapt_result(result, arrays, fields, trees):
             "algorithm": result.algorithm,
             "approximation": result.approximation,
             "chain_method": result.chain_method,
+            "gradient_estimator_id": result.gradient_estimator_id,
             "num_chains": result.num_chains,
             "num_draws": result.num_draws,
             "num_burnin": result.num_burnin,
@@ -791,6 +828,189 @@ def _adapt_result(result, arrays, fields, trees):
             "max_update_gradient_norm": result.max_update_gradient_norm,
         }
         return "sgmcmc", metadata, ("problem",)
+
+    if isinstance(result, AmortizedStateSpaceVariationalResult):
+        _put_tree(trees, arrays, "states", result.states)
+        _put_array_leaves(trees, arrays, "family_parameters", result.family)
+        for name, value in (
+            ("log_model", result.log_model),
+            ("log_variational", result.log_variational),
+            ("diagnostics.steps", result.diagnostics.steps),
+            ("diagnostics.elbo", result.diagnostics.elbo),
+            ("diagnostics.gradient_norm", result.diagnostics.gradient_norm),
+            ("diagnostics.finite", result.diagnostics.finite),
+        ):
+            _put_field(fields, arrays, name, value)
+        _put_field(fields, arrays, "root_key", jr.key_data(result.root_key))
+        metadata = {
+            "algorithm": "amortized-state-space-reverse-kl",
+            "family_id": result.family.family_id,
+            "num_draws": result.num_draws,
+            "completed_steps": result.diagnostics.completed_steps,
+            "duration_seconds": result.duration_seconds,
+            "approximation_id": result.approximation_id,
+            "hidden_size": result.config.hidden_size,
+            "scale_floor": result.config.scale_floor,
+            "optimization": result.config.optimization.as_dict(),
+        }
+        return (
+            "amortized_state_space_variational",
+            metadata,
+            ("problem", "family.static"),
+        )
+
+    if isinstance(result, BufferedStateSpaceVariationalResult):
+        _put_tree(trees, arrays, "states", result.states)
+        _put_array_leaves(trees, arrays, "family_parameters", result.family)
+        for name, value in (
+            ("log_model", result.log_model),
+            ("log_variational", result.log_variational),
+            ("diagnostics.steps", result.diagnostics.steps),
+            ("diagnostics.target_start", result.diagnostics.target_start),
+            ("diagnostics.context_start", result.diagnostics.context_start),
+            ("diagnostics.context_end", result.diagnostics.context_end),
+            ("diagnostics.elbo", result.diagnostics.elbo),
+            ("diagnostics.gradient_norm", result.diagnostics.gradient_norm),
+            ("diagnostics.finite", result.diagnostics.finite),
+            (
+                "window.inclusion_probability",
+                result.window_plan.inclusion_probability,
+            ),
+        ):
+            _put_field(fields, arrays, name, value)
+        _put_field(fields, arrays, "root_key", jr.key_data(result.root_key))
+        metadata = {
+            "algorithm": "buffered-state-space-reverse-kl",
+            "family_id": result.family.family_id,
+            "num_draws": result.num_draws,
+            "duration_seconds": result.duration_seconds,
+            "approximation_id": result.approximation_id,
+            "target_length": result.config.target_length,
+            "left_buffer": result.config.left_buffer,
+            "right_buffer": result.config.right_buffer,
+            "hidden_size": result.config.hidden_size,
+            "scale_floor": result.config.scale_floor,
+            "optimization": result.config.optimization.as_dict(),
+        }
+        return (
+            "buffered_state_space_variational",
+            metadata,
+            ("problem", "family.static"),
+        )
+
+    if isinstance(result, StateSpaceVariationalResult):
+        _put_tree(trees, arrays, "states", result.states)
+        _put_array_leaves(
+            trees,
+            arrays,
+            "family_parameters",
+            result.family,
+        )
+        for name, value in (
+            ("log_model", result.log_model),
+            ("log_variational", result.log_variational),
+            ("diagnostics.steps", result.diagnostics.steps),
+            ("diagnostics.elbo", result.diagnostics.elbo),
+            ("diagnostics.gradient_norm", result.diagnostics.gradient_norm),
+            ("diagnostics.finite", result.diagnostics.finite),
+        ):
+            _put_field(fields, arrays, name, value)
+        _put_field(fields, arrays, "root_key", jr.key_data(result.root_key))
+        metadata = {
+            "algorithm": "state-space-reverse-kl",
+            "family_id": result.family.family_id,
+            "num_draws": result.num_draws,
+            "completed_steps": result.diagnostics.completed_steps,
+            "duration_seconds": result.duration_seconds,
+            "approximation_id": result.approximation_id,
+            "initial_scale": result.config.initial_scale,
+            "scale_floor": result.config.scale_floor,
+            "optimization": result.config.optimization.as_dict(),
+        }
+        return (
+            "state_space_variational",
+            metadata,
+            ("problem", "family.static"),
+        )
+
+    if isinstance(result, FlowVariationalResult):
+        fitted = result.variational
+        _put_tree(trees, arrays, "samples", fitted.samples)
+        _put_tree(
+            trees,
+            arrays,
+            "unconstrained_samples",
+            fitted.unconstrained_samples,
+        )
+        _put_array_leaves(
+            trees,
+            arrays,
+            "family_parameters",
+            fitted.family,
+        )
+        _put_field(fields, arrays, "log_target", fitted.log_target)
+        _put_field(fields, arrays, "log_variational", fitted.log_variational)
+        _put_field(fields, arrays, "diagnostics.elbo", fitted.diagnostics.elbo)
+        _put_field(
+            fields,
+            arrays,
+            "initialization.elbo",
+            result.initialization.diagnostics.elbo,
+        )
+        metadata = {
+            "algorithm": "flow-reverse-kl-variational",
+            "family_id": fitted.family.family_id,
+            "num_draws": fitted.num_draws,
+            "approximation_id": result.approximation_id,
+            "duration_seconds": fitted.duration_seconds,
+            "sample_memory_bytes": fitted.sample_memory_bytes,
+            "family_memory_bytes": fitted.family_memory_bytes,
+            "config": result.config.as_dict(),
+        }
+        return (
+            "flow_variational",
+            metadata,
+            ("variational.problem", "initialization.problem", "family.static"),
+        )
+
+    if isinstance(result, VariationalResult):
+        _put_tree(trees, arrays, "samples", result.samples)
+        _put_tree(
+            trees,
+            arrays,
+            "unconstrained_samples",
+            result.unconstrained_samples,
+        )
+        _put_array_leaves(
+            trees,
+            arrays,
+            "family_parameters",
+            result.family,
+        )
+        for name, value in (
+            ("log_target", result.log_target),
+            ("log_variational", result.log_variational),
+            ("diagnostics.steps", result.diagnostics.steps),
+            ("diagnostics.elbo", result.diagnostics.elbo),
+            ("diagnostics.gradient_norm", result.diagnostics.gradient_norm),
+            ("diagnostics.finite", result.diagnostics.finite),
+        ):
+            _put_field(fields, arrays, name, value)
+        _put_field(fields, arrays, "root_key", jr.key_data(result.root_key))
+        metadata = {
+            "algorithm": "reverse-kl-variational",
+            "family_id": result.family.family_id,
+            "num_draws": result.num_draws,
+            "completed_steps": result.diagnostics.completed_steps,
+            "duration_seconds": result.duration_seconds,
+            "optimization_duration_seconds": (result.optimization_duration_seconds),
+            "sampling_duration_seconds": result.sampling_duration_seconds,
+            "sample_memory_bytes": result.sample_memory_bytes,
+            "family_memory_bytes": result.family_memory_bytes,
+            "approximation_id": result.approximation_id,
+            "config": result.config.as_dict(),
+        }
+        return "variational", metadata, ("problem", "family.static")
 
     if isinstance(result, FlowNUTSResult):
         mcmc = result.mcmc
@@ -897,9 +1117,56 @@ def _adapt_result(result, arrays, fields, trees):
             "warmup.inverse_mass_matrix",
             jnp.stack([item.inverse_mass_matrix for item in result.warmup]),
         )
+        if result.causal_diagnostics is not None:
+            _put_field(
+                fields,
+                arrays,
+                "causal.converged",
+                result.causal_diagnostics.converged,
+            )
+            _put_field(
+                fields,
+                arrays,
+                "causal.fallback_used",
+                result.causal_diagnostics.fallback_used,
+            )
+            _put_field(
+                fields,
+                arrays,
+                "causal.outer_iterations",
+                result.causal_diagnostics.outer_iterations,
+            )
+            _put_field(
+                fields,
+                arrays,
+                "causal.maximum_residual",
+                result.causal_diagnostics.maximum_residual,
+            )
+            _put_field(
+                fields,
+                arrays,
+                "causal.accepted_nonlinear_steps",
+                result.causal_diagnostics.accepted_nonlinear_steps,
+            )
+            _put_field(
+                fields,
+                arrays,
+                "causal.rejected_nonlinear_steps",
+                result.causal_diagnostics.rejected_nonlinear_steps,
+            )
+            _put_field(
+                fields,
+                arrays,
+                "causal.transition_evaluations",
+                result.causal_diagnostics.transition_evaluations,
+            )
         metadata = {
             "algorithm": result.algorithm,
             "chain_method": result.chain_method,
+            "trajectory_method": result.trajectory_method,
+            "causal_config": (
+                None if result.causal_config is None else result.causal_config.as_dict()
+            ),
             "num_chains": result.num_chains,
             "num_draws": result.num_draws,
             "duration_seconds": result.duration_seconds,
@@ -1360,6 +1627,9 @@ def _put_kalman_filter_result(result, arrays, fields, *, prefix):
 
 def _put_particle_filter_result(result, arrays, fields, *, prefix):
     for name, value in (
+        ("initial_particles", result.initial_particles),
+        ("initial_log_weights", result.initial_log_weights),
+        ("initial_valid", result.initial_valid),
         ("predicted_particles", result.predicted_particles),
         ("posterior_log_weights", result.posterior_log_weights),
         ("particles", result.particles),

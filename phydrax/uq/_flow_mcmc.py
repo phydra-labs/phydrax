@@ -39,8 +39,11 @@ from ._checkpoint import (
     write_checkpoint_archive,
 )
 from ._diagnostics import mcmc_diagnostics, MCMCConvergenceReport
+from ._flow_family import (
+    build_default_flow as _build_default_flow,
+    validate_flow as _validate_flow,
+)
 from ._flow_proposal import (
-    _build_default_flow,
     _fit_flow,
     _initialize_replay,
     _proposal_effective_sample_size,
@@ -48,7 +51,6 @@ from ._flow_proposal import (
     _ReplayBuffer,
     _run_flow_block,
     _update_replay,
-    _validate_flow,
 )
 from ._mcmc import _adapt_mcmc, MCMCChainWarmup, MCMCResult
 from ._posterior import PosteriorProblem

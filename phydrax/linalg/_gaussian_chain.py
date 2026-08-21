@@ -16,14 +16,11 @@ import opt_einsum as oe
 from jaxtyping import Array, ArrayLike, Key
 
 from .._strict import StrictModule
-from ..linalg import (
-    DenseLinearOperator,
-    DenseLU,
-    LinearSolvePolicy,
-    LinearSystem,
-    RHSLayout,
-    solve,
-)
+from ._operators import DenseLinearOperator
+from ._policies import DenseLU, LinearSolvePolicy
+from ._problems import LinearSystem
+from ._runtime import solve
+from ._spaces import RHSLayout
 
 
 class GaussianFilterElement(StrictModule):

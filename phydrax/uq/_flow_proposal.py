@@ -9,9 +9,7 @@ from typing import Any, NamedTuple
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from flowjax.bijections import RationalQuadraticSpline
-from flowjax.distributions import AbstractDistribution, Normal
-from flowjax.flows import coupling_flow, triangular_spline_flow
+from flowjax.distributions import AbstractDistribution
 from flowjax.train import fit_to_data
 from jaxtyping import Array
 
@@ -125,50 +123,6 @@ def _replay_data(replay: _ReplayBuffer) -> Array:
     return replay.values[:, :size, :].reshape((-1, replay.values.shape[-1]))
 
 
-def _build_default_flow(
-    key: Array,
-    data: Array,
-    /,
-    *,
-    flow_layers: int,
-    num_knots: int,
-    nn_width: int,
-    nn_depth: int,
-) -> AbstractDistribution:
-    samples = jnp.asarray(data)
-    if samples.ndim != 2 or samples.shape[0] < 2 or samples.shape[1] < 1:
-        raise ValueError("Flow initialization requires a non-empty matrix of samples.")
-    if not jnp.issubdtype(samples.dtype, jnp.floating):
-        raise TypeError("Flow samples must use a real floating dtype.")
-
-    location = jnp.mean(samples, axis=0)
-    scale = jnp.std(samples, axis=0)
-    tolerance = jnp.sqrt(jnp.finfo(samples.dtype).eps) * jnp.maximum(
-        jnp.ones_like(location), jnp.abs(location)
-    )
-    base = Normal(location, jnp.maximum(scale, tolerance))
-    dimension = int(samples.shape[1])
-    if dimension == 1:
-        return triangular_spline_flow(
-            key,
-            base_dist=base,
-            flow_layers=int(flow_layers),
-            knots=int(num_knots),
-            invert=True,
-        )
-
-    transformer = RationalQuadraticSpline(knots=int(num_knots), interval=3.0)
-    return coupling_flow(
-        key,
-        base_dist=base,
-        transformer=transformer,
-        flow_layers=int(flow_layers),
-        nn_width=int(nn_width),
-        nn_depth=int(nn_depth),
-        invert=True,
-    )
-
-
 def _fit_flow(
     key: Array,
     flow: AbstractDistribution,
@@ -207,35 +161,6 @@ def _fit_flow(
     ):
         raise FloatingPointError("Flow training produced a nonfinite loss.")
     return trained, training_loss, validation_loss
-
-
-def _validate_flow(
-    flow: AbstractDistribution,
-    data: Array,
-    key: Array,
-    /,
-) -> None:
-    samples = jnp.asarray(data)
-    expected_shape = (int(samples.shape[-1]),)
-    if flow.shape != expected_shape:
-        raise ValueError(
-            f"Flow event shape {flow.shape} does not match {expected_shape}."
-        )
-    if flow.cond_shape is not None:
-        raise ValueError("Flow proposal must be unconditional.")
-    data_log_density = flow.log_prob(samples)
-    proposed, proposed_log_density = flow.sample_and_log_prob(
-        key,
-        sample_shape=(min(8, int(samples.shape[0])),),
-    )
-    if proposed.shape[1:] != expected_shape:
-        raise ValueError("Flow proposal samples have an incompatible event shape.")
-    if not bool(jnp.all(jnp.isfinite(data_log_density))):
-        raise FloatingPointError("Flow density is nonfinite on its training data.")
-    if not bool(jnp.all(jnp.isfinite(proposed))) or not bool(
-        jnp.all(jnp.isfinite(proposed_log_density))
-    ):
-        raise FloatingPointError("Flow proposal produced a nonfinite sample or density.")
 
 
 def _independence_mh_scan(

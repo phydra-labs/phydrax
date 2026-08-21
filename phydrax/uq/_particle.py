@@ -184,7 +184,7 @@ class ParticleFilterState(StrictModule):
     valid: Array
     status: Array
     root_key: Array
-    step_index: int = eqx.field(static=True)
+    step_index: Array
     num_particles: int = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
     resampling_method: ResamplingMethod = eqx.field(static=True)
@@ -213,6 +213,9 @@ class ParticleFilterStep(StrictModule):
 class ParticleFilterResult(StrictModule):
     """Fixed-shape particle history with genealogy and complete run provenance."""
 
+    initial_particles: Array
+    initial_log_weights: Array
+    initial_valid: Array
     predicted_particles: Array
     posterior_log_weights: Array
     particles: Array
@@ -403,7 +406,7 @@ def initialize_particle_filter(
         valid=valid,
         status=status,
         root_key=jnp.asarray(key),
-        step_index=0,
+        step_index=jnp.asarray(0, dtype=jnp.int32),
         num_particles=count,
         problem_id=problem.problem_id,
         resampling_method=method,
@@ -425,44 +428,53 @@ def _propagate_particles(
     starts = state.time.reshape((case_count,))
     ends = target_time.reshape((case_count,))
     active_flat = active.reshape((case_count,))
+    state_valid = state.valid.reshape((case_count,))
     propagated_cases = []
     valid_cases = []
+    particle_indices = jnp.arange(count, dtype=jnp.int32)
     for case_index, case_id in enumerate(problem.observations.case_ids):
         context = problem.step_context(case_index, state.step_index)
-        propagated = []
-        particle_valid = []
-        for particle_index in range(count):
-            if bool(active_flat[case_index]) and bool(
-                state.valid.reshape((-1,))[case_index]
-            ):
-                transition_key = state_space_key(
-                    state.root_key,
-                    "particle-filter-transition",
-                    case_id,
-                    state.step_index,
-                    member=particle_index,
-                )
+        transition_keys = jax.vmap(
+            lambda particle_index: state_space_key(
+                state.root_key,
+                "particle-filter-transition",
+                case_id,
+                state.step_index,
+                member=particle_index,
+            )
+        )(particle_indices)
+        case_active = active_flat[case_index] & state_valid[case_index]
+
+        def propagate_one(transition_key, previous_particle):
+            def propagate(_):
                 sample = problem.model.transition.sample(
                     transition_key,
-                    previous[case_index, particle_index],
+                    previous_particle,
                     starts[case_index],
                     ends[case_index],
                     context,
                 )
                 sample_valid = jnp.all(sample.valid) & jnp.all(sample.status == 0)
-                propagated.append(
-                    jnp.where(
-                        sample_valid,
-                        sample.values,
-                        previous[case_index, particle_index],
-                    )
+                values = jnp.where(
+                    sample_valid,
+                    sample.values,
+                    previous_particle,
                 )
-                particle_valid.append(sample_valid)
-            else:
-                propagated.append(previous[case_index, particle_index])
-                particle_valid.append(jnp.asarray(True))
-        propagated_cases.append(jnp.stack(propagated, axis=0))
-        valid_cases.append(jnp.stack(particle_valid, axis=0))
+                return values, sample_valid
+
+            return jax.lax.cond(
+                case_active,
+                propagate,
+                lambda _: (previous_particle, jnp.asarray(True)),
+                operand=None,
+            )
+
+        propagated, particle_valid = jax.vmap(propagate_one)(
+            transition_keys,
+            previous[case_index],
+        )
+        propagated_cases.append(propagated)
+        valid_cases.append(particle_valid)
     return (
         jnp.stack(propagated_cases, axis=0).reshape(
             case_shape + (count,) + problem.model.state_shape
@@ -493,20 +505,24 @@ def _observation_log_likelihoods(
     likelihoods = []
     for case_index in range(case_count):
         context = problem.step_context(case_index, state.step_index)
-        case_likelihoods = []
-        for particle_index in range(count):
-            if bool(active_flat[case_index]):
-                value = problem.model.observation.log_prob(
-                    flat_values[case_index],
-                    particles[case_index, particle_index],
-                    flat_times[case_index],
-                    flat_mask[case_index],
-                    context,
-                )
-                case_likelihoods.append(jnp.asarray(value).reshape(()))
-            else:
-                case_likelihoods.append(jnp.asarray(0.0))
-        likelihoods.append(jnp.stack(case_likelihoods, axis=0))
+
+        def evaluate(particle):
+            return jax.lax.cond(
+                active_flat[case_index],
+                lambda _: jnp.asarray(
+                    problem.model.observation.log_prob(
+                        flat_values[case_index],
+                        particle,
+                        flat_times[case_index],
+                        flat_mask[case_index],
+                        context,
+                    )
+                ).reshape(()),
+                lambda _: jnp.zeros((), dtype=predicted_particles.dtype),
+                operand=None,
+            )
+
+        likelihoods.append(jax.vmap(evaluate)(particles[case_index]))
     return jnp.stack(likelihoods, axis=0).reshape(case_shape + (count,))
 
 
@@ -515,22 +531,26 @@ def particle_filter_step(
     state: ParticleFilterState,
     /,
 ) -> tuple[ParticleFilterState, ParticleFilterStep]:
-    """Run one bootstrap-filter step with stable case/step/particle key derivation."""
+    """Run one JAX-safe bootstrap-filter step with semantic key derivation."""
     if not isinstance(problem, StateSpaceProblem):
         raise TypeError("problem must be a StateSpaceProblem.")
     if not isinstance(state, ParticleFilterState):
         raise TypeError("state must be a ParticleFilterState.")
     if state.problem_id != problem.problem_id:
         raise ValueError("Particle-filter state and problem IDs do not match.")
-    index = state.step_index
     sequence = problem.observations
-    if index >= sequence.num_steps:
-        raise ValueError("The particle-filter state has consumed every observation step.")
+    index = jnp.asarray(state.step_index, dtype=jnp.int32)
+    checked_particles = eqx.error_if(
+        state.particles,
+        (index < 0) | (index >= sequence.num_steps),
+        "The particle-filter state has consumed every observation step.",
+    )
+    state = eqx.tree_at(lambda value: value.particles, state, checked_particles)
     case_shape = sequence.case_shape
     case_count = _case_count(problem)
     count = state.num_particles
-    active = sequence.step_valid[..., index]
-    target_time = sequence.times[..., index]
+    active = jnp.take(sequence.step_valid, index, axis=-1)
+    target_time = jnp.take(sequence.times, index, axis=-1)
     step_axis = len(case_shape)
     values = jnp.take(sequence.values, index, axis=step_axis)
     mask = jnp.take(sequence.observation_mask, index, axis=step_axis)
@@ -561,44 +581,76 @@ def particle_filter_step(
     )
     flat_previous_weights = state.log_weights.reshape((case_count, count))
     flat_ess = ess.reshape((case_count,))
-    flat_active = active.reshape((case_count,))
     flat_accepted = accepted.reshape((case_count,))
     output_particles = []
     output_weights = []
     ancestor_indices = []
     resampled_values = []
     for case_index, case_id in enumerate(sequence.case_ids):
-        should_resample = state.resampling_policy == "always" or (
-            state.resampling_policy == "ess"
-            and float(flat_ess[case_index]) < state.resampling_threshold * count
-        )
-        do_resample = bool(flat_accepted[case_index]) and should_resample
-        if do_resample:
-            resampling_key = state_space_key(
-                state.root_key,
-                "particle-filter-resampling",
-                case_id,
-                index,
-            )
-            ancestors = resample_indices(
-                resampling_key,
-                flat_posterior[case_index],
-                method=state.resampling_method,
-            )
-            output_particles.append(flat_predicted[case_index, ancestors])
-            output_weights.append(
-                jnp.full((count,), -jnp.log(float(count)), dtype=predicted.dtype)
-            )
-        elif bool(flat_accepted[case_index]):
-            ancestors = identity
-            output_particles.append(flat_predicted[case_index])
-            output_weights.append(flat_posterior[case_index])
+        if state.resampling_policy == "always":
+            should_resample = jnp.asarray(True)
+        elif state.resampling_policy == "ess":
+            should_resample = flat_ess[case_index] < state.resampling_threshold * count
         else:
-            ancestors = identity
-            output_particles.append(flat_previous_particles[case_index])
-            output_weights.append(flat_previous_weights[case_index])
-        ancestor_indices.append(ancestors)
-        resampled_values.append(jnp.asarray(do_resample))
+            should_resample = jnp.asarray(False)
+        resampling_key = state_space_key(
+            state.root_key,
+            "particle-filter-resampling",
+            case_id,
+            index,
+        )
+
+        def accepted_case(_):
+            def resampled_case(_):
+                selected = resample_indices(
+                    resampling_key,
+                    flat_posterior[case_index],
+                    method=state.resampling_method,
+                )
+                return (
+                    flat_predicted[case_index, selected],
+                    jnp.full(
+                        (count,),
+                        -jnp.log(float(count)),
+                        dtype=predicted.dtype,
+                    ),
+                    selected,
+                    jnp.asarray(True),
+                )
+
+            def retained_case(_):
+                return (
+                    flat_predicted[case_index],
+                    flat_posterior[case_index],
+                    identity,
+                    jnp.asarray(False),
+                )
+
+            return jax.lax.cond(
+                should_resample,
+                resampled_case,
+                retained_case,
+                operand=None,
+            )
+
+        def rejected_case(_):
+            return (
+                flat_previous_particles[case_index],
+                flat_previous_weights[case_index],
+                identity,
+                jnp.asarray(False),
+            )
+
+        case_particles, case_weights, case_ancestors, case_resampled = jax.lax.cond(
+            flat_accepted[case_index],
+            accepted_case,
+            rejected_case,
+            operand=None,
+        )
+        output_particles.append(case_particles)
+        output_weights.append(case_weights)
+        ancestor_indices.append(case_ancestors)
+        resampled_values.append(case_resampled)
     next_particles = jnp.stack(output_particles, axis=0).reshape(
         case_shape + (count,) + problem.model.state_shape
     )
@@ -664,10 +716,6 @@ def particle_filter_step(
     return next_state, record
 
 
-def _stack(values: list[Array], case_rank: int, /) -> Array:
-    return jnp.stack(values, axis=case_rank)
-
-
 def bootstrap_particle_filter(
     key: Key[Array, ""],
     problem: StateSpaceProblem,
@@ -679,7 +727,7 @@ def bootstrap_particle_filter(
     resampling_threshold: float = 0.5,
     raise_on_failure: bool = False,
 ) -> ParticleFilterResult:
-    """Run a bootstrap particle filter without assuming a transition density."""
+    """Run a bootstrap filter as one JAX-compatible temporal scan."""
     state = initialize_particle_filter(
         key,
         problem,
@@ -688,35 +736,40 @@ def bootstrap_particle_filter(
         resampling_policy=resampling_policy,
         resampling_threshold=resampling_threshold,
     )
-    records: list[ParticleFilterStep] = []
-    for _ in range(problem.observations.num_steps):
-        state, record = particle_filter_step(problem, state)
-        records.append(record)
+    initial_state = state
+
+    def scan_step(current_state, _):
+        next_state, record = particle_filter_step(problem, current_state)
+        return next_state, record
+
+    state, time_major_records = jax.lax.scan(
+        scan_step,
+        state,
+        xs=None,
+        length=problem.observations.num_steps,
+    )
     rank = len(problem.observations.case_shape)
+    records = jax.tree.map(
+        lambda leaf: jnp.moveaxis(leaf, 0, rank),
+        time_major_records,
+    )
     result = ParticleFilterResult(
-        predicted_particles=_stack(
-            [record.predicted_particles for record in records], rank
-        ),
-        posterior_log_weights=_stack(
-            [record.posterior_log_weights for record in records], rank
-        ),
-        particles=_stack([record.particles for record in records], rank),
-        log_weights=_stack([record.log_weights for record in records], rank),
-        ancestor_indices=_stack([record.ancestor_indices for record in records], rank),
-        transition_valid=_stack([record.transition_valid for record in records], rank),
-        effective_sample_sizes=_stack(
-            [record.effective_sample_size for record in records], rank
-        ),
-        resampled=_stack([record.resampled for record in records], rank),
-        incremental_log_likelihood=_stack(
-            [record.incremental_log_likelihood for record in records], rank
-        ),
-        cumulative_log_likelihood=_stack(
-            [record.cumulative_log_likelihood for record in records], rank
-        ),
+        initial_particles=initial_state.particles,
+        initial_log_weights=initial_state.log_weights,
+        initial_valid=initial_state.valid,
+        predicted_particles=records.predicted_particles,
+        posterior_log_weights=records.posterior_log_weights,
+        particles=records.particles,
+        log_weights=records.log_weights,
+        ancestor_indices=records.ancestor_indices,
+        transition_valid=records.transition_valid,
+        effective_sample_sizes=records.effective_sample_size,
+        resampled=records.resampled,
+        incremental_log_likelihood=records.incremental_log_likelihood,
+        cumulative_log_likelihood=records.cumulative_log_likelihood,
         step_valid=problem.observations.step_valid,
-        valid=_stack([record.valid for record in records], rank),
-        status=_stack([record.status for record in records], rank),
+        valid=records.valid,
+        status=records.status,
         times=problem.observations.times,
         final_state=state,
         problem=problem,
@@ -736,8 +789,17 @@ def bootstrap_particle_filter(
         resampling_policy=state.resampling_policy,
         resampling_threshold=state.resampling_threshold,
     )
-    if raise_on_failure and not bool(jnp.all(result.successful)):
-        raise RuntimeError("Particle filtering failed for at least one physical case.")
+    if raise_on_failure:
+        checked = eqx.error_if(
+            result.final_state.particles,
+            ~jnp.all(result.successful),
+            "Particle filtering failed for at least one physical case.",
+        )
+        result = eqx.tree_at(
+            lambda value: value.final_state.particles,
+            result,
+            checked,
+        )
     return result
 
 
@@ -1518,7 +1580,7 @@ def write_particle_filter_checkpoint(
         path,
         kind="particle-filter-state-v1",
         compatibility=compatibility,
-        state={"step_index": state.step_index},
+        state={"step_index": int(state.step_index)},
         arrays={
             "particles": state.particles,
             "log_weights": state.log_weights,

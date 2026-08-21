@@ -5,6 +5,13 @@
 """Reusable neural network layers."""
 
 from ._adaptive_residual import AdaptiveResidual
+from ._causal_recurrent import (
+    CausalRecurrentConfig,
+    CausalRecurrentDiagnostics,
+    CausalRecurrentFailurePolicy,
+    CausalRecurrentResult,
+    run_causal_recurrent,
+)
 from ._dropout import Dropout, inference_mode
 from ._fourier_embeddings import (
     ExplicitFourierFeatureEmbeddings,
@@ -67,6 +74,10 @@ __all__ = [
     "AbstractRecurrentCell",
     "AffineRecurrence",
     "AttentionExecution",
+    "CausalRecurrentConfig",
+    "CausalRecurrentDiagnostics",
+    "CausalRecurrentFailurePolicy",
+    "CausalRecurrentResult",
     "AttentionKernel",
     "MeasureAwareAttention",
     "MeasureNormalizedConvND",
@@ -110,5 +121,6 @@ __all__ = [
     "WarpBoundaryMode",
     "inference_mode",
     "run_affine_recurrence",
+    "run_causal_recurrent",
     "run_recurrent",
 ]

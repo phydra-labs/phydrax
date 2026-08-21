@@ -82,17 +82,35 @@ Low-level runners distinguish the streaming
 `initial_state` entering a chunk from the canonical state used by resets; an
 explicit `reset_state` overrides the latter when required.
 
-`run_recurrent` executes any `AbstractRecurrentCell` serially. Affine cells can
-instead use `run_affine_recurrence`, whose serial and associative routes compose
-the same transition monoid. `RNNCell`, `GRUCell`, `LSTMCell`, and
-`StackedRecurrentCell` use the same batching, masking, reset, and continuation
-rules.
+`run_recurrent` executes every cell serially. Affine cells can instead use
+`run_affine_recurrence`, whose serial and associative routes compose the same
+transition monoid. Nonlinear cells may opt into `run_causal_recurrent`, which
+uses the certified causal nonlinear solver while preserving the identical
+padding, reset, explicit-key, initial-state, output, and continuation semantics.
+`RNNCell`, `GRUCell`, `LSTMCell`, and `StackedRecurrentCell` support the adapter.
+
+Causal execution is never selected automatically. It can require more work and
+memory than `lax.scan`, especially for short sequences or wide states.
+`CausalRecurrentConfig` makes nonconvergence either an error or an explicit
+recorded serial fallback. A converged result uses the exact implicit recurrence
+adjoint even when its forward direction used a quasi-Newton approximation.
 
 `LinearRecurrentUnit` parameterizes stable complex-conjugate modes with real
 input/output maps. `SelectiveStateSpaceBlock` combines reset-aware causal
 convolution with input-dependent affine state transitions.
 `WeightSpaceRecurrence` applies a diagonal stable recurrence to one explicit
 parameter vector; it never materializes a dense parameter-by-parameter matrix.
+
+::: phydrax.nn.layers.CausalRecurrentConfig
+
+---
+
+::: phydrax.nn.layers.CausalRecurrentResult
+
+---
+
+::: phydrax.nn.layers.run_causal_recurrent
+
 
 ::: phydrax.nn.layers.RNNCell
 
@@ -171,25 +189,3 @@ parameter vector; it never materializes a dense parameter-by-parameter matrix.
 
 ::: phydrax.nn.layers.inference_mode
 
-## Recurrent execution
-
-`RecurrentBatch` is the canonical packed-sequence contract. Every input leaf
-begins with `case_shape + (sequence_length,)`; `valid`, `reset`, and optional
-physical `time` arrays use exactly that shape. Invalid padding preserves state
-and emits zero output. A valid reset restarts from the cell's canonical state
-before evaluating that step. `run_recurrent` returns the post-step state and
-output trajectories together with streaming-ready final values.
-
-::: phydrax.nn.layers.AbstractRecurrentCell
-
----
-
-::: phydrax.nn.layers.RecurrentBatch
-
----
-
-::: phydrax.nn.layers.RecurrentResult
-
----
-
-::: phydrax.nn.layers.run_recurrent

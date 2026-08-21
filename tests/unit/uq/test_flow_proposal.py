@@ -6,8 +6,8 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 
+from phydrax.uq._flow_family import build_default_flow as _build_default_flow
 from phydrax.uq._flow_proposal import (
-    _build_default_flow,
     _fit_flow,
     _FlowProposalState,
     _independence_mh_scan,

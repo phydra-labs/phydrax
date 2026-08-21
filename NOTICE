@@ -58,6 +58,33 @@ coloring dependency through its public Python API. ASDEX artifacts are
 normalized before Phydrax evaluates compressed derivatives through native JAX.
 See LICENSES/ASDEX-MIT.txt.
 
+SeqJAX
+Copyright (c) 2024 Tennessee Hickling
+Licensed under the MIT License.
+The amortized sequence-inference, buffered-window, and particle-genealogy
+designs are informed by SeqJAX at commit
+6e40d3459eb7fe654eb6250a6cb9274a76eba738. Phydrax retains its own state-space,
+parameter, result, checkpoint, and experiment contracts.
+See LICENSES/SEQJAX-MIT.txt.
+
+ELK
+Copyright (c) 2024 Linderman Lab
+Licensed under the BSD 3-Clause License.
+The causal nonlinear recurrence, quasi-Newton temporal linearization, and
+Kalman-form Levenberg--Marquardt stabilization are informed by ELK at commit
+58782bd07a58c28b48c651ac9bd9ac2fec527d58 and the associated NeurIPS 2024
+paper.
+See LICENSES/ELK-BSD-3-CLAUSE.txt.
+
+Parallel MCMC
+Copyright (c) 2025 Linderman Lab
+Licensed under the BSD 3-Clause License.
+The fixed-trajectory causal HMC execution and position--momentum block
+linearization are informed by parallel-mcmc at commit
+5e5b637b1214580d0be4e495215e0e5ed6eb2688 and the associated NeurIPS 2025
+paper.
+See LICENSES/PARALLEL-MCMC-BSD-3-CLAUSE.txt.
+
 Research and design acknowledgments
 
 The moment-calibration formulation follows Shane Barratt, Guillermo Angeris,
