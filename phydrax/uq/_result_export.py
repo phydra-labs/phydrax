@@ -55,6 +55,7 @@ from ._rao_blackwellized_smoothing import (
 )
 from ._sgmcmc import SGMCMCResult
 from ._sgmcmc_diagnostics import SGMCMCMixingReport
+from ._sing import SINGResult
 from ._smc import TemperedSMCResult
 
 
@@ -297,6 +298,91 @@ def _adapt_result(result, arrays, fields, trees):
         )
         metadata["smoother_method_id"] = result.method_id
         return "bellman_smoother", metadata, ("filter_result.problem",)
+
+    if isinstance(result, SINGResult):
+        for name, value in (
+            ("means", result.means),
+            ("covariances", result.covariances),
+            (
+                "transition_cross_covariances",
+                result.transition_cross_covariances,
+            ),
+            ("observation_means", result.observation_means),
+            ("observation_covariances", result.observation_covariances),
+            (
+                "information.diagonal_precision",
+                result.state.information.diagonal_precision,
+            ),
+            (
+                "information.transition_precision",
+                result.state.information.transition_precision,
+            ),
+            (
+                "information.information_vector",
+                result.state.information.information_vector,
+            ),
+            ("grid.times", result.state.grid.times),
+            ("grid.node_valid", result.state.grid.node_valid),
+            (
+                "grid.observation_node_indices",
+                result.state.grid.observation_node_indices,
+            ),
+            (
+                "grid.transition_step_indices",
+                result.state.grid.transition_step_indices,
+            ),
+            ("elbo.per_case_elbo", result.elbo.per_case_elbo),
+            ("elbo.total_elbo", result.elbo.total_elbo),
+            (
+                "elbo.expected_initial_log_density",
+                result.elbo.expected_initial_log_density,
+            ),
+            (
+                "elbo.expected_transition_log_density",
+                result.elbo.expected_transition_log_density,
+            ),
+            (
+                "elbo.expected_observation_log_density",
+                result.elbo.expected_observation_log_density,
+            ),
+            ("elbo.entropy", result.elbo.entropy),
+            ("elbo.valid", result.elbo.valid),
+            ("elbo.status", result.elbo.status),
+            ("elbo_history", result.elbo_history),
+            ("step_size_history", result.step_size_history),
+            ("natural_residual_history", result.natural_residual_history),
+            ("accepted_history", result.accepted_history),
+            ("converged", result.converged),
+            ("valid", result.valid),
+            ("status", result.status),
+            ("state.iteration", result.state.iteration),
+        ):
+            _put_field(fields, arrays, name, value)
+        metadata = {
+            "approximation_id": result.approximation_id,
+            "model_id": result.model_id,
+            "problem_id": result.problem_id,
+            "process_id": result.process_id,
+            "sequence_id": result.sequence_id,
+            "grid_id": result.state.grid.grid_id,
+            "information_id": result.state.information.information_id,
+            "case_axes": result.case_axes,
+            "case_shape": result.case_shape,
+            "case_ids": result.case_ids,
+            "state_shape": result.state_shape,
+            "expectation_method": result.expectation_method,
+            "execution_method": result.execution_method,
+            "max_iterations": result.max_iterations,
+            "num_samples": result.state.num_samples,
+            "order": result.state.order,
+            "max_dimension": result.state.max_dimension,
+            "max_points": result.state.max_points,
+            "alpha": result.state.alpha,
+            "beta": result.state.beta,
+            "kappa": result.state.kappa,
+            "rank_tolerance": result.state.information.rank_tolerance,
+        }
+        return "sing_smoother", metadata, ("state.expectation_key",)
 
     if isinstance(result, KalmanFilterResult):
         metadata = _put_kalman_filter_result(result, arrays, fields, prefix="")

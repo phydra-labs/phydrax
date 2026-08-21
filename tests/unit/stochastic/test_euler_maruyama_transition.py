@@ -85,6 +85,26 @@ def test_euler_maruyama_matches_scalar_gaussian_and_is_differentiable():
     assert jnp.isfinite(gradient.system.vector_field.model.scale)
 
 
+def test_euler_maruyama_exposes_drift_and_dispersion_without_density_work():
+    kernel = _scalar_kernel()
+    context = phx.stochastic.StateSpaceStepContext.empty()
+    state = jnp.asarray([2.0])
+    drift, dispersion = jax.jit(
+        lambda value: (
+            kernel.drift(jnp.asarray(0.2), value, context),
+            kernel.dispersion(jnp.asarray(0.2), value, context),
+        )
+    )(state)
+    parameters = kernel.parameters(state, 0.2, 0.6, context)
+
+    assert jnp.array_equal(drift, jnp.asarray([-1.0]))
+    assert jnp.array_equal(dispersion, jnp.asarray([[0.3]]))
+    assert jnp.allclose(
+        parameters.factor,
+        jnp.sqrt(jnp.asarray(0.4)) * dispersion,
+    )
+
+
 def test_euler_maruyama_preserves_rectangular_singular_diffusion():
     system = phx.dynamics.ContinuousSystem(
         lambda time, state, args: jnp.zeros_like(state),

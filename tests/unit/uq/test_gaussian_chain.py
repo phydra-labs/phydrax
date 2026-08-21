@@ -265,3 +265,208 @@ def test_exact_state_space_threads_temporal_execution_separately():
     assert likelihood.method == "kalman"
     assert likelihood.temporal_method == "parallel"
     assert likelihood.backend.execution_method == "parallel"
+
+
+def _markov_marginals(*, node_count=6, padded=False):
+    mean = jnp.asarray([0.25, -0.4])
+    covariance = jnp.asarray([[0.7, 0.12], [0.12, 0.45]])
+    means = [mean]
+    covariances = [covariance]
+    cross_covariances = []
+    for index in range(node_count - 1):
+        transition = jnp.asarray(
+            [[0.72 + 0.01 * index, -0.23], [0.31, 0.58 - 0.01 * index]]
+        )
+        offset = jnp.asarray([0.04 * (index + 1), -0.025])
+        process_covariance = jnp.asarray([[0.18 + 0.01 * index, 0.025], [0.025, 0.14]])
+        cross_covariances.append(covariance @ transition.T)
+        mean = transition @ mean + offset
+        covariance = transition @ covariance @ transition.T + process_covariance
+        means.append(mean)
+        covariances.append(covariance)
+    node_valid = jnp.ones((node_count,), dtype=bool)
+    if padded:
+        node_valid = node_valid.at[-2:].set(False)
+    return phx.uq.gaussian_markov_moments_from_marginals(
+        jnp.stack(means),
+        jnp.stack(covariances),
+        jnp.stack(cross_covariances),
+        node_valid=node_valid,
+        moments_id="chain-reference",
+    )
+
+
+def _dense_information_moments(information):
+    node_count = information.num_nodes
+    state_size = information.state_size
+    precision = np.zeros((node_count * state_size, node_count * state_size))
+    vector = np.asarray(information.information_vector).reshape((-1,))
+    for index in range(node_count):
+        block = slice(index * state_size, (index + 1) * state_size)
+        precision[block, block] = np.asarray(information.diagonal_precision[index])
+    for index in range(node_count - 1):
+        left = slice(index * state_size, (index + 1) * state_size)
+        right = slice((index + 1) * state_size, (index + 2) * state_size)
+        precision[left, right] = np.asarray(information.transition_precision[index])
+        precision[right, left] = np.asarray(information.transition_precision[index].T)
+    covariance = np.linalg.inv(precision)
+    mean = covariance @ vector
+    sign, log_determinant = np.linalg.slogdet(precision)
+    assert sign > 0
+    log_normalizer = (
+        0.5 * vector @ mean
+        + 0.5 * precision.shape[0] * np.log(2.0 * np.pi)
+        - 0.5 * log_determinant
+    )
+    return mean, covariance, log_normalizer
+
+
+def test_information_chain_round_trip_matches_dense_and_parallel_algebra():
+    reference = _markov_marginals()
+    information = phx.uq.gaussian_markov_information_from_moments(reference)
+    sequential = phx.uq.gaussian_markov_moments(information, method="sequential")
+    parallel = phx.uq.gaussian_markov_moments(information, method="parallel")
+    dense_mean, dense_covariance, dense_log_normalizer = _dense_information_moments(
+        information
+    )
+    state_size = information.state_size
+    node_count = information.num_nodes
+    dense_mean = dense_mean.reshape((node_count, state_size))
+    dense_marginals = np.stack(
+        tuple(
+            dense_covariance[
+                index * state_size : (index + 1) * state_size,
+                index * state_size : (index + 1) * state_size,
+            ]
+            for index in range(node_count)
+        )
+    )
+    dense_cross = np.stack(
+        tuple(
+            dense_covariance[
+                index * state_size : (index + 1) * state_size,
+                (index + 1) * state_size : (index + 2) * state_size,
+            ]
+            for index in range(node_count - 1)
+        )
+    )
+    assert sequential.successful
+    assert parallel.successful
+    assert sequential.execution_method == "sequential"
+    assert parallel.execution_method == "parallel"
+    assert jnp.allclose(sequential.means, reference.means, rtol=2e-9, atol=2e-9)
+    assert jnp.allclose(
+        sequential.covariances, reference.covariances, rtol=2e-9, atol=2e-9
+    )
+    assert jnp.allclose(
+        sequential.transition_cross_covariances,
+        reference.transition_cross_covariances,
+        rtol=2e-9,
+        atol=2e-9,
+    )
+    assert jnp.allclose(parallel.means, dense_mean, rtol=2e-9, atol=2e-9)
+    assert jnp.allclose(parallel.covariances, dense_marginals, rtol=2e-9, atol=2e-9)
+    assert jnp.allclose(
+        parallel.transition_cross_covariances,
+        dense_cross,
+        rtol=2e-9,
+        atol=2e-9,
+    )
+    assert jnp.allclose(
+        parallel.log_normalizer, dense_log_normalizer, rtol=2e-9, atol=2e-9
+    )
+    assert jnp.allclose(
+        parallel.second_moments,
+        sequential.second_moments,
+        rtol=2e-9,
+        atol=2e-9,
+    )
+
+
+def test_information_chain_source_target_orientation_and_padding_are_explicit():
+    reference = _markov_marginals(padded=True)
+    information = phx.uq.gaussian_markov_information_from_moments(reference)
+    recovered = phx.uq.gaussian_markov_moments(information, method="parallel")
+    active = reference.node_valid
+    assert recovered.successful
+    assert jnp.allclose(
+        recovered.means[active], reference.means[active], rtol=2e-9, atol=2e-9
+    )
+    assert jnp.allclose(
+        recovered.covariances[active],
+        reference.covariances[active],
+        rtol=2e-9,
+        atol=2e-9,
+    )
+    assert jnp.allclose(
+        recovered.transition_cross_covariances[:3],
+        reference.transition_cross_covariances[:3],
+        rtol=2e-9,
+        atol=2e-9,
+    )
+    assert jnp.array_equal(recovered.means[~active], jnp.zeros((2, 2)))
+    assert jnp.array_equal(
+        recovered.transition_cross_covariances[3:], jnp.zeros((2, 2, 2))
+    )
+    assert not jnp.allclose(
+        reference.transition_cross_covariances[0],
+        reference.transition_cross_covariances[0].T,
+    )
+
+
+def test_information_chain_statuses_never_repair_invalid_inputs():
+    reference = _markov_marginals(node_count=3)
+    information = phx.uq.gaussian_markov_information_from_moments(reference)
+    nonhermitian = phx.uq.GaussianMarkovInformation(
+        information.diagonal_precision.at[0, 0, 1].add(0.2),
+        information.transition_precision,
+        information.information_vector,
+    )
+    nonhermitian_result = phx.uq.gaussian_markov_log_normalizer(nonhermitian)
+    assert not nonhermitian_result.valid
+    assert nonhermitian_result.status == phx.uq.GAUSSIAN_MARKOV_NON_HERMITIAN
+    indefinite = phx.uq.GaussianMarkovInformation(
+        -jnp.eye(2)[None, ...],
+        jnp.zeros((0, 2, 2)),
+        jnp.zeros((1, 2)),
+    )
+    indefinite_result = phx.uq.gaussian_markov_log_normalizer(indefinite)
+    assert not indefinite_result.valid
+    assert indefinite_result.status == phx.uq.GAUSSIAN_MARKOV_NOT_POSITIVE_DEFINITE
+    invalid_mask = phx.uq.GaussianMarkovInformation(
+        information.diagonal_precision,
+        information.transition_precision,
+        information.information_vector,
+        node_valid=jnp.asarray([True, False, True]),
+    )
+    invalid_mask_result = phx.uq.gaussian_markov_log_normalizer(invalid_mask)
+    assert not invalid_mask_result.valid
+    assert invalid_mask_result.status == phx.uq.GAUSSIAN_MARKOV_INVALID_NODE_MASK
+
+
+def test_information_chain_is_jittable_and_coherent_samples_recover_lag_moments():
+    reference = _markov_marginals(node_count=4)
+    information = phx.uq.gaussian_markov_information_from_moments(reference)
+    recovered = jax.jit(
+        lambda value: phx.uq.gaussian_markov_moments(value, method="parallel")
+    )(information)
+    draws = phx.uq.sample_gaussian_markov(jr.key(912), recovered, sample_shape=(20_000,))
+    empirical_mean = jnp.mean(draws, axis=0)
+    centered = draws - empirical_mean
+    empirical_covariance = jnp.einsum("sni,snj->nij", centered, centered) / draws.shape[0]
+    empirical_cross = (
+        jnp.einsum("sni,snj->nij", centered[:, :-1], centered[:, 1:]) / draws.shape[0]
+    )
+    assert jnp.allclose(empirical_mean, recovered.means, rtol=0.0, atol=2.5e-2)
+    assert jnp.allclose(
+        empirical_covariance, recovered.covariances, rtol=0.0, atol=3.5e-2
+    )
+    assert jnp.allclose(
+        empirical_cross,
+        recovered.transition_cross_covariances,
+        rtol=0.0,
+        atol=3.5e-2,
+    )
+    short = phx.uq.sample_gaussian_markov(jr.key(44), recovered, sample_shape=(3,))
+    long = phx.uq.sample_gaussian_markov(jr.key(44), recovered, sample_shape=(8,))
+    assert jnp.array_equal(short, long[:3])

@@ -4,6 +4,7 @@
 
 import jax
 import jax.numpy as jnp
+import jax.random as jr
 import jax.scipy as jsp
 import pytest
 
@@ -372,3 +373,130 @@ def test_event_pytrees_jit_vmap_and_gradients_preserve_contracts():
     assert jnp.allclose(mean_gradient, 0.6)
     assert jnp.allclose(jnp.asarray(rule_gradients), jnp.full((3,), 0.6))
     assert jnp.allclose(root_gradient, 8.0 * 0.7**2 * root)
+
+
+def test_gaussian_expectation_reuses_rules_without_materializing_output_covariance():
+    mean, factor, matrix, offset = _linear_case()
+
+    def function(value):
+        transformed = matrix @ value + offset
+        return {"field": transformed[:2], "total": jnp.sum(transformed)}
+
+    expected = function(mean)
+    for method in ("cubature", "unscented", "gauss-hermite"):
+        result = phx.uq.gaussian_expectation(
+            function,
+            mean,
+            factor,
+            method=method,
+            order=3,
+        )
+        assert result.successful
+        assert jnp.allclose(result.value["field"], expected["field"], atol=2e-6)
+        assert jnp.allclose(result.value["total"], expected["total"], atol=2e-6)
+        assert result.input_dimension == 2
+        assert result.output_dimension == 3
+    assert (
+        phx.uq.gaussian_expectation(function, mean, factor, method="cubature").point_count
+        == 4
+    )
+
+
+def test_gaussian_expectation_polynomial_values_and_gradients_are_exact():
+    mean = jnp.asarray(0.35)
+    scale = jnp.asarray(0.6)
+
+    def expectation(center, root):
+        factor = phx.uq.GaussianFactor(root.reshape((1, 1)))
+        return phx.uq.gaussian_expectation(
+            lambda value: jnp.asarray([value**2, value**3]),
+            center,
+            factor,
+            method="gauss-hermite",
+            order=4,
+        ).value
+
+    value = jax.jit(expectation)(mean, scale)
+    mean_gradient, scale_gradient = jax.grad(
+        lambda center, root: expectation(center, root)[0],
+        argnums=(0, 1),
+    )(mean, scale)
+    expected = jnp.asarray(
+        [
+            mean**2 + scale**2,
+            mean**3 + 3.0 * mean * scale**2,
+        ]
+    )
+    assert jnp.allclose(value, expected, atol=2e-6)
+    assert jnp.allclose(mean_gradient, 2.0 * mean, atol=2e-6)
+    assert jnp.allclose(scale_gradient, 2.0 * scale, atol=2e-6)
+
+
+def test_gaussian_expectation_monte_carlo_is_keyed_and_zero_rank_is_exact():
+    factor = phx.uq.GaussianFactor(jnp.asarray([[0.7]]))
+    first = phx.uq.gaussian_expectation(
+        lambda value: value**2,
+        jnp.asarray(0.2),
+        factor,
+        method="monte-carlo",
+        key=jr.key(71),
+        num_samples=4_096,
+    )
+    second = phx.uq.gaussian_expectation(
+        lambda value: value**2,
+        jnp.asarray(0.2),
+        factor,
+        method="monte-carlo",
+        key=jr.key(71),
+        num_samples=4_096,
+    )
+    assert first.method_id == "fixed-sample-monte-carlo"
+    assert first.point_count == 4_096
+    assert jnp.array_equal(first.value, second.value)
+    assert jnp.allclose(first.value, 0.2**2 + 0.7**2, atol=2.5e-2)
+    with pytest.raises(ValueError, match="key is required"):
+        phx.uq.gaussian_expectation(
+            lambda value: value,
+            jnp.asarray(0.0),
+            factor,
+            method="monte-carlo",
+        )
+
+    deterministic = phx.uq.gaussian_expectation(
+        lambda value: {"value": 3.0 * value - 1.0},
+        jnp.asarray([0.25, -0.5]),
+        phx.uq.GaussianFactor(jnp.zeros((2, 0))),
+        method="monte-carlo",
+        key=jr.key(4),
+        num_samples=128,
+    )
+    assert deterministic.point_count == 1
+    assert jnp.array_equal(deterministic.value["value"], jnp.asarray([-0.25, -2.5]))
+
+
+def test_gaussian_expectation_preserves_guards_and_nonfinite_status():
+    factor = phx.uq.GaussianFactor(jnp.eye(2))
+    with pytest.raises(ValueError, match="exceeds max_dimension"):
+        phx.uq.gaussian_expectation(
+            lambda value: value,
+            jnp.zeros(2),
+            factor,
+            method="gauss-hermite",
+            max_dimension=1,
+        )
+    with pytest.raises(ValueError, match="exceeds max_points"):
+        phx.uq.gaussian_expectation(
+            lambda value: value,
+            jnp.zeros(2),
+            factor,
+            method="gauss-hermite",
+            order=5,
+            max_points=24,
+        )
+    nonfinite = phx.uq.gaussian_expectation(
+        lambda value: jnp.asarray(jnp.nan),
+        jnp.zeros(2),
+        factor,
+    )
+    assert not nonfinite.valid
+    assert nonfinite.status == phx.uq.NONLINEAR_GAUSSIAN_NONFINITE

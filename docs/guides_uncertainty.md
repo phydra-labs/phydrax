@@ -369,6 +369,68 @@ streaming and batch execution, status-aware diagnostics, and pickle-free compati
 checkpoints. Predictive conversion is available where mathematically defined. Complete
 histories can be exported as portable results.
 
+#### Variational latent-SDE smoothing with SING
+
+`sing_smoother` performs natural-gradient variational inference over one
+time-varying Gaussian Markov path law. It targets the Euler-discretized latent-SDE
+ELBO, not a marginal log likelihood. One natural update recovers the exact
+linear-Gaussian posterior; nonlinear drift or observation models retain the selected
+Gaussian expectation approximation in result provenance.
+
+The initial native surface deliberately requires:
+
+- a full-rank `GaussianStatePrior`;
+- an `EulerMaruyamaTransitionKernel`;
+- only additive `WienerTerm` objects and full-row-rank process covariance on every
+  active interval; and
+- a differentiable normalized observation `log_prob`.
+
+Irregular schedules, physical case axes, typed inputs, channel masks, and padded
+steps retain their `StateSpaceProblem` semantics. An observation at `initial_time`
+shares the initial latent node instead of creating a zero-duration transition.
+`"cubature"`, `"unscented"`, `"gauss-hermite"`, and keyed fixed-sample
+`"monte-carlo"` expectations are explicit choices. Information-to-moment conversion
+uses the Gaussian chain's sequential, associative, or automatic temporal execution
+method. Failed process covariances, nonfinite expectations, indefinite information,
+and exhausted backtracking remain visible status values; no covariance jitter,
+eigenvalue clipping, or factor repair is implicit.
+
+```python
+state = phx.uq.initialize_sing(
+    latent_sde_problem,
+    expectation_method="cubature",
+    method="auto",
+)
+step = phx.uq.sing_step(
+    latent_sde_problem,
+    state,
+    step_size=1.0,
+)
+posterior = phx.uq.sing_smoother(
+    latent_sde_problem,
+    state=step.state,
+    max_iterations=25,
+)
+paths = phx.uq.sample_sing_paths(
+    jr.key(7),
+    posterior,
+    sample_shape=(128,),
+)
+```
+
+`posterior.observation_means` and `posterior.observation_covariances` align with the
+original observation schedule; `posterior.means`, covariance arrays, and transition
+cross-covariances retain the complete latent grid. Path draws use the Gaussian
+forward conditionals and therefore preserve temporal dependence. The result also
+contains the decomposed ELBO, accepted step sizes, natural residuals, convergence,
+status, expectation settings, and model/problem/process/sequence provenance.
+`export_result` writes these arrays without the original model or expectation key.
+
+`sing_elbo(problem, state)` holds the variational posterior fixed, so gradients with
+respect to drift or observation parameters are suitable for an explicit outer
+optimization loop. `sing_smoother` itself updates only the posterior. It does not hide
+alternating model learning, GP drift inference, or minibatching inside one call.
+
 
 `optimal_transport_ensemble_transform` is a separate deterministic equal-weight
 barycentric transform for normalized weighted particle arrays. It preserves leading

@@ -341,6 +341,19 @@ implemented and recorded explicitly; there is no hidden fallback, clipping, or
 positive-semidefinite repair. Nonfinite evaluations and invalid input or output
 factors remain distinguishable through the nonlinear status codes.
 
+`gaussian_expectation` evaluates an arbitrary PyTree-valued function without
+materializing an output covariance. It shares the same deterministic cubature,
+unscented, and Gauss--Hermite rules and adds fixed-sample Monte Carlo with an explicit
+key. This is the expectation-only primitive used by SING.
+
+::: phydrax.uq.GaussianExpectationResult
+
+---
+
+::: phydrax.uq.gaussian_expectation
+
+---
+
 ::: phydrax.uq.NonlinearGaussianTransformResult
 
 ---
@@ -375,6 +388,79 @@ factors remain distinguishable through the nonlinear status codes.
 ---
 
 ::: phydrax.uq.NONLINEAR_GAUSSIAN_OUTPUT_FACTOR_INVALID
+
+## SING latent-SDE variational smoothing
+
+SING represents the complete latent path as a block-tridiagonal Gaussian information
+law and applies natural-gradient updates to its sufficient statistics. The objective
+is the Euler-discretized SDE ELBO. Linear drift with Gaussian observations reaches
+the exact posterior in one unit natural step; nonlinear factors retain the declared
+expectation approximation.
+
+`initialize_sing` builds a compact, case-aligned latent grid. An observation at
+`initial_time` maps to the initial node; padded rows do not create transitions.
+`sing_step` constructs a natural target and applies per-case monotone backtracking.
+`sing_smoother` executes a fixed-capacity JAX scan and records ELBO, accepted-step,
+natural-residual, convergence, and status histories. `sample_sing_paths` draws
+forward-conditional paths and returns them on the original observation schedule.
+
+The automatic path requires a full-rank `GaussianStatePrior`, an
+`EulerMaruyamaTransitionKernel`, explicitly additive `WienerTerm` objects, and
+full-rank process covariance on every active interval. Observation likelihoods may be
+arbitrary differentiable normalized `AbstractObservationModel` implementations.
+Irregular time gaps, physical cases, typed inputs, masks, and prefix padding preserve
+their state-space semantics. Multiplicative noise, solver-backed transitions, and
+singular process covariance have no hidden approximation or regularization path.
+
+`expectation_method` is one of `"cubature"`, `"unscented"`, `"gauss-hermite"`, or
+keyed `"monte-carlo"`. `method` independently selects sequential, associative, or
+automatic Gaussian-chain conversion. `sing_elbo` holds the supplied `SINGState`
+fixed, so model-parameter gradients are suitable for an explicit outer optimization
+loop; `sing_smoother` does not update drift or observation parameters.
+
+::: phydrax.uq.SINGGrid
+
+---
+
+::: phydrax.uq.SINGState
+
+---
+
+::: phydrax.uq.SINGELBOResult
+
+---
+
+::: phydrax.uq.SINGStepResult
+
+---
+
+::: phydrax.uq.SINGResult
+
+---
+
+::: phydrax.uq.initialize_sing
+
+---
+
+::: phydrax.uq.sing_elbo
+
+---
+
+::: phydrax.uq.sing_step
+
+---
+
+::: phydrax.uq.sing_smoother
+
+---
+
+::: phydrax.uq.sample_sing_paths
+
+---
+
+::: phydrax.uq.sing_status_name
+
+---
 
 ## Continuous-discrete Gaussian filtering
 
