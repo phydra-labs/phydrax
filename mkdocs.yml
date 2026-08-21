@@ -134,6 +134,7 @@ nav:
         - External solver backends: "api/backends.md"
         - Sparse derivatives: "api/sparse_derivatives.md"
         - Integration: "api/integration.md"
+        - Moment weighting: "api/weighting.md"
         - Optimal transport:
             - Overview: "api/transport/index.md"
             - Ground costs: "api/transport/costs.md"

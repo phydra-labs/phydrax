@@ -11,8 +11,8 @@ jax.config.update("jax_enable_x64", True)
 from . import (
     backends,
     conditions,
-    control,
     continuation,
+    control,
     coresets,
     data_utils,
     domain,
@@ -39,6 +39,7 @@ from . import (
     terms,
     transport,
     uq,
+    weighting,
 )
 
 
@@ -74,4 +75,5 @@ __all__ = [
     "solver",
     "stochastic",
     "uq",
+    "weighting",
 ]

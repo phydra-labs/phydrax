@@ -15,6 +15,7 @@ from jaxtyping import PyTree
 from .._linear_refresh import prepare_refresh_state
 from ..linalg import (
     FunctionLinearOperator,
+    LinearSolveControl,
     LinearSolvePolicy,
     LinearSolveStatus,
     LinearSystem,
@@ -246,6 +247,7 @@ class NewtonKrylov(AbstractScalarIterativeMethod):
             linear_result = solve_linear(
                 prepared,
                 _tree_negative(gradient),
+                control=LinearSolveControl(relative_tolerance=forcing),
             )
             proposed_direction = linear_result.value
             proposed_directional = _tree_inner(gradient, proposed_direction)

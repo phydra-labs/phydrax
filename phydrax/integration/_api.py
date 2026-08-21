@@ -69,19 +69,23 @@ from ._targets import (
     ProbabilityTarget,
     WeightedSampleTarget,
 )
+from ._transformations import (
+    MeasureTransformationRecord,
+    TransformedIntegrationDiagnostics,
+)
 
 
 _KEY_UNSET = object()
 
 
 class IntegrationRealization(StrictModule):
-    """A target, plan, reusable batch, execution key, and optional compression."""
+    """A target, plan, reusable batch, execution key, and transformation history."""
 
     target: Any
     plan: Any
     batch: Any
     key: Any
-    compression: Any | None = None
+    transformations: tuple[MeasureTransformationRecord, ...]
 
     def __init__(
         self,
@@ -89,38 +93,47 @@ class IntegrationRealization(StrictModule):
         plan: Any,
         batch: Any,
         key: Any,
-        compression: Any | None = None,
+        transformations: tuple[MeasureTransformationRecord, ...] = (),
         /,
     ):
         self.target = target
         self.plan = plan
         self.batch = batch
         self.key = key
-        self.compression = compression
+        records = tuple(transformations)
+        if any(not isinstance(item, MeasureTransformationRecord) for item in records):
+            raise TypeError(
+                "transformations must contain MeasureTransformationRecord values."
+            )
+        self.transformations = records
 
 
-def _attach_compression(
+def _attach_transformations(
     estimate: IntegrationEstimate,
     realization: IntegrationRealization,
     /,
 ) -> IntegrationEstimate:
-    if realization.compression is None:
+    if not realization.transformations:
         return estimate
-    from ._compression import CompressedIntegrationDiagnostics
     from ._estimates import IntegrationProvenance
 
+    final_kind = realization.transformations[-1].kind
+    method = {
+        "calibration": "calibrated",
+        "compression": "compressed",
+    }.get(final_kind, "transformed")
     return IntegrationEstimate(
         estimate.value,
         status=estimate.status,
         num_evaluations=estimate.num_evaluations,
         error_estimate=None,
         error_kind=None,
-        diagnostics=CompressedIntegrationDiagnostics(
-            realization.compression,
+        diagnostics=TransformedIntegrationDiagnostics(
+            realization.transformations,
             estimate.diagnostics,
         ),
         provenance=IntegrationProvenance(
-            "compressed",
+            method,
             estimate.provenance.target,
             estimate.provenance.realization,
         ),
@@ -369,7 +382,7 @@ def reduce(
         estimate = integrate_weighted_samples(
             integrand, target, realization.batch, key=key, kwargs=kwargs
         )
-        return _attach_compression(estimate, realization)
+        return _attach_transformations(estimate, realization)
     if isinstance(target, DiscreteMeasureTarget):
         return integrate_discrete_measure(
             integrand, target, realization.batch, key=key, kwargs=kwargs

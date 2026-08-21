@@ -12,11 +12,8 @@ from ._batches import (
     SeparableIntegrationBatch,
     WeightedSampleBatch,
 )
-from ._compression import (
-    compress,
-    CompressedIntegrationDiagnostics,
-    MeasureCompressionDiagnostics,
-)
+from ._calibration import calibrate, MeasureCalibrationDiagnostics
+from ._compression import compress, MeasureCompressionDiagnostics
 from ._estimates import (
     AdaptivePartition,
     AdaptiveQuadratureDiagnostics,
@@ -135,6 +132,10 @@ from ._targets import (
     weighted,
     WeightedSampleTarget,
 )
+from ._transformations import (
+    MeasureTransformationRecord,
+    TransformedIntegrationDiagnostics,
+)
 
 
 __all__ = [
@@ -157,7 +158,6 @@ __all__ = [
     "CellQuadraturePlan",
     "CallerIntegration",
     "ClenshawCurtisRule",
-    "CompressedIntegrationDiagnostics",
     "ComponentTarget",
     "ControlVariateEstimator",
     "DensityTarget",
@@ -175,7 +175,9 @@ __all__ = [
     "IntegrationBatch",
     "IntegrationEstimate",
     "IntegrationPlan",
+    "MeasureCalibrationDiagnostics",
     "MeasureCompressionDiagnostics",
+    "MeasureTransformationRecord",
     "IntegrationProvenance",
     "IntegrationStatus",
     "IntegrationRealization",
@@ -226,10 +228,12 @@ __all__ = [
     "StratifiedDiagnostics",
     "StratifiedMonteCarloPlan",
     "TanhSinhRule",
+    "TransformedIntegrationDiagnostics",
     "WeightedSampleBatch",
     "WeightedSampleTarget",
     "adaptive",
     "caller",
+    "calibrate",
     "compress",
     "discrete",
     "density",

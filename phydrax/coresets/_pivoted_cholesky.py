@@ -16,9 +16,9 @@ from phydrax.kernels import (
 )
 
 from .._doc import DOC_KEY0
+from .._measure_weights import log_weights_from_normalized
 from .._strict import StrictModule
 from ._types import CoresetSelection, PivotedCholeskyDiagnostics
-from ._weights import log_weights_from_normalized
 
 
 class RandomizedPivotedCholesky(StrictModule):

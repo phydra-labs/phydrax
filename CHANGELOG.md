@@ -4,6 +4,24 @@
 
 ### Added
 
+- `phydrax.weighting` exact and quadratically reconciled relative-entropy moment
+  calibration for dense, sparse, and matrix-free feature actions, with affine-rank
+  reduction, audited convergence/regularity evidence, warm starts, and implicit
+  target/prior derivatives. The mathematical formulation follows Barratt, Angeris,
+  and Boyd's *Optimal Representative Sample Weighting*; the public `cvxgrp/rsw`
+  and Apache-2.0 `andytimm/rswjax` packages are acknowledged as design
+  inspiration, while this implementation is independent and Phydrax-native.
+- Finite-measure calibration in `phydrax.integration`, shared calibration/coreset
+  lowering, and ordered transformation diagnostics that preserve physical mass,
+  masks, named axes, ancestry, support validity, execution keys, and provenance
+  while invalidating inapplicable inherited integration-error bounds.
+- Dense/sparse exact/soft calibration benchmarks with separate setup, first
+  compilation, steady-state, cold-nearby, and warm-nearby timing and numerical
+  evidence.
+- Newton--Krylov now passes its adaptive forcing tolerance into each inner linear
+  solve, so forcing policy changes actual Krylov work under eager and compiled
+  execution.
+
 - `phydrax.nonlinear` contracts for algebraic systems, Newton line-search and
   trust-region roots, nonlinear GMRES and preconditioning, fixed-point acceleration,
   full-approximation multigrid cycles, variational inequalities, semismooth

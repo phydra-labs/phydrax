@@ -58,7 +58,7 @@ def mean(
             target_or_realization.plan,
             target_or_realization.batch,
             target_or_realization.key,
-            target_or_realization.compression,
+            target_or_realization.transformations,
         )
         estimate = reduce_integration(integrand, realization, **kwargs)
     else:

@@ -18,6 +18,7 @@ def normalized_weights(
     rows_valid: Array | None = None,
 ) -> tuple[Array, Array, Array, Array]:
     """Normalize a masked finite log-weight vector without changing its shape."""
+
     if log_weights is None:
         values = jnp.zeros((count,), dtype=float)
     else:
@@ -48,6 +49,7 @@ def normalized_weights(
 
 def log_weights_from_normalized(weights: Array, mask: Array, /) -> Array:
     """Represent normalized nonnegative weights with inactive negative infinities."""
+
     values = jnp.asarray(weights, dtype=float)
     included = jnp.asarray(mask, dtype=bool)
     safe = jnp.where(included, values, 1.0)

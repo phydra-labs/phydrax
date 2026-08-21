@@ -11,9 +11,9 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from .._measure_weights import log_weights_from_normalized, normalized_weights
 from .._strict import StrictModule
 from ._types import CoresetSelection, MomentRecombinationDiagnostics
-from ._weights import log_weights_from_normalized, normalized_weights
 
 
 class MomentRecombination(StrictModule):

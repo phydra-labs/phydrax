@@ -17,7 +17,9 @@ def log_normalize(
     keepdims: bool = False,
 ) -> tuple[Array, Array, Array]:
     """Normalize masked log weights independently over explicit sample axes."""
-    log_weights_ = jnp.asarray(log_weights, dtype=float)
+    log_weights_ = jnp.asarray(log_weights)
+    if not jnp.issubdtype(log_weights_.dtype, jnp.inexact):
+        log_weights_ = log_weights_.astype(float)
     raw_axes = (axes,) if isinstance(axes, int) else tuple(axes)
     if not raw_axes:
         raise ValueError("axes must contain at least one reduction axis.")
@@ -48,7 +50,7 @@ def log_normalize(
     safe_maximum = jnp.where(jnp.isfinite(maximum), maximum, 0.0)
     scaled = jnp.where(active, jnp.exp(log_weights_ - safe_maximum), 0.0)
     total = jnp.sum(scaled, axis=resolved_axes, keepdims=True)
-    safe_total = jnp.maximum(total, jnp.finfo(float).tiny)
+    safe_total = jnp.maximum(total, jnp.finfo(log_weights_.dtype).tiny)
     normalized = jnp.where(valid, scaled / safe_total, 0.0)
     log_sum = jnp.where(valid, safe_maximum + jnp.log(safe_total), -jnp.inf)
     if keepdims:

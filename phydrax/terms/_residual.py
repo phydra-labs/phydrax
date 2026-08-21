@@ -153,6 +153,7 @@ def _apply_local_weight(
         realization.plan,
         weighted_batch,
         realization.key,
+        realization.transformations,
     )
 
 
