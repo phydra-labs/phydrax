@@ -26,6 +26,16 @@ The real-order modified Bessel implementation is adapted from Numerax 1.4.0
 (commit cce2ba7c1db1f7ab937065730016e53f704e312d).
 See LICENSES/NUMERAX-MIT.txt.
 
+SING
+Copyright (c) 2025, Linderman Lab
+Licensed under the MIT License.
+The Gaussian Markov natural-gradient formulation for latent-SDE variational
+inference is adapted from SING: SDE Inference via Natural Gradients
+(Hu, Smith, and Linderman, NeurIPS 2025). Phydrax implements the method
+natively against its own state-space, Gaussian-factor, and linear-algebra
+contracts rather than redistributing the upstream Python package.
+See LICENSES/SING-MIT.txt.
+
 SciPy XSF
 Copyright (c) 2001-2002 Enthought, Inc. 2003-2024, SciPy Developers.
 Licensed under the BSD 3-Clause License.

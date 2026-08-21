@@ -213,13 +213,20 @@ class EulerMaruyamaTransitionKernel(AbstractTransitionKernel):
         self.approximation_id = _identifier(approximation_id, owner="approximation_id")
         self.has_log_density = True
 
-    def _drift(
+    def drift(
         self,
-        time: Array,
-        state: Array,
+        time: ArrayLike,
+        state: ArrayLike,
         context: StateSpaceStepContext,
         /,
     ) -> Array:
+        """Evaluate the declared continuous drift in physical state coordinates."""
+        time_array = _scalar(time, owner="time")
+        state_array = jnp.asarray(state)
+        if tuple(state_array.shape) != self.state_shape:
+            raise ValueError(
+                f"state must have shape {self.state_shape}; got {state_array.shape}."
+            )
         inputs = None
         if self.system.input_layout is not None:
             inputs = context.transition_start_input
@@ -229,7 +236,35 @@ class EulerMaruyamaTransitionKernel(AbstractTransitionKernel):
                     f"inputs with shape {self.system.input_layout.shape}; got "
                     f"{inputs.shape}."
                 )
-        return jnp.asarray(self.system(time, state, context.args, inputs=inputs))
+        drift = jnp.asarray(
+            self.system(time_array, state_array, context.args, inputs=inputs)
+        )
+        if tuple(drift.shape) != self.state_shape:
+            raise ValueError(
+                "ContinuousSystem drift must preserve state shape; "
+                f"expected {self.state_shape}, got {drift.shape}."
+            )
+        return drift
+
+    def dispersion(
+        self,
+        time: ArrayLike,
+        state: ArrayLike,
+        context: StateSpaceStepContext,
+        /,
+    ) -> Array:
+        """Evaluate the combined state-by-Wiener dispersion matrix."""
+        time_array = _scalar(time, owner="time")
+        state_array = jnp.asarray(state)
+        if tuple(state_array.shape) != self.state_shape:
+            raise ValueError(
+                f"state must have shape {self.state_shape}; got {state_array.shape}."
+            )
+        coefficients = tuple(
+            term.coefficient_matrix(time_array, state_array, context.args)
+            for term in self.wiener_terms
+        )
+        return jnp.concatenate(coefficients, axis=-1)
 
     def parameters(
         self,
@@ -247,17 +282,8 @@ class EulerMaruyamaTransitionKernel(AbstractTransitionKernel):
         start = _scalar(t0, owner="t0")
         end = _scalar(t1, owner="t1")
         interval = end - start
-        drift = self._drift(start, state_array, context)
-        if tuple(drift.shape) != self.state_shape:
-            raise ValueError(
-                "ContinuousSystem drift must preserve state shape; "
-                f"expected {self.state_shape}, got {drift.shape}."
-            )
-        coefficients = tuple(
-            term.coefficient_matrix(start, state_array, context.args)
-            for term in self.wiener_terms
-        )
-        coefficient = jnp.concatenate(coefficients, axis=-1)
+        drift = self.drift(start, state_array, context)
+        coefficient = self.dispersion(start, state_array, context)
         return _euler_maruyama_parameters(
             state_array,
             drift,

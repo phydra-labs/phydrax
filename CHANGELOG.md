@@ -21,7 +21,11 @@
 - Newton--Krylov now passes its adaptive forcing tolerance into each inner linear
   solve, so forcing policy changes actual Krylov work under eager and compiled
   execution.
-
+- Native SING natural-gradient variational smoothing for additive-noise latent
+  SDEs, with Gaussian information-chain algebra, deterministic and fixed-sample
+  Gaussian expectations, irregular masked schedules, per-case backtracking,
+  coherent posterior paths, fixed-posterior ELBO gradients, portable archives,
+  diagnostics, tests, documentation, benchmarks, and explicit numerical status.
 - `phydrax.nonlinear` contracts for algebraic systems, Newton line-search and
   trust-region roots, nonlinear GMRES and preconditioning, fixed-point acceleration,
   full-approximation multigrid cycles, variational inequalities, semismooth

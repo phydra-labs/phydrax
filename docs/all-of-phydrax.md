@@ -177,20 +177,24 @@ explicit. See
 
 Gaussian inference uses `GaussianFactor` rather than silently converting every
 covariance to a dense matrix. Rank, factor method, regularization, validity, and
-status remain explicit through conditioning, nonlinear moment transforms, and
-continuous-discrete filtering and smoothing. First-order, scaled-unscented,
-spherical-radial, and Gauss--Hermite transforms are declared approximations; they
-do not make nonlinear continuous-discrete inference exact. Dense-only paths
-enforce dimension guards, and covariance inputs are never silently repaired.
+status remain explicit through conditioning, nonlinear moment transforms,
+expectation-only quadrature, and continuous-discrete filtering and smoothing.
+First-order, scaled-unscented, spherical-radial, Gauss--Hermite, and keyed Monte
+Carlo expectations are declared approximations; they do not make nonlinear
+inference exact. Dense-only paths enforce dimension guards, and covariance inputs
+are never silently repaired.
 
-The completed state-space surface also includes square-root sequential Kalman
-filtering/smoothing, exact finite-state backward smoothing, Viterbi paths and
-expected statistics, particle backward/full smoothing, ensemble smoothing,
-Rao--Blackwellized filtering, and structural model compilation. Physical cases,
-schedule masks, state/process ancestry, stable IDs, validity/status, and
-input/method/backend provenance remain present in results. Square-root Kalman
-execution does not support the parallel method. Discrete particle ancestry and
-resampling choices are nondifferentiable.
+The completed state-space surface also includes SING natural-gradient
+variational smoothing for additive-noise latent SDEs; square-root sequential
+Kalman filtering/smoothing; exact finite-state backward smoothing, Viterbi paths
+and expected statistics; particle backward/full smoothing; ensemble smoothing;
+Rao--Blackwellized filtering; and structural model compilation. SING retains its
+Euler-discretized ELBO, expectation rule, Gaussian-chain execution method,
+accepted steps, natural residuals, coherent path samples, and explicit
+unsupported-model boundary. Physical cases, schedule masks, state/process
+ancestry, stable IDs, validity/status, and input/method/backend provenance remain
+present in results. Square-root Kalman execution does not support the parallel
+method. Discrete particle ancestry and resampling choices are nondifferentiable.
 
 
 ### Moment calibration and target-aware finite measures
@@ -676,6 +680,14 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   and continuous-discrete Gaussian filtering/smoothing preserve rank,
   approximation, regularization, validity/status, physical cases, schedule
   masks, stable IDs, and solver/backend provenance. Dense guards apply.
+
+  SING adds a Gaussian information-form variational smoother for
+  Euler--Maruyama latent SDEs with full-rank additive diffusion. It supports
+  differentiable non-Gaussian observations, irregular masked schedules, per-case
+  natural-gradient backtracking, sequential or associative Gaussian-chain
+  conversion, fixed-posterior model gradients, coherent path sampling, and
+  portable result export. Its objective is an ELBO, not a relabeled marginal
+  likelihood; multiplicative or singular diffusion has no silent fallback.
   Nonlinear moment propagation and sampled continuous-discrete observations are
   approximations, not exact inference, and no invalid covariance is silently
   repaired. Structural local-level, trend, seasonal, autoregressive, regression,
