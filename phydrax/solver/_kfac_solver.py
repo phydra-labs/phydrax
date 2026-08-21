@@ -30,6 +30,10 @@ from ..optim._kfac._blocks import (
 )
 from ..optim._kfac._config import KFAC
 from ..optim._kfac._types import KFACMetrics, KFACState
+from ..optim._iterative._globalization import (
+    ArmijoLineSearch,
+    armijo_backtracking,
+)
 from ._functional_objective import (
     evaluate_prepared_objective,
     prepared_data_metrics,
@@ -78,27 +82,30 @@ def _armijo_search(
     ):
         raise ValueError("KFAC produced a non-descent or nonfinite update direction.")
 
-    step_size = float(learning_rate)
-    finite_candidate_seen = False
-    for line_search_step in range(1, int(max_steps) + 1):
-        candidate = flat_parameters - step_size * direction
-        candidate_loss = loss_function(candidate)
-        if bool(jnp.isfinite(candidate_loss)):
-            finite_candidate_seen = True
-            sufficient_decrease = initial_loss - float(c1) * step_size * (
-                directional_derivative
-            )
-            if bool(candidate_loss <= sufficient_decrease):
-                return (
-                    candidate,
-                    candidate_loss,
-                    jnp.asarray(step_size),
-                    jnp.asarray(line_search_step, dtype=jnp.int32),
-                )
-        step_size *= float(shrink)
-    if not finite_candidate_seen:
+    minimum_rate = float(learning_rate) * float(shrink) ** (int(max_steps) - 1)
+    if minimum_rate == 0.0:
+        minimum_rate = float(learning_rate)
+    policy = ArmijoLineSearch(
+        initial_rate=learning_rate,
+        contraction=shrink,
+        sufficient_decrease=c1,
+        maximum_steps=max_steps,
+        minimum_rate=minimum_rate,
+    )
+    descent = -direction
+    result = armijo_backtracking(
+        loss_function,
+        flat_parameters,
+        initial_loss,
+        descent,
+        -directional_derivative,
+        step=lambda base, tangent, rate: base + rate * tangent,
+        contains=lambda candidate: jnp.all(jnp.isfinite(candidate)),
+        policy=policy,
+    )
+    if not bool(result.finite_candidate_seen):
         raise FloatingPointError("Every KFAC line-search candidate was nonfinite.")
-    return flat_parameters, initial_loss, jnp.asarray(0.0), jnp.asarray(max_steps)
+    return result.parameters, result.value, result.rate, result.evaluations
 
 
 def _fixed_step(flat_parameters, direction, loss_function, /, *, learning_rate: float):

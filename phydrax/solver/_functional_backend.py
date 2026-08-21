@@ -11,6 +11,11 @@ import optax
 from evosax.algorithms.distribution_based.base import DistributionBasedAlgorithm
 from evosax.algorithms.population_based.base import PopulationBasedAlgorithm
 
+from ..optim._iterative import (
+    AbstractCompositeLeastSquaresMethod,
+    AbstractLeastSquaresMethod,
+    AbstractScalarIterativeMethod,
+)
 from ..optim._kfac._config import KFAC
 from ..optim._riemannian import AbstractRiemannianOptimizer
 from ._functional_evosax import _solve_evosax_distribution
@@ -155,6 +160,9 @@ def _resolve_backend(
     if isinstance(
         optimizer,
         (
+            AbstractCompositeLeastSquaresMethod,
+            AbstractLeastSquaresMethod,
+            AbstractScalarIterativeMethod,
             AbstractRiemannianOptimizer,
             optax.GradientTransformationExtraArgs,
             optax.GradientTransformation,
@@ -162,8 +170,9 @@ def _resolve_backend(
     ):
         return _GradientBackend(optimizer)
     raise TypeError(
-        "optim must be a Phydrax Riemannian optimizer, an Optax transformation, "
-        "a KFAC configuration, or an Evosax distribution-based algorithm instance."
+        "optim must be a Phydrax iterative or Riemannian optimizer, an Optax "
+        "transformation, a KFAC configuration, or an Evosax distribution-based "
+        "algorithm instance."
     )
 
 

@@ -97,6 +97,27 @@ def test_public_kfac_optimizer_decreases_frozen_functional_loss():
     assert trained.training_diagnostics["optimizer/kfac/num_affine_blocks"] == 1
 
 
+def test_native_least_squares_method_uses_functional_residual_contract():
+    solver = _linear_solver()
+    initial = solver.loss(key=jr.key(20))
+    trained = solver.solve(
+        num_iter=20,
+        optim=phx.optim.LevenbergMarquardt(),
+        seed=21,
+        jit=True,
+        keep_best=False,
+        log_every=0,
+    )
+    final = trained.loss(key=jr.key(20))
+
+    assert final < 1e-10 * initial
+    assert (
+        trained.training_diagnostics["optimizer/iterative/status"]
+        == phx.optim.OptimizationStatus.SUCCESS
+    )
+    assert trained.training_diagnostics["optimizer/iterative/residual_evaluations"] > 0
+
+
 def test_kfac_keep_best_includes_initial_parameters():
     solver = _linear_solver()
     trained = solver.solve(
@@ -387,3 +408,99 @@ def test_upstream_optax_lbfgs_decreases_deterministic_functional_loss():
     )
 
     assert trained.loss(key=jr.key(26)) < initial
+
+
+def _signed_integral_term():
+    domain = phx.domain.Interval1d(0.0, 1.0)
+    return phx.terms.IntegralFunctional(
+        target=phx.integration.over(domain.component()),
+        plan=phx.integration.FixedQuadraturePlan(
+            phx.integration.GaussLegendreRule(4)
+        ),
+        integrand=lambda functions: -0.1 * functions["u"],
+    )
+
+
+def test_generalized_gauss_newton_supports_residual_and_signed_integral():
+    solver = _linear_solver(extra_terms=(_signed_integral_term(),))
+    initial = solver.loss(key=jr.key(31))
+    trained = solver.solve(
+        num_iter=12,
+        optim=phx.optim.GeneralizedGaussNewton(),
+        seed=31,
+        jit=True,
+        keep_best=False,
+        log_every=0,
+    )
+
+    assert trained.loss(key=jr.key(31)) < initial
+    assert (
+        trained.training_diagnostics[
+            "optimizer/iterative/scalar_evaluations"
+        ]
+        > 0
+    )
+    assert (
+        trained.training_diagnostics[
+            "optimizer/iterative/scalar_hvp_evaluations"
+        ]
+        > 0
+    )
+    assert jnp.isfinite(
+        trained.training_diagnostics["optimizer/iterative/scalar_objective"]
+    )
+
+
+def test_generalized_gauss_newton_supports_model_level_scalar_losses():
+    solver = _linear_solver(model_loss=True)
+    initial = solver.loss(key=jr.key(32))
+    trained = solver.solve(
+        num_iter=12,
+        optim=phx.optim.GeneralizedGaussNewton(),
+        seed=32,
+        jit=False,
+        keep_best=False,
+        log_every=0,
+    )
+
+    assert trained.loss(key=jr.key(32)) < 1e-8 * initial
+    assert (
+        trained.training_diagnostics[
+            "optimizer/iterative/scalar_gradient_evaluations"
+        ]
+        > 0
+    )
+
+
+def test_plain_least_squares_method_still_rejects_mixed_scalar_terms():
+    with pytest.raises(TypeError, match="ResidualPenalty training terms only"):
+        _linear_solver(extra_terms=(_signed_integral_term(),)).solve(
+            num_iter=1,
+            optim=phx.optim.GaussNewton(),
+            log_every=0,
+        )
+
+
+def test_composite_functional_replays_frozen_realizations_across_jit_request():
+    solver = _linear_solver(extra_terms=(_signed_integral_term(),))
+    eager = solver.solve(
+        num_iter=2,
+        optim=phx.optim.GeneralizedGaussNewton(),
+        seed=33,
+        jit=False,
+        keep_best=False,
+        log_every=0,
+    )
+    requested_jit = solver.solve(
+        num_iter=2,
+        optim=phx.optim.GeneralizedGaussNewton(),
+        seed=33,
+        jit=True,
+        keep_best=False,
+        log_every=0,
+    )
+
+    eager_model = eager.functions["u"].func.raw_model
+    compiled_model = requested_jit.functions["u"].func.raw_model
+    assert jnp.allclose(eager_model.layers[0].weight, compiled_model.layers[0].weight)
+    assert jnp.allclose(eager_model.layers[0].bias, compiled_model.layers[0].bias)

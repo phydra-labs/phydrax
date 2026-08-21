@@ -9,6 +9,7 @@ from typing import Any, NamedTuple
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import jax.scipy as jsp
 from jaxtyping import Array
 
 from ..._strict import StrictModule
@@ -17,6 +18,7 @@ from .._policies import (
     FGMRES,
     GeneralizedLSMR,
     GMRES,
+    LinearSolveControl,
     MINRES,
     PCG,
     ProjectedPCG,
@@ -92,6 +94,52 @@ def prepare_native_krylov(
     return NativeKrylovState(problem, preconditioner)
 
 
+def _runtime_controls(
+    problem: Any,
+    plan: LinearSolvePlan,
+    control: LinearSolveControl | None,
+    dtype: Any,
+    /,
+) -> tuple[Array, Array, Array, int]:
+    # The planned bound fixes loop/basis structure; each invocation may only
+    # tighten it.
+    tolerance = plan.policy.tolerance
+    structural_max_steps = tolerance.max_steps or (
+        max(problem.operator.source.size, problem.operator.target.size)
+        if isinstance(problem, LeastSquaresProblem)
+        else max(1, problem.operator.source.size)
+    )
+    relative = jnp.asarray(
+        (
+            tolerance.relative
+            if control is None or control.relative_tolerance is None
+            else control.relative_tolerance
+        ),
+        dtype=dtype,
+    )
+    absolute = jnp.asarray(
+        (
+            tolerance.absolute
+            if control is None or control.absolute_tolerance is None
+            else control.absolute_tolerance
+        ),
+        dtype=dtype,
+    )
+    max_steps = jnp.asarray(
+        (
+            structural_max_steps
+            if control is None or control.maximum_steps is None
+            else control.maximum_steps
+        ),
+    )
+    max_steps = eqx.error_if(
+        max_steps,
+        max_steps > structural_max_steps,
+        "Runtime maximum_steps cannot exceed the prepared structural limit.",
+    ).astype(jnp.int32)
+    return relative, absolute, max_steps, structural_max_steps
+
+
 def solve_native_krylov(
     state: NativeKrylovState,
     rhs: Array,
@@ -99,9 +147,12 @@ def solve_native_krylov(
     /,
     *,
     initial_guess: Array | None = None,
+    control: LinearSolveControl | None = None,
 ) -> NativeKrylovBackendOutput:
     if rhs.ndim != 2:
         raise ValueError("Native Krylov right-hand sides must have shape (m, k).")
+    if control is not None and not isinstance(control, LinearSolveControl):
+        raise TypeError("control must be a LinearSolveControl or None.")
     problem = state.problem
     if plan.policy.differentiation.mode == "rhs-only":
         problem = jax.tree.map(
@@ -110,6 +161,12 @@ def solve_native_krylov(
         )
     method = plan.policy.method
     method_name = plan.method if method.name == "auto" else method.name
+    (
+        relative_tolerance,
+        absolute_tolerance,
+        maximum_steps,
+        structural_maximum_steps,
+    ) = _runtime_controls(problem, plan, control, rhs.real.dtype)
     guesses = (
         jnp.zeros((problem.operator.source.size, rhs.shape[1]), dtype=rhs.dtype)
         if initial_guess is None
@@ -127,6 +184,10 @@ def solve_native_krylov(
                 plan,
                 "pcg",
                 preconditioner=state.preconditioner,
+                relative=relative_tolerance,
+                absolute=absolute_tolerance,
+                max_steps=maximum_steps,
+                structural_max_steps=structural_maximum_steps,
             )
         if method_name == ProjectedPCG().name:
             return _square_solve(
@@ -136,6 +197,10 @@ def solve_native_krylov(
                 plan,
                 "projected-pcg",
                 preconditioner=state.preconditioner,
+                relative=relative_tolerance,
+                absolute=absolute_tolerance,
+                max_steps=maximum_steps,
+                structural_max_steps=structural_maximum_steps,
             )
         if method_name == MINRES().name:
             return _square_solve(
@@ -145,6 +210,10 @@ def solve_native_krylov(
                 plan,
                 "minres",
                 preconditioner=state.preconditioner,
+                relative=relative_tolerance,
+                absolute=absolute_tolerance,
+                max_steps=maximum_steps,
+                structural_max_steps=structural_maximum_steps,
             )
         if method_name == FGMRES().name:
             return _square_solve(
@@ -154,6 +223,10 @@ def solve_native_krylov(
                 plan,
                 "fgmres",
                 preconditioner=state.preconditioner,
+                relative=relative_tolerance,
+                absolute=absolute_tolerance,
+                max_steps=maximum_steps,
+                structural_max_steps=structural_maximum_steps,
             )
         if method_name == GMRES().name:
             return _square_solve(
@@ -163,9 +236,22 @@ def solve_native_krylov(
                 plan,
                 "gmres",
                 preconditioner=state.preconditioner,
+                relative=relative_tolerance,
+                absolute=absolute_tolerance,
+                max_steps=maximum_steps,
+                structural_max_steps=structural_maximum_steps,
             )
         if method_name == GeneralizedLSMR().name:
-            return _least_squares_solve(problem, target, guess, plan)
+            return _least_squares_solve(
+                problem,
+                target,
+                guess,
+                plan,
+                relative=relative_tolerance,
+                absolute=absolute_tolerance,
+                max_steps=maximum_steps,
+                structural_max_steps=structural_maximum_steps,
+            )
         raise ValueError(f"Unsupported native Krylov method {method_name!r}.")
 
     value, auxiliary = jax.vmap(solve_column, in_axes=(1, 1), out_axes=(1, 0))(
@@ -180,11 +266,11 @@ def solve_native_krylov(
         matvec_count,
         adjoint_matvec_count,
     ) = auxiliary
-    tolerance = plan.policy.tolerance
+    tolerance = (relative_tolerance, absolute_tolerance)
     rhs_norms = jax.vmap(
         lambda column: _space_norm(problem.operator.target, column), in_axes=1
     )(rhs)
-    converged = residual <= tolerance.absolute + tolerance.relative * rhs_norms
+    converged = residual <= tolerance[1] + tolerance[0] * rhs_norms
     if isinstance(problem, LeastSquaresProblem):
 
         def normal_reference(column):
@@ -192,9 +278,7 @@ def solve_native_krylov(
             return _norm(adjoint(target), source_inner)
 
         normal_reference = jax.vmap(normal_reference, in_axes=1)(rhs)
-        converged = normal_residual <= (
-            tolerance.absolute + tolerance.relative * normal_reference
-        )
+        converged = normal_residual <= (tolerance[1] + tolerance[0] * normal_reference)
         adjoint_matvec_count = adjoint_matvec_count + 1
     status = jnp.full(rhs_norms.shape, int(LinearSolveStatus.SUCCESS), dtype=jnp.int32)
     status = jnp.where(
@@ -263,13 +347,16 @@ def _square_solve(
     /,
     *,
     preconditioner: AbstractPreconditioner | None,
+    relative: Array,
+    absolute: Array,
+    max_steps: Array,
+    structural_max_steps: int,
 ):
     operator = problem.operator
     action = lambda vector: _action_coordinates(operator, vector)
     inner = lambda left, right: _space_inner(operator.source, left, right)
     precondition = _preconditioner_action(preconditioner, operator.source)
-    max_steps = plan.policy.tolerance.max_steps or max(1, operator.source.size)
-    tolerance = plan.policy.tolerance
+    tolerance = (relative, absolute)
     projected = method == "projected-pcg"
     if projected:
         nullspace = problem.nullspace_policy
@@ -297,9 +384,10 @@ def _square_solve(
                 initial,
                 inner,
                 precondition,
-                max_steps,
-                tolerance.relative,
-                tolerance.absolute,
+                structural_max_steps,
+                tolerance[0],
+                tolerance[1],
+                step_limit=max_steps,
             )
             matvec_count = auxiliary[0] + 2
         elif method == "minres":
@@ -309,9 +397,10 @@ def _square_solve(
                 initial,
                 inner,
                 precondition,
-                max_steps,
-                tolerance.relative,
-                tolerance.absolute,
+                structural_max_steps,
+                tolerance[0],
+                tolerance[1],
+                step_limit=max_steps,
             )
             matvec_count = auxiliary[0] + 2
         else:
@@ -331,21 +420,23 @@ def _square_solve(
                     else FGMRES()
                 )
                 selected_preconditioner = precondition
-            restart = min(selected_method.restart, max_steps)
+            restart = min(selected_method.restart, structural_max_steps)
             value, auxiliary = _fgmres_raw(
                 selected_action,
                 target,
                 initial,
                 inner,
                 selected_preconditioner,
-                max_steps,
+                structural_max_steps,
                 restart,
                 selected_method.stagnation_iterations,
-                tolerance.relative,
-                tolerance.absolute,
+                tolerance[0],
+                tolerance[1],
+                step_limit=max_steps,
+                identity_preconditioner=preconditioner is None,
             )
-            cycles = (max_steps + restart - 1) // restart
-            matvec_count = 2 * auxiliary[0] + cycles + 2
+            *auxiliary, executed_cycles = auxiliary
+            matvec_count = auxiliary[0] + executed_cycles + 1
         return value, (
             *auxiliary,
             jnp.asarray(matvec_count, dtype=jnp.int32),
@@ -363,9 +454,13 @@ def _pcg_raw(
     inner,
     precondition,
     max_steps: int,
-    relative: float,
-    absolute: float,
+    relative: Array,
+    absolute: Array,
+    *,
+    step_limit: Array | None = None,
 ):
+    if step_limit is None:
+        step_limit = jnp.asarray(max_steps, dtype=jnp.int32)
     residual = rhs - action(initial)
     transformed = precondition(residual, jnp.asarray(0, dtype=jnp.int32))
     direction = transformed
@@ -437,7 +532,12 @@ def _pcg_raw(
                 breakdown_i,
             )
 
-        return jax.lax.cond(active, execute, lambda operand: operand, current)
+        return jax.lax.cond(
+            active & (index < step_limit),
+            execute,
+            lambda operand: operand,
+            current,
+        )
 
     x, residual, _, _, _, iterations, _, breakdown = jax.lax.fori_loop(
         0, max_steps, step, state
@@ -460,9 +560,13 @@ def _minres_raw(
     inner,
     precondition,
     max_steps: int,
-    relative: float,
-    absolute: float,
+    relative: Array,
+    absolute: Array,
+    *,
+    step_limit: Array | None = None,
 ):
+    if step_limit is None:
+        step_limit = jnp.asarray(max_steps, dtype=jnp.int32)
     residual = rhs - action(initial)
     y = precondition(residual, jnp.asarray(0, dtype=jnp.int32))
     beta_one_squared = jnp.real(inner(residual, y))
@@ -603,7 +707,12 @@ def _minres_raw(
                 status,
             )
 
-        return jax.lax.cond(active, execute, lambda operand: operand, current)
+        return jax.lax.cond(
+            active & (index < step_limit),
+            execute,
+            lambda operand: operand,
+            current,
+        )
 
     result = jax.lax.fori_loop(0, max_steps, step, state)
     x, *_, iterations, _, breakdown = result
@@ -626,174 +735,437 @@ def _fgmres_raw(
     max_steps: int,
     restart: int,
     stagnation_iterations: int,
-    relative: float,
-    absolute: float,
+    relative: Array,
+    absolute: Array,
+    *,
+    step_limit: Array | None = None,
+    identity_preconditioner: bool = False,
 ):
-    x = initial
+    if step_limit is None:
+        step_limit = jnp.asarray(max_steps, dtype=jnp.int32)
     rhs_norm = _norm(rhs, inner)
     threshold = absolute + relative * rhs_norm
-    iterations = jnp.asarray(0, dtype=jnp.int32)
-    breakdown = jnp.asarray(int(KrylovBreakdownStatus.NONE), dtype=jnp.int32)
-    best_norm = _norm(rhs - action(x), inner)
-    stagnant_steps = jnp.asarray(0, dtype=jnp.int32)
-    active = best_norm > threshold
+    residual = rhs - action(initial)
+    residual_norm = _norm(residual, inner)
+    finite = jnp.isfinite(residual_norm) & jnp.all(jnp.isfinite(initial))
+    active = finite & (residual_norm > threshold)
+    initial_breakdown = jnp.where(
+        finite,
+        int(KrylovBreakdownStatus.NONE),
+        int(KrylovBreakdownStatus.NONFINITE_ACTION),
+    ).astype(jnp.int32)
+    initial_state = (
+        initial,
+        residual,
+        residual_norm,
+        jnp.asarray(0, dtype=jnp.int32),
+        initial_breakdown,
+        residual_norm,
+        jnp.asarray(0, dtype=jnp.int32),
+        active,
+        jnp.asarray(0, dtype=jnp.int32),
+    )
     cycles = (max_steps + restart - 1) // restart
-    for cycle in range(cycles):
-        cycle_base = x
-        residual = rhs - action(cycle_base)
-        beta = _norm(residual, inner)
-        safe_beta = jnp.where(beta > 0.0, beta, 1.0)
-        basis = jnp.zeros((restart + 1, rhs.size), dtype=rhs.dtype)
-        basis = basis.at[0].set(residual / safe_beta)
-        preconditioned_basis = jnp.zeros((restart, rhs.size), dtype=rhs.dtype)
-        hessenberg = jnp.zeros((restart + 1, restart), dtype=rhs.dtype)
-        right = jnp.zeros((restart + 1,), dtype=rhs.dtype).at[0].set(beta)
-        for local_index in range(restart):
-            global_index = cycle * restart + local_index
-            if global_index >= max_steps:
-                continue
+    columns = jnp.arange(restart)
 
-            def execute(operand):
+    def reduced_solve(hessenberg, reduced_rhs, steps):
+        active_columns = columns < steps
+        upper = jnp.where(
+            active_columns[:, None] & active_columns[None, :],
+            hessenberg[:-1],
+            0,
+        )
+        upper = upper.at[columns, columns].add((~active_columns).astype(rhs.dtype))
+        target = jnp.where(active_columns, reduced_rhs[:-1], 0)
+        coefficients = jsp.linalg.solve_triangular(
+            upper,
+            target,
+            lower=False,
+        )
+        return jnp.where(active_columns, coefficients, 0)
+
+    def cycle_step(_, state):
+        (
+            x,
+            current_residual,
+            current_norm,
+            iterations,
+            breakdown,
+            best_norm,
+            stagnant_steps,
+            cycle_active,
+            executed_cycles,
+        ) = state
+
+        def execute_cycle(operand):
+            (
+                cycle_base,
+                cycle_residual,
+                cycle_norm,
+                starting_iterations,
+                _,
+                previous_best,
+                previous_stagnant,
+                _,
+                previous_cycles,
+            ) = operand
+            safe_norm = jnp.where(cycle_norm > 0.0, cycle_norm, 1.0)
+            basis = jnp.zeros((restart + 1, rhs.size), dtype=rhs.dtype)
+            basis = basis.at[0].set(cycle_residual / safe_norm)
+            preconditioned_basis = jnp.zeros(
+                (0 if identity_preconditioner else restart, rhs.size),
+                dtype=rhs.dtype,
+            )
+            hessenberg = jnp.zeros((restart + 1, restart), dtype=rhs.dtype)
+            cosines = jnp.zeros((restart,), dtype=rhs.real.dtype)
+            sines = jnp.zeros((restart,), dtype=rhs.dtype)
+            reduced_rhs = jnp.zeros((restart + 1,), dtype=rhs.dtype)
+            reduced_rhs = reduced_rhs.at[0].set(cycle_norm)
+            inner_state = (
+                basis,
+                preconditioned_basis,
+                hessenberg,
+                cosines,
+                sines,
+                reduced_rhs,
+                starting_iterations,
+                jnp.asarray(True),
+                jnp.asarray(int(KrylovBreakdownStatus.NONE), dtype=jnp.int32),
+                previous_best,
+                previous_stagnant,
+            )
+
+            def arnoldi_step(local_index, current):
                 (
                     basis_,
                     preconditioned_,
                     hessenberg_,
-                    _,
-                    _,
-                    _,
-                    best_norm_,
-                    stagnant_steps_,
-                ) = operand
-                z = precondition(
-                    basis_[local_index], jnp.asarray(global_index, dtype=jnp.int32)
-                )
-                candidate = action(z)
-                coefficients = jax.vmap(lambda q: inner(q, candidate))(basis_[:-1])
-                mask = jnp.arange(restart) <= local_index
-                coefficients = jnp.where(mask, coefficients, 0)
-                orthogonal = candidate - jnp.sum(
-                    coefficients[:, None] * basis_[:-1], axis=0
-                )
-                correction = jax.vmap(lambda q: inner(q, orthogonal))(basis_[:-1])
-                correction = jnp.where(mask, correction, 0)
-                orthogonal = orthogonal - jnp.sum(
-                    correction[:, None] * basis_[:-1], axis=0
-                )
-                coefficients = coefficients + correction
-                next_norm = _norm(orthogonal, inner)
-                near_breakdown = next_norm <= jnp.sqrt(
-                    jnp.finfo(rhs.real.dtype).eps
-                ) * jnp.maximum(_norm(candidate, inner), 1.0)
-                basis_ = basis_.at[local_index + 1].set(
-                    orthogonal / jnp.where(near_breakdown, 1.0, next_norm)
-                )
-                preconditioned_ = preconditioned_.at[local_index].set(z)
-                hessenberg_ = hessenberg_.at[:-1, local_index].set(coefficients)
-                hessenberg_ = hessenberg_.at[local_index + 1, local_index].set(next_norm)
-                reduced = hessenberg_[: local_index + 2, : local_index + 1]
-                coefficients_y = jnp.linalg.lstsq(
-                    reduced, right[: local_index + 2], rcond=None
-                )[0]
-                candidate_x = cycle_base + jnp.sum(
-                    coefficients_y[:, None] * preconditioned_[: local_index + 1],
-                    axis=0,
-                )
-                true_norm = _norm(rhs - action(candidate_x), inner)
-                converged = true_norm <= threshold
-                finite = jnp.isfinite(true_norm) & jnp.all(jnp.isfinite(candidate_x))
-                improvement = true_norm < best_norm_ * (
-                    1.0 - jnp.sqrt(jnp.finfo(rhs.real.dtype).eps)
-                )
-                next_best = jnp.minimum(best_norm_, true_norm)
-                next_stagnant = jnp.where(
-                    improvement,
-                    jnp.asarray(0, dtype=jnp.int32),
-                    stagnant_steps_ + 1,
-                )
-                stagnated = next_stagnant >= stagnation_iterations
-                status = jnp.where(
-                    ~finite,
-                    int(KrylovBreakdownStatus.NONFINITE_ACTION),
-                    jnp.where(
-                        converged,
-                        int(KrylovBreakdownStatus.HAPPY),
-                        jnp.where(
-                            stagnated,
-                            int(KrylovBreakdownStatus.STAGNATION),
-                            jnp.where(
-                                near_breakdown,
-                                int(KrylovBreakdownStatus.NEAR_BREAKDOWN),
-                                int(KrylovBreakdownStatus.NONE),
-                            ),
-                        ),
-                    ),
-                ).astype(jnp.int32)
-                return (
-                    basis_,
-                    preconditioned_,
-                    hessenberg_,
-                    candidate_x,
-                    finite & ~converged & ~near_breakdown & ~stagnated,
-                    status,
-                    next_best,
-                    next_stagnant,
+                    cosines_,
+                    sines_,
+                    reduced_rhs_,
+                    iteration_,
+                    inner_active,
+                    inner_breakdown,
+                    inner_best,
+                    inner_stagnant,
+                ) = current
+                can_execute = (
+                    inner_active & (iteration_ < step_limit) & (iteration_ < max_steps)
                 )
 
-            was_active = active
+                def execute_arnoldi(inner_operand):
+                    (
+                        basis_i,
+                        preconditioned_i,
+                        hessenberg_i,
+                        cosines_i,
+                        sines_i,
+                        reduced_rhs_i,
+                        iteration_i,
+                        _,
+                        _,
+                        best_i,
+                        stagnant_i,
+                    ) = inner_operand
+                    vector = basis_i[local_index]
+                    transformed = (
+                        vector
+                        if identity_preconditioner
+                        else precondition(vector, iteration_i)
+                    )
+                    image = action(transformed)
+                    projection = jnp.zeros((restart,), dtype=rhs.dtype)
+
+                    def orthogonalize(index, state):
+                        remainder, coefficients = state
+                        coefficient = inner(basis_i[index], remainder)
+                        return (
+                            remainder - coefficient * basis_i[index],
+                            coefficients.at[index].add(coefficient),
+                        )
+
+                    orthogonal, projection = jax.lax.fori_loop(
+                        0,
+                        local_index + 1,
+                        orthogonalize,
+                        (image, projection),
+                    )
+                    orthogonal, projection = jax.lax.fori_loop(
+                        0,
+                        local_index + 1,
+                        orthogonalize,
+                        (orthogonal, projection),
+                    )
+                    next_norm = _norm(orthogonal, inner)
+                    near_breakdown = next_norm <= jnp.sqrt(
+                        jnp.finfo(rhs.real.dtype).eps
+                    ) * jnp.maximum(_norm(image, inner), 1.0)
+                    basis_i = basis_i.at[local_index + 1].set(
+                        orthogonal / jnp.where(near_breakdown, 1.0, next_norm)
+                    )
+                    if not identity_preconditioner:
+                        preconditioned_i = preconditioned_i.at[local_index].set(
+                            transformed
+                        )
+                    column = hessenberg_i[:, local_index]
+                    column = column.at[:-1].set(projection)
+                    column = column.at[local_index + 1].set(next_norm)
+
+                    def apply_previous_rotation(index, value):
+                        upper = value[index]
+                        lower = value[index + 1]
+                        cosine = cosines_i[index]
+                        sine = sines_i[index]
+                        value = value.at[index].set(cosine * upper + sine * lower)
+                        return value.at[index + 1].set(
+                            -jnp.conj(sine) * upper + cosine * lower
+                        )
+
+                    column = jax.lax.fori_loop(
+                        0,
+                        local_index,
+                        apply_previous_rotation,
+                        column,
+                    )
+                    upper = column[local_index]
+                    lower = column[local_index + 1]
+                    upper_abs = jnp.abs(upper)
+                    rotation_scale = jnp.hypot(upper_abs, jnp.abs(lower))
+                    safe_scale = jnp.where(rotation_scale > 0.0, rotation_scale, 1.0)
+                    safe_upper_abs = jnp.where(upper_abs > 0.0, upper_abs, 1.0)
+                    phase = upper / safe_upper_abs
+                    phase = jnp.where(
+                        upper_abs > 0.0,
+                        phase,
+                        jnp.ones((), dtype=rhs.dtype),
+                    )
+                    cosine = jnp.where(
+                        rotation_scale > 0.0,
+                        upper_abs / safe_scale,
+                        1.0,
+                    )
+                    sine = jnp.where(
+                        rotation_scale > 0.0,
+                        phase * jnp.conj(lower) / safe_scale,
+                        jnp.zeros((), dtype=rhs.dtype),
+                    )
+                    column = column.at[local_index].set(cosine * upper + sine * lower)
+                    column = column.at[local_index + 1].set(0)
+                    hessenberg_i = hessenberg_i.at[:, local_index].set(column)
+                    cosines_i = cosines_i.at[local_index].set(cosine)
+                    sines_i = sines_i.at[local_index].set(sine)
+                    reduced_upper = reduced_rhs_i[local_index]
+                    reduced_lower = reduced_rhs_i[local_index + 1]
+                    reduced_rhs_i = reduced_rhs_i.at[local_index].set(
+                        cosine * reduced_upper + sine * reduced_lower
+                    )
+                    reduced_rhs_i = reduced_rhs_i.at[local_index + 1].set(
+                        -jnp.conj(sine) * reduced_upper + cosine * reduced_lower
+                    )
+                    estimated_norm = jnp.abs(reduced_rhs_i[local_index + 1])
+                    finite_step = (
+                        jnp.isfinite(next_norm)
+                        & jnp.isfinite(rotation_scale)
+                        & jnp.isfinite(estimated_norm)
+                        & jnp.all(jnp.isfinite(image))
+                        & jnp.all(jnp.isfinite(transformed))
+                        & jnp.all(jnp.isfinite(column))
+                    )
+                    converged = estimated_norm <= threshold
+                    improvement = estimated_norm < best_i * (
+                        1.0 - jnp.sqrt(jnp.finfo(rhs.real.dtype).eps)
+                    )
+                    next_best = jnp.minimum(best_i, estimated_norm)
+                    next_stagnant = jnp.where(
+                        improvement,
+                        jnp.asarray(0, dtype=jnp.int32),
+                        stagnant_i + 1,
+                    )
+                    stagnated = next_stagnant >= stagnation_iterations
+                    step_breakdown = jnp.where(
+                        finite_step,
+                        jnp.where(
+                            converged,
+                            int(KrylovBreakdownStatus.HAPPY),
+                            jnp.where(
+                                stagnated,
+                                int(KrylovBreakdownStatus.STAGNATION),
+                                jnp.where(
+                                    near_breakdown,
+                                    int(KrylovBreakdownStatus.NEAR_BREAKDOWN),
+                                    int(KrylovBreakdownStatus.NONE),
+                                ),
+                            ),
+                        ),
+                        int(KrylovBreakdownStatus.NONFINITE_ACTION),
+                    ).astype(jnp.int32)
+                    return (
+                        basis_i,
+                        preconditioned_i,
+                        hessenberg_i,
+                        cosines_i,
+                        sines_i,
+                        reduced_rhs_i,
+                        iteration_i + 1,
+                        finite_step & ~converged & ~near_breakdown & ~stagnated,
+                        step_breakdown,
+                        next_best,
+                        next_stagnant,
+                    )
+
+                return jax.lax.cond(
+                    can_execute,
+                    execute_arnoldi,
+                    lambda inner_operand: inner_operand,
+                    current,
+                )
+
+            def inner_condition(current):
+                iteration = current[6]
+                return (
+                    current[7]
+                    & (iteration - starting_iterations < restart)
+                    & (iteration < step_limit)
+                    & (iteration < max_steps)
+                )
+
+            def inner_body(current):
+                return arnoldi_step(
+                    current[6] - starting_iterations,
+                    current,
+                )
+
             (
                 basis,
                 preconditioned_basis,
                 hessenberg,
-                candidate_x,
-                active,
-                step_status,
-                best_norm,
-                stagnant_steps,
-            ) = jax.lax.cond(
-                active,
-                execute,
-                lambda operand: operand,
-                (
-                    basis,
-                    preconditioned_basis,
-                    hessenberg,
-                    x,
-                    active,
-                    breakdown,
-                    best_norm,
-                    stagnant_steps,
+                _,
+                _,
+                reduced_rhs,
+                final_iterations,
+                _,
+                inner_breakdown,
+                inner_best,
+                inner_stagnant,
+            ) = jax.lax.while_loop(inner_condition, inner_body, inner_state)
+            update_basis = basis[:-1] if identity_preconditioner else preconditioned_basis
+            cycle_steps = final_iterations - starting_iterations
+            coefficients = reduced_solve(
+                hessenberg,
+                reduced_rhs,
+                cycle_steps,
+            )
+            candidate = cycle_base + jnp.sum(
+                coefficients[:, None] * update_basis,
+                axis=0,
+            )
+            candidate_residual = rhs - action(candidate)
+            candidate_norm = _norm(candidate_residual, inner)
+            finite_candidate = (
+                jnp.isfinite(candidate_norm)
+                & jnp.all(jnp.isfinite(candidate))
+                & jnp.all(jnp.isfinite(coefficients))
+            )
+            converged = candidate_norm <= threshold
+            next_best = jnp.minimum(inner_best, candidate_norm)
+            next_stagnant = inner_stagnant
+            stagnated = next_stagnant >= stagnation_iterations
+            final_breakdown = jnp.where(
+                finite_candidate,
+                jnp.where(
+                    converged,
+                    int(KrylovBreakdownStatus.HAPPY),
+                    jnp.where(
+                        inner_breakdown != int(KrylovBreakdownStatus.NONE),
+                        inner_breakdown,
+                        jnp.where(
+                            stagnated,
+                            int(KrylovBreakdownStatus.STAGNATION),
+                            int(KrylovBreakdownStatus.NONE),
+                        ),
+                    ),
                 ),
+                int(KrylovBreakdownStatus.NONFINITE_ACTION),
+            ).astype(jnp.int32)
+            blocking_breakdown = (final_breakdown != int(KrylovBreakdownStatus.NONE)) & (
+                final_breakdown != int(KrylovBreakdownStatus.HAPPY)
             )
-            iterations = jnp.where(
-                was_active,
-                jnp.asarray(global_index + 1, dtype=jnp.int32),
-                iterations,
+            next_active = (
+                finite_candidate
+                & ~converged
+                & ~blocking_breakdown
+                & (final_iterations < step_limit)
+                & (final_iterations < max_steps)
             )
-            x = candidate_x
-            breakdown = jnp.where(
-                step_status != int(KrylovBreakdownStatus.NONE),
-                step_status,
-                breakdown,
+            return (
+                candidate,
+                candidate_residual,
+                candidate_norm,
+                final_iterations,
+                final_breakdown,
+                next_best,
+                next_stagnant,
+                next_active,
+                previous_cycles + 1,
             )
-    residual_norm = _norm(rhs - action(x), inner)
+
+        return jax.lax.cond(
+            cycle_active & (iterations < step_limit) & (iterations < max_steps),
+            execute_cycle,
+            lambda operand: operand,
+            state,
+        )
+
+    def cycle_condition(state):
+        return (
+            state[7]
+            & (state[3] < step_limit)
+            & (state[3] < max_steps)
+            & (state[8] < cycles)
+        )
+
+    (
+        x,
+        _,
+        residual_norm,
+        iterations,
+        breakdown,
+        _,
+        _,
+        _,
+        executed_cycles,
+    ) = jax.lax.while_loop(
+        cycle_condition,
+        lambda state: cycle_step(None, state),
+        initial_state,
+    )
     return x, (
         iterations,
         residual_norm,
         jnp.asarray(jnp.nan, dtype=residual_norm.dtype),
         jnp.asarray(jnp.nan, dtype=residual_norm.dtype),
         breakdown,
+        executed_cycles,
     )
 
 
-def _least_squares_solve(problem, rhs, initial, plan):
+def _least_squares_solve(
+    problem,
+    rhs,
+    initial,
+    plan,
+    *,
+    relative: Array,
+    absolute: Array,
+    max_steps: Array,
+    structural_max_steps: int,
+):
     action, adjoint, target_inner, source_inner, right = _least_squares_actions(
         problem, rhs
     )
     selected = plan.policy.method
     method = selected if isinstance(selected, GeneralizedLSMR) else GeneralizedLSMR()
-    max_steps = plan.policy.tolerance.max_steps or max(
-        problem.operator.source.size, problem.operator.target.size
-    )
+    max_steps_ = structural_max_steps
     value, auxiliary = _lsmr_raw(
         action,
         adjoint,
@@ -801,11 +1173,12 @@ def _least_squares_solve(problem, rhs, initial, plan):
         initial,
         source_inner,
         target_inner,
-        max_steps,
-        plan.policy.tolerance.relative,
-        plan.policy.tolerance.absolute,
+        max_steps_,
+        relative,
+        absolute,
         method.condition_limit,
         method.damping,
+        step_limit=max_steps,
     )
     iterations = auxiliary[0]
     return value, (
@@ -823,11 +1196,15 @@ def _lsmr_raw(
     source_inner,
     target_inner,
     max_steps: int,
-    relative: float,
-    absolute: float,
+    relative: Array,
+    absolute: Array,
     condition_limit: float,
     damping: float,
+    *,
+    step_limit: Array | None = None,
 ):
+    if step_limit is None:
+        step_limit = jnp.asarray(max_steps, dtype=jnp.int32)
     residual = _target_subtract(rhs, action(initial))
     beta = _target_norm(residual, target_inner)
     u_operator, u_regularizer = _target_scale(
@@ -870,7 +1247,7 @@ def _lsmr_raw(
         breakdown=jnp.asarray(int(KrylovBreakdownStatus.NONE), dtype=jnp.int32),
     )
 
-    def step(_, current):
+    def step(index, current):
         def execute(value):
             image_operator, image_regularizer = action(value.v)
             next_u_operator = image_operator - value.alpha * value.u_operator
@@ -991,7 +1368,12 @@ def _lsmr_raw(
                 breakdown,
             )
 
-        return jax.lax.cond(current.active, execute, lambda value: value, current)
+        return jax.lax.cond(
+            current.active & (index < step_limit),
+            execute,
+            lambda value: value,
+            current,
+        )
 
     state = jax.lax.fori_loop(0, max_steps, step, state)
     true_residual = _target_norm(_target_subtract(rhs, action(state.x)), target_inner)

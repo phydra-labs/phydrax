@@ -421,7 +421,7 @@ arrays. The candidate point shape must be exactly
 that each catalog row remains one complete coefficient array; the adapter deliberately
 rejects a Cartesian product of individual coefficient entries.
 
-```python
+```py
 catalog = phx.optim.FiniteProductSpace(
     phx.optim.FiniteAxis(
         jnp.asarray(

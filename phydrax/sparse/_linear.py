@@ -148,6 +148,10 @@ class SparseLinearMap(AbstractSparseLinearOperator):
         )
         return matrix.at[safe_target, safe_source].add(values)
 
+    def _assemble_diagonal(self, /) -> Array:
+        relation, coefficients = self._edge_form()
+        return _assemble_relation_diagonal(relation, coefficients)
+
     def _materialize(self, /) -> Array:
         return self.as_dense()
 
@@ -289,11 +293,34 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
         )
         return matrix.at[safe_target, safe_source].add(values)
 
+    def _assemble_diagonal(self, /) -> Array:
+        relation, coefficients = self._edge_form()
+        return _assemble_relation_diagonal(relation, coefficients)
+
     def _materialize(self, /) -> Array:
         return self.as_dense()
 
     def sparse_storage(self, /) -> SparseStorage:
         return _canonical_sparse_storage(self.relation, self.coefficients)
+
+
+def _assemble_relation_diagonal(
+    relation: EdgeRelation,
+    coefficients: Array,
+    /,
+) -> Array:
+    diagonal_entry = relation.valid & (relation.source_indices == relation.target_indices)
+    safe_target = jnp.where(diagonal_entry, relation.target_indices, 0)
+    values = jnp.where(
+        diagonal_entry,
+        coefficients,
+        jnp.zeros((), dtype=coefficients.dtype),
+    )
+    return (
+        jnp.zeros((relation.target_size,), dtype=coefficients.dtype)
+        .at[safe_target]
+        .add(values)
+    )
 
 
 def _canonical_sparse_storage(

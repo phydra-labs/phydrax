@@ -17,7 +17,14 @@ from ._binding import LinearSolveTemplate
 from ._gcrodr import refresh_recycling, solve_recycled
 from ._operators import AbstractLinearOperator, adjoint, transpose
 from ._plans import LinearSolvePlan, plan as make_plan
-from ._policies import GeneralizedLSMR, LinearSolvePolicy, LSMR
+from ._policies import (
+    FGMRES,
+    GeneralizedLSMR,
+    GMRES,
+    LinearSolveControl,
+    LinearSolvePolicy,
+    LSMR,
+)
 from ._preconditioning import prepare_preconditioner, PreparedPreconditioner
 from ._prepared import PreparedLinearSolve
 from ._problems import (
@@ -28,6 +35,7 @@ from ._problems import (
     MinimumNormProblem,
 )
 from ._results import (
+    LinearPrecisionEvidence,
     LinearSolveDiagnostics,
     LinearSolveProvenance,
     LinearSolveResult,
@@ -36,8 +44,10 @@ from ._results import (
 from ._spaces import RHSLayout
 from ._subspaces import KernelCertificate, LinearSubspace, NullspacePolicy
 from .backends._jax_dense import (
+    DenseBackendOutput,
     DenseCholeskyState,
     DenseLUState,
+    DenseMixedPrecisionLUState,
     DenseQRState,
     DenseSVDState,
 )
@@ -177,8 +187,17 @@ def refresh(
         raise TypeError("problem must be an AbstractLinearProblem.")
     if problem.problem_id != prepared.problem.problem_id:
         raise ValueError("Numeric refreshes must preserve problem_id.")
+    previous_operator = prepared.problem.operator
+    current_operator = problem.operator
+    if type(current_operator) is not type(
+        previous_operator
+    ) or _operator_symbolic_contract(current_operator) != _operator_symbolic_contract(
+        previous_operator
+    ):
+        raise ValueError("Numeric refreshes must preserve the symbolic solve plan.")
     policy = prepared.plan.policy
     preconditioning = policy.preconditioning
+    refreshed_template = prepared.template
     if setup_operator is not None:
         if preconditioning is None:
             raise ValueError("setup_operator requires a preconditioning policy.")
@@ -188,6 +207,27 @@ def refresh(
             policy,
             replacement,
         )
+        refreshed_plan = make_plan(
+            problem,
+            policy,
+            rhs_layout=prepared.plan.rhs_layout,
+        )
+        if refreshed_plan.plan_id != prepared.plan.plan_id:
+            raise ValueError("Numeric refreshes must preserve the symbolic solve plan.")
+        refreshed_template = LinearSolveTemplate(
+            refreshed_plan,
+            prepared.template.symbolic_state,
+            device_bindable=prepared.template.device_bindable,
+            source_space_id=prepared.template.source_space_id,
+            target_space_id=prepared.template.target_space_id,
+            batch_shape=prepared.template.batch_shape,
+            rejection_reason=prepared.template.rejection_reason,
+            schema_version=prepared.template.schema_version,
+        )
+        if refreshed_template.template_id != prepared.template.template_id:
+            raise ValueError(
+                "Numeric refreshes must preserve the symbolic solve template."
+            )
     elif (
         preconditioning is not None
         and preconditioning.builder is not None
@@ -198,30 +238,30 @@ def refresh(
             "Refreshing a distinct setup operator requires setup_operator=...; "
             "silent reuse after coefficient changes is forbidden."
         )
-    refreshed_plan = make_plan(
-        problem,
-        policy,
-        rhs_layout=prepared.plan.rhs_layout,
-    )
-    if refreshed_plan.plan_id != prepared.plan.plan_id:
-        raise ValueError("Numeric refreshes must preserve the symbolic solve plan.")
-    refreshed_template = LinearSolveTemplate(
-        refreshed_plan,
-        prepared.template.symbolic_state,
-        device_bindable=prepared.template.device_bindable,
-        source_space_id=prepared.template.source_space_id,
-        target_space_id=prepared.template.target_space_id,
-        batch_shape=prepared.template.batch_shape,
-        rejection_reason=prepared.template.rejection_reason,
-        schema_version=prepared.template.schema_version,
-    )
-    if refreshed_template.template_id != prepared.template.template_id:
-        raise ValueError("Numeric refreshes must preserve the symbolic solve template.")
     return _bind_for_template(
         refreshed_template,
         problem,
         previous_preconditioner=prepared.preconditioning_state,
         numeric_version=prepared.numeric_version + jnp.asarray(1, dtype=jnp.int32),
+    )
+
+
+def _operator_symbolic_contract(operator: AbstractLinearOperator, /) -> tuple[Any, ...]:
+    properties = operator.properties
+    capabilities = operator.capabilities
+    return (
+        properties.diagonal,
+        properties.triangular,
+        properties.self_adjoint,
+        properties.positive_definite,
+        properties.positive_semidefinite,
+        properties.block_diagonal,
+        properties.rank,
+        properties.evidence,
+        capabilities.transpose,
+        capabilities.adjoint,
+        capabilities.materialize,
+        capabilities.diagonal_assembly,
     )
 
 
@@ -318,6 +358,37 @@ def _preconditioner_provenance(
     }
 
 
+def _precision_provenance(prepared: PreparedLinearSolve, /) -> dict[str, Any]:
+    requested = prepared.plan.policy.precision
+    if requested is None:
+        return {}
+    state = prepared.state
+    if isinstance(state, DenseMixedPrecisionLUState):
+        condition_limit = state.condition_limit
+        maximum_refinement_steps = state.maximum_refinement_steps
+    elif isinstance(state, DenseLUState):
+        condition_limit = None
+        maximum_refinement_steps = 0
+    else:
+        raise TypeError(
+            "A capability-checked MixedPrecisionPolicy requires dense LU state."
+        )
+    evidence = LinearPrecisionEvidence(
+        operator_dtype=state.matrix.dtype.name,
+        factorization_dtype=state.factor.dtype.name,
+        preconditioner_dtype=None,
+        krylov_dtype=None,
+        residual_dtype=state.matrix.dtype.name,
+        accumulation_dtype=state.matrix.dtype.name,
+        condition_limit=condition_limit,
+        maximum_refinement_steps=maximum_refinement_steps,
+    )
+    return {
+        "requested_precision": requested,
+        "effective_precision": evidence,
+    }
+
+
 def _execution_rhs_layout(
     prepared: PreparedLinearSolve,
     rhs_layout: RHSLayout | None,
@@ -341,8 +412,11 @@ def solve(
     policy: LinearSolvePolicy | LinearSolvePlan | None = None,
     rhs_layout: RHSLayout | None = None,
     initial_guess: PyTree[Any] | None = None,
+    control: LinearSolveControl | None = None,
 ) -> LinearSolveResult:
     """Solve one or many right-hand sides with explicit status evidence."""
+    if control is not None and not isinstance(control, LinearSolveControl):
+        raise TypeError("control must be a LinearSolveControl or None.")
     if isinstance(problem_or_prepared, PreparedLinearSolve):
         if policy is not None:
             raise ValueError("policy must be omitted when solving prepared state.")
@@ -375,6 +449,18 @@ def solve(
         rhs_layout = planned_layout
     else:
         raise TypeError("Expected an AbstractLinearProblem or PreparedLinearSolve.")
+    has_runtime_overrides = control is not None and any(
+        value is not None
+        for value in (
+            control.relative_tolerance,
+            control.absolute_tolerance,
+            control.maximum_steps,
+        )
+    )
+    if has_runtime_overrides and prepared.plan.backend != "native-krylov":
+        raise ValueError(
+            "LinearSolveControl overrides require the native-krylov backend."
+        )
     declared_layout = _execution_rhs_layout(prepared, rhs_layout)
 
     problem = (
@@ -426,6 +512,7 @@ def solve(
         canonical_rhs,
         prepared.plan,
         initial_guess=canonical_guess,
+        control=control,
     )
 
     if (
@@ -462,11 +549,21 @@ def solve(
         * jnp.finfo(canonical_rhs.real.dtype).eps
         * float(max(problem.operator.source.size, problem.operator.target.size))
     )
+    relative_tolerance = (
+        prepared.plan.policy.tolerance.relative
+        if control is None or control.relative_tolerance is None
+        else control.relative_tolerance
+    )
+    absolute_tolerance = (
+        prepared.plan.policy.tolerance.absolute
+        if control is None or control.absolute_tolerance is None
+        else control.absolute_tolerance
+    )
     effective_relative = jnp.maximum(
-        prepared.plan.policy.tolerance.relative,
+        relative_tolerance,
         roundoff_relative,
     )
-    threshold = prepared.plan.policy.tolerance.absolute + effective_relative * rhs_norm
+    threshold = absolute_tolerance + effective_relative * rhs_norm
 
     status = backend.status
     normal_residual = jnp.full_like(residual_norm, jnp.nan)
@@ -480,10 +577,7 @@ def solve(
             canonical_value,
         )
         convergence_measure = normal_residual
-        convergence_threshold = (
-            prepared.plan.policy.tolerance.absolute
-            + effective_relative * normal_reference
-        )
+        convergence_threshold = absolute_tolerance + effective_relative * normal_reference
     status = jnp.where(
         (status == int(LinearSolveStatus.SUCCESS))
         & (convergence_measure > convergence_threshold),
@@ -522,6 +616,16 @@ def solve(
     condition_out = _restore_rhs_axes(
         _rhs_broadcast(backend.condition_estimate, status.shape), layout
     )
+    if isinstance(backend, DenseBackendOutput):
+        refinement_steps_out = _restore_rhs_axes(
+            jnp.broadcast_to(backend.refinement_steps, status.shape),
+            layout,
+        )
+    else:
+        refinement_steps_out = _restore_rhs_axes(
+            jnp.zeros(status.shape, dtype=jnp.int32),
+            layout,
+        )
     if prepared.plan.backend in (
         "native-krylov",
         "native-block-krylov",
@@ -582,6 +686,7 @@ def solve(
         adjoint_matvec_count=adjoint_matvec_count_out,
         effective_block_rank=effective_block_rank_out,
         deflated_rhs_count=deflated_rhs_count_out,
+        refinement_steps=refinement_steps_out,
         singular_values=backend.singular_values,
     )
     provenance = LinearSolveProvenance(
@@ -603,6 +708,7 @@ def solve(
         recycling_capacity=prepared.plan.recycling_capacity,
         recycling_state_bytes=prepared.plan.recycling_state_bytes,
         **_preconditioner_provenance(prepared),
+        **_precision_provenance(prepared),
     )
     if prepared.plan.policy.failure.mode == "error":
         value = _error_on_failure(value, status_out)
@@ -615,6 +721,7 @@ def solve_many(
     /,
     *,
     initial_guess: PyTree[Any] | None = None,
+    control: LinearSolveControl | None = None,
 ) -> LinearSolveResult:
     """Solve shared trailing RHS axes and broadcast them over operator batches."""
     inferred_layout = _shared_rhs_layout(prepared.problem.operator.target, rhs)
@@ -627,6 +734,7 @@ def solve_many(
         rhs,
         rhs_layout=rhs_layout,
         initial_guess=initial_guess,
+        control=control,
     )
 
 
@@ -739,7 +847,8 @@ def _solve_prepared_transformed(
     )
     backend_rhs = canonical_rhs
     metric_transform = adjoint_mode and isinstance(
-        prepared.state, (DenseLUState, HostSparseState)
+        prepared.state,
+        (DenseLUState, DenseMixedPrecisionLUState, HostSparseState),
     )
     if metric_transform:
         backend_rhs = _riesz_coordinates(original.source, backend_rhs)
@@ -803,6 +912,11 @@ def _solve_prepared_transformed(
         status,
     )
     status_out = _restore_rhs_axes(status, layout)
+    transformed_refinement_steps = (
+        backend.refinement_steps
+        if isinstance(backend, DenseBackendOutput)
+        else jnp.zeros(status.shape, dtype=jnp.int32)
+    )
     diagnostics = LinearSolveDiagnostics(
         residual_norm=_restore_rhs_axes(residual_norm, layout),
         relative_residual=_restore_rhs_axes(relative, layout),
@@ -812,6 +926,10 @@ def _solve_prepared_transformed(
         rank=_restore_rhs_axes(_rhs_broadcast(backend.rank, status.shape), layout),
         condition_estimate=_restore_rhs_axes(
             _rhs_broadcast(backend.condition_estimate, status.shape), layout
+        ),
+        refinement_steps=_restore_rhs_axes(
+            jnp.broadcast_to(transformed_refinement_steps, status.shape),
+            layout,
         ),
         finite=_restore_rhs_axes(finite, layout),
         converged=_restore_rhs_axes(status == int(LinearSolveStatus.SUCCESS), layout),
@@ -849,6 +967,7 @@ def _solve_prepared_transformed(
         recycling_capacity=prepared.plan.recycling_capacity,
         recycling_state_bytes=prepared.plan.recycling_state_bytes,
         **_preconditioner_provenance(prepared),
+        **_precision_provenance(prepared),
     )
     return LinearSolveResult(value, status_out, diagnostics, provenance)
 
@@ -1499,24 +1618,66 @@ def _callable_gmres(
     plan: LinearSolvePlan,
     /,
 ) -> Array:
-    from .backends._native_krylov import _fgmres_raw
-
     dimension = int(rhs.shape[0])
     if plan.backend == "native-block-krylov":
         # A full, unrestarted Krylov basis is the conservative fixed-capacity
         # contract for exact implicit tangents. The primal block iteration
         # limit cannot safely bound a lower-rank independent-column tangent.
-        max_steps = dimension
-        restart = dimension
-        stagnation_iterations = dimension + 1
-        relative = 0.0
-        absolute = 0.0
-    else:
-        max_steps = plan.policy.tolerance.max_steps or dimension
-        restart = min(30, max_steps, dimension)
-        stagnation_iterations = max_steps
-        relative = plan.policy.tolerance.relative
-        absolute = plan.policy.tolerance.absolute
+        return _run_callable_gmres(
+            action,
+            rhs,
+            max_steps=dimension,
+            restart=dimension,
+            stagnation_iterations=dimension + 1,
+            relative=0.0,
+            absolute=0.0,
+        )
+    max_steps = plan.policy.tolerance.max_steps or dimension
+    return _run_callable_gmres(
+        action,
+        rhs,
+        max_steps=max_steps,
+        restart=min(30, max_steps, dimension),
+        stagnation_iterations=max_steps,
+        relative=plan.policy.tolerance.relative,
+        absolute=plan.policy.tolerance.absolute,
+    )
+
+
+def _callable_gmres_for_policy(
+    action,
+    rhs: Array,
+    policy: LinearSolvePolicy,
+    /,
+) -> Array:
+    method = policy.method
+    if not isinstance(method, (GMRES, FGMRES)):
+        raise TypeError("Callable GMRES requires an explicit GMRES or FGMRES policy.")
+    dimension = int(rhs.shape[0])
+    max_steps = policy.tolerance.max_steps or dimension
+    return _run_callable_gmres(
+        action,
+        rhs,
+        max_steps=max_steps,
+        restart=min(method.restart, max_steps, dimension),
+        stagnation_iterations=method.stagnation_iterations,
+        relative=policy.tolerance.relative,
+        absolute=policy.tolerance.absolute,
+    )
+
+
+def _run_callable_gmres(
+    action,
+    rhs: Array,
+    /,
+    *,
+    max_steps: int,
+    restart: int,
+    stagnation_iterations: int,
+    relative: float,
+    absolute: float,
+) -> Array:
+    from .backends._native_krylov import _fgmres_raw
 
     def inner(left, right):
         return jnp.vdot(left, right)
@@ -1533,8 +1694,9 @@ def _callable_gmres(
         max_steps,
         restart,
         stagnation_iterations,
-        relative,
-        absolute,
+        jnp.asarray(relative, dtype=rhs.real.dtype),
+        jnp.asarray(absolute, dtype=rhs.real.dtype),
+        identity_preconditioner=True,
     )
     return value
 

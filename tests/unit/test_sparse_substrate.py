@@ -239,3 +239,62 @@ def test_sparse_plans_reuse_global_asdex_jacobian_and_hessian_patterns():
     result = phx.linalg.solve(phx.linalg.LinearSystem(hessian), rhs)
     assert bool(result.successful)
     assert jnp.allclose(result.value, jnp.linalg.solve(hessian_matrix, rhs))
+
+
+def test_sparse_diagonal_assembly_and_numeric_refresh_are_jit_safe():
+    indices = jnp.arange(3, dtype=jnp.int32)
+    relation = phx.sparse.EdgeRelation(
+        indices,
+        indices,
+        source_size=3,
+        target_size=3,
+    )
+    space = ArraySpace((3,), dtype=jnp.float64)
+    properties = phx.linalg.OperatorProperties(
+        self_adjoint=True,
+        positive_definite=True,
+        evidence={
+            "self_adjoint": "construction",
+            "positive_definite": "construction",
+            "positive_semidefinite": "construction",
+        },
+    )
+
+    def operator(coefficients):
+        return phx.sparse.SparseCoordinateOperator(
+            relation,
+            coefficients,
+            source=space,
+            target=space,
+            properties=properties,
+            operator_id="jit-sparse-refresh-operator",
+        )
+
+    initial_coefficients = jnp.asarray([2.0, 3.0, 4.0])
+    problem = phx.linalg.LinearSystem(
+        operator(initial_coefficients),
+        problem_id="jit-sparse-refresh-system",
+    )
+    policy = phx.linalg.LinearSolvePolicy(
+        phx.linalg.ConjugateGradient(),
+        preconditioning=phx.linalg.PreconditioningPolicy(
+            phx.linalg.JacobiPreconditionerBuilder()
+        ),
+    )
+    prepared = phx.linalg.prepare(problem, policy)
+    right_hand_side = jnp.asarray([1.0, -2.0, 3.0])
+
+    def refresh_and_solve(coefficients):
+        refreshed_problem = phx.linalg.LinearSystem(
+            operator(coefficients),
+            problem_id=problem.problem_id,
+        )
+        refreshed = phx.linalg.refresh(prepared, refreshed_problem)
+        diagonal = phx.linalg.assemble_diagonal(refreshed_problem.operator)
+        result = phx.linalg.solve(refreshed, right_hand_side)
+        return result.value, diagonal
+
+    coefficients = jnp.asarray([2.5, 3.5, 4.5])
+    value, diagonal = jax.jit(refresh_and_solve)(coefficients)
+    assert jnp.allclose(diagonal, coefficients)
+    assert jnp.allclose(value, right_hand_side / coefficients)

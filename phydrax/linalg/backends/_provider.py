@@ -8,6 +8,7 @@ import abc
 from typing import Any
 
 from .._plans import LinearBackend, LinearSolvePlan
+from .._policies import LinearSolveControl
 from .._preconditioners import AbstractPreconditioner
 from ._jax_dense import prepare_dense, solve_dense, solve_dense_transformed
 from ._jax_sparse import (
@@ -63,6 +64,7 @@ class AbstractLinearProvider(abc.ABC):
         /,
         *,
         initial_guess: Any = None,
+        control: LinearSolveControl | None = None,
     ) -> Any:
         raise NotImplementedError
 
@@ -91,7 +93,7 @@ class _StructuredProvider(AbstractLinearProvider):
             raise ValueError("Structured direct binding rejects preconditioning.")
         return prepare_structured(problem, plan)
 
-    def solve(self, state, rhs, plan, /, *, initial_guess=None):
+    def solve(self, state, rhs, plan, /, *, initial_guess=None, control=None):
         return solve_structured(state, rhs, plan)
 
 
@@ -105,13 +107,20 @@ class _DenseProvider(AbstractLinearProvider):
             raise ValueError("Dense binding rejects preconditioning.")
         return prepare_dense(problem, plan)
 
-    def solve(self, state, rhs, plan, /, *, initial_guess=None):
+    def solve(self, state, rhs, plan, /, *, initial_guess=None, control=None):
         return solve_dense(state, rhs, plan)
 
     def supports_transformed(self, state, /) -> bool:
-        from ._jax_dense import DenseCholeskyState, DenseLUState
+        from ._jax_dense import (
+            DenseCholeskyState,
+            DenseLUState,
+            DenseMixedPrecisionLUState,
+        )
 
-        return isinstance(state, (DenseLUState, DenseCholeskyState))
+        return isinstance(
+            state,
+            (DenseLUState, DenseMixedPrecisionLUState, DenseCholeskyState),
+        )
 
     def solve_transformed(self, state, rhs, plan, /, *, adjoint):
         return solve_dense_transformed(state, rhs, plan, adjoint=adjoint)
@@ -127,7 +136,7 @@ class _SparseProvider(AbstractLinearProvider):
             raise ValueError("Sparse direct binding rejects preconditioning.")
         return prepare_sparse(problem, plan)
 
-    def solve(self, state, rhs, plan, /, *, initial_guess=None):
+    def solve(self, state, rhs, plan, /, *, initial_guess=None, control=None):
         return solve_sparse(state, rhs, plan)
 
     def supports_transformed(self, state, /) -> bool:
@@ -152,7 +161,7 @@ class _NativeBlockKrylovProvider(AbstractLinearProvider):
             preconditioner=preconditioner,
         )
 
-    def solve(self, state, rhs, plan, /, *, initial_guess=None):
+    def solve(self, state, rhs, plan, /, *, initial_guess=None, control=None):
         return solve_native_block_krylov(
             state,
             rhs,
@@ -174,8 +183,14 @@ class _NativeKrylovProvider(AbstractLinearProvider):
             preconditioner=preconditioner,
         )
 
-    def solve(self, state, rhs, plan, /, *, initial_guess=None):
-        return solve_native_krylov(state, rhs, plan, initial_guess=initial_guess)
+    def solve(self, state, rhs, plan, /, *, initial_guess=None, control=None):
+        return solve_native_krylov(
+            state,
+            rhs,
+            plan,
+            initial_guess=initial_guess,
+            control=control,
+        )
 
 
 class _MatfreeProvider(AbstractLinearProvider):
@@ -189,7 +204,7 @@ class _MatfreeProvider(AbstractLinearProvider):
             raise ValueError("Matfree binding rejects preconditioning.")
         return prepare_matfree(problem, plan)
 
-    def solve(self, state, rhs, plan, /, *, initial_guess=None):
+    def solve(self, state, rhs, plan, /, *, initial_guess=None, control=None):
         return solve_matfree(state, rhs, plan, initial_guess=initial_guess)
 
 
@@ -202,7 +217,7 @@ class _LineaxProvider(AbstractLinearProvider):
         del symbolic_state
         return prepare_lineax(problem, plan, preconditioner=preconditioner)
 
-    def solve(self, state, rhs, plan, /, *, initial_guess=None):
+    def solve(self, state, rhs, plan, /, *, initial_guess=None, control=None):
         return solve_lineax(state, rhs, plan, initial_guess=initial_guess)
 
 

@@ -41,13 +41,14 @@ from ._policies import (
     FGMRES,
     GeneralizedLSMR,
     GMRES,
-    HostSparseLU,
     LinearSolvePolicy,
     LSMR,
     MINRES,
     PCG,
     ProjectedPCG,
-    SparseDirect,
+    SparseCholesky,
+    SparseLU,
+    SparseQR,
     StructuredDirect,
 )
 from ._preconditioning import PreconditionerPlan
@@ -58,6 +59,7 @@ from ._problems import (
     LinearSystem,
     MinimumNormProblem,
 )
+from ._properties import LinearCapabilityError
 from ._spaces import (
     _coordinate_dtype,
     _has_diagonal_pairing,
@@ -65,6 +67,7 @@ from ._spaces import (
     RHSLayout,
 )
 from ._sparse_contract import AbstractSparseLinearOperator
+from ._sparse_providers import sparse_provider_availability, SparseProviderName
 from ._structured_operators import (
     _is_structured_exact,
     BandedLinearOperator,
@@ -204,6 +207,26 @@ class LinearSolvePlan(StrictModule):
                 "relative_tolerance": policy.tolerance.relative,
                 "absolute_tolerance": policy.tolerance.absolute,
                 "max_steps": policy.tolerance.max_steps,
+                **(
+                    {}
+                    if policy.precision is None
+                    else {
+                        "precision": {
+                            "operator_dtype": policy.precision.operator_dtype,
+                            "factorization_dtype": (policy.precision.factorization_dtype),
+                            "preconditioner_dtype": (
+                                policy.precision.preconditioner_dtype
+                            ),
+                            "krylov_dtype": policy.precision.krylov_dtype,
+                            "residual_dtype": policy.precision.residual_dtype,
+                            "accumulation_dtype": (policy.precision.accumulation_dtype),
+                            "maximum_refinement_steps": (
+                                policy.precision.maximum_refinement_steps
+                            ),
+                            "condition_limit": policy.precision.condition_limit,
+                        }
+                    }
+                ),
                 "preconditioning": (
                     None if preconditioner_plan is None else preconditioner_plan.plan_id
                 ),
@@ -267,6 +290,7 @@ def plan(
                 "GCRO-DR recycling with a preconditioner is not yet supported."
             )
     backend = _validate_method(problem, selected, policy_, rhs_layout)
+    _validate_precision_policy(problem, selected, backend, policy_)
     if policy_.require_device_binding and backend in ("host-sparse", "lineax"):
         raise ValueError(
             f"Selected backend {backend!r} cannot bind numerical state on device."
@@ -304,6 +328,112 @@ def plan(
         rejected=rejected,
         candidates=estimates,
     )
+
+
+def _validate_precision_policy(
+    problem: AbstractLinearProblem,
+    method: AbstractLinearMethod,
+    backend: LinearBackend,
+    policy: LinearSolvePolicy,
+    /,
+) -> None:
+    precision = policy.precision
+    if precision is None:
+        return
+
+    rejection = "MixedPrecisionPolicy is capability-rejected"
+    if backend != "jax-dense" or not isinstance(method, DenseLU):
+        raise LinearCapabilityError(
+            f"{rejection}: only the jax-dense DenseLU provider is supported."
+        )
+    if not isinstance(problem, LinearSystem) or not isinstance(
+        problem.operator,
+        DenseLinearOperator,
+    ):
+        raise LinearCapabilityError(
+            f"{rejection}: mixed-precision DenseLU requires explicit dense square "
+            "storage and never materializes another operator."
+        )
+    if not (
+        _has_euclidean_pairing(problem.operator.source)
+        and _has_euclidean_pairing(problem.operator.target)
+    ):
+        raise LinearCapabilityError(
+            f"{rejection}: mixed-precision refinement currently requires "
+            "Euclidean source and target pairings."
+        )
+    if precision.preconditioner_dtype is not None:
+        raise LinearCapabilityError(
+            f"{rejection}: jax-dense DenseLU has no preconditioner arithmetic."
+        )
+    if precision.krylov_dtype is not None:
+        raise LinearCapabilityError(
+            f"{rejection}: jax-dense DenseLU has no Krylov arithmetic."
+        )
+
+    operator_dtype = jnp.dtype(problem.operator.matrix.dtype)
+    requested_operator = (
+        operator_dtype
+        if precision.operator_dtype is None
+        else jnp.dtype(precision.operator_dtype)
+    )
+    residual_dtype = (
+        operator_dtype
+        if precision.residual_dtype is None
+        else jnp.dtype(precision.residual_dtype)
+    )
+    accumulation_dtype = (
+        operator_dtype
+        if precision.accumulation_dtype is None
+        else jnp.dtype(precision.accumulation_dtype)
+    )
+    factorization_dtype = (
+        operator_dtype
+        if precision.factorization_dtype is None
+        else jnp.dtype(precision.factorization_dtype)
+    )
+    if requested_operator != operator_dtype:
+        raise LinearCapabilityError(
+            f"{rejection}: operator_dtype={requested_operator.name!r} does not "
+            f"match stored coordinates {operator_dtype.name!r}."
+        )
+    if residual_dtype != operator_dtype:
+        raise LinearCapabilityError(
+            f"{rejection}: jax-dense certification requires residual_dtype to "
+            "match the stored operator precision."
+        )
+    if accumulation_dtype != operator_dtype:
+        raise LinearCapabilityError(
+            f"{rejection}: jax-dense refinement requires accumulation_dtype to "
+            "match the stored operator precision."
+        )
+    factorization_supported = (
+        jnp.dtype(jnp.float32),
+        jnp.dtype(jnp.float64),
+        jnp.dtype(jnp.complex64),
+        jnp.dtype(jnp.complex128),
+    )
+    if factorization_dtype not in factorization_supported:
+        raise LinearCapabilityError(
+            f"{rejection}: jax-dense LU does not support "
+            f"factorization_dtype={factorization_dtype.name!r}."
+        )
+    same_scalar_kind = jnp.issubdtype(
+        operator_dtype, jnp.complexfloating
+    ) == jnp.issubdtype(factorization_dtype, jnp.complexfloating)
+    if not same_scalar_kind or factorization_dtype.itemsize > operator_dtype.itemsize:
+        raise LinearCapabilityError(
+            f"{rejection}: factorization_dtype must have the stored operator's "
+            "real/complex kind and no greater precision."
+        )
+    lower_factorization = factorization_dtype.itemsize < operator_dtype.itemsize
+    if (
+        precision.maximum_refinement_steps > 0 or precision.condition_limit is not None
+    ) and not lower_factorization:
+        raise LinearCapabilityError(
+            f"{rejection}: refinement and condition screening require a lower "
+            "factorization precision."
+        )
 
 
 def _make_preconditioner_plan(
@@ -390,10 +520,10 @@ def _auto_method(
             and policy.preconditioning is None
             and policy.rank.relative_cutoff is None
         ):
-            return SparseDirect(), "canonical CSR with native CUDA sparse QR", ()
+            return SparseQR(), "canonical CSR with native CUDA sparse QR", ()
         rejected.append(
-            "sparse-direct: execution requires CUDA, no preconditioning, and no "
-            "numerical rank cutoff"
+            "sparse-qr/jax-cuda: execution requires CUDA, no preconditioning, "
+            "and no numerical rank cutoff"
         )
     if isinstance(problem, LinearSystem):
         dense_method: AbstractLinearMethod
@@ -554,7 +684,7 @@ def _validate_method(
             if rows < operator.source.size:
                 raise ValueError("Dense QR requires at least as many rows as columns.")
         return "jax-dense"
-    if isinstance(method, (SparseDirect, HostSparseLU)):
+    if isinstance(method, (SparseQR, SparseLU, SparseCholesky)):
         if not isinstance(problem, LinearSystem):
             raise ValueError(f"{method.name} requires a LinearSystem.")
         if not isinstance(operator, AbstractSparseLinearOperator):
@@ -567,22 +697,37 @@ def _validate_method(
             raise ValueError(f"{method.name} requires a square operator.")
         if preconditioner is not None:
             raise ValueError("Sparse direct methods do not accept preconditioners.")
-        if isinstance(method, SparseDirect):
+        if isinstance(method, SparseCholesky) and not operator.properties.certifies(
+            "positive_definite"
+        ):
+            raise ValueError(
+                "SparseCholesky requires certified positive-definite structure."
+            )
+        if isinstance(method, SparseQR) and method.provider == "jax-cuda":
             if not _cuda_sparse_available():
                 raise ValueError(
-                    "SparseDirect requires CUDA; use HostSparseLU explicitly for "
-                    "the non-JIT CPU fallback."
+                    "SparseQR(provider='jax-cuda') requires a JAX CUDA device."
                 )
             if policy.differentiation.mode == "algorithmic":
                 raise ValueError(
-                    "SparseDirect exposes mathematical differentiation, not an "
+                    "SparseQR exposes mathematical differentiation, not an "
                     "algorithmic QR derivative."
                 )
             return "jax-sparse"
         if policy.differentiation.mode != "none":
             raise ValueError(
-                "HostSparseLU is non-JIT and requires DifferentiationPolicy('none')."
+                "Host sparse direct providers are non-JIT and require "
+                "DifferentiationPolicy('none')."
             )
+        if isinstance(method, SparseLU):
+            provider: SparseProviderName = (
+                "scipy-superlu" if method.provider == "auto" else method.provider
+            )
+        else:
+            provider = method.provider
+        availability = sparse_provider_availability(provider)
+        if not availability.available:
+            raise ValueError(availability.reason)
         return "host-sparse"
     if operator.batch_shape:
         raise ValueError("Iterative providers require explicit batched execution policy.")
@@ -989,6 +1134,13 @@ def _dense_candidate_fits(
         if not problem.regularizer.capabilities.materialize:
             return False, "regularizer does not declare materialization"
     itemsize = _coordinate_dtype(operator.source).itemsize
+    factorization_itemsize = (
+        itemsize
+        if not isinstance(method, DenseLU)
+        or policy.precision is None
+        or policy.precision.factorization_dtype is None
+        else jnp.dtype(policy.precision.factorization_dtype).itemsize
+    )
     batch_count = prod(operator.batch_shape or (1,))
     requires_materialization = _requires_dense_materialization(problem)
     additional = (
@@ -999,7 +1151,12 @@ def _dense_candidate_fits(
         return False, f"materialization requires {entries} entries"
     if additional > policy.materialization.max_bytes:
         return False, f"materialization requires {additional} additional bytes"
-    factor = batch_count * _factorization_bytes(method, rows, columns, itemsize)
+    factor = batch_count * _factorization_bytes(
+        method,
+        rows,
+        columns,
+        factorization_itemsize,
+    )
     if factor > policy.resources.factorization_bytes:
         return False, f"factorization estimate {factor} exceeds budget"
     workspace = batch_count * rows * columns * itemsize
@@ -1066,6 +1223,11 @@ def _selected_estimate(
     if isinstance(problem, LeastSquaresProblem) and problem.regularizer is not None:
         rows += problem.regularizer.target.size
     itemsize = _coordinate_dtype(problem.operator.source).itemsize
+    factorization_itemsize = (
+        itemsize
+        if policy.precision is None or policy.precision.factorization_dtype is None
+        else jnp.dtype(policy.precision.factorization_dtype).itemsize
+    )
     operator_action_cost = estimate_operator_action_cost(problem.operator)
     existing = operator_action_cost.storage_bytes
     batch_count = prod(problem.operator.batch_shape or (1,))
@@ -1096,7 +1258,7 @@ def _selected_estimate(
             method,
             rows,
             columns,
-            itemsize,
+            factorization_itemsize,
         )
         preparation_workspace_bytes = batch_count * rows * columns * itemsize
     elif sparse_direct:
@@ -1111,11 +1273,20 @@ def _selected_estimate(
     else:
         factorization_bytes = 0
         preparation_workspace_bytes = 0
-    solve_workspace_bytes_per_rhs = (
-        _structured_solve_workspace_bytes(problem.operator)
-        if structured_direct
-        else batch_count * (rows + columns) * itemsize
-    )
+    if (
+        dense_direct
+        and policy.precision is not None
+        and policy.precision.maximum_refinement_steps > 0
+    ):
+        solve_workspace_bytes_per_rhs = batch_count * (
+            2 * (rows + columns) * itemsize + columns * factorization_itemsize
+        )
+    else:
+        solve_workspace_bytes_per_rhs = (
+            _structured_solve_workspace_bytes(problem.operator)
+            if structured_direct
+            else batch_count * (rows + columns) * itemsize
+        )
     rhs_width = 1 if rhs_layout is None else rhs_layout.size
     primal_krylov_bytes = (
         _krylov_storage_bytes(problem, method, policy, itemsize, rhs_width)
@@ -1494,8 +1665,10 @@ def _method_configuration(
     elif isinstance(method, (LSMR, GeneralizedLSMR)):
         configuration["condition_limit"] = method.condition_limit
         configuration["damping"] = method.damping
-    elif isinstance(method, SparseDirect):
-        configuration["reorder"] = method.reorder
+    elif isinstance(method, (SparseQR, SparseLU, SparseCholesky)):
+        configuration["provider"] = method.provider
+        if isinstance(method, SparseQR):
+            configuration["reorder"] = method.reorder
     return configuration
 
 

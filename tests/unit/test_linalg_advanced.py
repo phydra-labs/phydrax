@@ -481,7 +481,7 @@ def test_host_sparse_direct_and_incomplete_factorization_are_explicit():
         la.LinearSystem(operator),
         right_hand_side,
         policy=la.LinearSolvePolicy(
-            la.HostSparseLU(),
+            la.SparseLU(),
             differentiation=la.DifferentiationPolicy("none"),
         ),
     )
@@ -788,7 +788,7 @@ def test_sparse_preparation_validates_csr_numerical_content():
         la.prepare(
             la.LinearSystem(operator),
             la.LinearSolvePolicy(
-                la.HostSparseLU(),
+                la.SparseLU(),
                 differentiation=la.DifferentiationPolicy("none"),
             ),
         )

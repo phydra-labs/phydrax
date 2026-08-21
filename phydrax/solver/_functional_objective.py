@@ -327,6 +327,41 @@ def evaluate_prepared_objective(
     return _ObjectiveValues(total, terms_array, model_array)
 
 
+def evaluate_prepared_scalar_remainder(
+    prepared: _PreparedObjective,
+    functions: Any,
+    /,
+) -> Any:
+    """Evaluate non-residual terms and model losses on one frozen realization."""
+
+    enforced = (
+        functions
+        if prepared.enforcement is None
+        else prepared.enforcement.apply(functions)
+    )
+    total = jnp.asarray(0.0, dtype=float)
+    scale = jnp.asarray(prepared.selection.scale, dtype=float).reshape(())
+    with derivative_runtime_context():
+        for prepared_term in prepared.terms:
+            if isinstance(prepared_term.term, ResidualPenalty):
+                continue
+            value = evaluate(
+                prepared_term.term,
+                enforced,
+                key=prepared_term.key,
+                step=prepared.iteration,
+                **prepared_term.kwargs,
+            ).value
+            total = total + scale * jnp.asarray(value, dtype=float).reshape(())
+        for value in function_model_loss_values(
+            functions,
+            key=prepared.model_loss_key,
+            iter_=prepared.iteration,
+        ):
+            total = total + jnp.asarray(value, dtype=float).reshape(())
+    return total
+
+
 def prepared_data_metrics(
     prepared: _PreparedObjective,
     functions: Any,
@@ -623,6 +658,7 @@ __all__ = [
     "_PreparedTerm",
     "_TermSelection",
     "_adaptive_policy",
+    "evaluate_prepared_scalar_remainder",
     "evaluate_prepared_objective",
     "_SupportsDataMetrics",
     "prepared_data_metrics",

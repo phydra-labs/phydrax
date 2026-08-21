@@ -52,25 +52,19 @@ def materialize(operator, policy: MaterializationPolicy, /) -> Array:
             f"the policy limit {policy.max_entries}."
         )
     expected = operator.batch_shape + (operator.target.size, operator.source.size)
-    materialized = jax.eval_shape(operator._materialize)
-    if not isinstance(materialized, jax.ShapeDtypeStruct):
-        raise TypeError("Operator materialization must return one array.")
-    if materialized.shape != expected:
-        raise ValueError(
-            "Operator materialization must have shape "
-            f"{expected}; got {materialized.shape}."
-        )
-    required_bytes = entries * jnp.dtype(materialized.dtype).itemsize
+    target_dtypes = [spec.dtype for spec in jax.tree.leaves(operator.target.structure())]
+    expected_dtype = jnp.dtype(jnp.result_type(*target_dtypes))
+    required_bytes = entries * expected_dtype.itemsize
     if required_bytes > policy.max_bytes:
         raise LinearCapabilityError(
             f"Dense materialization requires {required_bytes} bytes, exceeding "
             f"the policy limit {policy.max_bytes}."
         )
     matrix = jnp.asarray(operator._materialize())
-    if matrix.shape != expected or matrix.dtype != materialized.dtype:
+    if matrix.shape != expected or matrix.dtype != expected_dtype:
         raise ValueError(
-            "Operator materialization changed shape or dtype between abstract "
-            "evaluation and execution."
+            "Operator materialization must have shape and dtype "
+            f"{expected} and {expected_dtype}; got {matrix.shape} and {matrix.dtype}."
         )
     if matrix.nbytes > policy.max_bytes:
         raise LinearCapabilityError(

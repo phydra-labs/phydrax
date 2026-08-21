@@ -546,6 +546,109 @@ def test_matrix_free_iterative_system_and_least_squares_backends():
     assert pcg.diagnostics.adjoint_matvec_count == 0
 
 
+def test_prepared_native_krylov_accepts_dynamic_per_solve_controls():
+    matrix = jnp.diag(jnp.asarray([1.0, 2.0, 4.0, 8.0]))
+    space = la.ArraySpace((4,), dtype=matrix.dtype)
+    operator = la.FunctionLinearOperator(
+        lambda vector: matrix @ vector,
+        source=space,
+        target=space,
+        properties=_positive_definite_properties(),
+        operator_id="runtime-controlled-pcg",
+    )
+    prepared = la.prepare(
+        la.LinearSystem(operator),
+        la.LinearSolvePolicy(
+            la.PCG(),
+            tolerance=la.TolerancePolicy(
+                relative=1e-5,
+                absolute=1e-7,
+                max_steps=4,
+            ),
+            differentiation=la.DifferentiationPolicy("none"),
+        ),
+    )
+    assert prepared.plan.backend == "native-krylov"
+    rhs = jnp.ones((4,))
+    short_control = la.LinearSolveControl(
+        relative_tolerance=0.0,
+        absolute_tolerance=0.0,
+        maximum_steps=1,
+    )
+    complete_control = la.LinearSolveControl(
+        relative_tolerance=1e-5,
+        absolute_tolerance=1e-7,
+        maximum_steps=4,
+    )
+
+    short = la.solve(prepared, rhs, control=short_control)
+    complete = la.solve(prepared, rhs, control=complete_control)
+    default = la.solve(prepared, rhs)
+    empty_control = la.solve(prepared, rhs, control=la.LinearSolveControl())
+
+    assert short.provenance.plan_id == prepared.plan.plan_id
+    assert complete.provenance.plan_id == prepared.plan.plan_id
+    assert short.status == int(la.LinearSolveStatus.MAXIMUM_STEPS_REACHED)
+    assert bool(complete.successful)
+    assert short.diagnostics.iterations == 1
+    assert complete.diagnostics.iterations > short.diagnostics.iterations
+    assert complete.diagnostics.matvec_count > short.diagnostics.matvec_count
+    assert default.status == empty_control.status
+    assert default.diagnostics.iterations == empty_control.diagnostics.iterations
+    assert jnp.allclose(default.value, empty_control.value)
+
+    @jax.jit
+    def run(relative_tolerance, absolute_tolerance, maximum_steps):
+        result = la.solve(
+            prepared,
+            rhs,
+            control=la.LinearSolveControl(
+                relative_tolerance=relative_tolerance,
+                absolute_tolerance=absolute_tolerance,
+                maximum_steps=maximum_steps,
+            ),
+        )
+        return (
+            result.status,
+            result.diagnostics.iterations,
+            result.diagnostics.matvec_count,
+        )
+
+    jitted_short = run(jnp.asarray(0.0), jnp.asarray(0.0), jnp.asarray(1))
+    jitted_complete = run(
+        jnp.asarray(1e-5),
+        jnp.asarray(1e-7),
+        jnp.asarray(4),
+    )
+    assert jitted_short == (
+        short.status,
+        short.diagnostics.iterations,
+        short.diagnostics.matvec_count,
+    )
+    assert jitted_complete == (
+        complete.status,
+        complete.diagnostics.iterations,
+        complete.diagnostics.matvec_count,
+    )
+
+
+def test_linear_solve_control_validates_runtime_values():
+    with pytest.raises(
+        ValueError,
+        match="relative_tolerance must be finite and non-negative",
+    ):
+        la.LinearSolveControl(relative_tolerance=jnp.inf)
+    with pytest.raises(
+        ValueError,
+        match="absolute_tolerance must be finite and non-negative",
+    ):
+        la.LinearSolveControl(absolute_tolerance=-1.0)
+    with pytest.raises(ValueError, match="maximum_steps must be positive"):
+        la.LinearSolveControl(maximum_steps=0)
+    with pytest.raises(TypeError, match="maximum_steps must have an integer dtype"):
+        la.LinearSolveControl(maximum_steps=1.5)
+
+
 def test_auto_planner_routes_general_pairings_to_native_krylov():
     metric = jnp.asarray([[2.0, 0.5], [0.5, 1.0]])
     space = la.ArraySpace(
@@ -571,7 +674,7 @@ def test_auto_planner_routes_general_pairings_to_native_krylov():
     result = la.solve(problem, rhs, policy=iterative_policy)
     assert bool(result.successful)
     assert jnp.allclose(result.value, jnp.linalg.solve(matrix, rhs))
-    assert result.diagnostics.matvec_count == 2 * result.diagnostics.iterations + 3
+    assert result.diagnostics.matvec_count == result.diagnostics.iterations + 2
     assert result.diagnostics.adjoint_matvec_count == 0
 
     with pytest.raises(ValueError, match="Euclidean or diagonal source pairing"):

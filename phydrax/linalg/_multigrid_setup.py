@@ -27,6 +27,7 @@ from ._materialization import MaterializationPolicy, materialize
 from ._multigrid import (
     _composition_properties,
     _source_properties,
+    MultigridCyclePolicy,
     MultigridHierarchy,
     MultigridLevel,
     MultigridPreconditioner,
@@ -69,6 +70,7 @@ class GalerkinHierarchyBuilder(AbstractPreconditionerBuilder):
     smoothers: tuple[PreconditionerSource, ...]
     coarse_solver: PreconditionerSource
     properties: PreconditionerProperties
+    cycle_policy: MultigridCyclePolicy
     refresh_mode: MultigridRefreshMode = eqx.field(static=True)
     pre_smoothing: int = eqx.field(static=True)
     post_smoothing: int = eqx.field(static=True)
@@ -83,6 +85,7 @@ class GalerkinHierarchyBuilder(AbstractPreconditionerBuilder):
         /,
         *,
         properties: PreconditionerProperties | None = None,
+        cycle_policy: MultigridCyclePolicy | None = None,
         refresh_mode: MultigridRefreshMode = "rebuild-all",
         pre_smoothing: int = 1,
         post_smoothing: int = 1,
@@ -115,10 +118,14 @@ class GalerkinHierarchyBuilder(AbstractPreconditionerBuilder):
         properties_ = PreconditionerProperties() if properties is None else properties
         if not isinstance(properties_, PreconditionerProperties):
             raise TypeError("properties must be PreconditionerProperties.")
+        cycle_policy_ = MultigridCyclePolicy() if cycle_policy is None else cycle_policy
+        if not isinstance(cycle_policy_, MultigridCyclePolicy):
+            raise TypeError("cycle_policy must be a MultigridCyclePolicy.")
         self.transfers = transfers_
         self.smoothers = smoothers_
         self.coarse_solver = coarse_solver
         self.properties = properties_
+        self.cycle_policy = cycle_policy_
         self.refresh_mode = mode
         self.pre_smoothing = pre
         self.post_smoothing = post
@@ -137,6 +144,7 @@ class GalerkinHierarchyBuilder(AbstractPreconditionerBuilder):
                 "refresh_mode": mode,
                 "pre_smoothing": pre,
                 "post_smoothing": post,
+                "cycle": cycle_policy_.cycle_id,
             }
         )
 
@@ -248,7 +256,8 @@ class GalerkinHierarchyBuilder(AbstractPreconditionerBuilder):
         materialization: MaterializationPolicy,
     ) -> AbstractPreconditioner:
         return MultigridPreconditioner(
-            self.prepare_hierarchy(setup_operator, materialization=materialization)
+            self.prepare_hierarchy(setup_operator, materialization=materialization),
+            cycle_policy=self.cycle_policy,
         )
 
     def refresh(
@@ -336,8 +345,16 @@ class GalerkinHierarchyBuilder(AbstractPreconditionerBuilder):
             builder_id=self.builder_id,
             reuse_decisions=decisions,
             previous_sparse_assemblies=previous_sparse_assemblies,
+            previous_levels=(
+                old.levels
+                if (
+                    reuse
+                    and old.diagnostics.reuse_dependency_fingerprint == self.builder_id
+                )
+                else ()
+            ),
         )
-        return MultigridPreconditioner(hierarchy)
+        return MultigridPreconditioner(hierarchy, cycle_policy=self.cycle_policy)
 
 
 class SmoothedAggregationPolicy(StrictModule):
@@ -351,6 +368,10 @@ class SmoothedAggregationPolicy(StrictModule):
     candidate_rank_tolerance: float | None = eqx.field(static=True)
     pre_smoothing: int = eqx.field(static=True)
     post_smoothing: int = eqx.field(static=True)
+    maximum_grid_complexity: float | None = eqx.field(static=True)
+    maximum_operator_complexity: float | None = eqx.field(static=True)
+    maximum_level_storage_bytes: int | None = eqx.field(static=True)
+    maximum_compatible_relaxation_factor: float | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -363,6 +384,10 @@ class SmoothedAggregationPolicy(StrictModule):
         candidate_rank_tolerance: float | None = None,
         pre_smoothing: int = 1,
         post_smoothing: int = 1,
+        maximum_grid_complexity: float | None = None,
+        maximum_operator_complexity: float | None = None,
+        maximum_level_storage_bytes: int | None = None,
+        maximum_compatible_relaxation_factor: float | None = None,
     ):
         threshold = float(strength_threshold)
         levels = int(max_levels)
@@ -373,6 +398,24 @@ class SmoothedAggregationPolicy(StrictModule):
             None if candidate_rank_tolerance is None else float(candidate_rank_tolerance)
         )
         pre, post = int(pre_smoothing), int(post_smoothing)
+        grid_limit = (
+            None if maximum_grid_complexity is None else float(maximum_grid_complexity)
+        )
+        operator_limit = (
+            None
+            if maximum_operator_complexity is None
+            else float(maximum_operator_complexity)
+        )
+        level_byte_limit = (
+            None
+            if maximum_level_storage_bytes is None
+            else int(maximum_level_storage_bytes)
+        )
+        relaxation_limit = (
+            None
+            if maximum_compatible_relaxation_factor is None
+            else float(maximum_compatible_relaxation_factor)
+        )
         if not np.isfinite(threshold) or threshold < 0.0 or threshold > 1.0:
             raise ValueError("strength_threshold must lie in [0, 1].")
         if levels < 2:
@@ -391,6 +434,22 @@ class SmoothedAggregationPolicy(StrictModule):
             )
         if pre < 0 or post < 0:
             raise ValueError("Smoothing counts must be nonnegative.")
+        if grid_limit is not None and (not np.isfinite(grid_limit) or grid_limit < 1.0):
+            raise ValueError("maximum_grid_complexity must be finite and at least one.")
+        if operator_limit is not None and (
+            not np.isfinite(operator_limit) or operator_limit < 1.0
+        ):
+            raise ValueError(
+                "maximum_operator_complexity must be finite and at least one."
+            )
+        if level_byte_limit is not None and level_byte_limit < 1:
+            raise ValueError("maximum_level_storage_bytes must be positive.")
+        if relaxation_limit is not None and (
+            not np.isfinite(relaxation_limit) or relaxation_limit < 0.0
+        ):
+            raise ValueError(
+                "maximum_compatible_relaxation_factor must be finite and nonnegative."
+            )
         self.strength_threshold = threshold
         self.max_levels = levels
         self.minimum_coarse_size = coarse_size
@@ -399,6 +458,10 @@ class SmoothedAggregationPolicy(StrictModule):
         self.candidate_rank_tolerance = rank_tolerance
         self.pre_smoothing = pre
         self.post_smoothing = post
+        self.maximum_grid_complexity = grid_limit
+        self.maximum_operator_complexity = operator_limit
+        self.maximum_level_storage_bytes = level_byte_limit
+        self.maximum_compatible_relaxation_factor = relaxation_limit
 
 
 class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
@@ -407,8 +470,9 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
     policy: SmoothedAggregationPolicy
     smoother: PreconditionerSource
     coarse_solver: PreconditionerSource
-    near_nullspace: LinearSubspace | None
+    near_nullspaces: tuple[LinearSubspace, ...]
     properties: PreconditionerProperties
+    cycle_policy: MultigridCyclePolicy
     refresh_mode: MultigridRefreshMode = eqx.field(static=True)
     _properties_supplied: bool = eqx.field(static=True)
     _builder_id: str = eqx.field(static=True)
@@ -420,25 +484,33 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
         coarse_solver: PreconditionerSource,
         /,
         *,
-        near_nullspace: LinearSubspace | None = None,
+        near_nullspaces: tuple[LinearSubspace, ...] = (),
         properties: PreconditionerProperties | None = None,
+        cycle_policy: MultigridCyclePolicy | None = None,
         refresh_mode: MultigridRefreshMode = "rebuild-all",
     ):
         if not isinstance(policy, SmoothedAggregationPolicy):
             raise TypeError("policy must be SmoothedAggregationPolicy.")
         _validate_preconditioner_source(smoother)
         _validate_preconditioner_source(coarse_solver)
-        if near_nullspace is not None and not isinstance(near_nullspace, LinearSubspace):
-            raise TypeError("near_nullspace must be a LinearSubspace when supplied.")
+        near_nullspaces_ = tuple(near_nullspaces)
+        if not all(
+            isinstance(candidate, LinearSubspace) for candidate in near_nullspaces_
+        ):
+            raise TypeError("near_nullspaces must contain LinearSubspace values.")
         properties_ = PreconditionerProperties() if properties is None else properties
         if not isinstance(properties_, PreconditionerProperties):
             raise TypeError("properties must be PreconditionerProperties.")
+        cycle_policy_ = MultigridCyclePolicy() if cycle_policy is None else cycle_policy
+        if not isinstance(cycle_policy_, MultigridCyclePolicy):
+            raise TypeError("cycle_policy must be a MultigridCyclePolicy.")
         mode = _refresh_mode(refresh_mode)
         self.policy = policy
         self.smoother = smoother
         self.coarse_solver = coarse_solver
-        self.near_nullspace = near_nullspace
+        self.near_nullspaces = near_nullspaces_
         self.properties = properties_
+        self.cycle_policy = cycle_policy_
         self.refresh_mode = mode
         self._properties_supplied = properties is not None
         self._builder_id = canonical_fingerprint(
@@ -453,21 +525,27 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
                     "candidate_rank_tolerance": policy.candidate_rank_tolerance,
                     "pre_smoothing": policy.pre_smoothing,
                     "post_smoothing": policy.post_smoothing,
+                    "maximum_grid_complexity": policy.maximum_grid_complexity,
+                    "maximum_operator_complexity": policy.maximum_operator_complexity,
+                    "maximum_level_storage_bytes": (policy.maximum_level_storage_bytes),
+                    "maximum_compatible_relaxation_factor": (
+                        policy.maximum_compatible_relaxation_factor
+                    ),
                 },
                 "smoother": _source_identifier(smoother),
                 "coarse_solver": _source_identifier(coarse_solver),
-                "near_nullspace": (
-                    None
-                    if near_nullspace is None
-                    else {
-                        "id": near_nullspace.subspace_id,
-                        "basis": array_tree_fingerprint(near_nullspace.basis),
-                        "dimension": int(np.asarray(near_nullspace.dimension)),
+                "near_nullspaces": [
+                    {
+                        "id": candidate.subspace_id,
+                        "basis": array_tree_fingerprint(candidate.basis),
+                        "dimension": int(np.asarray(candidate.dimension)),
                     }
-                ),
+                    for candidate in near_nullspaces_
+                ],
                 "properties": _preconditioner_properties_payload(properties_),
                 "properties_supplied": properties is not None,
                 "refresh_mode": mode,
+                "cycle": cycle_policy_.cycle_id,
             }
         )
 
@@ -484,7 +562,7 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
         setup_operator: AbstractLinearOperator,
         /,
     ) -> PreconditionerProperties:
-        _validate_sa_operator(setup_operator, self.near_nullspace)
+        _validate_sa_operator(setup_operator, self.near_nullspaces)
         components = (
             _source_properties(self.smoother, setup_operator),
             _source_properties(self.coarse_solver, setup_operator),
@@ -509,13 +587,12 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
         explicit = isinstance(
             setup_operator, (DenseLinearOperator, AbstractSparseLinearOperator)
         )
-        semantic_candidates = (
-            isinstance(setup_operator.source, ArraySpace)
-            or self.near_nullspace is not None
+        semantic_candidates = isinstance(setup_operator.source, ArraySpace) or bool(
+            self.near_nullspaces
         )
-        candidate_space_matches = (
-            self.near_nullspace is None
-            or self.near_nullspace.space.compatible(setup_operator.source)
+        candidate_space_matches = all(
+            candidate.space.compatible(setup_operator.source)
+            for candidate in self.near_nullspaces
         )
         if isinstance(setup_operator, AbstractSparseLinearOperator):
             storage = setup_operator.sparse_storage()
@@ -630,7 +707,8 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
         materialization: MaterializationPolicy,
     ) -> AbstractPreconditioner:
         return MultigridPreconditioner(
-            self.prepare_hierarchy(setup_operator, materialization=materialization)
+            self.prepare_hierarchy(setup_operator, materialization=materialization),
+            cycle_policy=self.cycle_policy,
         )
 
     def refresh(
@@ -651,7 +729,7 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
             materialization=materialization,
             old_hierarchy=preconditioner.hierarchy,
         )
-        return MultigridPreconditioner(hierarchy)
+        return MultigridPreconditioner(hierarchy, cycle_policy=self.cycle_policy)
 
     def _prepare_hierarchy(
         self,
@@ -661,8 +739,14 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
         materialization: MaterializationPolicy,
         old_hierarchy: MultigridHierarchy | None,
     ) -> MultigridHierarchy:
+        initial_rejection = _hierarchy_limit_rejection(
+            self.policy,
+            [setup_operator],
+        )
+        if initial_rejection is not None:
+            raise LinearCapabilityError(initial_rejection)
         matrix = _explicit_host_matrix(setup_operator)
-        candidates = _initial_candidates(setup_operator.source, self.near_nullspace)
+        candidates = _initial_candidates(setup_operator.source, self.near_nullspaces)
         requested_mode = self.refresh_mode
         effective_mode: MultigridRefreshMode = requested_mode
         invalidation = ""
@@ -672,12 +756,16 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
             tuple[AbstractLinearOperator, AbstractLinearOperator], ...
         ] = ()
         old_sparse_assemblies: tuple[PreparedSparseAssembly | None, ...] = ()
+        old_relaxation_factors: tuple[float, ...] = ()
+        old_candidate_ranks: tuple[tuple[int, ...], ...] = ()
         if old_hierarchy is None and requested_mode != "rebuild-all":
             effective_mode = "rebuild-all"
             invalidation = "initial-prepare-no-reusable-state;"
         if old_hierarchy is not None and requested_mode != "rebuild-all":
             diagnostics = old_hierarchy.diagnostics
             old_patterns = diagnostics.operator_pattern_fingerprints
+            old_relaxation_factors = diagnostics.compatible_relaxation_factors
+            old_candidate_ranks = diagnostics.aggregate_candidate_ranks
             pattern_matches = bool(old_patterns) and old_patterns[
                 0
             ] == _operator_pattern_fingerprint(setup_operator)
@@ -728,6 +816,8 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
         construction_modes: list[str] = []
         sparse_assemblies: list[PreparedSparseAssembly | None] = []
         decisions: list[str] = []
+        relaxation_factors: list[float] = []
+        candidate_ranks: list[tuple[int, ...]] = []
         workspace_bytes = int(
             matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes
         )
@@ -765,6 +855,9 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
                     ),
                 )
                 operators.append(coarse)
+                limit_rejection = _hierarchy_limit_rejection(self.policy, operators)
+                if limit_rejection is not None:
+                    raise LinearCapabilityError(limit_rejection)
                 transfers.append(pair)
                 construction_modes.append(construction_mode)
                 sparse_assemblies.append(sparse_assembly)
@@ -787,6 +880,8 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
             )
             if refreshed_patterns == old_patterns:
                 assignments.extend(old_assignments)
+                relaxation_factors.extend(old_relaxation_factors)
+                candidate_ranks.extend(old_candidate_ranks)
                 stop_reason = "reused-transfer-depth"
             else:
                 effective_mode = "rebuild-all"
@@ -796,6 +891,8 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
                 assignments = []
                 construction_modes = []
                 sparse_assemblies = []
+                relaxation_factors = []
+                candidate_ranks = []
                 decisions.append(
                     "reuse-transfers:discarded-after-dependent-pattern-change"
                 )
@@ -847,6 +944,18 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
                 if tentative.shape[1] <= 0 or tentative.shape[1] >= dimension:
                     stop_reason = "rank-revealing-no-coarsening"
                     break
+                relaxation_factor = _compatible_relaxation_factor(
+                    current_matrix,
+                    tentative,
+                    damping=self.policy.prolongation_damping,
+                )
+                relaxation_limit = self.policy.maximum_compatible_relaxation_factor
+                if relaxation_limit is not None and relaxation_factor > relaxation_limit:
+                    raise LinearCapabilityError(
+                        f"Level {index} compatible-relaxation factor "
+                        f"{relaxation_factor:.6g} exceeds limit "
+                        f"{relaxation_limit:.6g}."
+                    )
                 prolongator_matrix = _smooth_prolongator(
                     current_matrix,
                     tentative,
@@ -906,8 +1015,13 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
                     ),
                 )
                 operators.append(coarse)
+                limit_rejection = _hierarchy_limit_rejection(self.policy, operators)
+                if limit_rejection is not None:
+                    raise LinearCapabilityError(limit_rejection)
                 transfers.append((restriction, prolongation))
                 assignments.append(tuple(int(value) for value in aggregate))
+                relaxation_factors.append(relaxation_factor)
+                candidate_ranks.append(tuple(int(rank) for rank in ranks))
                 construction_modes.append(construction_mode)
                 sparse_assemblies.append(sparse_assembly)
                 decisions.append(
@@ -954,6 +1068,20 @@ class SmoothedAggregationHierarchyBuilder(AbstractPreconditionerBuilder):
             setup_workspace_bytes=workspace_bytes,
             aggregate_assignments=tuple(assignments),
             sparse_assemblies=tuple(sparse_assemblies),
+            compatible_relaxation_factors=tuple(relaxation_factors),
+            aggregate_candidate_ranks=tuple(candidate_ranks),
+            previous_levels=(
+                old_hierarchy.levels
+                if (
+                    old_hierarchy is not None
+                    and requested_mode != "rebuild-all"
+                    and tuple(
+                        _operator_pattern_fingerprint(operator) for operator in operators
+                    )
+                    == old_hierarchy.diagnostics.operator_pattern_fingerprints
+                )
+                else ()
+            ),
         )
 
 
@@ -971,10 +1099,16 @@ def _plan_smoothed_aggregation_levels(
     str,
 ]:
     """Construct deterministic typed level operators without preparing actions."""
+    initial_rejection = _hierarchy_limit_rejection(
+        builder.policy,
+        [setup_operator],
+    )
+    if initial_rejection is not None:
+        return (), 0, 0, (), initial_rejection
     current_matrix = _explicit_host_matrix(setup_operator)
     current_operator = setup_operator
     current_candidates = _initial_candidates(
-        setup_operator.source, builder.near_nullspace
+        setup_operator.source, builder.near_nullspaces
     )
     operators: list[AbstractLinearOperator] = [setup_operator]
     construction_modes: list[str] = []
@@ -1004,6 +1138,21 @@ def _plan_smoothed_aggregation_levels(
         if tentative.shape[1] <= 0 or tentative.shape[1] >= dimension:
             stop_reason = "rank-revealing-no-coarsening"
             break
+        relaxation_factor = _compatible_relaxation_factor(
+            current_matrix,
+            tentative,
+            damping=builder.policy.prolongation_damping,
+        )
+        relaxation_limit = builder.policy.maximum_compatible_relaxation_factor
+        if relaxation_limit is not None and relaxation_factor > relaxation_limit:
+            return (
+                (),
+                0,
+                workspace_bytes,
+                (),
+                f"level-{index} compatible-relaxation factor "
+                f"{relaxation_factor:.6g} exceeds limit {relaxation_limit:.6g}",
+            )
         diagonal = current_matrix.diagonal()
         if builder.policy.prolongation_smoothing_steps and (
             np.any(~np.isfinite(diagonal)) or np.any(np.abs(diagonal) == 0.0)
@@ -1100,6 +1249,9 @@ def _plan_smoothed_aggregation_levels(
                 f"next strength/aggregate setup: {fallback}",
             )
         operators.append(coarse_operator)
+        limit_rejection = _hierarchy_limit_rejection(builder.policy, operators)
+        if limit_rejection is not None:
+            return (), 0, workspace_bytes, (), limit_rejection
         construction_modes.append(construction.mode)
         sparse_assemblies.append(construction.sparse_assembly)
         aggregate_entries += int(aggregate.size)
@@ -1185,7 +1337,7 @@ def _validate_endomorphism(operator: AbstractLinearOperator, /) -> None:
 
 def _validate_sa_operator(
     operator: AbstractLinearOperator,
-    near_nullspace: LinearSubspace | None,
+    near_nullspaces: tuple[LinearSubspace, ...],
     /,
 ) -> None:
     _validate_endomorphism(operator)
@@ -1194,14 +1346,14 @@ def _validate_sa_operator(
             "Smoothed aggregation requires an explicit dense or canonical sparse "
             "operator; matrix-free setup is not supported."
         )
-    if near_nullspace is None and not isinstance(operator.source, ArraySpace):
+    if not near_nullspaces and not isinstance(operator.source, ArraySpace):
         raise LinearCapabilityError(
             "Semantic vector spaces require explicit near-nullspace candidates."
         )
-    if near_nullspace is not None and not near_nullspace.space.compatible(
-        operator.source
+    if any(
+        not candidate.space.compatible(operator.source) for candidate in near_nullspaces
     ):
-        raise ValueError("near_nullspace must belong to the fine operator space.")
+        raise ValueError("Every near-nullspace block must belong to the fine space.")
     if isinstance(operator, AbstractSparseLinearOperator):
         storage = operator.sparse_storage()
         if not storage.canonical or not storage.sorted_indices:
@@ -1434,6 +1586,7 @@ def _prepare_galerkin_hierarchy(
     builder_id: str,
     reuse_decisions: tuple[str, ...],
     previous_sparse_assemblies: tuple[PreparedSparseAssembly | None, ...] = (),
+    previous_levels: tuple[MultigridLevel, ...] = (),
 ) -> MultigridHierarchy:
     plan = _plan_galerkin_hierarchy(
         setup_operator,
@@ -1460,6 +1613,7 @@ def _prepare_galerkin_hierarchy(
         setup_workspace_bytes=plan.construction_workspace_bytes,
         aggregate_assignments=(),
         sparse_assemblies=plan.sparse_assemblies,
+        previous_levels=previous_levels,
     )
 
 
@@ -1480,11 +1634,16 @@ def _prepare_levels_from_operators(
     setup_workspace_bytes: int,
     aggregate_assignments: tuple[tuple[int, ...], ...],
     sparse_assemblies: tuple[PreparedSparseAssembly | None, ...],
+    compatible_relaxation_factors: tuple[float, ...] = (),
+    aggregate_candidate_ranks: tuple[tuple[int, ...], ...] = (),
+    previous_levels: tuple[MultigridLevel, ...] = (),
 ) -> MultigridHierarchy:
     if len(operators) != len(transfers) + 1 or len(smoothers) != len(transfers):
         raise ValueError("Generated hierarchy source counts are inconsistent.")
     if len(sparse_assemblies) != len(transfers):
         raise ValueError("Sparse assemblies must align with Galerkin transitions.")
+    if previous_levels and len(previous_levels) != len(operators):
+        raise ValueError("Previous multigrid levels must align with refreshed operators.")
     prepared_levels: list[MultigridLevel] = []
     component_properties: list[PreconditionerProperties] = []
     action_decisions: list[str] = []
@@ -1507,8 +1666,16 @@ def _prepare_levels_from_operators(
             prepared = source
             action_decisions.append(f"level-{index}:supplied-action-reused")
         else:
-            prepared = source.prepare(operator, materialization=materialization)
-            action_decisions.append(f"level-{index}:builder-action-prepared")
+            if previous_levels and source.default_refresh == "numeric":
+                prepared = source.refresh(
+                    previous_levels[index].smoother,
+                    operator,
+                    materialization=materialization,
+                )
+                action_decisions.append(f"level-{index}:builder-action-refreshed")
+            else:
+                prepared = source.prepare(operator, materialization=materialization)
+                action_decisions.append(f"level-{index}:builder-action-prepared")
         component_properties.append(prepared.properties)
         if index < len(transfers):
             restriction, prolongation = transfers[index]
@@ -1534,6 +1701,8 @@ def _prepare_levels_from_operators(
         aggregate_assignments=aggregate_assignments,
         reuse_dependency_fingerprint=builder_id,
         sparse_assemblies=sparse_assemblies,
+        compatible_relaxation_factors=compatible_relaxation_factors,
+        aggregate_candidate_ranks=aggregate_candidate_ranks,
     )
     return MultigridHierarchy(
         levels,
@@ -2009,14 +2178,19 @@ def _sparse_operator_from_csr(
 
 def _initial_candidates(
     space: AbstractVectorSpace,
-    near_nullspace: LinearSubspace | None,
+    near_nullspaces: tuple[LinearSubspace, ...],
     /,
 ) -> np.ndarray:
-    if near_nullspace is not None:
-        dimension = int(np.asarray(near_nullspace.dimension))
-        if dimension <= 0:
-            raise ValueError("near_nullspace must contain at least one active candidate.")
-        return np.asarray(near_nullspace.basis[:, :dimension])
+    if near_nullspaces:
+        blocks: list[np.ndarray] = []
+        for candidate in near_nullspaces:
+            dimension = int(np.asarray(candidate.dimension))
+            if dimension <= 0:
+                raise ValueError(
+                    "Every near-nullspace block must contain an active candidate."
+                )
+            blocks.append(np.asarray(candidate.basis[:, :dimension]))
+        return np.concatenate(blocks, axis=1)
     if not isinstance(space, ArraySpace):
         raise LinearCapabilityError(
             "A semantic vector space requires explicit near-nullspace candidates."
@@ -2247,6 +2421,8 @@ def _setup_diagnostics(
     aggregate_assignments: tuple[tuple[int, ...], ...],
     reuse_dependency_fingerprint: str,
     sparse_assemblies: tuple[PreparedSparseAssembly | None, ...],
+    compatible_relaxation_factors: tuple[float, ...] = (),
+    aggregate_candidate_ranks: tuple[tuple[int, ...], ...] = (),
 ) -> MultigridSetupDiagnostics:
     dimensions = tuple(level.operator.source.size for level in levels)
     nonzeros = tuple(_operator_nnz(level.operator) for level in levels)
@@ -2279,6 +2455,11 @@ def _setup_diagnostics(
             _operator_pattern_fingerprint(level.operator) for level in levels
         ),
         aggregate_assignments=aggregate_assignments,
+        level_storage_bytes=tuple(
+            _array_tree_storage_bytes(level.operator) for level in levels
+        ),
+        compatible_relaxation_factors=compatible_relaxation_factors,
+        aggregate_candidate_ranks=aggregate_candidate_ranks,
         reuse_dependency_fingerprint=reuse_dependency_fingerprint,
     )
 
@@ -2289,6 +2470,76 @@ def _operator_nnz(operator: AbstractLinearOperator, /) -> int | None:
     if isinstance(operator, DenseLinearOperator):
         return int(np.count_nonzero(np.asarray(operator.matrix)))
     return None
+
+
+def _operator_storage_bytes(operator: AbstractLinearOperator, /) -> int:
+    if isinstance(operator, AbstractSparseLinearOperator):
+        storage = operator.sparse_storage()
+        return int(storage.values.nbytes + storage.indices.nbytes + storage.indptr.nbytes)
+    if isinstance(operator, DenseLinearOperator):
+        return int(operator.matrix.nbytes)
+    return _array_tree_storage_bytes(operator)
+
+
+def _hierarchy_limit_rejection(
+    policy: SmoothedAggregationPolicy,
+    operators: list[AbstractLinearOperator],
+    /,
+) -> str | None:
+    dimensions = tuple(operator.source.size for operator in operators)
+    grid_complexity = sum(dimensions) / dimensions[0]
+    if (
+        policy.maximum_grid_complexity is not None
+        and grid_complexity > policy.maximum_grid_complexity
+    ):
+        return (
+            f"Grid complexity {grid_complexity:.6g} exceeds limit "
+            f"{policy.maximum_grid_complexity:.6g}."
+        )
+    nonzeros = tuple(_operator_nnz(operator) for operator in operators)
+    if all(value is not None for value in nonzeros) and nonzeros[0]:
+        operator_complexity = sum(int(value) for value in nonzeros) / int(nonzeros[0])
+        if (
+            policy.maximum_operator_complexity is not None
+            and operator_complexity > policy.maximum_operator_complexity
+        ):
+            return (
+                f"Operator complexity {operator_complexity:.6g} exceeds limit "
+                f"{policy.maximum_operator_complexity:.6g}."
+            )
+    if policy.maximum_level_storage_bytes is not None:
+        for index, operator in enumerate(operators):
+            storage = _operator_storage_bytes(operator)
+            if storage > policy.maximum_level_storage_bytes:
+                return (
+                    f"Level {index} storage {storage} bytes exceeds limit "
+                    f"{policy.maximum_level_storage_bytes}."
+                )
+    return None
+
+
+def _compatible_relaxation_factor(
+    matrix: sp.csr_matrix,
+    tentative: sp.csr_matrix,
+    /,
+    *,
+    damping: float,
+) -> float:
+    dimension = matrix.shape[0]
+    indices = np.arange(dimension, dtype=float)
+    probe = np.sin((indices + 1.0) * np.sqrt(2.0)) + np.cos(
+        (indices + 1.0) * np.sqrt(3.0)
+    )
+    coefficients = tentative.conjugate().transpose() @ probe
+    error = probe - tentative @ coefficients
+    norm = float(np.linalg.norm(error))
+    if norm == 0.0:
+        return 0.0
+    diagonal = matrix.diagonal()
+    if np.any(~np.isfinite(diagonal)) or np.any(diagonal == 0):
+        return float("inf")
+    relaxed = error - damping * (matrix @ error) / diagonal
+    return float(np.linalg.norm(relaxed) / norm)
 
 
 def _operator_pattern_fingerprint(

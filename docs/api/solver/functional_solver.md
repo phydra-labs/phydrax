@@ -24,9 +24,11 @@ four-layer model and integration-source choices, see
     - `partition_functions()` exposes the trainable/non-trainable state split used
       by `solve(...)`.
     - `solve(...)` accepts standard and line-search Optax transformations, Phydrax
-      Riemannian optimizers, Evosax distribution-based algorithms, and the structured
-      `phydrax.optim.kfac(...)` optimizer. Population-based Evosax algorithms require
-      a separate finite search-space contract and are rejected.
+      native scalar, least-squares, composite least-squares, and Riemannian methods,
+      Evosax distribution-based algorithms, and `phydrax.optim.kfac(...)`. Native
+      residual methods receive the same partitioned Equinox parameter tree returned by
+      `partition_functions()`. Population-based Evosax algorithms require a separate
+      finite search-space contract and are rejected.
     - Optimizer choice changes the update backend, not objective semantics. All
       backends consume the same run controls and prepared objective lifecycle;
       `num_iter=0` is a no-op and negative values are rejected before dispatch.
@@ -49,6 +51,14 @@ four-layer model and integration-source choices, see
       the other adapters to residual blocks, then reuses it across the gradient,
       curvature update, and line search; see
       [Optimization](../optim.md#structured-residual-optimization-kfac).
+    - `GaussNewton` and `LevenbergMarquardt` require residual-only training objectives.
+      `GeneralizedGaussNewton` combines those residual roots with signed
+      `IntegralFunctional` terms and model-level scalar losses. It uses residual
+      Gauss--Newton curvature plus exact scalar Hessian actions while replaying one
+      frozen realization throughout the nonlinear solve.
+    - With `jit=True`, native scalar, residual, and composite methods compile their
+      per-update numerical kernel. The outer training controller remains responsible for
+      logging, cancellation, immutable realization preparation, and best-model selection.
     - `save_onnx("u", ...)` exports one named ansatz function for deployment.
     - Data terms report data-fit diagnostics alongside their scalar values.
     - Enforcement compilation uses `gate_method="auto"` for the global,

@@ -6,9 +6,13 @@ from __future__ import annotations
 
 import abc
 import math
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
+import jax.numpy as jnp
+from jax import core as jax_core
+from jax.typing import DTypeLike
+from jaxtyping import Array
 
 from .._strict import StrictModule
 from ._materialization import MaterializationPolicy
@@ -26,6 +30,14 @@ DifferentiationMode: TypeAlias = Literal[
     "rhs-only",
     "algorithmic",
     "none",
+]
+PrecisionDType: TypeAlias = Literal[
+    "float16",
+    "bfloat16",
+    "float32",
+    "float64",
+    "complex64",
+    "complex128",
 ]
 
 
@@ -96,31 +108,63 @@ class StructuredDirect(AbstractLinearMethod):
         return "structured-direct"
 
 
-class SparseDirect(AbstractLinearMethod):
-    """Native device sparse direct solve; currently CUDA CSR QR."""
+class SparseLU(AbstractLinearMethod):
+    """Sparse LU with an explicit immutable host provider selection."""
 
+    provider: Literal["auto", "scipy-superlu", "umfpack"] = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        provider: Literal["auto", "scipy-superlu", "umfpack"] = "auto",
+    ):
+        if provider not in ("auto", "scipy-superlu", "umfpack"):
+            raise ValueError(f"Unknown sparse LU provider {provider!r}.")
+        self.provider = provider
+
+    @property
+    def name(self) -> str:
+        return "sparse-lu"
+
+
+class SparseCholesky(AbstractLinearMethod):
+    """Sparse Cholesky with an explicit CHOLMOD provider."""
+
+    provider: Literal["cholmod"] = eqx.field(static=True)
+
+    def __init__(self, *, provider: Literal["cholmod"] = "cholmod"):
+        if provider != "cholmod":
+            raise ValueError(f"Unknown sparse Cholesky provider {provider!r}.")
+        self.provider = provider
+
+    @property
+    def name(self) -> str:
+        return "sparse-cholesky"
+
+
+class SparseQR(AbstractLinearMethod):
+    """Sparse QR with an explicit device JAX or host SPQR provider."""
+
+    provider: Literal["jax-cuda", "spqr"] = eqx.field(static=True)
     reorder: int = eqx.field(static=True)
 
-    def __init__(self, *, reorder: int = 1):
+    def __init__(
+        self,
+        *,
+        provider: Literal["jax-cuda", "spqr"] = "jax-cuda",
+        reorder: int = 1,
+    ):
+        if provider not in ("jax-cuda", "spqr"):
+            raise ValueError(f"Unknown sparse QR provider {provider!r}.")
         reorder_ = int(reorder)
         if reorder_ not in (0, 1, 2, 3):
-            raise ValueError("SparseDirect reorder must be one of 0, 1, 2, or 3.")
+            raise ValueError("SparseQR reorder must be one of 0, 1, 2, or 3.")
+        self.provider = provider
         self.reorder = reorder_
 
     @property
     def name(self) -> str:
-        return "sparse-direct"
-
-
-class HostSparseLU(AbstractLinearMethod):
-    """Explicit non-JIT SciPy SuperLU factorization on the host."""
-
-    def __init__(self):
-        pass
-
-    @property
-    def name(self) -> str:
-        return "host-sparse-lu"
+        return "sparse-qr"
 
 
 class ConjugateGradient(AbstractLinearMethod):
@@ -306,6 +350,145 @@ class TolerancePolicy(StrictModule):
         self.max_steps = steps
 
 
+class LinearSolveControl(StrictModule):
+    """Dynamic per-invocation controls for a prepared native Krylov solve."""
+
+    relative_tolerance: Array | None
+    absolute_tolerance: Array | None
+    maximum_steps: Array | None
+
+    def __init__(
+        self,
+        *,
+        relative_tolerance: Any | None = None,
+        absolute_tolerance: Any | None = None,
+        maximum_steps: Any | None = None,
+    ):
+        self.relative_tolerance = _runtime_tolerance(
+            relative_tolerance,
+            "relative_tolerance",
+        )
+        self.absolute_tolerance = _runtime_tolerance(
+            absolute_tolerance,
+            "absolute_tolerance",
+        )
+        self.maximum_steps = _runtime_maximum_steps(maximum_steps)
+
+
+def _runtime_tolerance(value: Any | None, name: str, /) -> Array | None:
+    if value is None:
+        return None
+    scalar = jnp.asarray(value)
+    if scalar.ndim != 0:
+        raise ValueError(f"{name} must be scalar or None.")
+    if not (
+        jnp.issubdtype(scalar.dtype, jnp.integer)
+        or jnp.issubdtype(scalar.dtype, jnp.floating)
+    ):
+        raise TypeError(f"{name} must have a real numeric dtype.")
+    scalar = scalar.astype(jnp.result_type(scalar, 0.0))
+    invalid = ~jnp.isfinite(scalar) | (scalar < 0.0)
+    if isinstance(invalid, jax_core.Tracer):
+        return eqx.error_if(
+            scalar,
+            invalid,
+            f"{name} must be finite and non-negative.",
+        )
+    if bool(invalid):
+        raise ValueError(f"{name} must be finite and non-negative.")
+    return scalar
+
+
+def _runtime_maximum_steps(value: Any | None, /) -> Array | None:
+    if value is None:
+        return None
+    scalar = jnp.asarray(value)
+    if scalar.ndim != 0:
+        raise ValueError("maximum_steps must be scalar or None.")
+    if not jnp.issubdtype(scalar.dtype, jnp.integer):
+        raise TypeError("maximum_steps must have an integer dtype.")
+    invalid = scalar < 1
+    if isinstance(invalid, jax_core.Tracer):
+        return eqx.error_if(scalar, invalid, "maximum_steps must be positive.")
+    if bool(invalid):
+        raise ValueError("maximum_steps must be positive.")
+    return scalar
+
+
+class MixedPrecisionPolicy(StrictModule):
+    """Explicit arithmetic precision for each linear-solve execution stage."""
+
+    operator_dtype: PrecisionDType | None = eqx.field(static=True)
+    factorization_dtype: PrecisionDType | None = eqx.field(static=True)
+    preconditioner_dtype: PrecisionDType | None = eqx.field(static=True)
+    krylov_dtype: PrecisionDType | None = eqx.field(static=True)
+    residual_dtype: PrecisionDType | None = eqx.field(static=True)
+    accumulation_dtype: PrecisionDType | None = eqx.field(static=True)
+    maximum_refinement_steps: int = eqx.field(static=True)
+    condition_limit: float | None = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        operator_dtype: DTypeLike | None = None,
+        factorization_dtype: DTypeLike | None = None,
+        preconditioner_dtype: DTypeLike | None = None,
+        krylov_dtype: DTypeLike | None = None,
+        residual_dtype: DTypeLike | None = None,
+        accumulation_dtype: DTypeLike | None = None,
+        maximum_refinement_steps: int = 0,
+        condition_limit: float | None = None,
+    ):
+        self.operator_dtype = _precision_dtype(operator_dtype, "operator_dtype")
+        self.factorization_dtype = _precision_dtype(
+            factorization_dtype,
+            "factorization_dtype",
+        )
+        self.preconditioner_dtype = _precision_dtype(
+            preconditioner_dtype,
+            "preconditioner_dtype",
+        )
+        self.krylov_dtype = _precision_dtype(krylov_dtype, "krylov_dtype")
+        self.residual_dtype = _precision_dtype(residual_dtype, "residual_dtype")
+        self.accumulation_dtype = _precision_dtype(
+            accumulation_dtype,
+            "accumulation_dtype",
+        )
+        steps = int(maximum_refinement_steps)
+        if steps < 0:
+            raise ValueError("maximum_refinement_steps must be non-negative.")
+        limit = None if condition_limit is None else float(condition_limit)
+        if limit is not None and (not math.isfinite(limit) or limit <= 1.0):
+            raise ValueError("condition_limit must be finite and greater than one.")
+        self.maximum_refinement_steps = steps
+        self.condition_limit = limit
+
+
+def _precision_dtype(
+    value: DTypeLike | None,
+    name: str,
+    /,
+) -> PrecisionDType | None:
+    if value is None:
+        return None
+    dtype = jnp.dtype(value)
+    precision = dtype.name
+    supported = (
+        "float16",
+        "bfloat16",
+        "float32",
+        "float64",
+        "complex64",
+        "complex128",
+    )
+    if precision not in supported:
+        raise ValueError(
+            f"{name} must name a supported real or complex floating dtype; "
+            f"got {precision!r}."
+        )
+    return precision
+
+
 class RankPolicy(StrictModule):
     relative_cutoff: float | None = eqx.field(static=True)
     require_full_rank: bool = eqx.field(static=True)
@@ -394,6 +577,7 @@ class LinearSolvePolicy(StrictModule):
     differentiation: DifferentiationPolicy
     failure: FailurePolicy
     resources: SolveResourcePolicy
+    precision: MixedPrecisionPolicy | None
     require_device_binding: bool = eqx.field(static=True)
 
     def __init__(
@@ -409,6 +593,7 @@ class LinearSolvePolicy(StrictModule):
         differentiation: DifferentiationPolicy | None = None,
         failure: FailurePolicy | None = None,
         resources: SolveResourcePolicy | None = None,
+        precision: MixedPrecisionPolicy | None = None,
         require_device_binding: bool = False,
     ):
         method_ = AutoLinearMethod() if method is None else method
@@ -428,6 +613,8 @@ class LinearSolvePolicy(StrictModule):
         )
         failure_ = FailurePolicy() if failure is None else failure
         resources_ = SolveResourcePolicy() if resources is None else resources
+        if precision is not None and not isinstance(precision, MixedPrecisionPolicy):
+            raise TypeError("precision must be a MixedPrecisionPolicy or None.")
         if not isinstance(method_, AbstractLinearMethod):
             raise TypeError("method must be an AbstractLinearMethod.")
         if not isinstance(tolerance_, TolerancePolicy):
@@ -450,6 +637,7 @@ class LinearSolvePolicy(StrictModule):
         self.recycling = recycling
         self.differentiation = differentiation_
         self.failure = failure_
+        self.precision = precision
         self.resources = resources_
         self.require_device_binding = bool(require_device_binding)
 
@@ -472,15 +660,19 @@ __all__ = [
     "FGMRES",
     "GeneralizedLSMR",
     "GMRES",
-    "HostSparseLU",
+    "SparseCholesky",
+    "LinearSolveControl",
     "LinearSolvePolicy",
     "LSMR",
     "MINRES",
     "PCG",
+    "MixedPrecisionPolicy",
+    "PrecisionDType",
     "ProjectedPCG",
     "RankPolicy",
     "SolveResourcePolicy",
-    "SparseDirect",
+    "SparseLU",
+    "SparseQR",
     "StructuredDirect",
     "TolerancePolicy",
     "RecyclingExtraction",

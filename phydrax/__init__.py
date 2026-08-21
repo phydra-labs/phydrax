@@ -9,8 +9,10 @@ import jax
 jax.config.update("jax_enable_x64", True)
 
 from . import (
+    backends,
     conditions,
     control,
+    continuation,
     coresets,
     data_utils,
     domain,
@@ -26,6 +28,7 @@ from . import (
     metrix,
     ml,
     nn,
+    nonlinear,
     operators,
     optim,
     sampling,
@@ -41,8 +44,10 @@ from . import (
 
 # Explicit re-exports for star import
 __all__ = [
+    "backends",
     "conditions",
     "control",
+    "continuation",
     "coresets",
     "terms",
     "data_utils",
@@ -60,6 +65,7 @@ __all__ = [
     "metrix",
     "ml",
     "nn",
+    "nonlinear",
     "operators",
     "optim",
     "sampling",

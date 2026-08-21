@@ -11,6 +11,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
+from jax import core as jax_core
 from jaxtyping import Array
 
 from ..._strict import StrictModule
@@ -20,6 +21,7 @@ from .._pairings import DiagonalPairing, EuclideanPairing
 from .._plans import LinearSolvePlan
 from .._policies import DenseCholesky, DenseLU, DenseQR, DenseSVD
 from .._problems import LeastSquaresProblem, MinimumNormProblem
+from .._properties import LinearCapabilityError
 from .._results import LinearSolveStatus
 from .._space_extensions import CoordaxSpace, TensorProductSpace
 from .._spaces import ArraySpace, BlockSpace, DualSpace, PyTreeSpace
@@ -29,6 +31,7 @@ class DenseBackendOutput(StrictModule):
     value: Array
     status: Array
     iterations: Array
+    refinement_steps: Array
     rank: Array
     condition_estimate: Array
     singular_values: Array | None
@@ -39,6 +42,19 @@ class DenseLUState(StrictModule):
     factor: Array
     pivots: Array
     singular: Array
+    batch_shape: tuple[int, ...] = eqx.field(static=True)
+
+
+class DenseMixedPrecisionLUState(StrictModule):
+    """High-precision operator storage with reusable low-precision LU factors."""
+
+    matrix: Array
+    factor: Array
+    pivots: Array
+    singular: Array
+    condition_estimate: Array
+    condition_limit: float = eqx.field(static=True)
+    maximum_refinement_steps: int = eqx.field(static=True)
     batch_shape: tuple[int, ...] = eqx.field(static=True)
 
 
@@ -104,7 +120,19 @@ def prepare_dense(problem, plan: LinearSolvePlan, /) -> Any:
     else:
         method_name = method.name
     if method_name == DenseLU().name:
-        return _prepare_lu(matrix, problem.operator.batch_shape)
+        precision = plan.policy.precision
+        factorization_dtype = (
+            matrix.dtype
+            if precision is None or precision.factorization_dtype is None
+            else jnp.dtype(precision.factorization_dtype)
+        )
+        if factorization_dtype == matrix.dtype:
+            return _prepare_lu(matrix, problem.operator.batch_shape)
+        return _prepare_mixed_precision_lu(
+            matrix,
+            problem.operator.batch_shape,
+            plan,
+        )
     if method_name == DenseCholesky().name:
         return _prepare_cholesky(
             matrix,
@@ -139,6 +167,8 @@ def prepare_dense(problem, plan: LinearSolvePlan, /) -> Any:
 
 
 def solve_dense(state: Any, rhs: Array, plan: LinearSolvePlan, /) -> DenseBackendOutput:
+    if isinstance(state, DenseMixedPrecisionLUState):
+        return _solve_mixed_precision_lu(state, rhs, plan)
     if isinstance(state, DenseLUState):
         return _solve_lu(state, rhs)
     if isinstance(state, DenseCholeskyState):
@@ -159,7 +189,13 @@ def solve_dense_transformed(
     adjoint: bool,
 ) -> DenseBackendOutput:
     """Reuse square direct factors for algebraic-transpose or Hilbert-adjoint solves."""
-    del plan
+    if isinstance(state, DenseMixedPrecisionLUState):
+        return _solve_mixed_precision_lu(
+            state,
+            rhs,
+            plan,
+            trans=2 if adjoint else 1,
+        )
     if isinstance(state, DenseLUState):
         factor = _flat_batch(state.factor, state.batch_shape)
         pivots = _flat_batch(state.pivots, state.batch_shape)
@@ -178,6 +214,7 @@ def solve_dense_transformed(
             value=value,
             status=status,
             iterations=jnp.zeros_like(status, dtype=jnp.int32),
+            refinement_steps=jnp.zeros_like(status, dtype=jnp.int32),
             rank=jnp.where(
                 state.singular,
                 jnp.asarray(-1, dtype=jnp.int32),
@@ -206,6 +243,7 @@ def solve_dense_transformed(
             value=value,
             status=status,
             iterations=jnp.zeros_like(status, dtype=jnp.int32),
+            refinement_steps=jnp.zeros_like(status, dtype=jnp.int32),
             rank=jnp.where(
                 state.invalid,
                 jnp.asarray(-1, dtype=jnp.int32),
@@ -232,6 +270,60 @@ def _prepare_lu(matrix: Array, batch_shape: tuple[int, ...], /) -> DenseLUState:
         factor=factor.reshape(batch_shape + (size, size)),
         pivots=pivots.reshape(batch_shape + (size,)),
         singular=singular.reshape(batch_shape),
+        batch_shape=batch_shape,
+    )
+
+
+def _prepare_mixed_precision_lu(
+    matrix: Array,
+    batch_shape: tuple[int, ...],
+    plan: LinearSolvePlan,
+    /,
+) -> DenseMixedPrecisionLUState:
+    precision = plan.policy.precision
+    if precision is None or precision.factorization_dtype is None:
+        raise ValueError("Mixed-precision LU requires a factorization dtype.")
+    factorization_dtype = jnp.dtype(precision.factorization_dtype)
+    condition = jnp.linalg.cond(matrix)
+    factorization_real_dtype = (
+        jnp.float32
+        if factorization_dtype in (jnp.dtype(jnp.float32), jnp.dtype(jnp.complex64))
+        else jnp.float64
+    )
+    automatic_limit = 0.1 / float(jnp.finfo(factorization_real_dtype).eps)
+    condition_limit = (
+        automatic_limit
+        if precision.condition_limit is None
+        else min(automatic_limit, precision.condition_limit)
+    )
+    unsafe = jnp.any(~jnp.isfinite(condition) | (condition > condition_limit))
+    rejection = (
+        "Mixed-precision LU capability rejected before low-precision "
+        f"factorization: condition estimate exceeds safe limit {condition_limit:.6g}."
+    )
+    if isinstance(unsafe, jax_core.Tracer):
+        matrix = eqx.error_if(matrix, unsafe, rejection)
+    elif bool(unsafe):
+        raise LinearCapabilityError(rejection)
+
+    low_matrix = matrix.astype(factorization_dtype)
+    size = int(low_matrix.shape[-1])
+    count = prod(batch_shape) if batch_shape else 1
+    flattened = low_matrix.reshape((count, size, size))
+    factor, pivots = jax.vmap(jsp.linalg.lu_factor)(flattened)
+    diagonal = jnp.diagonal(factor, axis1=-2, axis2=-1)
+    scale = jnp.maximum(jnp.max(jnp.abs(flattened), axis=(-2, -1)), 1.0)
+    threshold = jnp.finfo(low_matrix.real.dtype).eps * float(size) * scale
+    singular = jnp.any(jnp.abs(diagonal) <= threshold[:, None], axis=-1)
+    singular = singular | jnp.any(~jnp.isfinite(flattened), axis=(-2, -1))
+    return DenseMixedPrecisionLUState(
+        matrix=matrix,
+        factor=factor.reshape(batch_shape + (size, size)),
+        pivots=pivots.reshape(batch_shape + (size,)),
+        singular=singular.reshape(batch_shape),
+        condition_estimate=condition,
+        condition_limit=condition_limit,
+        maximum_refinement_steps=precision.maximum_refinement_steps,
         batch_shape=batch_shape,
     )
 
@@ -464,12 +556,111 @@ def _solve_lu(state: DenseLUState, rhs: Array, /) -> DenseBackendOutput:
         value=value,
         status=status,
         iterations=jnp.zeros_like(status, dtype=jnp.int32),
+        refinement_steps=jnp.zeros_like(status, dtype=jnp.int32),
         rank=jnp.where(
             state.singular,
             jnp.asarray(-1, dtype=jnp.int32),
             jnp.asarray(state.matrix.shape[-1], dtype=jnp.int32),
         ),
         condition_estimate=jnp.full(state.batch_shape, jnp.nan),
+        singular_values=None,
+    )
+
+
+def _solve_mixed_precision_lu(
+    state: DenseMixedPrecisionLUState,
+    rhs: Array,
+    plan: LinearSolvePlan,
+    /,
+    *,
+    trans: int = 0,
+) -> DenseBackendOutput:
+    factor = _flat_batch(state.factor, state.batch_shape)
+    pivots = _flat_batch(state.pivots, state.batch_shape)
+
+    def solve_low(value):
+        flattened = _flat_batch(value.astype(state.factor.dtype), state.batch_shape)
+        solved = jax.vmap(
+            lambda lu, pivot, b: jsp.linalg.lu_solve(
+                (lu, pivot),
+                b,
+                trans=trans,
+            )
+        )(factor, pivots, flattened)
+        return solved.reshape(value.shape).astype(rhs.dtype)
+
+    matrix = (
+        jnp.conj(jnp.swapaxes(state.matrix, -1, -2))
+        if trans == 2
+        else jnp.swapaxes(state.matrix, -1, -2)
+        if trans == 1
+        else state.matrix
+    )
+    value = solve_low(rhs)
+    residual = rhs - jnp.matmul(matrix, value)
+    residual_norm = jnp.linalg.norm(residual, axis=-2)
+    rhs_norm = jnp.linalg.norm(rhs, axis=-2)
+    relative = max(
+        plan.policy.tolerance.relative,
+        10.0 * float(jnp.finfo(rhs.real.dtype).eps) * float(matrix.shape[-1]),
+    )
+    threshold = plan.policy.tolerance.absolute + relative * rhs_norm
+    active = (
+        (residual_norm > threshold)
+        & jnp.isfinite(residual_norm)
+        & ~state.singular[..., None]
+    )
+    refinement_steps = jnp.zeros_like(residual_norm, dtype=jnp.int32)
+
+    def refine(_, carry):
+        current, current_residual, current_norm, refining, counts = carry
+        correction_rhs = jnp.where(
+            refining[..., None, :],
+            current_residual,
+            0,
+        )
+        candidate = current + solve_low(correction_rhs)
+        candidate_residual = rhs - jnp.matmul(matrix, candidate)
+        candidate_norm = jnp.linalg.norm(candidate_residual, axis=-2)
+        accepted = (
+            refining & jnp.isfinite(candidate_norm) & (candidate_norm < current_norm)
+        )
+        accepted_columns = accepted[..., None, :]
+        next_value = jnp.where(accepted_columns, candidate, current)
+        next_residual = jnp.where(
+            accepted_columns,
+            candidate_residual,
+            current_residual,
+        )
+        next_norm = jnp.where(accepted, candidate_norm, current_norm)
+        next_counts = counts + refining.astype(jnp.int32)
+        next_refining = accepted & (next_norm > threshold)
+        return (
+            next_value,
+            next_residual,
+            next_norm,
+            next_refining,
+            next_counts,
+        )
+
+    value, _, _, _, refinement_steps = jax.lax.fori_loop(
+        0,
+        state.maximum_refinement_steps,
+        refine,
+        (value, residual, residual_norm, active, refinement_steps),
+    )
+    status = _direct_status(matrix, rhs, value, state.singular)
+    return DenseBackendOutput(
+        value=value,
+        status=status,
+        iterations=jnp.zeros_like(status, dtype=jnp.int32),
+        refinement_steps=refinement_steps,
+        rank=jnp.where(
+            state.singular,
+            jnp.asarray(-1, dtype=jnp.int32),
+            jnp.asarray(state.matrix.shape[-1], dtype=jnp.int32),
+        ),
+        condition_estimate=state.condition_estimate,
         singular_values=None,
     )
 
@@ -494,6 +685,7 @@ def _solve_cholesky(state: DenseCholeskyState, rhs: Array, /) -> DenseBackendOut
         value=value,
         status=status,
         iterations=jnp.zeros_like(status, dtype=jnp.int32),
+        refinement_steps=jnp.zeros_like(status, dtype=jnp.int32),
         rank=jnp.where(
             state.invalid,
             jnp.asarray(-1, dtype=jnp.int32),
@@ -546,6 +738,7 @@ def _solve_qr(
         value=value,
         status=status,
         iterations=jnp.zeros_like(status, dtype=jnp.int32),
+        refinement_steps=jnp.zeros_like(status, dtype=jnp.int32),
         rank=state.rank,
         condition_estimate=state.condition_estimate,
         singular_values=None,
@@ -585,6 +778,7 @@ def _solve_svd(
         value=value,
         status=status,
         iterations=jnp.zeros_like(status, dtype=jnp.int32),
+        refinement_steps=jnp.zeros_like(status, dtype=jnp.int32),
         rank=state.rank,
         condition_estimate=state.condition_estimate,
         singular_values=state.reported_singular_values,
@@ -645,6 +839,7 @@ def _rectangular_status(
 
 __all__ = [
     "DenseBackendOutput",
+    "DenseMixedPrecisionLUState",
     "prepare_dense",
     "solve_dense",
     "solve_dense_transformed",

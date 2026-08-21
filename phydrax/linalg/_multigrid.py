@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -78,6 +78,24 @@ def _source_properties(
     return source.properties_for(operator)
 
 
+MultigridCycleKind: TypeAlias = Literal["v", "w", "f", "full"]
+
+
+class MultigridCyclePolicy(StrictModule):
+    """Static recursive-cycle semantics for one prepared hierarchy action."""
+
+    kind: MultigridCycleKind = eqx.field(static=True)
+    cycle_id: str = eqx.field(static=True)
+
+    def __init__(self, kind: MultigridCycleKind = "v", /):
+        if kind not in ("v", "w", "f", "full"):
+            raise ValueError(f"Unknown multigrid cycle kind {kind!r}.")
+        self.kind = kind
+        self.cycle_id = canonical_fingerprint(
+            {"kind": "multigrid-cycle-policy", "cycle": kind}
+        )
+
+
 class MultigridLevel(StrictModule):
     """Prepared operator, transfer pair, smoother, and schedule for one level."""
 
@@ -144,6 +162,9 @@ class MultigridSetupDiagnostics(StrictModule):
     reuse_decisions: tuple[str, ...] = eqx.field(static=True)
     operator_pattern_fingerprints: tuple[str, ...] = eqx.field(static=True)
     aggregate_assignments: tuple[tuple[int, ...], ...] = eqx.field(static=True)
+    level_storage_bytes: tuple[int, ...] = eqx.field(static=True)
+    compatible_relaxation_factors: tuple[float, ...] = eqx.field(static=True)
+    aggregate_candidate_ranks: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     reuse_dependency_fingerprint: str | None = eqx.field(static=True)
 
     def __init__(
@@ -161,6 +182,9 @@ class MultigridSetupDiagnostics(StrictModule):
         operator_pattern_fingerprints: tuple[str, ...] = (),
         aggregate_assignments: tuple[tuple[int, ...], ...] = (),
         reuse_dependency_fingerprint: str | None = None,
+        level_storage_bytes: tuple[int, ...] = (),
+        compatible_relaxation_factors: tuple[float, ...] = (),
+        aggregate_candidate_ranks: tuple[tuple[int, ...], ...] = (),
     ):
         dimensions = tuple(int(value) for value in level_dimensions)
         nonzeros = tuple(None if value is None else int(value) for value in level_nnz)
@@ -221,6 +245,33 @@ class MultigridSetupDiagnostics(StrictModule):
         if dependency_fingerprint == "":
             raise ValueError("reuse_dependency_fingerprint must be non-empty.")
         self.level_dimensions = dimensions
+        level_bytes = tuple(int(value) for value in level_storage_bytes)
+        if level_bytes and (
+            len(level_bytes) != len(dimensions) or any(value < 0 for value in level_bytes)
+        ):
+            raise ValueError(
+                "level_storage_bytes must align with nonnegative hierarchy levels."
+            )
+        relaxation_factors = tuple(
+            float(value) for value in compatible_relaxation_factors
+        )
+        if relaxation_factors and (
+            len(relaxation_factors) != len(transfers)
+            or any(not isfinite(value) or value < 0.0 for value in relaxation_factors)
+        ):
+            raise ValueError(
+                "compatible_relaxation_factors must align with hierarchy transitions."
+            )
+        candidate_ranks = tuple(
+            tuple(int(rank) for rank in ranks) for ranks in aggregate_candidate_ranks
+        )
+        if candidate_ranks and (
+            len(candidate_ranks) != len(transfers)
+            or any(rank <= 0 for ranks in candidate_ranks for rank in ranks)
+        ):
+            raise ValueError(
+                "aggregate_candidate_ranks must contain positive ranks per transition."
+            )
         self.level_nnz = nonzeros
         self.grid_complexity = grid
         self.operator_complexity = operator
@@ -232,6 +283,9 @@ class MultigridSetupDiagnostics(StrictModule):
         self.operator_pattern_fingerprints = fingerprints
         self.aggregate_assignments = assignments
         self.reuse_dependency_fingerprint = dependency_fingerprint
+        self.level_storage_bytes = level_bytes
+        self.compatible_relaxation_factors = relaxation_factors
+        self.aggregate_candidate_ranks = candidate_ranks
 
 
 def _default_setup_diagnostics(
@@ -281,6 +335,9 @@ def _default_setup_diagnostics(
         coarse_construction_modes=("supplied",) * (len(levels) - 1),
         reuse_decisions=("prepared-explicit",),
         reuse_dependency_fingerprint=reuse_dependency_fingerprint,
+        level_storage_bytes=tuple(
+            _array_tree_storage_bytes(level.operator) for level in levels
+        ),
     )
 
 
@@ -414,17 +471,34 @@ class MultigridHierarchy(StrictModule):
 
 
 class MultigridPreconditioner(AbstractPreconditioner):
-    """One V-cycle over an immutable prepared multigrid hierarchy."""
+    """One policy-selected cycle over an immutable prepared hierarchy."""
 
     hierarchy: MultigridHierarchy
+    cycle_policy: MultigridCyclePolicy
 
-    def __init__(self, hierarchy: MultigridHierarchy, /):
+    def __init__(
+        self,
+        hierarchy: MultigridHierarchy,
+        /,
+        *,
+        cycle_policy: MultigridCyclePolicy | None = None,
+    ):
         if not isinstance(hierarchy, MultigridHierarchy):
             raise TypeError("hierarchy must be a MultigridHierarchy.")
+        policy = MultigridCyclePolicy() if cycle_policy is None else cycle_policy
+        if not isinstance(policy, MultigridCyclePolicy):
+            raise TypeError("cycle_policy must be a MultigridCyclePolicy.")
         self.hierarchy = hierarchy
+        self.cycle_policy = policy
         self.space = hierarchy.levels[0].operator.source
         self.properties = hierarchy.properties
-        self.preconditioner_id = hierarchy.hierarchy_id
+        self.preconditioner_id = canonical_fingerprint(
+            {
+                "kind": "multigrid-preconditioner",
+                "hierarchy": hierarchy.hierarchy_id,
+                "cycle": policy.cycle_id,
+            }
+        )
 
     def apply(
         self,
@@ -433,10 +507,14 @@ class MultigridPreconditioner(AbstractPreconditioner):
         *,
         iteration: ArrayLike | None = None,
     ) -> PyTree[Array]:
+        residual_ = self.space.validate(residual)
+        if self.cycle_policy.kind == "full":
+            return self._full_cycle(0, residual_, iteration=iteration)
         return self._cycle(
             0,
-            self.space.validate(residual),
+            residual_,
             iteration=iteration,
+            cycle_kind=self.cycle_policy.kind,
         )
 
     def cost_for(
@@ -475,6 +553,7 @@ class MultigridPreconditioner(AbstractPreconditioner):
         /,
         *,
         iteration: ArrayLike | None,
+        cycle_kind: Literal["v", "w", "f"],
     ) -> PyTree[Array]:
         level = self.hierarchy.levels[level_index]
         if level_index == len(self.hierarchy.levels) - 1:
@@ -490,11 +569,22 @@ class MultigridPreconditioner(AbstractPreconditioner):
         if level.restriction is None or level.prolongation is None:
             raise RuntimeError("Prepared non-coarse level is missing transfers.")
         coarse_residual = level.restriction.mv(defect)
-        coarse_correction = self._cycle(
-            level_index + 1,
-            coarse_residual,
-            iteration=iteration,
-        )
+        coarse_level = self.hierarchy.levels[level_index + 1]
+        coarse_correction = jax.tree.map(jnp.zeros_like, coarse_residual)
+        visits = 1 if cycle_kind == "v" else 2
+        for visit in range(visits):
+            coarse_defect = _subtract(
+                coarse_residual,
+                coarse_level.operator.mv(coarse_correction),
+            )
+            nested_kind = "v" if cycle_kind == "f" and visit == 1 else cycle_kind
+            nested = self._cycle(
+                level_index + 1,
+                coarse_defect,
+                iteration=iteration,
+                cycle_kind=nested_kind,
+            )
+            coarse_correction = _add(coarse_correction, nested)
         estimate = _add(estimate, level.prolongation.mv(coarse_correction))
         for _ in range(level.post_smoothing):
             defect = _subtract(residual, level.operator.mv(estimate))
@@ -503,6 +593,35 @@ class MultigridPreconditioner(AbstractPreconditioner):
                 level.smoother.apply(defect, iteration=iteration),
             )
         return estimate
+
+    def _full_cycle(
+        self,
+        level_index: int,
+        residual: PyTree[Array],
+        /,
+        *,
+        iteration: ArrayLike | None,
+    ) -> PyTree[Array]:
+        level = self.hierarchy.levels[level_index]
+        if level_index == len(self.hierarchy.levels) - 1:
+            return level.smoother.apply(residual, iteration=iteration)
+        if level.restriction is None or level.prolongation is None:
+            raise RuntimeError("Prepared non-coarse level is missing transfers.")
+        coarse_residual = level.restriction.mv(residual)
+        coarse_estimate = self._full_cycle(
+            level_index + 1,
+            coarse_residual,
+            iteration=iteration,
+        )
+        estimate = level.prolongation.mv(coarse_estimate)
+        defect = _subtract(residual, level.operator.mv(estimate))
+        correction = self._cycle(
+            level_index,
+            defect,
+            iteration=iteration,
+            cycle_kind="v",
+        )
+        return _add(estimate, correction)
 
 
 class MultigridLevelBuilder(StrictModule):
@@ -562,10 +681,11 @@ class MultigridLevelBuilder(StrictModule):
 
 
 class MultigridHierarchyBuilder(AbstractPreconditionerBuilder):
-    """Prepare a V-cycle from explicit immutable level specifications."""
+    """Prepare a policy-selected cycle from explicit immutable levels."""
 
     levels: tuple[MultigridLevelBuilder, ...]
     properties: PreconditionerProperties
+    cycle_policy: MultigridCyclePolicy
     _builder_id: str = eqx.field(static=True)
 
     def __init__(
@@ -574,6 +694,7 @@ class MultigridHierarchyBuilder(AbstractPreconditionerBuilder):
         /,
         *,
         properties: PreconditionerProperties | None = None,
+        cycle_policy: MultigridCyclePolicy | None = None,
     ):
         levels_ = tuple(levels)
         if len(levels_) < 2:
@@ -586,6 +707,9 @@ class MultigridHierarchyBuilder(AbstractPreconditionerBuilder):
             ),
             properties,
         )
+        cycle_policy_ = MultigridCyclePolicy() if cycle_policy is None else cycle_policy
+        if not isinstance(cycle_policy_, MultigridCyclePolicy):
+            raise TypeError("cycle_policy must be a MultigridCyclePolicy.")
         for index, level in enumerate(levels_[:-1]):
             if level.restriction is None or level.prolongation is None:
                 raise ValueError("Every non-coarse builder level requires transfers.")
@@ -602,6 +726,7 @@ class MultigridHierarchyBuilder(AbstractPreconditionerBuilder):
             raise ValueError("The coarsest builder level cannot carry transfers.")
         self.levels = levels_
         self.properties = properties_
+        self.cycle_policy = cycle_policy_
         self._builder_id = canonical_fingerprint(
             {
                 "kind": "multigrid-hierarchy-builder",
@@ -629,6 +754,7 @@ class MultigridHierarchyBuilder(AbstractPreconditionerBuilder):
                     for level in levels_
                 ],
                 "properties": _preconditioner_properties_payload(properties_),
+                "cycle": cycle_policy_.cycle_id,
             }
         )
 
@@ -777,7 +903,8 @@ class MultigridHierarchyBuilder(AbstractPreconditionerBuilder):
         materialization: MaterializationPolicy,
     ) -> AbstractPreconditioner:
         return MultigridPreconditioner(
-            self.prepare_hierarchy(setup_operator, materialization=materialization)
+            self.prepare_hierarchy(setup_operator, materialization=materialization),
+            cycle_policy=self.cycle_policy,
         )
 
     def refresh(
@@ -879,6 +1006,8 @@ def _subtract(left: PyTree[Array], right: PyTree[Array], /) -> PyTree[Array]:
 
 
 __all__ = [
+    "MultigridCycleKind",
+    "MultigridCyclePolicy",
     "MultigridHierarchy",
     "MultigridSetupDiagnostics",
     "MultigridHierarchyBuilder",

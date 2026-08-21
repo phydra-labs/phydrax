@@ -56,10 +56,9 @@ def projector_tangent(
     )
     selected = jnp.asarray(selected_mask, dtype=eigenvectors.dtype)
     membership_difference = selected[:, None] - selected[None, :]
-    eigenvalue_difference = (
-        eigenvalues[..., :, None].astype(eigenvectors.dtype)
-        - eigenvalues[..., None, :].astype(eigenvectors.dtype)
-    )
+    eigenvalue_difference = eigenvalues[..., :, None].astype(
+        eigenvectors.dtype
+    ) - eigenvalues[..., None, :].astype(eigenvectors.dtype)
     cross_block = membership_difference != 0
     safe_difference = jnp.where(cross_block, eigenvalue_difference, 1)
     derivative_in_basis = jnp.where(
@@ -132,13 +131,10 @@ def perturbation_in_eigenbasis(
     space = problem.operator.source
     pairing = _coordinate_pairing_matrix(space)
     residual_tangent = (
-        operator_tangent
-        - metric_images_tangent * eigenvalues[..., None, :]
+        operator_tangent - metric_images_tangent * eigenvalues[..., None, :]
     )
     perturbation = (
-        jnp.conj(jnp.swapaxes(eigenvectors, -1, -2))
-        @ pairing
-        @ residual_tangent
+        jnp.conj(jnp.swapaxes(eigenvectors, -1, -2)) @ pairing @ residual_tangent
     )
     return perturbation, paired_metric_tangent
 
@@ -157,18 +153,16 @@ def projector_derivative_residuals(
     """Return cross-block, commutator, and projector-tangent residuals."""
     selected = jnp.asarray(selected_mask, dtype=eigenvectors.dtype)
     membership_difference = selected[:, None] - selected[None, :]
-    eigenvalue_difference = (
-        eigenvalues[..., :, None].astype(eigenvectors.dtype)
-        - eigenvalues[..., None, :].astype(eigenvectors.dtype)
-    )
+    eigenvalue_difference = eigenvalues[..., :, None].astype(
+        eigenvectors.dtype
+    ) - eigenvalues[..., None, :].astype(eigenvectors.dtype)
     cross_residual = jnp.linalg.norm(
         eigenvalue_difference * derivative_in_basis
         - membership_difference * perturbation_in_basis,
         axis=(-2, -1),
     )
     spectral_operator = (
-        eigenvectors
-        * eigenvalues.astype(eigenvectors.dtype)[..., None, :]
+        eigenvectors * eigenvalues.astype(eigenvectors.dtype)[..., None, :]
     ) @ inverse_basis
     perturbation = eigenvectors @ perturbation_in_basis @ inverse_basis
     commutator_residual = jnp.linalg.norm(
@@ -291,20 +285,14 @@ def _operator_coordinate_columns(operator: Any, block: Array, /) -> Array:
     space = operator.source
     if operator.batch_shape:
         width = block.shape[-1]
-        structured = block.reshape(
-            operator.batch_shape + space.shape + (width,)
-        )
+        structured = block.reshape(operator.batch_shape + space.shape + (width,))
         images = operator.mv(structured)
-        return jnp.asarray(images).reshape(
-            operator.batch_shape + (space.size, width)
-        )
+        return jnp.asarray(images).reshape(operator.batch_shape + (space.size, width))
 
     def apply(column):
         return space.flatten(operator.mv(space.unflatten(column)))
 
     return jax.vmap(apply, in_axes=1, out_axes=1)(block)
-
-
 
 
 __all__ = [

@@ -452,7 +452,7 @@ operator_sgld = phx.uq.sample_sgld(
     operator_problem,
     operator_source,
     key=jr.key(42),
-    step_size=1e-5,
+    step_size=1e-7,
     num_chains=4,
     num_burnin=1000,
     num_samples=2000,

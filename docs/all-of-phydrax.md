@@ -62,8 +62,11 @@ Finite-dimensional algebra above those storage kernels is shared through
 `phydrax.linalg`: paired array/PyTree/block spaces, composable explicit and
 matrix-free operators, exact/least-squares/minimum-norm problem contracts,
 deterministic capability-based planning, reusable factorizations, and portable
-status, diagnostics, and provenance. Provider-neutral sparse derivative plans
-compile known structural patterns natively or use ASDEX once for global pattern
+status, diagnostics, and provenance. Standard and generalized nonsymmetric
+eigenproblems use the same spaces, operators, prepared transforms, cost models,
+and failure semantics; dense QZ and native restarted-Arnoldi/Krylov--Schur paths
+are explicit backend choices. Provider-neutral sparse derivative plans compile
+known structural patterns natively or use ASDEX once for global pattern
 detection and optimized coloring. Repeated Jacobian and Hessian evaluation is
 native JAX and produces ordinary sparse coordinate operators. See
 [API → Linear algebra runtime](api/linalg.md) and
@@ -228,13 +231,12 @@ coordinates. Ambient map conversion rejects non-Euclidean states unless a
 geometry-aware identification method is declared.
 
 Nonlinear analysis includes section crossings and return maps, multiple-shooting
-periodic orbits, dense or matrix-free monodromy/Floquet analysis, natural and
-pseudo-arclength continuation with flow/map/Floquet bifurcation indicators,
-resumable finite-time Lyapunov spectra, covariant or adjoint directions,
-finite-size growth, RQA, the modified 0--1 test, correlation dimension,
-surrogate significance, explicit uncertainty-source aggregation, and a
-matrix-free shadowing-candidate boundary. Bifurcation flags and statistical
-diagnostics are finite-resolution evidence, not automatic certificates.
+periodic orbits, dense or matrix-free monodromy/Floquet analysis, resumable
+finite-time Lyapunov spectra, covariant or adjoint directions, finite-size growth,
+RQA, the modified 0--1 test, correlation dimension, surrogate significance,
+explicit uncertainty-source aggregation, and a matrix-free shadowing-candidate
+boundary. Bifurcation flags and statistical diagnostics are finite-resolution
+evidence, not automatic certificates.
 
 See [Nonlinear-dynamics cookbook](cookbook/nonlinear_dynamics.md) and
 [API → Dynamical systems, identification, and chaos](api/dynamics.md).
@@ -267,6 +269,33 @@ dense active-set differentiation preserve primal/dual residuals, status,
 regularization, and backend provenance. QPax 0.1.4 is a core runtime dependency
 integrated only through its implicit backend; its availability does not introduce
 an automatic fallback or make all QP solution maps differentiable.
+
+General nonlinear optimization lives in `phydrax.optim`. Scalar, residual,
+residual-plus-signed-scalar, proximal-composite, constrained, state/design, and
+stochastic problems share typed termination, status, diagnostics, provenance, and
+PyTree contracts. Native methods cover matrix-free Newton--Krylov, Newton trust
+regions, nonlinear conjugate gradients with strong-Wolfe search, Gauss--Newton,
+Levenberg--Marquardt, deterministic finite-difference least squares, proximal
+gradient/Newton methods, projected box methods, augmented Lagrangian, filter/SOC
+SQP, and primal--dual predictor--corrector KKT solves. Curvature methods prepare
+reusable symbolic linear-solve templates and report numeric refreshes separately
+from setup. Smooth stationarity, least-squares normal-equation, and strictly
+complementary active-set KKT solution maps are differentiated implicitly;
+unsuccessful, singular, or ambiguous solves fail instead of returning fabricated
+sensitivities.
+
+Nonlinear algebraic systems live in `phydrax.nonlinear`, not in optimization.
+Newton--Krylov and trust-region roots, nonlinear GMRES, semismooth complementarity
+solves, fixed-point acceleration, nonlinear preconditioners, full-approximation
+multigrid, and implicit root maps share explicit status and work diagnostics.
+Domain-invalid evaluations remain distinct from nonfinite trials.
+
+Generic parameterized residual curves and local bifurcation workflows live in
+`phydrax.continuation`. Natural and pseudo-arclength continuation reuse prepared
+bordered linear solves, adaptive rejection policies, event localization, and
+dense or Krylov stability analyzers. Fold, Hopf, and pitchfork extended systems
+separate numerical convergence from nullspace, transversality, spectral, and
+symmetry certificates; branch switching requires an explicit validated seed.
 
 Lyapunov spectra for flows and maps, control-theoretic Gramian actions, implicit
 Lyapunov/Riccati sensitivities, state-space score/Fisher actions, empirical
@@ -702,6 +731,9 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 ## Where to go next
 
 - [Cookbook](cookbook/index.md)
+- [Advanced solver workflows](cookbook/advanced_solvers.md)
+- [External solver backends](api/backends.md)
+- [Continuation and bifurcation](api/continuation.md)
 - [Domains and sampling](guides_domain.md)
 - [Differential operators](guides_differential.md)
 - [Linear algebra runtime](api/linalg.md)
@@ -726,7 +758,10 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - `phydrax.sampling` for typed reference designs and capability inspection.
 - `phydrax.sparse` for JAX-native relations, routing kernels, and sparse linear actions.
 - `phydrax.linalg` for paired vector spaces, composable operators, linear
-  problems, solve policies, reusable plans, diagnostics, and backend provenance.
+  problems, solve policies, reusable plans and factorizations, general eigensolvers,
+  diagnostics, and backend provenance.
+- `phydrax.backends` for explicit lazy PETSc, SLEPc, PyAMGCL, and NVIDIA AmgX
+  lifecycle bridges with availability, transfer, convergence, and provenance evidence.
 - `phydrax.metrix` for charts, tensors, metrics, curvature, and stochastic geometry.
 - `phydrax.data_utils` for CSV loading, array scaling, and case-index splits.
 - `phydrax.conditions` for residual, moment, observation, and physical conditions.
@@ -737,8 +772,8 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - `phydrax.operators` for PDE operators.
 - `phydrax.nn` for models, wrappers, and the generic diagonal state-space mixer.
 - `phydrax.dynamics` for typed flow/map laws, pathwise evolution, trajectory
-  data, DMD/EDMD, SINDy/PDE-FIND, continuation, periodic-orbit and chaos
-  analysis, uncertainty aggregation, and the shadowing solver boundary.
+  data, DMD/EDMD, SINDy/PDE-FIND, periodic-orbit and chaos analysis, uncertainty
+  aggregation, and the shadowing solver boundary.
 - `phydrax.stochastic` for process paths, trajectories, typed state-space
   problems and inputs, transition kernels, exact signature and log-signature
   features, and structural model compilation.
@@ -747,7 +782,13 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   combinatorial, and fixed-noise noncompact kernels shared by GP and coreset methods.
 - `phydrax.uq` for Gaussian factors and transforms, filtering/smoothing,
   state-space estimation, sensitivities, and stochastic spectra.
-- `phydrax.optim` for canonical QPs and the native implicit QPax backend.
+- `phydrax.optim` for typed scalar, least-squares, proximal-composite, constrained,
+  state/design, and stochastic optimization, differentiable solution maps,
+  canonical QPs, and the explicit QPax backend.
+- `phydrax.nonlinear` for nonlinear algebraic systems, fixed points,
+  preconditioning, multigrid, variational inequalities, and implicit roots.
+- `phydrax.continuation` for generic parameterized residual curves, stability,
+  event localization, branch switching, and fold/Hopf/pitchfork workflows.
 - `phydrax.control` for finite-horizon control, linear systems, LQR/iLQR,
   multiple shooting, compiled QPs, and MPC.
 - `phydrax.solver` for training, differential, delay/memory, rough, stochastic,

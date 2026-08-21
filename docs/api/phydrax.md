@@ -15,13 +15,17 @@ Top-level package namespace. Most functionality lives in subpackages:
 - `phydrax.kernels`: composable positive-definite covariance functions shared by
   Gaussian-process and coreset algorithms
 - `phydrax.linalg`: paired vector spaces, composable dense/matrix-free/block
-  operators, linear problem contracts, reusable solve plans, native JAX
-  factorizations, and private Lineax iterative backends
-- `phydrax.special`: JAX-native named special functions and integral primitives
+  operators, linear problem contracts, reusable solve and factorization plans,
+  and standard/generalized eigensolvers
+- `phydrax.backends`: explicit lazy PETSc, SLEPc, PyAMGCL, and NVIDIA AmgX
+  lifecycle bridges with capability, transfer, convergence, and provenance evidence
 - `phydrax.enforcement`: exact condition transforms and enforcement programs
-- `phydrax.optim`: finite candidate products and exhaustive search, structured
-  residual KFAC, and domain-neutral optimization configurations consumed by
-  geometry, posterior, and control workflows
+- `phydrax.optim`: finite and continuous scalar, least-squares, proximal,
+  constrained, state/design, and stochastic optimization with explicit solution maps
+- `phydrax.nonlinear`: nonlinear systems, fixed points, preconditioning,
+  multigrid, complementarity, and implicit root derivatives
+- `phydrax.continuation`: generic parameterized residual curves, stability and event
+  evidence, branch switching, and fold/Hopf/pitchfork workflows
 - `phydrax.nn`: neural network components and structured models
 - `phydrax.ml`: case-aware native machine-learning batches, fitted models,
   workflows, model selection, metrics, inspection, and artifact interoperability
@@ -29,7 +33,7 @@ Top-level package namespace. Most functionality lives in subpackages:
 - `phydrax.solver`: functional solvers and direct ODE/SDE, jump, hybrid, and
   semidiscrete SPDE integration
 - `phydrax.dynamics`: typed continuous/map systems, evolution and trajectory
-  contracts, DMD/EDMD, sparse equation discovery, continuation, and nonlinear
+  contracts, DMD/EDMD, sparse equation discovery, periodic orbits, and nonlinear
   dynamics/chaos analysis
 - `phydrax.control`: finite-horizon control contracts, linear-system analysis,
   trajectory optimization, compiled QPs, and MPC

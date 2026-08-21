@@ -98,6 +98,7 @@ nav:
         - Filtering and smoothing: "cookbook/filtering.md"
         - Controlled dynamics: "cookbook/controlled_dynamics.md"
         - Nonlinear dynamics, identification, and chaos: "cookbook/nonlinear_dynamics.md"
+        - Advanced solver workflows: "cookbook/advanced_solvers.md"
         - Control workflows: "cookbook/control.md"
         - Backward stochastic equations: "cookbook/bsde.md"
         - Physics-informed graph residuals: "cookbook/graph_physics.md"
@@ -130,6 +131,7 @@ nav:
     - API:
         - Overview: "api/phydrax.md"
         - Linear algebra runtime: "api/linalg.md"
+        - External solver backends: "api/backends.md"
         - Sparse derivatives: "api/sparse_derivatives.md"
         - Integration: "api/integration.md"
         - Optimal transport:
@@ -232,6 +234,8 @@ nav:
             - Martingales and stopping: "api/stochastic/martingales.md"
             - Backward stochastic equations: "api/stochastic/bsde.md"
         - Optimization: "api/optim.md"
+        - Nonlinear systems: "api/nonlinear.md"
+        - Continuation and bifurcation: "api/continuation.md"
         - Dynamical systems, identification, and chaos: "api/dynamics.md"
         - Control: "api/control.md"
         - Solver:

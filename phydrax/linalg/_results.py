@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 from enum import IntEnum
 from typing import Any
 
@@ -12,6 +13,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
 from .._strict import StrictModule
+from ._policies import MixedPrecisionPolicy
 from ._recycling import RecyclingState
 
 
@@ -71,6 +73,7 @@ class LinearSolveDiagnostics(StrictModule):
     adjoint_matvec_count: Array
     effective_block_rank: Array
     deflated_rhs_count: Array
+    refinement_steps: Array
 
     def __init__(
         self,
@@ -91,6 +94,7 @@ class LinearSolveDiagnostics(StrictModule):
         adjoint_matvec_count: Any = 0,
         effective_block_rank: Any = -1,
         deflated_rhs_count: Any = 0,
+        refinement_steps: Any = 0,
     ):
         self.residual_norm = jnp.asarray(residual_norm)
         self.relative_residual = jnp.asarray(relative_residual)
@@ -113,9 +117,66 @@ class LinearSolveDiagnostics(StrictModule):
             deflated_rhs_count,
             dtype=jnp.int32,
         )
+        self.refinement_steps = jnp.asarray(refinement_steps, dtype=jnp.int32)
         self.singular_values = (
             None if singular_values is None else jnp.asarray(singular_values)
         )
+
+
+class LinearPrecisionEvidence(StrictModule):
+    """Requested-stage resolution for one capability-checked linear execution."""
+
+    operator_dtype: str = eqx.field(static=True)
+    factorization_dtype: str | None = eqx.field(static=True)
+    preconditioner_dtype: str | None = eqx.field(static=True)
+    krylov_dtype: str | None = eqx.field(static=True)
+    residual_dtype: str = eqx.field(static=True)
+    accumulation_dtype: str = eqx.field(static=True)
+    condition_limit: float | None = eqx.field(static=True)
+    maximum_refinement_steps: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        operator_dtype: str,
+        factorization_dtype: str | None,
+        preconditioner_dtype: str | None,
+        krylov_dtype: str | None,
+        residual_dtype: str,
+        accumulation_dtype: str,
+        condition_limit: float | None,
+        maximum_refinement_steps: int,
+    ):
+        if not operator_dtype or not residual_dtype or not accumulation_dtype:
+            raise ValueError(
+                "Effective operator, residual, and accumulation dtypes must be non-empty."
+            )
+        optional_dtypes = (
+            factorization_dtype,
+            preconditioner_dtype,
+            krylov_dtype,
+        )
+        if any(value is not None and not value for value in optional_dtypes):
+            raise ValueError("Effective precision dtype names must be non-empty.")
+        limit = None if condition_limit is None else float(condition_limit)
+        steps = int(maximum_refinement_steps)
+        if limit is not None and (not math.isfinite(limit) or limit <= 1.0):
+            raise ValueError("Effective condition_limit must exceed one.")
+        if steps < 0:
+            raise ValueError("Effective refinement work must be non-negative.")
+        self.operator_dtype = str(operator_dtype)
+        self.factorization_dtype = (
+            None if factorization_dtype is None else str(factorization_dtype)
+        )
+        self.preconditioner_dtype = (
+            None if preconditioner_dtype is None else str(preconditioner_dtype)
+        )
+        self.krylov_dtype = None if krylov_dtype is None else str(krylov_dtype)
+        self.residual_dtype = str(residual_dtype)
+        self.condition_limit = limit
+        self.maximum_refinement_steps = steps
+
+        self.accumulation_dtype = str(accumulation_dtype)
 
 
 class LinearSolveProvenance(StrictModule):
@@ -143,6 +204,8 @@ class LinearSolveProvenance(StrictModule):
     recycling_capacity: int = eqx.field(static=True)
     recycling_state_bytes: int = eqx.field(static=True)
     recycling_update_count: Array
+    requested_precision: MixedPrecisionPolicy | None
+    effective_precision: LinearPrecisionEvidence | None
 
     def __init__(
         self,
@@ -169,6 +232,8 @@ class LinearSolveProvenance(StrictModule):
         recycling_capacity: int = 0,
         recycling_state_bytes: int = 0,
         recycling_update_count: Any = 0,
+        requested_precision: MixedPrecisionPolicy | None = None,
+        effective_precision: LinearPrecisionEvidence | None = None,
     ):
         values = (
             str(backend),
@@ -193,6 +258,24 @@ class LinearSolveProvenance(StrictModule):
             )
         self.rhs_mode = rhs_mode
         self.prepared = bool(prepared)
+        if (requested_precision is None) != (effective_precision is None):
+            raise ValueError(
+                "Requested and effective precision evidence must be present together."
+            )
+        if requested_precision is not None and not isinstance(
+            requested_precision,
+            MixedPrecisionPolicy,
+        ):
+            raise TypeError("requested_precision must be a MixedPrecisionPolicy or None.")
+        if effective_precision is not None and not isinstance(
+            effective_precision,
+            LinearPrecisionEvidence,
+        ):
+            raise TypeError(
+                "effective_precision must be a LinearPrecisionEvidence or None."
+            )
+        self.requested_precision = requested_precision
+        self.effective_precision = effective_precision
         optional_identifiers = (
             preconditioner_plan_id,
             preconditioner_id,
@@ -353,6 +436,7 @@ class RecycledLinearSolveResult(StrictModule):
 __all__ = [
     "RecycledLinearSolveResult",
     "LinearSolveDiagnostics",
+    "LinearPrecisionEvidence",
     "LinearSolveProvenance",
     "LinearSolveResult",
     "LinearSolveStatus",

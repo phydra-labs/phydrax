@@ -143,7 +143,9 @@ class SelfAdjointSpectrumPlan(StrictModule):
         if not isinstance(eigen_plan.selected_method, DenseEigh):
             raise ValueError("A self-adjoint spectrum requires DenseEigh.")
         if eigen_plan.policy.count != problem.dimension:
-            raise ValueError("A self-adjoint spectrum plan must retain the full spectrum.")
+            raise ValueError(
+                "A self-adjoint spectrum plan must retain the full spectrum."
+            )
         if not isinstance(cost, SelfAdjointSpectrumCostEstimate):
             raise TypeError("cost must be a SelfAdjointSpectrumCostEstimate.")
         self.policy = policy
@@ -268,7 +270,9 @@ def plan_self_adjoint_spectrum(
         failure=selected.failure,
     )
     eigen_plan = plan_eigensolve(problem, eigen_policy)
-    source_cost = next(estimate for estimate in eigen_plan.candidates if estimate.accepted)
+    source_cost = next(
+        estimate for estimate in eigen_plan.candidates if estimate.accepted
+    )
     coordinate_dtype = np.dtype(_coordinate_dtype(problem.operator.source))
     real_dtype = np.empty((), dtype=coordinate_dtype).real.dtype
     n = problem.dimension
@@ -366,9 +370,7 @@ def _build_prepared_spectrum(
     if eigen_prepared.dense_state is None:
         raise ValueError("Prepared self-adjoint spectrum lost its dense state.")
     factor = eigen_prepared.dense_state.metric_factor
-    paired_metric = jax.lax.stop_gradient(
-        factor @ jnp.conj(jnp.swapaxes(factor, -1, -2))
-    )
+    paired_metric = jax.lax.stop_gradient(factor @ jnp.conj(jnp.swapaxes(factor, -1, -2)))
     inverse_basis = jax.lax.stop_gradient(
         jnp.conj(jnp.swapaxes(vectors, -1, -2)) @ paired_metric
     )

@@ -50,7 +50,9 @@ class AbstractSpectralFunction(StrictModule):
         return _stable_divided_difference(self, left, right)
 
     @abc.abstractmethod
-    def validate_domain(self, eigenvalues: ArrayLike, uncertainty: ArrayLike = 0, /) -> Array:
+    def validate_domain(
+        self, eigenvalues: ArrayLike, uncertainty: ArrayLike = 0, /
+    ) -> Array:
         """Return whether values and uncertainty lie inside the differentiable domain."""
 
 
@@ -87,12 +89,13 @@ class PolynomialSpectralFunction(AbstractSpectralFunction):
             result = result * x + degree * self.coefficients[degree]
         return result
 
-    def validate_domain(self, eigenvalues: ArrayLike, uncertainty: ArrayLike = 0, /) -> Array:
+    def validate_domain(
+        self, eigenvalues: ArrayLike, uncertainty: ArrayLike = 0, /
+    ) -> Array:
         del uncertainty
         values = jnp.asarray(eigenvalues)
-        return (
-            jnp.all(jnp.isfinite(values), axis=-1)
-            & jnp.all(jnp.isfinite(self.coefficients))
+        return jnp.all(jnp.isfinite(values), axis=-1) & jnp.all(
+            jnp.isfinite(self.coefficients)
         )
 
 
@@ -129,7 +132,9 @@ class FermiDiracSpectralFunction(AbstractSpectralFunction):
         occupation = self.value(eigenvalue)
         return -occupation * (1 - occupation) / self.temperature
 
-    def validate_domain(self, eigenvalues: ArrayLike, uncertainty: ArrayLike = 0, /) -> Array:
+    def validate_domain(
+        self, eigenvalues: ArrayLike, uncertainty: ArrayLike = 0, /
+    ) -> Array:
         del uncertainty
         values = jnp.asarray(eigenvalues)
         return (
@@ -152,7 +157,9 @@ class ExponentialSpectralFunction(AbstractSpectralFunction):
     def derivative(self, eigenvalue: ArrayLike, /) -> Array:
         return self.value(eigenvalue)
 
-    def validate_domain(self, eigenvalues: ArrayLike, uncertainty: ArrayLike = 0, /) -> Array:
+    def validate_domain(
+        self, eigenvalues: ArrayLike, uncertainty: ArrayLike = 0, /
+    ) -> Array:
         del uncertainty
         return jnp.all(jnp.isfinite(jnp.asarray(eigenvalues)), axis=-1)
 
@@ -169,7 +176,9 @@ class LogarithmSpectralFunction(AbstractSpectralFunction):
     def derivative(self, eigenvalue: ArrayLike, /) -> Array:
         return jnp.reciprocal(jnp.asarray(eigenvalue))
 
-    def validate_domain(self, eigenvalues: ArrayLike, uncertainty: ArrayLike = 0, /) -> Array:
+    def validate_domain(
+        self, eigenvalues: ArrayLike, uncertainty: ArrayLike = 0, /
+    ) -> Array:
         values = jnp.asarray(eigenvalues)
         error = jnp.broadcast_to(jnp.asarray(uncertainty), values.shape)
         return jnp.all(jnp.isfinite(values), axis=-1) & jnp.all(
@@ -190,7 +199,9 @@ class SquareRootSpectralFunction(AbstractSpectralFunction):
     def derivative(self, eigenvalue: ArrayLike, /) -> Array:
         return 0.5 / jnp.sqrt(jnp.asarray(eigenvalue))
 
-    def validate_domain(self, eigenvalues: ArrayLike, uncertainty: ArrayLike = 0, /) -> Array:
+    def validate_domain(
+        self, eigenvalues: ArrayLike, uncertainty: ArrayLike = 0, /
+    ) -> Array:
         values = jnp.asarray(eigenvalues)
         error = jnp.broadcast_to(jnp.asarray(uncertainty), values.shape)
         return jnp.all(jnp.isfinite(values), axis=-1) & jnp.all(
@@ -212,7 +223,9 @@ class InverseSquareRootSpectralFunction(AbstractSpectralFunction):
         x = jnp.asarray(eigenvalue)
         return -0.5 * jax.lax.rsqrt(x) / x
 
-    def validate_domain(self, eigenvalues: ArrayLike, uncertainty: ArrayLike = 0, /) -> Array:
+    def validate_domain(
+        self, eigenvalues: ArrayLike, uncertainty: ArrayLike = 0, /
+    ) -> Array:
         values = jnp.asarray(eigenvalues)
         error = jnp.broadcast_to(jnp.asarray(uncertainty), values.shape)
         return jnp.all(jnp.isfinite(values), axis=-1) & jnp.all(
@@ -242,7 +255,9 @@ class FractionalPowerSpectralFunction(AbstractSpectralFunction):
         x = jnp.asarray(eigenvalue)
         return self.power * x ** (self.power - 1)
 
-    def validate_domain(self, eigenvalues: ArrayLike, uncertainty: ArrayLike = 0, /) -> Array:
+    def validate_domain(
+        self, eigenvalues: ArrayLike, uncertainty: ArrayLike = 0, /
+    ) -> Array:
         values = jnp.asarray(eigenvalues)
         error = jnp.broadcast_to(jnp.asarray(uncertainty), values.shape)
         finite = jnp.all(jnp.isfinite(values), axis=-1)
@@ -270,7 +285,9 @@ class ResolventSpectralFunction(AbstractSpectralFunction):
         difference = jnp.asarray(eigenvalue) - self.shift
         return -jnp.reciprocal(difference * difference)
 
-    def validate_domain(self, eigenvalues: ArrayLike, uncertainty: ArrayLike = 0, /) -> Array:
+    def validate_domain(
+        self, eigenvalues: ArrayLike, uncertainty: ArrayLike = 0, /
+    ) -> Array:
         values = jnp.asarray(eigenvalues)
         error = jnp.broadcast_to(jnp.asarray(uncertainty), values.shape)
         return (
@@ -308,11 +325,10 @@ class SelfAdjointSpectralOperatorPolicy(StrictModule):
     ):
         relative = float(relative_tolerance)
         absolute = float(absolute_tolerance)
-        if any(
-            not math.isfinite(value) or value < 0.0
-            for value in (relative, absolute)
-        ):
-            raise ValueError("Spectral operator tolerances must be finite and non-negative.")
+        if any(not math.isfinite(value) or value < 0.0 for value in (relative, absolute)):
+            raise ValueError(
+                "Spectral operator tolerances must be finite and non-negative."
+            )
         if differentiation not in ("none", "frechet"):
             raise ValueError("differentiation must be 'none' or 'frechet'.")
         failure_ = FailurePolicy() if failure is None else failure
@@ -380,14 +396,14 @@ def self_adjoint_spectral_operator(
     """Evaluate a smooth scalar function of one self-adjoint operator pencil."""
     if not isinstance(function, AbstractSpectralFunction):
         raise TypeError("function must implement AbstractSpectralFunction.")
-    selected_policy = (
-        SelfAdjointSpectralOperatorPolicy() if policy is None else policy
-    )
+    selected_policy = SelfAdjointSpectralOperatorPolicy() if policy is None else policy
     if not isinstance(selected_policy, SelfAdjointSpectralOperatorPolicy):
         raise TypeError("policy must be a SelfAdjointSpectralOperatorPolicy or None.")
     if isinstance(spectrum_or_problem, PreparedSelfAdjointSpectrum):
         if spectrum_policy is not None:
-            raise ValueError("spectrum_policy must be omitted for prepared spectrum state.")
+            raise ValueError(
+                "spectrum_policy must be omitted for prepared spectrum state."
+            )
         spectrum = spectrum_or_problem
     else:
         spectrum = prepare_self_adjoint_spectrum(spectrum_or_problem, spectrum_policy)
@@ -576,11 +592,9 @@ def _spectral_operator_tangent(
     )
     if parameter_tangent is None:
         parameter_tangent = jnp.zeros_like(function_values)
-    derivative_in_basis = (
-        loewner * perturbation
-        + parameter_tangent.astype(eigenvectors.dtype)[..., None, :]
-        * jnp.eye(eigenvalues.shape[-1], dtype=eigenvectors.dtype)
-    )
+    derivative_in_basis = loewner * perturbation + parameter_tangent.astype(
+        eigenvectors.dtype
+    )[..., None, :] * jnp.eye(eigenvalues.shape[-1], dtype=eigenvectors.dtype)
     derivative = eigenvectors @ derivative_in_basis @ inverse_basis
     return derivative, paired_metric_tangent, derivative_in_basis
 
@@ -654,6 +668,7 @@ def _spectral_operator_evidence(
         converged=status == int(SelfAdjointSpectralOperatorStatus.SUCCESS),
     )
     return diagnostics, status
+
 
 def _eigenvalue_uncertainty(spectrum):
     scale = jnp.maximum(jnp.abs(spectrum.eigenvalues), 1)

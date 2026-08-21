@@ -400,8 +400,6 @@ def _execute_shifted(
     /,
 ) -> ShiftedSolveResult:
     decomposition = prepared.projection.decomposition
-    capacity = prepared.plan.dimension
-    rhs_coordinates = prepared.projection.initial_coordinates
     source = prepared.family.operator.source
     rhs_norm = jnp.sqrt(
         jnp.maximum(jnp.real(source.inner(prepared.rhs, prepared.rhs)), 0)
