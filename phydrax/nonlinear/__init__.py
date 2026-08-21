@@ -5,6 +5,17 @@
 """Nonlinear algebraic systems, fixed points, and implicit root calculus."""
 
 from .._bounds import Bounds
+from ._causal import (
+    CausalLevenbergMarquardt,
+    CausalLinearizationMode,
+    CausalLinearizationPolicy,
+    CausalNewton,
+    CausalProbeDistribution,
+    CausalRecurrenceDiagnostics,
+    CausalRecurrenceProblem,
+    CausalRecurrenceResult,
+    solve_causal_recurrence,
+)
 from ._fas import (
     fas_cycle,
     FASCycleKind,
@@ -83,6 +94,14 @@ __all__ = [
     "AndersonAcceleration",
     "AbstractRightNonlinearPreconditioner",
     "Bounds",
+    "CausalLevenbergMarquardt",
+    "CausalLinearizationMode",
+    "CausalLinearizationPolicy",
+    "CausalNewton",
+    "CausalProbeDistribution",
+    "CausalRecurrenceDiagnostics",
+    "CausalRecurrenceProblem",
+    "CausalRecurrenceResult",
     "ComplementarityCertificate",
     "ComplementarityFormulation",
     "FASCycleKind",
@@ -136,4 +155,5 @@ __all__ = [
     "refresh_nonlinear",
     "right_precondition",
     "solve_prepared_nonlinear",
+    "solve_causal_recurrence",
 ]

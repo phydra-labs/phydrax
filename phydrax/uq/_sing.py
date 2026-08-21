@@ -16,13 +16,7 @@ import jax.random as jr
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
-from ..stochastic._euler_maruyama import EulerMaruyamaTransitionKernel
-from ..stochastic._state_space import (
-    GaussianStatePrior,
-    state_space_key,
-    StateSpaceProblem,
-)
-from ._gaussian_chain import (
+from ..linalg._gaussian_chain import (
     gaussian_markov_information_from_moments,
     gaussian_markov_moments,
     gaussian_markov_moments_from_marginals,
@@ -30,6 +24,12 @@ from ._gaussian_chain import (
     GaussianMarkovInformation,
     GaussianMarkovMoments,
     sample_gaussian_markov,
+)
+from ..stochastic._euler_maruyama import EulerMaruyamaTransitionKernel
+from ..stochastic._state_space import (
+    GaussianStatePrior,
+    state_space_key,
+    StateSpaceProblem,
 )
 from ._gaussian_factor import GaussianFactor
 from ._nonlinear_gaussian import (

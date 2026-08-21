@@ -54,6 +54,11 @@ from ._sgmcmc_diagnostics import (
     SGMCMCMixingReport,
     SGMCMCMixingThresholds,
 )
+from ._stochastic_gradient import (
+    AbstractStochasticGradientEstimator,
+    AutodiffStochasticGradientEstimator,
+    StochasticGradientEstimate,
+)
 
 
 SGMCMCAlgorithm = Literal["sgld", "sgnht"]
@@ -131,6 +136,7 @@ class SGMCMCResult(StrictModule):
     source_fingerprint: str = eqx.field(static=True)
     _source_configuration_json: str = eqx.field(static=True)
     chain_method: ChainMethod = eqx.field(static=True)
+    gradient_estimator_id: str = eqx.field(static=True)
     compilation_duration_seconds: float = eqx.field(static=True)
     burnin_duration_seconds: float = eqx.field(static=True)
     sampling_duration_seconds: float = eqx.field(static=True)
@@ -172,6 +178,7 @@ class SGMCMCResult(StrictModule):
         source_fingerprint: str,
         source_configuration_json: str,
         chain_method: ChainMethod,
+        gradient_estimator_id: str,
         compilation_duration_seconds: float,
         burnin_duration_seconds: float,
         sampling_duration_seconds: float,
@@ -220,6 +227,7 @@ class SGMCMCResult(StrictModule):
         self.batch_capacity = int(batch_capacity)
         self.source_fingerprint = str(source_fingerprint)
         self._source_configuration_json = str(source_configuration_json)
+        self.gradient_estimator_id = str(gradient_estimator_id)
         self.chain_method = chain_method
         self.compilation_duration_seconds = float(compilation_duration_seconds)
         self.burnin_duration_seconds = float(burnin_duration_seconds)
@@ -401,6 +409,7 @@ def sample_sgld(
     initial_positions: PyTree[Any] | None = None,
     chain_method: ChainMethod = "vectorized",
     control_variate: SGMCMCControlVariate | None = None,
+    gradient_estimator: AbstractStochasticGradientEstimator | None = None,
     checkpoint_path: str | Path | None = None,
     checkpoint_every: int | None = None,
     checkpoint_id: str | None = None,
@@ -423,6 +432,7 @@ def sample_sgld(
         initial_positions=initial_positions,
         chain_method=chain_method,
         control_variate=control_variate,
+        gradient_estimator=gradient_estimator,
         checkpoint_path=checkpoint_path,
         checkpoint_every=checkpoint_every,
         checkpoint_id=checkpoint_id,
@@ -447,6 +457,7 @@ def sample_sgnht(
     initial_positions: PyTree[Any] | None = None,
     chain_method: ChainMethod = "vectorized",
     control_variate: SGMCMCControlVariate | None = None,
+    gradient_estimator: AbstractStochasticGradientEstimator | None = None,
     checkpoint_path: str | Path | None = None,
     checkpoint_every: int | None = None,
     checkpoint_id: str | None = None,
@@ -473,6 +484,7 @@ def sample_sgnht(
         initial_positions=initial_positions,
         chain_method=chain_method,
         control_variate=control_variate,
+        gradient_estimator=gradient_estimator,
         checkpoint_path=checkpoint_path,
         checkpoint_every=checkpoint_every,
         checkpoint_id=checkpoint_id,
@@ -498,6 +510,7 @@ def _sample_sgmcmc(
     initial_positions: PyTree[Any] | None,
     chain_method: ChainMethod,
     control_variate: SGMCMCControlVariate | None,
+    gradient_estimator: AbstractStochasticGradientEstimator | None,
     checkpoint_path: str | Path | None,
     checkpoint_every: int | None,
     checkpoint_id: str | None,
@@ -529,6 +542,20 @@ def _sample_sgmcmc(
         control_variate, SGMCMCControlVariate
     ):
         raise TypeError("control_variate must be an SGMCMCControlVariate or None.")
+    estimator = (
+        AutodiffStochasticGradientEstimator()
+        if gradient_estimator is None
+        else gradient_estimator
+    )
+    if not isinstance(estimator, AbstractStochasticGradientEstimator):
+        raise TypeError(
+            "gradient_estimator must implement AbstractStochasticGradientEstimator."
+        )
+    if control_variate is not None and not estimator.supports_control_variate:
+        raise ValueError(
+            "The selected stochastic-gradient estimator does not support "
+            "SGMCMCControlVariate."
+        )
     if resume_from is not None and (
         initial_position is not None or initial_positions is not None
     ):
@@ -584,6 +611,7 @@ def _sample_sgmcmc(
         "control_variate_fingerprint": (
             None if control_variate is None else control_variate.fingerprint
         ),
+        "gradient_estimator": estimator.configuration(),
         "root_key": [int(value) for value in jr.key_data(root_key).reshape(-1)],
     }
     compatibility = (
@@ -600,7 +628,7 @@ def _sample_sgmcmc(
         if destination is not None
         else None
     )
-    gradient_fn = _gradient_estimator(problem, control_variate)
+    gradient_fn = _gradient_estimator(problem, control_variate, estimator)
     state_template = _initialize_states(
         algorithm,
         chain_positions,
@@ -610,14 +638,23 @@ def _sample_sgmcmc(
     )
 
     if resume_from is None:
-        values = jax.vmap(
-            lambda current: problem.log_density_estimate(current, initial_batches[0])
-        )(chain_positions)
-        gradients = jax.vmap(lambda current: gradient_fn(current, initial_batches[0]))(
-            chain_positions
-        )
+        initial_estimator_keys = jax.vmap(
+            lambda chain_key: jr.fold_in(chain_key, _INITIALIZATION_TAG + 1)
+        )(chain_keys)
+        estimates = jax.vmap(
+            lambda current, estimator_key: gradient_fn(
+                current,
+                initial_batches[0],
+                estimator_key,
+            )
+        )(chain_positions, initial_estimator_keys)
+        values = estimates.log_density
+        gradients = estimates.gradient
         invalid_value_chains = tuple(
-            int(index) for index in jnp.argwhere(~jnp.isfinite(values)).reshape(-1)
+            int(index)
+            for index in jnp.argwhere(~jnp.isfinite(values) | ~estimates.valid).reshape(
+                -1
+            )
         )
         invalid_gradient_locations = _invalid_chain_locations(gradients, chains)
         if invalid_value_chains or invalid_gradient_locations:
@@ -693,6 +730,7 @@ def _sample_sgmcmc(
         algorithm,
         problem,
         control_variate,
+        estimator,
         step_size=step,
         diffusion=diffusion,
         chain_method=method,
@@ -717,13 +755,17 @@ def _sample_sgmcmc(
         batch = epoch_batches[update % int(source.batches_per_epoch)]
         transition_keys = _transition_keys(chain_keys, update)
         update_started = time.perf_counter()
-        new_states, gradient_norm = advance(current_states, transition_keys, batch)
+        new_states, gradient_norm, gradient_valid = advance(
+            current_states, transition_keys, batch
+        )
         jax.block_until_ready(new_states)
         update_duration = time.perf_counter() - update_started
         invalid_state_locations = _invalid_chain_locations(new_states, chains)
         invalid_gradient_locations = tuple(
             f"chain[{int(index)}].gradient_norm"
-            for index in jnp.argwhere(~jnp.isfinite(gradient_norm)).reshape(-1)
+            for index in jnp.argwhere(
+                ~jnp.isfinite(gradient_norm) | ~gradient_valid
+            ).reshape(-1)
         )
         if invalid_state_locations or invalid_gradient_locations:
             raise FloatingPointError(
@@ -856,6 +898,7 @@ def _sample_sgmcmc(
         source_fingerprint=source.fingerprint,
         source_configuration_json=source_configuration_json,
         chain_method=method,
+        gradient_estimator_id=estimator.estimator_id,
         compilation_duration_seconds=compilation_duration,
         burnin_duration_seconds=burnin_duration,
         sampling_duration_seconds=sampling_duration,
@@ -867,28 +910,69 @@ def _sample_sgmcmc(
 def _gradient_estimator(
     problem: MinibatchPosteriorProblem,
     control_variate: SGMCMCControlVariate | None,
+    estimator: AbstractStochasticGradientEstimator | None = None,
 ):
-    ordinary_gradient = jax.grad(problem.log_density_estimate)
-    if control_variate is None:
-        return ordinary_gradient
+    if estimator is None:
+        ordinary_gradient = jax.grad(problem.log_density_estimate)
+        if control_variate is None:
+            return ordinary_gradient
 
-    def control_variate_gradient(position, batch):
-        gradient = ordinary_gradient(position, batch)
-        center_gradient = ordinary_gradient(control_variate.center, batch)
-        return jax.tree_util.tree_map(
-            lambda full, current, center: full + current - center,
+        def legacy_control_variate_gradient(position, batch):
+            gradient = ordinary_gradient(position, batch)
+            center_gradient = ordinary_gradient(control_variate.center, batch)
+            return jax.tree_util.tree_map(
+                lambda full, value, reference: full + value - reference,
+                control_variate.full_gradient,
+                gradient,
+                center_gradient,
+            )
+
+        return legacy_control_variate_gradient
+
+    def ordinary_estimate(position, batch, key):
+        return estimator.estimate(problem, position, batch, key)
+
+    if control_variate is None:
+        return ordinary_estimate
+
+    def control_variate_estimate(position, batch, key):
+        current = ordinary_estimate(position, batch, key)
+        center = ordinary_estimate(control_variate.center, batch, key)
+        gradient = jax.tree_util.tree_map(
+            lambda full, value, reference: full + value - reference,
             control_variate.full_gradient,
-            gradient,
-            center_gradient,
+            current.gradient,
+            center.gradient,
+        )
+        gradient_norm = _tree_norm(gradient)
+        finite = (
+            current.valid
+            & center.valid
+            & jnp.isfinite(gradient_norm)
+            & jnp.all(
+                jnp.stack(
+                    [jnp.all(jnp.isfinite(leaf)) for leaf in jax.tree.leaves(gradient)]
+                )
+            )
+        )
+        return StochasticGradientEstimate(
+            gradient=gradient,
+            log_density=current.log_density,
+            gradient_norm=gradient_norm,
+            valid=finite,
+            status=jnp.where(finite, 0, 1).astype(jnp.int32),
+            likelihood_estimate=current.likelihood_estimate,
+            estimator_id=current.estimator_id,
         )
 
-    return control_variate_gradient
+    return control_variate_estimate
 
 
 def _compile_transition(
     algorithm: SGMCMCAlgorithm,
     problem: MinibatchPosteriorProblem,
     control_variate: SGMCMCControlVariate | None,
+    estimator: AbstractStochasticGradientEstimator,
     *,
     step_size: float,
     diffusion: float | None,
@@ -897,15 +981,23 @@ def _compile_transition(
     chain_keys: Array,
     batch: LikelihoodBatch,
 ):
-    gradient_fn = _gradient_estimator(problem, control_variate)
+    gradient_fn = _gradient_estimator(problem, control_variate, estimator)
     if algorithm == "sgld":
         integrator = diffusions.overdamped_langevin()
 
         def one_step(step_key, state, minibatch):
-            gradient = gradient_fn(state, minibatch)
+            estimator_key = jr.fold_in(step_key, 0x65726164)
+            estimate = gradient_fn(state, minibatch, estimator_key)
             return (
-                integrator(step_key, state, gradient, step_size, 1.0),
-                _tree_norm(gradient),
+                integrator(
+                    step_key,
+                    state,
+                    estimate.gradient,
+                    step_size,
+                    1.0,
+                ),
+                estimate.gradient_norm,
+                estimate.valid,
             )
 
     else:
@@ -914,17 +1006,22 @@ def _compile_transition(
         integrator = diffusions.sgnht(float(diffusion), 0.0)
 
         def one_step(step_key, state, minibatch):
-            gradient = gradient_fn(state.position, minibatch)
+            estimator_key = jr.fold_in(step_key, 0x65726164)
+            estimate = gradient_fn(state.position, minibatch, estimator_key)
             position, momentum, xi = integrator(
                 step_key,
                 state.position,
                 state.momentum,
                 state.xi,
-                gradient,
+                estimate.gradient,
                 step_size,
                 1.0,
             )
-            return SGNHTState(position, momentum, xi), _tree_norm(gradient)
+            return (
+                SGNHTState(position, momentum, xi),
+                estimate.gradient_norm,
+                estimate.valid,
+            )
 
     compile_started = time.perf_counter()
     if chain_method == "vectorized":
@@ -952,11 +1049,19 @@ def _compile_transition(
             current_values = _unstack_tree(current_states, int(keys.shape[0]))
             next_states = []
             gradient_norms = []
+            gradient_validity = []
             for state, step_key in zip(current_values, keys, strict=True):
-                next_state, gradient_norm = compiled(step_key, state, minibatch)
+                next_state, gradient_norm, gradient_valid = compiled(
+                    step_key, state, minibatch
+                )
                 next_states.append(next_state)
                 gradient_norms.append(gradient_norm)
-            return _stack_trees(next_states), jnp.stack(gradient_norms)
+                gradient_validity.append(gradient_valid)
+            return (
+                _stack_trees(next_states),
+                jnp.stack(gradient_norms),
+                jnp.stack(gradient_validity),
+            )
 
     compilation_duration = time.perf_counter() - compile_started
     return advance, compilation_duration

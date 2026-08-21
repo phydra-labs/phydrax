@@ -1202,3 +1202,153 @@ omitting it selects exact inference.
 ---
 
 ::: phydrax.uq.randomized_prior_ensemble
+
+## Variational posterior inference
+
+`fit_variational` minimizes reverse KL in the unconstrained coordinates of a
+`PosteriorProblem`. The target therefore includes the physical prior and each
+bijector Jacobian exactly once. `MeanFieldGaussianFamily` is the default normalized
+family. It is scalable but cannot represent posterior correlation or disconnected
+modes and commonly underestimates uncertainty.
+
+`fit_flow_variational` first obtains a mean-field approximation, initializes a
+FlowJAX spline distribution from its draws, and then optimizes the flow against the
+target density. This reverse-KL objective is distinct from the sample maximum-
+likelihood objective used by flow-assisted NUTS.
+
+Both results retain unconstrained and physical draws, target and family log
+densities, ELBO and gradient histories, deterministic root-key lineage, portable
+checkpoint state, prediction methods, memory, duration, and approximation identity.
+
+::: phydrax.uq.MeanFieldGaussianFamily
+
+---
+
+::: phydrax.uq.VariationalConfig
+
+---
+
+::: phydrax.uq.VariationalResult
+
+---
+
+::: phydrax.uq.fit_variational
+
+---
+
+::: phydrax.uq.FlowVariationalConfig
+
+---
+
+::: phydrax.uq.FlowVariationalFamily
+
+---
+
+::: phydrax.uq.fit_flow_variational
+
+## Full-path and amortized state-space inference
+
+`state_space_path_log_density` evaluates a normalized latent path containing the
+initial state followed by one state per observation step. It returns initial,
+transition, and observation terms separately. Inactive padded steps contribute zero
+and must preserve their predecessor exactly.
+
+`GaussianMarkovVariationalFamily` is a normalized directed Gaussian Markov path
+with dense affine transitions and diagonal innovations.
+`fit_state_space_variational` is the fixed-model full-path reference.
+`AmortizedGaussianMarkovFamily` replaces case-specific free parameters with one
+shared bidirectional context encoder and can be rebound to a compatible observation
+sequence without retraining.
+
+`fit_buffered_state_space_variational` samples fixed-length target intervals.
+`StateSpaceWindowPlan` records exact edge inclusion probabilities; target terms use
+inverse-inclusion weights. Left and right buffers control only encoder context.
+This remains an explicitly identified approximation because its boundary states are
+provided by the amortized family rather than an exact full-data smoother.
+
+::: phydrax.uq.StateSpacePathLogDensity
+
+---
+
+::: phydrax.uq.GaussianMarkovVariationalFamily
+
+---
+
+::: phydrax.uq.fit_state_space_variational
+
+---
+
+::: phydrax.uq.AmortizedGaussianMarkovFamily
+
+---
+
+::: phydrax.uq.fit_amortized_state_space_variational
+
+---
+
+::: phydrax.uq.StateSpaceWindowPlan
+
+---
+
+::: phydrax.uq.BufferedStateSpaceVariationalResult
+
+---
+
+::: phydrax.uq.fit_buffered_state_space_variational
+
+## Causal fixed-trajectory HMC
+
+`sample_hmc(..., trajectory_method="causal")` keeps BlackJAX warmup, momentum
+generation, energy evaluation, momentum flip, and Metropolis decision unchanged.
+Only the fixed-length velocity-Verlet trajectory is solved through the causal
+nonlinear recurrence. Production supports diagonal adapted inverse mass matrices,
+static leapfrog counts, dense-exact or position--momentum pair Hutchinson
+linearization, and explicit trajectory blocking.
+
+Every block must converge to the sequential trajectory before the proposal is
+treated as ordinary HMC. `failure_policy="raise"` is the default; an explicit
+sequential fallback is recorded in `CausalHMCDiagnostics`. NUTS is not supported
+because dynamic tree construction does not satisfy the fixed causal layout.
+
+::: phydrax.uq.CausalHMCConfig
+
+---
+
+::: phydrax.uq.CausalHMCDiagnostics
+
+## Particle genealogical scores and stochastic gradients
+
+`particle_genealogical_score` propagates normalized prior, transition, and
+observation score increments through realized stopped-gradient ancestry. Its stored
+state scales as `O(TN)`, unlike the existing density-based pair smoother's
+`O(TN²)` score. The lower cost trades for greater resampling and genealogy variance;
+the existing Fisher score remains available.
+
+`ParameterizedStateSpaceProblem` binds unconstrained global coordinates into the
+existing `StateSpaceStepContext.args` contract without defining a second model
+hierarchy. `ParticleGenealogicalGradientEstimator` uses its complete-sequence
+particle score plus the exact parameter prior and can drive `sample_sgld` or
+`sample_sgnht` through the common `AbstractStochasticGradientEstimator` interface.
+The existing autodiff minibatch estimator remains the default and replay-compatible.
+
+Buffered particle SG-MCMC is deliberately not exposed: the current buffered
+variational boundary law has not established a sufficiently accurate particle-score
+boundary correction. Complete-sequence particle gradients are supported.
+
+::: phydrax.uq.ParticleGenealogicalScoreResult
+
+---
+
+::: phydrax.uq.particle_genealogical_score
+
+---
+
+::: phydrax.uq.ParameterizedStateSpaceProblem
+
+---
+
+::: phydrax.uq.AbstractStochasticGradientEstimator
+
+---
+
+::: phydrax.uq.ParticleGenealogicalGradientEstimator

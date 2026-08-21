@@ -1294,6 +1294,28 @@ Flow-assisted NUTS does not currently accept the interleaved method. The schedul
 construction follows [Efficiently Vectorized MCMC on Modern
 Accelerators](https://arxiv.org/abs/2503.17405).
 
+Fixed-trajectory HMC can opt into causal leapfrog execution:
+
+```python
+causal_hmc = phx.uq.sample_hmc(
+    posterior,
+    key=jr.key(13),
+    num_integration_steps=128,
+    trajectory_method="causal",
+    causal_config=phx.uq.CausalHMCConfig(
+        trajectory_block_size=128,
+        linearization="pair-hutchinson",
+    ),
+)
+```
+
+Warmup and the Metropolis correction remain BlackJAX operations. Each production
+trajectory block must converge to the sequential velocity-Verlet endpoint. Inspect
+`causal_hmc.causal_diagnostics`; any fallback or failed residual gate invalidates a
+claim of causal acceleration. Causal HMC exchanges extra parallel work and memory for
+lower temporal depth and can be slower for short trajectories. It does not apply to
+NUTS's dynamic tree.
+
 `convergence_report(...)` applies caller-controlled release gates and reports exact
 failing PyTree leaves. `MCMCResult` retains tuned warmup parameters, final chain
 states, energies, integration depths, deterministic keys, adaptation and sampling
@@ -1345,6 +1367,41 @@ adaptive collocation, minibatch likelihoods, active dropout, or other random sam
 inside `log_density`. NUTS is the default for low-dimensional physical parameters,
 noise scales, and explicitly selected small subspaces. Sampling every neural-network
 weight is deliberately not the default.
+
+## Variational and long-sequence posterior approximation
+
+Use `fit_variational` when an optimized normalized approximation is more useful than
+a short, poorly mixed exact chain:
+
+```python
+variational = phx.uq.fit_variational(
+    posterior,
+    key=jr.key(14),
+    family=phx.uq.MeanFieldGaussianFamily.from_position(
+        posterior.initial_position
+    ),
+)
+```
+
+The family lives in unconstrained coordinates. Mean-field Gaussian VI is fast but
+misses correlation, tails, and separated modes. Flow VI can represent curved
+geometry but reverse KL can still collapse onto one mode. Compare both against NUTS
+or tempered SMC on a tractable reference and report target and family log densities,
+not ELBO alone.
+
+For a fixed `StateSpaceProblem`, `fit_state_space_variational` supplies the
+full-path Gaussian Markov reference. Train amortized and buffered variants only
+after this reference is credible:
+
+1. check the Gaussian Markov posterior against Kalman smoothing on a linear model;
+2. train the shared amortized encoder on complete sequences;
+3. compare complete-sequence amortized and free-family marginals;
+4. sweep left and right buffer lengths;
+5. report boundary-sensitive latent marginals, not observation prediction alone.
+
+`StateSpaceWindowPlan` uses exact inverse inclusion probabilities for target terms.
+That corrects target sampling frequency; it does not make the amortized boundary law
+exact. Buffered particle SG-MCMC is therefore not exposed.
 
 ## Fixed-step stochastic-gradient MCMC
 
@@ -1451,6 +1508,14 @@ locations. SGNHT additionally retains thermostat and momentum-norm traces.
 Checkpointing resumes the indexed source/transition schedule exactly and rejects
 changed problem, source, control-variate, PyTree, or sampler identities.
 
+`gradient_estimator` can replace the default autodiff factor gradient without
+changing the diffusion convention or transition-key schedule. The
+`ParticleGenealogicalGradientEstimator` runs a complete-sequence JAX particle filter,
+propagates stopped-ancestry prior/transition/observation scores in `O(TN)` state, and
+adds the exact global parameter prior. It is higher variance than the existing
+`O(TN²)` pair-smoothing score. The existing `SGMCMCControlVariate` is rejected for
+this estimator because its reference gradient has different semantics.
+
 These are unadjusted fixed-step approximations. Burn-in discards early states; it
 is not adaptation. Rank diagnostics measure between-chain mixing and do not detect
 stationary discretization bias. For every scientific use:
@@ -1461,11 +1526,12 @@ stationary discretization bias. For every scientific use:
 4. report the batch definition, population size, step size, burn-in, thinning,
    update count, and approximation label.
 
-Prefer NUTS or Laplace when full-data inference is feasible. Current SG-MCMC
-sources support uniform factor subsampling only: no decreasing-step schedule,
-automatic step-size adaptation, query-anchor subsampling, likelihood-dependent
-sampling, multi-host source execution, SGHMC, pSGLD/RMSProp geometry, or online
-gradient-noise covariance estimation is implied.
+Prefer NUTS or Laplace when full-data inference is feasible. Uniform factor
+minibatching and complete-sequence particle genealogical gradients are supported.
+No decreasing-step schedule, automatic step-size adaptation, query-anchor
+subsampling, buffered particle-score correction, multi-host source execution,
+SGHMC, pSGLD/RMSProp geometry, or online gradient-noise covariance estimation is
+implied.
 
 ## Flow-assisted NUTS
 

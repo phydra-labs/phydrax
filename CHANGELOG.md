@@ -34,6 +34,19 @@
   Gaussian expectations, irregular masked schedules, per-case backtracking,
   coherent posterior paths, fixed-posterior ELBO gradients, portable archives,
   diagnostics, tests, documentation, benchmarks, and explicit numerical status.
+- Certified causal nonlinear recurrence with associative temporal linear solves,
+  exact implicit adjoints, dense and quasi-Newton linearizations, and ELK-style
+  Levenberg--Marquardt damping; plus opt-in recurrent-layer and fixed-trajectory HMC
+  consumers with explicit convergence and fallback diagnostics.
+- Normalized mean-field and FlowJAX reverse-KL variational inference with deterministic
+  checkpoint replay, full-path Gaussian Markov state-space VI, reusable amortized
+  encoders, and inverse-inclusion-weighted buffered target windows.
+- Normalized latent-path and parameterized state-space density contracts that preserve
+  the existing prior, transition, observation, schedule, mask, physical-time, and
+  exogenous-input model hierarchy.
+- JAX-compiled bootstrap particle filtering, retained initial genealogy, complete-model
+  `O(TN)` genealogical scores, replaceable SG-MCMC gradient estimators, and
+  complete-sequence particle-driven SGLD/SGNHT.
 - `phydrax.nonlinear` contracts for algebraic systems, Newton line-search and
   trust-region roots, nonlinear GMRES and preconditioning, fixed-point acceleration,
   full-approximation multigrid cycles, variational inequalities, semismooth
@@ -116,6 +129,8 @@
 - DeepONet now accepts generalized coordinate-evaluated basis trunks, exposes
   explicit output-bias control, and preserves existing pointwise and POD
   behavior while supporting projection branches and frozen nested models.
+- Associative Gaussian-chain primitives now live in the lower-level linear-algebra
+  implementation while their existing `phydrax.uq` public names remain unchanged.
 - Nonlinear algebraic systems now have one public owner, `phydrax.nonlinear`, and
   generic continuation/bifurcation workflows have one public owner,
   `phydrax.continuation`; obsolete optimization and dynamics-analysis continuation

@@ -15,6 +15,12 @@ import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from .._strict import StrictModule
+from ..linalg._gaussian_chain import (
+    associative_affine_values,
+    associative_freeze,
+    associative_gaussian_filter,
+    associative_gaussian_smoother,
+)
 from ..stochastic._state_space import (
     GaussianStatePrior,
     LinearGaussianObservationModel,
@@ -23,12 +29,6 @@ from ..stochastic._state_space import (
     StateSpaceProblem,
 )
 from ._covariance import _factor_and_solve_covariance_system
-from ._gaussian_chain import (
-    associative_affine_values,
-    associative_freeze,
-    associative_gaussian_filter,
-    associative_gaussian_smoother,
-)
 
 
 KalmanExecutionMethod: TypeAlias = Literal["sequential", "parallel", "auto"]

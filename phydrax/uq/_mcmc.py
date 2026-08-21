@@ -17,6 +17,11 @@ from jaxtyping import Array, PyTree
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ._causal_hmc import (
+    build_causal_hmc_kernel,
+    CausalHMCConfig,
+    CausalHMCDiagnostics,
+)
 from ._chain import (
     _prepare_chain_positions,
     _split_chain_keys,
@@ -93,11 +98,14 @@ class MCMCResult(StrictModule):
     diagnostics: MCMCDiagnostics
     root_key: Array
     chain_keys: Array
+    causal_diagnostics: CausalHMCDiagnostics | None
+    causal_config: CausalHMCConfig | None
     algorithm: str = eqx.field(static=True)
     duration_seconds: float = eqx.field(static=True)
     sample_memory_bytes: int = eqx.field(static=True)
     max_num_doublings: int | None = eqx.field(static=True)
     chain_method: NUTSChainMethod = eqx.field(static=True)
+    trajectory_method: Literal["sequential", "causal"] = eqx.field(static=True)
     adaptation_duration_seconds: float = eqx.field(static=True)
     sampling_duration_seconds: float = eqx.field(static=True)
     samples_per_second: float = eqx.field(static=True)
@@ -125,6 +133,9 @@ class MCMCResult(StrictModule):
         chain_method: NUTSChainMethod,
         adaptation_duration_seconds: float,
         sampling_duration_seconds: float,
+        trajectory_method: Literal["sequential", "causal"] = "sequential",
+        causal_diagnostics: CausalHMCDiagnostics | None = None,
+        causal_config: CausalHMCConfig | None = None,
     ):
         self.problem = problem
         self.samples = samples
@@ -140,6 +151,25 @@ class MCMCResult(StrictModule):
         self.diagnostics = diagnostics
         self.root_key = root_key
         self.chain_keys = chain_keys
+        if trajectory_method not in ("sequential", "causal"):
+            raise ValueError("Unknown HMC trajectory method.")
+        if causal_diagnostics is not None and not isinstance(
+            causal_diagnostics, CausalHMCDiagnostics
+        ):
+            raise TypeError("causal_diagnostics must be CausalHMCDiagnostics or None.")
+        if causal_config is not None and not isinstance(causal_config, CausalHMCConfig):
+            raise TypeError("causal_config must be CausalHMCConfig or None.")
+        if trajectory_method == "causal" and (
+            causal_diagnostics is None or causal_config is None
+        ):
+            raise ValueError("Causal trajectory results require config and diagnostics.")
+        if trajectory_method == "sequential" and (
+            causal_diagnostics is not None or causal_config is not None
+        ):
+            raise ValueError("Sequential trajectory results cannot carry causal state.")
+        self.trajectory_method = trajectory_method
+        self.causal_diagnostics = causal_diagnostics
+        self.causal_config = causal_config
         self.algorithm = str(algorithm)
         self.duration_seconds = float(duration_seconds)
         self.sample_memory_bytes = _tree_nbytes(samples) + _tree_nbytes(
@@ -287,6 +317,8 @@ def sample_nuts(
         is_mass_matrix_diagonal=is_mass_matrix_diagonal,
         extra_parameters={"max_num_doublings": int(max_num_doublings)},
         chain_method=chain_method,
+        trajectory_method="sequential",
+        causal_config=None,
         checkpoint_path=checkpoint_path,
         checkpoint_every=checkpoint_every,
         checkpoint_id=checkpoint_id,
@@ -309,6 +341,8 @@ def sample_hmc(
     initial_step_size: float = 1.0,
     is_mass_matrix_diagonal: bool = True,
     chain_method: ChainMethod = "sequential",
+    trajectory_method: Literal["sequential", "causal"] = "sequential",
+    causal_config: CausalHMCConfig | None = None,
     checkpoint_path: str | Path | None = None,
     checkpoint_every: int | None = None,
     checkpoint_id: str | None = None,
@@ -317,6 +351,18 @@ def sample_hmc(
     """Run independently adapted fixed-trajectory BlackJAX HMC chains."""
     if int(num_integration_steps) <= 0:
         raise ValueError("num_integration_steps must be positive.")
+    if trajectory_method not in ("sequential", "causal"):
+        raise ValueError("trajectory_method must be 'sequential' or 'causal'.")
+    if trajectory_method == "causal":
+        if not is_mass_matrix_diagonal:
+            raise ValueError("Causal HMC requires a diagonal inverse mass matrix.")
+        causal = CausalHMCConfig() if causal_config is None else causal_config
+        if not isinstance(causal, CausalHMCConfig):
+            raise TypeError("causal_config must be CausalHMCConfig or None.")
+    else:
+        if causal_config is not None:
+            raise ValueError("causal_config requires trajectory_method='causal'.")
+        causal = None
     return _sample_mcmc(
         problem,
         key=key,
@@ -331,6 +377,8 @@ def sample_hmc(
         is_mass_matrix_diagonal=is_mass_matrix_diagonal,
         extra_parameters={"num_integration_steps": int(num_integration_steps)},
         chain_method=chain_method,
+        trajectory_method=trajectory_method,
+        causal_config=causal,
         checkpoint_path=checkpoint_path,
         checkpoint_every=checkpoint_every,
         checkpoint_id=checkpoint_id,
@@ -354,6 +402,8 @@ def _sample_mcmc(
     is_mass_matrix_diagonal: bool,
     extra_parameters: dict[str, Any],
     chain_method: NUTSChainMethod,
+    trajectory_method: Literal["sequential", "causal"],
+    causal_config: CausalHMCConfig | None,
     checkpoint_path: str | Path | None,
     checkpoint_every: int | None,
     checkpoint_id: str | None,
@@ -381,6 +431,11 @@ def _sample_mcmc(
         if algorithm == "nuts"
         else _validate_chain_method(cast(ChainMethod, chain_method))
     )
+    if trajectory_method == "causal":
+        if algorithm != "hmc" or causal_config is None:
+            raise ValueError("Causal trajectories require HMC and CausalHMCConfig.")
+    elif causal_config is not None:
+        raise ValueError("causal_config requires causal trajectory execution.")
     if resume_from is not None and (
         initial_position is not None or initial_positions is not None
     ):
@@ -435,6 +490,8 @@ def _sample_mcmc(
         "is_mass_matrix_diagonal": bool(is_mass_matrix_diagonal),
         "chain_method": method,
         "extra_parameters": extra_parameters,
+        "trajectory_method": trajectory_method,
+        "causal_config": (None if causal_config is None else causal_config.as_dict()),
         "root_key": [int(value) for value in jr.key_data(root_key).reshape(-1)],
     }
     compatibility = (
@@ -454,6 +511,8 @@ def _sample_mcmc(
         algorithm=algorithm,
         extra_parameters=extra_parameters,
         chain_method=method,
+        trajectory_method=trajectory_method,
+        causal_config=causal_config,
     )
     started = time.perf_counter()
 
@@ -485,6 +544,13 @@ def _sample_mcmc(
         energy = jnp.empty((chains, 0), dtype=float)
         num_integration_steps_array = jnp.empty((chains, 0), dtype=jnp.int32)
         num_trajectory_expansions_array = jnp.empty((chains, 0), dtype=jnp.int32)
+        causal_converged = jnp.empty((chains, 0), dtype=bool)
+        causal_fallback_used = jnp.empty((chains, 0), dtype=bool)
+        causal_outer_iterations = jnp.empty((chains, 0), dtype=jnp.int32)
+        causal_maximum_residual = jnp.empty((chains, 0), dtype=float)
+        causal_accepted_steps = jnp.empty((chains, 0), dtype=jnp.int32)
+        causal_rejected_steps = jnp.empty((chains, 0), dtype=jnp.int32)
+        causal_transition_evaluations = jnp.empty((chains, 0), dtype=jnp.int32)
         sampling_duration = 0.0
         previous_duration = 0.0
         if destination is not None and compatibility is not None:
@@ -504,6 +570,13 @@ def _sample_mcmc(
                 energy=energy,
                 num_integration_steps=num_integration_steps_array,
                 num_trajectory_expansions=num_trajectory_expansions_array,
+                causal_converged=causal_converged,
+                causal_fallback_used=causal_fallback_used,
+                causal_outer_iterations=causal_outer_iterations,
+                causal_maximum_residual=causal_maximum_residual,
+                causal_accepted_steps=causal_accepted_steps,
+                causal_rejected_steps=causal_rejected_steps,
+                causal_transition_evaluations=causal_transition_evaluations,
                 adaptation_duration=adaptation_duration,
                 sampling_duration=sampling_duration,
                 duration_seconds=time.perf_counter() - started,
@@ -525,6 +598,13 @@ def _sample_mcmc(
             energy,
             num_integration_steps_array,
             num_trajectory_expansions_array,
+            causal_converged,
+            causal_fallback_used,
+            causal_outer_iterations,
+            causal_maximum_residual,
+            causal_accepted_steps,
+            causal_rejected_steps,
+            causal_transition_evaluations,
             adaptation_duration,
             sampling_duration,
             previous_duration,
@@ -579,6 +659,33 @@ def _sample_mcmc(
             ),
             axis=1,
         )
+        causal_converged = jnp.concatenate(
+            (causal_converged, chunk_metrics["causal_converged"]), axis=1
+        )
+        causal_fallback_used = jnp.concatenate(
+            (causal_fallback_used, chunk_metrics["causal_fallback_used"]), axis=1
+        )
+        causal_outer_iterations = jnp.concatenate(
+            (causal_outer_iterations, chunk_metrics["causal_outer_iterations"]),
+            axis=1,
+        )
+        causal_maximum_residual = jnp.concatenate(
+            (causal_maximum_residual, chunk_metrics["causal_maximum_residual"]),
+            axis=1,
+        )
+        causal_accepted_steps = jnp.concatenate(
+            (causal_accepted_steps, chunk_metrics["causal_accepted_steps"]), axis=1
+        )
+        causal_rejected_steps = jnp.concatenate(
+            (causal_rejected_steps, chunk_metrics["causal_rejected_steps"]), axis=1
+        )
+        causal_transition_evaluations = jnp.concatenate(
+            (
+                causal_transition_evaluations,
+                chunk_metrics["causal_transition_evaluations"],
+            ),
+            axis=1,
+        )
         completed += chunk
         if destination is not None and compatibility is not None:
             _write_mcmc_checkpoint(
@@ -597,6 +704,13 @@ def _sample_mcmc(
                 energy=energy,
                 num_integration_steps=num_integration_steps_array,
                 num_trajectory_expansions=num_trajectory_expansions_array,
+                causal_converged=causal_converged,
+                causal_fallback_used=causal_fallback_used,
+                causal_outer_iterations=causal_outer_iterations,
+                causal_maximum_residual=causal_maximum_residual,
+                causal_accepted_steps=causal_accepted_steps,
+                causal_rejected_steps=causal_rejected_steps,
+                causal_transition_evaluations=causal_transition_evaluations,
                 adaptation_duration=adaptation_duration,
                 sampling_duration=sampling_duration,
                 duration_seconds=previous_duration + time.perf_counter() - started,
@@ -625,6 +739,19 @@ def _sample_mcmc(
         )
         for index in range(chains)
     )
+    causal_diagnostics = (
+        CausalHMCDiagnostics(
+            converged=causal_converged,
+            fallback_used=causal_fallback_used,
+            outer_iterations=causal_outer_iterations,
+            maximum_residual=causal_maximum_residual,
+            accepted_nonlinear_steps=causal_accepted_steps,
+            rejected_nonlinear_steps=causal_rejected_steps,
+            transition_evaluations=causal_transition_evaluations,
+        )
+        if trajectory_method == "causal"
+        else None
+    )
     duration = previous_duration + time.perf_counter() - started
     return MCMCResult(
         problem=problem,
@@ -649,6 +776,9 @@ def _sample_mcmc(
         adaptation_duration_seconds=adaptation_duration,
         sampling_duration_seconds=sampling_duration,
         chain_method=method,
+        trajectory_method=trajectory_method,
+        causal_diagnostics=causal_diagnostics,
+        causal_config=causal_config,
     )
 
 
@@ -734,6 +864,8 @@ def _build_mcmc_advancer(
     algorithm,
     extra_parameters,
     chain_method,
+    trajectory_method,
+    causal_config,
 ):
     if algorithm == "nuts" and chain_method == "interleaved":
         compiled = build_interleaved_nuts_advancer(
@@ -757,11 +889,29 @@ def _build_mcmc_advancer(
                 inverse_mass_matrices,
                 draw_keys,
             )
-            return final_states, samples, metrics
+            zero = jnp.zeros_like(metrics["num_integration_steps"])
+            return (
+                final_states,
+                samples,
+                {
+                    **metrics,
+                    "causal_converged": jnp.zeros_like(zero, dtype=bool),
+                    "causal_fallback_used": jnp.zeros_like(zero, dtype=bool),
+                    "causal_outer_iterations": zero,
+                    "causal_maximum_residual": zero.astype(metrics["log_density"].dtype),
+                    "causal_accepted_steps": zero,
+                    "causal_rejected_steps": zero,
+                    "causal_transition_evaluations": zero,
+                },
+            )
 
         return advance_interleaved
 
-    kernel = algorithm_factory.build_kernel()
+    kernel = (
+        build_causal_hmc_kernel(causal_config)
+        if trajectory_method == "causal" and causal_config is not None
+        else algorithm_factory.build_kernel()
+    )
     if algorithm == "nuts":
         max_num_doublings = int(extra_parameters["max_num_doublings"])
 
@@ -850,6 +1000,27 @@ def _build_mcmc_advancer(
             if algorithm == "nuts"
             else jnp.zeros_like(infos.num_integration_steps)
         )
+        if trajectory_method == "causal":
+            causal_metrics = {
+                "causal_converged": infos.causal_converged,
+                "causal_fallback_used": infos.causal_fallback_used,
+                "causal_outer_iterations": infos.causal_outer_iterations,
+                "causal_maximum_residual": infos.causal_maximum_residual,
+                "causal_accepted_steps": infos.causal_accepted_steps,
+                "causal_rejected_steps": infos.causal_rejected_steps,
+                "causal_transition_evaluations": (infos.causal_transition_evaluations),
+            }
+        else:
+            zero = jnp.zeros_like(infos.num_integration_steps)
+            causal_metrics = {
+                "causal_converged": jnp.zeros_like(zero, dtype=bool),
+                "causal_fallback_used": jnp.zeros_like(zero, dtype=bool),
+                "causal_outer_iterations": zero,
+                "causal_maximum_residual": zero.astype(states.logdensity.dtype),
+                "causal_accepted_steps": zero,
+                "causal_rejected_steps": zero,
+                "causal_transition_evaluations": zero,
+            }
         return (
             final_states,
             states.position,
@@ -860,6 +1031,7 @@ def _build_mcmc_advancer(
                 "energy": infos.energy,
                 "num_integration_steps": infos.num_integration_steps,
                 "num_trajectory_expansions": trajectory_expansions,
+                **causal_metrics,
             },
         )
 
@@ -890,6 +1062,13 @@ def _write_mcmc_checkpoint(
     energy,
     num_integration_steps,
     num_trajectory_expansions,
+    causal_converged,
+    causal_fallback_used,
+    causal_outer_iterations,
+    causal_maximum_residual,
+    causal_accepted_steps,
+    causal_rejected_steps,
+    causal_transition_evaluations,
     adaptation_duration,
     sampling_duration,
     duration_seconds,
@@ -904,6 +1083,13 @@ def _write_mcmc_checkpoint(
         "energy": energy,
         "num_integration_steps": num_integration_steps,
         "num_trajectory_expansions": num_trajectory_expansions,
+        "causal_converged": causal_converged,
+        "causal_fallback_used": causal_fallback_used,
+        "causal_outer_iterations": causal_outer_iterations,
+        "causal_maximum_residual": causal_maximum_residual,
+        "causal_accepted_steps": causal_accepted_steps,
+        "causal_rejected_steps": causal_rejected_steps,
+        "causal_transition_evaluations": causal_transition_evaluations,
     }
     state = {
         "completed_draws": int(completed),
@@ -976,6 +1162,27 @@ def _read_mcmc_checkpoint(
     trajectory_expansions = _checkpoint_array(
         arrays, "num_trajectory_expansions", shape=expected_draw_shape
     )
+    causal_converged = _checkpoint_array(
+        arrays, "causal_converged", shape=expected_draw_shape
+    )
+    causal_fallback_used = _checkpoint_array(
+        arrays, "causal_fallback_used", shape=expected_draw_shape
+    )
+    causal_outer_iterations = _checkpoint_array(
+        arrays, "causal_outer_iterations", shape=expected_draw_shape
+    )
+    causal_maximum_residual = _checkpoint_array(
+        arrays, "causal_maximum_residual", shape=expected_draw_shape
+    )
+    causal_accepted_steps = _checkpoint_array(
+        arrays, "causal_accepted_steps", shape=expected_draw_shape
+    )
+    causal_rejected_steps = _checkpoint_array(
+        arrays, "causal_rejected_steps", shape=expected_draw_shape
+    )
+    causal_transition_evaluations = _checkpoint_array(
+        arrays, "causal_transition_evaluations", shape=expected_draw_shape
+    )
     return (
         completed,
         current_states,
@@ -990,6 +1197,13 @@ def _read_mcmc_checkpoint(
         energy,
         integration_steps,
         trajectory_expansions,
+        causal_converged,
+        causal_fallback_used,
+        causal_outer_iterations,
+        causal_maximum_residual,
+        causal_accepted_steps,
+        causal_rejected_steps,
+        causal_transition_evaluations,
         float(state["adaptation_duration_seconds"]),
         float(state["sampling_duration_seconds"]),
         float(state["duration_seconds"]),

@@ -47,6 +47,28 @@ from .._likelihoods import (
     StudentTLikelihood,
 )
 from .._probability import AbstractProbabilityLaw
+from ..linalg._gaussian_chain import (
+    combine_gaussian_filter_elements,
+    combine_gaussian_information_elements,
+    gaussian_markov_information_from_moments,
+    GAUSSIAN_MARKOV_INVALID_NODE_MASK,
+    gaussian_markov_log_normalizer,
+    gaussian_markov_moments,
+    gaussian_markov_moments_from_marginals,
+    GAUSSIAN_MARKOV_NON_HERMITIAN,
+    GAUSSIAN_MARKOV_NONFINITE,
+    GAUSSIAN_MARKOV_NOT_POSITIVE_DEFINITE,
+    gaussian_markov_status_name,
+    GAUSSIAN_MARKOV_SUCCESS,
+    GaussianFilterElement,
+    GaussianInformationElement,
+    GaussianMarkovExecutionMethod,
+    GaussianMarkovInformation,
+    GaussianMarkovLogNormalizerResult,
+    GaussianMarkovMoments,
+    GaussianMarkovStatus,
+    sample_gaussian_markov,
+)
 from ._bellman import (
     bellman_filter,
     bellman_filter_status_name,
@@ -69,6 +91,12 @@ from ._bellman import (
     BellmanStatus,
     initialize_bellman_filter,
     StateSpaceLaplaceLikelihood,
+)
+from ._causal_hmc import (
+    CausalHMCConfig,
+    CausalHMCDiagnostics,
+    CausalHMCFailurePolicy,
+    CausalHMCLinearization,
 )
 from ._checkpoint import (
     CheckpointCompatibilityError,
@@ -193,27 +221,11 @@ from ._fixed_lag import (
     FixedLagParticleSmootherResult,
 )
 from ._flow_mcmc import FlowNUTSConfig, FlowNUTSResult, sample_flow_nuts
-from ._gaussian_chain import (
-    combine_gaussian_filter_elements,
-    combine_gaussian_information_elements,
-    gaussian_markov_information_from_moments,
-    GAUSSIAN_MARKOV_INVALID_NODE_MASK,
-    gaussian_markov_log_normalizer,
-    gaussian_markov_moments,
-    gaussian_markov_moments_from_marginals,
-    GAUSSIAN_MARKOV_NON_HERMITIAN,
-    GAUSSIAN_MARKOV_NONFINITE,
-    GAUSSIAN_MARKOV_NOT_POSITIVE_DEFINITE,
-    gaussian_markov_status_name,
-    GAUSSIAN_MARKOV_SUCCESS,
-    GaussianFilterElement,
-    GaussianInformationElement,
-    GaussianMarkovExecutionMethod,
-    GaussianMarkovInformation,
-    GaussianMarkovLogNormalizerResult,
-    GaussianMarkovMoments,
-    GaussianMarkovStatus,
-    sample_gaussian_markov,
+from ._flow_variational import (
+    fit_flow_variational,
+    FlowVariationalConfig,
+    FlowVariationalFamily,
+    FlowVariationalResult,
 )
 from ._gaussian_factor import (
     add_independent_gaussian_factors,
@@ -399,6 +411,10 @@ from ._operator_metrics import (
     operator_interval_coverage,
     operator_interval_width,
 )
+from ._parameterized_state_space import (
+    ParameterizedStateSpacePathLogDensity,
+    ParameterizedStateSpaceProblem,
+)
 from ._particle import (
     bootstrap_particle_filter,
     effective_sample_size,
@@ -435,6 +451,11 @@ from ._particle import (
     sample_particle_backward_paths,
     write_particle_filter_checkpoint,
 )
+from ._particle_genealogical_score import (
+    particle_genealogical_score,
+    ParticleGenealogicalScoreResult,
+    StateSpaceModelScore,
+)
 from ._particle_mcmc import (
     AbstractParameterProposal,
     CallableParameterProposal,
@@ -446,6 +467,10 @@ from ._particle_mcmc import (
     ParticleGibbsResult,
     ParticleMarginalMetropolisHastingsResult,
     sample_conditional_particle_path,
+)
+from ._particle_parameter_score import (
+    parameterized_particle_genealogical_score,
+    ParameterizedParticleGenealogicalScoreResult,
 )
 from ._pathfinder import fit_pathfinder, PathfinderResult
 from ._posterior import (
@@ -605,6 +630,21 @@ from ._sing import (
     SINGStepResult,
 )
 from ._smc import sample_tempered_smc, TemperedSMCResult
+from ._state_space_amortized import (
+    AmortizedGaussianMarkovEncoder,
+    AmortizedGaussianMarkovFamily,
+    AmortizedStateSpaceVariationalConfig,
+    AmortizedStateSpaceVariationalResult,
+    fit_amortized_state_space_variational,
+)
+from ._state_space_buffered import (
+    BufferedStateSpaceVariationalConfig,
+    BufferedStateSpaceVariationalDiagnostics,
+    BufferedStateSpaceVariationalResult,
+    fit_buffered_state_space_variational,
+    StateSpaceWindowBatch,
+    StateSpaceWindowPlan,
+)
 from ._state_space_estimation import (
     ApproximateStateSpaceLikelihoodResult,
     ExperimentStateSpaceLikelihood,
@@ -642,6 +682,24 @@ from ._state_space_inference import (
     StateSpaceIdentifiabilityReport,
     StateSpaceMarginalLikelihood,
 )
+from ._state_space_path_density import (
+    state_space_path_log_density,
+    StateSpacePathLogDensity,
+)
+from ._state_space_variational import (
+    fit_state_space_variational,
+    GaussianMarkovVariationalFamily,
+    StateSpaceVariationalConfig,
+    StateSpaceVariationalResult,
+)
+from ._stochastic_gradient import (
+    AbstractStochasticGradientEstimator,
+    AutodiffStochasticGradientEstimator,
+    ParticleGenealogicalGradientEstimator,
+    STOCHASTIC_GRADIENT_INVALID,
+    STOCHASTIC_GRADIENT_SUCCESS,
+    StochasticGradientEstimate,
+)
 from ._stochastic_spectra import (
     linear_gaussian_spectral_densities,
     linear_gaussian_transfer_function,
@@ -670,6 +728,14 @@ from ._transport_resampling import (
     OptimalTransportEnsembleTransformResult,
 )
 from ._unbalanced_transport import spatial_unbalanced_sinkhorn_divergence
+from ._variational import (
+    AbstractVariationalFamily,
+    fit_variational,
+    MeanFieldGaussianFamily,
+    VariationalConfig,
+    VariationalDiagnostics,
+    VariationalResult,
+)
 from ._whitening import GaussianPriorWhitening
 
 
@@ -970,6 +1036,11 @@ __all__ = [
     "ParticleFisherInformationResult",
     "particle_fisher_score",
     "ParticleFisherScoreResult",
+    "particle_genealogical_score",
+    "ParticleGenealogicalScoreResult",
+    "StateSpaceModelScore",
+    "parameterized_particle_genealogical_score",
+    "ParameterizedParticleGenealogicalScoreResult",
     "ParticleSmootherResult",
     "particle_posterior_measure",
     "resample_indices",
@@ -1146,6 +1217,20 @@ __all__ = [
     "search_map_candidates",
     "FlowNUTSConfig",
     "FlowNUTSResult",
+    "fit_flow_variational",
+    "FlowVariationalConfig",
+    "FlowVariationalFamily",
+    "FlowVariationalResult",
+    "CausalHMCConfig",
+    "AbstractStochasticGradientEstimator",
+    "AutodiffStochasticGradientEstimator",
+    "ParticleGenealogicalGradientEstimator",
+    "STOCHASTIC_GRADIENT_INVALID",
+    "STOCHASTIC_GRADIENT_SUCCESS",
+    "StochasticGradientEstimate",
+    "CausalHMCDiagnostics",
+    "CausalHMCFailurePolicy",
+    "CausalHMCLinearization",
     "MCMCChainWarmup",
     "MCMCConvergenceError",
     "MCMCConvergenceReport",
@@ -1158,12 +1243,37 @@ __all__ = [
     "build_sgmcmc_control_variate",
     "sample_sgld",
     "sample_sgnht",
+    "AmortizedGaussianMarkovEncoder",
+    "AmortizedGaussianMarkovFamily",
+    "AmortizedStateSpaceVariationalConfig",
+    "AmortizedStateSpaceVariationalResult",
+    "fit_amortized_state_space_variational",
+    "BufferedStateSpaceVariationalConfig",
+    "BufferedStateSpaceVariationalDiagnostics",
+    "BufferedStateSpaceVariationalResult",
+    "fit_buffered_state_space_variational",
+    "StateSpaceWindowBatch",
+    "StateSpaceWindowPlan",
     "SGMCMCControlVariate",
     "SGMCMCDiagnostics",
     "SGMCMCMixingError",
     "SGMCMCMixingReport",
     "SGMCMCMixingThresholds",
     "SGMCMCResult",
+    "AbstractVariationalFamily",
+    "fit_variational",
+    "ParameterizedStateSpacePathLogDensity",
+    "ParameterizedStateSpaceProblem",
+    "MeanFieldGaussianFamily",
+    "VariationalConfig",
+    "VariationalDiagnostics",
+    "VariationalResult",
+    "state_space_path_log_density",
+    "StateSpacePathLogDensity",
+    "fit_state_space_variational",
+    "GaussianMarkovVariationalFamily",
+    "StateSpaceVariationalConfig",
+    "StateSpaceVariationalResult",
     "PathfinderResult",
     "fit_pathfinder",
     "TemperedSMCResult",

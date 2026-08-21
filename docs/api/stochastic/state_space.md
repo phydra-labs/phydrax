@@ -373,6 +373,21 @@ component metadata.
 
 ---
 
+## Latent-path and parameter-learning convention
+
+Inference over a complete continuous-state path uses
+`case_shape + (num_steps + 1,) + state_shape`. Index zero is the state at
+`StateSpaceProblem.initial_time`; index `t + 1` is aligned with observation step
+`t`. This differs intentionally from filter result arrays, which contain only
+post-transition states at observation times.
+
+State-space roles continue to own simulation and normalized densities. Global
+parameter learning does not introduce parallel prior/transition/observation
+interfaces. `phydrax.uq.ParameterizedStateSpaceProblem` instead binds physical
+parameters into `StateSpaceStepContext.args`; existing callable transitions and
+observations read them there. A parameter-dependent initial density is an explicit
+optional callback because the original prior object also owns initial sampling.
+
 ## Model and problem
 
 ::: phydrax.stochastic.StateSpaceModel
