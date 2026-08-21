@@ -1090,13 +1090,7 @@ complete modes, phase/model cases, or low-dimensional coordinate choices:
 ```python
 candidate_space = phx.optim.FiniteProductSpace(
     phx.optim.FiniteAxis(
-        jnp.asarray(
-            [
-                [-2.0, -1.0],
-                [0.5, 1.5],
-                [2.0, 3.0],
-            ]
-        )
+        {"source": jnp.asarray([-2.0, 0.5, 2.0])}
     )
 )
 screened_mode = phx.uq.search_map_candidates(

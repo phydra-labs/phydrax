@@ -319,37 +319,13 @@ spectrum.
 
 ::: phydrax.dynamics.analysis.FloquetResult
 
-## Continuation and bifurcation evidence
+## Continuation boundary
 
-`ContinuationProblem` declares a square residual, scalar parameter, physical spectrum
-kind, and optional spectrum and normal-form hooks. Natural continuation is suitable while
-the state can be parameterized by the scalar parameter. Pseudo-arclength continuation
-uses a predictor and augmented corrector and can traverse folds. Both expose adaptive
-step changes, retries, Newton iterations, tangents, residuals, termination status, and a
-fixed-capacity branch buffer.
-
-Flow spectra drive fold and Hopf indicators. Map and Floquet spectra drive fold, flip, and
-torus indicators; declared neutral Floquet multipliers are excluded only from stability
-classification and indicators, not from stored spectra. Flags are finite-resolution
-candidates, not certified normal forms. `CallableNormalFormHook` records additional
-fixed-width evidence. `CallableBranchSwitchHook` proposes an explicit seed; it does not
-claim or execute a high-codimension branch switch automatically.
-
-::: phydrax.dynamics.analysis.ContinuationProblem
-
-::: phydrax.dynamics.analysis.CallableNormalFormHook
-
-::: phydrax.dynamics.analysis.continue_branch
-
-::: phydrax.dynamics.analysis.ContinuationBranch
-
-::: phydrax.dynamics.analysis.BifurcationIndicators
-
-::: phydrax.dynamics.analysis.BranchBifurcationFlags
-
-::: phydrax.dynamics.analysis.CallableBranchSwitchHook
-
-::: phydrax.dynamics.analysis.branch_switch_seed
+Generic residual-curve continuation and local bifurcation certification are owned by
+`phydrax.continuation`. Dynamics analysis supplies periodic-orbit and Floquet operators
+that may be adapted into those workflows; it does not maintain a second continuation
+runtime. See [API → Continuation and bifurcation](continuation.md) and the
+[advanced solver workflow](../cookbook/advanced_solvers.md).
 
 ## Lyapunov, covariant, finite-size, and recurrence diagnostics
 

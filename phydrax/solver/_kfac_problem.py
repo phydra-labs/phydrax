@@ -36,7 +36,7 @@ class FrozenResidualTerm:
 
     term: ResidualPenalty
     realization: IntegrationRealization
-    scale: float = 1.0
+    scale: Array | float = 1.0
 
 
 def materialize_frozen_terms(
@@ -64,10 +64,38 @@ def materialize_frozen_terms(
             FrozenResidualTerm(
                 term=term,
                 realization=realization,
-                scale=float(prepared.selection.scale),
+                scale=jnp.asarray(prepared.selection.scale),
             )
         )
     return tuple(frozen)
+
+def materialize_frozen_residual_terms(
+    prepared: _PreparedObjective,
+    /,
+) -> tuple[FrozenResidualTerm, ...]:
+    """Lower only ResidualPenalty terms from one mixed prepared objective."""
+
+    frozen: list[FrozenResidualTerm] = []
+    for prepared_term in prepared.terms:
+        term = prepared_term.term
+        if not isinstance(term, ResidualPenalty):
+            continue
+        if prepared_term.payload_kind != "realization" or not isinstance(
+            prepared_term.payload,
+            IntegrationRealization,
+        ):
+            raise TypeError(
+                "Residual terms require a prepared IntegrationRealization."
+            )
+        frozen.append(
+            FrozenResidualTerm(
+                term=term,
+                realization=prepared_term.payload,
+                scale=jnp.asarray(prepared.selection.scale),
+            )
+        )
+    return tuple(frozen)
+
 
 
 def validate_derivative_coverage(
@@ -94,7 +122,7 @@ def _scaled_residual_data(data, /, *, scale: float) -> Array:
         strict=True,
     ):
         root = cx.Field(
-            jnp.sqrt(float(scale) * jnp.asarray(coefficient.data)),
+            jnp.sqrt(jnp.asarray(scale) * jnp.asarray(coefficient.data)),
             dims=coefficient.dims,
         )
         scaled = root * residual
@@ -311,7 +339,7 @@ def frozen_loss(
                 realization=term.realization,
                 iter_=iter_,
             )
-            total = total + float(term.scale) * jnp.asarray(data.loss).reshape(())
+            total = total + jnp.asarray(term.scale) * jnp.asarray(data.loss).reshape(())
     return total
 
 
@@ -346,6 +374,7 @@ __all__ = [
     "frozen_loss",
     "frozen_loss_and_flat_gradient",
     "frozen_term_residual_vector",
+    "materialize_frozen_residual_terms",
     "materialize_frozen_terms",
     "term_block_curvature_observations",
     "term_residual_jacobians",

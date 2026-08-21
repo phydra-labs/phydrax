@@ -37,6 +37,7 @@ class PreparedLinearization(StrictModule):
     primal: PyTree[Array]
     pushforward: Callable[[PyTree[Any]], PyTree[Array]]
     pullback: Callable[[PyTree[Any]], PyTree[Array]]
+    auxiliary: Any
     policy: LinearizationPolicy
     linearization_id: str = eqx.field(static=True)
 
@@ -51,6 +52,7 @@ class PreparedLinearization(StrictModule):
         pullback: Callable[[PyTree[Any]], PyTree[Array]],
         policy: LinearizationPolicy,
         linearization_id: str,
+        auxiliary: Any = None,
     ):
         self.source = source
         self.target = target
@@ -58,6 +60,7 @@ class PreparedLinearization(StrictModule):
         self.primal = primal
         self.pushforward = pushforward
         self.pullback = pullback
+        self.auxiliary = auxiliary
         self.policy = policy
         self.linearization_id = linearization_id
 
@@ -68,6 +71,8 @@ class PreparedLinearization(StrictModule):
         return self.source.validate(self.pullback(self.target.validate(cotangent)))
 
 
+
+
 def prepare_linearization(
     function: Callable[[PyTree[Any]], PyTree[Any]],
     point: PyTree[Any],
@@ -75,6 +80,7 @@ def prepare_linearization(
     *,
     source: AbstractVectorSpace | None = None,
     target: AbstractVectorSpace | None = None,
+    has_aux: bool = False,
     policy: LinearizationPolicy | None = None,
     linearization_id: str | None = None,
 ) -> PreparedLinearization:
@@ -94,15 +100,22 @@ def prepare_linearization(
         if policy_.rematerialization == "rematerialize"
         else converted
     )
-    primal, pushforward = jax.linearize(executed, point_)
+    if has_aux:
+        primal, pushforward, auxiliary = jax.linearize(executed, point_, has_aux=True)
+    else:
+        primal, pushforward = jax.linearize(executed, point_)
+        auxiliary = None
+    pushforward = eqx.filter_closure_convert(pushforward, source_.structure())
     target_ = PyTreeSpace(primal) if target is None else target
     if not isinstance(target_, AbstractVectorSpace):
         raise TypeError("target must be an AbstractVectorSpace or None.")
     primal_ = target_.validate(primal)
     transposed = jax.linear_transpose(pushforward, source_.zeros())
 
-    def pullback(cotangent):
+    def apply_transpose(cotangent):
         return transposed(cotangent)[0]
+
+    pullback = eqx.filter_closure_convert(apply_transpose, target_.structure())
 
     identifier = (
         canonical_fingerprint(
@@ -125,6 +138,7 @@ def prepare_linearization(
         primal=primal_,
         pushforward=pushforward,
         pullback=pullback,
+        auxiliary=auxiliary,
         policy=policy_,
         linearization_id=identifier,
     )

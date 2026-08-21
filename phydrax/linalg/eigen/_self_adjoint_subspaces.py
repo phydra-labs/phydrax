@@ -82,10 +82,11 @@ class SelfAdjointSpectralSubspacePolicy(StrictModule):
         absolute = float(absolute_tolerance)
         gap = float(minimum_external_gap)
         if any(
-            not math.isfinite(value) or value < 0.0
-            for value in (relative, absolute, gap)
+            not math.isfinite(value) or value < 0.0 for value in (relative, absolute, gap)
         ):
-            raise ValueError("Subspace tolerances and gaps must be finite and non-negative.")
+            raise ValueError(
+                "Subspace tolerances and gaps must be finite and non-negative."
+            )
         if differentiation not in ("none", "projector"):
             raise ValueError("differentiation must be 'none' or 'projector'.")
         failure_ = FailurePolicy() if failure is None else failure
@@ -201,14 +202,14 @@ def self_adjoint_spectral_subspace(
     """Construct an isolated self-adjoint projector from one reusable spectrum."""
     if not isinstance(selection, SpectralSelection):
         raise TypeError("selection must be a SpectralSelection.")
-    selected_policy = (
-        SelfAdjointSpectralSubspacePolicy() if policy is None else policy
-    )
+    selected_policy = SelfAdjointSpectralSubspacePolicy() if policy is None else policy
     if not isinstance(selected_policy, SelfAdjointSpectralSubspacePolicy):
         raise TypeError("policy must be a SelfAdjointSpectralSubspacePolicy or None.")
     if isinstance(spectrum_or_problem, PreparedSelfAdjointSpectrum):
         if spectrum_policy is not None:
-            raise ValueError("spectrum_policy must be omitted for prepared spectrum state.")
+            raise ValueError(
+                "spectrum_policy must be omitted for prepared spectrum state."
+            )
         spectrum = spectrum_or_problem
     else:
         spectrum = prepare_self_adjoint_spectrum(spectrum_or_problem, spectrum_policy)
@@ -294,9 +295,7 @@ def self_adjoint_spectral_subspace(
         selected_eigenvalues=ordered_values[..., :expected],
         complement_eigenvalues=ordered_values[..., expected:],
         basis=ordered_vectors[..., :, :expected],
-        dual_basis=jnp.conj(
-            jnp.swapaxes(ordered_inverse[..., :expected, :], -1, -2)
-        ),
+        dual_basis=jnp.conj(jnp.swapaxes(ordered_inverse[..., :expected, :], -1, -2)),
         projector=projector,
         density_kernel=density,
         status=status,
@@ -324,9 +323,7 @@ def self_adjoint_spectral_projector_derivative(
     """Evaluate exact directional derivatives for one isolated spectral cluster."""
     if not isinstance(spectrum, PreparedSelfAdjointSpectrum):
         raise TypeError("spectrum must be a PreparedSelfAdjointSpectrum.")
-    selected_policy = (
-        SelfAdjointSpectralSubspacePolicy() if policy is None else policy
-    )
+    selected_policy = SelfAdjointSpectralSubspacePolicy() if policy is None else policy
     subspace = self_adjoint_spectral_subspace(
         spectrum,
         selection,
@@ -377,18 +374,13 @@ def self_adjoint_spectral_projector_derivative(
         operator_matrix @ vectors
         - (metric_matrix @ vectors) * ordered_values[..., None, :]
     )
-    perturbation = (
-        jnp.conj(jnp.swapaxes(vectors, -1, -2))
-        @ pairing
-        @ residual_images
-    )
+    perturbation = jnp.conj(jnp.swapaxes(vectors, -1, -2)) @ pairing @ residual_images
     paired_metric_tangent = pairing @ metric_matrix
     selected = selected_mask.astype(vectors.dtype)
     membership_difference = selected[:, None] - selected[None, :]
-    gaps = (
-        ordered_values[..., :, None].astype(vectors.dtype)
-        - ordered_values[..., None, :].astype(vectors.dtype)
-    )
+    gaps = ordered_values[..., :, None].astype(vectors.dtype) - ordered_values[
+        ..., None, :
+    ].astype(vectors.dtype)
     cross = membership_difference != 0
     safe_gaps = jnp.where(cross, gaps, 1)
     derivative_in_basis = jnp.where(
@@ -401,8 +393,7 @@ def self_adjoint_spectral_projector_derivative(
         jnp.linalg.solve(
             jnp.swapaxes(spectrum.paired_metric, -1, -2),
             jnp.swapaxes(
-                projector_derivative
-                - subspace.density_kernel @ paired_metric_tangent,
+                projector_derivative - subspace.density_kernel @ paired_metric_tangent,
                 -1,
                 -2,
             ),
@@ -471,8 +462,7 @@ def _subspace_evidence(
         certified_gap = external_gap
     else:
         distances = jnp.abs(
-            selected_values[..., :, None]
-            - complement_values[..., None, :]
+            selected_values[..., :, None] - complement_values[..., None, :]
         )
         order = jnp.argsort(
             ~selection.mask(spectrum.eigenvalues),
@@ -525,9 +515,7 @@ def _subspace_evidence(
     )
     basis = vectors[..., :, :expected]
     basis_orthogonality = jnp.linalg.norm(
-        jnp.conj(jnp.swapaxes(basis, -1, -2))
-        @ spectrum.paired_metric
-        @ basis
+        jnp.conj(jnp.swapaxes(basis, -1, -2)) @ spectrum.paired_metric @ basis
         - jnp.eye(expected, dtype=vectors.dtype),
         axis=(-2, -1),
     )
@@ -605,6 +593,7 @@ def _subspace_evidence(
     )
     return diagnostics, status, differentiation_valid
 
+
 def _derivative_evidence(
     spectrum,
     subspace,
@@ -625,14 +614,10 @@ def _derivative_evidence(
     expected = int(expected)
     membership = selected_mask.astype(vectors.dtype)
     membership_difference = membership[:, None] - membership[None, :]
-    gaps = (
-        values[..., :, None].astype(vectors.dtype)
-        - values[..., None, :].astype(vectors.dtype)
+    gaps = values[..., :, None].astype(vectors.dtype) - values[..., None, :].astype(
+        vectors.dtype
     )
-    sylvester_residual = (
-        gaps * derivative_in_basis
-        - membership_difference * perturbation
-    )
+    sylvester_residual = gaps * derivative_in_basis - membership_difference * perturbation
     selected_to_complement = jnp.linalg.norm(
         sylvester_residual[..., :expected, expected:],
         axis=(-2, -1),
@@ -664,9 +649,8 @@ def _derivative_evidence(
         - subspace.density_kernel @ paired_metric_tangent,
         axis=(-2, -1),
     )
-    perturbation_norm = (
-        jnp.linalg.norm(operator_matrix, axis=(-2, -1))
-        + jnp.linalg.norm(metric_matrix, axis=(-2, -1))
+    perturbation_norm = jnp.linalg.norm(operator_matrix, axis=(-2, -1)) + jnp.linalg.norm(
+        metric_matrix, axis=(-2, -1)
     )
     projector_norm = jnp.linalg.norm(
         projector_derivative,
@@ -697,9 +681,7 @@ def _derivative_evidence(
         & jnp.all(jnp.isfinite(density_derivative), axis=(-2, -1))
         & jnp.isfinite(residual)
     )
-    source_success = (
-        subspace.status == int(SelfAdjointSpectralSubspaceStatus.SUCCESS)
-    )
+    source_success = subspace.status == int(SelfAdjointSpectralSubspaceStatus.SUCCESS)
     residual_ok = residual <= tolerance
     status = jnp.where(
         ~finite,

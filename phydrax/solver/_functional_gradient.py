@@ -27,12 +27,23 @@ from .._training import (
     TrainingProgress,
     TrainingSignalGuard as _TrainingSignalGuard,
 )
+from ..optim._iterative import (
+    AbstractCompositeLeastSquaresMethod,
+    AbstractLeastSquaresMethod,
+    AbstractScalarIterativeMethod,
+    OptimizationStatus,
+    OptimizationTermination,
+)
+from ..optim._composite import CompositeLeastSquaresProblem
+from ..optim._least_squares import LeastSquaresState
 from ..optim._riemannian import (
     AbstractRiemannianLineSearchOptimizer,
     AbstractRiemannianOptimizer,
 )
+from ..optim._scalar import ScalarIterativeState
 from ._functional_objective import (
     evaluate_prepared_objective,
+    evaluate_prepared_scalar_remainder,
     prepared_data_metrics,
 )
 from ._functional_reporting import (
@@ -47,6 +58,11 @@ from ._functional_run import (
     select_train_terms as _active_train_terms,
     validate_term_sample_size as _train_term_sample_size,
 )
+from ._kfac_problem import (
+    frozen_term_residual_vector,
+    materialize_frozen_residual_terms,
+    materialize_frozen_terms,
+)
 from ._model_losses import function_model_loss_labels
 
 
@@ -58,7 +74,10 @@ def solve_gradient(
     self: "FunctionalSolver",
     *,
     num_iter: int,
-    optim: AbstractRiemannianOptimizer
+    optim: AbstractCompositeLeastSquaresMethod
+    | AbstractLeastSquaresMethod
+    | AbstractScalarIterativeMethod
+    | AbstractRiemannianOptimizer
     | optax.GradientTransformation
     | optax.GradientTransformationExtraArgs
     | Any = optax.rprop(1e-3),
@@ -86,9 +105,18 @@ def solve_gradient(
 
     _opt_linesearch: optax.GradientTransformationExtraArgs | None = None
     _opt_standard: optax.GradientTransformation | None = None
+    _opt_composite: AbstractCompositeLeastSquaresMethod | None = None
+    _opt_iterative: AbstractScalarIterativeMethod | None = None
+    _opt_least_squares: AbstractLeastSquaresMethod | None = None
 
     _opt_riemannian: AbstractRiemannianOptimizer | None = None
-    if isinstance(optim, AbstractRiemannianOptimizer):
+    if isinstance(optim, AbstractCompositeLeastSquaresMethod):
+        _opt_composite = optim
+    elif isinstance(optim, AbstractLeastSquaresMethod):
+        _opt_least_squares = optim
+    elif isinstance(optim, AbstractScalarIterativeMethod):
+        _opt_iterative = optim
+    elif isinstance(optim, AbstractRiemannianOptimizer):
         if evaluation_parameters is not None:
             raise ValueError(
                 "evaluation_parameters is unsupported for Riemannian optimizers "
@@ -101,10 +129,19 @@ def solve_gradient(
         _opt_standard = optim
     else:
         raise TypeError(
-            "optim must be a Phydrax Riemannian optimizer or an Optax transformation."
+            "optim must be a Phydrax least-squares, iterative, or Riemannian "
+            "optimizer, or an Optax transformation."
         )
     optimizer_label = (
-        _opt_riemannian.optimizer_id if _opt_riemannian is not None else "optax"
+        _opt_composite.method_id
+        if _opt_composite is not None
+        else _opt_least_squares.method_id
+        if _opt_least_squares is not None
+        else _opt_iterative.method_id
+        if _opt_iterative is not None
+        else _opt_riemannian.optimizer_id
+        if _opt_riemannian is not None
+        else "optax"
     )
 
     log_ctx = (
@@ -135,6 +172,14 @@ def solve_gradient(
         log_terms_ = bool(log_terms)
         term_names = tuple(_term_label(c) for c in self.terms)
         model_loss_names = function_model_loss_labels(self.functions)
+        if (
+            _opt_least_squares is not None
+            and model_loss_names
+        ):
+            raise ValueError(
+                "Least-squares FunctionalSolver methods require a pure "
+                "ResidualPenalty objective without model-level scalar losses."
+            )
         evaluation_term_names = tuple(_term_label(c) for c in self.evaluation_terms)
         term_sample_size = _train_term_sample_size(
             train_term_sample_size,
@@ -160,6 +205,10 @@ def solve_gradient(
 
         loss_fn = eqx.filter_value_and_grad(_loss_wrt_params, has_aux=True)
 
+        is_composite = _opt_composite is not None
+        is_least_squares = _opt_least_squares is not None
+        is_iterative = _opt_iterative is not None
+        iterative_termination = OptimizationTermination(maximum_steps=int(num_iter))
         is_linesearch = _opt_linesearch is not None
         is_riemannian = _opt_riemannian is not None
         is_riemannian_linesearch = isinstance(
@@ -172,6 +221,112 @@ def solve_gradient(
             opt_state,
             prepared_,
         ):
+            if is_composite:
+                assert _opt_composite is not None
+                frozen_terms = materialize_frozen_residual_terms(prepared_)
+
+                def _residual_fn(p, _):
+                    pieces = tuple(
+                        frozen_term_residual_vector(
+                            p,
+                            non_trainable_,
+                            self,
+                            term,
+                            iter_=prepared_.iteration,
+                        )
+                        for term in frozen_terms
+                    )
+                    if not pieces:
+                        raise ValueError(
+                            "GeneralizedGaussNewton requires at least one active "
+                            "ResidualPenalty."
+                        )
+                    return jnp.concatenate(pieces, axis=0)
+
+                def _scalar_fn(p, _):
+                    functions = combine_trainable(p, non_trainable_)
+                    return evaluate_prepared_scalar_remainder(
+                        prepared_,
+                        functions,
+                    )
+
+                composite_problem = CompositeLeastSquaresProblem(
+                    _residual_fn,
+                    _scalar_fn,
+                    problem_id="functional-solver-composite",
+                )
+                params_, opt_state, _ = _opt_composite.step(
+                    composite_problem,
+                    params_,
+                    opt_state,
+                    termination=iterative_termination,
+                    args=None,
+                )
+                loss_val, terms = _loss_wrt_params(
+                    params_,
+                    non_trainable_,
+                    prepared_,
+                )
+                return params_, opt_state, loss_val, terms
+
+            if is_least_squares:
+                assert _opt_least_squares is not None
+                frozen_terms = materialize_frozen_terms(prepared_)
+
+                def _residual_fn(p):
+                    pieces = tuple(
+                        frozen_term_residual_vector(
+                            p,
+                            non_trainable_,
+                            self,
+                            term,
+                            iter_=prepared_.iteration,
+                        )
+                        for term in frozen_terms
+                    )
+                    if not pieces:
+                        raise ValueError(
+                            "Least-squares FunctionalSolver methods require at "
+                            "least one active ResidualPenalty."
+                        )
+                    return jnp.concatenate(pieces, axis=0)
+
+                params_, opt_state, _ = _opt_least_squares.step(
+                    _residual_fn,
+                    params_,
+                    opt_state,
+                    termination=iterative_termination,
+                )
+                loss_val, terms = _loss_wrt_params(
+                    params_,
+                    non_trainable_,
+                    prepared_,
+                )
+                return params_, opt_state, loss_val, terms
+
+            if is_iterative:
+                assert _opt_iterative is not None
+
+                def _iterative_value_fn(p):
+                    return _loss_wrt_params(
+                        p,
+                        non_trainable_,
+                        prepared_,
+                    )[0]
+
+                params_, opt_state, loss_val = _opt_iterative.step(
+                    _iterative_value_fn,
+                    params_,
+                    opt_state,
+                    termination=iterative_termination,
+                )
+                _, terms = _loss_wrt_params(
+                    params_,
+                    non_trainable_,
+                    prepared_,
+                )
+                return params_, opt_state, loss_val, terms
+
             if is_riemannian:
                 (loss_val, terms), grads = loss_fn(
                     params_,
@@ -275,7 +430,13 @@ def solve_gradient(
         )
 
         opt = (
-            _opt_riemannian
+            _opt_composite
+            if is_composite
+            else _opt_least_squares
+            if is_least_squares
+            else _opt_iterative
+            if is_iterative
+            else _opt_riemannian
             if is_riemannian
             else (_opt_linesearch if is_linesearch else _opt_standard)
         )
@@ -345,6 +506,18 @@ def solve_gradient(
                     opt_state,
                     prepared,
                 )
+                iterative_step_metrics = (
+                    _opt_least_squares.step_metrics(opt_state)
+                    if _opt_least_squares is not None
+                    else _opt_iterative.step_metrics(opt_state)
+                    if _opt_iterative is not None
+                    else None
+                )
+                training_evaluation_multiplier = (
+                    1
+                    if iterative_step_metrics is None
+                    else 2 + int(iterative_step_metrics.globalization_evaluations)
+                )
                 if profile_adaptive:
                     jax.block_until_ready((params, opt_state, loss_val))
                     optimizer_step_wall_time = time.perf_counter() - optimizer_started
@@ -354,6 +527,7 @@ def solve_gradient(
                     else:
                         steady_optimizer_step_wall_time += optimizer_step_wall_time
                 objective = objective.record_training_evaluations(
+                    multiplier=training_evaluation_multiplier,
                     term_indices=active_term_indices,
                 )
                 completed = epoch + 1
@@ -377,7 +551,12 @@ def solve_gradient(
                     if evaluation_parameters is None:
                         selection_parameters = (
                             params
-                            if is_linesearch or is_riemannian_linesearch
+                            if (
+                                is_least_squares
+                                or is_iterative
+                                or is_linesearch
+                                or is_riemannian_linesearch
+                            )
                             else pre_update_params
                         )
                         selection_loss = loss_val
@@ -474,6 +653,19 @@ def solve_gradient(
                         else f" eval_loss={float(evaluation_loss):.6e}"
                     )
                     optimizer_suffix = ""
+                    if iterative_step_metrics is not None:
+                        optimizer_suffix = (
+                            " grad="
+                            f"{float(iterative_step_metrics.optimality_norm):.6e}"
+                            " step_norm="
+                            f"{float(iterative_step_metrics.step_norm):.6e}"
+                            " trials="
+                            f"{int(iterative_step_metrics.globalization_evaluations)}"
+                            " accepted="
+                            f"{int(iterative_step_metrics.accepted)}"
+                            " status="
+                            f"{int(iterative_step_metrics.status)}"
+                        )
                     if riemannian_step_metrics is not None:
                         if riemannian_constraint_residual is None:
                             raise RuntimeError(
@@ -603,6 +795,42 @@ def solve_gradient(
                         eval_data_metrics=eval_data_metrics,
                         log_terms=log_terms_,
                     )
+                    if iterative_step_metrics is not None:
+                        tb_writer.scalar(
+                            "optimizer/iterative/optimality_norm",
+                            iterative_step_metrics.optimality_norm,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/iterative/step_norm",
+                            iterative_step_metrics.step_norm,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/iterative/accepted_step_size",
+                            iterative_step_metrics.accepted_step_size,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/iterative/globalization_evaluations",
+                            iterative_step_metrics.globalization_evaluations,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/iterative/linear_iterations",
+                            iterative_step_metrics.linear_iterations,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/iterative/forcing",
+                            iterative_step_metrics.forcing,
+                            step,
+                        )
+                        tb_writer.scalar(
+                            "optimizer/iterative/status",
+                            iterative_step_metrics.status,
+                            step,
+                        )
                     if riemannian_step_metrics is not None:
                         tb_writer.scalar(
                             "optimizer/riemannian/learning_rate",
@@ -696,6 +924,10 @@ def solve_gradient(
                         )
                     if step % tb_flush_every_ == 0:
                         tb_writer.flush()
+                if iterative_step_metrics is not None and int(
+                    iterative_step_metrics.status
+                ) != int(OptimizationStatus.ITERATING):
+                    break
             except (KeyboardInterrupt, InterruptedError) as exc:
                 signal_guard.request_stop_from_exception(exc)
                 _log_training_signal_stop(
@@ -768,6 +1000,103 @@ def solve_gradient(
                     final_metrics.adaptive_denominator_maximum
                 ),
             }
+        iterative_diagnostics: dict[str, Any] = {}
+        if (
+            _opt_composite is not None
+            or _opt_least_squares is not None
+            or _opt_iterative is not None
+        ):
+            final_iterative_metrics = (
+                _opt_composite.step_metrics(opt_state)
+                if _opt_composite is not None
+                else _opt_least_squares.step_metrics(opt_state)
+                if _opt_least_squares is not None
+                else _opt_iterative.step_metrics(opt_state)
+            )
+            iterative_diagnostics = {
+                "optimizer/iterative/objective": final_iterative_metrics.objective,
+                "optimizer/iterative/residual_objective": (
+                    final_iterative_metrics.residual_objective
+                ),
+                "optimizer/iterative/scalar_objective": (
+                    final_iterative_metrics.scalar_objective
+                ),
+                "optimizer/iterative/optimality_norm": (
+                    final_iterative_metrics.optimality_norm
+                ),
+                "optimizer/iterative/step_norm": final_iterative_metrics.step_norm,
+                "optimizer/iterative/accepted_step_size": (
+                    final_iterative_metrics.accepted_step_size
+                ),
+                "optimizer/iterative/globalization_evaluations": (
+                    final_iterative_metrics.globalization_evaluations
+                ),
+                "optimizer/iterative/accepted": final_iterative_metrics.accepted,
+                "optimizer/iterative/linear_iterations": (
+                    final_iterative_metrics.linear_iterations
+                ),
+                "optimizer/iterative/linear_status": (
+                    final_iterative_metrics.linear_status
+                ),
+                "optimizer/iterative/forcing": final_iterative_metrics.forcing,
+                "optimizer/iterative/damping": final_iterative_metrics.damping,
+                "optimizer/iterative/reduction_ratio": (
+                    final_iterative_metrics.reduction_ratio
+                ),
+                "optimizer/iterative/direction_fallback": (
+                    final_iterative_metrics.direction_fallback
+                ),
+                "optimizer/iterative/status": final_iterative_metrics.status,
+            }
+            if _opt_composite is not None or _opt_least_squares is not None:
+                assert isinstance(opt_state, LeastSquaresState)
+                iterative_diagnostics |= {
+                    "optimizer/iterative/iterations": opt_state.iteration,
+                    "optimizer/iterative/accepted_steps": opt_state.accepted_steps,
+                    "optimizer/iterative/rejected_steps": opt_state.rejected_steps,
+                    "optimizer/iterative/residual_evaluations": (
+                        opt_state.residual_evaluations
+                    ),
+                    "optimizer/iterative/jvp_evaluations": opt_state.jvp_evaluations,
+                    "optimizer/iterative/vjp_evaluations": opt_state.vjp_evaluations,
+                    "optimizer/iterative/linear_solves": opt_state.linear_solves,
+                    "optimizer/iterative/linear_iterations_total": (
+                        opt_state.linear_iterations
+                    ),
+                    "optimizer/iterative/direction_fallbacks": (
+                        opt_state.direction_fallbacks
+                    ),
+                    "optimizer/iterative/scalar_evaluations": (
+                        opt_state.scalar_evaluations
+                    ),
+                    "optimizer/iterative/scalar_gradient_evaluations": (
+                        opt_state.scalar_gradient_evaluations
+                    ),
+                    "optimizer/iterative/scalar_hvp_evaluations": (
+                        opt_state.scalar_hvp_evaluations
+                    ),
+                }
+            else:
+                assert isinstance(opt_state, ScalarIterativeState)
+                iterative_diagnostics |= {
+                    "optimizer/iterative/iterations": opt_state.iteration,
+                    "optimizer/iterative/accepted_steps": opt_state.accepted_steps,
+                    "optimizer/iterative/rejected_steps": opt_state.rejected_steps,
+                    "optimizer/iterative/objective_evaluations": (
+                        opt_state.objective_evaluations
+                    ),
+                    "optimizer/iterative/gradient_evaluations": (
+                        opt_state.gradient_evaluations
+                    ),
+                    "optimizer/iterative/hvp_evaluations": opt_state.hvp_evaluations,
+                    "optimizer/iterative/linear_solves": opt_state.linear_solves,
+                    "optimizer/iterative/linear_iterations_total": (
+                        opt_state.linear_iterations
+                    ),
+                    "optimizer/iterative/direction_fallbacks": (
+                        opt_state.direction_fallbacks
+                    ),
+                }
         functions = combine_trainable(chosen, non_trainable)
         settle_started = time.perf_counter() if profile_adaptive else 0.0
         objective = objective.settle(
@@ -796,6 +1125,7 @@ def solve_gradient(
                 ),
             }
             | riemannian_diagnostics
+            | iterative_diagnostics
         )
         return eqx.tree_at(lambda s: s.training_diagnostics, result, diagnostics)
 

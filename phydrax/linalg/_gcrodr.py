@@ -198,6 +198,7 @@ def _solve_recycled(
         stagnation,
         prepared.plan.policy.tolerance.relative,
         prepared.plan.policy.tolerance.absolute,
+        identity_preconditioner=True,
     )
     image_correction = action(correction)
     correction_coefficients = _basis_coefficients(

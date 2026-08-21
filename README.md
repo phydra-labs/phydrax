@@ -75,6 +75,10 @@ Most workflows are composing a few primitives:
   controls, sampled costs/constraints, linearization, frequency response,
   Lyapunov/Riccati equations, Gramians, LQR/iLQR, compiled QPs, multiple shooting,
   bounded initialization search, and receding-horizon MPC.
+- **Nonlinear optimization**: typed scalar, residual, bound, nonlinear-constrained,
+  state/design, stochastic, and continuation problems; matrix-free second-order and
+  primal--dual methods; implicit solution derivatives; continuation stability events;
+  explicit status, diagnostics, certificates, and provenance.
 - **Sequence mixing**: `DiagonalStateSpaceMixer` is the input-independent
   continuous-time baseline; `SelectiveStateSpaceMixer` adds input-dependent
   step, injection, and readout maps while preserving exact irregular-time
@@ -283,11 +287,38 @@ output, and cross spectra reuse diagnosed control resolvents and reject unstable
 singular, non-Hermitian, or non-positive-semidefinite inputs instead of clipping
 or repairing them.
 
+General nonlinear optimization uses one typed problem/result model across
+matrix-free Newton methods, nonlinear and composite residual-plus-signed-scalar
+least squares, proximal objectives, bounds and general constraints, state/design
+systems, and stochastic risks. Curvature methods reuse prepared symbolic
+linear-solve templates and diagnose numeric refreshes. Converged scalar,
+least-squares, and strictly complementary constrained solutions expose implicit
+derivatives without unrolling optimizer iterations.
+
+Nonlinear algebraic systems have a separate `phydrax.nonlinear` contract for
+matrix-free Newton roots, fixed-point acceleration, nonlinear preconditioning,
+full-approximation multigrid, complementarity, and implicit root derivatives.
+Generic parameterized curves and local bifurcation workflows live in
+`phydrax.continuation`, with reusable bordered corrections, adaptive
+pseudo-arclength traversal, stability evidence, event localization, branch
+switching, and fold/Hopf/pitchfork certification. Failed solves, singular
+derivative systems, and ambiguous certificates remain explicit. See the
+[optimization API](docs/api/optim.md), [nonlinear systems API](docs/api/nonlinear.md),
+and [continuation API](docs/api/continuation.md).
+
 QPax 0.1.4 is a core runtime dependency and is integrated through its implicit
 backend. The Phydrax dense solver remains the default; select QPax explicitly with
 `method="qpax-implicit"`. QP results preserve primal/dual residuals, regularization,
 validity/status, and backend provenance, and neither backend is used as a hidden
 fallback.
+
+Optional PETSc KSP/SNES, SLEPc EPS, PyAMGCL, and NVIDIA AmgX execution lives behind
+the explicit lazy `phydrax.backends` boundary. Provider availability, assembled
+versus matrix-free support, numeric refresh, convergence evidence, transfers, and
+resource release remain visible; native planning never selects an external provider
+or silently falls back to one. See the [advanced solver cookbook](docs/cookbook/advanced_solvers.md),
+[external backend API](docs/api/backends.md), and
+[continuation API](docs/api/continuation.md).
 
 High-dimensional PDE support is structure-aware rather than a claim that one generic
 PINN removes the curse of dimensionality. Semilinear parabolic equations can use

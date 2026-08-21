@@ -25,4 +25,8 @@ scratch.py
 dist/
 site/
 _gitignore/
-benchmarks/
+benchmarks/*
+!benchmarks/advanced_solvers/
+!benchmarks/advanced_solvers/**
+benchmarks/advanced_solvers/**/__pycache__/
+benchmarks/advanced_solvers/**/*.pyc

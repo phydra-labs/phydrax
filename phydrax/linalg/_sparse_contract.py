@@ -80,20 +80,10 @@ class AbstractSparseLinearOperator(AbstractLinearOperator):
     def sparse_storage(self, /) -> SparseStorage:
         raise NotImplementedError
 
+    @abc.abstractmethod
     def _assemble_diagonal(self, /) -> Array:
-        storage = self.sparse_storage()
-        rows = jnp.repeat(
-            jnp.arange(storage.shape[0], dtype=storage.indptr.dtype),
-            jnp.diff(storage.indptr),
-            total_repeat_length=storage.values.size,
-        )
-        diagonal_entries = jnp.where(
-            rows == storage.indices,
-            storage.values,
-            jnp.zeros((), dtype=storage.values.dtype),
-        )
-        diagonal = jnp.zeros((storage.shape[0],), dtype=storage.values.dtype)
-        return diagonal.at[rows].add(diagonal_entries)
+        """Assemble the diagonal without densifying the sparse operator."""
+        raise NotImplementedError
 
 
 __all__ = ["AbstractSparseLinearOperator", "SparseFormat", "SparseStorage"]

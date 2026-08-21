@@ -135,9 +135,7 @@ def _solve_batched_dense_eigh(prepared: Any, /) -> _NativeEigenResult:
         criterion = -jnp.abs(values)
     order = jnp.argsort(criterion, axis=-1, stable=True)
     selected_indices = order[..., : policy.count]
-    selected_values = jnp.real(
-        jnp.take_along_axis(values, selected_indices, axis=-1)
-    )
+    selected_values = jnp.real(jnp.take_along_axis(values, selected_indices, axis=-1))
     selected_vectors = jnp.take_along_axis(
         vectors,
         selected_indices[..., None, :],
@@ -192,7 +190,10 @@ def _solve_batched_dense_eigh(prepared: Any, /) -> _NativeEigenResult:
         relative_residuals,
         policy.which,
     )
-    per_batch = lambda value: jnp.full(batch_shape, value, dtype=jnp.int32)
+
+    def per_batch(value):
+        return jnp.full(batch_shape, value, dtype=jnp.int32)
+
     return _NativeEigenResult(
         values=selected_values,
         vectors=selected_vectors,
@@ -202,16 +203,10 @@ def _solve_batched_dense_eigh(prepared: Any, /) -> _NativeEigenResult:
         relative_residuals=relative_residuals,
         orthogonality_error=orthogonality,
         iterations=per_batch(1),
-        operator_matvec_count=per_batch(
-            state.operator_matvec_count + policy.count
-        ),
+        operator_matvec_count=per_batch(state.operator_matvec_count + policy.count),
         metric_matvec_count=per_batch(
             state.metric_matvec_count
-            + (
-                policy.count
-                if isinstance(problem, GeneralizedEigenproblem)
-                else 0
-            )
+            + (policy.count if isinstance(problem, GeneralizedEigenproblem) else 0)
         ),
         preconditioner_apply_count=per_batch(0),
         isolation_gaps=isolation_gaps,
@@ -247,13 +242,10 @@ def _batched_dense_isolation_gaps(
     which: str,
     /,
 ) -> Array:
-    distances = jnp.abs(
-        selected_values[..., :, None] - all_values[..., None, :]
-    )
+    distances = jnp.abs(selected_values[..., :, None] - all_values[..., None, :])
     if which in ("smallest-magnitude", "largest-magnitude"):
         target_distances = jnp.abs(
-            jnp.abs(selected_values)[..., :, None]
-            - jnp.abs(all_values)[..., None, :]
+            jnp.abs(selected_values)[..., :, None] - jnp.abs(all_values)[..., None, :]
         )
         distances = jnp.minimum(distances, target_distances)
     selected_scale = jnp.maximum(jnp.abs(selected_values), 1)
@@ -267,13 +259,10 @@ def _batched_dense_isolation_gaps(
         * jnp.maximum(jnp.abs(all_values), 1)
     )
     distances = (
-        distances
-        - selected_uncertainty[..., :, None]
-        - all_uncertainty[..., None, :]
+        distances - selected_uncertainty[..., :, None] - all_uncertainty[..., None, :]
     )
     neighbors = (
-        selected_indices[..., :, None]
-        != jnp.arange(all_values.shape[-1])[None, :]
+        selected_indices[..., :, None] != jnp.arange(all_values.shape[-1])[None, :]
     )
     distances = jnp.where(neighbors, distances, jnp.asarray(jnp.inf))
     return jnp.min(distances, axis=-1)

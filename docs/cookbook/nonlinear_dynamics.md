@@ -160,7 +160,7 @@ Inspect `crossings.count`, `overflow`, `valid`, `status`, `bracket_start`, `brac
 and `section_values`. Interpolation refinement is bounded by saved data. To refine by
 re-integration, pass the declared evolution and use `refinement="evolution"`.
 
-## 5. Periodic orbits, Floquet multipliers, and continuation
+## 5. Periodic orbits, Floquet multipliers, and continuation handoff
 
 For an autonomous flow, use multiple shooting and a phase condition. The orbit state is a
 fixed number of shooting nodes plus its period. Dense Newton is appropriate only below
@@ -205,43 +205,40 @@ An initial guess is not a periodic orbit. Require `orbit.valid`, inspect its res
 history, then inspect `floquet.valid`, neutral multiplier evidence, stability, and Krylov
 status.
 
-Continuation is a generic square residual with one scalar parameter. For an equilibrium
-branch, the residual is the vector field evaluated at an equilibrium state.
+Continuation is a generic square residual with one scalar curve coordinate. For an
+equilibrium branch, the residual is the vector field evaluated at an equilibrium state.
+The reusable continuation runtime lives in `phydrax.continuation`.
 
 ```python
-continuation_layout = phx.dynamics.StateLayout((3,), component_names=("x", "y", "z"))
-
-
 def equilibrium_residual(state, parameter, args):
     del args
     x, y, z = state
     return jnp.asarray([sigma * (y - x), x * (parameter - z) - y, x * y - beta * z])
 
 
-continuation_problem = phx.dynamics.analysis.ContinuationProblem(
+continuation_problem = phx.continuation.ParameterContinuationProblem(
     equilibrium_residual,
-    state_layout=continuation_layout,
-    parameter_id="rho",
-    spectrum_kind="flow",
+    parameter_lower=-1.0,
+    parameter_upper=5.0,
     problem_id="lorenz-equilibria",
 )
-branch = phx.dynamics.analysis.continue_branch(
+branch = phx.continuation.continue_branch(
     continuation_problem,
     jnp.zeros((3,)),
     jnp.asarray(0.0),
-    method="pseudo_arclength",
-    direction=1,
-    initial_step=0.1,
-    max_points=32,
-    parameter_bounds=(-1.0, 5.0),
+    num_steps=5,
+    method=phx.continuation.PseudoArclengthContinuation(
+        initial_step=0.1,
+        maximum_step=0.1,
+        direction=1,
+    ),
 )
 ```
 
-`branch.bifurcations.fold` and `hopf` are finite-resolution candidates from stored
-spectra. They are not certified normal forms. Use `CallableNormalFormHook` to record a
-fixed-width problem-specific diagnostic. Use `CallableBranchSwitchHook` plus
-`branch_switch_seed` to propose a new seed explicitly; the hook does not claim that a new
-branch was found.
+`branch.events` and `branch.brackets` are finite-resolution candidate evidence. They are
+not certified normal forms. Use the explicit fold, Hopf, or pitchfork workflows in
+`phydrax.continuation` for augmented solves plus problem-specific certificates; branch
+switching requires a validated `BranchSeed`.
 
 ## 6. Lyapunov spectra and covariant directions
 

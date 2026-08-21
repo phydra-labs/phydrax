@@ -177,6 +177,7 @@ final gauge residual separately.
 - a `PreconditioningPolicy` with a prepared action or setup-time builder;
 - differentiation semantics;
 - failure behavior;
+- an optional, capability-checked `MixedPrecisionPolicy`;
 - independent factorization, workspace, and Krylov-basis byte budgets.
 
 `plan(problem, policy)` returns an immutable `LinearSolvePlan`. Its candidates
@@ -189,6 +190,56 @@ of coefficients; `bind_numeric(template, problem)` then creates the reusable
 share spaces, operator identity, property evidence, and method configuration.
 Binding rejects structural drift rather than silently replanning. The ordinary
 `prepare` entry point performs both stages.
+
+### Per-invocation Krylov controls
+
+`LinearSolveControl` changes only dynamic tolerances and the effective step cap for
+one prepared native-Krylov invocation:
+
+```python
+rhs = jnp.array([1.0, 2.0])
+forcing = jnp.asarray(1e-5)
+remaining_work = jnp.asarray(2, dtype=jnp.int32)
+prepared = phx.linalg.prepare(
+    problem,
+    phx.linalg.LinearSolvePolicy(
+        phx.linalg.GMRES(),
+        tolerance=phx.linalg.TolerancePolicy(max_steps=100),
+    ),
+)
+result = phx.linalg.solve(
+    prepared,
+    rhs,
+    control=phx.linalg.LinearSolveControl(
+        relative_tolerance=forcing,
+        maximum_steps=remaining_work,
+    ),
+)
+```
+
+The control values may be traced scalars. They cannot increase
+`TolerancePolicy.max_steps`, alter a plan, rebuild prepared state, or change
+provenance identity. Nonempty controls are capability-rejected for providers whose
+compiled loop cannot honor them. This is the solver-facing contract used by adaptive
+inexact Newton methods.
+
+### Mixed precision and refinement
+
+`MixedPrecisionPolicy` names the arithmetic requested for operator storage,
+factorization, preconditioning, Krylov work, residual certification, and correction
+accumulation. A provider must either implement every requested stage or reject the
+policy during planning.
+The current implemented mixed-precision route is an explicit square dense
+`DenseLU`: the operator and residual remain in the stored high precision, the LU
+factor may use a lower same-kind precision, and accepted iterative-refinement
+corrections accumulate in the high precision.
+
+Before creating a low-precision factor, preparation estimates the condition number
+in the stored precision and rejects values outside the lower precision's safe
+range. Diagnostics report the number of refinement attempts; provenance retains
+both the requested policy and resolved effective dtypes. Matrix-free Krylov,
+preconditioner, non-Euclidean, half-precision LU, and mixed real/complex requests
+are currently rejected explicitly rather than cast opportunistically.
 
 `KernelCertificate` and `SpectralInterval` attach auditable evidence to one
 operator structure or numerical value. Numerical certificates include an array
@@ -358,6 +409,36 @@ refreshed = phx.linalg.refresh(
 
 Omitting it is an error for a non-frozen distinct setup. A deliberately frozen
 prepared action remains reusable, but provenance exposes that reuse.
+
+### Sparse symbolic analysis and incomplete factors
+
+Sparse triangular and factorization lifecycles consume canonical
+`AbstractSparseLinearOperator` storage. `analyze_sparse_triangular` builds a fixed
+level schedule from the sparsity pattern; `solve_sparse_triangular` changes only
+numeric values and right-hand sides. The solve is JAX-native and returns explicit
+zero-pivot, nonfinite, and dependency-invalid status rather than repairing a factor.
+
+`SparseFactorizationPolicy` separates ordering and fill construction from numeric
+factorization. `prepare_sparse_factorization` computes immutable symbolic LU or
+Cholesky routes and binds the first values; `refresh_sparse_factorization` reuses
+those routes only when the canonical pattern identity matches. Fill level, numerical
+drop tolerance, maximum retained entries per row, diagonal shift, and pivot
+replacement are declared policy. A replacement is never enabled implicitly, and
+diagnostics report minimum pivot, dropped entries, replacement count, factor
+nonzeros, and fill ratio.
+
+`ILUPreconditionerBuilder`, `ILUTPreconditionerBuilder`, and
+`IncompleteCholeskyPreconditionerBuilder` expose these factors through the ordinary
+prepared-preconditioner lifecycle. Incomplete Cholesky requires certified
+self-adjoint structure and only claims positive definiteness when the setup operator
+provides that evidence. Symbolic analysis remains host-side; numeric refresh and
+triangular actions have static storage under JIT.
+
+`SPARSE_PROVIDER_CATALOG` is an immutable declaration of optional CUDA, SuperLU,
+UMFPACK, CHOLMOD, and SPQR capabilities. Availability inspection is deterministic and
+never imports or registers a runtime plugin. Host/device placement, transpose support,
+complex support, and JIT support remain explicit, so an unavailable provider cannot
+silently change the selected algorithm.
 
 ### Composable corrections, polynomials, and field splits
 
@@ -632,8 +713,8 @@ differentiate individual eigenvectors.
 problem = phx.linalg.eigen.Eigenproblem(operator)
 prepared = phx.linalg.eigen.prepare_self_adjoint_spectrum(problem)
 selection = phx.linalg.eigen.SpectralSelection.real_below(
-    0.0,
-    expected_dimension=occupied_dimension,
+    3.0,
+    expected_dimension=1,
 )
 subspace = phx.linalg.eigen.self_adjoint_spectral_subspace(
     prepared,
@@ -766,6 +847,53 @@ Residuals are evaluated against the original matrix equation. A declared
 self-adjoint solution is checked explicitly and receives a separate structure
 status rather than being symmetrized after the fact.
 
+### Factored continuous Lyapunov equations
+
+For a large equation `A X + X A* = -B B*`, the factored path accepts `B` directly
+and returns `X` as a fixed-capacity `Z Z*` factor:
+
+```python
+factored_space = phx.linalg.ArraySpace((4,), dtype=jnp.float64)
+stable_diagonal = jnp.asarray([-1.0, -2.0, -4.0, -8.0])
+operator = phx.linalg.FunctionLinearOperator(
+    lambda value: stable_diagonal * value,
+    source=factored_space,
+    target=factored_space,
+    properties=phx.linalg.OperatorProperties(
+        self_adjoint=True,
+        evidence={"self_adjoint": "construction"},
+    ),
+    operator_id="stable-generator",
+)
+problem = phx.linalg.factored_continuous_lyapunov_equation(
+    operator,
+    jnp.ones((4, 1)),
+    problem_id="factored-gramian",
+)
+policy = phx.linalg.FactoredMatrixEquationPolicy(
+    (-1.0, -2.0, -4.0, -8.0),
+    shifted=phx.linalg.ShiftedSolvePolicy("lanczos", max_dimension=4),
+    maximum_rank=4,
+)
+prepared = phx.linalg.prepare_factored_matrix_equation(problem, policy)
+result = phx.linalg.solve_factored_matrix_equation(prepared)
+assert bool(result.successful)
+```
+
+The low-rank ADI lifecycle never forms `B B*`, materializes the operator, or
+constructs dense `X`. It delegates each shift to the reusable shifted-Krylov
+contract, compresses the accumulated factor, and reports effective/raw rank,
+truncation loss, per-shift status/residual/iterations, factor storage, avoided
+explicit-solution storage, and an original-equation Frobenius residual computed by
+a low-rank Gram identity. Numeric refresh preserves the symbolic shifted plan.
+
+This route currently supports only unbatched Euclidean vector spaces and continuous
+Lyapunov structure with explicit open-left-half-plane shifts. Real-coordinate
+operators require real shifts. Generalized, Sylvester, discrete, dense-forcing, and
+general `U V*` equation solves are rejected without a dense fallback; the general
+`FactoredMatrixSolution` type is a representation contract, not a claim that those
+solvers exist.
+
 ## Low-rank updates, transformation, and resilience
 
 `BasePlusLowRankLinearOperator` represents `B + U C V*` for any reusable base
@@ -889,6 +1017,10 @@ Current boundaries are deliberate and reported before execution:
 - public factorization artifacts are unbatched and dense;
 - matrix functions and stochastic spectral estimators require unbatched
   endomorphisms;
+- mixed-precision execution currently requires explicit dense square `DenseLU`
+  with Euclidean pairings and capability-checked stage dtypes;
+- factored matrix-equation execution currently covers only unbatched continuous
+  Lyapunov equations with explicit ADI shifts;
 - Tensor-product spaces require factors with explicit positive coordinate-
   diagonal pairings;
 - Schur-complement operators expose only the supplied forward inverse action,
@@ -1121,6 +1253,18 @@ old and new plan identities.
 
 ::: phydrax.linalg.LinearSolvePolicy
 
+::: phydrax.linalg.LinearSolveControl
+
+---
+
+::: phydrax.linalg.MixedPrecisionPolicy
+
+---
+
+::: phydrax.linalg.LinearPrecisionEvidence
+
+---
+
 ---
 
 ::: phydrax.linalg.BlockGMRES
@@ -1284,6 +1428,78 @@ old and new plan identities.
 ---
 
 ::: phydrax.linalg.IncompleteFactorizationPreconditioner
+
+---
+
+::: phydrax.linalg.SparseTriangularAnalysis
+
+---
+
+::: phydrax.linalg.SparseTriangularFactor
+
+---
+
+::: phydrax.linalg.analyze_sparse_triangular
+
+---
+
+::: phydrax.linalg.solve_sparse_triangular
+
+---
+
+::: phydrax.linalg.SparseFactorizationPolicy
+
+---
+
+::: phydrax.linalg.SparseFactorizationPlan
+
+---
+
+::: phydrax.linalg.PreparedSparseFactorization
+
+---
+
+::: phydrax.linalg.prepare_sparse_factorization
+
+---
+
+::: phydrax.linalg.refresh_sparse_factorization
+
+---
+
+::: phydrax.linalg.factorize_sparse
+
+---
+
+::: phydrax.linalg.SparseFactorizationPreconditioner
+
+---
+
+::: phydrax.linalg.SparseFactorizationPreconditionerBuilder
+
+---
+
+::: phydrax.linalg.ILUPreconditionerBuilder
+
+---
+
+::: phydrax.linalg.ILUTPreconditionerBuilder
+
+---
+
+::: phydrax.linalg.IncompleteCholeskyPreconditionerBuilder
+
+---
+
+::: phydrax.linalg.SparseProviderCapabilities
+
+---
+
+::: phydrax.linalg.SparseProviderAvailability
+
+---
+
+::: phydrax.linalg.available_sparse_providers
 
 ---
 
@@ -1700,6 +1916,70 @@ old and new plan identities.
 ---
 
 ::: phydrax.linalg.discrete_lyapunov_equation
+
+---
+
+::: phydrax.linalg.FactoredMatrixSolution
+
+---
+
+::: phydrax.linalg.FactoredMatrixEquationProblem
+
+---
+
+::: phydrax.linalg.FactoredMatrixEquationPolicy
+
+---
+
+::: phydrax.linalg.FactoredMatrixEquationCostEstimate
+
+---
+
+::: phydrax.linalg.FactoredMatrixEquationPlan
+
+---
+
+::: phydrax.linalg.PreparedFactoredMatrixEquation
+
+---
+
+::: phydrax.linalg.FactoredMatrixEquationResidualCertificate
+
+---
+
+::: phydrax.linalg.FactoredMatrixEquationDiagnostics
+
+---
+
+::: phydrax.linalg.FactoredMatrixEquationProvenance
+
+---
+
+::: phydrax.linalg.FactoredMatrixEquationResult
+
+---
+
+::: phydrax.linalg.FactoredMatrixEquationStatus
+
+---
+
+::: phydrax.linalg.factored_continuous_lyapunov_equation
+
+---
+
+::: phydrax.linalg.plan_factored_matrix_equation
+
+---
+
+::: phydrax.linalg.prepare_factored_matrix_equation
+
+---
+
+::: phydrax.linalg.refresh_factored_matrix_equation
+
+---
+
+::: phydrax.linalg.solve_factored_matrix_equation
 
 ### Self-adjoint eigenproblems
 

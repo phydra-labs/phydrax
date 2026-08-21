@@ -468,9 +468,7 @@ def _evaluate_candidate(
     if isinstance(method, DenseEigh):
         structural_reason = None
         if problem.batch_shape and policy.differentiation != "none":
-            structural_reason = (
-                "batched dense eigendecomposition does not expose raw eigenvalue derivatives"
-            )
+            structural_reason = "batched dense eigendecomposition does not expose raw eigenvalue derivatives"
         elif problem.constraints is not None and problem.constraints.capacity > 0:
             structural_reason = "dense full-spectrum solves do not support constraints"
         elif preconditioner_plan is not None:
