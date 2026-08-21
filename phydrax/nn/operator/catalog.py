@@ -72,6 +72,20 @@ def _capabilities_for(name: str, architecture: str, /) -> OperatorCapabilitySpec
             resolution_transfer=True,
             autoregressive_rollout=True,
         )
+    if architecture == "FunctionFrameReconstructor":
+        return OperatorCapabilitySpec(
+            source_geometries=("tensor_grid", "point_cloud"),
+            query_geometries=("tensor_grid", "point_cloud"),
+            spatial_dimensions=(1, 2, 3),
+            source_query_relations=("coincident", "independent"),
+            quadrature="optional",
+            masks="supported",
+            topology="unused",
+            input_representations=("generic_channels", "scalar"),
+            output_representations=("generic_channels", "scalar"),
+            encode_once_decode_many=True,
+            resolution_transfer=True,
+        )
     if architecture == "DeepONet":
         return OperatorCapabilitySpec(
             source_geometries=(
@@ -461,6 +475,14 @@ _OPERATOR_ARCHITECTURE_STATUSES = {
         "The fixed-basis trunk configuration has deterministic projection and batching checks.",
         configuration=(("trunk", "pod_basis"),),
     ),
+    "FunctionFrameReconstructor": _status(
+        "FunctionFrameReconstructor",
+        "FunctionFrameReconstructor",
+        "research",
+        "Weighted projection, independent-query reconstruction, rank diagnostics, "
+        "gradients, and portable artifacts have focused validation; broader "
+        "scientific benchmark evidence remains pending.",
+    ),
     "GINO": _status(
         "GINO",
         "GINO",
@@ -795,6 +817,8 @@ _ALIAS_TARGETS = {
     "deepoperatornetwork": "DeepONet",
     "multipleinputoperatornetwork": "MIONet",
     "poddeeponet": "PODDeepONet",
+    "functionencoder": "FunctionFrameReconstructor",
+    "learnedfunctionframe": "FunctionFrameReconstructor",
     "properorthogonaldecompositiondeeponet": "PODDeepONet",
     "graphoperator": "GraphNeuralOperator",
     "resolutioninvariantgraphneuraloperator": "RIGNO",

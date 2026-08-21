@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Literal, TypeAlias
 
 import equinox as eqx
@@ -14,7 +15,6 @@ from .._strict import StrictModule
 from ..linalg import (
     DenseLinearOperator,
     DenseSVD,
-    DiagonalLinearOperator,
     LeastSquaresProblem,
     LinearSolvePolicy,
     RankPolicy,
@@ -79,14 +79,14 @@ def _rcond(value: float | None, dtype, rows: int, columns: int, /) -> float:
     if value is None:
         return float(max(rows, columns) * jnp.finfo(_real_dtype(dtype)).eps)
     resolved = float(value)
-    if not jnp.isfinite(resolved) or resolved < 0.0:
+    if not math.isfinite(resolved) or resolved < 0.0:
         raise ValueError("rcond must be finite and nonnegative or None.")
     return resolved
 
 
 def _ridge(value: float, /) -> float:
     resolved = float(value)
-    if not jnp.isfinite(resolved) or resolved < 0.0:
+    if not math.isfinite(resolved) or resolved < 0.0:
         raise ValueError("ridge must be finite and nonnegative.")
     return resolved
 
@@ -111,18 +111,32 @@ def _weights(value: ArrayLike | None, size: int, dtype, /) -> Array:
     return result.astype(_real_dtype(dtype))
 
 
-def normalize_least_squares_design(
+class _PreparedLeastSquaresDesign(StrictModule):
+    """Validated weighted design before rank diagnostics or factorization."""
+
+    values: Array
+    valid_rows: Array
+    weights: Array
+    offset: Array
+    scale: Array
+    sample_count: Array
+    weight_sum: Array
+    num_samples: int = eqx.field(static=True)
+    num_features: int = eqx.field(static=True)
+    centered: bool = eqx.field(static=True)
+    scaled: bool = eqx.field(static=True)
+
+
+def _prepare_least_squares_design(
     design: ArrayLike,
     /,
     *,
-    mask: ArrayLike | None = None,
-    weights: ArrayLike | None = None,
-    center: bool = False,
-    scale: bool = False,
-    rcond: float | None = None,
-    max_features: int | None = None,
-) -> NormalizedLeastSquaresDesign:
-    """Normalize one rank-two design without allowing masked padding to contribute."""
+    mask: ArrayLike | None,
+    weights: ArrayLike | None,
+    center: bool,
+    scale: bool,
+    max_features: int | None,
+) -> _PreparedLeastSquaresDesign:
     values = jnp.asarray(design)
     if values.ndim != 2:
         raise ValueError("design must have shape (samples, features).")
@@ -174,30 +188,14 @@ def normalize_least_squares_design(
     )
     resolved_scale = jnp.where(second_moment > threshold, jnp.sqrt(second_moment), 1.0)
     scales = resolved_scale if bool(scale) else jnp.ones_like(resolved_scale)
-    normalized = centered_values / scales
-    weighted = jnp.sqrt(safe_weights / denominator)[:, None] * jnp.where(
-        valid_rows[:, None], normalized, jnp.zeros((), values.dtype)
-    )
-    singular_values = jnp.linalg.svd(weighted, compute_uv=False)
-    largest = jnp.max(singular_values, initial=0.0)
-    tolerance = largest * _rcond(rcond, values.dtype, samples, features)
-    rank = jnp.sum(singular_values > tolerance).astype(jnp.int32)
-    smallest = jnp.min(
-        jnp.where(singular_values > tolerance, singular_values, jnp.inf),
-        initial=jnp.inf,
-    )
-    condition = jnp.where(rank == features, largest / smallest, jnp.inf)
-    return NormalizedLeastSquaresDesign(
-        values=normalized,
+    return _PreparedLeastSquaresDesign(
+        values=centered_values / scales,
         valid_rows=valid_rows,
         weights=safe_weights,
         offset=offset,
         scale=scales,
-        singular_values=singular_values,
         sample_count=jnp.sum(valid_rows).astype(jnp.int32),
         weight_sum=weight_sum,
-        rank=rank,
-        condition_number=condition,
         num_samples=samples,
         num_features=features,
         centered=bool(center),
@@ -205,20 +203,92 @@ def normalize_least_squares_design(
     )
 
 
-def solve_normalized_least_squares(
-    design: NormalizedLeastSquaresDesign,
-    target: ArrayLike,
+def _diagnose_prepared_design(
+    design: _PreparedLeastSquaresDesign,
+    /,
+    *,
+    rcond: float | None,
+) -> NormalizedLeastSquaresDesign:
+    denominator = jnp.maximum(
+        design.weight_sum,
+        jnp.asarray(1.0, dtype=design.weights.dtype),
+    )
+    weighted = jnp.sqrt(design.weights / denominator)[:, None] * jnp.where(
+        design.valid_rows[:, None],
+        design.values,
+        jnp.zeros((), design.values.dtype),
+    )
+    singular_values = jnp.linalg.svd(weighted, compute_uv=False)
+    largest = jnp.max(singular_values, initial=0.0)
+    tolerance = largest * _rcond(
+        rcond,
+        design.values.dtype,
+        design.num_samples,
+        design.num_features,
+    )
+    retained = singular_values > tolerance
+    rank = jnp.sum(retained).astype(jnp.int32)
+    smallest = jnp.min(
+        jnp.where(retained, singular_values, jnp.inf),
+        initial=jnp.inf,
+    )
+    condition = jnp.where(
+        rank == design.num_features,
+        largest / smallest,
+        jnp.inf,
+    )
+    return NormalizedLeastSquaresDesign(
+        values=design.values,
+        valid_rows=design.valid_rows,
+        weights=design.weights,
+        offset=design.offset,
+        scale=design.scale,
+        singular_values=singular_values,
+        sample_count=design.sample_count,
+        weight_sum=design.weight_sum,
+        rank=rank,
+        condition_number=condition,
+        num_samples=design.num_samples,
+        num_features=design.num_features,
+        centered=design.centered,
+        scaled=design.scaled,
+    )
+
+
+def normalize_least_squares_design(
+    design: ArrayLike,
     /,
     *,
     mask: ArrayLike | None = None,
-    ridge: float = 0.0,
+    weights: ArrayLike | None = None,
+    center: bool = False,
+    scale: bool = False,
     rcond: float | None = None,
-    min_samples: int | None = None,
-    feature_mask: ArrayLike | None = None,
+    max_features: int | None = None,
+) -> NormalizedLeastSquaresDesign:
+    """Normalize one rank-two design with explicit standalone diagnostics."""
+    prepared = _prepare_least_squares_design(
+        design,
+        mask=mask,
+        weights=weights,
+        center=center,
+        scale=scale,
+        max_features=max_features,
+    )
+    return _diagnose_prepared_design(prepared, rcond=rcond)
+
+
+def _solve_prepared_least_squares(
+    design: _PreparedLeastSquaresDesign,
+    target: ArrayLike,
+    /,
+    *,
+    mask: ArrayLike | None,
+    ridge: float,
+    rcond: float | None,
+    min_samples: int | None,
+    feature_mask: ArrayLike | None,
 ) -> WeightedLeastSquaresResult:
-    """Solve a normalized weighted least-squares problem by an economy SVD."""
-    if not isinstance(design, NormalizedLeastSquaresDesign):
-        raise TypeError("design must be a NormalizedLeastSquaresDesign.")
     response = jnp.asarray(target)
     if response.ndim < 1 or int(response.shape[0]) != design.num_samples:
         raise ValueError(
@@ -244,7 +314,8 @@ def solve_normalized_least_squares(
         active = jnp.asarray(feature_mask, dtype=bool)
         if active.shape != (design.num_features,):
             raise ValueError(
-                f"feature_mask must have shape ({design.num_features},); got {active.shape}."
+                f"feature_mask must have shape ({design.num_features},); got "
+                f"{active.shape}."
             )
     active_count = jnp.sum(active).astype(jnp.int32)
     safe_matrix = jnp.where(valid_rows[:, None], matrix, jnp.zeros((), dtype))
@@ -253,34 +324,22 @@ def solve_normalized_least_squares(
     weighted_matrix = root_weights[:, None] * safe_matrix * active[None, :]
     weighted_response = root_weights[:, None] * safe_response
 
-    singular_values = jnp.linalg.svd(weighted_matrix, compute_uv=False)
     resolved_rcond = _rcond(rcond, dtype, design.num_samples, design.num_features)
-    largest = jnp.max(singular_values, initial=0.0)
-    tolerance = largest * resolved_rcond
-    retained = singular_values > tolerance
-    rank = jnp.sum(retained).astype(jnp.int32)
     ridge_value = _ridge(ridge)
-    operator = DenseLinearOperator(weighted_matrix)
-    regularizer = (
-        None
-        if ridge_value == 0.0
-        else DiagonalLinearOperator(
-            jnp.full(
-                (design.num_features,),
-                jnp.sqrt(jnp.asarray(ridge_value, dtype=_real_dtype(dtype))),
-                dtype=dtype,
-            ),
-            space=operator.source,
-        )
-    )
     linear_result = solve(
-        LeastSquaresProblem(operator, regularizer=regularizer),
+        LeastSquaresProblem(DenseLinearOperator(weighted_matrix)),
         weighted_response,
         policy=LinearSolvePolicy(
-            DenseSVD(),
+            DenseSVD(damping=ridge_value**0.5),
             rank=RankPolicy(relative_cutoff=resolved_rcond),
         ),
     )
+    singular_values = linear_result.diagnostics.singular_values
+    assert singular_values is not None
+    rank = jnp.asarray(linear_result.diagnostics.rank).reshape(-1)[0]
+    condition_estimate = jnp.asarray(
+        linear_result.diagnostics.condition_estimate
+    ).reshape(-1)[0]
     coefficients_flat = linear_result.value * active[:, None]
     prediction_flat = matrix @ coefficients_flat
     residual_flat = flat_response - prediction_flat
@@ -295,8 +354,11 @@ def solve_normalized_least_squares(
     )
     normal_moment = normal_moment * active[:, None]
     normal_error = jnp.max(jnp.abs(normal_moment), initial=0.0)
-    smallest = jnp.min(jnp.where(retained, singular_values, jnp.inf), initial=jnp.inf)
-    condition = jnp.where(rank == active_count, largest / smallest, jnp.inf)
+    condition = jnp.where(
+        rank == active_count,
+        condition_estimate,
+        jnp.inf,
+    )
     sample_count = jnp.sum(valid_rows).astype(jnp.int32)
     required = design.num_features if min_samples is None else int(min_samples)
     if required < 1:
@@ -305,6 +367,7 @@ def solve_normalized_least_squares(
         jnp.all(jnp.isfinite(coefficients_flat))
         & jnp.isfinite(normal_error)
         & jnp.isfinite(weight_sum)
+        & jnp.all(linear_result.diagnostics.finite)
     )
     enough = sample_count >= required
     full_rank = rank == active_count
@@ -350,6 +413,44 @@ def solve_normalized_least_squares(
     )
 
 
+def solve_normalized_least_squares(
+    design: NormalizedLeastSquaresDesign,
+    target: ArrayLike,
+    /,
+    *,
+    mask: ArrayLike | None = None,
+    ridge: float = 0.0,
+    rcond: float | None = None,
+    min_samples: int | None = None,
+    feature_mask: ArrayLike | None = None,
+) -> WeightedLeastSquaresResult:
+    """Solve a normalized weighted least-squares problem by one economy SVD."""
+    if not isinstance(design, NormalizedLeastSquaresDesign):
+        raise TypeError("design must be a NormalizedLeastSquaresDesign.")
+    prepared = _PreparedLeastSquaresDesign(
+        values=design.values,
+        valid_rows=design.valid_rows,
+        weights=design.weights,
+        offset=design.offset,
+        scale=design.scale,
+        sample_count=design.sample_count,
+        weight_sum=design.weight_sum,
+        num_samples=design.num_samples,
+        num_features=design.num_features,
+        centered=design.centered,
+        scaled=design.scaled,
+    )
+    return _solve_prepared_least_squares(
+        prepared,
+        target,
+        mask=mask,
+        ridge=ridge,
+        rcond=rcond,
+        min_samples=min_samples,
+        feature_mask=feature_mask,
+    )
+
+
 def solve_weighted_least_squares(
     design: ArrayLike,
     target: ArrayLike,
@@ -365,19 +466,19 @@ def solve_weighted_least_squares(
     feature_mask: ArrayLike | None = None,
     max_features: int | None = None,
 ) -> WeightedLeastSquaresResult:
-    """Normalize and solve one weighted least-squares problem."""
-    normalized = normalize_least_squares_design(
+    """Prepare and solve one weighted least-squares problem with one SVD."""
+    prepared = _prepare_least_squares_design(
         design,
         mask=mask,
         weights=weights,
         center=center,
         scale=scale,
-        rcond=rcond,
         max_features=max_features,
     )
-    return solve_normalized_least_squares(
-        normalized,
+    return _solve_prepared_least_squares(
+        prepared,
         target,
+        mask=None,
         ridge=ridge,
         rcond=rcond,
         min_samples=min_samples,

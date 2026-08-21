@@ -182,6 +182,33 @@ def test_fixed_query_is_separate_from_source_query_structure():
     assert "FIXED_QUERY_REQUIRED" in pod.codes
 
 
+def test_function_frame_contract_is_research_scoped_and_query_independent():
+    status = phx.nn.operator.operator_architecture_status("function_encoder")
+    capabilities = status.capabilities
+    report = phx.nn.operator.validate_operator_architecture(
+        "FunctionFrameReconstructor",
+        _grid_batch(),
+        problem=phx.nn.operator.OperatorProblemSpec(
+            source_query_relation="independent",
+            query_is_fixed=False,
+            requires_resolution_transfer=True,
+        ),
+    )
+    unsupported_graph = phx.nn.operator.validate_operator_architecture(
+        "FunctionFrameReconstructor",
+        _graph_batch(),
+    )
+
+    assert status.tier == "research"
+    assert not status.recommendation_eligible
+    assert capabilities.source_geometries == ("tensor_grid", "point_cloud")
+    assert capabilities.query_geometries == ("tensor_grid", "point_cloud")
+    assert capabilities.encode_once_decode_many
+    assert capabilities.resolution_transfer
+    assert report.accepted
+    assert "UNSUPPORTED_GEOMETRY" in unsupported_graph.codes
+
+
 def test_graph_contract_requires_native_topology_and_physical_measure():
     valid = phx.nn.operator.validate_operator_architecture(
         "GraphNeuralOperator", _graph_batch()

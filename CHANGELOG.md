@@ -22,6 +22,13 @@
   solve, so forcing policy changes actual Krylov work under eager and compiled
   execution.
 
+- Learned function frames with masked, quadrature- and channel-metric-aware
+  projection, explicit rank and residual evidence, reusable source encodings,
+  arbitrary-query reconstruction, frozen inference, portable artifacts, and a
+  research-tier operator benchmark composition.
+- Scalar Tikhonov damping for dense SVD least-squares solves and a direct
+  weighted least-squares path that reuses one factorization for coefficients,
+  rank diagnostics, residuals, and differentiation.
 - `phydrax.nonlinear` contracts for algebraic systems, Newton line-search and
   trust-region roots, nonlinear GMRES and preconditioning, fixed-point acceleration,
   full-approximation multigrid cycles, variational inequalities, semismooth
@@ -97,6 +104,9 @@
 
 ### Changed
 
+- DeepONet now accepts generalized coordinate-evaluated basis trunks, exposes
+  explicit output-bias control, and preserves existing pointwise and POD
+  behavior while supporting projection branches and frozen nested models.
 - Nonlinear algebraic systems now have one public owner, `phydrax.nonlinear`, and
   generic continuation/bifurcation workflows have one public owner,
   `phydrax.continuation`; obsolete optimization and dynamics-analysis continuation

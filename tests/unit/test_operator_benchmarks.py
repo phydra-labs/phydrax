@@ -246,6 +246,61 @@ def test_architecture_registry_models_run_every_declared_evaluation():
                 assert jnp.all(jnp.isfinite(model(evaluation.batch)))
 
 
+def test_function_frame_benchmark_respects_projection_capability_boundary():
+    scenarios = {
+        scenario.name: scenario for scenario in standard_operator_benchmarks(quick=True)
+    }
+    scenario = scenarios["graph_diffusion_resolution_transfer"]
+    architectures = {
+        architecture.name: architecture
+        for architecture in compatible_architectures(scenario, quick=True)
+    }
+    architecture = architectures["function_frame_deeponet"]
+    model = architecture.build(scenario, seed=7)
+    encoded = model.encode_inputs(scenario.train_batch)
+    higher_resolution = next(
+        evaluation
+        for evaluation in scenario.evaluations
+        if evaluation.name == "higher_resolution"
+    )
+    prediction = model.decode_query(
+        encoded,
+        higher_resolution.batch.require_single_query(),
+    )
+
+    assert architecture.promotion_scope == "specialized"
+    assert dict(architecture.configuration(scenario)) == {
+        "rank": "4",
+        "frame_width": "12",
+        "coefficient_map": "nonlinear_mlp",
+        "projection": "weighted_regularized",
+        "ridge": "1e-5",
+    }
+    assert all(
+        report.runtime_accepted for report in architecture.capability_reports(scenario)
+    )
+    assert model.source_frame.rank <= int(jnp.min(encoded.report.sample_count))
+    assert prediction.shape == (
+        *scenario.train_batch.case_shape,
+        *higher_resolution.batch.require_single_query().sample_shape,
+    )
+    assert jnp.all(jnp.isfinite(prediction))
+
+    for incompatible_name in (
+        "multi_input_diffusion",
+        "navier_stokes_vorticity_2d",
+        "periodic_burgers_1d",
+    ):
+        names = {
+            candidate.name
+            for candidate in compatible_architectures(
+                scenarios[incompatible_name],
+                quick=True,
+            )
+        }
+        assert "function_frame_deeponet" not in names
+
+
 def test_case_splits_are_disjoint_sized_and_seed_deterministic():
     scenario = periodic_burgers_scenario(
         train_resolution=8,

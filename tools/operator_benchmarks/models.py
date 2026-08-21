@@ -291,6 +291,7 @@ class PointwiseAffineBaseline(eqx.Module):
 
 _BENCHMARK_CAPABILITY_ARCHITECTURES = {
     "deeponet": "DeepONet",
+    "function_frame_deeponet": "FunctionFrameReconstructor",
     "pod_deeponet": "PODDeepONet",
     "local_integral": "LocalIntegralOperator",
     "gino": "GINO",
@@ -689,6 +690,193 @@ def _deeponet_factory(*, pod: bool, quick: bool):
         )
 
     return build
+
+
+def _minimum_function_frame_equations(
+    scenario: OperatorBenchmarkScenario,
+    /,
+) -> int:
+    source_name, _ = _primary_source(scenario)
+    batches = (
+        scenario.train_batch,
+        *(() if scenario.validation is None else (scenario.validation.batch,)),
+        *(evaluation.batch for evaluation in scenario.evaluations),
+    )
+    minimum: int | None = None
+    for batch in batches:
+        if tuple(batch.inputs) != (source_name,):
+            return 0
+        source = batch.input(source_name)
+        if (
+            source.values is None
+            or not source.sample_shape
+            or (not source.axes and source.coordinates is None)
+        ):
+            return 0
+        channels = _sample_channels(source, batch.case_shape)
+        base_shape = batch.case_shape + source.sample_shape
+        values = jnp.asarray(source.values)
+        if tuple(values.shape) == base_shape:
+            value_finite = jnp.isfinite(values)
+        elif tuple(values.shape) == base_shape + (channels,):
+            value_finite = jnp.all(jnp.isfinite(values), axis=-1)
+        else:
+            return 0
+        coordinates = source.coordinates_array(case_shape=batch.case_shape)
+        quadrature = source.quadrature(case_shape=batch.case_shape)
+        requested = source.mask_array(case_shape=batch.case_shape)
+        valid_measure = (
+            jnp.all(jnp.isfinite(coordinates), axis=-1)
+            & jnp.isfinite(quadrature)
+            & (quadrature >= 0.0)
+        )
+        positive_measure = valid_measure & (quadrature > 0.0)
+        if bool(jnp.any(requested & ~valid_measure)) or bool(
+            jnp.any(requested & positive_measure & ~value_finite)
+        ):
+            return 0
+        active = requested & positive_measure & value_finite
+        sample_axes = tuple(
+            range(
+                len(batch.case_shape),
+                len(batch.case_shape) + len(source.sample_shape),
+            )
+        )
+        equations = int(jax.device_get(jnp.min(jnp.sum(active, axis=sample_axes))))
+        current = equations * channels
+        minimum = current if minimum is None else min(minimum, current)
+    return 0 if minimum is None else minimum
+
+
+def _function_frame_rank(
+    scenario: OperatorBenchmarkScenario,
+    /,
+    *,
+    quick: bool,
+    size_scale: float,
+) -> int:
+    requested = max(1, round((4 if quick else 16) * size_scale))
+    return min(requested, _minimum_function_frame_equations(scenario))
+
+
+def _function_frame_compatible(scenario: OperatorBenchmarkScenario, /) -> bool:
+    if len(scenario.train_batch.inputs) != 1 or _target_channels(scenario) != 1:
+        return False
+    source_name, source = _primary_source(scenario)
+    query = scenario.train_batch.require_single_query()
+    if (
+        source.values is None
+        or not source.sample_shape
+        or (not source.axes and source.coordinates is None)
+        or not query.sample_shape
+        or (not query.axes and query.coordinates is None)
+        or _sample_channels(source, scenario.train_batch.case_shape) != 1
+    ):
+        return False
+    source_dim = _coordinate_dimension(source)
+    target_dim = _coordinate_dimension(query)
+    batches = (
+        scenario.train_batch,
+        *(() if scenario.validation is None else (scenario.validation.batch,)),
+        *(evaluation.batch for evaluation in scenario.evaluations),
+    )
+    return _minimum_function_frame_equations(scenario) > 0 and all(
+        tuple(batch.inputs) == (source_name,)
+        and batch.input(source_name).values is not None
+        and bool(batch.input(source_name).sample_shape)
+        and (
+            bool(batch.input(source_name).axes)
+            or batch.input(source_name).coordinates is not None
+        )
+        and bool(batch.require_single_query().sample_shape)
+        and (
+            bool(batch.require_single_query().axes)
+            or batch.require_single_query().coordinates is not None
+        )
+        and _sample_channels(batch.input(source_name), batch.case_shape) == 1
+        and _coordinate_dimension(batch.input(source_name)) == source_dim
+        and _coordinate_dimension(batch.require_single_query()) == target_dim
+        for batch in batches
+    )
+
+
+def _function_frame_factory(*, quick: bool):
+    def build(scenario: OperatorBenchmarkScenario, seed: int, size_scale: float):
+        source_name, source = _primary_source(scenario)
+        query = scenario.train_batch.require_single_query()
+        rank = _function_frame_rank(
+            scenario,
+            quick=quick,
+            size_scale=size_scale,
+        )
+        width = max(2, round((12 if quick else 48) * size_scale))
+        source_key, target_key, map_key = jr.split(jr.key(seed), 3)
+        source_frame = phx.nn.operator.architectures.LearnedFunctionFrame(
+            basis_model=phx.nn.models.MLP(
+                in_size=_coordinate_dimension(source),
+                out_size=rank,
+                width_size=width,
+                depth=2,
+                key=source_key,
+            ),
+            rank=rank,
+            coord_dim=_coordinate_dimension(source),
+            frame_id=f"benchmark-{source_name}-source-frame",
+        )
+        target_frame = phx.nn.operator.architectures.LearnedFunctionFrame(
+            basis_model=phx.nn.models.MLP(
+                in_size=_coordinate_dimension(query),
+                out_size=rank,
+                width_size=width,
+                depth=2,
+                key=target_key,
+            ),
+            rank=rank,
+            coord_dim=_coordinate_dimension(query),
+            frame_id="benchmark-solution-target-frame",
+        )
+        coefficient_map = phx.nn.models.MLP(
+            in_size=rank,
+            out_size=rank,
+            width_size=width,
+            depth=2,
+            key=map_key,
+        )
+        return phx.nn.operator.architectures.FunctionFrameReconstructor(
+            source_frame=source_frame,
+            target_frame=target_frame,
+            coefficient_map=coefficient_map,
+            source_name=source_name,
+            policy=phx.nn.operator.architectures.FunctionProjectionPolicy(
+                ridge=1e-5,
+                min_samples=rank,
+                rank_policy="regularized",
+            ),
+        )
+
+    return build
+
+
+def _function_frame_configuration(*, quick: bool):
+    def configuration(
+        scenario: OperatorBenchmarkScenario,
+        size_scale: float,
+    ) -> tuple[tuple[str, str], ...]:
+        rank = _function_frame_rank(
+            scenario,
+            quick=quick,
+            size_scale=size_scale,
+        )
+        width = max(2, round((12 if quick else 48) * size_scale))
+        return (
+            ("rank", str(rank)),
+            ("frame_width", str(width)),
+            ("coefficient_map", "nonlinear_mlp"),
+            ("projection", "weighted_regularized"),
+            ("ridge", "1e-5"),
+        )
+
+    return configuration
 
 
 def _fno_factory(*, factorization: str, quick: bool):
@@ -2245,6 +2433,18 @@ def compatible_architectures(
             promotion_scope="general",
         ),
     ]
+    if _function_frame_compatible(scenario):
+        candidates.append(
+            OperatorArchitecture(
+                "function_frame_deeponet",
+                "branch_trunk",
+                _function_frame_factory(quick=quick),
+                True,
+                normalization="sourcewise",
+                promotion_scope="specialized",
+                configuration_factory=_function_frame_configuration(quick=quick),
+            )
+        )
     scalar_source = _scalar_source(scenario)
     matching_coordinates = _matching_coordinate_dimensions(scenario)
     if scalar_source:

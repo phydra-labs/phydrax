@@ -89,8 +89,15 @@ class DenseQR(AbstractLinearMethod):
 
 
 class DenseSVD(AbstractLinearMethod):
-    def __init__(self):
-        pass
+    """Economy SVD with optional scalar Tikhonov damping."""
+
+    damping: float = eqx.field(static=True)
+
+    def __init__(self, *, damping: float = 0.0):
+        damping_ = float(damping)
+        if not math.isfinite(damping_) or damping_ < 0.0:
+            raise ValueError("damping must be finite and non-negative.")
+        self.damping = damping_
 
     @property
     def name(self) -> str:
