@@ -242,6 +242,7 @@ nav:
         - Solver:
             - Overview: "api/solver/index.md"
             - Differential equations: "api/solver/differential.md"
+            - Differential-algebraic equations: "api/solver/differential_algebraic.md"
             - Delay and functional differential equations: "api/solver/delay.md"
             - Functional solver: "api/solver/functional_solver.md"
             - Exact enforcement: "api/solver/enforcement.md"

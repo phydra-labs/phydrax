@@ -1,0 +1,666 @@
+{
+  "cases": [
+    {
+      "certificates": {
+        "constraint": {
+          "applicable": false,
+          "maximum_absolute_residual": 0.0,
+          "passed": true,
+          "reference": null,
+          "tolerance": 0.0
+        },
+        "gradient": {
+          "absolute_error": 7.892720522539864e-06,
+          "absolute_tolerance": 1e-08,
+          "objective": 0.3679172379932296,
+          "passed": true,
+          "reference": "closed-form terminal derivative",
+          "reference_value": -0.3678794411714423,
+          "relative_error": 2.1454638773525897e-05,
+          "relative_tolerance": 0.005,
+          "symmetric_finite_difference_step": null,
+          "value": -0.36787154845091974
+        },
+        "residual": {
+          "independent_maximum_scaled_rms": 5.329070518200751e-15,
+          "passed": true,
+          "reported_maximum_constraint_rms": 0.0,
+          "reported_maximum_scaled_rms": 5.329070518200751e-15,
+          "threshold": 1e-10
+        },
+        "trajectory": {
+          "passed": true,
+          "reference": "closed-form exponential trajectory",
+          "relative_error": 0.0001514899086565386,
+          "tolerance": 0.001220703125
+        }
+      },
+      "finite_outputs": true,
+      "grid_points": 65,
+      "initialization_status": "success",
+      "metadata": {
+        "class": "linear ODE in implicit residual form"
+      },
+      "name": "scalar-linear",
+      "passed": true,
+      "plan_id": "dae-plan:b4221293b467c9211abba4e857a3779f198affca3282cf7609f8a0e721c34878",
+      "prepared_id": "prepared-dae:23aa994c3ac2aa459a23119a676633f6e6eea32a48a4547241caec02b360f2c4",
+      "problem_id": "benchmark:dae:scalar-linear",
+      "solver_evidence": {
+        "approximation_id": "fixed-grid-bdf2",
+        "differentiation_mode": "fixed-grid-discrete-implicit",
+        "grid_origin": "user",
+        "initialization_linear_iterations": 1,
+        "initialization_linear_plan_id": "1f970e40ce2d90d09fe5477ff5fd5254c843e6004a7a35b3b5a0069000e0e2bb",
+        "initialization_nonlinear_iterations": 1,
+        "integration_method": "bdf2",
+        "maximum_stage_nonlinear_iterations": 1,
+        "nonlinear_method_id": "newton-krylov-line-search",
+        "stage_linear_plan_id": "000165acc060ebaa4adcf69086688f76a8ec2d5cb1d9ab0ed62e1c83638a4ad1",
+        "stage_linear_template_reused": true,
+        "total_globalization_rejections": 0,
+        "total_jacobian_preparations": 64,
+        "total_linear_iterations": 64,
+        "total_linear_solves": 64,
+        "total_numeric_refreshes": 128,
+        "total_residual_evaluations": 128,
+        "total_setup_refreshes": 0,
+        "total_stage_nonlinear_iterations": 64
+      },
+      "state_shape": [
+        1
+      ],
+      "status_histogram": {
+        "success": 65
+      },
+      "storage": {
+        "prepared_array_bytes": 1388,
+        "scope": "logical array payloads; excludes allocator pools and compiled executables",
+        "solution_array_bytes": 7354,
+        "state_rate_trajectory_bytes": 520,
+        "state_trajectory_bytes": 520
+      },
+      "successful": true,
+      "system_id": "benchmark:dae:scalar-linear",
+      "time_id": "benchmark:dae:scalar-linear:64",
+      "timing": {
+        "forward": {
+          "compilation_ms": 918.8577089225873,
+          "first_execution_ms": 3.3269590931013227,
+          "lowering_ms": 1019.9316660873592,
+          "steady_samples_ms": [
+            1.1805000249296427,
+            1.051833969540894,
+            5.293167079798877
+          ],
+          "steady_summary": {
+            "maximum_ms": 5.293167079798877,
+            "mean_ms": 2.5085003580898046,
+            "median_ms": 1.1805000249296427,
+            "minimum_ms": 1.051833969540894,
+            "standard_deviation_ms": 1.9697572272910164
+          },
+          "warmup_execution_ms": 1.1884999694302678
+        },
+        "model_setup_ms": 311.23350001871586,
+        "solver_preparation_ms": 1069.1465409472585,
+        "unit": "milliseconds",
+        "value_and_grad": {
+          "compilation_ms": 988.6261250358075,
+          "first_execution_ms": 2.4387910962104797,
+          "lowering_ms": 1469.0083750756457,
+          "steady_samples_ms": [
+            1.415375038050115,
+            1.2851669453084469,
+            1.4091669581830502
+          ],
+          "steady_summary": {
+            "maximum_ms": 1.415375038050115,
+            "mean_ms": 1.3699029805138707,
+            "median_ms": 1.4091669581830502,
+            "minimum_ms": 1.2851669453084469,
+            "standard_deviation_ms": 0.05997100305236459
+          },
+          "warmup_execution_ms": 1.5670419670641422
+        }
+      }
+    },
+    {
+      "certificates": {
+        "constraint": {
+          "applicable": false,
+          "maximum_absolute_residual": 0.0,
+          "passed": true,
+          "reference": null,
+          "tolerance": 0.0
+        },
+        "gradient": {
+          "absolute_error": 2.7347316342019035e-05,
+          "absolute_tolerance": 1e-08,
+          "objective": 0.7288604561611397,
+          "passed": true,
+          "reference": "closed-form terminal derivative",
+          "reference_value": -0.605173494792745,
+          "relative_error": 4.5189216939160114e-05,
+          "relative_tolerance": 0.008,
+          "symmetric_finite_difference_step": null,
+          "value": -0.605200842109087
+        },
+        "residual": {
+          "independent_maximum_scaled_rms": 2.2083463457661466e-14,
+          "passed": true,
+          "reported_maximum_constraint_rms": 0.0,
+          "reported_maximum_scaled_rms": 2.219509580091501e-14,
+          "threshold": 1e-10
+        },
+        "trajectory": {
+          "passed": true,
+          "reference": "closed-form diagonal mass-matrix trajectory",
+          "relative_error": 0.00012735845754956347,
+          "tolerance": 0.0029296875
+        }
+      },
+      "finite_outputs": true,
+      "grid_points": 65,
+      "initialization_status": "success",
+      "metadata": {
+        "class": "diagonal nonsingular mass matrix",
+        "state_size": 4
+      },
+      "name": "vector-linear-mass",
+      "passed": true,
+      "plan_id": "dae-plan:32a65503da451cc1de1989984fb1152c7976c7cc035dc6937c21bd01f3610b4d",
+      "prepared_id": "prepared-dae:e0621f8d36ff76eed50ecc6d4d51a548a87dcdd6ca7709b42de5eda7e2b2e9a1",
+      "problem_id": "benchmark:dae:vector-linear",
+      "solver_evidence": {
+        "approximation_id": "fixed-grid-bdf2",
+        "differentiation_mode": "fixed-grid-discrete-implicit",
+        "grid_origin": "user",
+        "initialization_linear_iterations": 12,
+        "initialization_linear_plan_id": "83f3e905207122cb9e69fb892df240603242fbb0606e2591a87fcf960eb0cae5",
+        "initialization_nonlinear_iterations": 5,
+        "integration_method": "bdf2",
+        "maximum_stage_nonlinear_iterations": 5,
+        "nonlinear_method_id": "newton-krylov-line-search",
+        "stage_linear_plan_id": "2230b6ce63413ed27e732db86c7f11d60dbeda44796d24e550db11cefa8bcda7",
+        "stage_linear_template_reused": true,
+        "total_globalization_rejections": 0,
+        "total_jacobian_preparations": 284,
+        "total_linear_iterations": 660,
+        "total_linear_solves": 284,
+        "total_numeric_refreshes": 348,
+        "total_residual_evaluations": 568,
+        "total_setup_refreshes": 0,
+        "total_stage_nonlinear_iterations": 284
+      },
+      "state_shape": [
+        4
+      ],
+      "status_histogram": {
+        "success": 65
+      },
+      "storage": {
+        "prepared_array_bytes": 3364,
+        "scope": "logical array payloads; excludes allocator pools and compiled executables",
+        "solution_array_bytes": 10822,
+        "state_rate_trajectory_bytes": 2080,
+        "state_trajectory_bytes": 2080
+      },
+      "successful": true,
+      "system_id": "benchmark:dae:vector-linear",
+      "time_id": "benchmark:dae:vector-linear:64",
+      "timing": {
+        "forward": {
+          "compilation_ms": 1307.0802909787744,
+          "first_execution_ms": 6.838332978077233,
+          "lowering_ms": 1790.8019580645487,
+          "steady_samples_ms": [
+            6.478124996647239,
+            6.358165992423892,
+            5.436082952655852
+          ],
+          "steady_summary": {
+            "maximum_ms": 6.478124996647239,
+            "mean_ms": 6.090791313908994,
+            "median_ms": 6.358165992423892,
+            "minimum_ms": 5.436082952655852,
+            "standard_deviation_ms": 0.46553182447221625
+          },
+          "warmup_execution_ms": 6.58312498126179
+        },
+        "model_setup_ms": 260.8509580604732,
+        "solver_preparation_ms": 679.6434170100838,
+        "unit": "milliseconds",
+        "value_and_grad": {
+          "compilation_ms": 891.2262499798089,
+          "first_execution_ms": 7.393875042907894,
+          "lowering_ms": 1504.6122079947963,
+          "steady_samples_ms": [
+            5.459500011056662,
+            5.762208020314574,
+            5.2088749362155795
+          ],
+          "steady_summary": {
+            "maximum_ms": 5.762208020314574,
+            "mean_ms": 5.476860989195605,
+            "median_ms": 5.459500011056662,
+            "minimum_ms": 5.2088749362155795,
+            "standard_deviation_ms": 0.22623060235238138
+          },
+          "warmup_execution_ms": 5.561875062994659
+        }
+      }
+    },
+    {
+      "certificates": {
+        "constraint": {
+          "applicable": true,
+          "maximum_absolute_residual": 1.4688472660395746e-09,
+          "passed": true,
+          "reference": "species conservation y1 + y2 + y3 = 1",
+          "tolerance": 2e-09
+        },
+        "gradient": {
+          "absolute_error": 5.870828259299521e-11,
+          "absolute_tolerance": 1e-08,
+          "objective": 0.00036286663930489737,
+          "passed": true,
+          "reference": "symmetric finite difference of the discrete BDF solve",
+          "reference_value": 0.00039859088500577905,
+          "relative_error": 1.4728957635883724e-07,
+          "relative_tolerance": 0.0005,
+          "symmetric_finite_difference_step": 0.0001,
+          "value": 0.00039859082629749645
+        },
+        "residual": {
+          "independent_maximum_scaled_rms": 9.267752617061107e-10,
+          "passed": true,
+          "reported_maximum_constraint_rms": 1.4688472660395746e-09,
+          "reported_maximum_scaled_rms": 9.26775305869672e-10,
+          "threshold": 1e-09
+        },
+        "trajectory": {
+          "passed": true,
+          "reference": "high-accuracy Robertson terminal state at t=0.01",
+          "relative_error": 2.737727755337788e-10,
+          "tolerance": 5e-07
+        }
+      },
+      "finite_outputs": true,
+      "grid_points": 65,
+      "initialization_status": "success",
+      "metadata": {
+        "class": "stiff semi-explicit chemical kinetics DAE",
+        "reference_time": 0.01
+      },
+      "name": "robertson-semi-explicit",
+      "passed": true,
+      "plan_id": "dae-plan:4cdc93d192abcd696cb865fbdd5616b0aef1793ea53c8a772a620e36a385f27c",
+      "prepared_id": "prepared-dae:e434e1a0df6d210028c11163497a4052e9b5fc79eabe5585f6b59960b9331711",
+      "problem_id": "benchmark:dae:robertson",
+      "solver_evidence": {
+        "approximation_id": "fixed-grid-bdf2",
+        "differentiation_mode": "fixed-grid-discrete-implicit",
+        "grid_origin": "user",
+        "initialization_linear_iterations": 5,
+        "initialization_linear_plan_id": "809a6fc1f8548cf1beb1cf9b388ba68ecbfdde4649b8841dd8a7573b3cb1ee6b",
+        "initialization_nonlinear_iterations": 2,
+        "integration_method": "bdf2",
+        "maximum_stage_nonlinear_iterations": 5,
+        "nonlinear_method_id": "newton-krylov-line-search",
+        "stage_linear_plan_id": "b3d0a448836d8fef8e8a43b7d4ba39818de2155adc4637fa5e01f282305d5914",
+        "stage_linear_template_reused": true,
+        "total_globalization_rejections": 0,
+        "total_jacobian_preparations": 194,
+        "total_linear_iterations": 279,
+        "total_linear_solves": 194,
+        "total_numeric_refreshes": 258,
+        "total_residual_evaluations": 388,
+        "total_setup_refreshes": 0,
+        "total_stage_nonlinear_iterations": 194
+      },
+      "state_shape": [
+        3
+      ],
+      "status_histogram": {
+        "success": 65
+      },
+      "storage": {
+        "prepared_array_bytes": 2500,
+        "scope": "logical array payloads; excludes allocator pools and compiled executables",
+        "solution_array_bytes": 9666,
+        "state_rate_trajectory_bytes": 1560,
+        "state_trajectory_bytes": 1560
+      },
+      "successful": true,
+      "system_id": "benchmark:dae:robertson",
+      "time_id": "benchmark:dae:robertson:64",
+      "timing": {
+        "forward": {
+          "compilation_ms": 848.2803329825401,
+          "first_execution_ms": 4.463541088625789,
+          "lowering_ms": 889.8662090068683,
+          "steady_samples_ms": [
+            3.6460410337895155,
+            3.346291952766478,
+            3.329874947667122
+          ],
+          "steady_summary": {
+            "maximum_ms": 3.6460410337895155,
+            "mean_ms": 3.440735978074372,
+            "median_ms": 3.346291952766478,
+            "minimum_ms": 3.329874947667122,
+            "standard_deviation_ms": 0.14532722603549267
+          },
+          "warmup_execution_ms": 3.275875002145767
+        },
+        "model_setup_ms": 255.72066707536578,
+        "solver_preparation_ms": 919.1410840721801,
+        "unit": "milliseconds",
+        "value_and_grad": {
+          "compilation_ms": 1171.6599579667673,
+          "first_execution_ms": 5.8695420157164335,
+          "lowering_ms": 1321.72583299689,
+          "steady_samples_ms": [
+            4.029167001135647,
+            3.6297080805525184,
+            3.42645903583616
+          ],
+          "steady_summary": {
+            "maximum_ms": 4.029167001135647,
+            "mean_ms": 3.6951113725081086,
+            "median_ms": 3.6297080805525184,
+            "minimum_ms": 3.42645903583616,
+            "standard_deviation_ms": 0.250362957600671
+          },
+          "warmup_execution_ms": 3.758958075195551
+        }
+      }
+    },
+    {
+      "certificates": {
+        "constraint": {
+          "applicable": true,
+          "maximum_absolute_residual": 1.1102230246251565e-16,
+          "passed": true,
+          "reference": "Kirchhoff branch-current constraint",
+          "tolerance": 1e-10
+        },
+        "gradient": {
+          "absolute_error": 0.000444994403097608,
+          "absolute_tolerance": 1e-08,
+          "objective": 0.46076539275266093,
+          "passed": true,
+          "reference": "closed-form matrix-exponential terminal derivative",
+          "reference_value": -0.029284697545086946,
+          "relative_error": 0.015195458392988052,
+          "relative_tolerance": 0.01708984375,
+          "symmetric_finite_difference_step": null,
+          "value": -0.029729691948184554
+        },
+        "residual": {
+          "independent_maximum_scaled_rms": 1.302153897377236e-15,
+          "passed": true,
+          "reported_maximum_constraint_rms": 1.304539585185078e-16,
+          "reported_maximum_scaled_rms": 1.263840837864162e-15,
+          "threshold": 1e-10
+        },
+        "trajectory": {
+          "passed": true,
+          "reference": "closed-form reduced linear circuit trajectory",
+          "relative_error": 0.0005430072629132259,
+          "tolerance": 0.003662109375
+        }
+      },
+      "finite_outputs": true,
+      "grid_points": 65,
+      "initialization_status": "success",
+      "metadata": {
+        "class": "linear circuit with singular mass matrix"
+      },
+      "name": "singular-mass-circuit",
+      "passed": true,
+      "plan_id": "dae-plan:44df07358fc7e70bdd4c21c5e2a4a1eec21bb2a3b23446f550b95ec8e2148b57",
+      "prepared_id": "prepared-dae:7b1a5c4f474b6d19ab372b104914bde9374727ab5b1b98ed53cc85f2ad7b9261",
+      "problem_id": "benchmark:dae:rlc-circuit",
+      "solver_evidence": {
+        "approximation_id": "fixed-grid-bdf2",
+        "differentiation_mode": "fixed-grid-discrete-implicit",
+        "grid_origin": "user",
+        "initialization_linear_iterations": 3,
+        "initialization_linear_plan_id": "d539a3f9c6b270aaf3780a88a3ffc3af584f7ddf8268beb886605a75cb5e7d9f",
+        "initialization_nonlinear_iterations": 1,
+        "integration_method": "bdf2",
+        "maximum_stage_nonlinear_iterations": 4,
+        "nonlinear_method_id": "newton-krylov-line-search",
+        "stage_linear_plan_id": "b79ccf5b2c67dd0c11aa3ac951e4c72059362ed2481dba703c9eae34dbe80ff0",
+        "stage_linear_template_reused": true,
+        "total_globalization_rejections": 0,
+        "total_jacobian_preparations": 197,
+        "total_linear_iterations": 350,
+        "total_linear_solves": 197,
+        "total_numeric_refreshes": 261,
+        "total_residual_evaluations": 394,
+        "total_setup_refreshes": 0,
+        "total_stage_nonlinear_iterations": 197
+      },
+      "state_shape": [
+        3
+      ],
+      "status_histogram": {
+        "success": 65
+      },
+      "storage": {
+        "prepared_array_bytes": 2372,
+        "scope": "logical array payloads; excludes allocator pools and compiled executables",
+        "solution_array_bytes": 9666,
+        "state_rate_trajectory_bytes": 1560,
+        "state_trajectory_bytes": 1560
+      },
+      "successful": true,
+      "system_id": "benchmark:dae:rlc-circuit",
+      "time_id": "benchmark:dae:circuit:64",
+      "timing": {
+        "forward": {
+          "compilation_ms": 767.9441249929368,
+          "first_execution_ms": 4.322791937738657,
+          "lowering_ms": 969.1103328950703,
+          "steady_samples_ms": [
+            3.2980829710140824,
+            3.3544580219313502,
+            2.9472920577973127
+          ],
+          "steady_summary": {
+            "maximum_ms": 3.3544580219313502,
+            "mean_ms": 3.199944350247582,
+            "median_ms": 3.2980829710140824,
+            "minimum_ms": 2.9472920577973127,
+            "standard_deviation_ms": 0.18012851384823994
+          },
+          "warmup_execution_ms": 3.5054159816354513
+        },
+        "model_setup_ms": 1.1214999249204993,
+        "solver_preparation_ms": 147.8009580168873,
+        "unit": "milliseconds",
+        "value_and_grad": {
+          "compilation_ms": 1288.94624998793,
+          "first_execution_ms": 4.759750096127391,
+          "lowering_ms": 1218.842834001407,
+          "steady_samples_ms": [
+            3.3340409863740206,
+            3.536083037033677,
+            3.2433330779895186
+          ],
+          "steady_summary": {
+            "maximum_ms": 3.536083037033677,
+            "mean_ms": 3.3711523671324053,
+            "median_ms": 3.3340409863740206,
+            "minimum_ms": 3.2433330779895186,
+            "standard_deviation_ms": 0.12236169217102352
+          },
+          "warmup_execution_ms": 3.566083963960409
+        }
+      }
+    },
+    {
+      "certificates": {
+        "constraint": {
+          "applicable": true,
+          "maximum_absolute_residual": 1.4988010832439613e-13,
+          "passed": true,
+          "reference": "pointwise equilibrium = u**2",
+          "tolerance": 1e-09
+        },
+        "gradient": {
+          "absolute_error": 1.047817047961086e-05,
+          "absolute_tolerance": 1e-08,
+          "objective": 0.9612909703517638,
+          "passed": true,
+          "reference": "exact semidiscrete Fourier-mode terminal derivative",
+          "reference_value": -0.7590047144465168,
+          "relative_error": 1.380514544926348e-05,
+          "relative_tolerance": 0.008,
+          "symmetric_finite_difference_step": null,
+          "value": -0.7589942362760372
+        },
+        "residual": {
+          "independent_maximum_scaled_rms": 9.63919255708994e-11,
+          "passed": true,
+          "reported_maximum_constraint_rms": 8.859690320426835e-14,
+          "reported_maximum_scaled_rms": 9.639192363256746e-11,
+          "threshold": 1e-10
+        },
+        "trajectory": {
+          "passed": true,
+          "reference": "exact semidiscrete Fourier-mode trajectory",
+          "relative_error": 4.185524877337754e-07,
+          "tolerance": 0.003662109375
+        }
+      },
+      "finite_outputs": true,
+      "grid_points": 65,
+      "initialization_status": "success",
+      "metadata": {
+        "class": "semidiscrete PDE DAE",
+        "regularity_verified": false,
+        "spatial_points": 16,
+        "structural_assumption": "regular-index-1-required-unverified"
+      },
+      "name": "constrained-reaction-diffusion",
+      "passed": true,
+      "plan_id": "dae-plan:5c4f4a955fd3d3097d5b6921cf935975e5a35eae8dd92d147b91f96f06f8be61",
+      "prepared_id": "prepared-dae:4230c2ad14f048f18ed422522f226bb4f34513fa52e6dae61f5e08c26f35453a",
+      "problem_id": "benchmark:dae:reaction-diffusion",
+      "solver_evidence": {
+        "approximation_id": "fixed-grid-bdf2",
+        "differentiation_mode": "fixed-grid-discrete-implicit",
+        "grid_origin": "user",
+        "initialization_linear_iterations": 20,
+        "initialization_linear_plan_id": "754569fe48a35f3c71b67dedd2f2cd1bdc1291b7d000e435c1c3fa8f08349f79",
+        "initialization_nonlinear_iterations": 2,
+        "integration_method": "bdf2",
+        "maximum_stage_nonlinear_iterations": 3,
+        "nonlinear_method_id": "newton-krylov-line-search",
+        "stage_linear_plan_id": "4f0b404871e79f3d925debf5ddac2f03f153133488321d00d9cce6cf5f15d888",
+        "stage_linear_template_reused": true,
+        "total_globalization_rejections": 0,
+        "total_jacobian_preparations": 150,
+        "total_linear_iterations": 214,
+        "total_linear_solves": 150,
+        "total_numeric_refreshes": 214,
+        "total_residual_evaluations": 300,
+        "total_setup_refreshes": 0,
+        "total_stage_nonlinear_iterations": 150
+      },
+      "state_shape": [
+        16,
+        2
+      ],
+      "status_histogram": {
+        "success": 65
+      },
+      "storage": {
+        "prepared_array_bytes": 20948,
+        "scope": "logical array payloads; excludes allocator pools and compiled executables",
+        "solution_array_bytes": 43190,
+        "state_rate_trajectory_bytes": 16640,
+        "state_trajectory_bytes": 16640
+      },
+      "successful": true,
+      "system_id": "semidiscrete-dae:4cb78bf40cbdb83c14a3921bc216c98e5a96394a3ccd4337dba79fc084b82209",
+      "time_id": "benchmark:dae:reaction-diffusion:64:16",
+      "timing": {
+        "forward": {
+          "compilation_ms": 1935.6195000000298,
+          "first_execution_ms": 9.800542029552162,
+          "lowering_ms": 2465.6709589762613,
+          "steady_samples_ms": [
+            11.21220807544887,
+            8.725833962671459,
+            6.154583999887109
+          ],
+          "steady_summary": {
+            "maximum_ms": 11.21220807544887,
+            "mean_ms": 8.697542012669146,
+            "median_ms": 8.725833962671459,
+            "minimum_ms": 6.154583999887109,
+            "standard_deviation_ms": 2.064863296242101
+          },
+          "warmup_execution_ms": 5.446417024359107
+        },
+        "model_setup_ms": 442.8431249689311,
+        "solver_preparation_ms": 1722.867124946788,
+        "unit": "milliseconds",
+        "value_and_grad": {
+          "compilation_ms": 1378.9532500086352,
+          "first_execution_ms": 8.999874931760132,
+          "lowering_ms": 2537.327624973841,
+          "steady_samples_ms": [
+            5.833875038661063,
+            5.485999980010092,
+            5.156999919563532
+          ],
+          "steady_summary": {
+            "maximum_ms": 5.833875038661063,
+            "mean_ms": 5.492291646078229,
+            "median_ms": 5.485999980010092,
+            "minimum_ms": 5.156999919563532,
+            "standard_deviation_ms": 0.27636892071982194
+          },
+          "warmup_execution_ms": 5.95074996817857
+        }
+      }
+    }
+  ],
+  "configuration": {
+    "effective": {
+      "repeats": 3,
+      "smoke": false,
+      "spatial_points": 16,
+      "steps": 64
+    },
+    "requested": {
+      "repeats": 3,
+      "spatial_points": 16,
+      "steps": 64
+    }
+  },
+  "environment": {
+    "backend": "cpu",
+    "device_kind": "cpu",
+    "jax_version": "0.9.2",
+    "machine": "arm64",
+    "python_version": "3.12.8",
+    "system": "Darwin",
+    "system_release": "24.6.0",
+    "x64_enabled": true
+  },
+  "passed": true,
+  "protocol": {
+    "gradient": "discrete implicit value-and-grad compared with an independent closed-form or symmetric finite-difference reference",
+    "memory": "logical result payload only; no cumulative allocator counters",
+    "synchronization": "every measured JAX execution blocks all array leaves",
+    "timing": "model setup, solver preparation, lowering, compilation, first execution, warmup, and synchronized steady executions are separate"
+  },
+  "schema_version": "phydrax-dae-benchmark-v2"
+}

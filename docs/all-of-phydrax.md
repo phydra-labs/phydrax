@@ -177,20 +177,24 @@ explicit. See
 
 Gaussian inference uses `GaussianFactor` rather than silently converting every
 covariance to a dense matrix. Rank, factor method, regularization, validity, and
-status remain explicit through conditioning, nonlinear moment transforms, and
-continuous-discrete filtering and smoothing. First-order, scaled-unscented,
-spherical-radial, and Gauss--Hermite transforms are declared approximations; they
-do not make nonlinear continuous-discrete inference exact. Dense-only paths
-enforce dimension guards, and covariance inputs are never silently repaired.
+status remain explicit through conditioning, nonlinear moment transforms,
+expectation-only quadrature, and continuous-discrete filtering and smoothing.
+First-order, scaled-unscented, spherical-radial, Gauss--Hermite, and keyed Monte
+Carlo expectations are declared approximations; they do not make nonlinear
+inference exact. Dense-only paths enforce dimension guards, and covariance inputs
+are never silently repaired.
 
-The completed state-space surface also includes square-root sequential Kalman
-filtering/smoothing, exact finite-state backward smoothing, Viterbi paths and
-expected statistics, particle backward/full smoothing, ensemble smoothing,
-Rao--Blackwellized filtering, and structural model compilation. Physical cases,
-schedule masks, state/process ancestry, stable IDs, validity/status, and
-input/method/backend provenance remain present in results. Square-root Kalman
-execution does not support the parallel method. Discrete particle ancestry and
-resampling choices are nondifferentiable.
+The completed state-space surface also includes SING natural-gradient
+variational smoothing for additive-noise latent SDEs; square-root sequential
+Kalman filtering/smoothing; exact finite-state backward smoothing, Viterbi paths
+and expected statistics; particle backward/full smoothing; ensemble smoothing;
+Rao--Blackwellized filtering; and structural model compilation. SING retains its
+Euler-discretized ELBO, expectation rule, Gaussian-chain execution method,
+accepted steps, natural residuals, coherent path samples, and explicit
+unsupported-model boundary. Physical cases, schedule masks, state/process
+ancestry, stable IDs, validity/status, and input/method/backend provenance remain
+present in results. Square-root Kalman execution does not support the parallel
+method. Discrete particle ancestry and resampling choices are nondifferentiable.
 
 
 ### Moment calibration and target-aware finite measures
@@ -235,6 +239,11 @@ keep physical-time and map-iteration normalization distinct. Solver, control,
 stochastic, memory/delay, rough, and canonical evolution outputs enter the same
 `TrajectoryData` contract through explicit adapters without losing masks, reset
 boundaries, case/realization axes, or provenance.
+`DifferentialAlgebraicSystem` adds a state-shaped implicit residual with declared
+differential/algebraic component roles and independent state, rate, and residual
+scales. Its prepared fixed-grid BDF solver preserves native nonlinear diagnostics,
+implicit derivatives, and trajectory rate-validity masks without introducing a
+second identification representation.
 Array models bind into `ContinuousSystem` as explicit trainable PyTree children.
 Structured Port-Hamiltonian fields provide state-dependent energy,
 interconnection, dissipation, control, and forcing components while preserving
@@ -575,6 +584,13 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   Diffrax backend. Stochastic collocation provides a separate deterministic
   quadrature path for finite-dimensional random inputs.
   See [API → Solver → Differential equations](api/solver/differential.md).
+- **Differential-algebraic equations**: declare a state-shaped residual
+  `F(t, y, ydot, args) = 0`, component roles, scales, and an explicit consistency
+  contract. Native prepared BDF1/BDF2 solves support fixed-grid JIT, JVP, VJP, and
+  batching; failed initialization or stages remain explicit status evidence.
+  Semidiscrete PDE IR can compile directly to the same residual contract when every
+  equation has a bijective field target and supported direct temporal incidence.
+  See [API → Solver → Differential-algebraic equations](api/solver/differential_algebraic.md).
 - **System identification and equation discovery**: normalize canonical
   evolution, differential/delay/memory/rough, controlled, or stochastic output
   as `TrajectoryData`; preserve sample/transition masks and reset boundaries;
@@ -664,6 +680,14 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   and continuous-discrete Gaussian filtering/smoothing preserve rank,
   approximation, regularization, validity/status, physical cases, schedule
   masks, stable IDs, and solver/backend provenance. Dense guards apply.
+
+  SING adds a Gaussian information-form variational smoother for
+  Euler--Maruyama latent SDEs with full-rank additive diffusion. It supports
+  differentiable non-Gaussian observations, irregular masked schedules, per-case
+  natural-gradient backtracking, sequential or associative Gaussian-chain
+  conversion, fixed-posterior model gradients, coherent path sampling, and
+  portable result export. Its objective is an ELBO, not a relabeled marginal
+  likelihood; multiplicative or singular diffusion has no silent fallback.
   Nonlinear moment propagation and sampled continuous-discrete observations are
   approximations, not exact inference, and no invalid covariance is silently
   repaired. Structural local-level, trend, seasonal, autoregressive, regression,

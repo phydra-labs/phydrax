@@ -194,7 +194,80 @@ for _ in range(observations.num_steps):
 assert jnp.allclose(state.mean, kalman.final_state.mean)
 ```
 
-## 4. Complete a finite-state posterior
+## 4. Smooth a latent SDE with natural gradients
+
+Use SING when the latent law is an additive-noise SDE and a single Gaussian Markov
+path approximation is appropriate. Declare the same physical schedule and observation
+model, but expose the drift and additive Wiener coefficient through an
+`EulerMaruyamaTransitionKernel`:
+
+```python
+sde_system = phx.dynamics.ContinuousSystem(
+    lambda time, state, args: -0.2 * state - 0.05 * state**3,
+    state_layout=phx.dynamics.StateLayout((1,)),
+    system_id="nonlinear-position-sde",
+)
+sde_noise = phx.solver.WienerTerm(
+    "position-noise",
+    lambda time, state, args: jnp.full((1, 1), 0.3),
+    (1,),
+    structure="additive",
+    basis_id="position-brownian",
+)
+sde_transition = phx.stochastic.EulerMaruyamaTransitionKernel(
+    sde_system,
+    (sde_noise,),
+    state_shape=(1,),
+    noise_shape=(1,),
+    process_id="nonlinear-position-process",
+)
+sde_problem = phx.stochastic.StateSpaceProblem(
+    phx.stochastic.StateSpaceModel(
+        prior,
+        sde_transition,
+        observation,
+        model_id="nonlinear-position-model",
+    ),
+    observations,
+    initial_time=0.0,
+    problem_id="nonlinear-position-smoothing",
+)
+
+sing = phx.uq.sing_smoother(
+    sde_problem,
+    expectation_method="cubature",
+    method="auto",
+    max_iterations=20,
+)
+sing_paths = phx.uq.sample_sing_paths(
+    jr.key(4),
+    sing,
+    sample_shape=(128,),
+)
+```
+
+`sing.observation_means` and `sing.observation_covariances` follow the original
+observation rows. The complete latent grid, including the initial node, is available
+through `sing.means`, `sing.covariances`, and
+`sing.transition_cross_covariances`. `sing_paths` are coherent conditional paths, not
+independent marginal draws.
+
+Inspect `sing.elbo`, `sing.elbo_history`, `sing.step_size_history`,
+`sing.natural_residual_history`, `sing.converged`, `sing.valid`, and `sing.status`.
+The objective is an ELBO for the Euler-discretized model. It is not a marginal
+likelihood except at the exact linear-Gaussian solution. Backtracking never repairs an
+indefinite candidate. Monte Carlo expectations require an explicit key and reuse
+fixed semantic draws during optimization.
+
+The automatic initializer requires a full-rank Gaussian prior. Every active process
+covariance must be full rank, and every Wiener term must explicitly declare
+`structure="additive"`. Multiplicative noise, solver-backed transitions, singular
+process covariance, hidden drift-parameter learning, and minibatching are rejected or
+reported rather than approximated silently. For an explicit outer model-learning
+loop, call `phx.uq.sing_elbo(candidate_problem, sing.state)` while holding the
+posterior fixed.
+
+## 5. Complete a finite-state posterior
 
 The exact forward result is also the input to finite-state smoothing, Viterbi
 decoding, expected transition counts, and arbitrary expected transition statistics:
@@ -419,7 +492,7 @@ Transition `log_prob` must be a normalized density. Correlated innovations matte
 replacing the transition covariance with its diagonal changes the backward law.
 
 
-## 5. Nonlinear or non-Gaussian particle filtering
+## 6. Nonlinear or non-Gaussian particle filtering
 
 The bootstrap filter uses the same problem. A solver-backed
 `DifferentialTransitionKernel`, `JumpTransitionKernel`, or
@@ -462,7 +535,7 @@ genealogical and FFBSi results record stop-gradient ancestry. All variants prese
 physical case IDs and axes, masks/padding, validity/status, `input_id`, and method,
 process, approximation, or resampling provenance as applicable.
 
-## 6. High-dimensional ensemble filtering
+## 7. High-dimensional ensemble filtering
 
 The ensemble transform method performs member- and observation-space solves and avoids
 a dense state covariance:
@@ -484,7 +557,7 @@ For a field state, keep `state_shape` as the physical tensor shape. The ensemble
 inserted explicitly before those event axes and is labeled as process uncertainty in the
 predictive result.
 
-## 7. Checkpoint streaming state and export results
+## 8. Checkpoint streaming state and export results
 
 ```python
 checkpoint_directory = tempfile.TemporaryDirectory()
@@ -518,7 +591,7 @@ without reconstructing the original model. Bellman and Rao--Blackwellized smooth
 archives preserve status fields, pseudo-likelihood or path provenance, and conditional
 mixture components.
 
-## 8. Failure rules
+## 9. Failure rules
 
 - Inspect `valid`, `status`, and algorithm diagnostics before reducing a result.
 - Do not treat padded schedule entries as successful observations.

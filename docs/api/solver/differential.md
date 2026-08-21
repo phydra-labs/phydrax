@@ -5,6 +5,11 @@ The differential backend integrates finite-dimensional initial-value problems th
 `FunctionalSolver` minimizes a physics/data functional, while `solve_diffrax` numerically
 integrates a supplied drift and optional named stochastic terms.
 
+Implicit residuals `F(t, y, ydot, args) = 0` use the separate native
+[differential-algebraic solver](differential_algebraic.md). That path owns consistent
+initialization and fixed-grid BDF differentiation rather than encoding a singular
+mass matrix as an explicit Diffrax vector field.
+
 ## Problem, Wiener terms, and realization contract
 
 `DifferentialProblem` represents

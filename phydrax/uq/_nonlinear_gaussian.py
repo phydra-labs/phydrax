@@ -11,10 +11,11 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import jax.random as jr
 import numpy as np
 import opt_einsum as oe
 from jax.flatten_util import ravel_pytree
-from jaxtyping import Array, PyTree
+from jaxtyping import Array, Key, PyTree
 
 from .._strict import StrictModule
 from ._gaussian_factor import gaussian_factor_from_covariance, GaussianFactor
@@ -45,6 +46,28 @@ class NonlinearGaussianTransformResult(StrictModule):
     @property
     def successful(self) -> Array:
         """Whether the input, evaluations, and output factor are all valid."""
+        return self.valid
+
+
+GaussianExpectationMethod = Literal[
+    "cubature", "unscented", "gauss-hermite", "monte-carlo"
+]
+
+
+class GaussianExpectationResult(StrictModule):
+    """Auditable expectation of an arbitrary PyTree under one Gaussian law."""
+
+    value: PyTree[Array]
+    valid: Array
+    status: Array
+    method_id: str = eqx.field(static=True)
+    point_count: int = eqx.field(static=True)
+    input_dimension: int = eqx.field(static=True)
+    output_dimension: int = eqx.field(static=True)
+    method_parameters: tuple[tuple[str, float], ...] = eqx.field(static=True)
+
+    @property
+    def successful(self) -> Array:
         return self.valid
 
 
@@ -233,6 +256,215 @@ def _weighted_transform(
     )
 
 
+def _spherical_radial_rule(rank: int, dtype: jnp.dtype, /) -> tuple[Array, Array]:
+    if rank == 0:
+        return jnp.zeros((1, 0), dtype=dtype), jnp.ones((1,), dtype=dtype)
+    scale = jnp.sqrt(jnp.asarray(rank, dtype=dtype))
+    identity = jnp.eye(rank, dtype=dtype)
+    points = jnp.concatenate((scale * identity, -scale * identity), axis=0)
+    weights = jnp.full((2 * rank,), 1.0 / (2.0 * rank), dtype=dtype)
+    return points, weights
+
+
+def _scaled_unscented_rule(
+    rank: int,
+    dtype: jnp.dtype,
+    /,
+    *,
+    alpha: float,
+    beta: float,
+    kappa: float,
+) -> tuple[Array, Array, Array, bool]:
+    if rank == 0:
+        points = jnp.zeros((1, 0), dtype=dtype)
+        weights = jnp.ones((1,), dtype=dtype)
+        return points, weights, weights, True
+    lambda_ = alpha**2 * (rank + kappa) - rank
+    scaling = rank + lambda_
+    if not np.isfinite(scaling) or scaling <= 0.0:
+        raise ValueError("Scaled unscented parameters require n + lambda > 0.")
+    radius = jnp.sqrt(jnp.asarray(scaling, dtype=dtype))
+    identity = jnp.eye(rank, dtype=dtype)
+    points = jnp.concatenate(
+        (jnp.zeros((1, rank), dtype=dtype), radius * identity, -radius * identity),
+        axis=0,
+    )
+    side_weight = 1.0 / (2.0 * scaling)
+    central_mean_weight = lambda_ / scaling
+    central_covariance_weight = central_mean_weight + (1.0 - alpha**2 + beta)
+    mean_weights = jnp.asarray(
+        (central_mean_weight, *([side_weight] * (2 * rank))), dtype=dtype
+    )
+    covariance_weights = jnp.asarray(
+        (central_covariance_weight, *([side_weight] * (2 * rank))), dtype=dtype
+    )
+    return (
+        points,
+        mean_weights,
+        covariance_weights,
+        central_covariance_weight >= 0.0,
+    )
+
+
+def _gauss_hermite_rule(
+    rank: int,
+    dtype: jnp.dtype,
+    /,
+    *,
+    order: int,
+    max_dimension: int,
+    max_points: int,
+) -> tuple[Array, Array]:
+    if rank > max_dimension:
+        raise ValueError(
+            "Gauss-Hermite latent dimension exceeds max_dimension; "
+            f"got {rank}, cap {max_dimension}."
+        )
+    point_count = order**rank
+    if point_count > max_points:
+        raise ValueError(
+            "Gauss-Hermite tensor rule exceeds max_points; "
+            f"requires {point_count}, cap {max_points}."
+        )
+    if rank == 0:
+        return jnp.zeros((1, 0), dtype=dtype), jnp.ones((1,), dtype=dtype)
+    nodes, axis_weights = np.polynomial.hermite_e.hermegauss(order)
+    axis_weights = axis_weights / np.sqrt(2.0 * np.pi)
+    node_mesh = np.meshgrid(*([nodes] * rank), indexing="ij")
+    weight_mesh = np.meshgrid(*([axis_weights] * rank), indexing="ij")
+    points = jnp.asarray(
+        np.stack(tuple(mesh.reshape(-1) for mesh in node_mesh), axis=1),
+        dtype=dtype,
+    )
+    weights = jnp.asarray(
+        np.prod(
+            np.stack(tuple(mesh.reshape(-1) for mesh in weight_mesh), axis=1),
+            axis=1,
+        ),
+        dtype=dtype,
+    )
+    return points, weights
+
+
+def _weighted_expectation(
+    function: Callable[[PyTree[Array]], PyTree[Array]],
+    mean: PyTree[Array],
+    factor: GaussianFactor,
+    canonical_points: Array,
+    weights: Array,
+    /,
+    *,
+    method_id: str,
+    method_parameters: tuple[tuple[str, float], ...],
+) -> GaussianExpectationResult:
+    _, flat_mean, input_unravel = _input_coordinates(mean, factor)
+    physical_points = flat_mean[None, :] + canonical_points @ factor.factor.T
+    output_points, output_unravel = _evaluate_points(
+        function, input_unravel, physical_points
+    )
+    value = oe.contract("p,po->o", weights, output_points)
+    evaluations_finite = (
+        jnp.all(jnp.isfinite(flat_mean))
+        & jnp.all(jnp.isfinite(physical_points))
+        & jnp.all(jnp.isfinite(output_points))
+        & jnp.all(jnp.isfinite(value))
+    )
+    valid, status = _status(factor.valid, evaluations_finite, jnp.asarray(True))
+    return GaussianExpectationResult(
+        value=output_unravel(value),
+        valid=valid,
+        status=status,
+        method_id=method_id,
+        point_count=int(canonical_points.shape[0]),
+        input_dimension=int(flat_mean.size),
+        output_dimension=int(value.size),
+        method_parameters=method_parameters,
+    )
+
+
+def gaussian_expectation(
+    function: Callable[[PyTree[Array]], PyTree[Array]],
+    mean: PyTree[Array],
+    factor: GaussianFactor,
+    /,
+    *,
+    method: GaussianExpectationMethod = "cubature",
+    key: Key[Array, ""] | None = None,
+    num_samples: int = 32,
+    order: int = 3,
+    max_dimension: int = 5,
+    max_points: int = 100_000,
+    alpha: float = 1.0,
+    beta: float = 2.0,
+    kappa: float = 0.0,
+) -> GaussianExpectationResult:
+    """Evaluate an arbitrary PyTree expectation without forming output covariance."""
+    if method not in ("cubature", "unscented", "gauss-hermite", "monte-carlo"):
+        raise ValueError(
+            "method must be 'cubature', 'unscented', 'gauss-hermite', or 'monte-carlo'."
+        )
+    _, flat_mean, _ = _input_coordinates(mean, factor)
+    rank = factor.rank
+    real_dtype = jnp.real(flat_mean).dtype
+    if method == "cubature":
+        points, weights = _spherical_radial_rule(rank, real_dtype)
+        method_id = "spherical-radial-cubature"
+        parameters: tuple[tuple[str, float], ...] = ()
+    elif method == "unscented":
+        alpha_ = _configuration_float(alpha, "alpha", nonnegative=False)
+        beta_ = _configuration_float(beta, "beta", nonnegative=False)
+        kappa_ = _configuration_float(kappa, "kappa", nonnegative=False)
+        if alpha_ <= 0.0:
+            raise ValueError("alpha must be positive.")
+        points, weights, _, _ = _scaled_unscented_rule(
+            rank,
+            real_dtype,
+            alpha=alpha_,
+            beta=beta_,
+            kappa=kappa_,
+        )
+        method_id = "scaled-unscented"
+        parameters = (("alpha", alpha_), ("beta", beta_), ("kappa", kappa_))
+    elif method == "gauss-hermite":
+        order_ = _configuration_int(order, "order", minimum=1)
+        max_dimension_ = _configuration_int(max_dimension, "max_dimension", minimum=1)
+        max_points_ = _configuration_int(max_points, "max_points", minimum=1)
+        points, weights = _gauss_hermite_rule(
+            rank,
+            real_dtype,
+            order=order_,
+            max_dimension=max_dimension_,
+            max_points=max_points_,
+        )
+        method_id = "gauss-hermite"
+        parameters = (
+            ("order", float(order_)),
+            ("max_dimension", float(max_dimension_)),
+            ("max_points", float(max_points_)),
+        )
+    else:
+        sample_count = _configuration_int(num_samples, "num_samples", minimum=1)
+        if key is None:
+            raise ValueError("key is required for method='monte-carlo'.")
+        if rank == 0:
+            points = jnp.zeros((1, 0), dtype=real_dtype)
+            weights = jnp.ones((1,), dtype=real_dtype)
+        else:
+            points = jr.normal(key, (sample_count, rank), dtype=real_dtype)
+            weights = jnp.full((sample_count,), 1.0 / sample_count, dtype=real_dtype)
+        method_id = "fixed-sample-monte-carlo"
+        parameters = (("num_samples", float(sample_count)),)
+    return _weighted_expectation(
+        function,
+        mean,
+        factor,
+        points,
+        weights,
+        method_id=method_id,
+        method_parameters=parameters,
+    )
+
+
 def spherical_radial_cubature(
     function: Callable[[PyTree[Array]], PyTree[Array]],
     mean: PyTree[Array],
@@ -248,16 +480,9 @@ def spherical_radial_cubature(
         nonnegative=True,
     )
     _, flat_mean, _ = _input_coordinates(mean, factor)
-    rank = factor.rank
-    real_dtype = jnp.real(flat_mean).dtype
-    if rank == 0:
-        canonical_points = jnp.zeros((1, 0), dtype=real_dtype)
-        weights = jnp.ones((1,), dtype=real_dtype)
-    else:
-        scale = jnp.sqrt(jnp.asarray(rank, dtype=real_dtype))
-        identity = jnp.eye(rank, dtype=real_dtype)
-        canonical_points = jnp.concatenate((scale * identity, -scale * identity), axis=0)
-        weights = jnp.full((2 * rank,), 1.0 / (2.0 * rank), dtype=real_dtype)
+    canonical_points, weights = _spherical_radial_rule(
+        factor.rank, jnp.real(flat_mean).dtype
+    )
     return _weighted_transform(
         function,
         mean,
@@ -310,38 +535,18 @@ def scaled_unscented_transform(
         ("kappa", kappa_),
         ("max_output_dimension", float(max_output_dimension_)),
     )
-    if rank == 0:
-        canonical_points = jnp.zeros((1, 0), dtype=real_dtype)
-        mean_weights = jnp.ones((1,), dtype=real_dtype)
-        covariance_weights = mean_weights
-        nonnegative_covariance_weights = True
-    else:
-        lambda_ = alpha_**2 * (rank + kappa_) - rank
-        scaling = rank + lambda_
-        if not np.isfinite(scaling) or scaling <= 0.0:
-            raise ValueError("Scaled unscented parameters require n + lambda > 0.")
-        radius = jnp.sqrt(jnp.asarray(scaling, dtype=real_dtype))
-        identity = jnp.eye(rank, dtype=real_dtype)
-        canonical_points = jnp.concatenate(
-            (
-                jnp.zeros((1, rank), dtype=real_dtype),
-                radius * identity,
-                -radius * identity,
-            ),
-            axis=0,
-        )
-        side_weight = 1.0 / (2.0 * scaling)
-        central_mean_weight = lambda_ / scaling
-        central_covariance_weight = central_mean_weight + (1.0 - alpha_**2 + beta_)
-        mean_weights = jnp.asarray(
-            (central_mean_weight, *([side_weight] * (2 * rank))),
-            dtype=real_dtype,
-        )
-        covariance_weights = jnp.asarray(
-            (central_covariance_weight, *([side_weight] * (2 * rank))),
-            dtype=real_dtype,
-        )
-        nonnegative_covariance_weights = central_covariance_weight >= 0.0
+    (
+        canonical_points,
+        mean_weights,
+        covariance_weights,
+        nonnegative_covariance_weights,
+    ) = _scaled_unscented_rule(
+        rank,
+        real_dtype,
+        alpha=alpha_,
+        beta=beta_,
+        kappa=kappa_,
+    )
 
     return _weighted_transform(
         function,
@@ -380,38 +585,13 @@ def gauss_hermite_transform(
     )
     _, flat_mean, _ = _input_coordinates(mean, factor)
     rank = factor.rank
-    if rank > max_dimension_:
-        raise ValueError(
-            "Gauss-Hermite latent dimension exceeds max_dimension; "
-            f"got {rank}, cap {max_dimension_}."
-        )
-    point_count = order_**rank
-    if point_count > max_points_:
-        raise ValueError(
-            "Gauss-Hermite tensor rule exceeds max_points; "
-            f"requires {point_count}, cap {max_points_}."
-        )
-
-    real_dtype = jnp.real(flat_mean).dtype
-    if rank == 0:
-        canonical_points = jnp.zeros((1, 0), dtype=real_dtype)
-        weights = jnp.ones((1,), dtype=real_dtype)
-    else:
-        nodes, axis_weights = np.polynomial.hermite_e.hermegauss(order_)
-        axis_weights = axis_weights / np.sqrt(2.0 * np.pi)
-        node_mesh = np.meshgrid(*([nodes] * rank), indexing="ij")
-        weight_mesh = np.meshgrid(*([axis_weights] * rank), indexing="ij")
-        canonical_points = jnp.asarray(
-            np.stack(tuple(mesh.reshape(-1) for mesh in node_mesh), axis=1),
-            dtype=real_dtype,
-        )
-        weights = jnp.asarray(
-            np.prod(
-                np.stack(tuple(mesh.reshape(-1) for mesh in weight_mesh), axis=1),
-                axis=1,
-            ),
-            dtype=real_dtype,
-        )
+    canonical_points, weights = _gauss_hermite_rule(
+        rank,
+        jnp.real(flat_mean).dtype,
+        order=order_,
+        max_dimension=max_dimension_,
+        max_points=max_points_,
+    )
 
     return _weighted_transform(
         function,

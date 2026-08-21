@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ...control import ControlTrajectory
     from ...solver import (
         ControlledDifferentialSolution,
+        DifferentialAlgebraicSolution,
         DifferentialSolution,
         MemoryEquationSolution,
         RoughDifferentialSolution,
@@ -105,7 +106,8 @@ def trajectory_data_from_control(
 
 def trajectory_data_from_differential_solution(
     solution: (
-        DifferentialSolution
+        DifferentialAlgebraicSolution
+        | DifferentialSolution
         | MemoryEquationSolution
         | RoughDifferentialSolution
         | ControlledDifferentialSolution
@@ -115,18 +117,20 @@ def trajectory_data_from_differential_solution(
     state_layout: StateLayout | None = None,
     sample_axes: tuple[str, ...] | None = None,
     sample_axis_roles: tuple[CaseAxisRole, ...] | None = None,
-    coordinate_id: str = "time",
+    coordinate_id: str | None = None,
     source_id: str | None = None,
 ) -> TrajectoryData:
-    """Convert differential, delay/memory, rough, or controlled solver output."""
+    """Convert differential solver output, retaining native DAE state rates."""
     from ...solver import (
         ControlledDifferentialSolution,
+        DifferentialAlgebraicSolution,
         DifferentialSolution,
         MemoryEquationSolution,
         RoughDifferentialSolution,
     )
 
     supported = (
+        DifferentialAlgebraicSolution,
         DifferentialSolution,
         MemoryEquationSolution,
         RoughDifferentialSolution,
@@ -134,10 +138,29 @@ def trajectory_data_from_differential_solution(
     )
     if not isinstance(solution, supported):
         raise TypeError(
-            "solution must be differential, delay/memory, rough, or controlled "
-            "differential solver output."
+            "solution must be DAE, differential, delay/memory, rough, or "
+            "controlled differential solver output."
         )
-    if isinstance(solution, ControlledDifferentialSolution):
+    derivatives = None
+    derivative_valid = None
+    if isinstance(solution, DifferentialAlgebraicSolution):
+        states = solution.states
+        times = solution.times
+        valid = solution.valid
+        sample_shape = solution.sample_shape
+        state_shape = solution.state_shape
+        geometry_id = None
+        derivatives = solution.state_rates
+        state_rank = len(solution.state_shape)
+        state_axes = tuple(
+            range(solution.rate_valid.ndim - state_rank, solution.rate_valid.ndim)
+        )
+        derivative_valid = jnp.all(solution.rate_valid, axis=state_axes)
+        default_coordinate_id = solution.time_id
+        default_source_id = (
+            f"dae:{solution.problem_id}:{solution.integration_method}:{solution.plan_id}"
+        )
+    elif isinstance(solution, ControlledDifferentialSolution):
         base = solution.differential_solution
         states = base.states
         times = base.times
@@ -149,6 +172,7 @@ def trajectory_data_from_differential_solution(
             f"controlled-differential:{solution.problem_id}:{solution.path_id}:"
             f"{base.solver_id}:{base.resolved_method}"
         )
+        default_coordinate_id = "time"
     elif isinstance(solution, DifferentialSolution):
         states = solution.states
         times = solution.times
@@ -159,6 +183,7 @@ def trajectory_data_from_differential_solution(
         default_source_id = (
             f"differential:{solution.solver_id}:{solution.resolved_method}"
         )
+        default_coordinate_id = "time"
     elif isinstance(solution, MemoryEquationSolution):
         states = solution.states
         times = solution.times
@@ -167,6 +192,7 @@ def trajectory_data_from_differential_solution(
         state_shape = solution.state_shape
         geometry_id = None
         default_source_id = f"memory:{solution.solver_id}:{solution.resolved_method}"
+        default_coordinate_id = "time"
     else:
         states = solution.states
         times = solution.times
@@ -175,6 +201,7 @@ def trajectory_data_from_differential_solution(
         state_shape = solution.state_shape
         geometry_id = solution.state_geometry_id
         default_source_id = f"rough:{solution.solver.solver_name}"
+        default_coordinate_id = "time"
     default_layout = StateLayout(state_shape)
     if state_layout is None:
         if geometry_id is not None and geometry_id != default_layout.geometry.geometry_id:
@@ -211,9 +238,11 @@ def trajectory_data_from_differential_solution(
         state_layout=resolved_state,
         sample_valid=valid,
         transition_valid=transitions,
+        derivatives=derivatives,
+        derivative_valid=derivative_valid,
         case_axes=axes,
         case_axis_roles=roles,
-        coordinate_id=coordinate_id,
+        coordinate_id=(default_coordinate_id if coordinate_id is None else coordinate_id),
         source_id=default_source_id if source_id is None else source_id,
     )
 

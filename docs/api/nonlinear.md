@@ -165,10 +165,23 @@ result; final success requires the complementarity certificate as well.
 
 ## Implicit root differentiation
 
-`implicit_root` differentiates the mathematical solution map through the accepted
-root using a fresh linearized solve. It does not differentiate through iteration
-history. Singular or incompatible derivative systems fail according to the supplied
-linear policy instead of returning an unverified gradient.
+`implicit_root_result` runs the native nonlinear solve exactly once and returns a
+`NonlinearResult` whose state, residual, and auxiliary output are evaluated at the
+same accepted root. The state and user auxiliary leaves carry implicit JVP/VJP rules;
+status, iteration counts, work diagnostics, provenance, and transformation evidence
+remain nondifferentiable solver evidence. The explicit result therefore supports
+differentiable downstream observables without discarding failure information.
+
+`implicit_root` is the strict convenience form. It returns only the accepted state and
+raises when the native solve is unsuccessful. It does not hide or repair failure; use
+`implicit_root_result` when status-valued control flow or diagnostics are required.
+
+Both entry points differentiate the mathematical root map through a fresh linearized
+solve, not through nonlinear iteration history. They accept either an ordinary
+problem/state/method contract or a `PreparedNonlinearSolve`, so a caller can retain one
+symbolic linear template while refreshing runtime parameters. Singular or
+incompatible derivative systems fail according to the supplied linear policy instead
+of returning an unverified gradient.
 
 ## API reference
 
@@ -255,5 +268,9 @@ linear policy instead of returning an unverified gradient.
 ::: phydrax.nonlinear.NonlinearTransformationEvidence
 
 ---
+::: phydrax.nonlinear.implicit_root_result
+
+---
+
 
 ::: phydrax.nonlinear.implicit_root

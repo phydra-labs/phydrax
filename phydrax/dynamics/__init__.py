@@ -5,6 +5,12 @@
 """Dynamical-system, pathwise-evolution, analysis, and identification contracts."""
 
 from . import analysis, identification
+from ._differential_algebraic import (
+    DAERole,
+    DAEStructure,
+    DifferentialAlgebraicResidual,
+    DifferentialAlgebraicSystem,
+)
 from ._evolution import (
     AbstractDifferentiableEvolution,
     AbstractEvolution,
@@ -54,6 +60,10 @@ __all__ = [
     "CaseAxisRole",
     "ContinuousModelVectorField",
     "ContinuousSystem",
+    "DAERole",
+    "DAEStructure",
+    "DifferentialAlgebraicResidual",
+    "DifferentialAlgebraicSystem",
     "DiscreteEvolution",
     "DiscreteSystem",
     "EVOLUTION_BACKEND_FAILED",

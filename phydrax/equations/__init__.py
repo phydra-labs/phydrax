@@ -42,10 +42,13 @@ from ._randomized_compile import (
 )
 from ._semidiscrete import (
     BoundaryLift,
+    compile_semidiscrete_dae,
     compile_semidiscrete_pde,
     CompiledSpatialDynamics,
+    CompiledSpatialResidual,
     ResolvedSemidiscreteMethod,
     SemidiscreteCompilationMethod,
+    SemidiscreteDAEStructuralReport,
     SemidiscreteFieldLayout,
 )
 from ._serialize import (
@@ -74,10 +77,12 @@ __all__ = [
     "CompiledPDEEquation",
     "CompiledPDEProblem",
     "CompiledSpatialDynamics",
+    "CompiledSpatialResidual",
     "CompiledRandomizedPDETerm",
     "DifferentialBackend",
     "ResolvedSemidiscreteMethod",
     "SemidiscreteCompilationMethod",
+    "SemidiscreteDAEStructuralReport",
     "SemidiscreteFieldLayout",
     "IntegralCompiler",
     "PDECondition",
@@ -103,6 +108,7 @@ __all__ = [
     "compile_pde_residual_term",
     "compile_pde_randomized_term",
     "compile_pde_problem",
+    "compile_semidiscrete_dae",
     "compile_semidiscrete_pde",
     "infer_expression_type",
     "make_pde_operator",
