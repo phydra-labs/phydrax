@@ -114,8 +114,9 @@ mask.
 The four adapters preserve the source contract:
 
 - `trajectory_data_from_evolution` retains canonical evolution node and segment status;
-- `trajectory_data_from_differential_solution` retains deterministic or ensemble solver
-  sample axes, including delay and structured differential solutions;
+- `trajectory_data_from_differential_solution` retains deterministic, DAE, or ensemble
+  solver sample axes, including DAE state rates and their componentwise validity,
+  delay solutions, and structured differential solutions;
 - `trajectory_data_from_control` attaches source-aligned controls and their layout;
 - `trajectory_data_from_stochastic` retains case and realization axes.
 
@@ -420,10 +421,11 @@ convergence claim is hidden behind this evaluation call.
 
 ## Interoperability and hard boundaries
 
-- **Structured and delay systems:** differential, delay, rough, memory, hybrid, and
-  semidiscrete solver results enter through `trajectory_data_from_differential_solution`.
-  Their solver meaning stays in the source ID and masks. A delay history is not inferred
-  from a flat state vector.
+- **Structured, DAE, and delay systems:** differential, DAE, delay, rough, memory,
+  hybrid, and semidiscrete solver results enter through
+  `trajectory_data_from_differential_solution`. Their solver meaning stays in the
+  source ID and masks. DAE rates retain their own validity, and a delay history is not
+  inferred from a flat state vector.
 - **Controlled dynamics:** `trajectory_data_from_control` attaches controls with
   transition alignment. Controlled DMD and controlled SINDy then use the same
   `InputLayout`; autonomous fitting never silently drops supplied controls.

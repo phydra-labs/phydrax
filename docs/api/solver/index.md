@@ -1,9 +1,10 @@
 # Solver
 
 Phydrax has two separate solver paths: functional minimization over physics/data
-terms and direct finite-dimensional ODE/SDE, differentiable controlled,
-probabilistic ODE, Lyapunov, finite-activity jump, hybrid jump-differential, or
-semidiscrete SPDE integration.
+terms and direct finite-dimensional integration. Direct solvers cover explicit
+ODE/SDE, differential-algebraic, differentiable controlled, probabilistic ODE,
+Lyapunov, finite-activity jump, hybrid jump-differential, and semidiscrete spatial
+systems.
 
 For a conceptual overview (loss evaluation, exact enforcement, training loop behavior), see
 [Guides → Solvers and training](../../guides_solver.md).
@@ -12,6 +13,9 @@ For a conceptual overview (loss evaluation, exact enforcement, training loop beh
   differentiable CDE and neural-CDE training, probabilistic ODE filtering,
   finite-time Lyapunov spectra, finite-activity jump and hybrid trajectories,
   finite-rank semidiscrete SPDEs, and process ensembles.
+- [Differential-algebraic equation integration](differential_algebraic.md) defines
+  consistent initialization, prepared fixed-grid BDF1/BDF2, discrete implicit
+  differentiation, and implicit semidiscrete PDE residuals.
 - [Delay and functional differential equations](delay.md) defines causal method-of-steps,
   stochastic/geometric/rough/jump histories, functional/distributed/state-dependent/
   neutral delays, bounded and infinite memory, convolution, Caputo integration, and
@@ -31,6 +35,8 @@ For a conceptual overview (loss evaluation, exact enforcement, training loop beh
     - `phydrax.optim.kfac(...)` accepts quadratic `ResidualPenalty` terms and freezes
       each active term realization across its gradient, curvature update, and line search.
     - Use `DifferentialProblem` plus `solve_diffrax` for numerical ODE/SDE trajectories.
+    - Use `DifferentialAlgebraicProblem`, a `TimeGrid`, and `solve_dae` for regular
+      fixed-grid index-one residuals `F(t, y, ydot, args) = 0`.
     - Use `AbstractDifferentiableDrivingPath` plus `solve_diffrax_cde` for smooth
       first-level controls; rough controls and their second level belong to
       `solve_rough_differential`.

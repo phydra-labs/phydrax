@@ -26,6 +26,10 @@
   trust-region roots, nonlinear GMRES and preconditioning, fixed-point acceleration,
   full-approximation multigrid cycles, variational inequalities, semismooth
   complementarity solves, and implicit root derivatives with explicit failure status.
+- Native regular index-one differential-algebraic systems with explicit structural
+  roles and scales, consistent initialization contracts, prepared fixed-grid BDF1/BDF2
+  integration, implicit JVP/VJP differentiation, status-rich trajectory evidence,
+  semidiscrete implicit PDE compilation, and canonical identification adapters.
 - Reusable nonlinear Newton preparation/refresh/solve lifecycles, adaptive
   Eisenstat--Walker forcing, explicit Jacobian refresh policies, hard aggregate
   inner-linear work budgets, and physical-root certification for transformed

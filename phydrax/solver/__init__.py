@@ -81,6 +81,12 @@ from ._coupled import (
     CoupledValidity,
     solve_coupled_hierarchy,
 )
+from ._dae_initialization import (
+    DAEInitializationMode,
+    DAEInitializationResult,
+    DAEInitializationSpec,
+    DAEInitializationStatus,
+)
 from ._deep_bsde import DeepBSDEResult, solve_deep_bsde
 from ._deep_picard import (
     DeepPicardDiagnostics,
@@ -137,6 +143,20 @@ from ._differential import (
     DifferentialVectorField,
     NoiseStructure,
     WienerTerm,
+)
+from ._differential_algebraic import (
+    DAEFailureMode,
+    DAEIntegrationMethod,
+    DAESolvePlan,
+    DAESolvePolicy,
+    DAEStatus,
+    DifferentialAlgebraicProblem,
+    DifferentialAlgebraicSolution,
+    initialize_dae,
+    plan_dae,
+    prepare_dae,
+    PreparedDAESolve,
+    solve_dae,
 )
 from ._diffrax_backend import solve_diffrax, solve_diffrax_ensemble
 from ._diffrax_cde import ControlledDifferentialSolution, solve_diffrax_cde
@@ -383,6 +403,22 @@ __all__ = [
     "DifferentialInterpretation",
     "DifferentialProblem",
     "DifferentialSolution",
+    "DAEFailureMode",
+    "DAEIntegrationMethod",
+    "DAESolvePlan",
+    "DAESolvePolicy",
+    "DAEStatus",
+    "DAEInitializationMode",
+    "DAEInitializationResult",
+    "DAEInitializationSpec",
+    "DAEInitializationStatus",
+    "DifferentialAlgebraicProblem",
+    "DifferentialAlgebraicSolution",
+    "initialize_dae",
+    "plan_dae",
+    "prepare_dae",
+    "PreparedDAESolve",
+    "solve_dae",
     "DiffraxEvolution",
     "DifferentialVectorField",
     "FixedBSplineDrivingPath",
