@@ -16,6 +16,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._polynomial._orthogonal import legendre_rule_data
 from .._strict import StrictModule
 from ._certificates import _operator_numeric_fingerprint
 from ._operators import AbstractLinearOperator, FunctionLinearOperator
@@ -827,9 +828,9 @@ def _general_matrix_logarithm(matrix: Array, /) -> Array:
     size = matrix.shape[0]
     identity = jnp.eye(size, dtype=matrix.dtype)
     difference = matrix - identity
-    nodes_, weights_ = np.polynomial.legendre.leggauss(32)
-    nodes = jnp.asarray(0.5 * (nodes_ + 1.0), dtype=matrix.real.dtype)
-    weights = jnp.asarray(0.5 * weights_, dtype=matrix.real.dtype)
+    rule = legendre_rule_data(32, "gauss", dtype=matrix.real.dtype)
+    nodes = jnp.asarray(0.5 * (rule.nodes + 1.0), dtype=matrix.real.dtype)
+    weights = jnp.asarray(0.5 * rule.weights, dtype=matrix.real.dtype)
     resolvents = identity + nodes[:, None, None] * difference
     right = jnp.broadcast_to(difference, resolvents.shape)
     integrand = jnp.linalg.solve(resolvents, right)

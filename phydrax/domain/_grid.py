@@ -11,9 +11,9 @@ from typing import Literal
 
 import jax
 import jax.numpy as jnp
-import orthax
 from jaxtyping import Array
 
+from .._polynomial._orthogonal import legendre_rule_data
 from .._strict import StrictModule
 
 
@@ -362,10 +362,10 @@ class CosineAxisSpec(AbstractAxisSpec):
 
 
 class LegendreAxisSpec(AbstractAxisSpec):
-    r"""Legendre Gauss/Radau/Lobatto nodes and weights (via orthax).
+    r"""Legendre Gauss/Radau/Lobatto nodes and weights.
 
-    orthax returns canonical nodes \(\xi_j\in[-1,1]\) and weights \(w_j\), which are
-    mapped to \([a,b]\) via
+    Phydrax constructs canonical nodes \(\xi_j\in[-1,1]\) and weights \(w_j\), which
+    are mapped to \([a,b]\) via
 
     $$
     x_j=\tfrac{b-a}{2}\,\xi_j+\tfrac{a+b}{2},\qquad
@@ -377,6 +377,10 @@ class LegendreAxisSpec(AbstractAxisSpec):
 
     def __init__(self, n: int, *, kind: Literal["gauss", "radau", "lobatto"] = "gauss"):
         super().__init__(n)
+        if kind not in ("gauss", "radau", "lobatto"):
+            raise ValueError("kind must be 'gauss', 'radau', or 'lobatto'.")
+        if kind == "lobatto" and self.n < 2:
+            raise ValueError("Legendre Lobatto axes require at least two nodes.")
         self.kind = kind
 
     def materialize(self, a: Array, b: Array, /) -> AxisDiscretization:
@@ -384,13 +388,8 @@ class LegendreAxisSpec(AbstractAxisSpec):
         b_ = jnp.asarray(b, dtype=float).reshape(())
         n = int(self.n)
 
-        rec = orthax.recurrence.Legendre(scale="standard")
-        if self.kind == "gauss":
-            x, w = orthax.orthgauss(n, rec)
-        elif self.kind == "radau":
-            x, w = orthax.orthgauss(n, rec, x0=-1.0)
-        else:
-            x, w = orthax.orthgauss(n, rec, x0=-1.0, x1=1.0)
+        rule = legendre_rule_data(n, self.kind, dtype=a_.dtype)
+        x, w = rule.nodes, rule.weights
 
         half = 0.5 * (b_ - a_)
         mid = 0.5 * (a_ + b_)

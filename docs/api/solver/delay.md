@@ -342,7 +342,9 @@ Equations that depend on future state are not causal initial-value problems.
 `solve_functional_differential` instead treats the whole trajectory as a piecewise
 Chebyshev--Lobatto polynomial unknown and solves differential, continuity, boundary,
 periodic, phase, and observation residuals by global Optimistix root finding or least
-squares.
+squares. Every interval uses ascending endpoint-inclusive reference nodes, analytic
+barycentric interpolation weights, and Clenshaw--Curtis weights for the unweighted
+Lebesgue residual measure.
 
 ```python
 advanced_problem = phx.solver.FunctionalDifferentialBoundaryProblem(

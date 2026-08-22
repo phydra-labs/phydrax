@@ -261,10 +261,14 @@ $$
 
 and trapezoid weights \(w_0=w_{n-1}=\tfrac12\Delta x\), \(w_j=\Delta x\) otherwise.
 
-### Legendre (orthax Gauss / Radau / Lobatto)
+### Legendre (Gauss / Radau / Lobatto)
 
-For `LegendreAxisSpec(n)`, orthax produces nodes \(\xi_j\in[-1,1]\) and weights \(w_j\)
-for the canonical interval. Phydrax maps them to \([a,b]\) via
+For `LegendreAxisSpec(n)`, Phydrax constructs ascending canonical nodes
+\(\xi_j\in[-1,1]\) and raw-Lebesgue weights \(w_j\). Gauss rules use interior
+nodes, Radau includes the left endpoint, and Lobatto includes both endpoints.
+Their respective polynomial exactness degrees are \(2n-1\), \(2n-2\), and
+\(2n-3\). Lobatto requires at least two nodes. Phydrax maps each rule to
+\([a,b]\) via
 
 $$
 x_j=\tfrac{b-a}{2}\,\xi_j+\tfrac{a+b}{2},\qquad

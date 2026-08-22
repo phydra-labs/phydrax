@@ -11,6 +11,7 @@ import jax.scipy.special as jsp
 from phydrax.domain import AbstractScalarDomain, DomainFunction
 
 from ..._doc import DOC_KEY0
+from ..._numerics._quadrature_rules import gauss_legendre_data
 from ..._sampling import get_sampler
 from ._domain_ops import _unwrap_factor
 
@@ -23,10 +24,8 @@ def _time_start(u: DomainFunction, time_var: str) -> jax.Array:
 
 
 def _legendre_nodes_weights(n: int) -> tuple[jax.Array, jax.Array]:
-    from numpy.polynomial.legendre import leggauss
-
-    xs, ws = leggauss(int(n))
-    return jnp.asarray(xs, dtype=float), jnp.asarray(ws, dtype=float)
+    rule = gauss_legendre_data(n)
+    return jnp.asarray(rule.nodes, dtype=float), jnp.asarray(rule.weights, dtype=float)
 
 
 def caputo_time_fractional(

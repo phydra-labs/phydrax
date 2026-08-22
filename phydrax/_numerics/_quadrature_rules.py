@@ -10,6 +10,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from .._polynomial._orthogonal import legendre_rule_data
+
 
 class QuadratureRuleData(NamedTuple):
     """Canonical quadrature data on a reference interval or cell."""
@@ -299,13 +301,8 @@ def _symmetric_weights(values: np.ndarray) -> np.ndarray:
 
 def gauss_legendre_data(order: int) -> QuadratureRuleData:
     """Return the order-``n`` Gauss--Legendre rule on ``[-1, 1]``."""
-    order_ = int(order)
-    if order_ < 1:
-        raise ValueError("Gauss--Legendre order must be positive.")
-    nodes, weights = np.polynomial.legendre.leggauss(order_)
-    return QuadratureRuleData(
-        jnp.asarray(nodes), jnp.asarray(weights), None, 2 * order_ - 1
-    )
+    rule = legendre_rule_data(order, "gauss")
+    return QuadratureRuleData(rule.nodes, rule.weights, None, rule.exact_degree)
 
 
 def gauss_kronrod_data(order: int) -> QuadratureRuleData:
@@ -317,7 +314,9 @@ def gauss_kronrod_data(order: int) -> QuadratureRuleData:
     positive_nodes, positive_weights = _GAUSS_KRONROD_POSITIVE[order_]
     nodes_np = _symmetric(np.asarray(positive_nodes, dtype=float))
     weights_np = _symmetric_weights(np.asarray(positive_weights, dtype=float))
-    gauss_nodes, gauss_weights = np.polynomial.legendre.leggauss((order_ - 1) // 2)
+    gauss_rule = legendre_rule_data((order_ - 1) // 2, "gauss")
+    gauss_nodes = np.asarray(gauss_rule.nodes)
+    gauss_weights = np.asarray(gauss_rule.weights)
     embedded = np.zeros(order_, dtype=float)
     for node, weight in zip(gauss_nodes, gauss_weights, strict=True):
         index = int(np.argmin(np.abs(nodes_np - node)))

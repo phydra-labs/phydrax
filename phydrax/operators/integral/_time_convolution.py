@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax.domain import AbstractScalarDomain, DomainFunction
 
 from ..._doc import DOC_KEY0
+from ..._numerics._quadrature_rules import gauss_legendre_data
 from ..._sampling import get_sampler
 
 
@@ -29,10 +30,8 @@ def _time_start(u: DomainFunction, time_var: str) -> Array:
 
 
 def _legendre_nodes_weights(n: int) -> tuple[Array, Array]:
-    from numpy.polynomial.legendre import leggauss
-
-    xs, ws = leggauss(int(n))
-    return jnp.asarray(xs, dtype=float), jnp.asarray(ws, dtype=float)
+    rule = gauss_legendre_data(n)
+    return jnp.asarray(rule.nodes, dtype=float), jnp.asarray(rule.weights, dtype=float)
 
 
 def time_convolution(

@@ -14,6 +14,7 @@ import numpy as np
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
+from .._numerics._quadrature_rules import gauss_legendre_data
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import (
@@ -46,7 +47,9 @@ def _union_quadrature(
         np.concatenate(tuple(np.asarray(grid.breakpoints) for grid in grids))
     )
     order = max(1, ceil((polynomial_degree + 1) / 2))
-    reference_nodes, reference_weights = np.polynomial.legendre.leggauss(order)
+    reference = gauss_legendre_data(order)
+    reference_nodes = np.asarray(reference.nodes)
+    reference_weights = np.asarray(reference.weights)
     nodes: list[float] = []
     weights: list[float] = []
     for lower, upper in zip(breakpoints[:-1], breakpoints[1:], strict=True):

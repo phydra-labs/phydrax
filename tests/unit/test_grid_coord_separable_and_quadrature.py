@@ -3,6 +3,7 @@
 #
 
 import jax.numpy as jnp
+import pytest
 
 import phydrax as phx
 from phydrax.domain import (
@@ -48,6 +49,23 @@ def test_coord_separable_legendre_axis_spec_integral_matches_closed_form():
     out = integral(u, realization)
     expected = (2.0**3 - (-1.0) ** 3) / 3.0
     assert jnp.allclose(jnp.asarray(out.data), expected, rtol=1e-7, atol=1e-7)
+
+
+def test_legendre_axis_endpoint_rules_and_validation():
+    lower = jnp.asarray(-2.0)
+    upper = jnp.asarray(3.0)
+    radau = LegendreAxisSpec(5, kind="radau").materialize(lower, upper)
+    lobatto = LegendreAxisSpec(5, kind="lobatto").materialize(lower, upper)
+
+    assert radau.nodes[0] == lower
+    assert lobatto.nodes[0] == lower
+    assert lobatto.nodes[-1] == upper
+    assert jnp.sum(radau.quad_weights) == pytest.approx(5.0, abs=1e-12)
+    assert jnp.sum(lobatto.quad_weights) == pytest.approx(5.0, abs=1e-12)
+    with pytest.raises(ValueError, match="kind"):
+        LegendreAxisSpec(4, kind="typo")
+    with pytest.raises(ValueError, match="at least two"):
+        LegendreAxisSpec(1, kind="lobatto")
 
 
 def test_sdf_domain_function_evaluates_on_coord_separable_batch():

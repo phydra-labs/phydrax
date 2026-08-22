@@ -294,6 +294,30 @@ def test_rational_regularizer_reduces_to_polynomial_energy_at_unit_weights():
     )
 
 
+@pytest.mark.parametrize(
+    "family",
+    ("chebyshev", "legendre", "hermite", "hermite_e", "laguerre"),
+)
+def test_orthogonal_polynomial_families_have_exact_affine_initialization(family):
+    basis = OrthogonalPolynomialEdgeBasis(degree=1, family=family)
+    identity = basis.initialize_coefficients(1, 1, "identity", jr.key(30))
+    default = basis.initialize_coefficients(1, 1, "default", jr.key(31))
+
+    def evaluate(coefficients, point):
+        return basis.evaluate(coefficients, jnp.asarray([[point]]))[0, 0]
+
+    points = jnp.linspace(-1.0, 1.0, 9)
+    identity_values = jax.jit(jax.vmap(lambda point: evaluate(identity, point)))(points)
+    default_values = jax.vmap(lambda point: evaluate(default, point))(points)
+    default_slopes = jax.vmap(jax.grad(lambda point: evaluate(default, point)))(points)
+
+    assert jnp.allclose(identity_values, points, rtol=1e-12, atol=1e-12)
+    assert evaluate(default, jnp.asarray(0.0)) == pytest.approx(0.0, abs=1e-14)
+    assert jnp.allclose(default_values, default_slopes[0] * points, atol=1e-12)
+    assert jnp.allclose(default_slopes, default_slopes[0], atol=1e-12)
+    assert basis.regularization(identity) == pytest.approx(0.0, abs=1e-20)
+
+
 def test_orthogonal_kan_clipping_preserves_endpoint_derivatives():
     model = KAN(
         in_size="scalar",

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-from jaxtyping import Array
+from jaxtyping import Array, ArrayLike
 
 
 def _ratio_basis(x: Array, nodes: Array, weights: Array, /) -> Array:
@@ -51,6 +51,34 @@ def barycentric_basis(
     )
 
 
+def barycentric_differentiation_matrix(
+    nodes: ArrayLike,
+    /,
+    *,
+    weights: ArrayLike | None = None,
+) -> Array:
+    """Return the first-derivative matrix of a global nodal interpolant."""
+    nodes_ = jnp.asarray(nodes)
+    if nodes_.ndim != 1 or not int(nodes_.size):
+        raise ValueError("Barycentric differentiation nodes must be a nonempty vector.")
+    dtype = jnp.result_type(nodes_, float)
+    nodes_ = nodes_.astype(dtype)
+    count = int(nodes_.shape[0])
+    if count == 1:
+        return jnp.zeros((1, 1), dtype=dtype)
+    differences = nodes_[:, None] - nodes_[None, :]
+    safe_differences = differences + jnp.eye(count, dtype=dtype)
+    if weights is None:
+        weights_ = jnp.reciprocal(jnp.prod(safe_differences, axis=1))
+    else:
+        weights_ = jnp.asarray(weights, dtype=dtype)
+        if weights_.shape != nodes_.shape:
+            raise ValueError("Barycentric differentiation weights must match nodes.")
+    matrix = (weights_[None, :] / weights_[:, None]) / safe_differences
+    matrix = matrix - jnp.diag(jnp.diag(matrix))
+    return matrix.at[jnp.arange(count), jnp.arange(count)].set(-jnp.sum(matrix, axis=1))
+
+
 def barycentric_interpolate(
     x: Array,
     nodes: Array,
@@ -66,4 +94,8 @@ def barycentric_interpolate(
     return jnp.tensordot(basis, values_, axes=((0,), (0,)))
 
 
-__all__ = ["barycentric_basis", "barycentric_interpolate"]
+__all__ = [
+    "barycentric_basis",
+    "barycentric_differentiation_matrix",
+    "barycentric_interpolate",
+]

@@ -419,6 +419,12 @@ inputs have zero derivative.
 
 ---
 
+`OrthogonalPolynomialEdgeBasis` stores coefficients in ascending degree under
+the standard Chebyshev-T, Legendre, physicists' Hermite, probabilists' HermiteE,
+or Laguerre convention. Identity and default affine initialization are converted
+through the selected family's convention, so every supported family represents
+the same physical affine map rather than merely assigning its degree-one slot.
+
 ::: phydrax.nn.models.OrthogonalPolynomialEdgeBasis
     options:
         members:
