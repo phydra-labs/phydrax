@@ -105,7 +105,7 @@ def test_particle_marginal_metropolis_hastings_tracks_pseudo_marginal_chain():
         {"offset": jnp.asarray(0.0)},
         lambda parameters: _problem(offset=parameters["offset"]),
         lambda parameters: -0.5 * parameters["offset"] ** 2,
-        phx.uq.GaussianRandomWalkProposal(0.1),
+        phx.sampling.GaussianRandomWalkProposal(0.1),
         num_particles=16,
         num_samples=3,
         num_warmup=1,

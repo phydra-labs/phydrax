@@ -50,10 +50,16 @@ Most workflows are composing a few primitives:
   and quantum matrix operators.
 - **Integration**: explicit targets define measures, plans define numerical
   realizations, and estimates carry method-valid diagnostics and provenance.
+- **Sampling**: reference-space designs and fixed-kernel persistent Markov chains
+  preserve explicit keys, chain/draw axes, transition evidence, and correlated-measure
+  semantics when lowered into integration.
 - **Linear algebra**: paired array/PyTree/block spaces, composable dense,
   matrix-free, sparse, and block operators, explicit system/least-squares/
   minimum-norm contracts, reusable plans and factorizations, and portable
   status, diagnostics, and provenance.
+- **Empirical parameter geometry**: centered or uncentered weighted feature Gram
+  actions compose with the same paired spaces, nullspaces, prepared linear solves,
+  and diagnostics as every other matrix-free operator.
 - **Optimal transport**: integration measures lower into balanced finite transport
   problems with explicit mass, ground geometry, stabilized Sinkhorn diagnostics,
   matrix-free plan actions, exact/sliced Wasserstein distances, and soft order.
@@ -70,6 +76,11 @@ Most workflows are composing a few primitives:
 - **Differential-equation solvers**: deterministic, stochastic, delay/memory,
   rough, jump/hybrid, semidiscrete, differentiable-control, and probabilistic
   numerical integration.
+- **Variational quantum dynamics**: stable complex log amplitudes, connected discrete
+  operators, validated finite symmetry sectors, persistent-chain local energies,
+  damped SR, frozen R-hat/ESS diagnostics, portable exact-resume checkpoints, and
+  real/imaginary-time TDVP reuse the sampling, integration, parameter-subspace, and
+  linear-runtime contracts.
 - **Dynamical systems, identification, and chaos**: typed flows/maps and
   pathwise evolution, mask-safe trajectory data, DMD/EDMD, strong/discrete/
   integral/weak and implicit SINDy, PDE-FIND, periodic orbits, continuation,
@@ -216,6 +227,10 @@ Can be found [here](https://phydra-labs.github.io/phydrax).
 Mathematical guides include
 [Lagrangian and Hamiltonian mechanics](docs/guides_mechanics.md) and
 [quantum operators and dynamics](docs/guides_quantum.md).
+The [persistent Markov measure cookbook](docs/cookbook/variational_boltzmann.md)
+demonstrates correlated empirical integration outside quantum mechanics, while the
+[VMC cookbook](docs/cookbook/quantum_vmc.md) builds a two-spin connected Hamiltonian
+without materializing it.
 [Metrix](docs/api/metrix/index.md) adds metric-aware differential geometry for
 curvilinear PDEs, manifold PINNs, embedded geometry, and Riemannian stochastic
 generators.

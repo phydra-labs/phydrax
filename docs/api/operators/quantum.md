@@ -37,6 +37,32 @@ brackets.
 
 ::: phydrax.operators.trace_distance
 
+## Variational amplitudes and connected operators
+
+::: phydrax.operators.LogAmplitude
+
+::: phydrax.operators.AmplitudeRatio
+
+::: phydrax.operators.sampling_log_weight
+
+::: phydrax.operators.amplitude_ratio
+
+::: phydrax.operators.ConnectedConfigurations
+
+::: phydrax.operators.AbstractDiscreteQuantumOperator
+
+::: phydrax.operators.CallableDiscreteQuantumOperator
+
+::: phydrax.operators.LocalEstimate
+
+::: phydrax.operators.local_estimate
+
+### Finite symmetry sectors
+
+::: phydrax.operators.FiniteSignedPermutationSymmetry
+
+::: phydrax.operators.SymmetryProjectedAmplitude
+
 ## Composite systems
 
 ::: phydrax.operators.tensor_product

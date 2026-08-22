@@ -457,11 +457,8 @@ from ._particle_genealogical_score import (
     StateSpaceModelScore,
 )
 from ._particle_mcmc import (
-    AbstractParameterProposal,
-    CallableParameterProposal,
     conditional_particle_filter,
     ConditionalParticleFilterResult,
-    GaussianRandomWalkProposal,
     particle_gibbs,
     particle_marginal_metropolis_hastings,
     ParticleGibbsResult,
@@ -1050,11 +1047,8 @@ __all__ = [
     "sample_particle_ancestry_paths",
     "sample_particle_backward_paths",
     "write_particle_filter_checkpoint",
-    "AbstractParameterProposal",
-    "CallableParameterProposal",
     "conditional_particle_filter",
     "ConditionalParticleFilterResult",
-    "GaussianRandomWalkProposal",
     "particle_gibbs",
     "ParticleGibbsResult",
     "particle_marginal_metropolis_hastings",

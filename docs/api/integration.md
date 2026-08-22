@@ -202,6 +202,8 @@ Use `mean_over(condition.on)` for normalized pointwise residual means and
 
 ::: phydrax.integration.weighted
 
+::: phydrax.integration.markov_chain_measure
+
 ---
 
 ::: phydrax.integration.ComponentTarget

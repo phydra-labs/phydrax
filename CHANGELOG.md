@@ -27,6 +27,29 @@
   first-order finite-volume contracts. Strong, variational, and conservation
   compilers now retain complete discretization provenance; adaptive DAE results add
   their realized accepted-step mesh.
+- Shared normalized proposals and fixed-kernel persistent Metropolis--Hastings chains
+  with semantic key addressing, exact asymmetric Hastings correction, chain-preserving
+  transition evidence, target refresh after parameter changes, and direct lowering to
+  correlated `WeightedSampleTarget` measures that never claim IID uncertainty.
+- Pairing-aware `EmpiricalGramLinearOperator` geometry with normalized nonnegative
+  weights, sample centering, masking through zero weights, damping, rank/ESS evidence,
+  complex adjoint/transpose actions, existing linear-runtime interoperability, and a
+  single numerical implementation reused by UQ empirical Fisher actions.
+- Discrete variational Monte Carlo with stable log-magnitude/unit-phase amplitudes,
+  explicit real/holomorphic/nonholomorphic parameter modes, fixed-capacity connected
+  operators, matrix-free local energies, persistent walkers, centered score geometry,
+  damped SR updates, frozen-model final evaluation, complete status histories,
+  documentation, tests, and compile/steady-state/storage benchmarks. JaQMC, jQMC, and
+  Quantax are acknowledged as design references; this implementation is independent
+  and Phydrax-native.
+- Frozen-chain VMC diagnostics now report rank-normalized R-hat and bulk/tail ESS;
+  pickle-free checkpoints preserve exact model/walker/key continuation; finite signed
+  permutation groups provide validated symmetry-sector amplitude projection; and
+  fixed-step real/imaginary-time TDVP reuses the same persistent sampling and
+  pairing-aware score geometry. The scale benchmark now profiles sampler, connected
+  local-energy, geometry, solve, storage, and end-to-end costs for periodic 8/12/16-site
+  transverse-field Ising chains. Masked nonfinite feature and connection payloads are
+  selected to safe values before Gram or local-energy multiplication.
 
 - Industrial structured finite differences: exact point/interval entity layouts;
   masked variable-width Fornberg banks with consistency, adjoint, conservation, and
