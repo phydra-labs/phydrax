@@ -13,7 +13,7 @@ from jaxtyping import Array, PyTree
 
 from .._fingerprint import canonical_fingerprint
 from ._plans import LinearSolvePlan
-from ._policies import FGMRES, GMRES, LinearSolvePolicy
+from ._policies import FGMRES, GMRES, LinearSolveControl, LinearSolvePolicy
 from ._prepared import PreparedLinearSolve
 from ._problems import AbstractLinearProblem, LinearSystem
 from ._recycling import (
@@ -45,8 +45,11 @@ def solve_recycled(
     *,
     recycling: RecyclingState | RecyclingSubspace | None = None,
     policy: LinearSolvePolicy | LinearSolvePlan | None = None,
+    control: LinearSolveControl | None = None,
 ) -> RecycledLinearSolveResult:
     """Solve one right-hand side and return an updated GCRO-DR space."""
+    if control is not None and not isinstance(control, LinearSolveControl):
+        raise TypeError("control must be a LinearSolveControl or None.")
     from ._runtime import prepare
 
     if isinstance(prepared_or_problem, PreparedLinearSolve):
@@ -72,6 +75,22 @@ def solve_recycled(
         capacity=recycling_policy.capacity,
         extraction=recycling_policy.extraction,
         refresh=recycling_policy.refresh,
+        control=control,
+    )
+
+
+def initialize_recycling(prepared: PreparedLinearSolve, /) -> RecyclingState:
+    """Return an empty loop-safe GCRO-DR state for one prepared solve."""
+    _validate_prepared(prepared)
+    policy = prepared.plan.policy.recycling
+    if policy is None:
+        raise ValueError("initialize_recycling requires a RecyclingPolicy.")
+    return _stop_state(
+        _empty_state(
+            prepared,
+            policy.capacity,
+            policy.extraction,
+        )
     )
 
 
@@ -123,6 +142,7 @@ def _solve_recycled(
     capacity: int,
     extraction: RecyclingExtraction,
     refresh: RecyclingRefresh,
+    control: LinearSolveControl | None = None,
 ) -> RecycledLinearSolveResult:
 
     extraction_ = _validate_extraction(extraction)
@@ -183,8 +203,30 @@ def _solve_recycled(
         action(vector),
     )
     inner = lambda left, right: _coordinate_inner(target, left, right)
-    max_steps = prepared.plan.policy.tolerance.max_steps or operator.source.size
-    restart, stagnation = _gmres_configuration(prepared, max_steps)
+    structural_max_steps = (
+        prepared.plan.policy.tolerance.max_steps or operator.source.size
+    )
+    step_limit = (
+        jnp.asarray(structural_max_steps, dtype=jnp.int32)
+        if control is None or control.maximum_steps is None
+        else control.maximum_steps
+    )
+    step_limit = eqx.error_if(
+        step_limit,
+        step_limit > structural_max_steps,
+        "Runtime maximum_steps cannot exceed the prepared structural limit.",
+    )
+    relative_tolerance = (
+        prepared.plan.policy.tolerance.relative
+        if control is None or control.relative_tolerance is None
+        else control.relative_tolerance
+    )
+    absolute_tolerance = (
+        prepared.plan.policy.tolerance.absolute
+        if control is None or control.absolute_tolerance is None
+        else control.absolute_tolerance
+    )
+    restart, stagnation = _gmres_configuration(prepared, structural_max_steps)
     from .backends._native_krylov import _fgmres_raw
 
     correction, auxiliary = _fgmres_raw(
@@ -193,11 +235,12 @@ def _solve_recycled(
         jnp.zeros_like(projected_rhs),
         inner,
         lambda vector, _: vector,
-        max_steps,
+        structural_max_steps,
         restart,
         stagnation,
-        prepared.plan.policy.tolerance.relative,
-        prepared.plan.policy.tolerance.absolute,
+        relative_tolerance,
+        absolute_tolerance,
+        step_limit=step_limit,
         identity_preconditioner=True,
     )
     image_correction = action(correction)
@@ -223,9 +266,11 @@ def _solve_recycled(
             rhs_coordinates,
             value_coordinates,
             auxiliary,
-            max_steps,
+            structural_max_steps,
             restart,
             refresh_matvecs + extraction_matvecs,
+            relative_tolerance,
+            absolute_tolerance,
         ),
         _stop_state(updated),
     )
@@ -240,6 +285,8 @@ def _build_result(
     restart: int,
     /,
     setup_matvecs: Array,
+    relative_tolerance: Array,
+    absolute_tolerance: Array,
 ) -> LinearSolveResult:
     from ._runtime import _implicit_root_value
 
@@ -286,11 +333,11 @@ def _build_result(
         * jnp.finfo(rhs.real.dtype).eps
         * float(max(operator.source.size, operator.target.size))
     )
-    relative_tolerance = jnp.maximum(
-        prepared.plan.policy.tolerance.relative,
+    effective_relative = jnp.maximum(
+        relative_tolerance,
         roundoff_relative,
     )
-    threshold = prepared.plan.policy.tolerance.absolute + relative_tolerance * rhs_norm
+    threshold = absolute_tolerance + effective_relative * rhs_norm
     converged = residual_norm <= threshold
     status = jnp.where(
         converged,
@@ -329,9 +376,8 @@ def _build_result(
         int(LinearSolveStatus.NONFINITE_OUTPUT),
         status,
     ).astype(jnp.int32)
-    cycles = (max_steps + restart - 1) // restart
     matvec_count = (
-        2 * auxiliary[0] + jnp.asarray(cycles + 3, dtype=jnp.int32) + setup_matvecs
+        auxiliary[0] + auxiliary[5] + jnp.asarray(2, dtype=jnp.int32) + setup_matvecs
     )
     properties = operator.properties
     rank = (
@@ -993,4 +1039,4 @@ def _stop_state(state: RecyclingState, /) -> RecyclingState:
     )
 
 
-__all__ = ["refresh_recycling", "solve_recycled"]
+__all__ = ["initialize_recycling", "refresh_recycling", "solve_recycled"]

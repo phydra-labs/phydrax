@@ -52,9 +52,11 @@
   full-approximation multigrid cycles, variational inequalities, semismooth
   complementarity solves, and implicit root derivatives with explicit failure status.
 - Native regular index-one differential-algebraic systems with explicit structural
-  roles and scales, consistent initialization contracts, prepared fixed-grid BDF1/BDF2
-  integration, implicit JVP/VJP differentiation, status-rich trajectory evidence,
-  semidiscrete implicit PDE compilation, and canonical identification adapters.
+  roles and scales, consistent initialization contracts, prepared fixed/adaptive
+  BDF1/BDF2 integration, guarded cross-step numerical reuse, segmented continuation,
+  local regularity evidence, frozen accepted-grid JVP/VJP replay with bounded
+  checkpoint memory, status-rich trajectory evidence, semidiscrete implicit PDE
+  compilation, and canonical identification adapters.
 - Reusable nonlinear Newton preparation/refresh/solve lifecycles, adaptive
   Eisenstat--Walker forcing, explicit Jacobian refresh policies, hard aggregate
   inner-linear work budgets, and physical-root certification for transformed

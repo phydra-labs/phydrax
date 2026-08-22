@@ -11,10 +11,10 @@ BDF stage use the prepared nonlinear and linear-solve lifecycles from
 `phydrax.nonlinear` and `phydrax.linalg`. It does not route through Optimistix or
 Diffrax.
 
-This path deliberately covers fixed-grid, regular index-one problems. It does not
-infer a differentiation index, reduce a higher-index system, adapt the step size, or
-handle events. Those capabilities require separate structural and trajectory
-contracts rather than hidden heuristics in the integrator.
+This path covers regular index-one problems on either a declared fixed grid or an
+adaptive accepted-step grid. It does not infer a differentiation index, reduce a
+higher-index system, or handle events. Those capabilities require separate structural
+and trajectory contracts rather than hidden heuristics in the integrator.
 
 ## System and structure
 
@@ -33,7 +33,7 @@ broadcast to that shape:
 - residual scale defines the equation weights used by convergence checks;
 - none of the scales changes the raw value returned by `system(...)`.
 
-Nontrivial state geometry is rejected by the fixed-grid BDF backend. The current BDF
+Nontrivial state geometry is rejected by the native BDF backend. The current BDF
 formula combines ambient Euclidean states and therefore cannot honestly preserve a
 manifold-valued state.
 
@@ -107,17 +107,18 @@ nonlinear status and diagnostics, and a stable initialization ID. A check-only r
 has no nonlinear solve. Failed consistency is reported as evidence; the solver does
 not replace a failed pair with the original guess.
 
-## Fixed-grid BDF lifecycle
+## Fixed and adaptive BDF lifecycle
 
 `DAESolvePolicy` selects `"bdf1"` or variable-step `"bdf2"`, native
 `NewtonKrylov` or `NewtonTrustRegion` methods for initialization and stages,
-termination contracts, a maximum adjacent-step ratio, and failure behavior.
+termination contracts, temporal reuse, regularity evidence, replay checkpointing, a
+maximum adjacent-step ratio, and failure behavior. Supplying `DAEAdaptivePolicy`
+enables accepted-step control; omitting it preserves the fixed-grid contract.
 
-BDF2 uses BDF1 for its first accepted step. Later stages use the exact coefficients
-for the two adjacent grid intervals. A BDF2 grid whose adjacent interval ratio exceeds
-`max_step_ratio` is rejected during planning; it is not silently downgraded. Every
-accepted state is followed by an independent residual certification against the
-configured nonlinear threshold.
+BDF2 uses BDF1 until enough accepted history exists. A fixed BDF2 grid whose adjacent
+interval ratio exceeds `max_step_ratio` is rejected during planning. An adaptive solve
+uses BDF1 whenever accepted history or the proposed ratio cannot safely support BDF2.
+Every accepted state is followed by an independent residual certification.
 
 Planning, preparation, and execution are separate:
 
@@ -146,12 +147,12 @@ prepared = phx.solver.prepare_dae(problem, grid, policy=policy)
 solution = phx.solver.solve_dae(prepared)
 ```
 
-The prepared path supports JIT, JVP, VJP, and `vmap`. Each successful stage state has
-implicit derivatives obtained from that stage's residual Jacobian; nonlinear
-iteration history and diagnostics are nondifferentiable evidence. Dependencies on
-previous accepted states are chained through the outer fixed-length scan. Grid times
-are stop-gradient values: derivatives are for the declared discrete fixed-grid map,
-not for a parameter-dependent time controller.
+The fixed-grid prepared path supports JIT, JVP, VJP, and `vmap`. Each successful
+stage state has implicit derivatives obtained from that stage's residual Jacobian;
+nonlinear iteration history and diagnostics are nondifferentiable evidence.
+Dependencies on previous accepted states are chained through the outer fixed-length
+scan. Grid times are stop-gradient values: derivatives are for the declared discrete
+fixed-grid map.
 
 ```python
 def terminal_state(decay):
@@ -161,12 +162,115 @@ def terminal_state(decay):
 terminal_gradient = jax.jit(jax.grad(terminal_state))(jnp.asarray(0.5))
 ```
 
-`DifferentialAlgebraicSolution` stores states, reconstructed BDF state rates, node and
-step validity, orders, step sizes, residual and constraint norms, per-stage native
-nonlinear statuses and work counts, initialization evidence, plan/method/linear-plan
-provenance, and the original time identity. If initialization or one stage fails,
-later nodes are `NOT_RUN`; no explicit fallback state is fabricated. Use
-`failure="error"` when a non-successful solution must raise at the call boundary.
+## Adaptive integration and accepted-step evidence
+
+`TimeGrid` remains the requested output schedule for an adaptive solve. The controller
+may take multiple internal steps between adjacent requested times and lands exactly on
+every save boundary. Error weights apply only to differential variables; algebraic
+equations are checked independently against `constraint_tolerance`. Residual,
+nonlinear, linear, nonfinite, stale-Jacobian, regularity, and local-error failures have
+distinct attempt statuses. Accepted-step, attempt, and consecutive-rejection
+capacities are hard JAX-static bounds.
+
+```python
+adaptive_policy = phx.solver.DAESolvePolicy(
+    integration_method="bdf2",
+    nonlinear_method=phx.nonlinear.NewtonKrylov(),
+    adaptive=phx.solver.DAEAdaptivePolicy(
+        relative_tolerance=1e-5,
+        absolute_tolerance=1e-8,
+        maximum_accepted_steps=1024,
+        maximum_attempts=2048,
+    ),
+    temporal_reuse=phx.solver.DAETemporalReusePolicy(
+        maximum_jacobian_age=4,
+        maximum_alpha_ratio=2.0,
+        refresh_after_iterations=4,
+    ),
+    replay=phx.solver.DAEReplayPolicy("chunked", chunk_size=32),
+    regularity=phx.solver.DAERegularityPolicy(
+        "periodic",
+        interval=8,
+        failure="status",
+    ),
+)
+adaptive_prepared = phx.solver.prepare_dae(
+    problem,
+    grid,
+    policy=adaptive_policy,
+)
+adaptive_solution = phx.solver.solve_dae(adaptive_prepared)
+```
+
+`DAETemporalReusePolicy` retains numerical Jacobian preparation and, when configured
+on the Newton linear policy, GCRO-DR recycling state across related stages. Reuse is
+permitted only within the configured Jacobian age, BDF coefficient ratio, and previous
+Newton-work bounds. A failed reused stage is retried after a mandatory numerical
+refresh. Eisenstat--Walker forcing and remaining aggregate work limits are passed as
+dynamic controls into the prepared native Krylov solve; they do not change its static
+loop or basis shape.
+
+`DAEStepHistory` records accepted times, step sizes, BDF orders, local error ratios,
+source attempt indices, and requested-time mappings. `DAEAttemptHistory` records every
+attempt and its nonlinear and linear work. Both histories have fixed capacity plus an
+explicit valid mask and count; padded entries are not observations.
+
+## Segmented continuation
+
+Every successful adaptive result carries a `DAEContinuation` boundary object with the
+exact accepted BDF history, controller state, and retained nonlinear preparation.
+Pass it to a prepared solve whose first requested time equals that boundary:
+
+```python
+first = phx.solver.solve_dae(first_prepared)
+second = phx.solver.solve_dae(
+    second_prepared,
+    continuation=first.continuation,
+)
+```
+
+Continuation requires matching problem, system, state, dtype, integration,
+initialization, nonlinear-method, and stage-linear-plan identities. It cannot be
+combined with `initial_state` or `initial_state_rate`. These checks prevent a restart
+from silently applying BDF history or a recycled numerical operator to a different
+model.
+
+## Frozen accepted-grid derivatives and replay memory
+
+Adaptive JVPs and VJPs first run the controller, then stop gradients through accepted
+times, step sizes, orders, and save mappings. The accepted stages are replayed with
+implicit root derivatives. The resulting derivative is the frozen accepted-grid
+discrete derivative; it intentionally excludes derivatives of accept/reject decisions
+and the step-size controller. Tightening the primal tolerance is the convergence
+check against continuous sensitivities.
+
+`DAEReplayPolicy("full")` stores the complete replay trajectory.
+`DAEReplayPolicy("chunked", chunk_size=k)` rematerializes fixed-size segments during
+the reverse pass. A chunk may instead be selected from `memory_budget_bytes`; exactly
+one of `chunk_size` and `memory_budget_bytes` is required for chunked replay.
+`DAESolvePlan` records the selected static chunk and conservative replay-memory
+estimate, while `DAEReplayEvidence` records the realized accepted-step count. A failed
+adaptive primal has no valid derivative.
+
+## Local regularity evidence
+
+`DAERegularityPolicy("solver-evidence")` records rank and convergence information
+already available from consistency and nonlinear solves. The `"periodic"` mode
+explicitly probes the configured consistency-coordinate Jacobian and the local BDF
+stage operator `F_y + alpha F_ydot` every `interval` accepted steps. Optional
+`condition_limit` classifies an otherwise full-rank operator as numerically singular.
+`failure="record"` preserves evidence without changing the solve; `"status"` promotes
+a probed singular stage to an explicit rejected attempt and terminal status.
+
+This evidence is local and numerical. It never claims a global differentiation index
+or regularity between probes.
+
+`DifferentialAlgebraicSolution` stores requested states, reconstructed BDF rates,
+node validity, accepted-step and attempt histories, residual and constraint norms,
+initialization, continuation, local regularity, replay, termination, and
+plan/method/linear-plan provenance. If initialization or integration fails, unsaved
+nodes are `NOT_RUN`; no fallback state is fabricated. Use `failure="error"` when a
+non-successful solution must raise at the call boundary.
 
 ## Semidiscrete implicit PDE residuals
 
@@ -238,6 +342,54 @@ determine all algebraic rates.
 ::: phydrax.solver.DAEInitializationStatus
 
 ---
+::: phydrax.solver.DAEAdaptivePolicy
+
+---
+
+::: phydrax.solver.DAETemporalReusePolicy
+
+---
+
+::: phydrax.solver.DAEReplayPolicy
+
+---
+
+::: phydrax.solver.DAEReplayEvidence
+
+---
+
+::: phydrax.solver.DAERegularityPolicy
+
+---
+
+::: phydrax.solver.DAERegularityEvidence
+
+---
+
+::: phydrax.solver.DAERegularityStatus
+
+---
+
+::: phydrax.solver.DAEContinuation
+
+---
+
+::: phydrax.solver.DAEStepHistory
+
+---
+
+::: phydrax.solver.DAEAttemptHistory
+
+---
+
+::: phydrax.solver.DAEAttemptStatus
+
+---
+
+::: phydrax.solver.DAETerminationStatus
+
+---
+
 
 ::: phydrax.solver.DAESolvePolicy
 

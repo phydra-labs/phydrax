@@ -10,6 +10,7 @@ from enum import IntEnum
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
+import jax
 import jax.lax as lax
 import jax.numpy as jnp
 import numpy as np
@@ -30,11 +31,13 @@ from ..nonlinear import (
     refresh_nonlinear,
 )
 from ._dae_initialization import (
+    _DAEInitializationArguments,
     _initialize_dae,
     _masked_rms,
     _prepare_dae_initialization,
     _PreparedDAEInitialization,
     _scaled_space,
+    _unknown_guess,
     DAEInitializationResult,
     DAEInitializationSpec,
 )
@@ -43,6 +46,9 @@ from ._solution_validation import validate_solution_arrays
 
 DAEIntegrationMethod: TypeAlias = Literal["bdf1", "bdf2"]
 DAEFailureMode: TypeAlias = Literal["status", "error"]
+DAEReplayMode: TypeAlias = Literal["full", "chunked"]
+DAERegularityMode: TypeAlias = Literal["solver-evidence", "periodic"]
+DAERegularityFailureMode: TypeAlias = Literal["record", "status"]
 _DEFAULT_ARGS = object()
 
 
@@ -54,6 +60,40 @@ class DAEStatus(IntEnum):
     NONFINITE = 4
     RESIDUAL_TOO_LARGE = 5
     NOT_RUN = 6
+
+
+class DAEAttemptStatus(IntEnum):
+    ACCEPTED = 0
+    LOCAL_ERROR_REJECTED = 1
+    NONLINEAR_REJECTED = 2
+    LINEAR_REJECTED = 3
+    NONFINITE_REJECTED = 4
+    RESIDUAL_REJECTED = 5
+    CONSTRAINT_REJECTED = 6
+    STALE_JACOBIAN_RETRY = 7
+    REGULARITY_REJECTED = 8
+    NOT_RUN = 9
+
+
+class DAETerminationStatus(IntEnum):
+    SUCCESS = 0
+    INITIALIZATION_FAILED = 1
+    CONTINUATION_INCONSISTENT = 2
+    MAXIMUM_ACCEPTED_STEPS_REACHED = 3
+    MAXIMUM_ATTEMPTS_REACHED = 4
+    MINIMUM_STEP_REACHED = 5
+    REPEATED_REJECTIONS = 6
+    NONLINEAR_FAILURE = 7
+    RESIDUAL_CERTIFICATION_FAILED = 8
+    REGULARITY_FAILED = 9
+
+
+class DAERegularityStatus(IntEnum):
+    VERIFIED = 0
+    ESTIMATED = 1
+    INCONCLUSIVE = 2
+    NUMERICALLY_SINGULAR = 3
+    NOT_RUN = 4
 
 
 def _identifier(value: str | None, payload: object, prefix: str, /) -> str:
@@ -97,13 +137,250 @@ def _termination_identity(termination: NonlinearTermination, /) -> tuple[Any, ..
     )
 
 
+class DAEAdaptivePolicy(StrictModule):
+    """Accepted-step controller for adaptive BDF1/BDF2 integration."""
+
+    relative_tolerance: Array
+    absolute_tolerance: Array
+    initial_step: float | None = eqx.field(static=True)
+    minimum_step: float | None = eqx.field(static=True)
+    maximum_step: float | None = eqx.field(static=True)
+    safety: float = eqx.field(static=True)
+    accepted_growth_minimum: float = eqx.field(static=True)
+    accepted_growth_maximum: float = eqx.field(static=True)
+    rejected_shrink_minimum: float = eqx.field(static=True)
+    rejected_shrink_maximum: float = eqx.field(static=True)
+    nonlinear_failure_shrink: float = eqx.field(static=True)
+    residual_tolerance: float = eqx.field(static=True)
+    constraint_tolerance: float = eqx.field(static=True)
+    maximum_accepted_steps: int = eqx.field(static=True)
+    maximum_attempts: int = eqx.field(static=True)
+    maximum_consecutive_rejections: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        relative_tolerance: ArrayLike = 1e-5,
+        absolute_tolerance: ArrayLike = 1e-8,
+        initial_step: float | None = None,
+        minimum_step: float | None = None,
+        maximum_step: float | None = None,
+        safety: float = 0.9,
+        accepted_growth_minimum: float = 0.2,
+        accepted_growth_maximum: float = 5.0,
+        rejected_shrink_minimum: float = 0.1,
+        rejected_shrink_maximum: float = 0.5,
+        nonlinear_failure_shrink: float = 0.25,
+        residual_tolerance: float = 1e-8,
+        constraint_tolerance: float = 1e-8,
+        maximum_accepted_steps: int = 4096,
+        maximum_attempts: int = 8192,
+        maximum_consecutive_rejections: int = 12,
+    ):
+        relative = _inexact(relative_tolerance)
+        absolute = _inexact(absolute_tolerance)
+        relative_host = np.asarray(relative, dtype=float)
+        absolute_host = np.asarray(absolute, dtype=float)
+        if (
+            not np.all(np.isfinite(relative_host))
+            or not np.all(np.isfinite(absolute_host))
+            or np.any(relative_host < 0.0)
+            or np.any(absolute_host < 0.0)
+        ):
+            raise ValueError("Adaptive tolerances must be finite and non-negative.")
+        if np.all(relative_host == 0.0) and np.all(absolute_host == 0.0):
+            raise ValueError("At least one adaptive tolerance must be positive.")
+        steps = tuple(
+            None if value is None else float(value)
+            for value in (initial_step, minimum_step, maximum_step)
+        )
+        if any(
+            value is not None and (not math.isfinite(value) or value <= 0.0)
+            for value in steps
+        ):
+            raise ValueError("Adaptive step bounds must be finite and positive.")
+        initial, minimum, maximum = steps
+        if minimum is not None and maximum is not None and minimum > maximum:
+            raise ValueError("minimum_step cannot exceed maximum_step.")
+        if initial is not None and minimum is not None and initial < minimum:
+            raise ValueError("initial_step cannot be smaller than minimum_step.")
+        if initial is not None and maximum is not None and initial > maximum:
+            raise ValueError("initial_step cannot exceed maximum_step.")
+        controller = tuple(
+            float(value)
+            for value in (
+                safety,
+                accepted_growth_minimum,
+                accepted_growth_maximum,
+                rejected_shrink_minimum,
+                rejected_shrink_maximum,
+                nonlinear_failure_shrink,
+                residual_tolerance,
+                constraint_tolerance,
+            )
+        )
+        if any(not math.isfinite(value) or value <= 0.0 for value in controller):
+            raise ValueError("Adaptive controller values must be finite and positive.")
+        (
+            safety_,
+            growth_minimum,
+            growth_maximum,
+            shrink_minimum,
+            shrink_maximum,
+            nonlinear_shrink,
+            residual_threshold,
+            constraint_threshold,
+        ) = controller
+        if not 0.0 < safety_ <= 1.0:
+            raise ValueError("safety must lie in (0, 1].")
+        if not 0.0 < growth_minimum <= 1.0 <= growth_maximum:
+            raise ValueError("Accepted growth bounds must straddle one.")
+        if not 0.0 < shrink_minimum <= shrink_maximum < 1.0:
+            raise ValueError("Rejected shrink bounds must lie in (0, 1).")
+        if not 0.0 < nonlinear_shrink < 1.0:
+            raise ValueError("nonlinear_failure_shrink must lie in (0, 1).")
+        capacities = tuple(
+            int(value)
+            for value in (
+                maximum_accepted_steps,
+                maximum_attempts,
+                maximum_consecutive_rejections,
+            )
+        )
+        if any(value < 1 for value in capacities):
+            raise ValueError("Adaptive capacities must be positive.")
+        if capacities[1] < capacities[0]:
+            raise ValueError("maximum_attempts must cover maximum_accepted_steps.")
+        self.relative_tolerance = relative
+        self.absolute_tolerance = absolute
+        self.initial_step = initial
+        self.minimum_step = minimum
+        self.maximum_step = maximum
+        self.safety = safety_
+        self.accepted_growth_minimum = growth_minimum
+        self.accepted_growth_maximum = growth_maximum
+        self.rejected_shrink_minimum = shrink_minimum
+        self.rejected_shrink_maximum = shrink_maximum
+        self.nonlinear_failure_shrink = nonlinear_shrink
+        self.residual_tolerance = residual_threshold
+        self.constraint_tolerance = constraint_threshold
+        self.maximum_accepted_steps = capacities[0]
+        self.maximum_attempts = capacities[1]
+        self.maximum_consecutive_rejections = capacities[2]
+
+
+class DAETemporalReusePolicy(StrictModule):
+    """Cross-step modified-Newton reuse and mandatory refresh safeguards."""
+
+    enabled: bool = eqx.field(static=True)
+    maximum_jacobian_age: int = eqx.field(static=True)
+    maximum_alpha_ratio: float = eqx.field(static=True)
+    refresh_after_iterations: int | None = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        enabled: bool = True,
+        maximum_jacobian_age: int = 2,
+        maximum_alpha_ratio: float = 1.25,
+        refresh_after_iterations: int | None = 3,
+    ):
+        age = int(maximum_jacobian_age)
+        ratio = float(maximum_alpha_ratio)
+        iterations = (
+            None if refresh_after_iterations is None else int(refresh_after_iterations)
+        )
+        if age < 1:
+            raise ValueError("maximum_jacobian_age must be positive.")
+        if not math.isfinite(ratio) or ratio < 1.0:
+            raise ValueError("maximum_alpha_ratio must be finite and at least one.")
+        if iterations is not None and iterations < 1:
+            raise ValueError("refresh_after_iterations must be positive or None.")
+        self.enabled = bool(enabled)
+        self.maximum_jacobian_age = age
+        self.maximum_alpha_ratio = ratio
+        self.refresh_after_iterations = iterations
+
+
+class DAEReplayPolicy(StrictModule):
+    """Frozen-grid replay checkpointing policy."""
+
+    checkpointing: DAEReplayMode = eqx.field(static=True)
+    chunk_size: int | None = eqx.field(static=True)
+    memory_budget_bytes: int | None = eqx.field(static=True)
+
+    def __init__(
+        self,
+        checkpointing: DAEReplayMode = "full",
+        /,
+        *,
+        chunk_size: int | None = None,
+        memory_budget_bytes: int | None = None,
+    ):
+        if checkpointing not in ("full", "chunked"):
+            raise ValueError("checkpointing must be 'full' or 'chunked'.")
+        chunk = None if chunk_size is None else int(chunk_size)
+        budget = None if memory_budget_bytes is None else int(memory_budget_bytes)
+        if chunk is not None and chunk < 1:
+            raise ValueError("chunk_size must be positive or None.")
+        if budget is not None and budget < 1:
+            raise ValueError("memory_budget_bytes must be positive or None.")
+        if checkpointing == "full" and (chunk is not None or budget is not None):
+            raise ValueError("Full replay does not accept chunk planning inputs.")
+        if checkpointing == "chunked" and (chunk is None) == (budget is None):
+            raise ValueError(
+                "Chunked replay requires exactly one of chunk_size or "
+                "memory_budget_bytes."
+            )
+        self.checkpointing = checkpointing
+        self.chunk_size = chunk
+        self.memory_budget_bytes = budget
+
+
+class DAERegularityPolicy(StrictModule):
+    """Local numerical evidence policy; never a global DAE index claim."""
+
+    mode: DAERegularityMode = eqx.field(static=True)
+    interval: int = eqx.field(static=True)
+    condition_limit: float | None = eqx.field(static=True)
+    failure: DAERegularityFailureMode = eqx.field(static=True)
+
+    def __init__(
+        self,
+        mode: DAERegularityMode = "solver-evidence",
+        /,
+        *,
+        interval: int = 1,
+        condition_limit: float | None = None,
+        failure: DAERegularityFailureMode = "record",
+    ):
+        if mode not in ("solver-evidence", "periodic"):
+            raise ValueError("mode must be 'solver-evidence' or 'periodic'.")
+        interval_ = int(interval)
+        limit = None if condition_limit is None else float(condition_limit)
+        if interval_ < 1:
+            raise ValueError("interval must be positive.")
+        if limit is not None and (not math.isfinite(limit) or limit <= 1.0):
+            raise ValueError("condition_limit must be finite and exceed one.")
+        if failure not in ("record", "status"):
+            raise ValueError("failure must be 'record' or 'status'.")
+        self.mode = mode
+        self.interval = interval_
+        self.condition_limit = limit
+        self.failure = failure
+
+
 class DAESolvePolicy(StrictModule):
-    """Fixed-grid BDF integration and native nonlinear solve policy."""
+    """Fixed or adaptive BDF integration with explicit numerical policies."""
 
     nonlinear_method: NewtonKrylov | NewtonTrustRegion
     nonlinear_termination: NonlinearTermination
     initialization_method: NewtonKrylov | NewtonTrustRegion
     initialization_termination: NonlinearTermination
+    adaptive: DAEAdaptivePolicy | None
+    temporal_reuse: DAETemporalReusePolicy
+    replay: DAEReplayPolicy
+    regularity: DAERegularityPolicy
     integration_method: DAEIntegrationMethod = eqx.field(static=True)
     max_step_ratio: float = eqx.field(static=True)
     failure: DAEFailureMode = eqx.field(static=True)
@@ -116,6 +393,10 @@ class DAESolvePolicy(StrictModule):
         nonlinear_termination: NonlinearTermination | None = None,
         initialization_method: AbstractNonlinearMethod | None = None,
         initialization_termination: NonlinearTermination | None = None,
+        adaptive: DAEAdaptivePolicy | None = None,
+        temporal_reuse: DAETemporalReusePolicy | None = None,
+        replay: DAEReplayPolicy | None = None,
+        regularity: DAERegularityPolicy | None = None,
         max_step_ratio: float = 2.0,
         failure: DAEFailureMode = "status",
     ):
@@ -159,6 +440,19 @@ class DAESolvePolicy(StrictModule):
             raise TypeError(
                 "initialization_termination must be a NonlinearTermination or None."
             )
+        if adaptive is not None and not isinstance(adaptive, DAEAdaptivePolicy):
+            raise TypeError("adaptive must be a DAEAdaptivePolicy or None.")
+        reuse_policy = (
+            DAETemporalReusePolicy() if temporal_reuse is None else temporal_reuse
+        )
+        replay_policy = DAEReplayPolicy() if replay is None else replay
+        regularity_policy = DAERegularityPolicy() if regularity is None else regularity
+        if not isinstance(reuse_policy, DAETemporalReusePolicy):
+            raise TypeError("temporal_reuse must be a DAETemporalReusePolicy or None.")
+        if not isinstance(replay_policy, DAEReplayPolicy):
+            raise TypeError("replay must be a DAEReplayPolicy or None.")
+        if not isinstance(regularity_policy, DAERegularityPolicy):
+            raise TypeError("regularity must be a DAERegularityPolicy or None.")
         ratio = float(max_step_ratio)
         if not math.isfinite(ratio) or ratio < 1.0:
             raise ValueError("max_step_ratio must be finite and at least one.")
@@ -168,6 +462,10 @@ class DAESolvePolicy(StrictModule):
         self.nonlinear_termination = stage_termination
         self.initialization_method = initial_method
         self.initialization_termination = initial_termination
+        self.adaptive = adaptive
+        self.temporal_reuse = reuse_policy
+        self.replay = replay_policy
+        self.regularity = regularity_policy
         self.integration_method = integration_method
         self.max_step_ratio = ratio
         self.failure = failure
@@ -243,7 +541,7 @@ class DifferentialAlgebraicProblem(StrictModule):
 
 
 class DAESolvePlan(StrictModule):
-    """Validated fixed-grid DAE integration policy and structural identity."""
+    """Validated fixed/adaptive DAE policy and structural execution identity."""
 
     policy: DAESolvePolicy
     system_id: str = eqx.field(static=True)
@@ -252,6 +550,10 @@ class DAESolvePlan(StrictModule):
     state_shape: tuple[int, ...] = eqx.field(static=True)
     state_dtype: str = eqx.field(static=True)
     num_steps: int = eqx.field(static=True)
+    maximum_accepted_steps: int = eqx.field(static=True)
+    maximum_attempts: int = eqx.field(static=True)
+    replay_chunk_size: int = eqx.field(static=True)
+    replay_memory_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -268,13 +570,89 @@ class DAESolvePlan(StrictModule):
         if not isinstance(policy, DAESolvePolicy):
             raise TypeError("policy must be a DAESolvePolicy.")
         durations = np.asarray(time_grid.durations, dtype=float)
-        if policy.integration_method == "bdf2" and durations.size > 1:
+        if (
+            policy.adaptive is None
+            and policy.integration_method == "bdf2"
+            and durations.size > 1
+        ):
             ratios = durations[1:] / durations[:-1]
             if np.any(ratios > policy.max_step_ratio) or np.any(
                 ratios < 1.0 / policy.max_step_ratio
             ):
                 raise ValueError(
                     "BDF2 adjacent step ratios exceed the declared max_step_ratio."
+                )
+        adaptive = policy.adaptive
+        if adaptive is not None:
+            np.broadcast_to(
+                np.asarray(adaptive.relative_tolerance),
+                problem.system.state_shape,
+            )
+            np.broadcast_to(
+                np.asarray(adaptive.absolute_tolerance),
+                problem.system.state_shape,
+            )
+            if adaptive.maximum_accepted_steps < time_grid.num_steps:
+                raise ValueError(
+                    "maximum_accepted_steps must cover every requested save interval."
+                )
+        accepted_capacity = (
+            time_grid.num_steps if adaptive is None else adaptive.maximum_accepted_steps
+        )
+        attempt_capacity = (
+            time_grid.num_steps if adaptive is None else adaptive.maximum_attempts
+        )
+        state_bytes = int(
+            problem.initial_state.size * problem.initial_state.dtype.itemsize
+        )
+        bytes_per_step = max(8 * state_bytes + 256, 1)
+        replay_policy = policy.replay
+        if replay_policy.checkpointing == "full":
+            replay_chunk_size = max(accepted_capacity, 1)
+            replay_memory_bytes = bytes_per_step * accepted_capacity
+        elif replay_policy.chunk_size is not None:
+            replay_chunk_size = min(replay_policy.chunk_size, accepted_capacity)
+            replay_memory_bytes = (
+                bytes_per_step * replay_chunk_size
+                + 3 * state_bytes * math.ceil(accepted_capacity / replay_chunk_size)
+            )
+        else:
+            budget = replay_policy.memory_budget_bytes
+            if budget is None:
+                raise ValueError(
+                    "Chunked replay planning requires a chunk size or memory budget."
+                )
+            checkpoint_bytes = 3 * state_bytes
+            discriminant = (
+                budget * budget
+                - 4 * bytes_per_step * checkpoint_bytes * accepted_capacity
+            )
+            if discriminant < 0:
+                raise ValueError(
+                    "Replay memory budget is below the minimum feasible checkpoint "
+                    "footprint."
+                )
+            replay_chunk_size = min(
+                accepted_capacity,
+                max(
+                    1,
+                    int((budget + math.sqrt(discriminant)) // (2 * bytes_per_step)),
+                ),
+            )
+            replay_memory_bytes = (
+                bytes_per_step * replay_chunk_size
+                + checkpoint_bytes * math.ceil(accepted_capacity / replay_chunk_size)
+            )
+            while replay_chunk_size > 1 and replay_memory_bytes > budget:
+                replay_chunk_size -= 1
+                replay_memory_bytes = (
+                    bytes_per_step * replay_chunk_size
+                    + checkpoint_bytes * math.ceil(accepted_capacity / replay_chunk_size)
+                )
+            if replay_memory_bytes > budget:
+                raise ValueError(
+                    "Replay memory budget is below the minimum feasible checkpoint "
+                    "footprint."
                 )
         self.policy = policy
         self.system_id = problem.system.system_id
@@ -283,6 +661,10 @@ class DAESolvePlan(StrictModule):
         self.state_shape = problem.system.state_shape
         self.state_dtype = np.dtype(problem.initial_state.dtype).str
         self.num_steps = time_grid.num_steps
+        self.maximum_accepted_steps = accepted_capacity
+        self.maximum_attempts = attempt_capacity
+        self.replay_chunk_size = replay_chunk_size
+        self.replay_memory_bytes = replay_memory_bytes
         self.plan_id = _identifier(
             None,
             (
@@ -297,6 +679,11 @@ class DAESolvePlan(StrictModule):
                 _termination_identity(policy.nonlinear_termination),
                 _method_identity(policy.initialization_method),
                 _termination_identity(policy.initialization_termination),
+                repr(policy.adaptive),
+                repr(policy.temporal_reuse),
+                repr(policy.replay),
+                repr(policy.regularity),
+                replay_chunk_size,
             ),
             "dae-plan",
         )
@@ -351,6 +738,7 @@ class _DAEStageArguments(StrictModule):
     step_size: Array
     previous_step_size: Array
     order: Array
+    active: Array
     model_args: Any
 
 
@@ -366,11 +754,16 @@ class _DAEStageResidual(StrictModule):
             arguments.previous_step_size,
             arguments.order,
         )
-        return self.system.scaled_residual(
+        physical_residual = self.system.scaled_residual(
             arguments.time,
             state,
             state_rate,
             arguments.model_args,
+        )
+        return jnp.where(
+            arguments.active,
+            physical_residual,
+            state - arguments.previous,
         )
 
 
@@ -383,6 +776,7 @@ def _stage_arguments(
     previous_step_size: Array,
     order: Array,
     model_args: Any,
+    active: ArrayLike = True,
 ) -> _DAEStageArguments:
     return _DAEStageArguments(
         time,
@@ -391,6 +785,7 @@ def _stage_arguments(
         step_size,
         previous_step_size,
         order,
+        jnp.asarray(active, dtype=bool),
         model_args,
     )
 
@@ -449,8 +844,300 @@ class PreparedDAESolve(StrictModule):
         return "" if nonlinear_solve is None else nonlinear_solve.linear_plan_id
 
 
+class DAEStepHistory(StrictModule):
+    """Fixed-capacity evidence for accepted internal integration steps."""
+
+    accepted_times: Array
+    step_sizes: Array
+    orders: Array
+    error_ratios: Array
+    source_attempt_indices: Array
+    valid: Array
+    count: Array
+    save_step_indices: Array
+
+    def __init__(
+        self,
+        *,
+        accepted_times: Array,
+        step_sizes: Array,
+        orders: Array,
+        error_ratios: Array,
+        source_attempt_indices: Array,
+        valid: Array,
+        count: Array,
+        save_step_indices: Array,
+    ):
+        capacity = int(jnp.asarray(step_sizes).size)
+        shape = (capacity,)
+        for values, name in (
+            (accepted_times, "accepted_times"),
+            (orders, "orders"),
+            (error_ratios, "error_ratios"),
+            (source_attempt_indices, "source_attempt_indices"),
+            (valid, "valid"),
+        ):
+            if jnp.asarray(values).shape != shape:
+                raise ValueError(f"DAE step history {name} must have shape {shape}.")
+        self.accepted_times = jnp.asarray(accepted_times)
+        self.step_sizes = jnp.asarray(step_sizes)
+        self.orders = jnp.asarray(orders, dtype=jnp.int32)
+        self.error_ratios = jnp.asarray(error_ratios)
+        self.source_attempt_indices = jnp.asarray(source_attempt_indices, dtype=jnp.int32)
+        self.valid = jnp.asarray(valid, dtype=bool)
+        self.count = jnp.asarray(count, dtype=jnp.int32)
+        self.save_step_indices = jnp.asarray(save_step_indices, dtype=jnp.int32)
+
+
+class DAEAttemptHistory(StrictModule):
+    """Fixed-capacity evidence for every accepted or rejected attempt."""
+
+    times: Array
+    proposed_step_sizes: Array
+    orders: Array
+    status: Array
+    error_ratios: Array
+    nonlinear_status: Array
+    nonlinear_iterations: Array
+    residual_evaluations: Array
+    jacobian_preparations: Array
+    linear_solves: Array
+    linear_iterations: Array
+    globalization_rejections: Array
+    setup_refreshes: Array
+    numeric_refreshes: Array
+    stale_jacobian_retries: Array
+    linear_rejections: Array
+    residual_certifications: Array
+    valid: Array
+    count: Array
+
+    def __init__(
+        self,
+        *,
+        times: Array,
+        proposed_step_sizes: Array,
+        orders: Array,
+        status: Array,
+        error_ratios: Array,
+        nonlinear_status: Array,
+        nonlinear_iterations: Array,
+        residual_evaluations: Array,
+        jacobian_preparations: Array,
+        linear_solves: Array,
+        linear_iterations: Array,
+        globalization_rejections: Array,
+        setup_refreshes: Array,
+        numeric_refreshes: Array,
+        stale_jacobian_retries: Array,
+        linear_rejections: Array,
+        residual_certifications: Array,
+        valid: Array,
+        count: Array,
+    ):
+        shape = jnp.asarray(proposed_step_sizes).shape
+        if len(shape) != 1:
+            raise ValueError("DAE attempt history must be one-dimensional.")
+        values = (
+            times,
+            orders,
+            status,
+            error_ratios,
+            nonlinear_status,
+            nonlinear_iterations,
+            residual_evaluations,
+            jacobian_preparations,
+            linear_solves,
+            linear_iterations,
+            globalization_rejections,
+            setup_refreshes,
+            numeric_refreshes,
+            stale_jacobian_retries,
+            linear_rejections,
+            residual_certifications,
+            valid,
+        )
+        if any(jnp.asarray(value).shape != shape for value in values):
+            raise ValueError("Every DAE attempt history field must share one shape.")
+        self.times = jnp.asarray(times)
+        self.proposed_step_sizes = jnp.asarray(proposed_step_sizes)
+        self.orders = jnp.asarray(orders, dtype=jnp.int32)
+        self.status = jnp.asarray(status, dtype=jnp.int32)
+        self.error_ratios = jnp.asarray(error_ratios)
+        self.nonlinear_status = jnp.asarray(nonlinear_status, dtype=jnp.int32)
+        self.nonlinear_iterations = jnp.asarray(nonlinear_iterations, dtype=jnp.int32)
+        self.residual_evaluations = jnp.asarray(residual_evaluations, dtype=jnp.int32)
+        self.jacobian_preparations = jnp.asarray(jacobian_preparations, dtype=jnp.int32)
+        self.linear_solves = jnp.asarray(linear_solves, dtype=jnp.int32)
+        self.linear_iterations = jnp.asarray(linear_iterations, dtype=jnp.int32)
+        self.globalization_rejections = jnp.asarray(
+            globalization_rejections, dtype=jnp.int32
+        )
+        self.setup_refreshes = jnp.asarray(setup_refreshes, dtype=jnp.int32)
+        self.numeric_refreshes = jnp.asarray(numeric_refreshes, dtype=jnp.int32)
+        self.stale_jacobian_retries = jnp.asarray(stale_jacobian_retries, dtype=jnp.int32)
+        self.linear_rejections = jnp.asarray(linear_rejections, dtype=jnp.int32)
+        self.residual_certifications = jnp.asarray(
+            residual_certifications, dtype=jnp.int32
+        )
+        self.valid = jnp.asarray(valid, dtype=bool)
+        self.count = jnp.asarray(count, dtype=jnp.int32)
+
+
+class DAERegularityEvidence(StrictModule):
+    """Local consistency/stage operator evidence without a global index claim."""
+
+    consistency_status: Array
+    consistency_rank: Array
+    consistency_condition_estimate: Array
+    stage_status: Array
+    stage_rank: Array
+    stage_condition_estimate: Array
+    stage_valid: Array
+    consistency_operator: str = eqx.field(static=True)
+    stage_operator: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        consistency_status: Array,
+        consistency_rank: Array,
+        consistency_condition_estimate: Array,
+        stage_status: Array,
+        stage_rank: Array,
+        stage_condition_estimate: Array,
+        stage_valid: Array,
+        consistency_operator: str,
+        stage_operator: str,
+    ):
+        shape = jnp.asarray(stage_status).shape
+        if (
+            jnp.asarray(stage_rank).shape != shape
+            or jnp.asarray(stage_condition_estimate).shape != shape
+            or jnp.asarray(stage_valid).shape != shape
+        ):
+            raise ValueError("DAE stage regularity evidence shapes must match.")
+        self.consistency_status = jnp.asarray(consistency_status, dtype=jnp.int32)
+        self.consistency_rank = jnp.asarray(consistency_rank, dtype=jnp.int32)
+        self.consistency_condition_estimate = jnp.asarray(consistency_condition_estimate)
+        self.stage_status = jnp.asarray(stage_status, dtype=jnp.int32)
+        self.stage_rank = jnp.asarray(stage_rank, dtype=jnp.int32)
+        self.stage_condition_estimate = jnp.asarray(stage_condition_estimate)
+        self.stage_valid = jnp.asarray(stage_valid, dtype=bool)
+        self.consistency_operator = str(consistency_operator)
+        self.stage_operator = str(stage_operator)
+
+
+class DAEReplayEvidence(StrictModule):
+    """Frozen-grid replay storage plan and realized accepted-step count."""
+
+    accepted_steps: Array
+    selected_chunk_size: int = eqx.field(static=True)
+    estimated_memory_bytes: int = eqx.field(static=True)
+    checkpointing: DAEReplayMode = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        accepted_steps: Array,
+        selected_chunk_size: int,
+        estimated_memory_bytes: int,
+        checkpointing: DAEReplayMode,
+    ):
+        self.accepted_steps = jnp.asarray(accepted_steps, dtype=jnp.int32)
+        self.selected_chunk_size = int(selected_chunk_size)
+        self.estimated_memory_bytes = int(estimated_memory_bytes)
+        self.checkpointing = checkpointing
+
+
+class DAEContinuation(StrictModule):
+    """Exact accepted-history boundary state for segmented integration."""
+
+    time: Array
+    states: Array
+    state_rates: Array
+    times: Array
+    step_sizes: Array
+    history_depth: Array
+    accepted_order: Array
+    previous_error_ratio: Array
+    proposed_step_size: Array
+    jacobian_age: Array
+    last_alpha: Array
+    nonlinear_solve: PreparedNonlinearSolve | None
+    problem_id: str = eqx.field(static=True)
+    system_id: str = eqx.field(static=True)
+    state_shape: tuple[int, ...] = eqx.field(static=True)
+    state_dtype: str = eqx.field(static=True)
+    integration_method: DAEIntegrationMethod = eqx.field(static=True)
+    initialization_id: str = eqx.field(static=True)
+    nonlinear_method_id: str = eqx.field(static=True)
+    stage_linear_plan_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        time: Array,
+        states: Array,
+        state_rates: Array,
+        times: Array,
+        step_sizes: Array,
+        history_depth: Array,
+        accepted_order: Array,
+        previous_error_ratio: Array,
+        proposed_step_size: Array,
+        jacobian_age: Array,
+        last_alpha: Array,
+        nonlinear_solve: PreparedNonlinearSolve | None,
+        problem_id: str,
+        system_id: str,
+        integration_method: DAEIntegrationMethod,
+        initialization_id: str,
+        nonlinear_method_id: str,
+        stage_linear_plan_id: str,
+    ):
+        states_ = jnp.asarray(states)
+        rates_ = jnp.asarray(state_rates)
+        if states_.shape != rates_.shape or states_.shape[0] != 3:
+            raise ValueError("DAE continuation must retain three state/rate slots.")
+        if jnp.asarray(times).shape != (3,) or jnp.asarray(step_sizes).shape != (2,):
+            raise ValueError("DAE continuation time history has invalid shape.")
+        if nonlinear_solve is not None and not isinstance(
+            nonlinear_solve, PreparedNonlinearSolve
+        ):
+            raise TypeError("nonlinear_solve must be a PreparedNonlinearSolve or None.")
+        self.time = jnp.asarray(time)
+        self.states = states_
+        self.state_rates = rates_
+        self.times = jnp.asarray(times)
+        self.step_sizes = jnp.asarray(step_sizes)
+        self.history_depth = jnp.asarray(history_depth, dtype=jnp.int32)
+        self.accepted_order = jnp.asarray(accepted_order, dtype=jnp.int32)
+        self.previous_error_ratio = jnp.asarray(previous_error_ratio)
+        self.proposed_step_size = jnp.asarray(proposed_step_size)
+        self.jacobian_age = jnp.asarray(jacobian_age, dtype=jnp.int32)
+        self.last_alpha = jnp.asarray(last_alpha)
+        self.nonlinear_solve = nonlinear_solve
+        self.problem_id = str(problem_id)
+        self.system_id = str(system_id)
+        self.state_shape = tuple(states_.shape[1:])
+        self.state_dtype = np.dtype(states_.dtype).str
+        self.integration_method = integration_method
+        self.initialization_id = str(initialization_id)
+        self.nonlinear_method_id = str(nonlinear_method_id)
+        self.stage_linear_plan_id = str(stage_linear_plan_id)
+
+    @property
+    def state(self) -> Array:
+        return self.states[0]
+
+    @property
+    def state_rate(self) -> Array:
+        return self.state_rates[0]
+
+
 class DifferentialAlgebraicSolution(StrictModule):
-    """Fixed-grid DAE trajectory with node, step, and nonlinear evidence."""
+    """Requested DAE samples plus accepted-step, attempt, and restart evidence."""
 
     times: Array
     states: Array
@@ -462,19 +1149,13 @@ class DifferentialAlgebraicSolution(StrictModule):
     residual_threshold: Array
     differential_residual_norm: Array
     constraint_norm: Array
-    step_sizes: Array
-    orders: Array
-    nonlinear_status: Array
-    nonlinear_status_valid: Array
-    nonlinear_iterations: Array
-    residual_evaluations: Array
-    jacobian_preparations: Array
-    linear_solves: Array
-    linear_iterations: Array
-    globalization_rejections: Array
-    setup_refreshes: Array
-    numeric_refreshes: Array
+    step_history: DAEStepHistory
+    attempt_history: DAEAttemptHistory
     initialization: DAEInitializationResult
+    continuation: DAEContinuation
+    regularity: DAERegularityEvidence
+    replay: DAEReplayEvidence
+    termination_status: Array
     sample_shape: tuple[int, ...] = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
@@ -503,19 +1184,13 @@ class DifferentialAlgebraicSolution(StrictModule):
         residual_threshold: Array,
         differential_residual_norm: Array,
         constraint_norm: Array,
-        step_sizes: Array,
-        orders: Array,
-        nonlinear_status: Array,
-        nonlinear_status_valid: Array,
-        nonlinear_iterations: Array,
-        residual_evaluations: Array,
-        jacobian_preparations: Array,
-        linear_solves: Array,
-        linear_iterations: Array,
-        globalization_rejections: Array,
-        setup_refreshes: Array,
-        numeric_refreshes: Array,
+        step_history: DAEStepHistory,
+        attempt_history: DAEAttemptHistory,
         initialization: DAEInitializationResult,
+        continuation: DAEContinuation,
+        regularity: DAERegularityEvidence,
+        replay: DAEReplayEvidence,
+        termination_status: Array,
         problem_id: str,
         system_id: str,
         time_id: str,
@@ -525,6 +1200,7 @@ class DifferentialAlgebraicSolution(StrictModule):
         stage_linear_plan_id: str,
         initialization_linear_plan_id: str,
         integration_method: DAEIntegrationMethod,
+        adaptive: bool,
     ):
         validated = validate_solution_arrays(
             times,
@@ -549,24 +1225,16 @@ class DifferentialAlgebraicSolution(StrictModule):
         ):
             if jnp.asarray(values).shape != node_shape:
                 raise ValueError(f"DAE {name} must have shape {node_shape}.")
-        step_shape = (int(validated.times.size) - 1,)
-        step_values = (
-            (step_sizes, "step_sizes"),
-            (orders, "orders"),
-            (nonlinear_status, "nonlinear_status"),
-            (nonlinear_status_valid, "nonlinear_status_valid"),
-            (nonlinear_iterations, "nonlinear_iterations"),
-            (residual_evaluations, "residual_evaluations"),
-            (jacobian_preparations, "jacobian_preparations"),
-            (linear_solves, "linear_solves"),
-            (linear_iterations, "linear_iterations"),
-            (globalization_rejections, "globalization_rejections"),
-            (setup_refreshes, "setup_refreshes"),
-            (numeric_refreshes, "numeric_refreshes"),
-        )
-        for values, name in step_values:
-            if jnp.asarray(values).shape != step_shape:
-                raise ValueError(f"DAE {name} must have shape {step_shape}.")
+        if not isinstance(step_history, DAEStepHistory):
+            raise TypeError("step_history must be a DAEStepHistory.")
+        if not isinstance(attempt_history, DAEAttemptHistory):
+            raise TypeError("attempt_history must be a DAEAttemptHistory.")
+        if not isinstance(continuation, DAEContinuation):
+            raise TypeError("continuation must be a DAEContinuation.")
+        if not isinstance(regularity, DAERegularityEvidence):
+            raise TypeError("regularity must be DAERegularityEvidence.")
+        if not isinstance(replay, DAEReplayEvidence):
+            raise TypeError("replay must be DAEReplayEvidence.")
         self.times = validated.times
         self.states = validated.states
         self.state_rates = jnp.asarray(state_rates)
@@ -577,25 +1245,13 @@ class DifferentialAlgebraicSolution(StrictModule):
         self.residual_threshold = jnp.asarray(residual_threshold)
         self.differential_residual_norm = jnp.asarray(differential_residual_norm)
         self.constraint_norm = jnp.asarray(constraint_norm)
-        self.step_sizes = jnp.asarray(step_sizes)
-        self.orders = jnp.asarray(orders, dtype=jnp.int32)
-        self.nonlinear_status = jnp.asarray(nonlinear_status, dtype=jnp.int32)
-        self.nonlinear_status_valid = jnp.asarray(nonlinear_status_valid, dtype=bool)
-        self.nonlinear_iterations = jnp.asarray(nonlinear_iterations, dtype=jnp.int32)
-        self.residual_evaluations = jnp.asarray(residual_evaluations, dtype=jnp.int32)
-        self.jacobian_preparations = jnp.asarray(
-            jacobian_preparations,
-            dtype=jnp.int32,
-        )
-        self.linear_solves = jnp.asarray(linear_solves, dtype=jnp.int32)
-        self.linear_iterations = jnp.asarray(linear_iterations, dtype=jnp.int32)
-        self.globalization_rejections = jnp.asarray(
-            globalization_rejections,
-            dtype=jnp.int32,
-        )
-        self.setup_refreshes = jnp.asarray(setup_refreshes, dtype=jnp.int32)
-        self.numeric_refreshes = jnp.asarray(numeric_refreshes, dtype=jnp.int32)
+        self.step_history = step_history
+        self.attempt_history = attempt_history
         self.initialization = initialization
+        self.continuation = continuation
+        self.regularity = regularity
+        self.replay = replay
+        self.termination_status = jnp.asarray(termination_status, dtype=jnp.int32)
         self.sample_shape = validated.sample_shape
         self.state_shape = validated.state_shape
         self.problem_id = str(problem_id)
@@ -607,13 +1263,23 @@ class DifferentialAlgebraicSolution(StrictModule):
         self.stage_linear_plan_id = str(stage_linear_plan_id)
         self.initialization_linear_plan_id = str(initialization_linear_plan_id)
         self.integration_method = integration_method
-        self.differentiation_mode = "fixed-grid-discrete-implicit"
-        self.grid_origin = "user"
-        self.approximation_id = f"fixed-grid-{integration_method}"
+        self.differentiation_mode = (
+            "frozen-accepted-grid-discrete-implicit"
+            if adaptive
+            else "fixed-grid-discrete-implicit"
+        )
+        self.grid_origin = "controller" if adaptive else "user"
+        self.approximation_id = (
+            f"frozen-accepted-grid-{integration_method}"
+            if adaptive
+            else f"fixed-grid-{integration_method}"
+        )
 
     @property
     def successful(self) -> Array:
-        return jnp.all(self.valid)
+        return (self.termination_status == int(DAETerminationStatus.SUCCESS)) & jnp.all(
+            self.valid
+        )
 
 
 def plan_dae(
@@ -751,6 +1417,136 @@ def _linear_failure(status: Array, /) -> Array:
         | (status == int(NonlinearStatus.SINGULAR_JACOBIAN))
         | (status == int(NonlinearStatus.MAXIMUM_LINEAR_ITERATIONS_REACHED))
     )
+
+
+def _regularity_status(
+    rank: Array,
+    condition_estimate: Array,
+    converged: Array,
+    dimension: int,
+    condition_limit: float | None,
+    /,
+) -> Array:
+    rank_known = rank >= 0
+    condition_known = jnp.isfinite(condition_estimate)
+    singular = rank_known & (rank < dimension)
+    if condition_limit is not None:
+        singular = singular | (condition_known & (condition_estimate > condition_limit))
+    verified = (
+        jnp.asarray(converged, dtype=bool)
+        & rank_known
+        & (rank == dimension)
+        & condition_known
+    )
+    estimated = jnp.asarray(converged, dtype=bool) & ~verified
+    return jnp.where(
+        singular,
+        int(DAERegularityStatus.NUMERICALLY_SINGULAR),
+        jnp.where(
+            verified,
+            int(DAERegularityStatus.VERIFIED),
+            jnp.where(
+                estimated,
+                int(DAERegularityStatus.ESTIMATED),
+                int(DAERegularityStatus.INCONCLUSIVE),
+            ),
+        ),
+    ).astype(jnp.int32)
+
+
+def _matrix_regularity(matrix: Array, /):
+    singular_values = jnp.linalg.svd(matrix, compute_uv=False)
+    largest = singular_values[0]
+    smallest = singular_values[-1]
+    tolerance = (
+        max(matrix.shape)
+        * jnp.finfo(singular_values.real.dtype).eps
+        * jnp.maximum(largest, 1.0)
+    )
+    rank = jnp.sum(singular_values > tolerance, dtype=jnp.int32)
+    condition = jnp.where(smallest > tolerance, largest / smallest, jnp.inf)
+    return rank, condition, jnp.all(jnp.isfinite(matrix))
+
+
+def _dense_initial_regularity(
+    prepared,
+    initialization,
+    time,
+    args,
+    /,
+):
+    nonlinear_problem = prepared.initialization.nonlinear_problem
+    if nonlinear_problem is None:
+        return (
+            jnp.asarray(int(DAERegularityStatus.NOT_RUN), dtype=jnp.int32),
+            jnp.asarray(-1, dtype=jnp.int32),
+            jnp.asarray(jnp.nan, dtype=initialization.residual_norm.dtype),
+        )
+    unknown = _unknown_guess(
+        initialization.state,
+        initialization.state_rate,
+        prepared.initialization.state_indices,
+        prepared.initialization.rate_indices,
+    )
+    arguments = _DAEInitializationArguments(
+        time,
+        initialization.state,
+        initialization.state_rate,
+        args,
+    )
+    source = nonlinear_problem.state_space
+    target = nonlinear_problem.residual_space
+
+    def residual(current):
+        return target.flatten(
+            nonlinear_problem.residual(source.unflatten(current), arguments)
+        )
+
+    matrix = jax.jacfwd(residual)(source.flatten(unknown))
+    rank, condition, finite = _matrix_regularity(matrix)
+    status = _regularity_status(
+        rank,
+        condition,
+        finite,
+        int(prepared.problem.initial_state.size),
+        prepared.plan.policy.regularity.condition_limit,
+    )
+    return status, rank, condition
+
+
+def _initial_regularity(initialization, dimension: int, condition_limit, /):
+    nonlinear_result = initialization.nonlinear_result
+    if nonlinear_result is None:
+        rank = jnp.asarray(-1, dtype=jnp.int32)
+        condition = jnp.asarray(jnp.nan, dtype=initialization.residual_norm.dtype)
+        converged = initialization.valid
+    else:
+        diagnostics = nonlinear_result.diagnostics
+        rank = diagnostics.final_linear_rank
+        condition = diagnostics.final_linear_condition_estimate
+        converged = diagnostics.final_linear_converged
+    status = _regularity_status(
+        rank,
+        condition,
+        converged,
+        dimension,
+        condition_limit,
+    )
+    return status, rank, condition
+
+
+def _dense_stage_regularity(prepared, state, arguments, /):
+    source = prepared.stage_problem.state_space
+    target = prepared.stage_problem.residual_space
+    coordinates = source.flatten(state)
+
+    def residual(current):
+        return target.flatten(
+            prepared.stage_problem.residual(source.unflatten(current), arguments)
+        )
+
+    matrix = jax.jacfwd(residual)(coordinates)
+    return _matrix_regularity(matrix)
 
 
 def _solve_prepared(
@@ -894,6 +1690,11 @@ def _solve_prepared(
                 diagnostics.rejected_steps,
                 diagnostics.setup_refreshes,
                 diagnostics.numeric_refreshes,
+                diagnostics.final_linear_status,
+                diagnostics.final_linear_rank,
+                diagnostics.final_linear_condition_estimate,
+                diagnostics.final_linear_residual_norm,
+                diagnostics.final_linear_converged,
             )
 
         def skip_step(_):
@@ -919,6 +1720,11 @@ def _solve_prepared(
                 zero,
                 zero,
                 zero,
+                jnp.asarray(-1, dtype=jnp.int32),
+                jnp.asarray(-1, dtype=jnp.int32),
+                jnp.asarray(jnp.nan, dtype=previous.real.dtype),
+                jnp.asarray(jnp.nan, dtype=previous.real.dtype),
+                jnp.asarray(False),
             )
 
         output = lax.cond(prior_valid, solve_step, skip_step, operand=None)
@@ -964,6 +1770,11 @@ def _solve_prepared(
         globalization_rejections,
         setup_refreshes,
         numeric_refreshes,
+        final_linear_status,
+        final_linear_rank,
+        final_linear_condition,
+        final_linear_residual,
+        final_linear_converged,
     ) = outputs
     initial_status = jnp.where(
         initialization.valid,
@@ -1004,8 +1815,234 @@ def _solve_prepared(
         (initialization.rate_valid[None, ...], step_rate_valid),
         axis=0,
     )
+    orders = (
+        jnp.ones_like(indices)
+        if policy.integration_method == "bdf1"
+        else jnp.where(indices == 0, 1, 2).astype(jnp.int32)
+    )
+    accepted_count = jnp.sum(step_valid, dtype=jnp.int32)
+    save_step_indices = jnp.concatenate(
+        (
+            jnp.asarray((-1,), dtype=jnp.int32),
+            jnp.where(step_valid, indices, -2),
+        )
+    )
+    step_history = DAEStepHistory(
+        accepted_times=jnp.where(step_valid, times[1:], jnp.nan),
+        step_sizes=step_sizes,
+        orders=orders,
+        error_ratios=jnp.where(step_valid, 0.0, jnp.inf),
+        source_attempt_indices=indices,
+        valid=step_valid,
+        count=accepted_count,
+        save_step_indices=save_step_indices,
+    )
+    attempt_status = jnp.where(
+        ~nonlinear_status_valid,
+        int(DAEAttemptStatus.NOT_RUN),
+        jnp.where(
+            step_valid,
+            int(DAEAttemptStatus.ACCEPTED),
+            jnp.where(
+                step_status == int(DAEStatus.LINEAR_FAILED),
+                int(DAEAttemptStatus.LINEAR_REJECTED),
+                jnp.where(
+                    step_status == int(DAEStatus.NONFINITE),
+                    int(DAEAttemptStatus.NONFINITE_REJECTED),
+                    jnp.where(
+                        step_status == int(DAEStatus.RESIDUAL_TOO_LARGE),
+                        int(DAEAttemptStatus.RESIDUAL_REJECTED),
+                        int(DAEAttemptStatus.NONLINEAR_REJECTED),
+                    ),
+                ),
+            ),
+        ),
+    ).astype(jnp.int32)
+    attempt_history = DAEAttemptHistory(
+        times=times[:-1],
+        proposed_step_sizes=step_sizes,
+        orders=orders,
+        status=attempt_status,
+        error_ratios=jnp.where(step_valid, 0.0, jnp.inf),
+        nonlinear_status=nonlinear_status,
+        nonlinear_iterations=nonlinear_iterations,
+        residual_evaluations=residual_evaluations,
+        jacobian_preparations=jacobian_preparations,
+        linear_solves=linear_solves,
+        linear_iterations=linear_iterations,
+        globalization_rejections=globalization_rejections,
+        setup_refreshes=setup_refreshes,
+        numeric_refreshes=numeric_refreshes,
+        stale_jacobian_retries=jnp.zeros_like(indices),
+        linear_rejections=_linear_failure(nonlinear_status).astype(jnp.int32),
+        residual_certifications=nonlinear_status_valid.astype(jnp.int32),
+        valid=nonlinear_status_valid,
+        count=jnp.sum(nonlinear_status_valid, dtype=jnp.int32),
+    )
+    if policy.regularity.mode == "periodic":
+        (
+            consistency_status,
+            consistency_rank,
+            consistency_condition,
+        ) = _dense_initial_regularity(
+            prepared,
+            initialization,
+            times[0],
+            args,
+        )
+
+        def probe_regularity(index, state):
+            requested = step_valid[index] & ((index % policy.regularity.interval) == 0)
+            previous_index = jnp.maximum(index - 1, 0)
+            arguments = _stage_arguments(
+                time=times[index + 1],
+                previous=states[index],
+                previous_previous=states[previous_index],
+                step_size=step_sizes[index],
+                previous_step_size=step_sizes[previous_index],
+                order=orders[index],
+                model_args=args,
+            )
+
+            def probe(_):
+                rank, condition, finite = _dense_stage_regularity(
+                    prepared,
+                    state,
+                    arguments,
+                )
+                status = _regularity_status(
+                    rank,
+                    condition,
+                    finite,
+                    int(problem.initial_state.size),
+                    policy.regularity.condition_limit,
+                )
+                return status, rank, condition, jnp.asarray(True)
+
+            def skip(_):
+                return (
+                    jnp.asarray(
+                        int(DAERegularityStatus.NOT_RUN),
+                        dtype=jnp.int32,
+                    ),
+                    jnp.asarray(-1, dtype=jnp.int32),
+                    jnp.asarray(jnp.nan, dtype=state.real.dtype),
+                    jnp.asarray(False),
+                )
+
+            return lax.cond(requested, probe, skip, operand=None)
+
+        (
+            stage_regularity_status,
+            stage_regularity_rank,
+            stage_regularity_condition,
+            stage_regularity_valid,
+        ) = jax.vmap(probe_regularity)(indices, step_states)
+    else:
+        (
+            consistency_status,
+            consistency_rank,
+            consistency_condition,
+        ) = _initial_regularity(
+            initialization,
+            int(problem.initial_state.size),
+            policy.regularity.condition_limit,
+        )
+        stage_regularity_status = _regularity_status(
+            final_linear_rank,
+            final_linear_condition,
+            final_linear_converged,
+            int(problem.initial_state.size),
+            policy.regularity.condition_limit,
+        )
+        stage_regularity_rank = final_linear_rank
+        stage_regularity_condition = final_linear_condition
+        stage_regularity_valid = step_valid
+    regularity = DAERegularityEvidence(
+        consistency_status=consistency_status,
+        consistency_rank=consistency_rank,
+        consistency_condition_estimate=consistency_condition,
+        stage_status=stage_regularity_status,
+        stage_rank=stage_regularity_rank,
+        stage_condition_estimate=stage_regularity_condition,
+        stage_valid=stage_regularity_valid,
+        consistency_operator="configured-consistency-coordinate-jacobian",
+        stage_operator="bdf-stage:F_y+alpha*F_ydot",
+    )
+    valid_count = jnp.sum(valid, dtype=jnp.int32)
+    last_node = jnp.maximum(valid_count - 1, 0)
+    history_indices = jnp.maximum(
+        last_node - jnp.arange(3, dtype=jnp.int32),
+        0,
+    )
+    last_step_index = jnp.maximum(last_node - 1, 0)
+    previous_step_index = jnp.maximum(last_node - 2, 0)
+    last_step = jnp.where(
+        last_node > 0,
+        step_sizes[last_step_index],
+        initial_step,
+    )
+    previous_step = jnp.where(
+        last_node > 1,
+        step_sizes[previous_step_index],
+        last_step,
+    )
+    accepted_order = jnp.where(
+        last_node > 0,
+        orders[last_step_index],
+        jnp.asarray(1, dtype=jnp.int32),
+    )
+    ratio = last_step / previous_step
+    last_alpha = jnp.where(
+        accepted_order == 1,
+        1.0 / last_step,
+        ((1.0 + 2.0 * ratio) / (1.0 + ratio)) / last_step,
+    )
+    continuation = DAEContinuation(
+        time=times[last_node],
+        states=states[history_indices],
+        state_rates=state_rates[history_indices],
+        times=times[history_indices],
+        step_sizes=jnp.stack((last_step, previous_step)),
+        history_depth=jnp.minimum(valid_count, 3),
+        accepted_order=accepted_order,
+        previous_error_ratio=jnp.asarray(1.0, dtype=states.real.dtype),
+        proposed_step_size=last_step,
+        jacobian_age=jnp.asarray(0, dtype=jnp.int32),
+        last_alpha=last_alpha,
+        nonlinear_solve=None,
+        problem_id=problem.problem_id,
+        system_id=system.system_id,
+        integration_method=policy.integration_method,
+        initialization_id=problem.initialization.initialization_id,
+        nonlinear_method_id=policy.nonlinear_method.method_id,
+        stage_linear_plan_id=prepared.stage_linear_plan_id,
+    )
+    regularity_failed = jnp.any(
+        (stage_regularity_status == int(DAERegularityStatus.NUMERICALLY_SINGULAR))
+        & stage_regularity_valid
+    ) | (consistency_status == int(DAERegularityStatus.NUMERICALLY_SINGULAR))
+    termination_status = jnp.where(
+        jnp.all(valid),
+        int(DAETerminationStatus.SUCCESS),
+        jnp.where(
+            ~initialization.valid,
+            int(DAETerminationStatus.INITIALIZATION_FAILED),
+            int(DAETerminationStatus.NONLINEAR_FAILURE),
+        ),
+    ).astype(jnp.int32)
+    if policy.regularity.failure == "status":
+        termination_status = jnp.where(
+            regularity_failed,
+            int(DAETerminationStatus.REGULARITY_FAILED),
+            termination_status,
+        ).astype(jnp.int32)
     if policy.failure == "error":
-        states = eqx.error_if(states, jnp.any(~valid), "DAE solve failed.")
+        states = eqx.error_if(
+            states,
+            termination_status != int(DAETerminationStatus.SUCCESS),
+            "DAE solve failed.",
+        )
     return DifferentialAlgebraicSolution(
         times=times,
         states=states,
@@ -1017,23 +2054,18 @@ def _solve_prepared(
         residual_threshold=residual_threshold,
         differential_residual_norm=differential_norm,
         constraint_norm=constraint_norm,
-        step_sizes=step_sizes,
-        orders=(
-            jnp.ones_like(indices)
-            if policy.integration_method == "bdf1"
-            else jnp.where(indices == 0, 1, 2).astype(jnp.int32)
-        ),
-        nonlinear_status=nonlinear_status,
-        nonlinear_status_valid=nonlinear_status_valid,
-        nonlinear_iterations=nonlinear_iterations,
-        residual_evaluations=residual_evaluations,
-        jacobian_preparations=jacobian_preparations,
-        linear_solves=linear_solves,
-        linear_iterations=linear_iterations,
-        globalization_rejections=globalization_rejections,
-        setup_refreshes=setup_refreshes,
-        numeric_refreshes=numeric_refreshes,
+        step_history=step_history,
+        attempt_history=attempt_history,
         initialization=initialization,
+        continuation=continuation,
+        regularity=regularity,
+        replay=DAEReplayEvidence(
+            accepted_steps=accepted_count,
+            selected_chunk_size=prepared.plan.replay_chunk_size,
+            estimated_memory_bytes=prepared.plan.replay_memory_bytes,
+            checkpointing=policy.replay.checkpointing,
+        ),
+        termination_status=termination_status,
         problem_id=problem.problem_id,
         system_id=system.system_id,
         time_id=prepared.time_grid.time_id,
@@ -1043,6 +2075,7 @@ def _solve_prepared(
         stage_linear_plan_id=prepared.stage_linear_plan_id,
         initialization_linear_plan_id=prepared.initialization_linear_plan_id,
         integration_method=policy.integration_method,
+        adaptive=False,
     )
 
 
@@ -1055,8 +2088,9 @@ def solve_dae(
     args: Any = _DEFAULT_ARGS,
     initial_state: ArrayLike | None = None,
     initial_state_rate: ArrayLike | None = None,
+    continuation: DAEContinuation | None = None,
 ) -> DifferentialAlgebraicSolution:
-    """Solve one regular index-1 DAE on every node of a fixed ``TimeGrid``."""
+    """Solve one regular index-1 DAE on a fixed or adaptive time grid."""
     if isinstance(problem_or_prepared, PreparedDAESolve):
         if time_grid is not None or policy is not None:
             raise ValueError("time_grid and policy must be omitted for a prepared solve.")
@@ -1067,7 +2101,25 @@ def solve_dae(
         prepared = prepare_dae(problem_or_prepared, time_grid, policy=policy)
     else:
         raise TypeError("Expected a DifferentialAlgebraicProblem or PreparedDAESolve.")
+    if continuation is not None and (
+        initial_state is not None or initial_state_rate is not None
+    ):
+        raise ValueError(
+            "continuation cannot be combined with initial_state or initial_state_rate."
+        )
     runtime_args = prepared.problem.args if args is _DEFAULT_ARGS else args
+    if prepared.plan.policy.adaptive is not None:
+        from ._dae_adaptive import solve_adaptive_dae
+
+        return solve_adaptive_dae(
+            prepared,
+            runtime_args,
+            initial_state,
+            initial_state_rate,
+            continuation,
+        )
+    if continuation is not None:
+        raise ValueError("DAE continuation requires an adaptive solve policy.")
     return _solve_prepared(
         prepared,
         args=runtime_args,
@@ -1077,11 +2129,26 @@ def solve_dae(
 
 
 __all__ = [
+    "DAEAdaptivePolicy",
+    "DAEAttemptHistory",
+    "DAEAttemptStatus",
+    "DAEContinuation",
     "DAEFailureMode",
     "DAEIntegrationMethod",
+    "DAERegularityEvidence",
+    "DAERegularityFailureMode",
+    "DAERegularityMode",
+    "DAERegularityPolicy",
+    "DAERegularityStatus",
+    "DAEReplayEvidence",
+    "DAEReplayMode",
+    "DAEReplayPolicy",
     "DAESolvePlan",
     "DAESolvePolicy",
     "DAEStatus",
+    "DAEStepHistory",
+    "DAETemporalReusePolicy",
+    "DAETerminationStatus",
     "DifferentialAlgebraicProblem",
     "DifferentialAlgebraicSolution",
     "PreparedDAESolve",

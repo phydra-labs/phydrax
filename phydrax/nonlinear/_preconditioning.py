@@ -278,6 +278,13 @@ class AbstractNonlinearSystemTransformation(StrictModule):
             numeric_refreshes=result.diagnostics.numeric_refreshes,
             final_forcing=result.diagnostics.final_forcing,
             final_trust_radius=result.diagnostics.final_trust_radius,
+            final_linear_status=result.diagnostics.final_linear_status,
+            final_linear_rank=result.diagnostics.final_linear_rank,
+            final_linear_condition_estimate=(
+                result.diagnostics.final_linear_condition_estimate
+            ),
+            final_linear_residual_norm=result.diagnostics.final_linear_residual_norm,
+            final_linear_converged=result.diagnostics.final_linear_converged,
             counts_complete=result.diagnostics.counts_complete,
         )
         note = f"nonlinear-transformation={self.transformation_id}"

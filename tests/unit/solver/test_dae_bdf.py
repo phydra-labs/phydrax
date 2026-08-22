@@ -66,9 +66,12 @@ def test_bdf1_and_bdf2_follow_their_fixed_grid_discrete_maps():
         rtol=1e-9,
         atol=1e-11,
     )
-    assert jnp.array_equal(bdf1.orders, jnp.ones(grid.num_steps, dtype=jnp.int32))
     assert jnp.array_equal(
-        bdf2.orders,
+        bdf1.step_history.orders,
+        jnp.ones(grid.num_steps, dtype=jnp.int32),
+    )
+    assert jnp.array_equal(
+        bdf2.step_history.orders,
         jnp.asarray((1, 2, 2, 2, 2), dtype=jnp.int32),
     )
 
@@ -139,15 +142,16 @@ def test_prepared_solve_reports_native_nonlinear_lifecycle_and_provenance():
         solution.initialization_linear_plan_id == prepared.initialization_linear_plan_id
     )
     assert solution.nonlinear_method_id == prepared.plan.policy.nonlinear_method.method_id
-    assert jnp.all(solution.nonlinear_status_valid)
+    attempts = solution.attempt_history
+    assert jnp.all(attempts.valid)
     assert jnp.all(
-        solution.nonlinear_status == int(phx.nonlinear.NonlinearStatus.SUCCESS)
+        attempts.nonlinear_status == int(phx.nonlinear.NonlinearStatus.SUCCESS)
     )
-    assert jnp.all(solution.nonlinear_iterations >= 0)
-    assert jnp.all(solution.residual_evaluations > 0)
-    assert jnp.all(solution.jacobian_preparations > 0)
-    assert jnp.all(solution.linear_solves >= 0)
-    assert jnp.all(solution.numeric_refreshes >= 1)
+    assert jnp.all(attempts.nonlinear_iterations >= 0)
+    assert jnp.all(attempts.residual_evaluations > 0)
+    assert jnp.all(attempts.jacobian_preparations > 0)
+    assert jnp.all(attempts.linear_solves >= 0)
+    assert jnp.all(attempts.numeric_refreshes >= 1)
     assert jnp.all(solution.residual_norm <= solution.residual_threshold)
 
 
@@ -186,10 +190,12 @@ def test_failed_bdf_stage_is_reported_once_and_later_nodes_are_not_run():
         jnp.full((2,), int(phx.solver.DAEStatus.NOT_RUN), dtype=jnp.int32),
     )
     assert jnp.array_equal(
-        solution.nonlinear_status_valid,
+        solution.attempt_history.valid,
         jnp.asarray((True, False, False)),
     )
-    assert solution.nonlinear_status[0] != int(phx.nonlinear.NonlinearStatus.SUCCESS)
+    assert solution.attempt_history.nonlinear_status[0] != int(
+        phx.nonlinear.NonlinearStatus.SUCCESS
+    )
     assert jnp.all(jnp.isnan(solution.states[2:]))
 
 

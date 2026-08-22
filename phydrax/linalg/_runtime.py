@@ -14,7 +14,7 @@ import numpy as np
 from jaxtyping import Array, PyTree
 
 from ._binding import LinearSolveTemplate
-from ._gcrodr import refresh_recycling, solve_recycled
+from ._gcrodr import initialize_recycling, refresh_recycling, solve_recycled
 from ._operators import AbstractLinearOperator, adjoint, transpose
 from ._plans import LinearSolvePlan, plan as make_plan
 from ._policies import (
@@ -1719,6 +1719,7 @@ __all__ = [
     "prepare",
     "prepare_template",
     "refresh",
+    "initialize_recycling",
     "refresh_recycling",
     "solve",
     "solve_adjoint",

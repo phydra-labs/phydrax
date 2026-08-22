@@ -180,6 +180,46 @@ def test_recycled_solve_returns_immutable_state_and_refreshes_operator_images():
     )
 
 
+def test_recycled_solve_accepts_dynamic_tolerances_and_iteration_limits():
+    matrix, problem = _block_problem()
+    policy = la.LinearSolvePolicy(
+        la.GMRES(restart=4),
+        differentiation=la.DifferentiationPolicy("none"),
+        tolerance=la.TolerancePolicy(
+            relative=1e-12,
+            absolute=1e-14,
+            max_steps=20,
+        ),
+        recycling=la.RecyclingPolicy(capacity=2),
+    )
+    prepared = la.prepare(problem, policy)
+    right_hand_side = jnp.asarray((1.0, -2.0, 0.5, 3.0))
+
+    @jax.jit
+    def execute(relative_tolerance, maximum_steps):
+        return la.solve_recycled(
+            prepared,
+            right_hand_side,
+            control=la.LinearSolveControl(
+                relative_tolerance=relative_tolerance,
+                absolute_tolerance=jnp.asarray(1e-14),
+                maximum_steps=maximum_steps,
+            ),
+        )
+
+    limited = execute(jnp.asarray(1e-12), jnp.asarray(1, dtype=jnp.int32))
+    converged = execute(jnp.asarray(1e-12), jnp.asarray(20, dtype=jnp.int32))
+
+    assert limited.status == int(la.LinearSolveStatus.MAXIMUM_STEPS_REACHED)
+    assert converged.successful
+    assert jnp.allclose(
+        converged.value,
+        jnp.linalg.solve(matrix, right_hand_side),
+        rtol=1e-9,
+        atol=1e-10,
+    )
+
+
 def test_recycled_matvec_diagnostics_match_executed_operator_actions():
     matrix, _ = _block_problem()
     executed_actions = []

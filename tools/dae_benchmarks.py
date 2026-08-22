@@ -10,7 +10,7 @@ import math
 import platform
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -63,7 +63,9 @@ class _Case:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Benchmark native differentiable fixed-grid Phydrax DAE solves."
+        description=(
+            "Benchmark native fixed-grid and adaptive differentiable Phydrax DAE solves."
+        )
     )
     parser.add_argument("--steps", type=int, default=64)
     parser.add_argument("--spatial-points", type=int, default=16)
@@ -145,6 +147,104 @@ def _prepare(
     return prepared, _elapsed_ms(started)
 
 
+def _with_recycling(
+    method: phx.nonlinear.NewtonKrylov | phx.nonlinear.NewtonTrustRegion,
+    capacity: int,
+    /,
+) -> phx.nonlinear.NewtonKrylov:
+    if not isinstance(method, phx.nonlinear.NewtonKrylov):
+        raise TypeError("Adaptive benchmark recycling requires NewtonKrylov.")
+    linear = method.linear_policy
+    linear_policy = phx.linalg.LinearSolvePolicy(
+        linear.method,
+        tolerance=linear.tolerance,
+        rank=linear.rank,
+        materialization=linear.materialization,
+        preconditioning=linear.preconditioning,
+        recycling=phx.linalg.RecyclingPolicy(capacity=capacity),
+        differentiation=linear.differentiation,
+        failure=linear.failure,
+        resources=linear.resources,
+        precision=linear.precision,
+        require_device_binding=linear.require_device_binding,
+    )
+    return phx.nonlinear.NewtonKrylov(
+        jacobian_policy=method.jacobian_policy,
+        linear_policy=linear_policy,
+        forcing_policy=method.forcing_policy,
+        jacobian_refresh=method.jacobian_refresh,
+        line_search=method.line_search,
+    )
+
+
+def _adaptive_case(
+    case: _Case,
+    replay: phx.solver.DAEReplayPolicy,
+    /,
+    *,
+    recycling_capacity: int | None = None,
+) -> _Case:
+    base = case.prepared.plan.policy
+    stage_method = (
+        base.nonlinear_method
+        if recycling_capacity is None
+        else _with_recycling(base.nonlinear_method, recycling_capacity)
+    )
+    num_steps = case.prepared.time_grid.num_steps
+    maximum_accepted_steps = max(128, 4 * num_steps)
+    times = np.asarray(case.prepared.time_grid.times)
+    adaptive = phx.solver.DAEAdaptivePolicy(
+        relative_tolerance=1e-4,
+        absolute_tolerance=1e-7,
+        initial_step=float(np.min(np.diff(times))),
+        residual_tolerance=1e-8,
+        constraint_tolerance=1e-8,
+        maximum_accepted_steps=maximum_accepted_steps,
+        maximum_attempts=2 * maximum_accepted_steps,
+    )
+    policy = phx.solver.DAESolvePolicy(
+        integration_method=base.integration_method,
+        nonlinear_method=stage_method,
+        nonlinear_termination=base.nonlinear_termination,
+        initialization_method=base.initialization_method,
+        initialization_termination=base.initialization_termination,
+        adaptive=adaptive,
+        temporal_reuse=phx.solver.DAETemporalReusePolicy(),
+        replay=replay,
+        regularity=phx.solver.DAERegularityPolicy(
+            "periodic",
+            interval=8,
+            failure="status",
+        ),
+        max_step_ratio=base.max_step_ratio,
+        failure=base.failure,
+    )
+    prepared, preparation_ms = _prepare(
+        case.prepared.problem,
+        case.prepared.time_grid,
+        policy,
+    )
+    metadata = {
+        **case.metadata,
+        "integration": "adaptive-bdf2",
+        "variant_of": case.name,
+        "relative_tolerance": 1e-4,
+        "absolute_tolerance": 1e-7,
+        "maximum_accepted_steps": maximum_accepted_steps,
+        "replay_checkpointing": replay.checkpointing,
+        "replay_chunk_size": replay.chunk_size,
+        "recycling_capacity": recycling_capacity,
+        "regularity_probe_interval": 8,
+    }
+    return replace(
+        case,
+        name=f"{case.name}-adaptive",
+        prepared=prepared,
+        solver_preparation_ms=preparation_ms,
+        metadata=metadata,
+    )
+
+
 def _lower_compile(
     function: Any,
     argument: jax.Array,
@@ -166,12 +266,16 @@ def _execute(function: Any, argument: jax.Array, /) -> tuple[Any, float]:
     return result, _elapsed_ms(started)
 
 
-def _status_histogram(status: jax.Array, /) -> dict[str, int]:
+def _enum_histogram(status: Any, enum_type: Any, /) -> dict[str, int]:
     values, counts = np.unique(np.asarray(status), return_counts=True)
     return {
-        phx.solver.DAEStatus(int(value)).name.lower(): int(count)
+        enum_type(int(value)).name.lower(): int(count)
         for value, count in zip(values, counts, strict=True)
     }
+
+
+def _status_histogram(status: jax.Array, /) -> dict[str, int]:
+    return _enum_histogram(status, phx.solver.DAEStatus)
 
 
 def _independent_residual_norm(
@@ -301,6 +405,75 @@ def _benchmark_case(case: _Case, repeats: int, /) -> dict[str, Any]:
     residual_within_tolerance = bool(independent_residual <= residual_threshold)
     trajectory_within_tolerance = bool(trajectory_error <= case.trajectory_tolerance)
     constraint_within_tolerance = bool(constraint_residual <= case.constraint_tolerance)
+    adaptive_expected = case.prepared.plan.policy.adaptive is not None
+    adaptive_observed = solution.grid_origin == "controller"
+    accepted_count = int(solution.step_history.count)
+    attempt_count = int(solution.attempt_history.count)
+    accepted_valid = np.asarray(solution.step_history.valid, dtype=bool)
+    attempt_valid = np.asarray(solution.attempt_history.valid, dtype=bool)
+    accepted_errors = np.asarray(solution.step_history.error_ratios)[accepted_valid]
+    accepted_orders = np.asarray(solution.step_history.orders)[accepted_valid]
+    attempt_status = np.asarray(solution.attempt_history.status)[attempt_valid]
+    accepted_error_maximum = (
+        None if accepted_errors.size == 0 else float(np.max(accepted_errors))
+    )
+    order_values, order_counts = np.unique(accepted_orders, return_counts=True)
+    order_histogram = {
+        str(int(order)): int(count)
+        for order, count in zip(order_values, order_counts, strict=True)
+    }
+    history_consistent = (
+        accepted_count == int(np.sum(accepted_valid))
+        and attempt_count == int(np.sum(attempt_valid))
+        and attempt_count >= accepted_count
+        and int(solution.replay.accepted_steps) == accepted_count
+    )
+    controller_passed = (
+        adaptive_observed == adaptive_expected
+        and history_consistent
+        and (
+            not adaptive_expected
+            or (
+                accepted_count > 0
+                and accepted_error_maximum is not None
+                and accepted_error_maximum <= 1.0 + 1e-12
+            )
+        )
+    )
+    replay = solution.replay
+    replay_passed = (
+        replay.checkpointing == case.prepared.plan.policy.replay.checkpointing
+        and replay.selected_chunk_size == case.prepared.plan.replay_chunk_size
+        and replay.estimated_memory_bytes == case.prepared.plan.replay_memory_bytes
+    )
+    consistency_status = int(solution.regularity.consistency_status)
+    regularity_valid = np.asarray(solution.regularity.stage_valid, dtype=bool)
+    regularity_status = np.asarray(solution.regularity.stage_status)[regularity_valid]
+    regularity_ranks = np.asarray(solution.regularity.stage_rank)[regularity_valid]
+    regularity_conditions = np.asarray(solution.regularity.stage_condition_estimate)[
+        regularity_valid
+    ]
+    regular_statuses = {
+        int(phx.solver.DAERegularityStatus.VERIFIED),
+        int(phx.solver.DAERegularityStatus.ESTIMATED),
+    }
+    explicit_regularity = case.prepared.plan.policy.regularity.mode == "periodic"
+    regularity_passed = bool(
+        consistency_status in regular_statuses
+        and regularity_status.size > 0
+        and all(int(status) in regular_statuses for status in regularity_status)
+        and (
+            not explicit_regularity
+            or (
+                np.isfinite(
+                    np.asarray(solution.regularity.consistency_condition_estimate)
+                )
+                and np.all(np.isfinite(regularity_conditions))
+                and int(solution.regularity.consistency_rank) >= 0
+                and np.all(regularity_ranks >= 0)
+            )
+        )
+    )
     passed = (
         bool(solution.successful)
         and finite_outputs
@@ -308,6 +481,9 @@ def _benchmark_case(case: _Case, repeats: int, /) -> dict[str, Any]:
         and residual_within_tolerance
         and trajectory_within_tolerance
         and constraint_within_tolerance
+        and controller_passed
+        and replay_passed
+        and regularity_passed
     )
 
     initialization_iterations = int(solution.initialization.nonlinear_iterations)
@@ -361,6 +537,52 @@ def _benchmark_case(case: _Case, repeats: int, /) -> dict[str, Any]:
                 "relative_tolerance": case.gradient_relative_tolerance,
                 "passed": gradient_within_tolerance,
             },
+            "controller": {
+                "adaptive_expected": adaptive_expected,
+                "adaptive_observed": adaptive_observed,
+                "accepted_steps": accepted_count,
+                "attempted_steps": attempt_count,
+                "rejected_attempts": attempt_count - accepted_count,
+                "maximum_accepted_error_ratio": accepted_error_maximum,
+                "accepted_order_histogram": order_histogram,
+                "attempt_status_histogram": _enum_histogram(
+                    attempt_status,
+                    phx.solver.DAEAttemptStatus,
+                ),
+                "passed": controller_passed,
+            },
+            "replay": {
+                "checkpointing": replay.checkpointing,
+                "selected_chunk_size": replay.selected_chunk_size,
+                "estimated_memory_bytes": replay.estimated_memory_bytes,
+                "accepted_steps": int(replay.accepted_steps),
+                "passed": replay_passed,
+            },
+            "regularity": {
+                "consistency_status": phx.solver.DAERegularityStatus(
+                    consistency_status
+                ).name.lower(),
+                "consistency_rank": int(solution.regularity.consistency_rank),
+                "consistency_condition_estimate": _finite_float(
+                    solution.regularity.consistency_condition_estimate
+                ),
+                "stage_probe_count": int(regularity_status.size),
+                "stage_status_histogram": _enum_histogram(
+                    regularity_status,
+                    phx.solver.DAERegularityStatus,
+                ),
+                "minimum_stage_rank": (
+                    None if regularity_ranks.size == 0 else int(np.min(regularity_ranks))
+                ),
+                "maximum_stage_condition_estimate": (
+                    None
+                    if regularity_conditions.size == 0
+                    else _finite_float(np.max(regularity_conditions))
+                ),
+                "consistency_operator": solution.regularity.consistency_operator,
+                "stage_operator": solution.regularity.stage_operator,
+                "passed": bool(regularity_passed),
+            },
         },
         "solver_evidence": {
             "integration_method": solution.integration_method,
@@ -368,6 +590,11 @@ def _benchmark_case(case: _Case, repeats: int, /) -> dict[str, Any]:
             "differentiation_mode": solution.differentiation_mode,
             "grid_origin": solution.grid_origin,
             "approximation_id": solution.approximation_id,
+            "termination_status": phx.solver.DAETerminationStatus(
+                int(solution.termination_status)
+            ).name.lower(),
+            "accepted_steps": accepted_count,
+            "attempted_steps": attempt_count,
             "stage_linear_plan_id": solution.stage_linear_plan_id,
             "initialization_linear_plan_id": solution.initialization_linear_plan_id,
             "stage_linear_template_reused": (
@@ -376,20 +603,39 @@ def _benchmark_case(case: _Case, repeats: int, /) -> dict[str, Any]:
             "initialization_nonlinear_iterations": initialization_iterations,
             "initialization_linear_iterations": initialization_linear_iterations,
             "maximum_stage_nonlinear_iterations": int(
-                jnp.max(solution.nonlinear_iterations)
+                jnp.max(solution.attempt_history.nonlinear_iterations)
             ),
             "total_stage_nonlinear_iterations": int(
-                jnp.sum(solution.nonlinear_iterations)
+                jnp.sum(solution.attempt_history.nonlinear_iterations)
             ),
-            "total_residual_evaluations": int(jnp.sum(solution.residual_evaluations)),
-            "total_jacobian_preparations": int(jnp.sum(solution.jacobian_preparations)),
-            "total_linear_solves": int(jnp.sum(solution.linear_solves)),
-            "total_linear_iterations": int(jnp.sum(solution.linear_iterations)),
+            "total_residual_evaluations": int(
+                jnp.sum(solution.attempt_history.residual_evaluations)
+            ),
+            "total_jacobian_preparations": int(
+                jnp.sum(solution.attempt_history.jacobian_preparations)
+            ),
+            "total_linear_solves": int(jnp.sum(solution.attempt_history.linear_solves)),
+            "total_linear_iterations": int(
+                jnp.sum(solution.attempt_history.linear_iterations)
+            ),
             "total_globalization_rejections": int(
-                jnp.sum(solution.globalization_rejections)
+                jnp.sum(solution.attempt_history.globalization_rejections)
             ),
-            "total_setup_refreshes": int(jnp.sum(solution.setup_refreshes)),
-            "total_numeric_refreshes": int(jnp.sum(solution.numeric_refreshes)),
+            "total_setup_refreshes": int(
+                jnp.sum(solution.attempt_history.setup_refreshes)
+            ),
+            "total_numeric_refreshes": int(
+                jnp.sum(solution.attempt_history.numeric_refreshes)
+            ),
+            "total_stale_jacobian_retries": int(
+                jnp.sum(solution.attempt_history.stale_jacobian_retries)
+            ),
+            "total_linear_rejections": int(
+                jnp.sum(solution.attempt_history.linear_rejections)
+            ),
+            "total_residual_certifications": int(
+                jnp.sum(solution.attempt_history.residual_certifications)
+            ),
         },
         "timing": {
             "unit": "milliseconds",
@@ -421,6 +667,11 @@ def _benchmark_case(case: _Case, repeats: int, /) -> dict[str, Any]:
             "solution_array_bytes": _logical_array_bytes(solution),
             "state_trajectory_bytes": int(solution.states.nbytes),
             "state_rate_trajectory_bytes": int(solution.state_rates.nbytes),
+            "accepted_history_bytes": _logical_array_bytes(solution.step_history),
+            "attempt_history_bytes": _logical_array_bytes(solution.attempt_history),
+            "regularity_evidence_bytes": _logical_array_bytes(solution.regularity),
+            "replay_estimated_memory_bytes": replay.estimated_memory_bytes,
+            "replay_selected_chunk_size": replay.selected_chunk_size,
         },
         "passed": passed,
     }
@@ -845,16 +1096,32 @@ def main() -> None:
     if steps < 4 or spatial_points < 4 or repeats < 1:
         raise ValueError("steps, spatial-points, and repeats are below benchmark minima.")
 
-    cases = (
+    fixed_cases = (
         _scalar_linear(steps),
         _vector_linear(steps),
         _robertson(steps),
         _circuit(steps),
         _reaction_diffusion(steps, spatial_points),
     )
+    adaptive_cases = (
+        _adaptive_case(
+            fixed_cases[0],
+            phx.solver.DAEReplayPolicy("full"),
+        ),
+        _adaptive_case(
+            fixed_cases[3],
+            phx.solver.DAEReplayPolicy("chunked", chunk_size=8),
+        ),
+        _adaptive_case(
+            fixed_cases[4],
+            phx.solver.DAEReplayPolicy("chunked", chunk_size=8),
+            recycling_capacity=4,
+        ),
+    )
+    cases = fixed_cases + adaptive_cases
     records = tuple(_benchmark_case(case, repeats) for case in cases)
     report = {
-        "schema_version": "phydrax-dae-benchmark-v2",
+        "schema_version": "phydrax-dae-benchmark-v3",
         "protocol": {
             "timing": (
                 "model setup, solver preparation, lowering, compilation, first "
@@ -862,10 +1129,18 @@ def main() -> None:
             ),
             "synchronization": "every measured JAX execution blocks all array leaves",
             "gradient": (
-                "discrete implicit value-and-grad compared with an independent "
-                "closed-form or symmetric finite-difference reference"
+                "fixed-grid discrete implicit or frozen-accepted-grid replay "
+                "value-and-grad compared with an independent closed-form or "
+                "symmetric finite-difference reference"
             ),
-            "memory": "logical result payload only; no cumulative allocator counters",
+            "regularity": (
+                "local consistency and BDF-stage operator evidence only; no global "
+                "DAE-index claim"
+            ),
+            "memory": (
+                "logical result payloads and replay-plan estimates only; no "
+                "cumulative allocator counters"
+            ),
         },
         "configuration": {
             "requested": {
