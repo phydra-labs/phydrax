@@ -67,18 +67,6 @@ from ._function import (
     UnaryFieldEvaluator,
 )
 from ._geometry import GeometryDomain
-from ._grid import (
-    AbstractAxisSpec,
-    AxisDiscretization,
-    broadcasted_grid,
-    CosineAxisSpec,
-    FourierAxisSpec,
-    GridSpec,
-    LegendreAxisSpec,
-    NestedDyadicAxisSpec,
-    SineAxisSpec,
-    UniformAxisSpec,
-)
 from ._hyperrectangle import HyperRectangle
 from ._irregular_trajectory_dataset import (
     irregular_trajectory_default_quadrature_total_weight,
@@ -235,17 +223,6 @@ __all__ = [
     "GridSampling",
     "PointBatch",
     "GridBatch",
-    # grid/basis specs
-    "AbstractAxisSpec",
-    "AxisDiscretization",
-    "GridSpec",
-    "broadcasted_grid",
-    "NestedDyadicAxisSpec",
-    "UniformAxisSpec",
-    "FourierAxisSpec",
-    "SineAxisSpec",
-    "CosineAxisSpec",
-    "LegendreAxisSpec",
     # components
     "Selection",
     "Interior",

@@ -2,18 +2,18 @@ import coordax as cx
 import jax.numpy as jnp
 
 import phydrax as phx
-import phydrax._spectral as spectral
+import phydrax.discretization as spectral
 
 
 def _tensor_grid():
-    x_axis = phx.domain.FourierAxisSpec(8).materialize(0.0, 1.0)
-    y_axis = phx.domain.CosineAxisSpec(7).materialize(-1.0, 1.0)
-    return phx.solver.TensorGridDiscretization((x_axis, y_axis))
+    x_axis = phx.discretization.FourierAxisSpec(8).materialize(0.0, 1.0)
+    y_axis = phx.discretization.CosineAxisSpec(7).materialize(-1.0, 1.0)
+    return phx.discretization.SeparableSpectralDiscretization((x_axis, y_axis))
 
 
 def test_spatial_measure_preserves_separable_tensor_weights_and_output_axes():
     discretization = _tensor_grid()
-    target = phx.solver.spatial_measure(
+    target = phx.integration.spatial_measure(
         discretization,
         spatial_dims=("x", "y"),
     )
@@ -42,7 +42,7 @@ def test_spatial_measure_preserves_separable_tensor_weights_and_output_axes():
 
 def test_spatial_measure_exposes_physical_coordinates_to_callables():
     discretization = _tensor_grid()
-    target = phx.solver.spatial_measure(
+    target = phx.integration.spatial_measure(
         discretization,
         spatial_dims=("x", "y"),
     )
@@ -65,7 +65,7 @@ def test_spatial_measure_exposes_physical_coordinates_to_callables():
 def test_normalized_spatial_measure_and_mask_use_physical_quadrature_mass():
     discretization = _tensor_grid()
     mask = jnp.ones(discretization.state_shape, dtype=bool).at[0].set(False)
-    target = phx.solver.spatial_measure(
+    target = phx.integration.spatial_measure(
         discretization,
         spatial_dims=("x", "y"),
         mask=mask,
@@ -86,14 +86,14 @@ def test_normalized_spatial_measure_and_mask_use_physical_quadrature_mass():
 
 
 def test_spectral_spatial_measure_reduces_precomputed_fields_without_coordinates():
-    plan = spectral.SpectralDiscretization.from_eigenpairs(
+    plan = spectral.SpectralDecomposition.from_eigenpairs(
         jnp.asarray([0.0, 1.0, 4.0]),
         jnp.eye(3),
         jnp.asarray([0.2, 0.3, 0.5]),
-        basis_id="integration-plan",
+        decomposition_id="integration-plan",
     )
-    discretization = phx.solver.SpectralSpatialDiscretization(plan)
-    target = phx.solver.spatial_measure(discretization)
+    discretization = phx.discretization.SpectralDiscretization(plan)
+    target = phx.integration.spatial_measure(discretization)
     values = cx.Field(jnp.asarray([1.0, 2.0, 4.0]), dims=("space",))
 
     estimate = phx.integration.integrate(values, target)

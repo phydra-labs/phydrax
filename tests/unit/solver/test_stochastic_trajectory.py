@@ -40,7 +40,7 @@ def test_stochastic_transition_view_preserves_paths_masks_and_split_provenance()
     sampled = transitions.sample_flat_indices(jr.key(0), 64)
     assert jnp.all(transitions.valid.reshape((-1,))[sampled])
 
-    discretized_axis = phx.domain.UniformAxisSpec(3).materialize(0.0, 1.0)
+    discretized_axis = phx.discretization.UniformAxisSpec(3).materialize(0.0, 1.0)
     axis = phx.nn.operator.OperatorAxis.from_discretization("x", discretized_axis)
     dataset = transitions.operator_dataset(
         source_axes=(axis,),

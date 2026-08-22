@@ -47,18 +47,18 @@ variance = prediction.epistemic_variance()
 
 `DifferentialProblem` and `solve_diffrax_ensemble` generate finite-dimensional
 Itô or Stratonovich path ensembles. For spatial stochastic dynamics, first
-choose an `AbstractSpatialDiscretization`, then a finite-rank
-`SpatialNoiseBasis`, and compose a `SemidiscreteSPDE`. The resulting leading
-path axis is intrinsic `process` variation:
+choose an `AbstractStrongFormDiscretization`, then a finite-rank
+`phydrax.stochastic.SpatialNoiseBasis`, and compose a `SemidiscreteSPDE`. The
+resulting leading path axis is intrinsic `process` variation:
 
 ```python
 import jax.numpy as jnp
 import jax.random as jr
 import phydrax as phx
 
-axis = phx.domain.FourierAxisSpec(32).materialize(0.0, 1.0)
-space = phx.solver.TensorGridDiscretization((axis,))
-noise = phx.solver.SpatialNoiseBasis.from_spectrum(
+axis = phx.discretization.FourierAxisSpec(32).materialize(0.0, 1.0)
+space = phx.discretization.SeparableSpectralDiscretization((axis,))
+noise = phx.stochastic.SpatialNoiseBasis.from_spectrum(
     space,
     lambda eigenvalue: 0.01 * jnp.exp(-0.1 * eigenvalue),
     rank=6,
@@ -180,7 +180,7 @@ conditions.
 synthesis and semantic use:
 
 ```python
-basis = phx.solver.SpatialNoiseBasis.from_spectrum(
+basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
     space,
     lambda eigenvalue: 0.2 / (1.0 + eigenvalue),
     rank=8,

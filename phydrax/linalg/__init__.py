@@ -76,12 +76,22 @@ from ._incomplete_factorizations import (
     SparseFactorizationPreconditioner,
     SparseFactorizationPreconditionerBuilder,
 )
+from ._linear_transform import (
+    AbstractLinearTransform,
+    DenseLinearTransform,
+    FFTLinearTransform,
+    RealTrigonometricTransform,
+    SimilarityScaledLinearTransform,
+    TensorLinearTransform,
+    TrigonometricTransformKind,
+)
 from ._linearizations import (
     LinearizationPolicy,
     prepare_linearization,
     PreparedLinearization,
     RematerializationPolicy,
 )
+from ._low_rank_boundary import LowRankBoundaryCorrectionPlan
 from ._low_rank_updates import (
     BaseNonsingularity,
     LowRankCostEstimate,
@@ -128,7 +138,7 @@ from ._matrix_functions import (
     MatrixFunctionMethod,
     MatrixFunctionPolicy,
     MatrixFunctionResult,
-    SpectralMatrixRepresentation,
+    TransformDiagonalRepresentation,
 )
 from ._multigrid import (
     multigrid_hierarchy_from_pyamg,
@@ -439,6 +449,13 @@ from ._transform_operators import (
     SpectralProperty,
     TransformDiagonalLinearOperator,
 )
+from ._transform_solve import (
+    CompatibilityPolicy,
+    GaugePolicy,
+    PreparedTransformDiagonalSolve,
+    TransformDiagonalSolvePlan,
+    TransformDiagonalSolveResult,
+)
 from .krylov import (
     KrylovProjectionCostEstimate,
     KrylovProjectionMethod,
@@ -549,8 +566,16 @@ __all__ = [
     "OperatorActionCostEstimate",
     "LinearProblemKind",
     "LinearPrecisionEvidence",
+    "AbstractLinearTransform",
+    "DenseLinearTransform",
+    "FFTLinearTransform",
+    "RealTrigonometricTransform",
+    "SimilarityScaledLinearTransform",
+    "TensorLinearTransform",
+    "TrigonometricTransformKind",
     "LinearSolveDiagnostics",
     "LinearSolvePlan",
+    "LowRankBoundaryCorrectionPlan",
     "LinearSolveTemplate",
     "LinearSolveControl",
     "LinearSolvePolicy",
@@ -692,7 +717,12 @@ __all__ = [
     "SpectralBoundsEstimate",
     "SpectralInterval",
     "SpectralEstimate",
-    "SpectralMatrixRepresentation",
+    "TransformDiagonalRepresentation",
+    "TransformDiagonalSolvePlan",
+    "TransformDiagonalSolveResult",
+    "PreparedTransformDiagonalSolve",
+    "CompatibilityPolicy",
+    "GaugePolicy",
     "StochasticProbeDiagnostics",
     "StochasticProbeStatus",
     "StackedLinearOperator",

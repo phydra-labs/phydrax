@@ -107,7 +107,12 @@ def test_coord_separable_domain_view_preserves_axes_and_restores_output():
     domain = data @ geometry
     sampled = domain.component().sample(
         phx.domain.GridSampling(
-            {"x": (phx.domain.FourierAxisSpec(nx), phx.domain.FourierAxisSpec(nx))},
+            {
+                "x": (
+                    phx.discretization.FourierAxisSpec(nx),
+                    phx.discretization.FourierAxisSpec(nx),
+                )
+            },
             dense=phx.domain.PointSampling(
                 2, layout=phx.domain.SampleLayout((("data",),))
             ),

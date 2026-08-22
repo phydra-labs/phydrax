@@ -3,6 +3,9 @@
 Top-level package namespace. Most functionality lives in subpackages:
 
 - `phydrax.domain`: domains, geometry, sampling, and domain functions
+- `phydrax.discretization`: finite topology, support, field spaces, measures,
+  prepared tensor/spectral/cochain/FEM/FV methods, transfers, temporal meshes,
+  and approximation bundles/hierarchies
 - `phydrax.metrix`: coordinate charts, tensors, Riemannian metrics, curvature,
   embedded geometry, and metric-aware stochastic calculus
 - `phydrax.data_utils`: CSV loading and array scaling helpers

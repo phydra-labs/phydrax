@@ -60,6 +60,21 @@ from ._collocation import (
     StochasticCollocationPlan,
     StochasticCollocationResult,
 )
+from ._compatible_systems import (
+    CompatibleElasticityDynamics,
+    CompatibleElasticityState,
+    CompatibleIdealMHDInductionDynamics,
+    CompatibleIdealMHDState,
+    CompatibleIncompressibleProjection,
+    CompatibleMaxwellDynamics,
+    CompatibleMaxwellState,
+    CompatiblePoroelasticDynamics,
+    CompatiblePoroelasticState,
+    CompatibleThermoelasticDynamics,
+    CompatibleThermoelasticState,
+    CompatibleVariableDensityProjection,
+    IncompressibleProjectionResult,
+)
 from ._convergence import (
     coupled_strong_error,
     NoiseTruncationLevel,
@@ -167,6 +182,7 @@ from ._differential_algebraic import (
     DAETerminationStatus,
     DifferentialAlgebraicProblem,
     DifferentialAlgebraicSolution,
+    discretized_dae_problem,
     initialize_dae,
     plan_dae,
     prepare_dae,
@@ -217,7 +233,6 @@ from ._geometric import (
     SRKMK,
     StormerVerlet,
 )
-from ._integration import spatial_measure
 from ._jump import (
     finite_state_generator,
     FiniteStateGenerator,
@@ -263,7 +278,7 @@ from ._neural_cde import (
     NeuralCDEVectorField,
     train_neural_cde,
 )
-from ._noise import SpatialNoiseApproximation, SpatialNoiseBasis
+from ._operator_splitting import LocalImplicitSourcePlan, StrangSplitPlan
 from ._particles import (
     InteractingParticleProblem,
     InteractingParticleSolution,
@@ -330,38 +345,30 @@ from ._semilinear import (
     solve_semilinear_spde,
 )
 from ._semilinear_drift import SemilinearDrift
-from ._spatial import (
-    AbstractSpatialDiscretization,
-    SpectralSpatialDiscretization,
-    TensorGridDiscretization,
-)
 from ._spde import (
     SemidiscreteSPDE,
     semidiscretize_reaction_diffusion,
     semidiscretize_semilinear_spde,
     semidiscretize_spde,
 )
-from ._state_transfer import (
-    AbstractStateTransfer,
-    IdentityStateTransfer,
-    SpectralCoefficientStateTransfer,
-    TensorGridBoundary,
-    TensorGridRestriction,
-    TensorGridStateTransfer,
+from ._stencil_evolution import (
+    PreparedSplitFieldPML,
+    PreparedStaggeredAcoustics,
+    SplitFieldPMLPlan,
+    StaggeredAcousticPlan,
+    StaggeredAcousticState,
 )
 
 
 __all__ = [
     "AbstractDifferentiableDrivingPath",
     "AbstractGeometricSolver",
-    "AbstractSpatialDiscretization",
     "AbstractBSDERegressionBasis",
     "assemble_stochastic_collocation",
     "COLLOCATION_NONFINITE",
     "COLLOCATION_SOLVER_FAILURE",
     "COLLOCATION_SUCCESS",
     "CollocationAxisRule",
-    "AbstractStateTransfer",
     "CoupledCost",
     "CoupledHierarchyResult",
     "CoupledLevelResult",
@@ -389,6 +396,18 @@ __all__ = [
     "CausalBackwardHermiteDrivingPath",
     "ControlledDifferentialSolution",
     "ConstantDelay",
+    "CompatibleElasticityDynamics",
+    "CompatibleElasticityState",
+    "CompatibleIdealMHDInductionDynamics",
+    "CompatibleIdealMHDState",
+    "CompatibleIncompressibleProjection",
+    "CompatibleMaxwellDynamics",
+    "CompatibleMaxwellState",
+    "CompatiblePoroelasticDynamics",
+    "CompatiblePoroelasticState",
+    "CompatibleThermoelasticDynamics",
+    "CompatibleThermoelasticState",
+    "CompatibleVariableDensityProjection",
     "CheckpointedDelayAdjoint",
     "SegmentedDelayAdjoint",
     "DelayDifferentialProblem",
@@ -444,6 +463,7 @@ __all__ = [
     "DAEInitializationStatus",
     "DifferentialAlgebraicProblem",
     "DifferentialAlgebraicSolution",
+    "discretized_dae_problem",
     "initialize_dae",
     "plan_dae",
     "prepare_dae",
@@ -475,6 +495,7 @@ __all__ = [
     "LevySDEProblem",
     "LevySDEScheme",
     "LevySDESolution",
+    "IncompressibleProjectionResult",
     "LevySDESolverDiagnostics",
     "LevySDEVectorField",
     "LevySmallJumpApproximation",
@@ -487,6 +508,7 @@ __all__ = [
     "ProbabilisticODECovarianceOutput",
     "ProbabilisticODEFactorization",
     "ProbabilisticODEMethod",
+    "LocalImplicitSourcePlan",
     "ProbabilisticODESolution",
     "ProbabilisticODEStatus",
     "ProbabilisticODEUpdate",
@@ -533,14 +555,12 @@ __all__ = [
     "SemilinearFallback",
     "SemilinearSPDEScheme",
     "SPDEConvergenceLevel",
+    "PreparedSplitFieldPML",
+    "PreparedStaggeredAcoustics",
     "SPDEConvergenceMetric",
     "SPDEConvergenceStudy",
     "SPDEErrorBudget",
     "SPDERefinementAxis",
-    "SpatialNoiseApproximation",
-    "SpatialNoiseBasis",
-    "SpectralSpatialDiscretization",
-    "SpectralCoefficientStateTransfer",
     "PolynomialBSDERegressionBasis",
     "predict_bsde_least_squares_control",
     "predict_bsde_least_squares_value",
@@ -557,11 +577,6 @@ __all__ = [
     "StochasticCollocationPlan",
     "StochasticCollocationResult",
     "StochasticVolterraProblem",
-    "TensorGridDiscretization",
-    "TensorGridBoundary",
-    "TensorGridRestriction",
-    "TensorGridStateTransfer",
-    "spatial_measure",
     "WeakObservableEstimate",
     "WienerTerm",
     "VolterraFreeTerm",
@@ -580,6 +595,10 @@ __all__ = [
     "solve_diffrax_delay",
     "solve_diffrax_delay_segmented",
     "solve_diffrax_ensemble",
+    "SplitFieldPMLPlan",
+    "StaggeredAcousticPlan",
+    "StaggeredAcousticState",
+    "StrangSplitPlan",
     "solve_direct_ssa",
     "solve_jump_differential",
     "solve_next_reaction",

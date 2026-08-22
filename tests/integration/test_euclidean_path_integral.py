@@ -37,7 +37,7 @@ def test_free_kernel_normalization_and_semigroup_composition():
         None,
         x0,
         x2,
-        slicing=phx.operators.PathDiscretization(0.0, 1.0, num_steps=8),
+        slicing=phx.discretization.TemporalMesh.uniform(0.0, 1.0, 8, role="path"),
         num_paths=32,
         key=jr.key(0),
     )
@@ -65,7 +65,7 @@ def test_harmonic_bridge_estimate_matches_analytic_kernel():
     omega = 0.8
     x0 = jnp.array([0.0])
     x1 = jnp.array([0.3])
-    slicing = phx.operators.PathDiscretization(0.0, duration, num_steps=48)
+    slicing = phx.discretization.TemporalMesh.uniform(0.0, duration, 48, role="path")
 
     estimate = phx.operators.euclidean_kernel(
         lambda q, t: 0.5 * omega**2 * q[0] ** 2,
@@ -88,7 +88,7 @@ def test_harmonic_bridge_estimate_matches_analytic_kernel():
         lambda q, t: 0.5 * omega**2 * q[0] ** 2,
         x0,
         x1,
-        slicing=phx.operators.PathDiscretization(0.0, duration, num_steps=2),
+        slicing=phx.discretization.TemporalMesh.uniform(0.0, duration, 2, role="path"),
         num_paths=4096,
         chunk_size=512,
         key=jr.key(1),
@@ -111,7 +111,7 @@ def test_domain_potential_and_kernel_function_compose_with_sampled_fields():
     q0 = phx.domain.HyperRectangle([-0.5], [0.5], label="q0")
     q1 = phx.domain.HyperRectangle([-0.5], [0.5], label="q1")
     endpoint_domain = q0 @ q1
-    slicing = phx.operators.PathDiscretization(0.0, 0.5, num_steps=12)
+    slicing = phx.discretization.TemporalMesh.uniform(0.0, 0.5, 12, role="path")
     kernel = phx.operators.euclidean_kernel_function(
         endpoint_domain,
         potential,
@@ -141,7 +141,7 @@ def test_kernel_function_preserves_trainable_domain_potential_gradients():
     q0 = phx.domain.HyperRectangle([-0.5], [0.5], label="q0")
     q1 = phx.domain.HyperRectangle([-0.5], [0.5], label="q1")
     endpoint_domain = q0 @ q1
-    slicing = phx.operators.PathDiscretization(0.0, 0.5, num_steps=8)
+    slicing = phx.discretization.TemporalMesh.uniform(0.0, 0.5, 8, role="path")
 
     def value(stiffness):
         potential = potential_domain.Function("q", "t")(_TrainableHarmonic(stiffness))
@@ -174,7 +174,7 @@ def test_kernel_function_runs_through_operator_constraint_solver():
         None,
         start_var="q0",
         end_var="q1",
-        slicing=phx.operators.PathDiscretization(0.0, 0.5, num_steps=4),
+        slicing=phx.discretization.TemporalMesh.uniform(0.0, 0.5, 4, role="path"),
         num_paths=8,
     )
     condition = phx.conditions.Residual(

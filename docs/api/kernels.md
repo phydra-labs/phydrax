@@ -213,12 +213,14 @@ ragged padding, exact-feature alternatives, and numerical guidance.
 
 ## Laplacian spectral kernels
 
-`SpectralFeatureKernel` combines an immutable, measure-orthonormal
-`DiscreteLaplacianEigenbasis` with a nonnegative spectral multiplier. Normalized
-evaluation divides by the declared probability-measure average marginal variance,
-not by each point's diagonal. Heat and Matérn multipliers keep geometry,
-normalization, and covariance law separate. A finite basis therefore gives exact
-weight-space GP inference for that declared truncated covariance.
+`SpectralFeatureKernel` combines a measure-orthonormal
+`phydrax.discretization.SpectralDecomposition` with a nonnegative spectral
+multiplier. The underlying `ModalTransform` and `OperatorSpectrum` retain separate
+identities. Normalized evaluation divides by the declared probability-measure
+average marginal variance, not by each point's diagonal. Heat and Matérn
+multipliers keep geometry, normalization, and covariance law separate. A finite
+decomposition therefore gives exact weight-space GP inference for that declared
+truncated covariance.
 
 The geometric spectral construction follows the functional-calculus perspective
 described in [*The GeometricKernels Package: Heat and Matérn Kernels for Geometric

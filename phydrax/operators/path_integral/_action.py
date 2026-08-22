@@ -10,12 +10,12 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
 from ..._doc import DOC_KEY0
-from ._discretization import PathDiscretization
+from ...discretization import TemporalMesh
 from ._potential import _as_potential_callable, PotentialLike
 from ._sampling import _positive_scalar
 
 
-def _paths_array(paths: ArrayLike, slicing: PathDiscretization, /) -> Array:
+def _paths_array(paths: ArrayLike, slicing: TemporalMesh, /) -> Array:
     out = jnp.asarray(paths, dtype=float)
     if out.ndim < 2:
         raise ValueError("paths must have shape (..., num_nodes, state_dim).")
@@ -33,7 +33,7 @@ def kinetic_action(
     paths: ArrayLike,
     /,
     *,
-    slicing: PathDiscretization,
+    slicing: TemporalMesh,
     mass: ArrayLike,
 ) -> Array:
     r"""Evaluate the time-sliced Euclidean kinetic action.
@@ -53,7 +53,7 @@ def potential_action(
     potential: PotentialLike,
     /,
     *,
-    slicing: PathDiscretization,
+    slicing: TemporalMesh,
     position_var: str = "q",
     time_var: str = "t",
     key: Key[Array, ""] = DOC_KEY0,
@@ -97,7 +97,7 @@ def discrete_euclidean_action(
     potential: PotentialLike,
     /,
     *,
-    slicing: PathDiscretization,
+    slicing: TemporalMesh,
     mass: ArrayLike,
     position_var: str = "q",
     time_var: str = "t",

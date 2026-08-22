@@ -232,7 +232,7 @@ complex with the requested node probability measure.
 
 ---
 
-::: phydrax.graph.CochainBoundaryPolicy
+::: phydrax.discretization.CochainBoundaryPolicy
 
 ---
 
@@ -302,7 +302,7 @@ accept a declared cochain `DomainFunction`, preserve or change its degree as
 mathematically required, and return another `DomainFunction`. They execute the
 same sparse kernels as the array-level functions above.
 
-::: phydrax.graph.CochainFieldSpec
+::: phydrax.discretization.CochainFieldSpec
 
 ---
 
@@ -345,7 +345,7 @@ masks exclude padding; optional segment weights compose graph-time quadrature.
 
 `cochain_laplacian_eigenbasis` assembles the symmetric metric form of a complete,
 lower, or upper Hodge Laplacian and returns a
-`phydrax.metrix.DiscreteLaplacianEigenbasis`. Dense solves certify exact spectra or
+`phydrax.discretization.SpectralDecomposition`. Dense solves certify exact spectra or
 truncated tails from the full eigenspectrum. Sparse solves retain one Ritz lookahead
 to reject an observed cut through a degenerate eigenspace, but mark
 `report.tail_certified = False`: the lookahead is not a certified lower bound on

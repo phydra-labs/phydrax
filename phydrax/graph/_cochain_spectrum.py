@@ -14,7 +14,7 @@ from scipy.sparse.linalg import eigsh
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..metrix import DiscreteLaplacianEigenbasis, LaplacianEigenbasisReport
+from ..discretization import LaplacianEigenbasisReport, SpectralDecomposition
 from ._cochain import (
     CochainBoundaryKind,
     CochainBoundaryPolicy,
@@ -136,7 +136,7 @@ def cochain_laplacian_eigenbasis(
     solver_tolerance: float = 1e-10,
     eigenvalue_tolerance: float = 1e-10,
     degeneracy_tolerance: float = 1e-8,
-) -> DiscreteLaplacianEigenbasis:
+) -> SpectralDecomposition:
     """Compute a probability-normalized cochain basis with explicit tail provenance."""
     if int(dense_threshold) <= 0:
         raise ValueError("dense_threshold must be positive.")
@@ -219,16 +219,16 @@ def cochain_laplacian_eigenbasis(
         boundary_gap=boundary_gap,
         orthonormality_residual=residual,
     )
-    basis_id = (
+    decomposition_id = (
         f"{source_id}:rank={requested}:exact={int(exact)}:"
         f"tail-certified={int(used_dense_solver or exact)}"
     )
-    return DiscreteLaplacianEigenbasis(
+    return SpectralDecomposition(
         retained_values,
         functions,
         probability_measure,
         spectral_dimension=float(spectral_dimension),
-        basis_id=basis_id,
+        decomposition_id=decomposition_id,
         active_mask=active,
         index_offset=complex_ir.cell_offsets[int(degree)],
         report=report,
@@ -309,9 +309,9 @@ def compute_harmonic_subspace(
 class CochainHodgeSectorSpectra(StrictModule, NonTrainableState):
     """Complete harmonic, exact, and coexact spectral sectors for one degree."""
 
-    harmonic: DiscreteLaplacianEigenbasis | None
-    exact: DiscreteLaplacianEigenbasis | None
-    coexact: DiscreteLaplacianEigenbasis | None
+    harmonic: SpectralDecomposition | None
+    exact: SpectralDecomposition | None
+    coexact: SpectralDecomposition | None
     degree: int = eqx.field(static=True)
     boundary_policy: CochainBoundaryKind = eqx.field(static=True)
     complex_fingerprint: str = eqx.field(static=True)
@@ -319,15 +319,15 @@ class CochainHodgeSectorSpectra(StrictModule, NonTrainableState):
     def __init__(
         self,
         *,
-        harmonic: DiscreteLaplacianEigenbasis | None,
-        exact: DiscreteLaplacianEigenbasis | None,
-        coexact: DiscreteLaplacianEigenbasis | None,
+        harmonic: SpectralDecomposition | None,
+        exact: SpectralDecomposition | None,
+        coexact: SpectralDecomposition | None,
         degree: int,
         boundary_policy: CochainBoundaryKind,
         complex_fingerprint: str,
     ):
         for sector in (harmonic, exact, coexact):
-            if sector is not None and not isinstance(sector, DiscreteLaplacianEigenbasis):
+            if sector is not None and not isinstance(sector, SpectralDecomposition):
                 raise TypeError("Hodge sectors must be Laplacian eigenbases or None.")
         if all(sector is None for sector in (harmonic, exact, coexact)):
             raise ValueError("At least one Hodge sector must be nonempty.")
@@ -359,7 +359,7 @@ def _hodge_sector_basis(
     sector: Literal["harmonic", "exact", "coexact"],
     boundary_policy: CochainBoundaryKind,
     /,
-) -> DiscreteLaplacianEigenbasis | None:
+) -> SpectralDecomposition | None:
     rank = int(values.size)
     if rank == 0:
         return None
@@ -389,12 +389,12 @@ def _hodge_sector_basis(
         boundary_gap=float("inf"),
         orthonormality_residual=residual,
     )
-    return DiscreteLaplacianEigenbasis(
+    return SpectralDecomposition(
         values,
         functions,
         measure,
         spectral_dimension=float(max(1, complex_ir.max_degree)),
-        basis_id=f"{source_id}:rank={rank}",
+        decomposition_id=f"{source_id}:rank={rank}",
         active_mask=active,
         index_offset=complex_ir.cell_offsets[int(degree)],
         report=report,

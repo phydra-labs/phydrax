@@ -17,6 +17,7 @@ from jaxtyping import Array, ArrayLike
 from .._frozendict import frozendict
 from .._strict import StrictModule
 from .._uncertainty import UncertaintySource, validate_uncertainty_source
+from ..discretization import DiscretizationBundle
 from ..metrix import AbstractStateGeometry
 from ..stochastic import WienerRealization
 from ._solution_validation import validate_solution_arrays
@@ -225,6 +226,7 @@ class DifferentialSolution(StrictModule):
     stats: frozendict[str, Any]
     event_mask: Any
     realization: WienerRealization | None
+    discretization_bundle: DiscretizationBundle | None
     wiener_term_slices: frozendict[str, tuple[int, int]] = eqx.field(static=True)
     solver_name: str = eqx.field(static=True)
     interpretation: DifferentialInterpretation = eqx.field(static=True)
@@ -252,6 +254,7 @@ class DifferentialSolution(StrictModule):
         state_geometry_id: str | None = None,
         solver_id: str | None = None,
         resolved_method: str | None = None,
+        discretization_bundle: DiscretizationBundle | None = None,
     ):
         arrays = validate_solution_arrays(
             times,
@@ -294,6 +297,13 @@ class DifferentialSolution(StrictModule):
             getattr(interpolation, "evaluate", None)
         ):
             raise TypeError("DifferentialSolution interpolation must define evaluate().")
+        if discretization_bundle is not None and not isinstance(
+            discretization_bundle,
+            DiscretizationBundle,
+        ):
+            raise TypeError(
+                "discretization_bundle must be a DiscretizationBundle or None."
+            )
         self.times = times_array
         self.states = states_array
         self.valid = valid_array
@@ -311,6 +321,7 @@ class DifferentialSolution(StrictModule):
         self.state_geometry_id = state_geometry_id
         self.solver_id = resolved_solver_id
         self.resolved_method = resolved_solver_method
+        self.discretization_bundle = discretization_bundle
 
     @property
     def num_times(self) -> int:

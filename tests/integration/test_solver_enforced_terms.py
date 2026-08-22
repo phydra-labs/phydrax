@@ -12,10 +12,10 @@ import jax.random as jr
 
 import phydrax as phx
 from phydrax._frozendict import frozendict
+from phydrax.discretization import FourierAxisSpec
 from phydrax.domain import (
     Boundary,
     FixedStart,
-    FourierAxisSpec,
     GridBatch,
     Interval1d,
     PointBatch,

@@ -982,8 +982,8 @@ def _reaction_diffusion(steps: int, spatial_points: int) -> _Case:
             phx.equations.PDEEquation("local-equilibrium", equilibrium, u**2),
         ),
     )
-    axis = phx.domain.FourierAxisSpec(spatial_points).materialize(0.0, 1.0)
-    spatial = phx.solver.TensorGridDiscretization((axis,))
+    axis = phx.discretization.FourierAxisSpec(spatial_points).materialize(0.0, 1.0)
+    spatial = phx.discretization.SeparableSpectralDiscretization((axis,))
     compiled = phx.equations.compile_semidiscrete_dae(
         problem_ir,
         spatial,

@@ -264,7 +264,7 @@ class SpatialBasisSynthesis(StrictModule):
         *,
         mean: ArrayLike = 0.0,
     ) -> "SpatialBasisSynthesis":
-        from ..solver._noise import SpatialNoiseBasis
+        from ._spatial_noise import SpatialNoiseBasis
 
         if not isinstance(basis, SpatialNoiseBasis):
             raise TypeError("basis must be a SpatialNoiseBasis.")
@@ -274,7 +274,7 @@ class SpatialBasisSynthesis(StrictModule):
             basis.quadrature_weights,
             mode_ids=basis.mode_ids,
             basis_id=basis.basis_id,
-            discretization_id=basis.discretization_id,
+            discretization_id=basis.field_space_id,
             mean=mean,
         )
 

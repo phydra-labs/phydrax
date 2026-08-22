@@ -6,10 +6,9 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
+from phydrax.discretization import FourierAxisSpec, LegendreAxisSpec
 from phydrax.domain import (
-    FourierAxisSpec,
     Interval1d,
-    LegendreAxisSpec,
     SampleLayout,
     TimeInterval,
 )

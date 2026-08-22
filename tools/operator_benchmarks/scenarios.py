@@ -9,11 +9,8 @@ import jax.random as jr
 import numpy as np
 import opt_einsum as oe
 
-from phydrax.graph import (
-    CochainFieldSpec,
-    compute_harmonic_subspace,
-    triangle_mesh_to_cochain_complex,
-)
+from phydrax.discretization import CochainFieldSpec
+from phydrax.graph import compute_harmonic_subspace, triangle_mesh_to_cochain_complex
 from phydrax.nn.operator import (
     function_samples_from_cochain,
     FunctionSamples,

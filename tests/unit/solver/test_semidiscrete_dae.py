@@ -6,8 +6,8 @@ import phydrax as phx
 
 
 def _spatial(points=8):
-    axis = phx.domain.FourierAxisSpec(points).materialize(0.0, 1.0)
-    return axis, phx.solver.TensorGridDiscretization((axis,))
+    axis = phx.discretization.FourierAxisSpec(points).materialize(0.0, 1.0)
+    return axis, phx.discretization.SeparableSpectralDiscretization((axis,))
 
 
 def _mixed_problem():
@@ -146,8 +146,8 @@ def test_compiled_dae_solve_is_jittable_and_parameter_differentiable():
     axis, spatial, compiled = _compile_mixed(points=6)
     initial_u = jnp.sin(2.0 * jnp.pi * axis.nodes)
     initial_state = compiled.layout.pack({"u": initial_u, "p": jnp.zeros_like(initial_u)})
-    problem = phx.solver.DifferentialAlgebraicProblem(
-        compiled.system,
+    problem = phx.solver.discretized_dae_problem(
+        compiled,
         initial_state,
         problem_id="compiled-semipde",
     )
@@ -159,6 +159,10 @@ def test_compiled_dae_solve_is_jittable_and_parameter_differentiable():
         problem,
         grid,
         policy=phx.solver.DAESolvePolicy(integration_method="bdf1"),
+    )
+    assert problem.discretization_bundle_id == compiled.discretization_bundle.bundle_id
+    assert (
+        prepared.plan.discretization_bundle_id == compiled.discretization_bundle.bundle_id
     )
 
     def terminal_amplitude(kappa):
@@ -180,13 +184,33 @@ def test_compiled_dae_solve_is_jittable_and_parameter_differentiable():
 
     assert jnp.allclose(value, expected, rtol=1e-7, atol=1e-9)
     assert jnp.allclose(gradient, expected_gradient, rtol=1e-6, atol=1e-8)
+    solution = phx.solver.solve_dae(prepared, args={"kappa": kappa})
+    assert (
+        solution.source_discretization_bundle_id
+        == compiled.discretization_bundle.bundle_id
+    )
+    assert isinstance(
+        solution.temporal_mesh,
+        phx.discretization.RealizedTemporalMesh,
+    )
+    assert solution.discretization_bundle_id != compiled.discretization_bundle.bundle_id
+    assert (
+        solution.discretization_bundle.record(
+            next(
+                record.key
+                for record in solution.discretization_bundle.records
+                if record.key.role == "temporal"
+            )
+        ).artifact_id
+        == solution.temporal_mesh.mesh_id
+    )
 
 
 def test_dae_trajectory_adapter_retains_rates_validity_and_provenance():
     axis, _, compiled = _compile_mixed(points=6)
     initial_u = jnp.sin(2.0 * jnp.pi * axis.nodes)
-    problem = phx.solver.DifferentialAlgebraicProblem(
-        compiled.system,
+    problem = phx.solver.discretized_dae_problem(
+        compiled,
         compiled.layout.pack({"u": initial_u, "p": jnp.zeros_like(initial_u)}),
         problem_id="semipde-adapter",
     )
@@ -210,3 +234,29 @@ def test_dae_trajectory_adapter_retains_rates_validity_and_provenance():
     )
     assert data.coordinate_id == solution.time_id
     assert data.source_id.startswith("dae:")
+
+
+def test_compiled_dae_adaptive_plan_preserves_discretization_identity():
+    axis, _, compiled = _compile_mixed(points=6)
+    initial_u = jnp.sin(2.0 * jnp.pi * axis.nodes)
+    problem = phx.solver.discretized_dae_problem(
+        compiled,
+        compiled.layout.pack({"u": initial_u, "p": jnp.zeros_like(initial_u)}),
+    )
+    grid = phx.dynamics.TimeGrid(
+        jnp.linspace(0.0, 0.01, 3),
+        time_id="adaptive-semipde",
+    )
+    plan = phx.solver.plan_dae(
+        problem,
+        grid,
+        policy=phx.solver.DAESolvePolicy(
+            integration_method="bdf1",
+            adaptive=phx.solver.DAEAdaptivePolicy(
+                maximum_accepted_steps=8,
+                maximum_attempts=16,
+            ),
+        ),
+    )
+
+    assert plan.discretization_bundle_id == compiled.discretization_bundle.bundle_id

@@ -419,7 +419,7 @@ def test_spectral_matrix_functions_and_stochastic_estimators_are_replayable():
         operator_id="diagonal-spectrum",
     )
     eigenvalues, eigenvectors = jnp.linalg.eigh(matrix)
-    spectral = la.SpectralMatrixRepresentation(
+    spectral = la.TransformDiagonalRepresentation(
         operator,
         eigenvalues,
         eigenvectors.T,
@@ -704,7 +704,7 @@ def test_matrix_function_and_stochastic_evidence_rejects_false_success():
     assert not bool(chebyshev.converged)
     assert jnp.isnan(chebyshev.error_estimate)
 
-    spectral = la.SpectralMatrixRepresentation(
+    spectral = la.TransformDiagonalRepresentation(
         diagonal,
         jnp.asarray([1.0, 3.0]),
         jnp.eye(2),

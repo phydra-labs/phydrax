@@ -26,6 +26,11 @@ def test_complex_scalar_residual_uses_absolute_square():
     solver = phx.solver.FunctionalSolver(
         functions={"u": time.Function()(0.0)}, terms=[term]
     )
+    assert tuple(record.key.name for record in solver.discretization_bundle.records) == (
+        "trial:u",
+        "term:0",
+    )
+    assert solver.discretization_bundle.records[1].key.role == "residual"
 
     loss = eqx.filter_jit(lambda s, key: s.loss(key=key))(solver, jr.key(0))
     assert jnp.isrealobj(loss)

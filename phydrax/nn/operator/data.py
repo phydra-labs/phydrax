@@ -9,10 +9,12 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field as dataclass_field
 from typing import Any, cast, Literal
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._frozendict import frozendict
 from ..._strict import StrictModule
 from ...graph._operator_topology import (
@@ -137,6 +139,8 @@ class FunctionSamples(StrictModule):
     quadrature_weights: Array | None
     mask: Array | None
     topology: OperatorTopology | None
+    support_id: str = eqx.field(static=True)
+    measure_id: str | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -147,6 +151,8 @@ class FunctionSamples(StrictModule):
         quadrature_weights: Array | None = None,
         mask: Array | None = None,
         topology: OperatorTopology | None = None,
+        support_id: str | None = None,
+        measure_id: str | None = None,
     ):
         axes_ = tuple(axes)
         if len({axis.name for axis in axes_}) != len(axes_):
@@ -239,6 +245,63 @@ class FunctionSamples(StrictModule):
         self.quadrature_weights = weights_
         self.mask = mask_
         self.topology = topology
+        derived_support_id = (
+            topology.support_id
+            if topology is not None
+            else canonical_fingerprint(
+                {
+                    "kind": "operator-function-sample-support",
+                    "axes": [
+                        {
+                            "name": axis.name,
+                            "discretization": canonical_fingerprint(
+                                {
+                                    "name": axis.name,
+                                    "nodes": array_tree_fingerprint(axis.nodes),
+                                    "weights": None
+                                    if axis.quadrature_weights is None
+                                    else array_tree_fingerprint(axis.quadrature_weights),
+                                    "basis": axis.basis,
+                                    "periodic": axis.periodic,
+                                }
+                            ),
+                        }
+                        for axis in axes_
+                    ],
+                    "coordinates": None
+                    if coordinates_ is None
+                    else array_tree_fingerprint(coordinates_),
+                    "mask": None if mask_ is None else array_tree_fingerprint(mask_),
+                }
+            )
+        )
+        resolved_support_id = (
+            derived_support_id if support_id is None else str(support_id)
+        )
+        if not resolved_support_id:
+            raise ValueError("FunctionSamples support_id must be non-empty.")
+        if topology is not None and resolved_support_id != topology.support_id:
+            raise ValueError("FunctionSamples support_id must match topology.support_id.")
+        resolved_measure_id = (
+            None
+            if weights_ is None
+            else canonical_fingerprint(
+                {
+                    "kind": "operator-function-sample-measure",
+                    "support": resolved_support_id,
+                    "weights": array_tree_fingerprint(weights_),
+                    "mask": None if mask_ is None else array_tree_fingerprint(mask_),
+                }
+            )
+            if measure_id is None
+            else str(measure_id)
+        )
+        if resolved_measure_id is not None and not resolved_measure_id:
+            raise ValueError("FunctionSamples measure_id must be non-empty or None.")
+        if weights_ is None and measure_id is not None:
+            raise ValueError("FunctionSamples measure_id requires quadrature_weights.")
+        self.support_id = resolved_support_id
+        self.measure_id = resolved_measure_id
 
     @property
     def sample_shape(self) -> tuple[int, ...]:

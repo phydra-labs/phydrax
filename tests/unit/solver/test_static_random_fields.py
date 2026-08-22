@@ -6,10 +6,10 @@ import phydrax as phx
 
 
 def _periodic_basis(size, mode_names):
-    axis = phx.domain.UniformAxisSpec(size, endpoint=False, periodic=True).materialize(
-        0.0, 1.0
-    )
-    spatial = phx.solver.TensorGridDiscretization((axis,))
+    axis = phx.discretization.UniformAxisSpec(
+        size, endpoint=False, periodic=True
+    ).materialize(0.0, 1.0)
+    spatial = phx.discretization.SeparableSpectralDiscretization((axis,))
     available = {
         "constant": jnp.ones((size,)),
         "cosine": jnp.sqrt(2.0) * jnp.cos(2.0 * jnp.pi * axis.nodes),
@@ -17,13 +17,13 @@ def _periodic_basis(size, mode_names):
     }
     modes = jnp.stack(tuple(available[name] for name in mode_names), axis=-1)
     eigenvalues = jnp.asarray([0.3, 0.12, 0.08])[: len(mode_names)]
-    return phx.solver.SpatialNoiseBasis.from_modes(
+    return phx.stochastic.SpatialNoiseBasis.from_modes(
         modes,
         eigenvalues,
         quadrature_weights=spatial.quadrature_weights,
         state_shape=spatial.state_shape,
         mode_ids=mode_names,
-        discretization_id=spatial.discretization_id,
+        field_space_id=spatial.field_spaces[0].field_space_id,
     )
 
 

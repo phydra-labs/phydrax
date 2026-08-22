@@ -11,8 +11,8 @@ import jax.scipy.special as jsp
 from jaxtyping import Array, ArrayLike, Key
 
 from ..._doc import DOC_KEY0
+from ...discretization import TemporalMesh
 from ._action import potential_action
-from ._discretization import PathDiscretization
 from ._estimate import (
     _estimate_positive_log_sums,
     _estimate_positive_log_weights,
@@ -66,7 +66,7 @@ def _log_weights(
     potential: PotentialLike,
     /,
     *,
-    slicing: PathDiscretization,
+    slicing: TemporalMesh,
     hbar: Array,
     position_var: str,
     time_var: str,
@@ -90,7 +90,7 @@ def euclidean_kernel_from_noise(
     noise: ArrayLike,
     /,
     *,
-    slicing: PathDiscretization,
+    slicing: TemporalMesh,
     mass: ArrayLike = 1.0,
     hbar: ArrayLike = 1.0,
     position_var: str = "q",
@@ -142,7 +142,7 @@ def euclidean_kernel(
     x1: ArrayLike,
     /,
     *,
-    slicing: PathDiscretization,
+    slicing: TemporalMesh,
     mass: ArrayLike = 1.0,
     hbar: ArrayLike = 1.0,
     num_paths: int,

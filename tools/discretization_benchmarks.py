@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+#
+# Copyright © 2026 PHYDRA, Inc. All rights reserved.
+#
+
+from __future__ import annotations
+
+import argparse
+import json
+import time
+
+import equinox as eqx
+import jax
+import jax.numpy as jnp
+import numpy as np
+
+import phydrax as phx
+
+
+def _timed(function, repeats):
+    started = time.perf_counter()
+    value = None
+    for _ in range(repeats):
+        value = function()
+        jax.block_until_ready(value)
+    return value, (time.perf_counter() - started) / repeats
+
+
+def _triangular_grid(width):
+    axis = np.linspace(0.0, 1.0, width)
+    x, y = np.meshgrid(axis, axis, indexing="xy")
+    vertices = np.stack((x.reshape((-1,)), y.reshape((-1,))), axis=1)
+    faces = []
+    for row in range(width - 1):
+        for column in range(width - 1):
+            lower_left = row * width + column
+            lower_right = lower_left + 1
+            upper_left = lower_left + width
+            upper_right = upper_left + 1
+            faces.extend(
+                (
+                    (lower_left, lower_right, upper_right),
+                    (lower_left, upper_right, upper_left),
+                )
+            )
+    return jnp.asarray(vertices), jnp.asarray(faces, dtype=jnp.int32)
+
+
+def _tensor_case(size, repeats):
+    axis = phx.discretization.FourierAxisSpec(size).materialize(0.0, 1.0)
+    started = time.perf_counter()
+    discretization = phx.discretization.SeparableSpectralDiscretization((axis,))
+    preparation = time.perf_counter() - started
+    state = jnp.sin(2.0 * jnp.pi * axis.nodes)
+    action = eqx.filter_jit(discretization.laplacian)
+    action(state).block_until_ready()
+    value, steady = _timed(lambda: action(state), repeats)
+    return {
+        "preparation_seconds": preparation,
+        "steady_action_seconds": steady,
+        "points": size,
+        "maximum_absolute_value": float(jnp.max(jnp.abs(value))),
+    }
+
+
+def _fem_case(width, repeats):
+    vertices, faces = _triangular_grid(width)
+    started = time.perf_counter()
+    discretization = phx.discretization.P1FiniteElementPlan(
+        vertices,
+        faces,
+        field_name="u",
+    ).prepare()
+    preparation = time.perf_counter() - started
+    state = jnp.sin(jnp.pi * vertices[:, 0]) * jnp.sin(jnp.pi * vertices[:, 1])
+    action = eqx.filter_jit(discretization.stiffness.mv)
+    action(state).block_until_ready()
+    value, steady = _timed(lambda: action(state), repeats)
+    return {
+        "preparation_seconds": preparation,
+        "steady_action_seconds": steady,
+        "vertices": int(vertices.shape[0]),
+        "cells": int(faces.shape[0]),
+        "routes": int(discretization.stiffness.relation.route_shape[0]),
+        "maximum_absolute_value": float(jnp.max(jnp.abs(value))),
+    }
+
+
+def _finite_volume_case(width, repeats):
+    vertices, faces = _triangular_grid(width)
+    started = time.perf_counter()
+    discretization = phx.discretization.FiniteVolumePlan(
+        vertices,
+        faces,
+        field_name="u",
+    ).prepare()
+    problem = phx.equations.ConservationProblemIR(
+        "transport",
+        "u",
+        lambda time, state, points, args: state[:, None] * jnp.asarray([0.7, -0.2]),
+        lambda left, right, normals, args: jnp.abs(normals @ jnp.asarray([0.7, -0.2])),
+        exterior_state=lambda time, state, points, normals, args: state,
+    )
+    compiled = phx.equations.compile_conservation_problem(problem, discretization)
+    preparation = time.perf_counter() - started
+    state = jnp.sin(jnp.pi * discretization.cell_centroids[:, 0])
+    action = eqx.filter_jit(lambda value: compiled(jnp.asarray(0.0), value))
+    action(state).block_until_ready()
+    value, steady = _timed(lambda: action(state), repeats)
+    return {
+        "preparation_seconds": preparation,
+        "steady_action_seconds": steady,
+        "cells": int(faces.shape[0]),
+        "faces": int(discretization.face_lengths.shape[0]),
+        "maximum_absolute_value": float(jnp.max(jnp.abs(value))),
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--tensor-size", type=int, default=256)
+    parser.add_argument("--mesh-width", type=int, default=24)
+    parser.add_argument("--repeats", type=int, default=10)
+    arguments = parser.parse_args()
+    if arguments.tensor_size < 4 or arguments.mesh_width < 2 or arguments.repeats < 1:
+        raise ValueError("Benchmark sizes and repeats are below their valid minimum.")
+    report = {
+        "tensor": _tensor_case(arguments.tensor_size, arguments.repeats),
+        "p1_finite_element": _fem_case(arguments.mesh_width, arguments.repeats),
+        "first_order_finite_volume": _finite_volume_case(
+            arguments.mesh_width,
+            arguments.repeats,
+        ),
+    }
+    print(json.dumps(report, indent=2, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()

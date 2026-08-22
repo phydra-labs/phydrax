@@ -19,7 +19,7 @@ from .._callable import _ensure_special_kwonly_args
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from ._cochain import CochainFieldSpec
+from ..discretization import CochainFieldSpec
 from ._ir import GraphIR
 
 

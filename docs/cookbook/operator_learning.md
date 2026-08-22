@@ -78,7 +78,7 @@ For this runnable example, we choose a simple analytic “operator” that maps 
     nx = 32
     component = domain.component()
     sampling = phx.domain.GridSampling(
-        {"x": phx.domain.UniformAxisSpec(nx)},
+        {"x": phx.discretization.UniformAxisSpec(nx)},
         dense=phx.domain.PointSampling(
             8,
             layout=phx.domain.SampleLayout((("data",),)),
@@ -593,8 +593,8 @@ can be called on another compatible uniform coincident grid without rebuilding
 its learned layers. New array shapes may trigger ordinary JAX recompilation.
 
 `ManifoldSpectralOperator` takes a precomputed
-`phydrax._spectral.SpectralDiscretization`; an optional target plan must use an
-aligned Laplace eigenbasis. Build a mesh plan directly with
+`phydrax.discretization.SpectralDecomposition`; an optional target plan must use
+an aligned modal transform and compatible Laplacian spectrum. Build a mesh plan directly with
 `phx.graph.spectral_discretization_from_triangle_mesh(mesh, n_modes=...)`.
 There is no provider wrapper. A target plan is a declared cross-discretization,
 not an arbitrary-coordinate query path.
@@ -1051,12 +1051,12 @@ cochain_batch = phx.nn.operator.OperatorBatch(
     case_axes=("case",),
     case_shape=(2,),
 )
-zero_form = phx.graph.CochainFieldSpec(
+zero_form = phx.discretization.CochainFieldSpec(
     0,
     cell_orientation="invariant",
     sampling="point_value",
 )
-one_form = phx.graph.CochainFieldSpec(
+one_form = phx.discretization.CochainFieldSpec(
     1,
     cell_orientation="signed",
     sampling="cell_integral",

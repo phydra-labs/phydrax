@@ -117,6 +117,14 @@ def test_adaptive_error_control_excludes_algebraic_variables_but_certifies_const
     )
     assert jnp.all(solution.constraint_norm <= policy.adaptive.constraint_tolerance)
     assert solution.step_history.count < 64
+    assert isinstance(
+        solution.temporal_mesh,
+        phx.discretization.RealizedTemporalMesh,
+    )
+    assert solution.temporal_mesh.count == solution.step_history.count
+    assert solution.temporal_mesh.source_plan_id == solution.plan_id
+    assert solution.source_discretization_bundle_id is None
+    assert solution.discretization_bundle.records[-1].key.role == "temporal"
 
 
 def test_adaptive_capacity_failure_preserves_unsaved_nodes_as_not_run():

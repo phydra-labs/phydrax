@@ -10,7 +10,6 @@ from ._action import (
     potential_action,
 )
 from ._diffusion import diffusion_paths_from_noise, sample_diffusion_paths
-from ._discretization import PathDiscretization
 from ._estimate import PathIntegralEstimate
 from ._euclidean import (
     euclidean_kernel,
@@ -28,7 +27,6 @@ from ._sampling import (
 
 __all__ = [
     "euclidean_kernel_function",
-    "PathDiscretization",
     "PathIntegralEstimate",
     "brownian_bridge_from_noise",
     "diffusion_paths_from_noise",

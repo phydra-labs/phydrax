@@ -72,6 +72,19 @@ native JAX and produces ordinary sparse coordinate operators. See
 [API → Linear algebra runtime](api/linalg.md) and
 [API → Sparse derivatives](api/sparse_derivatives.md).
 
+### Discretization: supports, field spaces, and formulations
+
+`phydrax.discretization` binds labeled continuum semantics to finite topology,
+geometry, DOF layouts, measures, prepared operators, transfers, and complete
+approximation bundles. Tensor support is independent of finite-difference,
+spectral, or collocation calculus. Local stencil programs, independent modal
+transforms/operator spectra, WENO fluxes, SBP/compact/curvilinear methods,
+fixed-capacity AMR, and distributed halo plans compose without treating
+quadrature sites, mesh entities, and field DOFs as interchangeable. PINNs
+participate through trial/residual records rather than a fabricated mesh. See
+[Guide → Discretization](guides_discretization.md) and
+[Guide → Solver substrates](guides_solver_substrates.md).
+
 ### Differentiation: AD / jets / FD / basis
 
 Differential operators support multiple backends (`backend="ad"|"jet"|"fd"|"basis"`) and autodiff modes
@@ -636,7 +649,7 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
   explicit. This numerical uncertainty is not a physical-model posterior.
   See [API → Solver → Differential equations](api/solver/differential.md).
 - **Coupled estimation and rare events**: declare refinement axes and
-  coarse/fine transfers in a `StochasticHierarchy`, run paired levels with one
+  coarse/fine transfers in a `StochasticCouplingPlan`, run paired levels with one
   realization, and allocate multilevel Monte Carlo work from measured
   correction variance and cost. Estimator state, checkpoints, and result
   archives preserve hierarchy and sampler identities. Canonical path events
@@ -789,6 +802,8 @@ Below are the common SciML regimes expressed in Phydrax’s primitives.
 - [External solver backends](api/backends.md)
 - [Continuation and bifurcation](api/continuation.md)
 - [Domains and sampling](guides_domain.md)
+- [Discretization](guides_discretization.md)
+- [Solver substrates](guides_solver_substrates.md)
 - [Differential operators](guides_differential.md)
 - [Linear algebra runtime](api/linalg.md)
 - [Metrix: differentiable geometry](api/metrix/index.md)

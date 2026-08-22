@@ -6,19 +6,19 @@ import phydrax as phx
 
 
 def _periodic_discretization(size):
-    axis = phx.domain.UniformAxisSpec(
+    axis = phx.discretization.UniformAxisSpec(
         size,
         endpoint=False,
         periodic=True,
     ).materialize(0.0, 1.0)
-    return phx.solver.TensorGridDiscretization((axis,))
+    return phx.discretization.SeparableSpectralDiscretization((axis,))
 
 
 def test_stochastic_heat_ensemble_matches_semidiscrete_gaussian_moments():
     discretization = _periodic_discretization(4)
     kappa, duration = 0.1, 0.05
     initial = jnp.asarray([0.7, -0.2, 0.1, 0.4])
-    basis = phx.solver.SpatialNoiseBasis.from_spectrum(
+    basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
         discretization,
         0.04,
         rank=2,
@@ -83,7 +83,7 @@ def test_stochastic_heat_ensemble_matches_semidiscrete_gaussian_moments():
 
 def test_semidiscrete_heat_replays_realization_and_changes_with_key():
     discretization = _periodic_discretization(5)
-    basis = phx.solver.SpatialNoiseBasis.from_spectrum(
+    basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
         discretization,
         0.02,
         rank=2,
@@ -126,7 +126,7 @@ def test_semidiscrete_heat_replays_realization_and_changes_with_key():
 
 def test_stochastic_allen_cahn_semidiscretization_is_finite_and_reproducible():
     discretization = _periodic_discretization(6)
-    basis = phx.solver.SpatialNoiseBasis.from_spectrum(
+    basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
         discretization,
         0.01,
         rank=3,
@@ -165,22 +165,22 @@ def test_stochastic_allen_cahn_semidiscretization_is_finite_and_reproducible():
 
 
 def test_two_dimensional_tensor_state_preserves_channels_and_noise_axes():
-    x_axis = phx.domain.FourierAxisSpec(4).materialize(0.0, 1.0)
-    y_axis = phx.domain.FourierAxisSpec(5).materialize(0.0, 1.0)
-    discretization = phx.solver.TensorGridDiscretization((x_axis, y_axis))
+    x_axis = phx.discretization.FourierAxisSpec(4).materialize(0.0, 1.0)
+    y_axis = phx.discretization.FourierAxisSpec(5).materialize(0.0, 1.0)
+    discretization = phx.discretization.SeparableSpectralDiscretization((x_axis, y_axis))
     x, y = x_axis.nodes[:, None], y_axis.nodes[None, :]
     scalar = 0.1 * jnp.sin(2.0 * jnp.pi * x) * jnp.cos(2.0 * jnp.pi * y)
     initial = jnp.stack((scalar, -scalar), axis=-1)
     state_shape = initial.shape
     weights = jnp.broadcast_to(discretization.quadrature_weights[..., None], state_shape)
     mode = jnp.ones(state_shape) / jnp.sqrt(jnp.sum(weights))
-    basis = phx.solver.SpatialNoiseBasis.from_modes(
+    basis = phx.stochastic.SpatialNoiseBasis.from_modes(
         mode[..., None],
         jnp.asarray([0.005]),
         quadrature_weights=weights,
         state_shape=state_shape,
         mode_ids=("shared-channel-mode",),
-        discretization_id=discretization.discretization_id,
+        field_space_id=discretization.field_spaces[0].field_space_id,
     )
     spde = phx.solver.semidiscretize_reaction_diffusion(
         initial,
@@ -219,13 +219,13 @@ def test_two_dimensional_tensor_state_preserves_channels_and_noise_axes():
 def test_refined_grid_changes_discretization_and_basis_provenance():
     coarse = _periodic_discretization(6)
     refined = _periodic_discretization(10)
-    coarse_basis = phx.solver.SpatialNoiseBasis.from_spectrum(coarse, 0.02, rank=2)
-    refined_basis = phx.solver.SpatialNoiseBasis.from_spectrum(refined, 0.02, rank=2)
+    coarse_basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(coarse, 0.02, rank=2)
+    refined_basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(refined, 0.02, rank=2)
 
     assert coarse.discretization_id != refined.discretization_id
     assert coarse_basis.basis_id != refined_basis.basis_id
-    assert coarse_basis.discretization_id == coarse.discretization_id
-    assert refined_basis.discretization_id == refined.discretization_id
+    assert coarse_basis.field_space_id == coarse.field_spaces[0].field_space_id
+    assert refined_basis.field_space_id == refined.field_spaces[0].field_space_id
 
 
 def test_semidiscrete_stratonovich_geometric_noise_matches_analytic_moments():

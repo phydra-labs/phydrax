@@ -12,8 +12,9 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..discretization import CochainFieldSpec
 from ..metrix import CoordinateChart, DifferentialForm, exterior_derivative
-from ._cochain import CochainComplexIR, CochainFieldSpec
+from ._cochain import CochainComplexIR
 from ._cochain_ops import cochain_exterior_derivative
 
 

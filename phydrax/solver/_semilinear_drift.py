@@ -13,7 +13,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
-from ..linalg import AbstractLinearOperator, ArraySpace, SpectralMatrixRepresentation
+from ..linalg import AbstractLinearOperator, ArraySpace, TransformDiagonalRepresentation
 
 
 class SemilinearDrift(StrictModule):
@@ -27,7 +27,7 @@ class SemilinearDrift(StrictModule):
     linear_operator: AbstractLinearOperator | Callable[[Array], ArrayLike]
     nonlinear_drift: Callable[[Array, Array, Any], ArrayLike] | None
     mass_weights: Array | None
-    spectral_representation: SpectralMatrixRepresentation | None
+    spectral_representation: TransformDiagonalRepresentation | None
     compatible_noise_eigenvalues: Array | None
     state_shape: tuple[int, ...] = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
@@ -46,7 +46,7 @@ class SemilinearDrift(StrictModule):
         mass_self_adjoint: bool = False,
         mass_weights: ArrayLike | None = None,
         spectral_bounds: tuple[float, float] | None = None,
-        spectral_representation: SpectralMatrixRepresentation | None = None,
+        spectral_representation: TransformDiagonalRepresentation | None = None,
         compatible_noise_eigenvalues: ArrayLike | None = None,
         compatible_noise_basis_id: str | None = None,
     ):
@@ -96,9 +96,9 @@ class SemilinearDrift(StrictModule):
                 raise ValueError("spectral_bounds must be finite and increasing.")
             bounds = (lower, upper)
         if spectral_representation is not None:
-            if not isinstance(spectral_representation, SpectralMatrixRepresentation):
+            if not isinstance(spectral_representation, TransformDiagonalRepresentation):
                 raise TypeError(
-                    "spectral_representation must be SpectralMatrixRepresentation."
+                    "spectral_representation must be TransformDiagonalRepresentation."
                 )
             spectral_operator = spectral_representation.operator
             if (

@@ -16,10 +16,17 @@ from jaxtyping import Array, Key
 from phydrax.domain import DomainFunction
 
 from .._doc import DOC_KEY0
+from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from .._term import AbstractScalarTerm
+from .._term import AbstractSamplingTerm, AbstractScalarTerm
 from .._training import EvaluationParametersFn
+from ..discretization import (
+    DiscretizationBundle,
+    DiscretizationKey,
+    DiscretizationRecord,
+    DiscretizationRole,
+)
 from ..enforcement import EnforcementProgram
 from ..optim._kfac._config import KFAC
 from ..optim._riemannian import AbstractRiemannianOptimizer
@@ -27,6 +34,85 @@ from ._functional_objective import (
     _FunctionalObjective,
     evaluate_prepared_objective,
 )
+
+
+def _functional_discretization_bundle(
+    functions: Mapping[str, DomainFunction],
+    terms: Sequence[AbstractScalarTerm],
+    /,
+) -> DiscretizationBundle:
+    trial_records = []
+    trial_key_ids = []
+    for name, function in functions.items():
+        key = DiscretizationKey(
+            f"trial:{name}",
+            DiscretizationRole.AUXILIARY,
+            domain_labels=function.deps,
+        )
+        trial_records.append(
+            DiscretizationRecord(
+                key,
+                "parametric-domain-function",
+                canonical_fingerprint(
+                    {
+                        "kind": "functional-trial",
+                        "name": name,
+                        "dependencies": list(function.deps),
+                        "domain": repr(function.domain),
+                        "function": repr(function.func),
+                    }
+                ),
+            )
+        )
+        trial_key_ids.append(key.key_id)
+    if not trial_records:
+        raise ValueError("FunctionalSolver requires at least one trial function.")
+    records = list(trial_records)
+    for index, term in enumerate(terms):
+        sampling_key = None
+        if isinstance(term, AbstractSamplingTerm):
+            sampling_key = DiscretizationKey(
+                f"sampling:{index}",
+                DiscretizationRole.RESIDUAL,
+            )
+            records.append(
+                DiscretizationRecord(
+                    sampling_key,
+                    f"{type(term).__name__}-sampling",
+                    canonical_fingerprint(
+                        {
+                            "kind": "functional-sampling-plan",
+                            "term_type": type(term).__name__,
+                            "term": repr(term),
+                        }
+                    ),
+                    dependency_key_ids=tuple(trial_key_ids),
+                )
+            )
+        term_key = DiscretizationKey(
+            f"term:{index}",
+            DiscretizationRole.RESIDUAL,
+        )
+        records.append(
+            DiscretizationRecord(
+                term_key,
+                type(term).__name__,
+                canonical_fingerprint(
+                    {
+                        "kind": "functional-scalar-term",
+                        "term_type": type(term).__name__,
+                        "label": term.label,
+                        "term": repr(term),
+                    }
+                ),
+                dependency_key_ids=(
+                    tuple(trial_key_ids)
+                    if sampling_key is None
+                    else (sampling_key.key_id,)
+                ),
+            )
+        )
+    return DiscretizationBundle(records)
 
 
 class FunctionalSolver(StrictModule):
@@ -39,6 +125,7 @@ class FunctionalSolver(StrictModule):
     functions: frozendict[str, DomainFunction]
     objective: _FunctionalObjective
     training_diagnostics: frozendict[str, Array]
+    discretization_bundle: DiscretizationBundle
 
     def __init__(
         self,
@@ -58,6 +145,10 @@ class FunctionalSolver(StrictModule):
             collocation_key=collocation_key,
         )
         self.training_diagnostics = frozendict()
+        self.discretization_bundle = _functional_discretization_bundle(
+            self.functions,
+            self.objective.terms + self.objective.evaluation_terms,
+        )
 
     @property
     def terms(self) -> tuple[AbstractScalarTerm, ...]:
@@ -95,11 +186,27 @@ class FunctionalSolver(StrictModule):
         key: Key[Array, ""],
     ) -> "FunctionalSolver":
         objective = self.objective.append_training_terms(terms, key=key)
-        return eqx.tree_at(lambda solver: solver.objective, self, objective)
+        updated = eqx.tree_at(lambda solver: solver.objective, self, objective)
+        return eqx.tree_at(
+            lambda solver: solver.discretization_bundle,
+            updated,
+            _functional_discretization_bundle(
+                updated.functions,
+                updated.objective.terms + updated.objective.evaluation_terms,
+            ),
+        )
 
     def _retain_training_prefix(self, count: int, /) -> "FunctionalSolver":
         objective = self.objective.retain_training_prefix(count)
-        return eqx.tree_at(lambda solver: solver.objective, self, objective)
+        updated = eqx.tree_at(lambda solver: solver.objective, self, objective)
+        return eqx.tree_at(
+            lambda solver: solver.discretization_bundle,
+            updated,
+            _functional_discretization_bundle(
+                updated.functions,
+                updated.objective.terms + updated.objective.evaluation_terms,
+            ),
+        )
 
     def ansatz_functions(self) -> frozendict[str, DomainFunction]:
         r"""Return the current field mapping after applying enforcement (if configured)."""

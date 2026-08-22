@@ -16,7 +16,7 @@ from .._function import DomainFunction
 
 
 if TYPE_CHECKING:
-    from ...graph import (
+    from ...discretization import (
         CochainCellOrientation,
         CochainFieldSpec,
         CochainSampling,
@@ -81,7 +81,7 @@ def has_cochain_field_spec(field: DomainFunction, /) -> bool:
 
 def cochain_field_spec(field: DomainFunction, /) -> CochainFieldSpec:
     """Return the declared cochain semantics of a domain field."""
-    from ...graph import CochainFieldSpec
+    from ...discretization import CochainFieldSpec
 
     if not isinstance(field, DomainFunction):
         raise TypeError("cochain_field_spec expects a DomainFunction.")
@@ -112,7 +112,7 @@ def as_cochain_field(
     Values outside the declared cell degree are identically zero, including when a
     downstream graph operator evaluates the field over the full cochain complex.
     """
-    from ...graph import CochainFieldSpec
+    from ...discretization import CochainFieldSpec
 
     if not isinstance(field, DomainFunction):
         raise TypeError("as_cochain_field expects a DomainFunction.")

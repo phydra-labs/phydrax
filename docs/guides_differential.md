@@ -221,7 +221,7 @@ and axis-native neural operators.
     lap_u = phx.operators.laplacian(u, var="x", backend="basis", basis="fourier")
 
     batch = geom.component().sample(
-        phx.domain.GridSampling({"x": phx.domain.FourierAxisSpec(64)}),
+        phx.domain.GridSampling({"x": phx.discretization.FourierAxisSpec(64)}),
         key=jr.key(0),
     )
     out = lap_u(batch)

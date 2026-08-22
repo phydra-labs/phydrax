@@ -10,11 +10,8 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from ...graph._cochain import (
-    CochainBoundaryKind,
-    CochainBoundaryPolicy,
-    CochainComplexIR,
-)
+from ...discretization import CochainBoundaryKind, CochainBoundaryPolicy
+from ...graph._cochain import CochainComplexIR
 from ...graph._operator_topology import OperatorTopology
 from .data import FunctionSamples
 

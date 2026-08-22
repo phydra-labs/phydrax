@@ -43,6 +43,15 @@ def test_triangle_mesh_cochain_complex_has_exact_incidence_and_metric_graph():
     boundary_2 = complex_ir.incidences[1].scipy_matrix()
 
     assert complex_ir.cell_counts == (4, 5, 2)
+    assert isinstance(
+        complex_ir.discretization,
+        phx.discretization.CochainDiscretization,
+    )
+    assert complex_ir.discretization.cell_counts == complex_ir.cell_counts
+    assert len(complex_ir.discretization.field_spaces) == 3
+    assert (
+        complex_ir.discretization.topology.topology_id == complex_ir.incidence_fingerprint
+    )
     assert complex_ir.graph.num_nodes == 11
     assert complex_ir.graph.num_edges == 32
     assert np.array_equal((boundary_1 @ boundary_2).toarray(), np.zeros((4, 2)))
@@ -342,12 +351,12 @@ def test_cochain_field_masks_other_degrees_and_preserves_compatible_metadata():
     all_cells = domain.component({"graph": phx.domain.Nodes()}).sample(
         phx.domain.PointSampling(complex_ir.num_cells, layout=structure)
     )
-    zero_spec = phx.graph.CochainFieldSpec(
+    zero_spec = phx.discretization.CochainFieldSpec(
         0,
         cell_orientation="invariant",
         sampling="point_value",
     )
-    one_spec = phx.graph.CochainFieldSpec(
+    one_spec = phx.discretization.CochainFieldSpec(
         1,
         cell_orientation="signed",
         sampling="cell_integral",
@@ -382,7 +391,7 @@ def test_domain_cochain_dec_is_exact_and_matches_sparse_graph_operators():
     face_batch = domain.component({"graph": phx.domain.CochainCells(2)}).sample(
         phx.domain.PointSampling(complex_ir.cell_counts[2], layout=structure)
     )
-    zero_spec = phx.graph.CochainFieldSpec(
+    zero_spec = phx.discretization.CochainFieldSpec(
         0,
         cell_orientation="invariant",
         sampling="point_value",
@@ -434,7 +443,7 @@ def test_domain_cochain_laplacian_is_equivariant_to_cell_reorientation():
     reoriented = phx.graph.reorient_cochain_complex(complex_ir, signs)
     values = jnp.asarray([0.4, -0.1, 0.8, -0.3, 0.6])
     transformed_values = phx.graph.reorient_cochain(values, signs[1])
-    one_spec = phx.graph.CochainFieldSpec(
+    one_spec = phx.discretization.CochainFieldSpec(
         1,
         cell_orientation="signed",
         sampling="cell_integral",
@@ -537,7 +546,7 @@ def test_cochain_residual_constraint_composes_graph_and_time_measures(
         }
     )
     structure = phx.domain.SampleLayout((("graph", "t"),))
-    zero_spec = phx.graph.CochainFieldSpec(
+    zero_spec = phx.discretization.CochainFieldSpec(
         0,
         cell_orientation="invariant",
         sampling="point_value",

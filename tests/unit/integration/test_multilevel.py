@@ -28,7 +28,7 @@ def _hierarchy():
                 parent_level_id=None if index == 0 else f"level-{index - 1}",
             )
         )
-    return phx.stochastic.StochasticHierarchy(
+    return phx.stochastic.StochasticCouplingPlan(
         levels,
         hierarchy_id="toy-hierarchy",
     )

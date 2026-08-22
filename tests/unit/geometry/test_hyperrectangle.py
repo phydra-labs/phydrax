@@ -100,7 +100,12 @@ def test_hyperrectangle_coord_separable_sampling():
     )
     batch = geom.component().sample(
         phx.domain.GridSampling(
-            {"x": (phx.domain.UniformAxisSpec(5), phx.domain.UniformAxisSpec(7))}
+            {
+                "x": (
+                    phx.discretization.UniformAxisSpec(5),
+                    phx.discretization.UniformAxisSpec(7),
+                )
+            }
         ),
         key=jr.key(0),
     )

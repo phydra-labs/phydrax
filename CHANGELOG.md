@@ -10,6 +10,29 @@
   sphere, and triangle-surface maps; mixed product plans; and static-capacity
   differentiable adaptive triangle refinement with explicit paired-rule error,
   partition, evaluation-budget, and terminal-status evidence.
+- `phydrax.discretization`: canonical entity/topology/support, finite-measure,
+  DOF/field-space, plan/preparation, transfer, bundle, hierarchy, temporal, tensor,
+  spectral, metric-cochain, conforming P1 finite-element, and conservative
+  first-order finite-volume contracts. Strong, variational, and conservation
+  compilers now retain complete discretization provenance; adaptive DAE results add
+  their realized accepted-step mesh.
+
+- Industrial structured finite differences: exact point/interval entity layouts;
+  masked variable-width Fornberg banks with consistency, adjoint, conservation, and
+  stability evidence; manufactured convergence studies; stage-cached dynamic
+  Dirichlet/Neumann/Robin and conforming interface programs; conservative scalar,
+  diagonal, and tensor diffusion/advection lowering; diagonal-norm SBP orders
+  2/4/6/8 with compatible second derivatives and SAT coupling; discrete-curl mapped
+  geometry; oriented conforming and 2:1 multiblock mortars; geometric multigrid with
+  Jacobi, red-black, and line smoothers; compact interior kernels, fused CSE pipelines,
+  and multidimensional collective halos; WENO-Z/TENO/MP5, characteristic and
+  multispecies Euler, ideal MHD, unsplit multidimensional fluxes, positivity, and
+  entropy policies; entity-aware AMR halo/transfer/subcycling/reflux/regrid/migration;
+  portable checkpoints, exact discrete adjoints, resource/precision preflight,
+  structured cochains, and compatible Maxwell, MHD induction, elasticity,
+  variable-density projection, poroelasticity, and thermoelasticity. Certified
+  FFT/DCT/DST direct solves and directional split-field acoustic PML remain integrated
+  with the same provenance.
 
 - `phydrax.weighting` exact and quadratically reconciled relative-entropy moment
   calibration for dense, sparse, and matrix-free feature actions, with affine-rank
@@ -152,6 +175,18 @@
   initialization now represent the intended affine map, standard-normal Hermite
   rules own their probability normalization, invalid Legendre rule kinds fail
   explicitly, and functional collocation reuses canonical Chebyshev--Lobatto data.
+- Numerical axis specifications, tensor/spectral methods, temporal path slicing,
+  spatial-noise bases, cochain field semantics, and Laplacian spectral bases now have
+  one canonical owner. Old `phydrax.domain`, `phydrax.solver`, `phydrax.operators`,
+  `phydrax.graph`, and `phydrax.metrix` aliases were removed rather than deprecated:
+  use `phydrax.discretization`, and use `phydrax.stochastic.SpatialNoiseBasis` for
+  spatial stochastic forcing. `StochasticCouplingPlan` now owns a generic
+  `DiscretizationHierarchy`.
+
+- Spectral representations now split reusable `ModalTransform` objects from
+  operator-specific `OperatorSpectrum` values. `SpectralDecomposition` pairs them
+  where one API needs both, while `TransformDiagonalRepresentation` supports
+  finite-difference, pseudospectral, graph, manifold, and covariance modal symbols.
 - DeepONet now accepts generalized coordinate-evaluated basis trunks, exposes
   explicit output-bias control, and preserves existing pointwise and POD
   behavior while supporting projection branches and frozen nested models.

@@ -36,6 +36,10 @@ Most workflows are composing a few primitives:
 - **Geometry**: analytic, simplicial, B-Rep, CSG, and reconstructed sources compile
   to one JAX kernel/state contract with explicit capabilities, field certificates,
   boundary atlases, topology identities, and design parameters.
+- **Discretization and solver substrates**: tensor supports, local finite
+  differences, modal transforms/spectra, cochains, P1 finite elements, finite
+  volumes, WENO fluxes, fixed-capacity AMR, field spaces, measures, transfers,
+  temporal/stochastic composition, and auditable plan/preparation identities.
 - **Component**: a subset like interior/boundary/initial slice where a term lives.
 - **Metrix**: differentiable coordinate and Riemannian geometry—charts, tensor
   transformations, metrics, connections, curvature, embedded charts, and
@@ -107,6 +111,11 @@ If you are new to the library, the general recipe is:
 Geometry construction lives in `phx.geometry`; `phx.domain.GeometryDomain` is the
 thin labeled-domain adapter used by sampling, integration, and constraints. See the
 [geometry substrate API](docs/api/geometry.md).
+
+Numerical supports and finite field spaces live in `phx.discretization`; see the
+[discretization guide](docs/guides_discretization.md), the
+[solver-substrate guide](docs/guides_solver_substrates.md), and the
+[API](docs/api/discretization/index.md).
 
 ## Example
 

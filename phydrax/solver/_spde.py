@@ -12,28 +12,34 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
 from .._strict import StrictModule
+from ..discretization import (
+    AbstractStrongFormDiscretization,
+    DiscretizationBundle,
+    DiscretizationKey,
+    DiscretizationRecord,
+    DiscretizationRole,
+)
 from ..linalg import (
     AbstractLinearOperator,
     ArraySpace,
     DiagonalPairing,
     FunctionLinearOperator,
     OperatorProperties,
-    SpectralMatrixRepresentation,
+    TransformDiagonalRepresentation,
 )
 from ..stochastic import (
     LevyAreaKind,
     SPDESolutionSpec,
     WienerRealization,
 )
+from ..stochastic._spatial_noise import SpatialNoiseBasis
 from ._differential import (
     DifferentialInterpretation,
     DifferentialProblem,
     NoiseStructure,
     WienerTerm,
 )
-from ._noise import SpatialNoiseBasis
 from ._semilinear_drift import SemilinearDrift
-from ._spatial import AbstractSpatialDiscretization
 
 
 class _ValidatedVectorField(StrictModule):
@@ -79,7 +85,7 @@ class _BasisAmplitudeDiffusion(StrictModule):
 
 
 class _ReactionDiffusionDrift(StrictModule):
-    discretization: AbstractSpatialDiscretization
+    discretization: AbstractStrongFormDiscretization
     kappa: Any
     reaction: Callable[[Array, Array, Any], ArrayLike] | None
     state_shape: tuple[int, ...] = eqx.field(static=True)
@@ -108,7 +114,7 @@ class _ReactionDiffusionDrift(StrictModule):
 
 
 class _ScaledLaplacianOperator(StrictModule):
-    discretization: AbstractSpatialDiscretization
+    discretization: AbstractStrongFormDiscretization
     coefficient: Array
 
     def __call__(self, state: Array) -> Array:
@@ -116,7 +122,7 @@ class _ScaledLaplacianOperator(StrictModule):
 
 
 def _compatible_noise_eigenvalues(
-    discretization: AbstractSpatialDiscretization,
+    discretization: AbstractStrongFormDiscretization,
     noise_basis: SpatialNoiseBasis | None,
     coefficient: Array,
     /,
@@ -124,7 +130,7 @@ def _compatible_noise_eigenvalues(
     if (
         noise_basis is None
         or coefficient.shape != ()
-        or noise_basis.discretization_id != discretization.discretization_id
+        or noise_basis.field_space_id != discretization.field_spaces[0].field_space_id
     ):
         return None
     laplacian_eigenvalues, modes = discretization.eigenpairs(rank=noise_basis.rank)
@@ -137,18 +143,18 @@ def _compatible_noise_eigenvalues(
 
 def _spectral_linear_representation(
     operator: AbstractLinearOperator,
-    discretization: AbstractSpatialDiscretization,
+    discretization: AbstractStrongFormDiscretization,
     coefficient: Array,
     state_shape: tuple[int, ...],
     /,
-) -> SpectralMatrixRepresentation | None:
-    from ._spatial import SpectralSpatialDiscretization
+) -> TransformDiagonalRepresentation | None:
+    from ..discretization._tensor import SpectralDiscretization
 
-    if not isinstance(discretization, SpectralSpatialDiscretization):
+    if not isinstance(discretization, SpectralDiscretization):
         return None
     if coefficient.shape != () or state_shape != discretization.state_shape:
         return None
-    return SpectralMatrixRepresentation(
+    return TransformDiagonalRepresentation(
         operator,
         -coefficient * discretization.plan.eigenvalues,
         discretization.plan.analysis,
@@ -161,9 +167,10 @@ class SemidiscreteSPDE(StrictModule):
     """Finite-dimensional method-of-lines problem plus spatial/noise provenance."""
 
     problem: DifferentialProblem
-    spatial_discretization: AbstractSpatialDiscretization
+    spatial_discretization: AbstractStrongFormDiscretization
     noise_basis: SpatialNoiseBasis | None
     semilinear_drift: SemilinearDrift | None
+    discretization_bundle: DiscretizationBundle
     solution_spec: SPDESolutionSpec = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
     noise_shape: tuple[int, ...] = eqx.field(static=True)
@@ -174,7 +181,7 @@ class SemidiscreteSPDE(StrictModule):
         self,
         *,
         problem: DifferentialProblem,
-        spatial_discretization: AbstractSpatialDiscretization,
+        spatial_discretization: AbstractStrongFormDiscretization,
         noise_basis: SpatialNoiseBasis | None,
         semilinear_drift: SemilinearDrift | None = None,
         solution_spec: SPDESolutionSpec | None = None,
@@ -184,9 +191,9 @@ class SemidiscreteSPDE(StrictModule):
     ):
         if not isinstance(problem, DifferentialProblem):
             raise TypeError("problem must be a DifferentialProblem.")
-        if not isinstance(spatial_discretization, AbstractSpatialDiscretization):
+        if not isinstance(spatial_discretization, AbstractStrongFormDiscretization):
             raise TypeError(
-                "spatial_discretization must implement AbstractSpatialDiscretization."
+                "spatial_discretization must implement AbstractStrongFormDiscretization."
             )
         if noise_basis is not None and not isinstance(noise_basis, SpatialNoiseBasis):
             raise TypeError("noise_basis must be a SpatialNoiseBasis or None.")
@@ -243,6 +250,44 @@ class SemidiscreteSPDE(StrictModule):
         self.noise_shape = noise
         self.discretization_id = spatial_discretization.discretization_id
         self.basis_id = basis_id
+        records = [
+            DiscretizationRecord(
+                spatial_discretization.key,
+                type(spatial_discretization).__name__,
+                spatial_discretization.prepared_id,
+                numeric_version=spatial_discretization.numeric_version,
+            )
+        ]
+        dependencies = [spatial_discretization.key.key_id]
+        if noise_basis is not None:
+            noise_key = DiscretizationKey(
+                "spatial_noise",
+                DiscretizationRole.DRIVER,
+                domain_labels=spatial_discretization.key.domain_labels,
+            )
+            records.append(
+                DiscretizationRecord(
+                    noise_key,
+                    "spatial-noise-basis",
+                    noise_basis.basis_id,
+                    dependency_key_ids=(spatial_discretization.key.key_id,),
+                )
+            )
+            dependencies.append(noise_key.key_id)
+        form_key = DiscretizationKey(
+            "spde_form",
+            DiscretizationRole.RESIDUAL,
+            domain_labels=spatial_discretization.key.domain_labels,
+        )
+        records.append(
+            DiscretizationRecord(
+                form_key,
+                "semidiscrete-spde",
+                f"spde:{spatial_discretization.prepared_id}:{basis_id or 'deterministic'}",
+                dependency_key_ids=tuple(dependencies),
+            )
+        )
+        self.discretization_bundle = DiscretizationBundle(records)
 
     def wiener_realization(
         self,
@@ -282,7 +327,7 @@ class SemidiscreteSPDE(StrictModule):
 def semidiscretize_spde(
     drift: Callable[[Array, Array, Any], ArrayLike],
     initial_state: ArrayLike,
-    spatial_discretization: AbstractSpatialDiscretization,
+    spatial_discretization: AbstractStrongFormDiscretization,
     /,
     *,
     t0: ArrayLike,
@@ -306,9 +351,9 @@ def semidiscretize_spde(
     """
     if not callable(drift):
         raise TypeError("drift must be callable.")
-    if not isinstance(spatial_discretization, AbstractSpatialDiscretization):
+    if not isinstance(spatial_discretization, AbstractStrongFormDiscretization):
         raise TypeError(
-            "spatial_discretization must implement AbstractSpatialDiscretization."
+            "spatial_discretization must implement AbstractStrongFormDiscretization."
         )
     state = jnp.asarray(initial_state)
     spatial_shape = spatial_discretization.state_shape
@@ -331,6 +376,11 @@ def semidiscretize_spde(
             raise ValueError(
                 "noise basis state shape must match initial_state exactly; "
                 f"got {noise_basis.state_shape} and {state_shape}."
+            )
+        expected_field_space_id = spatial_discretization.field_spaces[0].field_space_id
+        if noise_basis.field_space_id != expected_field_space_id:
+            raise ValueError(
+                "noise basis field_space_id must match the spatial state field space."
             )
         resolved_noise_shape = noise_basis.noise_shape
         if (
@@ -427,7 +477,7 @@ def semidiscretize_semilinear_spde(
     linear_operator: AbstractLinearOperator,
     nonlinear_drift: Callable[[Array, Array, Any], ArrayLike] | None,
     initial_state: ArrayLike,
-    spatial_discretization: AbstractSpatialDiscretization,
+    spatial_discretization: AbstractStrongFormDiscretization,
     /,
     *,
     t0: ArrayLike,
@@ -444,7 +494,7 @@ def semidiscretize_semilinear_spde(
     mass_self_adjoint: bool = False,
     mass_weights: ArrayLike | None = None,
     spectral_bounds: tuple[float, float] | None = None,
-    spectral_representation: SpectralMatrixRepresentation | None = None,
+    spectral_representation: TransformDiagonalRepresentation | None = None,
     compatible_noise_eigenvalues: ArrayLike | None = None,
 ) -> SemidiscreteSPDE:
     """Semidiscretize an explicitly decomposed semilinear stochastic equation."""
@@ -492,7 +542,7 @@ def semidiscretize_semilinear_spde(
 
 def semidiscretize_reaction_diffusion(
     initial_state: ArrayLike,
-    spatial_discretization: AbstractSpatialDiscretization,
+    spatial_discretization: AbstractStrongFormDiscretization,
     /,
     *,
     t0: ArrayLike,
@@ -583,8 +633,8 @@ def semidiscretize_reaction_diffusion(
         )
         bounds = None
         if spectral is not None:
-            lower = float(jnp.min(spectral.eigenvalues))
-            upper = float(jnp.max(spectral.eigenvalues))
+            lower = float(jnp.min(spectral.modal_values))
+            upper = float(jnp.max(spectral.modal_values))
             if lower < upper:
                 bounds = (lower, upper)
         semilinear = SemilinearDrift(

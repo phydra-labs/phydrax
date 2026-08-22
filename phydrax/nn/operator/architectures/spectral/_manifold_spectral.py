@@ -18,8 +18,8 @@ from jax import core as jax_core
 from jaxtyping import Array, Key
 
 from phydrax._doc import DOC_KEY0
-from phydrax._spectral._modal import SpectralDiscretization
 from phydrax._strict import StrictModule
+from phydrax.discretization import SpectralDecomposition
 from phydrax.nn._keys import EvalKey, fold_in_eval_key
 from phydrax.nn._utils import _get_size
 from phydrax.nn.layers._linear import Linear
@@ -35,11 +35,11 @@ class _ManifoldSpectralMixer(StrictModule):
     out_channels: int = eqx.field(static=True)
     num_modes: int = eqx.field(static=True)
     num_groups: int = eqx.field(static=True)
-    basis_id: str = eqx.field(static=True)
+    transform_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        plan: SpectralDiscretization,
+        plan: SpectralDecomposition,
         /,
         *,
         in_channels: int,
@@ -54,7 +54,7 @@ class _ManifoldSpectralMixer(StrictModule):
         self.out_channels = out_size
         self.num_modes = plan.num_modes
         self.num_groups = plan.num_groups
-        self.basis_id = plan.basis_id
+        self.transform_id = plan.transform_id
         scale = 1.0 / jnp.sqrt(float(in_size))
         self.weight = scale * jr.normal(
             key,
@@ -64,8 +64,8 @@ class _ManifoldSpectralMixer(StrictModule):
     def __call__(
         self,
         values: Array,
-        source: SpectralDiscretization,
-        target: SpectralDiscretization,
+        source: SpectralDecomposition,
+        target: SpectralDecomposition,
         /,
     ) -> Array:
         array = jnp.asarray(values)
@@ -83,7 +83,10 @@ class _ManifoldSpectralMixer(StrictModule):
             )
         ):
             raise ValueError("Source and target eigenspace groups must align.")
-        if source.basis_id != self.basis_id or target.basis_id != self.basis_id:
+        if (
+            source.transform_id != self.transform_id
+            or target.transform_id != self.transform_id
+        ):
             raise ValueError(
                 "Source and target plans require the mixer's aligned basis_id."
             )
@@ -107,8 +110,8 @@ class ManifoldSpectralOperator(AbstractOperatorModel):
     spectral_mixers: tuple[_ManifoldSpectralMixer, ...]
     pointwise: tuple[Linear, ...]
     projection: Linear
-    source_plan: SpectralDiscretization
-    target_plan: SpectralDiscretization
+    source_plan: SpectralDecomposition
+    target_plan: SpectralDecomposition
     source_key: str | None
     activation: Callable[[Array], Array]
     residual: bool
@@ -122,30 +125,28 @@ class ManifoldSpectralOperator(AbstractOperatorModel):
 
     def __init__(
         self,
-        source_plan: SpectralDiscretization,
+        source_plan: SpectralDecomposition,
         /,
         *,
         in_channels: int | Literal["scalar"] = "scalar",
         out_channels: int | Literal["scalar"] = "scalar",
         width: int = 64,
         depth: int = 4,
-        target_plan: SpectralDiscretization | None = None,
+        target_plan: SpectralDecomposition | None = None,
         source_key: str | None = None,
         activation: Callable[[Array], Array] = jax.nn.gelu,
         residual: bool = True,
         key: Key[Array, ""] = DOC_KEY0,
     ):
-        if not isinstance(source_plan, SpectralDiscretization):
+        if not isinstance(source_plan, SpectralDecomposition):
             raise TypeError("source_plan must be a SpectralDiscretization.")
-        if target_plan is not None and not isinstance(
-            target_plan, SpectralDiscretization
-        ):
+        if target_plan is not None and not isinstance(target_plan, SpectralDecomposition):
             raise TypeError("target_plan must be a SpectralDiscretization.")
         self.source_plan = source_plan
         self.target_plan = source_plan if target_plan is None else target_plan
         if source_plan.num_modes != self.target_plan.num_modes:
             raise ValueError("Source and target spectral mode counts must match.")
-        if source_plan.basis_id != self.target_plan.basis_id:
+        if source_plan.transform_id != self.target_plan.transform_id:
             raise ValueError("Source and target plans require one aligned basis_id.")
         if not bool(jnp.array_equal(source_plan.group_ids, self.target_plan.group_ids)):
             raise ValueError("Source and target eigenspace groups must match.")
@@ -278,4 +279,4 @@ class ManifoldSpectralOperator(AbstractOperatorModel):
         return self.__call_operator_batch__(x, key=key)
 
 
-__all__ = ["ManifoldSpectralOperator", "SpectralDiscretization"]
+__all__ = ["ManifoldSpectralOperator"]
