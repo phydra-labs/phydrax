@@ -14,6 +14,12 @@ python -m benchmarks.advanced_solvers capabilities
 python -m benchmarks.advanced_solvers run \
   --preset ci \
   --output benchmarks/advanced-solver-ci.json
+python -m benchmarks.advanced_solvers run \
+  --preset convex \
+  --output benchmarks/advanced-solver-convex.json
+python -m benchmarks.advanced_solvers control \
+  --horizon 8 --horizon 32 --horizon 128 \
+  --output benchmarks/control-horizon-warm.json
 python -m benchmarks.advanced_solvers compare \
   reference.json candidate.json \
   --output comparison.json
@@ -40,6 +46,9 @@ contract:
 | `optimization-unconstrained` | nonquadratic Rosenbrock minimization | objective, reference gap, gradient norm, and distance |
 | `optimization-constrained` | Maratos-type equality/inequality problem | objective, feasibility, and independently estimated KKT stationarity |
 | `optimization-proximal` | smooth plus L1 composite objective | proximal-gradient stationarity and reference gap |
+| `optimization-linear-program` | bounded separable LP | projected KKT stationarity, feasibility, objective/reference gap |
+| `optimization-quadratic-program` | bounded diagonal positive-definite QP | projected KKT stationarity, feasibility, objective/reference gap |
+| `optimization-conic-program` | active Lorentz-cone QP | cone feasibility, estimated KKT stationarity, objective/reference gap |
 
 Generators are seed-deterministic. Their fingerprints cover numerical values,
 shapes, dtypes, and semantic configuration. A refresh case changes coefficients while
@@ -62,12 +71,20 @@ solvers a dimension-scaled work ceiling; PCG with Jacobi and GMRES with identity
 preconditioning remain different algorithms, so that case is a lifecycle and scaling
 reference rather than an algorithm-matched speed contest.
 
+The opt-in `convex` preset selects Phydrax, MPAX, and Clarabel across the LP/QP/SOCP
+cases. Unsupported backends remain explicit skipped rows. Preparation, numeric refresh,
+solve, certificates, and memory/transfer evidence use the same phase schema as every
+other advanced-solver case.
+
 ## Adapters
 
 The canonical registry contains:
 
 - `phydrax`: public native linear, nonlinear, general-eigen, continuation, and
   optimization APIs;
+- `mpax`: optional device raPDHG LP/QP execution through the Phydrax audit boundary;
+- `clarabel`: optional host quadratic-conic interior-point execution through the
+  Phydrax audit boundary;
 - `jax`: direct JAX baselines where the same mathematics is available;
 - `lineax`: linear scalar/block paths;
 - `optimistix`: nonlinear-root and unconstrained optimization paths;

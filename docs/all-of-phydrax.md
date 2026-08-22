@@ -284,19 +284,21 @@ physical model.
 costs, and sampled constraints into trajectories with stable control,
 discretization, approximation, method, and backend IDs. It includes
 linearization and frequency response, Lyapunov/Riccati equations, Gramians,
-finite- and infinite-horizon LQR, iLQR, dense multiple shooting, linear-control
-QP compilation, and receding-horizon MPC. Sampled nonlinear path constraints
+finite- and infinite-horizon LQR, iLQR, dense multiple shooting, dense or
+structural-sparse prepared linear-control QPs, explicit MPC warm-start shifting,
+and affine stage/terminal SOCP constraints. Sampled nonlinear path constraints
 report feasibility only at the sampled sites and are not continuous-time
 certificates. iLQR and multiple shooting solve one physical case per call.
 Coefficient search is bounded initialization, not a globally optimal solver.
 Dense algorithms enforce dimension guards; no failed solve is hidden by a
 fallback, projection, covariance repair, or undeclared regularization.
 
-Canonical QPs live in `phydrax.optim`. The built-in dense primal-dual path and
-dense active-set differentiation preserve primal/dual residuals, status,
-regularization, and backend provenance. QPax 0.1.4 is a core runtime dependency
-integrated only through its implicit backend; its availability does not introduce
-an automatic fallback or make all QP solution maps differentiable.
+Canonical LPs, QPs, and zero/nonnegative/SOC/rotated-SOC product-cone programs live
+in `phydrax.optim`. Native bounds remain separate from user constraint axes; typed
+methods, reusable plan/prepare/bind/refresh lifecycles, strict warm starts,
+independent KKT/ray audits, status, and provenance share one contract. Native dense,
+QPax 0.1.4, optional MPAX 0.2.4, and optional Clarabel 0.11.1 methods remain explicit
+choices with no automatic fallback or universal differentiability claim.
 
 General nonlinear optimization lives in `phydrax.optim`. Scalar, residual,
 residual-plus-signed-scalar, proximal-composite, constrained, state/design, and

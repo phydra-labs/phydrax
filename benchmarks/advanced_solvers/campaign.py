@@ -40,7 +40,12 @@ MATCHED_ROOT_CASES = (
     "nonlinear-root-matrix-free",
     "nonlinear-root-sparse-pde",
 )
-AVAILABLE_CASES = DEFAULT_CASES + MATCHED_ROOT_CASES
+PROGRAM_CASES = (
+    "optimization-linear-program",
+    "optimization-quadratic-program",
+    "optimization-conic-program",
+)
+AVAILABLE_CASES = DEFAULT_CASES + MATCHED_ROOT_CASES + PROGRAM_CASES
 
 
 @dataclass(frozen=True)
@@ -74,6 +79,17 @@ class CampaignConfig:
 PRESETS = {
     "ci": CampaignConfig(seed=20260816, size=16, warmup=1, repeats=3),
     "local": CampaignConfig(seed=20260816, size=64, warmup=2, repeats=10),
+    "convex": CampaignConfig(
+        seed=20260816,
+        size=32,
+        warmup=1,
+        repeats=5,
+        adapters=("phydrax", "mpax", "clarabel"),
+        cases=PROGRAM_CASES,
+        relative_tolerance=1e-6,
+        absolute_tolerance=1e-7,
+        max_steps=2_000,
+    ),
 }
 
 
@@ -107,5 +123,6 @@ __all__ = [
     "DEFAULT_CASES",
     "MATCHED_ROOT_CASES",
     "PRESETS",
+    "PROGRAM_CASES",
     "build_cases",
 ]

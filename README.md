@@ -274,12 +274,13 @@ physical model. See the
 Control support includes linear and differential dynamics, control
 parameterizations, sampled costs and constraints, linearization, Lyapunov and
 Riccati equations, Gramians, frequency response, LQR/iLQR, dense multiple
-shooting, compiled linear-control QPs, and receding-horizon MPC. Sampled
-nonlinear constraints are not continuous-time certificates; iLQR and multiple
-shooting accept one physical case; bounded coefficient search is not globally
-optimal; dense guards and solver status are explicit rather than hidden behind
-fallback or repair. See the [control cookbook](docs/cookbook/control.md),
-[control API](docs/api/control.md), and [QP API](docs/api/optim.md).
+shooting, dense or structural-sparse prepared linear-control QPs, explicit
+receding-horizon warm-start shifting, and affine stage/terminal SOCP constraints.
+Sampled nonlinear constraints are not continuous-time certificates; iLQR and
+multiple shooting accept one physical case; bounded coefficient search is not
+globally optimal; dense guards and solver status are explicit rather than hidden
+behind fallback or repair. See the [control cookbook](docs/cookbook/control.md),
+[control API](docs/api/control.md), and [mathematical-programming API](docs/api/optim.md).
 
 Sensitivity utilities add score/Fisher actions and empirical
 controllability/observability directions. Stationary linear-Gaussian state,
@@ -306,17 +307,20 @@ derivative systems, and ambiguous certificates remain explicit. See the
 [optimization API](docs/api/optim.md), [nonlinear systems API](docs/api/nonlinear.md),
 and [continuation API](docs/api/continuation.md).
 
-QPax 0.1.4 is a core runtime dependency and is integrated through its implicit
-backend. The Phydrax dense solver remains the default; select QPax explicitly with
-`method="qpax-implicit"`. QP results preserve primal/dual residuals, regularization,
-validity/status, and backend provenance, and neither backend is used as a hidden
-fallback.
+Canonical LPs, QPs, and product-cone programs live in `phydrax.optim`. They expose
+native bounds, typed solver/differentiation policies, reusable numeric refresh,
+warm-start contracts, independently audited KKT residuals and
+infeasibility/recession rays, and explicit status/provenance. The native dense
+LP/QP method remains the default. QPax 0.1.4 implicit differentiation, MPAX 0.2.4
+first-order LP/QP execution, and Clarabel 0.11.1 host conic execution are selected
+explicitly; none is a hidden fallback.
 
-Optional PETSc KSP/SNES, SLEPc EPS, PyAMGCL, and NVIDIA AmgX execution lives behind
-the explicit lazy `phydrax.backends` boundary. Provider availability, assembled
-versus matrix-free support, numeric refresh, convergence evidence, transfers, and
-resource release remain visible; native planning never selects an external provider
-or silently falls back to one. See the [advanced solver cookbook](docs/cookbook/advanced_solvers.md),
+Optional MPAX, Clarabel, PETSc KSP/SNES, SLEPc EPS, PyAMGCL, and NVIDIA AmgX
+execution lives behind the explicit lazy `phydrax.backends` boundary. Provider
+availability, assembled versus matrix-free support, numeric refresh, convergence
+evidence, transfers, and resource release remain visible; native planning never
+selects an external provider or silently falls back to one. See the
+[advanced solver cookbook](docs/cookbook/advanced_solvers.md),
 [external backend API](docs/api/backends.md), and
 [continuation API](docs/api/continuation.md).
 

@@ -35,6 +35,8 @@ GaussSeidelDirection: TypeAlias = Literal["forward", "backward", "symmetric"]
 def _explicit_csr(operator: AbstractLinearOperator, /) -> sp.csr_matrix:
     if isinstance(operator, AbstractSparseLinearOperator):
         storage = operator.sparse_storage()
+        if storage.batch_shape:
+            raise ValueError("Gauss-Seidel requires unbatched CSR values.")
         if not storage.canonical or not storage.sorted_indices:
             raise ValueError("Gauss-Seidel requires canonical sorted CSR storage.")
         matrix = sp.csr_matrix(

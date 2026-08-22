@@ -2,7 +2,6 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -20,7 +19,7 @@ def test_unconstrained_and_equality_solutions_have_audited_kkt_residuals():
     )
     result = phx.optim.solve_quadratic_program(unconstrained)
     np.testing.assert_allclose(result.primal, jnp.array([2.0, -2.0]), atol=1e-10)
-    assert result.status == phx.optim.QP_SUCCESS
+    assert result.status == phx.optim.ConvexProgramStatus.OPTIMAL
     assert result.valid
     assert result.backend == "phydrax"
     assert result.method == "dense-primal-dual"
@@ -42,6 +41,20 @@ def test_unconstrained_and_equality_solutions_have_audited_kkt_residuals():
     np.testing.assert_allclose(equality_result.stationarity_residual, 0.0, atol=1e-10)
 
 
+def test_relative_only_termination_is_scale_aware():
+    problem = phx.optim.QuadraticProgram(
+        1e6 * jnp.eye(1),
+        jnp.asarray([-2e6]),
+    )
+    policy = phx.optim.ConvexSolvePolicy(
+        termination=phx.optim.ConvexTermination(absolute=0.0, relative=1e-10)
+    )
+    result = phx.optim.solve_quadratic_program(problem, policy=policy)
+
+    np.testing.assert_allclose(result.primal, [2.0], atol=1e-10)
+    assert result.status == phx.optim.ConvexProgramStatus.OPTIMAL
+
+
 def test_nonsymmetric_quadratic_uses_symmetric_part_in_solve_and_vjp():
     quadratic = jnp.array([[1.0, 1.0], [-1.0, 1.0]])
     linear = jnp.array([-1.0, 0.0])
@@ -52,7 +65,7 @@ def test_nonsymmetric_quadratic_uses_symmetric_part_in_solve_and_vjp():
     np.testing.assert_allclose(result.primal, jnp.array([1.0, 0.0]), atol=1e-10)
     np.testing.assert_allclose(result.objective, -0.5, atol=1e-10)
     np.testing.assert_allclose(result.stationarity_residual, 0.0, atol=1e-10)
-    assert result.status == phx.optim.QP_SUCCESS
+    assert result.status == phx.optim.ConvexProgramStatus.OPTIMAL
 
     def primal_sum(raw_quadratic):
         raw_problem = phx.optim.QuadraticProgram(raw_quadratic, linear)
@@ -69,7 +82,7 @@ def test_rank_revealing_direct_solve_handles_singular_and_redundant_systems():
     zero_hessian = phx.optim.QuadraticProgram(jnp.zeros((1, 1)), jnp.zeros(1))
     zero_result = phx.optim.solve_quadratic_program(zero_hessian)
     np.testing.assert_allclose(zero_result.primal, 0.0, atol=1e-10)
-    assert zero_result.status == phx.optim.QP_SUCCESS
+    assert zero_result.status == phx.optim.ConvexProgramStatus.OPTIMAL
     assert zero_result.kkt_residual_norm == 0.0
     assert zero_result.iterations == 0
 
@@ -83,7 +96,7 @@ def test_rank_revealing_direct_solve_handles_singular_and_redundant_systems():
     np.testing.assert_allclose(redundant_result.primal, 0.0, atol=1e-10)
     np.testing.assert_allclose(redundant_result.equality_residual, 0.0, atol=1e-10)
     np.testing.assert_allclose(redundant_result.stationarity_residual, 0.0, atol=1e-10)
-    assert redundant_result.status == phx.optim.QP_SUCCESS
+    assert redundant_result.status == phx.optim.ConvexProgramStatus.OPTIMAL
 
 
 def test_rank_revealing_direct_solve_rejects_inconsistent_and_unbounded_systems():
@@ -94,16 +107,19 @@ def test_rank_revealing_direct_solve_rejects_inconsistent_and_unbounded_systems(
         equality_rhs=jnp.array([0.0, 1.0]),
     )
     inconsistent_result = phx.optim.solve_quadratic_program(inconsistent)
-    assert inconsistent_result.status == phx.optim.QP_INFEASIBLE
+    assert inconsistent_result.status == phx.optim.ConvexProgramStatus.PRIMAL_INFEASIBLE
     assert not inconsistent_result.valid
     assert jnp.max(jnp.abs(inconsistent_result.equality_residual)) > 0.4
+    assert inconsistent_result.certificate.dual_ray_valid
+    assert inconsistent_result.certificate.dual_ray_residual_norm <= 1e-8
 
     unbounded = phx.optim.QuadraticProgram(jnp.zeros((1, 1)), jnp.array([-1.0]))
     unbounded_result = phx.optim.solve_quadratic_program(unbounded)
-    assert unbounded_result.status == phx.optim.QP_MAX_ITERATIONS
+    assert unbounded_result.status == phx.optim.ConvexProgramStatus.DUAL_INFEASIBLE
     assert not unbounded_result.valid
     np.testing.assert_allclose(unbounded_result.stationarity_residual, jnp.array([-1.0]))
     assert unbounded_result.kkt_residual_norm == 1.0
+    assert unbounded_result.certificate.primal_ray_valid
 
 
 def test_inequality_and_mixed_solutions_identify_active_constraints():
@@ -113,9 +129,9 @@ def test_inequality_and_mixed_solutions_identify_active_constraints():
         inequality_matrix=jnp.array([[-1.0, 0.0], [0.0, -1.0], [1.0, 1.0]]),
         inequality_rhs=jnp.array([0.0, 0.0, 3.0]),
     )
-    result = phx.optim.solve_quadratic_program(inequality, tolerance=1e-7)
+    result = phx.optim.solve_quadratic_program(inequality)
     np.testing.assert_allclose(result.primal, jnp.array([0.0, 3.0]), atol=2e-4)
-    assert result.status == phx.optim.QP_SUCCESS
+    assert result.status == phx.optim.ConvexProgramStatus.OPTIMAL
     assert result.primal_residual_norm < 1e-7
     assert result.dual_residual_norm < 1e-7
     assert jnp.max(jnp.abs(result.complementarity_residual)) < 1e-7
@@ -145,9 +161,10 @@ def test_infeasible_and_nonfinite_inputs_have_distinct_explicit_statuses():
         inequality_rhs=jnp.array([0.0, -1.0]),
     )
     infeasible_result = phx.optim.solve_quadratic_program(infeasible)
-    assert infeasible_result.status == phx.optim.QP_INFEASIBLE
+    assert infeasible_result.status == phx.optim.ConvexProgramStatus.PRIMAL_INFEASIBLE
     assert not infeasible_result.valid
     assert jnp.all(jnp.isfinite(infeasible_result.primal))
+    assert infeasible_result.certificate.dual_ray_valid
 
     inconsistent_equalities = phx.optim.QuadraticProgram(
         jnp.eye(1),
@@ -156,7 +173,7 @@ def test_infeasible_and_nonfinite_inputs_have_distinct_explicit_statuses():
         equality_rhs=jnp.array([0.0, 1.0]),
     )
     equality_result = phx.optim.solve_quadratic_program(inconsistent_equalities)
-    assert equality_result.status == phx.optim.QP_INFEASIBLE
+    assert equality_result.status == phx.optim.ConvexProgramStatus.PRIMAL_INFEASIBLE
     assert not equality_result.valid
 
     nonfinite = phx.optim.QuadraticProgram(
@@ -164,9 +181,25 @@ def test_infeasible_and_nonfinite_inputs_have_distinct_explicit_statuses():
         jnp.array([jnp.nan]),
     )
     nonfinite_result = phx.optim.solve_quadratic_program(nonfinite)
-    assert nonfinite_result.status == phx.optim.QP_NONFINITE
+    assert nonfinite_result.status == phx.optim.ConvexProgramStatus.NONFINITE_INPUT
     assert not nonfinite_result.valid
     assert jnp.isnan(nonfinite_result.primal[0])
+
+
+def test_failure_policy_can_raise_on_audited_nonoptimal_status():
+    problem = phx.optim.QuadraticProgram(
+        jnp.eye(1),
+        jnp.zeros(1),
+        inequality_matrix=jnp.asarray([[1.0], [-1.0]]),
+        inequality_rhs=jnp.asarray([0.0, -1.0]),
+    )
+    policy = phx.optim.ConvexSolvePolicy(
+        failure=phx.linalg.FailurePolicy("error"),
+    )
+
+    with pytest.raises(RuntimeError, match="Convex program failed"):
+        result = phx.optim.solve_quadratic_program(problem, policy=policy)
+        jax.block_until_ready(result.primal)
 
 
 def test_batch_shapes_broadcast_constraints_and_preserve_per_case_status():
@@ -184,7 +217,13 @@ def test_batch_shapes_broadcast_constraints_and_preserve_per_case_status():
     )
     np.testing.assert_array_equal(
         result.status,
-        jnp.array([phx.optim.QP_SUCCESS, phx.optim.QP_SUCCESS, phx.optim.QP_NONFINITE]),
+        jnp.array(
+            [
+                phx.optim.ConvexProgramStatus.OPTIMAL,
+                phx.optim.ConvexProgramStatus.OPTIMAL,
+                phx.optim.ConvexProgramStatus.NONFINITE_INPUT,
+            ]
+        ),
     )
     np.testing.assert_array_equal(result.valid, jnp.array([True, True, False]))
     assert result.objective.shape == (3,)
@@ -202,7 +241,12 @@ def test_batched_inequality_solver_preserves_early_completion_iterations():
 
     np.testing.assert_array_equal(
         result.status,
-        jnp.array([phx.optim.QP_INFEASIBLE, phx.optim.QP_SUCCESS]),
+        jnp.array(
+            [
+                phx.optim.ConvexProgramStatus.PRIMAL_INFEASIBLE,
+                phx.optim.ConvexProgramStatus.OPTIMAL,
+            ]
+        ),
     )
     assert result.iterations[0] == 0
     assert result.iterations[1] > 0
@@ -226,7 +270,10 @@ def test_dense_result_matches_independent_scipy_oracle():
         inequality_matrix=inequality_matrix,
         inequality_rhs=inequality_rhs,
     )
-    result = phx.optim.solve_quadratic_program(problem, tolerance=1e-9)
+    policy = phx.optim.ConvexSolvePolicy(
+        termination=phx.optim.ConvexTermination(absolute=1e-9)
+    )
+    result = phx.optim.solve_quadratic_program(problem, policy=policy)
 
     def objective(x):
         return 0.5 * x @ quadratic @ x + linear @ x
@@ -247,6 +294,7 @@ def test_dense_result_matches_independent_scipy_oracle():
     np.testing.assert_allclose(result.primal, scipy_result.x, atol=2e-5, rtol=2e-5)
     np.testing.assert_allclose(result.objective, scipy_result.fun, atol=1e-8)
     assert result.kkt_residual_norm < 1e-9
+    assert result.provenance.policy_id == policy.policy_id
 
 
 def test_active_set_gradients_match_piecewise_analytic_sensitivities():
@@ -303,12 +351,15 @@ def test_active_set_gradients_match_piecewise_analytic_sensitivities():
 
 def test_explicit_regularization_is_recorded_and_not_hidden_in_raw_kkt_data():
     problem = phx.optim.QuadraticProgram(jnp.zeros((1, 1)), jnp.array([-1.0]))
-    result = phx.optim.solve_quadratic_program(problem, regularization=2.0)
+    result = phx.optim.solve_quadratic_program(
+        problem,
+        policy=phx.optim.ConvexSolvePolicy(regularization=2.0),
+    )
     np.testing.assert_allclose(result.primal, jnp.array([0.5]), atol=1e-10)
     np.testing.assert_allclose(result.stationarity_residual, jnp.array([-1.0]))
     np.testing.assert_allclose(result.solver_stationarity_residual, 0.0, atol=1e-10)
     assert result.regularization == 2.0
-    assert result.status == phx.optim.QP_SUCCESS
+    assert result.status == phx.optim.ConvexProgramStatus.OPTIMAL
 
 
 def test_dense_primal_dual_solver_supports_float32_without_dtype_repair():
@@ -322,7 +373,7 @@ def test_dense_primal_dual_solver_supports_float32_without_dtype_repair():
     )
     result = phx.optim.solve_quadratic_program(problem)
     assert result.primal.dtype == jnp.float32
-    assert result.status == phx.optim.QP_SUCCESS
+    assert result.status == phx.optim.ConvexProgramStatus.OPTIMAL
     assert result.kkt_residual_norm < 1e-7
 
 
@@ -366,8 +417,12 @@ def test_configuration_and_shape_guards_are_explicit():
             jnp.eye(2), jnp.ones(2), equality_matrix=jnp.ones((1, 2))
         )
     problem = phx.optim.QuadraticProgram(jnp.eye(2), jnp.ones(2))
-    invalid_method: Any = "qpax-explicit"
-    with pytest.raises(ValueError, match="max_dense_dimension"):
-        phx.optim.solve_quadratic_program(problem, max_dense_dimension=1)
-    with pytest.raises(ValueError, match="explicit differentiation"):
-        phx.optim.solve_quadratic_program_primal(problem, method=invalid_method)
+    with pytest.raises(ValueError, match="exceeds max_dense_dimension"):
+        phx.optim.solve_quadratic_program(
+            problem,
+            policy=phx.optim.ConvexSolvePolicy(
+                phx.optim.DensePrimalDualQP(max_kkt_dimension=1)
+            ),
+        )
+    with pytest.raises(ValueError, match="Unknown convex-program differentiation mode"):
+        phx.optim.ConvexDifferentiationPolicy("unsupported")

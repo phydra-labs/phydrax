@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from functools import partial
-from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -15,17 +14,24 @@ import numpy as np
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
-from .._strict import StrictModule
-from ._qpax_backend import solve_qpax_implicit, solve_qpax_implicit_primal
-
-
-QPMethod: TypeAlias = Literal["dense-primal-dual", "qpax-implicit"]
-QPDifferentiableMethod: TypeAlias = Literal["dense-active-set", "qpax-implicit"]
-
-QP_SUCCESS = 0
-QP_MAX_ITERATIONS = 1
-QP_INFEASIBLE = 2
-QP_NONFINITE = 3
+from ..._bounds import Bounds
+from ..._fingerprint import canonical_fingerprint
+from ..._strict import StrictModule
+from ._policy import (
+    ConvexDifferentiationPolicy,
+    ConvexSolvePolicy,
+    DensePrimalDualQP,
+    MPAXr2HPDHG,
+    MPAXraPDHG,
+    QPaxInteriorPoint,
+)
+from ._qpax import solve_qpax_implicit, solve_qpax_implicit_primal
+from ._types import (
+    ConvexProgramCertificate,
+    ConvexProgramProvenance,
+    ConvexProgramStatus,
+    ConvexWarmStart,
+)
 
 
 def _batch_shape(value: Sequence[int], /) -> tuple[int, ...]:
@@ -73,21 +79,39 @@ def _canonical_matrix(
     return matrix, rhs
 
 
+def _static_bound_values(
+    bounds: Bounds,
+    batch_shape: tuple[int, ...],
+    variables: int,
+    /,
+) -> tuple[np.ndarray, np.ndarray]:
+    lower_metadata = bounds._lower_metadata
+    upper_metadata = bounds._upper_metadata
+    if (
+        lower_metadata is None
+        or upper_metadata is None
+        or len(lower_metadata) != 1
+        or len(upper_metadata) != 1
+    ):
+        raise ValueError(
+            "QuadraticProgram bounds require static scalar or array role metadata."
+        )
+    metadata = (lower_metadata, upper_metadata)
+    arrays = []
+    for bound_metadata in metadata:
+        shape, dtype, values = bound_metadata[0]
+        raw = np.asarray(values, dtype=np.dtype(dtype)).reshape(shape)
+        arrays.append(np.broadcast_to(raw, batch_shape + (variables,)))
+    return arrays[0], arrays[1]
+
+
 class QuadraticProgram(StrictModule):
     r"""A convex quadratic program in canonical equality/inequality form.
 
-    The program is
-
-    .. math::
-
-        \min_x \tfrac12 x^T Q x + q^T x
-        \quad\text{subject to}\quad A x=b,\;Gx\leq h.
-
-    Every array is broadcast to ``batch_shape`` followed by its event dimensions.
-    Missing constraint families are represented by zero-row arrays, so the problem is
-    a transformation-compatible PyTree with one layout for every constraint pattern.
-    Convexity requires the symmetric part of ``quadratic`` to be positive semidefinite;
-    this mathematical precondition is not changed by hidden jitter or projection.
+    The program is ``min 1/2 xᵀQx + qᵀx`` subject to ``Ax=b``, ``Gx<=h``,
+    and optional native variable bounds. Bound roles are fixed across a batch.
+    Finite fixed bounds become equality rows for numerical execution; one-sided
+    finite bounds become inequality rows while retaining their public provenance.
     """
 
     quadratic: Array
@@ -96,10 +120,20 @@ class QuadraticProgram(StrictModule):
     equality_rhs: Array
     inequality_matrix: Array
     inequality_rhs: Array
+    lower_bounds: Array
+    upper_bounds: Array
     batch_shape: tuple[int, ...] = eqx.field(static=True)
     num_variables: int = eqx.field(static=True)
     num_equalities: int = eqx.field(static=True)
     num_inequalities: int = eqx.field(static=True)
+    num_user_equalities: int = eqx.field(static=True)
+    num_user_inequalities: int = eqx.field(static=True)
+    fixed_bound_indices: tuple[int, ...] = eqx.field(static=True)
+    lower_bound_indices: tuple[int, ...] = eqx.field(static=True)
+    upper_bound_indices: tuple[int, ...] = eqx.field(static=True)
+    problem_id: str = eqx.field(static=True)
+    structure_id: str = eqx.field(static=True)
+    convexity_evidence: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -111,6 +145,9 @@ class QuadraticProgram(StrictModule):
         equality_rhs: ArrayLike | None = None,
         inequality_matrix: ArrayLike | None = None,
         inequality_rhs: ArrayLike | None = None,
+        bounds: Bounds | None = None,
+        problem_id: str = "canonical-quadratic-program",
+        convexity_evidence: str = "asserted",
     ):
         quadratic_value = jnp.asarray(quadratic)
         linear_value = jnp.asarray(linear)
@@ -132,14 +169,14 @@ class QuadraticProgram(StrictModule):
         quadratic_value = quadratic_value.astype(dtype)
         quadratic_value = 0.5 * (quadratic_value + jnp.swapaxes(quadratic_value, -1, -2))
         linear_value = linear_value.astype(dtype)
-        equality_matrix_value, equality_rhs_value = _canonical_matrix(
+        equality_value, equality_rhs_value = _canonical_matrix(
             equality_matrix,
             rows_from=equality_rhs,
             variables=variables,
             name="equality_matrix",
             dtype=dtype,
         )
-        inequality_matrix_value, inequality_rhs_value = _canonical_matrix(
+        inequality_value, inequality_rhs_value = _canonical_matrix(
             inequality_matrix,
             rows_from=inequality_rhs,
             variables=variables,
@@ -149,38 +186,141 @@ class QuadraticProgram(StrictModule):
         batch = np.broadcast_shapes(
             quadratic_value.shape[:-2],
             linear_value.shape[:-1],
-            equality_matrix_value.shape[:-2],
+            equality_value.shape[:-2],
             equality_rhs_value.shape[:-1],
-            inequality_matrix_value.shape[:-2],
+            inequality_value.shape[:-2],
             inequality_rhs_value.shape[:-1],
         )
-        equalities = int(equality_matrix_value.shape[-2])
-        inequalities = int(inequality_matrix_value.shape[-2])
-        self.quadratic = jnp.broadcast_to(quadratic_value, batch + (variables, variables))
-        self.linear = jnp.broadcast_to(linear_value, batch + (variables,))
-        self.equality_matrix = jnp.broadcast_to(
-            equality_matrix_value, batch + (equalities, variables)
+        user_equalities = int(equality_value.shape[-2])
+        user_inequalities = int(inequality_value.shape[-2])
+        quadratic_value = jnp.broadcast_to(
+            quadratic_value, batch + (variables, variables)
         )
-        self.equality_rhs = jnp.broadcast_to(equality_rhs_value, batch + (equalities,))
-        self.inequality_matrix = jnp.broadcast_to(
-            inequality_matrix_value, batch + (inequalities, variables)
+        linear_value = jnp.broadcast_to(linear_value, batch + (variables,))
+        equality_value = jnp.broadcast_to(
+            equality_value, batch + (user_equalities, variables)
         )
-        self.inequality_rhs = jnp.broadcast_to(
-            inequality_rhs_value, batch + (inequalities,)
+        equality_rhs_value = jnp.broadcast_to(
+            equality_rhs_value, batch + (user_equalities,)
         )
+        inequality_value = jnp.broadcast_to(
+            inequality_value, batch + (user_inequalities, variables)
+        )
+        inequality_rhs_value = jnp.broadcast_to(
+            inequality_rhs_value, batch + (user_inequalities,)
+        )
+        bounds_ = Bounds() if bounds is None else bounds
+        if not isinstance(bounds_, Bounds):
+            raise TypeError("bounds must be a Bounds or None.")
+        lower, upper = bounds_.materialize(linear_value)
+        lower = jnp.asarray(lower, dtype=dtype)
+        upper = jnp.asarray(upper, dtype=dtype)
+        static_lower, static_upper = _static_bound_values(bounds_, batch, variables)
+        flat_lower = static_lower.reshape((-1, variables))
+        flat_upper = static_upper.reshape((-1, variables))
+        lower_finite = np.isfinite(flat_lower)
+        upper_finite = np.isfinite(flat_upper)
+        fixed = lower_finite & upper_finite & (flat_lower == flat_upper)
+        roles = np.stack((lower_finite, upper_finite, fixed), axis=-1)
+        if not np.all(roles == roles[:1]):
+            raise ValueError(
+                "QuadraticProgram bounds must have one shared finite/fixed role "
+                "pattern across the batch."
+            )
+        fixed_indices = tuple(int(index) for index in np.flatnonzero(fixed[0]))
+        lower_indices = tuple(
+            int(index) for index in np.flatnonzero(lower_finite[0] & ~fixed[0])
+        )
+        upper_indices = tuple(
+            int(index) for index in np.flatnonzero(upper_finite[0] & ~fixed[0])
+        )
+        identity = jnp.eye(variables, dtype=dtype)
+        fixed_matrix = jnp.broadcast_to(
+            identity[jnp.asarray(fixed_indices, dtype=jnp.int32)],
+            batch + (len(fixed_indices), variables),
+        )
+        lower_matrix = jnp.broadcast_to(
+            -identity[jnp.asarray(lower_indices, dtype=jnp.int32)],
+            batch + (len(lower_indices), variables),
+        )
+        upper_matrix = jnp.broadcast_to(
+            identity[jnp.asarray(upper_indices, dtype=jnp.int32)],
+            batch + (len(upper_indices), variables),
+        )
+        equality_value = jnp.concatenate((equality_value, fixed_matrix), axis=-2)
+        fixed_values = jnp.take(
+            lower, jnp.asarray(fixed_indices, dtype=jnp.int32), axis=-1
+        )
+        equality_rhs_value = jnp.concatenate((equality_rhs_value, fixed_values), axis=-1)
+        inequality_value = jnp.concatenate(
+            (inequality_value, lower_matrix, upper_matrix), axis=-2
+        )
+        lower_values = jnp.take(
+            lower, jnp.asarray(lower_indices, dtype=jnp.int32), axis=-1
+        )
+        upper_values = jnp.take(
+            upper, jnp.asarray(upper_indices, dtype=jnp.int32), axis=-1
+        )
+        inequality_rhs_value = jnp.concatenate(
+            (inequality_rhs_value, -lower_values, upper_values),
+            axis=-1,
+        )
+        identifier = str(problem_id)
+        evidence = str(convexity_evidence)
+        if not identifier or not evidence:
+            raise ValueError("problem_id and convexity_evidence must be non-empty.")
+        self.quadratic = quadratic_value
+        self.linear = linear_value
+        self.equality_matrix = equality_value
+        self.equality_rhs = equality_rhs_value
+        self.inequality_matrix = inequality_value
+        self.inequality_rhs = inequality_rhs_value
+        self.lower_bounds = lower
+        self.upper_bounds = upper
         self.batch_shape = _batch_shape(batch)
         self.num_variables = variables
-        self.num_equalities = equalities
-        self.num_inequalities = inequalities
+        self.num_equalities = user_equalities + len(fixed_indices)
+        self.num_inequalities = (
+            user_inequalities + len(lower_indices) + len(upper_indices)
+        )
+        self.num_user_equalities = user_equalities
+        self.num_user_inequalities = user_inequalities
+        self.fixed_bound_indices = fixed_indices
+        self.lower_bound_indices = lower_indices
+        self.upper_bound_indices = upper_indices
+        self.problem_id = identifier
+        self.convexity_evidence = evidence
+        self.structure_id = canonical_fingerprint(
+            {
+                "kind": "quadratic-program",
+                "problem_id": identifier,
+                "batch_shape": list(batch),
+                "variables": variables,
+                "user_equalities": user_equalities,
+                "user_inequalities": user_inequalities,
+                "fixed_bounds": list(fixed_indices),
+                "lower_bounds": list(lower_indices),
+                "upper_bounds": list(upper_indices),
+                "dtype": str(dtype),
+            }
+        )
 
 
-class QuadraticProgramResult(StrictModule):
+class ConvexProgramResult(StrictModule):
     """Primal/dual solution, KKT diagnostics, and complete solver provenance."""
 
     primal: Array
     equality_dual: Array
     inequality_dual: Array
     inequality_slack: Array
+    cone_slack: Array
+    cone_dual: Array
+    cone_primal_residual: Array
+    cone_violation: Array
+    cone_dual_violation: Array
+    cone_complementarity: Array
+    lower_bound_dual: Array
+    upper_bound_dual: Array
     objective: Array
     stationarity_residual: Array
     solver_stationarity_residual: Array
@@ -197,8 +337,10 @@ class QuadraticProgramResult(StrictModule):
     backend_converged: Array
     valid: Array
     status: Array
+    certificate: ConvexProgramCertificate
+    provenance: ConvexProgramProvenance
     batch_shape: tuple[int, ...] = eqx.field(static=True)
-    method: QPMethod = eqx.field(static=True)
+    method: str = eqx.field(static=True)
     backend: str = eqx.field(static=True)
     regularization: float = eqx.field(static=True)
     tolerance: float = eqx.field(static=True)
@@ -206,7 +348,101 @@ class QuadraticProgramResult(StrictModule):
 
     @property
     def successful(self) -> Array:
-        return self.valid & (self.status == QP_SUCCESS)
+        return self.valid & (self.status == int(ConvexProgramStatus.OPTIMAL))
+
+
+def _apply_failure_policy(
+    result: ConvexProgramResult,
+    policy: ConvexSolvePolicy,
+    /,
+) -> ConvexProgramResult:
+    if policy.failure.mode == "status":
+        return result
+    checked_primal = eqx.error_if(
+        result.primal,
+        jnp.any(~result.successful),
+        "Convex program failed its audited numerical contract.",
+    )
+    return eqx.tree_at(
+        lambda candidate: candidate.primal,
+        result,
+        checked_primal,
+    )
+
+
+def _validate_quadratic_materialization(
+    problem: QuadraticProgram,
+    policy: ConvexSolvePolicy,
+    /,
+) -> tuple[int, int]:
+    arrays = (
+        problem.quadratic,
+        problem.linear,
+        problem.equality_matrix,
+        problem.equality_rhs,
+        problem.inequality_matrix,
+        problem.inequality_rhs,
+        problem.lower_bounds,
+        problem.upper_bounds,
+    )
+    input_entries = sum(int(array.size) for array in arrays)
+    input_bytes = sum(int(array.size) * int(array.dtype.itemsize) for array in arrays)
+    if input_entries > policy.materialization.max_entries:
+        raise ValueError(
+            f"Quadratic program requires {input_entries} materialized entries, "
+            f"exceeding the policy limit {policy.materialization.max_entries}."
+        )
+    if input_bytes > policy.materialization.max_bytes:
+        raise ValueError(
+            f"Quadratic program requires {input_bytes} materialized bytes, "
+            f"exceeding the policy limit {policy.materialization.max_bytes}."
+        )
+    return input_entries, input_bytes
+
+
+def _validate_quadratic_resources(
+    problem: QuadraticProgram,
+    policy: ConvexSolvePolicy,
+    /,
+    *,
+    max_dense_dimension: int,
+) -> None:
+    input_entries, input_bytes = _validate_quadratic_materialization(problem, policy)
+    kkt_dimension = (
+        problem.num_variables + problem.num_equalities + 2 * problem.num_inequalities
+    )
+    if kkt_dimension > max_dense_dimension:
+        raise ValueError(
+            f"Dense QP dimension {kkt_dimension} exceeds "
+            f"max_dense_dimension={max_dense_dimension}."
+        )
+    batch_count = int(np.prod(problem.batch_shape)) if problem.batch_shape else 1
+    itemsize = int(problem.linear.dtype.itemsize)
+    kkt_entries = batch_count * kkt_dimension * kkt_dimension
+    kkt_bytes = kkt_entries * itemsize
+    materialization_entries = max(input_entries, kkt_entries)
+    materialization_bytes = max(input_bytes, kkt_bytes)
+    if materialization_entries > policy.materialization.max_entries:
+        raise ValueError(
+            f"Dense QP requires {materialization_entries} materialized entries, "
+            f"exceeding the policy limit {policy.materialization.max_entries}."
+        )
+    if materialization_bytes > policy.materialization.max_bytes:
+        raise ValueError(
+            f"Dense QP requires {materialization_bytes} materialized bytes, "
+            f"exceeding the policy limit {policy.materialization.max_bytes}."
+        )
+    if kkt_bytes > policy.resources.factorization_bytes:
+        raise ValueError(
+            f"Dense QP factorization estimate {kkt_bytes} bytes exceeds "
+            f"the resource limit {policy.resources.factorization_bytes}."
+        )
+    workspace_bytes = kkt_bytes + 4 * batch_count * kkt_dimension * itemsize
+    if workspace_bytes > policy.resources.workspace_bytes:
+        raise ValueError(
+            f"Dense QP workspace estimate {workspace_bytes} bytes exceeds "
+            f"the resource limit {policy.resources.workspace_bytes}."
+        )
 
 
 def _max_abs(value: Array, /) -> Array:
@@ -239,14 +475,6 @@ def _solve_saddle(
         kkt, jnp.concatenate((primal_rhs, constraint_rhs)), rcond=None
     )
     return solution[:variables], solution[variables:]
-
-
-def _equality_feasibility(matrix: Array, rhs: Array, tolerance: float) -> Array:
-    if matrix.shape[0] == 0:
-        return jnp.asarray(True)
-    candidate, _, _, _ = jnp.linalg.lstsq(matrix, rhs, rcond=None)
-    residual = matrix @ candidate - rhs
-    return _max_abs(residual) <= tolerance * (1.0 + _max_abs(rhs))
 
 
 def _newton_direction(
@@ -360,7 +588,12 @@ def _dense_constrained_single(
     equality_rhs: Array,
     inequality_matrix: Array,
     inequality_rhs: Array,
+    initial_primal: Array,
+    initial_slack: Array,
+    initial_inequality_dual: Array,
+    initial_equality_dual: Array,
     *,
+    use_warm_start: bool,
     tolerance: float,
     max_iterations: int,
     regularization: float,
@@ -371,15 +604,26 @@ def _dense_constrained_single(
     equality_candidate, _, _, _ = jnp.linalg.lstsq(
         equality_matrix, equality_rhs, rcond=None
     )
-    primal = jnp.where(
+    default_primal = jnp.where(
         equality_matrix.shape[0] == 0,
         jnp.zeros((variables,), dtype=quadratic.dtype),
         equality_candidate,
     )
-    raw_slack = inequality_rhs - inequality_matrix @ primal
-    slack = jnp.where(raw_slack > 0, raw_slack, jnp.ones_like(raw_slack))
-    inequality_dual = jnp.ones((inequalities,), dtype=quadratic.dtype)
-    equality_dual = jnp.zeros((equality_matrix.shape[0],), dtype=quadratic.dtype)
+    raw_slack = inequality_rhs - inequality_matrix @ default_primal
+    default_slack = jnp.where(raw_slack > 0, raw_slack, jnp.ones_like(raw_slack))
+    warm = jnp.asarray(use_warm_start)
+    primal = jnp.where(warm, initial_primal, default_primal)
+    slack = jnp.where(warm, initial_slack, default_slack)
+    inequality_dual = jnp.where(
+        warm,
+        initial_inequality_dual,
+        jnp.ones((inequalities,), dtype=quadratic.dtype),
+    )
+    equality_dual = jnp.where(
+        warm,
+        initial_equality_dual,
+        jnp.zeros((equality_matrix.shape[0],), dtype=quadratic.dtype),
+    )
     initial = (
         primal,
         slack,
@@ -507,7 +751,12 @@ def _dense_finite_single(
     equality_rhs: Array,
     inequality_matrix: Array,
     inequality_rhs: Array,
+    initial_primal: Array,
+    initial_slack: Array,
+    initial_inequality_dual: Array,
+    initial_equality_dual: Array,
     *,
+    use_warm_start: bool,
     tolerance: float,
     max_iterations: int,
     regularization: float,
@@ -542,7 +791,12 @@ def _dense_finite_single(
         equality_rhs,
         inequality_matrix,
         inequality_rhs,
+        initial_primal,
+        initial_slack,
+        initial_inequality_dual,
+        initial_equality_dual,
         tolerance=tolerance,
+        use_warm_start=use_warm_start,
         max_iterations=max_iterations,
         regularization=regularization,
         step_fraction=step_fraction,
@@ -572,7 +826,12 @@ def _dense_single(
     equality_rhs: Array,
     inequality_matrix: Array,
     inequality_rhs: Array,
+    initial_primal: Array,
+    initial_slack: Array,
+    initial_inequality_dual: Array,
+    initial_equality_dual: Array,
     *,
+    use_warm_start: bool,
     tolerance: float,
     max_iterations: int,
     regularization: float,
@@ -599,7 +858,12 @@ def _dense_single(
             equality_rhs,
             inequality_matrix,
             inequality_rhs,
+            initial_primal,
+            initial_slack,
+            initial_inequality_dual,
+            initial_equality_dual,
             tolerance=tolerance,
+            use_warm_start=use_warm_start,
             max_iterations=max_iterations,
             regularization=regularization,
             step_fraction=step_fraction,
@@ -627,6 +891,99 @@ def _flatten_problem(
     )
 
 
+def _warm_start_arrays(
+    problem: QuadraticProgram,
+    warm_start: ConvexWarmStart | None,
+    /,
+) -> tuple[Array | None, Array | None, Array | None, Array | None]:
+    if warm_start is None:
+        return None, None, None, None
+    if not isinstance(warm_start, ConvexWarmStart):
+        raise TypeError("warm_start must be a ConvexWarmStart or None.")
+    if warm_start.structure_id != problem.structure_id:
+        raise ValueError("Warm start does not match the quadratic-program structure.")
+    expected = {
+        "primal": problem.batch_shape + (problem.num_variables,),
+        "equality_dual": problem.batch_shape + (problem.num_user_equalities,),
+        "inequality_dual": problem.batch_shape + (problem.num_user_inequalities,),
+        "inequality_slack": problem.batch_shape + (problem.num_user_inequalities,),
+        "lower_bound_dual": problem.batch_shape + (problem.num_variables,),
+        "upper_bound_dual": problem.batch_shape + (problem.num_variables,),
+    }
+    values = {
+        "primal": warm_start.primal,
+        "equality_dual": warm_start.equality_dual,
+        "inequality_dual": warm_start.inequality_dual,
+        "inequality_slack": warm_start.inequality_slack,
+        "lower_bound_dual": warm_start.lower_bound_dual,
+        "upper_bound_dual": warm_start.upper_bound_dual,
+    }
+    for name, value in values.items():
+        if tuple(value.shape) != expected[name]:
+            raise ValueError(
+                f"Warm-start {name} must have shape {expected[name]}; got {value.shape}."
+            )
+    dtype = problem.linear.dtype
+    primal = jnp.asarray(warm_start.primal, dtype=dtype)
+    fixed_indices = jnp.asarray(problem.fixed_bound_indices, dtype=jnp.int32)
+    lower_indices = jnp.asarray(problem.lower_bound_indices, dtype=jnp.int32)
+    upper_indices = jnp.asarray(problem.upper_bound_indices, dtype=jnp.int32)
+    fixed_dual = jnp.take(warm_start.upper_bound_dual, fixed_indices, axis=-1) - jnp.take(
+        warm_start.lower_bound_dual, fixed_indices, axis=-1
+    )
+    equality_dual = jnp.concatenate(
+        (jnp.asarray(warm_start.equality_dual, dtype=dtype), fixed_dual),
+        axis=-1,
+    )
+    lower_dual = jnp.take(warm_start.lower_bound_dual, lower_indices, axis=-1)
+    upper_dual = jnp.take(warm_start.upper_bound_dual, upper_indices, axis=-1)
+    inequality_dual = jnp.concatenate(
+        (
+            jnp.asarray(warm_start.inequality_dual, dtype=dtype),
+            lower_dual,
+            upper_dual,
+        ),
+        axis=-1,
+    )
+    lower_slack = jnp.take(
+        primal - problem.lower_bounds,
+        lower_indices,
+        axis=-1,
+    )
+    upper_slack = jnp.take(
+        problem.upper_bounds - primal,
+        upper_indices,
+        axis=-1,
+    )
+    slack = jnp.concatenate(
+        (
+            jnp.asarray(warm_start.inequality_slack, dtype=dtype),
+            lower_slack,
+            upper_slack,
+        ),
+        axis=-1,
+    )
+    finite = (
+        jnp.all(jnp.isfinite(primal))
+        & jnp.all(jnp.isfinite(equality_dual))
+        & jnp.all(jnp.isfinite(inequality_dual))
+        & jnp.all(jnp.isfinite(slack))
+    )
+    interior = jnp.all(inequality_dual > 0.0) & jnp.all(slack > 0.0)
+    primal = eqx.error_if(
+        primal,
+        ~(finite & interior),
+        "Dense QP warm starts require finite data and strictly positive slacks/duals.",
+    )
+    count = int(np.prod(problem.batch_shape)) if problem.batch_shape else 1
+    return (
+        primal.reshape((count, problem.num_variables)),
+        slack.reshape((count, problem.num_inequalities)),
+        inequality_dual.reshape((count, problem.num_inequalities)),
+        equality_dual.reshape((count, problem.num_equalities)),
+    )
+
+
 def _solve_dense_arrays(
     quadratic: Array,
     linear: Array,
@@ -635,17 +992,46 @@ def _solve_dense_arrays(
     inequality_matrix: Array,
     inequality_rhs: Array,
     *,
+    initial_primal: Array | None = None,
+    initial_slack: Array | None = None,
+    initial_inequality_dual: Array | None = None,
+    initial_equality_dual: Array | None = None,
+    use_warm_start: bool = False,
     tolerance: float,
     max_iterations: int,
     regularization: float,
     step_fraction: float,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
+    count, variables = linear.shape
+    inequalities = inequality_rhs.shape[-1]
+    equalities = equality_rhs.shape[-1]
+    initial_primal = (
+        jnp.zeros((count, variables), dtype=linear.dtype)
+        if initial_primal is None
+        else initial_primal
+    )
+    initial_slack = (
+        jnp.ones((count, inequalities), dtype=linear.dtype)
+        if initial_slack is None
+        else initial_slack
+    )
+    initial_inequality_dual = (
+        jnp.ones((count, inequalities), dtype=linear.dtype)
+        if initial_inequality_dual is None
+        else initial_inequality_dual
+    )
+    initial_equality_dual = (
+        jnp.zeros((count, equalities), dtype=linear.dtype)
+        if initial_equality_dual is None
+        else initial_equality_dual
+    )
     solve_one = partial(
         _dense_single,
         tolerance=tolerance,
         max_iterations=max_iterations,
         regularization=regularization,
         step_fraction=step_fraction,
+        use_warm_start=use_warm_start,
     )
     return jax.lax.map(
         lambda arrays: solve_one(*arrays),
@@ -656,6 +1042,10 @@ def _solve_dense_arrays(
             equality_rhs,
             inequality_matrix,
             inequality_rhs,
+            initial_primal,
+            initial_slack,
+            initial_inequality_dual,
+            initial_equality_dual,
         ),
     )
 
@@ -669,12 +1059,18 @@ def _diagnostics(
     input_backend_converged: Array,
     iterations: Array,
     *,
-    method: QPMethod,
+    method: str,
     backend: str,
     tolerance: float,
+    relative_tolerance: float,
     max_iterations: int,
     regularization: float,
-) -> QuadraticProgramResult:
+    policy_id: str,
+    primal_infeasible_tolerance: float,
+    dual_infeasible_tolerance: float,
+) -> ConvexProgramResult:
+    from ._audit import audit_dual_infeasibility_ray, audit_primal_recession_ray
+
     quadratic = problem.quadratic
     linear = problem.linear
     equality_matrix = problem.equality_matrix
@@ -712,13 +1108,24 @@ def _diagnostics(
     solver_dual_norm = _max_abs(solver_stationarity)
     complementarity_norm = _max_abs(complementarity)
     complementarity_gap = (
-        jnp.mean(complementarity, axis=-1)
+        jnp.sum(complementarity, axis=-1)
         if problem.num_inequalities
         else jnp.zeros(problem.batch_shape, dtype=quadratic.dtype)
     )
     kkt_norm = jnp.maximum(
         jnp.maximum(primal_norm, solver_dual_norm), complementarity_norm
     )
+    optimality_scale = jnp.maximum(
+        1.0,
+        jnp.maximum(
+            jnp.abs(objective),
+            jnp.maximum(
+                _max_abs(linear),
+                jnp.maximum(_max_abs(equality_rhs), _max_abs(inequality_rhs)),
+            ),
+        ),
+    )
+    audit_tolerance = tolerance + relative_tolerance * optimality_scale
     input_finite = (
         jnp.all(jnp.isfinite(quadratic), axis=(-2, -1))
         & jnp.all(jnp.isfinite(linear), axis=-1)
@@ -734,65 +1141,247 @@ def _diagnostics(
         & jnp.all(jnp.isfinite(equality_dual), axis=-1)
         & jnp.isfinite(kkt_norm)
     )
-    nonnegative = (_min_value(slack) >= -tolerance) & (
-        _min_value(inequality_dual) >= -tolerance
+    nonnegative = (_min_value(slack) >= -audit_tolerance) & (
+        _min_value(inequality_dual) >= -audit_tolerance
     )
-    converged = output_finite & nonnegative & (kkt_norm <= tolerance)
+    converged = output_finite & nonnegative & (kkt_norm <= audit_tolerance)
+
+    user_equalities = problem.num_user_equalities
+    user_inequalities = problem.num_user_inequalities
+    fixed_dual = equality_dual[..., user_equalities:]
+    lower_start = user_inequalities
+    lower_stop = lower_start + len(problem.lower_bound_indices)
+    upper_stop = lower_stop + len(problem.upper_bound_indices)
+    lower_dual = inequality_dual[..., lower_start:lower_stop]
+    upper_dual = inequality_dual[..., lower_stop:upper_stop]
+    lower_bound_dual = jnp.zeros_like(primal)
+    upper_bound_dual = jnp.zeros_like(primal)
+    if problem.lower_bound_indices:
+        lower_bound_dual = lower_bound_dual.at[
+            ..., jnp.asarray(problem.lower_bound_indices, dtype=jnp.int32)
+        ].set(lower_dual)
+    if problem.upper_bound_indices:
+        upper_bound_dual = upper_bound_dual.at[
+            ..., jnp.asarray(problem.upper_bound_indices, dtype=jnp.int32)
+        ].set(upper_dual)
+    if problem.fixed_bound_indices:
+        fixed_indices = jnp.asarray(problem.fixed_bound_indices, dtype=jnp.int32)
+        lower_bound_dual = lower_bound_dual.at[..., fixed_indices].set(
+            jnp.maximum(-fixed_dual, 0.0)
+        )
+        upper_bound_dual = upper_bound_dual.at[..., fixed_indices].set(
+            jnp.maximum(fixed_dual, 0.0)
+        )
+
+    def equality_infeasibility_candidate(matrix: Array, rhs: Array) -> Array:
+        if matrix.shape[0] == 0:
+            return jnp.empty((0,), dtype=matrix.dtype)
+        candidate, _, _, _ = jnp.linalg.lstsq(matrix, rhs, rcond=None)
+        return matrix @ candidate - rhs
 
     flat_count = int(np.prod(problem.batch_shape)) if problem.batch_shape else 1
-    equality_feasible = jax.vmap(
-        lambda matrix, rhs: _equality_feasibility(matrix, rhs, tolerance)
-    )(
+    equality_candidate = jax.vmap(equality_infeasibility_candidate)(
         equality_matrix.reshape(
             (flat_count, problem.num_equalities, problem.num_variables)
         ),
         equality_rhs.reshape((flat_count, problem.num_equalities)),
-    ).reshape(problem.batch_shape)
-    certificate_stationarity = oe.contract(
-        "...ji,...j->...i", equality_matrix, equality_dual
-    ) + oe.contract("...ji,...j->...i", inequality_matrix, inequality_dual)
-    certificate_scale = jnp.maximum(
-        1.0,
-        jnp.maximum(_max_abs(equality_dual), _max_abs(inequality_dual)),
+    ).reshape(problem.batch_shape + (problem.num_equalities,))
+    candidate_lower = jnp.zeros_like(primal)
+    candidate_upper = jnp.zeros_like(primal)
+    if problem.fixed_bound_indices:
+        fixed_indices = jnp.asarray(problem.fixed_bound_indices, dtype=jnp.int32)
+        fixed_candidate = equality_candidate[..., user_equalities:]
+        candidate_lower = candidate_lower.at[..., fixed_indices].set(
+            jnp.maximum(-fixed_candidate, 0.0)
+        )
+        candidate_upper = candidate_upper.at[..., fixed_indices].set(
+            jnp.maximum(fixed_candidate, 0.0)
+        )
+    equality_ray_audit = audit_dual_infeasibility_ray(
+        problem,
+        equality_candidate[..., :user_equalities],
+        jnp.zeros(problem.batch_shape + (user_inequalities,), dtype=primal.dtype),
+        candidate_lower,
+        candidate_upper,
+        tolerance=primal_infeasible_tolerance,
     )
-    certificate_residual = _max_abs(certificate_stationarity) / certificate_scale
-    certificate_value = (
-        oe.contract("...i,...i->...", equality_rhs, equality_dual)
-        + oe.contract("...i,...i->...", inequality_rhs, inequality_dual)
-    ) / certificate_scale
-    certificate_tolerance = jnp.sqrt(jnp.asarray(tolerance, dtype=quadratic.dtype))
-    farkas_infeasible = (
-        (certificate_residual <= certificate_tolerance)
-        & (certificate_value < -certificate_tolerance)
-        & (_min_value(inequality_dual) >= -certificate_tolerance)
+    solver_ray_audit = audit_dual_infeasibility_ray(
+        problem,
+        equality_dual[..., :user_equalities],
+        inequality_dual[..., :user_inequalities],
+        lower_bound_dual,
+        upper_bound_dual,
+        tolerance=primal_infeasible_tolerance,
     )
-    infeasible = (~equality_feasible) | farkas_infeasible
+    use_equality_ray = equality_ray_audit.valid
+    dual_equality_ray = jnp.where(
+        use_equality_ray[..., None],
+        equality_ray_audit.equality_ray,
+        solver_ray_audit.equality_ray,
+    )
+    dual_inequality_ray = jnp.where(
+        use_equality_ray[..., None],
+        equality_ray_audit.inequality_ray,
+        solver_ray_audit.inequality_ray,
+    )
+    lower_bound_dual_ray = jnp.where(
+        use_equality_ray[..., None],
+        equality_ray_audit.lower_bound_ray,
+        solver_ray_audit.lower_bound_ray,
+    )
+    upper_bound_dual_ray = jnp.where(
+        use_equality_ray[..., None],
+        equality_ray_audit.upper_bound_ray,
+        solver_ray_audit.upper_bound_ray,
+    )
+    dual_ray_residual = jnp.where(
+        use_equality_ray,
+        equality_ray_audit.residual_norm,
+        solver_ray_audit.residual_norm,
+    )
+    dual_ray_objective = jnp.where(
+        use_equality_ray,
+        equality_ray_audit.objective,
+        solver_ray_audit.objective,
+    )
+    dual_ray_valid = equality_ray_audit.valid | solver_ray_audit.valid
+
+    linear_ray_audit = audit_primal_recession_ray(
+        problem,
+        -linear,
+        tolerance=dual_infeasible_tolerance,
+    )
+    iterate_ray_audit = audit_primal_recession_ray(
+        problem,
+        primal,
+        tolerance=dual_infeasible_tolerance,
+    )
+    use_linear_ray = linear_ray_audit.valid
+    primal_ray = jnp.where(
+        use_linear_ray[..., None],
+        linear_ray_audit.ray,
+        iterate_ray_audit.ray,
+    )
+    primal_ray_residual = jnp.where(
+        use_linear_ray,
+        linear_ray_audit.residual_norm,
+        iterate_ray_audit.residual_norm,
+    )
+    primal_ray_objective = jnp.where(
+        use_linear_ray,
+        linear_ray_audit.objective,
+        iterate_ray_audit.objective,
+    )
+    primal_ray_valid = linear_ray_audit.valid | iterate_ray_audit.valid
     status = jnp.where(
         ~input_finite,
-        QP_NONFINITE,
+        int(ConvexProgramStatus.NONFINITE_INPUT),
         jnp.where(
             converged,
-            QP_SUCCESS,
+            int(ConvexProgramStatus.OPTIMAL),
             jnp.where(
-                infeasible,
-                QP_INFEASIBLE,
-                jnp.where(~output_finite, QP_NONFINITE, QP_MAX_ITERATIONS),
+                dual_ray_valid,
+                int(ConvexProgramStatus.PRIMAL_INFEASIBLE),
+                jnp.where(
+                    primal_ray_valid,
+                    int(ConvexProgramStatus.DUAL_INFEASIBLE),
+                    jnp.where(
+                        ~output_finite,
+                        int(ConvexProgramStatus.NONFINITE_OUTPUT),
+                        int(ConvexProgramStatus.ITERATION_LIMIT),
+                    ),
+                ),
             ),
         ),
     ).astype(jnp.int32)
-    valid = status == QP_SUCCESS
-    return QuadraticProgramResult(
+    valid = status == int(ConvexProgramStatus.OPTIMAL)
+    certificate = ConvexProgramCertificate(
+        primal_ray=primal_ray,
+        equality_dual_ray=dual_equality_ray,
+        inequality_dual_ray=dual_inequality_ray,
+        lower_bound_dual_ray=lower_bound_dual_ray,
+        upper_bound_dual_ray=upper_bound_dual_ray,
+        primal_ray_residual_norm=primal_ray_residual,
+        dual_ray_residual_norm=dual_ray_residual,
+        primal_ray_objective=primal_ray_objective,
+        dual_ray_objective=dual_ray_objective,
+        primal_ray_valid=primal_ray_valid,
+        dual_ray_valid=dual_ray_valid,
+    )
+    if backend == "phydrax":
+        backend_name, backend_version = "phydrax", "native"
+    else:
+        backend_name, _, backend_version = backend.partition("-")
+    provenance = ConvexProgramProvenance(
+        numeric_version=0,
+        problem_id=problem.problem_id,
+        structure_id=problem.structure_id,
+        policy_id=policy_id,
+        method_id=method,
+        backend=backend_name,
+        backend_version=backend_version,
+        convexity_evidence=problem.convexity_evidence,
+        regularization=regularization,
+    )
+    return ConvexProgramResult(
         primal=primal,
-        equality_dual=equality_dual,
-        inequality_dual=inequality_dual,
-        inequality_slack=slack,
+        equality_dual=equality_dual[..., :user_equalities],
+        cone_slack=jnp.concatenate(
+            (
+                jnp.zeros(problem.batch_shape + (user_equalities,), dtype=primal.dtype),
+                slack[..., :user_inequalities],
+            ),
+            axis=-1,
+        ),
+        cone_dual=jnp.concatenate(
+            (
+                equality_dual[..., :user_equalities],
+                inequality_dual[..., :user_inequalities],
+            ),
+            axis=-1,
+        ),
+        cone_primal_residual=jnp.concatenate(
+            (
+                equality_residual[..., :user_equalities],
+                inequality_residual[..., :user_inequalities],
+            ),
+            axis=-1,
+        ),
+        cone_violation=jnp.concatenate(
+            (
+                jnp.abs(equality_residual[..., :user_equalities]),
+                inequality_violation[..., :user_inequalities],
+            ),
+            axis=-1,
+        ),
+        cone_dual_violation=jnp.concatenate(
+            (
+                jnp.zeros(problem.batch_shape + (user_equalities,), dtype=primal.dtype),
+                jnp.maximum(
+                    -inequality_dual[..., :user_inequalities],
+                    0.0,
+                ),
+            ),
+            axis=-1,
+        ),
+        cone_complementarity=jnp.concatenate(
+            (
+                jnp.zeros(problem.batch_shape + (user_equalities,), dtype=primal.dtype),
+                complementarity[..., :user_inequalities],
+            ),
+            axis=-1,
+        ),
+        inequality_dual=inequality_dual[..., :user_inequalities],
+        inequality_slack=slack[..., :user_inequalities],
+        lower_bound_dual=lower_bound_dual,
+        upper_bound_dual=upper_bound_dual,
         objective=objective,
         stationarity_residual=stationarity,
         solver_stationarity_residual=solver_stationarity,
-        equality_residual=equality_residual,
-        inequality_residual=inequality_residual,
-        inequality_violation=inequality_violation,
-        complementarity_residual=complementarity,
+        equality_residual=equality_residual[..., :user_equalities],
+        inequality_residual=inequality_residual[..., :user_inequalities],
+        inequality_violation=inequality_violation[..., :user_inequalities],
+        complementarity_residual=complementarity[..., :user_inequalities],
         primal_residual_norm=primal_norm,
         dual_residual_norm=dual_norm,
         solver_dual_residual_norm=solver_dual_norm,
@@ -802,6 +1391,8 @@ def _diagnostics(
         backend_converged=jnp.asarray(input_backend_converged, dtype=bool),
         valid=valid,
         status=status,
+        certificate=certificate,
+        provenance=provenance,
         batch_shape=problem.batch_shape,
         method=method,
         backend=backend,
@@ -860,76 +1451,108 @@ def solve_quadratic_program(
     problem: QuadraticProgram,
     /,
     *,
-    method: QPMethod = "dense-primal-dual",
-    tolerance: float = 1e-7,
-    max_iterations: int = 100,
-    regularization: float = 0.0,
-    step_fraction: float = 0.995,
-    max_dense_dimension: int = 512,
-) -> QuadraticProgramResult:
-    """Solve a convex QP and return primal/dual variables plus audited KKT data.
+    policy: ConvexSolvePolicy | None = None,
+    warm_start: ConvexWarmStart | None = None,
+) -> ConvexProgramResult:
+    """Solve a convex QP through one explicit typed policy and independent audit."""
 
-    QPax 0.1.4 fixes its fraction-to-boundary multiplier at 0.99, so
-    ``method="qpax-implicit"`` rejects non-default ``step_fraction`` requests.
-    """
+    selected = ConvexSolvePolicy() if policy is None else policy
+    if not isinstance(selected, ConvexSolvePolicy):
+        raise TypeError("policy must be a ConvexSolvePolicy or None.")
+    method = selected.method
+    if isinstance(method, (MPAXraPDHG, MPAXr2HPDHG)):
+        _validate_quadratic_materialization(problem, selected)
+        from ._mpax import solve_mpax_program
 
-    tolerance, max_iterations, regularization, step_fraction, _ = (
+        result = solve_mpax_program(
+            problem,
+            selected,
+            warm_start=warm_start,
+        )
+        return _apply_failure_policy(result, selected)
+    if isinstance(method, DensePrimalDualQP):
+        method_id = "dense-primal-dual"
+        step_fraction = method.step_fraction
+        max_dimension = method.max_kkt_dimension
+    elif isinstance(method, QPaxInteriorPoint):
+        if warm_start is not None:
+            raise ValueError("QPaxInteriorPoint does not support warm starts.")
+        method_id = "qpax-implicit"
+        step_fraction = 0.995
+        max_dimension = method.max_kkt_dimension
+    else:
+        raise TypeError(
+            f"Method {type(method).__name__!r} does not solve QuadraticProgram."
+        )
+    _validate_quadratic_resources(
+        problem,
+        selected,
+        max_dense_dimension=max_dimension,
+    )
+    tolerance, maximum_steps, regularization, step_fraction, _ = (
         _validate_solver_configuration(
             problem,
-            tolerance=tolerance,
-            max_iterations=max_iterations,
-            regularization=regularization,
+            tolerance=selected.termination.absolute + selected.termination.relative,
+            max_iterations=selected.termination.maximum_steps,
+            regularization=selected.regularization,
             step_fraction=step_fraction,
-            max_dense_dimension=max_dense_dimension,
+            max_dense_dimension=max_dimension,
         )
     )
     arrays = _flatten_problem(problem)
-    if method == "dense-primal-dual":
+    warm_arrays = _warm_start_arrays(problem, warm_start)
+    if isinstance(method, DensePrimalDualQP):
         primal, slack, inequality_dual, equality_dual, backend_converged, iterations = (
             _solve_dense_arrays(
                 *arrays,
+                initial_primal=warm_arrays[0],
+                initial_slack=warm_arrays[1],
+                initial_inequality_dual=warm_arrays[2],
+                initial_equality_dual=warm_arrays[3],
+                use_warm_start=warm_start is not None,
                 tolerance=tolerance,
-                max_iterations=max_iterations,
+                max_iterations=maximum_steps,
                 regularization=regularization,
                 step_fraction=step_fraction,
             )
         )
         backend = "phydrax"
-    elif method == "qpax-implicit":
+    else:
         primal, slack, inequality_dual, equality_dual, backend_converged, iterations = (
             solve_qpax_implicit(
                 *arrays,
                 tolerance=tolerance,
-                max_iterations=max_iterations,
+                max_iterations=maximum_steps,
                 regularization=regularization,
                 step_fraction=step_fraction,
             )
         )
         backend = "qpax-0.1.4"
-    else:
-        raise ValueError("method must be 'dense-primal-dual' or 'qpax-implicit'.")
     primal = primal.reshape(problem.batch_shape + (problem.num_variables,))
     slack = slack.reshape(problem.batch_shape + (problem.num_inequalities,))
     inequality_dual = inequality_dual.reshape(
         problem.batch_shape + (problem.num_inequalities,)
     )
     equality_dual = equality_dual.reshape(problem.batch_shape + (problem.num_equalities,))
-    backend_converged = backend_converged.reshape(problem.batch_shape)
-    iterations = iterations.reshape(problem.batch_shape)
-    return _diagnostics(
+    result = _diagnostics(
         problem,
         primal,
         slack,
         inequality_dual,
         equality_dual,
-        backend_converged,
-        iterations,
-        method=method,
+        backend_converged.reshape(problem.batch_shape),
+        iterations.reshape(problem.batch_shape),
+        method=method_id,
         backend=backend,
-        tolerance=tolerance,
-        max_iterations=max_iterations,
+        tolerance=selected.termination.absolute,
+        relative_tolerance=selected.termination.relative,
+        max_iterations=maximum_steps,
         regularization=regularization,
+        policy_id=selected.policy_id,
+        primal_infeasible_tolerance=selected.termination.primal_infeasible,
+        dual_infeasible_tolerance=selected.termination.dual_infeasible,
     )
+    return _apply_failure_policy(result, selected)
 
 
 def _active_set_adjoint_single(
@@ -991,14 +1614,6 @@ def _active_set_adjoint_single(
         jnp.outer(active_dual, primal_adjoint) + jnp.outer(inequality_adjoint, primal)
     )
     inequality_rhs_gradient = inequality_adjoint
-    gradients = (
-        quadratic_gradient,
-        linear_gradient,
-        equality_matrix_gradient,
-        equality_rhs_gradient,
-        inequality_matrix_gradient,
-        inequality_rhs_gradient,
-    )
 
     def masked(gradient: Array, /) -> Array:
         return jnp.where(valid, gradient, jnp.full_like(gradient, jnp.nan))
@@ -1160,71 +1775,95 @@ def solve_quadratic_program_primal(
     problem: QuadraticProgram,
     /,
     *,
-    method: QPDifferentiableMethod = "dense-active-set",
-    tolerance: float = 1e-7,
-    max_iterations: int = 100,
-    regularization: float = 0.0,
-    step_fraction: float = 0.995,
-    active_set_tolerance: float = 1e-5,
-    max_dense_dimension: int = 512,
+    policy: ConvexSolvePolicy | None = None,
+    differentiation: ConvexDifferentiationPolicy | None = None,
 ) -> Array:
-    """Return a differentiable primal solution with an explicit gradient method.
+    """Return one explicitly differentiated regular convex-QP solution map."""
 
-    ``dense-active-set`` differentiates the locally fixed active-set KKT system.
-    ``qpax-implicit`` delegates to QPax's public implicit custom-VJP API. QPax's
-    explicit differentiation backend is intentionally not accepted, and QPax
-    0.1.4's fixed 0.99 fraction-to-boundary multiplier means non-default
-    ``step_fraction`` requests are rejected.
-    """
+    selected = ConvexSolvePolicy() if policy is None else policy
+    if not isinstance(selected, ConvexSolvePolicy):
+        raise TypeError("policy must be a ConvexSolvePolicy or None.")
+    method = selected.method
+    derivative = (
+        ConvexDifferentiationPolicy(
+            "backend-implicit"
+            if isinstance(method, QPaxInteriorPoint)
+            else "active-set-kkt"
+        )
+        if differentiation is None
+        else differentiation
+    )
+    if not isinstance(derivative, ConvexDifferentiationPolicy):
+        raise TypeError("differentiation must be a ConvexDifferentiationPolicy or None.")
+    if isinstance(method, MPAXraPDHG):
+        _validate_quadratic_materialization(problem, selected)
+        if derivative.mode != "algorithmic" or not method.plan.unroll:
+            raise ValueError(
+                "MPAX QP differentiation requires an unrolled method and "
+                "ConvexDifferentiationPolicy('algorithmic')."
+            )
+        from ._mpax import solve_mpax_program
 
-    tolerance, max_iterations, regularization, step_fraction, _ = (
+        return solve_mpax_program(problem, selected).primal
+    if isinstance(method, MPAXr2HPDHG):
+        raise ValueError("MPAXr2HPDHG supports LinearProgram only.")
+    if derivative.mode == "algorithmic":
+        raise ValueError(
+            "Dense and QPax methods do not expose algorithmic differentiation."
+        )
+    if derivative.mode == "none":
+        raise ValueError("Use solve_quadratic_program when differentiation is disabled.")
+    if derivative.mode == "backend-implicit" and not isinstance(
+        method, QPaxInteriorPoint
+    ):
+        raise ValueError("backend-implicit differentiation requires QPaxInteriorPoint.")
+    if not isinstance(method, (DensePrimalDualQP, QPaxInteriorPoint)):
+        raise TypeError(
+            f"Method {type(method).__name__!r} does not solve QuadraticProgram."
+        )
+    step_fraction = (
+        method.step_fraction if isinstance(method, DensePrimalDualQP) else 0.995
+    )
+    max_dimension = method.max_kkt_dimension
+    _validate_quadratic_resources(
+        problem,
+        selected,
+        max_dense_dimension=max_dimension,
+    )
+    tolerance, maximum_steps, regularization, step_fraction, _ = (
         _validate_solver_configuration(
             problem,
-            tolerance=tolerance,
-            max_iterations=max_iterations,
-            regularization=regularization,
+            tolerance=selected.termination.absolute + selected.termination.relative,
+            max_iterations=selected.termination.maximum_steps,
+            regularization=selected.regularization,
             step_fraction=step_fraction,
-            max_dense_dimension=max_dense_dimension,
+            max_dense_dimension=max_dimension,
         )
     )
-    active_tolerance = float(active_set_tolerance)
-    if not np.isfinite(active_tolerance) or active_tolerance <= 0:
-        raise ValueError("active_set_tolerance must be finite and positive.")
     arrays = _flatten_problem(problem)
-    if method == "dense-active-set":
+    if derivative.mode == "active-set-kkt":
         primal = _dense_primal_implicit(
             *arrays,
-            max_iterations,
+            maximum_steps,
             tolerance,
             regularization,
             step_fraction,
-            active_tolerance,
+            derivative.active_tolerance,
         )
-    elif method == "qpax-implicit":
+    else:
         primal = solve_qpax_implicit_primal(
             *arrays,
             tolerance=tolerance,
-            max_iterations=max_iterations,
+            max_iterations=maximum_steps,
             regularization=regularization,
             step_fraction=step_fraction,
-        )
-    else:
-        raise ValueError(
-            "Differentiable method must be 'dense-active-set' or 'qpax-implicit'; "
-            "QPax explicit differentiation is not enabled."
         )
     return primal.reshape(problem.batch_shape + (problem.num_variables,))
 
 
 __all__ = [
-    "QP_INFEASIBLE",
-    "QP_MAX_ITERATIONS",
-    "QP_NONFINITE",
-    "QP_SUCCESS",
-    "QPDifferentiableMethod",
-    "QPMethod",
     "QuadraticProgram",
-    "QuadraticProgramResult",
+    "ConvexProgramResult",
     "solve_quadratic_program",
     "solve_quadratic_program_primal",
 ]

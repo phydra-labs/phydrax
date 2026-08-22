@@ -307,49 +307,109 @@ computed. These are dense direct operations, not matrix-free frequency solvers.
 
 ::: phydrax.control.input_to_output_response
 
-## Canonical QP compilation and MPC
+## Canonical QP, SOCP, and MPC compilation
 
 `LinearQuadraticControlProblem` uses
-`x[t+1] = A[t] x[t] + B[t] u[t] + c[t]` and an explicit stage axis. It supports state and
-control boxes, stage equalities and inequalities, and terminal equalities and
-inequalities. The compiler does not condense: decisions are ordered as all state nodes,
-then all interval controls. Constraint row slices preserve the initial condition,
-dynamics, box, polyhedral, and terminal provenance. Decoding returns the primal exactly
-as supplied by the QP backend.
+`x[t+1] = A[t] x[t] + B[t] u[t] + c[t]` with an explicit stage axis.
+Decisions remain uncondensed: all state nodes followed by all interval controls.
 
-The dense guard checks `num_variables + num_equalities + 2 * num_inequalities` against
-`max_dense_dimension` (default 512) before solving. `regularization` is explicit and
-defaults to zero. Supported solve methods are `"dense-primal-dual"` and
-`"qpax-implicit"`; the QPax integration is implicit only, and no QPax explicit mode is
-accepted. Inspect `qp_result.status`, `valid`, `successful`, `backend`, `method`, and KKT
-diagnostics rather than assuming a returned primal is usable.
+State and control boxes compile to native `Bounds`, not synthetic polyhedral rows.
+`LinearControlConstraintLayout` therefore covers initial, dynamics, stage, and
+terminal rows; `LinearControlBoundLayout` separately retains state/control bound
+coordinates and bound-dual provenance.
 
-MPC retains every local `LinearControlQPSolution`, exact applied controls, exact affine
-state handoffs, per-stage validity, backend status, and realized objective. Its terminal
-policy is explicit: `"global"` applies terminal terms only when the prediction reaches
-the global final node, `"always"` applies them at every prediction endpoint, and
-`"none"` omits them. Warm starts are unsupported and raise rather than being ignored.
-There is no clipping, projection, or infeasibility repair.
+`LinearControlCompilationPolicy("dense")` retains dense arrays.
+`LinearControlCompilationPolicy("sparse")` additionally emits shared-pattern
+`SparseLinearMap` representations for the stage-block Hessian and true constraint
+operators. Sparse coefficients may carry case batches while preserving one route
+pattern. Representation choice is explicit; there is no size-based switch.
+
+### Prepared QPs
+
+`prepare_linear_quadratic_control` composes compilation with the canonical convex
+program lifecycle. `refresh_linear_quadratic_control` changes numeric dynamics,
+costs, right-hand sides, and bounds while preserving horizon, shapes, row topology,
+bound roles, problem identity, policy, and sparse pattern. The one-shot
+`solve_linear_quadratic_control` remains a convenience composition.
+
+Inspect `qp_result.status`, `valid`, `certificate`, `provenance`, bound multipliers,
+and KKT diagnostics rather than assuming a returned primal is usable.
+
+### Receding-horizon warm starts
+
+MPC caches one prepared template per `(prediction horizon, terminal topology)` and
+refreshes numeric data between compatible windows. Exact affine state handoff remains
+independent of predicted local nodes.
+
+`MPCWarmStartPolicy` explicitly chooses terminal-control filling (`"hold"` or
+`"zero"`) and the strict interior margin. Primal states/controls, dynamics/stage
+duals, inequality multipliers, and bound multipliers are shifted by their declared
+layouts. New rows are initialized explicitly. A method that does not declare
+warm-start support is rejected before rollout.
+
+Terminal policy remains explicit: `"global"` applies terminal terms only when the
+window reaches the global final node, `"always"` applies them at every endpoint, and
+`"none"` omits them.
+
+### Affine SOCP constraints
+
+`StageSecondOrderConstraint` represents
+`||F_x x + F_u u + f||₂ ≤ g_x x + g_u u + g₀` at every stage.
+`TerminalSecondOrderConstraint` provides the terminal analogue.
+`compile_linear_conic_control` appends exact SOC blocks to the same uncondensed
+decision layout; `solve_linear_conic_control` requires an explicit conic-capable
+policy such as `ClarabelInteriorPoint`.
+
+These are exact affine SOC contracts. They are not sampled nonlinear or generic
+chance-constraint certificates.
 
 ### QP API
 
 ::: phydrax.control.LinearQuadraticControlProblem
 
+::: phydrax.control.LinearControlCompilationPolicy
+
 ::: phydrax.control.LinearControlDecisionLayout
 
 ::: phydrax.control.LinearControlConstraintLayout
 
+::: phydrax.control.LinearControlBoundLayout
+
 ::: phydrax.control.LinearControlQPCompilation
+
+::: phydrax.control.PreparedLinearControlQP
 
 ::: phydrax.control.LinearControlQPSolution
 
 ::: phydrax.control.compile_linear_quadratic_control
 
+::: phydrax.control.prepare_linear_quadratic_control
+
+::: phydrax.control.refresh_linear_quadratic_control
+
+::: phydrax.control.solve_prepared_linear_quadratic_control
+
 ::: phydrax.control.decode_linear_control_solution
 
 ::: phydrax.control.solve_linear_quadratic_control
 
+### SOCP API
+
+::: phydrax.control.StageSecondOrderConstraint
+
+::: phydrax.control.TerminalSecondOrderConstraint
+
+::: phydrax.control.LinearControlConicCompilation
+
+::: phydrax.control.LinearControlConicSolution
+
+::: phydrax.control.compile_linear_conic_control
+
+::: phydrax.control.solve_linear_conic_control
+
 ### MPC API
+
+::: phydrax.control.MPCWarmStartPolicy
 
 ::: phydrax.control.RecedingHorizonMPC
 

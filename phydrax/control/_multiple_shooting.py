@@ -15,7 +15,14 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
-from ..optim import QuadraticProgram, QuadraticProgramResult, solve_quadratic_program
+from ..optim import (
+    ConvexProgramResult,
+    ConvexSolvePolicy,
+    ConvexTermination,
+    DensePrimalDualQP,
+    QuadraticProgram,
+    solve_quadratic_program,
+)
 from ..solver import DifferentialProblem, solve_diffrax
 from ._constraints import evaluate_sampled_feasibility
 from ._cost import evaluate_sampled_cost
@@ -258,7 +265,7 @@ class MultipleShootingResult(StrictModule):
     rollout_state_error: Array
     rollout_result: ControlResult
     history: MultipleShootingHistory
-    last_qp_result: QuadraticProgramResult | None
+    last_qp_result: ConvexProgramResult | None
     iterations: Array
     valid: Array
     status: Array
@@ -281,7 +288,7 @@ class MultipleShootingResult(StrictModule):
         rollout_state_error: ArrayLike,
         rollout_result: ControlResult,
         history: MultipleShootingHistory,
-        last_qp_result: QuadraticProgramResult | None,
+        last_qp_result: ConvexProgramResult | None,
         iterations: int,
         status: int,
         layout: MultipleShootingDecisionLayout,
@@ -971,7 +978,7 @@ def _kkt_residual(
     layout: MultipleShootingDecisionLayout,
     decision: Array,
     values: _NonlinearValues,
-    qp_result: QuadraticProgramResult,
+    qp_result: ConvexProgramResult,
     /,
     *,
     solver_options: dict[str, Any],
@@ -1242,12 +1249,17 @@ def solve_multiple_shooting(
                 break
             last_qp_result = solve_quadratic_program(
                 linearization.quadratic_program,
-                method="dense-primal-dual",
-                tolerance=qp_tolerance,
-                max_iterations=qp_max_iterations,
-                regularization=qp_regularization,
-                step_fraction=qp_step_fraction,
-                max_dense_dimension=max_dense_dimension,
+                policy=ConvexSolvePolicy(
+                    DensePrimalDualQP(
+                        step_fraction=qp_step_fraction,
+                        max_kkt_dimension=max_dense_dimension,
+                    ),
+                    termination=ConvexTermination(
+                        absolute=qp_tolerance,
+                        maximum_steps=qp_max_iterations,
+                    ),
+                    regularization=qp_regularization,
+                ),
             )
             current_merit = _merit(values, merit_penalty)
             if not bool(np.asarray(last_qp_result.successful)):

@@ -60,6 +60,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+clarabel = [
+    "clarabel==0.11.1",
+]
 docs = [
   "hippogriffe==0.2.2",
   "griffe==1.7.3",

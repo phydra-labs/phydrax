@@ -41,6 +41,25 @@ from .amg import (
     solve_amgx,
     solve_pyamgcl,
 )
+from .clarabel import (
+    clarabel_availability,
+    CLARABEL_CAPABILITIES,
+    ClarabelBackend,
+    ClarabelPlan,
+    prepare_clarabel,
+    PreparedClarabel,
+)
+from .mpax import (
+    mpax_availability,
+    MPAX_CAPABILITIES,
+    MPAXAlgorithm,
+    MPAXBackend,
+    MPAXPlan,
+    prepare_mpax,
+    PreparedMPAX,
+    refresh_mpax,
+    solve_mpax,
+)
 from .petsc import (
     petsc_availability,
     PETScBackend,
@@ -88,6 +107,21 @@ from .slepc import (
 
 
 __all__ = [
+    "CLARABEL_CAPABILITIES",
+    "ClarabelBackend",
+    "ClarabelPlan",
+    "PreparedClarabel",
+    "clarabel_availability",
+    "prepare_clarabel",
+    "MPAXAlgorithm",
+    "MPAXBackend",
+    "MPAXPlan",
+    "MPAX_CAPABILITIES",
+    "PreparedMPAX",
+    "mpax_availability",
+    "prepare_mpax",
+    "refresh_mpax",
+    "solve_mpax",
     "AMGX_CAPABILITIES",
     "PYAMGCL_CAPABILITIES",
     "AMGBackendName",

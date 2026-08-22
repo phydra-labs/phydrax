@@ -14,9 +14,11 @@ from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
 from ...optim import (
-    QP_INFEASIBLE,
-    QP_MAX_ITERATIONS,
-    QP_NONFINITE,
+    ConvexDifferentiationPolicy,
+    ConvexProgramStatus,
+    ConvexSolvePolicy,
+    ConvexTermination,
+    DensePrimalDualQP,
     QuadraticProgram,
     solve_quadratic_program,
     solve_quadratic_program_primal,
@@ -417,19 +419,18 @@ class QuantileRegressorRecipe(AbstractRecipe):
             inequality_matrix=inequalities,
             inequality_rhs=inequality_rhs,
         )
-        audited = solve_quadratic_program(
-            problem,
-            method="dense-primal-dual",
-            tolerance=self.tolerance,
-            max_iterations=self.max_iterations,
-            max_dense_dimension=self.max_dense_dimension,
+        policy = ConvexSolvePolicy(
+            DensePrimalDualQP(max_kkt_dimension=self.max_dense_dimension),
+            termination=ConvexTermination(
+                absolute=self.tolerance,
+                maximum_steps=self.max_iterations,
+            ),
         )
+        audited = solve_quadratic_program(problem, policy=policy)
         differentiable = solve_quadratic_program_primal(
             problem,
-            method="dense-active-set",
-            tolerance=self.tolerance,
-            max_iterations=self.max_iterations,
-            max_dense_dimension=self.max_dense_dimension,
+            policy=policy,
+            differentiation=ConvexDifferentiationPolicy("active-set-kkt"),
         )
         primal = differentiable
         coefficients = jnp.swapaxes(primal[..., :features], 1, 2)
@@ -440,12 +441,17 @@ class QuantileRegressorRecipe(AbstractRecipe):
         )
         qp_status = audited.status
         mapped = jnp.where(
-            qp_status == QP_NONFINITE,
+            (qp_status == int(ConvexProgramStatus.NONFINITE_INPUT))
+            | (qp_status == int(ConvexProgramStatus.NONFINITE_OUTPUT)),
             ML_NONFINITE,
             jnp.where(
-                qp_status == QP_INFEASIBLE,
+                qp_status == int(ConvexProgramStatus.PRIMAL_INFEASIBLE),
                 ML_INFEASIBLE,
-                jnp.where(qp_status == QP_MAX_ITERATIONS, ML_NONCONVERGED, ML_SUCCESS),
+                jnp.where(
+                    qp_status == int(ConvexProgramStatus.OPTIMAL),
+                    ML_SUCCESS,
+                    ML_NONCONVERGED,
+                ),
             ),
         )
         status = jnp.max(mapped, axis=-1).astype(jnp.int32)

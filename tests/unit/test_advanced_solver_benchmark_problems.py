@@ -9,10 +9,14 @@ import numpy as np
 from benchmarks.advanced_solvers.campaign import build_cases, CampaignConfig
 from benchmarks.advanced_solvers.certificates import independent_certificate
 from benchmarks.advanced_solvers.problems import (
+    active_second_order_cone_program,
+    bounded_linear_program,
+    bounded_quadratic_program,
     default_problems,
     general_eigenproblem,
     l1_composite_optimization,
     maratos_constrained_optimization,
+    MathematicalProgramProblem,
     nonlinear_root,
     quadratic_fold,
     rosenbrock_optimization,
@@ -163,6 +167,50 @@ def test_optimization_certificates_use_independent_stationarity_and_kkt_relation
     )
     assert proximal_certificate["kind"] == "optimization-proximal-stationarity"
     assert proximal_certificate["residual_norm"] < 1e-15
+
+
+def test_mathematical_program_certificates_cover_lp_qp_and_socp():
+    problems = (
+        bounded_linear_program(size=8, seed=22),
+        bounded_quadratic_program(size=8, seed=23),
+        active_second_order_cone_program(seed=24),
+    )
+    for problem in problems:
+        certificate = independent_certificate(problem, problem.optimum, {})
+        assert certificate["kind"] == "optimization-program-kkt"
+        assert certificate["residual_norm"] < 1e-12
+        assert certificate["details"]["objective_gap"] == 0.0
+
+    central_path_qp = MathematicalProgramProblem(
+        name="central-path-bound",
+        variant="qp",
+        seed=25,
+        quadratic=np.eye(1),
+        linear=np.zeros(1),
+        equality_matrix=np.empty((0, 1)),
+        equality_rhs=np.empty((0,)),
+        inequality_matrix=np.empty((0, 1)),
+        inequality_rhs=np.empty((0,)),
+        lower=np.zeros(1),
+        upper=np.ones(1),
+        optimum=np.zeros(1),
+    )
+    central_point = np.asarray([1e-4])
+    fallback = independent_certificate(central_path_qp, central_point, {})
+    primal_dual = independent_certificate(
+        central_path_qp,
+        central_point,
+        {
+            "equality_dual": np.empty((0,)),
+            "inequality_dual": np.empty((0,)),
+            "lower_bound_dual": np.asarray([1e-4]),
+            "upper_bound_dual": np.zeros(1),
+        },
+    )
+
+    assert fallback["residual_norm"] == 1e-4
+    assert primal_dual["residual_norm"] == 1e-8
+    assert primal_dual["details"]["dual_stationarity_norm"] == 0.0
 
 
 def test_continuation_certificate_rejects_residual_only_nonfold_branch():

@@ -7,6 +7,7 @@ from __future__ import annotations
 from math import prod
 from typing import Any, Protocol
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -58,11 +59,16 @@ class SparseLinearMap(AbstractSparseLinearOperator):
         if not isinstance(relation, (EdgeRelation, RowRelation)):
             raise TypeError("relation must be an EdgeRelation or RowRelation.")
         values = jnp.asarray(coefficients)
-        if values.shape != relation.route_shape:
+        route_ndim = len(relation.route_shape)
+        if (
+            values.ndim < route_ndim
+            or tuple(values.shape[-route_ndim:]) != relation.route_shape
+        ):
             raise ValueError(
-                f"Sparse coefficients must have route shape {relation.route_shape}; "
+                f"Sparse coefficients must end in route shape {relation.route_shape}; "
                 f"got {values.shape}."
             )
+        batch = tuple(int(size) for size in values.shape[:-route_ndim])
         if not jnp.issubdtype(values.dtype, jnp.inexact):
             values = values.astype(float)
         self.relation = relation
@@ -82,7 +88,7 @@ class SparseLinearMap(AbstractSparseLinearOperator):
             materialize=True,
             diagonal_assembly=source.compatible(target),
         )
-        self.batch_shape = ()
+        self.batch_shape = batch
         self.operator_id = (
             canonical_fingerprint(
                 {
@@ -91,6 +97,7 @@ class SparseLinearMap(AbstractSparseLinearOperator):
                     "target": target.space_id,
                     "relation": _relation_payload(relation),
                     "properties": _properties_payload(properties_),
+                    "batch_shape": list(batch),
                 }
             )
             if operator_id is None
@@ -130,23 +137,38 @@ class SparseLinearMap(AbstractSparseLinearOperator):
     def _edge_form(self) -> tuple[EdgeRelation, Array]:
         if isinstance(self.relation, EdgeRelation):
             return self.relation, self.coefficients
-        return self.relation.as_edge_relation(), self.coefficients.reshape((-1,))
+        return (
+            self.relation.as_edge_relation(),
+            self.coefficients.reshape(self.batch_shape + (-1,)),
+        )
 
     def as_dense(self) -> Array:
-        """Materialize a two-dimensional matrix over flattened source and target spaces."""
+        """Materialize a dense matrix for every shared-pattern batch member."""
         relation, coefficients = self._edge_form()
         safe_source = jnp.where(relation.valid, relation.source_indices, 0)
         safe_target = jnp.where(relation.valid, relation.target_indices, 0)
-        values = jnp.where(
-            relation.valid,
-            coefficients,
-            jnp.zeros((), dtype=coefficients.dtype),
+
+        def materialize_one(values):
+            values = jnp.where(
+                relation.valid,
+                values,
+                jnp.zeros((), dtype=values.dtype),
+            )
+            return (
+                jnp.zeros(
+                    (relation.target_size, relation.source_size),
+                    dtype=values.dtype,
+                )
+                .at[safe_target, safe_source]
+                .add(values)
+            )
+
+        if not self.batch_shape:
+            return materialize_one(coefficients)
+        flattened = coefficients.reshape((-1,) + relation.route_shape)
+        return jax.vmap(materialize_one)(flattened).reshape(
+            self.batch_shape + (relation.target_size, relation.source_size)
         )
-        matrix = jnp.zeros(
-            (relation.target_size, relation.source_size),
-            dtype=coefficients.dtype,
-        )
-        return matrix.at[safe_target, safe_source].add(values)
 
     def _assemble_diagonal(self, /) -> Array:
         relation, coefficients = self._edge_form()
@@ -161,6 +183,9 @@ class SparseLinearMap(AbstractSparseLinearOperator):
     def to_scipy(self):
         """Return a host-side CSR matrix, coalescing duplicate linear routes."""
         import scipy.sparse as sp
+
+        if self.batch_shape:
+            raise ValueError("to_scipy requires an unbatched sparse operator.")
 
         relation, coefficients = self._edge_form()
         valid = np.asarray(relation.valid, dtype=bool)
@@ -311,15 +336,25 @@ def _assemble_relation_diagonal(
 ) -> Array:
     diagonal_entry = relation.valid & (relation.source_indices == relation.target_indices)
     safe_target = jnp.where(diagonal_entry, relation.target_indices, 0)
-    values = jnp.where(
-        diagonal_entry,
-        coefficients,
-        jnp.zeros((), dtype=coefficients.dtype),
-    )
-    return (
-        jnp.zeros((relation.target_size,), dtype=coefficients.dtype)
-        .at[safe_target]
-        .add(values)
+
+    def assemble_one(values):
+        values = jnp.where(
+            diagonal_entry,
+            values,
+            jnp.zeros((), dtype=values.dtype),
+        )
+        return (
+            jnp.zeros((relation.target_size,), dtype=values.dtype)
+            .at[safe_target]
+            .add(values)
+        )
+
+    batch_shape = coefficients.shape[: -len(relation.route_shape)]
+    if not batch_shape:
+        return assemble_one(coefficients)
+    flattened = coefficients.reshape((-1,) + relation.route_shape)
+    return jax.vmap(assemble_one)(flattened).reshape(
+        batch_shape + (relation.target_size,)
     )
 
 
@@ -361,10 +396,16 @@ def _canonical_sparse_storage(
         number_groups,
     )
     index_dtype = jnp.int32 if largest < np.iinfo(np.int32).max else jnp.int64
-    route_values = coefficients.reshape((-1,))[jnp.asarray(positions)]
+    batch_shape = coefficients.shape[: -len(relation.route_shape)]
+    flattened_coefficients = coefficients.reshape(batch_shape + (-1,))
+    route_values = jnp.take(
+        flattened_coefficients,
+        jnp.asarray(positions),
+        axis=-1,
+    )
     values = (
-        jnp.zeros((number_groups,), dtype=coefficients.dtype)
-        .at[jnp.asarray(groups)]
+        jnp.zeros(batch_shape + (number_groups,), dtype=coefficients.dtype)
+        .at[..., jnp.asarray(groups)]
         .add(route_values)
     )
     counts = np.bincount(

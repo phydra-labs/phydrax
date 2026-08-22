@@ -7,22 +7,28 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._bounds import Bounds
 from .._strict import StrictModule
 from ..dynamics import TimeGrid
-from ..optim._quadratic_program import (
-    QP_INFEASIBLE,
-    QP_SUCCESS,
-    QPMethod,
+from ..optim._programming import (
+    ConvexProgramResult,
+    ConvexProgramStatus,
+    ConvexSolvePolicy,
+    ConvexWarmStart,
+    prepare_convex_program,
+    PreparedConvexProgram,
     QuadraticProgram,
-    QuadraticProgramResult,
-    solve_quadratic_program,
+    refresh_convex_program,
+    solve_convex_program,
 )
+from ..sparse import EdgeRelation, SparseLinearMap
 from ._parameterization import PiecewiseConstantControlParameterization
 from ._problem import _identifier
 from ._trajectory import (
@@ -34,6 +40,19 @@ from ._trajectory import (
 
 
 SliceTuple: TypeAlias = tuple[slice, ...]
+
+ControlQPRepresentation: TypeAlias = Literal["dense", "sparse"]
+
+
+class LinearControlCompilationPolicy(StrictModule):
+    """Explicit dense or structural sparse control-QP representation."""
+
+    representation: ControlQPRepresentation = eqx.field(static=True)
+
+    def __init__(self, representation: ControlQPRepresentation = "dense", /):
+        if representation not in ("dense", "sparse"):
+            raise ValueError("representation must be 'dense' or 'sparse'.")
+        self.representation = representation
 
 
 def _exact_array_shape(
@@ -648,23 +667,49 @@ class LinearControlDecisionLayout(StrictModule):
         )
 
 
-class LinearControlConstraintLayout(StrictModule):
-    """Immutable row provenance for every compiled constraint family.
+class LinearControlBoundLayout(StrictModule):
+    """Decision-coordinate provenance for native state and control bounds."""
 
-    Equality rows are ordered as initial condition, dynamics, stage
-    equalities, and terminal equalities. Inequality rows are ordered as state
-    lower/upper bounds, control lower/upper bounds, stage polyhedra, and
-    terminal inequalities.
-    """
+    state_lower_slices: SliceTuple = eqx.field(static=True)
+    state_upper_slices: SliceTuple = eqx.field(static=True)
+    control_lower_slices: SliceTuple = eqx.field(static=True)
+    control_upper_slices: SliceTuple = eqx.field(static=True)
+
+    def __init__(
+        self,
+        specification: LinearQuadraticControlProblem,
+        decision: LinearControlDecisionLayout,
+        /,
+    ):
+        if not isinstance(specification, LinearQuadraticControlProblem):
+            raise TypeError("specification must be a LinearQuadraticControlProblem.")
+        if not isinstance(decision, LinearControlDecisionLayout):
+            raise TypeError("decision must be a LinearControlDecisionLayout.")
+        self.state_lower_slices = (
+            decision.state_slices if specification.state_lower_bounds is not None else ()
+        )
+        self.state_upper_slices = (
+            decision.state_slices if specification.state_upper_bounds is not None else ()
+        )
+        self.control_lower_slices = (
+            decision.control_stage_slices
+            if specification.control_lower_bounds is not None
+            else ()
+        )
+        self.control_upper_slices = (
+            decision.control_stage_slices
+            if specification.control_upper_bounds is not None
+            else ()
+        )
+
+
+class LinearControlConstraintLayout(StrictModule):
+    """Immutable row provenance for true equality and polyhedral constraints."""
 
     initial_condition_slice: slice = eqx.field(static=True)
     dynamics_slices: SliceTuple = eqx.field(static=True)
     stage_equality_slices: SliceTuple = eqx.field(static=True)
     terminal_equality_slice: slice | None = eqx.field(static=True)
-    state_lower_slices: SliceTuple = eqx.field(static=True)
-    state_upper_slices: SliceTuple = eqx.field(static=True)
-    control_lower_slices: SliceTuple = eqx.field(static=True)
-    control_upper_slices: SliceTuple = eqx.field(static=True)
     stage_inequality_slices: SliceTuple = eqx.field(static=True)
     terminal_inequality_slice: slice | None = eqx.field(static=True)
     num_equalities: int = eqx.field(static=True)
@@ -675,10 +720,8 @@ class LinearControlConstraintLayout(StrictModule):
             raise TypeError("specification must be a LinearQuadraticControlProblem.")
         horizon = specification.horizon
         state_size = specification.state_size
-        control_size = specification.control_size
-        equality_cursor = 0
+        equality_cursor = state_size
         self.initial_condition_slice = slice(0, state_size)
-        equality_cursor += state_size
         self.dynamics_slices = tuple(
             slice(
                 equality_cursor + stage * state_size,
@@ -705,47 +748,19 @@ class LinearControlConstraintLayout(StrictModule):
         equality_cursor += terminal_equalities
         self.num_equalities = equality_cursor
 
-        inequality_cursor = 0
-
-        def family_slices(count: int, stages: int, enabled: bool) -> SliceTuple:
-            nonlocal inequality_cursor
-            if not enabled:
-                return ()
-            slices = tuple(
+        stage_inequalities = specification.num_stage_inequalities
+        self.stage_inequality_slices = (
+            tuple(
                 slice(
-                    inequality_cursor + stage * count,
-                    inequality_cursor + (stage + 1) * count,
+                    stage * stage_inequalities,
+                    (stage + 1) * stage_inequalities,
                 )
-                for stage in range(stages)
+                for stage in range(horizon)
             )
-            inequality_cursor += stages * count
-            return slices
-
-        self.state_lower_slices = family_slices(
-            state_size,
-            horizon + 1,
-            specification.state_lower_bounds is not None,
+            if stage_inequalities
+            else ()
         )
-        self.state_upper_slices = family_slices(
-            state_size,
-            horizon + 1,
-            specification.state_upper_bounds is not None,
-        )
-        self.control_lower_slices = family_slices(
-            control_size,
-            horizon,
-            specification.control_lower_bounds is not None,
-        )
-        self.control_upper_slices = family_slices(
-            control_size,
-            horizon,
-            specification.control_upper_bounds is not None,
-        )
-        self.stage_inequality_slices = family_slices(
-            specification.num_stage_inequalities,
-            horizon,
-            specification.num_stage_inequalities > 0,
-        )
+        inequality_cursor = horizon * stage_inequalities
         terminal_inequalities = specification.num_terminal_inequalities
         self.terminal_inequality_slice = (
             slice(inequality_cursor, inequality_cursor + terminal_inequalities)
@@ -756,15 +771,87 @@ class LinearControlConstraintLayout(StrictModule):
         self.num_inequalities = inequality_cursor
 
 
+def _sparse_map_from_mask(matrix: Array, mask: np.ndarray, /) -> SparseLinearMap:
+    rows, columns = np.nonzero(mask)
+    relation = EdgeRelation(
+        jnp.asarray(columns, dtype=jnp.int32),
+        jnp.asarray(rows, dtype=jnp.int32),
+        source_size=mask.shape[1],
+        target_size=mask.shape[0],
+    )
+    coefficients = matrix[..., rows, columns]
+    return SparseLinearMap(relation, coefficients)
+
+
+def _control_sparse_operators(
+    specification: LinearQuadraticControlProblem,
+    decision: LinearControlDecisionLayout,
+    constraints: LinearControlConstraintLayout,
+    quadratic: Array,
+    equality: Array,
+    inequality: Array,
+    /,
+) -> tuple[SparseLinearMap, SparseLinearMap, SparseLinearMap]:
+    variables = decision.num_variables
+    quadratic_mask = np.zeros((variables, variables), dtype=bool)
+    for stage in range(specification.horizon):
+        state = decision.state_slice(stage)
+        control = decision.control_slice(stage)
+        quadratic_mask[state, state] = True
+        quadratic_mask[control, control] = True
+        quadratic_mask[state, control] = True
+        quadratic_mask[control, state] = True
+    terminal = decision.state_slice(specification.horizon)
+    quadratic_mask[terminal, terminal] = True
+
+    equality_mask = np.zeros((constraints.num_equalities, variables), dtype=bool)
+    initial = constraints.initial_condition_slice
+    for index in range(specification.state_size):
+        equality_mask[
+            initial.start + index, decision.initial_state_slice.start + index
+        ] = True
+    for stage, rows in enumerate(constraints.dynamics_slices):
+        previous = decision.state_slice(stage)
+        following = decision.state_slice(stage + 1)
+        control = decision.control_slice(stage)
+        equality_mask[rows, previous] = True
+        equality_mask[rows, control] = True
+        for index in range(specification.state_size):
+            equality_mask[rows.start + index, following.start + index] = True
+        if specification.num_stage_equalities:
+            stage_rows = constraints.stage_equality_slices[stage]
+            equality_mask[stage_rows, previous] = True
+            equality_mask[stage_rows, control] = True
+    if constraints.terminal_equality_slice is not None:
+        equality_mask[constraints.terminal_equality_slice, terminal] = True
+
+    inequality_mask = np.zeros((constraints.num_inequalities, variables), dtype=bool)
+    for stage, rows in enumerate(constraints.stage_inequality_slices):
+        inequality_mask[rows, decision.state_slice(stage)] = True
+        inequality_mask[rows, decision.control_slice(stage)] = True
+    if constraints.terminal_inequality_slice is not None:
+        inequality_mask[constraints.terminal_inequality_slice, terminal] = True
+    return (
+        _sparse_map_from_mask(quadratic, quadratic_mask),
+        _sparse_map_from_mask(equality, equality_mask),
+        _sparse_map_from_mask(inequality, inequality_mask),
+    )
+
+
 class LinearControlQPCompilation(StrictModule):
     """A canonical QP together with lossless control/constraint provenance."""
 
     quadratic_program: QuadraticProgram
     decision_layout: LinearControlDecisionLayout
     constraint_layout: LinearControlConstraintLayout
+    bound_layout: LinearControlBoundLayout
+    sparse_quadratic: SparseLinearMap | None
+    sparse_equality: SparseLinearMap | None
+    sparse_inequality: SparseLinearMap | None
     specification: LinearQuadraticControlProblem
     objective_constant: Array
     compiler_id: str = eqx.field(static=True)
+    representation: ControlQPRepresentation = eqx.field(static=True)
 
     @property
     def qp(self) -> QuadraticProgram:
@@ -778,11 +865,33 @@ class LinearControlQPCompilation(StrictModule):
         return self.decision_layout.decode(primal)
 
 
+class PreparedLinearControlQP(StrictModule):
+    """Compiled control layout paired with reusable prepared convex-program state."""
+
+    compilation: LinearControlQPCompilation
+    prepared: PreparedConvexProgram
+
+    def __init__(
+        self,
+        compilation: LinearControlQPCompilation,
+        prepared: PreparedConvexProgram,
+        /,
+    ):
+        if not isinstance(compilation, LinearControlQPCompilation):
+            raise TypeError("compilation must be a LinearControlQPCompilation.")
+        if not isinstance(prepared, PreparedConvexProgram):
+            raise TypeError("prepared must be a PreparedConvexProgram.")
+        if prepared.program is not compilation.quadratic_program:
+            raise ValueError("Prepared program must be bound to the compilation QP.")
+        self.compilation = compilation
+        self.prepared = prepared
+
+
 class LinearControlQPSolution(StrictModule):
     """Decoded QP solution with exact primal arrays and solver provenance."""
 
     compilation: LinearControlQPCompilation
-    qp_result: QuadraticProgramResult
+    qp_result: ConvexProgramResult
     trajectory: ControlTrajectory
     policy: PiecewiseConstantControlParameterization
     parameters: Array
@@ -802,7 +911,7 @@ class LinearControlQPSolution(StrictModule):
 
     @property
     def successful(self) -> Array:
-        return self.valid & (self.status == QP_SUCCESS)
+        return self.valid & (self.status == int(ConvexProgramStatus.OPTIMAL))
 
 
 def compile_linear_quadratic_control(
@@ -810,6 +919,7 @@ def compile_linear_quadratic_control(
     /,
     *,
     cost_tolerance: float = 1e-10,
+    compilation_policy: LinearControlCompilationPolicy | None = None,
 ) -> LinearControlQPCompilation:
     """Compile an affine finite-horizon problem without condensing or repair."""
     if not isinstance(specification, LinearQuadraticControlProblem):
@@ -817,12 +927,22 @@ def compile_linear_quadratic_control(
     tolerance = float(cost_tolerance)
     if not isfinite(tolerance) or tolerance < 0.0:
         raise ValueError("cost_tolerance must be finite and non-negative.")
+    selected_compilation = (
+        LinearControlCompilationPolicy()
+        if compilation_policy is None
+        else compilation_policy
+    )
+    if not isinstance(selected_compilation, LinearControlCompilationPolicy):
+        raise TypeError(
+            "compilation_policy must be a LinearControlCompilationPolicy or None."
+        )
     layout = LinearControlDecisionLayout(
         specification.horizon,
         specification.state_size,
         specification.control_size,
     )
     constraints = LinearControlConstraintLayout(specification)
+    bound_layout = LinearControlBoundLayout(specification, layout)
     dtype = specification.dynamics_matrices.dtype
     batch = specification.case_shape
     stage_hessian = jnp.concatenate(
@@ -951,43 +1071,6 @@ def compile_linear_quadratic_control(
         batch + (constraints.num_inequalities, layout.num_variables), dtype=dtype
     )
     inequality_rhs = jnp.zeros(batch + (constraints.num_inequalities,), dtype=dtype)
-    identity_control = jnp.eye(specification.control_size, dtype=dtype)
-    for stage, row in enumerate(constraints.state_lower_slices):
-        inequality_matrix = inequality_matrix.at[..., row, layout.state_slice(stage)].set(
-            -identity_state
-        )
-        inequality_rhs = inequality_rhs.at[..., row].set(
-            -_required_array(specification.state_lower_bounds, "state lower bounds")[
-                ..., stage, :
-            ]
-        )
-    for stage, row in enumerate(constraints.state_upper_slices):
-        inequality_matrix = inequality_matrix.at[..., row, layout.state_slice(stage)].set(
-            identity_state
-        )
-        inequality_rhs = inequality_rhs.at[..., row].set(
-            _required_array(specification.state_upper_bounds, "state upper bounds")[
-                ..., stage, :
-            ]
-        )
-    for stage, row in enumerate(constraints.control_lower_slices):
-        inequality_matrix = inequality_matrix.at[
-            ..., row, layout.control_slice(stage)
-        ].set(-identity_control)
-        inequality_rhs = inequality_rhs.at[..., row].set(
-            -_required_array(specification.control_lower_bounds, "control lower bounds")[
-                ..., stage, :
-            ]
-        )
-    for stage, row in enumerate(constraints.control_upper_slices):
-        inequality_matrix = inequality_matrix.at[
-            ..., row, layout.control_slice(stage)
-        ].set(identity_control)
-        inequality_rhs = inequality_rhs.at[..., row].set(
-            _required_array(specification.control_upper_bounds, "control upper bounds")[
-                ..., stage, :
-            ]
-        )
     for stage, row in enumerate(constraints.stage_inequality_slices):
         inequality_matrix = inequality_matrix.at[..., row, layout.state_slice(stage)].set(
             _required_array(
@@ -1018,6 +1101,33 @@ def compile_linear_quadratic_control(
             specification.terminal_inequality_rhs
         )
 
+    lower_bounds = jnp.full(batch + (layout.num_variables,), -jnp.inf, dtype=dtype)
+    upper_bounds = jnp.full(batch + (layout.num_variables,), jnp.inf, dtype=dtype)
+    if specification.state_lower_bounds is not None:
+        lower_bounds = lower_bounds.at[..., layout.all_states_slice].set(
+            specification.state_lower_bounds.reshape(
+                batch + ((specification.horizon + 1) * specification.state_size,)
+            )
+        )
+    if specification.state_upper_bounds is not None:
+        upper_bounds = upper_bounds.at[..., layout.all_states_slice].set(
+            specification.state_upper_bounds.reshape(
+                batch + ((specification.horizon + 1) * specification.state_size,)
+            )
+        )
+    if specification.control_lower_bounds is not None:
+        lower_bounds = lower_bounds.at[..., layout.all_controls_slice].set(
+            specification.control_lower_bounds.reshape(
+                batch + (specification.horizon * specification.control_size,)
+            )
+        )
+    if specification.control_upper_bounds is not None:
+        upper_bounds = upper_bounds.at[..., layout.all_controls_slice].set(
+            specification.control_upper_bounds.reshape(
+                batch + (specification.horizon * specification.control_size,)
+            )
+        )
+
     qp = QuadraticProgram(
         quadratic,
         linear,
@@ -1025,23 +1135,91 @@ def compile_linear_quadratic_control(
         equality_rhs=equality_rhs,
         inequality_matrix=inequality_matrix,
         inequality_rhs=inequality_rhs,
+        bounds=Bounds(lower_bounds, upper_bounds),
+        problem_id=f"{specification.problem_id}:qp",
+        convexity_evidence="verified",
     )
     objective_constant = (
         jnp.sum(specification.stage_constants, axis=-1) + specification.terminal_constant
     )
+    sparse_quadratic = None
+    sparse_equality = None
+    sparse_inequality = None
+    if selected_compilation.representation == "sparse":
+        sparse_quadratic, sparse_equality, sparse_inequality = _control_sparse_operators(
+            specification,
+            layout,
+            constraints,
+            quadratic,
+            equality_matrix,
+            inequality_matrix,
+        )
     return LinearControlQPCompilation(
         quadratic_program=qp,
         decision_layout=layout,
         constraint_layout=constraints,
+        bound_layout=bound_layout,
+        sparse_quadratic=sparse_quadratic,
+        sparse_equality=sparse_equality,
+        sparse_inequality=sparse_inequality,
         specification=specification,
         objective_constant=objective_constant,
+        representation=selected_compilation.representation,
         compiler_id="control:qp-compiler:linear-multiple-shooting",
     )
 
 
+def prepare_linear_quadratic_control(
+    specification: LinearQuadraticControlProblem,
+    /,
+    *,
+    policy: ConvexSolvePolicy | None = None,
+    cost_tolerance: float = 1e-10,
+    compilation_policy: LinearControlCompilationPolicy | None = None,
+) -> PreparedLinearControlQP:
+    """Compile and prepare one reusable finite-horizon control QP."""
+
+    compilation = compile_linear_quadratic_control(
+        specification,
+        cost_tolerance=cost_tolerance,
+        compilation_policy=compilation_policy,
+    )
+    prepared = prepare_convex_program(compilation.quadratic_program, policy)
+    return PreparedLinearControlQP(compilation, prepared)
+
+
+def refresh_linear_quadratic_control(
+    prepared: PreparedLinearControlQP,
+    specification: LinearQuadraticControlProblem,
+    /,
+    *,
+    cost_tolerance: float = 1e-10,
+    compilation_policy: LinearControlCompilationPolicy | None = None,
+) -> PreparedLinearControlQP:
+    """Refresh control coefficients without changing decision or constraint topology."""
+
+    if not isinstance(prepared, PreparedLinearControlQP):
+        raise TypeError("prepared must be a PreparedLinearControlQP.")
+    selected_compilation = (
+        LinearControlCompilationPolicy(prepared.compilation.representation)
+        if compilation_policy is None
+        else compilation_policy
+    )
+    compilation = compile_linear_quadratic_control(
+        specification,
+        cost_tolerance=cost_tolerance,
+        compilation_policy=selected_compilation,
+    )
+    refreshed = refresh_convex_program(
+        prepared.prepared,
+        compilation.quadratic_program,
+    )
+    return PreparedLinearControlQP(compilation, refreshed)
+
+
 def decode_linear_control_solution(
     compilation: LinearControlQPCompilation,
-    result: QuadraticProgramResult,
+    result: ConvexProgramResult,
     /,
     *,
     solution_id: str | None = None,
@@ -1049,8 +1227,8 @@ def decode_linear_control_solution(
     """Decode exactly the primal returned by a canonical QP solver."""
     if not isinstance(compilation, LinearControlQPCompilation):
         raise TypeError("compilation must be a LinearControlQPCompilation.")
-    if not isinstance(result, QuadraticProgramResult):
-        raise TypeError("result must be a QuadraticProgramResult.")
+    if not isinstance(result, ConvexProgramResult):
+        raise TypeError("result must be a ConvexProgramResult.")
     qp = compilation.quadratic_program
     if result.batch_shape != qp.batch_shape:
         raise ValueError("QP result batch shape does not match the compilation.")
@@ -1064,7 +1242,7 @@ def decode_linear_control_solution(
         result.valid,
         CONTROL_SUCCESS,
         jnp.where(
-            result.status == QP_INFEASIBLE,
+            result.status == int(ConvexProgramStatus.PRIMAL_INFEASIBLE),
             CONTROL_INFEASIBLE,
             CONTROL_DYNAMICS_FAILED,
         ),
@@ -1112,40 +1290,58 @@ def decode_linear_control_solution(
     )
 
 
+def solve_prepared_linear_quadratic_control(
+    prepared: PreparedLinearControlQP,
+    /,
+    *,
+    warm_start: ConvexWarmStart | None = None,
+) -> LinearControlQPSolution:
+    """Execute and decode one prepared linear-control QP."""
+
+    if not isinstance(prepared, PreparedLinearControlQP):
+        raise TypeError("prepared must be a PreparedLinearControlQP.")
+    execution = solve_convex_program(
+        prepared.prepared,
+        warm_start=warm_start,
+    )
+    return decode_linear_control_solution(prepared.compilation, execution.result)
+
+
 def solve_linear_quadratic_control(
     specification: LinearQuadraticControlProblem,
     /,
     *,
-    method: QPMethod = "dense-primal-dual",
-    tolerance: float = 1e-7,
     cost_tolerance: float = 1e-10,
-    max_iterations: int = 100,
-    regularization: float = 0.0,
-    step_fraction: float = 0.995,
-    max_dense_dimension: int = 512,
+    policy: ConvexSolvePolicy | None = None,
+    compilation_policy: LinearControlCompilationPolicy | None = None,
 ) -> LinearControlQPSolution:
     """Compile, solve, and losslessly decode a finite linear control QP."""
-    compilation = compile_linear_quadratic_control(
-        specification, cost_tolerance=cost_tolerance
+
+    selected = ConvexSolvePolicy() if policy is None else policy
+    if not isinstance(selected, ConvexSolvePolicy):
+        raise TypeError("policy must be a ConvexSolvePolicy or None.")
+    prepared = prepare_linear_quadratic_control(
+        specification,
+        policy=selected,
+        cost_tolerance=cost_tolerance,
+        compilation_policy=compilation_policy,
     )
-    result = solve_quadratic_program(
-        compilation.quadratic_program,
-        method=method,
-        tolerance=tolerance,
-        max_iterations=max_iterations,
-        regularization=regularization,
-        step_fraction=step_fraction,
-        max_dense_dimension=max_dense_dimension,
-    )
-    return decode_linear_control_solution(compilation, result)
+    return solve_prepared_linear_quadratic_control(prepared)
 
 
 __all__ = [
+    "ControlQPRepresentation",
+    "LinearControlCompilationPolicy",
     "LinearControlConstraintLayout",
     "LinearControlDecisionLayout",
     "LinearControlQPCompilation",
+    "LinearControlBoundLayout",
     "LinearControlQPSolution",
     "LinearQuadraticControlProblem",
+    "PreparedLinearControlQP",
+    "prepare_linear_quadratic_control",
+    "refresh_linear_quadratic_control",
+    "solve_prepared_linear_quadratic_control",
     "LinearQuadraticControlSpecification",
     "compile_linear_quadratic_control",
     "decode_linear_control_solution",

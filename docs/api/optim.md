@@ -915,109 +915,153 @@ single-process measurements, not backend-independent performance claims.
 ---
 
 
-## Convex quadratic programs
+## Canonical linear and quadratic programs
 
-`QuadraticProgram` represents the batched canonical convex program
-`minₓ 0.5 xᵀQx + qᵀx` subject to `Ax = b` and `Gx ≤ h`. Pass `Q` and `q` as
-`quadratic` and `linear`; the equality and inequality arrays are optional. A
-missing constraint family becomes a zero-row array rather than a different
-representation. All inputs broadcast over a common `batch_shape`, and the
-primal, dual, slack, diagnostic, validity, and status arrays preserve those
-batch axes.
+`LinearProgram` and `QuadraticProgram` share one audited mathematical-programming
+contract. Both accept optional equalities `Ax = b`, inequalities `Gx ≤ h`, and
+native `Bounds`. Bounds do not appear on the public equality or inequality axes:
+their lower and upper multipliers are reported separately. Fixed bounds are treated
+as equalities internally without exposing synthetic rows.
 
-Convexity is a caller precondition: the symmetric part of `Q` must be positive
-semidefinite. The solver does not project or repair `Q`, add hidden jitter, or
-replace a failed method with another one. `regularization` is the only
-regularization control and is recorded in the result. There is no public
-warm-start argument, elastic repair, or backend fallback.
+`LinearProgram` stores no dense zero Hessian. A selected dense QP method creates its
+temporary zero quadratic only at execution; sparse LP backends can consume the linear
+form directly.
 
 !!! example
     ```python
     import jax.numpy as jnp
     import phydrax as phx
 
-    problem = phx.optim.QuadraticProgram(
+
+    lp = phx.optim.LinearProgram(
+        jnp.asarray([-1.0, -0.5]),
+        inequality_matrix=jnp.asarray([[1.0, 1.0]]),
+        inequality_rhs=jnp.asarray([1.0]),
+        bounds=phx.optim.Bounds(0.0, jnp.inf),
+        problem_id="bounded-lp",
+    )
+    lp_result = phx.optim.solve_linear_program(lp)
+    assert lp_result.status == phx.optim.ConvexProgramStatus.OPTIMAL
+
+    qp = phx.optim.QuadraticProgram(
         jnp.asarray([[2.0, 0.0], [0.0, 2.0]]),
         jnp.asarray([-2.0, -5.0]),
         equality_matrix=jnp.asarray([[1.0, 1.0]]),
         equality_rhs=jnp.asarray([2.0]),
-        inequality_matrix=jnp.asarray([[-1.0, 0.0], [0.0, -1.0]]),
-        inequality_rhs=jnp.asarray([0.0, 0.0]),
+        bounds=phx.optim.Bounds(0.0, jnp.inf),
+        problem_id="bounded-qp",
     )
-    result = phx.optim.solve_quadratic_program(problem)
-    assert result.successful
-
-    # Use the primal-only API when the solution belongs in a differentiated graph.
-    differentiable_x = phx.optim.solve_quadratic_program_primal(
-        problem,
-        method="dense-active-set",
+    policy = phx.optim.ConvexSolvePolicy(
+        phx.optim.DensePrimalDualQP(),
+        termination=phx.optim.ConvexTermination(absolute=1e-7),
     )
+    qp_result = phx.optim.solve_quadratic_program(qp, policy=policy)
+    assert qp_result.successful
     ```
 
-### Methods, differentiation, and dense guard
+Convexity remains an explicit mathematical contract. Array-valued `Q` is symmetrized
+and carries asserted positive-semidefinite evidence; Phydrax never projects an
+indefinite matrix onto the PSD cone. Control compilers attach verified evidence after
+their explicit cost checks.
 
-`solve_quadratic_program` returns the complete audited result. Its default
-`method="dense-primal-dual"` uses the Phydrax dense primal-dual implementation.
-`method="qpax-implicit"` selects the required QPax 0.1.4 runtime dependency
-explicitly and records that backend. If its call fails, Phydrax does not silently
-run the dense solver.
-The public `QPMethod` type is
-`Literal["dense-primal-dual", "qpax-implicit"]`; the primal-only
-`QPDifferentiableMethod` type is
-`Literal["dense-active-set", "qpax-implicit"]`.
+### Policies and methods
+
+`ConvexSolvePolicy` separates the method, termination thresholds, regularization,
+materialization permission, resource budgets, and failure mode. Available methods are:
+
+- `DensePrimalDualQP`, the native dense predictor-corrector method;
+- `QPaxInteriorPoint`, QPax 0.1.4's dense public implicit backend;
+- optional `MPAXraPDHG`, restarted-average PDHG for assembled LP/QP;
+- optional `MPAXr2HPDHG`, reflected restarted Halpern PDHG for LP.
+
+No method fallback occurs. Dense resource rejection is a terminal configuration error,
+not a request to select another backend.
+
+Dense planning and direct QP solves check the assembled KKT entry count,
+factorization bytes, and workspace estimate against the declared limits before
+execution. `FailurePolicy("status")` returns audited terminal evidence;
+`FailurePolicy("error")` raises when that audit is nonoptimal. These policies never
+select a different method.
+
+`ConvexTermination.absolute + relative * scale` is the original-data KKT audit
+threshold; providers that expose relative stopping receive both components.
+`primal_infeasible` and
+`dual_infeasible` are direct tolerances for independently audited dual and primal
+rays; they are not inferred from a provider status.
+
+Native and QPax methods solve with the explicit regularized Hessian
+`Q + regularization * I`; the result audits that equation separately from stationarity
+for the original `Q`. QPax fixes its fraction-to-boundary multiplier and therefore has
+no configurable `step_fraction` field. MPAX retains its scaling and first-order
+iteration evidence, while Phydrax re-audits the original unscaled program.
+
+### Prepared lifecycle and warm starts
+
+Repeated programs use:
+
+1. `plan_convex_program`;
+2. `prepare_convex_template`;
+3. `bind_convex_numeric`;
+4. `refresh_convex_program`;
+5. `solve_convex_program`.
+
+Refresh preserves dimensions, bound roles, constraint topology, dtype, batch shape,
+method, and problem identity. It changes only numeric coefficients and increments
+`numeric_version`.
+
+The returned provenance records the public program's `problem_id` and `structure_id`,
+the exact policy fingerprint, and the prepared numeric version. Lowering an LP to a
+dense QP or conic provider representation does not leak that internal identity.
+
+`ConvexWarmStart` stores primal, equality-dual, inequality-dual, slack, and bound-dual
+arrays for one exact `structure_id`. The native dense method requires strictly positive
+inequality slacks and multipliers. `ConvexWarmStart.from_result` explicitly
+interiorizes dual/slack arrays; a primal on an active variable bound still requires a
+problem-aware shift into the interior. QPax rejects warm starts before backend
+execution.
+
+### Differentiation
 
 `solve_quadratic_program_primal` is the differentiable, primal-only surface.
-Its default `method="dense-active-set"` custom VJP differentiates the locally
-fixed active KKT system. An inequality is active only when its slack is at most
-`active_set_tolerance` and its multiplier is greater than that tolerance.
-These derivatives are local to that selected active set and are not
-differentiable through an active-set change; an invalid forward solution
-produces NaN data gradients rather than a fabricated sensitivity.
+`ConvexDifferentiationPolicy("active-set-kkt")` differentiates the locally fixed active
+KKT system. `ConvexDifferentiationPolicy("backend-implicit")` requires
+`QPaxInteriorPoint` and calls QPax's public implicit custom VJP. MPAX exposes only
+explicitly requested algorithmic differentiation: the selected method must use
+`unroll=True` and the differentiation policy must be `"algorithmic"`.
 
-The only QPax differentiation route is `method="qpax-implicit"`, which calls
-QPax's public implicit custom-VJP primal API. QPax explicit differentiation is
-not accepted. The full-result and primal-only APIs share `tolerance`,
-`max_iterations`, `regularization`, and `max_dense_dimension`. `step_fraction`
-configures only the native dense solver. QPax 0.1.4 hard-codes a 0.99
-fraction-to-boundary step and exposes no equivalent option, so QPax calls reject any
-non-default public `step_fraction` request instead of silently ignoring it. The
-primal-only API additionally exposes `active_set_tolerance`.
+The active-set derivative is valid only at a successful regular KKT point with an
+unambiguous strictly complementary active set. Invalid forward solves or singular and
+ambiguous active systems produce explicit failure/NaN sensitivities rather than a
+fabricated subgradient.
 
-Both backends are subject to the same dense-system guard. For `n` primal
-variables, `m` equalities, and `p` inequalities, the guarded dimension is
-`n + m + 2p`; it must not exceed `max_dense_dimension`, whose default is 512.
-This is a rejection boundary, not a request to approximate or switch methods.
+### Results, audits, and certificates
 
-### Result and KKT audit
+`ConvexProgramResult` retains:
 
-`QuadraticProgramResult` keeps `primal`, `equality_dual`,
-`inequality_dual`, and `inequality_slack` separately. For `Gx ≤ h`, both the
-slack and inequality multiplier are nonnegative, the slack equation is
-`Gx + slack - h = 0`, and complementarity is
-`slack * inequality_dual = 0`.
+- primal variables;
+- user equality and inequality multipliers/slacks;
+- lower and upper bound multipliers;
+- original and regularized stationarity;
+- feasibility, complementarity, and KKT residuals;
+- backend convergence and iteration evidence;
+- `ConvexProgramCertificate`;
+- `ConvexProgramProvenance`.
 
-The result reports the original objective and the complete audit:
+Public constraint arrays never include synthetic bound rows. The independent audit does
+include native bounds when computing primal feasibility and stationarity.
 
-- `stationarity_residual` and `dual_residual_norm` use the original `Q`;
-- `solver_stationarity_residual` and `solver_dual_residual_norm` include the
-  requested `regularization * primal`;
-- `equality_residual`, `inequality_residual`, and
-  `inequality_violation` preserve their full constraint axes;
-- `complementarity_residual`, `complementarity_gap`,
-  `primal_residual_norm`, and `kkt_residual_norm` expose the remaining KKT
-  checks;
-- `iterations` and `backend_converged` preserve the backend report, while
-  Phydrax independently derives `valid` and `status` from finite inputs and
-  outputs, multiplier/slack signs, feasibility, complementarity, and the
-  regularized solver KKT norm;
-- `method`, `backend`, `regularization`, `tolerance`, and `max_iterations`
-  retain the numerical provenance.
+`ConvexProgramStatus` distinguishes `OPTIMAL`, `ITERATION_LIMIT`,
+`PRIMAL_INFEASIBLE`, `DUAL_INFEASIBLE`, `NONFINITE_INPUT`, `NONFINITE_OUTPUT`,
+`NUMERICAL_FAILURE`, `BACKEND_FAILED`, and `INVALID_PROBLEM`. Infeasible or unbounded
+statuses require an independently validated dual or primal ray. A backend status alone
+is never promoted.
 
-Status is an integer array with public constants `QP_SUCCESS`,
-`QP_MAX_ITERATIONS`, `QP_INFEASIBLE`, and `QP_NONFINITE`.
-`result.successful` is the batch-shaped boolean success predicate. A backend
-convergence flag alone is not promoted to success when the independent KKT
-audit fails.
+::: phydrax.optim.LinearProgram
+    options:
+        members:
+            - __init__
+
+---
 
 ::: phydrax.optim.QuadraticProgram
     options:
@@ -1026,10 +1070,42 @@ audit fails.
 
 ---
 
-::: phydrax.optim.QuadraticProgramResult
+::: phydrax.optim.ConvexProgramResult
     options:
         members:
             - successful
+
+---
+
+::: phydrax.optim.ConvexSolvePolicy
+
+---
+
+::: phydrax.optim.ConvexTermination
+
+---
+
+::: phydrax.optim.DensePrimalDualQP
+
+---
+
+::: phydrax.optim.QPaxInteriorPoint
+
+---
+
+::: phydrax.optim.prepare_convex_program
+
+---
+
+::: phydrax.optim.refresh_convex_program
+
+---
+
+::: phydrax.optim.solve_convex_program
+
+---
+
+::: phydrax.optim.solve_linear_program
 
 ---
 
@@ -1038,6 +1114,60 @@ audit fails.
 ---
 
 ::: phydrax.optim.solve_quadratic_program_primal
+
+## Canonical conic programs
+
+`ConicProgram` represents
+`min 0.5 xᵀPx + qᵀx` subject to `Ax + s = b`, `s ∈ K`, and native variable
+bounds. The public cone product supports:
+
+- `ZeroCone`;
+- `NonnegativeCone`;
+- `SecondOrderCone`;
+- `RotatedSecondOrderCone`;
+- `ProductCone`.
+
+Every cone exposes primal/dual projection, membership residual, interior margin,
+and complementarity. Cone topology is static across program batches and numeric
+refreshes.
+
+Clarabel 0.11.1 is an optional explicit host backend selected with
+`ConvexSolvePolicy(ClarabelInteriorPoint())`. Rotated cones are mapped through one
+documented isometry to Clarabel's SOC representation and mapped back before the
+independent Phydrax audit. Native variable bounds are represented separately in the
+public result. Clarabel is not a JIT or differentiation boundary and is never selected
+automatically.
+
+::: phydrax.optim.ConicProgram
+
+---
+
+::: phydrax.optim.ZeroCone
+
+---
+
+::: phydrax.optim.NonnegativeCone
+
+---
+
+::: phydrax.optim.SecondOrderCone
+
+---
+
+::: phydrax.optim.RotatedSecondOrderCone
+
+---
+
+::: phydrax.optim.ProductCone
+
+---
+
+::: phydrax.optim.ClarabelInteriorPoint
+
+---
+
+::: phydrax.optim.solve_conic_program
+
 
 ## Bounded global search: differential evolution
 
