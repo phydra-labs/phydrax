@@ -15,6 +15,7 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, Key
 
+from ..._polynomial._cubature import CubatureReference
 from .._atlas import (
     BoundaryAtlas,
     box_boundary_atlas,
@@ -24,6 +25,7 @@ from .._atlas import (
 from .._capabilities import GeometryCapability
 from .._certificate import exact_signed_distance_certificate, FieldCertificate
 from .._contracts import GeometryKernel, GeometryKind, GeometrySource
+from .._cubature import AbstractCubatureMap, CubatureAtlas, CubatureComponent
 from .._sampling import (
     complete_sampling_result,
     RejectionSamplingPlan,
@@ -47,6 +49,9 @@ _ANALYTIC_CAPABILITIES = frozenset(
         GeometryCapability.BOUNDARY_SAMPLING,
         GeometryCapability.BOUNDARY_ATLAS,
     }
+)
+_RADIAL_CAPABILITIES = _ANALYTIC_CAPABILITIES | frozenset(
+    {GeometryCapability.CUBATURE_ATLAS}
 )
 
 
@@ -82,6 +87,55 @@ def _check_points(points: Array, dimension: int) -> Array:
     if points_.ndim == 0 or points_.shape[-1] != dimension:
         raise ValueError(f"points must have trailing dimension {dimension}.")
     return points_
+
+
+class _RadialCubatureMap(AbstractCubatureMap):
+    center: Array
+    radius: Array
+    reference: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        center: Array,
+        radius: Array,
+        reference: CubatureReference,
+    ):
+        self.center = jnp.asarray(center, dtype=float)
+        self.radius = jnp.asarray(radius, dtype=float).reshape(())
+        self.reference = reference
+
+    @property
+    def num_charts(self) -> int:
+        return 1
+
+    @property
+    def reference_domain(self) -> CubatureReference:
+        return self.reference
+
+    @property
+    def ambient_dimension(self) -> int:
+        return int(self.center.shape[0])
+
+    def map(self, chart_indices: Array, reference: Array, /) -> Array:
+        del chart_indices
+        return self.center + self.radius * reference
+
+    def jacobian(self, chart_indices: Array, reference: Array, /) -> Array:
+        del chart_indices
+        intrinsic_dimension = {
+            "circle": 1,
+            "disk": 2,
+            "sphere": 2,
+            "ball": 3,
+        }[self.reference]
+        return jnp.broadcast_to(
+            self.radius**intrinsic_dimension,
+            reference.shape[:-1],
+        )
+
+    def reference_mask(self, chart_indices: Array, reference: Array, /) -> Array:
+        del reference
+        return jnp.ones(jnp.asarray(chart_indices).shape, dtype=bool)
 
 
 @jax.custom_jvp
@@ -165,7 +219,7 @@ class _CircleKernel(GeometryKernel):
 
     @property
     def capabilities(self) -> frozenset[GeometryCapability]:
-        return _ANALYTIC_CAPABILITIES
+        return _RADIAL_CAPABILITIES
 
     @property
     def field_certificate(self) -> FieldCertificate:
@@ -255,6 +309,18 @@ class _CircleKernel(GeometryKernel):
         center, radius = self._parameters(state)
         return circle_boundary_atlas(center, radius, source_id=self.source_id)
 
+    def cubature_atlas(
+        self, state: DesignState, component: CubatureComponent, /
+    ) -> CubatureAtlas:
+        center, radius = self._parameters(state)
+        reference: CubatureReference = "disk" if component == "interior" else "circle"
+        return CubatureAtlas(
+            _RadialCubatureMap(center, radius, reference),
+            source_entity_ids=jnp.asarray([0], dtype=jnp.int32),
+            source_id=self.source_id,
+            physical_tags=(component,),
+        )
+
 
 class Sphere(GeometrySource):
     """Analytic solid sphere source."""
@@ -320,7 +386,7 @@ class _SphereKernel(GeometryKernel):
 
     @property
     def capabilities(self) -> frozenset[GeometryCapability]:
-        return _ANALYTIC_CAPABILITIES
+        return _RADIAL_CAPABILITIES
 
     @property
     def field_certificate(self) -> FieldCertificate:
@@ -403,6 +469,18 @@ class _SphereKernel(GeometryKernel):
     def boundary_atlas(self, state: DesignState, /) -> BoundaryAtlas:
         center, radius = self._parameters(state)
         return sphere_boundary_atlas(center, radius, source_id=self.source_id)
+
+    def cubature_atlas(
+        self, state: DesignState, component: CubatureComponent, /
+    ) -> CubatureAtlas:
+        center, radius = self._parameters(state)
+        reference: CubatureReference = "ball" if component == "interior" else "sphere"
+        return CubatureAtlas(
+            _RadialCubatureMap(center, radius, reference),
+            source_entity_ids=jnp.asarray([0], dtype=jnp.int32),
+            source_id=self.source_id,
+            physical_tags=(component,),
+        )
 
 
 class Box(GeometrySource):

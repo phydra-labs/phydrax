@@ -14,11 +14,24 @@ from phydrax._interpolation import (
     barycentric_interpolate,
 )
 from phydrax._polynomial._chebyshev import chebyshev_lobatto_data
+from phydrax._polynomial._cubature import (
+    CubatureRuleData,
+    lebedev_rule_data,
+    periodic_circle_rule_data,
+    radial_ball_rule_data,
+    radial_disk_rule_data,
+    xiao_gimbutas_rule_data,
+)
+from phydrax._polynomial._lebedev_cubature_data import LEBEDEV_RULES
 from phydrax._polynomial._orthogonal import (
     legendre_rule_data,
     standard_affine_coefficients,
     standard_normal_hermite_rule_data,
     standard_series_value,
+)
+from phydrax._polynomial._simplex_cubature_data import (
+    TETRAHEDRON_RULES,
+    TRIANGLE_RULES,
 )
 
 
@@ -182,3 +195,88 @@ def test_generic_barycentric_differentiation_preserves_irregular_polynomials():
     values = nodes**4 - 3.0 * nodes**2 + 2.0
 
     assert jnp.allclose(matrix @ values, 4.0 * nodes**3 - 6.0 * nodes, atol=1e-10)
+
+
+def _multiindices(dimension: int, degree: int):
+    return np.asarray(
+        [
+            exponent
+            for exponent in np.ndindex(*((degree + 1,) * dimension))
+            if sum(exponent) <= degree
+        ],
+        dtype=np.int32,
+    )
+
+
+def _reference_moments(reference: str, exponents: np.ndarray):
+    values = []
+    for exponent in exponents:
+        total = int(np.sum(exponent))
+        if reference in ("triangle", "tetrahedron"):
+            numerator = math.prod(math.factorial(int(value)) for value in exponent)
+            values.append(numerator / math.factorial(total + exponent.size))
+        elif np.any(exponent % 2):
+            values.append(0.0)
+        else:
+            numerator = math.prod(math.gamma((int(value) + 1) / 2) for value in exponent)
+            if reference in ("circle", "sphere"):
+                values.append(2.0 * numerator / math.gamma((total + exponent.size) / 2))
+            else:
+                values.append(numerator / math.gamma((total + exponent.size) / 2 + 1))
+    return np.asarray(values)
+
+
+def _assert_cubature_exact(rule: CubatureRuleData):
+    points = np.asarray(rule.points)
+    weights = np.asarray(rule.weights)
+    exponents = _multiindices(points.shape[1], rule.exact_degree)
+    values = np.prod(points[:, None, :] ** exponents[None, :, :], axis=-1)
+    observed = weights @ values
+    expected = _reference_moments(rule.reference_domain, exponents)
+    assert np.allclose(observed, expected, rtol=5e-10, atol=5e-11)
+
+
+@pytest.mark.parametrize("degree", tuple(TRIANGLE_RULES))
+def test_xiao_gimbutas_triangle_rules_have_certified_total_degree(degree):
+    _assert_cubature_exact(xiao_gimbutas_rule_data("triangle", degree))
+
+
+@pytest.mark.parametrize("degree", tuple(TETRAHEDRON_RULES))
+def test_xiao_gimbutas_tetrahedron_rules_have_certified_total_degree(degree):
+    _assert_cubature_exact(xiao_gimbutas_rule_data("tetrahedron", degree))
+
+
+@pytest.mark.parametrize("degree", tuple(LEBEDEV_RULES))
+def test_positive_lebedev_rules_have_certified_total_degree(degree):
+    _assert_cubature_exact(lebedev_rule_data(degree))
+
+
+@pytest.mark.parametrize(
+    "factory",
+    (periodic_circle_rule_data, radial_disk_rule_data, radial_ball_rule_data),
+)
+@pytest.mark.parametrize("degree", (0, 1, 2, 5, 8))
+def test_procedural_radial_rules_have_certified_total_degree(factory, degree):
+    _assert_cubature_exact(factory(degree))
+
+
+def test_cubature_data_identity_storage_and_validation_are_explicit():
+    first = radial_disk_rule_data(6)
+    second = radial_disk_rule_data(6)
+    assert first.rule_id == second.rule_id
+    assert first.storage_bytes == first.points.nbytes + first.weights.nbytes
+    assert jnp.all(first.weights > 0.0)
+
+    with pytest.raises(TypeError, match="integer"):
+        radial_disk_rule_data(True)
+    with pytest.raises(ValueError, match="maximum_rule_bytes"):
+        CubatureRuleData(
+            first.points,
+            first.weights,
+            exact_degree=first.exact_degree,
+            family="radial-product",
+            reference_domain="disk",
+            backend="test",
+            source_id="test",
+            maximum_rule_bytes=1,
+        )

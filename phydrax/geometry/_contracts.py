@@ -28,6 +28,7 @@ from .design._schema import (
 
 if TYPE_CHECKING:
     from ._atlas import BoundaryAtlas
+    from ._cubature import CubatureAtlas, CubatureComponent
     from ._sampling import RejectionSamplingPlan, SamplingResult
 
 
@@ -238,6 +239,10 @@ class CompiledGeometry(StrictModule):
     def boundary_atlas(self) -> BoundaryAtlas:
         self.require(GeometryCapability.BOUNDARY_ATLAS)
         return self.kernel.boundary_atlas(self.state)
+
+    def cubature_atlas(self, component: CubatureComponent, /) -> CubatureAtlas:
+        self.require(GeometryCapability.CUBATURE_ATLAS)
+        return self.kernel.cubature_atlas(self.state, component)
 
     def sample_interior(
         self,

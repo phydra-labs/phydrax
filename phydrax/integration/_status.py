@@ -19,6 +19,7 @@ class IntegrationStatus(IntEnum):
     UNSAMPLED_STRATUM = 8
     INVALID_WEIGHTS = 9
     NO_VALID_SAMPLES = 10
+    MAXIMUM_CELLS_REACHED = 11
 
 
 _STATUS_MESSAGES = {
@@ -33,6 +34,7 @@ _STATUS_MESSAGES = {
     IntegrationStatus.UNSAMPLED_STRATUM: "a positive-measure stratum received no samples",
     IntegrationStatus.INVALID_WEIGHTS: "integration weights are invalid",
     IntegrationStatus.NO_VALID_SAMPLES: "no valid samples remain after masking",
+    IntegrationStatus.MAXIMUM_CELLS_REACHED: "maximum triangle cells reached",
 }
 
 

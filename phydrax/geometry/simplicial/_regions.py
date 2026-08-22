@@ -26,6 +26,7 @@ from .._certificate import (
     ZeroSetAccuracy,
 )
 from .._contracts import GeometryKernel, GeometryKind, GeometrySource
+from .._cubature import CubatureAtlas, CubatureComponent
 from .._sampling import (
     bounded_rejection_sample,
     complete_sampling_result,
@@ -38,6 +39,7 @@ from ..design._schema import (
 )
 from ._mesh import (
     _closest_points_on_triangles,
+    _TriangleCubatureMap,
     _TriangleSurfaceMap,
     MeshQueryResult,
     TriangleMesh,
@@ -497,6 +499,7 @@ class _MeshRegionKernel(GeometryKernel):
                 GeometryCapability.INTERIOR_SAMPLING,
                 GeometryCapability.BOUNDARY_SAMPLING,
                 GeometryCapability.BOUNDARY_ATLAS,
+                GeometryCapability.CUBATURE_ATLAS,
             }
         )
 
@@ -650,6 +653,18 @@ class _MeshRegionKernel(GeometryKernel):
             source_id=self.source_id,
         )
 
+    def cubature_atlas(self, state, component: CubatureComponent, /) -> CubatureAtlas:
+        if component != "boundary":
+            raise NotImplementedError(
+                "MeshRegion has no tetrahedral interior cubature realization."
+            )
+        return CubatureAtlas(
+            _TriangleCubatureMap(self._vertices(state), self.faces),
+            source_entity_ids=jnp.arange(self.faces.shape[0], dtype=jnp.int32),
+            source_id=self.source_id,
+            physical_tags=tuple("face" for _ in range(self.faces.shape[0])),
+        )
+
 
 class TriangleSurface(StrictModule):
     """Canonical codimension-one triangular surface realization."""
@@ -674,6 +689,10 @@ class TriangleSurface(StrictModule):
     @property
     def atlas(self) -> BoundaryAtlas:
         return self.mesh.boundary_atlas
+
+    @property
+    def cubature_atlas(self) -> CubatureAtlas:
+        return self.mesh.cubature_atlas
 
     def query(self, points: Array, /) -> MeshQueryResult:
         return self.mesh.query_index().query(points)

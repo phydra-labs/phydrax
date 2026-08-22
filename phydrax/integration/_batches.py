@@ -129,6 +129,7 @@ class MappedIntegrationBatch(StrictModule):
     mask: Array
     target_mass: Array | None
     axis: str = eqx.field(static=True)
+    cell: str = eqx.field(static=True)
     provenance: str = eqx.field(static=True)
 
     def __init__(
@@ -141,6 +142,7 @@ class MappedIntegrationBatch(StrictModule):
         mask: Array | None = None,
         target_mass: Array | None = None,
         axis: str = "__integration_point__",
+        cell: str = "mapped",
         provenance: str = "mapped",
     ):
         reference = jnp.asarray(reference_points, dtype=float)
@@ -160,6 +162,7 @@ class MappedIntegrationBatch(StrictModule):
         self.mask = mask_
         self.target_mass = target_mass
         self.axis = str(axis)
+        self.cell = str(cell)
         self.provenance = str(provenance)
 
 

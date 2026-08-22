@@ -236,6 +236,10 @@ Use `mean_over(condition.on)` for normalized pointwise residual means and
 
 ---
 
+::: phydrax.integration.AdaptiveTrianglePlan
+
+---
+
 ::: phydrax.integration.MonteCarloPlan
 
 ---
@@ -376,11 +380,19 @@ implementation.
 
 ## Rules
 
+::: phydrax.integration.CubatureRule
+
+---
+
 ::: phydrax.integration.GaussLegendreRule
 
 ---
 
 ::: phydrax.integration.GaussKronrodRule
+
+---
+
+::: phydrax.integration.GaussHermiteRule
 
 ---
 
@@ -441,6 +453,14 @@ implementation.
 ---
 
 ::: phydrax.integration.AdaptiveQuadratureDiagnostics
+
+---
+
+::: phydrax.integration.AdaptiveTriangleDiagnostics
+
+---
+
+::: phydrax.integration.AdaptiveTrianglePartition
 
 ---
 

@@ -25,6 +25,12 @@ from ._contracts import (
     GeometrySource,
     GeometryTolerance,
 )
+from ._cubature import (
+    AbstractCubatureMap,
+    CubatureAtlas,
+    CubatureAtlasProvider,
+    CubatureComponent,
+)
 from ._partition import BoundaryAtlasPartition, GeometryMeasurePartition
 from ._sampling import (
     AtlasSamplingPlan,
@@ -165,10 +171,14 @@ __all__ = [
     "reconstruction",
     "simplicial",
     "AbstractSurfacePatch",
+    "AbstractCubatureMap",
     "BoundaryAtlas",
     "BoundaryAtlasPartition",
     "AtlasSamplingPlan",
     "BoundaryAtlasProvider",
+    "CubatureAtlas",
+    "CubatureAtlasProvider",
+    "CubatureComponent",
     "BoundaryMap",
     "BoundaryFrame",
     "BlendCSG",

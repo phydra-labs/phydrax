@@ -4,6 +4,13 @@
 
 ### Added
 
+- Positive certified Xiao--Gimbutas, Lebedev, periodic, radial, and Duffy
+  cubature with content identity and bounded storage; measure-matched fixed
+  Gauss--Hermite expectations; geometry-owned native disk, circle, ball,
+  sphere, and triangle-surface maps; mixed product plans; and static-capacity
+  differentiable adaptive triangle refinement with explicit paired-rule error,
+  partition, evaluation-budget, and terminal-status evidence.
+
 - `phydrax.weighting` exact and quadratically reconciled relative-entropy moment
   calibration for dense, sparse, and matrix-free feature actions, with affine-rank
   reduction, audited convergence/regularity evidence, warm starts, and implicit

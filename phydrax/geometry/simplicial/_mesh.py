@@ -14,6 +14,7 @@ from jaxtyping import Array
 
 from ..._strict import StrictModule
 from .._atlas import BoundaryAtlas, BoundaryMap
+from .._cubature import AbstractCubatureMap, CubatureAtlas
 from ._topology import TriangleTopology
 
 
@@ -140,6 +141,15 @@ class TriangleMesh(StrictModule):
             source_id=self.source_id,
         )
 
+    @property
+    def cubature_atlas(self) -> CubatureAtlas:
+        return CubatureAtlas(
+            _TriangleCubatureMap(self.vertices, self.faces),
+            source_entity_ids=jnp.arange(self.faces.shape[0], dtype=jnp.int32),
+            source_id=self.source_id,
+            physical_tags=tuple("face" for _ in range(self.faces.shape[0])),
+        )
+
     def query_index(self) -> TriangleMeshQueryIndex:
         return TriangleMeshQueryIndex(self)
 
@@ -184,6 +194,50 @@ class _TriangleSurfaceMap(BoundaryMap):
             axis=-1,
         )
         return doubled_area * (1.0 - reference[..., 0])
+
+
+class _TriangleCubatureMap(AbstractCubatureMap):
+    vertices: Array
+    faces: Array
+
+    def __init__(self, vertices: Array, faces: Array):
+        self.vertices = jnp.asarray(vertices, dtype=float)
+        self.faces = jnp.asarray(faces, dtype=jnp.int32)
+
+    @property
+    def num_charts(self) -> int:
+        return int(self.faces.shape[0])
+
+    @property
+    def reference_domain(self):
+        return "triangle"
+
+    @property
+    def ambient_dimension(self) -> int:
+        return 3
+
+    def map(self, chart_indices: Array, reference: Array, /) -> Array:
+        triangles = self.vertices[self.faces[chart_indices]]
+        return (
+            triangles[..., 0, :]
+            + reference[..., :1] * (triangles[..., 1, :] - triangles[..., 0, :])
+            + reference[..., 1:2] * (triangles[..., 2, :] - triangles[..., 0, :])
+        )
+
+    def jacobian(self, chart_indices: Array, reference: Array, /) -> Array:
+        triangles = self.vertices[self.faces[chart_indices]]
+        doubled_area = jnp.linalg.norm(
+            jnp.cross(
+                triangles[..., 1, :] - triangles[..., 0, :],
+                triangles[..., 2, :] - triangles[..., 0, :],
+            ),
+            axis=-1,
+        )
+        return jnp.broadcast_to(doubled_area, reference.shape[:-1])
+
+    def reference_mask(self, chart_indices: Array, reference: Array, /) -> Array:
+        del reference
+        return jnp.ones(jnp.asarray(chart_indices).shape, dtype=bool)
 
 
 def _closest_segment(point: Array, start: Array, end: Array) -> Array:

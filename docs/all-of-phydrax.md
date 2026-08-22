@@ -197,6 +197,13 @@ present in results. Square-root Kalman execution does not support the parallel
 method. Discrete particle ancestry and resampling choices are nondifferentiable.
 
 
+Certified multidimensional cubature extends the same measure contract: private
+polynomial data owns positive simplex, spherical, periodic, and radial reference
+rules, while integration plans and geometry-owned cubature atlases map those
+rules to physical targets. Reference exactness, physical Jacobians, content
+identity, resource limits, and paired adaptive-triangle error evidence remain
+distinct rather than being collapsed into a generic quadrature flag.
+
 ### Moment calibration and target-aware finite measures
 
 `phydrax.weighting` computes the minimum-relative-entropy reweighting of a finite

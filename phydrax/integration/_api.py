@@ -23,6 +23,7 @@ from .._doc import DOC_KEY0
 from .._sampling import AntitheticDesign, design_capabilities
 from .._strict import StrictModule
 from ._adaptive import integrate_adaptive
+from ._adaptive_triangle import integrate_adaptive_triangle
 from ._estimates import IntegrationEstimate
 from ._external import (
     integrate_discrete_measure,
@@ -42,6 +43,7 @@ from ._monte_carlo import (
 from ._multilevel import integrate_multilevel, materialize_multilevel
 from ._plans import (
     AdaptiveQuadraturePlan,
+    AdaptiveTrianglePlan,
     CellQuadraturePlan,
     FixedQuadraturePlan,
     ImportanceSamplingPlan,
@@ -177,6 +179,7 @@ def _is_deterministic_plan(plan: Any, /) -> bool:
         (
             FixedQuadraturePlan,
             AdaptiveQuadraturePlan,
+            AdaptiveTrianglePlan,
             CellQuadraturePlan,
             SparseGridPlan,
         ),
@@ -262,6 +265,10 @@ def materialize(
     elif isinstance(plan, AdaptiveQuadraturePlan):
         if not isinstance(base, ComponentTarget):
             raise TypeError("Adaptive quadrature requires a component target.")
+        batch = None
+    elif isinstance(plan, AdaptiveTrianglePlan):
+        if not isinstance(base, ComponentTarget):
+            raise TypeError("Adaptive triangle quadrature requires a component target.")
         batch = None
     elif isinstance(plan, (MonteCarloPlan, QuasiMonteCarloPlan)):
         batch = materialize_monte_carlo(target, plan, key=sampling_key)
@@ -424,6 +431,10 @@ def reduce(
         )
     if isinstance(plan, AdaptiveQuadraturePlan):
         return integrate_adaptive(integrand, target, plan, key=key, kwargs=kwargs)
+    if isinstance(plan, AdaptiveTrianglePlan):
+        return integrate_adaptive_triangle(
+            integrand, target, plan, key=key, kwargs=kwargs
+        )
     if isinstance(
         plan,
         (MonteCarloPlan, QuasiMonteCarloPlan, StratifiedMonteCarloPlan),

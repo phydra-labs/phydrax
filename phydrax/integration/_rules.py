@@ -17,6 +17,15 @@ from .._numerics import (
     QuadratureRuleData,
     tanh_sinh_data,
 )
+from .._polynomial._cubature import (
+    cubature_rule_data,
+    CubatureReference,
+    CubatureRuleData,
+)
+from .._polynomial._orthogonal import (
+    OrthogonalRuleData,
+    standard_normal_hermite_rule_data,
+)
 from .._strict import StrictModule
 
 
@@ -27,6 +36,73 @@ class ReferenceCellData(NamedTuple):
     weights: Array
     embedded_weights: Array | None
     cell: str
+
+
+class CubatureRule(StrictModule):
+    """Curated positive cubature on a canonical multidimensional reference."""
+
+    prepared: CubatureRuleData
+    requested_degree: int = eqx.field(static=True)
+    allow_duffy_fallback: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        reference: CubatureReference,
+        degree: int,
+        /,
+        *,
+        allow_duffy_fallback: bool = True,
+        maximum_rule_bytes: int = 64 * 1024**2,
+    ):
+        prepared = cubature_rule_data(
+            reference,
+            degree,
+            allow_duffy_fallback=allow_duffy_fallback,
+            maximum_rule_bytes=maximum_rule_bytes,
+        )
+        self.prepared = prepared
+        self.requested_degree = int(degree)
+        self.allow_duffy_fallback = bool(allow_duffy_fallback)
+
+    @property
+    def reference_domain(self) -> str:
+        return self.prepared.reference_domain
+
+    @property
+    def family(self) -> str:
+        return self.prepared.family
+
+    @property
+    def exact_degree(self) -> int:
+        return self.prepared.exact_degree
+
+    @property
+    def num_points(self) -> int:
+        return int(self.prepared.weights.shape[0])
+
+    @property
+    def measure_mass(self) -> float:
+        return self.prepared.measure_mass
+
+    @property
+    def storage_bytes(self) -> int:
+        return self.prepared.storage_bytes
+
+    @property
+    def source_id(self) -> str:
+        return self.prepared.source_id
+
+    @property
+    def rule_id(self) -> str:
+        return self.prepared.rule_id
+
+    def materialize(self) -> ReferenceCellData:
+        return ReferenceCellData(
+            self.prepared.points,
+            self.prepared.weights,
+            None,
+            self.reference_domain,
+        )
 
 
 class GaussLegendreRule(StrictModule):
@@ -41,6 +117,19 @@ class GaussLegendreRule(StrictModule):
 
     def data(self) -> QuadratureRuleData:
         return gauss_legendre_data(self.order)
+
+
+class GaussHermiteRule(StrictModule):
+    """Order-``n`` Gaussian quadrature for standard-normal expectations."""
+
+    order: int = eqx.field(static=True)
+
+    def __init__(self, order: int = 16):
+        data = standard_normal_hermite_rule_data(order)
+        self.order = int(data.nodes.shape[0])
+
+    def data(self) -> OrthogonalRuleData:
+        return standard_normal_hermite_rule_data(self.order)
 
 
 class GaussKronrodRule(StrictModule):
@@ -98,6 +187,13 @@ class TanhSinhRule(StrictModule):
 IntervalRule: TypeAlias = (
     GaussLegendreRule | GaussKronrodRule | ClenshawCurtisRule | TanhSinhRule
 )
+ProbabilityRule: TypeAlias = GaussHermiteRule
+
+
+def probability_rule_data(rule: ProbabilityRule, /) -> OrthogonalRuleData:
+    if isinstance(rule, GaussHermiteRule):
+        return rule.data()
+    raise TypeError(f"Unsupported probability rule {type(rule).__name__}.")
 
 
 def interval_rule_data(rule: IntervalRule, /) -> QuadratureRuleData:
@@ -230,6 +326,7 @@ ReferenceRule: TypeAlias = (
     | ReferenceQuadrilateralRule
     | ReferenceTetrahedronRule
     | ReferenceHexahedronRule
+    | CubatureRule
 )
 
 
@@ -244,14 +341,19 @@ def reference_rule_data(rule: ReferenceRule, /) -> ReferenceCellData:
         return rule.materialize()
     if isinstance(rule, ReferenceHexahedronRule):
         return rule.materialize()
+    if isinstance(rule, CubatureRule):
+        return rule.materialize()
     raise TypeError(f"Unsupported reference-cell rule {type(rule).__name__}.")
 
 
 __all__ = [
     "ClenshawCurtisRule",
+    "CubatureRule",
     "GaussKronrodRule",
+    "GaussHermiteRule",
     "GaussLegendreRule",
     "IntervalRule",
+    "ProbabilityRule",
     "ReferenceCellData",
     "ReferenceHexahedronRule",
     "ReferenceIntervalRule",
@@ -261,5 +363,6 @@ __all__ = [
     "ReferenceTriangleRule",
     "TanhSinhRule",
     "interval_rule_data",
+    "probability_rule_data",
     "reference_rule_data",
 ]

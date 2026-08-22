@@ -20,9 +20,8 @@ from ._estimates import (
     IntegrationEstimate,
     IntegrationProvenance,
 )
-from ._lowering import sum_over
+from ._lowering import _scalar_interior_rule_data, sum_over
 from ._plans import FixedQuadraturePlan
-from ._rules import interval_rule_data
 from ._status import IntegrationStatus
 from ._targets import DensityTarget, ProbabilityTarget
 
@@ -32,17 +31,8 @@ def materialize_fixed_probability(
     plan: FixedQuadraturePlan,
     /,
 ) -> PointIntegrationBatch:
-    """Map an open canonical interval rule through a probability quantile."""
-    data = interval_rule_data(plan.rule)
-    unit = 0.5 * (data.nodes + 1.0)
-    if bool(jnp.any(unit <= 0.0)) or bool(jnp.any(unit >= 1.0)):
-        support = target.probability.distribution.support
-        if support is None:
-            raise ValueError(
-                "Endpoint-inclusive quadrature cannot map an unbounded probability "
-                "domain; use GaussLegendreRule or stochastic integration."
-            )
-    samples = target.probability.distribution.icdf(unit)
+    """Map a compatible canonical rule through a probability reference map."""
+    samples, rule_weights = _scalar_interior_rule_data(target.probability, plan.rule)
     structure = SampleLayout(((target.probability.label,),)).canonicalize(
         (target.probability.label,)
     )
@@ -55,7 +45,7 @@ def materialize_fixed_probability(
         ),
         structure,
     )
-    weights = cx.Field(0.5 * data.weights, dims=(axis,))
+    weights = cx.Field(rule_weights, dims=(axis,))
     return PointIntegrationBatch(
         points,
         weights,

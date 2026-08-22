@@ -85,6 +85,21 @@ linearization are informed by parallel-mcmc at commit
 paper.
 See LICENSES/PARALLEL-MCMC-BSD-3-CLAUSE.txt.
 
+ModePy
+Copyright (c) 2012-16 Andreas Klöckner and Contributors.
+Licensed under the MIT License.
+The Xiao--Gimbutas triangle and tetrahedron cubature data are transformed
+from ModePy 2026.1 into Phydrax canonical unit-simplex coordinates, then
+independently certified for mass, positivity, containment, and polynomial
+exactness. See LICENSES/MODEPY-MIT.txt.
+
+SciPy
+Copyright (c) 2001-2002 Enthought, Inc. 2003, SciPy Developers.
+Licensed under the BSD 3-Clause License.
+The positive-weight Lebedev sphere rules are generated from SciPy 1.18.0's
+Lebedev implementation and independently certified under Phydrax reference
+measure conventions. See LICENSES/SCIPY-BSD-3-CLAUSE.txt.
+
 Research and design acknowledgments
 
 The moment-calibration formulation follows Shane Barratt, Guillermo Angeris,
@@ -95,3 +110,8 @@ The absorption study also considered rswjax by Andrew Timm, licensed under the
 Apache License, Version 2.0. The Phydrax moment-calibration implementation is
 independent and does not include source code copied or translated from rsw or
 rswjax.
+
+The cubature-rule design study considered sigma-py/quadpy. Phydrax does not
+include or depend on quadpy source or proprietary runtime data; its implementation
+uses the original quadrature publications and the permissively licensed sources
+identified above.
