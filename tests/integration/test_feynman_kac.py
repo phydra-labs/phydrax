@@ -14,7 +14,7 @@ def test_feynman_kac_heat_solution_matches_analytic_and_pde_routes():
     wave_number = 1.1
     final_time = 0.7
     x0 = jnp.array([0.25])
-    slicing = phx.operators.PathDiscretization(0.0, final_time, num_steps=32)
+    slicing = phx.discretization.TemporalMesh.uniform(0.0, final_time, 32, role="path")
     terminal = lambda x, t: jnp.cos(wave_number * x[0])
     drift = lambda x, t: jnp.zeros_like(x)
 
@@ -48,7 +48,7 @@ def test_feynman_kac_heat_solution_matches_analytic_and_pde_routes():
 
 
 def test_feynman_kac_constant_killing_and_diffusion_gradient():
-    slicing = phx.operators.PathDiscretization(0.0, 0.6, num_steps=24)
+    slicing = phx.discretization.TemporalMesh.uniform(0.0, 0.6, 24, role="path")
     killing_rate = 0.3
     x0 = jnp.array([0.1])
     terminal = lambda x, t: 1.0
@@ -92,7 +92,7 @@ def test_feynman_kac_constant_killing_and_diffusion_gradient():
 
 
 def test_ornstein_uhlenbeck_terminal_mean_matches_euler_reference():
-    slicing = phx.operators.PathDiscretization(0.0, 1.0, num_steps=64)
+    slicing = phx.discretization.TemporalMesh.uniform(0.0, 1.0, 64, role="path")
     theta = 0.7
     sigma = 0.4
     x0 = jnp.array([1.2])
@@ -114,7 +114,7 @@ def test_ornstein_uhlenbeck_terminal_mean_matches_euler_reference():
 def test_discrete_first_passage_converges_to_brownian_interval_survival():
     final_time = 0.5
     sigma = 0.5
-    slicing = phx.operators.PathDiscretization(0.0, final_time, num_steps=256)
+    slicing = phx.discretization.TemporalMesh.uniform(0.0, final_time, 256, role="path")
     paths = phx.operators.sample_diffusion_paths(
         None,
         sigma,

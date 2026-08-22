@@ -913,12 +913,12 @@ other cell degree.
     domain = phx.domain.GraphDomain(complex_ir.graph)
     layout = phx.domain.SampleLayout((("graph",),))
 
-    zero_form = phx.graph.CochainFieldSpec(
+    zero_form = phx.discretization.CochainFieldSpec(
         0,
         cell_orientation="invariant",
         sampling="point_value",
     )
-    one_form = phx.graph.CochainFieldSpec(
+    one_form = phx.discretization.CochainFieldSpec(
         1,
         cell_orientation="signed",
         sampling="cell_integral",

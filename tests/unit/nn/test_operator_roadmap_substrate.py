@@ -15,7 +15,8 @@ import pytest
 
 import phydrax as phx
 from phydrax._frozendict import frozendict
-from phydrax.domain import Interval1d, LegendreAxisSpec, SampleLayout
+from phydrax.discretization import LegendreAxisSpec
+from phydrax.domain import Interval1d, SampleLayout
 from phydrax.equations import (
     compile_pde_problem,
     compile_pde_residual_term,

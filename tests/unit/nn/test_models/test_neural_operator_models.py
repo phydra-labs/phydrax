@@ -8,9 +8,9 @@ import jax.random as jr
 import pytest
 
 import phydrax as phx
+from phydrax.discretization import FourierAxisSpec
 from phydrax.domain import (
     DatasetDomain,
-    FourierAxisSpec,
     Interval1d,
     SampleLayout,
 )

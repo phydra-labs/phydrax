@@ -10,11 +10,11 @@ import jax.tree_util as jtu
 
 import phydrax as phx
 from phydrax.conditions import Dirichlet, Initial, Moment, Residual
+from phydrax.discretization import FourierAxisSpec
 from phydrax.domain import (
     BatchEvaluator,
     Boundary,
     FixedStart,
-    FourierAxisSpec,
     GridBatch,
     Interval1d,
     PointBatch,

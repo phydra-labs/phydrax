@@ -9,13 +9,13 @@ import pytest
 import phydrax as phx
 
 
-def _two_point_basis(basis_id="two-point"):
-    return phx.metrix.DiscreteLaplacianEigenbasis(
+def _two_point_basis(decomposition_id="two-point"):
+    return phx.discretization.SpectralDecomposition(
         jnp.asarray([0.0, 2.0]),
         jnp.asarray([[1.0, 1.0], [1.0, -1.0]]),
         jnp.asarray([0.5, 0.5]),
         spectral_dimension=1.0,
-        basis_id=basis_id,
+        decomposition_id=decomposition_id,
     )
 
 
@@ -74,7 +74,7 @@ def test_isotropic_product_matern_is_distinct_from_separable_kernel_product():
 
 
 def test_product_spectrum_uses_certified_factor_tail():
-    report = phx.metrix.LaplacianEigenbasisReport(
+    report = phx.discretization.LaplacianEigenbasisReport(
         method_id="test-truncation",
         source_id="truncated-factor",
         requested_modes=1,
@@ -88,12 +88,12 @@ def test_product_spectrum_uses_certified_factor_tail():
         boundary_gap=5.0,
         orthonormality_residual=0.0,
     )
-    truncated = phx.metrix.DiscreteLaplacianEigenbasis(
+    truncated = phx.discretization.SpectralDecomposition(
         jnp.asarray([0.0]),
         jnp.asarray([[1.0], [1.0]]),
         jnp.asarray([0.5, 0.5]),
         spectral_dimension=1.0,
-        basis_id="truncated",
+        decomposition_id="truncated",
         report=report,
     )
     product = phx.metrix.product_laplacian_eigenbasis(

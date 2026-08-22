@@ -499,8 +499,8 @@ def test_partial_axis_integration_does_not_apply_unreduced_geometry_weights():
     time = phx.domain.TimeInterval(0.0, 3.0)
     domain = geometry @ time
     component = domain.component()
-    axis = phx.domain.LegendreAxisSpec(5)
-    grid = phx.domain.GridSpec((axis, axis), cut_cell_order=2)
+    axis = phx.discretization.LegendreAxisSpec(5)
+    grid = phx.discretization.TensorGridPlan((axis, axis), cut_cell_order=2)
     points = component.sample(
         phx.domain.GridSampling(
             {"x": grid},

@@ -13,8 +13,8 @@ import opt_einsum as oe
 from jaxtyping import Array, Key
 
 from ...._doc import DOC_KEY0
-from ...._spectral._modal import BasisTransformPlan, SpectralBasis
 from ...._strict import StrictModule
+from ....discretization._spectral import BasisTransformPlan, ModalTransformKind
 from ..data import OperatorAxis
 
 
@@ -29,7 +29,7 @@ class BasisSpectralConvND(StrictModule):
     in_channels: int
     out_channels: int
     n_modes: tuple[int, ...]
-    bases: tuple[SpectralBasis, ...]
+    bases: tuple[ModalTransformKind, ...]
     weight: Array
 
     def __init__(
@@ -38,7 +38,7 @@ class BasisSpectralConvND(StrictModule):
         in_channels: int,
         out_channels: int,
         n_modes: int | Sequence[int],
-        bases: SpectralBasis | Sequence[SpectralBasis],
+        bases: ModalTransformKind | Sequence[ModalTransformKind],
         key: Key[Array, ""] = DOC_KEY0,
     ):
         self.in_channels = int(in_channels)
@@ -49,7 +49,7 @@ class BasisSpectralConvND(StrictModule):
             else tuple(int(mode) for mode in n_modes)
         )
         bases_value = (
-            (cast(SpectralBasis, bases),) * len(modes)
+            (cast(ModalTransformKind, bases),) * len(modes)
             if isinstance(bases, str)
             else tuple(bases)
         )
@@ -137,4 +137,4 @@ class BasisSpectralConvND(StrictModule):
         return output
 
 
-__all__ = ["BasisSpectralConvND", "BasisTransformPlan", "SpectralBasis"]
+__all__ = ["BasisSpectralConvND", "BasisTransformPlan", "ModalTransformKind"]

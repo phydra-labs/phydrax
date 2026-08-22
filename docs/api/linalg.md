@@ -1635,7 +1635,7 @@ old and new plan identities.
 
 ---
 
-::: phydrax.linalg.SpectralMatrixRepresentation
+::: phydrax.linalg.TransformDiagonalRepresentation
 
 ---
 

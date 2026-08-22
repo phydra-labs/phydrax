@@ -15,9 +15,9 @@ from jaxtyping import Array, ArrayLike
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
-from ..stochastic._hierarchy import StochasticHierarchy, StochasticLevelSpec
+from ..discretization._state_transfer import AbstractRefinementTransfer
+from ..stochastic._hierarchy import StochasticCouplingPlan, StochasticLevelSpec
 from ..stochastic._realization import is_stochastic_realization, StochasticRealization
-from ._state_transfer import AbstractStateTransfer
 
 
 CoupledLevelSolver: TypeAlias = Callable[
@@ -25,7 +25,7 @@ CoupledLevelSolver: TypeAlias = Callable[
         StochasticLevelSpec,
         StochasticRealization | None,
         Any | None,
-        AbstractStateTransfer | None,
+        AbstractRefinementTransfer | None,
     ],
     Any,
 ]
@@ -117,7 +117,7 @@ class CoupledHierarchyResult(StrictModule):
     levels: tuple[CoupledLevelResult, ...]
     corrections: tuple[Array, ...]
     correction_valid: tuple[Array, ...]
-    hierarchy: StochasticHierarchy = eqx.field(static=True)
+    hierarchy: StochasticCouplingPlan = eqx.field(static=True)
     sample_shape: tuple[int, ...] = eqx.field(static=True)
     realization_id: str | None = eqx.field(static=True)
     coupling_id: str | None = eqx.field(static=True)
@@ -130,7 +130,7 @@ class CoupledHierarchyResult(StrictModule):
         correction_valid: Sequence[ArrayLike],
         /,
         *,
-        hierarchy: StochasticHierarchy,
+        hierarchy: StochasticCouplingPlan,
         sample_shape: Sequence[int],
         realization_id: str | None,
         coupling_id: str | None,
@@ -194,7 +194,7 @@ class CoupledHierarchyResult(StrictModule):
 
 
 def solve_coupled_hierarchy(
-    hierarchy: StochasticHierarchy,
+    hierarchy: StochasticCouplingPlan,
     realization: StochasticRealization | None,
     solve_level: CoupledLevelSolver,
     observable: CoupledObservable,
@@ -202,7 +202,7 @@ def solve_coupled_hierarchy(
     *,
     validity: CoupledValidity | None = None,
     cost: CoupledCost | None = None,
-    state_transfers: Mapping[str, AbstractStateTransfer] | None = None,
+    state_transfers: Mapping[str, AbstractRefinementTransfer] | None = None,
     metadata: Mapping[str, Any] | None = None,
 ) -> CoupledHierarchyResult:
     """Solve every hierarchy level against one explicitly shared realization.
@@ -213,8 +213,8 @@ def solve_coupled_hierarchy(
     unrelated paths. Independent level noise is rejected because it does not define a
     strong pathwise correction.
     """
-    if not isinstance(hierarchy, StochasticHierarchy):
-        raise TypeError("hierarchy must be a StochasticHierarchy.")
+    if not isinstance(hierarchy, StochasticCouplingPlan):
+        raise TypeError("hierarchy must be a StochasticCouplingPlan.")
     if realization is not None and not is_stochastic_realization(realization):
         raise TypeError("realization must be a supported stochastic realization or None.")
     if not callable(solve_level) or not callable(observable):
@@ -228,8 +228,12 @@ def solve_coupled_hierarchy(
             "Pathwise coupled execution does not permit independent fine-level noise."
         )
     transfers = {} if state_transfers is None else dict(state_transfers)
-    if any(not isinstance(value, AbstractStateTransfer) for value in transfers.values()):
-        raise TypeError("state_transfers values must implement AbstractStateTransfer.")
+    if any(
+        not isinstance(value, AbstractRefinementTransfer) for value in transfers.values()
+    ):
+        raise TypeError(
+            "state_transfers values must implement AbstractRefinementTransfer."
+        )
     samples = () if realization is None else realization.sample_shape
     realization_id = None if realization is None else realization.realization_id
     coupling_id = None if realization is None else realization.coupling_id
@@ -239,7 +243,7 @@ def solve_coupled_hierarchy(
     correction_masks: list[Array] = []
     parent_result: Any | None = None
     for position, level in enumerate(hierarchy.levels):
-        transfer: AbstractStateTransfer | None = None
+        transfer: AbstractRefinementTransfer | None = None
         if level.state_transfer_id is not None:
             if level.state_transfer_id not in transfers:
                 raise ValueError(

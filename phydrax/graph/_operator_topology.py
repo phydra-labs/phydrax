@@ -128,6 +128,7 @@ class OperatorTopology(StrictModule, NonTrainableState):
     entity: OperatorTopologyEntity = eqx.field(static=True)
     entity_count: int = eqx.field(static=True)
     graph_fingerprint: str = eqx.field(static=True)
+    support_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -141,6 +142,7 @@ class OperatorTopology(StrictModule, NonTrainableState):
         entity: OperatorTopologyEntity = "node",
         validate: bool = True,
         _graph_fingerprint: str | None = None,
+        _support_id: str | None = None,
     ):
         if not isinstance(graph, GraphIR):
             raise TypeError("OperatorTopology graph must be a GraphIR.")
@@ -192,11 +194,16 @@ class OperatorTopology(StrictModule, NonTrainableState):
         self.site = site
         self.entity = entity
         self.entity_count = int(leading)
-        self.graph_fingerprint = (
+        graph_fingerprint = (
             operator_graph_fingerprint(graph)
             if _graph_fingerprint is None
             else str(_graph_fingerprint)
         )
+        support_id = graph_fingerprint if _support_id is None else str(_support_id)
+        if not graph_fingerprint or not support_id:
+            raise ValueError("Graph fingerprint and support ID must be non-empty.")
+        self.graph_fingerprint = graph_fingerprint
+        self.support_id = support_id
         if validate:
             self.validate()
 
@@ -327,6 +334,7 @@ class OperatorTopology(StrictModule, NonTrainableState):
             site="cell",
             entity="node",
             validate=validate,
+            _support_id=complex_ir.discretization.support.support_id,
         )
 
     def validate(self) -> None:
@@ -398,6 +406,7 @@ class OperatorTopology(StrictModule, NonTrainableState):
             site=self.site,
             entity=self.entity,
             _graph_fingerprint=self.graph_fingerprint,
+            _support_id=self.support_id,
         )
 
 
@@ -549,6 +558,7 @@ def broadcast_operator_topology(
             _graph_fingerprint=_derived_graph_fingerprint(
                 topology.graph_fingerprint, ("broadcast", target)
             ),
+            _support_id=topology.support_id,
         )
     node_stride = jnp.sum(graph.n_node, dtype=jnp.int32)
     senders = None
@@ -590,6 +600,7 @@ def broadcast_operator_topology(
         _graph_fingerprint=_derived_graph_fingerprint(
             topology.graph_fingerprint, ("broadcast", target)
         ),
+        _support_id=topology.support_id,
     )
 
 
@@ -605,6 +616,7 @@ def operator_topology_fingerprint(topology: OperatorTopology, /) -> str:
                 topology.entity,
                 topology.case_shape,
                 topology.graph_fingerprint,
+                topology.support_id,
             )
         ).encode("utf-8")
     )

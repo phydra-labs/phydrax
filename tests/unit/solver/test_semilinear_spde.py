@@ -9,12 +9,13 @@ import phydrax as phx
 
 
 def _periodic_discretization(size):
-    axis = phx.domain.UniformAxisSpec(
+    axis = phx.discretization.UniformAxisSpec(
         size,
         endpoint=False,
         periodic=True,
     ).materialize(0.0, 1.0)
-    return phx.solver.TensorGridDiscretization((axis,))
+    grid = phx.discretization.PreparedTensorGrid((axis,))
+    return phx.discretization.periodic_finite_difference(grid)
 
 
 def test_matrix_function_actions_match_dense_values_and_derivatives():
@@ -80,7 +81,7 @@ def test_semilinear_solver_propagates_linear_heat_mode_exactly():
     discretization = _periodic_discretization(8)
     duration = 0.3
     diffusivity = 0.04
-    initial = jnp.sin(2.0 * jnp.pi * discretization.axes[0].nodes)
+    initial = jnp.sin(2.0 * jnp.pi * discretization.grid.axes[0].nodes)
     spde = phx.solver.semidiscretize_reaction_diffusion(
         initial,
         discretization,
@@ -110,7 +111,7 @@ def test_exact_modal_stochastic_convolution_replays_and_matches_covariance():
     discretization = _periodic_discretization(4)
     duration = 0.08
     diffusivity = 0.1
-    basis = phx.solver.SpatialNoiseBasis.from_spectrum(
+    basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(
         discretization,
         0.03,
         rank=2,
@@ -138,6 +139,14 @@ def test_exact_modal_stochastic_convolution_replays_and_matches_covariance():
         )
 
     solution = solve(realization)
+    assert spde.discretization_bundle.record(discretization.key).artifact_id == (
+        discretization.prepared_id
+    )
+    assert solution.discretization_bundle is not None
+    roles = tuple(record.key.role for record in solution.discretization_bundle.records)
+    assert "temporal" in roles
+    assert "driver" in roles
+    assert "ensemble" in roles
     replay = solve(realization)
     changed = solve(
         spde.wiener_realization(
@@ -185,13 +194,14 @@ def test_exact_modal_stochastic_convolution_replays_and_matches_covariance():
 
 
 def _geometric_spde(*, duration, rate=-0.2, noise=0.7, structure="commutative"):
-    discretization = _periodic_discretization(2)
+    axis = phx.discretization.FourierAxisSpec(2).materialize(0.0, 1.0)
+    discretization = phx.discretization.SeparableSpectralDiscretization((axis,))
     initial = jnp.asarray([0.8, 1.3])
     operator = phx.linalg.DenseLinearOperator(
         rate * jnp.eye(2),
         operator_id="geometric-linear-drift",
     )
-    spectral = phx.linalg.SpectralMatrixRepresentation(
+    spectral = phx.linalg.TransformDiagonalRepresentation(
         operator,
         jnp.full((2,), rate),
         jnp.eye(2),

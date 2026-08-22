@@ -10,9 +10,9 @@ import pytest
 
 import phydrax as phx
 from phydrax._frozendict import frozendict
+from phydrax.discretization import FourierAxisSpec
 from phydrax.domain import (
     DomainFunction,
-    FourierAxisSpec,
     Interval1d,
     SampleLayout,
     TimeInterval,

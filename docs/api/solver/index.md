@@ -60,11 +60,14 @@ For a conceptual overview (loss evaluation, exact enforcement, training loop beh
       `PoissonClockRealization` for pure jump paths.
     - Use `solve_jump_differential` with explicit Poisson and optional Wiener
       realizations for coupled hybrid dynamics.
-    - Use `TensorGridDiscretization` or `SpectralSpatialDiscretization`, a
-      `SpatialNoiseBasis`, and `semidiscretize_spde` for finite-rank spatial dynamics.
+    - Use `phydrax.discretization.SeparableSpectralDiscretization`,
+      `phydrax.discretization.PreparedFiniteDifferenceDiscretization`, or
+      `phydrax.discretization.SpectralDiscretization`, a
+      `phydrax.stochastic.SpatialNoiseBasis`, and `semidiscretize_spde` for
+      finite-rank spatial dynamics.
 
 `spatial_measure` reuses a spatial discretization's physical quadrature as a
 deterministic external integration target. Tensor-grid axis weights remain
 separable until reduction.
 
-::: phydrax.solver.spatial_measure
+::: phydrax.integration.spatial_measure

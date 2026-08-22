@@ -11,11 +11,10 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Key, PyTree
 
+from phydrax.discretization import AbstractAxisSpec, AxisDiscretization
 from phydrax.domain import (
-    AbstractAxisSpec,
     AbstractGeometry,
     AbstractScalarDomain,
-    AxisDiscretization,
     Boundary,
     ComponentSum,
     DomainComponent,

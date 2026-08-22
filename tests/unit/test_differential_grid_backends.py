@@ -4,13 +4,13 @@
 
 import jax.numpy as jnp
 
-from phydrax.domain import (
+from phydrax.discretization import (
     CosineAxisSpec,
     FourierAxisSpec,
-    Interval1d,
     LegendreAxisSpec,
     SineAxisSpec,
 )
+from phydrax.domain import Interval1d
 from phydrax.operators.differential import laplacian, partial_n
 
 

@@ -242,7 +242,6 @@ from .path_integral import (  # noqa: F401
     first_exit_time,
     free_euclidean_kernel,
     kinetic_action,
-    PathDiscretization,
     PathIntegralEstimate,
     potential_action,
     sample_brownian_bridge,
@@ -407,7 +406,6 @@ __all__ = [
     "spatial_integral",
     "time_convolution",
     # path-integral exports
-    "PathDiscretization",
     "PathIntegralEstimate",
     "brownian_bridge_from_noise",
     "diffusion_paths_from_noise",

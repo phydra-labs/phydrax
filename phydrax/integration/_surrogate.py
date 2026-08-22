@@ -17,7 +17,7 @@ from jaxtyping import Array, ArrayLike, Key
 from phydrax.domain import DomainFunction, ProbabilityDomain
 
 from .._strict import StrictModule
-from ..stochastic._hierarchy import StochasticHierarchy, StochasticLevelSpec
+from ..stochastic._hierarchy import StochasticCouplingPlan, StochasticLevelSpec
 from ._api import integrate
 from ._multilevel import MultilevelSampleBatch
 from ._plans import SparseGridPlan
@@ -149,7 +149,7 @@ class SmolyakSurrogateHierarchyAdapter(StrictModule):
     surrogate: DomainFunction
     fine_model: Any
     input_sampler: SmolyakInputSampler
-    hierarchy: StochasticHierarchy
+    hierarchy: StochasticCouplingPlan
     surrogate_expectation: Array | None
     sampler_id: str = eqx.field(static=True)
 
@@ -230,7 +230,7 @@ class SmolyakSurrogateHierarchyAdapter(StrictModule):
         self.surrogate = surrogate
         self.fine_model = fine_model
         self.input_sampler = sampler
-        self.hierarchy = StochasticHierarchy(
+        self.hierarchy = StochasticCouplingPlan(
             (coarse, fine),
             hierarchy_id=hierarchy_name,
         )

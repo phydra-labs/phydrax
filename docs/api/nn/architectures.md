@@ -981,8 +981,8 @@ sampled circular extension, `"symmetric"` is symmetric reflection, and `"zero"`
 is zero extension.
 
 `ManifoldSpectralOperator` projects through a supplied
-`phydrax._spectral.SpectralDiscretization`. Source and optional target plans must
-represent a fixed, aligned Laplace eigenbasis. A target plan permits a pre-aligned
+`phydrax.discretization.SpectralDecomposition`. Source and optional target plans
+must share an aligned `ModalTransform` and compatible operator groups. A target plan permits
 cross-discretization, not arbitrary query coordinates or independently remeshed
 manifolds with unresolved eigenbasis alignment.
 
@@ -1058,7 +1058,7 @@ grouped as one eigenspace for basis-gauge-safe spectral mixing.
             - with_bands
 ---
 
-::: phydrax._spectral.SpectralDiscretization
+::: phydrax.discretization.SpectralDecomposition
 
 ---
 
@@ -1506,7 +1506,7 @@ for any of the geometry architectures above.
 `CochainNeuralOperator` acts on typed discrete differential forms over one
 `CochainComplexIR`. Each `OperatorFieldSpec` declares its cochain degree,
 primal/dual side, orientation law, and sampling semantics through
-`phydrax.graph.CochainFieldSpec`. `function_samples_from_cochain` then binds values,
+`phydrax.discretization.CochainFieldSpec`. `function_samples_from_cochain` then binds values,
 physical Hodge-star measures, boundary masks, coordinates, and the shared
 cell-complex topology into canonical `FunctionSamples`.
 
@@ -1525,7 +1525,7 @@ The default route set excludes the dense harmonic projection. Enable
 boundary policies select different closed subcomplexes and must match between
 sample construction and model execution.
 
-::: phydrax.graph.CochainFieldSpec
+::: phydrax.discretization.CochainFieldSpec
 
 ---
 

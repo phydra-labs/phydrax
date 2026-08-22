@@ -13,6 +13,7 @@ import numpy as np
 from jaxtyping import Array
 
 from ..._strict import StrictModule
+from ...discretization import DiscreteSupport
 from .._atlas import BoundaryAtlas, BoundaryMap
 from ._topology import TriangleTopology
 
@@ -107,6 +108,14 @@ class TriangleMesh(StrictModule):
     @property
     def triangles(self) -> Array:
         return self.vertices[self.faces]
+
+    def discrete_support(self, /) -> DiscreteSupport:
+        """Return canonical topology bound to this immutable embedding."""
+        return DiscreteSupport(
+            self.topology.cell_complex_topology(),
+            3,
+            self.source_id,
+        )
 
     @property
     def face_normals(self) -> Array:

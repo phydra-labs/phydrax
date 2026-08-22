@@ -17,6 +17,13 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..discretization import (
+    DiscretizationBundle,
+    DiscretizationKey,
+    DiscretizationRecord,
+    DiscretizationRole,
+    RealizedTemporalMesh,
+)
 from ..dynamics import DifferentialAlgebraicSystem, TimeGrid
 from ..nonlinear import (
     AbstractNonlinearMethod,
@@ -480,6 +487,8 @@ class DifferentialAlgebraicProblem(StrictModule):
     args: Any
     initialization: DAEInitializationSpec
     problem_id: str = eqx.field(static=True)
+    discretization_bundle: DiscretizationBundle | None
+    discretization_bundle_id: str | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -490,6 +499,7 @@ class DifferentialAlgebraicProblem(StrictModule):
         initial_state_rate: ArrayLike | None = None,
         args: Any = None,
         initialization: DAEInitializationSpec | None = None,
+        discretization_bundle: DiscretizationBundle | None = None,
         problem_id: str | None = None,
     ):
         if not isinstance(system, DifferentialAlgebraicSystem):
@@ -523,11 +533,23 @@ class DifferentialAlgebraicProblem(StrictModule):
         )
         if not isinstance(initial_spec, DAEInitializationSpec):
             raise TypeError("initialization must be a DAEInitializationSpec or None.")
+        if discretization_bundle is not None and not isinstance(
+            discretization_bundle,
+            DiscretizationBundle,
+        ):
+            raise TypeError(
+                "discretization_bundle must be a DiscretizationBundle or None."
+            )
+        bundle_id = (
+            None if discretization_bundle is None else discretization_bundle.bundle_id
+        )
         self.system = system
         self.initial_state = state
         self.initial_state_rate = state_rate
         self.args = args
         self.initialization = initial_spec
+        self.discretization_bundle_id = bundle_id
+        self.discretization_bundle = discretization_bundle
         self.problem_id = _identifier(
             problem_id,
             (
@@ -535,9 +557,36 @@ class DifferentialAlgebraicProblem(StrictModule):
                 system.state_shape,
                 np.dtype(state.dtype).str,
                 initial_spec.initialization_id,
+                bundle_id,
             ),
             "dae-problem",
         )
+
+
+def discretized_dae_problem(
+    compiled: Any,
+    initial_state: ArrayLike,
+    /,
+    *,
+    initial_state_rate: ArrayLike | None = None,
+    args: Any = None,
+    initialization: DAEInitializationSpec | None = None,
+    problem_id: str | None = None,
+) -> DifferentialAlgebraicProblem:
+    """Bind a compiled discrete residual to the native DAE lifecycle."""
+    from ..equations import CompiledDiscreteResidual
+
+    if not isinstance(compiled, CompiledDiscreteResidual):
+        raise TypeError("compiled must be a CompiledDiscreteResidual.")
+    return DifferentialAlgebraicProblem(
+        compiled.system,
+        initial_state,
+        initial_state_rate=initial_state_rate,
+        args=args,
+        initialization=initialization,
+        discretization_bundle=compiled.discretization_bundle,
+        problem_id=problem_id,
+    )
 
 
 class DAESolvePlan(StrictModule):
@@ -547,6 +596,7 @@ class DAESolvePlan(StrictModule):
     system_id: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
     time_id: str = eqx.field(static=True)
+    discretization_bundle_id: str | None = eqx.field(static=True)
     state_shape: tuple[int, ...] = eqx.field(static=True)
     state_dtype: str = eqx.field(static=True)
     num_steps: int = eqx.field(static=True)
@@ -658,6 +708,7 @@ class DAESolvePlan(StrictModule):
         self.system_id = problem.system.system_id
         self.problem_id = problem.problem_id
         self.time_id = time_grid.time_id
+        self.discretization_bundle_id = problem.discretization_bundle_id
         self.state_shape = problem.system.state_shape
         self.state_dtype = np.dtype(problem.initial_state.dtype).str
         self.num_steps = time_grid.num_steps
@@ -671,6 +722,7 @@ class DAESolvePlan(StrictModule):
                 self.system_id,
                 self.problem_id,
                 self.time_id,
+                self.discretization_bundle_id,
                 self.state_shape,
                 self.state_dtype,
                 policy.integration_method,
@@ -1163,6 +1215,10 @@ class DifferentialAlgebraicSolution(StrictModule):
     time_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
+    source_discretization_bundle_id: str | None = eqx.field(static=True)
+    discretization_bundle: DiscretizationBundle
+    temporal_mesh: RealizedTemporalMesh
+    discretization_bundle_id: str = eqx.field(static=True)
     nonlinear_method_id: str = eqx.field(static=True)
     stage_linear_plan_id: str = eqx.field(static=True)
     initialization_linear_plan_id: str = eqx.field(static=True)
@@ -1196,6 +1252,7 @@ class DifferentialAlgebraicSolution(StrictModule):
         time_id: str,
         plan_id: str,
         prepared_id: str,
+        source_discretization_bundle: DiscretizationBundle | None,
         nonlinear_method_id: str,
         stage_linear_plan_id: str,
         initialization_linear_plan_id: str,
@@ -1259,6 +1316,61 @@ class DifferentialAlgebraicSolution(StrictModule):
         self.time_id = str(time_id)
         self.plan_id = str(plan_id)
         self.prepared_id = str(prepared_id)
+        if source_discretization_bundle is not None and not isinstance(
+            source_discretization_bundle,
+            DiscretizationBundle,
+        ):
+            raise TypeError(
+                "source_discretization_bundle must be a DiscretizationBundle or None."
+            )
+        self.source_discretization_bundle_id = (
+            None
+            if source_discretization_bundle is None
+            else source_discretization_bundle.bundle_id
+        )
+        temporal_mesh = RealizedTemporalMesh(
+            validated.times[0],
+            step_history.accepted_times,
+            step_history.valid,
+            step_history.count,
+            adaptive=adaptive,
+            source_plan_id=self.plan_id,
+            requested_time_id=self.time_id,
+        )
+        temporal_key = DiscretizationKey(
+            "dae_internal_time",
+            DiscretizationRole.TEMPORAL,
+            domain_labels=("time",),
+        )
+        temporal_record = DiscretizationRecord(
+            temporal_key,
+            "realized-temporal-mesh",
+            temporal_mesh.mesh_id,
+            realization_id=temporal_mesh.mesh_id,
+        )
+        source_records = (
+            ()
+            if source_discretization_bundle is None
+            else source_discretization_bundle.records
+        )
+        source_transfers = (
+            ()
+            if source_discretization_bundle is None
+            else source_discretization_bundle.transfers
+        )
+        source_couplings = (
+            ()
+            if source_discretization_bundle is None
+            else source_discretization_bundle.stochastic_coupling_ids
+        )
+        bundle = DiscretizationBundle(
+            source_records + (temporal_record,),
+            transfers=source_transfers,
+            stochastic_coupling_ids=source_couplings,
+        )
+        self.temporal_mesh = temporal_mesh
+        self.discretization_bundle = bundle
+        self.discretization_bundle_id = bundle.bundle_id
         self.nonlinear_method_id = str(nonlinear_method_id)
         self.stage_linear_plan_id = str(stage_linear_plan_id)
         self.initialization_linear_plan_id = str(initialization_linear_plan_id)
@@ -2071,6 +2183,7 @@ def _solve_prepared(
         time_id=prepared.time_grid.time_id,
         plan_id=prepared.plan.plan_id,
         prepared_id=prepared.prepared_id,
+        source_discretization_bundle=problem.discretization_bundle,
         nonlinear_method_id=policy.nonlinear_method.method_id,
         stage_linear_plan_id=prepared.stage_linear_plan_id,
         initialization_linear_plan_id=prepared.initialization_linear_plan_id,

@@ -103,18 +103,18 @@ point coordinates or replace domain admissibility rules.
 
 ## Laplacian spectra
 
-`DiscreteLaplacianEigenbasis` is the geometry-to-kernel spectral contract. It stores
-one canonical entity ordering, a nonnegative spectrum, a measure-orthonormal basis,
-and a construction report. `product_laplacian_eigenbasis` selects the lowest
-eigenvalue sums from compact factors without materializing their full Cartesian
+`phydrax.discretization.SpectralDecomposition` is the geometry-to-kernel spectral
+contract. It pairs one canonical `ModalTransform` with a Laplacian
+`OperatorSpectrum` and construction report. `product_laplacian_eigenbasis` selects
+the lowest eigenvalue sums from compact factors without materializing their full Cartesian
 product. `SphereLaplacianLevels` stores analytic eigenvalues and multiplicities
 without choosing a spherical-harmonic basis.
 
-::: phydrax.metrix.LaplacianEigenbasisReport
+::: phydrax.discretization.LaplacianEigenbasisReport
 
 ---
 
-::: phydrax.metrix.DiscreteLaplacianEigenbasis
+::: phydrax.discretization.SpectralDecomposition
 
 ---
 

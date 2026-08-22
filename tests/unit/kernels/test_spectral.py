@@ -127,24 +127,24 @@ def test_entity_permutation_and_eigenbasis_gauge_changes_preserve_covariance():
     )
 
     permutation = np.asarray([2, 0, 1])
-    permuted_basis = phx.metrix.DiscreteLaplacianEigenbasis(
+    permuted_basis = phx.discretization.SpectralDecomposition(
         basis.eigenvalues,
         basis.eigenfunctions[permutation],
         basis.probability_measure[permutation],
         spectral_dimension=basis.spectral_dimension,
-        basis_id="permuted-path",
+        decomposition_id="permuted-path",
     )
     permuted = phx.kernels.SpectralFeatureKernel(permuted_basis, multiplier).matrix(
         entities, entities
     )
     assert jnp.allclose(permuted, reference[jnp.ix_(permutation, permutation)])
 
-    signed_basis = phx.metrix.DiscreteLaplacianEigenbasis(
+    signed_basis = phx.discretization.SpectralDecomposition(
         basis.eigenvalues,
         basis.eigenfunctions * jnp.asarray([1.0, -1.0, -1.0]),
         basis.probability_measure,
         spectral_dimension=basis.spectral_dimension,
-        basis_id="signed-path",
+        decomposition_id="signed-path",
     )
     signed = phx.kernels.SpectralFeatureKernel(signed_basis, multiplier).matrix(
         entities, entities
@@ -163,24 +163,24 @@ def test_rotation_within_degenerate_eigenspace_leaves_kernel_unchanged():
         ]
     )
     measure = jnp.full((4,), 0.25)
-    basis = phx.metrix.DiscreteLaplacianEigenbasis(
+    basis = phx.discretization.SpectralDecomposition(
         values,
         functions,
         measure,
         spectral_dimension=1.0,
-        basis_id="cycle",
+        decomposition_id="cycle",
     )
     angle = 0.37
     rotation = jnp.asarray(
         [[jnp.cos(angle), -jnp.sin(angle)], [jnp.sin(angle), jnp.cos(angle)]]
     )
     rotated_functions = functions.at[:, 1:3].set(functions[:, 1:3] @ rotation)
-    rotated = phx.metrix.DiscreteLaplacianEigenbasis(
+    rotated = phx.discretization.SpectralDecomposition(
         values,
         rotated_functions,
         measure,
         spectral_dimension=1.0,
-        basis_id="rotated-cycle",
+        decomposition_id="rotated-cycle",
     )
     multiplier = phx.kernels.MaternSpectralMultiplier(0.6, 1.2)
 

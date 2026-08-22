@@ -1208,6 +1208,7 @@ def _adaptive_primal(
         time_id=prepared.time_grid.time_id,
         plan_id=prepared.plan.plan_id,
         prepared_id=prepared.prepared_id,
+        source_discretization_bundle=problem.discretization_bundle,
         nonlinear_method_id=policy.nonlinear_method.method_id,
         stage_linear_plan_id=prepared.stage_linear_plan_id,
         initialization_linear_plan_id=prepared.initialization_linear_plan_id,

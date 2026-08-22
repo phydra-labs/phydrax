@@ -36,7 +36,7 @@ def _hierarchy(*, changing_shape=False, independent=False):
         state_transfer_id=transfer_id,
         noise_coupling="independent" if independent else "shared",
     )
-    return phx.stochastic.StochasticHierarchy(
+    return phx.stochastic.StochasticCouplingPlan(
         (coarse, fine),
         hierarchy_id="gbm-hierarchy",
     )
@@ -115,7 +115,7 @@ def test_coupled_hierarchy_tracks_failed_pairs_without_repairing_them():
 
 def test_coupled_hierarchy_resolves_declared_state_transfer():
     hierarchy = _hierarchy(changing_shape=True)
-    transfer = phx.solver.TensorGridStateTransfer(
+    transfer = phx.discretization.TensorGridStateTransfer(
         (5,),
         (3,),
         transfer_id="grid-5-to-3",

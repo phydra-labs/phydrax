@@ -162,8 +162,8 @@ def _interoperability_benchmarks(
         num_times = 16
         num_space = 16
         times = jnp.linspace(0.0, 1.0, num_times)
-        axis = phx.domain.FourierAxisSpec(num_space).materialize(0.0, 1.0)
-        spatial = phx.solver.TensorGridDiscretization((axis,))
+        axis = phx.discretization.FourierAxisSpec(num_space).materialize(0.0, 1.0)
+        spatial = phx.discretization.SeparableSpectralDiscretization((axis,))
         phase = jnp.linspace(0.0, 2.0 * jnp.pi, budget, endpoint=False)
         states = (
             jnp.sin(phase[:, None, None] + 2.0 * jnp.pi * axis.nodes[None, None, :])
@@ -186,7 +186,7 @@ def _interoperability_benchmarks(
         )
         path_target = phx.stochastic.trajectory_measure(trajectory, mode="path")
         time_target = phx.stochastic.time_measure(trajectory)
-        space_target = phx.solver.spatial_measure(
+        space_target = phx.integration.spatial_measure(
             spatial,
             spatial_dims="space",
         )

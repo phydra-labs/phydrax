@@ -11,7 +11,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
-from ..metrix import DiscreteLaplacianEigenbasis
+from ..discretization import SpectralDecomposition
 from ._base import _as_point, _as_points
 from ._finite_feature import AbstractFiniteFeatureKernel
 
@@ -112,20 +112,26 @@ class MaternSpectralMultiplier(AbstractSpectralMultiplier):
 class SpectralFeatureKernel(AbstractFiniteFeatureKernel):
     """Finite Laplacian spectral covariance over integer entity identifiers."""
 
-    eigenbasis: DiscreteLaplacianEigenbasis
+    eigenbasis: SpectralDecomposition
     multiplier: AbstractSpectralMultiplier
     normalize: bool = eqx.field(static=True)
 
     def __init__(
         self,
-        eigenbasis: DiscreteLaplacianEigenbasis,
+        eigenbasis: SpectralDecomposition,
         multiplier: AbstractSpectralMultiplier,
         /,
         *,
         normalize: bool = True,
     ):
-        if not isinstance(eigenbasis, DiscreteLaplacianEigenbasis):
-            raise TypeError("eigenbasis must be a DiscreteLaplacianEigenbasis.")
+        if not isinstance(eigenbasis, SpectralDecomposition):
+            raise TypeError(
+                "eigenbasis must be a Laplacian-provenance SpectralDecomposition."
+            )
+        if eigenbasis.report is None or eigenbasis.spectral_dimension is None:
+            raise ValueError(
+                "SpectralFeatureKernel requires Laplacian provenance and dimension."
+            )
         if not isinstance(multiplier, AbstractSpectralMultiplier):
             raise TypeError("multiplier must be an AbstractSpectralMultiplier.")
         self.eigenbasis = eigenbasis
@@ -133,9 +139,12 @@ class SpectralFeatureKernel(AbstractFiniteFeatureKernel):
         self.normalize = bool(normalize)
 
     def _sqrt_weights(self) -> Array:
+        dimension = self.eigenbasis.spectral_dimension
+        if dimension is None:
+            raise RuntimeError("Validated Laplacian basis lost its spectral dimension.")
         log_weights = self.multiplier.log_weights(
             self.eigenbasis.eigenvalues,
-            self.eigenbasis.spectral_dimension,
+            dimension,
         )
         if log_weights.shape != self.eigenbasis.eigenvalues.shape:
             raise ValueError("Spectral multiplier output must match the eigenvalues.")
@@ -210,7 +219,7 @@ class SpectralFeatureKernel(AbstractFiniteFeatureKernel):
     @property
     def kernel_id(self) -> str:
         return (
-            f"SpectralFeatureKernel[{self.eigenbasis.basis_id};"
+            f"SpectralFeatureKernel[{self.eigenbasis.decomposition_id};"
             f"{self.multiplier.multiplier_id};normalize={int(self.normalize)}]"
         )
 

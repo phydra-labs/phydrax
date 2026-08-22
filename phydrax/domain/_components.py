@@ -23,20 +23,20 @@ from .._sampling import (
     SampleAddress,
 )
 from .._strict import StrictModule
+from ..discretization._axis import (
+    AbstractAxisSpec,
+    AxisDiscretization,
+    broadcasted_grid,
+    cut_cell_geometry_weight_from_adf,
+    sdf_mask_from_adf,
+    TensorGridPlan,
+)
 from ..geometry import BoundaryAtlasProvider, sample_boundary_atlas
 from ._base import AbstractGeometry, EnforcementGateMethod
 from ._dataset import DatasetDomain
 from ._domain import Domain
 from ._factor_component import FactorComponent
 from ._function import DomainFunction
-from ._grid import (
-    AbstractAxisSpec,
-    AxisDiscretization,
-    broadcasted_grid,
-    cut_cell_geometry_weight_from_adf,
-    GridSpec,
-    sdf_mask_from_adf,
-)
 from ._measure import (
     BaseMeasure,
     ExactMass,
@@ -1073,7 +1073,7 @@ class DomainComponent(StrictModule):
     ) -> GridBatch:
         r"""Materialize a coordinate grid with optional dense point blocks.
 
-        Coordinate requests may be counts, axis specifications, or `GridSpec`
+        Coordinate requests may be counts, axis specifications, or `TensorGridPlan`
         values. Remaining non-fixed labels are sampled through `sampling.dense`.
         """
         from ._trajectory_dataset import TrajectoryDatasetDomain
@@ -1228,7 +1228,7 @@ class DomainComponent(StrictModule):
                 axis_specs: tuple[AbstractAxisSpec, ...] | None = None
                 counts: tuple[int, ...] | None = None
 
-                if isinstance(n_spec, GridSpec):
+                if isinstance(n_spec, TensorGridPlan):
                     axis_specs = n_spec.axes
                 elif isinstance(n_spec, AbstractAxisSpec):
                     axis_specs = (n_spec,) * var_dim
@@ -1251,8 +1251,8 @@ class DomainComponent(StrictModule):
                             counts = counts_candidate
                         else:
                             raise TypeError(
-                                f"coord_separable[{lbl!r}] must be int, Sequence[int], AxisSpec, "
-                                "Sequence[AxisSpec], or GridSpec."
+                                f"coord_separable[{lbl!r}] must be int, Sequence[int], "
+                                "AbstractAxisSpec, Sequence[AbstractAxisSpec], or TensorGridPlan."
                             )
 
                 geometry_weight_arr: Array | None = None
@@ -1273,7 +1273,10 @@ class DomainComponent(StrictModule):
 
                         coords_tuple = tuple(coords)
                         mask_arr = sdf_mask_from_adf(factor.adf, coords_tuple)
-                        if isinstance(n_spec, GridSpec) and n_spec.cut_cell_order > 0:
+                        if (
+                            isinstance(n_spec, TensorGridPlan)
+                            and n_spec.cut_cell_order > 0
+                        ):
                             base_weights: list[Array] = []
                             for i, coord in enumerate(coords_tuple):
                                 axis_name = _axis_name_for_coord(lbl, i)

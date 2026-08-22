@@ -14,6 +14,14 @@ import equinox as eqx
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from ..discretization import (
+    DiscretizationBundle,
+    DiscretizationHierarchy,
+    DiscretizationKey,
+    DiscretizationLevel,
+    DiscretizationRecord,
+    DiscretizationRole,
+)
 
 
 RefinementAxis: TypeAlias = Literal["time", "space", "noise_rank", "surrogate", "other"]
@@ -52,6 +60,7 @@ def _fingerprint(parts: Sequence[object], /) -> str:
 class StochasticLevelSpec(StrictModule):
     """Static identity and compatibility contract for one approximation level."""
 
+    discretization_bundle: DiscretizationBundle
     metadata: frozendict[str, str] = eqx.field(static=True)
     level_id: str = eqx.field(static=True)
     refinement_index: int = eqx.field(static=True)
@@ -87,6 +96,7 @@ class StochasticLevelSpec(StrictModule):
         basis_id: str | None = None,
         state_transfer_id: str | None = None,
         noise_coupling: NoiseCoupling = "shared",
+        discretization_bundle: DiscretizationBundle | None = None,
         metadata: Mapping[str, str] | None = None,
     ):
         identifier = _identifier(level_id, "level_id", required=True)
@@ -130,6 +140,56 @@ class StochasticLevelSpec(StrictModule):
         )
         basis = _identifier(basis_id, "basis_id", required=False)
         transfer = _identifier(state_transfer_id, "state_transfer_id", required=False)
+        if discretization_bundle is None:
+            records = []
+            approximation_key = DiscretizationKey(
+                "approximation",
+                DiscretizationRole.AUXILIARY,
+            )
+            records.append(
+                DiscretizationRecord(
+                    approximation_key,
+                    "stochastic-approximation",
+                    approximation,
+                )
+            )
+            spatial_key = None
+            if discretization is not None:
+                spatial_key = DiscretizationKey(
+                    "space",
+                    DiscretizationRole.PHYSICAL,
+                    domain_labels=("space",),
+                )
+                records.append(
+                    DiscretizationRecord(
+                        spatial_key,
+                        "spatial-discretization",
+                        discretization,
+                    )
+                )
+            if basis is not None:
+                noise_key = DiscretizationKey(
+                    "noise",
+                    DiscretizationRole.DRIVER,
+                    domain_labels=("space",),
+                )
+                records.append(
+                    DiscretizationRecord(
+                        noise_key,
+                        "spatial-noise-basis",
+                        basis,
+                        dependency_key_ids=()
+                        if spatial_key is None
+                        else (spatial_key.key_id,),
+                    )
+                )
+            bundle = DiscretizationBundle(records)
+        else:
+            if not isinstance(discretization_bundle, DiscretizationBundle):
+                raise TypeError(
+                    "discretization_bundle must be a DiscretizationBundle or None."
+                )
+            bundle = discretization_bundle
         self.level_id = identifier
         self.refinement_index = index
         self.refinement_axes = axes
@@ -145,6 +205,7 @@ class StochasticLevelSpec(StrictModule):
         self.state_transfer_id = transfer
         self.noise_coupling = noise_coupling
         self.metadata = identities
+        self.discretization_bundle = bundle
         self.fingerprint = _fingerprint(
             (
                 identifier,
@@ -162,6 +223,7 @@ class StochasticLevelSpec(StrictModule):
                 transfer,
                 noise_coupling,
                 tuple(identities.items()),
+                bundle.bundle_id,
             )
         )
 
@@ -170,7 +232,7 @@ class StochasticLevelSpec(StrictModule):
         return frozendict(zip(self.refinement_axes, self.resolutions, strict=True))
 
 
-class StochasticHierarchy(StrictModule):
+class StochasticCouplingPlan(StrictModule):
     """Ordered one- or multi-axis approximation hierarchy with explicit coupling."""
 
     levels: tuple[StochasticLevelSpec, ...]
@@ -180,6 +242,7 @@ class StochasticHierarchy(StrictModule):
     refinement_axes: tuple[RefinementAxis, ...] = eqx.field(static=True)
     allow_multi_axis: bool = eqx.field(static=True)
     fingerprint: str = eqx.field(static=True)
+    discretization_hierarchy: DiscretizationHierarchy
 
     def __init__(
         self,
@@ -193,7 +256,7 @@ class StochasticHierarchy(StrictModule):
         if not values or any(
             not isinstance(level, StochasticLevelSpec) for level in values
         ):
-            raise ValueError("StochasticHierarchy requires valid non-empty levels.")
+            raise ValueError("StochasticCouplingPlan requires valid non-empty levels.")
         identifier = _identifier(hierarchy_id, "hierarchy_id", required=True)
         assert identifier is not None
         expected_indices = tuple(range(len(values)))
@@ -259,6 +322,19 @@ class StochasticHierarchy(StrictModule):
         self.observable_id = values[0].observable_id
         self.refinement_axes = axes
         self.allow_multi_axis = multi_axis
+        generic_levels = tuple(
+            DiscretizationLevel(
+                level.discretization_bundle,
+                parent_level_id=None if position == 0 else values[position - 1].level_id,
+                refinements=() if position == 0 else level.refinement_axes,
+                level_id=level.level_id,
+            )
+            for position, level in enumerate(values)
+        )
+        self.discretization_hierarchy = DiscretizationHierarchy(
+            generic_levels,
+            hierarchy_id=identifier,
+        )
         self.fingerprint = _fingerprint(
             (identifier, tuple(level.fingerprint for level in values), multi_axis)
         )
@@ -283,6 +359,6 @@ class StochasticHierarchy(StrictModule):
 __all__ = [
     "NoiseCoupling",
     "RefinementAxis",
-    "StochasticHierarchy",
+    "StochasticCouplingPlan",
     "StochasticLevelSpec",
 ]

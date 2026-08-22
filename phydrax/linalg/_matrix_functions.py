@@ -19,6 +19,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._polynomial._orthogonal import legendre_rule_data
 from .._strict import StrictModule
 from ._certificates import _operator_numeric_fingerprint
+from ._linear_transform import AbstractLinearTransform, DenseLinearTransform
 from ._operators import AbstractLinearOperator, FunctionLinearOperator
 from ._spaces import PyTreeSpace
 from .krylov import (
@@ -100,73 +101,95 @@ class MatrixFunctionPolicy(StrictModule):
         self.error_tolerance = tolerance
 
 
-class SpectralMatrixRepresentation(StrictModule):
-    """Exact or explicitly truncated biorthogonal spectral representation."""
+class TransformDiagonalRepresentation(StrictModule):
+    """Exact or truncated operator representation through one linear transform."""
 
     operator: AbstractLinearOperator
-    eigenvalues: Array
-    analysis: Array
-    synthesis: Array
+    modal_values: Array
+    transform: AbstractLinearTransform
     representation_id: str = eqx.field(static=True)
     operator_fingerprint: str = eqx.field(static=True)
 
     def __init__(
         self,
         operator: AbstractLinearOperator,
-        eigenvalues: ArrayLike,
-        analysis: ArrayLike,
-        synthesis: ArrayLike,
+        modal_values: ArrayLike,
+        analysis_or_transform: ArrayLike | AbstractLinearTransform,
+        synthesis: ArrayLike | None = None,
         /,
         *,
         representation_id: str | None = None,
     ):
+        if isinstance(analysis_or_transform, AbstractLinearTransform):
+            if synthesis is not None:
+                raise ValueError(
+                    "synthesis must be omitted when a linear transform is supplied."
+                )
+            transform = analysis_or_transform
+        else:
+            if synthesis is None:
+                raise ValueError(
+                    "Dense transform construction requires synthesis coordinates."
+                )
+            transform = DenseLinearTransform(analysis_or_transform, synthesis)
+        self._initialize(
+            operator,
+            modal_values,
+            transform,
+            representation_id=representation_id,
+        )
+
+    @classmethod
+    def from_transform(
+        cls,
+        operator: AbstractLinearOperator,
+        modal_values: ArrayLike,
+        transform: AbstractLinearTransform,
+        /,
+        *,
+        representation_id: str | None = None,
+    ) -> "TransformDiagonalRepresentation":
+        return cls(
+            operator,
+            modal_values,
+            transform,
+            representation_id=representation_id,
+        )
+
+    def _initialize(
+        self,
+        operator: AbstractLinearOperator,
+        modal_values: ArrayLike,
+        transform: AbstractLinearTransform,
+        /,
+        *,
+        representation_id: str | None,
+    ) -> None:
         if not isinstance(operator, AbstractLinearOperator):
             raise TypeError("operator must be an AbstractLinearOperator.")
         if not operator.source.compatible(operator.target) or operator.batch_shape:
             raise ValueError(
-                "Spectral representations require an unbatched endomorphism."
+                "Transform-diagonal representations require an unbatched endomorphism."
             )
-        values = jnp.asarray(eigenvalues)
-        analysis_ = jnp.asarray(analysis)
-        synthesis_ = jnp.asarray(synthesis)
-        if values.ndim != 1 or values.size < 1:
-            raise ValueError("eigenvalues must be a non-empty vector.")
-        rank = int(values.size)
-        if analysis_.shape != (rank, operator.source.size):
-            raise ValueError("analysis shape must be (rank, operator dimension).")
-        if synthesis_.shape != (operator.source.size, rank):
-            raise ValueError("synthesis shape must be (operator dimension, rank).")
-        if not (
-            bool(np.all(np.isfinite(np.asarray(values))))
-            and bool(np.all(np.isfinite(np.asarray(analysis_))))
-            and bool(np.all(np.isfinite(np.asarray(synthesis_))))
+        if not isinstance(transform, AbstractLinearTransform):
+            raise TypeError("transform must be an AbstractLinearTransform.")
+        if (
+            transform.physical_space.size != operator.source.size
+            or transform.modal_space.size < 1
         ):
-            raise ValueError(
-                "Spectral eigenvalues, analysis, and synthesis must all be finite."
-            )
-        identity = np.eye(rank, dtype=np.result_type(np.asarray(analysis_).dtype))
-        if not np.allclose(
-            np.asarray(analysis_ @ synthesis_),
-            identity,
-            rtol=1e-5,
-            atol=1e-7,
-        ):
-            raise ValueError("Spectral analysis and synthesis must be biorthogonal.")
-        if rank == operator.source.size and not np.allclose(
-            np.asarray(synthesis_ @ analysis_),
-            np.eye(operator.source.size, dtype=identity.dtype),
-            rtol=1e-5,
-            atol=1e-7,
-        ):
-            raise ValueError(
-                "A complete spectral representation must synthesize the identity."
-            )
+            raise ValueError("Transform spaces do not match the represented operator.")
+        values = jnp.asarray(modal_values)
+        if values.shape != transform.modal_space.shape:
+            raise ValueError("modal_values must match transform.modal_space shape.")
+        if not bool(np.all(np.isfinite(np.asarray(values)))):
+            raise ValueError("Modal values must be finite.")
         identifier = (
             canonical_fingerprint(
                 {
-                    "kind": "spectral-representation",
+                    "kind": "transform-diagonal-representation",
                     "operator": operator.operator_id,
-                    "rank": rank,
+                    "transform": transform.transform_id,
+                    "modal_shape": list(values.shape),
                 }
             )
             if representation_id is None
@@ -175,11 +198,22 @@ class SpectralMatrixRepresentation(StrictModule):
         if not identifier:
             raise ValueError("representation_id must be non-empty.")
         self.operator = operator
-        self.eigenvalues = values
-        self.analysis = analysis_
-        self.synthesis = synthesis_
+        self.modal_values = values
+        self.transform = transform
         self.representation_id = identifier
         self.operator_fingerprint = _operator_numerical_fingerprint(operator)
+
+    @property
+    def rank(self) -> int:
+        return self.transform.modal_space.size
+
+    def analyze_coordinates(self, coordinates: ArrayLike, /) -> Array:
+        value = jnp.asarray(coordinates).reshape(self.transform.physical_space.shape)
+        return self.transform.analyze(value).reshape((-1,))
+
+    def synthesize_coordinates(self, coefficients: ArrayLike, /) -> Array:
+        value = jnp.asarray(coefficients).reshape(self.transform.modal_space.shape)
+        return self.transform.synthesize(value).reshape((-1,))
 
 
 class MatrixFunctionResult(StrictModule):
@@ -269,7 +303,7 @@ def _validate_real_branch_domain(
     /,
     *,
     power: float | None,
-    spectral: SpectralMatrixRepresentation | None,
+    spectral: TransformDiagonalRepresentation | None,
     spectral_bounds: tuple[float, float] | None,
     positive_definite: bool,
 ) -> Array:
@@ -293,9 +327,9 @@ def _validate_real_branch_domain(
     if not (requires_strict_positive or requires_nonnegative or requires_nonzero):
         return scalar
     if spectral is not None and not jnp.issubdtype(
-        spectral.eigenvalues.dtype, jnp.complexfloating
+        spectral.modal_values.dtype, jnp.complexfloating
     ):
-        arguments = scalar * spectral.eigenvalues
+        arguments = scalar * spectral.modal_values
     elif spectral_bounds is not None:
         arguments = scalar * jnp.asarray(spectral_bounds, dtype=scalar.dtype)
     elif positive_definite:
@@ -371,7 +405,7 @@ def matrix_function_action(
     power: float | None = None,
     shift: complex | float | None = None,
     policy: MatrixFunctionPolicy | None = None,
-    spectral: SpectralMatrixRepresentation | None = None,
+    spectral: TransformDiagonalRepresentation | None = None,
     spectral_bounds: tuple[float, float] | None = None,
     decomposition: KrylovDecomposition | PreparedKrylovProjection | None = None,
 ) -> MatrixFunctionResult:
@@ -471,13 +505,15 @@ def matrix_function_action(
                 "Spectral representation numerical operator state does not match."
             )
         multipliers = _scalar_function(
-            scalar * spectral.eigenvalues,
+            scalar * spectral.modal_values,
             kind,
             power=power,
             shift=shift,
         )
-        value = spectral.synthesis @ (multipliers * (spectral.analysis @ coordinates))
-        complete = spectral.eigenvalues.size == operator.source.size
+        value = spectral.synthesize_coordinates(
+            multipliers * spectral.analyze_coordinates(coordinates)
+        )
+        complete = spectral.rank == operator.source.size
         error = jnp.asarray(
             0.0 if complete else jnp.nan,
             dtype=coordinates.real.dtype,
@@ -487,7 +523,7 @@ def matrix_function_action(
             error_estimate=error,
             residual_estimate=error,
             converged=jnp.all(jnp.isfinite(value)) & jnp.asarray(complete),
-            effective_dimension=jnp.asarray(spectral.eigenvalues.size, dtype=jnp.int32),
+            effective_dimension=jnp.asarray(spectral.rank, dtype=jnp.int32),
             matvec_count=jnp.asarray(0, dtype=jnp.int32),
             breakdown_status=jnp.asarray(
                 int(KrylovBreakdownStatus.NONE), dtype=jnp.int32
@@ -889,7 +925,7 @@ __all__ = [
     "MatrixFunctionMethod",
     "MatrixFunctionPolicy",
     "MatrixFunctionResult",
-    "SpectralMatrixRepresentation",
+    "TransformDiagonalRepresentation",
     "matrix_exponential_action",
     "matrix_function_action",
     "matrix_phi1_action",

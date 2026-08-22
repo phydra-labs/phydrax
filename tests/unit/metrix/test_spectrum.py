@@ -17,7 +17,7 @@ def _basis(
     probability_measure: ArrayLike | None = None,
     active_mask: ArrayLike | None = None,
 ):
-    return phx.metrix.DiscreteLaplacianEigenbasis(
+    return phx.discretization.SpectralDecomposition(
         jnp.asarray([0.0, 2.0]) if eigenvalues is None else eigenvalues,
         (
             jnp.asarray([[1.0, 1.0], [1.0, -1.0]])
@@ -26,7 +26,7 @@ def _basis(
         ),
         (jnp.asarray([0.5, 0.5]) if probability_measure is None else probability_measure),
         spectral_dimension=1.0,
-        basis_id="two-point",
+        decomposition_id="two-point",
         active_mask=active_mask,
     )
 
@@ -65,18 +65,18 @@ def test_probability_measure_tolerance_is_absolute():
     measure = jnp.asarray([0.5, 0.499995])
     functions = jnp.ones((2, 1)) / jnp.sqrt(jnp.sum(measure))
     with pytest.raises(ValueError, match="sum to one"):
-        phx.metrix.DiscreteLaplacianEigenbasis(
+        phx.discretization.SpectralDecomposition(
             jnp.asarray([0.0]),
             functions,
             measure,
             spectral_dimension=1.0,
-            basis_id="unnormalized-measure",
+            decomposition_id="unnormalized-measure",
         )
 
 
 def test_spectrum_reports_reject_invalid_or_inconsistent_provenance():
     with pytest.raises(ValueError, match="next_eigenvalue"):
-        phx.metrix.LaplacianEigenbasisReport(
+        phx.discretization.LaplacianEigenbasisReport(
             method_id="test",
             source_id="test-source",
             requested_modes=2,
@@ -91,7 +91,7 @@ def test_spectrum_reports_reject_invalid_or_inconsistent_provenance():
             orthonormality_residual=0.0,
         )
 
-    inconsistent = phx.metrix.LaplacianEigenbasisReport(
+    inconsistent = phx.discretization.LaplacianEigenbasisReport(
         method_id="test",
         source_id="test-source",
         requested_modes=2,
@@ -106,12 +106,12 @@ def test_spectrum_reports_reject_invalid_or_inconsistent_provenance():
         orthonormality_residual=0.0,
     )
     with pytest.raises(ValueError, match="zero_mode_count"):
-        phx.metrix.DiscreteLaplacianEigenbasis(
+        phx.discretization.SpectralDecomposition(
             jnp.asarray([0.0, 2.0]),
             jnp.asarray([[1.0, 1.0], [1.0, -1.0]]),
             jnp.asarray([0.5, 0.5]),
             spectral_dimension=1.0,
-            basis_id="inconsistent-report",
+            decomposition_id="inconsistent-report",
             report=inconsistent,
         )
 

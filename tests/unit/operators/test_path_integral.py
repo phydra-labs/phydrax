@@ -11,23 +11,23 @@ import phydrax as phx
 
 
 def test_path_discretization_uniform_grid_and_validation():
-    slicing = phx.operators.PathDiscretization(-1.0, 2.0, num_steps=6)
+    slicing = phx.discretization.TemporalMesh.uniform(-1.0, 2.0, 6, role="path")
 
     assert slicing.num_nodes == 7
     assert jnp.allclose(slicing.dt, 0.5)
     assert jnp.allclose(slicing.times, jnp.linspace(-1.0, 2.0, 7))
     assert jnp.allclose(slicing.midpoints, jnp.linspace(-0.75, 1.75, 6))
 
-    with pytest.raises(ValueError, match="num_steps"):
-        phx.operators.PathDiscretization(0.0, 1.0, num_steps=0)
+    with pytest.raises(ValueError, match="intervals"):
+        phx.discretization.TemporalMesh.uniform(0.0, 1.0, 0, role="path")
     with pytest.raises(TypeError, match="integer"):
-        phx.operators.PathDiscretization(0.0, 1.0, num_steps=2.5)
-    with pytest.raises(ValueError, match="t1 > t0"):
-        phx.operators.PathDiscretization(1.0, 1.0, num_steps=4)
+        phx.discretization.TemporalMesh.uniform(0.0, 1.0, 2.5, role="path")
+    with pytest.raises(ValueError, match="bounds"):
+        phx.discretization.TemporalMesh.uniform(1.0, 1.0, 4, role="path")
 
 
 def test_brownian_bridge_exact_endpoints_and_covariance():
-    slicing = phx.operators.PathDiscretization(0.0, 1.0, num_steps=2)
+    slicing = phx.discretization.TemporalMesh.uniform(0.0, 1.0, 2, role="path")
     x0 = jnp.array([-0.2])
     x1 = jnp.array([0.4])
     paths = phx.operators.sample_brownian_bridge(
@@ -48,7 +48,7 @@ def test_brownian_bridge_exact_endpoints_and_covariance():
 
 
 def test_discrete_euclidean_action_matches_midpoint_formula():
-    slicing = phx.operators.PathDiscretization(0.0, 1.0, num_steps=2)
+    slicing = phx.discretization.TemporalMesh.uniform(0.0, 1.0, 2, role="path")
     paths = jnp.array([[[0.0], [1.0], [0.0]]])
     potential = lambda q, t: q[0] ** 2
 
@@ -71,7 +71,7 @@ def test_discrete_euclidean_action_matches_midpoint_formula():
 
 
 def test_euclidean_action_rejects_complex_potential():
-    slicing = phx.operators.PathDiscretization(0.0, 1.0, num_steps=2)
+    slicing = phx.discretization.TemporalMesh.uniform(0.0, 1.0, 2, role="path")
     paths = jnp.zeros((3, 3, 1))
 
     with pytest.raises(TypeError, match="must be real"):
@@ -83,7 +83,7 @@ def test_euclidean_action_rejects_complex_potential():
 
 
 def test_euclidean_estimate_is_seeded_and_reports_diagnostics():
-    slicing = phx.operators.PathDiscretization(0.0, 1.0, num_steps=16)
+    slicing = phx.discretization.TemporalMesh.uniform(0.0, 1.0, 16, role="path")
     potential = lambda q, t: 0.5 * q[0] ** 2
 
     estimate_a = phx.operators.euclidean_kernel(
@@ -129,7 +129,7 @@ def test_euclidean_estimate_is_seeded_and_reports_diagnostics():
 
 
 def test_euclidean_log_weight_reduction_stays_stable_at_large_scale():
-    slicing = phx.operators.PathDiscretization(0.0, 1.0, num_steps=4)
+    slicing = phx.discretization.TemporalMesh.uniform(0.0, 1.0, 4, role="path")
     estimate = phx.operators.euclidean_kernel(
         lambda q, t: -500.0,
         jnp.array([0.0]),
@@ -147,7 +147,7 @@ def test_euclidean_log_weight_reduction_stays_stable_at_large_scale():
 
 
 def test_euclidean_kernel_supports_jit_vmap_and_parameter_gradients():
-    slicing = phx.operators.PathDiscretization(0.0, 0.5, num_steps=8)
+    slicing = phx.discretization.TemporalMesh.uniform(0.0, 0.5, 8, role="path")
     x0 = jnp.array([0.0])
 
     def kernel(endpoint, stiffness):
@@ -182,7 +182,7 @@ def test_euclidean_kernel_supports_jit_vmap_and_parameter_gradients():
 
 
 def test_diffusion_from_zero_noise_matches_euler_drift():
-    slicing = phx.operators.PathDiscretization(0.0, 1.0, num_steps=4)
+    slicing = phx.discretization.TemporalMesh.uniform(0.0, 1.0, 4, role="path")
     noise = jnp.zeros((2, 4, 1))
     paths = phx.operators.diffusion_paths_from_noise(
         lambda x, t: -x,
@@ -198,7 +198,7 @@ def test_diffusion_from_zero_noise_matches_euler_drift():
 
 
 def test_first_exit_uses_discrete_crossing_and_survival_sentinel():
-    slicing = phx.operators.PathDiscretization(0.0, 1.0, num_steps=2)
+    slicing = phx.discretization.TemporalMesh.uniform(0.0, 1.0, 2, role="path")
     paths = jnp.array(
         [
             [[0.0], [0.4], [1.1]],

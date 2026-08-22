@@ -334,11 +334,11 @@ dU_t=\kappa\Delta U_t\,dt+dW_t^Q.
 Choose the spatial discretization and retained covariance modes explicitly:
 
 ```python
-axis = phx.domain.FourierAxisSpec(32).materialize(0.0, 1.0)
-space = phx.solver.TensorGridDiscretization((axis,))
+axis = phx.discretization.FourierAxisSpec(32).materialize(0.0, 1.0)
+space = phx.discretization.SeparableSpectralDiscretization((axis,))
 
 # q(lambda) is evaluated on low eigenvalues of -Delta_h.
-noise = phx.solver.SpatialNoiseBasis.from_spectrum(
+noise = phx.stochastic.SpatialNoiseBasis.from_spectrum(
     space,
     lambda eigenvalue: 0.02 * jnp.exp(-0.05 * eigenvalue),
     rank=6,
@@ -387,7 +387,7 @@ trajectory = paths.to_stochastic_trajectory(
 )
 path_measure = phx.stochastic.trajectory_measure(trajectory, mode="path")
 time_measure = phx.stochastic.time_measure(trajectory, rule="trapezoid")
-space_measure = phx.solver.spatial_measure(space, spatial_dims="space")
+space_measure = phx.integration.spatial_measure(space, spatial_dims="space")
 
 space_integrals = phx.integration.integrate(path_measure.samples, space_measure)
 time_integrals = phx.integration.integrate(space_integrals.value, time_measure)
@@ -410,11 +410,11 @@ same global Brownian paths, even when a time horizon is split across solves. Cha
 the root key changes paths; changing the grid, rank, spectrum, or modes changes
 `noise_id`.
 
-`TensorGridDiscretization` also supports periodic finite differences, sine bases
-with homogeneous Dirichlet semantics, cosine bases with homogeneous Neumann
-semantics, and multidimensional tensor grids. `SpectralSpatialDiscretization`
-reuses a precomputed manifold `phydrax._spectral.SpectralDiscretization`
-directly, without a provider or a second eigenbasis convention.
+`SeparableSpectralDiscretization` composes Fourier, sine, and cosine tensor bases.
+Uniform periodic finite differences use `periodic_finite_difference`; bounded FD2
+operators can use `diagonalize_fd_laplacian`. `SpectralDiscretization` reuses a
+precomputed `phydrax.discretization.SpectralDecomposition` while preserving
+independent transform and operator-spectrum identities.
 
 ## Stochastic Allen--Cahn
 

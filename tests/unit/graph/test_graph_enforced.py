@@ -255,12 +255,12 @@ def test_enforce_cochain_values_preserves_signed_semantics_and_rejects_mismatch(
     complex_ir = _cochain_complex_with_interior_vertex()
     domain = phx.domain.GraphDomain(complex_ir.graph)
     structure = phx.domain.SampleLayout((("graph",),))
-    edge_spec = phx.graph.CochainFieldSpec(
+    edge_spec = phx.discretization.CochainFieldSpec(
         1,
         cell_orientation="signed",
         sampling="cell_integral",
     )
-    vertex_spec = phx.graph.CochainFieldSpec(
+    vertex_spec = phx.discretization.CochainFieldSpec(
         0,
         cell_orientation="invariant",
         sampling="point_value",
@@ -306,7 +306,7 @@ def test_hard_cochain_boundary_remains_exact_during_solver_optimization():
     complex_ir = _cochain_complex_with_interior_vertex()
     domain = phx.domain.GraphDomain(complex_ir.graph)
     structure = phx.domain.SampleLayout((("graph",),))
-    zero_spec = phx.graph.CochainFieldSpec(
+    zero_spec = phx.discretization.CochainFieldSpec(
         0,
         cell_orientation="invariant",
         sampling="point_value",

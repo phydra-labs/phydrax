@@ -48,15 +48,15 @@ one-dimensional sequences.
 
 ### Axis-based grids
 
-`GridSampling.axes` maps each gridded label to integer counts, axis specs, tuples
-of axis specs, or a `GridSpec`. A dense point plan may cover labels that remain
-paired:
+`GridSampling.axes` maps each gridded label to integer counts, axis specs,
+tuples of axis specs, or a `phydrax.discretization.TensorGridPlan`. A dense
+point plan may cover labels that remain paired:
 
 ```python
 geom = phx.domain.Interval1d(0.0, 1.0)
 batch = geom.component().sample(
     phx.domain.GridSampling(
-        {"x": phx.domain.FourierAxisSpec(64)},
+        {"x": phx.discretization.FourierAxisSpec(64)},
     ),
     key=jr.key(0),
 )
@@ -127,61 +127,61 @@ stored values are reconstructed at new sites.
 
 ## Axis specs and grids
 
-::: phydrax.domain.AxisDiscretization
+::: phydrax.discretization.AxisDiscretization
     options:
         members:
             - __init__
 
 ---
 
-::: phydrax.domain.AbstractAxisSpec
+::: phydrax.discretization.AbstractAxisSpec
     options:
         members:
             - __init__
 
 ---
 
-::: phydrax.domain.GridSpec
+::: phydrax.discretization.TensorGridPlan
     options:
         members:
             - __init__
 
 ---
 
-::: phydrax.domain.UniformAxisSpec
+::: phydrax.discretization.UniformAxisSpec
     options:
         members:
             - __init__
 
 ---
 
-::: phydrax.domain.FourierAxisSpec
+::: phydrax.discretization.FourierAxisSpec
     options:
         members:
             - __init__
 
 ---
 
-::: phydrax.domain.SineAxisSpec
+::: phydrax.discretization.SineAxisSpec
     options:
         members:
             - __init__
 
 ---
 
-::: phydrax.domain.CosineAxisSpec
+::: phydrax.discretization.CosineAxisSpec
     options:
         members:
             - __init__
 
 ---
 
-::: phydrax.domain.LegendreAxisSpec
+::: phydrax.discretization.LegendreAxisSpec
     options:
         members:
             - __init__
 
-::: phydrax.domain.NestedDyadicAxisSpec
+::: phydrax.discretization.NestedDyadicAxisSpec
     options:
         members:
             - __init__
@@ -230,8 +230,9 @@ Many basis-aware operators (spectral derivatives, quadrature) want both:
 - nodes \(x_j\) on an axis \([a,b]\),
 - quadrature weights \(w_j\) to approximate \(\int_a^b f(x)\,dx \approx \sum_j w_j f(x_j)\).
 
-When you sample with axis specs (`AbstractAxisSpec` implementations) / `GridSpec`, Phydrax materializes an `AxisDiscretization`
-and attaches it on the batch (so downstream operators can reuse nodes/weights).
+When you sample with `phydrax.discretization.AbstractAxisSpec` implementations or a
+`TensorGridPlan`, Phydrax materializes an `AxisDiscretization` and attaches it
+on the batch so downstream operators can reuse nodes and weights.
 
 ### Fourier (periodic, endpoint excluded)
 

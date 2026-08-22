@@ -10,7 +10,7 @@ import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
 from ..._doc import DOC_KEY0
-from ._discretization import PathDiscretization
+from ...discretization import TemporalMesh
 
 
 def _endpoints(x0: ArrayLike, x1: ArrayLike, /) -> tuple[Array, Array]:
@@ -59,7 +59,7 @@ def brownian_bridge_from_noise(
     x1: ArrayLike,
     /,
     *,
-    slicing: PathDiscretization,
+    slicing: TemporalMesh,
     diffusion: ArrayLike = 1.0,
 ) -> Array:
     r"""Construct endpoint-conditioned Brownian paths from standard-normal increments.
@@ -117,7 +117,7 @@ def sample_brownian_bridge(
     x1: ArrayLike,
     /,
     *,
-    slicing: PathDiscretization,
+    slicing: TemporalMesh,
     num_paths: int,
     diffusion: ArrayLike = 1.0,
     key: Key[Array, ""] = DOC_KEY0,

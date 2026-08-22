@@ -15,6 +15,15 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._strict import StrictModule
+from ..discretization import (
+    AbstractStrongFormDiscretization,
+    DiscreteFieldSpace,
+    DiscretizationBundle,
+    DiscretizationKey,
+    DiscretizationRecord,
+    DiscretizationRole,
+    TensorDofLayout,
+)
 from ..dynamics import DAERole, DAEStructure, DifferentialAlgebraicSystem
 from ..linalg import (
     ArraySpace,
@@ -58,10 +67,39 @@ def _value_fingerprint(value: Any | None, /) -> str:
     return digest.hexdigest()
 
 
-class SemidiscreteFieldLayout(StrictModule):
-    """Static packing of PDE fields after a leading spatial discretization."""
+def _compiled_discretization_bundle(
+    discretization: AbstractStrongFormDiscretization,
+    compilation_id: str,
+    /,
+) -> DiscretizationBundle:
+    residual_key = DiscretizationKey(
+        "strong_form",
+        DiscretizationRole.RESIDUAL,
+        domain_labels=discretization.key.domain_labels,
+    )
+    return DiscretizationBundle(
+        (
+            DiscretizationRecord(
+                discretization.key,
+                type(discretization).__name__,
+                discretization.prepared_id,
+                numeric_version=discretization.numeric_version,
+            ),
+            DiscretizationRecord(
+                residual_key,
+                "compiled-strong-form",
+                str(compilation_id),
+                dependency_key_ids=(discretization.key.key_id,),
+            ),
+        )
+    )
+
+
+class DiscreteStateLayout(StrictModule):
+    """Static packing of PDE fields bound to exact prepared field spaces."""
 
     field_names: tuple[str, ...] = eqx.field(static=True)
+    field_spaces: tuple[DiscreteFieldSpace, ...]
     component_counts: tuple[int, ...] = eqx.field(static=True)
     scalar_fields: tuple[bool, ...] = eqx.field(static=True)
     component_offsets: tuple[int, ...] = eqx.field(static=True)
@@ -73,7 +111,7 @@ class SemidiscreteFieldLayout(StrictModule):
     def __init__(
         self,
         fields: Sequence[PDEField],
-        spatial_shape: Sequence[int],
+        discretization: AbstractStrongFormDiscretization,
         /,
     ):
         field_values = tuple(fields)
@@ -81,16 +119,65 @@ class SemidiscreteFieldLayout(StrictModule):
             not isinstance(field, PDEField) for field in field_values
         ):
             raise TypeError("fields must be a non-empty sequence of PDEField objects.")
+        if not isinstance(discretization, AbstractStrongFormDiscretization):
+            raise TypeError("discretization must be an AbstractStrongFormDiscretization.")
         names = tuple(field.name for field in field_values)
         if len(set(names)) != len(names):
-            raise ValueError("Semidiscrete field names must be unique.")
+            raise ValueError("Discrete field names must be unique.")
         components = tuple(int(field.components) for field in field_values)
         scalar_fields = tuple(
             field.representation in ("scalar", "pseudoscalar") for field in field_values
         )
-        shape = tuple(int(size) for size in spatial_shape)
+        shape = tuple(int(size) for size in discretization.state_shape)
         if not shape or any(size <= 0 for size in shape):
-            raise ValueError("spatial_shape must contain positive dimensions.")
+            raise ValueError("Prepared spatial shape must contain positive dimensions.")
+        base_space = discretization.field_spaces[0]
+        if not isinstance(base_space.layout, TensorDofLayout):
+            raise TypeError(
+                "Strong-form state layouts currently require tensor DOF coordinates."
+            )
+        if not isinstance(base_space.vector_space, ArraySpace):
+            raise TypeError(
+                "Strong-form state layouts currently require ArraySpace coordinates."
+            )
+        spaces = []
+        for field, count, scalar in zip(
+            field_values,
+            components,
+            scalar_fields,
+            strict=True,
+        ):
+            component_shape = () if count == 1 and scalar else (count,)
+            layout = TensorDofLayout(
+                base_space.layout.axis_names,
+                base_space.layout.axis_shape,
+                component_shape=component_shape,
+            )
+            vector_space = (
+                base_space.vector_space
+                if not component_shape
+                else ArraySpace(
+                    layout.value_shape,
+                    dtype=base_space.vector_space.dtype,
+                    space_id=_stable_id(
+                        "discrete-field-vector-space",
+                        field.name,
+                        base_space.support_id,
+                        repr(layout.value_shape),
+                    ),
+                )
+            )
+            spaces.append(
+                DiscreteFieldSpace(
+                    field.name,
+                    base_space.support_id,
+                    layout,
+                    vector_space,
+                    representation="point_value",
+                    conformity=base_space.conformity,
+                    reconstruction_id=base_space.reconstruction_id,
+                )
+            )
         offsets: list[int] = []
         offset = 0
         for count in components:
@@ -101,6 +188,7 @@ class SemidiscreteFieldLayout(StrictModule):
         )
         state_shape = shape if squeezed else shape + (offset,)
         self.field_names = names
+        self.field_spaces = tuple(spaces)
         self.component_counts = components
         self.scalar_fields = scalar_fields
         self.component_offsets = tuple(offsets)
@@ -108,8 +196,8 @@ class SemidiscreteFieldLayout(StrictModule):
         self.state_shape = state_shape
         self.squeezed = squeezed
         self.layout_id = _stable_id(
-            "semidiscrete-field-layout-v2",
-            repr(tuple(zip(names, components, scalar_fields, strict=True))),
+            "discrete-state-layout-v3",
+            *(space.field_space_id for space in spaces),
             repr(shape),
         )
 
@@ -224,7 +312,7 @@ class BoundaryLift(StrictModule):
 
 
 class _SemidiscreteEvaluator(StrictModule):
-    layout: SemidiscreteFieldLayout
+    layout: DiscreteStateLayout
     discretization: Any
     boundary_lifts: tuple[BoundaryLift, ...]
     parameter_defaults: tuple[Any | None, ...]
@@ -242,7 +330,7 @@ class _SemidiscreteEvaluator(StrictModule):
         self,
         problem: PDEProblemIR,
         rhs_expressions: Sequence[PDEExpression],
-        layout: SemidiscreteFieldLayout,
+        layout: DiscreteStateLayout,
         discretization: Any,
         boundary_lifts: Sequence[BoundaryLift],
         parameter_defaults: Sequence[Any | None],
@@ -517,10 +605,10 @@ class _SemidiscreteEvaluator(StrictModule):
         axis: int,
         order: int,
     ) -> Array:
+        from ..discretization._tensor import SeparableSpectralDiscretization
         from ..operators.differential._array_ops import _fd_nth_derivative
-        from ..solver._spatial import TensorGridDiscretization
 
-        if not isinstance(self.discretization, TensorGridDiscretization):
+        if not isinstance(self.discretization, SeparableSpectralDiscretization):
             return self.discretization.partial_derivative(
                 value,
                 axis=axis,
@@ -586,9 +674,9 @@ class _SemidiscreteEvaluator(StrictModule):
         gradient: bool,
         order: int = 1,
     ) -> tuple[int, ...]:
-        from ..solver._spatial import TensorGridDiscretization
+        from ..discretization._tensor import SeparableSpectralDiscretization
 
-        if not isinstance(self.discretization, TensorGridDiscretization):
+        if not isinstance(self.discretization, SeparableSpectralDiscretization):
             return parity
         basis = self.discretization.basis[axis]
         output = list(parity)
@@ -722,13 +810,13 @@ class _SemidiscreteEvaluator(StrictModule):
         order: int,
         parity: int,
     ) -> Array:
-        from ..solver._spatial import (
+        from ..discretization._tensor import (
             _dual_basis_first_derivative,
-            TensorGridDiscretization,
+            SeparableSpectralDiscretization,
         )
 
         if (
-            isinstance(self.discretization, TensorGridDiscretization)
+            isinstance(self.discretization, SeparableSpectralDiscretization)
             and self.discretization.basis[axis] == "uniform"
             and parity == 1
         ):
@@ -745,7 +833,7 @@ class _SemidiscreteEvaluator(StrictModule):
                 )
             return result
         if (
-            isinstance(self.discretization, TensorGridDiscretization)
+            isinstance(self.discretization, SeparableSpectralDiscretization)
             and self.discretization.basis[axis] in ("sine", "cosine")
             and parity == 2
         ):
@@ -754,7 +842,7 @@ class _SemidiscreteEvaluator(StrictModule):
                 "composite expression; rewrite it into boundary-compatible terms."
             )
         if (
-            not isinstance(self.discretization, TensorGridDiscretization)
+            not isinstance(self.discretization, SeparableSpectralDiscretization)
             or self.discretization.basis[axis] not in ("sine", "cosine")
             or parity != 1
         ):
@@ -1026,14 +1114,14 @@ class _SemidiscreteEvaluator(StrictModule):
                     )
                 return result
             if node.op == "gradient":
-                from ..solver._spatial import TensorGridDiscretization
+                from ..discretization._tensor import SeparableSpectralDiscretization
 
                 source_parities = self._parities(node.args[0])
                 components = []
                 for axis in axes:
                     parity = 2 if source_parities is None else source_parities[0][axis]
                     if (
-                        isinstance(self.discretization, TensorGridDiscretization)
+                        isinstance(self.discretization, SeparableSpectralDiscretization)
                         and self.discretization.basis[axis] == "uniform"
                         and parity != 1
                     ):
@@ -1295,7 +1383,7 @@ class _SemidiscreteEvaluator(StrictModule):
 
 
 class _FieldwiseLaplacianOperator(StrictModule):
-    layout: SemidiscreteFieldLayout
+    layout: DiscreteStateLayout
     discretization: Any
     coefficients: tuple[Array, ...]
 
@@ -1331,15 +1419,16 @@ class _SemilinearRemainder(StrictModule):
         return self.evaluator(time, state, args) - self.linear_operator(state)
 
 
-class CompiledSpatialDynamics(StrictModule):
+class CompiledDiscreteDynamics(StrictModule):
     """State-shaped method-of-lines dynamics with compilation provenance."""
 
     drift: Any
-    layout: SemidiscreteFieldLayout
+    layout: DiscreteStateLayout
     spatial_discretization: Any
     semilinear_drift: Any | None
     boundary_lifts: tuple[BoundaryLift, ...]
     _evaluator: _SemidiscreteEvaluator
+    discretization_bundle: DiscretizationBundle
     compilation_id: str = eqx.field(static=True)
     source_hash: str = eqx.field(static=True)
     resolved_method: ResolvedSemidiscreteMethod = eqx.field(static=True)
@@ -1347,7 +1436,7 @@ class CompiledSpatialDynamics(StrictModule):
     def __init__(
         self,
         drift: Any,
-        layout: SemidiscreteFieldLayout,
+        layout: DiscreteStateLayout,
         spatial_discretization: Any,
         evaluator: _SemidiscreteEvaluator,
         /,
@@ -1367,6 +1456,10 @@ class CompiledSpatialDynamics(StrictModule):
         self.compilation_id = str(compilation_id)
         self.source_hash = str(source_hash)
         self.resolved_method = resolved_method
+        self.discretization_bundle = _compiled_discretization_bundle(
+            spatial_discretization,
+            self.compilation_id,
+        )
 
     @property
     def state_shape(self) -> tuple[int, ...]:
@@ -1433,7 +1526,7 @@ class SemidiscreteDAEStructuralReport(StrictModule):
         )
 
 
-class _CompiledSpatialResidualFunction(StrictModule):
+class _CompiledDiscreteResidualFunction(StrictModule):
     evaluator: _SemidiscreteEvaluator
 
     def __call__(
@@ -1446,25 +1539,26 @@ class _CompiledSpatialResidualFunction(StrictModule):
         return self.evaluator.residual(time, state, state_rate, args)
 
 
-class CompiledSpatialResidual(StrictModule):
+class CompiledDiscreteResidual(StrictModule):
     """Implicit semidiscrete PDE residual and explicit DAE structure."""
 
-    residual: _CompiledSpatialResidualFunction
+    residual: _CompiledDiscreteResidualFunction
     system: DifferentialAlgebraicSystem
-    layout: SemidiscreteFieldLayout
+    layout: DiscreteStateLayout
     spatial_discretization: Any
     structure: DAEStructure
     structural_report: SemidiscreteDAEStructuralReport
     boundary_lifts: tuple[BoundaryLift, ...]
     _evaluator: _SemidiscreteEvaluator
+    discretization_bundle: DiscretizationBundle
     compilation_id: str = eqx.field(static=True)
     source_hash: str = eqx.field(static=True)
 
     def __init__(
         self,
-        residual: _CompiledSpatialResidualFunction,
+        residual: _CompiledDiscreteResidualFunction,
         system: DifferentialAlgebraicSystem,
-        layout: SemidiscreteFieldLayout,
+        layout: DiscreteStateLayout,
         spatial_discretization: Any,
         evaluator: _SemidiscreteEvaluator,
         /,
@@ -1485,6 +1579,10 @@ class CompiledSpatialResidual(StrictModule):
         self._evaluator = evaluator
         self.compilation_id = str(compilation_id)
         self.source_hash = str(source_hash)
+        self.discretization_bundle = _compiled_discretization_bundle(
+            spatial_discretization,
+            self.compilation_id,
+        )
 
     @property
     def state_shape(self) -> tuple[int, ...]:
@@ -1634,7 +1732,7 @@ def _expression_nodes(expression: PDEExpression, /) -> tuple[PDEExpression, ...]
 
 def _dae_residual_layout(
     problem: PDEProblemIR,
-    layout: SemidiscreteFieldLayout,
+    layout: DiscreteStateLayout,
     time_coordinate: str,
     equation_targets: Mapping[str, str],
     /,
@@ -1794,7 +1892,7 @@ def _coordinate_axis_map(
     discretization: Any,
     /,
 ) -> tuple[tuple[str, tuple[int, ...]], ...]:
-    from ..solver._spatial import TensorGridDiscretization
+    from ..discretization._tensor import SeparableSpectralDiscretization
 
     spatial = tuple(
         coordinate for coordinate in problem.coordinates if coordinate.kind == "space"
@@ -1802,7 +1900,7 @@ def _coordinate_axis_map(
     if not spatial:
         raise ValueError("Semidiscrete PDE compilation requires spatial coordinates.")
     rank = sum(coordinate.size for coordinate in spatial)
-    if isinstance(discretization, TensorGridDiscretization):
+    if isinstance(discretization, SeparableSpectralDiscretization):
         if rank != len(discretization.state_shape):
             raise ValueError(
                 "PDE spatial coordinate size must match the tensor-grid rank; "
@@ -1925,14 +2023,14 @@ def _validate_boundary_conditions(
     boundary_lifts: Sequence[BoundaryLift],
     /,
 ) -> None:
-    from ..solver._spatial import TensorGridDiscretization
+    from ..discretization._tensor import SeparableSpectralDiscretization
 
     lifts = {lift.field_name: lift for lift in boundary_lifts}
     if any(condition.kind == "interface" for condition in problem.conditions):
         raise ValueError(
             "Semidiscrete single-grid compilation does not support interface conditions."
         )
-    if not isinstance(discretization, TensorGridDiscretization):
+    if not isinstance(discretization, SeparableSpectralDiscretization):
         if any(condition.kind == "boundary" for condition in problem.conditions):
             raise ValueError(
                 "Manifold spectral discretizations do not expose a boundary basis contract."
@@ -2111,7 +2209,7 @@ def _multiplicative_factors(expression: PDEExpression, /) -> tuple[PDEExpression
 
 def _diffusion_coefficients(
     rhs_expressions: Sequence[PDEExpression],
-    layout: SemidiscreteFieldLayout,
+    layout: DiscreteStateLayout,
     all_spatial_coordinates: set[str],
     defaults: Mapping[str, Any],
     /,
@@ -2157,22 +2255,22 @@ def _diffusion_coefficients(
 def _spectral_representation(
     operator: Any,
     discretization: Any,
-    layout: SemidiscreteFieldLayout,
+    layout: DiscreteStateLayout,
     coefficients: tuple[float, ...] | None,
     /,
 ) -> Any | None:
-    from ..linalg import SpectralMatrixRepresentation
-    from ..solver._spatial import SpectralSpatialDiscretization
+    from ..discretization._tensor import SpectralDiscretization
+    from ..linalg import TransformDiagonalRepresentation
 
     if (
-        not isinstance(discretization, SpectralSpatialDiscretization)
+        not isinstance(discretization, SpectralDiscretization)
         or discretization.plan.num_modes != discretization.plan.num_points
         or coefficients is None
         or not layout.squeezed
     ):
         return None
     coefficient = coefficients[0]
-    return SpectralMatrixRepresentation(
+    return TransformDiagonalRepresentation(
         operator,
         -coefficient * discretization.plan.eigenvalues,
         discretization.plan.analysis,
@@ -2195,14 +2293,13 @@ def _semidiscrete_setup(
     tuple[str, ...],
     tuple[BoundaryLift, ...],
     tuple[tuple[str, tuple[int, ...]], ...],
-    SemidiscreteFieldLayout,
+    DiscreteStateLayout,
 ]:
-    from ..solver._spatial import AbstractSpatialDiscretization
 
     if not isinstance(problem, PDEProblemIR):
         raise TypeError("problem must be a PDEProblemIR.")
-    if not isinstance(discretization, AbstractSpatialDiscretization):
-        raise TypeError("discretization must be an AbstractSpatialDiscretization.")
+    if not isinstance(discretization, AbstractStrongFormDiscretization):
+        raise TypeError("discretization must be an AbstractStrongFormDiscretization.")
     validate_pde_ir(problem)
     time_coordinates = tuple(
         coordinate for coordinate in problem.coordinates if coordinate.kind == "time"
@@ -2258,13 +2355,13 @@ def _semidiscrete_setup(
         spatial_coordinates,
         lifts,
         coordinate_axes,
-        SemidiscreteFieldLayout(problem.fields, discretization.state_shape),
+        DiscreteStateLayout(problem.fields, discretization),
     )
 
 
 def _parameter_defaults(
     problem: PDEProblemIR,
-    layout: SemidiscreteFieldLayout,
+    layout: DiscreteStateLayout,
     parameter_values: Mapping[str, Any] | None,
     /,
 ) -> tuple[
@@ -2331,9 +2428,9 @@ def _validate_semidiscrete_expressions(
     *,
     allow_temporal_derivatives: bool,
 ) -> None:
-    from ..solver._spatial import (
-        SpectralSpatialDiscretization,
-        TensorGridDiscretization,
+    from ..discretization._tensor import (
+        SeparableSpectralDiscretization,
+        SpectralDiscretization,
     )
 
     expression_values = tuple(expressions)
@@ -2358,10 +2455,10 @@ def _validate_semidiscrete_expressions(
             "Semidiscrete volume quadrature only supports unpartitioned interior "
             f"spatial regions with unique coordinates; got {unsupported_integrals}."
         )
-    if isinstance(discretization, SpectralSpatialDiscretization):
+    if isinstance(discretization, SpectralDiscretization):
         if lifts:
             raise ValueError(
-                "SpectralSpatialDiscretization cannot apply coordinate-space "
+                "SpectralDiscretization cannot apply coordinate-space "
                 "BoundaryLift objects without a coordinate frame."
             )
         framed_expressions = expression_values + tuple(
@@ -2374,7 +2471,7 @@ def _validate_semidiscrete_expressions(
             for expression in framed_expressions
         ):
             raise ValueError(
-                "SpectralSpatialDiscretization has no coordinate frame for "
+                "SpectralDiscretization has no coordinate frame for "
                 "coordinate, derivative, gradient, divergence, or curl nodes."
             )
     for expression in expression_values:
@@ -2414,7 +2511,7 @@ def _validate_semidiscrete_expressions(
                 raise ValueError(
                     "Derivatives of grouped coordinates require an explicit axis."
                 )
-            if not isinstance(discretization, TensorGridDiscretization) or not any(
+            if not isinstance(discretization, SeparableSpectralDiscretization) or not any(
                 discretization.basis[axis] in ("sine", "cosine") for axis in axes
             ):
                 continue
@@ -2444,12 +2541,30 @@ def compile_semidiscrete_pde(
     parameter_values: Mapping[str, Any] | None = None,
     boundary_lifts: Sequence[BoundaryLift] = (),
     method: SemidiscreteCompilationMethod = "auto",
-) -> CompiledSpatialDynamics:
+) -> Any:
     """Compile validated PDE IR into state-shaped method-of-lines dynamics."""
     from ..solver._semilinear_drift import SemilinearDrift
 
     if method not in ("auto", "direct", "semilinear"):
         raise ValueError("method must be 'auto', 'direct', or 'semilinear'.")
+    from ..discretization import PreparedTensorGrid
+
+    if isinstance(discretization, PreparedTensorGrid):
+        if boundary_lifts:
+            raise ValueError(
+                "PreparedTensorGrid compilation lowers PDE conditions directly; "
+                "external BoundaryLift values are not accepted."
+            )
+        if parameter_values:
+            raise ValueError(
+                "Native FD parameters are supplied through runtime args, not "
+                "compile-time parameter_values."
+            )
+        if method == "semilinear":
+            raise ValueError("Native FD semilinear decomposition is not yet certified.")
+        from ._fd_compile import compile_finite_difference_pde
+
+        return compile_finite_difference_pde(problem, discretization)
     (
         time_coordinate,
         spatial_coordinates,
@@ -2610,7 +2725,7 @@ def compile_semidiscrete_pde(
         binding_id,
         resolved,
     )
-    return CompiledSpatialDynamics(
+    return CompiledDiscreteDynamics(
         drift,
         layout,
         discretization,
@@ -2635,7 +2750,7 @@ def compile_semidiscrete_dae(
     state_rate_scale: ArrayLike | None = None,
     residual_scale: ArrayLike | None = None,
     system_id: str | None = None,
-) -> CompiledSpatialResidual:
+) -> CompiledDiscreteResidual:
     """Compile PDE IR into an implicit residual without claiming index regularity."""
     if not isinstance(equation_targets, Mapping):
         raise TypeError("equation_targets must be a mapping from equations to fields.")
@@ -2694,7 +2809,7 @@ def compile_semidiscrete_dae(
         _value_fingerprint(state_rate_scale),
         _value_fingerprint(residual_scale),
     )
-    residual = _CompiledSpatialResidualFunction(evaluator)
+    residual = _CompiledDiscreteResidualFunction(evaluator)
     resolved_system_id = (
         f"semidiscrete-dae:{compilation_id}" if system_id is None else system_id
     )
@@ -2707,7 +2822,7 @@ def compile_semidiscrete_dae(
         residual_scale=residual_scale,
         system_id=resolved_system_id,
     )
-    return CompiledSpatialResidual(
+    return CompiledDiscreteResidual(
         residual,
         system,
         layout,
@@ -2723,12 +2838,12 @@ def compile_semidiscrete_dae(
 
 __all__ = [
     "BoundaryLift",
-    "CompiledSpatialDynamics",
-    "CompiledSpatialResidual",
+    "CompiledDiscreteDynamics",
+    "CompiledDiscreteResidual",
     "ResolvedSemidiscreteMethod",
     "SemidiscreteCompilationMethod",
     "SemidiscreteDAEStructuralReport",
-    "SemidiscreteFieldLayout",
+    "DiscreteStateLayout",
     "compile_semidiscrete_dae",
     "compile_semidiscrete_pde",
 ]
