@@ -17,6 +17,7 @@ import opt_einsum as oe
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, Key, PyTree
 
+from .._polynomial._orthogonal import standard_normal_hermite_rule_data
 from .._strict import StrictModule
 from ._gaussian_factor import gaussian_factor_from_covariance, GaussianFactor
 
@@ -328,20 +329,13 @@ def _gauss_hermite_rule(
         )
     if rank == 0:
         return jnp.zeros((1, 0), dtype=dtype), jnp.ones((1,), dtype=dtype)
-    nodes, axis_weights = np.polynomial.hermite_e.hermegauss(order)
-    axis_weights = axis_weights / np.sqrt(2.0 * np.pi)
-    node_mesh = np.meshgrid(*([nodes] * rank), indexing="ij")
-    weight_mesh = np.meshgrid(*([axis_weights] * rank), indexing="ij")
-    points = jnp.asarray(
-        np.stack(tuple(mesh.reshape(-1) for mesh in node_mesh), axis=1),
-        dtype=dtype,
-    )
-    weights = jnp.asarray(
-        np.prod(
-            np.stack(tuple(mesh.reshape(-1) for mesh in weight_mesh), axis=1),
-            axis=1,
-        ),
-        dtype=dtype,
+    rule = standard_normal_hermite_rule_data(order, dtype=dtype)
+    node_mesh = jnp.meshgrid(*([rule.nodes] * rank), indexing="ij")
+    weight_mesh = jnp.meshgrid(*([rule.weights] * rank), indexing="ij")
+    points = jnp.stack(tuple(mesh.reshape(-1) for mesh in node_mesh), axis=1)
+    weights = jnp.prod(
+        jnp.stack(tuple(mesh.reshape(-1) for mesh in weight_mesh), axis=1),
+        axis=1,
     )
     return points, weights
 

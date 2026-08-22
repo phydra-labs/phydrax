@@ -4,7 +4,11 @@
 
 """Native deterministic reconstruction primitives."""
 
-from ._barycentric import barycentric_basis, barycentric_interpolate
+from ._barycentric import (
+    barycentric_basis,
+    barycentric_differentiation_matrix,
+    barycentric_interpolate,
+)
 from ._bspline import bspline_batched_evaluate, bspline_evaluate, bspline_stencil
 from ._bspline_grid import BSplineGrid, TrainableBSplineGrid
 from ._bspline_grid_bank import BSplineGridBank
@@ -83,6 +87,7 @@ __all__ = [
     "RectilinearBoundaryMode",
     "apply_gather_stencil",
     "barycentric_basis",
+    "barycentric_differentiation_matrix",
     "bspline_evaluate",
     "bspline_batched_evaluate",
     "bspline_cross_gram",

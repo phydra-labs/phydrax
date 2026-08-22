@@ -9,8 +9,8 @@ from functools import lru_cache
 from typing import cast, Literal, NamedTuple, Sequence, TypeAlias
 
 import numpy as np
-import orthax
 
+from .._polynomial._orthogonal import standard_normal_hermite_rule_data
 from ._quadrature_rules import clenshaw_curtis_data
 
 
@@ -301,12 +301,9 @@ def smolyak_axis_data(rule: SmolyakAxisRule, level: int, /) -> SmolyakAxisData:
             "uniform",
         )
     if rule == "gauss-hermite":
-        recurrence = orthax.recurrence.HermiteE(scale="standard")
-        nodes_jax, weights_jax = orthax.orthgauss(level_ + 1, recurrence)
-        nodes = np.asarray(nodes_jax, dtype=float)
-        quadrature_weights = np.asarray(weights_jax, dtype=float) / math.sqrt(
-            2.0 * math.pi
-        )
+        rule_data = standard_normal_hermite_rule_data(level_ + 1)
+        nodes = np.asarray(rule_data.nodes, dtype=float)
+        quadrature_weights = np.asarray(rule_data.weights, dtype=float)
         return SmolyakAxisData(
             nodes,
             quadrature_weights,

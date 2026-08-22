@@ -16,6 +16,7 @@ import numpy as np
 from jaxtyping import Array, Key
 from shapely.geometry import Polygon as ShapelyPolygon
 
+from ..._numerics._quadrature_rules import gauss_legendre_data
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
@@ -70,9 +71,9 @@ _LEVEL_SET_CERTIFICATE = FieldCertificate(
     provenance=("analytic_level_set",),
 )
 _TWO_PI = 2.0 * jnp.pi
-_GL_NODES_HOST, _GL_WEIGHTS_HOST = np.polynomial.legendre.leggauss(48)
-_GL_NODES = jnp.asarray(_GL_NODES_HOST, dtype=float)
-_GL_WEIGHTS = jnp.asarray(_GL_WEIGHTS_HOST, dtype=float)
+_GL_RULE = gauss_legendre_data(48)
+_GL_NODES = jnp.asarray(_GL_RULE.nodes, dtype=float)
+_GL_WEIGHTS = jnp.asarray(_GL_RULE.weights, dtype=float)
 
 
 def _validate_positive_vector(value: Any, dimension: int, *, name: str) -> Array:

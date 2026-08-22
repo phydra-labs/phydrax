@@ -10,9 +10,9 @@ from typing import Literal, TypeAlias
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._numerics._quadrature_rules import gauss_legendre_data
 from .._strict import StrictModule
 from ..linalg import (
     ArraySpace,
@@ -610,9 +610,9 @@ def _continuous_action_quadrature(
     order: int,
     policy: MatrixFunctionPolicy,
 ) -> Array:
-    nodes_host, weights_host = np.polynomial.legendre.leggauss(order)
-    nodes = jnp.asarray(nodes_host, dtype=horizon.dtype)
-    weights = jnp.asarray(weights_host, dtype=horizon.dtype)
+    rule = gauss_legendre_data(order)
+    nodes = jnp.asarray(rule.nodes, dtype=horizon.dtype)
+    weights = jnp.asarray(rule.weights, dtype=horizon.dtype)
     result = jnp.zeros_like(vector)
     for index in range(order):
         time = 0.5 * horizon * (nodes[index] + 1.0)

@@ -17,6 +17,7 @@ import opt_einsum as oe
 from jax.scipy.special import logsumexp
 from jaxtyping import Array
 
+from ..._numerics._quadrature_rules import gauss_legendre_data
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
 from .._capabilities import GeometryCapability
 from .._certificate import (
@@ -466,9 +467,9 @@ class _ScalingKernel(GeometryKernel):
                 self.intrinsic_dimension - 1
             )
         atlas = self.boundary_atlas(state)
-        nodes, weights = np.polynomial.legendre.leggauss(24)
-        reference_axis = jnp.asarray(0.5 * (nodes + 1.0))
-        weights_axis = jnp.asarray(0.5 * weights)
+        rule = gauss_legendre_data(24)
+        reference_axis = jnp.asarray(0.5 * (rule.nodes + 1.0))
+        weights_axis = jnp.asarray(0.5 * rule.weights)
         if atlas.reference_dimension == 1:
             charts = jnp.repeat(jnp.arange(atlas.num_charts), reference_axis.size)
             reference = jnp.tile(reference_axis, atlas.num_charts)[:, None]

@@ -14,13 +14,6 @@ import jax.numpy as jnp
 import jax.random as jr
 from jax import Array
 from jaxtyping import ArrayLike, Key
-from orthax import (
-    chebyshev as _o_cheb,
-    hermite as _o_herm,
-    hermite_e as _o_herme,
-    laguerre as _o_lag,
-    legendre as _o_leg,
-)
 
 from ..._interpolation import (
     bspline_batched_evaluate,
@@ -29,6 +22,11 @@ from ..._interpolation import (
     BSplineGridBank,
     TrainableBSplineGrid,
 )
+from ..._polynomial._orthogonal import (
+    OrthogonalFamily,
+    standard_affine_coefficients,
+    standard_series_value,
+)
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
@@ -36,7 +34,7 @@ from ..._trainable import NonTrainableState
 EdgeInitialization = Literal["default", "identity"]
 
 
-_FAMILY_ALIASES = {
+_FAMILY_ALIASES: dict[str, OrthogonalFamily] = {
     "chebyshev": "chebyshev",
     "cheb": "chebyshev",
     "t": "chebyshev",
@@ -50,20 +48,6 @@ _FAMILY_ALIASES = {
     "laguerre": "laguerre",
     "lag": "laguerre",
 }
-
-
-def _poly_eval(coefficients: Array, inputs: Array, family: str) -> Array:
-    if family == "chebyshev":
-        return _o_cheb.chebval(inputs, coefficients)
-    if family == "legendre":
-        return _o_leg.legval(inputs, coefficients)
-    if family == "hermite":
-        return _o_herm.hermval(inputs, coefficients)
-    if family == "hermite_e":
-        return _o_herme.hermeval(inputs, coefficients)
-    if family == "laguerre":
-        return _o_lag.lagval(inputs, coefficients)
-    raise ValueError(f"Unsupported orthogonal polynomial family: {family!r}.")
 
 
 def _validate_edge_arrays(
@@ -125,10 +109,10 @@ class AbstractEdgeBasis(StrictModule):
 
 
 class OrthogonalPolynomialEdgeBasis(AbstractEdgeBasis):
-    """Global orthogonal-polynomial KAN edge basis evaluated by Orthax."""
+    """Global orthogonal-polynomial KAN edge basis in standard normalization."""
 
     _degree: int = eqx.field(static=True)
-    family: str = eqx.field(static=True)
+    family: OrthogonalFamily = eqx.field(static=True)
     regularization_start: int = eqx.field(static=True)
     regularization_power: float = eqx.field(static=True)
 
@@ -185,13 +169,19 @@ class OrthogonalPolynomialEdgeBasis(AbstractEdgeBasis):
                 raise ValueError(
                     "Identity initialization requires polynomial degree >= 1."
                 )
-            diagonal = jnp.eye(out_size, in_size)
-            return coefficients.at[..., 1].set(diagonal)
+            slope = jnp.eye(out_size, in_size, dtype=coefficients.dtype)
+            affine = standard_affine_coefficients(
+                self.family, jnp.zeros_like(slope), slope
+            )
+            return coefficients.at[..., :2].set(affine)
         if initialization == "default":
             if self.degree == 0:
                 return coefficients
-            slopes = 0.05 * jr.normal(key, (out_size, in_size))
-            return coefficients.at[..., 1].set(slopes)
+            slopes = 0.05 * jr.normal(key, (out_size, in_size), dtype=coefficients.dtype)
+            affine = standard_affine_coefficients(
+                self.family, jnp.zeros_like(slopes), slopes
+            )
+            return coefficients.at[..., :2].set(affine)
         raise ValueError(f"Unknown edge initialization: {initialization!r}.")
 
     def evaluate(self, coefficients: ArrayLike, inputs: ArrayLike) -> Array:
@@ -200,8 +190,8 @@ class OrthogonalPolynomialEdgeBasis(AbstractEdgeBasis):
         )
         return jax.vmap(
             lambda coefficient_row, input_row: jax.vmap(
-                lambda edge_coefficients, edge_input: _poly_eval(
-                    edge_coefficients, edge_input, self.family
+                lambda edge_coefficients, edge_input: standard_series_value(
+                    self.family, edge_coefficients, edge_input
                 )
             )(coefficient_row, input_row)
         )(coefficients_, inputs_)

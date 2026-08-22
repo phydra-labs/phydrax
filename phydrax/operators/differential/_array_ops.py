@@ -9,6 +9,8 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 
+from ..._interpolation import barycentric_differentiation_matrix
+
 
 def _fd_first_derivative(
     y: jax.Array, /, *, dx: jax.Array, axis: int, periodic: bool
@@ -39,24 +41,11 @@ def _fd_nth_derivative(
     return jax.lax.fori_loop(0, order_i, _step, y)
 
 
-def _barycentric_diff_matrix(x: jax.Array, /) -> jax.Array:
-    x1 = jnp.asarray(x, dtype=float).reshape((-1,))
-    n = int(x1.shape[0])
-    if n < 2:
-        return jnp.zeros((n, n), dtype=float)
-    diff = x1[:, None] - x1[None, :]
-    diff_safe = diff + jnp.eye(n, dtype=float)
-    w = 1.0 / jnp.prod(diff_safe, axis=1)
-    matrix = (w[None, :] / w[:, None]) / diff_safe
-    matrix = matrix - jnp.diag(jnp.diag(matrix))
-    return matrix.at[jnp.arange(n), jnp.arange(n)].set(-jnp.sum(matrix, axis=1))
-
-
 def _poly_nth_derivative(
     y: jax.Array, x: jax.Array, /, *, axis: int, order: int
 ) -> jax.Array:
     order_i = int(order)
-    matrix = _barycentric_diff_matrix(x)
+    matrix = barycentric_differentiation_matrix(x)
 
     def _step(_: int, out_i: jax.Array) -> jax.Array:
         out0 = jnp.moveaxis(out_i, axis, 0)
@@ -162,7 +151,6 @@ def _basis_nth_derivative(
 
 __all__ = [
     "_basis_nth_derivative",
-    "_barycentric_diff_matrix",
     "_cosine_nth_derivative",
     "_fd_first_derivative",
     "_fd_nth_derivative",

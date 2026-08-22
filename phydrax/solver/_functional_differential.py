@@ -17,7 +17,7 @@ from jaxtyping import Array, ArrayLike
 
 from .._frozendict import frozendict
 from .._interpolation._barycentric import barycentric_interpolate
-from .._numerics._quadrature_rules import clenshaw_curtis_data
+from .._polynomial._chebyshev import chebyshev_lobatto_data
 from .._strict import StrictModule
 
 
@@ -39,22 +39,6 @@ def _maximum_absolute(value: Array, /) -> Array:
     if int(value.size) == 0:
         return jnp.asarray(0.0, dtype=value.dtype)
     return jnp.max(jnp.abs(value))
-
-
-def _barycentric_data(nodes: Array, /) -> tuple[Array, Array]:
-    nodes_host = np.asarray(nodes, dtype=float)
-    count = int(nodes_host.size)
-    differences = nodes_host[:, None] - nodes_host[None, :]
-    differences[np.diag_indices(count)] = 1.0
-    weights = (-1.0) ** np.arange(count, dtype=float)
-    weights[[0, -1]] *= 0.5
-
-    ratio = weights[None, :] / weights[:, None]
-    matrix = np.zeros((count, count), dtype=float)
-    off_diagonal = ~np.eye(count, dtype=bool)
-    matrix[off_diagonal] = (ratio / differences)[off_diagonal]
-    matrix[np.diag_indices(count)] = -np.sum(matrix, axis=1)
-    return jnp.asarray(weights), jnp.asarray(matrix)
 
 
 class FunctionalDifferentialContext(StrictModule):
@@ -290,18 +274,19 @@ class FunctionalCollocationPlan(StrictModule):
             jnp.any(~jnp.isfinite(mesh_)) | jnp.any(jnp.diff(mesh_) <= 0.0),
             "mesh must be finite and strictly increasing.",
         )
-        rule = clenshaw_curtis_data(degree_ + 1)
-        barycentric_weights, differentiation_matrix = _barycentric_data(rule.nodes)
+        reference = chebyshev_lobatto_data(
+            degree_ + 1,
+            maximum_derivative_order=1,
+            dtype=mesh_.dtype,
+        )
 
         rtol_ = float(rtol)
         atol_ = float(atol)
         self.mesh = mesh_
-        self.reference_nodes = jnp.asarray(rule.nodes, dtype=mesh_.dtype)
-        self.barycentric_weights = jnp.asarray(barycentric_weights, dtype=mesh_.dtype)
-        self.differentiation_matrix = jnp.asarray(
-            differentiation_matrix, dtype=mesh_.dtype
-        )
-        self.quadrature_weights = jnp.asarray(rule.weights, dtype=mesh_.dtype)
+        self.reference_nodes = reference.nodes
+        self.barycentric_weights = reference.barycentric_weights
+        self.differentiation_matrix = reference.differentiation_matrix(1)
+        self.quadrature_weights = reference.quadrature_weights
         self.root_finder = (
             optx.LevenbergMarquardt(rtol=rtol_, atol=atol_, norm=optx.rms_norm)
             if root_finder is None

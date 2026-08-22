@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._numerics._quadrature_rules import gauss_legendre_data
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 
@@ -141,7 +142,9 @@ class BSplineGrid(StrictModule, NonTrainableState):
         ):
             raise ValueError("quadrature polynomial_degree must be nonnegative.")
         order = max(1, ceil((int(polynomial_degree) + 1) / 2))
-        reference_nodes, reference_weights = np.polynomial.legendre.leggauss(order)
+        reference = gauss_legendre_data(order)
+        reference_nodes = np.asarray(reference.nodes)
+        reference_weights = np.asarray(reference.weights)
         breakpoints = np.asarray(self.breakpoints)
         nodes: list[float] = []
         weights: list[float] = []
@@ -352,10 +355,10 @@ class TrainableBSplineGrid(StrictModule):
         ):
             raise ValueError("quadrature polynomial_degree must be nonnegative.")
         order = max(1, ceil((int(polynomial_degree) + 1) / 2))
-        reference_nodes, reference_weights = np.polynomial.legendre.leggauss(order)
-        reference_nodes_ = jnp.asarray(reference_nodes, dtype=self.raw_span_logits.dtype)
+        reference = gauss_legendre_data(order)
+        reference_nodes_ = jnp.asarray(reference.nodes, dtype=self.raw_span_logits.dtype)
         reference_weights_ = jnp.asarray(
-            reference_weights, dtype=self.raw_span_logits.dtype
+            reference.weights, dtype=self.raw_span_logits.dtype
         )
         lower = self.breakpoints[:-1, None]
         upper = self.breakpoints[1:, None]

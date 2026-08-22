@@ -9,6 +9,7 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, Key
 
+from .._numerics._quadrature_rules import gauss_legendre_data
 from .._strict import StrictModule
 from ._atlas import BoundaryAtlas
 
@@ -159,9 +160,9 @@ class BoundaryAtlasPartition(StrictModule):
             raise TypeError("atlas must be a BoundaryAtlas.")
         if quadrature_order < 2 or candidate_count < 2:
             raise ValueError("quadrature_order and candidate_count must be at least two.")
-        nodes_host, weights_host = np.polynomial.legendre.leggauss(quadrature_order)
-        nodes_host = 0.5 * (nodes_host + 1.0)
-        weights_host = 0.5 * weights_host
+        rule = gauss_legendre_data(quadrature_order)
+        nodes_host = 0.5 * (np.asarray(rule.nodes) + 1.0)
+        weights_host = 0.5 * np.asarray(rule.weights)
         if atlas.reference_dimension == 1:
             reference_host = nodes_host[:, None]
             reference_weights_host = weights_host

@@ -13,6 +13,7 @@ import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._numerics._quadrature_rules import gauss_legendre_data
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._multiresolution import MultiresolutionCoefficients
@@ -36,9 +37,9 @@ def _discrete_legendre_analysis(order: int, /) -> np.ndarray:
 
 
 def _alpert_analysis(order: int, /) -> np.ndarray:
-    quadrature_nodes, quadrature_weights = np.polynomial.legendre.leggauss(
-        max(16, 4 * order)
-    )
+    quadrature = gauss_legendre_data(max(16, 4 * order))
+    quadrature_nodes = np.asarray(quadrature.nodes)
+    quadrature_weights = np.asarray(quadrature.weights)
     low_rows = np.zeros((order, 2 * order), dtype=float)
     for branch in range(2):
         lower = 0.5 * branch

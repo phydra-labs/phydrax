@@ -140,6 +140,11 @@
 
 ### Changed
 
+- Orthogonal-polynomial evaluation and Gaussian rule construction now pass through
+  one private convention boundary. Hermite and Laguerre KAN identity/default
+  initialization now represent the intended affine map, standard-normal Hermite
+  rules own their probability normalization, invalid Legendre rule kinds fail
+  explicitly, and functional collocation reuses canonical Chebyshev--Lobatto data.
 - DeepONet now accepts generalized coordinate-evaluated basis trunks, exposes
   explicit output-bias control, and preserves existing pointwise and POD
   behavior while supporting projection branches and frozen nested models.
