@@ -41,6 +41,7 @@ from ._costs import (
     OperatorActionCostEstimate,
     PreconditionerCostEstimate,
 )
+from ._empirical import EmpiricalGramLinearOperator
 from ._factored_matrix_equations import (
     factored_continuous_lyapunov_equation,
     FactoredMatrixEquationCostEstimate,
@@ -525,6 +526,7 @@ __all__ = [
     "DiagonalSystemTransform",
     "DifferentiationPolicy",
     "DualSpace",
+    "EmpiricalGramLinearOperator",
     "EuclideanPairing",
     "FGMRES",
     "FactorizationCapabilities",

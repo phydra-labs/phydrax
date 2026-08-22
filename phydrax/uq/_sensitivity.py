@@ -21,6 +21,7 @@ from .._exponential_family import (
 from .._frozendict import frozendict
 from .._sampling import get_sampler
 from .._strict import StrictModule
+from ..linalg import DenseLinearOperator, EmpiricalGramLinearOperator
 from ._distributions import AbstractDistribution
 
 
@@ -730,6 +731,11 @@ def fisher_information_action(
         raise ValueError("scores must have shape (sample, *parameter_shape).")
     if score_array.shape[1:] != direction.shape:
         raise ValueError("vector shape must match one score sample.")
+    if jnp.iscomplexobj(score_array) or jnp.iscomplexobj(direction):
+        raise TypeError(
+            "fisher_information_action supports real scores; use a pairing-aware "
+            "EmpiricalGramLinearOperator for complex geometry."
+        )
     penalty = float(regularization)
     if not isfinite(penalty) or penalty < 0.0:
         raise ValueError("regularization must be finite and non-negative.")
@@ -737,24 +743,33 @@ def fisher_information_action(
     flat_scores = score_array.reshape((count, -1))
     flat_direction = direction.reshape(-1)
     if weights is None:
-        normalized = jnp.full((count,), 1.0 / count)
+        sample_weights = jnp.ones((count,), dtype=float)
         weights_valid = jnp.asarray(True)
     else:
         sample_weights = jnp.asarray(weights)
         if sample_weights.shape != (count,):
             raise ValueError("weights must have one entry per score sample.")
-        normalized = sample_weights / jnp.sum(sample_weights)
         weights_valid = (
             jnp.all(jnp.isfinite(sample_weights))
             & jnp.all(sample_weights >= 0.0)
             & (jnp.sum(sample_weights) > 0.0)
         )
-    flat_action = flat_scores.T @ (normalized * (flat_scores @ flat_direction))
-    action = flat_action.reshape(direction.shape) + penalty * direction
+    safe_weights = jnp.where(weights_valid, sample_weights, jnp.ones_like(sample_weights))
+    feature_operator = DenseLinearOperator(
+        flat_scores,
+        operator_id="fisher-score-features",
+    )
+    gram = EmpiricalGramLinearOperator(
+        feature_operator,
+        safe_weights,
+        centered=False,
+        damping=penalty,
+        operator_id="fisher-information",
+    )
+    action = gram.mv(flat_direction).reshape(direction.shape)
     finite = (
         jnp.all(jnp.isfinite(score_array))
-        & jnp.all(jnp.isfinite(normalized))
-        & jnp.all(normalized >= 0.0)
+        & jnp.all(jnp.isfinite(sample_weights))
         & weights_valid
         & jnp.all(jnp.isfinite(action))
     )

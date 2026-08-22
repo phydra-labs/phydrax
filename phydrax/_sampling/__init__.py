@@ -12,6 +12,14 @@ from ._designs import (
     seed_from_key,
     unit_design,
 )
+from ._markov import (
+    MarkovSampleResult,
+    MarkovState,
+    MarkovTransitionInfo,
+    MetropolisHastings,
+    sample_markov,
+)
+from ._proposals import AbstractProposal, CallableProposal, GaussianRandomWalkProposal
 from ._transports import ReferenceTransport
 from ._types import (
     AntitheticDesign,
@@ -36,14 +44,21 @@ from ._types import (
 
 
 __all__ = [
+    "AbstractProposal",
     "AntitheticDesign",
+    "CallableProposal",
     "DESIGN_ALGORITHM_VERSION",
     "DesignCapabilities",
     "DesignLike",
     "DesignName",
     "HaltonDesign",
+    "GaussianRandomWalkProposal",
     "HammersleyDesign",
     "IIDDesign",
+    "MarkovSampleResult",
+    "MarkovState",
+    "MarkovTransitionInfo",
+    "MetropolisHastings",
     "LatinHypercubeDesign",
     "RandomizedQMCDesign",
     "ReferenceTransport",
@@ -63,5 +78,6 @@ __all__ = [
     "normalize_design_name",
     "resolve_design",
     "seed_from_key",
+    "sample_markov",
     "unit_design",
 ]

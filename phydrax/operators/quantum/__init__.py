@@ -11,7 +11,21 @@ from ._algebra import (
     quantum_bracket,
     unit_trace_residual,
 )
+from ._amplitude import (
+    amplitude_ratio,
+    AmplitudeRatio,
+    ComplexParameterMode,
+    LogAmplitude,
+    sampling_log_weight,
+)
 from ._composite import embed_operator, partial_trace, tensor_product
+from ._discrete import (
+    AbstractDiscreteQuantumOperator,
+    CallableDiscreteQuantumOperator,
+    ConnectedConfigurations,
+    local_estimate,
+    LocalEstimate,
+)
 from ._dynamics import (
     HamiltonianAction,
     heisenberg_residual,
@@ -33,20 +47,31 @@ from ._states import (
     state_expectation,
     state_norm_residual,
 )
+from ._symmetry import FiniteSignedPermutationSymmetry, SymmetryProjectedAmplitude
 
 
 __all__ = [
+    "AbstractDiscreteQuantumOperator",
+    "AmplitudeRatio",
     "HamiltonianAction",
     "anticommutator",
+    "CallableDiscreteQuantumOperator",
+    "ComplexParameterMode",
+    "ConnectedConfigurations",
     "commutator",
     "density_expectation",
     "density_fidelity",
     "density_from_factor",
+    "FiniteSignedPermutationSymmetry",
     "embed_operator",
     "heisenberg_residual",
     "hermiticity_residual",
     "lindblad_dissipator",
+    "LocalEstimate",
+    "LogAmplitude",
     "lindblad_residual",
+    "amplitude_ratio",
+    "local_estimate",
     "quantum_bracket",
     "observable_variance",
     "purity",
@@ -55,6 +80,8 @@ __all__ = [
     "state_expectation",
     "state_fidelity",
     "state_norm_residual",
+    "sampling_log_weight",
+    "SymmetryProjectedAmplitude",
     "tensor_product",
     "trace_distance",
     "unit_trace_residual",

@@ -54,12 +54,15 @@ remain visible as `SENSITIVITY_NONFINITE`; there is no fallback estimator.
 
 ## Matrix-free Fisher and Gauss--Newton actions
 
-`fisher_information_action` applies the empirical score outer-product matrix to a
-direction without forming that matrix. Optional sample weights must be finite,
-nonnegative, and have positive total weight. `gauss_newton_action` applies `JᵀJ` to a
-real-valued residual-model direction using one JVP and one transpose-VJP. Both add
-only the explicitly requested `regularization * direction`; neither chooses a
-regularizer or repairs an invalid result.
+`fisher_information_action` applies the uncentered empirical outer product of real
+score rows to a real direction. It delegates the numerical action to
+`phydrax.linalg.EmpiricalGramLinearOperator` with `centered=False`; complex or
+centered score geometry must construct that pairing-aware operator explicitly.
+Optional sample weights must be finite, nonnegative, and have positive total weight.
+`gauss_newton_action` applies `JᵀJ` to a real-valued residual-model direction using
+one JVP and one transpose-VJP. Both add only the explicitly requested
+`regularization * direction`; neither chooses a regularizer or repairs an invalid
+result.
 
 This complete local example does not materialize a Jacobian:
 

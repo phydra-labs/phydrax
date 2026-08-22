@@ -108,11 +108,13 @@ nav:
         - Operator learning (DatasetDomain): "cookbook/operator_learning.md"
         - Uncertainty quantification: "cookbook/uncertainty_quantification.md"
         - Neural-operator uncertainty: "cookbook/operator_uncertainty.md"
+        - Persistent Markov measures: "cookbook/variational_boltzmann.md"
         - Optimal transport: "cookbook/optimal_transport.md"
         - Mechanics and Deep Ritz: "cookbook/mechanics.md"
         - Two-level quantum dynamics: "cookbook/quantum_two_level.md"
         - Composite systems and a Bell state: "cookbook/quantum_composite.md"
         - Open-system amplitude damping: "cookbook/quantum_open_system.md"
+        - Variational Monte Carlo: "cookbook/quantum_vmc.md"
     - Guides:
         - Domains and sampling: "guides_domain.md"
         - Discretization: "guides_discretization.md"
@@ -135,6 +137,7 @@ nav:
         - Linear algebra runtime: "api/linalg.md"
         - External solver backends: "api/backends.md"
         - Sparse derivatives: "api/sparse_derivatives.md"
+        - Sampling: "api/sampling.md"
         - Integration: "api/integration.md"
         - Moment weighting: "api/weighting.md"
         - Optimal transport:
@@ -257,6 +260,8 @@ nav:
             - Differential-algebraic equations: "api/solver/differential_algebraic.md"
             - Delay and functional differential equations: "api/solver/delay.md"
             - Functional solver: "api/solver/functional_solver.md"
+            - Variational Monte Carlo: "api/solver/variational_monte_carlo.md"
+            - Variational TDVP: "api/solver/variational_tdvp.md"
             - Exact enforcement: "api/solver/enforcement.md"
             - Geometry-preserving solvers: "api/solver/geometric.md"
         - Uncertainty quantification:
