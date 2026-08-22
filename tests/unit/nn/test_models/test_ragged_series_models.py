@@ -80,6 +80,37 @@ def test_masked_series_pooling_ignores_padded_tail_values():
     assert jnp.allclose(out_a, jnp.asarray([2.0, 7.0]))
 
 
+def test_masked_series_pooling_selects_nonfinite_padded_latents():
+    payload = phx.nn.models.RaggedSeriesBatchInput(
+        static=None,
+        series=jnp.asarray([[[1.0], [0.0]]]),
+        time=jnp.asarray([[0.0, 1.0]]),
+        mask=jnp.asarray([[True, False]]),
+        length=jnp.asarray([1], dtype=jnp.int32),
+    )
+
+    def step_model(x, *, key=None):
+        del key
+        return jnp.log(x)
+
+    def readout_model(x, *, key=None):
+        del key
+        return x[:, 0]
+
+    model = phx.nn.models.MaskedSeriesPoolingModel(
+        step_model=step_model,
+        readout_model=readout_model,
+        reduction="sum",
+        include_time=False,
+        include_static_in_readout=False,
+    )
+    eager = model(payload)
+    compiled = eqx.filter_jit(lambda current, data: current(data))(model, payload)
+
+    assert jnp.array_equal(eager, jnp.asarray([0.0]))
+    assert jnp.array_equal(compiled, eager)
+
+
 def test_masked_series_pooling_can_scale_sampled_sum():
     payload = phx.nn.models.RaggedSeriesBatchInput(
         static=None,

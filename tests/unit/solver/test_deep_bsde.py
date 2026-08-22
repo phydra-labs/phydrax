@@ -1,3 +1,4 @@
+import jax
 import jax.numpy as jnp
 import optax
 
@@ -70,6 +71,46 @@ def test_deep_bsde_rollout_reproduces_linear_brownian_solution():
     assert objective.diagnostics(
         {"initial": initial, "control": control}, batch=paths
     ).passed
+
+
+def test_deep_bsde_masks_nonfinite_invalid_terminal_gradient():
+    base_paths = _brownian_paths()
+    paths = BSDEPathBatch(
+        base_paths.times,
+        base_paths.states.at[1, -1, 0].set(2.0),
+        base_paths.wiener_increments,
+        sample_shape=base_paths.sample_shape,
+        state_shape=base_paths.state_shape,
+        noise_shape=base_paths.noise_shape,
+        path_id="masked-terminal",
+        process_id=base_paths.process_id,
+    )
+    problem = _problem(
+        paths,
+        terminal=lambda state, args: jnp.where(
+            state[0] > 1.0,
+            jnp.asarray([jnp.nan]),
+            jnp.asarray([0.0]),
+        ),
+    )
+    domain = phx.domain.Interval1d(-1.0, 1.0)
+    control = _constant(domain, [[0.0]])
+    objective = DeepBSDEShootingTerm(
+        problem,
+        initial_value_name="initial",
+        control_name="control",
+        sampling_mode="fixed",
+        fixed_paths=paths,
+    )
+
+    def loss(initial_value):
+        initial = _constant(domain, jnp.reshape(initial_value, (1,)))
+        return objective.loss({"initial": initial, "control": control}, batch=paths)
+
+    value, gradient = jax.jit(jax.value_and_grad(loss))(jnp.asarray(1.5))
+
+    assert value == 2.25
+    assert gradient == 3.0
 
 
 def test_solve_deep_bsde_trains_initial_value_and_removes_temporary_objective():

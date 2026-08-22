@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
@@ -62,6 +63,40 @@ def test_deep_splitting_labels_use_explicit_right_endpoint_source():
     assert jnp.allclose(labels.source_controls, 0.0)
     assert jnp.allclose(labels.value_targets, 0.5)
     assert jnp.allclose(objective.loss({"value": exact}, batch=labels), 0.0)
+
+
+def test_deep_splitting_masks_nonfinite_invalid_target_gradient():
+    paths = _paths()
+    problem = _problem(paths)
+    labels = deep_splitting_labels(
+        problem,
+        paths,
+        lambda time, state: jnp.asarray([0.0]),
+        1,
+    )
+    valid = jnp.arange(paths.num_paths) < paths.num_paths // 2
+    labels = eqx.tree_at(lambda batch: batch.valid, labels, valid)
+    labels = eqx.tree_at(
+        lambda batch: batch.value_targets,
+        labels,
+        jnp.where(valid[:, None], labels.value_targets, jnp.nan),
+    )
+    domain = phx.domain.Interval1d(-1.0, 1.0)
+    objective = DeepSplittingRegressionTerm(
+        problem,
+        value_name="value",
+        slice_index=1,
+        labels=labels,
+    )
+
+    def loss(value):
+        predictor = domain.Parameter(jnp.reshape(value, (1,)))
+        return objective.loss({"value": predictor}, batch=labels)
+
+    value, gradient = jax.jit(jax.value_and_grad(loss))(jnp.asarray(1.5))
+
+    assert value == 1.0
+    assert gradient == 2.0
 
 
 def test_solve_deep_splitting_trains_distinct_slices_and_interpolates_field():

@@ -604,14 +604,25 @@ def evaluate_bsde(
 def _masked_mean_square(
     values: Array, valid: Array, event_shape: tuple[int, ...], /
 ) -> Array:
-    squared = jnp.abs(values) ** 2
+    event_mask = jnp.broadcast_to(
+        valid.reshape(valid.shape + (1,) * len(event_shape)),
+        values.shape,
+    )
+    safe_values = jnp.where(
+        event_mask,
+        values,
+        jnp.zeros((), dtype=values.dtype),
+    )
+    squared = jnp.abs(safe_values) ** 2
     if event_shape:
         squared = jnp.sum(
             squared,
             axis=tuple(range(squared.ndim - len(event_shape), squared.ndim)),
         )
-    mask = jnp.broadcast_to(valid, squared.shape)
-    return jnp.sum(jnp.where(mask, squared, 0.0)) / jnp.maximum(jnp.sum(mask), 1)
+    reduction_mask = jnp.broadcast_to(valid, squared.shape)
+    return jnp.sum(jnp.where(reduction_mask, squared, 0.0)) / jnp.maximum(
+        jnp.sum(reduction_mask), 1
+    )
 
 
 def bsde_objective_loss(
